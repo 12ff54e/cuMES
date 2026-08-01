@@ -41,14 +41,23 @@ __global__ void extrapolateAxisKernel(
 }
 
 // Apply vmecpp's even/odd-m decomposition scaling (decomposeInto) to the
-// spectral forces. vmecpp stores and evolves the "decomposed" representation:
-// odd-m coefficients carry an extra 1/max(sqrt(s), sqrt(1/(ns-1))) factor
-// (Eqn. 8c in Hirshman, Schwenn & Nuehrenberg 1990); the axis is clamped to
-// the innermost surface's sqrt(s) (constant extrapolation towards the axis).
-// cuMES's geometry coefficients already follow this convention (initState),
-// so the forces must be scaled the same way before the residuals, the
-// preconditioned solve, and the descent — otherwise the per-mode dynamics
-// differ from vmecpp. Even-m modes: scalxc = 1 (no change).
+// spectral forces. vmecpp decomposes its FORCES: odd-m force coefficients
+// carry an extra 1/max(sqrt(s_F), sqrt(1/(ns-1))) factor (Eqn. 8c in
+// Hirshman, Schwenn & Nuehrenberg 1990), which it then evolves through the
+// residual, preconditioned-solve, and descent pipeline (m_decomposed_f).
+// max(..., sqrt(s1)) clamps the factor at the axis to the innermost
+// surface's sqrt(s), keeping it finite at s=0 (constant extrapolation,
+// the same treatment as extrapolateAxisKernel above).
+//
+// IMPORTANT: only the FORCES are transformed here. The spectral state
+// (d_rmncc/...) stays in plain physical coefficients throughout — initState
+// builds s^(m/2) profiles, and the dumped state matches vmecpp's physical
+// wout coefficients exactly. cuMES's real-space odd arrays likewise carry
+// the decomposed form only transiently (inverseDFT divides by max(...) to
+// feed the vmecpp-formula kernels). Consequently the odd-m factor must
+// NEVER be re-applied when post-processing the state (e.g. flux-surface
+// plots): doing so double-scales and flattens the m=1 shift profile into
+// a linear-in-s one. Even-m modes: scalxc = 1 (no change).
 __global__ void scalxcApplyKernel(
     double* __restrict__ f_spec, const double* __restrict__ sqrtS_F,
     int ns, int mnmax, double sqrtS1)
