@@ -1,0 +1,6 @@
+# Build artifacts
+build/
+
+# Editors / misc
+*.swp
+*~
