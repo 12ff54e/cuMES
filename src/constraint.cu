@@ -90,9 +90,18 @@ void constraintFree(ConstraintWorkspace& cw) {
 // constraint), so rCon measures the deviation of the m>=2 content from the
 // LCFS-extrapolated profile rCon0.
 // ---------------------------------------------------------------------------
+// rCon/zCon in the 3D folded product basis (vmecpp's rCon/zCon in
+// dft_FourierToReal_3d_symm): the xmpq-weighted real-space combination
+//   rCon = Σ xmpq[m]*sqrt(s)^{odd}*(rmncc*cos(mθ)cos(nζ) + rmnss*sin(mθ)sin(nζ))
+//   zCon = Σ xmpq[m]*sqrt(s)^{odd}*(zmnsc*sin(mθ)cos(nζ) + zmncs*cos(mθ)sin(nζ))
+// with xmpq[m] = m*(m-1): the m=0 and m=1 contributions vanish (the m=1
+// constraint), so rCon measures the deviation of the m>=2 content from the
+// LCFS-extrapolated profile rCon0.
 __global__ void rzConComputeKernel(
-    const double* __restrict__ rmncc, const double* __restrict__ zmnsc,
-    const double* __restrict__ cc, const double* __restrict__ sc,
+    const double* __restrict__ rmncc, const double* __restrict__ rmnss,
+    const double* __restrict__ zmnsc, const double* __restrict__ zmncs,
+    const double* __restrict__ cc, const double* __restrict__ ss,
+    const double* __restrict__ sc, const double* __restrict__ cs,
     const double* __restrict__ sqrtS_F,
     const int* __restrict__ xm,
     int ns, int mnmax, int nZnT,
@@ -107,10 +116,17 @@ __global__ void rzConComputeKernel(
         int mm = xm[m];
         double xmpq = (double)(mm * (mm - 1));
         if (xmpq == 0.0) continue;  // m=0,1: nothing (m=1 constraint)
-        double scal = (mm % 2 == 0) ? 1.0 : sqrtS_F[jF];
+        // Odd-m: NO extra sqrt(s) here. vmecpp's con_factor = xmpq*sqrtSF
+        // applies to its PHYSICAL state; cuMES's state carries the 1/scalxc
+        // decomposition for odd m (c = v*mscale*nscale/scalxc), and
+        // sqrtSF*scalxc = 1, so the odd-m factor is exactly 1.0.
+        // (FIXED 2026-08-02: the old sqrtS_F factor made odd-m rCon too
+        // small by 1/scalxc, ~sqrt(s).)
         int idx_j = jF + m * ns;
-        r += xmpq * scal * rmncc[idx_j] * cc[k + m * nZnT];
-        z += xmpq * scal * zmnsc[idx_j] * sc[k + m * nZnT];
+        r += xmpq * (rmncc[idx_j] * cc[k + m * nZnT] +
+                     rmnss[idx_j] * ss[k + m * nZnT]);
+        z += xmpq * (zmnsc[idx_j] * sc[k + m * nZnT] +
+                     zmncs[idx_j] * cs[k + m * nZnT]);
     }
     int idx = k + jF * nZnT;
     rCon[idx] = r;
@@ -235,20 +251,28 @@ __global__ void deAliasKernelFast(
         __syncthreads();
     }
 
-    // Thread 0: normalize and write spectral coefficient
+    // Thread 0: normalize and write spectral coefficients
     if (tid == 0) {
-        // Normalization: for m>0, n>=0: factor 4/nZnT
-        // (since sin²(mθ)cos²(nζ) integrates to nZnT/4)
+        // Normalization: for m>0, n>=0: factor 4/nZnT for the n>0 modes
+        // (since sin²(mθ)cos²(nζ) sums to nZnT/4) and 2/nZnT for n=0
+        // (sin²(mθ) sums to nZnT/2). This is the full-grid equivalent of
+        // vmecpp's mscale*nscale*intNorm round trip (empirically matched
+        // for the n=0 case; the sc/cs projections are kept separate, as in
+        // vmecpp's sinmu/cosmu round trip, to avoid cross terms in 3D).
         double norm = (mm > 0 && nn > 0) ? (4.0 / nZnT) :
                       (nn == 0)            ? (2.0 / nZnT) : (4.0 / nZnT);
-        double coeff = (s_wsc[0] + s_wcs[0]) * norm * scale;
+        double coeff_sc = s_wsc[0] * norm * scale;
+        double coeff_cs = s_wcs[0] * norm * scale;
 
-        // Inverse DFT: add coeff * (sc + cs) back to gCon at each point
+        // Inverse DFT: add coeff_sc * sc + coeff_cs * cs back to gCon at
+        // each point (matching vmecpp: the sin-projection reconstructs with
+        // sinmu, the cos-projection with cosmu).
         for (int k = 0; k < nZnT; ++k) {
             int idx = k + jF * nZnT;
             // Use atomic add since multiple modes contribute
             atomicAdd(&gCon[idx],
-                coeff * (sc[k + mode * nZnT] + cs[k + mode * nZnT]));
+                coeff_sc * sc[k + mode * nZnT] +
+                coeff_cs * cs[k + mode * nZnT]);
         }
     }
 }
@@ -327,9 +351,11 @@ __global__ void computeTconKernel(
 
     // Surface average of the PHYSICAL derivatives
     // |∇R|² = ruFull², |∇Z|² = zuFull² with ruFull = ru_e + sqrt(s)*ru_o
-    // (vmecpp line 1178). One thread per surface; the reduced-grid sum over
-    // the nThetaRed = 10 points is serial per thread (no block reduction —
-    // threads of different surfaces must not share accumulators).
+    // (vmecpp constraintForceMultiplier, using ruFull on the full grid).
+    // One thread per surface; serial loop over ALL (zeta, theta-reduced)
+    // points -- the layout is [jF][zeta][theta], so the index must combine
+    // both. (FIXED 2026-08-02: previously only theta at the first zeta plane
+    // was summed, making arN/azN ~36x too small and tcon ~21x too big.)
     double arN = 0.0, azN = 0.0;
 
     const int nThetaEven = 2 * (ntheta / 2);
@@ -337,14 +363,16 @@ __global__ void computeTconKernel(
     const double dnorm3 = 1.0 / (nzeta * (nThetaRed - 1));
     const double sF = sqrtS_F[jF];
 
-    for (int k = 0; k < nThetaRed; ++k) {
-        double w = dnorm3;
-        if (k == 0 || k == nThetaRed - 1) w *= 0.5;
-        int idx = k + jF * nZnT;
-        double ruFull = ru_e[idx] + sF * ru_o[idx];
-        double zuFull = zu_e[idx] + sF * zu_o[idx];
-        arN += ruFull * ruFull * w;
-        azN += zuFull * zuFull * w;
+    for (int iz = 0; iz < nzeta; ++iz) {
+        for (int it = 0; it < nThetaRed; ++it) {
+            double w = dnorm3;
+            if (it == 0 || it == nThetaRed - 1) w *= 0.5;
+            int idx = (jF * nzeta + iz) * ntheta + it;
+            double ruFull = ru_e[idx] + sF * ru_o[idx];
+            double zuFull = zu_e[idx] + sF * zu_o[idx];
+            arN += ruFull * ruFull * w;
+            azN += zuFull * zuFull * w;
+        }
     }
     if (arN == 0.0) arN = 1e-10;
     if (azN == 0.0) azN = 1e-10;
@@ -374,8 +402,8 @@ void constraintRzConCompute(const GridParams& p, const FourierPlan& fp,
     dim3 block(32);
     dim3 grid((p.nZnT + 31) / 32, p.ns);
     rzConComputeKernel<<<grid, block>>>(
-        st.d_rmncc, st.d_zmnsc,
-        fp.basis.d_cc, fp.basis.d_sc,
+        st.d_rmncc, st.d_rmnss, st.d_zmnsc, st.d_zmncs,
+        fp.basis.d_cc, fp.basis.d_ss, fp.basis.d_sc, fp.basis.d_cs,
         d_sqrtS_F, fp.basis.d_xm,
         p.ns, p.mnmax, p.nZnT,
         cw.d_rCon, cw.d_zCon);

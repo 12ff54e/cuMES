@@ -4,6 +4,10 @@
 // adapted for the single-coefficient-per-mode representation (where even
 // and odd parity components are derived from the same rmnc/zmns/lmnc via
 // trigonometric decomposition rather than being independent variables).
+// In 3D the poloidal forces (brmn/bzmn) gain the gbubv = √g·B^θ·B^ζ cross
+// terms and the toroidal forces (crmn/czmn) appear; the λ force gains the
+// guv·bsupu term in the alternative interpolation and the toroidal λ force
+// clmn.
 
 #include "forces.cuh"
 #include <cstdio>
@@ -22,6 +26,8 @@ __global__ void forcesKernel(
     const double* __restrict__ z_e,   const double* __restrict__ z_o,
     const double* __restrict__ ru_e,  const double* __restrict__ ru_o,
     const double* __restrict__ zu_e,  const double* __restrict__ zu_o,
+    const double* __restrict__ rv_e,  const double* __restrict__ rv_o,
+    const double* __restrict__ zv_e,  const double* __restrict__ zv_o,
     // Half-grid geometry
     const double* __restrict__ r12,
     const double* __restrict__ ru12,
@@ -30,6 +36,7 @@ __global__ void forcesKernel(
     const double* __restrict__ zs,
     const double* __restrict__ tau,
     const double* __restrict__ gsqrt,
+    const double* __restrict__ guv,
     const double* __restrict__ gvv,
     const double* __restrict__ bsupu,
     const double* __restrict__ bsupv,
@@ -43,13 +50,17 @@ __global__ void forcesKernel(
     const double* __restrict__ sqrtS_F,   // sqrt(s) on full grid
     const double* __restrict__ sqrtS_H,   // sqrt(s) on half grid
     const double* __restrict__ phip_F,    // dPhi/ds on full grid (negative)
+    double lamscale,
     int ns, int nZnT, double delta_s,
     // Output force components (parity-split)
     double* __restrict__ d_armn_e, double* __restrict__ d_armn_o,
     double* __restrict__ d_azmn_e, double* __restrict__ d_azmn_o,
     double* __restrict__ d_brmn_e, double* __restrict__ d_brmn_o,
     double* __restrict__ d_bzmn_e, double* __restrict__ d_bzmn_o,
-    double* __restrict__ d_blmn_e, double* __restrict__ d_blmn_o)
+    double* __restrict__ d_crmn_e, double* __restrict__ d_crmn_o,
+    double* __restrict__ d_czmn_e, double* __restrict__ d_czmn_o,
+    double* __restrict__ d_blmn_e, double* __restrict__ d_blmn_o,
+    double* __restrict__ d_clmn_e, double* __restrict__ d_clmn_o)
 {
     int j = blockIdx.y;  // full-grid surface
     int k = threadIdx.x + blockIdx.x * blockDim.x;
@@ -62,6 +73,8 @@ __global__ void forcesKernel(
     double ze_j = z_e[idx_f],  zo_j = z_o[idx_f];
     double rue_j = ru_e[idx_f], ruo_j = ru_o[idx_f];
     double zue_j = zu_e[idx_f], zuo_j = zu_o[idx_f];
+    double rve_j = rv_e[idx_f], rvo_j = rv_o[idx_f];
+    double zve_j = zv_e[idx_f], zvo_j = zv_o[idx_f];
 
     double sF_j = sqrtS_F[j];                // sqrt(s) at full grid
     double sFull = sF_j * sF_j;              // s (normalized flux)
@@ -70,18 +83,18 @@ __global__ void forcesKernel(
     double r12_i=0, ru12_i=0, zu12_i=0, rs_i=0, zs_i=0, tau_i=0;
     double gsqrt_i=0, bsupu_i=0, bsupv_i=0;
     double bsubu_i=0, bsubv_i=0, totalP_i=0;
-    double sH_i = 0, gvv_i = 0;
+    double sH_i = 0, gvv_i = 0, guv_i = 0;
 
     double r12_o=0, ru12_o=0, zu12_o=0, rs_o=0, zs_o=0, tau_o=0;
     double gsqrt_o=0, bsupu_o=0, bsupv_o=0;
     double bsubu_o=0, bsubv_o=0, totalP_o=0;
-    double sH_o = 0, gvv_o = 0;
+    double sH_o = 0, gvv_o = 0, guv_o = 0;
 
     if (j > 0) {
         int h_i = k + (j - 1) * nZnT;
         r12_i=r12[h_i]; ru12_i=ru12[h_i]; zu12_i=zu12[h_i];
         rs_i=rs[h_i]; zs_i=zs[h_i]; tau_i=tau[h_i];
-        gsqrt_i=gsqrt[h_i]; gvv_i=gvv[h_i];
+        gsqrt_i=gsqrt[h_i]; gvv_i=gvv[h_i]; guv_i=guv[h_i];
         bsupu_i=bsupu[h_i]; bsupv_i=bsupv[h_i];
         bsubu_i=bsubu[h_i]; bsubv_i=bsubv[h_i];
         totalP_i=totalPressure[h_i];
@@ -91,7 +104,7 @@ __global__ void forcesKernel(
         int h_o = k + j * nZnT;
         r12_o=r12[h_o]; ru12_o=ru12[h_o]; zu12_o=zu12[h_o];
         rs_o=rs[h_o]; zs_o=zs[h_o]; tau_o=tau[h_o];
-        gsqrt_o=gsqrt[h_o]; gvv_o=gvv[h_o];
+        gsqrt_o=gsqrt[h_o]; gvv_o=gvv[h_o]; guv_o=guv[h_o];
         bsupu_o=bsupu[h_o]; bsupv_o=bsupv[h_o];
         bsubu_o=bsubu[h_o]; bsubv_o=bsubv[h_o];
         totalP_o=totalPressure[h_o];
@@ -110,6 +123,8 @@ __global__ void forcesKernel(
     double gbubu_o = gsqrt_o * bsupu_o * bsupu_o;
     double gbvbv_i = gsqrt_i * bsupv_i * bsupv_i;
     double gbvbv_o = gsqrt_o * bsupv_o * bsupv_o;
+    double gbubv_i = gsqrt_i * bsupu_i * bsupv_i;
+    double gbubv_o = gsqrt_o * bsupu_o * bsupv_o;
 
     // ---- Arithmetic and sqrt(s)-weighted averages ----------------------
     double inv_ds = 1.0 / delta_s;
@@ -122,6 +137,8 @@ __global__ void forcesKernel(
     double gbubu_wavg = 0.5 * (gbubu_o * sH_o + gbubu_i * sH_i);
     double gbvbv_avg = 0.5 * (gbvbv_o + gbvbv_i);
     double gbvbv_wavg = 0.5 * (gbvbv_o * sH_o + gbvbv_i * sH_i);
+    double gbubv_avg = 0.5 * (gbubv_o + gbubv_i);
+    double gbubv_wavg = 0.5 * (gbubv_o * sH_o + gbubv_i * sH_i);
 
     // ---- Radial R-force (armn): even and odd parity --------------------
     double armn_e = (zup_o - zup_i) * inv_ds
@@ -142,58 +159,64 @@ __global__ void forcesKernel(
     // ---- Poloidal R-force (brmn) ---------------------------------------
     double brmn_e = 0.5 * (zsp_o + zsp_i)
                   + 0.5 * P_wavg * zo_j
-                  - gbubu_avg * rue_j - gbubu_wavg * ruo_j;
+                  - gbubu_avg * rue_j - gbubu_wavg * ruo_j
+                  - gbubv_avg * rve_j - gbubv_wavg * rvo_j;
 
     double brmn_o = 0.5 * (zsp_o * sH_o + zsp_i * sH_i)
                   + 0.5 * P_avg * zo_j
-                  - gbubu_wavg * rue_j - gbubu_avg * ruo_j * sFull;
+                  - gbubu_wavg * rue_j - gbubu_avg * ruo_j * sFull
+                  - gbubv_wavg * rve_j - gbubv_avg * rvo_j * sFull;
 
     // ---- Poloidal Z-force (bzmn) ---------------------------------------
     double bzmn_e = -0.5 * (rsp_o + rsp_i)
                   - 0.5 * P_wavg * ro_j
-                  - gbubu_avg * zue_j - gbubu_wavg * zuo_j;
+                  - gbubu_avg * zue_j - gbubu_wavg * zuo_j
+                  - gbubv_avg * zve_j - gbubv_wavg * zvo_j;
 
     double bzmn_o = -0.5 * (rsp_o * sH_o + rsp_i * sH_i)
                   - 0.5 * P_avg * ro_j
-                  - gbubu_wavg * zue_j - gbubu_avg * zuo_j * sFull;
+                  - gbubu_wavg * zue_j - gbubu_avg * zuo_j * sFull
+                  - gbubv_wavg * zve_j - gbubv_avg * zvo_j * sFull;
+
+    // ---- Toroidal forces (crmn/czmn, 3D) --------------------------------
+    double crmn_e = gbubv_avg * rue_j + gbubv_wavg * ruo_j
+                  + gbvbv_avg * rve_j + gbvbv_wavg * rvo_j;
+    double crmn_o = gbubv_wavg * rue_j + gbubv_avg * ruo_j * sFull
+                  + gbvbv_wavg * rve_j + gbvbv_avg * rvo_j * sFull;
+    double czmn_e = gbubv_avg * zue_j + gbubv_wavg * zuo_j
+                  + gbvbv_avg * zve_j + gbvbv_wavg * zvo_j;
+    double czmn_o = gbubv_wavg * zue_j + gbubv_avg * zuo_j * sFull
+                  + gbvbv_wavg * zve_j + gbvbv_avg * zvo_j * sFull;
 
     // ---- Lambda force (blmn): hybrid with radial blending ------------
     // Matches vmecpp's lambda_force_kernel.h: ComputeHybridLambdaForce.
     // For the first iteration (lambda=0), this reduces to:
     //   blmn = -lamscale * 0.5*(bsubv_o + bsubv_i)
     // Full formula (with lambda) blends two bsubv interpolation schemes
-    // with radialBlending weights and includes lamscale factor.
+    // with radialBlending weights and includes lamscale factor. In 3D the
+    // alternative interpolation adds the guv*bsupu term.
     //
-    // lamscale = sqrt(rmsPhiP * deltaS) = sqrt(phipRMS² * deltaS)
-    // For phip = 1/(2*pi): rmsPhiP² ≈ 10 * (1/(2pi))², deltaS=0.1
-    // lamscale ≈ sqrt(0.0253 * 0.1) ≈ 0.159
-    // lamscale = sqrt(rmsPhiP * deltaS) where rmsPhiP = sum(phipH²) over half-grid
-    // For phipH = 1/(2*pi): rmsPhiP = (ns-1) * (1/(2*pi))²
-    // lamscale = sqrt((ns-1) * (1/(2*pi))² * deltaS)
-    //          = (1/(2*pi)) * sqrt((ns-1) * deltaS)
-    //          = (1/(2*pi)) * sqrt(1.0)  [since (ns-1)*deltaS = 1.0]
-    //          = 1/(2*pi)
-    double lamscale = 1.0 / (2.0 * M_PI);  // for constant phip = 1/(2*pi)
-
+    // lamscale = sqrt(rmsPhiP * deltaS), rmsPhiP = sum phipH^2.
     double bsubv_avg = 0.5 * (bsubv_o + bsubv_i);
     // Note: at j==0, bsubv_i=0 (no inside half-grid), so bsubv_avg=0.5*bsubv_o.
 
-    // Hybrid lambda force (vmecpp lambda_force_kernel.h, verified to machine
-    // precision against kernel-internal dumps of the vmecpp binary at the
-    // iter-150 handoff state). The "alternative" bsubv interpolation
-    // reconstructs bsubv from the half-grid gvv/gsqrt and the NORMALIZED
-    // lambda derivative: vmecpp's computeBContra mutates lu in place to
+    // The "alternative" bsubv interpolation reconstructs bsubv from the
+    // half-grid gvv/gsqrt (+guv/bsupu in 3D) and the NORMALIZED lambda
+    // derivative: vmecpp's computeBContra mutates lu in place to
     // lamscale*lu + phipF (phipF = dPhi/ds < 0) before this kernel runs, so
     // the alternative carries the same normalization. The odd part uses the
     // sqrt(s_H)-weighted half-grid average, matching vmecpp exactly. The two
     // interpolations are blended with radialBlending = 2*kPDamp*(1-s),
-    // kPDamp = 0.05 (profile [0.1, 0.09, ..., 0] confirmed in the binary).
+    // kPDamp = 0.05.
     double gvv_gsqrt_i = (j > 0)    ? (gvv_i / gsqrt_i) : 0.0;
     double gvv_gsqrt_o = (j < ns-1) ? (gvv_o / gsqrt_o) : 0.0;
+    double guv_bsupu_i = (j > 0)    ? (guv_i * bsupu_i) : 0.0;
+    double guv_bsupu_o = (j < ns-1) ? (guv_o * bsupu_o) : 0.0;
     double lu_e_norm = lamscale * lu_e[idx_f] + phip_F[j];
     double lu_o_norm = lamscale * lu_o[idx_f];
     double bsubv_alt = 0.5 * (gvv_gsqrt_i + gvv_gsqrt_o) * lu_e_norm
-                     + 0.5 * (gvv_gsqrt_i * sH_i + gvv_gsqrt_o * sH_o) * lu_o_norm;
+                     + 0.5 * (gvv_gsqrt_i * sH_i + gvv_gsqrt_o * sH_o) * lu_o_norm
+                     + 0.5 * (guv_bsupu_i + guv_bsupu_o);
     double rb = 2.0 * 0.05 * (1.0 - sFull);
     double _blmn = bsubv_avg * (1.0 - rb) + bsubv_alt * rb;
     // MINUS SIGN => HESSIAN DIAGONALS ARE POSITIVE (vmecpp comment)
@@ -203,12 +226,25 @@ __global__ void forcesKernel(
     double blmn_e = _blmn;                  // positive at j=0, matching vmecpp
     double blmn_o = _blmn * sF_j;           // odd parity scales with sqrt(s)
 
+    // ---- Toroidal lambda force (clmn, 3D) -------------------------------
+    // clmn = -lamscale * 0.5*(bsubu_o + bsubu_i) for j>0 (no blending);
+    // positive at j=0 like blmn.
+    double _clmn = 0.5 * (bsubu_o + bsubu_i);
+    if (j > 0) {
+        _clmn *= -lamscale;
+    }
+    double clmn_e = _clmn;
+    double clmn_o = _clmn * sF_j;
+
     // ---- Store ----------------------------------------------------------
     d_armn_e[idx_f] = armn_e;  d_armn_o[idx_f] = armn_o;
     d_azmn_e[idx_f] = azmn_e;  d_azmn_o[idx_f] = azmn_o;
     d_brmn_e[idx_f] = brmn_e;  d_brmn_o[idx_f] = brmn_o;
     d_bzmn_e[idx_f] = bzmn_e;  d_bzmn_o[idx_f] = bzmn_o;
+    d_crmn_e[idx_f] = crmn_e;  d_crmn_o[idx_f] = crmn_o;
+    d_czmn_e[idx_f] = czmn_e;  d_czmn_o[idx_f] = czmn_o;
     d_blmn_e[idx_f] = blmn_e;  d_blmn_o[idx_f] = blmn_o;
+    d_clmn_e[idx_f] = clmn_e;  d_clmn_o[idx_f] = clmn_o;
 }
 
 void computeForces(const FourierPlan& fp, const GridParams& p,
@@ -220,19 +256,24 @@ void computeForces(const FourierPlan& fp, const GridParams& p,
         fp.d_z_e, fp.d_z_o,
         fp.d_ru_e, fp.d_ru_o,
         fp.d_zu_e, fp.d_zu_o,
+        fp.d_rv_e, fp.d_rv_o,
+        fp.d_zv_e, fp.d_zv_o,
         mw.d_r12, mw.d_ru12, mw.d_zu12, mw.d_rs, mw.d_zs, mw.d_tau,
-        mw.d_gsqrt, mw.d_gvv,
+        mw.d_gsqrt, mw.d_guv, mw.d_gvv,
         mw.d_bsupu, mw.d_bsupv,
         mw.d_bsubu, mw.d_bsubv,
         mw.d_totalPressure,
         fp.d_lu_e, fp.d_lu_o,
-        rp.d_sqrtS_F, rp.d_sqrtS_H, rp.d_phip_F,
+        rp.d_sqrtS_F, rp.d_sqrtS_H, rp.d_phip_F, p.lamscale,
         p.ns, p.nZnT, rp.delta_s,
         fp.d_armn_e, fp.d_armn_o,
         fp.d_azmn_e, fp.d_azmn_o,
         fp.d_brmn_e, fp.d_brmn_o,
         fp.d_bzmn_e, fp.d_bzmn_o,
-        fp.d_blmn_e, fp.d_blmn_o);
+        fp.d_crmn_e, fp.d_crmn_o,
+        fp.d_czmn_e, fp.d_czmn_o,
+        fp.d_blmn_e, fp.d_blmn_o,
+        fp.d_clmn_e, fp.d_clmn_o);
     checkCuda(cudaGetLastError(), "forces kernel");
     checkCuda(cudaDeviceSynchronize(), "forces sync");
 }

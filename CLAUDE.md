@@ -48,7 +48,7 @@ cuMES/
 │   ├── main.cu             Entry point: init params → create state → solve → output
 │   ├── fourier.cu          DFT basis precomputation + inverse/forward transform kernels
 │   ├── geometry.cu         Jacobian, metric g^ij, contravariant B on half-grid
-│   ├── forces.cu           MHD force residuals (STUB — fill in real physics)
+│   ├── forces.cu           MHD force residuals (brmn/bzmn/crmn/czmn/blmn/clmn)
 │   ├── profiles.cu         Radial profile evaluation + GPU upload
 │   ├── solver.cu           Fixed-point loop with Garabedian accelerated descent
 │   └── output.cu           Copy results from GPU → print
@@ -205,16 +205,37 @@ x_new = x_old + delt * v_new
 
 ## Known Issues / Next Steps
 
-1. **Forces kernel verified against vmecpp.** `forces.cu` implements the MHD force
-   balance formulas from `mhdforce_kernel.h` and matches vmecpp for 2D axisymmetric
-   cases. For 3D (lthreed), the `g^uv` terms (gbubv) in brmn/bzmn and the hybrid
-   lambda force with radial blending are not yet implemented.
+**Status (2026-08-02 evening): the residual normalization now matches vmecpp
+exactly (fNormRZ/fNormL/fNorm1, energies and volume at 1e-12..1e-15), the
+axis m=0 λ extrapolation is fixed (the axis-adjacent B^θ now matches at 1e-11),
+the trajectory tracks vmecpp at <1e-6 through the first 55 passes with an
+identical restart sequence (BAD JACOBIANs at iter2 3,5,8,11,15; BAD PROGRESS
+at 51), and the W7-X converged FSQR equals vmecpp's (9.91e-13 vs 9.92e-13).
+The converged R/Z states now match the wout at 2.8e-5..2.7e-4 (rmncc/zmnsc
+improved 10-16x over the pre-normalization 1e-4..6e-4).**
 
-2. **No radial force preconditioning.** Without the `precon` matrix (diagonal
-   Hessian approximation), high-m modes converge very slowly.
+1. **Axis-adjacent λ-force seed (~1e-4 at j=1) and weakly-determined λ gauge
+   modes (converged residual ~1e-2..1e-3).** Even with the normalization and
+   the axis m=0 λ fixes, the real-space λ force at the first interior surface
+   (j=1) differs from vmecpp at ~1.2e-4 on the second pass (λ≠0), and the
+   weakly-determined m=0,n=1 Z / m=1,n=0 & m=0,n=1 λ modes drift apart over
+   the run (the axis position Z(0,1) drifts to ~1e-3 by iter 150 before the
+   equilibrium pulls it back). At convergence the R/Z are at 2.8e-5..2.7e-4
+   (strongly determined — good) but the λ gauge modes (lmnsc(1,0)@j=1 ~1.4e-2,
+   lmncs(1,1)@j=1 ~2.5e-3) remain. The seed is in the axis-adjacent (j=1)
+   odd-m λ force blend; candidates: the alternative bsubv interpolation term
+   or the jH=0 covariant-B odd-parity mixing. The per-iteration tracking
+   breaks at the pass-56/57 BAD_PROGRESS restore window (the fsq1 at the
+   restored state differs ~6%) and the run converges at 2791 vs vmecpp's 2953.
 
-3. **No λ constraint force de-aliasing.** Truncated Fourier series can alias
-   high-mode energy into low modes. VMEC bandpass-filters the λ constraint force.
+2. **Axis representation (state-file only, real-space-irrelevant).** cuMES
+   constant-extrapolates the axis row from j=1 (extrapolateAxisKernel — m=1
+   all six families plus the m=0 lmncs "chi-force leftover", matching vmecpp's
+   extrapolateTowardsAxis), so the dumped axis m>0 coefficients equal the j=1
+   values (e.g. rmncc(1,0)@axis = 0.0497 for W7-X, 0.319 for Solovev), while
+   vmecpp keeps them 0 (or s^(m/2)-extrapolated). The real-space axis geometry
+   agrees (step_A verified at 1e-15), and the axis coefficients do not enter
+   the forces, so this only shows up when diffing state files / wout axis rows.
 
-4. **No multigrid.** Single fixed radial grid; adding grid sequencing would
+3. **No multigrid.** Single fixed radial grid; adding grid sequencing would
    improve robustness for difficult equilibria.

@@ -41,11 +41,13 @@ PreconWorkspace preconCreate(const GridParams& p) {
     cc(cudaMalloc(&pw.d_jMin, p.mnmax * sizeof(int)), "jMin");
     cc(cudaMalloc(&pw.d_lambdaPrec, szMN), "lambdaPrec");
     cc(cudaMalloc(&pw.d_bLambda, (p.ns + 1) * sizeof(double)), "bLambda");
+    cc(cudaMalloc(&pw.d_dLambda, (p.ns + 1) * sizeof(double)), "dLambda");
     cc(cudaMalloc(&pw.d_cLambda, (p.ns + 1) * sizeof(double)), "cLambda");
     cc(cudaMalloc(&pw.d_rmsPhiP, sizeof(double)), "rmsPhiP");
     // Index ns of bLambda/cLambda must stay zero: the LCFS full-grid average
     // reads it (vmecpp: array sized ns+1, last entry never written).
     cc(cudaMemset(pw.d_bLambda, 0, (p.ns + 1) * sizeof(double)), "bLambda zero");
+    cc(cudaMemset(pw.d_dLambda, 0, (p.ns + 1) * sizeof(double)), "dLambda zero");
     cc(cudaMemset(pw.d_cLambda, 0, (p.ns + 1) * sizeof(double)), "cLambda zero");
     return pw;
 }
@@ -62,7 +64,7 @@ void preconFree(PreconWorkspace& pw) {
     cudaFree(pw.d_az);   cudaFree(pw.d_dz);   cudaFree(pw.d_bz);
     cudaFree(pw.d_jMin);
     cudaFree(pw.d_lambdaPrec);
-    cudaFree(pw.d_bLambda); cudaFree(pw.d_cLambda); cudaFree(pw.d_rmsPhiP);
+    cudaFree(pw.d_bLambda); cudaFree(pw.d_dLambda); cudaFree(pw.d_cLambda); cudaFree(pw.d_rmsPhiP);
 }
 
 // ---------------------------------------------------------------------------
@@ -428,11 +430,13 @@ __global__ void tridiagAssemblyKernel(
 // One block per half-grid surface; shifted layout: half-grid jH -> index jH+1.
 // ---------------------------------------------------------------------------
 __global__ void lambdaPrecAssembleKernel(
-    const double* __restrict__ guu, const double* __restrict__ gvv,
+    const double* __restrict__ guu, const double* __restrict__ guv,
+    const double* __restrict__ gvv,
     const double* __restrict__ gsqrt,
     const double* __restrict__ phipH,
     int ns, int nZnT, int ntheta, int nzeta,
-    double* __restrict__ bLambda, double* __restrict__ cLambda,
+    double* __restrict__ bLambda, double* __restrict__ dLambda,
+    double* __restrict__ cLambda,
     double* __restrict__ rmsPhiP)
 {
     int jH = blockIdx.x, tid = threadIdx.x;
@@ -442,26 +446,33 @@ __global__ void lambdaPrecAssembleKernel(
     const int nThetaRed = nThetaEven / 2 + 1;  // reduced grid [0, pi]
     const double dnorm3 = 1.0 / (nzeta * (nThetaRed - 1));
 
-    double bsum = 0.0, csum = 0.0;
-    int base = jH * nZnT;
-    for (int k = tid; k < nThetaRed; k += blockDim.x) {
+    double bsum = 0.0, dsum = 0.0, csum = 0.0;
+    // Loop over ALL (zeta, reduced-theta) points: the layout is
+    // [jH][zeta][theta], so the index must combine both. (FIXED 2026-08-02:
+    // previously only theta at the first zeta plane was summed, making the
+    // bLambda/dLambda/cLambda averages ~21-36x too small and the lambda
+    // preconditioner ~32x too big near the LCFS.)
+    for (int k = tid; k < nThetaRed * nzeta; k += blockDim.x) {
+        int iz = k / nThetaRed, it = k % nThetaRed;
         double w = dnorm3;
-        if (k == 0 || k == nThetaRed - 1) w *= 0.5;
-        int idx = base + k;
+        if (it == 0 || it == nThetaRed - 1) w *= 0.5;
+        int idx = (jH * nzeta + iz) * ntheta + it;
         bsum += guu[idx] / gsqrt[idx] * w;
+        dsum += guv[idx] / gsqrt[idx] * w;   // 3D: toroidal coupling
         csum += gvv[idx] / gsqrt[idx] * w;
     }
 
-    __shared__ double s_b[256], s_c[256];
-    s_b[tid] = bsum; s_c[tid] = csum;
+    __shared__ double s_b[256], s_d[256], s_c[256];
+    s_b[tid] = bsum; s_d[tid] = dsum; s_c[tid] = csum;
     __syncthreads();
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (tid < s) { s_b[tid] += s_b[tid + s]; s_c[tid] += s_c[tid + s]; }
+        if (tid < s) { s_b[tid] += s_b[tid + s]; s_d[tid] += s_d[tid + s]; s_c[tid] += s_c[tid + s]; }
         __syncthreads();
     }
 
     if (tid == 0) {
         bLambda[jH + 1] = s_b[0];
+        dLambda[jH + 1] = s_d[0];
         cLambda[jH + 1] = s_c[0];
         atomicAdd(rmsPhiP, phipH[jH] * phipH[jH]);
     }
@@ -483,26 +494,34 @@ __global__ void lambdaPrecAssembleKernel(
 // One block per mode.
 // ---------------------------------------------------------------------------
 __global__ void lambdaPrecFinalizeKernel(
-    const double* __restrict__ bLambda, const double* __restrict__ cLambda,
+    const double* __restrict__ bLambda, const double* __restrict__ dLambda,
+    const double* __restrict__ cLambda,
     const double* __restrict__ sqrtS_F, const double* __restrict__ rmsPhiP,
-    const int* __restrict__ xm,
-    int ns, int mnmax, double delta_s,
+    const int* __restrict__ xm, const int* __restrict__ xn,
+    int ns, int mnmax, double delta_s, int nfp,
     double* __restrict__ lambdaPrec)
 {
     int mode = blockIdx.x;
     if (mode >= mnmax) return;
 
-    int m = xm[mode];
+    int m = xm[mode], n = xn[mode];
     double lamscale = sqrt(rmsPhiP[0] * delta_s);
     const double pFactor = 2.0 / (4.0 * lamscale * lamscale);
     const double pwr = fmin((double)(m * m) / (16.0 * 16.0), 8.0);
+    // faclam terms (vmecpp updateLambdaPreconditioner):
+    //   tnn = (n*nfp)^2, tmn = 2*m*n*nfp  (nfp passed separately)
+    double tnn = (double)(n * n) * (double)(nfp * nfp);
+    double tmn = 2.0 * (double)(m * n) * (double)nfp;
 
     for (int jF = 0; jF < ns; ++jF) lambdaPrec[mode * ns + jF] = 0.0;
-    if (m == 0) return;  // m=0,n=0 skipped in vmecpp assembly -> stays 0
+    if (m == 0 && n == 0) return;  // gauge mode skipped in vmecpp assembly
 
     for (int jF = 1; jF < ns; ++jF) {
+        double bFull = 0.5 * (bLambda[jF + 1] + bLambda[jF]);
+        double dFull = 0.5 * (dLambda[jF + 1] + dLambda[jF]);
         double cFull = 0.5 * (cLambda[jF + 1] + cLambda[jF]);
-        double faclam = (double)(m * m) * cFull;  // n=0: no toroidal terms
+        double faclam = tnn * bFull + tmn * copysign(dFull, bFull) +
+                        (double)(m * m) * cFull;
         if (faclam == 0.0) faclam = -1.0e-10;  // kLambdaPreconditionerZeroGuard
         lambdaPrec[mode * ns + jF] =
             pFactor / faclam * pow(sqrtS_F[jF], pwr);
@@ -607,13 +626,15 @@ __global__ void tridiagSolveKernel(
     thomas(f + 1 * stride + mode * ns, az, dz, bz);  // zmnsc
     thomas(f + 4 * stride + mode * ns, az, dz, bz);  // zmncs
 
-    // ---- Component 2 (lmnsc): lambda diagonal preconditioner ----
-    // vmecpp's applyLambdaPreconditioner: flsc[mode, jF] *= lambdaPrec
+    // ---- Components 2 (lmnsc) and 5 (lmncs): lambda diagonal
+    // preconditioner ----
+    // vmecpp's applyLambdaPreconditioner: flsc/flcs[mode, jF] *= lambdaPrec
     // for all surfaces 0..ns-1 (including the LCFS). lambdaPrec is zero
     // for the m=0 mode, at the axis (jF=0), and below... no jMin filter —
     // the axis m>0 entries are zeroed by lambdaPrec itself (sqrt(s)^pwr=0).
     for (int j = 0; j < ns; ++j) {
         f[2 * stride + mode * ns + j] *= lambdaPrec[mode * ns + j];
+        f[5 * stride + mode * ns + j] *= lambdaPrec[mode * ns + j];
     }
 }
 
@@ -669,20 +690,20 @@ void preconCompute(const FourierPlan& fp, const GridParams& p,
         pw.d_jMin);
     cc(cudaGetLastError(), "tridiagAssembly");
 
-    // Step 4a/4b: Lambda diagonal preconditioner (component 2)
+    // Step 4a/4b: Lambda diagonal preconditioner (components 2 and 5)
     {
         cc(cudaMemset(pw.d_rmsPhiP, 0, sizeof(double)), "rmsPhiP zero");
         lambdaPrecAssembleKernel<<<nH, threads>>>(
-            mw.d_guu, mw.d_gvv, mw.d_gsqrt,
+            mw.d_guu, mw.d_guv, mw.d_gvv, mw.d_gsqrt,
             rp.d_phip_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta,
-            pw.d_bLambda, pw.d_cLambda, pw.d_rmsPhiP);
+            pw.d_bLambda, pw.d_dLambda, pw.d_cLambda, pw.d_rmsPhiP);
         cc(cudaGetLastError(), "lambdaPrecAssemble");
         lambdaPrecFinalizeKernel<<<p.mnmax, 1>>>(
-            pw.d_bLambda, pw.d_cLambda,
+            pw.d_bLambda, pw.d_dLambda, pw.d_cLambda,
             rp.d_sqrtS_F, pw.d_rmsPhiP,
-            fp.basis.d_xm,
-            p.ns, p.mnmax, rp.delta_s,
+            fp.basis.d_xm, fp.basis.d_xn,
+            p.ns, p.mnmax, rp.delta_s, p.nfp,
             pw.d_lambdaPrec);
         cc(cudaGetLastError(), "lambdaPrecFinalize");
     }

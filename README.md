@@ -118,7 +118,7 @@ debug output.
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, full wout | Post-processing; not needed for the core loop |
 | Hot restart / checkpointing | Add later |
-| 3D (lthreed) equilibria | The projection kernels are written for the 2D axisymmetric path (verified); the 3D terms follow vmecpp's structure but are unverified |
+| 3D (lthreed) equilibria | Implemented and verified against vmecpp (W7-X, mpol=ntor=12): the full iter-1 chain matches at 1e-9..1e-13, cuMES converges on its own (iter ~2794 vs vmecpp 2953), and the converged states match the vmecpp wout at ~1e-4 (residual-normalization control-path residual — see CLAUDE.md) |
 
 ## Tests
 

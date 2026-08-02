@@ -21,8 +21,9 @@ static void checkCuda(cudaError_t err, const char* tag) {
 
 int main() {
     GridParams p;
-    p.ns = 17; p.mnmax = 12; p.ntheta = 32; p.nzeta = 64;
+    p.ns = 17; p.mnmax = 6*(2+1); p.ntheta = 32; p.nzeta = 64;
     p.nfp = 1; p.nZnT = 2048; p.mpol = 6; p.ntor = 2;
+    p.ncurr = 0; p.delt = 1.0; p.ftol = 1e-14; p.max_iter = 10;
 
     printf("=== Force Diagnostic Test ===\n");
 
@@ -41,16 +42,16 @@ int main() {
     for (int j = 0; j < p.ns; ++j) {
         double ss = j / (p.ns - 1.0);
         for (int m = 0; m < p.mnmax; ++m) {
-            int mm = m / p.ntor;
+            int mm = m / (p.ntor + 1);
             if (mm == 0 && m == 0) {
                 h_cc[j + m * p.ns] = 4.0;  // R_00 constant
-            } else if (m == 1 * p.ntor + 0) {
+            } else if (m == 1 * (p.ntor + 1) + 0) {
                 h_cc[j + m * p.ns] = 0.3 * ss;  // R_10
-            } else if (m == 2 * p.ntor + 0) {
+            } else if (m == 2 * (p.ntor + 1) + 0) {
                 h_cc[j + m * p.ns] = 0.2 * ss;  // R_20
             }
             h_ss[j + m * p.ns] = h_cc[j + m * p.ns];  // rmnss = rmncc initially
-            if (m == 1 * p.ntor + 0) {
+            if (m == 1 * (p.ntor + 1) + 0) {
                 h_zsc[j + m * p.ns] = -0.5 * ss;  // Z_10
                 h_zcs[j + m * p.ns] = -0.5 * ss;  // zmncs = zmnsc initially
             }
@@ -62,11 +63,13 @@ int main() {
     checkCuda(cudaMalloc(&st.d_zmnsc, nbytes_state), "zmnsc");
     checkCuda(cudaMalloc(&st.d_zmncs, nbytes_state), "zmncs");
     checkCuda(cudaMalloc(&st.d_lmnsc, nbytes_state), "lmnsc");
+    checkCuda(cudaMalloc(&st.d_lmncs, nbytes_state), "lmncs");
     checkCuda(cudaMalloc(&st.d_v_rmncc, nbytes_state), "vcc");
     checkCuda(cudaMalloc(&st.d_v_rmnss, nbytes_state), "vss");
     checkCuda(cudaMalloc(&st.d_v_zmnsc, nbytes_state), "vzsc");
     checkCuda(cudaMalloc(&st.d_v_zmncs, nbytes_state), "vzcs");
     checkCuda(cudaMalloc(&st.d_v_lmnsc, nbytes_state), "vlsc");
+    checkCuda(cudaMalloc(&st.d_v_lmncs, nbytes_state), "vlcs");
     checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nbytes_state, cudaMemcpyHostToDevice), "cpy cc");
     checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nbytes_state, cudaMemcpyHostToDevice), "cpy ss");
     checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nbytes_state, cudaMemcpyHostToDevice), "cpy zsc");
@@ -77,10 +80,12 @@ int main() {
     checkCuda(cudaMemset(st.d_v_zmnsc, 0, nbytes_state), "vzsc");
     checkCuda(cudaMemset(st.d_v_zmncs, 0, nbytes_state), "vzcs");
     checkCuda(cudaMemset(st.d_v_lmnsc, 0, nbytes_state), "vlsc");
+    checkCuda(cudaMemset(st.d_v_lmncs, 0, nbytes_state), "vlcs");
 
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc;
 
-    RadialProfiles rp = profilesCreate(p);
+    InputParams ip = initInputParams();
+    RadialProfiles rp = profilesCreate(p, ip);
     FourierPlan fp = fourierCreate(p, cublasHandle);
     MetricWorkspace mw = metricCreate(p);
 
@@ -138,7 +143,7 @@ int main() {
     }
 
     // Compute spectral forces via forward DFT
-    size_t nbs = 5 * p.ns * p.mnmax * sizeof(double);
+    size_t nbs = 6 * p.ns * p.mnmax * sizeof(double);
     auto* d_fspec = (double*)malloc(nbs);  // host
     double* d_fspec_gpu;
     checkCuda(cudaMalloc(&d_fspec_gpu, nbs), "fspec");

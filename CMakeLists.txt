@@ -60,5 +60,14 @@ add_executable(test_force_verify
     src/forces.cu
     src/profiles.cu
 )
+
+add_executable(test_geometry_iso
+    tests/test_geometry_iso.cu
+    src/fourier.cu
+    src/geometry.cu
+    src/profiles.cu
+)
+target_link_libraries(test_geometry_iso PRIVATE CUDA::cublas)
+target_include_directories(test_geometry_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_force_verify PRIVATE CUDA::cublas)
 target_include_directories(test_force_verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

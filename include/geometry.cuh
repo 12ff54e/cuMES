@@ -42,3 +42,10 @@ void metricFree(MetricWorkspace& mw);
 // from parity-split real-space geometry.
 void computeGeometry(const FourierPlan& fp, const GridParams& p,
                      const RadialProfiles& rp, MetricWorkspace& mw);
+
+// Force-norm partial sums for the residual normalization (vmecpp
+// computeForceNorms): writes dVdsH[jH] = signJ * sum(gsqrt * wInt) and the
+// per-surface sums (guu*r12^2, bsubu^2+bsubv^2, gsqrt*|B|^2/2, gsqrt) to
+// psum (4 * (ns-1)). dVdsH: (ns-1), psum: 4*(ns-1), both device arrays.
+void computeForceNormPartials(const GridParams& p, const MetricWorkspace& mw,
+                              double* dVdsH, double* psum);

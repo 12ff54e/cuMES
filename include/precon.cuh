@@ -55,10 +55,12 @@ struct PreconWorkspace {
     // ---- Lambda diagonal preconditioner (vmecpp updateLambdaPreconditioner) ----
     // lambdaPrec[mode * ns + jF]: per-mode diagonal applied to component 2.
     double* d_lambdaPrec;
-    // Scratch [ns+1] each: flux-surface averages of guu/gsqrt and gvv/gsqrt.
-    // vmecpp shifted half-grid layout: half-grid jH -> index jH+1; index ns
-    // stays zero (never written), used by the LCFS full-grid average.
+    // Scratch [ns+1] each: flux-surface averages of guu/gsqrt, guv/gsqrt
+    // (3D) and gvv/gsqrt. vmecpp shifted half-grid layout: half-grid jH ->
+    // index jH+1; index ns stays zero (never written), used by the LCFS
+    // full-grid average.
     double* d_bLambda;
+    double* d_dLambda;
     double* d_cLambda;
     double* d_rmsPhiP;  // scratch [1]: sum of phipH^2 (for lamscale)
 };

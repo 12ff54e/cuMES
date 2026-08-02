@@ -11,6 +11,7 @@ static void checkCuda(cudaError_t err, const char* tag) {
 }
 
 // Save full spectral state as raw binary for Python analysis.
+// 6 coefficient arrays: rmncc zmnsc lmnsc rmnss zmncs lmncs, each ns*mnmax.
 void outputSaveBinary(const SpectralState& st, const GridParams& p,
                        const char* filename) {
     FILE* fp = fopen(filename, "wb");
@@ -19,7 +20,7 @@ void outputSaveBinary(const SpectralState& st, const GridParams& p,
     int ns = p.ns, mnmax = p.mnmax;
     fwrite(&ns, sizeof(int), 1, fp);
     fwrite(&mnmax, sizeof(int), 1, fp);
-    // Write each coefficient array (5 arrays, each ns*mnmax doubles)
+    // Write each coefficient array (6 arrays, each ns*mnmax doubles)
     size_t nb = ns * mnmax * sizeof(double);
     auto* buf = new double[ns * mnmax];
     checkCuda(cudaMemcpy(buf, st.d_rmncc, nb, cudaMemcpyDeviceToHost), "cpy rmncc");
@@ -31,6 +32,8 @@ void outputSaveBinary(const SpectralState& st, const GridParams& p,
     checkCuda(cudaMemcpy(buf, st.d_rmnss, nb, cudaMemcpyDeviceToHost), "cpy rmnss");
     fwrite(buf, sizeof(double), ns * mnmax, fp);
     checkCuda(cudaMemcpy(buf, st.d_zmncs, nb, cudaMemcpyDeviceToHost), "cpy zmncs");
+    fwrite(buf, sizeof(double), ns * mnmax, fp);
+    checkCuda(cudaMemcpy(buf, st.d_lmncs, nb, cudaMemcpyDeviceToHost), "cpy lmncs");
     fwrite(buf, sizeof(double), ns * mnmax, fp);
     delete[] buf;
     fclose(fp);
@@ -95,11 +98,11 @@ void outputPrint(const SpectralState& st, const GridParams& p, int niter,
         printf("  %2d | %10.6f\n", jj, h_rmnc_r[jj]);
     }
     printf("\n  Axis (j=0) and Boundary (j=%d):\n", j);
-    printf("  Mode | m  n |   rmnc(ax)   rmnc(bdy)  zmns(ax)   zmns(bdy)\n");
+    printf("  Mode | m  n |   rmncc(ax)  rmncc(bdy)  zmnsc(ax)  zmnsc(bdy)\n");
     printf("  ------+-------+-------------------------------------------\n");
     for (int mode = 0; mode < p.mnmax && mode < 12; ++mode) {
-        int mm = mode / kNtor;
-        int nn = mode % kNtor;
+        int mm = mode / (p.ntor + 1);
+        int nn = mode % (p.ntor + 1);
         printf("  %4d | %d %d | %10.6f %10.6f %10.6f %10.6f\n",
                mode, mm, nn,
                h_rmnc_ax[mode], h_rmnc[mode],

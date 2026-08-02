@@ -1,4 +1,6 @@
 // main.cu — entry point: init → solve → output.
+// Input selection: default Solovev (hardcoded); CUMES_INPUT=w7x selects the
+// W7-X parameters from input_w7x.h. A JSON parser will replace both later.
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -20,20 +22,30 @@ static void checkCublas(cublasStatus_t st, const char* tag) {
     if(st!=CUBLAS_STATUS_SUCCESS){fprintf(stderr,"cuBLAS error [%s]: %d\n",tag,(int)st);exit(1);}
 }
 
-static GridParams initParams() {
-    GridParams p; p.ns=kNsVal; p.mnmax=kMnmax; p.ntheta=kNtheta;
-    p.nzeta=kNzeta; p.nfp=kNfp; p.nZnT=kNZnT; p.mpol=kMpol; p.ntor=kNtor;
+static GridParams initParams(const InputParams& ip) {
+    GridParams p;
+    p.ns=ip.ns; p.mpol=ip.mpol; p.ntor=ip.ntor;
+    p.ntheta=ip.ntheta; p.nzeta=ip.nzeta; p.nfp=ip.nfp;
+    p.nZnT=p.ntheta*p.nzeta;
+    p.mnmax=p.mpol*(p.ntor+1);   // folded basis: mode = m*(ntor+1)+n
+    p.ncurr=ip.ncurr;
+    p.delt=ip.delt; p.ftol=ip.ftol; p.max_iter=ip.max_iter;
+    p.lamscale=0.0;              // set by profilesCreate
     return p;
 }
 
-static void initState(SpectralState& st, const GridParams& p) {
-    // Default: start from the internal initial state (vmecpp's
-    // interpFromBoundaryAndAxis, below). Loading an initial state from
-    // dump/vmecpp (vmecpp_init.bin, created by scripts/create_vmecpp_init.py)
-    // is DISABLED by default so runs are reproducible from the true baseline;
-    // opt in with CUMES_LOAD_INIT=1 for the same-state handoff protocol.
+// Initial state from vmecpp's interpFromBoundaryAndAxis (fourier_geometry.cc):
+//   m=0: linear interpolation in s between the magnetic axis (raxis_c /
+//        zaxis_s) and the boundary; zmnsc/rmnss have no m=0 content.
+//   m>0: s^(m/2) radial envelope so higher modes vanish faster near the axis.
+// cuMES stores the plain physical coefficients (vmecpp's internal state
+// divides by mscale*nscale, but its mscale'd basis makes the real-space
+// reconstruction identical).
+static void initState(SpectralState& st, const GridParams& p, const InputParams& ip) {
     bool loadInit = false;
     if (const char* e = getenv("CUMES_LOAD_INIT")) loadInit = atoi(e) != 0;
+    size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
+    size_t nb_one = nb;
     if (loadInit) {
         FILE* fp = fopen("vmecpp_init.bin", "rb");
     if (fp) {
@@ -42,65 +54,70 @@ static void initState(SpectralState& st, const GridParams& p) {
         fread(&mnmax_file, sizeof(int), 1, fp);
         if (ns_file == p.ns && mnmax_file == p.mnmax) {
             printf("Loading initial state from vmecpp_init.bin (ns=%d, mnmax=%d)\n", ns_file, mnmax_file);
-            size_t nb = p.ns * p.mnmax * sizeof(double);
             auto* h_rmncc = new double[p.ns * p.mnmax];
             auto* h_zmnsc = new double[p.ns * p.mnmax];
             auto* h_lmnsc = new double[p.ns * p.mnmax];
             auto* h_rmnss = new double[p.ns * p.mnmax];
             auto* h_zmncs = new double[p.ns * p.mnmax];
+            auto* h_lmncs = new double[p.ns * p.mnmax];
             fread(h_rmncc, sizeof(double), p.ns * p.mnmax, fp);
             fread(h_zmnsc, sizeof(double), p.ns * p.mnmax, fp);
             fread(h_lmnsc, sizeof(double), p.ns * p.mnmax, fp);
             fread(h_rmnss, sizeof(double), p.ns * p.mnmax, fp);
             fread(h_zmncs, sizeof(double), p.ns * p.mnmax, fp);
+            fread(h_lmncs, sizeof(double), p.ns * p.mnmax, fp);
             fclose(fp);
 
             checkCuda(cudaMalloc(&st.d_rmncc,nb),"cc"); checkCuda(cudaMalloc(&st.d_rmnss,nb),"ss");
             checkCuda(cudaMalloc(&st.d_zmnsc,nb),"zsc"); checkCuda(cudaMalloc(&st.d_zmncs,nb),"zcs");
-            checkCuda(cudaMalloc(&st.d_lmnsc,nb),"lsc");
+            checkCuda(cudaMalloc(&st.d_lmnsc,nb),"lsc"); checkCuda(cudaMalloc(&st.d_lmncs,nb),"lcs");
             checkCuda(cudaMalloc(&st.d_v_rmncc,nb),"vcc"); checkCuda(cudaMalloc(&st.d_v_rmnss,nb),"vss");
             checkCuda(cudaMalloc(&st.d_v_zmnsc,nb),"vzsc"); checkCuda(cudaMalloc(&st.d_v_zmncs,nb),"vzcs");
-            checkCuda(cudaMalloc(&st.d_v_lmnsc,nb),"vlsc");
+            checkCuda(cudaMalloc(&st.d_v_lmnsc,nb),"vlsc"); checkCuda(cudaMalloc(&st.d_v_lmncs,nb),"vlcs");
 
             checkCuda(cudaMemcpy(st.d_rmncc, h_rmncc, nb, cudaMemcpyHostToDevice), "cpy cc");
             checkCuda(cudaMemcpy(st.d_zmnsc, h_zmnsc, nb, cudaMemcpyHostToDevice), "cpy zsc");
             checkCuda(cudaMemcpy(st.d_lmnsc, h_lmnsc, nb, cudaMemcpyHostToDevice), "cpy lsc");
             checkCuda(cudaMemcpy(st.d_rmnss, h_rmnss, nb, cudaMemcpyHostToDevice), "cpy ss");
             checkCuda(cudaMemcpy(st.d_zmncs, h_zmncs, nb, cudaMemcpyHostToDevice), "cpy zcs");
+            checkCuda(cudaMemcpy(st.d_lmncs, h_lmncs, nb, cudaMemcpyHostToDevice), "cpy lcs");
 
-            // vmecpp stores boundary values separately (not in the spectral state).
-            // cuMES embeds the boundary in the spectral coefficients at j=ns-1.
-            // Patch the LCFS values to match the boundary from solovev.json.
-            // Also zero out m>0 modes at the magnetic axis (j=0) — vmecpp does
-            // this via extrapolateTowardsAxis().
+            // vmecpp stores boundary values separately (not in the spectral
+            // state). cuMES embeds the boundary in the spectral coefficients
+            // at j=ns-1. Patch the LCFS values to match the folded boundary;
+            // also zero out m>0 modes at the magnetic axis (j=0) — vmecpp
+            // does this via extrapolateTowardsAxis().
             {
-                auto* rbc = new double[p.mnmax], *zbs = new double[p.mnmax];
-                setSolovevBoundary(rbc, zbs, p.mnmax);
-                double *h_cc, *h_ss, *h_zsc, *h_zcs, *h_lsc;
+                double *h_cc, *h_ss, *h_zsc, *h_zcs, *h_lsc, *h_lcs;
                 h_cc = new double[p.ns*p.mnmax];
                 h_ss = new double[p.ns*p.mnmax];
                 h_zsc = new double[p.ns*p.mnmax];
                 h_zcs = new double[p.ns*p.mnmax];
                 h_lsc = new double[p.ns*p.mnmax];
+                h_lcs = new double[p.ns*p.mnmax];
                 checkCuda(cudaMemcpy(h_cc, st.d_rmncc, nb, cudaMemcpyDeviceToHost), "get cc");
                 checkCuda(cudaMemcpy(h_ss, st.d_rmnss, nb, cudaMemcpyDeviceToHost), "get ss");
                 checkCuda(cudaMemcpy(h_zsc, st.d_zmnsc, nb, cudaMemcpyDeviceToHost), "get zsc");
                 checkCuda(cudaMemcpy(h_zcs, st.d_zmncs, nb, cudaMemcpyDeviceToHost), "get zcs");
                 checkCuda(cudaMemcpy(h_lsc, st.d_lmnsc, nb, cudaMemcpyDeviceToHost), "get lsc");
+                checkCuda(cudaMemcpy(h_lcs, st.d_lmncs, nb, cudaMemcpyDeviceToHost), "get lcs");
                 int jB = p.ns - 1;  // LCFS index
-                for (int m = 0; m < p.mnmax; ++m) {
-                    // Fix LCFS: set to boundary values
-                    h_cc[jB + m * p.ns] = rbc[m];
-                    h_ss[jB + m * p.ns] = rbc[m];
-                    h_zsc[jB + m * p.ns] = zbs[m];
-                    h_zcs[jB + m * p.ns] = zbs[m];
-                    // Fix axis: zero all m>0 modes at j=0 (axis regularity)
-                    if (m > 0) {
-                        h_cc[0 + m * p.ns] = 0.0;
-                        h_ss[0 + m * p.ns] = 0.0;
-                        h_zsc[0 + m * p.ns] = 0.0;
-                        h_zcs[0 + m * p.ns] = 0.0;
-                        h_lsc[0 + m * p.ns] = 0.0;
+                for (int m = 0; m < p.mpol; ++m) {
+                    for (int n = 0; n < p.ntor + 1; ++n) {
+                        int mn = m * (p.ntor + 1) + n;
+                        h_cc[jB + mn * p.ns] = ip.rbcc[m][n];
+                        h_ss[jB + mn * p.ns] = ip.rbss[m][n];
+                        h_zsc[jB + mn * p.ns] = ip.zbsc[m][n];
+                        h_zcs[jB + mn * p.ns] = ip.zbcs[m][n];
+                        // Fix axis: zero all m>0 modes at j=0 (axis regularity)
+                        if (m > 0) {
+                            h_cc[0 + mn * p.ns] = 0.0;
+                            h_ss[0 + mn * p.ns] = 0.0;
+                            h_zsc[0 + mn * p.ns] = 0.0;
+                            h_zcs[0 + mn * p.ns] = 0.0;
+                            h_lsc[0 + mn * p.ns] = 0.0;
+                            h_lcs[0 + mn * p.ns] = 0.0;
+                        }
                     }
                 }
                 checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nb, cudaMemcpyHostToDevice), "set cc");
@@ -108,108 +125,105 @@ static void initState(SpectralState& st, const GridParams& p) {
                 checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nb, cudaMemcpyHostToDevice), "set zsc");
                 checkCuda(cudaMemcpy(st.d_zmncs, h_zcs, nb, cudaMemcpyHostToDevice), "set zcs");
                 checkCuda(cudaMemcpy(st.d_lmnsc, h_lsc, nb, cudaMemcpyHostToDevice), "set lsc");
-                delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc;
-                delete[] rbc; delete[] zbs;
+                checkCuda(cudaMemcpy(st.d_lmncs, h_lcs, nb, cudaMemcpyHostToDevice), "set lcs");
+                delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc; delete[] h_lcs;
             }
             printf("  Fixed LCFS boundary and axis regularity\n");
             checkCuda(cudaMemset(st.d_v_rmncc,0,nb),"vcc"); checkCuda(cudaMemset(st.d_v_rmnss,0,nb),"vss");
             checkCuda(cudaMemset(st.d_v_zmnsc,0,nb),"vzsc"); checkCuda(cudaMemset(st.d_v_zmncs,0,nb),"vzcs");
-            checkCuda(cudaMemset(st.d_v_lmnsc,0,nb),"vlsc");
+            checkCuda(cudaMemset(st.d_v_lmnsc,0,nb),"vlsc"); checkCuda(cudaMemset(st.d_v_lmncs,0,nb),"vlcs");
 
             delete[] h_rmncc; delete[] h_zmnsc; delete[] h_lmnsc;
-            delete[] h_rmnss; delete[] h_zmncs;
+            delete[] h_rmnss; delete[] h_zmncs; delete[] h_lmncs;
             return;
         }
             fclose(fp);
         }
     }
 
-    // Fallback: vmecpp's interpFromBoundaryAndAxis algorithm.
-    // m=0: linear interpolation between axis and boundary in flux s.
-    // m>0: s^(m/2) scaling so higher modes vanish faster near axis.
-    // For axisymmetric (n=0): rmnss and zmncs = 0 (sin(nζ)=0).
-    // Note: vmecpp divides by mscale=√2 for m>0 in the coefficient,
-    // but cuMES's inverse DFT does not apply mscale, so we store
-    // the boundary value directly. The resulting real-space geometry
-    // is identical to vmecpp's.
-    auto* rbc=new double[p.mnmax], *zbs=new double[p.mnmax];
-    setSolovevBoundary(rbc,zbs,p.mnmax);
-    size_t nb=p.ns*p.mnmax*sizeof(double);
-    double raxis = 4.0;  // raxis_c[0] from solovev.json
-
     auto* c=new double[p.ns*p.mnmax](), *s=new double[p.ns*p.mnmax]();
     auto* zsc=new double[p.ns*p.mnmax](), *zcs=new double[p.ns*p.mnmax]();
-    auto* lsc=new double[p.ns*p.mnmax]();
+    auto* lsc=new double[p.ns*p.mnmax](), *lcs=new double[p.ns*p.mnmax]();
 
     for(int j=0;j<p.ns;++j){
         double sFlux = j/(p.ns-1.0);          // normalized flux s
         double sqrtS  = sqrt(sFlux);           // sqrt(s)
-        for(int m=0;m<p.mnmax;++m){
-            if(m==0){
-                // m=0: linear in s between axis and boundary
-                c[j+m*p.ns]   = sFlux * rbc[m] + (1.0 - sFlux) * raxis;
-                zsc[j+m*p.ns] = 0.0;  // Z has no m=0 component
-            } else if(m==1){
-                // m=1: s^(1/2) radial envelope, matching vmecpp's physical
-                // state (interpFromBoundaryAndAxis: m>0 -> s^(m/2)).
-                // NOTE: the real-space odd-parity values then carry the
-                // 1/max(sqrt(s),sqrt(1/(ns-1))) decomposition factor (applied
-                // in the inverse DFT), so the real-space m=1 contribution is
-                // constant 1.026 across the interior — matching vmecpp's
-                // decomposed real space (its real-space odd = physical/max).
-                double w = sqrtS;  // s^(1/2)
-                c[j+m*p.ns]   = w * rbc[m];
-                zsc[j+m*p.ns] = w * zbs[m];
-            } else {
-                // m>=2: s^(m/2) radial envelope, vanishing at axis
-                double w = pow(sqrtS, m);  // s^(m/2)
-                c[j+m*p.ns]   = w * rbc[m];
-                zsc[j+m*p.ns] = w * zbs[m];
+        for(int m=0;m<p.mpol;++m){
+            for(int n=0;n<p.ntor+1;++n){
+                int mn = m*(p.ntor+1)+n;
+                if(m==0){
+                    // m=0: linear in s between axis and boundary
+                    c[j+mn*p.ns]   = sFlux*ip.rbcc[0][n] + (1.0-sFlux)*ip.raxis_c[n];
+                    zcs[j+mn*p.ns] = sFlux*ip.zbcs[0][n] - (1.0-sFlux)*ip.zaxis_s[n];
+                    // rmnss/zmnsc: no m=0 content; lambda: zero initially
+                } else if(m==1){
+                    // m=1: s^(1/2) radial envelope (s^(m/2)), matching
+                    // vmecpp's physical state (interpFromBoundaryAndAxis).
+                    // NOTE: the real-space odd-parity values then carry the
+                    // 1/max(sqrt(s),sqrt(1/(ns-1))) decomposition factor
+                    // (applied in the inverse DFT), so the real-space m=1
+                    // contribution is constant across the interior — matching
+                    // vmecpp's decomposed real space (its real-space odd =
+                    // physical/max).
+                    double w = sqrtS;  // s^(1/2)
+                    c[j+mn*p.ns]   = w * ip.rbcc[m][n];
+                    s[j+mn*p.ns]   = w * ip.rbss[m][n];
+                    zsc[j+mn*p.ns] = w * ip.zbsc[m][n];
+                    zcs[j+mn*p.ns] = w * ip.zbcs[m][n];
+                } else {
+                    // m>=2: s^(m/2) radial envelope, vanishing at axis
+                    double w = pow(sqrtS, m);  // s^(m/2)
+                    c[j+mn*p.ns]   = w * ip.rbcc[m][n];
+                    s[j+mn*p.ns]   = w * ip.rbss[m][n];
+                    zsc[j+mn*p.ns] = w * ip.zbsc[m][n];
+                    zcs[j+mn*p.ns] = w * ip.zbcs[m][n];
+                }
+                // lmnsc/lmncs: zero initially (lambda is a free gauge)
             }
-            s[j+m*p.ns]   = 0.0;  // rmnss=0 (sin(nζ)=0 for n=0)
-            zcs[j+m*p.ns] = 0.0;  // zmncs=0
-            lsc[j+m*p.ns] = 0.0;  // lambda=0 initially
         }
     }
     printf("  initState: vmecpp interpFromBoundaryAndAxis (m>0 s^(m/2))\n");
 
     checkCuda(cudaMalloc(&st.d_rmncc,nb),"cc"); checkCuda(cudaMalloc(&st.d_rmnss,nb),"ss");
     checkCuda(cudaMalloc(&st.d_zmnsc,nb),"zsc"); checkCuda(cudaMalloc(&st.d_zmncs,nb),"zcs");
-    checkCuda(cudaMalloc(&st.d_lmnsc,nb),"lsc");
+    checkCuda(cudaMalloc(&st.d_lmnsc,nb),"lsc"); checkCuda(cudaMalloc(&st.d_lmncs,nb),"lcs");
     checkCuda(cudaMalloc(&st.d_v_rmncc,nb),"vcc"); checkCuda(cudaMalloc(&st.d_v_rmnss,nb),"vss");
     checkCuda(cudaMalloc(&st.d_v_zmnsc,nb),"vzsc"); checkCuda(cudaMalloc(&st.d_v_zmncs,nb),"vzcs");
-    checkCuda(cudaMalloc(&st.d_v_lmnsc,nb),"vlsc");
+    checkCuda(cudaMalloc(&st.d_v_lmnsc,nb),"vlsc"); checkCuda(cudaMalloc(&st.d_v_lmncs,nb),"vlcs");
 
     checkCuda(cudaMemcpy(st.d_rmncc,c,nb,cudaMemcpyHostToDevice),"cpy cc");
     checkCuda(cudaMemcpy(st.d_rmnss,s,nb,cudaMemcpyHostToDevice),"cpy ss");
     checkCuda(cudaMemcpy(st.d_zmnsc,zsc,nb,cudaMemcpyHostToDevice),"cpy zsc");
     checkCuda(cudaMemcpy(st.d_zmncs,zcs,nb,cudaMemcpyHostToDevice),"cpy zcs");
     checkCuda(cudaMemcpy(st.d_lmnsc,lsc,nb,cudaMemcpyHostToDevice),"cpy lsc");
+    checkCuda(cudaMemcpy(st.d_lmncs,lcs,nb,cudaMemcpyHostToDevice),"cpy lcs");
     checkCuda(cudaMemset(st.d_v_rmncc,0,nb),"vcc"); checkCuda(cudaMemset(st.d_v_rmnss,0,nb),"vss");
     checkCuda(cudaMemset(st.d_v_zmnsc,0,nb),"vzsc"); checkCuda(cudaMemset(st.d_v_zmncs,0,nb),"vzcs");
-    checkCuda(cudaMemset(st.d_v_lmnsc,0,nb),"vlsc");
+    checkCuda(cudaMemset(st.d_v_lmnsc,0,nb),"vlsc"); checkCuda(cudaMemset(st.d_v_lmncs,0,nb),"vlcs");
 
-    delete[] rbc; delete[] zbs; delete[] c; delete[] s; delete[] zsc; delete[] zcs; delete[] lsc;
+    delete[] c; delete[] s; delete[] zsc; delete[] zcs; delete[] lsc; delete[] lcs;
 }
 
 static void freeState(SpectralState& st) {
     cudaFree(st.d_rmncc); cudaFree(st.d_rmnss); cudaFree(st.d_zmnsc);
-    cudaFree(st.d_zmncs); cudaFree(st.d_lmnsc);
+    cudaFree(st.d_zmncs); cudaFree(st.d_lmnsc); cudaFree(st.d_lmncs);
     cudaFree(st.d_v_rmncc); cudaFree(st.d_v_rmnss); cudaFree(st.d_v_zmnsc);
-    cudaFree(st.d_v_zmncs); cudaFree(st.d_v_lmnsc);
+    cudaFree(st.d_v_zmncs); cudaFree(st.d_v_lmnsc); cudaFree(st.d_v_lmncs);
 }
 
 int main() {
-    GridParams p=initParams();
+    InputParams ip = initInputParams();
+    GridParams p=initParams(ip);
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
-    printf("ns=%d mnmax=%d ntheta=%d nzeta=%d nZnT=%d nfp=%d\n",
-           p.ns,p.mnmax,p.ntheta,p.nzeta,p.nZnT,p.nfp);
+    printf("input: %s\n", p.ncurr == 0 ? "solovev" : "w7x");
+    printf("ns=%d mnmax=%d ntheta=%d nzeta=%d nZnT=%d nfp=%d mpol=%d ntor=%d ncurr=%d\n",
+           p.ns,p.mnmax,p.ntheta,p.nzeta,p.nZnT,p.nfp,p.mpol,p.ntor,p.ncurr);
 
     cublasHandle_t cublasHandle; checkCublas(cublasCreate(&cublasHandle),"cublas");
 
-    SpectralState st{}; initState(st,p);
-    RadialProfiles rp=profilesCreate(p);
+    SpectralState st{}; initState(st,p,ip);
+    RadialProfiles rp=profilesCreate(p,ip);
     FourierPlan fp=fourierCreate(p,cublasHandle);
     MetricWorkspace mw=metricCreate(p);
 

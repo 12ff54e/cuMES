@@ -30,8 +30,9 @@ int main() {
     GridParams p;
     p.ns = ns; p.mnmax = mnmax; p.ntheta = 18; p.nzeta = 1;
     p.nfp = 1; p.nZnT = p.ntheta * p.nzeta;
-    p.mpol = mnmax;  // ntor=1, so mpol=mnmax
-    p.ntor = 1;
+    p.mpol = mnmax;  // ntor=0 (axisymmetric): mnmax = mpol*(ntor+1)
+    p.ntor = 0;
+    p.ncurr = 0; p.delt = 1.0; p.ftol = 1e-14; p.max_iter = 10;
 
     size_t nb = ns * mnmax * sizeof(double);
     auto* h_rmncc = new double[ns*mnmax];
@@ -39,12 +40,14 @@ int main() {
     auto* h_lmnsc = new double[ns*mnmax];
     auto* h_rmnss = new double[ns*mnmax];
     auto* h_zmncs = new double[ns*mnmax];
+    auto* h_lmncs = new double[ns*mnmax];
 
     fread(h_rmncc, sizeof(double), ns*mnmax, fp);
     fread(h_zmnsc, sizeof(double), ns*mnmax, fp);
     fread(h_lmnsc, sizeof(double), ns*mnmax, fp);
     fread(h_rmnss, sizeof(double), ns*mnmax, fp);
     fread(h_zmncs, sizeof(double), ns*mnmax, fp);
+    fread(h_lmncs, sizeof(double), ns*mnmax, fp);
     fclose(fp);
 
     printf("R_00 axis=%.6f edge=%.6f\n", h_rmncc[0], h_rmncc[ns-1]);
@@ -56,6 +59,7 @@ int main() {
     cc(cudaMalloc(&st.d_rmncc, nb), "rmncc");
     cc(cudaMalloc(&st.d_zmnsc, nb), "zmnsc");
     cc(cudaMalloc(&st.d_lmnsc, nb), "lmnsc");
+    cc(cudaMalloc(&st.d_lmncs, nb), "lmncs");
     cc(cudaMalloc(&st.d_rmnss, nb), "rmnss");
     cc(cudaMalloc(&st.d_zmncs, nb), "zmncs");
     cc(cudaMemcpy(st.d_rmncc, h_rmncc, nb, cudaMemcpyHostToDevice), "cpy rmncc");
@@ -65,7 +69,8 @@ int main() {
     cc(cudaMemcpy(st.d_zmncs, h_zmncs, nb, cudaMemcpyHostToDevice), "cpy zmncs");
 
     // Create profiles and Fourier plan
-    RadialProfiles rp = profilesCreate(p);
+    InputParams ip = initInputParams();
+    RadialProfiles rp = profilesCreate(p, ip);
     cublasHandle_t handle;
     cublasCreate(&handle);
     FourierPlan fpl = fourierCreate(p, handle);
