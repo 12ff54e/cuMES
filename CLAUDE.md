@@ -205,30 +205,20 @@ x_new = x_old + delt * v_new
 
 ## Known Issues / Next Steps
 
-**Status (2026-08-02 evening): the residual normalization now matches vmecpp
-exactly (fNormRZ/fNormL/fNorm1, energies and volume at 1e-12..1e-15), the
-axis m=0 λ extrapolation is fixed (the axis-adjacent B^θ now matches at 1e-11),
-the trajectory tracks vmecpp at <1e-6 through the first 55 passes with an
-identical restart sequence (BAD JACOBIANs at iter2 3,5,8,11,15; BAD PROGRESS
-at 51), and the W7-X converged FSQR equals vmecpp's (9.91e-13 vs 9.92e-13).
-The converged R/Z states now match the wout at 2.8e-5..2.7e-4 (rmncc/zmnsc
-improved 10-16x over the pre-normalization 1e-4..6e-4).**
+**Status (2026-08-02 night 2): the θ-parameterization difference is RESOLVED.
+The rollback-backup refresh now captures the POST-descent state (vmecpp's
+RestartIteration(NO_RESTART) semantics — the descent runs before the
+time-step control), the per-iteration residuals track vmecpp at ≤1e-8
+relative over the ENTIRE run (restart sequence identical at all 9 restarts:
+BJs iter2 3,5,8,11,15; BPs 51,64,78,91), and the W7-X run converges at 2962
+iters, FSQR 9.91e-13 (vmecpp: 2953, 9.92e-13). The converged state matches
+the wout at ≤1.5e-9 in ALL SIX FAMILIES — rmncc 3.0e-10, zmnsc 2.3e-10,
+lmnsc 1.5e-9, rmnss 1.9e-10, zmncs 1.4e-10, lmncs 1.5e-9 — including the λ
+gauge modes (lmnsc(1,0), lmncs(0,1)) that previously sat at 1.4e-2/2.5e-3.
+(The latter was partly a comparison bug: scripts/compare_converged_state.py
+read the half-grid-interpolated wout `lmns`; it must read `lmns_full`.)**
 
-1. **Axis-adjacent λ-force seed (~1e-4 at j=1) and weakly-determined λ gauge
-   modes (converged residual ~1e-2..1e-3).** Even with the normalization and
-   the axis m=0 λ fixes, the real-space λ force at the first interior surface
-   (j=1) differs from vmecpp at ~1.2e-4 on the second pass (λ≠0), and the
-   weakly-determined m=0,n=1 Z / m=1,n=0 & m=0,n=1 λ modes drift apart over
-   the run (the axis position Z(0,1) drifts to ~1e-3 by iter 150 before the
-   equilibrium pulls it back). At convergence the R/Z are at 2.8e-5..2.7e-4
-   (strongly determined — good) but the λ gauge modes (lmnsc(1,0)@j=1 ~1.4e-2,
-   lmncs(1,1)@j=1 ~2.5e-3) remain. The seed is in the axis-adjacent (j=1)
-   odd-m λ force blend; candidates: the alternative bsubv interpolation term
-   or the jH=0 covariant-B odd-parity mixing. The per-iteration tracking
-   breaks at the pass-56/57 BAD_PROGRESS restore window (the fsq1 at the
-   restored state differs ~6%) and the run converges at 2791 vs vmecpp's 2953.
-
-2. **Axis representation (state-file only, real-space-irrelevant).** cuMES
+1. **Axis representation (state-file only, real-space-irrelevant).** cuMES
    constant-extrapolates the axis row from j=1 (extrapolateAxisKernel — m=1
    all six families plus the m=0 lmncs "chi-force leftover", matching vmecpp's
    extrapolateTowardsAxis), so the dumped axis m>0 coefficients equal the j=1
@@ -237,5 +227,5 @@ improved 10-16x over the pre-normalization 1e-4..6e-4).**
    agrees (step_A verified at 1e-15), and the axis coefficients do not enter
    the forces, so this only shows up when diffing state files / wout axis rows.
 
-3. **No multigrid.** Single fixed radial grid; adding grid sequencing would
+2. **No multigrid.** Single fixed radial grid; adding grid sequencing would
    improve robustness for difficult equilibria.

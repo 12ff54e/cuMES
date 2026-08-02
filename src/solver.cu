@@ -1064,8 +1064,9 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
 
         enum RestartReason { kNoRestart, kBadJacobian, kBadProgress };
         RestartReason reason = kNoRestart;
+        bool doRefresh = false;  // refresh the backup AFTER the descent
         if (fsq <= res0 && (iter2 - iter1) > 10) {
-            backupState();  // consistent progress: refresh rollback target
+            doRefresh = true;  // consistent progress: refresh rollback target
         } else if (fsq > 100.0 * res0 && iter2 > iter1) {
             reason = kBadJacobian;
         } else if ((iter2 - iter1) > 12 && iter2 > 50 &&
@@ -1078,7 +1079,33 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
                    fsqr, fsqz, fsql, delt, otav, dtau, b1, fac);
 #endif
 
+        // ---- Descent step (Garabedian second-order Richardson) ----------
+        // Runs BEFORE the time-step control, matching vmecpp's pass order:
+        // Evolve() descends, then SolveEquilibriumLoop's control block
+        // refreshes the backup or restores. The backup refresh must capture
+        // the POST-descent state (vmecpp's RestartIteration(NO_RESTART) runs
+        // after Evolve): a pre-descent backup restores the state one descent
+        // step earlier at every restart, which offsets the weakly-determined
+        // lambda gauge modes by ~1e-2 (one step of their ~1e-2/pass drift) at
+        // the pass-56/57 BAD_PROGRESS restore and splits the trajectory
+        // (2791 vs 2953 iters; converged lambda gauge modes 1.4e-2 off).
+        { dim3 bd(256), gd((p.ns*p.mnmax+255)/256);
+          descentStepKernel<<<gd,bd>>>(
+              st.d_rmncc,st.d_rmnss,st.d_zmnsc,st.d_zmncs,st.d_lmnsc,st.d_lmncs,
+              st.d_v_rmncc,st.d_v_rmnss,st.d_v_zmnsc,st.d_v_zmncs,st.d_v_lmnsc,st.d_v_lmncs,
+              d_f_spec, fp.basis.d_xm, fp.basis.d_xn,
+              p.ns,p.mnmax,delt,b1,fac);
+          checkCuda(cudaGetLastError(),"descent"); }
+
+        if (doRefresh) {
+            backupState();  // POST-descent state (vmecpp RestartIteration
+                            // NO_RESTART semantics — see comment above)
+        }
+
         if (reason != kNoRestart) {
+            // Restore overwrites the just-descended state and zeroes the
+            // velocities (vmecpp does the same: Evolve()'s descent is
+            // discarded by the control block's RestartIteration).
             restoreState();
             if (reason == kBadJacobian) { delt *= 0.9; ++ijacob; }
             else { delt /= 1.03; }
@@ -1086,7 +1113,8 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
             printf("  -> %s (iter2=%d) delt=%.3e\n",
                    reason == kBadJacobian ? "BAD JACOBIAN" : "BAD PROGRESS",
                    iter2, delt);
-            continue;  // no descent this pass; next pass reinitializes damping
+        } else {
+            iter2++;  // effective counter advances on good passes only
         }
 
         // ---- Output (every 50 iters, first 5, or late iterations) ----
@@ -1097,17 +1125,6 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
             checkCuda(cudaMemcpy(&h_rmncc_bnd, st.d_rmncc + (p.ns-1), sizeof(double), cudaMemcpyDeviceToHost), "cpy Rbnd");
             printf(" | Rax=%.4f Rbnd=%.4f\n", h_rmncc_axis, h_rmncc_bnd);
         }
-
-        // ---- Descent step (Garabedian second-order Richardson) ----------
-        { dim3 bd(256), gd((p.ns*p.mnmax+255)/256);
-          descentStepKernel<<<gd,bd>>>(
-              st.d_rmncc,st.d_rmnss,st.d_zmnsc,st.d_zmncs,st.d_lmnsc,st.d_lmncs,
-              st.d_v_rmncc,st.d_v_rmnss,st.d_v_zmnsc,st.d_v_zmncs,st.d_v_lmnsc,st.d_v_lmncs,
-              d_f_spec, fp.basis.d_xm, fp.basis.d_xn,
-              p.ns,p.mnmax,delt,b1,fac);
-          checkCuda(cudaGetLastError(),"descent"); }
-
-        iter2++;  // effective iteration counter advances on good passes only
 
         if(iter==kMaxIterEff-1){ res.iterations=kMaxIterEff;
             res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=delt; }
