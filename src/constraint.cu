@@ -71,6 +71,17 @@ ConstraintWorkspace constraintCreate(const GridParams& p) {
     cc(cudaMemset(cw.d_fzcon_e, 0, nFc), "fzcon_e zero");
     cc(cudaMemset(cw.d_fzcon_o, 0, nFc), "fzcon_o zero");
 
+    // Compact deAlias bandpass buffers + plans (2 slots x (mpol-2) x (ns-1)
+    // batch elements instead of the full 12*mpol*ns).
+    int n = p.nzeta, nz2 = p.nzeta / 2 + 1;
+    int batchDa = 2 * (p.mpol - 2) * (p.ns - 1);
+    cc(cudaMalloc(&cw.d_zeta_real_c, (size_t)batchDa * n * sizeof(double)), "zeta_real_c");
+    cc(cudaMalloc(&cw.d_zeta_spectra_c, (size_t)batchDa * nz2 * sizeof(double2)), "zeta_spectra_c");
+    ccf(cufftPlanMany(&cw.plan_d2z_da, 1, &n, &n, 1, n, &nz2, 1, nz2,
+                      CUFFT_D2Z, batchDa), "plan d2z_da");
+    ccf(cufftPlanMany(&cw.plan_z2d_da, 1, &n, &nz2, 1, nz2, &n, 1, n,
+                      CUFFT_Z2D, batchDa), "plan z2d_da");
+
     return cw;
 }
 
@@ -82,6 +93,8 @@ void constraintFree(ConstraintWorkspace& cw) {
     cudaFreeHost(cw.h_faccon); cudaFree(cw.d_faccon);
     cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o);
     cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
+    cudaFree(cw.d_zeta_real_c); cudaFree(cw.d_zeta_spectra_c);
+    cufftDestroy(cw.plan_d2z_da); cufftDestroy(cw.plan_z2d_da);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +273,7 @@ __global__ void deAliasAnalyzeKernel(
     const double* __restrict__ gConEff,
     const double* __restrict__ cos_th, const double* __restrict__ sin_th,
     int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    double* __restrict__ zeta_real)   // slots 0 (sc), 1 (cs) at (m, jF)
+    double* __restrict__ zeta_real)   // compact slots 0 (sc), 1 (cs)
 {
     int jF = blockIdx.y, m1 = blockIdx.x;   // m = m1 + 1 in [1, mpol-2]
     int k = threadIdx.x;
@@ -274,41 +287,57 @@ __global__ void deAliasAnalyzeKernel(
         s_sc += g[it] * sth[it];
         s_cs += g[it] * cth[it];
     }
-    size_t step = (size_t)mpol * ns * nzeta;
-    double* base = zeta_real + ((size_t)m * ns + jF) * nzeta + k;
-    base[0 * step] = s_sc;
-    base[1 * step] = s_cs;
+    // Compact layout: ((slot*(mpol-2) + m1)*(ns-1) + (jF-1))*nzeta + k
+    size_t base = ((size_t)m1 * (ns - 1) + (jF - 1)) * nzeta + k;
+    size_t step = (size_t)(mpol - 2) * (ns - 1) * nzeta;
+    zeta_real[0 * step + base] = s_sc;
+    zeta_real[1 * step + base] = s_cs;
 }
 
 __global__ void deAliasCoeffPackKernel(
-    const double2* __restrict__ spectra,   // analysis output (slots 0,1)
-    const int* __restrict__ xm, const int* __restrict__ xn,
+    const double2* __restrict__ spectra,   // compact analysis output (slots 0,1)
     const double* __restrict__ tcon, const double* __restrict__ faccon,
-    int ns, int mpol, int mnmax, int nz2, int nZnT,
-    double2* __restrict__ out)             // slots 4,5 (same buffer, disjoint)
+    int ns, int mpol, int ntor, int nz2, int nZnT,
+    double2* __restrict__ out)             // compact slots 4,5 (same buffer, disjoint)
 {
     int t = blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= ns * mnmax) return;
-    int jF = t % ns, mode = t / ns;
-    if (jF == 0) return;
-    int m = xm[mode], n = xn[mode];
-    if (m < 1 || m >= mpol - 1) return;   // bandpass modes only
+    int nBand = (mpol - 2) * (ns - 1);
+    if (t >= nBand) return;
+    int m1 = t / (ns - 1), jF1 = t % (ns - 1);
+    int jF = jF1 + 1, m = m1 + 1;
+    // scale == 0 (tcon or faccon zero) must still produce a zero synthesis
+    // element: the compact Z2D synthesizes every bin, and there is no
+    // memset to zero the slots otherwise (the full-batch path relied on
+    // d_zeta_real's memset).
     double scale = tcon[jF] * faccon[m];
-    if (scale == 0.0) return;
-    // Normalization: 4/nZnT for n>0 (sin²(mθ)cos²(nζ) sums to nZnT/4),
-    // 2/nZnT for n=0 (sin²(mθ) sums to nZnT/2) — the full-grid equivalent
-    // of vmecpp's mscale*nscale*intNorm round trip; the sc/cs projections
-    // are kept separate (as in vmecpp's sinmu/cosmu round trip).
-    double norm = (n > 0) ? 4.0 / nZnT : 2.0 / nZnT;
-    size_t step = (size_t)mpol * ns * nz2;
-    const double2* in = spectra + ((size_t)m * ns + jF) * nz2 + n;
-    double coeff_sc = norm * scale * in[0 * step].x;      // Re F_sc
-    double coeff_cs = norm * scale * (-in[1 * step].y);   // -Im F_cs
-    double half = (n == 0) ? 1.0 : 0.5;
-    double shalf = (n == 0) ? 0.0 : 0.5;
-    double2* slot = out + ((size_t)m * ns + jF) * nz2 + n;
-    slot[4 * step] = make_double2(coeff_sc * half, 0.0);
-    slot[5 * step] = make_double2(0.0, -coeff_cs * shalf);
+    // Compact layout: ((slot*(mpol-2) + m1)*(ns-1) + jF1)*nz2 + n
+    size_t base = ((size_t)m1 * (ns - 1) + jF1) * nz2;
+    size_t step = (size_t)(mpol - 2) * (ns - 1) * nz2;
+    const double2* in = spectra + base;
+    double2* slot = out + base;
+    for (int n = 0; n <= ntor; ++n) {
+        // Normalization: 4/nZnT for n>0 (sin²(mθ)cos²(nζ) sums to nZnT/4),
+        // 2/nZnT for n=0 (sin²(mθ) sums to nZnT/2) — the full-grid equivalent
+        // of vmecpp's mscale*nscale*intNorm round trip; the sc/cs projections
+        // are kept separate (as in vmecpp's sinmu/cosmu round trip).
+        double norm = (n > 0) ? 4.0 / nZnT : 2.0 / nZnT;
+        double coeff_sc = norm * scale * in[0 * step + n].x;      // Re F_sc
+        double coeff_cs = norm * scale * (-in[1 * step + n].y);   // -Im F_cs
+        double half = (n == 0) ? 1.0 : 0.5;
+        double shalf = (n == 0) ? 0.0 : 0.5;
+        // In-place: compact slots 0,1 carry the analysis (sc/cs) and are
+        // overwritten with the synthesis coefficients (the full-batch path
+        // wrote slots 4,5, which were disjoint from 0,1 there).
+        slot[0 * step + n] = make_double2(coeff_sc * half, 0.0);
+        slot[1 * step + n] = make_double2(0.0, -coeff_cs * shalf);
+    }
+    // Zero the unused tail bins: the compact Z2D synthesizes every bin, so
+    // bins n > ntor must be zero (the full-batch path got this from the
+    // d_zeta_real memset; the compact buffers have no such memset).
+    for (int n = ntor + 1; n < nz2; ++n) {
+        slot[0 * step + n] = make_double2(0.0, 0.0);
+        slot[1 * step + n] = make_double2(0.0, 0.0);
+    }
 }
 
 __global__ void deAliasSynthesizeKernel(
@@ -323,14 +352,13 @@ __global__ void deAliasSynthesizeKernel(
     // gCon stores at jF*nZnT + k*ntheta + l then vary l fastest and coalesce.
     int k = threadIdx.y, l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    extern __shared__ double sh[];   // [2][mpol-2][nzeta] (slots 4,5)
+    extern __shared__ double sh[];   // [2][mpol-2][nzeta] (compact slots 0,1)
     int nb = 2 * (mpol - 2);
+    int jF1 = jF - 1;
     for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < nb * nzeta; i += nthreads) {
         int s = i / ((mpol - 2) * nzeta), rem = i - s * (mpol - 2) * nzeta;
         int m1 = rem / nzeta, kk = rem % nzeta;
-        int m = m1 + 1;
-        int slot = (s == 0) ? 4 : 5;
-        sh[i] = zeta_real[(((size_t)slot * mpol + m) * ns + jF) * nzeta + kk];
+        sh[i] = zeta_real[((size_t)(s * (mpol - 2) + m1) * (ns - 1) + jF1) * nzeta + kk];
     }
     __syncthreads();
     #pragma unroll
@@ -543,35 +571,31 @@ void constraintCompute(const GridParams& p, const FourierPlan& fp,
         p.ns, p.nZnT, cw.d_gConEff);
     cc(cudaGetLastError(), "gConEff");
 
-    // Step 2: Bandpass filter (de-alias) — cuFFT round trip.
-    //   1. zero d_zeta_real, θ-reduce gConEff into the slot-0/1 ζ-signals
-    //   2. D2Z (analysis spectra; all untouched slots stay zero)
-    //   3. per-mode coefficients -> pack slots 4/5 (same buffer, disjoint)
-    //   4. Z2D + poloidal synthesis -> gCon
-    // The D2Z/Z2D plans cover the full 12*mpol*ns batch; the untouched slots
-    // are zero from the memset and their synthesized output is never read.
-    cc(cudaMemset(fp.d_zeta_real, 0, (size_t)12 * p.mpol * p.ns * p.nzeta *
-                                     sizeof(double)), "deAlias zero");
+    // Step 2: Bandpass filter (de-alias) — cuFFT round trip on the compact
+    // batch (2 slots x (mpol-2) modes x (ns-1) surfaces instead of the full
+    // 12*mpol*ns): θ-reduce gConEff into the slot-0/1 ζ-signals, D2Z, scale
+    // the per-mode coefficients into slots 4/5 (the spectra tail bins n>ntor
+    // are zeroed by the memset — the pack writes only the used bins), Z2D,
+    // poloidal synthesis -> gCon.
     {   dim3 blkA(p.nzeta), grdA(p.mpol - 2, p.ns);
         deAliasAnalyzeKernel<<<grdA, blkA>>>(
             cw.d_gConEff, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, fp.d_zeta_real);
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_zeta_real_c);
         cc(cudaGetLastError(), "deAlias analyze");
     }
-    ccf(cufftExecD2Z(fp.plan_d2z, fp.d_zeta_real, fp.d_zeta_spectra), "deAlias d2z");
-    {   int totalDA = p.ns * p.mnmax;
-        deAliasCoeffPackKernel<<<(totalDA + 255) / 256, 256>>>(
-            fp.d_zeta_spectra, fp.basis.d_xm, fp.basis.d_xn,
-            cw.d_tcon, cw.d_faccon,
-            p.ns, p.mpol, p.mnmax, p.nzeta / 2 + 1, p.nZnT,
-            fp.d_zeta_spectra);
+    ccf(cufftExecD2Z(cw.plan_d2z_da, cw.d_zeta_real_c, cw.d_zeta_spectra_c), "deAlias d2z");
+    {   int nBand = (p.mpol - 2) * (p.ns - 1);
+        deAliasCoeffPackKernel<<<(nBand + 255) / 256, 256>>>(
+            cw.d_zeta_spectra_c, cw.d_tcon, cw.d_faccon,
+            p.ns, p.mpol, p.ntor, p.nzeta / 2 + 1, p.nZnT,
+            cw.d_zeta_spectra_c);
         cc(cudaGetLastError(), "deAlias coeff");
     }
-    ccf(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "deAlias z2d");
+    ccf(cufftExecZ2D(cw.plan_z2d_da, cw.d_zeta_spectra_c, cw.d_zeta_real_c), "deAlias z2d");
     {   dim3 blkS(p.ntheta / 2, p.nzeta);
         deAliasSynthesizeKernel<<<p.ns, blkS,
             2 * (p.mpol - 2) * p.nzeta * sizeof(double)>>>(
-            fp.d_zeta_real, fp.d_cos_th, fp.d_sin_th,
+            cw.d_zeta_real_c, fp.d_cos_th, fp.d_sin_th,
             p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon);
         cc(cudaGetLastError(), "deAlias synth");
     }

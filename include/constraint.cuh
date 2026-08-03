@@ -34,6 +34,15 @@ struct ConstraintWorkspace {
     double* d_frcon_o;  // [ns * nZnT]
     double* d_fzcon_e;  // [ns * nZnT]
     double* d_fzcon_o;  // [ns * nZnT]
+
+    // Compact deAlias bandpass workspace: only slots 0/1 (analysis) and 4/5
+    // (synthesis), modes m = 1..mpol-2, surfaces jF = 1..ns-1 participate in
+    // the round trip — 2*(mpol-2)*(ns-1) batch elements instead of the full
+    // 12*mpol*ns. Element order: ((slot*(mpol-2) + (m-1))*(ns-1) + (jF-1)),
+    // then nzeta (real) / nz2 (spectra) contiguous.
+    double* d_zeta_real_c;     // [2*(mpol-2)*(ns-1) * nzeta]
+    double2* d_zeta_spectra_c; // [2*(mpol-2)*(ns-1) * nz2]
+    cufftHandle plan_d2z_da, plan_z2d_da;
 };
 
 ConstraintWorkspace constraintCreate(const GridParams& p);
