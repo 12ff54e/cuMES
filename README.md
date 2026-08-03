@@ -109,16 +109,16 @@ debug output.
   from vmecpp's iter-150 state), no restarts, delt constant 0.9, final
   invariant residual ~7–9e-17.
 
-## What's Intentionally Omitted (for clarity)
+## Status vs VMEC++
 
-| VMEC++ feature | Why omitted |
-|----------------|-------------|
-| FFT-accelerated transforms | Implemented: the transforms use cuFFT (batched 1D real FFT in the toroidal direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure); the constraint module's rCon/zCon and de-aliasing bandpass reuse the same machinery. See `src/fourier.cu`. |
+| VMEC++ feature | Status |
+|----------------|--------|
+| FFT-accelerated transforms | Implemented: cuFFT (batched 1D real FFT in the ζ direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure); the constraint module's rCon/zCon and de-aliasing bandpass reuse the same plans/scratch. Measured on W7-X: inverse 3.5→0.9 ms/iter, forward 42.3→0.4 ms/iter; full run 155 s→21 s. See `src/fourier.cu`. |
+| 3D (lthreed) equilibria | Implemented and verified against vmecpp (W7-X, mpol=ntor=12): per-iteration residuals track vmecpp at ≤1e-8 over the whole run; converges at iter 2962 (vmecpp 2953) with FSQR 9.924e-13 (vmecpp 9.92e-13); the converged state matches the wout at ≤1.5e-9 in all six families. |
 | Multigrid grid sequencing | Single fixed radial grid |
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, full wout | Post-processing; not needed for the core loop |
 | Hot restart / checkpointing | Add later |
-| 3D (lthreed) equilibria | Implemented and verified against vmecpp (W7-X, mpol=ntor=12): the full iter-1 chain matches at 1e-9..1e-13, cuMES converges on its own (iter ~2794 vs vmecpp 2953), and the converged states match the vmecpp wout at ~1e-4 (residual-normalization control-path residual — see CLAUDE.md) |
 
 ## Tests
 
