@@ -418,6 +418,11 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
     PreconWorkspace pw = preconCreate(p);
     ConstraintWorkspace cw = constraintCreate(p);
 
+    // ---- transform timing (cudaEvent pairs around inverseDFT/forwardDFT) ----
+    cudaEvent_t ev0, ev1;
+    cudaEventCreate(&ev0); cudaEventCreate(&ev1);
+    float t_inv_ms = 0.0f, t_fwd_ms = 0.0f;
+
     // ---- env-gated knobs for convergence experiments (defaults = input
     // values; set via CUMES_MAX_ITER, CUMES_DELT0, CUMES_DTAU_FLOOR,
     // CUMES_DUMP_ITER, CUMES_E2_START) ----
@@ -597,7 +602,11 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
             st.d_lmncs, p.ns, p.mnmax, p.ntor + 1);
         checkCuda(cudaGetLastError(), "extrapAxis");
 
+        cudaEventRecord(ev0);
         inverseDFT(fp,st,p);
+        cudaEventRecord(ev1);
+        cudaEventSynchronize(ev1);
+        { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_inv_ms += ms; }
 
         if (iter == 0 && dumpEnabled()) {
             auto* h_test = new double[p.nZnT * p.ns];
@@ -872,7 +881,11 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
         }
 #endif
 
+        cudaEventRecord(ev0);
         forwardDFT(fp,d_f_spec,p,cw);
+        cudaEventRecord(ev1);
+        cudaEventSynchronize(ev1);
+        { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_fwd_ms += ms; }
 
         // Apply the odd-m decomposition scaling (vmecpp decomposeInto).
         // The forward DFT already zeroed the LCFS R/Z entries and the axis
@@ -1159,5 +1172,10 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
     checkCuda(cudaFree(d_bk_zmncs),"free bk zcs");
     checkCuda(cudaFree(d_bk_lmncs),"free bk lcs");
     preconFree(pw); constraintFree(cw);
+    printf("transform timing: inverseDFT total %.1f ms (%.3f ms/iter), "
+           "forwardDFT total %.1f ms (%.3f ms/iter)\n",
+           t_inv_ms, t_inv_ms / (res.iterations > 0 ? res.iterations : 1),
+           t_fwd_ms, t_fwd_ms / (res.iterations > 0 ? res.iterations : 1));
+    cudaEventDestroy(ev0); cudaEventDestroy(ev1);
     return res;
 }

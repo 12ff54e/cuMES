@@ -30,6 +30,12 @@ static void checkCuda(cudaError_t err, const char* tag) {
         exit(EXIT_FAILURE);
     }
 }
+static void checkCufft(cufftResult r, const char* tag) {
+    if (r != CUFFT_SUCCESS) {
+        fprintf(stderr, "cuFFT error [%s]: %d\n", tag, (int)r);
+        exit(EXIT_FAILURE);
+    }
+}
 
 FourierPlan fourierCreate(const GridParams& p, cublasHandle_t handle) {
     FourierPlan fp{}; fp.handle = handle;
@@ -112,6 +118,62 @@ FourierPlan fourierCreate(const GridParams& p, cublasHandle_t handle) {
     am(fp.d_czmn_e,"cze"); am(fp.d_czmn_o,"czo");
     am(fp.d_clmn_e,"cle"); am(fp.d_clmn_o,"clo");
     am(fp.d_fr_real,"fr"); am(fp.d_fz_real,"fz"); am(fp.d_fl_real,"fl");
+
+    // ---- cuFFT backend: poloidal tables, scratch, plans ----
+    checkCuda(cudaMalloc(&fp.d_zeta_spectra,
+        (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(double2)), "spectra");
+    checkCuda(cudaMalloc(&fp.d_zeta_real,
+        (size_t)12 * p.mpol * p.ns * p.nzeta * sizeof(double)), "zeta");
+    auto amt = [&](double*& q, const char* n, size_t cnt) {
+        checkCuda(cudaMalloc(&q, cnt * sizeof(double)), n);
+    };
+    amt(fp.d_cos_th, "costh", p.mpol * p.ntheta);  amt(fp.d_sin_th, "sinth", p.mpol * p.ntheta);
+    amt(fp.d_mcos_th, "mcosth", p.mpol * p.ntheta); amt(fp.d_msin_th, "msinth", p.mpol * p.ntheta);
+    amt(fp.d_fwd_w, "fwdw", p.ntheta / 2 + 1);
+
+    auto* h_cos_th  = new double[p.mpol * p.ntheta];
+    auto* h_sin_th  = new double[p.mpol * p.ntheta];
+    auto* h_mcos_th = new double[p.mpol * p.ntheta];
+    auto* h_msin_th = new double[p.mpol * p.ntheta];
+    for (int m = 0; m < p.mpol; ++m)
+        for (int l = 0; l < p.ntheta; ++l) {
+            double th = 2.0 * M_PI * l / p.ntheta;
+            double c = cos(m * th), s = sin(m * th);
+            h_cos_th[m * p.ntheta + l]  = c;
+            h_sin_th[m * p.ntheta + l]  = s;
+            h_mcos_th[m * p.ntheta + l] = m * c;
+            h_msin_th[m * p.ntheta + l] = -m * s;
+        }
+    // Reduced-grid trapezoid weights for the forward quadrature (vmecpp
+    // intNorm = 1/(nZeta*(nThetaRed-1)), endpoint-halved).
+    int nThetaRed = p.ntheta / 2 + 1;
+    auto* h_fwd_w = new double[nThetaRed];
+    double intNorm = 1.0 / ((double)p.nzeta * (nThetaRed - 1));
+    for (int l = 0; l < nThetaRed; ++l) {
+        h_fwd_w[l] = intNorm;
+        if (l == 0 || l == nThetaRed - 1) h_fwd_w[l] *= 0.5;
+    }
+    checkCuda(cudaMemcpy(fp.d_cos_th, h_cos_th, (size_t)p.mpol * p.ntheta * sizeof(double),
+                         cudaMemcpyHostToDevice), "cp costh");
+    checkCuda(cudaMemcpy(fp.d_sin_th, h_sin_th, (size_t)p.mpol * p.ntheta * sizeof(double),
+                         cudaMemcpyHostToDevice), "cp sinth");
+    checkCuda(cudaMemcpy(fp.d_mcos_th, h_mcos_th, (size_t)p.mpol * p.ntheta * sizeof(double),
+                         cudaMemcpyHostToDevice), "cp mcosth");
+    checkCuda(cudaMemcpy(fp.d_msin_th, h_msin_th, (size_t)p.mpol * p.ntheta * sizeof(double),
+                         cudaMemcpyHostToDevice), "cp msinth");
+    checkCuda(cudaMemcpy(fp.d_fwd_w, h_fwd_w, (size_t)nThetaRed * sizeof(double),
+                         cudaMemcpyHostToDevice), "cp fwdw");
+    delete[] h_cos_th; delete[] h_sin_th; delete[] h_mcos_th; delete[] h_msin_th;
+    delete[] h_fwd_w;
+
+    // Batched 1D real FFTs of length nzeta, one batch element per (slot, m, j).
+    int n = p.nzeta, nz2 = p.nzeta / 2 + 1;
+    int batch = 12 * p.mpol * p.ns;
+    int inemb = nz2, outemb = n;
+    checkCufft(cufftPlanMany(&fp.plan_z2d, 1, &n, &inemb, 1, nz2,
+                             &outemb, 1, n, CUFFT_Z2D, batch), "plan z2d");
+    checkCufft(cufftPlanMany(&fp.plan_d2z, 1, &n, &outemb, 1, n,
+                             &inemb, 1, nz2, CUFFT_D2Z, batch), "plan d2z");
     return fp;
 }
 
@@ -136,6 +198,10 @@ void fourierFree(FourierPlan& fp) {
     cuFree(fp.d_crmn_e);cuFree(fp.d_crmn_o);cuFree(fp.d_czmn_e);cuFree(fp.d_czmn_o);
     cuFree(fp.d_clmn_e);cuFree(fp.d_clmn_o);
     cuFree(fp.d_fr_real);cuFree(fp.d_fz_real);cuFree(fp.d_fl_real);
+    cufftDestroy(fp.plan_z2d); cufftDestroy(fp.plan_d2z);
+    cudaFree(fp.d_zeta_spectra); cudaFree(fp.d_zeta_real);
+    cudaFree(fp.d_cos_th); cudaFree(fp.d_sin_th);
+    cudaFree(fp.d_mcos_th); cudaFree(fp.d_msin_th); cudaFree(fp.d_fwd_w);
 }
 
 // ---- inverse DFT (parity coefficients → real space) -------------------
@@ -254,21 +320,220 @@ __global__ void inverseDFTKernel(
     rv_real[idx]=rve+rvo; zv_real[idx]=zve+zvo; lv_real[idx]=lve+lvo;
 }
 
-void inverseDFT(const FourierPlan& fp, const SpectralState& st, const GridParams& p) {
-    dim3 block(32); dim3 grid((p.nZnT+31)/32, p.ns);
-    inverseDFTKernel<<<grid, block>>>(
+// ---- cuFFT backend: inverse ---------------------------------------------
+// Mirror of vmecpp's fft_toroidal.cc (FourierToReal3DSymmFastPoloidal):
+// the ζ direction is a real inverse FFT (cuFFT Z2D), the θ direction stays a
+// direct basis-table sum. All nine real-space outputs (r/z/l, their θ and ζ
+// derivatives) come from the 12 slots; the m-parity split into e/o arrays and
+// the odd-m scalxc division (maxsc) happen on the target side, as in vmecpp.
+__global__ void inversePackKernel(
+    const double* __restrict__ rmncc, const double* __restrict__ rmnss,
+    const double* __restrict__ zmnsc, const double* __restrict__ zmncs,
+    const double* __restrict__ lmnsc, const double* __restrict__ lmncs,
+    const int* __restrict__ xm, const int* __restrict__ xn,
+    int ns, int mpol, int ntor, int nfp, int nz2,
+    double2* __restrict__ spectra)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= ns * mpol * (ntor + 1)) return;
+    int j = t % ns, mode = t / ns;
+    int m = xm[mode], n = xn[mode];
+    double nf = n * nfp;
+    double rc = rmncc[j + mode * ns], rs = rmnss[j + mode * ns];
+    double zs = zmnsc[j + mode * ns], zc = zmncs[j + mode * ns];
+    double lsc = lmnsc[j + mode * ns], lcs = lmncs[j + mode * ns];
+    // cuFFT's Z2D synthesis is f[k] = X[0] + 2*Σ Re(X[n])cos - 2*Σ Im(X[n])sin,
+    // so the n>=1 bins are halved (cancelling the 2× exactly) and the DST
+    // slots carry a minus (vmecpp FillDct/FillDst). The ζ-derivative slots
+    // carry the n*nfp factor with vmecpp's signs (FillDctDeriv: Im = +spec*n*nfp,
+    // FillDstDeriv: Re = +spec*n*nfp). The n=0 bins of the DST/derivative
+    // slots stay 0 (sin(nζ) = n*nfp = 0); no mscale/nscale — the cuMES state
+    // is plain physical (λ carries ms*ns inside the state values).
+    double half   = (n == 0) ? 1.0 : 0.5;
+    double shalf  = (n == 0) ? 0.0 : 0.5;
+    double dhalf  = (n == 0) ? 0.0 : 0.5 * nf;
+    size_t step = (size_t)mpol * ns * nz2;
+    double2* slot = spectra + ((size_t)m * ns + j) * nz2 + n;
+    slot[0 * step] = make_double2(rc * half, 0.0);
+    slot[1 * step] = make_double2(0.0, -rs * shalf);
+    slot[2 * step] = make_double2(0.0, +rc * dhalf);
+    slot[3 * step] = make_double2(+rs * dhalf, 0.0);
+    slot[4 * step] = make_double2(zs * half, 0.0);
+    slot[5 * step] = make_double2(0.0, -zc * shalf);
+    slot[6 * step] = make_double2(0.0, +zs * dhalf);
+    slot[7 * step] = make_double2(+zc * dhalf, 0.0);
+    slot[8 * step] = make_double2(lsc * half, 0.0);
+    slot[9 * step] = make_double2(0.0, -lcs * shalf);
+    slot[10 * step] = make_double2(0.0, +lsc * dhalf);
+    slot[11 * step] = make_double2(+lcs * dhalf, 0.0);
+}
+
+// Poloidal accumulation over the FULL θ grid (block per surface j, threads
+// (k=ζ, l1); each thread handles θ points l1 and l1 + ntheta/2 and sums the
+// m-loop serially — the same accumulation order as inverseDFTKernel — then
+// writes each output point exactly once). Outputs the nine e/o parity arrays:
+// even m -> *_e, odd m -> *_o divided by maxsc (vmecpp's scalxc odd
+// decomposition). Slot-to-output mapping (verified against inverseDFTKernel
+// and fft_toroidal.cc):
+//   r1 = rmkcc*cos + rmkss*sin        ru = -m*rmkcc*sin + m*rmkss*cos
+//   rv = rmkccN*cos + rmkssN*sin      z1 = zmksc*sin + zmkcs*cos
+//   zu = m*zmksc*cos - m*zmkcs*sin    zv = zmkscN*sin + zmkcsN*cos
+//   l1 = lmksc*sin + lmkcs*cos        lu = m*lmksc*cos - m*lmkcs*sin
+//   lv = -(lmkscN*sin + lmkcsN*cos)   (λ's ζ-derivative stored negated)
+__global__ void inverseAccumulateKernel(
+    const double* __restrict__ zeta_real,
+    const double* __restrict__ cos_th, const double* __restrict__ sin_th,
+    const double* __restrict__ mcos_th, const double* __restrict__ msin_th,
+    int ns, int mpol, int ntheta, int nzeta, int nZnT,
+    double* __restrict__ r_e,  double* __restrict__ z_e,  double* __restrict__ l_e,
+    double* __restrict__ ru_e, double* __restrict__ zu_e, double* __restrict__ lu_e,
+    double* __restrict__ rv_e, double* __restrict__ zv_e, double* __restrict__ lv_e,
+    double* __restrict__ r_o,  double* __restrict__ z_o,  double* __restrict__ l_o,
+    double* __restrict__ ru_o, double* __restrict__ zu_o, double* __restrict__ lu_o,
+    double* __restrict__ rv_o, double* __restrict__ zv_o, double* __restrict__ lv_o)
+{
+    int j = blockIdx.x;
+    int k = threadIdx.x, l1 = threadIdx.y;
+    int nthreads = blockDim.x * blockDim.y;
+    extern __shared__ double sh[];   // [12][mpol][nzeta]
+    for (int i = threadIdx.x + l1 * blockDim.x; i < 12 * mpol * nzeta; i += nthreads) {
+        int s = i / (mpol * nzeta), rem = i - s * mpol * nzeta;
+        int m = rem / nzeta, kk = rem % nzeta;
+        sh[i] = zeta_real[(((size_t)s * mpol + m) * ns + j) * nzeta + kk];
+    }
+    __syncthreads();
+    double maxsc = fmax(sqrt((double)j / (ns - 1.0)), sqrt(1.0 / (ns - 1.0)));
+    double facO = 1.0 / maxsc;
+    size_t mstride = (size_t)mpol * nzeta;
+    #pragma unroll
+    for (int pass = 0; pass < 2; ++pass) {
+        int l = l1 + pass * (ntheta / 2);
+        double re = 0, ze = 0, le = 0, rue = 0, zue = 0, lue = 0;
+        double ro = 0, zo = 0, lo = 0, ruo = 0, zuo = 0, luo = 0;
+        double rve = 0, zve = 0, lve = 0, rvo = 0, zvo = 0, lvo = 0;
+        for (int m = 0; m < mpol; ++m) {
+            const double* sm = sh + m * nzeta;
+            double rmkcc = sm[0 * mstride + k], rmkss = sm[1 * mstride + k];
+            double rmkccN = sm[2 * mstride + k], rmkssN = sm[3 * mstride + k];
+            double zmksc = sm[4 * mstride + k], zmkcs = sm[5 * mstride + k];
+            double zmkscN = sm[6 * mstride + k], zmkcsN = sm[7 * mstride + k];
+            double lmksc = sm[8 * mstride + k], lmkcs = sm[9 * mstride + k];
+            double lmkscN = sm[10 * mstride + k], lmkcsN = sm[11 * mstride + k];
+            double cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
+            double mcos = mcos_th[m * ntheta + l], msin = msin_th[m * ntheta + l];
+            double fac = (m % 2 == 1) ? facO : 1.0;
+            double r1  = fac * (rmkcc * cosm + rmkss * sinm);
+            double ru1 = fac * (rmkcc * msin + rmkss * mcos);
+            double rv1 = fac * (rmkccN * cosm + rmkssN * sinm);
+            double z1  = fac * (zmksc * sinm + zmkcs * cosm);
+            double zu1 = fac * (zmksc * mcos + zmkcs * msin);
+            double zv1 = fac * (zmkscN * sinm + zmkcsN * cosm);
+            double l1v = fac * (lmksc * sinm + lmkcs * cosm);
+            double lu1 = fac * (lmksc * mcos + lmkcs * msin);
+            double lv1 = fac * -(lmkscN * sinm + lmkcsN * cosm);
+            if (m % 2 == 1) {
+                ro += r1; zo += z1; lo += l1v;
+                ruo += ru1; zuo += zu1; luo += lu1;
+                rvo += rv1; zvo += zv1; lvo += lv1;
+            } else {
+                re += r1; ze += z1; le += l1v;
+                rue += ru1; zue += zu1; lue += lu1;
+                rve += rv1; zve += zv1; lve += lv1;
+            }
+        }
+        int idx = j * nZnT + k * ntheta + l;
+        r_e[idx] = re;  z_e[idx] = ze;  l_e[idx] = le;
+        ru_e[idx] = rue; zu_e[idx] = zue; lu_e[idx] = lue;
+        rv_e[idx] = rve; zv_e[idx] = zve; lv_e[idx] = lve;
+        r_o[idx] = ro;  z_o[idx] = zo;  l_o[idx] = lo;
+        ru_o[idx] = ruo; zu_o[idx] = zuo; lu_o[idx] = luo;
+        rv_o[idx] = rvo; zv_o[idx] = zvo; lv_o[idx] = lvo;
+    }
+}
+
+// The 9 combined (e+o) real-space arrays (used by the dump machinery and the
+// legacy test-only forwardDFTDirect).
+__global__ void combineParityKernel(
+    const double* __restrict__ r_e,  const double* __restrict__ z_e,
+    const double* __restrict__ l_e,  const double* __restrict__ ru_e,
+    const double* __restrict__ zu_e, const double* __restrict__ lu_e,
+    const double* __restrict__ rv_e, const double* __restrict__ zv_e,
+    const double* __restrict__ lv_e, const double* __restrict__ r_o,
+    const double* __restrict__ z_o,  const double* __restrict__ l_o,
+    const double* __restrict__ ru_o, const double* __restrict__ zu_o,
+    const double* __restrict__ lu_o, const double* __restrict__ rv_o,
+    const double* __restrict__ zv_o, const double* __restrict__ lv_o,
+    int nZnT, int ns,
+    double* __restrict__ r_real,  double* __restrict__ z_real,
+    double* __restrict__ l_real,  double* __restrict__ ru_real,
+    double* __restrict__ zu_real, double* __restrict__ lu_real,
+    double* __restrict__ rv_real, double* __restrict__ zv_real,
+    double* __restrict__ lv_real)
+{
+    int j = blockIdx.y, k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= nZnT) return;
+    int idx = k + j * nZnT;
+    r_real[idx] = r_e[idx] + r_o[idx];   z_real[idx] = z_e[idx] + z_o[idx];
+    l_real[idx] = l_e[idx] + l_o[idx];   ru_real[idx] = ru_e[idx] + ru_o[idx];
+    zu_real[idx] = zu_e[idx] + zu_o[idx]; lu_real[idx] = lu_e[idx] + lu_o[idx];
+    rv_real[idx] = rv_e[idx] + rv_o[idx]; zv_real[idx] = zv_e[idx] + zv_o[idx];
+    lv_real[idx] = lv_e[idx] + lv_o[idx];
+}
+
+static void inverseDFTCufft(const FourierPlan& fp, const SpectralState& st,
+                            const GridParams& p) {
+    // Zero the half-spectra (only bins n <= ntor are filled).
+    checkCuda(cudaMemset(fp.d_zeta_spectra, 0,
+        (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(double2)), "inv zero");
+    int total = p.ns * p.mnmax;
+    inversePackKernel<<<(total + 255) / 256, 256>>>(
         st.d_rmncc, st.d_rmnss, st.d_zmnsc, st.d_zmncs, st.d_lmnsc, st.d_lmncs,
-        fp.basis.d_cc, fp.basis.d_ss, fp.basis.d_sc, fp.basis.d_cs,
         fp.basis.d_xm, fp.basis.d_xn,
-        p.ns, p.mnmax, p.nZnT, p.nfp,
+        p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
+    checkCufft(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
+    dim3 blk(p.nzeta, p.ntheta / 2);
+    dim3 grd(p.ns);
+    inverseAccumulateKernel<<<grd, blk, 12 * p.mpol * p.nzeta * sizeof(double)>>>(
+        fp.d_zeta_real,
+        fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
+        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
         fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
+        fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
         fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
-        fp.d_rv_e, fp.d_zv_e, fp.d_lv_e, fp.d_rv_o, fp.d_zv_o, fp.d_lv_o,
+        fp.d_rv_o, fp.d_zv_o, fp.d_lv_o);
+    dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
+    combineParityKernel<<<cgrd, cblk>>>(
+        fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
+        fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
+        fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
+        fp.d_rv_o, fp.d_zv_o, fp.d_lv_o,
+        p.nZnT, p.ns,
         fp.d_r_real, fp.d_z_real, fp.d_l_real,
         fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
         fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
-    checkCuda(cudaGetLastError(), "invDFT");
-    checkCuda(cudaDeviceSynchronize(), "invDFT sync");
+    checkCuda(cudaGetLastError(), "inv cuFFT");
+    checkCuda(cudaDeviceSynchronize(), "inv cuFFT sync");
+}
+
+void inverseDFT(const FourierPlan& fp, const SpectralState& st, const GridParams& p) {
+    if (fp.backend != DftBackend::kCufft) {
+        dim3 block(32); dim3 grid((p.nZnT+31)/32, p.ns);
+        inverseDFTKernel<<<grid, block>>>(
+            st.d_rmncc, st.d_rmnss, st.d_zmnsc, st.d_zmncs, st.d_lmnsc, st.d_lmncs,
+            fp.basis.d_cc, fp.basis.d_ss, fp.basis.d_sc, fp.basis.d_cs,
+            fp.basis.d_xm, fp.basis.d_xn,
+            p.ns, p.mnmax, p.nZnT, p.nfp,
+            fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
+            fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
+            fp.d_rv_e, fp.d_zv_e, fp.d_lv_e, fp.d_rv_o, fp.d_zv_o, fp.d_lv_o,
+            fp.d_r_real, fp.d_z_real, fp.d_l_real,
+            fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
+            fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
+        checkCuda(cudaGetLastError(), "invDFT");
+        checkCuda(cudaDeviceSynchronize(), "invDFT sync");
+        return;
+    }
+    inverseDFTCufft(fp, st, p);
 }
 
 // ---- forward DFT (parity forces → 6-component spectral forces) -------
@@ -458,24 +723,181 @@ __global__ void forwardDFTParityKernel(
     f_spec[j + mode*ns + 5*mnmax*ns] = slcs;
 }
 
-void forwardDFT(const FourierPlan& fp, double* d_f_spectral, const GridParams& p,
-                const ConstraintWorkspace& cw) {
+// ---- cuFFT backend: forward ----------------------------------------------
+// Mirror of vmecpp's dft_ForcesToFourier_3d_symm (fft_toroidal.cc): a fused
+// poloidal reduction over the REDUCED θ grid [0, π] builds 12 real ζ-signals
+// per (m, j) (the m-parity selects the _e/_o force arrays, xmpq = m(m-1)
+// folds the spectral-condensation constraint into tempR/tempZ), a batched
+// real FFT gives their half-spectra, and the recovery recombines the bins.
+// Slot definitions (signs verified against forwardDFTParityKernel):
+//   rmkcc  += tempR*cos + brmn*(-m*sin)     rmkss += tempR*sin + brmn*(+m*cos)
+//   zmksc  += tempZ*sin + bzmn*(+m*cos)     zmkcs += tempZ*cos + bzmn*(-m*sin)
+//   lmksc  += blmn*(+m*cos)                 lmkcs += blmn*(-m*sin)
+//   rmkccN -= crmn*cos;  rmkssN -= crmn*sin
+//   zmkscN -= czmn*sin;  zmkcsN -= czmn*cos
+//   lmkscN -= clmn*sin;  lmkcsN -= clmn*cos
+// with the θ tables carrying the trapezoid weight (d_fwd_w, intNorm with
+// endpoint ½ — the θ > π points are not on vmecpp's reduced grid).
+__global__ void forwardReduceKernel(
+    const double* __restrict__ armn_e, const double* __restrict__ armn_o,
+    const double* __restrict__ azmn_e, const double* __restrict__ azmn_o,
+    const double* __restrict__ brmn_e, const double* __restrict__ brmn_o,
+    const double* __restrict__ bzmn_e, const double* __restrict__ bzmn_o,
+    const double* __restrict__ crmn_e, const double* __restrict__ crmn_o,
+    const double* __restrict__ czmn_e, const double* __restrict__ czmn_o,
+    const double* __restrict__ blmn_e, const double* __restrict__ blmn_o,
+    const double* __restrict__ clmn_e, const double* __restrict__ clmn_o,
+    const double* __restrict__ frcon_e, const double* __restrict__ frcon_o,
+    const double* __restrict__ fzcon_e, const double* __restrict__ fzcon_o,
+    const double* __restrict__ cos_th, const double* __restrict__ sin_th,
+    const double* __restrict__ mcos_th, const double* __restrict__ msin_th,
+    const double* __restrict__ fwd_w,
+    int ns, int mpol, int ntheta, int nThetaRed, int nzeta, int nZnT,
+    double* __restrict__ zeta_real)
+{
+    int j = blockIdx.y, m = blockIdx.x;
+    int k = threadIdx.x, l = threadIdx.y;
+    if (l >= nThetaRed) return;
+    extern __shared__ double sh[];   // [12][nzeta], reduction per (slot, k)
+    for (int i = threadIdx.x; i < 12 * nzeta; i += blockDim.x) sh[i] = 0.0;
+    __syncthreads();
+    bool m_even = (m % 2 == 0);
+    const double* armn = m_even ? armn_e : armn_o;
+    const double* azmn = m_even ? azmn_e : azmn_o;
+    const double* brmn = m_even ? brmn_e : brmn_o;
+    const double* bzmn = m_even ? bzmn_e : bzmn_o;
+    const double* crmn = m_even ? crmn_e : crmn_o;
+    const double* czmn = m_even ? czmn_e : czmn_o;
+    const double* blmn = m_even ? blmn_e : blmn_o;
+    const double* clmn = m_even ? clmn_e : clmn_o;
+    const double* frcon = m_even ? frcon_e : frcon_o;
+    const double* fzcon = m_even ? fzcon_e : fzcon_o;
+    double xmpq = (double)m * (m - 1);
+    int idx = j * nZnT + k * ntheta + l;
+    double w = fwd_w[l];
+    double cosm = w * cos_th[m * ntheta + l], sinm = w * sin_th[m * ntheta + l];
+    double mcos = w * mcos_th[m * ntheta + l], msin = w * msin_th[m * ntheta + l];
+    double tempR = armn[idx] + xmpq * frcon[idx];
+    double tempZ = azmn[idx] + xmpq * fzcon[idx];
+    double br = brmn[idx], bz = bzmn[idx];
+    double cr = crmn[idx], cz = czmn[idx];
+    double bl = blmn[idx], cl = clmn[idx];
+    atomicAdd(&sh[0 * nzeta + k], tempR * cosm + br * msin);
+    atomicAdd(&sh[1 * nzeta + k], tempR * sinm + br * mcos);
+    atomicAdd(&sh[2 * nzeta + k], -cr * cosm);
+    atomicAdd(&sh[3 * nzeta + k], -cr * sinm);
+    atomicAdd(&sh[4 * nzeta + k], tempZ * sinm + bz * mcos);
+    atomicAdd(&sh[5 * nzeta + k], tempZ * cosm + bz * msin);
+    atomicAdd(&sh[6 * nzeta + k], -cz * sinm);
+    atomicAdd(&sh[7 * nzeta + k], -cz * cosm);
+    atomicAdd(&sh[8 * nzeta + k], bl * mcos);
+    atomicAdd(&sh[9 * nzeta + k], bl * msin);
+    atomicAdd(&sh[10 * nzeta + k], -cl * sinm);
+    atomicAdd(&sh[11 * nzeta + k], -cl * cosm);
+    __syncthreads();
+    if (l == 0) {
+        double* base = zeta_real + ((size_t)m * ns + j) * nzeta;
+        size_t step = (size_t)mpol * ns * nzeta;
+        #pragma unroll
+        for (int s = 0; s < 12; ++s) base[s * step + k] = sh[s * nzeta + k];
+    }
+}
+
+// Coefficient recovery from the 12 half-spectra (bin n of each slot).
+// With nf = n*nfp and mn = mscale*nscale:
+//   frcc = mn*(Re F_rmkcc + nf*Im F_rmkccN)   frss = mn*(-Im F_rmkss + nf*Re F_rmkssN)
+//   fzsc = mn*(Re F_zmksc + nf*Im F_zmkscN)   fzcs = mn*(-Im F_zmkcs + nf*Re F_zmkcsN)
+//   flsc = mn*(Re F_lmksc + nf*Im F_lmkscN)   flcs = mn*(-Im F_lmkcs + nf*Re F_lmkcsN)
+// Surface coverage (vmecpp dft_ForcesToFourier_3d_symm): axis j=0 keeps only
+// the m=0 frcc/fzcs (incl. the crmn/czmn toroidal terms); the LCFS j=ns-1
+// keeps only the λ components; f_spec is pre-zeroed by the caller.
+__global__ void forwardRecoverKernel(
+    const double2* __restrict__ spectra,
+    const int* __restrict__ xm, const int* __restrict__ xn,
+    int ns, int mpol, int mnmax, int nfp, int nz2,
+    double* __restrict__ f_spec)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= ns * mnmax) return;
+    int j = t % ns, mode = t / ns;
+    int m = xm[mode], n = xn[mode];
+    double nf = n * nfp;
+    double ms = (m == 0) ? 1.0 : sqrt(2.0);
+    double nsq = (n == 0) ? 1.0 : sqrt(2.0);
+    double mn = ms * nsq;
+    size_t step = (size_t)mpol * ns * nz2;
+    const double2* slot = spectra + ((size_t)m * ns + j) * nz2 + n;
+    double2 F0 = slot[0 * step],  F1 = slot[1 * step],  F2 = slot[2 * step],  F3 = slot[3 * step];
+    double2 F4 = slot[4 * step],  F5 = slot[5 * step],  F6 = slot[6 * step],  F7 = slot[7 * step];
+    double2 F8 = slot[8 * step],  F9 = slot[9 * step],  F10 = slot[10 * step], F11 = slot[11 * step];
+    double* out = f_spec + j + mode * ns;
+    if (j == 0) {
+        if (m > 0) return;   // axis: m=0 only
+        out[0 * mnmax * ns] = mn * (F0.x + nf * F2.y);
+        out[4 * mnmax * ns] = mn * (-F5.y + nf * F7.x);
+        return;
+    }
+    if (j == ns - 1) {       // LCFS: λ only
+        out[2 * mnmax * ns] = mn * (F8.x + nf * F10.y);
+        out[5 * mnmax * ns] = mn * (-F9.y + nf * F11.x);
+        return;
+    }
+    out[0 * mnmax * ns] = mn * (F0.x + nf * F2.y);
+    out[1 * mnmax * ns] = mn * (F4.x + nf * F6.y);
+    out[2 * mnmax * ns] = mn * (F8.x + nf * F10.y);
+    out[3 * mnmax * ns] = mn * (-F1.y + nf * F3.x);
+    out[4 * mnmax * ns] = mn * (-F5.y + nf * F7.x);
+    out[5 * mnmax * ns] = mn * (-F9.y + nf * F11.x);
+}
+
+static void forwardDFTCufft(const FourierPlan& fp, double* d_f_spectral,
+                            const GridParams& p, const ConstraintWorkspace& cw) {
     // vmecpp zeroes the target before projecting (m_physical_f.setZero());
-    // the kernel writes only the entries vmecpp computes.
+    // the kernels write only the entries vmecpp computes.
     checkCuda(cudaMemset(d_f_spectral, 0,
                          (size_t)6 * p.mnmax * p.ns * sizeof(double)), "fwd zero");
-    {   dim3 b(1), g(p.mnmax, p.ns);
-        forwardDFTParityKernel<<<g, b>>>(
-            fp.d_armn_e, fp.d_armn_o, fp.d_azmn_e, fp.d_azmn_o,
-            fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
-            fp.d_crmn_e, fp.d_crmn_o, fp.d_czmn_e, fp.d_czmn_o,
-            fp.d_blmn_e, fp.d_blmn_o, fp.d_clmn_e, fp.d_clmn_o,
-            cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o,
-            fp.basis.d_cc, fp.basis.d_ss, fp.basis.d_sc, fp.basis.d_cs,
-            fp.basis.d_xm, fp.basis.d_xn,
-            p.ns, p.mnmax, p.nZnT, p.ntheta, p.nfp, d_f_spectral);
-        checkCuda(cudaGetLastError(), "fwdDFT"); }
-    checkCuda(cudaDeviceSynchronize(), "fwdDFT sync");
+    dim3 blk(p.nzeta, p.ntheta / 2 + 1);
+    dim3 grd(p.mpol, p.ns);
+    forwardReduceKernel<<<grd, blk, 12 * p.nzeta * sizeof(double)>>>(
+        fp.d_armn_e, fp.d_armn_o, fp.d_azmn_e, fp.d_azmn_o,
+        fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
+        fp.d_crmn_e, fp.d_crmn_o, fp.d_czmn_e, fp.d_czmn_o,
+        fp.d_blmn_e, fp.d_blmn_o, fp.d_clmn_e, fp.d_clmn_o,
+        cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o,
+        fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th, fp.d_fwd_w,
+        p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT,
+        fp.d_zeta_real);
+    checkCufft(cufftExecD2Z(fp.plan_d2z, fp.d_zeta_real, fp.d_zeta_spectra), "fwd d2z");
+    int total = p.ns * p.mnmax;
+    forwardRecoverKernel<<<(total + 255) / 256, 256>>>(
+        fp.d_zeta_spectra, fp.basis.d_xm, fp.basis.d_xn,
+        p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, d_f_spectral);
+    checkCuda(cudaGetLastError(), "fwd cuFFT");
+    checkCuda(cudaDeviceSynchronize(), "fwd cuFFT sync");
+}
+
+void forwardDFT(const FourierPlan& fp, double* d_f_spectral, const GridParams& p,
+                const ConstraintWorkspace& cw) {
+    if (fp.backend != DftBackend::kCufft) {
+        // vmecpp zeroes the target before projecting (m_physical_f.setZero());
+        // the kernel writes only the entries vmecpp computes.
+        checkCuda(cudaMemset(d_f_spectral, 0,
+                             (size_t)6 * p.mnmax * p.ns * sizeof(double)), "fwd zero");
+        {   dim3 b(1), g(p.mnmax, p.ns);
+            forwardDFTParityKernel<<<g, b>>>(
+                fp.d_armn_e, fp.d_armn_o, fp.d_azmn_e, fp.d_azmn_o,
+                fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
+                fp.d_crmn_e, fp.d_crmn_o, fp.d_czmn_e, fp.d_czmn_o,
+                fp.d_blmn_e, fp.d_blmn_o, fp.d_clmn_e, fp.d_clmn_o,
+                cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o,
+                fp.basis.d_cc, fp.basis.d_ss, fp.basis.d_sc, fp.basis.d_cs,
+                fp.basis.d_xm, fp.basis.d_xn,
+                p.ns, p.mnmax, p.nZnT, p.ntheta, p.nfp, d_f_spectral);
+            checkCuda(cudaGetLastError(), "fwdDFT"); }
+        checkCuda(cudaDeviceSynchronize(), "fwdDFT sync");
+        return;
+    }
+    forwardDFTCufft(fp, d_f_spectral, p, cw);
 }
 
 // Backward-compatible forward DFT for tests

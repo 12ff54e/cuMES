@@ -31,6 +31,7 @@ add_executable(cuMES
 
 target_link_libraries(cuMES PRIVATE
     CUDA::cublas
+    CUDA::cufft
 )
 
 target_include_directories(cuMES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -40,7 +41,7 @@ add_executable(test_fourier
     tests/test_fourier.cu
     src/fourier.cu
 )
-target_link_libraries(test_fourier PRIVATE CUDA::cublas)
+target_link_libraries(test_fourier PRIVATE CUDA::cublas CUDA::cufft)
 target_include_directories(test_fourier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(test_forces
@@ -50,7 +51,7 @@ add_executable(test_forces
     src/forces.cu
     src/profiles.cu
 )
-target_link_libraries(test_forces PRIVATE CUDA::cublas)
+target_link_libraries(test_forces PRIVATE CUDA::cublas CUDA::cufft)
 target_include_directories(test_forces PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(test_force_verify
@@ -67,7 +68,7 @@ add_executable(test_geometry_iso
     src/geometry.cu
     src/profiles.cu
 )
-target_link_libraries(test_geometry_iso PRIVATE CUDA::cublas)
+target_link_libraries(test_geometry_iso PRIVATE CUDA::cublas CUDA::cufft)
 target_include_directories(test_geometry_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_force_verify PRIVATE CUDA::cublas)
+target_link_libraries(test_force_verify PRIVATE CUDA::cublas CUDA::cufft)
 target_include_directories(test_force_verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

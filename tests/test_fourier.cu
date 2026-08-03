@@ -320,6 +320,204 @@ static int t_gpuVcpu_inv(GridParams& p, cublasHandle_t cb, FourierPlan& fp, Spec
     return g_failures-lf;
 }
 
+// A/B cross-check: the direct-sum and cuFFT backends must agree on identical
+// input at ~1e-10 relative (both are the same linear map, differing only in
+// floating-point summation order).
+static int t_backendAB(GridParams& p, cublasHandle_t cb, FourierPlan& fp, SpectralState& st){
+    int lf=g_failures; printf("  test_backendAB ... ");
+    size_t nbr=p.ns*p.nZnT*sizeof(double);
+    std::vector<double> cc_(p.ns*p.mnmax),ss_(p.ns*p.mnmax),zs(p.ns*p.mnmax),zc(p.ns*p.mnmax),ls_(p.ns*p.mnmax),lcs(p.ns*p.mnmax);
+    for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
+        cc_[j+m*p.ns]=sin(0.1*(j+1)+0.7*(m+1));   ss_[j+m*p.ns]=cos(0.3*(j+1)+1.1*(m+1));
+        zs[j+m*p.ns]=sin(0.5*(j+1)+1.7*(m+1));    zc[j+m*p.ns]=cos(0.2*(j+1)+0.9*(m+1));
+        ls_[j+m*p.ns]=sin(0.4*(j+1)+2.3*(m+1));   lcs[j+m*p.ns]=cos(0.6*(j+1)+1.3*(m+1));
+    }
+    gpuInv(st,fp,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    std::vector<double> g1(9*p.ns*p.nZnT);
+    const double* ars[]={fp.d_r_real,fp.d_z_real,fp.d_l_real,fp.d_ru_real,fp.d_zu_real,
+                         fp.d_lu_real,fp.d_rv_real,fp.d_zv_real,fp.d_lv_real};
+    for(int i=0;i<9;++i) cc(cudaMemcpy(g1.data()+i*p.ns*p.nZnT,ars[i],nbr,cudaMemcpyDeviceToHost),"g1");
+    fp.backend=DftBackend::kDirect;
+    gpuInv(st,fp,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    std::vector<double> g2(9*p.ns*p.nZnT);
+    for(int i=0;i<9;++i) cc(cudaMemcpy(g2.data()+i*p.ns*p.nZnT,ars[i],nbr,cudaMemcpyDeviceToHost),"g2");
+    for(size_t i=0;i<g1.size();++i){
+        double scale=fmax(1.0,fabs(g2[i]));
+        if(fabs(g1[i]-g2[i])>1e-10*scale) { fprintf(stderr,"FAIL [AB-inv] i=%zu got=%.15e exp=%.15e\n",i,g1[i],g2[i]); ++g_failures; }
+    }
+    fp.backend=DftBackend::kCufft;
+
+    // Forward A/B: random forces + random constraint force.
+    double* d_fs; cc(cudaMalloc(&d_fs,6*p.ns*p.mnmax*sizeof(double)),"fs");
+    ConstraintWorkspace cw{};
+    size_t nfc=(size_t)p.ns*p.nZnT*sizeof(double);
+    cudaMalloc(&cw.d_frcon_e,nfc); cudaMalloc(&cw.d_frcon_o,nfc);
+    cudaMalloc(&cw.d_fzcon_e,nfc); cudaMalloc(&cw.d_fzcon_o,nfc);
+    std::vector<double> fr(p.ns*p.nZnT);
+    double* farrs[]={fp.d_armn_e,fp.d_armn_o,fp.d_azmn_e,fp.d_azmn_o,
+                     fp.d_brmn_e,fp.d_brmn_o,fp.d_bzmn_e,fp.d_bzmn_o,
+                     fp.d_crmn_e,fp.d_crmn_o,fp.d_czmn_e,fp.d_czmn_o,
+                     fp.d_blmn_e,fp.d_blmn_o,fp.d_clmn_e,fp.d_clmn_o,
+                     cw.d_frcon_e,cw.d_frcon_o,cw.d_fzcon_e,cw.d_fzcon_o};
+    for(int c=0;c<20;++c){
+        for(int i=0;i<p.ns*p.nZnT;++i) fr[i]=sin(0.13*i+0.9*c+0.5)+0.3*cos(0.07*i+0.2*c);
+        cc(cudaMemcpy(farrs[c],fr.data(),nbr,cudaMemcpyHostToDevice),"fr");
+    }
+    forwardDFT(fp,d_fs,p,cw);
+    std::vector<double> f1(6*p.ns*p.mnmax);
+    cc(cudaMemcpy(f1.data(),d_fs,6*p.ns*p.mnmax*sizeof(double),cudaMemcpyDeviceToHost),"f1");
+    fp.backend=DftBackend::kDirect;
+    forwardDFT(fp,d_fs,p,cw);
+    std::vector<double> f2(6*p.ns*p.mnmax);
+    cc(cudaMemcpy(f2.data(),d_fs,6*p.ns*p.mnmax*sizeof(double),cudaMemcpyDeviceToHost),"f2");
+    for(size_t i=0;i<f1.size();++i){
+        double scale=fmax(1.0,fabs(f2[i]));
+        if(fabs(f1[i]-f2[i])>1e-10*scale) { fprintf(stderr,"FAIL [AB-fwd] i=%zu got=%.15e exp=%.15e\n",i,f1[i],f2[i]); ++g_failures; }
+    }
+    fp.backend=DftBackend::kCufft;
+    cudaFree(d_fs);
+    cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o); cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
+    printf(g_failures==lf?"PASS\n":"FAIL\n");
+    return g_failures-lf;
+}
+
+// Axis branch (vmecpp dft_ForcesToFourier: j=0 keeps only m=0 frcc/fzcs,
+// including the crmn/czmn toroidal terms). Expected values computed on the
+// host with the same reduced-grid trapezoid as the kernels.
+static int t_fwd_axis(GridParams& p, cublasHandle_t cb, FourierPlan& fp, SpectralState& st){
+    int lf=g_failures; printf("  test_forwardDFT_axis ... ");
+    size_t nbr=p.ns*p.nZnT*sizeof(double);
+    int n1=1*(p.ntor+1)+0; // mode (1,0)
+    std::vector<double> fr(p.ns*p.nZnT,0);
+    for(int k=0;k<p.nZnT;++k){
+        double ze=2*M_PI*(k/p.ntheta)/p.nzeta;
+        fr[k+0*p.nZnT]=2.0+cos(ze);               // armn_e at axis
+    }
+    cc(cudaMemset(fp.d_armn_e,0,nbr),"ms");
+    cc(cudaMemcpy(fp.d_armn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"armn_e");
+    for(int k=0;k<p.nZnT;++k){
+        double ze=2*M_PI*(k/p.ntheta)/p.nzeta;
+        fr[k+0*p.nZnT]=sin(ze);                   // crmn_e at axis
+    }
+    cc(cudaMemset(fp.d_crmn_e,0,nbr),"ms");
+    cc(cudaMemcpy(fp.d_crmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"crmn_e");
+    for(int k=0;k<p.nZnT;++k){
+        double ze=2*M_PI*(k/p.ntheta)/p.nzeta;
+        fr[k+0*p.nZnT]=sin(ze);                   // azmn_e at axis
+    }
+    cc(cudaMemset(fp.d_azmn_e,0,nbr),"ms");
+    cc(cudaMemcpy(fp.d_azmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"azmn_e");
+    for(int k=0;k<p.nZnT;++k){
+        double ze=2*M_PI*(k/p.ntheta)/p.nzeta;
+        fr[k+0*p.nZnT]=cos(ze);                   // czmn_e at axis
+    }
+    cc(cudaMemset(fp.d_czmn_e,0,nbr),"ms");
+    cc(cudaMemcpy(fp.d_czmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"czmn_e");
+    double* d_fs; cc(cudaMalloc(&d_fs,6*p.ns*p.mnmax*sizeof(double)),"fs");
+    ConstraintWorkspace cw_zero{};
+    size_t nfc=(size_t)p.ns*p.nZnT*sizeof(double);
+    cudaMalloc(&cw_zero.d_frcon_e,nfc); cudaMemset(cw_zero.d_frcon_e,0,nfc);
+    cudaMalloc(&cw_zero.d_frcon_o,nfc); cudaMemset(cw_zero.d_frcon_o,0,nfc);
+    cudaMalloc(&cw_zero.d_fzcon_e,nfc); cudaMemset(cw_zero.d_fzcon_e,0,nfc);
+    cudaMalloc(&cw_zero.d_fzcon_o,nfc); cudaMemset(cw_zero.d_fzcon_o,0,nfc);
+    forwardDFT(fp,d_fs,p,cw_zero);
+    std::vector<double> fs(6*p.ns*p.mnmax);
+    cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(double),cudaMemcpyDeviceToHost),"get fs");
+    std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
+    hostBasis(p,hcc,hss,hsc,hcs,hxm,hxn);
+    // Host expectation for mode (0,1) at the axis (nfp=1 -> n_ibp=1).
+    int mode=0*(p.ntor+1)+1;
+    int nThetaRed=p.ntheta/2+1;
+    double intNorm=1.0/((double)p.nzeta*(nThetaRed-1));
+    double frcc=0, fzcs=0;
+    for(int k=0;k<p.nZnT;++k){
+        int it=k%p.ntheta; if(it>=nThetaRed) continue;
+        double w=intNorm; if(it==0||it==nThetaRed-1) w*=0.5;
+        int iz=k/p.ntheta; double ze=2*M_PI*iz/p.nzeta;
+        int idx=k+0*p.nZnT;
+        frcc += ( (2.0+cos(ze)) * hcc[k+mode*p.nZnT] + sin(ze) * hcs[k+mode*p.nZnT]) * w;
+        fzcs += ( sin(ze) * hcs[k+mode*p.nZnT] - cos(ze) * hcc[k+mode*p.nZnT]) * w;
+    }
+    const double sq2=sqrt(2.0); // nscale for n=1; mscale=1 for m=0
+    frcc*=sq2; fzcs*=sq2;
+    checkMode(fs[0*p.ns+mode*p.ns+0*p.mnmax*p.ns],frcc,1e-10,"axis_frcc",0,mode);
+    checkMode(fs[0*p.ns+mode*p.ns+4*p.mnmax*p.ns],fzcs,1e-10,"axis_fzcs",0,mode);
+    // Poloidal m>0 at the axis must stay zero (mode index >= ntor+1; the
+    // (0,n) modes ARE computed at the axis).
+    for(int m=p.ntor+1;m<p.mnmax;++m){
+        checkMode(fs[0+m*p.ns+0*p.mnmax*p.ns],0.0,1e-13,"axis_m>0",0,m);
+        checkMode(fs[0+m*p.ns+4*p.mnmax*p.ns],0.0,1e-13,"axis_m>0_z",0,m);
+    }
+    cudaFree(d_fs);
+    cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
+    cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
+    printf(g_failures==lf?"PASS\n":"FAIL\n");
+    return g_failures-lf;
+}
+
+// LCFS branch (j=ns-1 keeps only the λ components flsc/flcs).
+static int t_fwd_lcfs(GridParams& p, cublasHandle_t cb, FourierPlan& fp, SpectralState& st){
+    int lf=g_failures; printf("  test_forwardDFT_lcfs ... ");
+    size_t nbr=p.ns*p.nZnT*sizeof(double);
+    int jB=p.ns-1;
+    std::vector<double> fr(p.ns*p.nZnT,0);
+    // blmn_o (m=1 is odd) at the LCFS: 1 + sin(θ)cos(ζ); clmn_o: cos(θ)sin(ζ)
+    for(int k=0;k<p.nZnT;++k){
+        int it=k%p.ntheta, iz=k/p.ntheta;
+        double th=2*M_PI*it/p.ntheta, ze=2*M_PI*iz/p.nzeta;
+        fr[k+jB*p.nZnT]=1.0+sin(th)*cos(ze);
+    }
+    cc(cudaMemset(fp.d_blmn_o,0,nbr),"ms");
+    cc(cudaMemcpy(fp.d_blmn_o,fr.data(),nbr,cudaMemcpyHostToDevice),"blmn_o");
+    for(int k=0;k<p.nZnT;++k){
+        int it=k%p.ntheta, iz=k/p.ntheta;
+        double th=2*M_PI*it/p.ntheta, ze=2*M_PI*iz/p.nzeta;
+        fr[k+jB*p.nZnT]=cos(th)*sin(ze);
+    }
+    cc(cudaMemset(fp.d_clmn_o,0,nbr),"ms");
+    cc(cudaMemcpy(fp.d_clmn_o,fr.data(),nbr,cudaMemcpyHostToDevice),"clmn_o");
+    double* d_fs; cc(cudaMalloc(&d_fs,6*p.ns*p.mnmax*sizeof(double)),"fs");
+    ConstraintWorkspace cw_zero{};
+    size_t nfc=(size_t)p.ns*p.nZnT*sizeof(double);
+    cudaMalloc(&cw_zero.d_frcon_e,nfc); cudaMemset(cw_zero.d_frcon_e,0,nfc);
+    cudaMalloc(&cw_zero.d_frcon_o,nfc); cudaMemset(cw_zero.d_frcon_o,0,nfc);
+    cudaMalloc(&cw_zero.d_fzcon_e,nfc); cudaMemset(cw_zero.d_fzcon_e,0,nfc);
+    cudaMalloc(&cw_zero.d_fzcon_o,nfc); cudaMemset(cw_zero.d_fzcon_o,0,nfc);
+    forwardDFT(fp,d_fs,p,cw_zero);
+    std::vector<double> fs(6*p.ns*p.mnmax);
+    cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(double),cudaMemcpyDeviceToHost),"get fs");
+    std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
+    hostBasis(p,hcc,hss,hsc,hcs,hxm,hxn);
+    int mode=1*(p.ntor+1)+1;   // (m,n)=(1,1)
+    int nThetaRed=p.ntheta/2+1;
+    double intNorm=1.0/((double)p.nzeta*(nThetaRed-1));
+    double flsc=0, flcs=0;
+    for(int k=0;k<p.nZnT;++k){
+        int it=k%p.ntheta; if(it>=nThetaRed) continue;
+        double w=intNorm; if(it==0||it==nThetaRed-1) w*=0.5;
+        int iz=k/p.ntheta;
+        double th=2*M_PI*it/p.ntheta, ze=2*M_PI*iz/p.nzeta;
+        int idx=k+jB*p.nZnT;
+        double blmn=1.0+sin(th)*cos(ze), clmn=cos(th)*sin(ze);
+        flsc += (blmn*(1.0*hcc[k+mode*p.nZnT]) + clmn*(1.0*hss[k+mode*p.nZnT]))*w;
+        flcs += (blmn*(-1.0*hss[k+mode*p.nZnT]) + clmn*(-1.0*hcc[k+mode*p.nZnT]))*w;
+    }
+    const double sq2=sqrt(2.0); // mscale=nscale=√2 for (1,1)
+    flsc*=2.0; flcs*=2.0;
+    checkMode(fs[jB+mode*p.ns+2*p.mnmax*p.ns],flsc,1e-10,"lcfs_flsc",jB,mode);
+    checkMode(fs[jB+mode*p.ns+5*p.mnmax*p.ns],flcs,1e-10,"lcfs_flcs",jB,mode);
+    // R/Z components at the LCFS stay zero.
+    for(int c=0;c<6;++c){
+        if(c==2||c==5) continue;
+        checkMode(fs[jB+mode*p.ns+c*p.mnmax*p.ns],0.0,1e-13,"lcfs_rz",jB,mode);
+    }
+    cudaFree(d_fs);
+    cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
+    cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
+    printf(g_failures==lf?"PASS\n":"FAIL\n");
+    return g_failures-lf;
+}
+
 int main(){
     printf("=== Fourier Transform Tests (folded n>=0 basis) ===\n");
     GridParams p;
@@ -338,12 +536,21 @@ int main(){
     cc(cudaMalloc(&st.d_v_zmnsc,nb),"vzsc"); cc(cudaMalloc(&st.d_v_zmncs,nb),"vzcs");
     cc(cudaMalloc(&st.d_v_lmnsc,nb),"vlsc"); cc(cudaMalloc(&st.d_v_lmncs,nb),"vlcs");
 
-    t_inv_constR(p,cb,fp,st);
-    t_inv_theta(p,cb,fp,st);
-    t_inv_zeta(p,cb,fp,st);
-    t_fwd_const(p,cb,fp,st);
-    t_fwd_sine(p,cb,fp,st);
-    t_gpuVcpu_inv(p,cb,fp,st);
+    // The CPU-reference tests run against BOTH backends (the host mirror is
+    // backend-independent); the A/B test cross-checks the two backends.
+    for (DftBackend bk : {DftBackend::kDirect, DftBackend::kCufft}) {
+        fp.backend = bk;
+        printf("  -- backend %s --\n", bk == DftBackend::kDirect ? "direct" : "cufft");
+        t_inv_constR(p,cb,fp,st);
+        t_inv_theta(p,cb,fp,st);
+        t_inv_zeta(p,cb,fp,st);
+        t_fwd_const(p,cb,fp,st);
+        t_fwd_sine(p,cb,fp,st);
+        t_gpuVcpu_inv(p,cb,fp,st);
+        t_fwd_axis(p,cb,fp,st);
+        t_fwd_lcfs(p,cb,fp,st);
+    }
+    t_backendAB(p,cb,fp,st);
 
     fourierFree(fp);
     cublasDestroy(cb);

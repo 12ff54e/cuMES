@@ -81,7 +81,7 @@ v = fac×(b1·v + delt·f) ,  x += delt·v
 
 | Decision | Rationale |
 |----------|-----------|
-| **Custom DFT kernels, not cuBLAS** | The DFT is a structured sum (cos/sin per surface), not a generic gemm. Custom kernels fuse derivative computation with the transform, saving memory bandwidth. |
+| **cuFFT transforms (default), direct-sum reference backend** | The transforms mirror vmecpp's FFTX structure: a batched 1D real FFT in the toroidal (ζ) direction plus direct poloidal synthesis/reduction. The original direct-sum kernels remain as a reference (`CUMES_DFT_BACKEND=direct`). Measured on W7-X: inverse 3.5→0.9 ms/iter, forward 42.3→0.4 ms/iter; full run 155 s→21 s. |
 | **Column-major storage** | Standard for cuBLAS; natural for per-surface indexing: `array[point + surface * nZnT]` for real space, `array[surface + mode * ns]` for spectral. |
 | **Staggered half-grid** | Dynamic variables on full grid (flux surfaces); metric elements on half grid (between surfaces). Prevents checkerboard instability. Matches VMEC convention. |
 | **All GPU allocations at startup** | Scratch arrays allocated once, reused every iteration. Zero `cudaMalloc` calls in the hot loop. |
@@ -110,15 +110,29 @@ m-parity split. The Jacobian, metric, and force kernels all assume this conventi
 - λ: `cos(mθ - nζ)` (lmnc coefficients)
 
 ### Mode numbering
-`mode = m * ntor + n` with `m = 0..mpol-1`, `n = 0..ntor-1`.
-Mode 0 is the (0,0) DC mode.
+`mode = m * (ntor+1) + n` with `m = 0..mpol-1`, `n = 0..ntor`
+(folded n ≥ 0 basis; `mnmax = mpol*(ntor+1)`). Mode 0 is the (0,0) DC mode.
+The physical `n` is `n*nfp` (the ζ grid covers one field period).
 
 ### Forward DFT normalization
-Mode-dependent weights:
-- Mode 0 (DC): `weight = 1 / nZnT`  (since Σ cos²(0) = N)
-- All other modes: `weight = 2 / nZnT`  (since Σ cos² = N/2 for m>0)
+The forward quadrature is vmecpp's reduced-grid trapezoid over θ ∈ [0, π]
+(`nThetaRed = ntheta/2+1` points), weight `w = mscale*nscale/(nZeta*(nThetaRed-1))`
+with endpoint halving and `mscale = √2 (m>0)`, `nscale = √2 (n>0)` — the
+projection onto the orthonormal basis (NOT the `1/nZnT, 2/nZnT` round-trip
+identity; the descent step re-applies `mfac*nfac`). The inverse DFT uses the
+raw basis (no normalization — the cuMES state is plain physical; the λ state
+additionally carries `mscale*nscale` inside the values).
 
-This ensures round-trip identity: `forward(inverse(x)) = x`.
+### Backends
+- **kCufft (default)**: 12-slot packing per poloidal mode (vmecpp `kBatch`:
+  rmkcc/rmkss + ζ-derivative slots for R, Z, λ), batched 1D cuFFT D2Z/Z2D of
+  length `nzeta` (batch `12*mpol*ns`), direct poloidal accumulation/reduction
+  over θ with small per-mode tables (`d_cos_th` etc.). Structurally identical
+  to vmecpp's `fft_toroidal.cc`; numerically equal to the direct backend to
+  FFT roundoff (~1e-14), byte-identical per-iteration residual logs on W7-X.
+- **kDirect**: the original direct-sum kernels (`inverseDFTKernel`,
+  `forwardDFTParityKernel`), kept as the reference; selected via
+  `CUMES_DFT_BACKEND=direct`.
 
 ### Derivative computation
 Derivatives are computed analytically during the inverse DFT:
@@ -168,7 +182,7 @@ x_new = x_old + delt * v_new
 
 | VMEC++ feature | Status |
 |----------------|--------|
-| FFT-accelerated transforms | Custom DFT kernels instead (simpler, ~30 lines) |
+| FFT-accelerated transforms | cuFFT backend (batched 1D ζ-FFT + direct poloidal), mirroring vmecpp's FFTX structure; direct-sum kernels kept as reference backend |
 | Multigrid grid sequencing | Single fixed radial grid |
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, wout | Post-processing; not needed for core loop |

@@ -2,12 +2,42 @@
 #pragma once
 #include "vmec_types.h"
 #include <cublas_v2.h>
+#include <cufft.h>
 
 struct ConstraintWorkspace;  // defined in constraint.cuh
+
+// Transform backend:
+//   kDirect — original direct-sum DFT kernels (exact reference, kept for
+//             A/B validation and the CPU-mirroring tests).
+//   kCufft  — batched 1D real FFT in the toroidal (ζ) direction + direct
+//             poloidal synthesis, mirroring vmecpp's FFTX fft_toroidal.cc
+//             (the default; selected via CUMES_DFT_BACKEND=cufft|direct).
+enum class DftBackend { kDirect, kCufft };
 
 struct FourierPlan {
     FourierBasis basis;
     cublasHandle_t handle;
+
+    DftBackend backend = DftBackend::kCufft;
+
+    // ---- cuFFT backend state (created in fourierCreate; unused by kDirect)
+    // Batched 1D real FFTs of length nzeta, one batch element per
+    // (slot, m, j) with slot in 0..11 (the vmecpp kBatch layout below) and
+    // element index ((slot*mpol + m)*ns + j). Slot layout per poloidal
+    // mode m (fft_toroidal.cc kBatch):
+    //   0 rmkcc   1 rmkss   2 rmkccN   3 rmkssN     (R value + ζ-derivs)
+    //   4 zmksc   5 zmkcs   6 zmkscN   7 zmkcsN     (Z value + ζ-derivs)
+    //   8 lmksc   9 lmkcs  10 lmkscN  11 lmkcsN     (λ value + ζ-derivs)
+    cufftHandle plan_z2d;    // inverse:  half-spectrum -> real
+    cufftHandle plan_d2z;    // forward:  real -> half-spectrum
+    double2* d_zeta_spectra; // [12*mpol*ns][nzeta/2+1] complex
+    double*  d_zeta_real;    // [12*mpol*ns][nzeta] real
+    // Poloidal tables (per mode m over the full θ grid): cos(mθ), sin(mθ),
+    // m*cos(mθ), -m*sin(mθ). The forward path multiplies by the reduced-grid
+    // trapezoid weights in d_fwd_w.
+    double* d_cos_th; double* d_sin_th;
+    double* d_mcos_th; double* d_msin_th;
+    double* d_fwd_w;         // [ntheta/2+1] intNorm weights (endpoints 1/2)
 
     // Real-space geometry (parity-split, full grid)
     double* d_r_e;  double* d_z_e;  double* d_l_e;

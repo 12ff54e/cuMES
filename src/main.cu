@@ -225,6 +225,12 @@ int main() {
     SpectralState st{}; initState(st,p,ip);
     RadialProfiles rp=profilesCreate(p,ip);
     FourierPlan fp=fourierCreate(p,cublasHandle);
+    // Transform backend override: CUMES_DFT_BACKEND=direct|cufft (default cufft)
+    if (const char* e = getenv("CUMES_DFT_BACKEND")) {
+        if (strcmp(e, "direct") == 0) fp.backend = DftBackend::kDirect;
+        else if (strcmp(e, "cufft") == 0) fp.backend = DftBackend::kCufft;
+        else { fprintf(stderr, "unknown CUMES_DFT_BACKEND '%s' (direct|cufft)\n", e); return 1; }
+    }
     MetricWorkspace mw=metricCreate(p);
 
     SolverResult result=solverRun(st,p,rp,fp,mw);

@@ -98,6 +98,7 @@ debug output.
 | `CUMES_E2_START` | first iteration of the per-iteration force dumps (default 560) |
 | `CUMES_DUMP` | master switch for all dump/debug output (`=1` enables) |
 | `CUMES_LOAD_INIT` | load an initial state from `vmecpp_init.bin` (handoff protocol) |
+| `CUMES_DFT_BACKEND` | transform backend: `cufft` (default) or `direct` (reference) |
 
 ## Verification
 
@@ -113,7 +114,7 @@ debug output.
 
 | VMEC++ feature | Why omitted |
 |----------------|-------------|
-| FFT-accelerated transforms | Custom DFT kernels are simpler and easier to read |
+| FFT-accelerated transforms | Implemented: the transforms use cuFFT (batched 1D real FFT in the toroidal direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure). The original direct-sum kernels remain as a reference backend (`CUMES_DFT_BACKEND=direct`). See `src/fourier.cu`. |
 | Multigrid grid sequencing | Single fixed radial grid |
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, full wout | Post-processing; not needed for the core loop |
