@@ -82,6 +82,13 @@ ConstraintWorkspace constraintCreate(const GridParams& p) {
     ccf(cufftPlanMany(&cw.plan_z2d_da, 1, &n, &nz2, 1, nz2, &n, 1, n,
                       CUFFT_Z2D, batchDa), "plan z2d_da");
 
+    // Compact rCon/zCon workspace (value slots 0/1/4/5 only).
+    int batchRz = 4 * p.mpol * p.ns;
+    cc(cudaMalloc(&cw.d_zeta_real_rz, (size_t)batchRz * n * sizeof(double)), "zeta_real_rz");
+    cc(cudaMalloc(&cw.d_zeta_spectra_rz, (size_t)batchRz * nz2 * sizeof(double2)), "zeta_spectra_rz");
+    ccf(cufftPlanMany(&cw.plan_z2d_rz, 1, &n, &nz2, 1, nz2, &n, 1, n,
+                      CUFFT_Z2D, batchRz), "plan z2d_rz");
+
     return cw;
 }
 
@@ -95,6 +102,8 @@ void constraintFree(ConstraintWorkspace& cw) {
     cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
     cudaFree(cw.d_zeta_real_c); cudaFree(cw.d_zeta_spectra_c);
     cufftDestroy(cw.plan_d2z_da); cufftDestroy(cw.plan_z2d_da);
+    cudaFree(cw.d_zeta_real_rz); cudaFree(cw.d_zeta_spectra_rz);
+    cufftDestroy(cw.plan_z2d_rz);
 }
 
 // ---------------------------------------------------------------------------
@@ -144,12 +153,14 @@ __global__ void rzConPackKernel(
     double shalf = (n == 0) ? 0.0 : 0.5;
     double rc = xmpq * rmncc[j + mode * ns], rs = xmpq * rmnss[j + mode * ns];
     double zs = xmpq * zmnsc[j + mode * ns], zc = xmpq * zmncs[j + mode * ns];
+    // Compact layout (value slots only): 0 -> full slot 0, 1 -> 1, 2 -> 4,
+    // 3 -> 5. Same m*ns+j element order as the full layout.
     size_t step = (size_t)mpol * ns * nz2;
     double2* slot = spectra + ((size_t)m * ns + j) * nz2 + n;
     slot[0 * step] = make_double2(rc * half, 0.0);
     slot[1 * step] = make_double2(0.0, -rs * shalf);
-    slot[4 * step] = make_double2(zs * half, 0.0);
-    slot[5 * step] = make_double2(0.0, -zc * shalf);
+    slot[2 * step] = make_double2(zs * half, 0.0);
+    slot[3 * step] = make_double2(0.0, -zc * shalf);
 }
 
 // rCon/zCon poloidal accumulation: the plain reconstruction of the value
@@ -167,12 +178,11 @@ __global__ void rzConAccumulateKernel(
     // and coalesce.
     int k = threadIdx.y, l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    extern __shared__ double sh[];   // [4][mpol][nzeta]: slots 0,1,4,5
+    extern __shared__ double sh[];   // [4][mpol][nzeta] (compact slots 0,1,2,3)
     for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * nzeta; i += nthreads) {
         int s = i / (mpol * nzeta), rem = i - s * mpol * nzeta;
         int m = rem / nzeta, kk = rem % nzeta;
-        int slot = (s == 2) ? 4 : (s == 3) ? 5 : s;
-        sh[i] = zeta_real[(((size_t)slot * mpol + m) * ns + j) * nzeta + kk];
+        sh[i] = zeta_real[(((size_t)s * mpol + m) * ns + j) * nzeta + kk];
     }
     __syncthreads();
     size_t mstride = (size_t)mpol * nzeta;
@@ -498,20 +508,22 @@ void constraintRzConCompute(const GridParams& p, const FourierPlan& fp,
                             const SpectralState& st, ConstraintWorkspace& cw,
                             const double* d_sqrtS_F) {
     (void)d_sqrtS_F;   // the odd-m factor is exactly 1.0 (see rzConPackKernel)
-    // xmpq-weighted inverse transform: pack the value slots, Z2D, accumulate
-    // rCon/zCon (the poloidal sum over all m with the raw cos/sin tables).
-    cc(cudaMemset(fp.d_zeta_spectra, 0,
-        (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(double2)), "rzcon zero");
+    // xmpq-weighted inverse transform on the compact value-slot batch:
+    // pack slots 0/1/4/5 (compact 0..3), Z2D, accumulate rCon/zCon (the
+    // poloidal sum over all m with the raw cos/sin tables). The memset
+    // zeros the m=0,1 elements (xmpq == 0) and the unused n > ntor bins.
+    cc(cudaMemset(cw.d_zeta_spectra_rz, 0,
+        (size_t)4 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(double2)), "rzcon zero");
     int total = p.ns * p.mnmax;
     rzConPackKernel<<<(total + 255) / 256, 256>>>(
         st.d_rmncc, st.d_rmnss, st.d_zmnsc, st.d_zmncs,
         fp.basis.d_xm, fp.basis.d_xn,
-        p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
+        p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, cw.d_zeta_spectra_rz);
     cc(cudaGetLastError(), "rzcon pack");
-    ccf(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "rzcon z2d");
+    ccf(cufftExecZ2D(cw.plan_z2d_rz, cw.d_zeta_spectra_rz, cw.d_zeta_real_rz), "rzcon z2d");
     dim3 blk(p.ntheta / 2, p.nzeta);
     rzConAccumulateKernel<<<p.ns, blk, 4 * p.mpol * p.nzeta * sizeof(double)>>>(
-        fp.d_zeta_real, fp.d_cos_th, fp.d_sin_th,
+        cw.d_zeta_real_rz, fp.d_cos_th, fp.d_sin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
         cw.d_rCon, cw.d_zCon);
     cc(cudaGetLastError(), "rzcon acc");

@@ -43,6 +43,14 @@ struct ConstraintWorkspace {
     double* d_zeta_real_c;     // [2*(mpol-2)*(ns-1) * nzeta]
     double2* d_zeta_spectra_c; // [2*(mpol-2)*(ns-1) * nz2]
     cufftHandle plan_d2z_da, plan_z2d_da;
+
+    // Compact rCon/zCon round trip: only the value slots 0/1/4/5 of the 12
+    // participate — 4*mpol*ns batch elements instead of 12*mpol*ns. Element
+    // order: ((slot*mpol + m)*ns + j), then nzeta (real) / nz2 (spectra)
+    // contiguous; slot = 0,1,2,3 maps to the full slots 0,1,4,5.
+    double* d_zeta_real_rz;     // [4*mpol*ns * nzeta]
+    double2* d_zeta_spectra_rz; // [4*mpol*ns * nz2]
+    cufftHandle plan_z2d_rz;
 };
 
 ConstraintWorkspace constraintCreate(const GridParams& p);
