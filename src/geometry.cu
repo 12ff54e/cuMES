@@ -405,7 +405,6 @@ void computeGeometry(const FourierPlan& fp, const GridParams& p,
         mw.d_bsubu, mw.d_bsubv,
         mw.d_totalPressure);
     checkCuda(cudaGetLastError(), "geometry kernel");
-    checkCuda(cudaDeviceSynchronize(), "geometry sync");
 
     if (p.ncurr == 1) {
         dim3 fb(256), fg(p.ns - 1);
@@ -418,13 +417,11 @@ void computeGeometry(const FourierPlan& fp, const GridParams& p,
             mw.d_bsubu, mw.d_bsubv, mw.d_totalPressure,
             rp.d_chip_H, rp.d_iota_H);
         checkCuda(cudaGetLastError(), "ncurr1 kernel");
-        checkCuda(cudaDeviceSynchronize(), "ncurr1 sync");
-    }
+        }
 
     dim3 ib(256), ig((p.ns + 255) / 256);
     updateIotaChipFKernel<<<ig, ib>>>(
         rp.d_iota_H, rp.d_chip_H, p.ns, rp.d_iota_F, rp.d_chi_F);
     checkCuda(cudaGetLastError(), "iotaChipF kernel");
-    checkCuda(cudaDeviceSynchronize(), "iotaChipF sync");
 
 }

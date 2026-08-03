@@ -603,7 +603,7 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
         checkCuda(cudaGetLastError(), "extrapAxis");
 
         cudaEventRecord(ev0);
-        inverseDFT(fp,st,p);
+        inverseDFT(fp,st,p,false);
         cudaEventRecord(ev1);
         cudaEventSynchronize(ev1);
         { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_inv_ms += ms; }

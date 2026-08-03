@@ -275,5 +275,4 @@ void computeForces(const FourierPlan& fp, const GridParams& p,
         fp.d_blmn_e, fp.d_blmn_o,
         fp.d_clmn_e, fp.d_clmn_o);
     checkCuda(cudaGetLastError(), "forces kernel");
-    checkCuda(cudaDeviceSynchronize(), "forces sync");
 }

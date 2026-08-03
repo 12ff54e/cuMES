@@ -320,7 +320,7 @@ __global__ void combineParityKernel(
 }
 
 static void inverseDFTCufft(const FourierPlan& fp, const SpectralState& st,
-                            const GridParams& p) {
+                            const GridParams& p, bool do_combine) {
     // Zero the half-spectra (only bins n <= ntor are filled).
     checkCuda(cudaMemset(fp.d_zeta_spectra, 0,
         (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(double2)), "inv zero");
@@ -349,22 +349,24 @@ static void inverseDFTCufft(const FourierPlan& fp, const SpectralState& st,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 8,
         fp.d_l_e, fp.d_lu_e, fp.d_lv_e, fp.d_l_o, fp.d_lu_o, fp.d_lv_o);
-    dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
-    combineParityKernel<<<cgrd, cblk>>>(
-        fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
-        fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
-        fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
-        fp.d_rv_o, fp.d_zv_o, fp.d_lv_o,
-        p.nZnT, p.ns,
-        fp.d_r_real, fp.d_z_real, fp.d_l_real,
-        fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
-        fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
+    if (do_combine) {
+        dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
+        combineParityKernel<<<cgrd, cblk>>>(
+            fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
+            fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
+            fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
+            fp.d_rv_o, fp.d_zv_o, fp.d_lv_o,
+            p.nZnT, p.ns,
+            fp.d_r_real, fp.d_z_real, fp.d_l_real,
+            fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
+            fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
+    }
     checkCuda(cudaGetLastError(), "inv cuFFT");
-    checkCuda(cudaDeviceSynchronize(), "inv cuFFT sync");
 }
 
-void inverseDFT(const FourierPlan& fp, const SpectralState& st, const GridParams& p) {
-    inverseDFTCufft(fp, st, p);
+void inverseDFT(const FourierPlan& fp, const SpectralState& st,
+                const GridParams& p, bool do_combine) {
+    inverseDFTCufft(fp, st, p, do_combine);
 }
 
 // ---- cuFFT backend: forward ----------------------------------------------
@@ -546,7 +548,6 @@ static void forwardDFTCufft(const FourierPlan& fp, double* d_f_spectral,
         fp.d_zeta_spectra, fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, d_f_spectral);
     checkCuda(cudaGetLastError(), "fwd cuFFT");
-    checkCuda(cudaDeviceSynchronize(), "fwd cuFFT sync");
 }
 
 void forwardDFT(const FourierPlan& fp, double* d_f_spectral, const GridParams& p,

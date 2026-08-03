@@ -63,8 +63,10 @@ struct FourierPlan {
 FourierPlan fourierCreate(const GridParams& p, cublasHandle_t handle);
 void fourierFree(FourierPlan& fp);
 
+// do_combine=false skips the e/o parity combination (only needed for the
+// dump machinery and tests); the hot loop passes false.
 void inverseDFT(const FourierPlan& fp, const SpectralState& st,
-                const GridParams& p);
+                const GridParams& p, bool do_combine = true);
 
 // forwardDFT: parity forces → 6-component spectral forces
 // Layout: (6*mnmax, ns) col-major

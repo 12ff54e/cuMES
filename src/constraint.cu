@@ -487,7 +487,6 @@ void constraintRzConCompute(const GridParams& p, const FourierPlan& fp,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
         cw.d_rCon, cw.d_zCon);
     cc(cudaGetLastError(), "rzcon acc");
-    cc(cudaDeviceSynchronize(), "rzcon sync");
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +533,6 @@ void constraintCompute(const GridParams& p, const FourierPlan& fp,
     }
 
     // Zero gCon before accumulation
-    cc(cudaMemset(cw.d_gCon, 0, p.ns * p.nZnT * sizeof(double)), "zero gCon");
 
     // Step 1: Effective constraint force
     effectiveConstraintKernel<<<grid, block>>>(
@@ -577,7 +575,6 @@ void constraintCompute(const GridParams& p, const FourierPlan& fp,
             p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon);
         cc(cudaGetLastError(), "deAlias synth");
     }
-    cc(cudaDeviceSynchronize(), "deAlias sync");
 
     // Step 3: Add constraint force to brmn/bzmn + write frcon/fzcon outputs
     addConstraintKernel<<<grid, block>>>(
