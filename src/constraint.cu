@@ -536,8 +536,8 @@ void constraintRzConCompute(const GridParams& p, const FourierPlan& fp,
 // ---------------------------------------------------------------------------
 void constraintResetRzCon0(const GridParams& p, ConstraintWorkspace& cw,
                            const double* d_sqrtS_F) {
-    dim3 block(32);
-    dim3 grid((p.nZnT + 31) / 32, p.ns);
+    dim3 block(128);
+    dim3 grid((p.nZnT + 127) / 128, p.ns);
     rzConIntoVolumeKernel<<<grid, block>>>(
         cw.d_rCon, cw.d_zCon, d_sqrtS_F,
         p.ns, p.nZnT, cw.d_rCon0, cw.d_zCon0);
@@ -550,8 +550,8 @@ void constraintResetRzCon0(const GridParams& p, ConstraintWorkspace& cw,
 void constraintCompute(const GridParams& p, const FourierPlan& fp,
                        const PreconWorkspace& pw, ConstraintWorkspace& cw,
                        const double* d_sqrtS_F, bool precon_updated) {
-    dim3 block(32);
-    dim3 grid((p.nZnT + 31) / 32, p.ns);
+    dim3 block(128);
+    dim3 grid((p.nZnT + 127) / 128, p.ns);
 
     // Step 0: refresh tcon from the current preconditioner elements.
     // vmecpp recomputes tcon only when the radial preconditioner is updated

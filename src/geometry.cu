@@ -241,12 +241,15 @@ __global__ void ncurr1FinalizeKernel(
 
     double jv = 0, avg = 0;
     int base = jH * nZnT;
-    for (int k = tid; k < nZnT; k += blockDim.x) {
-        int it = k % ntheta, iz = k / ntheta;
-        if (it >= nThetaRed) continue;  // reduced poloidal subset
+    // Compact reduced-grid loop: only the nzeta*nThetaRed points of the
+    // trapezoid subset (the old stride over nZnT skipped half the points).
+    // Same (iz, it) visit order as the old k = iz*ntheta + it sequence.
+    int nRed = nzeta * nThetaRed;
+    for (int k = tid; k < nRed; k += blockDim.x) {
+        int iz = k / nThetaRed, it = k - iz * nThetaRed;
         double w = dnorm3;
         if (it == 0 || it == nThetaRed - 1) w *= 0.5;
-        int idx = base + k;
+        int idx = base + iz * ntheta + it;
         double guu_v = guu[idx], gsqrt_v = gsqrt[idx];
         jv  += (guu_v * bsupu[idx] + guv[idx] * bsupv[idx]) * w;
         avg += guu_v / gsqrt_v * w;
@@ -383,8 +386,8 @@ __global__ void updateIotaChipFKernel(
 
 void computeGeometry(const FourierPlan& fp, const GridParams& p,
                      const RadialProfiles& rp, MetricWorkspace& mw) {
-    dim3 block(32);
-    dim3 grid((p.nZnT + 31) / 32, p.ns - 1);
+    dim3 block(128);
+    dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     geometryKernel<<<grid, block>>>(
         fp.d_r_e, fp.d_r_o,
         fp.d_z_e, fp.d_z_o,

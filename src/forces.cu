@@ -249,8 +249,8 @@ __global__ void forcesKernel(
 
 void computeForces(const FourierPlan& fp, const GridParams& p,
                    const RadialProfiles& rp, const MetricWorkspace& mw) {
-    dim3 block(32);
-    dim3 grid((p.nZnT + 31) / 32, p.ns);
+    dim3 block(128);
+    dim3 grid((p.nZnT + 127) / 128, p.ns);
     forcesKernel<<<grid, block>>>(
         fp.d_r_e, fp.d_r_o,
         fp.d_z_e, fp.d_z_o,

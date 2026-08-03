@@ -501,8 +501,12 @@ __global__ void lambdaPrecFinalizeKernel(
     int ns, int mnmax, double delta_s, int nfp,
     double* __restrict__ lambdaPrec)
 {
+    // One thread per (mode, jF) element — the original ran one thread per
+    // mode with a serial ns loop (<<<mnmax, 1>>>). Per-element arithmetic
+    // is unchanged (the per-mode scalars are recomputed per thread).
     int mode = blockIdx.x;
-    if (mode >= mnmax) return;
+    int jF = blockIdx.y * blockDim.x + threadIdx.x;
+    if (mode >= mnmax || jF >= ns) return;
 
     int m = xm[mode], n = xn[mode];
     double lamscale = sqrt(rmsPhiP[0] * delta_s);
@@ -513,19 +517,17 @@ __global__ void lambdaPrecFinalizeKernel(
     double tnn = (double)(n * n) * (double)(nfp * nfp);
     double tmn = 2.0 * (double)(m * n) * (double)nfp;
 
-    for (int jF = 0; jF < ns; ++jF) lambdaPrec[mode * ns + jF] = 0.0;
-    if (m == 0 && n == 0) return;  // gauge mode skipped in vmecpp assembly
+    if (jF == 0) { lambdaPrec[mode * ns] = 0.0; return; }
+    if (m == 0 && n == 0) { lambdaPrec[mode * ns + jF] = 0.0; return; }  // gauge mode
 
-    for (int jF = 1; jF < ns; ++jF) {
-        double bFull = 0.5 * (bLambda[jF + 1] + bLambda[jF]);
-        double dFull = 0.5 * (dLambda[jF + 1] + dLambda[jF]);
-        double cFull = 0.5 * (cLambda[jF + 1] + cLambda[jF]);
-        double faclam = tnn * bFull + tmn * copysign(dFull, bFull) +
-                        (double)(m * m) * cFull;
-        if (faclam == 0.0) faclam = -1.0e-10;  // kLambdaPreconditionerZeroGuard
-        lambdaPrec[mode * ns + jF] =
-            pFactor / faclam * pow(sqrtS_F[jF], pwr);
-    }
+    double bFull = 0.5 * (bLambda[jF + 1] + bLambda[jF]);
+    double dFull = 0.5 * (dLambda[jF + 1] + dLambda[jF]);
+    double cFull = 0.5 * (cLambda[jF + 1] + cLambda[jF]);
+    double faclam = tnn * bFull + tmn * copysign(dFull, bFull) +
+                    (double)(m * m) * cFull;
+    if (faclam == 0.0) faclam = -1.0e-10;  // kLambdaPreconditionerZeroGuard
+    lambdaPrec[mode * ns + jF] =
+        pFactor / faclam * pow(sqrtS_F[jF], pwr);
 }
 
 // ---------------------------------------------------------------------------
@@ -743,7 +745,7 @@ void preconCompute(const FourierPlan& fp, const GridParams& p,
             p.ns, p.nZnT, p.ntheta, p.nzeta,
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda, pw.d_rmsPhiP);
         cc(cudaGetLastError(), "lambdaPrecAssemble");
-        lambdaPrecFinalizeKernel<<<p.mnmax, 1>>>(
+        lambdaPrecFinalizeKernel<<<dim3(p.mnmax, (p.ns + 127) / 128), 128>>>(
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda,
             rp.d_sqrtS_F, pw.d_rmsPhiP,
             fp.basis.d_xm, fp.basis.d_xn,

@@ -131,7 +131,7 @@ __global__ void extrapolateAxisKernel(
     double* __restrict__ lmnsc, double* __restrict__ rmnss,
     double* __restrict__ zmncs, double* __restrict__ lmncs,
     int ns, int mnmax, int ntorp1) {
-    int mode = blockIdx.x;
+    int mode = blockIdx.x * blockDim.x + threadIdx.x;
     if (mode >= mnmax) return;
     int m = mode / ntorp1;  // poloidal mode number
     if (m == 0) {
@@ -597,7 +597,7 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
         // before inverse DFT, matching vmecpp's extrapolateTowardsAxis().
         // Must be done each iteration since the descent step updates j=1
         // but skips j=0 for m>0 (axis regularity).
-        extrapolateAxisKernel<<<p.mnmax, 1>>>(
+        extrapolateAxisKernel<<<(p.mnmax + 31) / 32, 32>>>(
             st.d_rmncc, st.d_zmnsc, st.d_lmnsc, st.d_rmnss, st.d_zmncs,
             st.d_lmncs, p.ns, p.mnmax, p.ntor + 1);
         checkCuda(cudaGetLastError(), "extrapAxis");
