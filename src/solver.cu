@@ -461,6 +461,12 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
     checkCuda(cudaMalloc(&d_psum, 4 * (size_t)(p.ns - 1) * sizeof(double)), "malloc psum");
     checkCuda(cudaMalloc(&d_rzsum, sizeof(double)), "malloc rzsum");
 
+    // Pinned residual staging (async D2H copies avoid the pageable staging
+    // of synchronous cudaMemcpy on the default stream).
+    double* h_sq_i_pin; double* h_sq_pin;
+    checkCuda(cudaMallocHost(&h_sq_i_pin, 3 * sizeof(double)), "pin sqi");
+    checkCuda(cudaMallocHost(&h_sq_pin, 3 * sizeof(double)), "pin sq");
+
     // State rollback: backup arrays for restoring spectral state on restart.
     size_t nb_one = (size_t)p.ns * (size_t)p.mnmax * sizeof(double);
     double *d_bk_rmncc, *d_bk_zmnsc, *d_bk_lmnsc, *d_bk_rmnss, *d_bk_zmncs, *d_bk_lmncs;
@@ -942,7 +948,10 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
         }
 #endif
         { dim3 b3(256),g3(3); computeResidualsKernel<<<g3,b3>>>(d_f_spec,p.ns,p.mnmax,d_sq); }
-        double h_sq_i[3]; checkCuda(cudaMemcpy(h_sq_i,d_sq,3*sizeof(double),cudaMemcpyDeviceToHost),"cpy sqi");
+        checkCuda(cudaMemcpyAsync(h_sq_i_pin, d_sq, 3 * sizeof(double),
+                               cudaMemcpyDeviceToHost), "cpy sqi");
+        checkCuda(cudaStreamSynchronize(0), "sqi sync");
+        const double* h_sq_i = h_sq_i_pin;
         // vmecpp evalFResInvar: fsqr = fResInvar[0]·fNormRZ·0.25 (same for
         // fsqz), fsql = fResInvar[2]·fNormL, where fResInvar are the plain
         // sums. The cuMES kernel returns ΣF²/(mnmax·ns), so undo that first.
@@ -1034,7 +1043,10 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
 
         // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
         { dim3 b3(256),g3(3); computeResidualsKernel<<<g3,b3>>>(d_f_spec,p.ns,p.mnmax,d_sq); }
-        double h_sq[3]; checkCuda(cudaMemcpy(h_sq,d_sq,3*sizeof(double),cudaMemcpyDeviceToHost),"cpy sq");
+        checkCuda(cudaMemcpyAsync(h_sq_pin, d_sq, 3 * sizeof(double),
+                               cudaMemcpyDeviceToHost), "cpy sq");
+        checkCuda(cudaStreamSynchronize(0), "sq sync");
+        const double* h_sq = h_sq_pin;
         // vmecpp evalFResPrecd: fsqr1 = fResPrecd[0]·fNorm1 (same for fsqz1),
         // fsql1 = fResPrecd[2]·deltaS — NOTE: deltaS, not fNormL.
         double fsqr = h_sq[0] * plainPerEl * fNorm1;
@@ -1163,6 +1175,8 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
 
     checkCuda(cudaFree(d_f_spec),"free f");
     checkCuda(cudaFree(d_sq),"free sq");
+    checkCuda(cudaFreeHost(h_sq_i_pin), "unpin sqi");
+    checkCuda(cudaFreeHost(h_sq_pin), "unpin sq");
     checkCuda(cudaFree(d_psum),"free psum");
     checkCuda(cudaFree(d_rzsum),"free rzsum");
     checkCuda(cudaFree(d_bk_rmncc),"free bk cc");

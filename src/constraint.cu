@@ -285,23 +285,44 @@ __global__ void deAliasAnalyzeKernel(
     int ns, int mpol, int ntheta, int nzeta, int nZnT,
     double* __restrict__ zeta_real)   // compact slots 0 (sc), 1 (cs)
 {
+    // 8 threads per (m, jF, k) split the theta sum (4 contiguous points
+    // each), reduced by a warp shuffle tree over the 8 lanes (4 k-groups
+    // per warp, width 8). The original ran one serial 30-point dot per
+    // thread (36 threads/block, latency-bound at ~41 us/iter); the
+    // summation order differs at the rounding level.
     int jF = blockIdx.y, m1 = blockIdx.x;   // m = m1 + 1 in [1, mpol-2]
-    int k = threadIdx.x;
-    if (jF == 0 || k >= nzeta) return;
+    if (jF == 0) return;
+    int t = threadIdx.x, k = threadIdx.y;   // t in [0,8), k in [0,nzeta)
+    if (k >= nzeta) return;
     int m = m1 + 1;
     const double* g = gConEff + jF * nZnT + k * ntheta;
     const double* sth = sin_th + m * ntheta;
     const double* cth = cos_th + m * ntheta;
     double s_sc = 0.0, s_cs = 0.0;
-    for (int it = 0; it < ntheta; ++it) {
+    // 4 contiguous theta points per thread (theta = 4*t .. 4*t+3; the last
+    // group may exceed ntheta — the extra points read past the row, so
+    // guard: ntheta is even and >= 8, 4*8 = 32 >= ntheta + ... clamp.
+    int it0 = 4 * t;
+    int itEnd = it0 + 4;
+    if (itEnd > ntheta) itEnd = ntheta;
+    for (int it = it0; it < itEnd; ++it) {
         s_sc += g[it] * sth[it];
         s_cs += g[it] * cth[it];
     }
-    // Compact layout: ((slot*(mpol-2) + m1)*(ns-1) + (jF-1))*nzeta + k
-    size_t base = ((size_t)m1 * (ns - 1) + (jF - 1)) * nzeta + k;
-    size_t step = (size_t)(mpol - 2) * (ns - 1) * nzeta;
-    zeta_real[0 * step + base] = s_sc;
-    zeta_real[1 * step + base] = s_cs;
+    // Shuffle tree over the 8 theta-split lanes (width 8).
+    unsigned mask = 0xffffffffu;
+    #pragma unroll
+    for (int off = 4; off > 0; off >>= 1) {
+        s_sc += __shfl_down_sync(mask, s_sc, off, 8);
+        s_cs += __shfl_down_sync(mask, s_cs, off, 8);
+    }
+    if (t == 0) {
+        // Compact layout: ((slot*(mpol-2) + m1)*(ns-1) + (jF-1))*nzeta + k
+        size_t base = ((size_t)m1 * (ns - 1) + (jF - 1)) * nzeta + k;
+        size_t step = (size_t)(mpol - 2) * (ns - 1) * nzeta;
+        zeta_real[0 * step + base] = s_sc;
+        zeta_real[1 * step + base] = s_cs;
+    }
 }
 
 __global__ void deAliasCoeffPackKernel(
@@ -589,7 +610,7 @@ void constraintCompute(const GridParams& p, const FourierPlan& fp,
     // the per-mode coefficients into slots 4/5 (the spectra tail bins n>ntor
     // are zeroed by the memset — the pack writes only the used bins), Z2D,
     // poloidal synthesis -> gCon.
-    {   dim3 blkA(p.nzeta), grdA(p.mpol - 2, p.ns);
+    {   dim3 blkA(8, p.nzeta), grdA(p.mpol - 2, p.ns);
         deAliasAnalyzeKernel<<<grdA, blkA>>>(
             cw.d_gConEff, fp.d_cos_th, fp.d_sin_th,
             p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_zeta_real_c);
