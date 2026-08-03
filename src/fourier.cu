@@ -240,10 +240,13 @@ __global__ void inverseAccumulateKernel(
     double* __restrict__ rv_o, double* __restrict__ zv_o, double* __restrict__ lv_o)
 {
     int j = blockIdx.x;
-    int k = threadIdx.x, l1 = threadIdx.y;
+    // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
+    // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
+    // coalesce; the m-loop shared reads (sm[.. + k]) become broadcasts.
+    int k = threadIdx.y, l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
     extern __shared__ double sh[];   // [12][mpol][nzeta]
-    for (int i = threadIdx.x + l1 * blockDim.x; i < 12 * mpol * nzeta; i += nthreads) {
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 12 * mpol * nzeta; i += nthreads) {
         int s = i / (mpol * nzeta), rem = i - s * mpol * nzeta;
         int m = rem / nzeta, kk = rem % nzeta;
         sh[i] = zeta_real[(((size_t)s * mpol + m) * ns + j) * nzeta + kk];
@@ -338,7 +341,7 @@ static void inverseDFTCufft(const FourierPlan& fp, const SpectralState& st,
         fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
     checkCufft(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
-    dim3 blk(p.nzeta, p.ntheta / 2);
+    dim3 blk(p.ntheta / 2, p.nzeta);
     dim3 grd(p.ns);
     inverseAccumulateKernel<<<grd, blk, 12 * p.mpol * p.nzeta * sizeof(double)>>>(
         fp.d_zeta_real,
@@ -399,50 +402,79 @@ __global__ void forwardReduceKernel(
     double* __restrict__ zeta_real)
 {
     int j = blockIdx.y, m = blockIdx.x;
-    int k = threadIdx.x, l = threadIdx.y;
-    if (l >= nThetaRed) return;
-    extern __shared__ double sh[];   // [12][nzeta], reduction per (slot, k)
-    for (int i = threadIdx.x; i < 12 * nzeta; i += blockDim.x) sh[i] = 0.0;
-    __syncthreads();
-    bool m_even = (m % 2 == 0);
-    const double* armn = m_even ? armn_e : armn_o;
-    const double* azmn = m_even ? azmn_e : azmn_o;
-    const double* brmn = m_even ? brmn_e : brmn_o;
-    const double* bzmn = m_even ? bzmn_e : bzmn_o;
-    const double* crmn = m_even ? crmn_e : crmn_o;
-    const double* czmn = m_even ? czmn_e : czmn_o;
-    const double* blmn = m_even ? blmn_e : blmn_o;
-    const double* clmn = m_even ? clmn_e : clmn_o;
-    const double* frcon = m_even ? frcon_e : frcon_o;
-    const double* fzcon = m_even ? fzcon_e : fzcon_o;
-    double xmpq = (double)m * (m - 1);
-    int idx = j * nZnT + k * ntheta + l;
-    double w = fwd_w[l];
-    double cosm = w * cos_th[m * ntheta + l], sinm = w * sin_th[m * ntheta + l];
-    double mcos = w * mcos_th[m * ntheta + l], msin = w * msin_th[m * ntheta + l];
-    double tempR = armn[idx] + xmpq * frcon[idx];
-    double tempZ = azmn[idx] + xmpq * fzcon[idx];
-    double br = brmn[idx], bz = bzmn[idx];
-    double cr = crmn[idx], cz = czmn[idx];
-    double bl = blmn[idx], cl = clmn[idx];
-    atomicAdd(&sh[0 * nzeta + k], tempR * cosm + br * msin);
-    atomicAdd(&sh[1 * nzeta + k], tempR * sinm + br * mcos);
-    atomicAdd(&sh[2 * nzeta + k], -cr * cosm);
-    atomicAdd(&sh[3 * nzeta + k], -cr * sinm);
-    atomicAdd(&sh[4 * nzeta + k], tempZ * sinm + bz * mcos);
-    atomicAdd(&sh[5 * nzeta + k], tempZ * cosm + bz * msin);
-    atomicAdd(&sh[6 * nzeta + k], -cz * sinm);
-    atomicAdd(&sh[7 * nzeta + k], -cz * cosm);
-    atomicAdd(&sh[8 * nzeta + k], bl * mcos);
-    atomicAdd(&sh[9 * nzeta + k], bl * msin);
-    atomicAdd(&sh[10 * nzeta + k], -cl * sinm);
-    atomicAdd(&sh[11 * nzeta + k], -cl * cosm);
-    __syncthreads();
+    // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the 14
+    // force-array loads at idx = j*nZnT + k*ntheta + l then vary l fastest
+    // and coalesce. blockDim.x is padded to 16 lanes; threads with
+    // l >= nThetaRed contribute zero. The per-(slot, k) sum over the 16
+    // l-values is a warp shuffle tree (two k groups per warp, width 16) —
+    // replacing the previous shared-memory atomicAdd, which after the
+    // dimension swap serialized 16-way per address (2.5 ms/iter).
+    int k = threadIdx.y, l = threadIdx.x;
+    bool active = (l < nThetaRed);
+    double v0 = 0, v1 = 0, v2 = 0, v3 = 0, v4 = 0, v5 = 0;
+    double v6 = 0, v7 = 0, v8 = 0, v9 = 0, v10 = 0, v11 = 0;
+    if (active) {
+        bool m_even = (m % 2 == 0);
+        const double* armn = m_even ? armn_e : armn_o;
+        const double* azmn = m_even ? azmn_e : azmn_o;
+        const double* brmn = m_even ? brmn_e : brmn_o;
+        const double* bzmn = m_even ? bzmn_e : bzmn_o;
+        const double* crmn = m_even ? crmn_e : crmn_o;
+        const double* czmn = m_even ? czmn_e : czmn_o;
+        const double* blmn = m_even ? blmn_e : blmn_o;
+        const double* clmn = m_even ? clmn_e : clmn_o;
+        const double* frcon = m_even ? frcon_e : frcon_o;
+        const double* fzcon = m_even ? fzcon_e : fzcon_o;
+        double xmpq = (double)m * (m - 1);
+        int idx = j * nZnT + k * ntheta + l;
+        double w = fwd_w[l];
+        double cosm = w * cos_th[m * ntheta + l], sinm = w * sin_th[m * ntheta + l];
+        double mcos = w * mcos_th[m * ntheta + l], msin = w * msin_th[m * ntheta + l];
+        double tempR = armn[idx] + xmpq * frcon[idx];
+        double tempZ = azmn[idx] + xmpq * fzcon[idx];
+        double br = brmn[idx], bz = bzmn[idx];
+        double cr = crmn[idx], cz = czmn[idx];
+        double bl = blmn[idx], cl = clmn[idx];
+        v0 = tempR * cosm + br * msin;
+        v1 = tempR * sinm + br * mcos;
+        v2 = -cr * cosm;
+        v3 = -cr * sinm;
+        v4 = tempZ * sinm + bz * mcos;
+        v5 = tempZ * cosm + bz * msin;
+        v6 = -cz * sinm;
+        v7 = -cz * cosm;
+        v8 = bl * mcos;
+        v9 = bl * msin;
+        v10 = -cl * sinm;
+        v11 = -cl * cosm;
+    }
+    // Warp reduction over the 16 l-values (two k groups per warp, width 16).
+    unsigned mask = 0xffffffffu;
+    #pragma unroll
+    for (int off = 8; off > 0; off >>= 1) {
+        v0 += __shfl_down_sync(mask, v0, off, 16);
+        v1 += __shfl_down_sync(mask, v1, off, 16);
+        v2 += __shfl_down_sync(mask, v2, off, 16);
+        v3 += __shfl_down_sync(mask, v3, off, 16);
+        v4 += __shfl_down_sync(mask, v4, off, 16);
+        v5 += __shfl_down_sync(mask, v5, off, 16);
+        v6 += __shfl_down_sync(mask, v6, off, 16);
+        v7 += __shfl_down_sync(mask, v7, off, 16);
+        v8 += __shfl_down_sync(mask, v8, off, 16);
+        v9 += __shfl_down_sync(mask, v9, off, 16);
+        v10 += __shfl_down_sync(mask, v10, off, 16);
+        v11 += __shfl_down_sync(mask, v11, off, 16);
+    }
     if (l == 0) {
         double* base = zeta_real + ((size_t)m * ns + j) * nzeta;
         size_t step = (size_t)mpol * ns * nzeta;
         #pragma unroll
-        for (int s = 0; s < 12; ++s) base[s * step + k] = sh[s * nzeta + k];
+        for (int s = 0; s < 12; ++s) {
+            double v = (s == 0) ? v0 : (s == 1) ? v1 : (s == 2) ? v2 : (s == 3) ? v3
+                     : (s == 4) ? v4 : (s == 5) ? v5 : (s == 6) ? v6 : (s == 7) ? v7
+                     : (s == 8) ? v8 : (s == 9) ? v9 : (s == 10) ? v10 : v11;
+            base[s * step + k] = v;
+        }
     }
 }
 
@@ -499,9 +531,9 @@ static void forwardDFTCufft(const FourierPlan& fp, double* d_f_spectral,
     // the kernels write only the entries vmecpp computes.
     checkCuda(cudaMemset(d_f_spectral, 0,
                          (size_t)6 * p.mnmax * p.ns * sizeof(double)), "fwd zero");
-    dim3 blk(p.nzeta, p.ntheta / 2 + 1);
+    dim3 blk(16, p.nzeta);  // x padded to 16 lanes (warp shuffle width)
     dim3 grd(p.mpol, p.ns);
-    forwardReduceKernel<<<grd, blk, 12 * p.nzeta * sizeof(double)>>>(
+    forwardReduceKernel<<<grd, blk>>>(
         fp.d_armn_e, fp.d_armn_o, fp.d_azmn_e, fp.d_azmn_o,
         fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
         fp.d_crmn_e, fp.d_crmn_o, fp.d_czmn_e, fp.d_czmn_o,

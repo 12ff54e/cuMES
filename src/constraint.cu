@@ -149,10 +149,13 @@ __global__ void rzConAccumulateKernel(
     double* __restrict__ rCon, double* __restrict__ zCon)
 {
     int j = blockIdx.x;
-    int k = threadIdx.x, l1 = threadIdx.y;
+    // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
+    // rCon/zCon stores at idx = j*nZnT + k*ntheta + l then vary l fastest
+    // and coalesce.
+    int k = threadIdx.y, l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
     extern __shared__ double sh[];   // [4][mpol][nzeta]: slots 0,1,4,5
-    for (int i = threadIdx.x + l1 * blockDim.x; i < 4 * mpol * nzeta; i += nthreads) {
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * nzeta; i += nthreads) {
         int s = i / (mpol * nzeta), rem = i - s * mpol * nzeta;
         int m = rem / nzeta, kk = rem % nzeta;
         int slot = (s == 2) ? 4 : (s == 3) ? 5 : s;
@@ -316,11 +319,13 @@ __global__ void deAliasSynthesizeKernel(
 {
     int jF = blockIdx.x;
     if (jF == 0) return;
-    int k = threadIdx.x, l1 = threadIdx.y;
+    // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
+    // gCon stores at jF*nZnT + k*ntheta + l then vary l fastest and coalesce.
+    int k = threadIdx.y, l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
     extern __shared__ double sh[];   // [2][mpol-2][nzeta] (slots 4,5)
     int nb = 2 * (mpol - 2);
-    for (int i = threadIdx.x + l1 * blockDim.x; i < nb * nzeta; i += nthreads) {
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < nb * nzeta; i += nthreads) {
         int s = i / ((mpol - 2) * nzeta), rem = i - s * (mpol - 2) * nzeta;
         int m1 = rem / nzeta, kk = rem % nzeta;
         int m = m1 + 1;
@@ -476,7 +481,7 @@ void constraintRzConCompute(const GridParams& p, const FourierPlan& fp,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
     cc(cudaGetLastError(), "rzcon pack");
     ccf(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "rzcon z2d");
-    dim3 blk(p.nzeta, p.ntheta / 2);
+    dim3 blk(p.ntheta / 2, p.nzeta);
     rzConAccumulateKernel<<<p.ns, blk, 4 * p.mpol * p.nzeta * sizeof(double)>>>(
         fp.d_zeta_real, fp.d_cos_th, fp.d_sin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
@@ -565,7 +570,7 @@ void constraintCompute(const GridParams& p, const FourierPlan& fp,
         cc(cudaGetLastError(), "deAlias coeff");
     }
     ccf(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "deAlias z2d");
-    {   dim3 blkS(p.nzeta, p.ntheta / 2);
+    {   dim3 blkS(p.ntheta / 2, p.nzeta);
         deAliasSynthesizeKernel<<<p.ns, blkS,
             2 * (p.mpol - 2) * p.nzeta * sizeof(double)>>>(
             fp.d_zeta_real, fp.d_cos_th, fp.d_sin_th,
