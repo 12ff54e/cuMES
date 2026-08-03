@@ -101,13 +101,16 @@ debug output.
 
 ## Verification
 
-- **Iter-1 baseline**: spectral forces match vmecpp at the same initial state
-  to ~6e-14 (frcc/fzsc) / 7e-15 (flsc).
-- **Handoff (same-state)**: given vmecpp's iter-150 state, real-space λ-force
-  matches at 3e-14 and preconditioned spectral forces at ≤2e-6.
-- **Full run**: converges at iter 209 (default start) or iter 76 (started
-  from vmecpp's iter-150 state), no restarts, delt constant 0.9, final
-  invariant residual ~7–9e-17.
+- **Per-iteration fidelity (W7-X)**: invariant residuals track vmecpp at
+  ≤1e-8 relative over the entire run; the cuFFT transform backend reproduces
+  the direct-sum trajectory byte-identically in the per-iteration logs.
+- **Solovev (axisymmetric)**: converges at iter 252 (default start) or
+  iter 237 (started from vmecpp's iter-150 state via `CUMES_LOAD_INIT=1`),
+  no restarts, delt constant 0.9, final invariant residual ~8e-17.
+- **W7-X (3D)**: converges at iter 2962 (vmecpp 2953) with FSQR 9.924e-13
+  (vmecpp 9.92e-13); the converged state matches the wout at ≤1.5e-9 in all
+  six families (rmncc 3.0e-10, zmnsc 2.3e-10, lmnsc 1.5e-9, rmnss 1.9e-10,
+  zmncs 1.4e-10, lmncs 1.5e-9).
 
 ## Status vs VMEC++
 
