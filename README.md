@@ -21,7 +21,7 @@ main.cu                  Entry point — init → solve → output
    ├── vmec_types.h      Shared GPU data structures (GridParams, SpectralState, …)
    │
    ├── profiles.cu/cuh   1D radial profiles (iota, pressure, mass) on device
-   ├── fourier.cu/cuh    Precomputed DFT basis + forward/inverse transforms
+   ├── fourier.cu/cuh    cuFFT transforms (12-slot packing, batched 1D ζ-FFT)
    ├── geometry.cu/cuh   Jacobian, metric g^ij, contravariant/covariant B
    ├── forces.cu/cuh     MHD force residuals (R, Z, λ) in real space
    ├── constraint.cu/cuh Spectral-condensation constraint force (de-aliased)
@@ -98,7 +98,6 @@ debug output.
 | `CUMES_E2_START` | first iteration of the per-iteration force dumps (default 560) |
 | `CUMES_DUMP` | master switch for all dump/debug output (`=1` enables) |
 | `CUMES_LOAD_INIT` | load an initial state from `vmecpp_init.bin` (handoff protocol) |
-| `CUMES_DFT_BACKEND` | transform backend: `cufft` (default) or `direct` (reference) |
 
 ## Verification
 
@@ -114,7 +113,7 @@ debug output.
 
 | VMEC++ feature | Why omitted |
 |----------------|-------------|
-| FFT-accelerated transforms | Implemented: the transforms use cuFFT (batched 1D real FFT in the toroidal direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure). The original direct-sum kernels remain as a reference backend (`CUMES_DFT_BACKEND=direct`). See `src/fourier.cu`. |
+| FFT-accelerated transforms | Implemented: the transforms use cuFFT (batched 1D real FFT in the toroidal direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure); the constraint module's rCon/zCon and de-aliasing bandpass reuse the same machinery. See `src/fourier.cu`. |
 | Multigrid grid sequencing | Single fixed radial grid |
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, full wout | Post-processing; not needed for the core loop |

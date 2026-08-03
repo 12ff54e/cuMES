@@ -323,66 +323,6 @@ static int t_gpuVcpu_inv(GridParams& p, cublasHandle_t cb, FourierPlan& fp, Spec
 // A/B cross-check: the direct-sum and cuFFT backends must agree on identical
 // input at ~1e-10 relative (both are the same linear map, differing only in
 // floating-point summation order).
-static int t_backendAB(GridParams& p, cublasHandle_t cb, FourierPlan& fp, SpectralState& st){
-    int lf=g_failures; printf("  test_backendAB ... ");
-    size_t nbr=p.ns*p.nZnT*sizeof(double);
-    std::vector<double> cc_(p.ns*p.mnmax),ss_(p.ns*p.mnmax),zs(p.ns*p.mnmax),zc(p.ns*p.mnmax),ls_(p.ns*p.mnmax),lcs(p.ns*p.mnmax);
-    for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
-        cc_[j+m*p.ns]=sin(0.1*(j+1)+0.7*(m+1));   ss_[j+m*p.ns]=cos(0.3*(j+1)+1.1*(m+1));
-        zs[j+m*p.ns]=sin(0.5*(j+1)+1.7*(m+1));    zc[j+m*p.ns]=cos(0.2*(j+1)+0.9*(m+1));
-        ls_[j+m*p.ns]=sin(0.4*(j+1)+2.3*(m+1));   lcs[j+m*p.ns]=cos(0.6*(j+1)+1.3*(m+1));
-    }
-    gpuInv(st,fp,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
-    std::vector<double> g1(9*p.ns*p.nZnT);
-    const double* ars[]={fp.d_r_real,fp.d_z_real,fp.d_l_real,fp.d_ru_real,fp.d_zu_real,
-                         fp.d_lu_real,fp.d_rv_real,fp.d_zv_real,fp.d_lv_real};
-    for(int i=0;i<9;++i) cc(cudaMemcpy(g1.data()+i*p.ns*p.nZnT,ars[i],nbr,cudaMemcpyDeviceToHost),"g1");
-    fp.backend=DftBackend::kDirect;
-    gpuInv(st,fp,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
-    std::vector<double> g2(9*p.ns*p.nZnT);
-    for(int i=0;i<9;++i) cc(cudaMemcpy(g2.data()+i*p.ns*p.nZnT,ars[i],nbr,cudaMemcpyDeviceToHost),"g2");
-    for(size_t i=0;i<g1.size();++i){
-        double scale=fmax(1.0,fabs(g2[i]));
-        if(fabs(g1[i]-g2[i])>1e-10*scale) { fprintf(stderr,"FAIL [AB-inv] i=%zu got=%.15e exp=%.15e\n",i,g1[i],g2[i]); ++g_failures; }
-    }
-    fp.backend=DftBackend::kCufft;
-
-    // Forward A/B: random forces + random constraint force.
-    double* d_fs; cc(cudaMalloc(&d_fs,6*p.ns*p.mnmax*sizeof(double)),"fs");
-    ConstraintWorkspace cw{};
-    size_t nfc=(size_t)p.ns*p.nZnT*sizeof(double);
-    cudaMalloc(&cw.d_frcon_e,nfc); cudaMalloc(&cw.d_frcon_o,nfc);
-    cudaMalloc(&cw.d_fzcon_e,nfc); cudaMalloc(&cw.d_fzcon_o,nfc);
-    std::vector<double> fr(p.ns*p.nZnT);
-    double* farrs[]={fp.d_armn_e,fp.d_armn_o,fp.d_azmn_e,fp.d_azmn_o,
-                     fp.d_brmn_e,fp.d_brmn_o,fp.d_bzmn_e,fp.d_bzmn_o,
-                     fp.d_crmn_e,fp.d_crmn_o,fp.d_czmn_e,fp.d_czmn_o,
-                     fp.d_blmn_e,fp.d_blmn_o,fp.d_clmn_e,fp.d_clmn_o,
-                     cw.d_frcon_e,cw.d_frcon_o,cw.d_fzcon_e,cw.d_fzcon_o};
-    for(int c=0;c<20;++c){
-        for(int i=0;i<p.ns*p.nZnT;++i) fr[i]=sin(0.13*i+0.9*c+0.5)+0.3*cos(0.07*i+0.2*c);
-        cc(cudaMemcpy(farrs[c],fr.data(),nbr,cudaMemcpyHostToDevice),"fr");
-    }
-    forwardDFT(fp,d_fs,p,cw);
-    std::vector<double> f1(6*p.ns*p.mnmax);
-    cc(cudaMemcpy(f1.data(),d_fs,6*p.ns*p.mnmax*sizeof(double),cudaMemcpyDeviceToHost),"f1");
-    fp.backend=DftBackend::kDirect;
-    forwardDFT(fp,d_fs,p,cw);
-    std::vector<double> f2(6*p.ns*p.mnmax);
-    cc(cudaMemcpy(f2.data(),d_fs,6*p.ns*p.mnmax*sizeof(double),cudaMemcpyDeviceToHost),"f2");
-    for(size_t i=0;i<f1.size();++i){
-        double scale=fmax(1.0,fabs(f2[i]));
-        if(fabs(f1[i]-f2[i])>1e-10*scale) { fprintf(stderr,"FAIL [AB-fwd] i=%zu got=%.15e exp=%.15e\n",i,f1[i],f2[i]); ++g_failures; }
-    }
-    fp.backend=DftBackend::kCufft;
-    cudaFree(d_fs);
-    cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o); cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
-}
-
-// Axis branch (vmecpp dft_ForcesToFourier: j=0 keeps only m=0 frcc/fzcs,
-// including the crmn/czmn toroidal terms). Expected values computed on the
 // host with the same reduced-grid trapezoid as the kernels.
 static int t_fwd_axis(GridParams& p, cublasHandle_t cb, FourierPlan& fp, SpectralState& st){
     int lf=g_failures; printf("  test_forwardDFT_axis ... ");
@@ -536,21 +476,17 @@ int main(){
     cc(cudaMalloc(&st.d_v_zmnsc,nb),"vzsc"); cc(cudaMalloc(&st.d_v_zmncs,nb),"vzcs");
     cc(cudaMalloc(&st.d_v_lmnsc,nb),"vlsc"); cc(cudaMalloc(&st.d_v_lmncs,nb),"vlcs");
 
-    // The CPU-reference tests run against BOTH backends (the host mirror is
-    // backend-independent); the A/B test cross-checks the two backends.
-    for (DftBackend bk : {DftBackend::kDirect, DftBackend::kCufft}) {
-        fp.backend = bk;
-        printf("  -- backend %s --\n", bk == DftBackend::kDirect ? "direct" : "cufft");
-        t_inv_constR(p,cb,fp,st);
-        t_inv_theta(p,cb,fp,st);
-        t_inv_zeta(p,cb,fp,st);
-        t_fwd_const(p,cb,fp,st);
-        t_fwd_sine(p,cb,fp,st);
-        t_gpuVcpu_inv(p,cb,fp,st);
-        t_fwd_axis(p,cb,fp,st);
-        t_fwd_lcfs(p,cb,fp,st);
-    }
-    t_backendAB(p,cb,fp,st);
+    // All tests compare the cuFFT backend against the backend-independent
+    // host CPU reference (the direct-sum kernels were removed after the
+    // cuFFT A/B validation; the git history has them).
+    t_inv_constR(p,cb,fp,st);
+    t_inv_theta(p,cb,fp,st);
+    t_inv_zeta(p,cb,fp,st);
+    t_fwd_const(p,cb,fp,st);
+    t_fwd_sine(p,cb,fp,st);
+    t_gpuVcpu_inv(p,cb,fp,st);
+    t_fwd_axis(p,cb,fp,st);
+    t_fwd_lcfs(p,cb,fp,st);
 
     fourierFree(fp);
     cublasDestroy(cb);

@@ -46,7 +46,7 @@ cuMES/
 │   └── output.cuh          outputPrint declaration
 ├── src/                    Implementation files (.cu = CUDA C++)
 │   ├── main.cu             Entry point: init params → create state → solve → output
-│   ├── fourier.cu          DFT basis precomputation + inverse/forward transform kernels
+│   ├── fourier.cu          cuFFT inverse/forward transform kernels (12-slot ζ-FFT)
 │   ├── geometry.cu         Jacobian, metric g^ij, contravariant B on half-grid
 │   ├── forces.cu           MHD force residuals (brmn/bzmn/crmn/czmn/blmn/clmn)
 │   ├── profiles.cu         Radial profile evaluation + GPU upload
@@ -81,7 +81,7 @@ v = fac×(b1·v + delt·f) ,  x += delt·v
 
 | Decision | Rationale |
 |----------|-----------|
-| **cuFFT transforms (default), direct-sum reference backend** | The transforms mirror vmecpp's FFTX structure: a batched 1D real FFT in the toroidal (ζ) direction plus direct poloidal synthesis/reduction. The original direct-sum kernels remain as a reference (`CUMES_DFT_BACKEND=direct`). Measured on W7-X: inverse 3.5→0.9 ms/iter, forward 42.3→0.4 ms/iter; full run 155 s→21 s. |
+| **cuFFT transforms** | The transforms mirror vmecpp's FFTX structure: a batched 1D real FFT in the toroidal (ζ) direction plus direct poloidal synthesis/reduction; the constraint module (rCon/zCon, de-aliasing) reuses the same plans/scratch. Measured on W7-X: inverse 3.5→0.9 ms/iter, forward 42.3→0.4 ms/iter; full run 155 s→21 s. |
 | **Column-major storage** | Standard for cuBLAS; natural for per-surface indexing: `array[point + surface * nZnT]` for real space, `array[surface + mode * ns]` for spectral. |
 | **Staggered half-grid** | Dynamic variables on full grid (flux surfaces); metric elements on half grid (between surfaces). Prevents checkerboard instability. Matches VMEC convention. |
 | **All GPU allocations at startup** | Scratch arrays allocated once, reused every iteration. Zero `cudaMalloc` calls in the hot loop. |
@@ -123,16 +123,16 @@ identity; the descent step re-applies `mfac*nfac`). The inverse DFT uses the
 raw basis (no normalization — the cuMES state is plain physical; the λ state
 additionally carries `mscale*nscale` inside the values).
 
-### Backends
-- **kCufft (default)**: 12-slot packing per poloidal mode (vmecpp `kBatch`:
-  rmkcc/rmkss + ζ-derivative slots for R, Z, λ), batched 1D cuFFT D2Z/Z2D of
-  length `nzeta` (batch `12*mpol*ns`), direct poloidal accumulation/reduction
-  over θ with small per-mode tables (`d_cos_th` etc.). Structurally identical
-  to vmecpp's `fft_toroidal.cc`; numerically equal to the direct backend to
-  FFT roundoff (~1e-14), byte-identical per-iteration residual logs on W7-X.
-- **kDirect**: the original direct-sum kernels (`inverseDFTKernel`,
-  `forwardDFTParityKernel`), kept as the reference; selected via
-  `CUMES_DFT_BACKEND=direct`.
+### Transform implementation
+12-slot packing per poloidal mode (vmecpp `kBatch`: rmkcc/rmkss + ζ-derivative
+slots for R, Z, λ), batched 1D cuFFT D2Z/Z2D of length `nzeta` (batch
+`12*mpol*ns`), direct poloidal accumulation/reduction over θ with small
+per-mode tables (`d_cos_th` etc.) — structurally identical to vmecpp's
+`fft_toroidal.cc`. The same plans and scratch (`d_zeta_spectra`/`d_zeta_real`)
+serve the constraint module: rCon/zCon (xmpq-weighted reconstruction) and the
+de-aliasing bandpass (full-grid sc/cs analysis → D2Z → normalized coefficients
+→ Z2D synthesis). The original direct-sum kernels were removed after A/B
+validation (commit 373172f^ has them).
 
 ### Derivative computation
 Derivatives are computed analytically during the inverse DFT:
@@ -182,7 +182,7 @@ x_new = x_old + delt * v_new
 
 | VMEC++ feature | Status |
 |----------------|--------|
-| FFT-accelerated transforms | cuFFT backend (batched 1D ζ-FFT + direct poloidal), mirroring vmecpp's FFTX structure; direct-sum kernels kept as reference backend |
+| FFT-accelerated transforms | cuFFT backend (batched 1D ζ-FFT + direct poloidal), mirroring vmecpp's FFTX structure |
 | Multigrid grid sequencing | Single fixed radial grid |
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, wout | Post-processing; not needed for core loop |

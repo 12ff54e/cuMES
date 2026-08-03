@@ -18,6 +18,9 @@
 static void cc(cudaError_t e, const char* t) {
     if (e != cudaSuccess) { fprintf(stderr, "CUDA[%s]: %s\n", t, cudaGetErrorString(e)); exit(1); }
 }
+static void ccf(cufftResult r, const char* t) {
+    if (r != CUFFT_SUCCESS) { fprintf(stderr, "CUFFT[%s]: %d\n", t, (int)r); exit(1); }
+}
 
 // ---------------------------------------------------------------------------
 // Allocate/free
@@ -97,40 +100,80 @@ void constraintFree(ConstraintWorkspace& cw) {
 // with xmpq[m] = m*(m-1): the m=0 and m=1 contributions vanish (the m=1
 // constraint), so rCon measures the deviation of the m>=2 content from the
 // LCFS-extrapolated profile rCon0.
-__global__ void rzConComputeKernel(
+// rCon/zCon via the cuFFT machinery: the xmpq-weighted real-space combination
+// used by the spectral-condensation constraint.
+//   rCon = Σ xmpq[m]*(rmncc*cos(mθ)cos(nζ) + rmnss*sin(mθ)sin(nζ))
+//   zCon = Σ xmpq[m]*(zmnsc*sin(mθ)cos(nζ) + zmncs*cos(mθ)sin(nζ))
+// with xmpq[m] = m*(m-1): the m=0,1 contributions vanish (the m=1
+// constraint), so rCon measures the deviation of the m>=2 content from the
+// LCFS-extrapolated profile rCon0.
+// Odd-m: NO extra sqrt(s) factor. vmecpp's con_factor = xmpq*sqrtSF applies
+// to its PHYSICAL state; cuMES's state carries the 1/scalxc decomposition
+// for odd m and sqrtSF*scalxc = 1, so the factor is exactly 1.0.
+// (FIXED 2026-08-02: the old sqrtS_F factor made odd-m rCon too small by
+// 1/scalxc, ~sqrt(s).)
+// The xmpq weighting is folded into the pack (a per-mode scalar that
+// commutes with the transform); only the value slots 0/1/4/5 are used.
+__global__ void rzConPackKernel(
     const double* __restrict__ rmncc, const double* __restrict__ rmnss,
     const double* __restrict__ zmnsc, const double* __restrict__ zmncs,
-    const double* __restrict__ cc, const double* __restrict__ ss,
-    const double* __restrict__ sc, const double* __restrict__ cs,
-    const double* __restrict__ sqrtS_F,
-    const int* __restrict__ xm,
-    int ns, int mnmax, int nZnT,
+    const int* __restrict__ xm, const int* __restrict__ xn,
+    int ns, int mpol, int ntor, int nfp, int nz2,
+    double2* __restrict__ spectra)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= ns * mpol * (ntor + 1)) return;
+    int j = t % ns, mode = t / ns;
+    int m = xm[mode], n = xn[mode];
+    double xmpq = (double)m * (m - 1);
+    if (xmpq == 0.0) return;   // m=0,1 vanish; the rest stays zero (memset)
+    double half  = (n == 0) ? 1.0 : 0.5;
+    double shalf = (n == 0) ? 0.0 : 0.5;
+    double rc = xmpq * rmncc[j + mode * ns], rs = xmpq * rmnss[j + mode * ns];
+    double zs = xmpq * zmnsc[j + mode * ns], zc = xmpq * zmncs[j + mode * ns];
+    size_t step = (size_t)mpol * ns * nz2;
+    double2* slot = spectra + ((size_t)m * ns + j) * nz2 + n;
+    slot[0 * step] = make_double2(rc * half, 0.0);
+    slot[1 * step] = make_double2(0.0, -rs * shalf);
+    slot[4 * step] = make_double2(zs * half, 0.0);
+    slot[5 * step] = make_double2(0.0, -zc * shalf);
+}
+
+// rCon/zCon poloidal accumulation: the plain reconstruction of the value
+// slots over all m (no parity split, no maxsc — rCon/zCon are full
+// real-space fields, unlike the e/o-split inverse-DFT outputs).
+__global__ void rzConAccumulateKernel(
+    const double* __restrict__ zeta_real,
+    const double* __restrict__ cos_th, const double* __restrict__ sin_th,
+    int ns, int mpol, int ntheta, int nzeta, int nZnT,
     double* __restrict__ rCon, double* __restrict__ zCon)
 {
-    int jF = blockIdx.y;
-    int k  = threadIdx.x + blockIdx.x * blockDim.x;
-    if (jF >= ns || k >= nZnT) return;
-
-    double r = 0.0, z = 0.0;
-    for (int m = 0; m < mnmax; ++m) {
-        int mm = xm[m];
-        double xmpq = (double)(mm * (mm - 1));
-        if (xmpq == 0.0) continue;  // m=0,1: nothing (m=1 constraint)
-        // Odd-m: NO extra sqrt(s) here. vmecpp's con_factor = xmpq*sqrtSF
-        // applies to its PHYSICAL state; cuMES's state carries the 1/scalxc
-        // decomposition for odd m (c = v*mscale*nscale/scalxc), and
-        // sqrtSF*scalxc = 1, so the odd-m factor is exactly 1.0.
-        // (FIXED 2026-08-02: the old sqrtS_F factor made odd-m rCon too
-        // small by 1/scalxc, ~sqrt(s).)
-        int idx_j = jF + m * ns;
-        r += xmpq * (rmncc[idx_j] * cc[k + m * nZnT] +
-                     rmnss[idx_j] * ss[k + m * nZnT]);
-        z += xmpq * (zmnsc[idx_j] * sc[k + m * nZnT] +
-                     zmncs[idx_j] * cs[k + m * nZnT]);
+    int j = blockIdx.x;
+    int k = threadIdx.x, l1 = threadIdx.y;
+    int nthreads = blockDim.x * blockDim.y;
+    extern __shared__ double sh[];   // [4][mpol][nzeta]: slots 0,1,4,5
+    for (int i = threadIdx.x + l1 * blockDim.x; i < 4 * mpol * nzeta; i += nthreads) {
+        int s = i / (mpol * nzeta), rem = i - s * mpol * nzeta;
+        int m = rem / nzeta, kk = rem % nzeta;
+        int slot = (s == 2) ? 4 : (s == 3) ? 5 : s;
+        sh[i] = zeta_real[(((size_t)slot * mpol + m) * ns + j) * nzeta + kk];
     }
-    int idx = k + jF * nZnT;
-    rCon[idx] = r;
-    zCon[idx] = z;
+    __syncthreads();
+    size_t mstride = (size_t)mpol * nzeta;
+    #pragma unroll
+    for (int pass = 0; pass < 2; ++pass) {
+        int l = l1 + pass * (ntheta / 2);
+        double r = 0.0, z = 0.0;
+        for (int m = 0; m < mpol; ++m) {
+            const double* sm = sh + m * nzeta;
+            double cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
+            r += sm[0 * mstride + k] * cosm + sm[1 * mstride + k] * sinm;
+            z += sm[2 * mstride + k] * sinm + sm[3 * mstride + k] * cosm;
+        }
+        int idx = j * nZnT + k * ntheta + l;
+        rCon[idx] = r;
+        zCon[idx] = z;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,84 +239,106 @@ __global__ void rzConIntoVolumeKernel(
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Bandpass filter gConEff -> gCon (efficient: one block per mode/surface).
+// Step 2: Bandpass filter gConEff -> gCon via the cuFFT machinery.
+// Analysis (full-grid uniform sums, matching deAliasKernelFast's quadrature):
+//   w_sc(m,n) = Σ gConEff*sin(mθ)cos(nζ) = Re F_sc(n)
+//   w_cs(m,n) = Σ gConEff*cos(mθ)sin(nζ) = -Im F_cs(n)
+// where F_sc/F_cs are the 1D-ζ real FFTs of the per-(m,jF) θ-reduced signals
+// s_sc[ζ] = Σ_θ gConEff*sin(mθ), s_cs[ζ] = Σ_θ gConEff*cos(mθ) (both θ and ζ
+// sums are uniform over the full grid, as in the original kernel).
+// Synthesis: slots 4/5 (zmksc/zmkcs) are packed with the normalized
+// coefficients (norm = 4/nZnT for n>0, 2/nZnT for n=0; scale = tcon*faccon),
+// and the inverse FFT + poloidal sum rebuilds
+// gCon = Σ coeff_sc*sin(mθ)cos(nζ) + coeff_cs*cos(mθ)sin(nζ)
+// over the bandpass modes m = 1..mpol-2, surfaces jF >= 1.
 // ---------------------------------------------------------------------------
 
-__global__ void deAliasKernelFast(
+__global__ void deAliasAnalyzeKernel(
     const double* __restrict__ gConEff,
-    const double* __restrict__ cc, const double* __restrict__ sc,
-    const double* __restrict__ cs,
-    const double* __restrict__ cos_mt_nz, const double* __restrict__ sin_mt_nz,
+    const double* __restrict__ cos_th, const double* __restrict__ sin_th,
+    int ns, int mpol, int ntheta, int nzeta, int nZnT,
+    double* __restrict__ zeta_real)   // slots 0 (sc), 1 (cs) at (m, jF)
+{
+    int jF = blockIdx.y, m1 = blockIdx.x;   // m = m1 + 1 in [1, mpol-2]
+    int k = threadIdx.x;
+    if (jF == 0 || k >= nzeta) return;
+    int m = m1 + 1;
+    const double* g = gConEff + jF * nZnT + k * ntheta;
+    const double* sth = sin_th + m * ntheta;
+    const double* cth = cos_th + m * ntheta;
+    double s_sc = 0.0, s_cs = 0.0;
+    for (int it = 0; it < ntheta; ++it) {
+        s_sc += g[it] * sth[it];
+        s_cs += g[it] * cth[it];
+    }
+    size_t step = (size_t)mpol * ns * nzeta;
+    double* base = zeta_real + ((size_t)m * ns + jF) * nzeta + k;
+    base[0 * step] = s_sc;
+    base[1 * step] = s_cs;
+}
+
+__global__ void deAliasCoeffPackKernel(
+    const double2* __restrict__ spectra,   // analysis output (slots 0,1)
     const int* __restrict__ xm, const int* __restrict__ xn,
-    const double* __restrict__ tcon,
-    const double* __restrict__ faccon,
-    int ns, int mnmax, int mpol, int ntor, int nZnT, int ntheta, int nzeta,
+    const double* __restrict__ tcon, const double* __restrict__ faccon,
+    int ns, int mpol, int mnmax, int nz2, int nZnT,
+    double2* __restrict__ out)             // slots 4,5 (same buffer, disjoint)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= ns * mnmax) return;
+    int jF = t % ns, mode = t / ns;
+    if (jF == 0) return;
+    int m = xm[mode], n = xn[mode];
+    if (m < 1 || m >= mpol - 1) return;   // bandpass modes only
+    double scale = tcon[jF] * faccon[m];
+    if (scale == 0.0) return;
+    // Normalization: 4/nZnT for n>0 (sin²(mθ)cos²(nζ) sums to nZnT/4),
+    // 2/nZnT for n=0 (sin²(mθ) sums to nZnT/2) — the full-grid equivalent
+    // of vmecpp's mscale*nscale*intNorm round trip; the sc/cs projections
+    // are kept separate (as in vmecpp's sinmu/cosmu round trip).
+    double norm = (n > 0) ? 4.0 / nZnT : 2.0 / nZnT;
+    size_t step = (size_t)mpol * ns * nz2;
+    const double2* in = spectra + ((size_t)m * ns + jF) * nz2 + n;
+    double coeff_sc = norm * scale * in[0 * step].x;      // Re F_sc
+    double coeff_cs = norm * scale * (-in[1 * step].y);   // -Im F_cs
+    double half = (n == 0) ? 1.0 : 0.5;
+    double shalf = (n == 0) ? 0.0 : 0.5;
+    double2* slot = out + ((size_t)m * ns + jF) * nz2 + n;
+    slot[4 * step] = make_double2(coeff_sc * half, 0.0);
+    slot[5 * step] = make_double2(0.0, -coeff_cs * shalf);
+}
+
+__global__ void deAliasSynthesizeKernel(
+    const double* __restrict__ zeta_real,   // Z2D output (slots 4,5)
+    const double* __restrict__ cos_th, const double* __restrict__ sin_th,
+    int ns, int mpol, int ntheta, int nzeta, int nZnT,
     double* __restrict__ gCon)
 {
-    // One thread per (mode, surface) for the forward DFT
-    // Mode index = blockIdx.x, surface = blockIdx.y
-    int mode = blockIdx.x;
-    int jF = blockIdx.y;
-    if (jF >= ns || jF == 0 || mode >= mnmax) return;
-
-    int mm = xm[mode], nn = xn[mode];
-    // Only bandpass modes: m = 1 .. mpol-2
-    if (mm < 1 || mm >= mpol - 1) return;
-
-    double faccon_m = faccon[mm];  // 0.25/(m*m)
-    double tcon_j = tcon[jF];
-    double scale = tcon_j * faccon_m;
-    if (scale == 0.0) return;
-
-    int tid = threadIdx.x;
-
-    // Forward DFT projection of gConEff onto basis (mm, nn)
-    // Sum over (theta, zeta): gConEff * basis_{mm,nn}
-    double w_sc = 0.0;  // sin(mθ)cos(nζ) basis
-    double w_cs = 0.0;  // cos(mθ)sin(nζ) basis
-
-    for (int k = tid; k < nZnT; k += blockDim.x) {
-        int idx = k + jF * nZnT;
-        // sc = sin(mθ)cos(nζ), cs = cos(mθ)sin(nζ)
-        w_sc += gConEff[idx] * sc[k + mode * nZnT];
-        w_cs += gConEff[idx] * cs[k + mode * nZnT];
+    int jF = blockIdx.x;
+    if (jF == 0) return;
+    int k = threadIdx.x, l1 = threadIdx.y;
+    int nthreads = blockDim.x * blockDim.y;
+    extern __shared__ double sh[];   // [2][mpol-2][nzeta] (slots 4,5)
+    int nb = 2 * (mpol - 2);
+    for (int i = threadIdx.x + l1 * blockDim.x; i < nb * nzeta; i += nthreads) {
+        int s = i / ((mpol - 2) * nzeta), rem = i - s * (mpol - 2) * nzeta;
+        int m1 = rem / nzeta, kk = rem % nzeta;
+        int m = m1 + 1;
+        int slot = (s == 0) ? 4 : 5;
+        sh[i] = zeta_real[(((size_t)slot * mpol + m) * ns + jF) * nzeta + kk];
     }
-
-    // Parallel reduction in shared memory
-    __shared__ double s_wsc[256], s_wcs[256];
-    s_wsc[tid] = w_sc; s_wcs[tid] = w_cs;
     __syncthreads();
-    for (int s = blockDim.x/2; s > 0; s >>= 1) {
-        if (tid < s) {
-            s_wsc[tid] += s_wsc[tid + s];
-            s_wcs[tid] += s_wcs[tid + s];
+    #pragma unroll
+    for (int pass = 0; pass < 2; ++pass) {
+        int l = l1 + pass * (ntheta / 2);
+        double g = 0.0;
+        for (int m1 = 0; m1 < mpol - 2; ++m1) {
+            int m = m1 + 1;
+            double cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
+            g += sh[0 * (mpol - 2) * nzeta + m1 * nzeta + k] * sinm
+               + sh[1 * (mpol - 2) * nzeta + m1 * nzeta + k] * cosm;
         }
-        __syncthreads();
-    }
-
-    // Thread 0: normalize and write spectral coefficients
-    if (tid == 0) {
-        // Normalization: for m>0, n>=0: factor 4/nZnT for the n>0 modes
-        // (since sin²(mθ)cos²(nζ) sums to nZnT/4) and 2/nZnT for n=0
-        // (sin²(mθ) sums to nZnT/2). This is the full-grid equivalent of
-        // vmecpp's mscale*nscale*intNorm round trip (empirically matched
-        // for the n=0 case; the sc/cs projections are kept separate, as in
-        // vmecpp's sinmu/cosmu round trip, to avoid cross terms in 3D).
-        double norm = (mm > 0 && nn > 0) ? (4.0 / nZnT) :
-                      (nn == 0)            ? (2.0 / nZnT) : (4.0 / nZnT);
-        double coeff_sc = s_wsc[0] * norm * scale;
-        double coeff_cs = s_wcs[0] * norm * scale;
-
-        // Inverse DFT: add coeff_sc * sc + coeff_cs * cs back to gCon at
-        // each point (matching vmecpp: the sin-projection reconstructs with
-        // sinmu, the cos-projection with cosmu).
-        for (int k = 0; k < nZnT; ++k) {
-            int idx = k + jF * nZnT;
-            // Use atomic add since multiple modes contribute
-            atomicAdd(&gCon[idx],
-                coeff_sc * sc[k + mode * nZnT] +
-                coeff_cs * cs[k + mode * nZnT]);
-        }
+        gCon[jF * nZnT + k * ntheta + l] = g;
     }
 }
 
@@ -399,15 +464,25 @@ __global__ void tconLcfsHalfKernel(double* __restrict__ tcon, int ns) {
 void constraintRzConCompute(const GridParams& p, const FourierPlan& fp,
                             const SpectralState& st, ConstraintWorkspace& cw,
                             const double* d_sqrtS_F) {
-    dim3 block(32);
-    dim3 grid((p.nZnT + 31) / 32, p.ns);
-    rzConComputeKernel<<<grid, block>>>(
+    (void)d_sqrtS_F;   // the odd-m factor is exactly 1.0 (see rzConPackKernel)
+    // xmpq-weighted inverse transform: pack the value slots, Z2D, accumulate
+    // rCon/zCon (the poloidal sum over all m with the raw cos/sin tables).
+    cc(cudaMemset(fp.d_zeta_spectra, 0,
+        (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(double2)), "rzcon zero");
+    int total = p.ns * p.mnmax;
+    rzConPackKernel<<<(total + 255) / 256, 256>>>(
         st.d_rmncc, st.d_rmnss, st.d_zmnsc, st.d_zmncs,
-        fp.basis.d_cc, fp.basis.d_ss, fp.basis.d_sc, fp.basis.d_cs,
-        d_sqrtS_F, fp.basis.d_xm,
-        p.ns, p.mnmax, p.nZnT,
+        fp.basis.d_xm, fp.basis.d_xn,
+        p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
+    cc(cudaGetLastError(), "rzcon pack");
+    ccf(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "rzcon z2d");
+    dim3 blk(p.nzeta, p.ntheta / 2);
+    rzConAccumulateKernel<<<p.ns, blk, 4 * p.mpol * p.nzeta * sizeof(double)>>>(
+        fp.d_zeta_real, fp.d_cos_th, fp.d_sin_th,
+        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
         cw.d_rCon, cw.d_zCon);
-    cc(cudaGetLastError(), "rzConCompute");
+    cc(cudaGetLastError(), "rzcon acc");
+    cc(cudaDeviceSynchronize(), "rzcon sync");
 }
 
 // ---------------------------------------------------------------------------
@@ -465,18 +540,38 @@ void constraintCompute(const GridParams& p, const FourierPlan& fp,
         p.ns, p.nZnT, cw.d_gConEff);
     cc(cudaGetLastError(), "gConEff");
 
-    // Step 2: Bandpass filter (de-alias)
-    // One block per mode, one per surface
-    dim3 gridDA(p.mnmax, p.ns);
-    deAliasKernelFast<<<gridDA, 256>>>(
-        cw.d_gConEff,
-        fp.basis.d_cc, fp.basis.d_sc, fp.basis.d_cs,
-        fp.basis.d_cos_mt_nz, fp.basis.d_sin_mt_nz,
-        fp.basis.d_xm, fp.basis.d_xn,
-        cw.d_tcon, cw.d_faccon,
-        p.ns, p.mnmax, p.mpol, p.ntor, p.nZnT, p.ntheta, p.nzeta,
-        cw.d_gCon);
-    cc(cudaGetLastError(), "deAlias");
+    // Step 2: Bandpass filter (de-alias) — cuFFT round trip.
+    //   1. zero d_zeta_real, θ-reduce gConEff into the slot-0/1 ζ-signals
+    //   2. D2Z (analysis spectra; all untouched slots stay zero)
+    //   3. per-mode coefficients -> pack slots 4/5 (same buffer, disjoint)
+    //   4. Z2D + poloidal synthesis -> gCon
+    // The D2Z/Z2D plans cover the full 12*mpol*ns batch; the untouched slots
+    // are zero from the memset and their synthesized output is never read.
+    cc(cudaMemset(fp.d_zeta_real, 0, (size_t)12 * p.mpol * p.ns * p.nzeta *
+                                     sizeof(double)), "deAlias zero");
+    {   dim3 blkA(p.nzeta), grdA(p.mpol - 2, p.ns);
+        deAliasAnalyzeKernel<<<grdA, blkA>>>(
+            cw.d_gConEff, fp.d_cos_th, fp.d_sin_th,
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, fp.d_zeta_real);
+        cc(cudaGetLastError(), "deAlias analyze");
+    }
+    ccf(cufftExecD2Z(fp.plan_d2z, fp.d_zeta_real, fp.d_zeta_spectra), "deAlias d2z");
+    {   int totalDA = p.ns * p.mnmax;
+        deAliasCoeffPackKernel<<<(totalDA + 255) / 256, 256>>>(
+            fp.d_zeta_spectra, fp.basis.d_xm, fp.basis.d_xn,
+            cw.d_tcon, cw.d_faccon,
+            p.ns, p.mpol, p.mnmax, p.nzeta / 2 + 1, p.nZnT,
+            fp.d_zeta_spectra);
+        cc(cudaGetLastError(), "deAlias coeff");
+    }
+    ccf(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "deAlias z2d");
+    {   dim3 blkS(p.nzeta, p.ntheta / 2);
+        deAliasSynthesizeKernel<<<p.ns, blkS,
+            2 * (p.mpol - 2) * p.nzeta * sizeof(double)>>>(
+            fp.d_zeta_real, fp.d_cos_th, fp.d_sin_th,
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon);
+        cc(cudaGetLastError(), "deAlias synth");
+    }
     cc(cudaDeviceSynchronize(), "deAlias sync");
 
     // Step 3: Add constraint force to brmn/bzmn + write frcon/fzcon outputs

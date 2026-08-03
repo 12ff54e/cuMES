@@ -31,8 +31,8 @@ struct GridParams {
 };
 
 struct FourierBasis {
-    double* d_cos_mt_nz; double* d_sin_mt_nz;
-    double* d_cc; double* d_ss; double* d_sc; double* d_cs;
+    // Mode tables only: the basis functions are evaluated analytically via
+    // the cuFFT machinery and the small per-m poloidal tables in FourierPlan.
     int* d_xm; int* d_xn;
 };
 

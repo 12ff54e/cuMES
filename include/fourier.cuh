@@ -6,21 +6,12 @@
 
 struct ConstraintWorkspace;  // defined in constraint.cuh
 
-// Transform backend:
-//   kDirect — original direct-sum DFT kernels (exact reference, kept for
-//             A/B validation and the CPU-mirroring tests).
-//   kCufft  — batched 1D real FFT in the toroidal (ζ) direction + direct
-//             poloidal synthesis, mirroring vmecpp's FFTX fft_toroidal.cc
-//             (the default; selected via CUMES_DFT_BACKEND=cufft|direct).
-enum class DftBackend { kDirect, kCufft };
-
+// Transforms use a batched 1D real FFT in the toroidal (ζ) direction plus
+// direct poloidal synthesis, mirroring vmecpp's FFTX fft_toroidal.cc.
 struct FourierPlan {
     FourierBasis basis;
     cublasHandle_t handle;
 
-    DftBackend backend = DftBackend::kCufft;
-
-    // ---- cuFFT backend state (created in fourierCreate; unused by kDirect)
     // Batched 1D real FFTs of length nzeta, one batch element per
     // (slot, m, j) with slot in 0..11 (the vmecpp kBatch layout below) and
     // element index ((slot*mpol + m)*ns + j). Slot layout per poloidal
@@ -28,6 +19,8 @@ struct FourierPlan {
     //   0 rmkcc   1 rmkss   2 rmkccN   3 rmkssN     (R value + ζ-derivs)
     //   4 zmksc   5 zmkcs   6 zmkscN   7 zmkcsN     (Z value + ζ-derivs)
     //   8 lmksc   9 lmkcs  10 lmkscN  11 lmkcsN     (λ value + ζ-derivs)
+    // The d_zeta_* scratch is also reused by the constraint module
+    // (constraint.cu: rCon/zCon and the de-aliasing bandpass filter).
     cufftHandle plan_z2d;    // inverse:  half-spectrum -> real
     cufftHandle plan_d2z;    // forward:  real -> half-spectrum
     double2* d_zeta_spectra; // [12*mpol*ns][nzeta/2+1] complex
@@ -83,6 +76,3 @@ void inverseDFT(const FourierPlan& fp, const SpectralState& st,
 //   [5*mnmax*ns .. 6*mnmax*ns): f_lmncs
 void forwardDFT(const FourierPlan& fp, double* d_f_spectral,
                 const GridParams& p, const ConstraintWorkspace& cw);
-
-void forwardDFTDirect(const FourierPlan& fp, double* d_f_spectral,
-                      const GridParams& p);
