@@ -215,89 +215,78 @@ __global__ void inversePackKernel(
     slot[11 * step] = make_double2(+lcs * dhalf, 0.0);
 }
 
-// Poloidal accumulation over the FULL θ grid (block per surface j, threads
-// (k=ζ, l1); each thread handles θ points l1 and l1 + ntheta/2 and sums the
-// m-loop serially — the same accumulation order as inverseDFTKernel — then
-// writes each output point exactly once). Outputs the nine e/o parity arrays:
-// even m -> *_e, odd m -> *_o divided by maxsc (vmecpp's scalxc odd
-// decomposition). Slot-to-output mapping (verified against inverseDFTKernel
-// and fft_toroidal.cc):
-//   r1 = rmkcc*cos + rmkss*sin        ru = -m*rmkcc*sin + m*rmkss*cos
-//   rv = rmkccN*cos + rmkssN*sin      z1 = zmksc*sin + zmkcs*cos
-//   zu = m*zmksc*cos - m*zmkcs*sin    zv = zmkscN*sin + zmkcsN*cos
-//   l1 = lmksc*sin + lmkcs*cos        lu = m*lmksc*cos - m*lmkcs*sin
-//   lv = -(lmkscN*sin + lmkcsN*cos)   (λ's ζ-derivative stored negated)
+// Poloidal accumulation over the FULL θ grid. Grid (ns, 3): blockIdx.y
+// selects the slot group (0 = R slots 0-3, 1 = Z slots 4-7, 2 = λ slots
+// 8-11), blockIdx.x the surface j. Threads (l1=θ-half, k=ζ); each thread
+// handles θ points l1 and l1 + ntheta/2 and sums the m-loop serially — the
+// same accumulation order as inverseDFTKernel — then writes each output
+// point exactly once. Outputs the e/o parity arrays: even m -> *_e, odd m
+// -> *_o divided by maxsc (vmecpp's scalxc odd decomposition). Splitting
+// the 12 slots into 3 groups cuts the shared memory per block 41.5 KB ->
+// 13.8 KB, raising occupancy from 1 to 3 blocks/SM (was latency-bound at
+// ~425 us/iter; the group selection is uniform per block, so the per-thread
+// arithmetic is unchanged — bit-identical).
+//
+// Slot-to-output mapping (verified against inverseDFTKernel and
+// fft_toroidal.cc). Per group, slots are (cos-slot, sin-slot, cosN-slot,
+// sinN-slot) and the θ basis differs: R multiplies (cos, sin), Z and λ
+// multiply (sin, cos), and λ's ζ-derivative is negated:
+//   R: v = c0*cos + c1*sin      vu = c0*msin + c1*mcos
+//      vv = c2*cos + c3*sin
+//   Z: v = c0*sin + c1*cos      vu = c0*mcos + c1*msin
+//      vv = c2*sin + c3*cos
+//   λ: v = c0*sin + c1*cos      vu = c0*mcos + c1*msin
+//      vv = -(c2*sin + c3*cos)
 __global__ void inverseAccumulateKernel(
     const double* __restrict__ zeta_real,
     const double* __restrict__ cos_th, const double* __restrict__ sin_th,
     const double* __restrict__ mcos_th, const double* __restrict__ msin_th,
-    int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    double* __restrict__ r_e,  double* __restrict__ z_e,  double* __restrict__ l_e,
-    double* __restrict__ ru_e, double* __restrict__ zu_e, double* __restrict__ lu_e,
-    double* __restrict__ rv_e, double* __restrict__ zv_e, double* __restrict__ lv_e,
-    double* __restrict__ r_o,  double* __restrict__ z_o,  double* __restrict__ l_o,
-    double* __restrict__ ru_o, double* __restrict__ zu_o, double* __restrict__ lu_o,
-    double* __restrict__ rv_o, double* __restrict__ zv_o, double* __restrict__ lv_o)
+    int ns, int mpol, int ntheta, int nzeta, int nZnT, int slot0,
+    double* __restrict__ e0, double* __restrict__ e1, double* __restrict__ e2,
+    double* __restrict__ o0, double* __restrict__ o1, double* __restrict__ o2)
 {
     int j = blockIdx.x;
+    // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
     // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
     // coalesce; the m-loop shared reads (sm[.. + k]) become broadcasts.
     int k = threadIdx.y, l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    extern __shared__ double sh[];   // [12][mpol][nzeta]
-    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 12 * mpol * nzeta; i += nthreads) {
+    extern __shared__ double sh[];   // [4][mpol][nzeta]
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * nzeta; i += nthreads) {
         int s = i / (mpol * nzeta), rem = i - s * mpol * nzeta;
         int m = rem / nzeta, kk = rem % nzeta;
-        sh[i] = zeta_real[(((size_t)s * mpol + m) * ns + j) * nzeta + kk];
+        sh[i] = zeta_real[(((size_t)(slot0 + s) * mpol + m) * ns + j) * nzeta + kk];
     }
     __syncthreads();
     double maxsc = fmax(sqrt((double)j / (ns - 1.0)), sqrt(1.0 / (ns - 1.0)));
     double facO = 1.0 / maxsc;
+    bool isR = (slot0 == 0);
+    double signV = (slot0 == 8) ? -1.0 : 1.0;
     size_t mstride = (size_t)mpol * nzeta;
     #pragma unroll
     for (int pass = 0; pass < 2; ++pass) {
         int l = l1 + pass * (ntheta / 2);
-        double re = 0, ze = 0, le = 0, rue = 0, zue = 0, lue = 0;
-        double ro = 0, zo = 0, lo = 0, ruo = 0, zuo = 0, luo = 0;
-        double rve = 0, zve = 0, lve = 0, rvo = 0, zvo = 0, lvo = 0;
+        double v0e = 0, v1e = 0, v2e = 0;
+        double v0o = 0, v1o = 0, v2o = 0;
         for (int m = 0; m < mpol; ++m) {
             const double* sm = sh + m * nzeta;
-            double rmkcc = sm[0 * mstride + k], rmkss = sm[1 * mstride + k];
-            double rmkccN = sm[2 * mstride + k], rmkssN = sm[3 * mstride + k];
-            double zmksc = sm[4 * mstride + k], zmkcs = sm[5 * mstride + k];
-            double zmkscN = sm[6 * mstride + k], zmkcsN = sm[7 * mstride + k];
-            double lmksc = sm[8 * mstride + k], lmkcs = sm[9 * mstride + k];
-            double lmkscN = sm[10 * mstride + k], lmkcsN = sm[11 * mstride + k];
+            double c0 = sm[0 * mstride + k], c1 = sm[1 * mstride + k];
+            double c2 = sm[2 * mstride + k], c3 = sm[3 * mstride + k];
             double cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
             double mcos = mcos_th[m * ntheta + l], msin = msin_th[m * ntheta + l];
             double fac = (m % 2 == 1) ? facO : 1.0;
-            double r1  = fac * (rmkcc * cosm + rmkss * sinm);
-            double ru1 = fac * (rmkcc * msin + rmkss * mcos);
-            double rv1 = fac * (rmkccN * cosm + rmkssN * sinm);
-            double z1  = fac * (zmksc * sinm + zmkcs * cosm);
-            double zu1 = fac * (zmksc * mcos + zmkcs * msin);
-            double zv1 = fac * (zmkscN * sinm + zmkcsN * cosm);
-            double l1v = fac * (lmksc * sinm + lmkcs * cosm);
-            double lu1 = fac * (lmksc * mcos + lmkcs * msin);
-            double lv1 = fac * -(lmkscN * sinm + lmkcsN * cosm);
-            if (m % 2 == 1) {
-                ro += r1; zo += z1; lo += l1v;
-                ruo += ru1; zuo += zu1; luo += lu1;
-                rvo += rv1; zvo += zv1; lvo += lv1;
-            } else {
-                re += r1; ze += z1; le += l1v;
-                rue += ru1; zue += zu1; lue += lu1;
-                rve += rv1; zve += zv1; lve += lv1;
-            }
+            double t0 = isR ? cosm : sinm, t1 = isR ? sinm : cosm;
+            double u0 = isR ? msin : mcos, u1 = isR ? mcos : msin;
+            double v0 = fac * (c0 * t0 + c1 * t1);
+            double v1 = fac * (c0 * u0 + c1 * u1);
+            double v2 = signV * fac * (c2 * t0 + c3 * t1);
+            if (m % 2 == 1) { v0o += v0; v1o += v1; v2o += v2; }
+            else            { v0e += v0; v1e += v1; v2e += v2; }
         }
         int idx = j * nZnT + k * ntheta + l;
-        r_e[idx] = re;  z_e[idx] = ze;  l_e[idx] = le;
-        ru_e[idx] = rue; zu_e[idx] = zue; lu_e[idx] = lue;
-        rv_e[idx] = rve; zv_e[idx] = zve; lv_e[idx] = lve;
-        r_o[idx] = ro;  z_o[idx] = zo;  l_o[idx] = lo;
-        ru_o[idx] = ruo; zu_o[idx] = zuo; lu_o[idx] = luo;
-        rv_o[idx] = rvo; zv_o[idx] = zvo; lv_o[idx] = lvo;
+        e0[idx] = v0e; e1[idx] = v1e; e2[idx] = v2e;
+        o0[idx] = v0o; o1[idx] = v1o; o2[idx] = v2o;
     }
 }
 
@@ -343,14 +332,23 @@ static void inverseDFTCufft(const FourierPlan& fp, const SpectralState& st,
     checkCufft(cufftExecZ2D(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
     dim3 blk(p.ntheta / 2, p.nzeta);
     dim3 grd(p.ns);
-    inverseAccumulateKernel<<<grd, blk, 12 * p.mpol * p.nzeta * sizeof(double)>>>(
+    size_t invSmem = 4 * p.mpol * p.nzeta * sizeof(double);
+    // R slots 0-3 -> r/ru/rv, Z slots 4-7 -> z/zu/zv, λ slots 8-11 -> l/lu/lv
+    inverseAccumulateKernel<<<grd, blk, invSmem>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
-        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
-        fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
-        fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
-        fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
-        fp.d_rv_o, fp.d_zv_o, fp.d_lv_o);
+        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 0,
+        fp.d_r_e, fp.d_ru_e, fp.d_rv_e, fp.d_r_o, fp.d_ru_o, fp.d_rv_o);
+    inverseAccumulateKernel<<<grd, blk, invSmem>>>(
+        fp.d_zeta_real,
+        fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
+        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 4,
+        fp.d_z_e, fp.d_zu_e, fp.d_zv_e, fp.d_z_o, fp.d_zu_o, fp.d_zv_o);
+    inverseAccumulateKernel<<<grd, blk, invSmem>>>(
+        fp.d_zeta_real,
+        fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
+        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 8,
+        fp.d_l_e, fp.d_lu_e, fp.d_lv_e, fp.d_l_o, fp.d_lu_o, fp.d_lv_o);
     dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
     combineParityKernel<<<cgrd, cblk>>>(
         fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
