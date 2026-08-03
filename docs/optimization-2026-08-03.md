@@ -25,12 +25,30 @@ verification bar (state ≤1e-8, per-iter residual tracking ≤1e-8).
 - GPU: NVIDIA TITAN Xp (Pascal, sm_61, 12 GB, ~380 GFLOPS fp64).
 - CUDA 12.1 toolchain, `-O3 --use_fast_math`, no `-lineinfo` in the default
   build; a parallel `build-prof/` dir adds `-lineinfo` and `sm_61` only.
-- **ncu was unavailable** (no performance-counter permission, no sudo —
-  `ERR_NVGPUCTRPERM`), so all profiling came from **nsys kernel timelines**
-  plus targeted **standalone microbenchmarks** (`/tmp/cumes_prof/bench_*.cu`).
-  This shaped the workflow: hypothesis from code reading → nsys to rank
-  kernels → microbenchmark to isolate a single kernel's behavior → change →
-  full-run verification.
+- **ncu cannot profile this GPU at all.** The TITAN Xp is Pascal (sm_61),
+  and Nsight Compute dropped Pascal support before 2023.1.1 (the CUDA 12.1
+  toolkit's version): both the installed 2023.1.1 and a freshly downloaded
+  2026.2.1 list no gp10x chips in `--list-chips`, and profiling reports
+  "Profiling is not supported on device 0". The last Pascal-capable ncu
+  (2022.1) predates the CUDA-13.0 driver (580.173) and cannot attach to it.
+  The permission layer (ERR_NVGPUCTRPERM, fixable via sudo or
+  NVreg_RestrictProfilingToAdminUsers=0) was never the blocker; the
+  toolchain has moved on from the hardware.
+- With hardware counters off the table, profiling came from **nsys kernel
+  timelines**, **cuobjdump --dump-resource-usage** (register counts, spills,
+  derived occupancy), and targeted **standalone microbenchmarks**
+  (`/tmp/cumes_prof/bench_*.cu`). This shaped the workflow: hypothesis from
+  code reading → nsys to rank kernels → microbenchmark to isolate a single
+  kernel's behavior → change → full-run verification.
+
+  The resource dump did surface one thing ncu would have: the slot-split
+  inverseAccumulate runs at 26% occupancy (64 regs × 540 threads = 1 block/
+  SM — registers, not shared memory, are the limiter), and forces at 25%
+  (108 regs). The follow-up `__launch_bounds__` experiments (forcing 2-8
+  blocks/SM on inverseAccumulate/forwardReduce/forces/geometry) measured out
+  as noise or negative — the memory-bound kernels saturate occupancy's
+  benefit, and the register-hungry ones spill (forces: 224 B/thread at 64
+  regs → 6% regression). All reverted; 4.984 s stands.
 
 ## 2. Verification methodology (no vmecpp reference per change)
 
