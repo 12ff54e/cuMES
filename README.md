@@ -116,7 +116,8 @@ debug output.
 
 | VMEC++ feature | Status |
 |----------------|--------|
-| FFT-accelerated transforms | Implemented: cuFFT (batched 1D real FFT in the ζ direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure); the constraint module's rCon/zCon and de-aliasing bandpass reuse the same plans/scratch. Measured on W7-X: inverse 3.5→0.9 ms/iter, forward 42.3→0.4 ms/iter; full run 155 s→21 s. See `src/fourier.cu`. |
+| FFT-accelerated transforms | Implemented: cuFFT (batched 1D real FFT in the ζ direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure); the constraint module's rCon/zCon and de-aliasing bandpass reuse the same plans/scratch (compact sub-batches: 2·(mpol−2)·(ns−1) and 4·mpol·ns elements instead of the full 12·mpol·ns). See `src/fourier.cu`. |
+| Performance (W7-X, TITAN Xp) | Full run 7.79 s → **4.98 s** after the 2026-08-03 pass (PCR tridiagonal solve, coalesced θ-major access, slot-split poloidal accumulation, compact constraint sub-batch FFTs, sync removal): transforms 0.43/0.39 ms/iter (inverse/forward), converged at iter 2962 with FSQR 9.924e-13 — per-iteration residuals bit-identical to the pre-pass run, state ≤2e-10 in all six families. |
 | 3D (lthreed) equilibria | Implemented and verified against vmecpp (W7-X, mpol=ntor=12): per-iteration residuals track vmecpp at ≤1e-8 over the whole run; converges at iter 2962 (vmecpp 2953) with FSQR 9.924e-13 (vmecpp 9.92e-13); the converged state matches the wout at ≤1.5e-9 in all six families. |
 | Multigrid grid sequencing | Single fixed radial grid |
 | Free boundary / vacuum solver | Fixed boundary only |

@@ -81,7 +81,7 @@ v = fac×(b1·v + delt·f) ,  x += delt·v
 
 | Decision | Rationale |
 |----------|-----------|
-| **cuFFT transforms** | The transforms mirror vmecpp's FFTX structure: a batched 1D real FFT in the toroidal (ζ) direction plus direct poloidal synthesis/reduction; the constraint module (rCon/zCon, de-aliasing) reuses the same plans/scratch. Measured on W7-X: inverse 3.5→0.9 ms/iter, forward 42.3→0.4 ms/iter; full run 155 s→21 s. |
+| **cuFFT transforms** | The transforms mirror vmecpp's FFTX structure: a batched 1D real FFT in the toroidal (ζ) direction plus direct poloidal synthesis/reduction; the constraint module (rCon/zCon, de-aliasing) reuses the same plans/scratch, with compact sub-batch plans (only the participating slots/modes/surfaces: 2·(mpol−2)·(ns−1) elements for the deAlias bandpass, 4·mpol·ns for rCon/zCon). W7-X on TITAN Xp: inverse 0.43 ms/iter, forward 0.39 ms/iter; full run 7.79 s→4.98 s after the 2026-08-03 pass (PCR tridiagonal solve, coalesced θ-major access, slot-split poloidal accumulation, sync removal). |
 | **Column-major storage** | Standard for cuBLAS; natural for per-surface indexing: `array[point + surface * nZnT]` for real space, `array[surface + mode * ns]` for spectral. |
 | **Staggered half-grid** | Dynamic variables on full grid (flux surfaces); metric elements on half grid (between surfaces). Prevents checkerboard instability. Matches VMEC convention. |
 | **All GPU allocations at startup** | Scratch arrays allocated once, reused every iteration. Zero `cudaMalloc` calls in the hot loop. |
