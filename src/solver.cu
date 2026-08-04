@@ -521,14 +521,16 @@ SolverResult solverRun(SpectralState& st, const GridParams& p,
     // (~+0.36 for W7-X, dominated by rmnc(0,1)@axis = +0.35).
     auto axisRAtZeta0 = [&]() {
         // mode-major layout [mode*ns + j]: the m=0 modes (mode = n) at the
-        // axis row (j=0) sit at indices n*ns — not contiguous.
+        // axis row (j=0) sit at indices n*ns — strided, so one cudaMemcpy2D
+        // grabs all ntor+1 values instead of ntor+1 individual 1-double
+        // copies (each of which synchronized the device).
+        double h_ax[64];   // ntor+1 <= 64 for the hardcoded inputs
+        checkCuda(cudaMemcpy2D(h_ax, sizeof(double), st.d_rmncc,
+                               (size_t)p.ns * sizeof(double),
+                               sizeof(double), p.ntor + 1,
+                               cudaMemcpyDeviceToHost), "cpy Rax");
         double h = 0.0;
-        for (int n = 0; n <= p.ntor; ++n) {
-            double v;
-            checkCuda(cudaMemcpy(&v, st.d_rmncc + (size_t)n * p.ns, sizeof(double),
-                                 cudaMemcpyDeviceToHost), "cpy Rax");
-            h += v;
-        }
+        for (int n = 0; n <= p.ntor; ++n) h += h_ax[n];
         return h;
     };
     auto recordPass = [&](int reason, double fRi, double fZi, double fLi,
