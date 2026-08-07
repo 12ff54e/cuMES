@@ -466,6 +466,10 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
     // invTau reinitialization key off (iter2 - iter1).
     // res0: running minimum of the preconditioned residual sum fsq.
     int iter2 = 1, iter1 = 1;
+    // Log grid anchor: table rows print at iter2 = log_anchor + 100n and
+    // re-anchor at every restart, so a restarted trajectory is sampled at
+    // the restart point and every 100 effective passes after it.
+    int log_anchor = 0;
     T res0 = T(-1.0);
     T fsq_prev = T(1.0);   // vmecpp: fc_.fsq = 1.0 at stage start
     T fsqz_prev = T(0.0);  // vmecpp: fc_.fsqz = 0.0 at stage start; feeds
@@ -589,6 +593,17 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
     printf("\n ITER |    FSQR        FSQZ        FSQL    |   DELT\n");
     printf("------+------------------------------------+----------\n");
 
+    // One table row: effective iteration, invariant residuals, delt, and the
+    // axis / boundary R_00 (same columns as vmecpp's iteration printout).
+    auto printIterRow = [&](int it2, T fsqr_v, T fsqz_v, T fsql_v, T delt_v) {
+        printf("%5d | %11.3e %11.3e %11.3e | %8.2e", it2,
+               (double)fsqr_v, (double)fsqz_v, (double)fsql_v, (double)delt_v);
+        T h_rmncc_axis = axisRAtZeta0(), h_rmncc_bnd;
+        checkCuda(cudaMemcpy(&h_rmncc_bnd, st.d_rmncc + (p.ns - 1), sizeof(T),
+                             cudaMemcpyDeviceToHost), "cpy Rbnd");
+        printf(" | Rax=%.4f Rbnd=%.4f\n", (double)h_rmncc_axis, (double)h_rmncc_bnd);
+    };
+
 #ifdef DUMP_CUMES_VERIFY
     {
         dumpEnsureDir();
@@ -617,7 +632,7 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
             restoreState();
             ++ijacob;
             delt = (ijacob < 50 ? T(0.98) : T(0.96)) * T(kDelt0Eff);
-            iter1 = iter2;
+            iter1 = iter2; log_anchor = iter2;
             printf("  -> CONVERGENCE PROBLEM: RESETTING DELT to %.3e (ijacob=%d)\n",
                    (double)delt, ijacob);
             continue;
@@ -994,17 +1009,23 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
 #endif
             restoreState();
             delt *= T(0.9);
-            iter1 = iter2;
+            iter1 = iter2; log_anchor = iter2;
             printf("  -> BAD JACOBIAN (non-finite residuals) delt=%.3e\n",(double)delt);
+            printIterRow(iter2, fsqr_i, fsqz_i, fsql_i, delt);
             continue;
         }
         if (fsqr_i <= p.ftol && fsqz_i <= p.ftol && fsql_i <= p.ftol) {
 #ifdef DUMP_CUMES_VERIFY
             recordPass(0, fsqr_i, fsqz_i, fsql_i, 0,0,0, delt,0,0,0,0);
 #endif
-            res.converged=true; res.iterations=iter+1;
+            res.converged=true; res.iterations=iter2;
             res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=delt;
-            printf("  -> CONVERGED at iter %d\n",iter+1); break;
+            // Report the EFFECTIVE iteration count (iter2): restart passes
+            // don't advance it, matching vmecpp's bad_resets counter and the
+            // ITER column of the table above (the raw pass count, iter+1,
+            // would disagree after any restart).
+            printf("  -> CONVERGED at iter %d\n",iter2);
+            printIterRow(iter2, fsqr_i, fsqz_i, fsql_i, delt); break;
         }
 
         // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve
@@ -1156,7 +1177,7 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
             restoreState();
             if (reason == kBadJacobian) { delt *= T(0.9); ++ijacob; }
             else { delt /= T(1.03); }
-            iter1 = iter2;
+            iter1 = iter2; log_anchor = iter2;
             printf("  -> %s (iter2=%d) delt=%.3e\n",
                    reason == kBadJacobian ? "BAD JACOBIAN" : "BAD PROGRESS",
                    iter2, (double)delt);
@@ -1164,16 +1185,13 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
             iter2++;  // effective counter advances on good passes only
         }
 
-        // ---- Output (every 50 iters, first 5, or late iterations) ----
-        if(iter%50==0||iter<5||(iter>1950&&iter%10==0)) {
-            printf("%5d | %11.3e %11.3e %11.3e | %8.2e",iter2,(double)fsqr_i,(double)fsqz_i,(double)fsql_i,(double)delt);
-            // Axis R at zeta=0 (vmecpp r00 convention) and R_00 at the LCFS
-            T h_rmncc_axis = axisRAtZeta0(), h_rmncc_bnd;
-            checkCuda(cudaMemcpy(&h_rmncc_bnd, st.d_rmncc + (p.ns-1), sizeof(T), cudaMemcpyDeviceToHost), "cpy Rbnd");
-            printf(" | Rax=%.4f Rbnd=%.4f\n", (double)h_rmncc_axis, (double)h_rmncc_bnd);
+        // ---- Output (every 100 effective iters on the restart-anchored
+        // grid, plus the final pass of a max-iteration run) ----
+        if ((iter2 - log_anchor) % 100 == 0 || iter == kMaxIterEff - 1) {
+            printIterRow(iter2, fsqr_i, fsqz_i, fsql_i, delt);
         }
 
-        if(iter==kMaxIterEff-1){ res.iterations=kMaxIterEff;
+        if(iter==kMaxIterEff-1){ res.iterations=iter2;
             res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=delt; }
     }
 

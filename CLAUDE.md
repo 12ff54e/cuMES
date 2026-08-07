@@ -238,8 +238,10 @@ The rollback-backup refresh now captures the POST-descent state (vmecpp's
 RestartIteration(NO_RESTART) semantics — the descent runs before the
 time-step control), the per-iteration residuals track vmecpp at ≤1e-8
 relative over the ENTIRE run (restart sequence identical at all 9 restarts:
-BJs iter2 3,5,8,11,15; BPs 51,64,78,91), and the W7-X run converges at 2962
-iters, FSQR 9.91e-13 (vmecpp: 2953, 9.92e-13). The converged state matches
+BJs iter2 3,5,8,11,15; BPs 51,64,78,91), and the W7-X run converges at 2953
+effective iters (2962 raw passes incl. the 9 restarts), FSQR 9.91e-13
+(vmecpp: 2953, 9.92e-13). The solver reports the effective count everywhere
+(convergence message, ITER table column, Iterations: summary). The converged state matches
 the wout at ≤1.5e-9 in ALL SIX FAMILIES — rmncc 3.0e-10, zmnsc 2.3e-10,
 lmnsc 1.5e-9, rmnss 1.9e-10, zmncs 1.4e-10, lmncs 1.5e-9 — including the λ
 gauge modes (lmnsc(1,0), lmncs(0,1)) that previously sat at 1.4e-2/2.5e-3.
