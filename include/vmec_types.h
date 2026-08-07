@@ -17,17 +17,20 @@
 // cosnvn=+n*nfp*cos(nζ)); bsupu = (lamscale*lv + chip')/√g.
 #pragma once
 
+// The computation scalar type, templated on T throughout; the app-level
+// compile-time switch between double and float is `Real` (see below).
+template <typename T>
 struct GridParams {
     int ns; int mnmax; int ntheta; int nzeta;
     int nfp; int nZnT; int mpol; int ntor;
     // Runtime input knobs (host-side; a JSON parser will fill them later).
     int ncurr;              // 0: prescribed iota, 1: prescribed current
-    double delt;            // initial time step
-    double ftol;            // convergence tolerance (invariant residuals)
+    T delt;                 // initial time step
+    T ftol;                 // convergence tolerance (invariant residuals)
     int max_iter;
-    double lamscale;        // sqrt(deltaS * sum phipH^2), vmecpp constants_.
+    T lamscale;             // sqrt(deltaS * sum phipH^2), vmecpp constants_.
     static constexpr int kSignJacobian = -1;
-    static constexpr double kMu0 = 4.0 * M_PI * 1.0e-7;  // exact, = vmecpp MU_0
+    static constexpr T kMu0 = 4.0 * M_PI * 1.0e-7;  // exact, = vmecpp MU_0
 };
 
 struct FourierBasis {
@@ -36,30 +39,43 @@ struct FourierBasis {
     int* d_xm; int* d_xn;
 };
 
+template <typename T>
 struct RadialProfiles {
-    double* d_iota_F; double* d_pres_F; double* d_phip_F;
-    double* d_chi_F;  double* d_sqrtS_F;
-    double* d_iota_H; double* d_pres_H; double* d_phip_H;
-    double* d_mass_H; double* d_dVds_H; double* d_sqrtS_H;
-    double* d_curr_H;  // prescribed toroidal current profile (ncurr=1), half grid
-    double* d_chip_H;  // dχ/ds (poloidal flux derivative), half grid
-    double delta_s;
+    T* d_iota_F; T* d_pres_F; T* d_phip_F;
+    T* d_chi_F;  T* d_sqrtS_F;
+    T* d_iota_H; T* d_pres_H; T* d_phip_H;
+    T* d_mass_H; T* d_dVds_H; T* d_sqrtS_H;
+    T* d_curr_H;  // prescribed toroidal current profile (ncurr=1), half grid
+    T* d_chip_H;  // dχ/ds (poloidal flux derivative), half grid
+    T delta_s;
 };
 
 // Spectral state with independent coefficient arrays.
 // Each is shape (ns, mnmax) column-major.
 // Total DOFs: 6 * ns * mnmax  (6 components in 3D stellarator-symmetric).
 // Real-space parity (e/o) is determined by m parity (even m -> e, odd m -> o).
+template <typename T>
 struct SpectralState {
     // Coefficients for Fourier reconstruction (all m, folded n>=0)
-    double* d_rmncc;   // R: cos(mθ)cos(nζ) component
-    double* d_zmnsc;   // Z: sin(mθ)cos(nζ) component
-    double* d_lmnsc;   // λ: sin(mθ)cos(nζ) component
-    double* d_rmnss;   // R: sin(mθ)sin(nζ) component
-    double* d_zmncs;   // Z: cos(mθ)sin(nζ) component
-    double* d_lmncs;   // λ: cos(mθ)sin(nζ) component
+    T* d_rmncc;   // R: cos(mθ)cos(nζ) component
+    T* d_zmnsc;   // Z: sin(mθ)cos(nζ) component
+    T* d_lmnsc;   // λ: sin(mθ)cos(nζ) component
+    T* d_rmnss;   // R: sin(mθ)sin(nζ) component
+    T* d_zmncs;   // Z: cos(mθ)sin(nζ) component
+    T* d_lmncs;   // λ: cos(mθ)sin(nζ) component
 
     // Velocities (6 components)
-    double* d_v_rmncc; double* d_v_zmnsc; double* d_v_lmnsc;
-    double* d_v_rmnss; double* d_v_zmncs; double* d_v_lmncs;
+    T* d_v_rmncc; T* d_v_zmnsc; T* d_v_lmnsc;
+    T* d_v_rmnss; T* d_v_zmncs; T* d_v_lmncs;
 };
+
+// App-level precision switch. All modules are templated on T; this alias is
+// what main.cu (and the diagnostics) build with. Configure via
+//   cmake -B build-float -DCUMES_USE_FLOAT=ON
+// The on-disk state files (cumes_state.bin, vmecpp_init.bin) stay double
+// regardless; only the GPU computation uses T.
+#ifdef CUMES_USE_FLOAT
+using Real = float;
+#else
+using Real = double;
+#endif

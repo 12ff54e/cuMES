@@ -23,11 +23,14 @@ int main() {
     FILE* fp = fopen("vmecpp_init.bin", "rb");
     if (!fp) { printf("Cannot open vmecpp_init.bin\n"); return 1; }
     int ns, mnmax;
-    fread(&ns, sizeof(int), 1, fp);
-    fread(&mnmax, sizeof(int), 1, fp);
+    if (fread(&ns, sizeof(int), 1, fp) != 1 || fread(&mnmax, sizeof(int), 1, fp) != 1) {
+        printf("Truncated vmecpp_init.bin (header)\n");
+        fclose(fp);
+        return 1;
+    }
     printf("Read vmecpp state: ns=%d mnmax=%d\n", ns, mnmax);
 
-    GridParams p;
+    GridParams<double> p;
     p.ns = ns; p.mnmax = mnmax; p.ntheta = 18; p.nzeta = 1;
     p.nfp = 1; p.nZnT = p.ntheta * p.nzeta;
     p.mpol = mnmax;  // ntor=0 (axisymmetric): mnmax = mpol*(ntor+1)
@@ -42,12 +45,17 @@ int main() {
     auto* h_zmncs = new double[ns*mnmax];
     auto* h_lmncs = new double[ns*mnmax];
 
-    fread(h_rmncc, sizeof(double), ns*mnmax, fp);
-    fread(h_zmnsc, sizeof(double), ns*mnmax, fp);
-    fread(h_lmnsc, sizeof(double), ns*mnmax, fp);
-    fread(h_rmnss, sizeof(double), ns*mnmax, fp);
-    fread(h_zmncs, sizeof(double), ns*mnmax, fp);
-    fread(h_lmncs, sizeof(double), ns*mnmax, fp);
+    size_t ncoef = (size_t)ns * mnmax;
+    if (fread(h_rmncc, sizeof(double), ncoef, fp) != ncoef ||
+        fread(h_zmnsc, sizeof(double), ncoef, fp) != ncoef ||
+        fread(h_lmnsc, sizeof(double), ncoef, fp) != ncoef ||
+        fread(h_rmnss, sizeof(double), ncoef, fp) != ncoef ||
+        fread(h_zmncs, sizeof(double), ncoef, fp) != ncoef ||
+        fread(h_lmncs, sizeof(double), ncoef, fp) != ncoef) {
+        printf("Truncated vmecpp_init.bin (state)\n");
+        fclose(fp);
+        return 1;
+    }
     fclose(fp);
 
     printf("R_00 axis=%.6f edge=%.6f\n", h_rmncc[0], h_rmncc[ns-1]);
@@ -55,7 +63,7 @@ int main() {
     printf("R_10 axis=%.6f edge=%.6f\n", h_rmncc[ns], h_rmncc[ns-1+ns]);
 
     // Allocate GPU state
-    SpectralState st{};
+    SpectralState<double> st{};
     cc(cudaMalloc(&st.d_rmncc, nb), "rmncc");
     cc(cudaMalloc(&st.d_zmnsc, nb), "zmnsc");
     cc(cudaMalloc(&st.d_lmnsc, nb), "lmnsc");
@@ -70,11 +78,11 @@ int main() {
 
     // Create profiles and Fourier plan
     InputParams ip = initInputParams();
-    RadialProfiles rp = profilesCreate(p, ip);
+    RadialProfiles<double> rp = profilesCreate(p, ip);
     cublasHandle_t handle;
     cublasCreate(&handle);
-    FourierPlan fpl = fourierCreate(p, handle);
-    MetricWorkspace mw = metricCreate(p);
+    FourierPlan<double> fpl = fourierCreate(p, handle);
+    MetricWorkspace<double> mw = metricCreate(p);
 
     // Run one iteration: inverse DFT + geometry + forces + forward DFT
     inverseDFT(fpl, st, p);
@@ -90,10 +98,10 @@ int main() {
     // Forward DFT to get spectral forces
     double* d_f_spec;
     cc(cudaMalloc(&d_f_spec, 5*ns*mnmax*sizeof(double)), "f_spec");
-    ConstraintWorkspace cw_zero{}; cudaMalloc(&cw_zero.d_frcon_e, (size_t)p.ns*p.nZnT*8); cudaMemset(cw_zero.d_frcon_e, 0, (size_t)p.ns*p.nZnT*8);
-    cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns*p.nZnT*8); cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns*p.nZnT*8);
-    cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns*p.nZnT*8); cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns*p.nZnT*8);
-    cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns*p.nZnT*8); cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns*p.nZnT*8);
+    ConstraintWorkspace<double> cw_zero{}; cudaMalloc(&cw_zero.d_frcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     forwardDFT(fpl, d_f_spec, p, cw_zero);
 
     // Copy forces to host

@@ -7,5 +7,6 @@
 // Evaluate MHD force balance residuals in real space.
 // Computes even/odd parity force components (armn_e/o, azmn_e/o, etc.)
 // stored in FourierPlan scratch arrays.
-void computeForces(const FourierPlan& fp, const GridParams& p,
-                   const RadialProfiles& rp, const MetricWorkspace& mw);
+template <typename T>
+void computeForces(const FourierPlan<T>& fp, const GridParams<T>& p,
+                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw);

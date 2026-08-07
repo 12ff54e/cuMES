@@ -84,6 +84,28 @@ point to g++-12 (set in `CMakeLists.txt`).
 The reference implementation lives in `../vmecpp` (CPU-based C++ VMEC++
 solver); `../scripts/compare_step.py` compares binary dumps of the two codes.
 
+### Precision
+
+All computation is templated on a scalar type `T`; the executable's precision
+is a compile-time choice:
+
+```bash
+cmake -B build-float -G Ninja -DCUMES_USE_FLOAT=ON   # single precision
+cmake --build build-float -j
+```
+
+- The default build is double precision (`Real = double` in `vmec_types.h`).
+- Single precision is ~1/32-rate-fp64-free on consumer GPUs, but the invariant
+  residuals stall at ~1e-7 (the float rounding floor): the hardcoded
+  `ftol` (1e-16) is never reached, so float runs report NOT CONVERGED unless
+  the tolerance is relaxed for float experiments.
+- The on-disk state file (`cumes_state.bin`) and `vmecpp_init.bin` stay double
+  regardless of `T` — the Python comparison scripts are unaffected.
+- The debug dumps (`dump/cuMES/*.bin`) are `T`-native: only readable by
+  same-build tooling (e.g. `test_geometry_iso` is double-build-only).
+- The unit tests instantiate both double and float in every build
+  (`./build/test_fourier` runs both legs).
+
 ### Environment variables
 
 All knobs are off by default; plain runs write nothing extra and print no

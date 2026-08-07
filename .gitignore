@@ -1,9 +1,16 @@
 # Build artifacts
 build/
 build-prof/
+build-float/
+
+# Run output
+cumes_state.bin
+dump/
 
 # Per-change verification scratch (baselines live in perf_base/)
 perf_check/
+perf_refactor_pre/
+perf_refactor_post/
 
 # Editors / misc
 *.swp

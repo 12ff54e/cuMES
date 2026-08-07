@@ -1,13 +1,15 @@
 // fourier.cuh — DFT transforms between spectral (parity-split) and real space.
 #pragma once
 #include "vmec_types.h"
+#include "fft_traits.h"
 #include <cublas_v2.h>
 #include <cufft.h>
 
-struct ConstraintWorkspace;  // defined in constraint.cuh
+template <typename T> struct ConstraintWorkspace;  // defined in constraint.cuh
 
 // Transforms use a batched 1D real FFT in the toroidal (ζ) direction plus
 // direct poloidal synthesis, mirroring vmecpp's FFTX fft_toroidal.cc.
+template <typename T>
 struct FourierPlan {
     FourierBasis basis;
     cublasHandle_t handle;
@@ -23,50 +25,53 @@ struct FourierPlan {
     // (constraint.cu: rCon/zCon and the de-aliasing bandpass filter).
     cufftHandle plan_z2d;    // inverse:  half-spectrum -> real
     cufftHandle plan_d2z;    // forward:  real -> half-spectrum
-    double2* d_zeta_spectra; // [12*mpol*ns][nzeta/2+1] complex
-    double*  d_zeta_real;    // [12*mpol*ns][nzeta] real
+    typename FftTraits<T>::Complex* d_zeta_spectra; // [12*mpol*ns][nzeta/2+1]
+    T* d_zeta_real;    // [12*mpol*ns][nzeta] real
     // Poloidal tables (per mode m over the full θ grid): cos(mθ), sin(mθ),
     // m*cos(mθ), -m*sin(mθ). The forward path multiplies by the reduced-grid
     // trapezoid weights in d_fwd_w.
-    double* d_cos_th; double* d_sin_th;
-    double* d_mcos_th; double* d_msin_th;
-    double* d_fwd_w;         // [ntheta/2+1] intNorm weights (endpoints 1/2)
+    T* d_cos_th; T* d_sin_th;
+    T* d_mcos_th; T* d_msin_th;
+    T* d_fwd_w;         // [ntheta/2+1] intNorm weights (endpoints 1/2)
 
     // Real-space geometry (parity-split, full grid)
-    double* d_r_e;  double* d_z_e;  double* d_l_e;
-    double* d_ru_e; double* d_zu_e; double* d_lu_e;
-    double* d_r_o;  double* d_z_o;  double* d_l_o;
-    double* d_ru_o; double* d_zu_o; double* d_lu_o;
-    double* d_r_real; double* d_z_real; double* d_l_real;
-    double* d_ru_real; double* d_zu_real; double* d_lu_real;
-    double* d_rv_real; double* d_zv_real; double* d_lv_real;
+    T* d_r_e;  T* d_z_e;  T* d_l_e;
+    T* d_ru_e; T* d_zu_e; T* d_lu_e;
+    T* d_r_o;  T* d_z_o;  T* d_l_o;
+    T* d_ru_o; T* d_zu_o; T* d_lu_o;
+    T* d_r_real; T* d_z_real; T* d_l_real;
+    T* d_ru_real; T* d_zu_real; T* d_lu_real;
+    T* d_rv_real; T* d_zv_real; T* d_lv_real;
     // Parity-split toroidal derivatives (the 3D metric/forces need them)
-    double* d_rv_e; double* d_rv_o;
-    double* d_zv_e; double* d_zv_o;
-    double* d_lv_e; double* d_lv_o;
+    T* d_rv_e; T* d_rv_o;
+    T* d_zv_e; T* d_zv_o;
+    T* d_lv_e; T* d_lv_o;
 
     // Force components (parity-split). crmn/czmn/clmn are the toroidal force
     // components (3D only; zero for axisymmetric).
-    double* d_armn_e; double* d_armn_o;
-    double* d_azmn_e; double* d_azmn_o;
-    double* d_brmn_e; double* d_brmn_o;
-    double* d_bzmn_e; double* d_bzmn_o;
-    double* d_blmn_e; double* d_blmn_o;
-    double* d_crmn_e; double* d_crmn_o;
-    double* d_czmn_e; double* d_czmn_o;
-    double* d_clmn_e; double* d_clmn_o;
+    T* d_armn_e; T* d_armn_o;
+    T* d_azmn_e; T* d_azmn_o;
+    T* d_brmn_e; T* d_brmn_o;
+    T* d_bzmn_e; T* d_bzmn_o;
+    T* d_blmn_e; T* d_blmn_o;
+    T* d_crmn_e; T* d_crmn_o;
+    T* d_czmn_e; T* d_czmn_o;
+    T* d_clmn_e; T* d_clmn_o;
 
     // Combined forces (backward compat)
-    double* d_fr_real; double* d_fz_real; double* d_fl_real;
+    T* d_fr_real; T* d_fz_real; T* d_fl_real;
 };
 
-FourierPlan fourierCreate(const GridParams& p, cublasHandle_t handle);
-void fourierFree(FourierPlan& fp);
+template <typename T>
+FourierPlan<T> fourierCreate(const GridParams<T>& p, cublasHandle_t handle);
+template <typename T>
+void fourierFree(FourierPlan<T>& fp);
 
 // do_combine=false skips the e/o parity combination (only needed for the
 // dump machinery and tests); the hot loop passes false.
-void inverseDFT(const FourierPlan& fp, const SpectralState& st,
-                const GridParams& p, bool do_combine = true);
+template <typename T>
+void inverseDFT(const FourierPlan<T>& fp, const SpectralState<T>& st,
+                const GridParams<T>& p, bool do_combine = true);
 
 // forwardDFT: parity forces → 6-component spectral forces
 // Layout: (6*mnmax, ns) col-major
@@ -76,5 +81,6 @@ void inverseDFT(const FourierPlan& fp, const SpectralState& st,
 //   [3*mnmax*ns .. 4*mnmax*ns): f_rmnss
 //   [4*mnmax*ns .. 5*mnmax*ns): f_zmncs
 //   [5*mnmax*ns .. 6*mnmax*ns): f_lmncs
-void forwardDFT(const FourierPlan& fp, double* d_f_spectral,
-                const GridParams& p, const ConstraintWorkspace& cw);
+template <typename T>
+void forwardDFT(const FourierPlan<T>& fp, T* d_f_spectral,
+                const GridParams<T>& p, const ConstraintWorkspace<T>& cw);

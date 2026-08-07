@@ -6,5 +6,8 @@
 // Evaluate profiles on CPU from the input parameters, upload to device.
 // Fills p.lamscale (sqrt(deltaS * sum phipH^2)).
 // Caller owns the returned struct; call profilesFree() to release.
-RadialProfiles profilesCreate(GridParams& p, const InputParams& ip);
-void profilesFree(RadialProfiles& rp);
+// InputParams stays double (host config); T conversion happens here.
+template <typename T>
+RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip);
+template <typename T>
+void profilesFree(RadialProfiles<T>& rp);

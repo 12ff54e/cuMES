@@ -11,8 +11,13 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_ARCHITECTURES "61;75;80;86;89")
 
 # Optimisation flags
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --use_fast_math")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --use_fast_math -Wall -Wextra")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -Wall -Wextra")
+
+# Precision: all computation is templated on T (double or float); the
+# executable's `Real` type is chosen here (the tests instantiate both
+# explicitly and are unaffected).
+option(CUMES_USE_FLOAT "Build cuMES in single precision (float)" OFF)
 
 find_package(CUDAToolkit 11 REQUIRED)
 
@@ -35,6 +40,10 @@ target_link_libraries(cuMES PRIVATE
 )
 
 target_include_directories(cuMES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+if(CUMES_USE_FLOAT)
+    target_compile_definitions(cuMES PRIVATE CUMES_USE_FLOAT)
+endif()
 
 # ---- tests (standalone executables, no framework) ----------------------
 add_executable(test_fourier

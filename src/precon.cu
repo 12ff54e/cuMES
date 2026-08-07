@@ -3,9 +3,25 @@
 // assembles tridiagonal systems per (m,n) mode, and solves via Thomas algorithm.
 // Reference: vmecpp computePreconditioningMatrix / assembleRZPreconditioner /
 // TridiagonalSolveSerial.
+//
+// All computation is templated on the scalar type T (double or float).
 #include "precon.cuh"
 #include <cstdio>
 #include <cmath>
+
+// nvcc rejects `extern __shared__` arrays in a function template that is
+// instantiated with different element types in one TU ("declaration is
+// incompatible with previous" — both the double and float instantiations
+// collide on the variable name). Route the dynamic shared-memory base through
+// one non-templated device function instead: the base address is the same for
+// every function in a block, so the kernels reinterpret it as T*.
+namespace {
+__device__ void* dynSharedBase() {
+    extern __shared__ unsigned char smem_base[];
+    return smem_base;
+}
+}
+
 
 static void cc(cudaError_t e, const char* t) {
     if (e != cudaSuccess) { fprintf(stderr, "CUDA[%s]: %s\n", t, cudaGetErrorString(e)); exit(1); }
@@ -14,16 +30,17 @@ static void cc(cudaError_t e, const char* t) {
 // ---------------------------------------------------------------------------
 // Allocate
 // ---------------------------------------------------------------------------
-PreconWorkspace preconCreate(const GridParams& p) {
-    PreconWorkspace pw{};
+template <typename T>
+PreconWorkspace<T> preconCreate(const GridParams<T>& p) {
+    PreconWorkspace<T> pw{};
     int nH = p.ns - 1, nF = p.ns;
-    size_t szH  = nH * sizeof(double);
-    size_t szF  = nF * sizeof(double);
-    size_t szH4 = 4 * nH * sizeof(double);
-    size_t szH3 = 3 * nH * sizeof(double);
-    size_t sz2H = 2 * nH * sizeof(double);
-    size_t sz2F = 2 * nF * sizeof(double);
-    size_t szMN = p.mnmax * nF * sizeof(double);
+    size_t szH  = nH * sizeof(T);
+    size_t szF  = nF * sizeof(T);
+    size_t szH4 = 4 * nH * sizeof(T);
+    size_t szH3 = 3 * nH * sizeof(T);
+    size_t sz2H = 2 * nH * sizeof(T);
+    size_t sz2F = 2 * nF * sizeof(T);
+    size_t szMN = p.mnmax * nF * sizeof(T);
 
     cc(cudaMalloc(&pw.d_ax_R, szH4), "ax_R");  cc(cudaMalloc(&pw.d_ax_Z, szH4), "ax_Z");
     cc(cudaMalloc(&pw.d_bx_R, szH3), "bx_R");  cc(cudaMalloc(&pw.d_bx_Z, szH3), "bx_Z");
@@ -40,19 +57,20 @@ PreconWorkspace preconCreate(const GridParams& p) {
     cc(cudaMalloc(&pw.d_bz, szMN),  "bz");
     cc(cudaMalloc(&pw.d_jMin, p.mnmax * sizeof(int)), "jMin");
     cc(cudaMalloc(&pw.d_lambdaPrec, szMN), "lambdaPrec");
-    cc(cudaMalloc(&pw.d_bLambda, (p.ns + 1) * sizeof(double)), "bLambda");
-    cc(cudaMalloc(&pw.d_dLambda, (p.ns + 1) * sizeof(double)), "dLambda");
-    cc(cudaMalloc(&pw.d_cLambda, (p.ns + 1) * sizeof(double)), "cLambda");
-    cc(cudaMalloc(&pw.d_rmsPhiP, sizeof(double)), "rmsPhiP");
+    cc(cudaMalloc(&pw.d_bLambda, (p.ns + 1) * sizeof(T)), "bLambda");
+    cc(cudaMalloc(&pw.d_dLambda, (p.ns + 1) * sizeof(T)), "dLambda");
+    cc(cudaMalloc(&pw.d_cLambda, (p.ns + 1) * sizeof(T)), "cLambda");
+    cc(cudaMalloc(&pw.d_rmsPhiP, sizeof(T)), "rmsPhiP");
     // Index ns of bLambda/cLambda must stay zero: the LCFS full-grid average
     // reads it (vmecpp: array sized ns+1, last entry never written).
-    cc(cudaMemset(pw.d_bLambda, 0, (p.ns + 1) * sizeof(double)), "bLambda zero");
-    cc(cudaMemset(pw.d_dLambda, 0, (p.ns + 1) * sizeof(double)), "dLambda zero");
-    cc(cudaMemset(pw.d_cLambda, 0, (p.ns + 1) * sizeof(double)), "cLambda zero");
+    cc(cudaMemset(pw.d_bLambda, 0, (p.ns + 1) * sizeof(T)), "bLambda zero");
+    cc(cudaMemset(pw.d_dLambda, 0, (p.ns + 1) * sizeof(T)), "dLambda zero");
+    cc(cudaMemset(pw.d_cLambda, 0, (p.ns + 1) * sizeof(T)), "cLambda zero");
     return pw;
 }
 
-void preconFree(PreconWorkspace& pw) {
+template <typename T>
+void preconFree(PreconWorkspace<T>& pw) {
     cudaFree(pw.d_ax_R); cudaFree(pw.d_ax_Z);
     cudaFree(pw.d_bx_R); cudaFree(pw.d_bx_Z); cudaFree(pw.d_cx);
     cudaFree(pw.d_arm);  cudaFree(pw.d_brm);
@@ -75,37 +93,38 @@ void preconFree(PreconWorkspace& pw) {
 // For R: xs=zs, xu12=zu12, xu_e/o=zu_e/o
 // For Z: xs=rs, xu12=ru12, xu_e/o=ru_e/o
 // ---------------------------------------------------------------------------
+template <typename T>
 __global__ void preconComputeKernel(
     // Geometry shared by both R and Z precons
-    const double* __restrict__ r12, const double* __restrict__ tau,
-    const double* __restrict__ totalP, const double* __restrict__ bsupv,
-    const double* __restrict__ gsqrt, const double* __restrict__ sqrtS_H,
+    const T* __restrict__ r12, const T* __restrict__ tau,
+    const T* __restrict__ totalP, const T* __restrict__ bsupv,
+    const T* __restrict__ gsqrt, const T* __restrict__ sqrtS_H,
     // For R precon: Z geometry (derivatives + odd-m coordinate value)
-    const double* __restrict__ zs,  const double* __restrict__ zu12,
-    const double* __restrict__ zu_e, const double* __restrict__ zu_o,
-    const double* __restrict__ z_o,   // odd-m Z coordinate value (= vmecpp z1_o)
+    const T* __restrict__ zs,  const T* __restrict__ zu12,
+    const T* __restrict__ zu_e, const T* __restrict__ zu_o,
+    const T* __restrict__ z_o,   // odd-m Z coordinate value (= vmecpp z1_o)
     // For Z precon: R geometry (derivatives + odd-m coordinate value)
-    const double* __restrict__ rs,  const double* __restrict__ ru12,
-    const double* __restrict__ ru_e, const double* __restrict__ ru_o,
-    const double* __restrict__ r_o,   // odd-m R coordinate value (= vmecpp r1_o)
-    int ns, int nZnT, double delta_s,
+    const T* __restrict__ rs,  const T* __restrict__ ru12,
+    const T* __restrict__ ru_e, const T* __restrict__ ru_o,
+    const T* __restrict__ r_o,   // odd-m R coordinate value (= vmecpp r1_o)
+    int ns, int nZnT, T delta_s,
     // Outputs
-    double* __restrict__ ax_R, double* __restrict__ ax_Z,
-    double* __restrict__ bx_R, double* __restrict__ bx_Z,
-    double* __restrict__ cx)
+    T* __restrict__ ax_R, T* __restrict__ ax_Z,
+    T* __restrict__ bx_R, T* __restrict__ bx_Z,
+    T* __restrict__ cx)
 {
-    extern __shared__ double s_buf[];
+    T* s_buf = static_cast<T*>(dynSharedBase());
     int jH = blockIdx.x, tid = threadIdx.x;
     if (jH >= ns - 1) return;
 
-    double sH = sqrtS_H[jH];
-    double wInt = 1.0 / nZnT;
+    T sH = sqrtS_H[jH];
+    T wInt = T(1.0) / T(nZnT);
     int base = jH * nZnT;
 
     // Accumulators: ax[4], bx[3], cx for R and Z
-    double aR[4] = {0}, aZ[4] = {0};
-    double bR[3] = {0}, bZ[3] = {0};
-    double cx_v = 0;
+    T aR[4] = {T(0)}, aZ[4] = {T(0)};
+    T bR[3] = {T(0)}, bZ[3] = {T(0)};
+    T cx_v = T(0);
 
     for (int k = tid; k < nZnT; k += blockDim.x) {
         int idx = base + k;
@@ -114,18 +133,18 @@ __global__ void preconComputeKernel(
         int idxF_o = idx + nZnT;              // outer full-grid (jH+1)
 
         // Common pTau factor: -4 * r12 * totalP / tau * wInt
-        double pTau = -4.0 * r12[idx] * totalP[idx] / tau[idx] * wInt;
+        T pTau = T(-4.0) * r12[idx] * totalP[idx] / tau[idx] * wInt;
 
         // sH reciprocal for odd-m corrections in bx terms
-        double inv_sH = 1.0 / sH;
+        T inv_sH = T(1.0) / sH;
 
         // ---- R preconditioner (uses Z geometry) ----
         {
             // t1a: radial derivative term (dominant)
-            double t1a = zu12[idx] / delta_s;
+            T t1a = zu12[idx] / delta_s;
             // t2a, t3a: parity-mixed corrections from full-grid
-            double t2a = 0.25 * (zu_e[idxF_o] / sH + zu_o[idxF_o]) / sH;
-            double t3a = 0.25 * (zu_e[idxF_i] / sH + zu_o[idxF_i]) / sH;
+            T t2a = T(0.25) * (zu_e[idxF_o] / sH + zu_o[idxF_o]) / sH;
+            T t3a = T(0.25) * (zu_e[idxF_i] / sH + zu_o[idxF_i]) / sH;
 
             aR[0] += pTau * t1a * t1a;
             aR[1] += pTau * (t1a + t2a) * (-t1a + t3a);
@@ -135,8 +154,8 @@ __global__ void preconComputeKernel(
             // t1b, t2b: poloidal term, includes odd-m full-grid
             // correction matching vmecpp: 0.5*(xs + 0.5/sqrtSH * x1_o)
             // NOTE: x1_o is the coordinate VALUE (z1_o), not derivative (zu_o)
-            double t1b = 0.5 * (zs[idx] + 0.5 * inv_sH * z_o[idxF_o]);
-            double t2b = 0.5 * (zs[idx] + 0.5 * inv_sH * z_o[idxF_i]);
+            T t1b = T(0.5) * (zs[idx] + T(0.5) * inv_sH * z_o[idxF_o]);
+            T t2b = T(0.5) * (zs[idx] + T(0.5) * inv_sH * z_o[idxF_i]);
             bR[0] += pTau * t1b * t2b;
             bR[1] += pTau * t1b * t1b;
             bR[2] += pTau * t2b * t2b;
@@ -144,9 +163,9 @@ __global__ void preconComputeKernel(
 
         // ---- Z preconditioner (uses R geometry) ----
         {
-            double t1a = ru12[idx] / delta_s;
-            double t2a = 0.25 * (ru_e[idxF_o] / sH + ru_o[idxF_o]) / sH;
-            double t3a = 0.25 * (ru_e[idxF_i] / sH + ru_o[idxF_i]) / sH;
+            T t1a = ru12[idx] / delta_s;
+            T t2a = T(0.25) * (ru_e[idxF_o] / sH + ru_o[idxF_o]) / sH;
+            T t3a = T(0.25) * (ru_e[idxF_i] / sH + ru_o[idxF_i]) / sH;
 
             aZ[0] += pTau * t1a * t1a;
             aZ[1] += pTau * (t1a + t2a) * (-t1a + t3a);
@@ -156,8 +175,8 @@ __global__ void preconComputeKernel(
             // t1b, t2b: radial term, includes odd-m full-grid
             // correction matching vmecpp: 0.5*(xs + 0.5/sqrtSH * x1_o)
             // NOTE: x1_o is the coordinate VALUE (r1_o), not derivative (ru_o)
-            double t1b = 0.5 * (rs[idx] + 0.5 * inv_sH * r_o[idxF_o]);
-            double t2b = 0.5 * (rs[idx] + 0.5 * inv_sH * r_o[idxF_i]);
+            T t1b = T(0.5) * (rs[idx] + T(0.5) * inv_sH * r_o[idxF_o]);
+            T t2b = T(0.5) * (rs[idx] + T(0.5) * inv_sH * r_o[idxF_i]);
             bZ[0] += pTau * t1b * t2b;
             bZ[1] += pTau * t1b * t1b;
             bZ[2] += pTau * t2b * t2b;
@@ -171,7 +190,7 @@ __global__ void preconComputeKernel(
     // Parallel reduction for all 4+4+3+3+1 = 15 accumulators
     // Store in shared memory and reduce
     int nRed = 15;
-    double* s = s_buf;
+    T* s = s_buf;
     s[tid] = aR[0]; s[tid + blockDim.x] = aR[1];
     s[tid + 2*blockDim.x] = aR[2]; s[tid + 3*blockDim.x] = aR[3];
     s[tid + 4*blockDim.x] = aZ[0]; s[tid + 5*blockDim.x] = aZ[1];
@@ -210,18 +229,19 @@ __global__ void preconComputeKernel(
 // Also computes sm/sp on the fly.
 // One block handles all half-grid surfaces.
 // ---------------------------------------------------------------------------
+template <typename T>
 __global__ void preconAssembleKernel(
-    const double* __restrict__ ax_R, const double* __restrict__ ax_Z,
-    const double* __restrict__ bx_R, const double* __restrict__ bx_Z,
-    const double* __restrict__ cx,
-    const double* __restrict__ sqrtS_H, const double* __restrict__ sqrtS_F,
+    const T* __restrict__ ax_R, const T* __restrict__ ax_Z,
+    const T* __restrict__ bx_R, const T* __restrict__ bx_Z,
+    const T* __restrict__ cx,
+    const T* __restrict__ sqrtS_H, const T* __restrict__ sqrtS_F,
     int ns,
-    double* __restrict__ arm, double* __restrict__ brm,
-    double* __restrict__ azm, double* __restrict__ bzm,
-    double* __restrict__ ard, double* __restrict__ brd,
-    double* __restrict__ azd, double* __restrict__ bzd,
-    double* __restrict__ cxd,
-    double* __restrict__ sm_out, double* __restrict__ sp_out)
+    T* __restrict__ arm, T* __restrict__ brm,
+    T* __restrict__ azm, T* __restrict__ bzm,
+    T* __restrict__ ard, T* __restrict__ brd,
+    T* __restrict__ azd, T* __restrict__ bzd,
+    T* __restrict__ cxd,
+    T* __restrict__ sm_out, T* __restrict__ sp_out)
 {
     int jH = blockIdx.x * blockDim.x + threadIdx.x;
     if (jH >= ns - 1) return;
@@ -234,9 +254,9 @@ __global__ void preconAssembleKernel(
     // Half-grid jH sits between full-grid jH and jH+1.
     // sm[jH] = sqrtS_H[jH] / sqrtS_F[jH+1]  (ratio to OUTER full-grid)
     // sp[jH] = sqrtS_H[jH] / sqrtS_F[jH]    (ratio to INNER full-grid)
-    double sh = sqrtS_H[jH];
-    double sm = sh / sqrtS_F[jH + 1];  // outer — always safe (sqrtS_F[jH+1] > 0)
-    double sp;
+    T sh = sqrtS_H[jH];
+    T sm = sh / sqrtS_F[jH + 1];  // outer — always safe (sqrtS_F[jH+1] > 0)
+    T sp;
     if (jH == 0) {
         sp = sm;  // at innermost half-grid: inner full-grid is axis (s=0), so sp = sm
     } else {
@@ -245,7 +265,7 @@ __global__ void preconAssembleKernel(
     sm_out[jH] = sm;
     sp_out[jH] = sp;
 
-    double smsp = sm * sp;
+    T smsp = sm * sp;
 
     // ---- R preconditioner ----
     // Off-diagonal (half-grid)
@@ -265,15 +285,16 @@ __global__ void preconAssembleKernel(
 // Step 2b: Average half-grid diagonals to full-grid.
 // One thread per full-grid surface.
 // ---------------------------------------------------------------------------
+template <typename T>
 __global__ void preconDiagKernel(
-    const double* __restrict__ ax_R, const double* __restrict__ ax_Z,
-    const double* __restrict__ bx_R, const double* __restrict__ bx_Z,
-    const double* __restrict__ cx,
-    const double* __restrict__ sm, const double* __restrict__ sp,
+    const T* __restrict__ ax_R, const T* __restrict__ ax_Z,
+    const T* __restrict__ bx_R, const T* __restrict__ bx_Z,
+    const T* __restrict__ cx,
+    const T* __restrict__ sm, const T* __restrict__ sp,
     int ns,
-    double* __restrict__ ard, double* __restrict__ brd,
-    double* __restrict__ azd, double* __restrict__ bzd,
-    double* __restrict__ cxd)
+    T* __restrict__ ard, T* __restrict__ brd,
+    T* __restrict__ azd, T* __restrict__ bzd,
+    T* __restrict__ cxd)
 {
     int jF = blockIdx.x * blockDim.x + threadIdx.x;
     if (jF >= ns) return;
@@ -333,17 +354,17 @@ __global__ void preconDiagKernel(
     }
 
     // Edge pedestal for boundary stability
-    const double edge_pedestal = 0.05;
+    const T edge_pedestal = T(0.05);
     if (jF == ns - 1) {
-        ard[jF_even] *= 1.0 + edge_pedestal;
-        ard[jF_odd]  *= 1.0 + edge_pedestal;
-        brd[jF_even] *= 1.0 + edge_pedestal;
-        brd[jF_odd]  *= 1.0 + edge_pedestal;
-        azd[jF_even] *= 1.0 + edge_pedestal;
-        azd[jF_odd]  *= 1.0 + edge_pedestal;
-        bzd[jF_even] *= 1.0 + edge_pedestal;
-        bzd[jF_odd]  *= 1.0 + edge_pedestal;
-        cxd[jF]      *= 1.0 + edge_pedestal;
+        ard[jF_even] *= T(1.0) + edge_pedestal;
+        ard[jF_odd]  *= T(1.0) + edge_pedestal;
+        brd[jF_even] *= T(1.0) + edge_pedestal;
+        brd[jF_odd]  *= T(1.0) + edge_pedestal;
+        azd[jF_even] *= T(1.0) + edge_pedestal;
+        azd[jF_odd]  *= T(1.0) + edge_pedestal;
+        bzd[jF_even] *= T(1.0) + edge_pedestal;
+        bzd[jF_odd]  *= T(1.0) + edge_pedestal;
+        cxd[jF]      *= T(1.0) + edge_pedestal;
     }
 }
 
@@ -354,16 +375,17 @@ __global__ void preconDiagKernel(
 //   dr[jF] : diagonal on full-grid jF
 //   br[jF] : sub-diagonal on half-grid at jF-1 (inner for forces at jF)
 // ---------------------------------------------------------------------------
+template <typename T>
 __global__ void tridiagAssemblyKernel(
-    const double* __restrict__ arm, const double* __restrict__ brm,
-    const double* __restrict__ azm, const double* __restrict__ bzm,
-    const double* __restrict__ ard, const double* __restrict__ brd,
-    const double* __restrict__ azd, const double* __restrict__ bzd,
-    const double* __restrict__ cxd,
+    const T* __restrict__ arm, const T* __restrict__ brm,
+    const T* __restrict__ azm, const T* __restrict__ bzm,
+    const T* __restrict__ ard, const T* __restrict__ brd,
+    const T* __restrict__ azd, const T* __restrict__ bzd,
+    const T* __restrict__ cxd,
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mnmax, int nfp,
-    double* __restrict__ ar, double* __restrict__ dr, double* __restrict__ br,
-    double* __restrict__ az, double* __restrict__ dz, double* __restrict__ bz,
+    T* __restrict__ ar, T* __restrict__ dr, T* __restrict__ br,
+    T* __restrict__ az, T* __restrict__ dz, T* __restrict__ bz,
     int* __restrict__ jMin)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -375,8 +397,8 @@ __global__ void tridiagAssemblyKernel(
     int mm = xm[mode], nn = xn[mode];
     int parity = mm % 2;  // m-parity: determines even/odd precon elements
 
-    double m2 = (double)(mm * mm);
-    double n2 = (double)(nn * nfp * nn * nfp);
+    T m2 = T(mm * mm);
+    T n2 = T(nn * nfp * nn * nfp);
     int nH = ns - 1;
 
     // Sup-diagonal: half-grid at jF (outer of forces surface jF)
@@ -385,8 +407,8 @@ __global__ void tridiagAssemblyKernel(
         ar[idx] = -(arm[jH_par] + brm[jH_par] * m2);
         az[idx] = -(azm[jH_par] + bzm[jH_par] * m2);
     } else {
-        ar[idx] = 0.0;
-        az[idx] = 0.0;
+        ar[idx] = T(0.0);
+        az[idx] = T(0.0);
     }
 
     // Diagonal: full-grid at jF
@@ -400,8 +422,8 @@ __global__ void tridiagAssemblyKernel(
         br[idx] = -(arm[jH_par] + brm[jH_par] * m2);
         bz[idx] = -(azm[jH_par] + bzm[jH_par] * m2);
     } else {
-        br[idx] = 0.0;
-        bz[idx] = 0.0;
+        br[idx] = T(0.0);
+        bz[idx] = T(0.0);
     }
 
     // jMin: magnetic axis only gets m=0 contributions
@@ -429,24 +451,25 @@ __global__ void tridiagAssemblyKernel(
 // Also accumulates rmsPhiP = sum(phipH^2) for lamscale.
 // One block per half-grid surface; shifted layout: half-grid jH -> index jH+1.
 // ---------------------------------------------------------------------------
+template <typename T>
 __global__ void lambdaPrecAssembleKernel(
-    const double* __restrict__ guu, const double* __restrict__ guv,
-    const double* __restrict__ gvv,
-    const double* __restrict__ gsqrt,
-    const double* __restrict__ phipH,
+    const T* __restrict__ guu, const T* __restrict__ guv,
+    const T* __restrict__ gvv,
+    const T* __restrict__ gsqrt,
+    const T* __restrict__ phipH,
     int ns, int nZnT, int ntheta, int nzeta,
-    double* __restrict__ bLambda, double* __restrict__ dLambda,
-    double* __restrict__ cLambda,
-    double* __restrict__ rmsPhiP)
+    T* __restrict__ bLambda, T* __restrict__ dLambda,
+    T* __restrict__ cLambda,
+    T* __restrict__ rmsPhiP)
 {
     int jH = blockIdx.x, tid = threadIdx.x;
     if (jH >= ns - 1) return;
 
     const int nThetaEven = 2 * (ntheta / 2);
     const int nThetaRed = nThetaEven / 2 + 1;  // reduced grid [0, pi]
-    const double dnorm3 = 1.0 / (nzeta * (nThetaRed - 1));
+    const T dnorm3 = T(1.0) / T(nzeta * (nThetaRed - 1));
 
-    double bsum = 0.0, dsum = 0.0, csum = 0.0;
+    T bsum = T(0.0), dsum = T(0.0), csum = T(0.0);
     // Loop over ALL (zeta, reduced-theta) points: the layout is
     // [jH][zeta][theta], so the index must combine both. (FIXED 2026-08-02:
     // previously only theta at the first zeta plane was summed, making the
@@ -454,15 +477,15 @@ __global__ void lambdaPrecAssembleKernel(
     // preconditioner ~32x too big near the LCFS.)
     for (int k = tid; k < nThetaRed * nzeta; k += blockDim.x) {
         int iz = k / nThetaRed, it = k % nThetaRed;
-        double w = dnorm3;
-        if (it == 0 || it == nThetaRed - 1) w *= 0.5;
+        T w = dnorm3;
+        if (it == 0 || it == nThetaRed - 1) w *= T(0.5);
         int idx = (jH * nzeta + iz) * ntheta + it;
         bsum += guu[idx] / gsqrt[idx] * w;
         dsum += guv[idx] / gsqrt[idx] * w;   // 3D: toroidal coupling
         csum += gvv[idx] / gsqrt[idx] * w;
     }
 
-    __shared__ double s_b[256], s_d[256], s_c[256];
+    __shared__ T s_b[256], s_d[256], s_c[256];
     s_b[tid] = bsum; s_d[tid] = dsum; s_c[tid] = csum;
     __syncthreads();
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -474,7 +497,15 @@ __global__ void lambdaPrecAssembleKernel(
         bLambda[jH + 1] = s_b[0];
         dLambda[jH + 1] = s_d[0];
         cLambda[jH + 1] = s_c[0];
-        atomicAdd(rmsPhiP, phipH[jH] * phipH[jH]);
+        // Deterministic rmsPhiP: one atomic from the last block, summing in
+        // jH order (the original per-block atomicAdd's cross-block FP order
+        // is scheduling-dependent, making rmsPhiP — and hence the lambda
+        // preconditioner — vary by ~1 ulp run to run).
+        if (jH == ns - 2) {
+            double total = 0.0;
+            for (int j = 0; j < ns - 1; ++j) total += phipH[j] * phipH[j];
+            atomicAdd(rmsPhiP, total);
+        }
     }
 }
 
@@ -493,13 +524,14 @@ __global__ void lambdaPrecAssembleKernel(
 //   full[jF] = 0.5*(b[jF+1] + b[jF]) for jF=1..ns-1 (LCFS reads b[ns] = 0).
 // One block per mode.
 // ---------------------------------------------------------------------------
+template <typename T>
 __global__ void lambdaPrecFinalizeKernel(
-    const double* __restrict__ bLambda, const double* __restrict__ dLambda,
-    const double* __restrict__ cLambda,
-    const double* __restrict__ sqrtS_F, const double* __restrict__ rmsPhiP,
+    const T* __restrict__ bLambda, const T* __restrict__ dLambda,
+    const T* __restrict__ cLambda,
+    const T* __restrict__ sqrtS_F, const T* __restrict__ rmsPhiP,
     const int* __restrict__ xm, const int* __restrict__ xn,
-    int ns, int mnmax, double delta_s, int nfp,
-    double* __restrict__ lambdaPrec)
+    int ns, int mnmax, T delta_s, int nfp,
+    T* __restrict__ lambdaPrec)
 {
     // One thread per (mode, jF) element — the original ran one thread per
     // mode with a serial ns loop (<<<mnmax, 1>>>). Per-element arithmetic
@@ -509,23 +541,23 @@ __global__ void lambdaPrecFinalizeKernel(
     if (mode >= mnmax || jF >= ns) return;
 
     int m = xm[mode], n = xn[mode];
-    double lamscale = sqrt(rmsPhiP[0] * delta_s);
-    const double pFactor = 2.0 / (4.0 * lamscale * lamscale);
-    const double pwr = fmin((double)(m * m) / (16.0 * 16.0), 8.0);
+    T lamscale = sqrt(rmsPhiP[0] * delta_s);
+    const T pFactor = T(2.0) / (T(4.0) * lamscale * lamscale);
+    const T pwr = fmin(T(m * m) / T(16.0 * 16.0), T(8.0));
     // faclam terms (vmecpp updateLambdaPreconditioner):
     //   tnn = (n*nfp)^2, tmn = 2*m*n*nfp  (nfp passed separately)
-    double tnn = (double)(n * n) * (double)(nfp * nfp);
-    double tmn = 2.0 * (double)(m * n) * (double)nfp;
+    T tnn = T(n * n) * T(nfp * nfp);
+    T tmn = T(2.0) * T(m * n) * T(nfp);
 
-    if (jF == 0) { lambdaPrec[mode * ns] = 0.0; return; }
-    if (m == 0 && n == 0) { lambdaPrec[mode * ns + jF] = 0.0; return; }  // gauge mode
+    if (jF == 0) { lambdaPrec[mode * ns] = T(0.0); return; }
+    if (m == 0 && n == 0) { lambdaPrec[mode * ns + jF] = T(0.0); return; }  // gauge mode
 
-    double bFull = 0.5 * (bLambda[jF + 1] + bLambda[jF]);
-    double dFull = 0.5 * (dLambda[jF + 1] + dLambda[jF]);
-    double cFull = 0.5 * (cLambda[jF + 1] + cLambda[jF]);
-    double faclam = tnn * bFull + tmn * copysign(dFull, bFull) +
-                    (double)(m * m) * cFull;
-    if (faclam == 0.0) faclam = -1.0e-10;  // kLambdaPreconditionerZeroGuard
+    T bFull = T(0.5) * (bLambda[jF + 1] + bLambda[jF]);
+    T dFull = T(0.5) * (dLambda[jF + 1] + dLambda[jF]);
+    T cFull = T(0.5) * (cLambda[jF + 1] + cLambda[jF]);
+    T faclam = tnn * bFull + tmn * copysign(dFull, bFull) +
+               T(m * m) * cFull;
+    if (faclam == T(0.0)) faclam = T(-1.0e-10);  // kLambdaPreconditionerZeroGuard
     lambdaPrec[mode * ns + jF] =
         pFactor / faclam * pow(sqrtS_F[jF], pwr);
 }
@@ -562,13 +594,14 @@ __global__ void lambdaPrecFinalizeKernel(
 // Shared layout: cL,cD,cU,nL,nD,nU (3+3 arrays of ns) + cF,nF (2+2 RHS
 // rows of ns) = 10*ns doubles. ns ~ 100, so ~8KB.
 // ---------------------------------------------------------------------------
+template <typename T>
 __global__ void tridiagSolveKernel(
-    double* __restrict__ f,
-    const double* __restrict__ ar, const double* __restrict__ dr,
-    const double* __restrict__ br,
-    const double* __restrict__ az, const double* __restrict__ dz,
-    const double* __restrict__ bz,
-    const double* __restrict__ lambdaPrec,
+    T* __restrict__ f,
+    const T* __restrict__ ar, const T* __restrict__ dr,
+    const T* __restrict__ br,
+    const T* __restrict__ az, const T* __restrict__ dz,
+    const T* __restrict__ bz,
+    const T* __restrict__ lambdaPrec,
     const int* __restrict__ jMin,
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mnmax)
@@ -582,19 +615,19 @@ __global__ void tridiagSolveKernel(
     int stride = mnmax * ns;
 
     // Shared: cur L,d,U; nxt L,d,U; f rows (2 per pass) cur+nxt
-    extern __shared__ double s_tri[];
-    double* cL = s_tri;            // [ns]
-    double* cD = cL + ns;
-    double* cU = cD + ns;
-    double* nL = cU + ns;
-    double* nD = nL + ns;
-    double* nU = nD + ns;
-    double* cF = nU + ns;          // [2][ns]
-    double* nF = cF + 2 * ns;      // [2][ns]
+    T* s_tri = static_cast<T*>(dynSharedBase());
+    T* cL = s_tri;            // [ns]
+    T* cD = cL + ns;
+    T* cU = cD + ns;
+    T* nL = cU + ns;
+    T* nD = nL + ns;
+    T* nU = nD + ns;
+    T* cF = nU + ns;          // [2][ns]
+    T* nF = cF + 2 * ns;      // [2][ns]
 
     // One PCR pass for the system (upper, diag, lower) applied to the two
     // RHS components cA and cB; writes the solutions back to f.
-    auto pass = [&](const double* aU, const double* dD, const double* bL,
+    auto pass = [&](const T* aU, const T* dD, const T* bL,
                     int cA, int cB) {
         const int comp[2] = {cA, cB};
         // stage lower=L=b_in, diag=D=d_in, upper=U=a_in + 2 RHS rows
@@ -607,8 +640,8 @@ __global__ void tridiagSolveKernel(
         }
         // zero the j < jMin region of the staged RHS (mirrors Thomas zeroing)
         for (int j = tid; j < jMin_m; j += blockDim.x) {
-            cF[0 * ns + j] = 0.0;
-            cF[1 * ns + j] = 0.0;
+            cF[0 * ns + j] = T(0.0);
+            cF[1 * ns + j] = T(0.0);
         }
         __syncthreads();
         // PCR rounds: eliminate the two neighbors at distance k each round
@@ -616,30 +649,30 @@ __global__ void tridiagSolveKernel(
             int j = jMin_m + tid;
             if (tid < nRow) {
                 bool hasL = (j - k >= jMin_m), hasR = (j + k < jMax);
-                double dL = hasL ? cD[j - k] : 0.0;
-                double dR = hasR ? cD[j + k] : 0.0;
-                if (fabs(dL) < 1e-30) dL = 1e-30;
-                if (fabs(dR) < 1e-30) dR = 1e-30;
-                double invL = hasL ? 1.0 / dL : 0.0;
-                double invR = hasR ? 1.0 / dR : 0.0;
-                double L = cL[j], D = cD[j], U = cU[j];
-                double Ll = hasL ? cL[j - k] : 0.0, Ul = hasL ? cU[j - k] : 0.0;
-                double Lr = hasR ? cL[j + k] : 0.0, Ur = hasR ? cU[j + k] : 0.0;
+                T dL = hasL ? cD[j - k] : T(0.0);
+                T dR = hasR ? cD[j + k] : T(0.0);
+                if (fabs(dL) < T(1e-30)) dL = T(1e-30);
+                if (fabs(dR) < T(1e-30)) dR = T(1e-30);
+                T invL = hasL ? T(1.0) / dL : T(0.0);
+                T invR = hasR ? T(1.0) / dR : T(0.0);
+                T L = cL[j], D = cD[j], U = cU[j];
+                T Ll = hasL ? cL[j - k] : T(0.0), Ul = hasL ? cU[j - k] : T(0.0);
+                T Lr = hasR ? cL[j + k] : T(0.0), Ur = hasR ? cU[j + k] : T(0.0);
                 nL[j] = -L * Ll * invL;
                 nU[j] = -U * Ur * invR;
-                double nDv = D - L * Ul * invL - U * Lr * invR;
-                if (fabs(nDv) < 1e-30) nDv = 1e-30;
+                T nDv = D - L * Ul * invL - U * Lr * invR;
+                if (fabs(nDv) < T(1e-30)) nDv = T(1e-30);
                 nD[j] = nDv;
                 #pragma unroll
                 for (int c = 0; c < 2; ++c) {
-                    double fv = cF[c * ns + j];
-                    double fl = hasL ? cF[c * ns + j - k] : 0.0;
-                    double fr = hasR ? cF[c * ns + j + k] : 0.0;
+                    T fv = cF[c * ns + j];
+                    T fl = hasL ? cF[c * ns + j - k] : T(0.0);
+                    T fr = hasR ? cF[c * ns + j + k] : T(0.0);
                     nF[c * ns + j] = fv - L * fl * invL - U * fr * invR;
                 }
             }
             __syncthreads();
-            double* t;
+            T* t;
             t = cL; cL = nL; nL = t;
             t = cD; cD = nD; nD = t;
             t = cU; cU = nU; nU = t;
@@ -649,9 +682,9 @@ __global__ void tridiagSolveKernel(
         // ---- Final solve: x = f'' / d'' (decoupled after the rounds) ----
         if (tid < nRow) {
             int j = jMin_m + tid;
-            double d = cD[j];
-            if (fabs(d) < 1e-30) d = 1e-30;
-            double inv = 1.0 / d;
+            T d = cD[j];
+            if (fabs(d) < T(1e-30)) d = T(1e-30);
+            T inv = T(1.0) / d;
             f[comp[0] * stride + mode * ns + j] = cF[0 * ns + j] * inv;
             f[comp[1] * stride + mode * ns + j] = cF[1 * ns + j] * inv;
         }
@@ -663,11 +696,11 @@ __global__ void tridiagSolveKernel(
     // ---- Zero out RHS for j < jMin (identity matrix region): comps 0..4
     // (matching the original kernel's zeroing; comp 5 is not zeroed) ----
     for (int j = tid; j < jMin_m; j += blockDim.x) {
-        f[0 * stride + mode * ns + j] = 0.0;
-        f[1 * stride + mode * ns + j] = 0.0;
-        f[2 * stride + mode * ns + j] = 0.0;
-        f[3 * stride + mode * ns + j] = 0.0;
-        f[4 * stride + mode * ns + j] = 0.0;
+        f[0 * stride + mode * ns + j] = T(0.0);
+        f[1 * stride + mode * ns + j] = T(0.0);
+        f[2 * stride + mode * ns + j] = T(0.0);
+        f[3 * stride + mode * ns + j] = T(0.0);
+        f[4 * stride + mode * ns + j] = T(0.0);
     }
 
     // ---- Components 2 (lmnsc) and 5 (lmncs): lambda diagonal
@@ -677,7 +710,7 @@ __global__ void tridiagSolveKernel(
     // for the m=0 mode, at the axis (jF=0), and below... no jMin filter —
     // the axis m>0 entries are zeroed by lambdaPrec itself (sqrt(s)^pwr=0).
     for (int j = tid; j < ns; j += blockDim.x) {
-        double lp = lambdaPrec[mode * ns + j];
+        T lp = lambdaPrec[mode * ns + j];
         f[2 * stride + mode * ns + j] *= lp;
         f[5 * stride + mode * ns + j] *= lp;
     }
@@ -687,15 +720,16 @@ __global__ void tridiagSolveKernel(
 // ---------------------------------------------------------------------------
 // Host-side orchestration
 // ---------------------------------------------------------------------------
-void preconCompute(const FourierPlan& fp, const GridParams& p,
-                   const RadialProfiles& rp, const MetricWorkspace& mw,
-                   PreconWorkspace& pw) {
+template <typename T>
+void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
+                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
+                   PreconWorkspace<T>& pw) {
     int nH = p.ns - 1, nF = p.ns;
     int threads = 256;
-    size_t smem = threads * 15 * sizeof(double);  // 15 accumulators
+    size_t smem = threads * 15 * sizeof(T);  // 15 accumulators
 
     // Step 1: Compute ax, bx, cx on half-grid
-    preconComputeKernel<<<nH, threads, smem>>>(
+    preconComputeKernel<T><<<nH, threads, smem>>>(
         mw.d_r12, mw.d_tau, mw.d_totalPressure, mw.d_bsupv, mw.d_gsqrt,
         rp.d_sqrtS_H,
         mw.d_zs, mw.d_zu12, fp.d_zu_e, fp.d_zu_o, fp.d_z_o,
@@ -706,7 +740,7 @@ void preconCompute(const FourierPlan& fp, const GridParams& p,
 
     // Step 2a: Assemble off-diagonal terms + sm/sp on half-grid
     int gridH = (nH + 255) / 256;
-    preconAssembleKernel<<<gridH, 256>>>(
+    preconAssembleKernel<T><<<gridH, 256>>>(
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx,
         rp.d_sqrtS_H, rp.d_sqrtS_F,
         p.ns,
@@ -717,7 +751,7 @@ void preconCompute(const FourierPlan& fp, const GridParams& p,
 
     // Step 2b: Average half-grid diagonals to full-grid
     int gridF = (nF + 255) / 256;
-    preconDiagKernel<<<gridF, 256>>>(
+    preconDiagKernel<T><<<gridF, 256>>>(
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx,
         pw.d_sm, pw.d_sp, p.ns,
         pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd);
@@ -726,7 +760,7 @@ void preconCompute(const FourierPlan& fp, const GridParams& p,
     // Step 3: Assemble tridiagonal matrices per (m,n) mode
     int total = p.mnmax * nF;
     int gridMN = (total + 255) / 256;
-    tridiagAssemblyKernel<<<gridMN, 256>>>(
+    tridiagAssemblyKernel<T><<<gridMN, 256>>>(
         pw.d_arm, pw.d_brm, pw.d_azm, pw.d_bzm,
         pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd,
         fp.basis.d_xm, fp.basis.d_xn,
@@ -738,14 +772,14 @@ void preconCompute(const FourierPlan& fp, const GridParams& p,
 
     // Step 4a/4b: Lambda diagonal preconditioner (components 2 and 5)
     {
-        cc(cudaMemset(pw.d_rmsPhiP, 0, sizeof(double)), "rmsPhiP zero");
-        lambdaPrecAssembleKernel<<<nH, threads>>>(
+        cc(cudaMemset(pw.d_rmsPhiP, 0, sizeof(T)), "rmsPhiP zero");
+        lambdaPrecAssembleKernel<T><<<nH, threads>>>(
             mw.d_guu, mw.d_guv, mw.d_gvv, mw.d_gsqrt,
             rp.d_phip_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta,
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda, pw.d_rmsPhiP);
         cc(cudaGetLastError(), "lambdaPrecAssemble");
-        lambdaPrecFinalizeKernel<<<dim3(p.mnmax, (p.ns + 127) / 128), 128>>>(
+        lambdaPrecFinalizeKernel<T><<<dim3(p.mnmax, (p.ns + 127) / 128), 128>>>(
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda,
             rp.d_sqrtS_F, pw.d_rmsPhiP,
             fp.basis.d_xm, fp.basis.d_xn,
@@ -755,13 +789,14 @@ void preconCompute(const FourierPlan& fp, const GridParams& p,
     }
 }
 
-void preconApply(double* d_f_inout, const GridParams& p,
-                 const PreconWorkspace& pw,
+template <typename T>
+void preconApply(T* d_f_inout, const GridParams<T>& p,
+                 const PreconWorkspace<T>& pw,
                  const int* xm, const int* xn) {
     // Step 4: PCR solve — one block per mode, 128 threads per block
     // (the threads cover up to ns-1 solved rows; PCR rounds in parallel)
-    size_t smem = 10 * p.ns * sizeof(double);  // coeffs + RHS buffers
-    tridiagSolveKernel<<<p.mnmax, 128, smem>>>(
+    size_t smem = 10 * p.ns * sizeof(T);  // coeffs + RHS buffers
+    tridiagSolveKernel<T><<<p.mnmax, 128, smem>>>(
         d_f_inout,
         pw.d_ar, pw.d_dr, pw.d_br,
         pw.d_az, pw.d_dz, pw.d_bz,
@@ -770,3 +805,13 @@ void preconApply(double* d_f_inout, const GridParams& p,
         p.ns, p.mnmax);
     cc(cudaGetLastError(), "tridiagSolve");
 }
+
+// ---- Explicit instantiation (double + float) ----------------------------
+template PreconWorkspace<double> preconCreate<double>(const GridParams<double>&);
+template PreconWorkspace<float>  preconCreate<float>(const GridParams<float>&);
+template void preconFree<double>(PreconWorkspace<double>&);
+template void preconFree<float>(PreconWorkspace<float>&);
+template void preconCompute<double>(const FourierPlan<double>&, const GridParams<double>&, const RadialProfiles<double>&, const MetricWorkspace<double>&, PreconWorkspace<double>&);
+template void preconCompute<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, const MetricWorkspace<float>&, PreconWorkspace<float>&);
+template void preconApply<double>(double*, const GridParams<double>&, const PreconWorkspace<double>&, const int*, const int*);
+template void preconApply<float>(float*, const GridParams<float>&, const PreconWorkspace<float>&, const int*, const int*);

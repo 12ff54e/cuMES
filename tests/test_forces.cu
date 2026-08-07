@@ -20,7 +20,7 @@ static void checkCuda(cudaError_t err, const char* tag) {
 }
 
 int main() {
-    GridParams p;
+    GridParams<double> p;
     p.ns = 17; p.mnmax = 6*(2+1); p.ntheta = 32; p.nzeta = 64;
     p.nfp = 1; p.nZnT = 2048; p.mpol = 6; p.ntor = 2;
     p.ncurr = 0; p.delt = 1.0; p.ftol = 1e-14; p.max_iter = 10;
@@ -31,7 +31,7 @@ int main() {
     cublasCreate(&cublasHandle);
 
     // Create Solovev-like initial state with independent parity coefficients
-    SpectralState st{};
+    SpectralState<double> st{};
     size_t nbytes_state = p.ns * p.mnmax * sizeof(double);
     auto* h_cc = new double[p.ns * p.mnmax]();
     auto* h_ss = new double[p.ns * p.mnmax]();
@@ -85,9 +85,9 @@ int main() {
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc;
 
     InputParams ip = initInputParams();
-    RadialProfiles rp = profilesCreate(p, ip);
-    FourierPlan fp = fourierCreate(p, cublasHandle);
-    MetricWorkspace mw = metricCreate(p);
+    RadialProfiles<double> rp = profilesCreate(p, ip);
+    FourierPlan<double> fp = fourierCreate(p, cublasHandle);
+    MetricWorkspace<double> mw = metricCreate(p);
 
     // Run one iteration
     inverseDFT(fp, st, p);
@@ -147,10 +147,10 @@ int main() {
     auto* d_fspec = (double*)malloc(nbs);  // host
     double* d_fspec_gpu;
     checkCuda(cudaMalloc(&d_fspec_gpu, nbs), "fspec");
-    ConstraintWorkspace cw_zero{}; cudaMalloc(&cw_zero.d_frcon_e, (size_t)p.ns*p.nZnT*8); cudaMemset(cw_zero.d_frcon_e, 0, (size_t)p.ns*p.nZnT*8);
-    cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns*p.nZnT*8); cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns*p.nZnT*8);
-    cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns*p.nZnT*8); cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns*p.nZnT*8);
-    cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns*p.nZnT*8); cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns*p.nZnT*8);
+    ConstraintWorkspace<double> cw_zero{}; cudaMalloc(&cw_zero.d_frcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     forwardDFT(fp, d_fspec_gpu, p, cw_zero);
     checkCuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost), "fspec d");
 

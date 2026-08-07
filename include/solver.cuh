@@ -9,13 +9,15 @@
 // Run the full fixed-point solve on GPU.
 // Returns: iterations used, and whether converged.
 // On exit, state contains the converged (or final) spectral coefficients.
+template <typename T>
 struct SolverResult {
     bool converged;
     int iterations;
-    double fsqr, fsqz, fsql;   // final force residuals
-    double delt;                 // final time step
+    T fsqr, fsqz, fsql;   // final force residuals
+    T delt;               // final time step
 };
 
-SolverResult solverRun(SpectralState& state, const GridParams& p,
-                       const RadialProfiles& rp, FourierPlan& fp,
-                       MetricWorkspace& mw);
+template <typename T>
+SolverResult<T> solverRun(SpectralState<T>& state, const GridParams<T>& p,
+                          const RadialProfiles<T>& rp, FourierPlan<T>& fp,
+                          MetricWorkspace<T>& mw);

@@ -21,11 +21,25 @@ cmake --build build -j
 
 # run tests
 ./build/test_fourier
+
+# single-precision build (all computation templated on T; Real = float)
+cmake -B build-float -G Ninja -DCUMES_USE_FLOAT=ON
+cmake --build build-float -j
 ```
 
 **Requirements:** CUDA Toolkit >= 11, CMake >= 3.20, GPU compute capability >= 6.1.
 If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must point to g++-12 (set in
 `CMakeLists.txt`).
+
+**Precision:** every computation function is `template<typename T>` (double or
+float); the executable's `Real` alias (vmec_types.h) is the compile-time switch
+(`-DCUMES_USE_FLOAT=ON`). The tests instantiate both types in every build.
+On-disk state files stay double (Python scripts unaffected); dump files are
+T-native. Float runs stall at ~1e-7 residuals and never reach the hardcoded
+ftol — relax ftol for float experiments. Note: nvcc rejects `extern __shared__`
+arrays in function templates instantiated with different element types in one
+TU — the dynamic shared-memory base is routed through the non-templated
+`dynSharedBase()` helper (see the comment at the top of each .cu that uses it).
 
 **CUDA architectures:** 61 (Pascal), 75 (Turing), 80 (Ampere), 86, 89 (Ada).
 
@@ -86,7 +100,7 @@ v = fac×(b1·v + delt·f) ,  x += delt·v
 | **Staggered half-grid** | Dynamic variables on full grid (flux surfaces); metric elements on half grid (between surfaces). Prevents checkerboard instability. Matches VMEC convention. |
 | **All GPU allocations at startup** | Scratch arrays allocated once, reused every iteration. Zero `cudaMalloc` calls in the hot loop. |
 | **Host checks convergence** | Residual reduction runs on GPU, but the scalar comparison `fsq < ftol` happens on host. |
-| **double precision** | Mandatory — residuals pushed to 1e-14. Single precision stalls at ~1e-7. |
+| **Precision via templates** | All computation is `template<typename T>`; `Real` (vmec_types.h) + `-DCUMES_USE_FLOAT=ON` selects float, otherwise double. Double is the verified default — residuals pushed to 1e-14. Single precision stalls at ~1e-7 (float rounding floor), so float runs need a relaxed ftol. cuFFT dispatches through `FftTraits<T>` (D2Z/Z2D ↔ R2C/C2R). |
 
 ## Fourier Transform Details
 
