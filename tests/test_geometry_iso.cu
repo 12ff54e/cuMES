@@ -23,8 +23,13 @@ static void loadState(SpectralState<double>& st, const GridParams<double>& p, co
         FILE* fp = fopen(fn, "rb");
         if (!fp) { fprintf(stderr, "cannot open %s\n", fn); exit(1); }
         uint64_t n;
-        if (fread(&n, sizeof(uint64_t), 1, fp) != 1 ||
-            fread(h, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax)) {
+        if (fread(&n, sizeof(uint64_t), 1, fp) != 1 || n != (uint64_t)(p.ns * p.mnmax)) {
+            fprintf(stderr, "size mismatch %s: file has %llu elements, expected %d\n",
+                    fn, (unsigned long long)n, p.ns * p.mnmax);
+            fclose(fp);
+            exit(1);
+        }
+        if (fread(h, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax)) {
             fprintf(stderr, "truncated %s\n", fn);
             fclose(fp);
             exit(1);
@@ -45,7 +50,9 @@ static void loadState(SpectralState<double>& st, const GridParams<double>& p, co
 int main() {
     InputParams ip = initInputParams();
     GridParams<double> p{};
-    p.ns = ip.ns; p.mpol = ip.mpol; p.ntor = ip.ntor;
+    // The dump/cuMES/step_0_* files are left by the LAST grid stage of a
+    // multigrid run (per-stage dumps overwrite), so use the final grid ns.
+    p.ns = ip.ns_array[ip.n_grids - 1]; p.mpol = ip.mpol; p.ntor = ip.ntor;
     p.ntheta = ip.ntheta; p.nzeta = ip.nzeta; p.nfp = ip.nfp;
     p.nZnT = p.ntheta * p.nzeta;
     p.mnmax = p.mpol * (p.ntor + 1);
