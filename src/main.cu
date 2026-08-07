@@ -18,6 +18,7 @@
 #include "solver.cuh"
 #include "output.cuh"
 #include "profiles.cuh"
+#include "refine.cuh"
 
 static void checkCuda(cudaError_t err, const char* tag) {
     if(err!=cudaSuccess){fprintf(stderr,"CUDA error [%s]: %s\n",tag,cudaGetErrorString(err));exit(1);}
@@ -54,9 +55,9 @@ static void initState(SpectralState<T>& st, const GridParams<T>& p, const InputP
         FILE* fp = fopen("vmecpp_init.bin", "rb");
     if (fp) {
         int ns_file, mnmax_file;
-        bool headerOk = fread(&ns_file, sizeof(int), 1, fp) == 1 &&
-                        fread(&mnmax_file, sizeof(int), 1, fp) == 1 &&
-                        ns_file == p.ns && mnmax_file == p.mnmax;
+        bool hdrRead = fread(&ns_file, sizeof(int), 1, fp) == 1 &&
+                       fread(&mnmax_file, sizeof(int), 1, fp) == 1;
+        bool headerOk = hdrRead && ns_file == p.ns && mnmax_file == p.mnmax;
         if (headerOk) {
             printf("Loading initial state from vmecpp_init.bin (ns=%d, mnmax=%d)\n", ns_file, mnmax_file);
             // The file stores doubles regardless of T: read into double
@@ -147,6 +148,15 @@ static void initState(SpectralState<T>& st, const GridParams<T>& p, const InputP
 
             return;
         }
+        if (hdrRead) {
+            // File exists but the resolution doesn't match the (stage-0)
+            // grid — e.g. an init file from another ns. Established behavior
+            // is a silent cold-start fallback; vmecpp hard-errors instead.
+            fprintf(stderr, "WARNING: vmecpp_init.bin header (ns=%d, mnmax=%d) "
+                            "does not match ns=%d, mnmax=%d — falling back to "
+                            "the cold start\n",
+                    ns_file, mnmax_file, p.ns, p.mnmax);
+        }
             fclose(fp);
         }
     }
@@ -229,21 +239,76 @@ int main() {
     fflush(stdout);
     printf("input: %s\n", p.ncurr == 0 ? "solovev" : "w7x");
     printf("precision: %s\n", sizeof(Real) == sizeof(double) ? "double" : "float");
-    printf("ns=%d mnmax=%d ntheta=%d nzeta=%d nZnT=%d nfp=%d mpol=%d ntor=%d ncurr=%d\n",
-           p.ns,p.mnmax,p.ntheta,p.nzeta,p.nZnT,p.nfp,p.mpol,p.ntor,p.ncurr);
+    printf("mpol=%d ntor=%d nfp=%d ntheta=%d nzeta=%d nZnT=%d ncurr=%d\n",
+           p.mpol,p.ntor,p.nfp,p.ntheta,p.nzeta,p.nZnT,p.ncurr);
+    // Multi-radial-grid stage sequence (vmecpp ns_array/niter_array/ftol_array)
+    printf("grids=%d: ns", ip.n_grids);
+    for (int g = 0; g < ip.n_grids; ++g) printf("%s%d", g == 0 ? "" : "->", ip.ns_array[g]);
+    printf(" (niter");
+    for (int g = 0; g < ip.n_grids; ++g) printf(" %d", ip.niter_array[g]);
+    printf(", ftol");
+    for (int g = 0; g < ip.n_grids; ++g) printf(" %.0e", ip.ftol_array[g]);
+    printf(")\n");
 
     cublasHandle_t cublasHandle; checkCublas(cublasCreate(&cublasHandle),"cublas");
 
-    SpectralState<Real> st{}; initState<Real>(st,p,ip);
-    RadialProfiles<Real> rp=profilesCreate<Real>(p,ip);
-    FourierPlan<Real> fp=fourierCreate<Real>(p,cublasHandle);
-    MetricWorkspace<Real> mw=metricCreate<Real>(p);
+    // ---- Multi-radial-grid stage loop ----
+    // Each stage runs the solver on its own radial grid (with its own
+    // iteration cap and ftol), seeded by the previous stage's converged
+    // state interpolated onto the new grid (vmecpp grid sequencing). All
+    // ns-dependent objects are re-created per stage; profiles re-evaluate
+    // analytically on the new grid.
+    SpectralState<Real> st{};
+    GridParams<Real> p_prev;
+    SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9)};
+    int total_iter = 0;
+    for (int g = 0; g < ip.n_grids; ++g) {
+        p_prev = p;                    // previous stage's params (ns, ...)
+        p.ns = ip.ns_array[g];
+        p.max_iter = ip.niter_array[g];
+        p.ftol = ip.ftol_array[g];
+        printf("\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d ftol=%.0e ===\n",
+               g + 1, ip.n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol);
+        if (g == 0) {
+            initState<Real>(st, p, ip);  // cold start (interpFromBoundaryAndAxis)
+        } else {
+            SpectralState<Real> st_new{};
+            interpolateState<Real>(st_new, p, st, p_prev);
+            freeState(st);
+            st = st_new;
+        }
+        RadialProfiles<Real> rp = profilesCreate<Real>(p, ip);  // sets p.lamscale
+        FourierPlan<Real> fp = fourierCreate<Real>(p, cublasHandle);
+        MetricWorkspace<Real> mw = metricCreate<Real>(p);
 
-    SolverResult<Real> result=solverRun<Real>(st,p,rp,fp,mw);
+        result = solverRun<Real>(st, p, rp, fp, mw);
+
+        fourierFree(fp); metricFree(mw); profilesFree(rp);
+        total_iter += result.iterations;
+
+        // vmecpp semantics (vmec.cc:367-392): a stage that exhausts its
+        // iteration cap without meeting ftol fails the whole run. Single-
+        // grid runs keep the lenient report-and-return path below.
+        if (!result.converged && ip.n_grids > 1) {
+            fprintf(stderr, "FATAL: grid stage %d/%d (ns=%d) completed %d/%d "
+                            "iterations without meeting ftol=%.0e; final "
+                            "residuals fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
+                    g + 1, ip.n_grids, p.ns, result.iterations, p.max_iter,
+                    (double)p.ftol, (double)result.fsqr, (double)result.fsqz,
+                    (double)result.fsql);
+            freeState(st);
+            cublasDestroy(cublasHandle);
+            return EXIT_FAILURE;
+        }
+    }
+
     outputSaveBinary<Real>(st, p, "cumes_state.bin");
-    outputPrint<Real>(st,p,result.iterations,result.converged,result.fsqr,result.fsqz,result.fsql);
-
-    fourierFree(fp); metricFree(mw); profilesFree(rp); freeState(st);
+    outputPrint<Real>(st, p, result.iterations, result.converged,
+                      result.fsqr, result.fsqz, result.fsql);
+    if (ip.n_grids > 1)
+        printf("multigrid: total effective iterations over %d grids = %d\n",
+               ip.n_grids, total_iter);
+    freeState(st);
     cublasDestroy(cublasHandle);
-    printf("\nDone.\n"); return result.converged?0:1;
+    printf("\nDone.\n"); return result.converged ? 0 : 1;
 }

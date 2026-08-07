@@ -57,14 +57,16 @@ cuMES/
 │   ├── forces.cuh          computeForces declaration
 │   ├── profiles.cuh        profilesCreate / profilesFree declarations
 │   ├── solver.cuh          SolverResult, solverRun declaration
-│   └── output.cuh          outputPrint declaration
+│   ├── output.cuh          outputPrint declaration
+│   └── refine.cuh          interpolateState declaration (grid sequencing)
 ├── src/                    Implementation files (.cu = CUDA C++)
-│   ├── main.cu             Entry point: init params → create state → solve → output
+│   ├── main.cu             Entry point: multigrid stage loop → solve → output
 │   ├── fourier.cu          cuFFT inverse/forward transform kernels (12-slot ζ-FFT)
 │   ├── geometry.cu         Jacobian, metric g^ij, contravariant B on half-grid
 │   ├── forces.cu           MHD force residuals (brmn/bzmn/crmn/czmn/blmn/clmn)
 │   ├── profiles.cu         Radial profile evaluation + GPU upload
 │   ├── solver.cu           Fixed-point loop with Garabedian accelerated descent
+│   ├── refine.cu           interpolateState: coarse→fine grid state interpolation
 │   └── output.cu           Copy results from GPU → print
 └── tests/
     └── test_fourier.cu     Standalone correctness tests (no framework)
@@ -197,7 +199,7 @@ x_new = x_old + delt * v_new
 | VMEC++ feature | Status |
 |----------------|--------|
 | FFT-accelerated transforms | cuFFT backend (batched 1D ζ-FFT + direct poloidal), mirroring vmecpp's FFTX structure |
-| Multigrid grid sequencing | Single fixed radial grid |
+| Multigrid grid sequencing | Implemented: per-config `ns_array`/`niter_array`/`ftol_array` stage loop (Solovev 5→11→55, W7-X 33→66→99), each stage seeded by the previous converged state via `interpolateState` (refine.cu) — vmecpp `InterpolateToNextMultigridStep`, linear in s on scalxc-scaled odd-m coefficients, 2·x₁−x₂ axis extrapolation, odd-m zeroed at the axis, LCFS copied exactly. A stage that exhausts its cap without meeting ftol fails the run (vmecpp semantics) |
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, wout | Post-processing; not needed for core loop |
 | Hot restart / checkpointing | Not yet |
@@ -233,20 +235,31 @@ x_new = x_old + delt * v_new
 
 ## Known Issues / Next Steps
 
-**Status (2026-08-02 night 2): the θ-parameterization difference is RESOLVED.
-The rollback-backup refresh now captures the POST-descent state (vmecpp's
-RestartIteration(NO_RESTART) semantics — the descent runs before the
-time-step control), the per-iteration residuals track vmecpp at ≤1e-8
-relative over the ENTIRE run (restart sequence identical at all 9 restarts:
-BJs iter2 3,5,8,11,15; BPs 51,64,78,91), and the W7-X run converges at 2953
-effective iters (2962 raw passes incl. the 9 restarts), FSQR 9.91e-13
-(vmecpp: 2953, 9.92e-13). The solver reports the effective count everywhere
-(convergence message, ITER table column, Iterations: summary). The converged state matches
-the wout at ≤1.5e-9 in ALL SIX FAMILIES — rmncc 3.0e-10, zmnsc 2.3e-10,
-lmnsc 1.5e-9, rmnss 1.9e-10, zmncs 1.4e-10, lmncs 1.5e-9 — including the λ
-gauge modes (lmnsc(1,0), lmncs(0,1)) that previously sat at 1.4e-2/2.5e-3.
-(The latter was partly a comparison bug: scripts/compare_converged_state.py
-read the half-grid-interpolated wout `lmns`; it must read `lmns_full`.)**
+**Status (2026-08-07): grid sequencing is implemented and verified against
+vmecpp. Both configs now run multi-stage by default (Solovev 5→11→55,
+W7-X 33→66→99, mirroring the reference JSONs), each stage seeded by the
+previous converged state via `interpolateState` (refine.cu). Verification
+vs vmecpp's own multigrid runs:
+- Solovev: 251 → 199 → 456 effective iters, final FSQR 9.58e-17 — the
+  final stage matches vmecpp's playground reference exactly (456, 9.99e-17).
+- W7-X: 1878 → 1617 → 2011 effective iters (total 5506), final FSQR
+  9.78e-13; vmecpp multigrid runs 1877 → 1635 → 2012. The converged final
+  states agree at ~1e-5 in R/Z, ~1e-4 in the weakly-determined near-axis λ.
+- The multigrid final state is a different member of the (near-degenerate)
+  λ-gauge family than the single-grid-99 run: rmncc(0,1) differs by
+  2.7e-4 vs the single-grid state/wout — and vmecpp's own single-grid vs
+  multigrid states differ by exactly the same 2.7e-4 (intrinsic to the
+  continuation, not a cuMES artifact). Restarting the solver from the
+  multigrid final state converges at iter 1 (it is a genuine fixed point).
+- Single-grid regression: with `n_grids=1` (ns_array={99}) the run is
+  bit-identical to the pre-multigrid code (compare_runs.py PASS, 2953
+  effective iters, FSQR 9.924e-13, state identical).**
+(The 2026-08-02 status below remains true for single-grid runs: the
+per-iteration residuals track vmecpp at ≤1e-8 over the ENTIRE run with an
+identical restart sequence — BJs iter2 3,5,8,11,15; BPs 51,64,78,91 — and
+the single-grid converged state matches the wout at ≤1.5e-9 in all six
+families including the λ gauge modes. Note: scripts/compare_converged_state.py
+must read the FULL-grid wout `lmns_full`, not the half-grid `lmns`.)
 
 1. **Axis representation (state-file only, real-space-irrelevant).** cuMES
    constant-extrapolates the axis row from j=1 (extrapolateAxisKernel — m=1
@@ -257,5 +270,10 @@ read the half-grid-interpolated wout `lmns`; it must read `lmns_full`.)**
    agrees (step_A verified at 1e-15), and the axis coefficients do not enter
    the forces, so this only shows up when diffing state files / wout axis rows.
 
-2. **No multigrid.** Single fixed radial grid; adding grid sequencing would
-   improve robustness for difficult equilibria.
+2. **Float builds need a relaxed ftol_array.** Float runs stall at ~1e-7
+   (float rounding floor), so the hardcoded stage ftols (1e-16/1e-12) can
+   never be met: a multi-grid float run exits FATAL at the first stage
+   (a stage that exhausts its cap without meeting ftol fails the run, per
+   vmecpp semantics). For float experiments, relax the `ftol_array` entries
+   in input.h (and note `CUMES_MAX_ITER`/`CUMES_DELT0` override every
+   stage's cap when set).

@@ -113,7 +113,7 @@ debug output.
 
 | Variable | Effect |
 |----------|--------|
-| `CUMES_MAX_ITER` | iteration cap (default 1000) |
+| `CUMES_MAX_ITER` | iteration cap (default 1000); overrides EVERY stage's cap in a multigrid run |
 | `CUMES_DELT0` | initial time step (default 0.9) |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau (experiments) |
 | `CUMES_DUMP_ITER` | which iterations the windowed dump files fire on (default 150) |
@@ -123,17 +123,39 @@ debug output.
 
 ## Verification
 
-- **Per-iteration fidelity (W7-X)**: invariant residuals track vmecpp at
-  ≤1e-8 relative over the entire run; the cuFFT transform backend reproduces
-  the direct-sum trajectory byte-identically in the per-iteration logs.
-- **Solovev (axisymmetric)**: converges at iter 252 (default start) or
-  iter 237 (started from vmecpp's iter-150 state via `CUMES_LOAD_INIT=1`),
-  no restarts, delt constant 0.9, final invariant residual ~8e-17.
-- **W7-X (3D)**: converges at iter 2953 effective (2962 raw passes incl. 9
-  restarts; vmecpp 2953) with FSQR 9.924e-13
-  (vmecpp 9.92e-13); the converged state matches the wout at ≤1.5e-9 in all
-  six families (rmncc 3.0e-10, zmnsc 2.3e-10, lmnsc 1.5e-9, rmnss 1.9e-10,
-  zmncs 1.4e-10, lmncs 1.5e-9).
+- **Multi-radial-grid (default, both configs)**: each stage runs with its
+  own iteration cap and ftol, seeded by the previous stage's converged state
+  via `interpolateState` (`src/refine.cu`, vmecpp's
+  `InterpolateToNextMultigridStep` semantics). Verified against vmecpp's own
+  multigrid runs:
+  - **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR
+    9.58e-17; the final stage matches the vmecpp playground reference
+    exactly (456 iters, 9.99e-17).
+  - **W7-X 33→66→99**: 1878 → 1617 → 2011 effective iters (total 5506),
+    final FSQR 9.78e-13 (vmecpp multigrid: 1877 → 1635 → 2012); converged
+    states agree at ~1e-5 in R/Z and ~1e-4 in the weakly-determined
+    near-axis λ. The final state is a different member of the (near-
+    degenerate) λ-gauge family than the single-grid-99 equilibrium
+    (rmncc(0,1) differs by 2.7e-4) — vmecpp's own single-grid vs multigrid
+    states differ by the same 2.7e-4, so this is intrinsic to the
+    continuation, and the multigrid final state is a genuine fixed point
+    (restarting from it converges at iter 1).
+- **Single-grid regression**: with `n_grids=1` the run is bit-identical to
+  the pre-multigrid code (compare_runs.py PASS; W7-X converges at iter 2953
+  effective, 2962 raw passes incl. 9 restarts, FSQR 9.924e-13).
+- **Per-iteration fidelity (W7-X, single-grid)**: invariant residuals track
+  vmecpp at ≤1e-8 relative over the entire run; the cuFFT transform backend
+  reproduces the direct-sum trajectory byte-identically in the per-iteration
+  logs; the converged state matches the wout at ≤1.5e-9 in all six families.
+- **Solovev (axisymmetric, single-grid ns=11)**: converges at iter 252
+  (default start) or iter 237 (started from vmecpp's iter-150 state via
+  `CUMES_LOAD_INIT=1`), no restarts, delt constant 0.9, final invariant
+  residual ~8e-17.
+
+Note: `scripts/compare_runs.py` (two-log trajectory comparison) is only
+valid for single-grid logs — per-stage iteration counters restart at 1, so
+rows of later stages overwrite earlier ones. Use `compare_states.py` for
+final-state checks.
 
 ## Status vs VMEC++
 
@@ -142,7 +164,7 @@ debug output.
 | FFT-accelerated transforms | Implemented: cuFFT (batched 1D real FFT in the ζ direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure); the constraint module's rCon/zCon and de-aliasing bandpass reuse the same plans/scratch (compact sub-batches: 2·(mpol−2)·(ns−1) and 4·mpol·ns elements instead of the full 12·mpol·ns). See `src/fourier.cu`. |
 | Performance (W7-X, TITAN Xp) | Full run 7.79 s → **4.98 s** after the 2026-08-03 pass (PCR tridiagonal solve, coalesced θ-major access, slot-split poloidal accumulation, compact constraint sub-batch FFTs, sync removal): transforms 0.43/0.39 ms/iter (inverse/forward), converged at effective iter 2953 (2962 passes) with FSQR 9.924e-13 — per-iteration residuals bit-identical to the pre-pass run, state ≤2e-10 in all six families. |
 | 3D (lthreed) equilibria | Implemented and verified against vmecpp (W7-X, mpol=ntor=12): per-iteration residuals track vmecpp at ≤1e-8 over the whole run; converges at iter 2953 effective (vmecpp 2953) with FSQR 9.924e-13 (vmecpp 9.92e-13); the converged state matches the wout at ≤1.5e-9 in all six families. |
-| Multigrid grid sequencing | Single fixed radial grid |
+| Multigrid grid sequencing | Implemented: per-config `ns_array`/`niter_array`/`ftol_array` stage loop (Solovev 5→11→55, W7-X 33→66→99), each stage seeded by the previous converged state via `interpolateState` (refine.cu) — linear-in-s interpolation on scalxc-scaled odd-m coefficients, exact at old grid points, LCFS pinned. A stage that exhausts its cap without meeting ftol fails the run (vmecpp semantics). See `src/refine.cu` + the Verification section. |
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, full wout | Post-processing; not needed for the core loop |
 | Hot restart / checkpointing | Add later |

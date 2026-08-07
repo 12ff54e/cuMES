@@ -35,6 +35,14 @@ struct InputParams {
     int ncurr = 0;
     double delt = 0.9, ftol = 1e-16;
     int max_iter = 1000;
+    // Multi-radial-grid sequence (vmecpp ns_array/niter_array/ftol_array):
+    // the solver runs stage g on ns_array[g] with its own iteration cap and
+    // ftol, seeded by the previous stage's converged state (interpolated).
+    // ip.ns/max_iter/ftol are the stage-0 values. Default = single stage.
+    static constexpr int kMaxGrids = 8;
+    int ns_array[kMaxGrids] = {}, niter_array[kMaxGrids] = {};
+    double ftol_array[kMaxGrids] = {};
+    int n_grids = 1;
     double phiedge = 1.0;
     double pres_scale = 1.0, adiabatic_index = 0.0, spres_ped = 1.0;
     double bloat = 1.0, curtor = 0.0, tcon0 = 1.0;
@@ -55,13 +63,19 @@ struct InputParams {
     double zbsc[16][16] = {}, zbcs[16][16] = {};
 };
 
-// ---- Solovev parameters (matches the previous hardcoded input.h) ---------
+// ---- Solovev parameters (matches playground/solovev/solovev.json) --------
 inline void setSolovevParams(InputParams& p) {
     p.mpol = 6; p.ntor = 0; p.nfp = 1;
     p.ntheta = 18; p.nzeta = 1;
-    p.ns = 11;
+    p.ns = 5;                              // stage-0 values; full sequence below
     p.ncurr = 0;
     p.delt = 0.9; p.ftol = 1e-16; p.max_iter = 1000;
+    // solovev.json: ns_array [5,11,55], niter_array [1000,2000,2000],
+    //               ftol_array [1e-16,1e-16,1e-16]
+    p.n_grids = 3;
+    p.ns_array[0] = 5;  p.ns_array[1] = 11; p.ns_array[2] = 55;
+    p.niter_array[0] = 1000; p.niter_array[1] = 2000; p.niter_array[2] = 2000;
+    p.ftol_array[0] = 1e-16; p.ftol_array[1] = 1e-16; p.ftol_array[2] = 1e-16;
     p.phiedge = 1.0;
     p.pres_scale = 1.0; p.adiabatic_index = 0.0; p.spres_ped = 1.0;
     p.bloat = 1.0; p.curtor = 0.0; p.tcon0 = 1.0;

@@ -11,8 +11,8 @@ constexpr int kntor = 12;
 constexpr int knfp = 5;
 constexpr int kntheta = 0;
 constexpr int knzeta = 36;
-constexpr int kns = 99;
-constexpr int kmax_iter = 5000;
+constexpr int kns = 33;
+constexpr int kmax_iter = 3000;
 constexpr double kftol = 1e-12;
 constexpr double kdelt = 1.0;
 constexpr int kncurr = 1;
@@ -23,6 +23,12 @@ constexpr double kspres_ped = 1.0;
 constexpr double kbloat = 1.0;
 constexpr double kcurtor = 5000.0;
 constexpr double ktcon0 = 1.0;
+
+// Multi-radial-grid stage sequence (vmecpp ns_array/niter_array/ftol_array).
+constexpr int kNGrids = 3;
+constexpr int kNsArray[3] = {33, 66, 99};
+constexpr int kNiterArray[3] = {3000, 4000, 5000};
+constexpr double kFtolArray[3] = {1e-12, 1e-12, 1e-12};
 
 // am: power-series coefficients.
 constexpr int kamN = 2;
@@ -237,6 +243,11 @@ inline void setW7xParams(InputParams& p) {
     p.ntheta = kntheta; p.nzeta = knzeta; p.ns = kns;
     p.ncurr = kncurr;
     p.delt = kdelt; p.ftol = kftol; p.max_iter = kmax_iter;
+    p.n_grids = kNGrids;
+    for (int g = 0; g < kNGrids; ++g) {
+        p.ns_array[g] = kNsArray[g]; p.niter_array[g] = kNiterArray[g];
+        p.ftol_array[g] = kFtolArray[g];
+    }
     p.phiedge = kphiedge;
     p.pres_scale = kpres_scale; p.adiabatic_index = kadiabatic_index;
     p.spres_ped = kspres_ped; p.bloat = kbloat;

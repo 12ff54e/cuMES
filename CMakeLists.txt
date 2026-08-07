@@ -32,6 +32,7 @@ add_executable(cuMES
     src/profiles.cu
     src/precon.cu
     src/constraint.cu
+    src/refine.cu
 )
 
 target_link_libraries(cuMES PRIVATE
