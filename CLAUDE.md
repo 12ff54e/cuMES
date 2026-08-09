@@ -15,10 +15,16 @@ Reference implementation: `../vmecpp` (CPU-based C++ VMEC++ solver).
 # in folder cuMES
 cmake -B build -G Ninja
 cmake --build build -j
+# Output backends: -DCUMES_USE_NETCDF=OFF / -DCUMES_USE_HDF5=OFF disable the
+# .nc / .h5 writers individually (default ON; a missing library disables
+# the backend with a configure warning)
 
-# Run main solver (argv[1] = JSON input; default inputs/solovev.json)
+# Run main solver (argv[1] = JSON input, default inputs/solovev.json;
+# argv[2] = output path; suffix selects format: .nc/.h5/.hdf5/.bin,
+# missing or unknown suffix falls back to binary cumes_state.bin)
 ./build/cuMES
 ./build/cuMES inputs/w7x.json
+./build/cuMES inputs/solovev.json solovev.nc
 
 # run tests
 ./build/test_fourier
@@ -74,7 +80,9 @@ cuMES/
 │   ├── profiles.cu         Radial profile evaluation + GPU upload
 │   ├── solver.cu           Fixed-point loop with Garabedian accelerated descent
 │   ├── refine.cu           interpolateState: coarse→fine grid state interpolation
-│   └── output.cu           Copy results from GPU → print
+│   ├── output.cu           Binary state save + suffix dispatcher (outputSave)
+│   ├── output_netcdf.cu    NetCDF classic-3 writer (CUMES_HAVE_NETCDF only)
+│   └── output_hdf5.cu      HDF5 writer, scalars as root attrs (CUMES_HAVE_HDF5 only)
 └── tests/
     ├── test_fourier.cu     Standalone correctness tests (no framework)
     ├── test_input_json.cu  JSON input mapping + error paths (inputs/*.json)

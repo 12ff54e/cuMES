@@ -21,6 +21,12 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -Wall -Wextra")
 # explicitly and are unaffected).
 option(CUMES_USE_FLOAT "Build cuMES in single precision (float)" OFF)
 
+# Optional state-output backends. Each is compiled in only if the option is
+# ON and the library is found; otherwise the run falls back to binary
+# cumes_state.bin with a stderr warning.
+option(CUMES_USE_NETCDF "Enable NetCDF output of the solved state (.nc)" ON)
+option(CUMES_USE_HDF5  "Enable HDF5  output of the solved state (.h5/.hdf5)" ON)
+
 find_package(CUDAToolkit 11 REQUIRED)
 
 # ---- executable -------------------------------------------------------
@@ -44,6 +50,63 @@ target_link_libraries(cuMES PRIVATE
 )
 
 target_include_directories(cuMES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# ---- optional output backends (NetCDF / HDF5) ---------------------------
+# Each backend TU is added only when the option is ON and the library is
+# found; the suffix dispatcher in src/output.cu falls back to binary
+# cumes_state.bin when a requested format is not compiled in.
+set(CUMES_OUTPUT_BACKENDS "")   # backend TUs, appended when a library is found
+
+# NetCDF: Debian's libnetcdf-dev ships neither FindnetCDF.cmake nor a
+# netCDFConfig package, so probe for a package first and fall back to
+# pkg-config (the vmecpp pattern). find_package and pkg_check_modules share
+# the netCDF_* variable namespace, so the fallback cleanly overwrites the
+# failed probe.
+if(CUMES_USE_NETCDF)
+    find_package(netCDF QUIET)
+    if(NOT netCDF_FOUND)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(netCDF QUIET IMPORTED_TARGET netcdf)
+        endif()
+    endif()
+    if(netCDF_FOUND)
+        list(APPEND CUMES_OUTPUT_BACKENDS src/output_netcdf.cu)
+        target_compile_definitions(cuMES PRIVATE CUMES_HAVE_NETCDF)
+        if(TARGET netCDF::netCDF)
+            target_link_libraries(cuMES PRIVATE netCDF::netCDF)
+        elseif(TARGET PkgConfig::netcdf)
+            target_link_libraries(cuMES PRIVATE PkgConfig::netcdf)
+        else()
+            target_link_libraries(cuMES PRIVATE ${netCDF_LIBRARIES})
+            target_include_directories(cuMES PRIVATE ${netCDF_INCLUDE_DIRS})
+        endif()
+        message(STATUS "cuMES: NetCDF output enabled (netCDF ${netCDF_VERSION})")
+    else()
+        message(WARNING "cuMES: NetCDF not found - .nc output disabled "
+                        "(install libnetcdf-dev or pass -DCUMES_USE_NETCDF=OFF)")
+    endif()
+endif()
+
+# HDF5: CMake's FindHDF5 handles the Debian serial layout (interrogates
+# h5cc, resolves libhdf5.so under .../hdf5/serial, headers in
+# /usr/include/hdf5/serial) and provides the HDF5::HDF5 imported target.
+if(CUMES_USE_HDF5)
+    find_package(HDF5 QUIET COMPONENTS C)
+    if(HDF5_FOUND)
+        list(APPEND CUMES_OUTPUT_BACKENDS src/output_hdf5.cu)
+        target_compile_definitions(cuMES PRIVATE CUMES_HAVE_HDF5)
+        target_link_libraries(cuMES PRIVATE HDF5::HDF5)
+        message(STATUS "cuMES: HDF5 output enabled (HDF5 ${HDF5_VERSION})")
+    else()
+        message(WARNING "cuMES: HDF5 not found - .h5 output disabled "
+                        "(install libhdf5-dev or pass -DCUMES_USE_HDF5=OFF)")
+    endif()
+endif()
+
+if(CUMES_OUTPUT_BACKENDS)
+    target_sources(cuMES PRIVATE ${CUMES_OUTPUT_BACKENDS})
+endif()
 
 if(CUMES_USE_FLOAT)
     target_compile_definitions(cuMES PRIVATE CUMES_USE_FLOAT)

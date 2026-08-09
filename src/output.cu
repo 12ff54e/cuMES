@@ -7,6 +7,8 @@
 #include "output.cuh"
 #include "input.h"
 #include <cstdio>
+#include <cstring>   // strrchr
+#include <strings.h>  // strcasecmp
 
 static void checkCuda(cudaError_t err, const char* tag) {
     if (err != cudaSuccess) {
@@ -123,8 +125,53 @@ void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
     delete[] h_rmnc; delete[] h_zmns; delete[] h_lmnc;
 }
 
+// Format dispatcher. The path suffix decides the format: .nc -> NetCDF,
+// .h5/.hdf5 -> HDF5, .bin -> binary at the given path. An unrecognized
+// suffix, a missing suffix, or a backend compiled out falls back to binary
+// cumes_state.bin in the working directory (the pre-argv[2] behaviour),
+// with a stderr warning.
+template <typename T>
+void outputSave(const SpectralState<T>& st, const GridParams<T>& p,
+                const InputParams& ip, const SolverResult<T>& result,
+                const char* path, const char* input_file) {
+    // ip/result/input_file are only read by the backend writers; silence
+    // -Wunused-parameter when both backends are compiled out.
+    (void)ip; (void)result; (void)input_file;
+    const char* ext = strrchr(path, '.');
+    if (ext == nullptr) { ext = ""; }
+    if (strcasecmp(ext, ".bin") == 0) {
+        outputSaveBinary<T>(st, p, path);
+        return;
+    }
+    if (strcasecmp(ext, ".nc") == 0) {
+#ifdef CUMES_HAVE_NETCDF
+        outputSaveNetcdf<T>(st, p, ip, result, path, input_file);
+        return;
+#else
+        fprintf(stderr, "WARNING: %s: .nc output requested but cuMES was "
+                        "built without NetCDF - writing cumes_state.bin\n",
+                path);
+#endif
+    } else if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
+#ifdef CUMES_HAVE_HDF5
+        outputSaveHdf5<T>(st, p, ip, result, path, input_file);
+        return;
+#else
+        fprintf(stderr, "WARNING: %s: %s output requested but cuMES was "
+                        "built without HDF5 - writing cumes_state.bin\n",
+                path, ext);
+#endif
+    } else {
+        fprintf(stderr, "WARNING: %s: unrecognized output suffix '%s' - "
+                        "writing binary cumes_state.bin\n", path, ext);
+    }
+    outputSaveBinary<T>(st, p, "cumes_state.bin");
+}
+
 // ---- Explicit instantiation (double + float) ----------------------------
 template void outputSaveBinary<double>(const SpectralState<double>&, const GridParams<double>&, const char*);
 template void outputSaveBinary<float>(const SpectralState<float>&, const GridParams<float>&, const char*);
 template void outputPrint<double>(const SpectralState<double>&, const GridParams<double>&, int, bool, double, double, double);
 template void outputPrint<float>(const SpectralState<float>&, const GridParams<float>&, int, bool, float, float, float);
+template void outputSave<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
+template void outputSave<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);

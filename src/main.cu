@@ -236,6 +236,13 @@ static void freeState(SpectralState<T>& st) {
 
 int main(int argc, char** argv) {
     const char* inputPath = (argc > 1) ? argv[1] : "inputs/solovev.json";
+    // Output format is selected by the argv[2] suffix: .nc -> NetCDF,
+    // .h5/.hdf5 -> HDF5, .bin -> binary at that path; missing or
+    // unrecognized falls back to the legacy binary cumes_state.bin.
+    const char* outputPath = (argc > 2) ? argv[2] : "cumes_state.bin";
+    if (argc <= 2)
+        fprintf(stderr, "WARNING: no output path given (argv[2]) - "
+                        "writing binary cumes_state.bin\n");
     InputParams ip;
     try {
         ip = initInputParams(inputPath);
@@ -311,7 +318,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    outputSaveBinary<Real>(st, p, "cumes_state.bin");
+    outputSave<Real>(st, p, ip, result, outputPath, inputPath);
     outputPrint<Real>(st, p, result.iterations, result.converged,
                       result.fsqr, result.fsqz, result.fsql);
     if (ip.n_grids > 1)

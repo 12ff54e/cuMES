@@ -76,9 +76,19 @@ v = fac×(b1·v + delt·f) ,  x += delt·v
 # in folder cuMES
 cmake -B build -G Ninja
 cmake --build build -j
-./build/cuMES                # default input: inputs/solovev.json
+./build/cuMES                      # default input: inputs/solovev.json
 ./build/cuMES inputs/w7x.json
+./build/cuMES inputs/solovev.json solovev.nc      # argv[2] selects the output
+./build/cuMES inputs/solovev.json solovev.h5
 ```
+
+Output path is argv[2]; the file suffix selects the format (`.nc` → NetCDF,
+`.h5`/`.hdf5` → HDF5, `.bin` → raw binary at that path). A missing argv[2] or
+an unrecognized suffix falls back to the legacy binary `cumes_state.bin` in
+the working directory (with a stderr warning). The NetCDF and HDF5 backends
+are found at configure time and each can be disabled with
+`-DCUMES_USE_NETCDF=OFF` / `-DCUMES_USE_HDF5=OFF` (default ON; a missing
+library disables the backend with a warning).
 
 Input is a vmecpp-style JSON file (flat top-level keys: `mpol`, `ntor`,
 `nfp`, `ns_array`/`niter_array`/`ftol_array` (multigrid stages), `am`/`ac`/
@@ -117,6 +127,25 @@ cmake --build build-float -j
   same-build tooling (e.g. `test_geometry_iso` is double-build-only).
 - The unit tests instantiate both double and float in every build
   (`./build/test_fourier` runs both legs).
+
+### Output formats
+
+The solved state is written by suffix (argv[2], fallback `cumes_state.bin`):
+
+- **`.bin`** — raw binary, the legacy contract: `[int ns][int mnmax]` + 6
+  families (`rmncc zmnsc lmnsc rmnss zmncs lmncs`) of `ns*mnmax` doubles,
+  mode-major (`i = m*ns + j`). Consumed by `scripts/compare_*.py` and the
+  parent-repo plotting scripts — unchanged.
+- **`.nc`** — netCDF classic-3 (CDF-1). State variables `(ns, mnmax)` in the
+  same mode-major order, grid/convergence scalar variables, and the full
+  InputParams provenance (profile coefficients `am/ac/ai/aphi`, `raxis_c`/
+  `zaxis_s`, folded boundary `rbcc/rbss/zbsc/zbcs`, multigrid arrays), with
+  global attributes `input_file` and `precision`.
+- **`.h5`/`.hdf5`** — serial HDF5 with the same content: scalars as
+  root-group attributes, arrays as datasets.
+
+All formats write doubles regardless of the compute type `T` (float runs
+produce the same layout with `precision = "float"`).
 
 ### Environment variables
 
