@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cublas_v2.h>
 
-#include "input.h"
+#include "input_json.h"
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
@@ -48,7 +48,8 @@ static void loadState(SpectralState<double>& st, const GridParams<double>& p, co
 }
 
 int main() {
-    InputParams ip = initInputParams();
+    // W7-X config (CWD = repo root, same as the dump/ paths below).
+    InputParams ip = initInputParams("inputs/w7x.json");
     GridParams<double> p{};
     // The dump/cuMES/step_0_* files are left by the LAST grid stage of a
     // multigrid run (per-stage dumps overwrite), so use the final grid ns.

@@ -1,17 +1,18 @@
 // input.h — host-side input parameters.
 //
-// Two hardcoded configurations are available (a JSON parser will replace
-// these later):
-//   - Solovev (default): matches playground/solovev/solovev.json, used for
-//     verification against vmecpp.
-//   - W7-X (CUMES_INPUT=w7x): parameters from w7x.json, generated into
-//     input_w7x.h by scripts/gen_w7x_header.py.
+// InputParams is the fixed-size host bundle that feeds the GPU solver
+// (boundary, profiles, resolution, multigrid stage sequence). It is
+// populated from a vmecpp-style JSON input file by src/input_json.cu
+// (API in input_json.h): JSON keys map 1:1 onto the fields below with the
+// vmecpp indata schema (mpol, ntor, nfp, ..., ns_array/niter_array/
+// ftol_array, am/ac/ai/aphi, raxis_c/zaxis_s, rbc/zbs as {n,m,value}
+// objects). Every key is optional; a missing key keeps the member default.
 //
-// initInputParams() applies vmecpp's resolution defaults (ntheta=0 ->
-// 2*mpol+6; nzeta=0 -> 1 if ntor=0, else 2*ntor+4) and folds the raw rbc/zbs
-// boundary coefficients (n can be negative) into the internal n>=0 product
-// basis rbcc/rbss/zbsc/zbcs, matching vmecpp's Boundaries::
-// parseToInternalArrays (boundaries.cc:57-174):
+// applyResolutionDefaults() applies vmecpp's resolution defaults
+// (ntheta=0 -> 2*mpol+6; nzeta=0 -> 1 if ntor=0, else 2*ntor+4), and
+// foldBoundary() folds the raw rbc/zbs boundary coefficients (n can be
+// negative) into the internal n>=0 product basis rbcc/rbss/zbsc/zbcs,
+// matching vmecpp's Boundaries::parseToInternalArrays (boundaries.cc:57-174):
 //   rbcc[m,n] = rbc[m,+n] + rbc[m,-n]        (all m)
 //   rbss[m,n] = rbc[m,+n] - rbc[m,-n]        (m > 0)
 //   zbsc[m,n] = zbs[m,+n] + zbs[m,-n]        (m > 0)
@@ -19,7 +20,6 @@
 #pragma once
 #include "vmec_types.h"
 #include <cmath>
-#include <cstring>
 
 struct BoundaryEntry {
     int m;
@@ -63,38 +63,17 @@ struct InputParams {
     double zbsc[16][16] = {}, zbcs[16][16] = {};
 };
 
-// ---- Solovev parameters (matches playground/solovev/solovev.json) --------
-inline void setSolovevParams(InputParams& p) {
-    p.mpol = 6; p.ntor = 0; p.nfp = 1;
-    p.ntheta = 18; p.nzeta = 1;
-    p.ns = 5;                              // stage-0 values; full sequence below
-    p.ncurr = 0;
-    p.delt = 0.9; p.ftol = 1e-16; p.max_iter = 1000;
-    // solovev.json: ns_array [5,11,55], niter_array [1000,2000,2000],
-    //               ftol_array [1e-16,1e-16,1e-16]
-    p.n_grids = 3;
-    p.ns_array[0] = 5;  p.ns_array[1] = 11; p.ns_array[2] = 55;
-    p.niter_array[0] = 1000; p.niter_array[1] = 2000; p.niter_array[2] = 2000;
-    p.ftol_array[0] = 1e-16; p.ftol_array[1] = 1e-16; p.ftol_array[2] = 1e-16;
-    p.phiedge = 1.0;
-    p.pres_scale = 1.0; p.adiabatic_index = 0.0; p.spres_ped = 1.0;
-    p.bloat = 1.0; p.curtor = 0.0; p.tcon0 = 1.0;
-    p.am[0] = 0.125; p.am[1] = -0.125; p.am_n = 2;
-    p.ac_n = 0; p.ai[0] = 1.0; p.ai_n = 1;
-    p.aphi[0] = 1.0; p.aphi_n = 1;
-    p.raxis_c[0] = 4.0; p.raxis_n = 1;
-    p.zaxis_s[0] = 0.0;
-    p.rbc_n = 3;
-    p.rbc[0] = {0, 0, 3.999};
-    p.rbc[1] = {1, 0, 1.026};
-    p.rbc[2] = {2, 0, -0.068};
-    p.zbs_n = 3;
-    p.zbs[0] = {0, 0, 0.000};
-    p.zbs[1] = {1, 0, 1.580};
-    p.zbs[2] = {2, 0, 0.010};
+// Apply vmecpp's grid resolution defaults (Sizes::computeDerivedSizes,
+// sizes.cc:54-85).
+inline void applyResolutionDefaults(InputParams& p) {
+    if (p.ntheta < 2 * p.mpol + 6) p.ntheta = 2 * p.mpol + 6;
+    if (p.ntor == 0) {
+        if (p.nzeta < 1) p.nzeta = 1;
+    } else if (p.nzeta < 2 * p.ntor + 4) {
+        p.nzeta = 2 * p.ntor + 4;
+    }
+    p.ntheta = 2 * (p.ntheta / 2);  // nThetaEven
 }
-
-#include "input_w7x.h"  // provides setW7xParams(InputParams&)
 
 // Fold raw rbc/zbs entries (n = -ntor..ntor) into the internal n>=0 product
 // basis, matching vmecpp's parseToInternalArrays (see header comment).
@@ -116,28 +95,4 @@ inline void foldBoundary(InputParams& p) {
         if (e.m > 0) p.zbsc[e.m][(e.n >= 0) ? e.n : -e.n] += e.value;
         p.zbcs[e.m][(e.n >= 0) ? e.n : -e.n] -= sn * e.value;
     }
-}
-
-// Select the input configuration (CUMES_INPUT=w7x or default Solovev), apply
-// vmecpp's grid resolution defaults and fold the boundary.
-inline InputParams initInputParams() {
-    InputParams p;
-    const char* e = getenv("CUMES_INPUT");
-    if (e && strcmp(e, "w7x") == 0) {
-        setW7xParams(p);
-    } else {
-        setSolovevParams(p);
-    }
-
-    // vmecpp Sizes::computeDerivedSizes defaults (sizes.cc:54-85).
-    if (p.ntheta < 2 * p.mpol + 6) p.ntheta = 2 * p.mpol + 6;
-    if (p.ntor == 0) {
-        if (p.nzeta < 1) p.nzeta = 1;
-    } else if (p.nzeta < 2 * p.ntor + 4) {
-        p.nzeta = 2 * p.ntor + 4;
-    }
-    p.ntheta = 2 * (p.ntheta / 2);  // nThetaEven
-
-    foldBoundary(p);
-    return p;
 }

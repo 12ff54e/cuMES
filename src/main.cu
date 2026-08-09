@@ -1,6 +1,7 @@
 // main.cu — entry point: init → solve → output.
-// Input selection: default Solovev (hardcoded); CUMES_INPUT=w7x selects the
-// W7-X parameters from input_w7x.h. A JSON parser will replace both later.
+// Input selection: argv[1] is the JSON input file (vmecpp indata schema);
+// without an argument the default inputs/solovev.json is used. Parsing and
+// validation live in src/input_json.cu (see include/input_json.h).
 //
 // Precision: `Real` (vmec_types.h) is the compile-time switch between double
 // and float — configure with -DCUMES_USE_FLOAT=ON. All modules are templated
@@ -8,9 +9,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <exception>
 #include <cublas_v2.h>
 
-#include "input.h"
+#include "input_json.h"
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
@@ -232,12 +234,19 @@ static void freeState(SpectralState<T>& st) {
     cudaFree(st.d_v_zmncs); cudaFree(st.d_v_lmnsc); cudaFree(st.d_v_lmncs);
 }
 
-int main() {
-    InputParams ip = initInputParams();
+int main(int argc, char** argv) {
+    const char* inputPath = (argc > 1) ? argv[1] : "inputs/solovev.json";
+    InputParams ip;
+    try {
+        ip = initInputParams(inputPath);
+    } catch (const std::exception& e) {
+        fprintf(stderr, "cuMES: error loading input file: %s\n", e.what());
+        return EXIT_FAILURE;
+    }
     GridParams<Real> p=initParams(ip);
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
-    printf("input: %s\n", p.ncurr == 0 ? "solovev" : "w7x");
+    printf("input: %s\n", inputPath);
     printf("precision: %s\n", sizeof(Real) == sizeof(double) ? "double" : "float");
     printf("mpol=%d ntor=%d nfp=%d ntheta=%d nzeta=%d nZnT=%d ncurr=%d\n",
            p.mpol,p.ntor,p.nfp,p.ntheta,p.nzeta,p.nZnT,p.ncurr);

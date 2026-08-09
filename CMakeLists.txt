@@ -6,8 +6,10 @@ set(CMAKE_CUDA_HOST_COMPILER /usr/bin/g++-12 CACHE FILEPATH "CUDA host compiler"
 
 project(cuMES VERSION 0.1.0 LANGUAGES CXX CUDA)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CUDA_STANDARD 17)
+# C++20: JsonParser.h (JSON input, src/input_json.cu) uses requires-clauses
+# and concepts; CUDA 12.1 nvcc compiles the whole project at C++20.
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_ARCHITECTURES "61;75;80;86;89")
 
 # Optimisation flags
@@ -24,6 +26,7 @@ find_package(CUDAToolkit 11 REQUIRED)
 # ---- executable -------------------------------------------------------
 add_executable(cuMES
     src/main.cu
+    src/input_json.cu
     src/fourier.cu
     src/geometry.cu
     src/forces.cu
@@ -51,11 +54,18 @@ add_executable(test_fourier
     tests/test_fourier.cu
     src/fourier.cu
 )
+
+add_executable(test_input_json
+    tests/test_input_json.cu
+    src/input_json.cu
+)
+target_include_directories(test_input_json PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_fourier PRIVATE CUDA::cublas CUDA::cufft)
 target_include_directories(test_fourier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(test_forces
     tests/test_forces.cu
+    src/input_json.cu
     src/fourier.cu
     src/geometry.cu
     src/forces.cu
@@ -66,6 +76,7 @@ target_include_directories(test_forces PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/inclu
 
 add_executable(test_force_verify
     tests/test_force_verify.cu
+    src/input_json.cu
     src/fourier.cu
     src/geometry.cu
     src/forces.cu
@@ -74,6 +85,7 @@ add_executable(test_force_verify
 
 add_executable(test_geometry_iso
     tests/test_geometry_iso.cu
+    src/input_json.cu
     src/fourier.cu
     src/geometry.cu
     src/profiles.cu

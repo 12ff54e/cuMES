@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cublas_v2.h>
 
-#include "input.h"
+#include "input_json.h"
 #include "constraint.cuh"
 #include "vmec_types.h"
 #include "fourier.cuh"

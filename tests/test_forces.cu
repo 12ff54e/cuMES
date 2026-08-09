@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "input.h"
+#include "input_json.h"
 #include "constraint.cuh"
 #include "fourier.cuh"
 #include "geometry.cuh"

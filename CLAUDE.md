@@ -16,8 +16,9 @@ Reference implementation: `../vmecpp` (CPU-based C++ VMEC++ solver).
 cmake -B build -G Ninja
 cmake --build build -j
 
-# Run main solver
+# Run main solver (argv[1] = JSON input; default inputs/solovev.json)
 ./build/cuMES
+./build/cuMES inputs/w7x.json
 
 # run tests
 ./build/test_fourier
@@ -47,11 +48,16 @@ TU — the dynamic shared-memory base is routed through the non-templated
 
 ```
 cuMES/
-├── CMakeLists.txt          Build config (two targets: cuda_vmec + test_fourier)
+├── CMakeLists.txt          Build config (cuMES executable + 4 test targets)
 ├── README.md               Architecture overview, data flow, omitted features
+├── inputs/                 JSON input files (vmecpp indata schema)
+│   ├── solovev.json        Solovev 5→11→55 (matches vmecpp playground)
+│   └── w7x.json            W7-X 33→66→99 (matches vmecpp/w7x.json)
 ├── include/                Public headers
 │   ├── vmec_types.h        Shared GPU data structures (GridParams, SpectralState, …)
-│   ├── input.h             Hardcoded Solovev boundary + profile functions
+│   ├── input.h             InputParams bundle, foldBoundary, resolution defaults
+│   ├── input_json.h        initInputParams API (JSON input; impl in src/input_json.cu)
+│   ├── JsonParser.h        Header-only JSON parser (C++20; impl in src/input_json.cu)
 │   ├── fourier.cuh         DFT plan, inverseDFT / forwardDFT declarations
 │   ├── geometry.cuh        MetricWorkspace, computeGeometry declaration
 │   ├── forces.cuh          computeForces declaration
@@ -60,7 +66,8 @@ cuMES/
 │   ├── output.cuh          outputPrint declaration
 │   └── refine.cuh          interpolateState declaration (grid sequencing)
 ├── src/                    Implementation files (.cu = CUDA C++)
-│   ├── main.cu             Entry point: multigrid stage loop → solve → output
+│   ├── main.cu             Entry point: JSON input → multigrid stage loop → output
+│   ├── input_json.cu       JSON → InputParams mapping (the only ZQ_JSON_PARSER_IMPLEMENTATION TU)
 │   ├── fourier.cu          cuFFT inverse/forward transform kernels (12-slot ζ-FFT)
 │   ├── geometry.cu         Jacobian, metric g^ij, contravariant B on half-grid
 │   ├── forces.cu           MHD force residuals (brmn/bzmn/crmn/czmn/blmn/clmn)
@@ -69,7 +76,11 @@ cuMES/
 │   ├── refine.cu           interpolateState: coarse→fine grid state interpolation
 │   └── output.cu           Copy results from GPU → print
 └── tests/
-    └── test_fourier.cu     Standalone correctness tests (no framework)
+    ├── test_fourier.cu     Standalone correctness tests (no framework)
+    ├── test_input_json.cu  JSON input mapping + error paths (inputs/*.json)
+    ├── test_forces.cu      Force-kernel diagnostic solve
+    ├── test_force_verify.cu  Forces near zero on a converged vmecpp state
+    └── test_geometry_iso.cu  W7-X geometry chain vs dump/cuMES step files
 ```
 
 ## Architecture: Data Flow per Iteration
@@ -206,7 +217,7 @@ x_new = x_old + delt * v_new
 | Adaptive time-step (Jacobian resets) | Fixed step; add when convergence is poor |
 | De-aliased constraint force | Not yet |
 | Python interface | Not yet; C++/CUDA executable only |
-| Input file parsing | Hardcoded in `input.h` |
+| Input file parsing | JSON via `argv[1]` (default `inputs/solovev.json`), parsed in `src/input_json.cu` with the header-only `JsonParser.h`; vmecpp indata schema, every key optional, unsupported features (lasym, free boundary, spline profiles) rejected |
 
 ## Coding Conventions
 
@@ -238,8 +249,10 @@ x_new = x_old + delt * v_new
 **Status (2026-08-07): grid sequencing is implemented and verified against
 vmecpp. Both configs now run multi-stage by default (Solovev 5→11→55,
 W7-X 33→66→99, mirroring the reference JSONs), each stage seeded by the
-previous converged state via `interpolateState` (refine.cu). Verification
-vs vmecpp's own multigrid runs:
+previous converged state via `interpolateState` (refine.cu). Input is read
+from JSON files (`inputs/*.json`, argv[1] or default; the hardcoded
+configs are gone) — JSON-driven runs are bit-identical to the hardcoded
+ones (2026-08-09). Verification vs vmecpp's own multigrid runs:
 - Solovev: 251 → 199 → 456 effective iters, final FSQR 9.58e-17 — the
   final stage matches vmecpp's playground reference exactly (456, 9.99e-17).
 - W7-X: 1878 → 1617 → 2011 effective iters (total 5506), final FSQR
@@ -271,9 +284,9 @@ must read the FULL-grid wout `lmns_full`, not the half-grid `lmns`.)
    the forces, so this only shows up when diffing state files / wout axis rows.
 
 2. **Float builds need a relaxed ftol_array.** Float runs stall at ~1e-7
-   (float rounding floor), so the hardcoded stage ftols (1e-16/1e-12) can
-   never be met: a multi-grid float run exits FATAL at the first stage
-   (a stage that exhausts its cap without meeting ftol fails the run, per
-   vmecpp semantics). For float experiments, relax the `ftol_array` entries
-   in input.h (and note `CUMES_MAX_ITER`/`CUMES_DELT0` override every
-   stage's cap when set).
+   (float rounding floor), so the stage ftols in `inputs/*.json` (1e-16/
+   1e-12) can never be met: a multi-grid float run exits FATAL at the first
+   stage (a stage that exhausts its cap without meeting ftol fails the run,
+   per vmecpp semantics). For float experiments, relax the `ftol_array`
+   entries in the JSON input file (and note `CUMES_MAX_ITER`/`CUMES_DELT0`
+   override every stage's cap when set).

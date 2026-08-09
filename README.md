@@ -5,7 +5,7 @@ algorithm. All computation runs on GPU; the CPU host is a thin orchestrator.
 This is a pedagogical / scaffolding project — not production-grade, but the
 architecture and physics are real.
 
-**Status: working.** For the Solovev test case (`solovev.json`), the solver
+**Status: working.** For the Solovev test case (`inputs/solovev.json`), the solver
 converges to the correct equilibrium (invariant residual < 1e-16) from the
 default initial state in **209 iterations** (vmecpp reference: 252), with no
 restarts and a constant time step. The converged equilibrium matches the
@@ -17,7 +17,9 @@ vmecpp reference (`solovev.out.h5`) to 6–8 digits (axis R_00 = 3.990923 vs
 ```
 main.cu                  Entry point — init → solve → output
    │
-   ├── input.h           Hardcoded Solovev input (boundary + profiles)
+   ├── inputs/           JSON input files (vmecpp indata schema)
+   ├── input_json.cu     JSON → InputParams mapping (JsonParser.h)
+   ├── input.h           InputParams bundle + boundary folding
    ├── vmec_types.h      Shared GPU data structures (GridParams, SpectralState, …)
    │
    ├── profiles.cu/cuh   1D radial profiles (iota, pressure, mass) on device
@@ -74,8 +76,18 @@ v = fac×(b1·v + delt·f) ,  x += delt·v
 # in folder cuMES
 cmake -B build -G Ninja
 cmake --build build -j
-./build/cuMES
+./build/cuMES                # default input: inputs/solovev.json
+./build/cuMES inputs/w7x.json
 ```
+
+Input is a vmecpp-style JSON file (flat top-level keys: `mpol`, `ntor`,
+`nfp`, `ns_array`/`niter_array`/`ftol_array` (multigrid stages), `am`/`ac`/
+`ai`/`aphi` profile coefficients, `raxis_c`/`zaxis_s`, and `rbc`/`zbs`
+boundary as `{"n","m","value"}` objects). Every key is optional — missing
+keys keep the built-in defaults (vmecpp semantics); unknown keys are ignored.
+Keys for features cuMES does not implement (`lasym=true`, `lfreeb=true`,
+spline profiles) are rejected with a clear error. The two shipped configs
+reproduce the vmecpp reference multigrid runs bit-for-bit (see Verification).
 
 Requirements: CUDA Toolkit ≥ 11, CMake ≥ 3.20, GPU with compute capability ≥ 6.1
 (Pascal or newer). If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must
@@ -96,9 +108,9 @@ cmake --build build-float -j
 
 - The default build is double precision (`Real = double` in `vmec_types.h`).
 - Single precision is ~1/32-rate-fp64-free on consumer GPUs, but the invariant
-  residuals stall at ~1e-7 (the float rounding floor): the hardcoded
-  `ftol` (1e-16) is never reached, so float runs report NOT CONVERGED unless
-  the tolerance is relaxed for float experiments.
+  residuals stall at ~1e-7 (the float rounding floor): the `ftol_array`
+  entries (1e-16) are never reached, so float runs report NOT CONVERGED
+  unless the tolerances in the JSON input are relaxed for float experiments.
 - The on-disk state file (`cumes_state.bin`) and `vmecpp_init.bin` stay double
   regardless of `T` — the Python comparison scripts are unaffected.
 - The debug dumps (`dump/cuMES/*.bin`) are `T`-native: only readable by
@@ -173,9 +185,15 @@ final-state checks.
 
 ```bash
 ./build/test_fourier        # DFT round-trip + derivative checks
-./build/test_forces         # force-kernel diagnostic solve
+./build/test_input_json     # JSON input mapping + error paths (inputs/*.json)
+./build/test_forces         # force-kernel diagnostic solve (inputs/solovev.json)
 ./build/test_force_verify   # forces near zero on a converged vmecpp state
+                            # (needs vmecpp_init.bin; skipped otherwise)
+./build/test_geometry_iso   # W7-X geometry chain vs dump/cuMES (inputs/w7x.json)
 ```
+
+All tests load their config from the JSON files under `inputs/` (run from the
+cuMES folder).
 
 ## License
 
