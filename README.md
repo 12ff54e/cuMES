@@ -88,7 +88,10 @@ an unrecognized suffix falls back to the legacy binary `cumes_state.bin` in
 the working directory (with a stderr warning). The NetCDF and HDF5 backends
 are found at configure time and each can be disabled with
 `-DCUMES_USE_NETCDF=OFF` / `-DCUMES_USE_HDF5=OFF` (default ON; a missing
-library disables the backend with a warning).
+library disables the backend with a warning). Requesting a format whose
+backend is not compiled in is a hard error: cuMES prints a hint (write a
+binary format — use a `.bin` suffix or omit argv[2]) and exits without
+writing anything.
 
 Input is a vmecpp-style JSON file (flat top-level keys: `mpol`, `ntor`,
 `nfp`, `ns_array`/`niter_array`/`ftol_array` (multigrid stages), `am`/`ac`/

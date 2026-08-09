@@ -127,9 +127,11 @@ void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
 
 // Format dispatcher. The path suffix decides the format: .nc -> NetCDF,
 // .h5/.hdf5 -> HDF5, .bin -> binary at the given path. An unrecognized
-// suffix, a missing suffix, or a backend compiled out falls back to binary
-// cumes_state.bin in the working directory (the pre-argv[2] behaviour),
-// with a stderr warning.
+// suffix or a missing argv[2] falls back to binary cumes_state.bin in the
+// working directory (the pre-argv[2] behaviour), with a stderr warning.
+// A known suffix whose backend is not compiled in is a hard error: the
+// requested format cannot be produced, so we hint at the binary option and
+// exit instead of silently writing something else.
 template <typename T>
 void outputSave(const SpectralState<T>& st, const GridParams<T>& p,
                 const InputParams& ip, const SolverResult<T>& result,
@@ -148,18 +150,24 @@ void outputSave(const SpectralState<T>& st, const GridParams<T>& p,
         outputSaveNetcdf<T>(st, p, ip, result, path, input_file);
         return;
 #else
-        fprintf(stderr, "WARNING: %s: .nc output requested but cuMES was "
-                        "built without NetCDF - writing cumes_state.bin\n",
-                path);
+        fprintf(stderr,
+                "ERROR: %s: .nc output requested but cuMES was built "
+                "without NetCDF support\n"
+                "       (possible option: write a binary format - use a "
+                ".bin suffix or omit argv[2])\n", path);
+        exit(EXIT_FAILURE);
 #endif
     } else if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
 #ifdef CUMES_HAVE_HDF5
         outputSaveHdf5<T>(st, p, ip, result, path, input_file);
         return;
 #else
-        fprintf(stderr, "WARNING: %s: %s output requested but cuMES was "
-                        "built without HDF5 - writing cumes_state.bin\n",
-                path, ext);
+        fprintf(stderr,
+                "ERROR: %s: %s output requested but cuMES was built "
+                "without HDF5 support\n"
+                "       (possible option: write a binary format - use a "
+                ".bin suffix or omit argv[2])\n", path, ext);
+        exit(EXIT_FAILURE);
 #endif
     } else {
         fprintf(stderr, "WARNING: %s: unrecognized output suffix '%s' - "
