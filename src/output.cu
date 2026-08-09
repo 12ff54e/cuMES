@@ -17,6 +17,31 @@ static void checkCuda(cudaError_t err, const char* tag) {
     }
 }
 
+// Compile-time summary of the output libraries linked into this build,
+// for the disabled-backend error hints.
+const char* linkedOutputLibraries() {
+#if defined(CUMES_HAVE_NETCDF) && defined(CUMES_HAVE_HDF5)
+    return "NetCDF, HDF5";
+#elif defined(CUMES_HAVE_NETCDF)
+    return "NetCDF";
+#elif defined(CUMES_HAVE_HDF5)
+    return "HDF5";
+#else
+    return "none (binary only)";
+#endif
+}
+const char* linkedOutputSuffixes() {
+#if defined(CUMES_HAVE_NETCDF) && defined(CUMES_HAVE_HDF5)
+    return ".nc, .h5, .hdf5, .bin";
+#elif defined(CUMES_HAVE_NETCDF)
+    return ".nc, .bin";
+#elif defined(CUMES_HAVE_HDF5)
+    return ".h5, .hdf5, .bin";
+#else
+    return ".bin";
+#endif
+}
+
 // Save full spectral state as raw binary for Python analysis.
 // 6 coefficient arrays: rmncc zmnsc lmnsc rmnss zmncs lmncs, each ns*mnmax
 // doubles on disk (converted from T).
@@ -153,8 +178,9 @@ void outputSave(const SpectralState<T>& st, const GridParams<T>& p,
         fprintf(stderr,
                 "ERROR: %s: .nc output requested but cuMES was built "
                 "without NetCDF support\n"
-                "       (possible option: write a binary format - use a "
-                ".bin suffix or omit argv[2])\n", path);
+                "       (linked output libraries: %s; supported suffixes: "
+                "%s; omit argv[2] for the binary fallback)\n",
+                path, linkedOutputLibraries(), linkedOutputSuffixes());
         exit(EXIT_FAILURE);
 #endif
     } else if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
@@ -165,8 +191,9 @@ void outputSave(const SpectralState<T>& st, const GridParams<T>& p,
         fprintf(stderr,
                 "ERROR: %s: %s output requested but cuMES was built "
                 "without HDF5 support\n"
-                "       (possible option: write a binary format - use a "
-                ".bin suffix or omit argv[2])\n", path, ext);
+                "       (linked output libraries: %s; supported suffixes: "
+                "%s; omit argv[2] for the binary fallback)\n",
+                path, ext, linkedOutputLibraries(), linkedOutputSuffixes());
         exit(EXIT_FAILURE);
 #endif
     } else {
