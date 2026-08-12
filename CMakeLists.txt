@@ -141,6 +141,9 @@ add_executable(test_forces
 target_link_libraries(test_forces PRIVATE CUDA::cufft)
 target_include_directories(test_forces PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# Converged-equilibrium force-balance check (self-contained: runs the solver
+# to convergence, no external vmecpp_init.bin). solverRun pulls in the solver
+# chain (precon/constraint).
 add_executable(test_force_verify
     tests/test_force_verify.cu
     src/input_json.cu
@@ -148,6 +151,10 @@ add_executable(test_force_verify
     src/geometry.cu
     src/forces.cu
     src/profiles.cu
+    src/solver.cu
+    src/precon.cu
+    src/constraint.cu
+    src/refine.cu
 )
 target_link_libraries(test_force_verify PRIVATE CUDA::cufft)
 target_include_directories(test_force_verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -268,6 +275,17 @@ set_tests_properties(test_constraint_tcon PROPERTIES
 add_test(NAME test_regression_kernels COMMAND test_regression_kernels)
 set_tests_properties(test_regression_kernels PROPERTIES
     LABELS "unit;constraint;precon" TIMEOUT 300
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+# Self-contained ncurr=1 geometry write-coverage check (no external dump
+# fixtures needed anymore).
+add_test(NAME test_geometry_iso COMMAND test_geometry_iso)
+set_tests_properties(test_geometry_iso PROPERTIES
+    LABELS "unit;geometry" TIMEOUT 120
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+# Converged-equilibrium force-balance check (self-contained solver run).
+add_test(NAME test_force_verify COMMAND test_force_verify)
+set_tests_properties(test_force_verify PROPERTIES
+    LABELS "unit;forces" TIMEOUT 300
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 # Optional Compute Sanitizer pass over the unit tests (memcheck catches the
 # OOB device reads/writes this issue pass fixed; enable with

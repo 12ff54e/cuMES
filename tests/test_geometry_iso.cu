@@ -1,12 +1,17 @@
-// test_geometry_iso.cu — isolated check of the ncurr=1 geometry chain:
-// loads the w7x iter-1 state (from dump/cuMES/step_0_*.bin), runs
-// computeGeometry only, and verifies the bsupu/bsubu write coverage.
+// test_geometry_iso.cu — self-contained coverage check of the ncurr=1
+// geometry chain. Runs computeGeometry on a manufactured W7-X-shaped state
+// (full mpol/ntor, ntheta/nzeta) and verifies the bsupu/bsubu write
+// coverage: every angular point of an interior surface must be written (a
+// zero on an interior surface is not a physical bsupu/bsubu value, so a
+// launch-shape bug that skips points surfaces as exact zeros).
+//
 // The coverage checks ASSERT (nonzero exit on failure) — a passing exit code
 // must mean every angular point of the surface was written.
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <vector>
 
 #include "input_json.h"
 #include "vmec_types.h"
@@ -18,43 +23,47 @@ static void cc(cudaError_t e, const char* t) {
     if (e != cudaSuccess) { fprintf(stderr, "CUDA[%s]: %s\n", t, cudaGetErrorString(e)); exit(1); }
 }
 
-static void loadState(SpectralState<double>& st, const GridParams<double>& p, const char* base) {
-    size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
-    auto* h = new double[p.ns * p.mnmax];
-    auto rd = [&](double* d, const char* fn) {
-        FILE* fp = fopen(fn, "rb");
-        if (!fp) { fprintf(stderr, "cannot open %s\n", fn); exit(1); }
-        uint64_t n;
-        if (fread(&n, sizeof(uint64_t), 1, fp) != 1 || n != (uint64_t)(p.ns * p.mnmax)) {
-            fprintf(stderr, "size mismatch %s: file has %llu elements, expected %d\n",
-                    fn, (unsigned long long)n, p.ns * p.mnmax);
-            fclose(fp);
-            exit(1);
+// Manufacture a non-degenerate spectral state on the W7-X shape. The content
+// is deliberately generic (all modes get a mild radial envelope) so no
+// interior surface collapses to zero geometry: R has a strong m=0/n=0 DC
+// plus a few m>0 modes, Z and lambda get m=1..3 content with the same s
+// envelopes. This replaces the previous external dump/cuMES/step_0_*.bin
+// dependency (gitignored, only present after a CUMES_DUMP=1 run) — the test
+// is now self-contained and registerable.
+template <typename T>
+static void fillState(SpectralState<T>& st, const GridParams<T>& p) {
+    size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
+    std::vector<T> hcc_(p.ns * p.mnmax, T(0)), hss(p.ns * p.mnmax, T(0));
+    std::vector<T> hzsc(p.ns * p.mnmax, T(0)), hzcs(p.ns * p.mnmax, T(0));
+    std::vector<T> hlsc(p.ns * p.mnmax, T(0)), hlcs(p.ns * p.mnmax, T(0));
+    for (int j = 0; j < p.ns; ++j) {
+        double s = (double)j / (p.ns - 1.0);
+        for (int mode = 0; mode < p.mnmax; ++mode) {
+            int m = mode / (p.ntor + 1), n = mode % (p.ntor + 1);
+            if (m == 0 && n == 0) { hcc_[j + mode * p.ns] = T(5.6); hzcs[j + mode * p.ns] = T(0.0); }
+            else if (m == 0)      { hcc_[j + mode * p.ns] = T(0.02 * s * s); hzcs[j + mode * p.ns] = T(0.01 * s * s); }
+            else if (m == 1)      { hcc_[j + mode * p.ns] = T(0.3 * s); hss[j + mode * p.ns] = T(0.1 * s);
+                                    hzsc[j + mode * p.ns] = T(0.2 * s); hzcs[j + mode * p.ns] = T(-0.1 * s); }
+            else if (m == 2)      { hcc_[j + mode * p.ns] = T(0.04 * s * s); hss[j + mode * p.ns] = T(0.02 * s * s);
+                                    hzsc[j + mode * p.ns] = T(0.03 * s * s); hzcs[j + mode * p.ns] = T(0.01 * s * s); }
+            else if (m <= 6)      { hcc_[j + mode * p.ns] = T(0.01 * s * s); hzsc[j + mode * p.ns] = T(0.008 * s * s); }
+            hlsc[j + mode * p.ns] = T(0.02 * (m + 1) * s * s);
+            hlcs[j + mode * p.ns] = T(0.01 * (m + 1) * s * s);
         }
-        if (fread(h, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax)) {
-            fprintf(stderr, "truncated %s\n", fn);
-            fclose(fp);
-            exit(1);
-        }
-        fclose(fp);
-        cc(cudaMemcpy(d, h, nb, cudaMemcpyHostToDevice), "cpy");
-    };
-    char fn[256];
-    snprintf(fn, sizeof fn, "%s_rmncc.bin", base); rd(st.d_rmncc, fn);
-    snprintf(fn, sizeof fn, "%s_zmnsc.bin", base); rd(st.d_zmnsc, fn);
-    snprintf(fn, sizeof fn, "%s_lmnsc.bin", base); rd(st.d_lmnsc, fn);
-    snprintf(fn, sizeof fn, "%s_rmnss.bin", base); rd(st.d_rmnss, fn);
-    snprintf(fn, sizeof fn, "%s_zmncs.bin", base); rd(st.d_zmncs, fn);
-    snprintf(fn, sizeof fn, "%s_lmncs.bin", base); rd(st.d_lmncs, fn);
-    delete[] h;
+    }
+    cc(cudaMemcpy(st.d_rmncc, hcc_.data(), nb, cudaMemcpyHostToDevice), "cc");
+    cc(cudaMemcpy(st.d_rmnss, hss.data(), nb, cudaMemcpyHostToDevice), "ss");
+    cc(cudaMemcpy(st.d_zmnsc, hzsc.data(), nb, cudaMemcpyHostToDevice), "zsc");
+    cc(cudaMemcpy(st.d_zmncs, hzcs.data(), nb, cudaMemcpyHostToDevice), "zcs");
+    cc(cudaMemcpy(st.d_lmnsc, hlsc.data(), nb, cudaMemcpyHostToDevice), "lsc");
+    cc(cudaMemcpy(st.d_lmncs, hlcs.data(), nb, cudaMemcpyHostToDevice), "lcs");
 }
 
 int main() {
-    // W7-X config (CWD = repo root, same as the dump/ paths below).
     InputParams ip = initInputParams("inputs/w7x.json");
     GridParams<double> p{};
-    // The dump/cuMES/step_0_* files are left by the LAST grid stage of a
-    // multigrid run (per-stage dumps overwrite), so use the final grid ns.
+    // Full W7-X shape (the largest angular grid the solver runs), exercising
+    // the same kernel launch shapes the real runs use.
     p.ns = ip.ns_array[ip.n_grids - 1]; p.mpol = ip.mpol; p.ntor = ip.ntor;
     p.ntheta = ip.ntheta; p.nzeta = ip.nzeta; p.nfp = ip.nfp;
     p.nZnT = p.ntheta * p.nzeta;
@@ -72,16 +81,14 @@ int main() {
     cc(cudaMalloc(&st.d_v_zmnsc, nb), "vzsc"); cc(cudaMalloc(&st.d_v_zmncs, nb), "vzcs");
     cc(cudaMalloc(&st.d_v_lmnsc, nb), "vlsc"); cc(cudaMalloc(&st.d_v_lmncs, nb), "vlcs");
 
-    loadState(st, p, "dump/cuMES/step_0");
+    fillState(st, p);
     RadialProfiles<double> rp = profilesCreate(p, ip);
     FourierPlan<double> fp = fourierCreate(p);
     MetricWorkspace<double> mw = metricCreate(p);
 
     // extrapolate m=1 to the axis (as the solver does each iteration)
     {
-        // reuse the solver's kernel via a small inline copy is not possible;
-        // do it on the host instead
-        double* hcc = new double[p.ns * p.mnmax];
+        auto* hcc = new double[p.ns * p.mnmax];
         cudaMemcpy(hcc, st.d_rmncc, nb, cudaMemcpyDeviceToHost);
         for (int n = 0; n < p.ntor + 1; ++n) {
             int mn = 1 * (p.ntor + 1) + n;
