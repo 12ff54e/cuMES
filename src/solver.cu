@@ -761,22 +761,25 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         // invalid Jacobian — same recovery as the non-finite-residual path.
         computeJacobianStats(p, mw, d_jac_stats, h_jac_stats);
         {
+            // Oriented statistics: h_jac_stats[0] = min(signJ·√g),
+            // [1] = max |√g|, [2] = nonfinite count, [3] = min index.
+            // signJ = -1 and √g is negative on a valid surface, so
+            // signJ·√g = |√g| > 0 there. A NEGATIVE oriented min means the
+            // Jacobian flipped sign somewhere — a genuine interior collapse
+            // that |√g| would hide — and is always invalid, regardless of
+            // index. A positive oriented min that is tiny (< 1e-12 of the
+            // scale) is only invalid away from the axis-adjacent singularity
+            // (gminIdx >= nZnT).
             T gmin = h_jac_stats[0], gmax = h_jac_stats[1], gbad = h_jac_stats[2];
             int gminIdx = (int)h_jac_stats[3];
-            // A non-finite entry or an empty grid (max == 0) is always bad.
-            // A tiny min |√g| alone is NOT (the axis-adjacent half-grid
-            // shrinks to the coordinate singularity): only surfaces whose
-            // |√g| collapsed far below the run's own scale (< 1e-12 of the
-            // max — for the shipped grids that means an effectively zero
-            // Jacobian at an interior point) fail here.
-            if (gbad > T(0.0) || gmax <= T(0.0) ||
+            if (gbad > T(0.0) || gmax <= T(0.0) || gmin <= T(0.0) ||
                 (gmin < T(1e-12) * gmax && gminIdx >= p.nZnT)) {
                 recordPass(1, 0, 0, 0, 0, 0, 0, delt, 0, 0, 0, 0);
                 restoreState();
                 delt *= T(0.9);
                 iter1 = iter2; log_anchor = iter2;
-                printf("  -> BAD JACOBIAN (invalid √g: min=%.3e max=%.3e "
-                       "nonfinite=%.0f at jH=%d) delt=%.3e\n",
+                printf("  -> BAD JACOBIAN (invalid √g: min(signJ·√g)=%.3e "
+                       "max|√g|=%.3e nonfinite=%.0f at jH=%d) delt=%.3e\n",
                        (double)gmin, (double)gmax, (double)gbad,
                        gminIdx / p.nZnT, (double)delt);
                 printIterRow(iter2, T(1.0), T(1.0), T(1.0), delt);

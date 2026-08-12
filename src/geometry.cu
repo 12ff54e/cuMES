@@ -443,29 +443,35 @@ __global__ void updateIotaChipFKernel(
 }
 
 // ---- Jacobian validity stats (vmecpp's bad-jacobian detection) -----------
-// Reduces over the half-grid: min/max |√g| (orientation-adjusted), the
-// non-finite count, and the index of the min-|√g| element (jH*stride + point,
-// for the error message). The solver checks these after every computeGeometry
-// call and fails the iteration through the BAD_JACOBIAN restore path BEFORE
-// the forces/constraint/preconditioner kernels consume the geometry — so a
-// collapsed surface can never silently poison the iteration with infinities
-// (see the inv_gsqrt guards in geometryKernel/ncurr1FinalizeKernel).
-// NOTE on the axis: |√g| -> 0 at the innermost half-grid is EXPECTED (the
+// Reduces over the half-grid: the ORIENTED minimum signJ·√g (signJ = ±1, the
+// sign convention of the coordinates), the max |√g|, the non-finite count,
+// and the index of the min element (jH*stride + point, for the error
+// message). Tracking signJ·√g rather than fabs(√g) makes a genuine Jacobian
+// SIGN FLIP (an interior collapse, √g crossing zero) fail the validity test
+// directly — |√g| would keep the value positive and hide the flip. On a valid
+// run √g has constant sign everywhere, so signJ·√g = |√g| and the reported
+// minimum is identical; the change is trajectory-neutral there. The solver
+// checks these after every computeGeometry call and fails the iteration
+// through the BAD_JACOBIAN restore path BEFORE the forces/constraint/
+// preconditioner kernels consume the geometry — so a collapsed surface can
+// never silently poison the iteration with infinities (see the inv_gsqrt
+// guards in geometryKernel/ncurr1FinalizeKernel).
+// NOTE on the axis: √g -> 0 at the innermost half-grid is EXPECTED (the
 // magnetic axis is a coordinate singularity), so the solver's threshold must
 // be relative to the run's own scale (see solverRun), not an absolute zero.
 template <typename T>
 __global__ void jacobianStatsKernel(
-    const T* __restrict__ gsqrt, int nHalf, int stride,
-    T* __restrict__ out)  // [4]: min |√g|, max |√g|, nonfinite count,
-                          // min-|√g| linear index (as T)
+    const T* __restrict__ gsqrt, int nHalf, int stride, T signJ,
+    T* __restrict__ out)  // [4]: min signJ·√g, max |√g|, nonfinite count,
+                          // min-signJ·√g linear index (as T)
 {
-    // Reduction identities: min starts at +inf (NOT 0) and max at -inf (NOT
-    // 0), and a lane that saw no finite data contributes the identity via a
-    // `seen` flag rather than a zero that could win the minimum. The old
-    // code initialized vmin=0 and relied on `first`; on grids where
-    // nHalf*stride < blockDim (e.g. (ns-1)*nZnT < 256), idle lanes kept
-    // vmin=0 and could win the tree minimum, poisoning the reported gmin
-    // (masked only because the solver suppresses gminIdx < nZnT).
+    // Reduction identities: min starts at +inf (NOT 0) and max at 0, and a
+    // lane that saw no finite data contributes the identity via a `seen` flag
+    // rather than a zero that could win the minimum. The old code initialized
+    // vmin=0 and relied on `first`; on grids where nHalf*stride < blockDim
+    // (e.g. (ns-1)*nZnT < 256), idle lanes kept vmin=0 and could win the tree
+    // minimum, poisoning the reported gmin (masked only because the solver
+    // suppresses gminIdx < nZnT).
     // Device-safe +inf: numeric_limits<T>::infinity() is host-only constexpr
     // in nvcc; CUDART_INF_F / CUDART_INF are the device constants. Pick by T.
     const T kInf = (sizeof(T) == sizeof(double)) ? T(CUDART_INF) : T(CUDART_INF_F);
@@ -476,9 +482,11 @@ __global__ void jacobianStatsKernel(
         for (int s = 0; s < stride; ++s) {
             T g = gsqrt[i + s * nHalf];
             if (!std::isfinite(g)) { vbad += T(1.0); continue; }
-            T a = fabs(g);
+            T a = fabs(g);            // scale statistic
+            T ov = signJ * g;         // ORIENTED value: = |g| when √g keeps
+                                      // the expected sign, negative on a flip
             if (!seen) { vmin = vmax = a; argmin = i + s * nHalf; seen = true; }
-            else if (a < vmin) { vmin = a; argmin = i + s * nHalf; }
+            else if (ov < vmin) { vmin = ov; argmin = i + s * nHalf; }
             else { vmax = fmax(vmax, a); }
         }
     }
@@ -520,7 +528,8 @@ template <typename T>
 void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
                           T* d_stats, T* h_stats) {
     const int nHalf = (p.ns - 1) * p.nZnT;
-    jacobianStatsKernel<T><<<1, 256>>>(mw.d_gsqrt, nHalf, 1, d_stats);
+    jacobianStatsKernel<T><<<1, 256>>>(mw.d_gsqrt, nHalf, 1,
+                                       T(p.kSignJacobian), d_stats);
     checkCuda(cudaGetLastError(), "jacobianStats");
     checkCuda(cudaMemcpy(h_stats, d_stats, 4 * sizeof(T), cudaMemcpyDeviceToHost), "jac stats cpy");
 }
