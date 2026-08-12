@@ -16,3 +16,4 @@ perf_refactor_post/
 *.swp
 *~
 build-nobackend/
+.verify-scratch/
