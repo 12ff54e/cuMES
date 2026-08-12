@@ -821,11 +821,13 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         // current iteration's preconditioner elements, matching vmecpp
         // (updateRadialPreconditioner + constraintForceMultiplier at the
         // start of update()). Cadence matches vmecpp's
-        // shouldUpdateRadialPreconditioner: (iter2 - iter1) % 25 == 0, plus
-        // the dump-mode refresh at the handoff window (iter2 == kDumpIter)
-        // so dump-mode runs stay same-state with the vmecpp reference.
-        bool precon_updated = ((iter2 - iter1) % kPreconInterval) == 0 ||
-                              (dumpEnabled() && iter2 == kDumpIter);
+        // shouldUpdateRadialPreconditioner: (iter2 - iter1) % 25 == 0.
+        // Diagnostic mode must NOT change the trajectory: the old
+        // `|| (dumpEnabled() && iter2 == kDumpIter)` extra refresh made a
+        // CUMES_DUMP=1 run a different run than the no-dump production path,
+        // so observers could alter the solver arithmetic. The refresh cadence
+        // is now a pure function of the iteration counters.
+        bool precon_updated = ((iter2 - iter1) % kPreconInterval) == 0;
         if (precon_updated) {
             preconCompute(fp, p, rp, mw, pw);
 
