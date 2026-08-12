@@ -18,6 +18,7 @@
 #include "fourier.cuh"
 #include "profiles.cuh"
 #include <cstdio>
+#include <math_constants.h>
 
 // nvcc rejects `extern __shared__` arrays in a function template that is
 // instantiated with different element types in one TU ("declaration is
@@ -458,29 +459,44 @@ __global__ void jacobianStatsKernel(
     T* __restrict__ out)  // [4]: min |√g|, max |√g|, nonfinite count,
                           // min-|√g| linear index (as T)
 {
-    T vmin = T(0.0), vmax = T(0.0), vbad = T(0.0);
+    // Reduction identities: min starts at +inf (NOT 0) and max at -inf (NOT
+    // 0), and a lane that saw no finite data contributes the identity via a
+    // `seen` flag rather than a zero that could win the minimum. The old
+    // code initialized vmin=0 and relied on `first`; on grids where
+    // nHalf*stride < blockDim (e.g. (ns-1)*nZnT < 256), idle lanes kept
+    // vmin=0 and could win the tree minimum, poisoning the reported gmin
+    // (masked only because the solver suppresses gminIdx < nZnT).
+    // Device-safe +inf: numeric_limits<T>::infinity() is host-only constexpr
+    // in nvcc; CUDART_INF_F / CUDART_INF are the device constants. Pick by T.
+    const T kInf = (sizeof(T) == sizeof(double)) ? T(CUDART_INF) : T(CUDART_INF_F);
+    T vmin = kInf, vmax = T(0.0), vbad = T(0.0);
     int argmin = 0;
-    bool first = true;
+    bool seen = false;
     for (int i = threadIdx.x; i < nHalf; i += blockDim.x) {
         for (int s = 0; s < stride; ++s) {
             T g = gsqrt[i + s * nHalf];
             if (!std::isfinite(g)) { vbad += T(1.0); continue; }
             T a = fabs(g);
-            if (first) { vmin = vmax = a; argmin = i + s * nHalf; first = false; }
+            if (!seen) { vmin = vmax = a; argmin = i + s * nHalf; seen = true; }
             else if (a < vmin) { vmin = a; argmin = i + s * nHalf; }
             else { vmax = fmax(vmax, a); }
         }
     }
     __shared__ T s_min[256], s_max[256], s_bad[256];
     __shared__ int s_arg[256];
+    __shared__ char s_seen[256];
     int tid = threadIdx.x;
-    s_min[tid] = vmin; s_max[tid] = vmax; s_bad[tid] = vbad; s_arg[tid] = argmin;
+    s_min[tid] = seen ? vmin : kInf;
+    s_max[tid] = vmax; s_bad[tid] = vbad;
+    s_arg[tid] = seen ? argmin : 0;
+    s_seen[tid] = seen ? 1 : 0;
     __syncthreads();
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
-            if (s_min[tid + s] < s_min[tid]) {
+            if (s_seen[tid + s] && (!s_seen[tid] || s_min[tid + s] < s_min[tid])) {
                 s_min[tid] = s_min[tid + s];
                 s_arg[tid] = s_arg[tid + s];
+                s_seen[tid] = 1;
             }
             s_max[tid] = fmax(s_max[tid], s_max[tid + s]);
             s_bad[tid] += s_bad[tid + s];
@@ -488,7 +504,10 @@ __global__ void jacobianStatsKernel(
         __syncthreads();
     }
     if (tid == 0) {
-        out[0] = s_min[0]; out[1] = s_max[0]; out[2] = s_bad[0];
+        // A fully-empty grid (no finite data anywhere) keeps the +inf identity;
+        // the solver treats max <= 0 (or here inf) as invalid.
+        out[0] = s_seen[0] ? s_min[0] : kInf;
+        out[1] = s_max[0]; out[2] = s_bad[0];
         out[3] = T(s_arg[0]);
     }
 }
