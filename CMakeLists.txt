@@ -162,6 +162,24 @@ add_executable(test_geometry_iso
 target_link_libraries(test_geometry_iso PRIVATE CUDA::cufft)
 target_include_directories(test_geometry_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# De-alias bandpass theta-coverage + PCR row-coverage regressions: the de-alias
+# analyze kernel must sum the FULL theta grid (ntheta > 32), and the PCR
+# tridiagonal solve must cover solved rows above 128 (ns > 129). Both are
+# compared against CPU scalar references on manufactured inputs. Kernel-driving,
+# so it also gets a memcheck variant.
+add_executable(test_regression_kernels
+    tests/test_regression_kernels.cu
+    src/input_json.cu
+    src/fourier.cu
+    src/geometry.cu
+    src/forces.cu
+    src/precon.cu
+    src/constraint.cu
+    src/profiles.cu
+)
+target_link_libraries(test_regression_kernels PRIVATE CUDA::cufft)
+target_include_directories(test_regression_kernels PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 # Non-unit tcon0 constraint-force scaling regression: the constraint force
 # must be exactly linear in the parsed tcon0 multiplier.
 add_executable(test_constraint_tcon
@@ -247,6 +265,10 @@ add_test(NAME test_constraint_tcon COMMAND test_constraint_tcon)
 set_tests_properties(test_constraint_tcon PROPERTIES
     LABELS "unit;constraint" TIMEOUT 120
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME test_regression_kernels COMMAND test_regression_kernels)
+set_tests_properties(test_regression_kernels PROPERTIES
+    LABELS "unit;constraint;precon" TIMEOUT 300
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 # Optional Compute Sanitizer pass over the unit tests (memcheck catches the
 # OOB device reads/writes this issue pass fixed; enable with
 # -DCUMES_ENABLE_SANITIZER_TESTS=ON when compute-sanitizer is installed).
@@ -259,7 +281,7 @@ if(CUMES_ENABLE_SANITIZER_TESTS)
         # test_geometry_ncurr drives both ncurr paths at the OOB ns=33 size, so
         # its memcheck variant is the permanent guard for the LCFS half-grid
         # OOB the containment series fixed.
-        foreach(t test_fourier test_forces test_geometry_ncurr test_constraint_tcon)
+        foreach(t test_fourier test_forces test_geometry_ncurr test_constraint_tcon test_regression_kernels)
             add_test(NAME sanitizer_${t} COMMAND ${CUMES_COMPUTE_SANITIZER}
                      --tool memcheck --error-exitcode 3 $<TARGET_FILE:${t}>)
             set_tests_properties(sanitizer_${t} PROPERTIES
