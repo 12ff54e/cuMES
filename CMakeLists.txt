@@ -186,7 +186,9 @@ option(CUMES_ENABLE_SANITIZER_TESTS "Register compute-sanitizer memcheck variant
 if(CUMES_ENABLE_SANITIZER_TESTS)
     find_program(CUMES_COMPUTE_SANITIZER compute-sanitizer)
     if(CUMES_COMPUTE_SANITIZER)
-        foreach(t test_fourier test_input_json test_forces)
+        # test_input_json is host-only (no CUDA launches) and compute-sanitizer
+        # refuses to profile it — only the kernel-driving tests get variants.
+        foreach(t test_fourier test_forces)
             add_test(NAME sanitizer_${t} COMMAND ${CUMES_COMPUTE_SANITIZER}
                      --tool memcheck --error-exitcode 3 $<TARGET_FILE:${t}>)
             set_tests_properties(sanitizer_${t} PROPERTIES
