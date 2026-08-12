@@ -3,11 +3,21 @@
 // shipped configs (inputs/*.json, run from the cuMES folder) and the
 // vmecpp-schema error handling. The expected values below pin the
 // mapping: a change here must be a deliberate schema change.
+//
+// The negative tests pin the containment-series validation: nonzero gamma,
+// negative/out-of-range boundary m, empty/oversized/mismatched/non-monotonic
+// multigrid schedules, integer narrowing, wrong-type auxiliary/asymmetric
+// keys, unsupported physics (lasym/lfreeb/spline profiles), and the
+// unknown-key warning. A change to any of these must be a deliberate schema
+// decision, not an accidental loosening.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "input_json.h"
 
@@ -39,6 +49,32 @@ static void writeScratch(const std::string& content) {
     if (!fp) { fprintf(stderr, "cannot write scratch file\n"); exit(1); }
     fputs(content.c_str(), fp);
     fclose(fp);
+}
+
+// Return the stderr written while running fn() (for the unknown-key warning).
+template <typename Fn>
+static std::string captureStderr(Fn fn) {
+    const char* path = "test_input_json_stderr.txt";
+    fflush(stderr);
+    int saved = dup(STDERR_FILENO);
+    FILE* tmp = fopen(path, "w");
+    if (!tmp) { fprintf(stderr, "cannot open stderr capture\n"); exit(1); }
+    int fd = fileno(tmp);
+    dup2(fd, STDERR_FILENO);
+    fclose(tmp);
+    fn();
+    fflush(stderr);
+    dup2(saved, STDERR_FILENO);
+    close(saved);
+    FILE* fp = fopen(path, "r");
+    if (!fp) { fprintf(stderr, "cannot read stderr capture\n"); exit(1); }
+    std::string out;
+    char buf[1024];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, fp)) > 0) out.append(buf, n);
+    fclose(fp);
+    remove(path);
+    return out;
 }
 
 static void testSolovev() {
@@ -126,10 +162,132 @@ static void testErrors() {
           "minimal doc: single stage + aphi default");
 }
 
+// ---- containment-series validation negatives (cuMES-issues.md fixes) ----
+// Each case pins an accepted validation path: the offending input must be
+// rejected before any allocation, with a message naming the cause.
+
+static void testNegative() {
+    // Nonzero gamma / adiabatic_index is rejected (input_json.cu:217).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
+                 " \"adiabatic_index\": 0.5,"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "gamma", "neg: nonzero gamma (adiabatic_index) rejected");
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
+                 " \"gamma\": 1.5,"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "gamma", "neg: nonzero gamma (alias) rejected");
+
+    // Negative boundary m is skipped with a warning (input_json.cu:151),
+    // matching vmecpp's ignore-and-continue for out-of-range modes. The
+    // folded tables stay in-bounds.
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
+                 " \"rbc\": [{\"n\": 0, \"m\": -1, \"value\": 9.9},"
+                 "          {\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    {
+        InputParams p = initInputParams("test_input_json_scratch.json");
+        CHECK(p.rbc_n == 1 && p.rbc[0].value == 1.0,
+              "neg: negative boundary m skipped, valid entry kept");
+    }
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
+                 " \"rbc\": [{\"n\": 0, \"m\": 7, \"value\": 9.9},"
+                 "          {\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    {
+        InputParams p = initInputParams("test_input_json_scratch.json");
+        CHECK(p.rbc_n == 1 && p.rbc[0].value == 1.0,
+              "neg: m >= mpol boundary skipped");
+    }
+
+    // Empty multigrid schedule is rejected (input_json.cu:270): a zero-stage
+    // run would save/print a null state.
+    writeScratch("{\"ns_array\": [], \"niter_array\": [], \"ftol_array\": []}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "at least one stage", "neg: empty ns_array rejected");
+    // Oversized schedule rejected by the kMaxGrids capacity (readNumberArray).
+    writeScratch("{\"ns_array\": [5,6,7,8,9,10,11,12,13],"
+                 " \"niter_array\": [1,1,1,1,1,1,1,1,1],"
+                 " \"ftol_array\": [1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "exceed the 8-entry capacity", "neg: oversized ns_array rejected");
+    // ftol_array length mismatch (only niter length was covered before).
+    writeScratch("{\"ns_array\": [5, 11], \"niter_array\": [100, 200],"
+                 " \"ftol_array\": [1e-12]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "ftol_array length must match ns_array",
+                 "neg: ftol_array length mismatch rejected");
+    // Non-monotonic schedule.
+    writeScratch("{\"ns_array\": [55, 11], \"niter_array\": [100, 200],"
+                 " \"ftol_array\": [1e-12, 1e-12]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "monotonically non-decreasing", "neg: non-monotonic ns rejected");
+
+    // Integer narrowing: a huge literal must not silently wrap into a
+    // valid-looking resolution (input_json.cu:67).
+    writeScratch("{\"mpol\": 4294967297}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "out of range", "neg: integer overflow rejected");
+
+    // Wrong-type auxiliary/asymmetric keys are hard errors (input_json.cu:317).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"am_aux_s\": 5,"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "am_aux_s': expected an array", "neg: scalar am_aux_s rejected");
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"raxis_s\": 5,"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "raxis_s': expected an array", "neg: scalar raxis_s rejected");
+    // Non-empty asymmetric array is unsupported physics.
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"rbs\": [1.0],"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "asymmetric (lasym) input is not supported", "neg: rbs content rejected");
+
+    // Unsupported physics keys: lasym, lfreeb, non-power_series profiles.
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "lasym=true", "neg: lasym=true rejected");
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "free-boundary", "neg: lfreeb=true rejected");
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
+                 " \"pmass_type\": \"spline\","
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+                 "only \"power_series\"", "neg: non-power_series profile rejected");
+
+    // A typo'd key warns to stderr (not silently ignored) but does not fail
+    // the parse (unknown keys outside the supported/known-ignored sets warn).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"n_theta\": 6,"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    {
+        std::string err = captureStderr([&]() {
+            InputParams p = initInputParams("test_input_json_scratch.json");
+            CHECK(p.mpol == 2, "neg: unknown key parse succeeds");
+        });
+        CHECK(err.find("unknown input key 'n_theta'") != std::string::npos,
+              "neg: unknown key warned to stderr");
+    }
+}
+
 int main() {
     testSolovev();
     testW7x();
     testErrors();
+    testNegative();
     remove("test_input_json_scratch.json");
     if (failures == 0) {
         printf("test_input_json: ALL PASS\n");
