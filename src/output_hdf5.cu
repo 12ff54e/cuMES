@@ -50,7 +50,9 @@ bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
         return false;
     }
     // On any later error: close, delete the half-written file, return false
-    // (the caller folds output success into the CLI exit code).
+    // (the caller folds output success into the CLI exit code). A failure OF
+    // H5Fclose itself must not be re-closed (double-close UB) — the closing
+    // call is handled at the call site, not through this macro.
 #define H5_CHECK(expr, tag)                                                   \
     do {                                                                      \
         if ((expr) < 0) {                                                     \
@@ -175,7 +177,13 @@ bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
     delete[] dbuf;
     delete[] buf;
 
-    H5_CHECK(H5Fclose(fid), "H5Fclose");
+    // A failed close is not re-closed (the file is already being torn down);
+    // remove the partial output and report the failure.
+    if (H5Fclose(fid) < 0) {
+        fprintf(stderr, "HDF5 error [H5Fclose %s]\n", path);
+        remove(path);
+        return false;
+    }
 #undef H5_CHECK
     printf("Saved HDF5 state to %s\n", path);
     return true;

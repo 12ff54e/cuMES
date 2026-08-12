@@ -52,16 +52,19 @@ bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
                       const char* filename) {
     FILE* fp = fopen(filename, "wb");
     if (!fp) { fprintf(stderr, "Cannot open %s\n", filename); return false; }
-    auto fail = [&](const char* tag) {
+    // `already_closed` distinguishes a mid-write failure (close the partial
+    // file ourselves) from a failure OF the close itself (the stream is
+    // already being torn down; calling fclose again is a double-close / UB).
+    auto fail = [&](const char* tag, bool already_closed) {
         fprintf(stderr, "outputSaveBinary: %s (%s)\n", tag, filename);
-        fclose(fp);
+        if (!already_closed) fclose(fp);
         remove(filename);
         return false;
     };
     // Write header: ns, mnmax as ints
     int ns = p.ns, mnmax = p.mnmax;
-    if (fwrite(&ns, sizeof(int), 1, fp) != 1) return fail("header ns");
-    if (fwrite(&mnmax, sizeof(int), 1, fp) != 1) return fail("header mnmax");
+    if (fwrite(&ns, sizeof(int), 1, fp) != 1) return fail("header ns", false);
+    if (fwrite(&mnmax, sizeof(int), 1, fp) != 1) return fail("header mnmax", false);
     // Write each coefficient array (6 arrays, each ns*mnmax doubles on disk)
     size_t nb = ns * mnmax * sizeof(T);
     auto* buf = new T[ns * mnmax];
@@ -82,8 +85,10 @@ bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
     writeFam(st.d_lmncs, "cpy lmncs");
     delete[] dbuf;
     delete[] buf;
-    if (!ok) return fail("state write");
-    if (fclose(fp) != 0) return fail("fclose");
+    if (!ok) return fail("state write", false);
+    // A failed close must not be re-closed in cleanup (double-close UB); the
+    // file is already being torn down, so only remove the partial output.
+    if (fclose(fp) != 0) return fail("fclose", true);
     printf("Saved binary state to %s\n", filename);
     return true;
 }

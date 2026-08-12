@@ -37,7 +37,9 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
         return false;
     }
     // On any later error: close, delete the half-written file, return false
-    // (the caller folds output success into the CLI exit code).
+    // (the caller folds output success into the CLI exit code). A failure OF
+    // nc_close itself must not be re-closed (double-close UB) — the closing
+    // call is handled at the call site, not through this macro.
 #define NC_CHECK(rc_, tag)                                                   \
     do {                                                                     \
         int _rc = (rc_);                                                     \
@@ -185,7 +187,17 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
     NC_CHECK(nc_put_var_double(ncid, v_zbsc, &ip.zbsc[0][0]), "put zbsc");
     NC_CHECK(nc_put_var_double(ncid, v_zbcs, &ip.zbcs[0][0]), "put zbcs");
 
-    NC_CHECK(nc_close(ncid), "nc_close");
+    // A failed close is not re-closed (the stream is already being torn
+    // down); remove the partial output and report the failure.
+    {
+        int _rc = nc_close(ncid);
+        if (_rc != NC_NOERR) {
+            fprintf(stderr, "NetCDF error [nc_close %s]: %s\n", path,
+                    nc_strerror(_rc));
+            remove(path);
+            return false;
+        }
+    }
 #undef NC_CHECK
     printf("Saved netCDF state to %s\n", path);
     return true;

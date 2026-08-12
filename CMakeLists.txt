@@ -162,6 +162,34 @@ add_executable(test_geometry_iso
 target_link_libraries(test_geometry_iso PRIVATE CUDA::cufft)
 target_include_directories(test_geometry_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# Writer failure-injection matrix: exercises open/write/truncation failure
+# contracts for every compiled-in output backend. Links output.cu (binary +
+# dispatcher) plus whichever optional backend TUs are present.
+add_executable(test_output_failure
+    tests/test_output_failure.cu
+    src/output.cu
+    ${CUMES_OUTPUT_BACKENDS}
+)
+target_link_libraries(test_output_failure PRIVATE CUDA::cufft)
+target_include_directories(test_output_failure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(TARGET netCDF::netCDF)
+    target_link_libraries(test_output_failure PRIVATE netCDF::netCDF)
+elseif(TARGET PkgConfig::netcdf)
+    target_link_libraries(test_output_failure PRIVATE PkgConfig::netcdf)
+elseif(CUMES_USE_NETCDF AND netCDF_FOUND)
+    target_link_libraries(test_output_failure PRIVATE ${netCDF_LIBRARIES})
+    target_include_directories(test_output_failure PRIVATE ${netCDF_INCLUDE_DIRS})
+endif()
+if(TARGET HDF5::HDF5)
+    target_link_libraries(test_output_failure PRIVATE HDF5::HDF5)
+endif()
+if(CUMES_USE_NETCDF AND netCDF_FOUND)
+    target_compile_definitions(test_output_failure PRIVATE CUMES_HAVE_NETCDF)
+endif()
+if(CUMES_USE_HDF5 AND HDF5_FOUND)
+    target_compile_definitions(test_output_failure PRIVATE CUMES_HAVE_HDF5)
+endif()
+
 # ---- ctest registration --------------------------------------------------
 # A ctest run must distinguish a verified result from a diagnostic: every
 # registered test exits nonzero on failure, and all of them run from the
@@ -178,6 +206,10 @@ set_tests_properties(test_input_json PROPERTIES
 add_test(NAME test_forces COMMAND test_forces)
 set_tests_properties(test_forces PROPERTIES
     LABELS "diagnostic;forces" TIMEOUT 300
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME test_output_failure COMMAND test_output_failure)
+set_tests_properties(test_output_failure PROPERTIES
+    LABELS "unit;output" TIMEOUT 120
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 # Optional Compute Sanitizer pass over the unit tests (memcheck catches the
 # OOB device reads/writes this issue pass fixed; enable with
