@@ -24,7 +24,7 @@ main.cu                  Entry point — init → solve → output
    │
    ├── profiles.cu/cuh   1D radial profiles (iota, pressure, mass) on device
    ├── fourier.cu/cuh    cuFFT transforms (12-slot packing, batched 1D ζ-FFT)
-   ├── geometry.cu/cuh   Jacobian, metric g^ij, contravariant/covariant B
+   ├── geometry.cu/cuh   Jacobian, covariant metric, contravariant/covariant B
    ├── forces.cu/cuh     MHD force residuals (R, Z, λ) in real space
    ├── constraint.cu/cuh Spectral-condensation constraint force (de-aliased)
    ├── precon.cu/cuh     Radial tridiagonal + λ preconditioners
@@ -41,13 +41,13 @@ Spectral coefs (rmnc, zmns, lmnc)              ← degrees of freedom
 Real-space geometry R, Z, λ + derivatives      (ns × ntheta × nzeta)
          │
          ▼  [geometry kernel]
-Half-grid: √g, g^uu, g^uv, g^vv, B^θ, B^ζ    (ns-1 × ntheta × nzeta)
+Half-grid: √g, g_uu, g_uv, g_vv, B^θ, B^ζ    (ns-1 × ntheta × nzeta)
          │
          ▼  [forces kernel]
 Real-space forces F_R, F_Z, F_λ                (ns × ntheta × nzeta)
          │
          ▼  [constraint force (de-aliased) + forward DFT]
-Spectral forces                                 (5, mnmax, ns)
+Spectral forces                                 (6, mnmax, ns)
          │
          ▼  [precondition + descent kernel — Garabedian step]
 v = fac×(b1·v + delt·f) ,  x += delt·v
