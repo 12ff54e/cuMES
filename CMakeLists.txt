@@ -162,6 +162,21 @@ add_executable(test_geometry_iso
 target_link_libraries(test_geometry_iso PRIVATE CUDA::cufft)
 target_include_directories(test_geometry_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# Non-unit tcon0 constraint-force scaling regression: the constraint force
+# must be exactly linear in the parsed tcon0 multiplier.
+add_executable(test_constraint_tcon
+    tests/test_constraint_tcon.cu
+    src/input_json.cu
+    src/fourier.cu
+    src/geometry.cu
+    src/forces.cu
+    src/precon.cu
+    src/constraint.cu
+    src/profiles.cu
+)
+target_link_libraries(test_constraint_tcon PRIVATE CUDA::cufft)
+target_include_directories(test_constraint_tcon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 # ncurr=0/ncurr=1 geometry-path regression at ns=33 (the half-grid OOB size).
 # Kernel-driving (launches computeGeometry), so it also gets a memcheck
 # variant under CUMES_ENABLE_SANITIZER_TESTS below.
@@ -228,6 +243,10 @@ add_test(NAME test_geometry_ncurr COMMAND test_geometry_ncurr)
 set_tests_properties(test_geometry_ncurr PROPERTIES
     LABELS "unit;geometry" TIMEOUT 120
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME test_constraint_tcon COMMAND test_constraint_tcon)
+set_tests_properties(test_constraint_tcon PROPERTIES
+    LABELS "unit;constraint" TIMEOUT 120
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 # Optional Compute Sanitizer pass over the unit tests (memcheck catches the
 # OOB device reads/writes this issue pass fixed; enable with
 # -DCUMES_ENABLE_SANITIZER_TESTS=ON when compute-sanitizer is installed).
@@ -240,7 +259,7 @@ if(CUMES_ENABLE_SANITIZER_TESTS)
         # test_geometry_ncurr drives both ncurr paths at the OOB ns=33 size, so
         # its memcheck variant is the permanent guard for the LCFS half-grid
         # OOB the containment series fixed.
-        foreach(t test_fourier test_forces test_geometry_ncurr)
+        foreach(t test_fourier test_forces test_geometry_ncurr test_constraint_tcon)
             add_test(NAME sanitizer_${t} COMMAND ${CUMES_COMPUTE_SANITIZER}
                      --tool memcheck --error-exitcode 3 $<TARGET_FILE:${t}>)
             set_tests_properties(sanitizer_${t} PROPERTIES
