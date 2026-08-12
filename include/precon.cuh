@@ -1,14 +1,15 @@
 // precon.cuh — radial tridiagonal preconditioner for MHD force balance.
-// Reference: vmecpp's computePreconditioningMatrix / assembleRZPreconditioner /
-// TridiagonalSolveSerial.
+// Reference: vmecpp's computePreconditioningMatrix / assembleRZPreconditioner
+// / TridiagonalSolveSerial (the solver itself is a parallel cyclic reduction
+// — see tridiagSolveKernel in precon.cu).
 //
 // Computes a flux-surface-averaged Hessian approximation twice per update:
 //   R preconditioner uses Z-derivatives (zs, zu12, zu_e, zu_o)
 //   Z preconditioner uses R-derivatives (rs, ru12, ru_e, ru_o)
 //
-// Each (m,n) mode gets an independent tridiagonal system solved via the
-// Thomas algorithm. Even/odd parity components use separate matrix elements
-// incorporating sm/sp radial scaling factors.
+// Each (m,n) mode gets an independent tridiagonal system solved in parallel
+// via PCR (128-thread grid-stride). Even/odd parity components use separate
+// matrix elements incorporating sm/sp radial scaling factors.
 #pragma once
 #include "vmec_types.h"
 #include "fourier.cuh"

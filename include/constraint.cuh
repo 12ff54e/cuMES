@@ -20,8 +20,8 @@ struct ConstraintWorkspace {
     T* d_rCon0;    // [ns * nZnT]
     T* d_zCon0;    // [ns * nZnT]
 
-    // Constraint force multiplier profile
-    T* h_tcon;     // [ns] host (pinned)
+    // Constraint force multiplier profile (device; computeTconKernel writes
+    // d_tcon directly — there is no host mirror to keep in sync)
     T* d_tcon;     // [ns] device
 
     // faccon[m] = -0.25 * signJ / m²  (mode-dependent scaling)

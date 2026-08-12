@@ -65,14 +65,11 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p) {
     cc(cudaMemset(cw.d_rCon0, 0, nF), "rCon0 zero");
     cc(cudaMemset(cw.d_zCon0, 0, nF), "zCon0 zero");
 
-    // tcon profile: allocate on host and device
-    cc(cudaMallocHost(&cw.h_tcon, p.ns * sizeof(T)), "tcon host");
+    // tcon profile (device). Zero-init: deAliasKernelFast reads tcon on
+    // iteration 0 before computeTconKernel writes it — with zeros the
+    // constraint force is inactive on the first iteration (deterministic,
+    // matches vmecpp where the constraint has no prior tcon either).
     cc(cudaMalloc(&cw.d_tcon, p.ns * sizeof(T)), "tcon dev");
-    // Zero-init: deAliasKernelFast reads tcon on iteration 0 before
-    // computeTconKernel writes it — with zeros the constraint force is
-    // inactive on the first iteration (deterministic, matches vmecpp where
-    // the constraint has no prior tcon either).
-    memset(cw.h_tcon, 0, p.ns * sizeof(T));
     cc(cudaMemset(cw.d_tcon, 0, p.ns * sizeof(T)), "tcon zero");
     // faccon: allocate on host and device
     cc(cudaMallocHost(&cw.h_faccon, p.mnmax * sizeof(T)), "faccon host");
@@ -124,7 +121,7 @@ void constraintFree(ConstraintWorkspace<T>& cw) {
     cudaFree(cw.d_gConEff); cudaFree(cw.d_gCon);
     cudaFree(cw.d_rCon);    cudaFree(cw.d_zCon);
     cudaFree(cw.d_rCon0);   cudaFree(cw.d_zCon0);
-    cudaFreeHost(cw.h_tcon); cudaFree(cw.d_tcon);
+    cudaFree(cw.d_tcon);
     cudaFreeHost(cw.h_faccon); cudaFree(cw.d_faccon);
     cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o);
     cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);

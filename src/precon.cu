@@ -1,6 +1,7 @@
 // precon.cu — radial tridiagonal preconditioner for MHD force balance.
 // Computes flux-surface-averaged Hessian approximation separately for R and Z,
-// assembles tridiagonal systems per (m,n) mode, and solves via Thomas algorithm.
+// assembles tridiagonal systems per (m,n) mode, and solves via parallel cyclic
+// reduction (tridiagSolveKernel).
 // Reference: vmecpp computePreconditioningMatrix / assembleRZPreconditioner /
 // TridiagonalSolveSerial.
 //

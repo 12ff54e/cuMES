@@ -19,8 +19,10 @@ struct FourierPlan {
     //   0 rmkcc   1 rmkss   2 rmkccN   3 rmkssN     (R value + ζ-derivs)
     //   4 zmksc   5 zmkcs   6 zmkscN   7 zmkcsN     (Z value + ζ-derivs)
     //   8 lmksc   9 lmkcs  10 lmkscN  11 lmkcsN     (λ value + ζ-derivs)
-    // The d_zeta_* scratch is also reused by the constraint module
-    // (constraint.cu: rCon/zCon and the de-aliasing bandpass filter).
+    // Note: the constraint module does NOT reuse these scratch buffers — it
+    // allocates its own compact d_zeta_real_c/d_zeta_spectra_c and plans in
+    // constraintCreate (constraint.cuh). These scratch arrays serve only the
+    // main transform.
     cufftHandle plan_z2d;    // inverse:  half-spectrum -> real
     cufftHandle plan_d2z;    // forward:  real -> half-spectrum
     typename FftTraits<T>::Complex* d_zeta_spectra; // [12*mpol*ns][nzeta/2+1]
