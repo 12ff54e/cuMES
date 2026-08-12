@@ -162,6 +162,19 @@ add_executable(test_geometry_iso
 target_link_libraries(test_geometry_iso PRIVATE CUDA::cufft)
 target_include_directories(test_geometry_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# ncurr=0/ncurr=1 geometry-path regression at ns=33 (the half-grid OOB size).
+# Kernel-driving (launches computeGeometry), so it also gets a memcheck
+# variant under CUMES_ENABLE_SANITIZER_TESTS below.
+add_executable(test_geometry_ncurr
+    tests/test_geometry_ncurr.cu
+    src/input_json.cu
+    src/fourier.cu
+    src/geometry.cu
+    src/profiles.cu
+)
+target_link_libraries(test_geometry_ncurr PRIVATE CUDA::cufft)
+target_include_directories(test_geometry_ncurr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 # Writer failure-injection matrix: exercises open/write/truncation failure
 # contracts for every compiled-in output backend. Links output.cu (binary +
 # dispatcher) plus whichever optional backend TUs are present.
@@ -211,6 +224,10 @@ add_test(NAME test_output_failure COMMAND test_output_failure)
 set_tests_properties(test_output_failure PROPERTIES
     LABELS "unit;output" TIMEOUT 120
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME test_geometry_ncurr COMMAND test_geometry_ncurr)
+set_tests_properties(test_geometry_ncurr PROPERTIES
+    LABELS "unit;geometry" TIMEOUT 120
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 # Optional Compute Sanitizer pass over the unit tests (memcheck catches the
 # OOB device reads/writes this issue pass fixed; enable with
 # -DCUMES_ENABLE_SANITIZER_TESTS=ON when compute-sanitizer is installed).
@@ -220,7 +237,10 @@ if(CUMES_ENABLE_SANITIZER_TESTS)
     if(CUMES_COMPUTE_SANITIZER)
         # test_input_json is host-only (no CUDA launches) and compute-sanitizer
         # refuses to profile it — only the kernel-driving tests get variants.
-        foreach(t test_fourier test_forces)
+        # test_geometry_ncurr drives both ncurr paths at the OOB ns=33 size, so
+        # its memcheck variant is the permanent guard for the LCFS half-grid
+        # OOB the containment series fixed.
+        foreach(t test_fourier test_forces test_geometry_ncurr)
             add_test(NAME sanitizer_${t} COMMAND ${CUMES_COMPUTE_SANITIZER}
                      --tool memcheck --error-exitcode 3 $<TARGET_FILE:${t}>)
             set_tests_properties(sanitizer_${t} PROPERTIES
