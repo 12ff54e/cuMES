@@ -15,7 +15,10 @@
 #include "solver.cuh"
 #include <netcdf.h>
 #include <cstdio>
+#include <cstdlib>   // getpid
 #include <cstring>
+#include <string>
+#include <unistd.h>   // getpid, rename
 
 static void checkCuda(cudaError_t err, const char* tag) {
     if (err != cudaSuccess) {
@@ -28,11 +31,17 @@ template <typename T>
 bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
                       const InputParams& ip, const SolverResult<T>& result,
                       const char* path, const char* input_file) {
+    // Atomic publication: create the file at a same-directory temp path, then
+    // rename() it over `path` after a successful close, so a reader never sees
+    // a half-written file and a failure leaves the target untouched. The temp
+    // path must live in the same directory as the target for an atomic rename.
+    const std::string tmp = std::string(path) + ".tmp." +
+                            std::to_string((long)getpid());
     // NC_CLOBBER alone gives classic-3 (CDF-1); ncdump -k reports "classic".
     int ncid = -1;
-    int rc = nc_create(path, NC_CLOBBER, &ncid);
+    int rc = nc_create(tmp.c_str(), NC_CLOBBER, &ncid);
     if (rc != NC_NOERR) {
-        fprintf(stderr, "NetCDF error [nc_create %s]: %s\n", path,
+        fprintf(stderr, "NetCDF error [nc_create %s]: %s\n", tmp.c_str(),
                 nc_strerror(rc));
         return false;
     }
@@ -46,7 +55,7 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
         if (_rc != NC_NOERR) {                                               \
             fprintf(stderr, "NetCDF error [%s]: %s\n", tag, nc_strerror(_rc)); \
             nc_close(ncid);                                                  \
-            remove(path);                                                    \
+            remove(tmp.c_str());                                             \
             return false;                                                    \
         }                                                                    \
     } while (0)
@@ -188,15 +197,22 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
     NC_CHECK(nc_put_var_double(ncid, v_zbcs, &ip.zbcs[0][0]), "put zbcs");
 
     // A failed close is not re-closed (the stream is already being torn
-    // down); remove the partial output and report the failure.
+    // down); remove the partial temp and report the failure.
     {
         int _rc = nc_close(ncid);
         if (_rc != NC_NOERR) {
-            fprintf(stderr, "NetCDF error [nc_close %s]: %s\n", path,
+            fprintf(stderr, "NetCDF error [nc_close %s]: %s\n", tmp.c_str(),
                     nc_strerror(_rc));
-            remove(path);
+            remove(tmp.c_str());
             return false;
         }
+    }
+    // Atomic publish: the temp is fully written and closed, so rename it over
+    // the target. On failure remove the temp; the target is untouched.
+    if (rename(tmp.c_str(), path) != 0) {
+        fprintf(stderr, "NetCDF error [rename %s -> %s]\n", tmp.c_str(), path);
+        remove(tmp.c_str());
+        return false;
     }
 #undef NC_CHECK
     printf("Saved netCDF state to %s\n", path);

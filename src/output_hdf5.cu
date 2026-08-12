@@ -15,7 +15,10 @@
 #include "solver.cuh"
 #include <hdf5.h>
 #include <cstdio>
+#include <cstdlib>   // getpid
 #include <cstring>
+#include <string>
+#include <unistd.h>   // getpid, rename
 
 static void checkCuda(cudaError_t err, const char* tag) {
     if (err != cudaSuccess) {
@@ -44,9 +47,14 @@ template <typename T>
 bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
                     const InputParams& ip, const SolverResult<T>& result,
                     const char* path, const char* input_file) {
-    hid_t fid = H5Fcreate(path, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    // Atomic publication: create at a same-directory temp path, then rename()
+    // over `path` after a successful close, so a reader never sees a
+    // half-written file and a failure leaves the target untouched.
+    const std::string tmp = std::string(path) + ".tmp." +
+                            std::to_string((long)getpid());
+    hid_t fid = H5Fcreate(tmp.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
     if (fid < 0) {
-        fprintf(stderr, "HDF5 error [H5Fcreate %s]\n", path);
+        fprintf(stderr, "HDF5 error [H5Fcreate %s]\n", tmp.c_str());
         return false;
     }
     // On any later error: close, delete the half-written file, return false
@@ -58,7 +66,7 @@ bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
         if ((expr) < 0) {                                                     \
             fprintf(stderr, "HDF5 error [%s]\n", tag);                        \
             H5Fclose(fid);                                                    \
-            remove(path);                                                     \
+            remove(tmp.c_str());                                              \
             return false;                                                     \
         }                                                                     \
     } while (0)
@@ -178,10 +186,17 @@ bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
     delete[] buf;
 
     // A failed close is not re-closed (the file is already being torn down);
-    // remove the partial output and report the failure.
+    // remove the partial temp and report the failure.
     if (H5Fclose(fid) < 0) {
-        fprintf(stderr, "HDF5 error [H5Fclose %s]\n", path);
-        remove(path);
+        fprintf(stderr, "HDF5 error [H5Fclose %s]\n", tmp.c_str());
+        remove(tmp.c_str());
+        return false;
+    }
+    // Atomic publish: the temp is fully written and closed, so rename it over
+    // the target. On failure remove the temp; the target is untouched.
+    if (rename(tmp.c_str(), path) != 0) {
+        fprintf(stderr, "HDF5 error [rename %s -> %s]\n", tmp.c_str(), path);
+        remove(tmp.c_str());
         return false;
     }
 #undef H5_CHECK

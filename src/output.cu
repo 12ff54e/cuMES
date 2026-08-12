@@ -4,11 +4,54 @@
 // computation type T — the Python comparison scripts (scripts/compare_*.py)
 // parse doubles with struct.unpack("<d"). outputSaveBinary converts T->double
 // on save.
+//
+// Atomic publication: the writer writes to a same-directory temp file, flushes
+// and syncs it, closes it, then rename()s it over the target. A reader never
+// sees a half-written state file, and a failure at any point leaves the target
+// untouched (only the temp is removed). On POSIX rename() within one directory
+// is atomic.
 #include "output.cuh"
 #include "input.h"
 #include <cstdio>
+#include <cstdlib>   // getpid
 #include <cstring>   // strrchr
+#include <string>
 #include <strings.h>  // strcasecmp
+#include <unistd.h>   // getpid, fsync, rename
+
+// A same-directory temp path for `path` (so rename() stays on one filesystem).
+static std::string tempPathFor(const char* path) {
+    std::string p = path;
+    p += ".tmp." + std::to_string((long)getpid());
+    return p;
+}
+
+// Flush + fsync + close `fp`, then atomically rename `tmp` over `path`.
+// Returns true on success; on failure prints and removes the temp, leaving
+// `path` untouched. `fp` is always closed exactly once (a close that fails is
+// not re-closed). Used by the atomic writers.
+static bool publishAtomic(FILE* fp, const char* tmp, const char* path) {
+    bool fail = false;
+    if (fflush(fp) != 0) {
+        fprintf(stderr, "output: fflush %s failed\n", tmp);
+        fail = true;
+    }
+    if (!fail && fsync(fileno(fp)) != 0) {
+        fprintf(stderr, "output: fsync %s failed\n", tmp);
+        fail = true;
+    }
+    if (fclose(fp) != 0) {
+        fprintf(stderr, "output: fclose %s failed\n", tmp);
+        fail = true;
+    }
+    if (fail) { remove(tmp); return false; }
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "output: rename %s -> %s failed\n", tmp, path);
+        remove(tmp);
+        return false;
+    }
+    return true;
+}
 
 static void checkCuda(cudaError_t err, const char* tag) {
     if (err != cudaSuccess) {
@@ -50,21 +93,21 @@ const char* linkedOutputSuffixes() {
 template <typename T>
 bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
                       const char* filename) {
-    FILE* fp = fopen(filename, "wb");
-    if (!fp) { fprintf(stderr, "Cannot open %s\n", filename); return false; }
-    // `already_closed` distinguishes a mid-write failure (close the partial
-    // file ourselves) from a failure OF the close itself (the stream is
-    // already being torn down; calling fclose again is a double-close / UB).
-    auto fail = [&](const char* tag, bool already_closed) {
-        fprintf(stderr, "outputSaveBinary: %s (%s)\n", tag, filename);
-        if (!already_closed) fclose(fp);
-        remove(filename);
+    const std::string tmp = tempPathFor(filename);
+    FILE* fp = fopen(tmp.c_str(), "wb");
+    if (!fp) { fprintf(stderr, "Cannot open %s\n", tmp.c_str()); return false; }
+    // On any failure: close the temp, remove it, return false. The target
+    // `filename` is never touched until the atomic publish.
+    auto fail = [&](const char* tag) {
+        fprintf(stderr, "outputSaveBinary: %s (%s)\n", tag, tmp.c_str());
+        fclose(fp);
+        remove(tmp.c_str());
         return false;
     };
     // Write header: ns, mnmax as ints
     int ns = p.ns, mnmax = p.mnmax;
-    if (fwrite(&ns, sizeof(int), 1, fp) != 1) return fail("header ns", false);
-    if (fwrite(&mnmax, sizeof(int), 1, fp) != 1) return fail("header mnmax", false);
+    if (fwrite(&ns, sizeof(int), 1, fp) != 1) return fail("header ns");
+    if (fwrite(&mnmax, sizeof(int), 1, fp) != 1) return fail("header mnmax");
     // Write each coefficient array (6 arrays, each ns*mnmax doubles on disk)
     size_t nb = ns * mnmax * sizeof(T);
     auto* buf = new T[ns * mnmax];
@@ -85,10 +128,11 @@ bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
     writeFam(st.d_lmncs, "cpy lmncs");
     delete[] dbuf;
     delete[] buf;
-    if (!ok) return fail("state write", false);
-    // A failed close must not be re-closed in cleanup (double-close UB); the
-    // file is already being torn down, so only remove the partial output.
-    if (fclose(fp) != 0) return fail("fclose", true);
+    if (!ok) return fail("state write");
+    // Flush + fsync + close + atomic rename. publishAtomic always closes fp
+    // exactly once (a failing close is not re-closed) and removes the temp on
+    // any failure, leaving `filename` untouched.
+    if (!publishAtomic(fp, tmp.c_str(), filename)) return false;
     printf("Saved binary state to %s\n", filename);
     return true;
 }

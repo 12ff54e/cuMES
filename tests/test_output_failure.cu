@@ -3,19 +3,20 @@
 //
 //   open failure   -> a path in a nonexistent directory (fopen/nc_create/
 //                     H5Fcreate fail before any state is read)
-//   write failure  -> /dev/full (a Linux device that returns ENOSPC on every
-//                     write) — the binary writer's cudaMemcpy succeeds, the
-//                     fwrite fails, and the partial file must be removed
-//   truncation     -> a pre-existing file is clobbered (fopen "wb" /
-//                     NC_CLOBBER / H5F_ACC_TRUNC), so a stale reader can never
-//                     mistake old bytes for the new run's output
+//   rename failure -> the target is a non-empty directory: the writer writes
+//                     a same-directory temp fine, the atomic rename() fails,
+//                     it returns false, removes the temp, and leaves the
+//                     target untouched
+//   truncation     -> a pre-existing file is atomically replaced (write temp
+//                     + rename), so a stale reader can never mistake old
+//                     bytes for the new run's output
 //   close failure  -> exercised via the close-safe cleanup path (see the
 //                     writers); a failing close must not be re-entered
 //
 // The contract under test (output.cuh): every writer returns true only when
-// the file was fully written AND closed successfully, false on any failure
-// (after removing partial files). main folds this into the CLI exit code, so
-// a run can never report success without a durable result.
+// the file was fully written AND closed AND atomically published, false on
+// any failure (after removing partial temp files). main folds this into the
+// CLI exit code, so a run can never report success without a durable result.
 //
 // All backends are exercised only when compiled in (CUMES_HAVE_NETCDF /
 // CUMES_HAVE_HDF5), so the same source works in the no/one/both backend
@@ -24,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -108,10 +110,6 @@ static void writeGarbage(const char* path, const char* bytes, size_t n) {
     fclose(fp);
 }
 
-// Deterministic write-failure via /dev/full (ENOSPC on every write). Only
-// meaningful on Linux; skip with a note elsewhere.
-static bool haveDevFull() { return fileExists("/dev/full"); }
-
 template <typename T>
 static void runAll() {
     printf("== %s precision ==\n", sizeof(T) == sizeof(double) ? "double" : "float");
@@ -144,23 +142,34 @@ static void runAll() {
     }
 #endif
 
-    // ---- write failure: /dev/full (deterministic ENOSPC) ----
-    // The path must carry a recognized suffix (.bin) or the dispatcher falls
-    // back to the legacy binary name (which succeeds here). A symlink named
-    // test_dev_full.bin pointing at /dev/full keeps the suffix AND makes the
-    // writer's partial-file remove() touch the symlink, never the device.
-    if (haveDevFull()) {
-        const char* link = "test_dev_full.bin";
-        remove(link);
-        if (symlink("/dev/full", link) != 0) {
-            fprintf(stderr, "cannot symlink /dev/full\n");
-            exit(1);
+    // ---- atomic-rename failure: target is a directory with a valid suffix ----
+    // The dispatcher must route to the binary writer, so the target carries a
+    // .bin suffix; the target IS a directory, so the writer writes the temp
+    // fine but rename(temp, target) fails. It must return false, remove the
+    // temp, and leave the directory untouched. Note: the temp path is
+    // <target>.tmp.<pid>, which sits NEXT to the directory and writes fine.
+    {
+        const char* dir = "test_output_target_dir.bin";
+        // Remove any prior run's leftover, then make a directory as the target.
+        remove(dir);
+        if (mkdir(dir, 0755) != 0) { fprintf(stderr, "cannot mkdir %s\n", dir); exit(1); }
+        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res, dir, "inputs/solovev.json");
+        CHECK(!ok, "rename failure: target directory -> returns false");
+        CHECK(fileExists(dir), "rename failure: target directory untouched");
+        // No stray temp file may remain next to the target.
+        std::string tmp = std::string(dir) + ".tmp.";
+        bool stray = false;
+        // scan CWD for <dir>.tmp.* leftovers
+        DIR* d = opendir(".");
+        if (d) {
+            struct dirent* e;
+            while ((e = readdir(d))) {
+                if (std::string(e->d_name).compare(0, tmp.size(), tmp) == 0) stray = true;
+            }
+            closedir(d);
         }
-        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res, link, "inputs/solovev.json");
-        CHECK(!ok, "write failure: binary /dev/full returns false");
-        remove(link);
-    } else {
-        printf("  (skip /dev/full write-failure: not available)\n");
+        CHECK(!stray, "rename failure: no stray temp file left");
+        rmdir(dir);
     }
 
     // ---- truncation: a pre-existing file is clobbered, old bytes gone ----
