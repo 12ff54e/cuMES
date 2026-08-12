@@ -1,10 +1,12 @@
 // test_geometry_iso.cu — isolated check of the ncurr=1 geometry chain:
 // loads the w7x iter-1 state (from dump/cuMES/step_0_*.bin), runs
-// computeGeometry only, and verifies the bsupu write coverage.
+// computeGeometry only, and verifies the bsupu/bsubu write coverage.
+// The coverage checks ASSERT (nonzero exit on failure) — a passing exit code
+// must mean every angular point of the surface was written.
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
-#include <cublas_v2.h>
 
 #include "input_json.h"
 #include "vmec_types.h"
@@ -61,7 +63,6 @@ int main() {
     p.delt = ip.delt; p.ftol = ip.ftol; p.max_iter = ip.max_iter;
     p.lamscale = 0.0;
 
-    cublasHandle_t cb; cublasCreate(&cb);
     SpectralState<double> st{};
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
     cc(cudaMalloc(&st.d_rmncc, nb), "cc"); cc(cudaMalloc(&st.d_rmnss, nb), "ss");
@@ -73,7 +74,7 @@ int main() {
 
     loadState(st, p, "dump/cuMES/step_0");
     RadialProfiles<double> rp = profilesCreate(p, ip);
-    FourierPlan<double> fp = fourierCreate(p, cb);
+    FourierPlan<double> fp = fourierCreate(p);
     MetricWorkspace<double> mw = metricCreate(p);
 
     // extrapolate m=1 to the axis (as the solver does each iteration)
@@ -93,26 +94,37 @@ int main() {
     inverseDFT(fp, st, p);
     computeGeometry(fp, p, rp, mw);
 
-    // check bsupu coverage
+    // check bsupu coverage on a mid-volume surface. All indices are computed
+    // from the actual grid (the old hardcoded ks/1080 were W7-X-specific).
     int nZnT = p.nZnT;
+    int jMid = (p.ns - 1) / 2;  // a surface in the middle of the volume
+    int nks = 8;
+    int ks[8];
+    for (int i = 0; i < nks; ++i) ks[i] = (i * nZnT) / nks;  // spread over the plane
     double hb[8];
-    int ks[8] = {0, 31, 32, 255, 256, 287, 951, 1079};
-    for (int i = 0; i < 8; ++i)
-        cudaMemcpy(&hb[i], mw.d_bsupu + 50 * nZnT + ks[i], sizeof(double), cudaMemcpyDeviceToHost);
+    for (int i = 0; i < nks; ++i)
+        cudaMemcpy(&hb[i], mw.d_bsupu + jMid * nZnT + ks[i], sizeof(double), cudaMemcpyDeviceToHost);
     int nz = 0;
     double* h_all = new double[(p.ns - 1) * nZnT];
     cudaMemcpy(h_all, mw.d_bsupu, (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost);
-    for (int k = 0; k < nZnT; ++k) if (h_all[50 * nZnT + k] == 0.0) ++nz;
-    printf("bsupu[50] zeros: %d/1080\n", nz);
-    printf("k=0:% .6f k=31:% .6f k=32:% .6f k=255:% .6f k=256:% .6f k=287:% .6f k=951:% .6f k=1079:% .6f\n",
-           hb[0], hb[1], hb[2], hb[3], hb[4], hb[5], hb[6], hb[7]);
+    for (int k = 0; k < nZnT; ++k) if (h_all[jMid * nZnT + k] == 0.0) ++nz;
+    printf("bsupu[jMid=%d] zeros: %d/%d\n", jMid, nz, nZnT);
+    for (int i = 0; i < nks; ++i)
+        printf("  k=%d: %.6f\n", ks[i], hb[i]);
     // also check the bsubu coverage
     cudaMemcpy(h_all, mw.d_bsubu, (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost);
     int nz2 = 0;
-    for (int k = 0; k < nZnT; ++k) if (h_all[50 * nZnT + k] == 0.0) ++nz2;
-    printf("bsubu[50] zeros: %d/1080\n", nz2);
+    for (int k = 0; k < nZnT; ++k) if (h_all[jMid * nZnT + k] == 0.0) ++nz2;
+    printf("bsubu[jMid=%d] zeros: %d/%d\n", jMid, nz2, nZnT);
+    delete[] h_all;
 
     fourierFree(fp); metricFree(mw); profilesFree(rp);
-    cublasDestroy(cb);
-    return 0;
+
+    // Assertions: a full-coverage kernel must leave no unwritten point on an
+    // interior surface (zero is not a physical bsupu/bsubu value there).
+    int bad = 0;
+    if (nz != 0) { fprintf(stderr, "FAIL: bsupu coverage incomplete (%d zeros)\n", nz); bad = 1; }
+    if (nz2 != 0) { fprintf(stderr, "FAIL: bsubu coverage incomplete (%d zeros)\n", nz2); bad = 1; }
+    if (bad == 0) printf("test_geometry_iso: coverage OK\n");
+    return bad;
 }

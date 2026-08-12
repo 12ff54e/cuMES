@@ -45,7 +45,6 @@ add_executable(cuMES
 )
 
 target_link_libraries(cuMES PRIVATE
-    CUDA::cublas
     CUDA::cufft
 )
 
@@ -113,18 +112,23 @@ if(CUMES_USE_FLOAT)
 endif()
 
 # ---- tests (standalone executables, no framework) ----------------------
+# ctest runs the self-contained suites (they need no external fixtures and
+# are run from the source dir, where inputs/*.json lives). The fixture-based
+# diagnostics (test_force_verify needs vmecpp_init.bin, test_geometry_iso
+# needs dump/cuMES/step_0_*.bin) are NOT registered: they are meaningful only
+# in a verification workflow that produces those files.
 add_executable(test_fourier
     tests/test_fourier.cu
     src/fourier.cu
 )
+target_link_libraries(test_fourier PRIVATE CUDA::cufft)
+target_include_directories(test_fourier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(test_input_json
     tests/test_input_json.cu
     src/input_json.cu
 )
 target_include_directories(test_input_json PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_fourier PRIVATE CUDA::cublas CUDA::cufft)
-target_include_directories(test_fourier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(test_forces
     tests/test_forces.cu
@@ -134,7 +138,7 @@ add_executable(test_forces
     src/forces.cu
     src/profiles.cu
 )
-target_link_libraries(test_forces PRIVATE CUDA::cublas CUDA::cufft)
+target_link_libraries(test_forces PRIVATE CUDA::cufft)
 target_include_directories(test_forces PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(test_force_verify
@@ -145,6 +149,8 @@ add_executable(test_force_verify
     src/forces.cu
     src/profiles.cu
 )
+target_link_libraries(test_force_verify PRIVATE CUDA::cufft)
+target_include_directories(test_force_verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(test_geometry_iso
     tests/test_geometry_iso.cu
@@ -153,7 +159,42 @@ add_executable(test_geometry_iso
     src/geometry.cu
     src/profiles.cu
 )
-target_link_libraries(test_geometry_iso PRIVATE CUDA::cublas CUDA::cufft)
+target_link_libraries(test_geometry_iso PRIVATE CUDA::cufft)
 target_include_directories(test_geometry_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_force_verify PRIVATE CUDA::cublas CUDA::cufft)
-target_include_directories(test_force_verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# ---- ctest registration --------------------------------------------------
+# A ctest run must distinguish a verified result from a diagnostic: every
+# registered test exits nonzero on failure, and all of them run from the
+# source directory (they read inputs/*.json relative to the CWD).
+enable_testing()
+add_test(NAME test_fourier COMMAND test_fourier)
+set_tests_properties(test_fourier PROPERTIES
+    LABELS "unit;fourier" TIMEOUT 300
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME test_input_json COMMAND test_input_json)
+set_tests_properties(test_input_json PROPERTIES
+    LABELS "unit;input" TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME test_forces COMMAND test_forces)
+set_tests_properties(test_forces PROPERTIES
+    LABELS "diagnostic;forces" TIMEOUT 300
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+# Optional Compute Sanitizer pass over the unit tests (memcheck catches the
+# OOB device reads/writes this issue pass fixed; enable with
+# -DCUMES_ENABLE_SANITIZER_TESTS=ON when compute-sanitizer is installed).
+option(CUMES_ENABLE_SANITIZER_TESTS "Register compute-sanitizer memcheck variants of the unit tests" OFF)
+if(CUMES_ENABLE_SANITIZER_TESTS)
+    find_program(CUMES_COMPUTE_SANITIZER compute-sanitizer)
+    if(CUMES_COMPUTE_SANITIZER)
+        foreach(t test_fourier test_input_json test_forces)
+            add_test(NAME sanitizer_${t} COMMAND ${CUMES_COMPUTE_SANITIZER}
+                     --tool memcheck --error-exitcode 3 $<TARGET_FILE:${t}>)
+            set_tests_properties(sanitizer_${t} PROPERTIES
+                LABELS "sanitizer" TIMEOUT 600
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        endforeach()
+    else()
+        message(WARNING "cuMES: CUMES_ENABLE_SANITIZER_TESTS=ON but "
+                        "compute-sanitizer not found on PATH")
+    endif()
+endif()

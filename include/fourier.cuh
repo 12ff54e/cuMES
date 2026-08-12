@@ -2,7 +2,6 @@
 #pragma once
 #include "vmec_types.h"
 #include "fft_traits.h"
-#include <cublas_v2.h>
 #include <cufft.h>
 
 template <typename T> struct ConstraintWorkspace;  // defined in constraint.cuh
@@ -12,7 +11,6 @@ template <typename T> struct ConstraintWorkspace;  // defined in constraint.cuh
 template <typename T>
 struct FourierPlan {
     FourierBasis basis;
-    cublasHandle_t handle;
 
     // Batched 1D real FFTs of length nzeta, one batch element per
     // (slot, m, j) with slot in 0..11 (the vmecpp kBatch layout below) and
@@ -57,13 +55,10 @@ struct FourierPlan {
     T* d_crmn_e; T* d_crmn_o;
     T* d_czmn_e; T* d_czmn_o;
     T* d_clmn_e; T* d_clmn_o;
-
-    // Combined forces (backward compat)
-    T* d_fr_real; T* d_fz_real; T* d_fl_real;
 };
 
 template <typename T>
-FourierPlan<T> fourierCreate(const GridParams<T>& p, cublasHandle_t handle);
+FourierPlan<T> fourierCreate(const GridParams<T>& p);
 template <typename T>
 void fourierFree(FourierPlan<T>& fp);
 
@@ -72,6 +67,15 @@ void fourierFree(FourierPlan<T>& fp);
 template <typename T>
 void inverseDFT(const FourierPlan<T>& fp, const SpectralState<T>& st,
                 const GridParams<T>& p, bool do_combine = true);
+
+// Materialize the 9 combined (e+o) real-space arrays from the current parity
+// arrays. The combined buffers hold whatever the last do_combine=true
+// inverseDFT (or this call) produced — the hot loop runs with do_combine=false
+// and never refreshes them, so any dump/consumer must call this first to get
+// a snapshot of the CURRENT state (never read the combined arrays after a
+// do_combine=false pass and assume they are fresh).
+template <typename T>
+void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p);
 
 // forwardDFT: parity forces → 6-component spectral forces
 // Layout: (6*mnmax, ns) col-major

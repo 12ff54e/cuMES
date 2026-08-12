@@ -12,7 +12,6 @@
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
-#include <cublas_v2.h>
 #include <vector>
 #include "vmec_types.h"
 #include "fourier.cuh"
@@ -124,8 +123,7 @@ static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, const GridParams<T>
 }
 
 template <typename T>
-static int t_inv_constR(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, SpectralState<T>& st){
-    (void)cb;  // inverse tests don't touch the cuBLAS handle
+static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_constantR ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) cc_[j+0*p.ns]=T(4.0);  // R_00
@@ -155,8 +153,7 @@ static int t_inv_constR(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp,
 }
 
 template <typename T>
-static int t_inv_theta(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, SpectralState<T>& st){
-    (void)cb;  // inverse tests don't touch the cuBLAS handle
+static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_thetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+0;
@@ -187,8 +184,7 @@ static int t_inv_theta(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, 
 }
 
 template <typename T>
-static int t_inv_zeta(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, SpectralState<T>& st){
-    (void)cb;  // inverse tests don't touch the cuBLAS handle
+static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_zetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+1;  // R_11 (cos(θ-ζ)): folded rmncc=rmnss=0.2
@@ -215,8 +211,7 @@ static int t_inv_zeta(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, S
 }
 
 template <typename T>
-static int t_fwd_const(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, SpectralState<T>& st){
-    (void)cb; (void)st;  // forward tests use the workspace, not state
+static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
     int lf=g_failures; printf("  test_forwardDFT_constant ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(3.0));
@@ -254,8 +249,7 @@ static int t_fwd_const(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, 
 }
 
 template <typename T>
-static int t_fwd_sine(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, SpectralState<T>& st){
-    (void)cb; (void)st;  // forward tests use the workspace, not state
+static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
     int lf=g_failures; printf("  test_forwardDFT_sine ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fz(p.ns*p.nZnT,T(0));
@@ -302,8 +296,7 @@ static int t_fwd_sine(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, S
 }
 
 template <typename T>
-static int t_gpuVcpu_inv(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, SpectralState<T>& st){
-    (void)cb;  // inverse tests don't touch the cuBLAS handle
+static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
     int lf=g_failures; printf("  test_gpuVcpu_inverseDFT ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
@@ -364,8 +357,7 @@ static int t_gpuVcpu_inv(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp
 // floating-point summation order).
 // host with the same reduced-grid trapezoid as the kernels.
 template <typename T>
-static int t_fwd_axis(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, SpectralState<T>& st){
-    (void)cb; (void)st;  // forward tests use the workspace, not state
+static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
     int lf=g_failures; printf("  test_forwardDFT_axis ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(0));
@@ -436,8 +428,7 @@ static int t_fwd_axis(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, S
 
 // LCFS branch (j=ns-1 keeps only the λ components flsc/flcs).
 template <typename T>
-static int t_fwd_lcfs(GridParams<T>& p, cublasHandle_t cb, FourierPlan<T>& fp, SpectralState<T>& st){
-    (void)cb; (void)st;  // forward tests use the workspace, not state
+static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
     int lf=g_failures; printf("  test_forwardDFT_lcfs ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     int jB=p.ns-1;
@@ -507,8 +498,7 @@ static int runTests(){
     p.nfp=kNfp; p.nZnT=kNZnT; p.mpol=kMpol; p.ntor=kNtor;
     p.ncurr=0; p.delt=T(1.0); p.ftol=T(1e-14); p.max_iter=10; p.lamscale=T(1.0);
 
-    cublasHandle_t cb; cublasCreate(&cb);
-    FourierPlan<T> fp=fourierCreate<T>(p,cb);
+    FourierPlan<T> fp=fourierCreate<T>(p);
     SpectralState<T> st{};
     size_t nb=p.ns*p.mnmax*sizeof(T);
     cc(cudaMalloc(&st.d_rmncc,nb),"cc"); cc(cudaMalloc(&st.d_rmnss,nb),"ss");
@@ -522,17 +512,17 @@ static int runTests(){
     // host CPU reference (the direct-sum kernels were removed after the
     // cuFFT A/B validation; the git history has them).
     int nf = 0;
-    nf += t_inv_constR(p,cb,fp,st);
-    nf += t_inv_theta(p,cb,fp,st);
-    nf += t_inv_zeta(p,cb,fp,st);
-    nf += t_fwd_const(p,cb,fp,st);
-    nf += t_fwd_sine(p,cb,fp,st);
-    nf += t_gpuVcpu_inv(p,cb,fp,st);
-    nf += t_fwd_axis(p,cb,fp,st);
-    nf += t_fwd_lcfs(p,cb,fp,st);
+    nf += t_inv_constR(p,fp,st);
+    nf += t_inv_theta(p,fp,st);
+    nf += t_inv_zeta(p,fp,st);
+    nf += t_fwd_const(p,fp,st);
+    nf += t_fwd_sine(p,fp,st);
+    nf += t_gpuVcpu_inv(p,fp,st);
+    nf += t_fwd_axis(p,fp,st);
+    nf += t_fwd_lcfs(p,fp,st);
 
     fourierFree(fp);
-    cublasDestroy(cb);
+
     return nf;
 }
 

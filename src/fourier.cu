@@ -55,8 +55,8 @@ static void checkCufft(cufftResult r, const char* tag) {
 }
 
 template <typename T>
-FourierPlan<T> fourierCreate(const GridParams<T>& p, cublasHandle_t handle) {
-    FourierPlan<T> fp{}; fp.handle = handle;
+FourierPlan<T> fourierCreate(const GridParams<T>& p) {
+    FourierPlan<T> fp{};
     int nZnT = p.nZnT, mnmax = p.mnmax;
     size_t nbytes_mode  = mnmax * sizeof(int);
     size_t nbytes_real  = p.ns * nZnT * sizeof(T);
@@ -99,7 +99,6 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p, cublasHandle_t handle) {
     am(fp.d_crmn_e,"ce"); am(fp.d_crmn_o,"co");
     am(fp.d_czmn_e,"cze"); am(fp.d_czmn_o,"czo");
     am(fp.d_clmn_e,"cle"); am(fp.d_clmn_o,"clo");
-    am(fp.d_fr_real,"fr"); am(fp.d_fz_real,"fz"); am(fp.d_fl_real,"fl");
 
     // ---- cuFFT backend: poloidal tables, scratch, plans ----
     checkCuda(cudaMalloc(&fp.d_zeta_spectra,
@@ -178,7 +177,6 @@ void fourierFree(FourierPlan<T>& fp) {
     cuFree(fp.d_blmn_e);cuFree(fp.d_blmn_o);
     cuFree(fp.d_crmn_e);cuFree(fp.d_crmn_o);cuFree(fp.d_czmn_e);cuFree(fp.d_czmn_o);
     cuFree(fp.d_clmn_e);cuFree(fp.d_clmn_o);
-    cuFree(fp.d_fr_real);cuFree(fp.d_fz_real);cuFree(fp.d_fl_real);
     cufftDestroy(fp.plan_z2d); cufftDestroy(fp.plan_d2z);
     cudaFree(fp.d_zeta_spectra); cudaFree(fp.d_zeta_real);
     cudaFree(fp.d_cos_th); cudaFree(fp.d_sin_th);
@@ -264,36 +262,46 @@ __global__ void inverseAccumulateKernel(
     const T* __restrict__ mcos_th, const T* __restrict__ msin_th,
     int ns, int mpol, int ntheta, int nzeta, int nZnT, int slot0,
     T* __restrict__ e0, T* __restrict__ e1, T* __restrict__ e2,
-    T* __restrict__ o0, T* __restrict__ o1, T* __restrict__ o2)
+    T* __restrict__ o0, T* __restrict__ o1, T* __restrict__ o2,
+    int kTile)
 {
-    int j = blockIdx.x;
     // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
     // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
     // coalesce; the m-loop shared reads (sm[.. + k]) become broadcasts.
-    int k = threadIdx.y, l1 = threadIdx.x;
+    // The ζ direction is TILED (blockIdx.y selects the k-tile, kTile-wide):
+    // the launch block no longer embeds the full nzeta product, so the block
+    // size stays bounded for larger angular grids. Every output point is
+    // computed by the same arithmetic as the untiled kernel (bit-identical).
+    int j = blockIdx.x;
+    int k0 = blockIdx.y * kTile;
+    int k = threadIdx.y + k0;
+    int l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    T* sh = static_cast<T*>(dynSharedBase());   // [4][mpol][nzeta]
-    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * nzeta; i += nthreads) {
-        int s = i / (mpol * nzeta), rem = i - s * mpol * nzeta;
-        int m = rem / nzeta, kk = rem % nzeta;
-        sh[i] = zeta_real[(((size_t)(slot0 + s) * mpol + m) * ns + j) * nzeta + kk];
+    T* sh = static_cast<T*>(dynSharedBase());   // [4][mpol][kTile]
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * kTile; i += nthreads) {
+        int s = i / (mpol * kTile), rem = i - s * mpol * kTile;
+        int m = rem / kTile, kk = rem % kTile;
+        int kk_abs = k0 + kk;
+        sh[i] = (kk_abs < nzeta) ? zeta_real[(((size_t)(slot0 + s) * mpol + m) * ns + j) * nzeta + kk_abs]
+                                 : T(0.0);  // tail tile: zeros (never used)
     }
     __syncthreads();
+    if (k >= nzeta) return;  // tail tile past the grid
     T maxsc = fmax(sqrt(T(j) / T(ns - 1)), sqrt(T(1.0) / T(ns - 1)));
     T facO = T(1.0) / maxsc;
     bool isR = (slot0 == 0);
     T signV = (slot0 == 8) ? T(-1.0) : T(1.0);
-    size_t mstride = (size_t)mpol * nzeta;
+    size_t mstride = (size_t)mpol * kTile;
     #pragma unroll
     for (int pass = 0; pass < 2; ++pass) {
         int l = l1 + pass * (ntheta / 2);
         T v0e = T(0), v1e = T(0), v2e = T(0);
         T v0o = T(0), v1o = T(0), v2o = T(0);
         for (int m = 0; m < mpol; ++m) {
-            const T* sm = sh + m * nzeta;
-            T c0 = sm[0 * mstride + k], c1 = sm[1 * mstride + k];
-            T c2 = sm[2 * mstride + k], c3 = sm[3 * mstride + k];
+            const T* sm = sh + m * kTile;
+            T c0 = sm[0 * mstride + k - k0], c1 = sm[1 * mstride + k - k0];
+            T c2 = sm[2 * mstride + k - k0], c3 = sm[3 * mstride + k - k0];
             T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
             T mcos = mcos_th[m * ntheta + l], msin = msin_th[m * ntheta + l];
             T fac = (m % 2 == 1) ? facO : T(1.0);
@@ -341,6 +349,15 @@ __global__ void combineParityKernel(
     lv_real[idx] = lv_e[idx] + lv_o[idx];
 }
 
+// ζ-tile width for the accumulate/reduce kernels: the block no longer embeds
+// the full ntheta/2 × nzeta product (unbounded blocks for larger grids).
+// blockDim.y = kTile, capped so blockDim.x*blockDim.y <= 1024 (and near 512
+// for occupancy); ntheta is input-capped at 256, so blockDim.x <= 128.
+static int computeKTile(int blkX, int nzeta) {
+    int kt = (blkX >= 1024) ? 1 : std::min(16, 1024 / blkX);
+    return std::min(kt, nzeta);
+}
+
 template <typename T>
 static void inverseDFTCufft(const FourierPlan<T>& fp, const SpectralState<T>& st,
                             const GridParams<T>& p, bool do_combine) {
@@ -353,25 +370,32 @@ static void inverseDFTCufft(const FourierPlan<T>& fp, const SpectralState<T>& st
         fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
     checkCufft(FftTraits<T>::execInverse(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
-    dim3 blk(p.ntheta / 2, p.nzeta);
-    dim3 grd(p.ns);
-    size_t invSmem = 4 * p.mpol * p.nzeta * sizeof(T);
+    // ζ-tiled accumulate (see inverseAccumulateKernel): block (ntheta/2,
+    // kTile), one grid row per (surface, k-tile).
+    int kTile = computeKTile(p.ntheta / 2, p.nzeta);
+    int nKTiles = (p.nzeta + kTile - 1) / kTile;
+    dim3 blk(p.ntheta / 2, kTile);
+    dim3 grd(p.ns, nKTiles);
+    size_t invSmem = 4 * p.mpol * kTile * sizeof(T);
     // R slots 0-3 -> r/ru/rv, Z slots 4-7 -> z/zu/zv, λ slots 8-11 -> l/lu/lv
     inverseAccumulateKernel<T><<<grd, blk, invSmem>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 0,
-        fp.d_r_e, fp.d_ru_e, fp.d_rv_e, fp.d_r_o, fp.d_ru_o, fp.d_rv_o);
+        fp.d_r_e, fp.d_ru_e, fp.d_rv_e, fp.d_r_o, fp.d_ru_o, fp.d_rv_o,
+        kTile);
     inverseAccumulateKernel<T><<<grd, blk, invSmem>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 4,
-        fp.d_z_e, fp.d_zu_e, fp.d_zv_e, fp.d_z_o, fp.d_zu_o, fp.d_zv_o);
+        fp.d_z_e, fp.d_zu_e, fp.d_zv_e, fp.d_z_o, fp.d_zu_o, fp.d_zv_o,
+        kTile);
     inverseAccumulateKernel<T><<<grd, blk, invSmem>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 8,
-        fp.d_l_e, fp.d_lu_e, fp.d_lv_e, fp.d_l_o, fp.d_lu_o, fp.d_lv_o);
+        fp.d_l_e, fp.d_lu_e, fp.d_lv_e, fp.d_l_o, fp.d_lu_o, fp.d_lv_o,
+        kTile);
     if (do_combine) {
         dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
         combineParityKernel<T><<<cgrd, cblk>>>(
@@ -385,6 +409,24 @@ static void inverseDFTCufft(const FourierPlan<T>& fp, const SpectralState<T>& st
             fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
     }
     checkCuda(cudaGetLastError(), "inv cuFFT");
+}
+
+// Public snapshot: refresh the 9 combined arrays from the CURRENT parity
+// arrays (the hot loop runs with do_combine=false and never refreshes them;
+// call this before reading any *_real array after a do_combine=false pass).
+template <typename T>
+void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p) {
+    dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
+    combineParityKernel<T><<<cgrd, cblk>>>(
+        fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
+        fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
+        fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
+        fp.d_rv_o, fp.d_zv_o, fp.d_lv_o,
+        p.nZnT, p.ns,
+        fp.d_r_real, fp.d_z_real, fp.d_l_real,
+        fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
+        fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
+    checkCuda(cudaGetLastError(), "combine parity");
 }
 
 template <typename T>
@@ -424,7 +466,7 @@ __global__ void forwardReduceKernel(
     const T* __restrict__ mcos_th, const T* __restrict__ msin_th,
     const T* __restrict__ fwd_w,
     int ns, int mpol, int ntheta, int nThetaRed, int nzeta, int nZnT,
-    T* __restrict__ zeta_real)
+    T* __restrict__ zeta_real, int kTile)
 {
     int j = blockIdx.y, m = blockIdx.x;
     // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the 14
@@ -434,8 +476,14 @@ __global__ void forwardReduceKernel(
     // l-values is a warp shuffle tree (two k groups per warp, width 16) —
     // replacing the previous shared-memory atomicAdd, which after the
     // dimension swap serialized 16-way per address (2.5 ms/iter).
-    int k = threadIdx.y, l = threadIdx.x;
-    bool active = (l < nThetaRed);
+    // The ζ direction is TILED (blockIdx.z selects the k-tile, kTile-wide)
+    // so the launch block stays bounded for larger grids; every (m, j, k)
+    // is independent, so the per-point arithmetic is unchanged.
+    int k = threadIdx.y + blockIdx.z * kTile;
+    int l = threadIdx.x;
+    // The k guard covers the tail tile (k >= nzeta): those threads contribute
+    // zeros to the shuffle tree, whose result is discarded by the store guard.
+    bool active = (l < nThetaRed && k < nzeta);
     T v0 = T(0), v1 = T(0), v2 = T(0), v3 = T(0), v4 = T(0), v5 = T(0);
     T v6 = T(0), v7 = T(0), v8 = T(0), v9 = T(0), v10 = T(0), v11 = T(0);
     if (active) {
@@ -474,7 +522,11 @@ __global__ void forwardReduceKernel(
         v11 = -cl * cosm;
     }
     // Warp reduction over the 16 l-values (two k groups per warp, width 16).
-    unsigned mask = 0xffffffffu;
+    // All block threads converge here (threads with l >= nThetaRed only
+    // zeroed their contributions), so the active mask names exactly the
+    // existing lanes — 0xffffffff would be an invalid mask contract for
+    // partial warps (e.g. the 16-thread blocks of the nzeta=1 Solovev grid).
+    unsigned mask = __activemask();
     #pragma unroll
     for (int off = 8; off > 0; off >>= 1) {
         v0 += __shfl_down_sync(mask, v0, off, 16);
@@ -490,7 +542,7 @@ __global__ void forwardReduceKernel(
         v10 += __shfl_down_sync(mask, v10, off, 16);
         v11 += __shfl_down_sync(mask, v11, off, 16);
     }
-    if (l == 0) {
+    if (l == 0 && k < nzeta) {   // k guard: tail tile past the grid
         T* base = zeta_real + ((size_t)m * ns + j) * nzeta;
         size_t step = (size_t)mpol * ns * nzeta;
         #pragma unroll
@@ -559,8 +611,12 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, T* d_f_spectral,
     // the kernels write only the entries vmecpp computes.
     checkCuda(cudaMemset(d_f_spectral, 0,
                          (size_t)6 * p.mnmax * p.ns * sizeof(T)), "fwd zero");
-    dim3 blk(16, p.nzeta);  // x padded to 16 lanes (warp shuffle width)
-    dim3 grd(p.mpol, p.ns);
+    // ζ-tiled reduce (see forwardReduceKernel): block (16 lanes, kTile),
+    // grid (mpol, ns, k-tiles).
+    int kTile = computeKTile(16, p.nzeta);
+    int nKTiles = (p.nzeta + kTile - 1) / kTile;
+    dim3 blk(16, kTile);  // x padded to 16 lanes (warp shuffle width)
+    dim3 grd(p.mpol, p.ns, nKTiles);
     forwardReduceKernel<T><<<grd, blk>>>(
         fp.d_armn_e, fp.d_armn_o, fp.d_azmn_e, fp.d_azmn_o,
         fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
@@ -569,7 +625,7 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, T* d_f_spectral,
         cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th, fp.d_fwd_w,
         p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT,
-        fp.d_zeta_real);
+        fp.d_zeta_real, kTile);
     checkCufft(FftTraits<T>::execForward(fp.plan_d2z, fp.d_zeta_real, fp.d_zeta_spectra), "fwd d2z");
     int total = p.ns * p.mnmax;
     forwardRecoverKernel<T><<<(total + 255) / 256, 256>>>(
@@ -587,11 +643,13 @@ void forwardDFT(const FourierPlan<T>& fp, T* d_f_spectral, const GridParams<T>& 
 // ---- Explicit instantiation (double + float) ----------------------------
 // The kernels need none: every launch happens inside these host templates in
 // this TU, so they instantiate implicitly.
-template FourierPlan<double> fourierCreate<double>(const GridParams<double>&, cublasHandle_t);
-template FourierPlan<float>  fourierCreate<float>(const GridParams<float>&, cublasHandle_t);
+template FourierPlan<double> fourierCreate<double>(const GridParams<double>&);
+template FourierPlan<float>  fourierCreate<float>(const GridParams<float>&);
 template void fourierFree<double>(FourierPlan<double>&);
 template void fourierFree<float>(FourierPlan<float>&);
 template void inverseDFT<double>(const FourierPlan<double>&, const SpectralState<double>&, const GridParams<double>&, bool);
 template void inverseDFT<float>(const FourierPlan<float>&, const SpectralState<float>&, const GridParams<float>&, bool);
 template void forwardDFT<double>(const FourierPlan<double>&, double*, const GridParams<double>&, const ConstraintWorkspace<double>&);
 template void forwardDFT<float>(const FourierPlan<float>&, float*, const GridParams<float>&, const ConstraintWorkspace<float>&);
+template void fourierCombineParity<double>(const FourierPlan<double>&, const GridParams<double>&);
+template void fourierCombineParity<float>(const FourierPlan<float>&, const GridParams<float>&);

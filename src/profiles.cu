@@ -84,14 +84,12 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
     size_t nH = (p.ns - 1) * sizeof(T);
 
     checkCuda(cudaMalloc(&rp.d_iota_F, nF), "iota_F");
-    checkCuda(cudaMalloc(&rp.d_pres_F, nF), "pres_F");
     checkCuda(cudaMalloc(&rp.d_phip_F, nF), "phip_F");
     checkCuda(cudaMalloc(&rp.d_chi_F,  nF), "chi_F");
     checkCuda(cudaMalloc(&rp.d_sqrtS_F, nF), "sqrtS_F");
     checkCuda(cudaMalloc(&rp.d_iota_H, nH), "iota_H");
     checkCuda(cudaMalloc(&rp.d_pres_H, nH), "pres_H");
     checkCuda(cudaMalloc(&rp.d_phip_H, nH), "phip_H");
-    checkCuda(cudaMalloc(&rp.d_mass_H, nH), "mass_H");
     checkCuda(cudaMalloc(&rp.d_dVds_H, nH), "dVds_H");
     checkCuda(cudaMalloc(&rp.d_sqrtS_H, nH), "sqrtS_H");
     checkCuda(cudaMalloc(&rp.d_curr_H, nH), "curr_H");
@@ -108,6 +106,14 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
     T Itor = T(0.0);
     if (ip.ncurr == 1) {
         T edgeCurrent = evalCurrProfile<T>(ip, T(1.0));
+        if (edgeCurrent == T(0.0)) {
+            // The normalization is a division by the edge current integral:
+            // a degenerate (all-zero) ac profile would make Itor infinite and
+            // poison the current constraint. Fail loudly instead.
+            fprintf(stderr, "profiles: ncurr=1 with a zero edge current "
+                            "integral (ac profile integrates to 0 at s=1)\n");
+            exit(1);
+        }
         Itor = T(GridParams<T>::kSignJacobian) * GridParams<T>::kMu0 * T(ip.curtor) /
                (T(2.0 * M_PI) * edgeCurrent);
     }
@@ -120,12 +126,6 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
         h[j] = evalIotaProfile<T>(ip, tf);
     }
     checkCuda(cudaMemcpy(rp.d_iota_F, h, nF, cudaMemcpyHostToDevice), "iota_F cpy");
-    for (int j = 0; j < p.ns; ++j) {
-        T s = rp.delta_s * T(j);
-        T tf = fmin(torflux<T>(ip, fmin(s, T(ip.spres_ped))), T(1.0));
-        h[j] = evalMassProfile<T>(ip, tf);  // pres = mass (gamma = 0)
-    }
-    checkCuda(cudaMemcpy(rp.d_pres_F, h, nF, cudaMemcpyHostToDevice), "pres_F cpy");
     for (int j = 0; j < p.ns; ++j) {
         T s = rp.delta_s * T(j);
         h[j] = maxToroidalFlux * torfluxDeriv<T>(ip, s);
@@ -158,6 +158,8 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
         h[j] = maxToroidalFlux * torfluxDeriv<T>(ip, sh);
     }
     checkCuda(cudaMemcpy(rp.d_phip_H, h, nH, cudaMemcpyHostToDevice), "phip_H cpy");
+    // Note: d_mass_H (dead storage, never read) was removed; d_pres_H holds
+    // the mass profile (gamma=0 -> pres = mass).
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = rp.delta_s * (T(j) + T(0.5));
         T tf = fmin(torflux<T>(ip, sh), T(1.0));
@@ -195,11 +197,11 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
 
 template <typename T>
 void profilesFree(RadialProfiles<T>& rp) {
-    cudaFree(rp.d_iota_F); cudaFree(rp.d_pres_F);
+    cudaFree(rp.d_iota_F);
     cudaFree(rp.d_phip_F); cudaFree(rp.d_chi_F);
     cudaFree(rp.d_sqrtS_F);
     cudaFree(rp.d_iota_H); cudaFree(rp.d_pres_H);
-    cudaFree(rp.d_phip_H); cudaFree(rp.d_mass_H);
+    cudaFree(rp.d_phip_H);
     cudaFree(rp.d_dVds_H); cudaFree(rp.d_sqrtS_H);
     cudaFree(rp.d_curr_H); cudaFree(rp.d_chip_H);
 }

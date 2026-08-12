@@ -10,7 +10,6 @@
 #include <cstdlib>
 #include <cmath>
 #include <exception>
-#include <cublas_v2.h>
 
 #include "input_json.h"
 #include "vmec_types.h"
@@ -25,9 +24,6 @@
 static void checkCuda(cudaError_t err, const char* tag) {
     if(err!=cudaSuccess){fprintf(stderr,"CUDA error [%s]: %s\n",tag,cudaGetErrorString(err));exit(1);}
 }
-static void checkCublas(cublasStatus_t st, const char* tag) {
-    if(st!=CUBLAS_STATUS_SUCCESS){fprintf(stderr,"cuBLAS error [%s]: %d\n",tag,(int)st);exit(1);}
-}
 
 static GridParams<Real> initParams(const InputParams& ip) {
     GridParams<Real> p;
@@ -37,6 +33,7 @@ static GridParams<Real> initParams(const InputParams& ip) {
     p.mnmax=p.mpol*(p.ntor+1);   // folded basis: mode = m*(ntor+1)+n
     p.ncurr=ip.ncurr;
     p.delt=ip.delt; p.ftol=ip.ftol; p.max_iter=ip.max_iter;
+    p.tcon0=Real(ip.tcon0);      // constraint-force multiplier
     p.lamscale=Real(0.0);        // set by profilesCreate
     return p;
 }
@@ -250,6 +247,33 @@ int main(int argc, char** argv) {
         fprintf(stderr, "cuMES: error loading input file: %s\n", e.what());
         return EXIT_FAILURE;
     }
+
+    // Output-backend preflight: a requested-but-unlinked format (e.g. .nc on
+    // a build without NetCDF) is rejected HERE, before the CUDA context is
+    // created and before any grid stage runs — not after thousands of
+    // solver iterations (and without the deep exit() that used to bypass
+    // cleanup).
+    if (!outputFormatAvailable(outputPath)) {
+        fprintf(stderr, "cuMES: no output will be written; bailing out\n");
+        return EXIT_FAILURE;
+    }
+
+#ifdef CUMES_USE_FLOAT
+    // Float runs stall at ~1e-7 (the float rounding floor) and can never
+    // meet the double-tuned stage tolerances — reject impossible values
+    // instead of failing every stage at the end of the run.
+    for (int g = 0; g < ip.n_grids; ++g) {
+        if (ip.ftol_array[g] < 1.0e-6) {
+            fprintf(stderr,
+                    "cuMES: float build cannot meet ftol_array[%d]=%.0e "
+                    "(float residual floor is ~1e-7); relax the ftol_array "
+                    "entries to >= 1e-6 for float experiments\n",
+                    g, ip.ftol_array[g]);
+            return EXIT_FAILURE;
+        }
+    }
+#endif
+
     GridParams<Real> p=initParams(ip);
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
@@ -265,8 +289,6 @@ int main(int argc, char** argv) {
     printf(", ftol");
     for (int g = 0; g < ip.n_grids; ++g) printf(" %.0e", ip.ftol_array[g]);
     printf(")\n");
-
-    cublasHandle_t cublasHandle; checkCublas(cublasCreate(&cublasHandle),"cublas");
 
     // ---- Multi-radial-grid stage loop ----
     // Each stage runs the solver on its own radial grid (with its own
@@ -294,7 +316,7 @@ int main(int argc, char** argv) {
             st = st_new;
         }
         RadialProfiles<Real> rp = profilesCreate<Real>(p, ip);  // sets p.lamscale
-        FourierPlan<Real> fp = fourierCreate<Real>(p, cublasHandle);
+        FourierPlan<Real> fp = fourierCreate<Real>(p);
         MetricWorkspace<Real> mw = metricCreate<Real>(p);
 
         result = solverRun<Real>(st, p, rp, fp, mw);
@@ -313,18 +335,24 @@ int main(int argc, char** argv) {
                     (double)p.ftol, (double)result.fsqr, (double)result.fsqz,
                     (double)result.fsql);
             freeState(st);
-            cublasDestroy(cublasHandle);
             return EXIT_FAILURE;
         }
     }
 
-    outputSave<Real>(st, p, ip, result, outputPath, inputPath);
+    // Output success is part of the run result: a converged solve whose
+    // state file could not be written must NOT exit 0 (the writers return
+    // false on open/write/close failure and clean up partial files).
+    const bool output_ok = outputSave<Real>(st, p, ip, result, outputPath, inputPath);
     outputPrint<Real>(st, p, result.iterations, result.converged,
                       result.fsqr, result.fsqz, result.fsql);
     if (ip.n_grids > 1)
         printf("multigrid: total effective iterations over %d grids = %d\n",
                ip.n_grids, total_iter);
     freeState(st);
-    cublasDestroy(cublasHandle);
-    printf("\nDone.\n"); return result.converged ? 0 : 1;
+    printf("\nDone.\n");
+    if (!output_ok) {
+        fprintf(stderr, "cuMES: FAILED to write output state (%s)\n", outputPath);
+        return EXIT_FAILURE;
+    }
+    return result.converged ? 0 : 1;
 }

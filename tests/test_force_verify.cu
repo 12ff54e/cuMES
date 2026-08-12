@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
-#include <cublas_v2.h>
 
 #include "input_json.h"
 #include "constraint.cuh"
@@ -75,13 +74,15 @@ int main() {
     cc(cudaMemcpy(st.d_lmnsc, h_lmnsc, nb, cudaMemcpyHostToDevice), "cpy lmnsc");
     cc(cudaMemcpy(st.d_rmnss, h_rmnss, nb, cudaMemcpyHostToDevice), "cpy rmnss");
     cc(cudaMemcpy(st.d_zmncs, h_zmncs, nb, cudaMemcpyHostToDevice), "cpy zmncs");
+    // st.d_lmncs was allocated above but never uploaded: the inverse DFT
+    // reads it, so uninitialized device memory (garbage λ forces) is a
+    // real hazard — upload the loaded state like the other families.
+    cc(cudaMemcpy(st.d_lmncs, h_lmncs, nb, cudaMemcpyHostToDevice), "cpy lmncs");
 
     // Create profiles and Fourier plan
     InputParams ip = initInputParams();
     RadialProfiles<double> rp = profilesCreate(p, ip);
-    cublasHandle_t handle;
-    cublasCreate(&handle);
-    FourierPlan<double> fpl = fourierCreate(p, handle);
+    FourierPlan<double> fpl = fourierCreate(p);
     MetricWorkspace<double> mw = metricCreate(p);
 
     // Run one iteration: inverse DFT + geometry + forces + forward DFT
@@ -95,9 +96,13 @@ int main() {
     printf("dbg: forces err=%s\n", cudaGetErrorString(cudaGetLastError()));
     cudaDeviceSynchronize();
 
-    // Forward DFT to get spectral forces
+    // Forward DFT to get spectral forces. forwardDFT writes SIX component
+    // families (frcc fzsc flsc frss fzcs flcs — it memsets 6*mnmax*ns and
+    // the recovery kernel writes component 5), so the buffers must hold six;
+    // the old 5-family allocation was a device buffer overflow.
+    const size_t n6 = (size_t)6 * ns * mnmax;
     double* d_f_spec;
-    cc(cudaMalloc(&d_f_spec, 5*ns*mnmax*sizeof(double)), "f_spec");
+    cc(cudaMalloc(&d_f_spec, n6*sizeof(double)), "f_spec");
     ConstraintWorkspace<double> cw_zero{}; cudaMalloc(&cw_zero.d_frcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
@@ -105,23 +110,34 @@ int main() {
     forwardDFT(fpl, d_f_spec, p, cw_zero);
 
     // Copy forces to host
-    auto* h_f = new double[5*ns*mnmax];
-    cc(cudaMemcpy(h_f, d_f_spec, 5*ns*mnmax*sizeof(double), cudaMemcpyDeviceToHost), "cpy f");
+    auto* h_f = new double[n6];
+    cc(cudaMemcpy(h_f, d_f_spec, n6*sizeof(double), cudaMemcpyDeviceToHost), "cpy f");
 
-    // Compute residuals
+    // Compute residuals. vmecpp's groups: fsqr = frcc+frss (comps 0,3),
+    // fsqz = fzsc+fzcs (comps 1,4), fsql = flsc+flcs (comps 2,5).
     double fsqr=0, fsqz=0, fsql=0;
-    for (int c = 0; c < 5; ++c) {
+    for (int c = 0; c < 6; ++c) {
         double sum = 0;
         for (int i = 0; i < ns*mnmax; ++i) sum += h_f[c*ns*mnmax + i] * h_f[c*ns*mnmax + i];
         sum /= (ns*mnmax);
-        if (c == 0) fsqr = sum;
-        else if (c == 1) fsqz = sum;
-        else if (c == 2) fsql = sum;
+        if (c == 0 || c == 3) fsqr += sum;
+        else if (c == 1 || c == 4) fsqz += sum;
+        else if (c == 2 || c == 5) fsql += sum;
     }
     printf("\nForce residuals for vmecpp equilibrium:\n");
     printf("  FSQR = %.3e\n", fsqr);
     printf("  FSQZ = %.3e\n", fsqz);
     printf("  FSQL = %.3e\n", fsql);
+
+    // The whole point of the test: a converged equilibrium must sit near a
+    // force balance. A broken formula shows up as O(1) residuals; a correct
+    // one lands orders of magnitude below. Fail (nonzero exit) when the
+    // residuals are implausibly large so CI can distinguish a verified
+    // result from a diagnostic.
+    const double kFailThresh = 1e-4;
+    bool bad = fsqr > kFailThresh || fsqz > kFailThresh || fsql > kFailThresh;
+    printf(bad ? "  -> FAIL: residuals above %.0e\n" : "  -> residuals below %.0e (OK)\n",
+           kFailThresh);
 
     // Print forces for mode 0 (R_00) at axis
     printf("\nMode 0 (R_00) forces at each surface:\n");
@@ -196,9 +212,11 @@ int main() {
     cudaFree(d_f_spec);
     fourierFree(fpl); metricFree(mw); profilesFree(rp);
     cudaFree(st.d_rmncc); cudaFree(st.d_zmnsc); cudaFree(st.d_lmnsc);
-    cudaFree(st.d_rmnss); cudaFree(st.d_zmncs);
-    cublasDestroy(handle);
+    cudaFree(st.d_rmnss); cudaFree(st.d_zmncs); cudaFree(st.d_lmncs);
+    cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
+    cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
     delete[] h_rmncc; delete[] h_zmnsc; delete[] h_lmnsc; delete[] h_rmnss; delete[] h_zmncs;
+    delete[] h_lmncs;
     delete[] h_f;
-    return 0;
+    return bad ? 1 : 0;
 }

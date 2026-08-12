@@ -1,7 +1,6 @@
 // test_forces.cu — diagnostic: check force sign and magnitude for cylinder
 #include <cstdio>
 #include <cmath>
-#include <cublas_v2.h>
 #include <vector>
 
 #include "vmec_types.h"
@@ -27,9 +26,6 @@ int main() {
 
     printf("=== Force Diagnostic Test ===\n");
 
-    cublasHandle_t cublasHandle;
-    cublasCreate(&cublasHandle);
-
     // Create Solovev-like initial state with independent parity coefficients
     SpectralState<double> st{};
     size_t nbytes_state = p.ns * p.mnmax * sizeof(double);
@@ -38,6 +34,10 @@ int main() {
     auto* h_zsc = new double[p.ns * p.mnmax]();
     auto* h_zcs = new double[p.ns * p.mnmax]();
     auto* h_lsc = new double[p.ns * p.mnmax]();
+    // h_lcs was declared but never filled/uploaded before: the inverse DFT
+    // reads st.d_lmncs, so the kernel consumed uninitialized device memory
+    // (and st.d_lmncs was leaked). Zero it like the other families.
+    auto* h_lcs = new double[p.ns * p.mnmax]();
 
     for (int j = 0; j < p.ns; ++j) {
         double ss = j / (p.ns - 1.0);
@@ -75,6 +75,7 @@ int main() {
     checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nbytes_state, cudaMemcpyHostToDevice), "cpy zsc");
     checkCuda(cudaMemcpy(st.d_zmncs, h_zcs, nbytes_state, cudaMemcpyHostToDevice), "cpy zcs");
     checkCuda(cudaMemcpy(st.d_lmnsc, h_lsc, nbytes_state, cudaMemcpyHostToDevice), "cpy lsc");
+    checkCuda(cudaMemcpy(st.d_lmncs, h_lcs, nbytes_state, cudaMemcpyHostToDevice), "cpy lcs");
     checkCuda(cudaMemset(st.d_v_rmncc, 0, nbytes_state), "vcc");
     checkCuda(cudaMemset(st.d_v_rmnss, 0, nbytes_state), "vss");
     checkCuda(cudaMemset(st.d_v_zmnsc, 0, nbytes_state), "vzsc");
@@ -82,11 +83,12 @@ int main() {
     checkCuda(cudaMemset(st.d_v_lmnsc, 0, nbytes_state), "vlsc");
     checkCuda(cudaMemset(st.d_v_lmncs, 0, nbytes_state), "vlcs");
 
-    delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc;
+    delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
+    delete[] h_lsc; delete[] h_lcs;
 
     InputParams ip = initInputParams();
     RadialProfiles<double> rp = profilesCreate(p, ip);
-    FourierPlan<double> fp = fourierCreate(p, cublasHandle);
+    FourierPlan<double> fp = fourierCreate(p);
     MetricWorkspace<double> mw = metricCreate(p);
 
     // Run one iteration
@@ -144,7 +146,7 @@ int main() {
 
     // Compute spectral forces via forward DFT
     size_t nbs = 6 * p.ns * p.mnmax * sizeof(double);
-    auto* d_fspec = (double*)malloc(nbs);  // host
+    auto* d_fspec = new double[6 * p.ns * p.mnmax];  // host
     double* d_fspec_gpu;
     checkCuda(cudaMalloc(&d_fspec_gpu, nbs), "fspec");
     ConstraintWorkspace<double> cw_zero{}; cudaMalloc(&cw_zero.d_frcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
@@ -157,8 +159,9 @@ int main() {
     printf("\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n");
     printf("  mode | m  n |  f_rmnc(axis) f_zmns(axis) f_lmnc(axis)\n");
     for (int m = 0; m < p.mnmax; ++m) {
-        int mm = m / p.ntor;
-        int nn = m % p.ntor;
+        // mode = m*(ntor+1)+n (the old m/ntor division mislabeled the modes)
+        int mm = m / (p.ntor + 1);
+        int nn = m % (p.ntor + 1);
         int idx_r = 0 + m * p.ns;  // axis (j=0), mode m, comp R
         int idx_z = 0 + m * p.ns + p.mnmax * p.ns;
         int idx_l = 0 + m * p.ns + 2 * p.mnmax * p.ns;
@@ -168,16 +171,17 @@ int main() {
 
     // Cleanup
     cudaFree(st.d_rmncc); cudaFree(st.d_rmnss); cudaFree(st.d_zmnsc);
-    cudaFree(st.d_zmncs); cudaFree(st.d_lmnsc);
+    cudaFree(st.d_zmncs); cudaFree(st.d_lmnsc); cudaFree(st.d_lmncs);
     cudaFree(st.d_v_rmncc); cudaFree(st.d_v_rmnss); cudaFree(st.d_v_zmnsc);
     cudaFree(st.d_v_zmncs); cudaFree(st.d_v_lmnsc);
     fourierFree(fp); metricFree(mw); profilesFree(rp);
-    cublasDestroy(cublasHandle);
+    cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
+    cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
 
     delete[] h_r; delete[] h_z;
     delete[] h_armn_e; delete[] h_armn_o; delete[] h_blmn_e;
     delete[] h_az; delete[] h_gs; delete[] h_tau; delete[] h_r12;
-    cudaFree(d_fspec_gpu); free(d_fspec);
+    cudaFree(d_fspec_gpu); delete[] d_fspec;
 
     printf("\nDone.\n");
     return 0;
