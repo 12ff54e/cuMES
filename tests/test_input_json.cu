@@ -32,6 +32,14 @@ static int failures = 0;
         }                                                                    \
     } while (0)
 
+// Unique per-process scratch file so parallel CTest runs cannot collide on
+// the same path (the old fixed name broke `ctest -j`).
+static const char* scratchPath() {
+    static char buf[64];
+    snprintf(buf, sizeof buf, "test_input_json_scratch_%d.json", (int)getpid());
+    return buf;
+}
+
 // Expect expr to throw std::runtime_error whose message contains `fragment`.
 #define CHECK_THROWS(expr, fragment, msg)                                    \
     do {                                                                     \
@@ -45,7 +53,7 @@ static int failures = 0;
     } while (0)
 
 static void writeScratch(const std::string& content) {
-    FILE* fp = fopen("test_input_json_scratch.json", "w");
+    FILE* fp = fopen(scratchPath(), "w");
     if (!fp) { fprintf(stderr, "cannot write scratch file\n"); exit(1); }
     fputs(content.c_str(), fp);
     fclose(fp);
@@ -127,17 +135,17 @@ static void testErrors() {
     CHECK_THROWS(initInputParamsFromJson("no_such_file.json"), "not found",
                  "error: missing file");
     writeScratch("{\"mpol\": \"six\"}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "expected an integer", "error: wrong type for mpol");
     // (lasym check runs after the boundary-required check, so include one)
     writeScratch("{\"lasym\": true, \"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "lasym=true", "error: lasym rejected");
     writeScratch("{\"ns_array\": [5, 11], \"niter_array\": [1000, 2000, 2000],"
                  " \"ftol_array\": [1e-16, 1e-16, 1e-16]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "niter_array length must match ns_array", "error: multigrid length mismatch");
     // out-of-range boundary mode is warned about and skipped (vmecpp semantics)
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"ns_array\": [5],"
@@ -146,18 +154,18 @@ static void testErrors() {
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0},"
                  "          {\"n\": 0, \"m\": 99, \"value\": 9.9}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    InputParams p = initInputParams("test_input_json_scratch.json");
+    InputParams p = initInputParams(scratchPath());
     CHECK(p.rbc_n == 1 && p.rbc[0].value == 1.0, "error: out-of-range mode skipped");
     // missing boundary is a hard error
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"rbc\": []}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "rbc: at least one boundary coefficient is required",
                  "error: empty rbc rejected");
     // minimal document without multigrid arrays -> single stage, defaults
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    p = initInputParams("test_input_json_scratch.json");
+    p = initInputParams(scratchPath());
     CHECK(p.n_grids == 1 && p.ns == p.ns_array[0] && p.aphi_n == 1 && p.aphi[0] == 1.0,
           "minimal doc: single stage + aphi default");
 }
@@ -172,13 +180,13 @@ static void testNegative() {
                  " \"adiabatic_index\": 0.5,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "gamma", "neg: nonzero gamma (adiabatic_index) rejected");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"gamma\": 1.5,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "gamma", "neg: nonzero gamma (alias) rejected");
 
     // Negative boundary m is skipped with a warning (input_json.cu:151),
@@ -189,7 +197,7 @@ static void testNegative() {
                  "          {\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     {
-        InputParams p = initInputParams("test_input_json_scratch.json");
+        InputParams p = initInputParams(scratchPath());
         CHECK(p.rbc_n == 1 && p.rbc[0].value == 1.0,
               "neg: negative boundary m skipped, valid entry kept");
     }
@@ -198,7 +206,7 @@ static void testNegative() {
                  "          {\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     {
-        InputParams p = initInputParams("test_input_json_scratch.json");
+        InputParams p = initInputParams(scratchPath());
         CHECK(p.rbc_n == 1 && p.rbc[0].value == 1.0,
               "neg: m >= mpol boundary skipped");
     }
@@ -206,66 +214,66 @@ static void testNegative() {
     // Empty multigrid schedule is rejected (input_json.cu:270): a zero-stage
     // run would save/print a null state.
     writeScratch("{\"ns_array\": [], \"niter_array\": [], \"ftol_array\": []}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "at least one stage", "neg: empty ns_array rejected");
     // Oversized schedule rejected by the kMaxGrids capacity (readNumberArray).
     writeScratch("{\"ns_array\": [5,6,7,8,9,10,11,12,13],"
                  " \"niter_array\": [1,1,1,1,1,1,1,1,1],"
                  " \"ftol_array\": [1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "exceed the 8-entry capacity", "neg: oversized ns_array rejected");
     // ftol_array length mismatch (only niter length was covered before).
     writeScratch("{\"ns_array\": [5, 11], \"niter_array\": [100, 200],"
                  " \"ftol_array\": [1e-12]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "ftol_array length must match ns_array",
                  "neg: ftol_array length mismatch rejected");
     // Non-monotonic schedule.
     writeScratch("{\"ns_array\": [55, 11], \"niter_array\": [100, 200],"
                  " \"ftol_array\": [1e-12, 1e-12]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "monotonically non-decreasing", "neg: non-monotonic ns rejected");
 
     // Integer narrowing: a huge literal must not silently wrap into a
     // valid-looking resolution (input_json.cu:67).
     writeScratch("{\"mpol\": 4294967297}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "out of range", "neg: integer overflow rejected");
 
     // Wrong-type auxiliary/asymmetric keys are hard errors (input_json.cu:317).
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"am_aux_s\": 5,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "am_aux_s': expected an array", "neg: scalar am_aux_s rejected");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"raxis_s\": 5,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "raxis_s': expected an array", "neg: scalar raxis_s rejected");
     // Non-empty asymmetric array is unsupported physics.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"rbs\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "asymmetric (lasym) input is not supported", "neg: rbs content rejected");
 
     // Unsupported physics keys: lasym, lfreeb, non-power_series profiles.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "lasym=true", "neg: lasym=true rejected");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "free-boundary", "neg: lfreeb=true rejected");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"pmass_type\": \"spline\","
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson("test_input_json_scratch.json"),
+    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
                  "only \"power_series\"", "neg: non-power_series profile rejected");
 
     // A typo'd key warns to stderr (not silently ignored) but does not fail
@@ -275,7 +283,7 @@ static void testNegative() {
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     {
         std::string err = captureStderr([&]() {
-            InputParams p = initInputParams("test_input_json_scratch.json");
+            InputParams p = initInputParams(scratchPath());
             CHECK(p.mpol == 2, "neg: unknown key parse succeeds");
         });
         CHECK(err.find("unknown input key 'n_theta'") != std::string::npos,
@@ -288,7 +296,7 @@ int main() {
     testW7x();
     testErrors();
     testNegative();
-    remove("test_input_json_scratch.json");
+    remove(scratchPath());
     if (failures == 0) {
         printf("test_input_json: ALL PASS\n");
         return 0;
