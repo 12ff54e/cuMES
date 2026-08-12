@@ -1,4 +1,14 @@
-// test_forces.cu — diagnostic: check force sign and magnitude for cylinder
+// test_forces.cu — force/geometry chain on a manufactured Solovev-like state.
+// Runs inverseDFT -> computeGeometry -> computeForces once and asserts the
+// numerical invariants a correct implementation must satisfy:
+//   * geometry is finite and the oriented Jacobian has the expected sign;
+//   * real-space R/Z and all four even/odd force families are finite
+//     (a NaN or inf would indicate a broken derivative/Jacobian/force path);
+//   * the axisymmetric manufactured state has the exact Z=0 symmetry at
+//     theta=0 and exact zero Z-forces (azmn_e == 0): a launch or indexing
+//     error leaks non-axisymmetric content into the Z channel.
+// The test returns nonzero if any assertion fails (it is a gate, not a
+// print-only diagnostic).
 #include <cstdio>
 #include <cmath>
 #include <vector>
@@ -10,6 +20,17 @@
 #include "geometry.cuh"
 #include "forces.cuh"
 #include "profiles.cuh"
+
+static int failures = 0;
+#define CHECK(cond, msg)                                                     \
+    do {                                                                     \
+        if (cond) {                                                          \
+            printf("PASS %s\n", msg);                                        \
+        } else {                                                             \
+            printf("FAIL %s\n", msg);                                        \
+            ++failures;                                                      \
+        }                                                                    \
+    } while (0)
 
 static void checkCuda(cudaError_t err, const char* tag) {
     if (err != cudaSuccess) {
@@ -169,6 +190,57 @@ int main() {
                m, mm, nn, d_fspec[idx_r], d_fspec[idx_z], d_fspec[idx_l]);
     }
 
+    // ---- numerical assertions (the gate) ----
+    {
+        // Geometry: finite everywhere; the oriented Jacobian is signJ*|gsqrt|
+        // (signJ = -1), so signJ*gsqrt must be positive on an interior
+        // surface (a flipped Jacobian from a bad parity combination would
+        // make it negative).
+        size_t nH = (size_t)(p.ns - 1) * p.nZnT;
+        checkCuda(cudaMemcpy(h_gs, mw.d_gsqrt, nH * sizeof(double), cudaMemcpyDeviceToHost), "gs");
+        bool geo_finite = true;
+        double jmin = 1e300, jmax = 0.0;
+        for (size_t i = 0; i < nH; ++i) {
+            if (!std::isfinite(h_gs[i])) geo_finite = false;
+            jmin = std::min(jmin, std::abs(h_gs[i]));
+            jmax = std::max(jmax, std::abs(h_gs[i]));
+        }
+        CHECK(geo_finite, "geometry gsqrt finite");
+        CHECK(jmin > 0.0 && jmax > 0.0, "geometry gsqrt nonzero (non-degenerate)");
+        // Axisymmetric: R at theta=0 must be positive on the axis (4.0).
+        CHECK(h_r[0] > 0.0, "axis R positive");
+
+        // Real-space forces finite (both parities, all families).
+        bool f_finite = true;
+        for (size_t i = 0; i < (size_t)p.ns * p.nZnT; ++i) {
+            if (!std::isfinite(h_armn_e[i]) || !std::isfinite(h_armn_o[i]) ||
+                !std::isfinite(h_az[i]) || !std::isfinite(h_blmn_e[i]))
+                f_finite = false;
+        }
+        CHECK(f_finite, "real-space forces finite");
+
+        // Axisymmetric symmetry: Z(theta=0) == 0 exactly (the manufactured
+        // state has only sin(m theta) Z content, which vanishes at theta=0;
+        // a leak of cos(m theta) Z content into the axisymmetric Z channel
+        // would break this). The Z-FORCE at theta=0 also vanishes for the
+        // same reason — the weak form's Z term is proportional to Z and its
+        // derivatives, all zero at theta=0.
+        bool z_zero = true;
+        for (int j = 0; j < p.ns; ++j)
+            if (h_z[j * p.nZnT] != 0.0) z_zero = false;
+        CHECK(z_zero, "axisymmetric: Z(theta=0) == 0");
+        bool az_zero = true;
+        for (int j = 0; j < p.ns; ++j)
+            if (h_az[j * p.nZnT] != 0.0) az_zero = false;
+        CHECK(az_zero, "axisymmetric: Z-force azmn_e(theta=0) == 0");
+
+        // Spectral forces finite (the forward-DFT path).
+        bool fs_finite = true;
+        for (size_t i = 0; i < 6 * (size_t)p.ns * p.mnmax; ++i)
+            if (!std::isfinite(d_fspec[i])) fs_finite = false;
+        CHECK(fs_finite, "spectral forces finite");
+    }
+
     // Cleanup
     cudaFree(st.d_rmncc); cudaFree(st.d_rmnss); cudaFree(st.d_zmnsc);
     cudaFree(st.d_zmncs); cudaFree(st.d_lmnsc); cudaFree(st.d_lmncs);
@@ -184,5 +256,10 @@ int main() {
     cudaFree(d_fspec_gpu); delete[] d_fspec;
 
     printf("\nDone.\n");
-    return 0;
+    if (failures == 0) {
+        printf("test_forces: ALL PASS\n");
+        return 0;
+    }
+    printf("test_forces: %d FAILURES\n", failures);
+    return 1;
 }

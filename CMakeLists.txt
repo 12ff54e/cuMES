@@ -258,7 +258,7 @@ set_tests_properties(test_input_json PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME test_forces COMMAND test_forces)
 set_tests_properties(test_forces PROPERTIES
-    LABELS "diagnostic;forces" TIMEOUT 300
+    LABELS "unit;forces" TIMEOUT 300
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME test_output_failure COMMAND test_output_failure)
 set_tests_properties(test_output_failure PROPERTIES
