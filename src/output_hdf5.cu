@@ -41,22 +41,23 @@ herr_t putAttr(hid_t loc, const char* name, hid_t dtype, const void* val) {
 }  // namespace
 
 template <typename T>
-void outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
                     const InputParams& ip, const SolverResult<T>& result,
                     const char* path, const char* input_file) {
     hid_t fid = H5Fcreate(path, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
     if (fid < 0) {
         fprintf(stderr, "HDF5 error [H5Fcreate %s]\n", path);
-        return;
+        return false;
     }
-    // On any later error: close, delete the half-written file, return.
+    // On any later error: close, delete the half-written file, return false
+    // (the caller folds output success into the CLI exit code).
 #define H5_CHECK(expr, tag)                                                   \
     do {                                                                      \
         if ((expr) < 0) {                                                     \
             fprintf(stderr, "HDF5 error [%s]\n", tag);                        \
             H5Fclose(fid);                                                    \
             remove(path);                                                     \
-            return;                                                           \
+            return false;                                                     \
         }                                                                     \
     } while (0)
 
@@ -177,8 +178,9 @@ void outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
     H5_CHECK(H5Fclose(fid), "H5Fclose");
 #undef H5_CHECK
     printf("Saved HDF5 state to %s\n", path);
+    return true;
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template void outputSaveHdf5<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template void outputSaveHdf5<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveHdf5<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
+template bool outputSaveHdf5<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);

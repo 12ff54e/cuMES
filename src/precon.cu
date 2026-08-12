@@ -541,7 +541,11 @@ __global__ void lambdaPrecFinalizeKernel(
     if (mode >= mnmax || jF >= ns) return;
 
     int m = xm[mode], n = xn[mode];
-    T lamscale = sqrt(rmsPhiP[0] * delta_s);
+    // Guard: an all-zero phip profile (rmsPhiP == 0) would make lamscale == 0
+    // and pFactor infinite. The tiny floor keeps the lambda preconditioner
+    // finite; the degenerate geometry is failed earlier by the solver's
+    // jacobian-stats check anyway.
+    T lamscale = sqrt(fmax(rmsPhiP[0] * delta_s, T(1e-30)));
     const T pFactor = T(2.0) / (T(4.0) * lamscale * lamscale);
     const T pwr = fmin(T(m * m) / T(16.0 * 16.0), T(8.0));
     // faclam terms (vmecpp updateLambdaPreconditioner):
@@ -614,6 +618,14 @@ __global__ void tridiagSolveKernel(
     int nRow = jMax - jMin_m;   // solved rows jMin_m .. jMax-1
     int stride = mnmax * ns;
 
+    // The 128-thread block covers the solved rows in a grid-stride loop (the
+    // old kernel assumed nRow <= 128: for ns > 129 the tail rows were
+    // silently left at their staged values — an incomplete solve). Each row
+    // of a PCR round depends only on the PREVIOUS round's arrays, so the
+    // per-row arithmetic is unchanged; a __syncthreads() between rounds
+    // preserves the dependency. For the shipped grids (ns <= 99) the stride
+    // loop runs exactly once per round — bit-identical to the old kernel.
+
     // Shared: cur L,d,U; nxt L,d,U; f rows (2 per pass) cur+nxt
     T* s_tri = static_cast<T*>(dynSharedBase());
     T* cL = s_tri;            // [ns]
@@ -644,15 +656,22 @@ __global__ void tridiagSolveKernel(
             cF[1 * ns + j] = T(0.0);
         }
         __syncthreads();
-        // PCR rounds: eliminate the two neighbors at distance k each round
+        // PCR rounds: eliminate the two neighbors at distance k each round.
+        // Each round processes ALL solved rows via a grid-stride loop; the
+        // rounds are separated by __syncthreads (round r+1 reads every row
+        // written in round r, so the tiles cannot overlap).
         for (int k = 1; k <= nRow; k <<= 1) {
-            int j = jMin_m + tid;
-            if (tid < nRow) {
+            for (int r = tid; r < nRow; r += blockDim.x) {
+                int j = jMin_m + r;
                 bool hasL = (j - k >= jMin_m), hasR = (j + k < jMax);
                 T dL = hasL ? cD[j - k] : T(0.0);
                 T dR = hasR ? cD[j + k] : T(0.0);
-                if (fabs(dL) < T(1e-30)) dL = T(1e-30);
-                if (fabs(dR) < T(1e-30)) dR = T(1e-30);
+                // Pivot guard with sign preservation: a tiny (or zero)
+                // diagonal is replaced by a tiny value of the SAME sign —
+                // the old clamp to +1e-30 flipped the pivot (and hence the
+                // solve direction) for negative diagonals.
+                if (fabs(dL) < T(1e-30)) dL = copysign(T(1e-30), dL);
+                if (fabs(dR) < T(1e-30)) dR = copysign(T(1e-30), dR);
                 T invL = hasL ? T(1.0) / dL : T(0.0);
                 T invR = hasR ? T(1.0) / dR : T(0.0);
                 T L = cL[j], D = cD[j], U = cU[j];
@@ -661,7 +680,7 @@ __global__ void tridiagSolveKernel(
                 nL[j] = -L * Ll * invL;
                 nU[j] = -U * Ur * invR;
                 T nDv = D - L * Ul * invL - U * Lr * invR;
-                if (fabs(nDv) < T(1e-30)) nDv = T(1e-30);
+                if (fabs(nDv) < T(1e-30)) nDv = copysign(T(1e-30), nDv);
                 nD[j] = nDv;
                 #pragma unroll
                 for (int c = 0; c < 2; ++c) {
@@ -680,10 +699,10 @@ __global__ void tridiagSolveKernel(
             __syncthreads();
         }
         // ---- Final solve: x = f'' / d'' (decoupled after the rounds) ----
-        if (tid < nRow) {
-            int j = jMin_m + tid;
+        for (int r = tid; r < nRow; r += blockDim.x) {
+            int j = jMin_m + r;
             T d = cD[j];
-            if (fabs(d) < T(1e-30)) d = T(1e-30);
+            if (fabs(d) < T(1e-30)) d = copysign(T(1e-30), d);
             T inv = T(1.0) / d;
             f[comp[0] * stride + mode * ns + j] = cF[0 * ns + j] * inv;
             f[comp[1] * stride + mode * ns + j] = cF[1 * ns + j] * inv;

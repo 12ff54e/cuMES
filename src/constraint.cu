@@ -39,6 +39,14 @@ static void ccf(cufftResult r, const char* t) {
     if (r != CUFFT_SUCCESS) { fprintf(stderr, "CUFFT[%s]: %d\n", t, (int)r); exit(1); }
 }
 
+// ζ-tile width for the accumulate/synthesize/analyze kernels (mirrors the
+// helper in fourier.cu): the block no longer embeds the full theta/2 × zeta
+// product, so block sizes stay bounded for larger angular grids.
+static int computeKTile(int blkX, int nzeta) {
+    int kt = (blkX >= 1024) ? 1 : (16 < 1024 / blkX ? 16 : 1024 / blkX);
+    return kt < nzeta ? kt : nzeta;
+}
+
 // ---------------------------------------------------------------------------
 // Allocate/free
 // ---------------------------------------------------------------------------
@@ -193,31 +201,38 @@ __global__ void rzConAccumulateKernel(
     const T* __restrict__ zeta_real,
     const T* __restrict__ cos_th, const T* __restrict__ sin_th,
     int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    T* __restrict__ rCon, T* __restrict__ zCon)
+    T* __restrict__ rCon, T* __restrict__ zCon, int kTile)
 {
     int j = blockIdx.x;
     // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
     // rCon/zCon stores at idx = j*nZnT + k*ntheta + l then vary l fastest
-    // and coalesce.
-    int k = threadIdx.y, l1 = threadIdx.x;
+    // and coalesce. The ζ direction is TILED (blockIdx.y selects the
+    // k-tile) so the launch block stays bounded for larger grids; every
+    // (k, l) output point is independent, so the arithmetic is unchanged.
+    int k0 = blockIdx.y * kTile;
+    int k = threadIdx.y + k0;
+    int l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    T* sh = static_cast<T*>(dynSharedBase());   // [4][mpol][nzeta] (compact slots 0,1,2,3)
-    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * nzeta; i += nthreads) {
-        int s = i / (mpol * nzeta), rem = i - s * mpol * nzeta;
-        int m = rem / nzeta, kk = rem % nzeta;
-        sh[i] = zeta_real[(((size_t)s * mpol + m) * ns + j) * nzeta + kk];
+    T* sh = static_cast<T*>(dynSharedBase());   // [4][mpol][kTile] (compact slots 0,1,2,3)
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * kTile; i += nthreads) {
+        int s = i / (mpol * kTile), rem = i - s * mpol * kTile;
+        int m = rem / kTile, kk = rem % kTile;
+        int kk_abs = k0 + kk;
+        sh[i] = (kk_abs < nzeta) ? zeta_real[(((size_t)s * mpol + m) * ns + j) * nzeta + kk_abs]
+                                 : T(0.0);  // tail tile: zeros (never used)
     }
     __syncthreads();
-    size_t mstride = (size_t)mpol * nzeta;
+    if (k >= nzeta) return;  // tail tile past the grid
+    size_t mstride = (size_t)mpol * kTile;
     #pragma unroll
     for (int pass = 0; pass < 2; ++pass) {
         int l = l1 + pass * (ntheta / 2);
         T r = T(0.0), z = T(0.0);
         for (int m = 0; m < mpol; ++m) {
-            const T* sm = sh + m * nzeta;
+            const T* sm = sh + m * kTile;
             T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
-            r += sm[0 * mstride + k] * cosm + sm[1 * mstride + k] * sinm;
-            z += sm[2 * mstride + k] * sinm + sm[3 * mstride + k] * cosm;
+            r += sm[0 * mstride + (k - k0)] * cosm + sm[1 * mstride + (k - k0)] * sinm;
+            z += sm[2 * mstride + (k - k0)] * sinm + sm[3 * mstride + (k - k0)] * cosm;
         }
         int idx = j * nZnT + k * ntheta + l;
         rCon[idx] = r;
@@ -309,40 +324,51 @@ __global__ void deAliasAnalyzeKernel(
     const T* __restrict__ gConEff,
     const T* __restrict__ cos_th, const T* __restrict__ sin_th,
     int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    T* __restrict__ zeta_real)   // compact slots 0 (sc), 1 (cs)
+    T* __restrict__ zeta_real,   // compact slots 0 (sc), 1 (cs)
+    int kTile)
 {
     // 8 threads per (m, jF, k) split the theta sum (4 contiguous points
     // each), reduced by a warp shuffle tree over the 8 lanes (4 k-groups
     // per warp, width 8). The original ran one serial 30-point dot per
     // thread (36 threads/block, latency-bound at ~41 us/iter); the
     // summation order differs at the rounding level.
+    // Theta coverage LOOPS over 32-point groups (8 lanes x 4 points), so
+    // grids with ntheta > 32 are fully summed instead of silently dropping
+    // the tail; the ζ direction is TILED (blockIdx.z selects the k-tile) so
+    // the launch block stays bounded for larger angular grids. For the
+    // shipped configs (ntheta <= 32) the loop runs exactly once per thread
+    // — same arithmetic as the pre-fix kernel.
     int jF = blockIdx.y, m1 = blockIdx.x;   // m = m1 + 1 in [1, mpol-2]
     if (jF == 0) return;
-    int t = threadIdx.x, k = threadIdx.y;   // t in [0,8), k in [0,nzeta)
-    if (k >= nzeta) return;
+    int t = threadIdx.x;                    // t in [0,8)
+    int k = threadIdx.y + blockIdx.z * kTile;
     int m = m1 + 1;
-    const T* g = gConEff + jF * nZnT + k * ntheta;
-    const T* sth = sin_th + m * ntheta;
-    const T* cth = cos_th + m * ntheta;
     T s_sc = T(0.0), s_cs = T(0.0);
-    // 4 contiguous theta points per thread (theta = 4*t .. 4*t+3; the last
-    // group may exceed ntheta — the extra points read past the row, so
-    // guard: ntheta is even and >= 8, 4*8 = 32 >= ntheta + ... clamp.
-    int it0 = 4 * t;
-    int itEnd = it0 + 4;
-    if (itEnd > ntheta) itEnd = ntheta;
-    for (int it = it0; it < itEnd; ++it) {
-        s_sc += g[it] * sth[it];
-        s_cs += g[it] * cth[it];
+    if (k < nzeta) {
+        const T* g = gConEff + jF * nZnT + k * ntheta;
+        const T* sth = sin_th + m * ntheta;
+        const T* cth = cos_th + m * ntheta;
+        for (int it0 = 4 * t; it0 < ntheta; it0 += 32) {
+            int itEnd = it0 + 4;
+            if (itEnd > ntheta) itEnd = ntheta;
+            for (int it = it0; it < itEnd; ++it) {
+                s_sc += g[it] * sth[it];
+                s_cs += g[it] * cth[it];
+            }
+        }
     }
-    // Shuffle tree over the 8 theta-split lanes (width 8).
-    unsigned mask = 0xffffffffu;
+    // Shuffle tree over the 8 theta-split lanes (width 8). All block threads
+    // converge here (the k >= nzeta tail contributes zeros, discarded by the
+    // store guard), so __activemask names exactly the existing lanes — a
+    // 0xffffffff mask would be an invalid contract for partial warps, e.g.
+    // the 8-thread blocks of the nzeta=1 Solovev grid.
+    unsigned mask = __activemask();
     #pragma unroll
     for (int off = 4; off > 0; off >>= 1) {
         s_sc += __shfl_down_sync(mask, s_sc, off, 8);
         s_cs += __shfl_down_sync(mask, s_cs, off, 8);
     }
-    if (t == 0) {
+    if (t == 0 && k < nzeta) {
         // Compact layout: ((slot*(mpol-2) + m1)*(ns-1) + (jF-1))*nzeta + k
         size_t base = ((size_t)m1 * (ns - 1) + (jF - 1)) * nzeta + k;
         size_t step = (size_t)(mpol - 2) * (ns - 1) * nzeta;
@@ -407,23 +433,32 @@ __global__ void deAliasSynthesizeKernel(
     const T* __restrict__ zeta_real,   // Z2D output (slots 4,5)
     const T* __restrict__ cos_th, const T* __restrict__ sin_th,
     int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    T* __restrict__ gCon)
+    T* __restrict__ gCon, int kTile)
 {
     int jF = blockIdx.x;
     if (jF == 0) return;
     // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
     // gCon stores at jF*nZnT + k*ntheta + l then vary l fastest and coalesce.
-    int k = threadIdx.y, l1 = threadIdx.x;
+    // The ζ direction is TILED (blockIdx.y selects the k-tile), so the launch
+    // block stays bounded for larger grids; every (k, l) output point is
+    // independent, so the per-point arithmetic is unchanged.
+    int k0 = blockIdx.y * kTile;
+    int k = threadIdx.y + k0;
+    int l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    T* sh = static_cast<T*>(dynSharedBase());   // [2][mpol-2][nzeta] (compact slots 0,1)
+    T* sh = static_cast<T*>(dynSharedBase());   // [2][mpol-2][kTile] (compact slots 0,1)
     int nb = 2 * (mpol - 2);
     int jF1 = jF - 1;
-    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < nb * nzeta; i += nthreads) {
-        int s = i / ((mpol - 2) * nzeta), rem = i - s * (mpol - 2) * nzeta;
-        int m1 = rem / nzeta, kk = rem % nzeta;
-        sh[i] = zeta_real[((size_t)(s * (mpol - 2) + m1) * (ns - 1) + jF1) * nzeta + kk];
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < nb * kTile; i += nthreads) {
+        int s = i / ((mpol - 2) * kTile), rem = i - s * (mpol - 2) * kTile;
+        int m1 = rem / kTile, kk = rem % kTile;
+        int kk_abs = k0 + kk;
+        sh[i] = (kk_abs < nzeta)
+                    ? zeta_real[((size_t)(s * (mpol - 2) + m1) * (ns - 1) + jF1) * nzeta + kk_abs]
+                    : T(0.0);  // tail tile: zeros (never used)
     }
     __syncthreads();
+    if (k >= nzeta) return;  // tail tile past the grid
     #pragma unroll
     for (int pass = 0; pass < 2; ++pass) {
         int l = l1 + pass * (ntheta / 2);
@@ -431,8 +466,8 @@ __global__ void deAliasSynthesizeKernel(
         for (int m1 = 0; m1 < mpol - 2; ++m1) {
             int m = m1 + 1;
             T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
-            g += sh[0 * (mpol - 2) * nzeta + m1 * nzeta + k] * sinm
-               + sh[1 * (mpol - 2) * nzeta + m1 * nzeta + k] * cosm;
+            g += sh[0 * (mpol - 2) * kTile + m1 * kTile + (k - k0)] * sinm
+               + sh[1 * (mpol - 2) * kTile + m1 * kTile + (k - k0)] * cosm;
         }
         gCon[jF * nZnT + k * ntheta + l] = g;
     }
@@ -579,11 +614,14 @@ void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, cw.d_zeta_spectra_rz);
     cc(cudaGetLastError(), "rzcon pack");
     ccf(FftTraits<T>::execInverse(cw.plan_z2d_rz, cw.d_zeta_spectra_rz, cw.d_zeta_real_rz), "rzcon z2d");
-    dim3 blk(p.ntheta / 2, p.nzeta);
-    rzConAccumulateKernel<T><<<p.ns, blk, 4 * p.mpol * p.nzeta * sizeof(T)>>>(
+    int kTile = computeKTile(p.ntheta / 2, p.nzeta);
+    int nKTiles = (p.nzeta + kTile - 1) / kTile;
+    dim3 blk(p.ntheta / 2, kTile);
+    dim3 grd(p.ns, nKTiles);
+    rzConAccumulateKernel<T><<<grd, blk, 4 * p.mpol * kTile * sizeof(T)>>>(
         cw.d_zeta_real_rz, fp.d_cos_th, fp.d_sin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
-        cw.d_rCon, cw.d_zCon);
+        cw.d_rCon, cw.d_zCon, kTile);
     cc(cudaGetLastError(), "rzcon acc");
 }
 
@@ -619,8 +657,11 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
     // branch), using the current iteration's geometry — so it is applied in
     // the same iteration it is computed.
     if (precon_updated) {
-        // Pure constant: compute in double, convert once to T.
-        T tcon_multiplier = T(1.0 * (1.0 + p.ns * (1.0/60.0 + p.ns/(200.0*120.0))) / 16.0);
+        // Pure constant: compute in double, convert once to T. The vmecpp
+        // indata tcon0 scales the whole profile (the parsed value reaches
+        // the kernel through GridParams::tcon0; default 1.0 keeps the
+        // shipped configs unchanged).
+        T tcon_multiplier = p.tcon0 * T(1.0 * (1.0 + p.ns * (1.0/60.0 + p.ns/(200.0*120.0))) / 16.0);
         int gridF = (p.ns + 255) / 256;
         computeTconKernel<T><<<gridF, 256>>>(
             fp.d_ru_e, fp.d_ru_o, fp.d_zu_e, fp.d_zu_o,
@@ -650,10 +691,12 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
     // the per-mode coefficients into slots 4/5 (the spectra tail bins n>ntor
     // are zeroed by the memset — the pack writes only the used bins), Z2D,
     // poloidal synthesis -> gCon.
-    {   dim3 blkA(8, p.nzeta), grdA(p.mpol - 2, p.ns);
+    {   int kTileA = computeKTile(8, p.nzeta);
+        int nKTilesA = (p.nzeta + kTileA - 1) / kTileA;
+        dim3 blkA(8, kTileA), grdA(p.mpol - 2, p.ns, nKTilesA);
         deAliasAnalyzeKernel<T><<<grdA, blkA>>>(
             cw.d_gConEff, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_zeta_real_c);
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_zeta_real_c, kTileA);
         cc(cudaGetLastError(), "deAlias analyze");
     }
     ccf(FftTraits<T>::execForward(cw.plan_d2z_da, cw.d_zeta_real_c, cw.d_zeta_spectra_c), "deAlias d2z");
@@ -665,11 +708,14 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
         cc(cudaGetLastError(), "deAlias coeff");
     }
     ccf(FftTraits<T>::execInverse(cw.plan_z2d_da, cw.d_zeta_spectra_c, cw.d_zeta_real_c), "deAlias z2d");
-    {   dim3 blkS(p.ntheta / 2, p.nzeta);
-        deAliasSynthesizeKernel<T><<<p.ns, blkS,
-            2 * (p.mpol - 2) * p.nzeta * sizeof(T)>>>(
+    {   int kTileS = computeKTile(p.ntheta / 2, p.nzeta);
+        int nKTilesS = (p.nzeta + kTileS - 1) / kTileS;
+        dim3 blkS(p.ntheta / 2, kTileS);
+        dim3 grdS(p.ns, nKTilesS);
+        deAliasSynthesizeKernel<T><<<grdS, blkS,
+            2 * (p.mpol - 2) * kTileS * sizeof(T)>>>(
             cw.d_zeta_real_c, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon);
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon, kTileS);
         cc(cudaGetLastError(), "deAlias synth");
     }
 

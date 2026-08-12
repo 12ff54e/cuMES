@@ -95,9 +95,16 @@ static void computeForceNorms(SpectralState<T>& st, const FourierPlan<T>& fp,
     eTherm *= deltaS;
     vol *= deltaS;
     T energyDensity = std::max(eMag, eTherm) / vol;
-    fNormRZ = T(1.0) / (sRZ * energyDensity * energyDensity);
-    fNormL = T(1.0) / (sL * p.lamscale * p.lamscale);
-    fNorm1 = T(1.0) / h_rz;
+    // Scale-free-division guards: on degenerate geometry (empty volume, zero
+    // surface norms, zero flux) the vmecpp 1/denominator would silently
+    // produce inf/NaN normalization factors that poison every residual. A
+    // fallback factor of 1.0 keeps the residuals finite (they then fail the
+    // ftol/BAD_PROGRESS checks instead of the finiteness check).
+    T denomRZ = sRZ * energyDensity * energyDensity;
+    fNormRZ = denomRZ > T(0.0) ? (T(1.0) / denomRZ) : T(1.0);
+    T denomL = sL * p.lamscale * p.lamscale;
+    fNormL = denomL > T(0.0) ? (T(1.0) / denomL) : T(1.0);
+    fNorm1 = h_rz > T(0.0) ? (T(1.0) / h_rz) : T(1.0);
 
 #ifdef DUMP_CUMES_VERIFY
     if (dumpEnabled()) {
@@ -254,6 +261,11 @@ __global__ void m1PreconScaleKernel(T* __restrict__ f_spec,
     int m1base = ntor + 1;
     T denom = ard[j * 2 + 1] + brd[j * 2 + 1] +
               azd[j * 2 + 1] + bzd[j * 2 + 1];
+    // Degenerate-denominator guard: all-zero odd-parity precon diagonals
+    // (e.g. a zero-√g surface) would make both scales NaN. Leave the forces
+    // unscaled instead — the jacobian-stats check fails such surfaces before
+    // this kernel normally runs.
+    if (fabs(denom) < T(1e-30)) return;
     T scaleR = (ard[j * 2 + 1] + brd[j * 2 + 1]) / denom;
     T scaleZ = (azd[j * 2 + 1] + bzd[j * 2 + 1]) / denom;
     for (int n = 0; n < ntor + 1; ++n) {
@@ -486,6 +498,14 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
     checkCuda(cudaMalloc(&d_psum, 4 * (size_t)(p.ns - 1) * sizeof(T)), "malloc psum");
     checkCuda(cudaMalloc(&d_rzsum, sizeof(T)), "malloc rzsum");
 
+    // Jacobian-validity stats scratch (computeJacobianStats): device 4-vec +
+    // pinned staging. Allocated once, checked every iteration after
+    // computeGeometry so a degenerate surface fails via the BAD_JACOBIAN
+    // restore path before the forces/constraint/precon consume the geometry.
+    T *d_jac_stats, *h_jac_stats;
+    checkCuda(cudaMalloc(&d_jac_stats, 4 * sizeof(T)), "malloc jac");
+    checkCuda(cudaMallocHost(&h_jac_stats, 4 * sizeof(T)), "pin jac");
+
     // Pinned residual staging (async D2H copies avoid the pageable staging
     // of synchronous cudaMemcpy on the default stream).
     T* h_sq_i_pin; T* h_sq_pin;
@@ -574,8 +594,11 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
 #endif
 
     // Diagnostic: test inverse DFT at specified surface (CUMES_DUMP=1 only).
+    // do_combine=false: the diagnostic reads only the parity arrays; the
+    // combined *_real buffers are materialized on demand (fourierCombineParity)
+    // at the dump site, never read stale.
     if (dumpEnabled()) {
-        inverseDFT(fp, st, p);
+        inverseDFT(fp, st, p, false);
         auto* h_re = new T[p.nZnT * p.ns];
         auto* h_ro = new T[p.nZnT * p.ns];
         checkCuda(cudaMemcpy(h_re, fp.d_r_e, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "diag re");
@@ -692,6 +715,10 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         }
         if (iter == 0) {
             size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
+            // The combined *_real arrays are NOT refreshed by the hot loop
+            // (inverseDFT runs with do_combine=false); materialize a fresh
+            // snapshot from the current parity arrays before dumping them.
+            fourierCombineParity(fp, p);
             // Full R, Z, lambda (even+odd)
             dumpDeviceArray("dump/cuMES/step_A_r_real_iter_1.bin", fp.d_r_real, n_real);
             dumpDeviceArray("dump/cuMES/step_A_z_real_iter_1.bin", fp.d_z_real, n_real);
@@ -723,6 +750,39 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
 #endif
 
         computeGeometry(fp,p,rp,mw);
+
+        // ---- Jacobian validity check (vmecpp's bad-jacobian detection) ----
+        // A collapsed or sign-flipped surface must fail the iteration here,
+        // BEFORE the constraint/forces/preconditioner kernels consume the
+        // geometry (the kernels' inv_gsqrt guards keep those buffers finite
+        // in the interim). The threshold is relative to the run's own |√g|
+        // scale: any non-finite entry, a fully-degenerate grid (max == 0),
+        // or a surface whose |√g| is < 1e-12 of the maximum is treated as an
+        // invalid Jacobian — same recovery as the non-finite-residual path.
+        computeJacobianStats(p, mw, d_jac_stats, h_jac_stats);
+        {
+            T gmin = h_jac_stats[0], gmax = h_jac_stats[1], gbad = h_jac_stats[2];
+            int gminIdx = (int)h_jac_stats[3];
+            // A non-finite entry or an empty grid (max == 0) is always bad.
+            // A tiny min |√g| alone is NOT (the axis-adjacent half-grid
+            // shrinks to the coordinate singularity): only surfaces whose
+            // |√g| collapsed far below the run's own scale (< 1e-12 of the
+            // max — for the shipped grids that means an effectively zero
+            // Jacobian at an interior point) fail here.
+            if (gbad > T(0.0) || gmax <= T(0.0) ||
+                (gmin < T(1e-12) * gmax && gminIdx >= p.nZnT)) {
+                recordPass(1, 0, 0, 0, 0, 0, 0, delt, 0, 0, 0, 0);
+                restoreState();
+                delt *= T(0.9);
+                iter1 = iter2; log_anchor = iter2;
+                printf("  -> BAD JACOBIAN (invalid √g: min=%.3e max=%.3e "
+                       "nonfinite=%.0f at jH=%d) delt=%.3e\n",
+                       (double)gmin, (double)gmax, (double)gbad,
+                       gminIdx / p.nZnT, (double)delt);
+                printIterRow(iter2, T(1.0), T(1.0), T(1.0), delt);
+                continue;
+            }
+        }
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 2) {
@@ -884,9 +944,10 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
                 dumpDeviceArray("dump/cuMES/step_E_blmn_o_iter_1.bin", fp.d_blmn_o, n_real);
                 dumpDeviceArray("dump/cuMES/step_E_clmn_e_iter_1.bin", fp.d_clmn_e, n_real);
                 dumpDeviceArray("dump/cuMES/step_E_clmn_o_iter_1.bin", fp.d_clmn_o, n_real);
-                dumpDeviceArray("dump/cuMES/step_F_fr_real_iter_1.bin", fp.d_fr_real, n_real);
-                dumpDeviceArray("dump/cuMES/step_F_fz_real_iter_1.bin", fp.d_fz_real, n_real);
-                dumpDeviceArray("dump/cuMES/step_F_fl_real_iter_1.bin", fp.d_fl_real, n_real);
+                // NOTE: no combined-force dumps — the force combine buffers
+                // were removed (they were allocated/dumped but never
+                // produced; the parity-split arrays above are the source of
+                // truth).
             }
         }
 #endif
@@ -1219,6 +1280,8 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
     checkCuda(cudaFreeHost(h_sq_pin), "unpin sq");
     checkCuda(cudaFree(d_psum),"free psum");
     checkCuda(cudaFree(d_rzsum),"free rzsum");
+    checkCuda(cudaFree(d_jac_stats),"free jac");
+    checkCuda(cudaFreeHost(h_jac_stats), "unpin jac");
     checkCuda(cudaFree(d_bk_rmncc),"free bk cc");
     checkCuda(cudaFree(d_bk_zmnsc),"free bk zsc");
     checkCuda(cudaFree(d_bk_lmnsc),"free bk lsc");

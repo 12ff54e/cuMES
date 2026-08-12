@@ -25,7 +25,7 @@ static void checkCuda(cudaError_t err, const char* tag) {
 }
 
 template <typename T>
-void outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
                       const InputParams& ip, const SolverResult<T>& result,
                       const char* path, const char* input_file) {
     // NC_CLOBBER alone gives classic-3 (CDF-1); ncdump -k reports "classic".
@@ -34,9 +34,10 @@ void outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
     if (rc != NC_NOERR) {
         fprintf(stderr, "NetCDF error [nc_create %s]: %s\n", path,
                 nc_strerror(rc));
-        return;
+        return false;
     }
-    // On any later error: close, delete the half-written file, return.
+    // On any later error: close, delete the half-written file, return false
+    // (the caller folds output success into the CLI exit code).
 #define NC_CHECK(rc_, tag)                                                   \
     do {                                                                     \
         int _rc = (rc_);                                                     \
@@ -44,7 +45,7 @@ void outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
             fprintf(stderr, "NetCDF error [%s]: %s\n", tag, nc_strerror(_rc)); \
             nc_close(ncid);                                                  \
             remove(path);                                                    \
-            return;                                                          \
+            return false;                                                    \
         }                                                                    \
     } while (0)
 
@@ -187,8 +188,9 @@ void outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
     NC_CHECK(nc_close(ncid), "nc_close");
 #undef NC_CHECK
     printf("Saved netCDF state to %s\n", path);
+    return true;
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template void outputSaveNetcdf<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template void outputSaveNetcdf<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveNetcdf<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
+template bool outputSaveNetcdf<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);

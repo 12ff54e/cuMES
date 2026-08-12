@@ -44,24 +44,35 @@ const char* linkedOutputSuffixes() {
 
 // Save full spectral state as raw binary for Python analysis.
 // 6 coefficient arrays: rmncc zmnsc lmnsc rmnss zmncs lmncs, each ns*mnmax
-// doubles on disk (converted from T).
+// doubles on disk (converted from T). Returns false (after removing the
+// partial file) when the file cannot be opened, written, or closed — the
+// caller reports the run's output status in the CLI exit code.
 template <typename T>
-void outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
                       const char* filename) {
     FILE* fp = fopen(filename, "wb");
-    if (!fp) { fprintf(stderr, "Cannot open %s\n", filename); return; }
+    if (!fp) { fprintf(stderr, "Cannot open %s\n", filename); return false; }
+    auto fail = [&](const char* tag) {
+        fprintf(stderr, "outputSaveBinary: %s (%s)\n", tag, filename);
+        fclose(fp);
+        remove(filename);
+        return false;
+    };
     // Write header: ns, mnmax as ints
     int ns = p.ns, mnmax = p.mnmax;
-    fwrite(&ns, sizeof(int), 1, fp);
-    fwrite(&mnmax, sizeof(int), 1, fp);
+    if (fwrite(&ns, sizeof(int), 1, fp) != 1) return fail("header ns");
+    if (fwrite(&mnmax, sizeof(int), 1, fp) != 1) return fail("header mnmax");
     // Write each coefficient array (6 arrays, each ns*mnmax doubles on disk)
     size_t nb = ns * mnmax * sizeof(T);
     auto* buf = new T[ns * mnmax];
     auto* dbuf = new double[ns * mnmax];
+    bool ok = true;
     auto writeFam = [&](const T* d, const char* tag) {
         checkCuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), tag);
         for (size_t i = 0; i < (size_t)ns * mnmax; ++i) dbuf[i] = (double)buf[i];
-        fwrite(dbuf, sizeof(double), ns * mnmax, fp);
+        if (fwrite(dbuf, sizeof(double), ns * mnmax, fp) != (size_t)(ns * mnmax)) {
+            ok = false;
+        }
     };
     writeFam(st.d_rmncc, "cpy rmncc");
     writeFam(st.d_zmnsc, "cpy zmnsc");
@@ -71,8 +82,10 @@ void outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
     writeFam(st.d_lmncs, "cpy lmncs");
     delete[] dbuf;
     delete[] buf;
-    fclose(fp);
+    if (!ok) return fail("state write");
+    if (fclose(fp) != 0) return fail("fclose");
     printf("Saved binary state to %s\n", filename);
+    return true;
 }
 
 template <typename T>
@@ -150,15 +163,55 @@ void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
     delete[] h_rmnc; delete[] h_zmns; delete[] h_lmnc;
 }
 
+// Preflight: does this build produce the format implied by `path`'s suffix?
+// True for .bin (always) and for any compiled-in backend; false for a known
+// suffix whose backend is not linked. Prints the same hint the old hard-exit
+// path used. main calls this BEFORE creating the CUDA context / running any
+// grid stage, so a requested-but-unlinked backend fails fast and cleanly
+// instead of after thousands of iterations.
+bool outputFormatAvailable(const char* path) {
+    const char* ext = strrchr(path, '.');
+    if (ext == nullptr) { ext = ""; }
+    if (strcasecmp(ext, ".bin") == 0 || strcasecmp(ext, "") == 0) return true;
+    if (strcasecmp(ext, ".nc") == 0) {
+#ifdef CUMES_HAVE_NETCDF
+        return true;
+#else
+        fprintf(stderr,
+                "ERROR: %s: .nc output requested but cuMES was built "
+                "without NetCDF support\n"
+                "       (linked output libraries: %s; supported suffixes: "
+                "%s; omit argv[2] for the binary fallback)\n",
+                path, linkedOutputLibraries(), linkedOutputSuffixes());
+        return false;
+#endif
+    }
+    if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
+#ifdef CUMES_HAVE_HDF5
+        return true;
+#else
+        fprintf(stderr,
+                "ERROR: %s: %s output requested but cuMES was built "
+                "without HDF5 support\n"
+                "       (linked output libraries: %s; supported suffixes: "
+                "%s; omit argv[2] for the binary fallback)\n",
+                path, ext, linkedOutputLibraries(), linkedOutputSuffixes());
+        return false;
+#endif
+    }
+    // Unknown suffix: the dispatcher warns and falls back to binary.
+    return true;
+}
+
 // Format dispatcher. The path suffix decides the format: .nc -> NetCDF,
 // .h5/.hdf5 -> HDF5, .bin -> binary at the given path. An unrecognized
 // suffix or a missing argv[2] falls back to binary cumes_state.bin in the
 // working directory (the pre-argv[2] behaviour), with a stderr warning.
-// A known suffix whose backend is not compiled in is a hard error: the
-// requested format cannot be produced, so we hint at the binary option and
-// exit instead of silently writing something else.
+// A known suffix whose backend is not compiled in returns false (the caller
+// preflights via outputFormatAvailable before the solve, so this is only a
+// belt-and-suspenders path) — never exit()s, so normal cleanup runs.
 template <typename T>
-void outputSave(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSave(const SpectralState<T>& st, const GridParams<T>& p,
                 const InputParams& ip, const SolverResult<T>& result,
                 const char* path, const char* input_file) {
     // ip/result/input_file are only read by the backend writers; silence
@@ -167,46 +220,35 @@ void outputSave(const SpectralState<T>& st, const GridParams<T>& p,
     const char* ext = strrchr(path, '.');
     if (ext == nullptr) { ext = ""; }
     if (strcasecmp(ext, ".bin") == 0) {
-        outputSaveBinary<T>(st, p, path);
-        return;
+        return outputSaveBinary<T>(st, p, path);
     }
     if (strcasecmp(ext, ".nc") == 0) {
 #ifdef CUMES_HAVE_NETCDF
-        outputSaveNetcdf<T>(st, p, ip, result, path, input_file);
-        return;
+        return outputSaveNetcdf<T>(st, p, ip, result, path, input_file);
 #else
-        fprintf(stderr,
-                "ERROR: %s: .nc output requested but cuMES was built "
-                "without NetCDF support\n"
-                "       (linked output libraries: %s; supported suffixes: "
-                "%s; omit argv[2] for the binary fallback)\n",
-                path, linkedOutputLibraries(), linkedOutputSuffixes());
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "ERROR: %s: .nc output requested but cuMES was built "
+                        "without NetCDF support\n", path);
+        return false;
 #endif
-    } else if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
-#ifdef CUMES_HAVE_HDF5
-        outputSaveHdf5<T>(st, p, ip, result, path, input_file);
-        return;
-#else
-        fprintf(stderr,
-                "ERROR: %s: %s output requested but cuMES was built "
-                "without HDF5 support\n"
-                "       (linked output libraries: %s; supported suffixes: "
-                "%s; omit argv[2] for the binary fallback)\n",
-                path, ext, linkedOutputLibraries(), linkedOutputSuffixes());
-        exit(EXIT_FAILURE);
-#endif
-    } else {
-        fprintf(stderr, "WARNING: %s: unrecognized output suffix '%s' - "
-                        "writing binary cumes_state.bin\n", path, ext);
     }
-    outputSaveBinary<T>(st, p, "cumes_state.bin");
+    if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
+#ifdef CUMES_HAVE_HDF5
+        return outputSaveHdf5<T>(st, p, ip, result, path, input_file);
+#else
+        fprintf(stderr, "ERROR: %s: %s output requested but cuMES was built "
+                        "without HDF5 support\n", path, ext);
+        return false;
+#endif
+    }
+    fprintf(stderr, "WARNING: %s: unrecognized output suffix '%s' - "
+                    "writing binary cumes_state.bin\n", path, ext);
+    return outputSaveBinary<T>(st, p, "cumes_state.bin");
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template void outputSaveBinary<double>(const SpectralState<double>&, const GridParams<double>&, const char*);
-template void outputSaveBinary<float>(const SpectralState<float>&, const GridParams<float>&, const char*);
+template bool outputSaveBinary<double>(const SpectralState<double>&, const GridParams<double>&, const char*);
+template bool outputSaveBinary<float>(const SpectralState<float>&, const GridParams<float>&, const char*);
 template void outputPrint<double>(const SpectralState<double>&, const GridParams<double>&, int, bool, double, double, double);
 template void outputPrint<float>(const SpectralState<float>&, const GridParams<float>&, int, bool, float, float, float);
-template void outputSave<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template void outputSave<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSave<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
+template bool outputSave<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);

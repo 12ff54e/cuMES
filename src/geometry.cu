@@ -195,11 +195,26 @@ __global__ void geometryKernel(
     T lv_h = T(0.5) * ((lv_e[i_in] + lv_e[i_out]) + sH * (lv_o[i_in] + lv_o[i_out]));
     T phipF_avg = T(0.5) * (phip_F[jH] + phip_F[jH + 1]);
 
-    // B^ζ = (lamscale·λ_θ + Φ') / √g
-    T bsupv_v = (lamscale * lu_h + phipF_avg) / gsqrt_v;
-    // B^θ = (lamscale·λ_ζ + χ') / √g; the χ' part (chipH) is added below
-    // (ncurr=1) or taken from the fixed profile (ncurr=0).
-    T bsupu_v = lamscale * lv_h / gsqrt_v;
+    // B^ζ = (lamscale·λ_θ + Φ') / √g, B^θ = (lamscale·λ_ζ + χ') / √g.
+    // Degenerate-Jacobian guard: a non-finite or ~zero √g (e.g. a surface
+    // whose metric collapsed mid-run) would otherwise seed infinities into
+    // every downstream kernel (forces, constraint, preconditioner) and only
+    // surface much later as non-finite residuals. Writing zero keeps the
+    // field arrays finite; the solver's jacobian-stats check
+    // (computeJacobianStats) then fails the iteration early via the
+    // BAD_JACOBIAN restore path. The guard branches on validity instead of
+    // computing a reciprocal, so the valid branch keeps the exact x/y
+    // rounding (x * (1/y) would round twice and shift the trajectory).
+    T bsupv_v, bsupu_v;
+    if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+        bsupv_v = (lamscale * lu_h + phipF_avg) / gsqrt_v;
+        // the χ' part (chipH) is added below (ncurr=1) or taken from the
+        // fixed profile (ncurr=0).
+        bsupu_v = lamscale * lv_h / gsqrt_v;
+    } else {
+        bsupv_v = T(0.0);
+        bsupu_v = T(0.0);
+    }
 
     int idx_out = k + jH * nZnT;
     r12[idx_out]  = r12_v;
@@ -217,7 +232,10 @@ __global__ void geometryKernel(
 
     if (ncurr == 0) {
         // Fixed iota profile: chipH is precomputed in profiles.
-        bsupu_v += chip_H[jH] / gsqrt_v;
+        // (chip_H[jH] / gsqrt_v — the same validity branch as above.)
+        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+            bsupu_v += chip_H[jH] / gsqrt_v;
+        }
         bsupu[idx_out] = bsupu_v;
         T bsubu_v = guu_v * bsupu_v + guv_v * bsupv_v;
         T bsubv_v = guv_v * bsupu_v + gvv_v * bsupv_v;
@@ -272,7 +290,12 @@ __global__ void ncurr1FinalizeKernel(
         int idx = base + iz * ntheta + it;
         T guu_v = guu[idx], gsqrt_v = gsqrt[idx];
         jv  += (guu_v * bsupu[idx] + guv[idx] * bsupv[idx]) * w;
-        avg += guu_v / gsqrt_v * w;
+        // Same degenerate-√g guard as geometryKernel: a non-finite or ~zero
+        // √g would otherwise make the surface average NaN and the chipH
+        // solve below degenerate before the jacobian-stats check runs.
+        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+            avg += guu_v / gsqrt_v * w;
+        }
     }
     s_jv[tid] = jv; s_avg[tid] = avg;
     __syncthreads();
@@ -292,7 +315,12 @@ __global__ void ncurr1FinalizeKernel(
     T chip = s_chip;
     for (int k = tid; k < nZnT; k += blockDim.x) {
         int idx = base + k;
-        T bsupu_v = bsupu[idx] + chip / gsqrt[idx];
+        T gsqrt_v = gsqrt[idx];
+        // Same validity branch as geometryKernel (chip / √g exactly).
+        T bsupu_v = bsupu[idx];
+        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+            bsupu_v += chip / gsqrt_v;
+        }
         T bsubu_v = guu[idx] * bsupu_v + guv[idx] * bsupv[idx];
         T bsubv_v = guv[idx] * bsupu_v + gvv[idx] * bsupv[idx];
         bsupu[idx] = bsupu_v;
@@ -396,15 +424,86 @@ __global__ void updateIotaChipFKernel(
 {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j <= 0 || j >= ns) return;
+    // The LCFS row (j = ns-1) has no outside half-grid neighbor: the interior
+    // average would read iotaH[ns-1]/chipH[ns-1], one element PAST the
+    // (ns-1)-element half-grid arrays (an out-of-bounds device read, flagged
+    // by Compute Sanitizer on W7-X ns=33). The LCFS value comes from the
+    // extrapolation below instead, which only reads iotaH[ns-2]/iotaH[ns-3].
+    if (j == ns - 1) {
+        iotaF[ns - 1] = T(1.5) * iotaH[ns - 2] - T(0.5) * iotaH[ns - 3];
+        chipF[ns - 1] = T(2.0) * chipH[ns - 2] - chipH[ns - 3];
+        return;
+    }
     if (j == 1) {
         iotaF[0] = T(1.5) * iotaH[0] - T(0.5) * iotaH[1];
     }
     iotaF[j] = T(0.5) * (iotaH[j] + iotaH[j - 1]);
     chipF[j] = T(0.5) * (chipH[j] + chipH[j - 1]);
-    if (j == ns - 1) {
-        iotaF[ns - 1] = T(1.5) * iotaH[ns - 2] - T(0.5) * iotaH[ns - 3];
-        chipF[ns - 1] = T(2.0) * chipH[ns - 2] - chipH[ns - 3];
+}
+
+// ---- Jacobian validity stats (vmecpp's bad-jacobian detection) -----------
+// Reduces over the half-grid: min/max |√g| (orientation-adjusted), the
+// non-finite count, and the index of the min-|√g| element (jH*stride + point,
+// for the error message). The solver checks these after every computeGeometry
+// call and fails the iteration through the BAD_JACOBIAN restore path BEFORE
+// the forces/constraint/preconditioner kernels consume the geometry — so a
+// collapsed surface can never silently poison the iteration with infinities
+// (see the inv_gsqrt guards in geometryKernel/ncurr1FinalizeKernel).
+// NOTE on the axis: |√g| -> 0 at the innermost half-grid is EXPECTED (the
+// magnetic axis is a coordinate singularity), so the solver's threshold must
+// be relative to the run's own scale (see solverRun), not an absolute zero.
+template <typename T>
+__global__ void jacobianStatsKernel(
+    const T* __restrict__ gsqrt, int nHalf, int stride,
+    T* __restrict__ out)  // [4]: min |√g|, max |√g|, nonfinite count,
+                          // min-|√g| linear index (as T)
+{
+    T vmin = T(0.0), vmax = T(0.0), vbad = T(0.0);
+    int argmin = 0;
+    bool first = true;
+    for (int i = threadIdx.x; i < nHalf; i += blockDim.x) {
+        for (int s = 0; s < stride; ++s) {
+            T g = gsqrt[i + s * nHalf];
+            if (!std::isfinite(g)) { vbad += T(1.0); continue; }
+            T a = fabs(g);
+            if (first) { vmin = vmax = a; argmin = i + s * nHalf; first = false; }
+            else if (a < vmin) { vmin = a; argmin = i + s * nHalf; }
+            else { vmax = fmax(vmax, a); }
+        }
     }
+    __shared__ T s_min[256], s_max[256], s_bad[256];
+    __shared__ int s_arg[256];
+    int tid = threadIdx.x;
+    s_min[tid] = vmin; s_max[tid] = vmax; s_bad[tid] = vbad; s_arg[tid] = argmin;
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            if (s_min[tid + s] < s_min[tid]) {
+                s_min[tid] = s_min[tid + s];
+                s_arg[tid] = s_arg[tid + s];
+            }
+            s_max[tid] = fmax(s_max[tid], s_max[tid + s]);
+            s_bad[tid] += s_bad[tid + s];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        out[0] = s_min[0]; out[1] = s_max[0]; out[2] = s_bad[0];
+        out[3] = T(s_arg[0]);
+    }
+}
+
+// Host wrapper: d_stats is a caller-owned 4-element device scratch
+// (allocated once by the solver, not per call — no cudaMalloc in the hot
+// loop); h_stats receives {min|√g|, max|√g|, nonfinite count, min index}.
+// Synchronous (the caller consumes the values immediately).
+template <typename T>
+void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
+                          T* d_stats, T* h_stats) {
+    const int nHalf = (p.ns - 1) * p.nZnT;
+    jacobianStatsKernel<T><<<1, 256>>>(mw.d_gsqrt, nHalf, 1, d_stats);
+    checkCuda(cudaGetLastError(), "jacobianStats");
+    checkCuda(cudaMemcpy(h_stats, d_stats, 4 * sizeof(T), cudaMemcpyDeviceToHost), "jac stats cpy");
 }
 
 template <typename T>
@@ -462,3 +561,5 @@ template void computeGeometry<double>(const FourierPlan<double>&, const GridPara
 template void computeGeometry<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, MetricWorkspace<float>&);
 template void computeForceNormPartials<double>(const GridParams<double>&, const MetricWorkspace<double>&, double*, double*);
 template void computeForceNormPartials<float>(const GridParams<float>&, const MetricWorkspace<float>&, float*, float*);
+template void computeJacobianStats<double>(const GridParams<double>&, const MetricWorkspace<double>&, double*, double*);
+template void computeJacobianStats<float>(const GridParams<float>&, const MetricWorkspace<float>&, float*, float*);
