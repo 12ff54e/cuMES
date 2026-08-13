@@ -51,6 +51,15 @@ add_library(cumes_config STATIC src/input_json.cpp)
 target_include_directories(cumes_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 cumes_enable_warnings(cumes_config)
 
+# ---- Phase 2: validated host model (namespace cumes) -----------------------
+# Core host model: result/status, checked arithmetic, grid shape, mode table.
+# Header-mostly; the two non-trivial TU implementations live in src/cumes/core.
+add_library(cumes_core STATIC
+  src/cumes/core/grid_shape.cpp
+  src/cumes/core/mode_table.cpp)
+target_include_directories(cumes_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+cumes_enable_warnings(cumes_core)
+
 # Output writers: binary dispatcher + optional NetCDF/HDF5 backends (host-only
 # C++, using only the CUDA runtime API for D2H copies — no device code).
 add_library(cumes_io STATIC src/output.cpp)
