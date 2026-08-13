@@ -60,6 +60,15 @@ add_library(cumes_core STATIC
 target_include_directories(cumes_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 cumes_enable_warnings(cumes_core)
 
+# Config model + JSON reader: dynamic ProblemSpec -> ValidatedProblem, the
+# legacy InputParams bridge, and the normalization emitter. Host-only C++.
+add_library(cumes_config_json STATIC
+  src/cumes/config/validation_report.cpp
+  src/cumes/config/validated_problem.cpp)
+target_include_directories(cumes_config_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(cumes_config_json PUBLIC cumes_core)
+cumes_enable_warnings(cumes_config_json)
+
 # Output writers: binary dispatcher + optional NetCDF/HDF5 backends (host-only
 # C++, using only the CUDA runtime API for D2H copies — no device code).
 add_library(cumes_io STATIC src/output.cpp)
