@@ -163,11 +163,23 @@ target_include_directories(test_host_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/
 target_link_libraries(test_host_config PRIVATE cumes_config_json cumes_config)
 cumes_enable_warnings(test_host_config)
 
+add_executable(test_host_io tests/test_host_io.cpp)
+target_include_directories(test_host_io PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_host_io PRIVATE cumes_io_host)
+cumes_enable_warnings(test_host_io)
+
+add_executable(test_checkpoint tests/test_checkpoint.cpp)
+target_include_directories(test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_checkpoint PRIVATE cumes_io_host)
+cumes_enable_warnings(test_checkpoint)
+
 # ---- ctest registration ----------------------------------------------------
 enable_testing()
 cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
 cumes_add_test(test_host_config      unit;config)
+cumes_add_test(test_host_io          unit;io)
+cumes_add_test(test_checkpoint       unit;io)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
