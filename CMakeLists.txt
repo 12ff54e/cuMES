@@ -77,6 +77,19 @@ target_include_directories(cumes_config_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/
 target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
 cumes_enable_warnings(cumes_config_json)
 
+# Versioned + legacy host I/O: output spec, run report, snapshot, binary v0
+# (byte-exact) and v1 writers/readers, and the versioned checkpoint + legacy
+# init converter. Host-only C++ (no CUDA); NetCDF/HDF5 host adapters are
+# deferred to Phase 3.
+add_library(cumes_io_host STATIC
+  src/cumes/io/output_spec.cpp
+  src/cumes/io/legacy_binary_v0.cpp
+  src/cumes/io/versioned_binary.cpp
+  src/cumes/io/checkpoint.cpp)
+target_include_directories(cumes_io_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(cumes_io_host PUBLIC cumes_core)
+cumes_enable_warnings(cumes_io_host)
+
 # Output writers: binary dispatcher + optional NetCDF/HDF5 backends (host-only
 # C++, using only the CUDA runtime API for D2H copies — no device code).
 add_library(cumes_io STATIC src/output.cpp)
