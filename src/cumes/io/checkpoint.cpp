@@ -80,11 +80,11 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path) {
     if (precision != 0) {
         return fail("checkpoint: unsupported precision tag " + std::to_string(precision));
     }
-    if (ns < 1 || mnmax < 1) {
-        return fail("checkpoint: bad dimensions (ns=" + std::to_string(ns) +
-                    ", mnmax=" + std::to_string(mnmax) + ")");
+    std::size_t n = 0;
+    std::string reason;
+    if (!io_detail::checkStateDimensions(fp, ns, mnmax, n, reason)) {
+        return fail("checkpoint: " + reason);
     }
-    const std::size_t n = static_cast<std::size_t>(ns) * mnmax;
     EquilibriumSnapshot snapshot;
     snapshot.ns = ns;
     snapshot.mnmax = mnmax;

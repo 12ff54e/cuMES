@@ -114,12 +114,13 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
                      "(pres = mass/dVds^gamma) is not implemented by cuMES");
     }
 
-    // ---- axis: provided axis vectors must match ntor+1 ----
-    if (!spec.raxis_c.empty() &&
+    // ---- axis: a provided axis vector must match ntor+1 (an absent key is
+    // zero-padded; a present-but-empty array is malformed) ----
+    if (spec.has_raxis_c &&
         spec.raxis_c.size() != static_cast<std::size_t>(spec.ntor + 1)) {
         report.error("raxis_c", "raxis_c must have exactly ntor+1 entries");
     }
-    if (!spec.zaxis_s.empty() &&
+    if (spec.has_zaxis_s &&
         spec.zaxis_s.size() != static_cast<std::size_t>(spec.ntor + 1)) {
         report.error("zaxis_s", "zaxis_s must have exactly ntor+1 entries");
     }
@@ -225,6 +226,9 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     }
     vp.mode_table_ = ModeTable<double>::build(vp.shape());
     vp.boundary_ = fold_boundary(vp.spec_, vp.shape().modes());
+    // On success `report` holds only warnings (boundary skips); carry them on
+    // the model so the caller can report them.
+    vp.warnings_ = std::move(report);
     return ValidationResult(vp);
 }
 

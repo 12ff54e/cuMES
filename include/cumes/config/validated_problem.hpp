@@ -54,6 +54,14 @@ class ValidatedProblem {
     const ModeTable<double>& mode_table() const { return mode_table_; }
     const FoldedBoundary& boundary() const { return boundary_; }
 
+    // Non-fatal findings (e.g. a skipped out-of-range boundary harmonic, an
+    // unknown-key in compatibility mode). Collected end-to-end so the CLI can
+    // report them; a warning never makes the problem invalid.
+    const ValidationReport& warnings() const { return warnings_; }
+    void add_warning(std::string key, std::string message) {
+        warnings_.warn(std::move(key), std::move(message));
+    }
+
     // Legacy bridge: reproduce the current fixed-capacity InputParams exactly
     // (folded boundary, resolved angles, profiles, axis, stage schedule). Fails
     // only when the validated problem exceeds a legacy capacity (dynamic
@@ -74,6 +82,7 @@ class ValidatedProblem {
     std::vector<GridShape> stage_shapes_;
     ModeTable<double> mode_table_;
     FoldedBoundary boundary_;
+    ValidationReport warnings_;
 };
 
 using ValidationResult = BasicResult<ValidatedProblem, ValidationReport>;

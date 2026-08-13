@@ -330,11 +330,38 @@ static void testMalformed() {
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = read_and_validate(scratchPath(), opts);
     CHECK(vr.has_value(), "malformed: unknown key (compat) still validates");
+    if (vr.has_value()) {
+        bool warned = false;
+        for (const auto& issue : vr.value().warnings().issues()) {
+            if (issue.message.find("unknown input key 'n_theta'") != std::string::npos) {
+                warned = true;
+            }
+        }
+        CHECK(warned, "malformed: unknown key (compat) recorded as a warning");
+    }
     SolverOptions strict;
     strict.strict_schema = true;
     vr = read_and_validate(scratchPath(), strict);
     CHECK(!vr.has_value() && !findError(vr, "unknown input key 'n_theta'").empty(),
           "malformed: unknown key (strict) rejected");
+
+    // Negative niter_array is rejected (a negative int must not wrap to size_t
+    // and bypass the >= 1 check).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}],"
+                 " \"ns_array\": [5], \"niter_array\": [-1], \"ftol_array\": [1e-12]}");
+    vr = read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "niter_array entries must be >= 1").empty(),
+          "malformed: negative niter_array rejected");
+
+    // Present-but-empty raxis_c is rejected (not silently zero-padded).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"raxis_c\": [],"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "raxis_c must have exactly ntor+1 entries").empty(),
+          "malformed: empty raxis_c rejected");
 
     // lasym=true.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"

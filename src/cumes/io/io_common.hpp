@@ -3,9 +3,13 @@
 // little-endian binary field serialization.
 #pragma once
 
+#include "cumes/core/checked_size.hpp"
+
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <unistd.h>
 
@@ -35,6 +39,44 @@ inline std::string publishAtomic(FILE* fp, const std::string& tmp,
     return "";
 }
 
+// Current file size in bytes (position-preserving), or nullopt on failure.
+inline std::optional<long long> fileSize(FILE* fp) {
+    const long long pos = ftell(fp);
+    if (pos < 0 || fseek(fp, 0, SEEK_END) != 0) return std::nullopt;
+    const long long sz = ftell(fp);
+    fseek(fp, static_cast<long>(pos), SEEK_SET);
+    if (sz < 0) return std::nullopt;
+    return sz;
+}
+
+// Validate state dimensions and bound the per-family element count `n` against
+// the actual file size, so a corrupt or mismatched header cannot trigger a huge
+// allocation (the v0 format has no magic, so a wrong-format file decodes as
+// enormous positive dimensions). Returns false and sets `reason` on failure;
+// on success sets `n_out`.
+inline bool checkStateDimensions(FILE* fp, std::int32_t ns, std::int32_t mnmax,
+                                 std::size_t& n_out, std::string& reason) {
+    if (ns < 1 || mnmax < 1) {
+        reason = "bad dimensions (ns=" + std::to_string(ns) +
+                 ", mnmax=" + std::to_string(mnmax) + ")";
+        return false;
+    }
+    auto n = checked_mul(static_cast<std::size_t>(ns),
+                         static_cast<std::size_t>(mnmax));
+    if (!n) {
+        reason = "dimension product overflows size_t";
+        return false;
+    }
+    auto needed = checked_mul(*n, 6 * sizeof(double));
+    auto sz = fileSize(fp);
+    if (!needed || !sz || static_cast<long long>(*needed) > *sz) {
+        reason = "dimensions implausible for file size (truncated or corrupt)";
+        return false;
+    }
+    n_out = *n;
+    return true;
+}
+
 // ---- little-endian binary field I/O (native on the supported x86 host) ----
 inline bool write_u8(FILE* fp, std::uint8_t v) {
     return fwrite(&v, sizeof(v), 1, fp) == 1;
@@ -49,6 +91,7 @@ inline bool write_bytes(FILE* fp, const void* p, std::size_t n) {
     return n == 0 || fwrite(p, 1, n, fp) == n;
 }
 inline bool write_string(FILE* fp, const std::string& s) {
+    if (s.size() > static_cast<std::size_t>(INT32_MAX)) return false;
     return write_i32(fp, static_cast<std::int32_t>(s.size())) &&
            write_bytes(fp, s.data(), s.size());
 }
@@ -71,7 +114,7 @@ inline bool read_bytes(FILE* fp, void* p, std::size_t n) {
 inline bool read_string(FILE* fp, std::string& s) {
     std::int32_t n = 0;
     if (!read_i32(fp, n)) return false;
-    if (n < 0) return false;
+    if (n < 0 || n > (1 << 24)) return false;  // cap a corrupt length prefix
     s.resize(static_cast<std::size_t>(n));
     return read_bytes(fp, s.data(), static_cast<std::size_t>(n));
 }

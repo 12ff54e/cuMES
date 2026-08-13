@@ -64,13 +64,12 @@ class LegacyBinaryV0Reader final : public Reader {
             fclose(fp);
             return Result<EquilibriumSnapshot>("legacy binary state: truncated header");
         }
-        if (ns < 1 || mnmax < 1) {
+        std::size_t n = 0;
+        std::string reason;
+        if (!io_detail::checkStateDimensions(fp, ns, mnmax, n, reason)) {
             fclose(fp);
-            return Result<EquilibriumSnapshot>(
-                "legacy binary state: bad dimensions (ns=" + std::to_string(ns) +
-                ", mnmax=" + std::to_string(mnmax) + ")");
+            return Result<EquilibriumSnapshot>("legacy binary state: " + reason);
         }
-        const std::size_t n = static_cast<std::size_t>(ns) * mnmax;
         EquilibriumSnapshot snapshot;
         snapshot.ns = ns;
         snapshot.mnmax = mnmax;

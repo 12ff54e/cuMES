@@ -25,8 +25,10 @@ std::size_t GridShape::half_points() const {
 }
 
 std::size_t GridShape::modes() const {
+    // (ntor + 1) is evaluated in size_t to avoid signed overflow if a caller
+    // passes an unchecked ntor; the config bounds ntor before building tables.
     auto a = checked_mul(static_cast<std::size_t>(mpol),
-                         static_cast<std::size_t>(ntor + 1));
+                         static_cast<std::size_t>(ntor) + 1);
     return a.value_or(0);
 }
 

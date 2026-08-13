@@ -183,6 +183,24 @@ static void testV1RoundTrip() {
     remove(spec.path.c_str());
 }
 
+static void testReaderRejectsMismatchedFormat() {
+    // A v1 file has no v0 magic; its first 8 bytes decode as enormous positive
+    // dimensions. The v0 reader must return a dimension error, not attempt a
+    // huge allocation (std::bad_alloc / terminate).
+    EquilibriumSnapshot s = makeSnapshot(4, 2);
+    OutputSpec v1;
+    v1.format = OutputFormat::kBinary;
+    v1.schema = OutputSchema::kV1;
+    v1.path = scratch("mismatch").c_str();
+    auto v1w = cumes::make_writer(v1.format, v1.schema);
+    CHECK(v1w->write_atomic(s, makeReport(), v1).has_value(),
+          "mismatch: write v1 fixture");
+    auto v0r = cumes::make_reader(OutputFormat::kBinary, OutputSchema::kLegacyV0);
+    auto got = v0r->read(v1.path);
+    CHECK(!got.has_value(), "mismatch: v0 reader rejects a v1 file without crashing");
+    remove(v1.path.c_str());
+}
+
 static void testFailureMatrix() {
     EquilibriumSnapshot s = makeSnapshot(4, 2);
     // open failure: a path in a nonexistent directory.
@@ -218,6 +236,7 @@ int main() {
     testBinaryByteLayout();
     testBinaryRoundTrip();
     testV1RoundTrip();
+    testReaderRejectsMismatchedFormat();
     testFailureMatrix();
     if (failures == 0) {
         printf("test_host_io: ALL PASS\n");

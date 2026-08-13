@@ -71,6 +71,10 @@ struct ProblemSpec {
 
     std::vector<double> raxis_c;  // R axis cos coefficients (length ntor+1)
     std::vector<double> zaxis_s;  // Z axis sin coefficients (length ntor+1)
+    // Presence flags distinguish an absent key (zero-padded to ntor+1) from a
+    // present-but-empty array (a malformed input the legacy parser rejects).
+    bool has_raxis_c = false;
+    bool has_zaxis_s = false;
 
     std::vector<BoundaryHarmonic> rbc;  // raw, signed-n
     std::vector<BoundaryHarmonic> zbs;  // raw, signed-n

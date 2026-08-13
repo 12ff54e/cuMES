@@ -264,9 +264,11 @@ ParsedProblem read_problem_spec(const std::string& path,
 
     // ---- magnetic axis ----
     if (root.contains("raxis_c")) {
+        p.has_raxis_c = true;
         p.raxis_c = readDoubleArray(root.at("raxis_c"), "raxis_c", report);
     }
     if (root.contains("zaxis_s")) {
+        p.has_zaxis_s = true;
         p.zaxis_s = readDoubleArray(root.at("zaxis_s"), "zaxis_s", report);
     }
 
@@ -291,9 +293,11 @@ ParsedProblem read_problem_spec(const std::string& path,
             const std::size_t ng = std::min(ns.size(),
                                             std::min(niter.size(), ftol.size()));
             for (std::size_t g = 0; g < ng; ++g) {
+                // Clamp negative entries to 0 so a negative int never wraps to
+                // SIZE_MAX; validate() then rejects 0 with the legacy message.
                 p.stages.push_back(StageRequest{
-                    static_cast<std::size_t>(ns[g]),
-                    static_cast<std::size_t>(niter[g]),
+                    static_cast<std::size_t>(ns[g] < 0 ? 0 : ns[g]),
+                    static_cast<std::size_t>(niter[g] < 0 ? 0 : niter[g]),
                     ftol[g]});
             }
         }
@@ -377,24 +381,31 @@ ValidationResult read_and_validate(const std::string& path,
     }
     auto vr = validate(std::move(parsed.spec), options);
 
-    // Merge the mapping-phase findings (type errors, unsupported features,
-    // unknown keys) with the validation-phase findings.
-    ValidationReport combined = std::move(parsed.report);
-    if (!vr.has_value()) {
-        for (const auto& issue : vr.error().issues()) {
-            if (issue.severity == Severity::kError) {
-                combined.error(issue.key, issue.message);
-            } else {
-                combined.warn(issue.key, issue.message);
+    if (vr.has_value()) {
+        // Success: fold mapping-phase warnings into the model (observability).
+        // A mapping-phase ERROR still invalidates the model — it is a type
+        // error that validate() cannot see, because the field kept its default.
+        for (const auto& issue : parsed.report.issues()) {
+            if (issue.severity == Severity::kWarning) {
+                vr.value().add_warning(issue.key, issue.message);
             }
         }
+        if (parsed.report.has_errors()) {
+            return ValidationResult(parsed.report);
+        }
+        return vr;
     }
-    if (combined.has_errors()) {
-        return ValidationResult(combined);
+
+    // validate() failed: merge mapping findings into its report.
+    ValidationReport combined = std::move(parsed.report);
+    for (const auto& issue : vr.error().issues()) {
+        if (issue.severity == Severity::kError) {
+            combined.error(issue.key, issue.message);
+        } else {
+            combined.warn(issue.key, issue.message);
+        }
     }
-    // No errors: validate() must have succeeded (its errors would have been
-    // folded in above). Return the model, dropping observability warnings.
-    return vr;
+    return ValidationResult(combined);
 }
 
 }  // namespace cumes

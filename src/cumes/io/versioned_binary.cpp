@@ -117,11 +117,11 @@ class VersionedBinaryReader final : public Reader {
         if (version != kVersion) {
             return fail("versioned binary: unsupported version " + std::to_string(version));
         }
-        if (ns < 1 || mnmax < 1) {
-            return fail("versioned binary: bad dimensions (ns=" + std::to_string(ns) +
-                        ", mnmax=" + std::to_string(mnmax) + ")");
+        std::size_t n = 0;
+        std::string reason;
+        if (!io_detail::checkStateDimensions(fp, ns, mnmax, n, reason)) {
+            return fail("versioned binary: " + reason);
         }
-        const std::size_t n = static_cast<std::size_t>(ns) * mnmax;
         EquilibriumSnapshot snapshot;
         snapshot.ns = ns;
         snapshot.mnmax = mnmax;
