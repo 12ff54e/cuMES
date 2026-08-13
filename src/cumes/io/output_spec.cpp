@@ -56,6 +56,9 @@ std::optional<OutputFormat> suffix_format(const std::string& path) {
 
 Result<OutputSpec> resolve_output_spec(const std::string& path,
                                        bool compatibility_mode) {
+    // Pure suffix -> format dispatch; backend availability is the separate
+    // output_format_available() preflight (mirrors the legacy
+    // outputFormatAvailable vs outputSave split).
     const auto fmt = suffix_format(path);
     if (!fmt.has_value()) {
         if (compatibility_mode) {
@@ -68,11 +71,6 @@ Result<OutputSpec> resolve_output_spec(const std::string& path,
         return Result<OutputSpec>("'" + path +
                                   "': unrecognized output suffix; pass "
                                   "--output-schema or a recognized suffix");
-    }
-    if (!output_format_available(*fmt)) {
-        return Result<OutputSpec>("'" + path + "': " + output_suffix(*fmt) +
-                                  " output requested but this backend is not "
-                                  "compiled in");
     }
     OutputSpec spec;
     spec.format = *fmt;
