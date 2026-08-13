@@ -46,9 +46,16 @@ endforeach()
 
 # ---- host-only library targets ---------------------------------------------
 
+# JsonParser implementation (header-only library, compiled once). Shared by the
+# legacy parser and the new host-model reader.
+add_library(cumes_json STATIC src/json_parser.cpp)
+target_include_directories(cumes_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+cumes_enable_warnings(cumes_json)
+
 # JSON input parser (no CUDA; compiled by the C++ compiler).
 add_library(cumes_config STATIC src/input_json.cpp)
 target_include_directories(cumes_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(cumes_config PUBLIC cumes_json)
 cumes_enable_warnings(cumes_config)
 
 # ---- Phase 2: validated host model (namespace cumes) -----------------------
@@ -64,9 +71,10 @@ cumes_enable_warnings(cumes_core)
 # legacy InputParams bridge, and the normalization emitter. Host-only C++.
 add_library(cumes_config_json STATIC
   src/cumes/config/validation_report.cpp
-  src/cumes/config/validated_problem.cpp)
+  src/cumes/config/validated_problem.cpp
+  src/cumes/config/json_reader.cpp)
 target_include_directories(cumes_config_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(cumes_config_json PUBLIC cumes_core)
+target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
 cumes_enable_warnings(cumes_config_json)
 
 # Output writers: binary dispatcher + optional NetCDF/HDF5 backends (host-only
@@ -137,10 +145,16 @@ target_include_directories(test_output_failure PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(test_output_failure PRIVATE cumes_test_support cumes_io)
 cumes_enable_warnings(test_output_failure)
 
+add_executable(test_host_config tests/test_host_config.cpp)
+target_include_directories(test_host_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_host_config PRIVATE cumes_config_json cumes_config)
+cumes_enable_warnings(test_host_config)
+
 # ---- ctest registration ----------------------------------------------------
 enable_testing()
 cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
+cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)

@@ -19,19 +19,20 @@ enum class PrecisionPolicy : std::uint8_t {
     kDebugDouble = 3,   // double + precise + device checks
 };
 
-// The lowest tolerance a policy can meaningfully meet. Double can reach the
-// 1e-14..1e-16 range; float stalls at ~1e-7, and the legacy float gate used
-// 1e-6 as a safety margin.
+// The lowest tolerance a policy can meaningfully meet. Double reaches the
+// ~1e-16 residual floor (the shipped configs request 1e-16 and converge);
+// float stalls at ~1e-7, and the legacy float gate used 1e-6 as a safety
+// margin.
 inline double tolerance_floor(PrecisionPolicy policy) {
     switch (policy) {
         case PrecisionPolicy::kVerifyDouble:
         case PrecisionPolicy::kFastDouble:
         case PrecisionPolicy::kDebugDouble:
-            return 1e-14;
+            return 1e-16;
         case PrecisionPolicy::kMixedFloat:
             return 1e-6;
     }
-    return 1e-14;
+    return 1e-16;
 }
 
 // Is `ftol` achievable under `policy`? False means validation must reject it

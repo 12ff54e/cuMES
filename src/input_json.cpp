@@ -14,7 +14,9 @@
 // Value::contains (no Null-insertion side effect of the non-const
 // operator[]), reads through at()/const operator[], so everything below
 // takes const Value references.
-#define ZQ_JSON_PARSER_IMPLEMENTATION
+//
+// The JsonParser implementation is compiled once into the cumes_json target
+// (src/json_parser.cpp); this TU only declares it.
 #include "JsonParser.h"
 #include "input_json.h"
 
