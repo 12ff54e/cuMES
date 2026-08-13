@@ -1,7 +1,8 @@
-# Build artifacts
+# Build artifacts (build/ = verify preset; build-* = the other CMakePresets.json
+# configs: float, debug, sanitize, nobackend, profiling, and the one-off
+# backend-matrix dirs).
 build/
-build-prof/
-build-float/
+build-*/
 
 # Run output
 cumes_state.bin
@@ -15,5 +16,4 @@ perf_refactor_post/
 # Editors / misc
 *.swp
 *~
-build-nobackend/
 .verify-scratch/

@@ -53,15 +53,10 @@
 #include "profiles.cuh"
 #include "precon.cuh"
 #include "constraint.cuh"
+#include "cumes_test_support.cuh"
 
 static int g_failures = 0;
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(1);
-    }
-}
 
 // Absolute comparison against a precomputed tolerance (see the callers: the
 // tolerances are scale-based — rel * the grid/component reference scale + an

@@ -18,10 +18,8 @@
 #include "fourier.cuh"
 #include "geometry.cuh"
 #include "profiles.cuh"
+#include "cumes_test_support.cuh"
 
-static void cc(cudaError_t e, const char* t) {
-    if (e != cudaSuccess) { fprintf(stderr, "CUDA[%s]: %s\n", t, cudaGetErrorString(e)); exit(1); }
-}
 
 // Manufacture a non-degenerate spectral state on the W7-X shape. The content
 // is deliberately generic (all modes get a mild radial envelope) so no

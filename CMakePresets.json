@@ -1,0 +1,98 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "verify",
+      "displayName": "Verify — double, release, all backends (default)",
+      "description": "The verification configuration: precise double, NetCDF+HDF5 on when found.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_USE_FLOAT": "OFF",
+        "CUMES_USE_NETCDF": "ON",
+        "CUMES_USE_HDF5": "ON"
+      }
+    },
+    {
+      "name": "float",
+      "displayName": "Float — single precision (experimental)",
+      "description": "Single-precision CLI. Float stalls at ~1e-7; relax ftol_array entries to >= 1e-6.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-float",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_USE_FLOAT": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug — double, symbols, no optimisation",
+      "description": "Debug build for host/device debugging.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CUMES_USE_FLOAT": "OFF"
+      }
+    },
+    {
+      "name": "sanitizer",
+      "displayName": "Sanitizer — double + Compute Sanitizer memcheck tests",
+      "description": "Registers compute-sanitizer memcheck variants of the kernel-driving tests.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-sanitize",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CUMES_USE_FLOAT": "OFF",
+        "CUMES_ENABLE_SANITIZER_TESTS": "ON"
+      }
+    },
+    {
+      "name": "nobackend",
+      "displayName": "No-backend — binary-only output (CI matrix entry)",
+      "description": "Builds without NetCDF/HDF5 so the binary-only fallback path is exercised.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-nobackend",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_USE_FLOAT": "OFF",
+        "CUMES_USE_NETCDF": "OFF",
+        "CUMES_USE_HDF5": "OFF"
+      }
+    },
+    {
+      "name": "profiling",
+      "displayName": "Profiling — double + lineinfo + ptxas verbosity",
+      "description": "Adds -lineinfo and ptxas -v to the CUDA flags for Nsight/ptxas analysis.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-prof",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_USE_FLOAT": "OFF",
+        "CMAKE_CUDA_FLAGS": "-lineinfo -Xptxas=-v"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "verify", "configurePreset": "verify" },
+    { "name": "float", "configurePreset": "float" },
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "sanitizer", "configurePreset": "sanitizer" },
+    { "name": "nobackend", "configurePreset": "nobackend" },
+    { "name": "profiling", "configurePreset": "profiling" }
+  ],
+  "testPresets": [
+    {
+      "name": "verify",
+      "configurePreset": "verify",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "sanitizer",
+      "configurePreset": "sanitizer",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 //
 // InputParams is the fixed-size host bundle that feeds the GPU solver
 // (boundary, profiles, resolution, multigrid stage sequence). It is
-// populated from a vmecpp-style JSON input file by src/input_json.cu
+// populated from a vmecpp-style JSON input file by src/input_json.cpp
 // (API in input_json.h): JSON keys map 1:1 onto the fields below with the
 // vmecpp indata schema (mpol, ntor, nfp, ..., ns_array/niter_array/
 // ftol_array, am/ac/ai/aphi, raxis_c/zaxis_s, rbc/zbs as {n,m,value}

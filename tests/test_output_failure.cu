@@ -33,6 +33,7 @@
 #include "input.h"
 #include "solver.cuh"
 #include "output.cuh"
+#include "cumes_test_support.cuh"
 
 static int failures = 0;
 #define CHECK(cond, msg)                                                     \
@@ -45,12 +46,6 @@ static int failures = 0;
         }                                                                    \
     } while (0)
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(1);
-    }
-}
 
 // A tiny but valid state/params bundle for the writers. The state need not be
 // physical — the writers copy whatever is there. ns=5, mnmax=2.

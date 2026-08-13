@@ -1,3 +1,7 @@
+// solver_impl.cuh — template definitions for solver.cuh.
+// Included once per scalar type by solver_double.cu / solver_float.cu; see the
+// explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+#pragma once
 // solver.cu — fixed-point iteration with Garabedian acceleration.
 // The dump/debug machinery below (DUMP_CUMES_VERIFY blocks) is compiled in
 // but RUNTIME-GATED: nothing is written and no debug output is produced
@@ -1302,7 +1306,3 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
     return res;
 }
 
-// ---- Explicit instantiation (double + float) ----------------------------
-// The kernels need none: every launch happens inside this TU.
-template SolverResult<double> solverRun<double>(SpectralState<double>&, const GridParams<double>&, const RadialProfiles<double>&, FourierPlan<double>&, MetricWorkspace<double>&);
-template SolverResult<float>  solverRun<float>(SpectralState<float>&, const GridParams<float>&, const RadialProfiles<float>&, FourierPlan<float>&, MetricWorkspace<float>&);

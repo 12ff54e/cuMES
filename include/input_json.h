@@ -1,6 +1,6 @@
 // input_json.h — JSON-file-driven input (vmecpp indata schema).
 //
-// initInputParamsFromJson() is defined in src/input_json.cu (the only TU
+// initInputParamsFromJson() is defined in src/input_json.cpp (the only TU
 // that includes JsonParser.h and defines ZQ_JSON_PARSER_IMPLEMENTATION).
 // This header stays plain so it can be included from any nvcc-compiled TU.
 #pragma once

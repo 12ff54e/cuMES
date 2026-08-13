@@ -1,7 +1,7 @@
 // main.cu — entry point: init → solve → output.
 // Input selection: argv[1] is the JSON input file (vmecpp indata schema);
 // without an argument the default inputs/solovev.json is used. Parsing and
-// validation live in src/input_json.cu (see include/input_json.h).
+// validation live in src/input_json.cpp (see include/input_json.h).
 //
 // Precision: `Real` (vmec_types.h) is the compile-time switch between double
 // and float — configure with -DCUMES_USE_FLOAT=ON. All modules are templated

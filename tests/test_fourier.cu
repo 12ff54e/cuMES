@@ -16,6 +16,7 @@
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "constraint.cuh"
+#include "cumes_test_support.cuh"
 
 constexpr int kNs=3, kMpol=3, kNtor=2, kNtheta=16, kNzeta=8, kNfp=1;
 constexpr int kMnmax=kMpol*(kNtor+1), kNZnT=kNtheta*kNzeta;
@@ -25,7 +26,6 @@ static void checkNear(double g,double e,double t,const char* s,int j,int k){
     if(fabs(g-e)>t){fprintf(stderr,"FAIL [%s] j=%d k=%d got=%.15e exp=%.15e\n",s,j,k,g,e);++g_failures;}}
 static void checkMode(double g,double e,double t,const char* s,int j,int m){
     if(fabs(g-e)>t){fprintf(stderr,"FAIL [%s] j=%d m=%d got=%.15e exp=%.15e\n",s,j,m,g,e);++g_failures;}}
-static void cc(cudaError_t e,const char* t){if(e!=cudaSuccess){fprintf(stderr,"CUDA[%s]:%s\n",t,cudaGetErrorString(e));exit(1);}}
 
 // Per-type comparison tolerances (float arithmetic cannot reach the double
 // reference at 1e-12; 1e-4 is ~100x the float rounding floor of these sums).

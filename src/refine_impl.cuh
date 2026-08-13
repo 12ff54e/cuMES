@@ -1,3 +1,7 @@
+// refine_impl.cuh — template definitions for refine.cuh.
+// Included once per scalar type by refine_double.cu / refine_float.cu; see the
+// explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+#pragma once
 // refine.cu — grid-sequencing state interpolation (multi-radial-grid).
 //
 // Mirrors vmecpp's Vmec::InterpolateToNextMultigridStep (vmec.cc:1795-2042),
@@ -130,7 +134,3 @@ void interpolateState(SpectralState<T>& st_new, const GridParams<T>& p_new,
            p_old.ns, p_new.ns);
 }
 
-template void interpolateState<double>(SpectralState<double>&, const GridParams<double>&,
-                                       const SpectralState<double>&, const GridParams<double>&);
-template void interpolateState<float>(SpectralState<float>&, const GridParams<float>&,
-                                      const SpectralState<float>&, const GridParams<float>&);

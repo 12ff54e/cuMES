@@ -4,7 +4,7 @@
 #include "input.h"       // InputParams (full provenance bundle)
 #include "solver.cuh"    // SolverResult<T>
 // (no include cycle: nothing in the input/solver/geometry/forces chain
-//  includes output.cuh; only main.cu and output.cu include this header)
+//  includes output.cuh; only main.cu and output.cpp include this header)
 
 // The on-disk state format stays double regardless of T (the Python
 // comparison scripts parse doubles); outputSaveBinary converts T -> double.
@@ -22,7 +22,7 @@ void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
 #ifdef CUMES_HAVE_NETCDF
 // Write state + grid params + convergence + full InputParams provenance to
 // a netCDF classic-3 file (NC_CLOBBER). Declared under the CMake define;
-// the definition + explicit instantiation live in src/output_netcdf.cu.
+// the definition + explicit instantiation live in src/output_netcdf.cpp.
 template <typename T>
 bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
                       const InputParams& ip, const SolverResult<T>& result,
@@ -31,7 +31,7 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
 
 #ifdef CUMES_HAVE_HDF5
 // Same content as a serial HDF5 file (scalars as root-group attributes).
-// Definition + explicit instantiation live in src/output_hdf5.cu.
+// Definition + explicit instantiation live in src/output_hdf5.cpp.
 template <typename T>
 bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
                     const InputParams& ip, const SolverResult<T>& result,
@@ -42,7 +42,7 @@ bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
 // suffix falls back to binary cumes_state.bin in the working directory with
 // a stderr warning. A known suffix whose backend is not compiled in returns
 // false (the caller should have preflighted via outputFormatAvailable before
-// running the solve). Always compiled (output.cu).
+// running the solve). Always compiled (output.cpp).
 template <typename T>
 bool outputSave(const SpectralState<T>& st, const GridParams<T>& p,
                 const InputParams& ip, const SolverResult<T>& result,

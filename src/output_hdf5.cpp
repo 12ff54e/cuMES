@@ -1,7 +1,7 @@
-// output_hdf5.cu — serial HDF5 output of the solved state.
+// output_hdf5.cpp — serial HDF5 output of the solved state.
 // Compiled only when CUMES_HAVE_HDF5 is defined (CMake, CUMES_USE_HDF5
 // option + find_package(HDF5 COMPONENTS C)). Same content as the netCDF
-// writer (src/output_netcdf.cu): the 6 coefficient families (on disk
+// writer (src/output_netcdf.cpp): the 6 coefficient families (on disk
 // double regardless of T) plus grid params, convergence and the full
 // InputParams provenance; scalars are root-group attributes, arrays are
 // datasets.
@@ -13,6 +13,7 @@
 #include "output.cuh"
 #include "input.h"
 #include "solver.cuh"
+#include <cuda_runtime.h>  // cudaMemcpy (host runtime API)
 #include <hdf5.h>
 #include <cstdio>
 #include <cstdlib>   // getpid

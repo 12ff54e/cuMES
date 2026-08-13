@@ -17,6 +17,16 @@
 // cosnvn=+n*nfp*cos(nζ)); bsupu = (lamscale*lv + chip')/√g.
 #pragma once
 
+// Self-contained: M_PI (used by GridParams::kMu0 below) is a POSIX/GNU
+// extension, not ISO C++. Host-only .cpp TUs compiled by g++ (rather than
+// nvcc, which pre-defines it) need it to be visible here, before any other
+// header has a chance to include <cmath>. The fallback is glibc's exact
+// double value, so kMu0 is bit-identical on every toolchain.
+#include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // The computation scalar type, templated on T throughout; the app-level
 // compile-time switch between double and float is `Real` (see below).
 template <typename T>

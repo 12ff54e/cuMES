@@ -1,4 +1,4 @@
-// output.cu — copy results from GPU and print.
+// output.cpp — copy results from GPU and print.
 //
 // The on-disk state format (cumes_state.bin) stays double regardless of the
 // computation type T — the Python comparison scripts (scripts/compare_*.py)
@@ -12,6 +12,7 @@
 // is atomic.
 #include "output.cuh"
 #include "input.h"
+#include <cuda_runtime.h>  // cudaMemcpy/cudaMemcpy2D/cudaGetErrorString (host runtime API)
 #include <cstdio>
 #include <cstdlib>   // getpid
 #include <cstring>   // strrchr

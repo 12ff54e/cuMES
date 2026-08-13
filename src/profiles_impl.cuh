@@ -1,3 +1,7 @@
+// profiles_impl.cuh — template definitions for profiles.cuh.
+// Included once per scalar type by profiles_double.cu / profiles_float.cu; see the
+// explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+#pragma once
 // profiles.cu — evaluate radial profiles on host from the input parameters
 // and upload to GPU. Matches vmecpp's evalRadialProfiles (radial_profiles.cc
 // lines 1149-1220) and computeMagneticFluxes (440-455):
@@ -206,8 +210,3 @@ void profilesFree(RadialProfiles<T>& rp) {
     cudaFree(rp.d_curr_H); cudaFree(rp.d_chip_H);
 }
 
-// ---- Explicit instantiation (double + float) ----------------------------
-template RadialProfiles<double> profilesCreate<double>(GridParams<double>&, const InputParams&);
-template RadialProfiles<float>  profilesCreate<float>(GridParams<float>&, const InputParams&);
-template void profilesFree<double>(RadialProfiles<double>&);
-template void profilesFree<float>(RadialProfiles<float>&);

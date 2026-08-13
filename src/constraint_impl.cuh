@@ -1,3 +1,7 @@
+// constraint_impl.cuh — template definitions for constraint.cuh.
+// Included once per scalar type by constraint_double.cu / constraint_float.cu; see the
+// explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+#pragma once
 // constraint.cu — spectral condensation constraint force.
 // Reference: vmecpp constraint_force_kernel.h and deAliasConstraintForce().
 //
@@ -18,19 +22,23 @@
 #include <cstdio>
 #include <cmath>
 
-// nvcc rejects `extern __shared__` arrays in a function template that is
-// instantiated with different element types in one TU ("declaration is
-// incompatible with previous" — both the double and float instantiations
-// collide on the variable name). Route the dynamic shared-memory base through
-// one non-templated device function instead: the base address is the same for
-// every function in a block, so the kernels reinterpret it as T*.
+
+// Dynamic shared-memory base accessor. Each block reserves one extern __shared__
+// region per kernel launch; the consuming kernels reinterpret that base as T*.
+// NOTE: the explicit double/float instantiation split (one scalar type per TU)
+// removes the ORIGINAL reason for this indirection — nvcc rejecting a direct
+// `extern __shared__ T[]` in a template instantiated with two scalar types in
+// one TU. It is nevertheless RETAINED here: switching to the direct form
+// changes -use_fast_math FMA fusion in the consumers (opaque function return
+// vs. known shared-array aliasing) and perturbs the trajectory at ~1e-10 — a
+// Class B change, not the Class A bitwise-equivalence the build/library split
+// must preserve. Removal is deferred to a Class B phase (re-frozen baseline).
 namespace {
 __device__ void* dynSharedBase() {
     extern __shared__ unsigned char smem_base[];
     return smem_base;
 }
 }
-
 
 static void cc(cudaError_t e, const char* t) {
     if (e != cudaSuccess) { fprintf(stderr, "CUDA[%s]: %s\n", t, cudaGetErrorString(e)); exit(1); }
@@ -727,14 +735,3 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
     cc(cudaGetLastError(), "addConstraint");
 }
 
-// ---- Explicit instantiation (double + float) ----------------------------
-template ConstraintWorkspace<double> constraintCreate<double>(const GridParams<double>&);
-template ConstraintWorkspace<float>  constraintCreate<float>(const GridParams<float>&);
-template void constraintFree<double>(ConstraintWorkspace<double>&);
-template void constraintFree<float>(ConstraintWorkspace<float>&);
-template void constraintRzConCompute<double>(const GridParams<double>&, const FourierPlan<double>&, const SpectralState<double>&, ConstraintWorkspace<double>&, const double*);
-template void constraintRzConCompute<float>(const GridParams<float>&, const FourierPlan<float>&, const SpectralState<float>&, ConstraintWorkspace<float>&, const float*);
-template void constraintResetRzCon0<double>(const GridParams<double>&, ConstraintWorkspace<double>&, const double*);
-template void constraintResetRzCon0<float>(const GridParams<float>&, ConstraintWorkspace<float>&, const float*);
-template void constraintCompute<double>(const GridParams<double>&, const FourierPlan<double>&, const PreconWorkspace<double>&, ConstraintWorkspace<double>&, const double*, bool);
-template void constraintCompute<float>(const GridParams<float>&, const FourierPlan<float>&, const PreconWorkspace<float>&, ConstraintWorkspace<float>&, const float*, bool);

@@ -1,3 +1,7 @@
+// forces_impl.cuh — template definitions for forces.cuh.
+// Included once per scalar type by forces_double.cu / forces_float.cu; see the
+// explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+#pragma once
 // forces.cu — MHD force residuals in real space, with even/odd parity.
 //
 // Follows vmecpp's mhdforce_kernel.h and lambda_force_kernel.h exactly,
@@ -281,6 +285,3 @@ void computeForces(const FourierPlan<T>& fp, const GridParams<T>& p,
     checkCuda(cudaGetLastError(), "forces kernel");
 }
 
-// ---- Explicit instantiation (double + float) ----------------------------
-template void computeForces<double>(const FourierPlan<double>&, const GridParams<double>&, const RadialProfiles<double>&, const MetricWorkspace<double>&);
-template void computeForces<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, const MetricWorkspace<float>&);

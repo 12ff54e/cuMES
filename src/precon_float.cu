@@ -1,0 +1,7 @@
+#include "precon_impl.cuh"
+
+// Explicit instantiation for float (cumes_cuda_float).
+template PreconWorkspace<float>  preconCreate<float>(const GridParams<float>&);
+template void preconFree<float>(PreconWorkspace<float>&);
+template void preconCompute<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, const MetricWorkspace<float>&, PreconWorkspace<float>&);
+template void preconApply<float>(float*, const GridParams<float>&, const PreconWorkspace<float>&, const int*, const int*);

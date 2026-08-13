@@ -19,6 +19,7 @@
 #include "forces.cuh"
 #include "profiles.cuh"
 #include "solver.cuh"
+#include "cumes_test_support.cuh"
 
 static int failures = 0;
 #define CHECK(cond, msg)                                                     \
@@ -31,9 +32,6 @@ static int failures = 0;
         }                                                                    \
     } while (0)
 
-static void cc(cudaError_t e, const char* t) {
-    if (e != cudaSuccess) { fprintf(stderr, "CUDA[%s]:%s\n", t, cudaGetErrorString(e)); exit(1); }
-}
 
 int main() {
     // ---- Initial Solovev state (ns=55 = the Solovev final grid, ntor=0) ----

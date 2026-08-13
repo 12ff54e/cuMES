@@ -1,3 +1,7 @@
+// precon_impl.cuh — template definitions for precon.cuh.
+// Included once per scalar type by precon_double.cu / precon_float.cu; see the
+// explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+#pragma once
 // precon.cu — radial tridiagonal preconditioner for MHD force balance.
 // Computes flux-surface-averaged Hessian approximation separately for R and Z,
 // assembles tridiagonal systems per (m,n) mode, and solves via parallel cyclic
@@ -10,19 +14,23 @@
 #include <cstdio>
 #include <cmath>
 
-// nvcc rejects `extern __shared__` arrays in a function template that is
-// instantiated with different element types in one TU ("declaration is
-// incompatible with previous" — both the double and float instantiations
-// collide on the variable name). Route the dynamic shared-memory base through
-// one non-templated device function instead: the base address is the same for
-// every function in a block, so the kernels reinterpret it as T*.
+
+// Dynamic shared-memory base accessor. Each block reserves one extern __shared__
+// region per kernel launch; the consuming kernels reinterpret that base as T*.
+// NOTE: the explicit double/float instantiation split (one scalar type per TU)
+// removes the ORIGINAL reason for this indirection — nvcc rejecting a direct
+// `extern __shared__ T[]` in a template instantiated with two scalar types in
+// one TU. It is nevertheless RETAINED here: switching to the direct form
+// changes -use_fast_math FMA fusion in the consumers (opaque function return
+// vs. known shared-array aliasing) and perturbs the trajectory at ~1e-10 — a
+// Class B change, not the Class A bitwise-equivalence the build/library split
+// must preserve. Removal is deferred to a Class B phase (re-frozen baseline).
 namespace {
 __device__ void* dynSharedBase() {
     extern __shared__ unsigned char smem_base[];
     return smem_base;
 }
 }
-
 
 static void cc(cudaError_t e, const char* t) {
     if (e != cudaSuccess) { fprintf(stderr, "CUDA[%s]: %s\n", t, cudaGetErrorString(e)); exit(1); }
@@ -826,12 +834,3 @@ void preconApply(T* d_f_inout, const GridParams<T>& p,
     cc(cudaGetLastError(), "tridiagSolve");
 }
 
-// ---- Explicit instantiation (double + float) ----------------------------
-template PreconWorkspace<double> preconCreate<double>(const GridParams<double>&);
-template PreconWorkspace<float>  preconCreate<float>(const GridParams<float>&);
-template void preconFree<double>(PreconWorkspace<double>&);
-template void preconFree<float>(PreconWorkspace<float>&);
-template void preconCompute<double>(const FourierPlan<double>&, const GridParams<double>&, const RadialProfiles<double>&, const MetricWorkspace<double>&, PreconWorkspace<double>&);
-template void preconCompute<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, const MetricWorkspace<float>&, PreconWorkspace<float>&);
-template void preconApply<double>(double*, const GridParams<double>&, const PreconWorkspace<double>&, const int*, const int*);
-template void preconApply<float>(float*, const GridParams<float>&, const PreconWorkspace<float>&, const int*, const int*);

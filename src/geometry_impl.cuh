@@ -1,3 +1,7 @@
+// geometry_impl.cuh — template definitions for geometry.cuh.
+// Included once per scalar type by geometry_double.cu / geometry_float.cu; see the
+// explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+#pragma once
 // geometry.cu — Jacobian, metric, magnetic field, and total pressure
 // on the staggered half-grid with even/odd parity decomposition.
 //
@@ -20,19 +24,23 @@
 #include <cstdio>
 #include <math_constants.h>
 
-// nvcc rejects `extern __shared__` arrays in a function template that is
-// instantiated with different element types in one TU ("declaration is
-// incompatible with previous" — both the double and float instantiations
-// collide on the variable name). Route the dynamic shared-memory base through
-// one non-templated device function instead: the base address is the same for
-// every function in a block, so the kernels reinterpret it as T*.
+
+// Dynamic shared-memory base accessor. Each block reserves one extern __shared__
+// region per kernel launch; the consuming kernels reinterpret that base as T*.
+// NOTE: the explicit double/float instantiation split (one scalar type per TU)
+// removes the ORIGINAL reason for this indirection — nvcc rejecting a direct
+// `extern __shared__ T[]` in a template instantiated with two scalar types in
+// one TU. It is nevertheless RETAINED here: switching to the direct form
+// changes -use_fast_math FMA fusion in the consumers (opaque function return
+// vs. known shared-array aliasing) and perturbs the trajectory at ~1e-10 — a
+// Class B change, not the Class A bitwise-equivalence the build/library split
+// must preserve. Removal is deferred to a Class B phase (re-frozen baseline).
 namespace {
 __device__ void* dynSharedBase() {
     extern __shared__ unsigned char smem_base[];
     return smem_base;
 }
 }
-
 
 static void checkCuda(cudaError_t err, const char* tag) {
     if (err != cudaSuccess) {
@@ -580,14 +588,3 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
 
 }
 
-// ---- Explicit instantiation (double + float) ----------------------------
-template MetricWorkspace<double> metricCreate<double>(const GridParams<double>&);
-template MetricWorkspace<float>  metricCreate<float>(const GridParams<float>&);
-template void metricFree<double>(MetricWorkspace<double>&);
-template void metricFree<float>(MetricWorkspace<float>&);
-template void computeGeometry<double>(const FourierPlan<double>&, const GridParams<double>&, const RadialProfiles<double>&, MetricWorkspace<double>&);
-template void computeGeometry<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, MetricWorkspace<float>&);
-template void computeForceNormPartials<double>(const GridParams<double>&, const MetricWorkspace<double>&, double*, double*);
-template void computeForceNormPartials<float>(const GridParams<float>&, const MetricWorkspace<float>&, float*, float*);
-template void computeJacobianStats<double>(const GridParams<double>&, const MetricWorkspace<double>&, double*, double*);
-template void computeJacobianStats<float>(const GridParams<float>&, const MetricWorkspace<float>&, float*, float*);

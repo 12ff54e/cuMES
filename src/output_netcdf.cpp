@@ -1,4 +1,4 @@
-// output_netcdf.cu — netCDF classic-3 output of the solved state.
+// output_netcdf.cpp — netCDF classic-3 output of the solved state.
 // Compiled only when CUMES_HAVE_NETCDF is defined (CMake, CUMES_USE_NETCDF
 // option + find_package/pkg-config). Content mirrors outputSaveBinary (the
 // 6 coefficient families, on disk double regardless of T) plus grid params,
@@ -13,6 +13,7 @@
 #include "output.cuh"
 #include "input.h"
 #include "solver.cuh"
+#include <cuda_runtime.h>  // cudaMemcpy (host runtime API)
 #include <netcdf.h>
 #include <cstdio>
 #include <cstdlib>   // getpid

@@ -1,4 +1,4 @@
-// input_json.cu — JSON-file-driven input (vmecpp indata schema).
+// input_json.cpp — JSON-file-driven input (vmecpp indata schema).
 //
 // The only TU that defines ZQ_JSON_PARSER_IMPLEMENTATION (JsonParser.h is
 // C++20; the whole project builds at C++20, but the implementation is kept

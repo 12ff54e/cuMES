@@ -23,6 +23,7 @@
 #include "forces.cuh"
 #include "precon.cuh"
 #include "profiles.cuh"
+#include "cumes_test_support.cuh"
 
 static int failures = 0;
 #define CHECK(cond, msg)                                                     \
@@ -35,12 +36,6 @@ static int failures = 0;
         }                                                                    \
     } while (0)
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(1);
-    }
-}
 
 // One constraint-compute pass at the given tcon0; returns the post-constraint
 // even force families (brmn_e, bzmn_e) and the tcon profile (host).

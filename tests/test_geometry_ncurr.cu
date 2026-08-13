@@ -23,6 +23,7 @@
 #include "fourier.cuh"
 #include "geometry.cuh"
 #include "profiles.cuh"
+#include "cumes_test_support.cuh"
 
 static int failures = 0;
 #define CHECK(cond, msg)                                                     \
@@ -35,12 +36,6 @@ static int failures = 0;
         }                                                                    \
     } while (0)
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(1);
-    }
-}
 
 // Build a Solovev-like state with a few modes and run one geometry pass.
 template <typename T>
