@@ -1,0 +1,184 @@
+# cuMES Phase 5 handover — operator/workspace boundaries
+
+Status date: 2026-08-15. Branch: `overhaul` (Phase 0 `bd26857` + Phase 1
+`12bcc44` + Phase 2 `168170a` + Phase 3 `c21564c` + Phase 4 `1b0d099` + this
+Phase 5 work). This document records what Phase 5 of
+`docs/cuda-overhaul-blueprint.md` delivered, how it was verified, and what was
+deliberately deferred and why.
+
+## 1. Scope
+
+Phase 5 is the **operator/workspace boundaries**: turn the five per-stage
+workspaces (profiles, Fourier, metric, preconditioner, constraint) into one
+arena allocation with a reported liveness/peak, and introduce the typed
+real-space views + operator interface contracts that the kernels will migrate
+onto. The numerical path stays bit-for-bit unchanged throughout — every commit
+is Class A.
+
+This phase delivers three of the blueprint's four Phase-5 deliverables plus the
+`DeviceArena`:
+
+| Blueprint deliverable | Status |
+| --------------------- | ------ |
+| stage arena with reported liveness/peak memory | **Done** (DeviceArena + arena-backed workspaces + StageSolver report) |
+| transform-only `SpectralOperator` | **Contract declared** (abstract interface; backends are Phase 7) |
+| profiles/geometry/B/force/constraint/residual/preconditioner/descent interfaces | **Contracts declared** (header-only boundary types) |
+| scalar CPU references + old/new dual-run hooks | **Deferred** (§5) |
+
+The remaining Phase-5 items from the Phase-4 handover — full `SpectralView`
+kernel-signature migration, config/I-O wiring in `main.cu` — are deferred with
+specific guidance (§5).
+
+## 2. What changed
+
+### 2.1 `DeviceArena` (`include/cumes/runtime/device_arena.cuh`)
+
+A host-side linear arena over one `cudaMalloc`'d backing store that carves
+**named, aligned** subspans (`alloc_span<T>(name, count, align)`) and reports
+per-category liveness/peak (`spans()`, `used_bytes()`, `peak_bytes()`,
+`total_bytes()`). It throws `CumesError` on overflow (a too-small plan is a
+loud setup error, never silent aliasing) and rejects non-power-of-two
+alignments. Move resets the source.
+
+### 2.2 Arena-backed workspaces
+
+Every workspace array now allocates through `alloc_span` behind a
+`DeviceArena* arena = nullptr` default on each `*Create`:
+
+- `arena == nullptr` → the legacy per-array `cudaMalloc` path (all six tests
+  that call `*Create` directly are unchanged).
+- `arena != nullptr` → named subspans of one stage allocation; each struct
+  carries `arena_backed = true` so its `*Free` frees only the non-arena
+  resources (cuFFT plans, the pinned `h_faccon`) and resets the struct.
+
+`StageSolver` now plans (`stage_arena_bytes<T>`, blueprint §6.5
+`StageWorkspace::plan`), allocates one arena for the whole stage (profiles +
+Fourier + metric + preconditioner + constraint), and reports the peak/liveness
+after the solve:
+
+```
+stage arena: 122 spans, peak 71366160 bytes (68.06 MiB), reserved 71431688 bytes
+```
+
+One `cudaMalloc` per stage replaces ~110 per-array allocations.
+
+### 2.3 Typed real-space views (`include/cumes/state/real_fields.cuh`)
+
+`ReducedThetaView<T>` (a **distinct** reduced-theta quadrature view — never an
+integer reinterpretation of a full-grid view, blueprint §4.1) plus the
+aggregate bundles `GeometryParityViews` / `RadialProfileViews` /
+`BaseGeometryHalfViews` / `MagneticFieldViews` / `ForceParityViews`. All are
+trivially-copyable, `__host__ __device__`, and index bit-for-bit like the
+legacy `surface*nZnT + zeta*ntheta + theta` layout.
+
+### 2.4 Operator interface contracts
+
+Header-only boundary declarations that establish the acyclic dependency DAG
+(blueprint §5.1):
+
+- `cumes/transforms/spectral_operator.hpp` — abstract `enqueue_inverse`/
+  `enqueue_forward` (the Axisymmetric/ToroidalFft backends land in Phase 7).
+- `cumes/physics/{profiles,geometry_operator,magnetic_field_operator,
+  force_operator,constraint_operator}.hpp`.
+- `cumes/numerics/{residual_operator,preconditioner,tridiagonal_backend,
+  descent_operator,prolongation}.hpp`.
+
+`tests/test_operator_views.cu` includes every interface header (the no-cycle
+gate), round-trips a `ReducedThetaView` on device, and `static_assert`s the view
+bundles are trivially copyable.
+
+## 3. Key design decisions
+
+1. **`arena_backed` flag, not a signature-only change.** A defaulted
+   `DeviceArena* arena = nullptr` keeps the legacy path (and all six direct test
+   call sites) bit-for-bit, while `StageSolver` opts into the arena. `*Free`
+   branches on the flag so it can skip device `cudaFree` for arena-backed
+   structs while still destroying cuFFT plans and the pinned `h_faccon`.
+2. **`stage_arena_bytes` is the host-side plan.** The arena must be sized before
+   the `*Create` calls carve it; the plan sums each module's exact span counts
+   (mirroring the `alloc_span` calls) plus a 64 KiB alignment slack.
+   `alloc_span` throws on overflow, so a miscount fails loudly at setup rather
+   than corrupting the trajectory.
+3. **cuFFT scratch is explicitly 16-byte aligned.** This was the one real bug
+   this phase surfaced: `cudaMalloc`'s 256-byte alignment had masked cuFFT's
+   16-byte requirement (`cufftDoubleComplex` is a 16-byte vector, and the real
+   input of a double D2Z is processed as `double2` chunks). On the W7-X
+   prescribed-current `deAlias d2z`, the 8-byte-aligned arena `double*` input
+   returned `CUFFT_INVALID_VALUE`. Aligning the zeta scratch (both real and
+   complex) to 16 bytes restores it; the other kernels have no alignment
+   requirement beyond `alignof(T)`.
+4. **Interfaces are contracts, not dead code.** The typed views are concrete and
+   device-tested; the operator headers are compiled together in
+   `test_operator_views.cu` (the acyclic-DAG gate). The kernels migrate onto
+   these signatures in the follow-up (§5) — no numerical path depends on them
+   yet, which is what keeps this phase Class A.
+
+## 4. Verification
+
+### Class A bitwise gate (the critical gate)
+
+Fresh baseline at `overhaul/phase-4` (`1b0d099`), captured to
+`.verify-scratch/baseline-phase5`; candidate trees captured from the Phase-5
+tree and compared with `scripts/compare_bitwise.py`:
+
+| Config | state | trajectory | step_0 | dump manifest |
+| ------ | ----- | ---------- | ------ | ------------- |
+| double/solovev | OK | OK | OK (10) | OK (235 files) |
+| double/w7x    | OK | OK | OK (10) | OK (526 files) |
+
+Both `PASS: byte-identical`. Effective-iteration counts reproduce the baseline
+exactly (Solovev 251 → 199 → 456; W7-X 1877 → 1617 → 2011).
+
+### Test matrix
+
+| Preset | Result |
+| ------ | ------ |
+| `verify` (double, both backends) | **24/24** (17 unit + 7 compute-sanitizer memcheck) |
+| `float` | **15/15** |
+
+The float build compiles and its solver runs the same arena path; the double
+build is the verification configuration (blueprint §1).
+
+### No hot-loop allocation
+
+The five workspaces now allocate once per stage (one arena `cudaMalloc`); the
+solver's internal `d_f_spec`/`d_sq`/`d_psum`/`d_jac_stats`/`checkpoint` buffers
+were already RAII `DeviceBuffer`s from Phase 3. `grep cudaMalloc src/*_impl.cuh`
+now shows only the `arena == nullptr` legacy fallback branches, never a hot-loop
+call.
+
+## 5. Deferred (documented, not hidden)
+
+Phase 5 is delivered as the **boundary layer**; the following are the remaining
+Phase-5 items, each substantial enough to be its own focused change:
+
+- **Full `SpectralView`/`RealFieldView` kernel-signature migration** (§6.3). The
+  kernels still take raw `T*` + `int ns/mnmax`; the operator contracts now name
+  the target signatures. Migrate one module at a time (fourier → geometry →
+  forces → constraint → precon → solver descent/residual), each a Class A
+  bitwise change, then wire `StageSolver` to the operators.
+- **Config/I-O wiring in `main.cu`** (§6.1, §6.13). `main.cu` still parses via
+  `initInputParams` and writes via `outputSave`; `read_and_validate` +
+  versioned writers + `read_checkpoint`/`convert_legacy_init` (all host-only,
+  already tested in Phase 2) must replace them. The legacy-v0 writer must first
+  be proven byte-identical to `outputSaveBinary` (a golden test) before the
+  swap, because `compare_bitwise.py` compares the on-disk `cumes_state.bin`.
+- **Scalar CPU references + old/new dual-run hooks** (§10.1). A local scalar
+  reference for transforms/geometry/force/residuals (the first layer of truth)
+  and a dual-run harness that runs legacy vs migrated kernels on one frozen
+  input at every boundary. This is the natural companion to the kernel
+  migration above.
+- **`dynSharedBase()` removal** is still a Class B change (Phase-1 handover §3),
+  not part of this phase.
+
+## 6. Next steps (Phase 5 completion)
+
+1. Golden-test the versioned legacy-v0 writer against `outputSaveBinary`, then
+   wire `main.cu` to `read_and_validate` + versioned writers + checkpoint
+   reader (config/I-O wiring).
+2. Migrate the kernels onto the operator signatures module-by-module, with
+   Class A bitwise verification after each, and add the scalar CPU references +
+   dual-run hooks as the per-boundary gate.
+3. Then Phase 6 (control-path performance): explicit nonblocking streams,
+   one combined control fence, one-copy checkpoint (already one copy since
+   Phase 3), fixed-iota update skip.
