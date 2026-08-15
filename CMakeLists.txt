@@ -195,6 +195,11 @@ target_include_directories(test_arena PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/includ
 target_link_libraries(test_arena PRIVATE cumes_test_support cumes_cuda_runtime)
 cumes_enable_warnings(test_arena)
 
+add_executable(test_operator_views tests/test_operator_views.cu)
+target_include_directories(test_operator_views PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_operator_views PRIVATE cumes_test_support cumes_cuda_runtime)
+cumes_enable_warnings(test_operator_views)
+
 # ---- ctest registration ----------------------------------------------------
 enable_testing()
 cumes_add_test(test_fourier          unit;fourier)
@@ -205,6 +210,7 @@ cumes_add_test(test_checkpoint       unit;io)
 cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
 cumes_add_test(test_arena            unit;runtime)
+cumes_add_test(test_operator_views   unit;runtime)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
@@ -217,4 +223,4 @@ cumes_add_test(test_force_verify     unit;forces)
 # (test_input_json is host-only and compute-sanitizer refuses to profile it).
 cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
-    test_regression_kernels test_runtime test_arena)
+    test_regression_kernels test_runtime test_arena test_operator_views)
