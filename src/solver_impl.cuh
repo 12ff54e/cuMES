@@ -37,8 +37,7 @@ static void dumpDeviceArray(const char* filename, const T* d_data,
 
 template <typename T>
 __global__ void rzNormKernel(  // defined below (before computeResidualsKernel)
-    const T* __restrict__ rmncc, const T* __restrict__ zmnsc,
-    const T* __restrict__ rmnss, const T* __restrict__ zmncs,
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mnmax, T* __restrict__ out);
 
@@ -58,7 +57,8 @@ __global__ void rzNormKernel(  // defined below (before computeResidualsKernel)
 // Called on the same cadence as the preconditioner update (vmecpp:
 // computeForceNorms inside shouldUpdateRadialPreconditioner).
 template <typename T>
-static void computeForceNorms(SpectralState<T>& st, const FourierPlan<T>& fp,
+static void computeForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
+                              const FourierPlan<T>& fp,
                               const GridParams<T>& p, const RadialProfiles<T>& rp,
                               const MetricWorkspace<T>& mw,
                               T* d_psum, T* d_rzsum, int iter2,
@@ -66,8 +66,7 @@ static void computeForceNorms(SpectralState<T>& st, const FourierPlan<T>& fp,
     computeForceNormPartials(p, mw, rp.d_dVds_H, d_psum);
 
     { dim3 b1(256), g1(1);
-      rzNormKernel<T><<<g1, b1>>>(st.d_rmncc, st.d_zmnsc, st.d_rmnss, st.d_zmncs,
-                                  fp.basis.d_xm, fp.basis.d_xn,
+      rzNormKernel<T><<<g1, b1>>>(st, fp.basis.d_xm, fp.basis.d_xn,
                                   p.ns, p.mnmax, d_rzsum);
       cumes::check_cuda(cudaGetLastError(), "rzNorm");
       cumes::check_cuda(cudaDeviceSynchronize(), "rzNorm sync"); }
@@ -147,9 +146,7 @@ static void computeForceNorms(SpectralState<T>& st, const FourierPlan<T>& fp,
 // for stellarator-symmetric equilibria. Mode table: mode = m*(ntor+1)+n.
 template <typename T>
 __global__ void extrapolateAxisKernel(
-    T* __restrict__ rmncc, T* __restrict__ zmnsc,
-    T* __restrict__ lmnsc, T* __restrict__ rmnss,
-    T* __restrict__ zmncs, T* __restrict__ lmncs,
+    cumes::SpectralView<T, cumes::PhysicalStateDomain> st,
     int ns, int mnmax, int ntorp1) {
     int mode = blockIdx.x * blockDim.x + threadIdx.x;
     if (mode >= mnmax) return;
@@ -162,17 +159,17 @@ __global__ void extrapolateAxisKernel(
         // through the half-grid average (FIXED 2026-08-02: without it the
         // jH=0 bsupu was off by ~30% on the first lambda != 0 pass, seeding
         // a 1e-4-level drift of the lambda channel).
-        lmncs[0 + mode*ns] = lmncs[1 + mode*ns];
+        st(cumes::SpectralComponent::Lcs, mode, 0) = st(cumes::SpectralComponent::Lcs, mode, 1);
         return;
     }
     if (m != 1) return;     // only m=1 needs extrapolation
     // Copy from j=1 to j=0
-    rmncc[0 + mode*ns] = rmncc[1 + mode*ns];
-    zmnsc[0 + mode*ns] = zmnsc[1 + mode*ns];
-    lmnsc[0 + mode*ns] = lmnsc[1 + mode*ns];
-    rmnss[0 + mode*ns] = rmnss[1 + mode*ns];
-    zmncs[0 + mode*ns] = zmncs[1 + mode*ns];
-    lmncs[0 + mode*ns] = lmncs[1 + mode*ns];
+    st(cumes::SpectralComponent::Rcc, mode, 0) = st(cumes::SpectralComponent::Rcc, mode, 1);
+    st(cumes::SpectralComponent::Zsc, mode, 0) = st(cumes::SpectralComponent::Zsc, mode, 1);
+    st(cumes::SpectralComponent::Lsc, mode, 0) = st(cumes::SpectralComponent::Lsc, mode, 1);
+    st(cumes::SpectralComponent::Rss, mode, 0) = st(cumes::SpectralComponent::Rss, mode, 1);
+    st(cumes::SpectralComponent::Zcs, mode, 0) = st(cumes::SpectralComponent::Zcs, mode, 1);
+    st(cumes::SpectralComponent::Lcs, mode, 0) = st(cumes::SpectralComponent::Lcs, mode, 1);
 }
 
 // Apply vmecpp's even/odd-m decomposition scaling (decomposeInto) to the
@@ -195,7 +192,8 @@ __global__ void extrapolateAxisKernel(
 // a linear-in-s one. Even-m modes: scalxc = 1 (no change).
 template <typename T>
 __global__ void scalxcApplyKernel(
-    T* __restrict__ f_spec, const T* __restrict__ sqrtS_F,
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
+    const T* __restrict__ sqrtS_F,
     const int* __restrict__ xm, int ns, int mnmax, T sqrtS1)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x, total = mnmax * ns;
@@ -210,7 +208,8 @@ __global__ void scalxcApplyKernel(
     if (m % 2 == 0) return;  // even-m: scalxc = 1
     int j = i % ns;
     T scal = T(1.0) / fmax(sqrtS_F[j], sqrtS1);
-    for (int c = 0; c < 6; ++c) f_spec[c * mnmax * ns + i] *= scal;
+    for (int c = 0; c < 6; ++c)
+        f_spec(static_cast<cumes::SpectralComponent>(c), mode, j) *= scal;
 }
 
 // vmecpp's m1 gauge on the decomposed forces, applied every iteration after
@@ -227,23 +226,21 @@ __global__ void scalxcApplyKernel(
 // m=1 R/Z coefficients ~1e-3 off the reference.
 // Applied to components 3 (frss) and 4 (fzcs) of the 6-component layout.
 template <typename T>
-__global__ void m1ConstraintKernel(T* __restrict__ f_spec, int ns,
-                                   int mnmax, int ntor, int zeroZ) {
+__global__ void m1ConstraintKernel(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
+                                   int ns, int mnmax, int ntor, int zeroZ) {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j >= ns) return;
     const T s = T(1.0) / std::sqrt(T(2.0));
     int m1base = ntor + 1;  // mode index of (m=1, n=0)
     for (int n = 0; n < ntor + 1; ++n) {
         int mn = m1base + n;
-        T* rss = &f_spec[j + mn * ns + 3 * mnmax * ns];
-        T* zcs = &f_spec[j + mn * ns + 4 * mnmax * ns];
-        T old_rss = *rss;
-        T old_zcs = *zcs;
-        *rss = (old_rss + old_zcs) * s;
+        T old_rss = f_spec(cumes::SpectralComponent::Rss, mn, j);
+        T old_zcs = f_spec(cumes::SpectralComponent::Zcs, mn, j);
+        f_spec(cumes::SpectralComponent::Rss, mn, j) = (old_rss + old_zcs) * s;
         if (zeroZ) {
-            *zcs = T(0.0);  // zeroZForceForM1
+            f_spec(cumes::SpectralComponent::Zcs, mn, j) = T(0.0);  // zeroZForceForM1
         } else {
-            *zcs = (old_rss - old_zcs) * s;  // keep the mixed zcs
+            f_spec(cumes::SpectralComponent::Zcs, mn, j) = (old_rss - old_zcs) * s;  // mixed zcs
         }
     }
 }
@@ -254,7 +251,7 @@ __global__ void m1ConstraintKernel(T* __restrict__ f_spec, int ns,
 // nonzero (fix_m1_gauge = false), i.e. for iter2 >= 2 before convergence.
 // Applied right before the RZ preconditioner (after the invariant residuals).
 template <typename T>
-__global__ void m1PreconScaleKernel(T* __restrict__ f_spec,
+__global__ void m1PreconScaleKernel(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                                     const T* __restrict__ ard,
                                     const T* __restrict__ brd,
                                     const T* __restrict__ azd,
@@ -274,8 +271,8 @@ __global__ void m1PreconScaleKernel(T* __restrict__ f_spec,
     T scaleZ = (azd[j * 2 + 1] + bzd[j * 2 + 1]) / denom;
     for (int n = 0; n < ntor + 1; ++n) {
         int mn = m1base + n;
-        f_spec[j + mn * ns + 3 * mnmax * ns] *= scaleR;
-        f_spec[j + mn * ns + 4 * mnmax * ns] *= scaleZ;
+        f_spec(cumes::SpectralComponent::Rss, mn, j) *= scaleR;
+        f_spec(cumes::SpectralComponent::Zcs, mn, j) *= scaleZ;
     }
 }
 
@@ -289,8 +286,7 @@ __global__ void m1PreconScaleKernel(T* __restrict__ f_spec,
 // (the 0.5 factor below); all other modes use the unmixed square.
 template <typename T>
 __global__ void rzNormKernel(
-    const T* __restrict__ rmncc, const T* __restrict__ zmnsc,
-    const T* __restrict__ rmnss, const T* __restrict__ zmncs,
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mnmax, T* __restrict__ out)
 {
@@ -307,8 +303,10 @@ __global__ void rzNormKernel(
         T nfac = (nn == 0) ? T(1.0) : std::sqrt(T(2.0));
         // decomposed = physical/(ms*ns): the squared term picks up 1/(ms*ns)^2
         T inv2 = T(1.0) / (mfac * nfac * mfac * nfac);
-        T rcc = rmncc[i], zsc = zmnsc[i];
-        T rss = rmnss[i], zcs = zmncs[i];
+        T rcc = st(cumes::SpectralComponent::Rcc, m, j);
+        T zsc = st(cumes::SpectralComponent::Zsc, m, j);
+        T rss = st(cumes::SpectralComponent::Rss, m, j);
+        T zcs = st(cumes::SpectralComponent::Zcs, m, j);
         if (mm > 0 || nn > 0) sum += rcc * rcc * inv2;
         sum += zsc * zsc * inv2;
         if (mm == 1) {
@@ -334,13 +332,15 @@ __global__ void rzNormKernel(
 //   fsqr = Σ frcc² + frss²,  fsqz = Σ fzsc² + fzcs²,  fsql = Σ flsc² + flcs²
 // (components 0..5 of f_spec: frcc fzsc flsc frss fzcs flcs).
 template <typename T>
-__global__ void computeResidualsKernel(const T* __restrict__ f_spec, int ns, int mnmax,
-                                       T* __restrict__ sq_out) {
+__global__ void computeResidualsKernel(
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
+    int ns, int mnmax, T* __restrict__ sq_out) {
     int comp = blockIdx.x; if(comp>=3)return;
     T sum=T(0); int total=mnmax*ns;
     for(int i=threadIdx.x; i<total; i+=blockDim.x){
-        T a=f_spec[i+comp*total];
-        T b=f_spec[i+(comp+3)*total];
+        int mode = i / ns, j = i % ns;
+        T a = f_spec(static_cast<cumes::SpectralComponent>(comp), mode, j);
+        T b = f_spec(static_cast<cumes::SpectralComponent>(comp + 3), mode, j);
         sum+=a*a+b*b;
     }
     __shared__ T s_sum[256]; int tid=threadIdx.x; s_sum[tid]=sum; __syncthreads();
@@ -350,16 +350,13 @@ __global__ void computeResidualsKernel(const T* __restrict__ f_spec, int ns, int
 
 template <typename T>
 __global__ void descentStepKernel(
-    T* __restrict__ x_cc, T* __restrict__ x_ss,
-    T* __restrict__ x_zsc, T* __restrict__ x_zcs,
-    T* __restrict__ x_lsc, T* __restrict__ x_lcs,
-    T* __restrict__ v_cc, T* __restrict__ v_ss,
-    T* __restrict__ v_zsc, T* __restrict__ v_zcs,
-    T* __restrict__ v_lsc, T* __restrict__ v_lcs,
-    const T* __restrict__ f_spec,
+    cumes::SpectralView<T, cumes::PhysicalStateDomain> x,
+    cumes::SpectralView<T, cumes::DecomposedVelocityDomain> v,
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mnmax, T delt, T b1, T fac)
 {
+    using cumes::SpectralComponent;
     int i = blockIdx.x*blockDim.x + threadIdx.x, total = mnmax*ns;
     if(i>=total)return;
     int m=i/ns, j=i%ns, mm=xm[m];
@@ -382,10 +379,10 @@ __global__ void descentStepKernel(
     // fixBoundaryKernel and the coefficient must not move. Lambda (comps
     // 2,5) is free on all surfaces including the LCFS, matching vmecpp.
     if (j < ns-1) {
-        T vr=v_cc[i]; vr=fac*(b1*vr+ delt*f_spec[i+0*mnmax*ns]); v_cc[i]=vr; x_cc[i]+=delt*vr*f;
-        T vz=v_zsc[i];vz=fac*(b1*vz+ delt*f_spec[i+1*mnmax*ns]);v_zsc[i]=vz;x_zsc[i]+=delt*vz*f;
-        T vs=v_ss[i]; vs=fac*(b1*vs+ delt*f_spec[i+3*mnmax*ns]); v_ss[i]=vs;
-        T vzc=v_zcs[i];vzc=fac*(b1*vzc+ delt*f_spec[i+4*mnmax*ns]);v_zcs[i]=vzc;
+        T vr=v(SpectralComponent::Rcc,m,j); vr=fac*(b1*vr+ delt*f_spec(SpectralComponent::Rcc,m,j)); v(SpectralComponent::Rcc,m,j)=vr; x(SpectralComponent::Rcc,m,j)+=delt*vr*f;
+        T vz=v(SpectralComponent::Zsc,m,j); vz=fac*(b1*vz+ delt*f_spec(SpectralComponent::Zsc,m,j)); v(SpectralComponent::Zsc,m,j)=vz; x(SpectralComponent::Zsc,m,j)+=delt*vz*f;
+        T vs=v(SpectralComponent::Rss,m,j); vs=fac*(b1*vs+ delt*f_spec(SpectralComponent::Rss,m,j)); v(SpectralComponent::Rss,m,j)=vs;
+        T vzc=v(SpectralComponent::Zcs,m,j);vzc=fac*(b1*vzc+ delt*f_spec(SpectralComponent::Zcs,m,j));v(SpectralComponent::Zcs,m,j)=vzc;
         if (mm == 1) {
             // m1 gauge: the state is stored in the UNDONE gauge while the
             // velocities/forces are vmecpp-decomposed (mixed gauge). vmecpp's
@@ -394,15 +391,15 @@ __global__ void descentStepKernel(
             //   rmnss += (vrss+vzcs), zmncs += (vrss-vzcs)
             // (FIXED 2026-08-02: without the mixing the iter-2+ m=1 states
             // drifted from vmecpp by ~0.07, corrupting the real-space.)
-            x_ss[i]  += delt * (vs + vzc) * f;
-            x_zcs[i] += delt * (vs - vzc) * f;
+            x(SpectralComponent::Rss,m,j) += delt * (vs + vzc) * f;
+            x(SpectralComponent::Zcs,m,j) += delt * (vs - vzc) * f;
         } else {
-            x_ss[i]  += delt * vs * f;
-            x_zcs[i] += delt * vzc * f;
+            x(SpectralComponent::Rss,m,j) += delt * vs * f;
+            x(SpectralComponent::Zcs,m,j) += delt * vzc * f;
         }
     }
-    T vl=v_lsc[i];vl=fac*(b1*vl+ delt*f_spec[i+2*mnmax*ns]);v_lsc[i]=vl;x_lsc[i]+=delt*vl*f;
-    T vlc=v_lcs[i];vlc=fac*(b1*vlc+ delt*f_spec[i+5*mnmax*ns]);v_lcs[i]=vlc;x_lcs[i]+=delt*vlc*f;
+    T vl=v(SpectralComponent::Lsc,m,j);vl=fac*(b1*vl+ delt*f_spec(SpectralComponent::Lsc,m,j));v(SpectralComponent::Lsc,m,j)=vl;x(SpectralComponent::Lsc,m,j)+=delt*vl*f;
+    T vlc=v(SpectralComponent::Lcs,m,j);vlc=fac*(b1*vlc+ delt*f_spec(SpectralComponent::Lcs,m,j));v(SpectralComponent::Lcs,m,j)=vlc;x(SpectralComponent::Lcs,m,j)+=delt*vlc*f;
 }
 
 #ifdef DUMP_CUMES_VERIFY
@@ -453,6 +450,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
     cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
     cumes::DeviceBuffer<T> d_sq(3);
+    // Typed spectral views over the contiguous slabs + residual buffer (the
+    // migrated kernel inputs). Each indexes bit-for-bit like the legacy
+    // pointers it replaces; the const views are the read-only side.
+    cumes::SpectralView<T, cumes::PhysicalStateDomain> state_view = storage.physical();
+    cumes::SpectralView<T, cumes::DecomposedVelocityDomain> velocity_view = storage.velocity();
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual_view(d_f_spec.data(), p.ns, p.mnmax);
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain> residual_view_const(
+        d_f_spec.data(), p.ns, p.mnmax);
     PreconWorkspace<T> pw = preconCreate(p, arena);
     ConstraintWorkspace<T> cw = constraintCreate(p, arena);
 
@@ -641,8 +646,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // Must be done each iteration since the descent step updates j=1
         // but skips j=0 for m>0 (axis regularity).
         extrapolateAxisKernel<T><<<(p.mnmax + 31) / 32, 32>>>(
-            st.d_rmncc, st.d_zmnsc, st.d_lmnsc, st.d_rmnss, st.d_zmncs,
-            st.d_lmncs, p.ns, p.mnmax, p.ntor + 1);
+            state_view, p.ns, p.mnmax, p.ntor + 1);
         cumes::check_cuda(cudaGetLastError(), "extrapAxis");
 
         cudaEventRecord(ev0);
@@ -818,7 +822,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
             // vmecpp computeForceNorms (same cadence): residual normalization
             // factors feeding fsqr/fsqz/fsql and fsqr1/fsqz1/fsql1.
-            computeForceNorms(st, fp, p, rp, mw, d_psum.data(), d_rzsum.data(),
+            computeForceNorms(storage.physical_const(), fp, p, rp, mw,
+                              d_psum.data(), d_rzsum.data(),
                               iter2, fNormRZ, fNormL, fNorm1);
 
 #ifdef DUMP_CUMES_VERIFY
@@ -986,7 +991,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // m>0 entries, so the boundary stays rigid and only the lambda
         // force is present at the LCFS (free gauge, evolved by descent).
         { dim3 bs(256), gs((p.ns*p.mnmax+255)/256);
-          scalxcApplyKernel<T><<<gs,bs>>>(d_f_spec.data(), rp.d_sqrtS_F, fp.basis.d_xm,
+          scalxcApplyKernel<T><<<gs,bs>>>(residual_view, rp.d_sqrtS_F, fp.basis.d_xm,
                                           p.ns, p.mnmax,
                                           std::sqrt(T(1.0) / T(p.ns - 1)));
           cumes::check_cuda(cudaGetLastError(), "scalxc"); }
@@ -1021,7 +1026,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         { dim3 b1(256), g1((p.ns + 255) / 256);
           int zeroZ = (controller.effective_iteration() < 2) ||
                       (controller.fsqz_prev() < T(1.0e-6));
-          m1ConstraintKernel<T><<<g1, b1>>>(d_f_spec.data(), p.ns, p.mnmax, p.ntor,
+          m1ConstraintKernel<T><<<g1, b1>>>(residual_view, p.ns, p.mnmax, p.ntor,
                                             zeroZ);
           cumes::check_cuda(cudaGetLastError(), "m1Constraint"); }
 
@@ -1036,7 +1041,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
                             (size_t)6 * p.mnmax * p.ns);
         }
 #endif
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(d_f_spec.data(),p.ns,p.mnmax,d_sq.data()); }
+        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(residual_view_const,p.ns,p.mnmax,d_sq.data()); }
         cumes::check_cuda(cudaMemcpyAsync(h_sq_i_pin.data(), d_sq.data(), 3 * sizeof(T),
                                cudaMemcpyDeviceToHost), "cpy sqi");
         cumes::check_cuda(cudaStreamSynchronize(0), "sqi sync");
@@ -1089,7 +1094,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
         // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve
         { dim3 b1(256), g1((p.ns + 255) / 256);
-          m1PreconScaleKernel<T><<<g1, b1>>>(d_f_spec.data(), pw.d_ard, pw.d_brd,
+          m1PreconScaleKernel<T><<<g1, b1>>>(residual_view, pw.d_ard, pw.d_brd,
                                              pw.d_azd, pw.d_bzd,
                                              p.ns, p.mnmax, p.ntor);
           cumes::check_cuda(cudaGetLastError(), "m1PreconScale"); }
@@ -1145,7 +1150,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif
 
         // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(d_f_spec.data(),p.ns,p.mnmax,d_sq.data()); }
+        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(residual_view_const,p.ns,p.mnmax,d_sq.data()); }
         cumes::check_cuda(cudaMemcpyAsync(h_sq_pin.data(), d_sq.data(), 3 * sizeof(T),
                                cudaMemcpyDeviceToHost), "cpy sq");
         cumes::check_cuda(cudaStreamSynchronize(0), "sq sync");
@@ -1183,9 +1188,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // (2791 vs 2953 iters; converged lambda gauge modes 1.4e-2 off).
         { dim3 bd(256), gd((p.ns*p.mnmax+255)/256);
           descentStepKernel<T><<<gd,bd>>>(
-              st.d_rmncc,st.d_rmnss,st.d_zmnsc,st.d_zmncs,st.d_lmnsc,st.d_lmncs,
-              st.d_v_rmncc,st.d_v_rmnss,st.d_v_zmnsc,st.d_v_zmncs,st.d_v_lmnsc,st.d_v_lmncs,
-              d_f_spec.data(), fp.basis.d_xm, fp.basis.d_xn,
+              state_view, velocity_view, residual_view_const,
+              fp.basis.d_xm, fp.basis.d_xn,
               p.ns,p.mnmax,controller.delta_t(),decision.damping.b1,decision.damping.fac);
           cumes::check_cuda(cudaGetLastError(),"descent"); }
 
