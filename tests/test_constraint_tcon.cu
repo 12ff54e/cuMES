@@ -92,7 +92,7 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
 
     inverseDFT(fp, storage.physical_const(), p);
     computeGeometry(fp, p, rp, mw);
-    constraintRzConCompute(p, fp, st, cw, rp.d_sqrtS_F);
+    constraintRzConCompute(p, fp, storage.physical_const(), cw, rp.d_sqrtS_F);
     constraintResetRzCon0(p, cw, rp.d_sqrtS_F);
     preconCompute(fp, p, rp, mw, pw);
     computeForces(fp, p, rp, mw);

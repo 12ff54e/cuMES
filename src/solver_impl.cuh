@@ -795,7 +795,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // Compute the xmpq-weighted real-space combination rCon/zCon from
         // the current spectral state (vmecpp's rCon/zCon in the inverse
         // DFT), used by the spectral-condensation constraint.
-        constraintRzConCompute(p, fp, st, cw, rp.d_sqrtS_F);
+        constraintRzConCompute(p, fp, storage.physical_const(), cw, rp.d_sqrtS_F);
 
         // Reset the constraint-force reference (rCon0/zCon0) to the
         // LCFS-extrapolated profile on the first iteration and after every
@@ -1101,7 +1101,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
         // Apply the radial tridiagonal + lambda preconditioners to the
         // (decomposed) spectral forces.
-        preconApply(d_f_spec.data(), p, pw, fp.basis.d_xm, fp.basis.d_xn);
+        preconApply(residual_view, p, pw, fp.basis.d_xm, fp.basis.d_xn);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 51 || (iter2 >= kDumpIter && iter2 <= kDumpIter + 2) ||

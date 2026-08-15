@@ -4,4 +4,4 @@
 template PreconWorkspace<float>  preconCreate<float>(const GridParams<float>&, cumes::DeviceArena*);
 template void preconFree<float>(PreconWorkspace<float>&);
 template void preconCompute<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, const MetricWorkspace<float>&, PreconWorkspace<float>&);
-template void preconApply<float>(float*, const GridParams<float>&, const PreconWorkspace<float>&, const int*, const int*);
+template void preconApply<float>(cumes::SpectralView<float, cumes::DecomposedResidualDomain>, const GridParams<float>&, const PreconWorkspace<float>&, const int*, const int*);

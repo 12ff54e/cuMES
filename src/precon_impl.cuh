@@ -610,7 +610,7 @@ __global__ void lambdaPrecFinalizeKernel(
 // ---------------------------------------------------------------------------
 template <typename T>
 __global__ void tridiagSolveKernel(
-    T* __restrict__ f,
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
     const T* __restrict__ ar, const T* __restrict__ dr,
     const T* __restrict__ br,
     const T* __restrict__ az, const T* __restrict__ dz,
@@ -626,7 +626,6 @@ __global__ void tridiagSolveKernel(
     int jMin_m = jMin[mode];
     int jMax = ns - 1;          // LCFS row excluded
     int nRow = jMax - jMin_m;   // solved rows jMin_m .. jMax-1
-    int stride = mnmax * ns;
 
     // The 128-thread block covers the solved rows in a grid-stride loop (the
     // old kernel assumed nRow <= 128: for ns > 129 the tail rows were
@@ -657,8 +656,8 @@ __global__ void tridiagSolveKernel(
             cL[j] = bL[mode * ns + j];
             cD[j] = dD[mode * ns + j];
             cU[j] = aU[mode * ns + j];
-            cF[0 * ns + j] = f[comp[0] * stride + mode * ns + j];
-            cF[1 * ns + j] = f[comp[1] * stride + mode * ns + j];
+            cF[0 * ns + j] = f(static_cast<cumes::SpectralComponent>(comp[0]), mode, j);
+            cF[1 * ns + j] = f(static_cast<cumes::SpectralComponent>(comp[1]), mode, j);
         }
         // zero the j < jMin region of the staged RHS (mirrors Thomas zeroing)
         for (int j = tid; j < jMin_m; j += blockDim.x) {
@@ -714,8 +713,8 @@ __global__ void tridiagSolveKernel(
             T d = cD[j];
             if (fabs(d) < T(1e-30)) d = copysign(T(1e-30), d);
             T inv = T(1.0) / d;
-            f[comp[0] * stride + mode * ns + j] = cF[0 * ns + j] * inv;
-            f[comp[1] * stride + mode * ns + j] = cF[1 * ns + j] * inv;
+            f(static_cast<cumes::SpectralComponent>(comp[0]), mode, j) = cF[0 * ns + j] * inv;
+            f(static_cast<cumes::SpectralComponent>(comp[1]), mode, j) = cF[1 * ns + j] * inv;
         }
     };
     pass(ar, dr, br, 0, 3);
@@ -725,11 +724,11 @@ __global__ void tridiagSolveKernel(
     // ---- Zero out RHS for j < jMin (identity matrix region): comps 0..4
     // (matching the original kernel's zeroing; comp 5 is not zeroed) ----
     for (int j = tid; j < jMin_m; j += blockDim.x) {
-        f[0 * stride + mode * ns + j] = T(0.0);
-        f[1 * stride + mode * ns + j] = T(0.0);
-        f[2 * stride + mode * ns + j] = T(0.0);
-        f[3 * stride + mode * ns + j] = T(0.0);
-        f[4 * stride + mode * ns + j] = T(0.0);
+        f(cumes::SpectralComponent::Rcc, mode, j) = T(0.0);
+        f(cumes::SpectralComponent::Zsc, mode, j) = T(0.0);
+        f(cumes::SpectralComponent::Lsc, mode, j) = T(0.0);
+        f(cumes::SpectralComponent::Rss, mode, j) = T(0.0);
+        f(cumes::SpectralComponent::Zcs, mode, j) = T(0.0);
     }
 
     // ---- Components 2 (lmnsc) and 5 (lmncs): lambda diagonal
@@ -740,8 +739,8 @@ __global__ void tridiagSolveKernel(
     // the axis m>0 entries are zeroed by lambdaPrec itself (sqrt(s)^pwr=0).
     for (int j = tid; j < ns; j += blockDim.x) {
         T lp = lambdaPrec[mode * ns + j];
-        f[2 * stride + mode * ns + j] *= lp;
-        f[5 * stride + mode * ns + j] *= lp;
+        f(cumes::SpectralComponent::Lsc, mode, j) *= lp;
+        f(cumes::SpectralComponent::Lcs, mode, j) *= lp;
     }
 }
 
@@ -819,14 +818,14 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
 }
 
 template <typename T>
-void preconApply(T* d_f_inout, const GridParams<T>& p,
-                 const PreconWorkspace<T>& pw,
+void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
+                 const GridParams<T>& p, const PreconWorkspace<T>& pw,
                  const int* xm, const int* xn) {
     // Step 4: PCR solve — one block per mode, 128 threads per block
     // (the threads cover up to ns-1 solved rows; PCR rounds in parallel)
     size_t smem = 10 * p.ns * sizeof(T);  // coeffs + RHS buffers
     tridiagSolveKernel<T><<<p.mnmax, 128, smem>>>(
-        d_f_inout,
+        f,
         pw.d_ar, pw.d_dr, pw.d_br,
         pw.d_az, pw.d_dz, pw.d_bz,
         pw.d_lambdaPrec,

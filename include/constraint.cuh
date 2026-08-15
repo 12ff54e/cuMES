@@ -71,8 +71,8 @@ void constraintFree(ConstraintWorkspace<T>& cw);
 // Call every iteration before the constraint force is assembled.
 template <typename T>
 void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
-                            const SpectralState<T>& st, ConstraintWorkspace<T>& cw,
-                            const T* d_sqrtS_F);
+                            cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
+                            ConstraintWorkspace<T>& cw, const T* d_sqrtS_F);
 
 // Reset rCon0/zCon0 to the LCFS-extrapolated profile (vmecpp
 // rzConIntoVolume): rCon0 = rCon_LCFS * s. Call with the current rCon/zCon

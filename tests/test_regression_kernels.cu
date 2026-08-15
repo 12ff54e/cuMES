@@ -465,7 +465,9 @@ static int testPcr(int ns) {
     T* d_f;
     checkCuda(cudaMalloc(&d_f, 6 * stride * sizeof(T)), "d_f");
     checkCuda(cudaMemcpy(d_f, h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
-    preconApply(d_f, p, pw, fp.basis.d_xm, fp.basis.d_xn);
+    preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
+                    d_f, p.ns, p.mnmax),
+                p, pw, fp.basis.d_xm, fp.basis.d_xn);
     std::vector<T> h_g(6 * stride);
     checkCuda(cudaMemcpy(h_g.data(), d_f, 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
 

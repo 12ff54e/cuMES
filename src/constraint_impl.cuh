@@ -191,8 +191,7 @@ void constraintFree(ConstraintWorkspace<T>& cw) {
 // commutes with the transform); only the value slots 0/1/4/5 are used.
 template <typename T>
 __global__ void rzConPackKernel(
-    const T* __restrict__ rmncc, const T* __restrict__ rmnss,
-    const T* __restrict__ zmnsc, const T* __restrict__ zmncs,
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mpol, int ntor, int nfp, int nz2,
     typename FftTraits<T>::Complex* __restrict__ spectra)
@@ -206,8 +205,10 @@ __global__ void rzConPackKernel(
     if (xmpq == T(0.0)) return;   // m=0,1 vanish; the rest stays zero (memset)
     T half  = (n == 0) ? T(1.0) : T(0.5);
     T shalf = (n == 0) ? T(0.0) : T(0.5);
-    T rc = xmpq * rmncc[j + mode * ns], rs = xmpq * rmnss[j + mode * ns];
-    T zs = xmpq * zmnsc[j + mode * ns], zc = xmpq * zmncs[j + mode * ns];
+    T rc = xmpq * st(cumes::SpectralComponent::Rcc, mode, j);
+    T rs = xmpq * st(cumes::SpectralComponent::Rss, mode, j);
+    T zs = xmpq * st(cumes::SpectralComponent::Zsc, mode, j);
+    T zc = xmpq * st(cumes::SpectralComponent::Zcs, mode, j);
     // Compact layout (value slots only): 0 -> full slot 0, 1 -> 1, 2 -> 4,
     // 3 -> 5. Same m*ns+j element order as the full layout.
     size_t step = (size_t)mpol * ns * nz2;
@@ -622,8 +623,8 @@ __global__ void tconLcfsHalfKernel(T* __restrict__ tcon, int ns) {
 // ---------------------------------------------------------------------------
 template <typename T>
 void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
-                            const SpectralState<T>& st, ConstraintWorkspace<T>& cw,
-                            const T* d_sqrtS_F) {
+                            cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
+                            ConstraintWorkspace<T>& cw, const T* d_sqrtS_F) {
     using Complex = typename FftTraits<T>::Complex;
     (void)d_sqrtS_F;   // the odd-m factor is exactly 1.0 (see rzConPackKernel)
     // xmpq-weighted inverse transform on the compact value-slot batch:
@@ -634,8 +635,7 @@ void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
         (size_t)4 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(Complex)), "rzcon zero");
     int total = p.ns * p.mnmax;
     rzConPackKernel<T><<<(total + 255) / 256, 256>>>(
-        st.d_rmncc, st.d_rmnss, st.d_zmnsc, st.d_zmncs,
-        fp.basis.d_xm, fp.basis.d_xn,
+        st, fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, cw.d_zeta_spectra_rz);
     cumes::check_cuda(cudaGetLastError(), "rzcon pack");
     cumes::check_cufft(FftTraits<T>::execInverse(cw.plan_z2d_rz, cw.d_zeta_spectra_rz, cw.d_zeta_real_rz), "rzcon z2d");

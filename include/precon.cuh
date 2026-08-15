@@ -90,6 +90,7 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
 // Component 2 (lambda) gets the diagonal lambda preconditioner.
 // Modifies forces in-place.
 template <typename T>
-void preconApply(T* d_f_inout, const GridParams<T>& p,
+void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
+                 const GridParams<T>& p,
                  const PreconWorkspace<T>& pw,
                  const int* xm, const int* xn);
