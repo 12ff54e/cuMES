@@ -1,4 +1,4 @@
-# cuMES Phase 6 handover — low-risk control-path performance
+# cuMES Phase 6A handover — low-risk control-path performance
 
 Status date: 2026-08-15. Branch: `overhaul` (Phase 0 `bd26857` + Phase 1
 `12bcc44` + Phase 2 `168170a` + Phase 3 `c21564c` + Phase 4 `1b0d099` + Phase 5
