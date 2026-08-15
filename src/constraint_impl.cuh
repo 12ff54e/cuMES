@@ -136,6 +136,32 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
     cumes::check_cufft(cufftPlanMany(&cw.plan_z2d_rz, 1, &n, &nz2, 1, nz2, &n, 1, n,
                       FftTraits<T>::kInverse, batchRz), "plan z2d_rz");
 
+    // Phase 6B: disable cuFFT auto-allocation and share one max-sized work
+    // area across the three constraint plans (sequential on one stream, so
+    // their lifetimes never overlap). Replaces cuFFT's three per-plan auto
+    // allocations (~0.5-1.4 MB each for the W7-X shape) with one buffer.
+    {
+        size_t wda = 0, wza = 0, wrz = 0;
+        cumes::check_cufft(cufftSetAutoAllocation(cw.plan_d2z_da, 0), "cufft noauto d2z_da");
+        cumes::check_cufft(cufftSetAutoAllocation(cw.plan_z2d_da, 0), "cufft noauto z2d_da");
+        cumes::check_cufft(cufftSetAutoAllocation(cw.plan_z2d_rz, 0), "cufft noauto z2d_rz");
+        cumes::check_cufft(cufftGetSize(cw.plan_d2z_da, &wda), "cufftGetSize d2z_da");
+        cumes::check_cufft(cufftGetSize(cw.plan_z2d_da, &wza), "cufftGetSize z2d_da");
+        cumes::check_cufft(cufftGetSize(cw.plan_z2d_rz, &wrz), "cufftGetSize z2d_rz");
+        cw.cufft_work_bytes = (wda > wza) ? wda : wza;
+        cw.cufft_work_bytes = (cw.cufft_work_bytes > wrz) ? cw.cufft_work_bytes : wrz;
+        if (cw.cufft_work_bytes > 0) {
+            cumes::check_cuda(cudaMalloc(&cw.d_cufft_work, cw.cufft_work_bytes),
+                              "cufft work c");
+            cumes::check_cufft(cufftSetWorkArea(cw.plan_d2z_da, cw.d_cufft_work),
+                               "cufft workarea d2z_da");
+            cumes::check_cufft(cufftSetWorkArea(cw.plan_z2d_da, cw.d_cufft_work),
+                               "cufft workarea z2d_da");
+            cumes::check_cufft(cufftSetWorkArea(cw.plan_z2d_rz, cw.d_cufft_work),
+                               "cufft workarea z2d_rz");
+        }
+    }
+
     cw.arena_backed = (arena != nullptr);
     return cw;
 }
@@ -156,6 +182,7 @@ void constraintFree(ConstraintWorkspace<T>& cw) {
     cudaFreeHost(cw.h_faccon);
     cufftDestroy(cw.plan_d2z_da); cufftDestroy(cw.plan_z2d_da);
     cufftDestroy(cw.plan_z2d_rz);
+    if (cw.d_cufft_work) cudaFree(cw.d_cufft_work);
     cw = ConstraintWorkspace<T>{};
 }
 

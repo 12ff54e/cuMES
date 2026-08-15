@@ -190,6 +190,27 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) 
                              &outemb, 1, n, FftTraits<T>::kInverse, batch), "plan z2d");
     cumes::check_cufft(cufftPlanMany(&fp.plan_d2z, 1, &n, &outemb, 1, n,
                              &inemb, 1, nz2, FftTraits<T>::kForward, batch), "plan d2z");
+
+    // Phase 6B: disable cuFFT auto-allocation and share one max-sized work
+    // area across the two Fourier plans (sequential on one stream, so their
+    // lifetimes never overlap). This replaces cuFFT's two per-plan auto
+    // allocations (~4 MB each for the W7-X shape) with one buffer.
+    {
+        size_t wz = 0, wd = 0;
+        cumes::check_cufft(cufftSetAutoAllocation(fp.plan_z2d, 0), "cufft noauto z2d");
+        cumes::check_cufft(cufftSetAutoAllocation(fp.plan_d2z, 0), "cufft noauto d2z");
+        cumes::check_cufft(cufftGetSize(fp.plan_z2d, &wz), "cufftGetSize z2d");
+        cumes::check_cufft(cufftGetSize(fp.plan_d2z, &wd), "cufftGetSize d2z");
+        fp.cufft_work_bytes = (wz > wd) ? wz : wd;
+        if (fp.cufft_work_bytes > 0) {
+            cumes::check_cuda(cudaMalloc(&fp.d_cufft_work, fp.cufft_work_bytes),
+                              "cufft work");
+            cumes::check_cufft(cufftSetWorkArea(fp.plan_z2d, fp.d_cufft_work),
+                               "cufft workarea z2d");
+            cumes::check_cufft(cufftSetWorkArea(fp.plan_d2z, fp.d_cufft_work),
+                               "cufft workarea d2z");
+        }
+    }
     fp.arena_backed = (arena != nullptr);
     return fp;
 }
@@ -219,6 +240,7 @@ void fourierFree(FourierPlan<T>& fp) {
         cudaFree(fp.d_mcos_th); cudaFree(fp.d_msin_th); cudaFree(fp.d_fwd_w);
     }
     cufftDestroy(fp.plan_z2d); cufftDestroy(fp.plan_d2z);
+    if (fp.d_cufft_work) cudaFree(fp.d_cufft_work);
     fp = FourierPlan<T>{};
 }
 

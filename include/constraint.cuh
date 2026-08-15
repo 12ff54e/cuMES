@@ -58,6 +58,14 @@ struct ConstraintWorkspace {
     // true when the device arrays above are subspans of a shared DeviceArena
     // (constraintFree then frees only the pinned host faccon + cuFFT plans).
     bool arena_backed = false;
+
+    // Phase 6B: one shared cuFFT work area for the three constraint plans
+    // (d2z_da/z2d_da/z2d_rz), with auto-allocation disabled. Their transforms
+    // are sequential on one stream, so a single max-sized buffer replaces
+    // cuFFT's three auto-allocated per-plan areas. Owned here, freed in
+    // constraintFree after the plans.
+    void* d_cufft_work = nullptr;
+    size_t cufft_work_bytes = 0;
 };
 
 template <typename T>

@@ -64,6 +64,14 @@ struct FourierPlan {
     // true when the device arrays above are subspans of a shared DeviceArena
     // (fourierFree then destroys only the cuFFT plans; the arena owns memory).
     bool arena_backed = false;
+
+    // Phase 6B: one shared cuFFT work area for the two Fourier plans (z2d/d2z),
+    // with auto-allocation disabled. The two transforms are sequential on one
+    // stream, so their work-area lifetimes never overlap; a single max-sized
+    // buffer replaces cuFFT's two auto-allocated per-plan areas (~4 MB each for
+    // the W7-X shape). Owned here, freed in fourierFree after the plans.
+    void* d_cufft_work = nullptr;
+    size_t cufft_work_bytes = 0;
 };
 
 // fourierCreate builds the mode tables, allocates the real-space/force/zeta
