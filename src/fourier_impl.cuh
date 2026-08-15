@@ -317,7 +317,7 @@ __global__ void inversePackKernel(
 //      vv = c2*sin + c3*cos
 //   λ: v = c0*sin + c1*cos      vu = c0*mcos + c1*msin
 //      vv = -(c2*sin + c3*cos)
-template <typename T>
+template <typename T, bool FuseRzCon = false>
 __global__ void inverseAccumulateKernel(
     const T* __restrict__ zeta_real,
     const T* __restrict__ cos_th, const T* __restrict__ sin_th,
@@ -325,7 +325,7 @@ __global__ void inverseAccumulateKernel(
     int ns, int mpol, int ntheta, int nzeta, int nZnT, int slot0,
     T* __restrict__ e0, T* __restrict__ e1, T* __restrict__ e2,
     T* __restrict__ o0, T* __restrict__ o1, T* __restrict__ o2,
-    int kTile)
+    int kTile, T* __restrict__ rCon, T* __restrict__ zCon)
 {
     // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
     // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
@@ -335,6 +335,11 @@ __global__ void inverseAccumulateKernel(
     // the launch block no longer embeds the full nzeta product, so the block
     // size stays bounded for larger angular grids. Every output point is
     // computed by the same arithmetic as the untiled kernel (bit-identical).
+    // FuseRzCon (blueprint §8.4) additionally accumulates the xmpq = m(m-1)
+    // weighted R/Z sums into rCon/zCon (full fields, no parity split, no
+    // scalxc) — the same arithmetic constraintRzConCompute performs as a
+    // separate xmpq-weighted inverse transform, moved into the main accumulator
+    // and gated at compile time so the FuseRzCon=false path is bit-identical.
     int j = blockIdx.x;
     int k0 = blockIdx.y * kTile;
     int k = threadIdx.y + k0;
@@ -360,6 +365,7 @@ __global__ void inverseAccumulateKernel(
         int l = l1 + pass * (ntheta / 2);
         T v0e = T(0), v1e = T(0), v2e = T(0);
         T v0o = T(0), v1o = T(0), v2o = T(0);
+        T rcon = T(0), zcon = T(0);
         for (int m = 0; m < mpol; ++m) {
             const T* sm = sh + m * kTile;
             T c0 = sm[0 * mstride + k - k0], c1 = sm[1 * mstride + k - k0];
@@ -372,12 +378,24 @@ __global__ void inverseAccumulateKernel(
             T v0 = fac * (c0 * t0 + c1 * t1);
             T v1 = fac * (c0 * u0 + c1 * u1);
             T v2 = signV * fac * (c2 * t0 + c3 * t1);
+            if constexpr (FuseRzCon) {
+                // rCon from the R slots (c0=Rcc cos, c1=Rss sin), zCon from
+                // the Z slots (c0=Zsc sin, c1=Zcs cos) — no fac/maxsc, matching
+                // rzConAccumulateKernel's full-field reconstruction.
+                T xmpq = T(m) * T(m - 1);
+                rcon += xmpq * (c0 * cosm + c1 * sinm);
+                zcon += xmpq * (c0 * sinm + c1 * cosm);
+            }
             if (m % 2 == 1) { v0o += v0; v1o += v1; v2o += v2; }
             else            { v0e += v0; v1e += v1; v2e += v2; }
         }
         int idx = j * nZnT + k * ntheta + l;
         e0[idx] = v0e; e1[idx] = v1e; e2[idx] = v2e;
         o0[idx] = v0o; o1[idx] = v1o; o2[idx] = v2o;
+        if constexpr (FuseRzCon) {
+            if (rCon != nullptr) rCon[idx] = rcon;   // R-slot launch only
+            if (zCon != nullptr) zCon[idx] = zcon;   // Z-slot launch only
+        }
     }
 }
 
@@ -420,11 +438,11 @@ static int computeKTile(int blkX, int nzeta) {
     return std::min(kt, nzeta);
 }
 
-template <typename T>
+template <typename T, bool FuseRzCon = false>
 static void inverseDFTCufft(const FourierPlan<T>& fp,
                             cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                             const GridParams<T>& p, bool do_combine,
-                            cudaStream_t stream) {
+                            T* rCon, T* zCon, cudaStream_t stream) {
     // Zero the half-spectra (only bins n <= ntor are filled).
     cumes::check_cuda(cudaMemsetAsync(fp.d_zeta_spectra, 0,
         (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex), stream), "inv zero");
@@ -440,25 +458,26 @@ static void inverseDFTCufft(const FourierPlan<T>& fp,
     dim3 blk(p.ntheta / 2, kTile);
     dim3 grd(p.ns, nKTiles);
     size_t invSmem = 4 * p.mpol * kTile * sizeof(T);
-    // R slots 0-3 -> r/ru/rv, Z slots 4-7 -> z/zu/zv, λ slots 8-11 -> l/lu/lv
-    inverseAccumulateKernel<T><<<grd, blk, invSmem, stream>>>(
+    // R slots 0-3 -> r/ru/rv (and fused rCon), Z slots 4-7 -> z/zu/zv (and
+    // fused zCon), λ slots 8-11 -> l/lu/lv.
+    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, invSmem, stream>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 0,
         fp.d_r_e, fp.d_ru_e, fp.d_rv_e, fp.d_r_o, fp.d_ru_o, fp.d_rv_o,
-        kTile);
-    inverseAccumulateKernel<T><<<grd, blk, invSmem, stream>>>(
+        kTile, rCon, nullptr);
+    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, invSmem, stream>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 4,
         fp.d_z_e, fp.d_zu_e, fp.d_zv_e, fp.d_z_o, fp.d_zu_o, fp.d_zv_o,
-        kTile);
-    inverseAccumulateKernel<T><<<grd, blk, invSmem, stream>>>(
+        kTile, nullptr, zCon);
+    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, invSmem, stream>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 8,
         fp.d_l_e, fp.d_lu_e, fp.d_lv_e, fp.d_l_o, fp.d_lu_o, fp.d_lv_o,
-        kTile);
+        kTile, nullptr, nullptr);
     if (do_combine) {
         dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
         combineParityKernel<T><<<cgrd, cblk, 0, stream>>>(
@@ -497,7 +516,15 @@ template <typename T>
 void inverseDFT(const FourierPlan<T>& fp,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                 const GridParams<T>& p, bool do_combine, cudaStream_t stream) {
-    inverseDFTCufft(fp, coeff, p, do_combine, stream);
+    inverseDFTCufft<T, false>(fp, coeff, p, do_combine, nullptr, nullptr, stream);
+}
+
+template <typename T>
+void inverseDFTFused(const FourierPlan<T>& fp,
+                     cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
+                     const GridParams<T>& p, bool do_combine, T* rCon, T* zCon,
+                     cudaStream_t stream) {
+    inverseDFTCufft<T, true>(fp, coeff, p, do_combine, rCon, zCon, stream);
 }
 
 // ---- cuFFT backend: forward ----------------------------------------------

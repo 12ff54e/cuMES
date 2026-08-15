@@ -701,7 +701,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         cumes::check_cuda(cudaGetLastError(), "extrapAxis");
 
         cudaEventRecord(ev0_inv, stream);
-        inverseDFT(fp, storage.physical_const(), p, false, stream);
+        // Fused inverse (blueprint §8.4): the xmpq-weighted rCon/zCon are
+        // accumulated alongside the geometry, replacing the separate
+        // constraintRzConCompute inverse transform below.
+        inverseDFTFused(fp, storage.physical_const(), p, false,
+                        cw.d_rCon, cw.d_zCon, stream);
         cudaEventRecord(ev1_inv, stream);
 
         if (iter == 0 && dumpEnabled()) {
@@ -810,12 +814,9 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         }
 #endif
 
-        // Compute the xmpq-weighted real-space combination rCon/zCon from
-        // the current spectral state (vmecpp's rCon/zCon in the inverse
-        // DFT), used by the spectral-condensation constraint.
-        constraintRzConCompute(p, fp, storage.physical_const(), cw, rp.d_sqrtS_F, stream);
-
-        // Reset the constraint-force reference (rCon0/zCon0) to the
+        // rCon/zCon were produced by the fused inverse DFT above (blueprint
+        // §8.4); the separate constraintRzConCompute inverse transform is
+        // gone. Reset the constraint-force reference (rCon0/zCon0) to the
         // LCFS-extrapolated profile on the first iteration and after every
         // restart (iter2 == iter1), matching vmecpp's rzConIntoVolume
         // ("initialization/soft reset").

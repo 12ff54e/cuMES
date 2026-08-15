@@ -95,6 +95,24 @@ void inverseDFT(const FourierPlan<T>& fp,
                 const GridParams<T>& p, bool do_combine = true,
                 cudaStream_t stream = 0);
 
+// Fused inverse DFT (blueprint §8.4): in addition to the 18 parity-split
+// geometry arrays, accumulate the xmpq = m(m-1)-weighted R/Z sums into `rCon`
+// and `zCon` at the same time as the main inverse poloidal accumulation. This
+// eliminates the constraint's duplicate pack + zeta inverse + accumulation
+// (constraintRzConCompute's rzCon path), which is a separate xmpq-weighted
+// inverse transform over the compact 4-slot batch.
+//
+// `rCon`/`zCon` are full real-space fields [ns * nZnT] (no parity split, no
+// scalxc), matching the ConstraintWorkspace d_rCon/d_zCon layout. `rCon` is
+// written by the R-slot launch, `zCon` by the Z-slot launch; either may be
+// null to skip that output. Class B vs constraintRzConCompute (the xmpq weight
+// moves across the reconstruction, changing summation order at the ULP level).
+template <typename T>
+void inverseDFTFused(const FourierPlan<T>& fp,
+                     cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
+                     const GridParams<T>& p, bool do_combine, T* rCon, T* zCon,
+                     cudaStream_t stream = 0);
+
 // Materialize the 9 combined (e+o) real-space arrays from the current parity
 // arrays. The combined buffers hold whatever the last do_combine=true
 // inverseDFT (or this call) produced — the hot loop runs with do_combine=false
