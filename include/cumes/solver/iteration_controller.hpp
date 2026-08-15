@@ -63,6 +63,9 @@ class IterationController {
     // Previous pass's invariant Z-residual, feeding the m=1 fix_m1_gauge
     // (zeroZForceForM1) condition this pass.
     T fsqz_prev() const noexcept { return fsqz_prev_; }
+    // Accumulated bad-Jacobian counter (observability only; the 25/50
+    // maintenance reset keys off it internally).
+    int bad_jacobian_count() const noexcept { return ijacob_; }
     // rzConIntoVolume soft-reset: true on the first pass and after a restart.
     bool reset_constraint_reference() const noexcept { return iter2_ == iter1_; }
     bool refresh_preconditioner() const noexcept {

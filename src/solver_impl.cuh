@@ -22,11 +22,10 @@
 #include <algorithm>
 #include <vector>
 
-static constexpr int kPreconInterval = 25;  // update preconditioner every N iters
-
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/runtime/pinned_buffer.hpp"
+#include "cumes/solver/iteration_controller.hpp"
 
 #ifdef DUMP_CUMES_VERIFY
 static bool dumpEnabled();  // defined below with the dump machinery
@@ -480,21 +479,12 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // iter2: effective iteration counter — does NOT advance on restart
     // passes (vmecpp's bad_resets mechanism). iter1: branch-point marker,
     // set to the current iteration on every restart; grace periods and the
-    // invTau reinitialization key off (iter2 - iter1).
-    // res0: running minimum of the preconditioned residual sum fsq.
-    int iter2 = 1, iter1 = 1;
-    // Log grid anchor: table rows print at iter2 = log_anchor + 100n and
-    // re-anchor at every restart, so a restarted trajectory is sampled at
-    // the restart point and every 100 effective passes after it.
-    int log_anchor = 0;
-    T res0 = T(-1.0);
-    T fsq_prev = T(1.0);   // vmecpp: fc_.fsq = 1.0 at stage start
-    T fsqz_prev = T(0.0);  // vmecpp: fc_.fsqz = 0.0 at stage start; feeds
-                           // the fix_m1_gauge condition (zeroZForceForM1)
-    int ijacob = 0;
-    T inv_tau_hist[10];
-    for (int ii = 0; ii < 10; ++ii) inv_tau_hist[ii] = T(0.15) / T(kDelt0Eff);
-    T delt = T(kDelt0Eff);
+    // invTau reinitialization key off (iter2 - iter1). res0: running minimum
+    // of the preconditioned residual sum fsq. All of this lives in a pure
+    // host state machine (Phase 4): the solver below launches kernels and
+    // applies the returned decisions in the exact frozen order.
+    cumes::IterationController<T> controller(
+        {T(kDelt0Eff), p.ftol, T(kDtauFloor)});
 
     // vmecpp residual normalization factors (computeForceNorms), refreshed on
     // the same cadence as the preconditioner (every kPreconInterval passes).
@@ -561,13 +551,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     };
     auto recordPass = [&](int reason, double fRi, double fZi, double fLi,
                           double fR, double fZ, double fL, double d,
-                          double o, double dt, double b1v, double fcv) {
+                          double o, double dt, double b1v, double fcv,
+                          int it2, int it1) {
         if (!dumpEnabled()) return;
         if (n_passes < kMaxIterEff) {
             double* r = per_iter[n_passes++];
             r[0]=fRi; r[1]=fZi; r[2]=fLi; r[3]=fR; r[4]=fZ; r[5]=fL;
             r[6]=d; r[7]=o; r[8]=dt; r[9]=b1v; r[10]=fcv;
-            r[11]=(double)iter2; r[12]=(double)iter1; r[13]=(double)reason;
+            r[11]=(double)it2; r[12]=(double)it1; r[13]=(double)reason;
             r[14]=(double)axisRAtZeta0();
         }
     };
@@ -625,19 +616,19 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif
 
     for(int iter=0; iter<kMaxIterEff; ++iter){
+        // Snapshot of the controller's effective iteration for this pass's
+        // dump windows (constant until after_descent at the end of the body;
+        // the post-descent output block reads the controller directly).
+        const int iter2 = controller.effective_iteration();
         // vmecpp: after 25/50 bad Jacobians, restore the state and reset the
         // time step to 0.98/0.96 of the INITIAL delt (vmec.cc, "HAVING A
-        // CONVERGENCE PROBLEM: RESETTING DELT"). The restoreState() below
-        // mirrors vmecpp's RestartIteration(BAD_JACOBIAN) in that branch;
-        // ++ijacob matches the increment inside RestartIteration (so the
-        // 0.98/0.96 scale keys off the post-increment value, as in vmecpp).
-        if (ijacob == 25 || ijacob == 50) {
+        // CONVERGENCE PROBLEM: RESETTING DELT"). The controller's
+        // next_schedule() performs the ++ijacob / delt reset / re-anchor; the
+        // restoreState() below mirrors vmecpp's RestartIteration(BAD_JACOBIAN).
+        if (controller.next_schedule()) {
             restoreState();
-            ++ijacob;
-            delt = (ijacob < 50 ? T(0.98) : T(0.96)) * T(kDelt0Eff);
-            iter1 = iter2; log_anchor = iter2;
             printf("  -> CONVERGENCE PROBLEM: RESETTING DELT to %.3e (ijacob=%d)\n",
-                   (double)delt, ijacob);
+                   (double)controller.delta_t(), controller.bad_jacobian_count());
             continue;
         }
 
@@ -749,20 +740,27 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
             // that |√g| would hide — and is always invalid, regardless of
             // index. A positive oriented min that is tiny (< 1e-12 of the
             // scale) is only invalid away from the axis-adjacent singularity
-            // (gminIdx >= nZnT).
-            T gmin = h_jac_stats.data()[0], gmax = h_jac_stats.data()[1], gbad = h_jac_stats.data()[2];
-            int gminIdx = (int)h_jac_stats.data()[3];
-            if (gbad > T(0.0) || gmax <= T(0.0) || gmin <= T(0.0) ||
-                (gmin < T(1e-12) * gmax && gminIdx >= p.nZnT)) {
-                recordPass(1, 0, 0, 0, 0, 0, 0, delt, 0, 0, 0, 0);
+            // (gminIdx >= nZnT). The predicate and the delt shrink/re-anchor
+            // bookkeeping live in the controller; the solver only restores.
+            cumes::JacobianStatus<T> js;
+            js.min_oriented = h_jac_stats.data()[0];
+            js.max_abs = h_jac_stats.data()[1];
+            js.nonfinite_count = h_jac_stats.data()[2];
+            js.min_index = (int)h_jac_stats.data()[3];
+            T delt_before = controller.delta_t();
+            int it2_before = controller.effective_iteration();
+            int it1_before = controller.restart_anchor();
+            if (controller.jacobian_invalid(js, p.nZnT)) {
+                recordPass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
+                           it2_before, it1_before);
                 restoreState();
-                delt *= T(0.9);
-                iter1 = iter2; log_anchor = iter2;
                 printf("  -> BAD JACOBIAN (invalid √g: min(signJ·√g)=%.3e "
                        "max|√g|=%.3e nonfinite=%.0f at jH=%d) delt=%.3e\n",
-                       (double)gmin, (double)gmax, (double)gbad,
-                       gminIdx / p.nZnT, (double)delt);
-                printIterRow(iter2, T(1.0), T(1.0), T(1.0), delt);
+                       (double)js.min_oriented, (double)js.max_abs,
+                       (double)js.nonfinite_count,
+                       js.min_index / p.nZnT, (double)controller.delta_t());
+                printIterRow(controller.effective_iteration(), T(1.0), T(1.0),
+                             T(1.0), controller.delta_t());
                 continue;
             }
         }
@@ -795,7 +793,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // LCFS-extrapolated profile on the first iteration and after every
         // restart (iter2 == iter1), matching vmecpp's rzConIntoVolume
         // ("initialization/soft reset").
-        if (iter2 == iter1) {
+        if (controller.reset_constraint_reference()) {
             constraintResetRzCon0(p, cw, rp.d_sqrtS_F);
         }
 
@@ -810,7 +808,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // CUMES_DUMP=1 run a different run than the no-dump production path,
         // so observers could alter the solver arithmetic. The refresh cadence
         // is now a pure function of the iteration counters.
-        bool precon_updated = ((iter2 - iter1) % kPreconInterval) == 0;
+        bool precon_updated = controller.refresh_preconditioner();
         if (precon_updated) {
             preconCompute(fp, p, rp, mw, pw);
 
@@ -1015,7 +1013,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // default): zeroZ only on the first pass and once the previous
         // pass's invariant Z-residual dropped below 1e-6.
         { dim3 b1(256), g1((p.ns + 255) / 256);
-          int zeroZ = (iter2 < 2) || (fsqz_prev < T(1.0e-6));
+          int zeroZ = (controller.effective_iteration() < 2) ||
+                      (controller.fsqz_prev() < T(1.0e-6));
           m1ConstraintKernel<T><<<g1, b1>>>(d_f_spec.data(), p.ns, p.mnmax, p.ntor,
                                             zeroZ);
           cumes::check_cuda(cudaGetLastError(), "m1Constraint"); }
@@ -1043,35 +1042,43 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         T fsqr_i = h_sq_i[0] * plainPerEl * fNormRZ * T(0.25);
         T fsqz_i = h_sq_i[1] * plainPerEl * fNormRZ * T(0.25);
         T fsql_i = h_sq_i[2] * plainPerEl * fNormL;
-        fsqz_prev = fsqz_i;  // vmecpp: m_fc_.fsqz (NORMALIZED), read by the
-                             // next pass's fix_m1_gauge condition
+        const T inv_triple[3] = {fsqr_i, fsqz_i, fsql_i};
 
         // ---- Stopping criterion (vmecpp Evolve) ----
-        if (!(std::isfinite(fsqr_i) && std::isfinite(fsqz_i) && std::isfinite(fsql_i))) {
+        // classify_invariant records fsqz_prev for the next pass's gauge
+        // condition, then reports nonfinite (recover) or converged (stop).
+        const T delt_before_i = controller.delta_t();
+        const int it2_before_i = controller.effective_iteration();
+        const int it1_before_i = controller.restart_anchor();
+        cumes::InvariantVerdict<T> verdict = controller.classify_invariant(inv_triple);
+        if (verdict.nonfinite) {
             // vmecpp hard-fails on non-finite residuals (status BAD_JACOBIAN);
             // we recover instead: restore the last good state and shrink delt.
 #ifdef DUMP_CUMES_VERIFY
-            recordPass(1, fsqr_i, fsqz_i, fsql_i, 0,0,0, delt,0,0,0,0);
+            recordPass(1, fsqr_i, fsqz_i, fsql_i, 0,0,0, delt_before_i,0,0,0,0,
+                       it2_before_i, it1_before_i);
 #endif
             restoreState();
-            delt *= T(0.9);
-            iter1 = iter2; log_anchor = iter2;
-            printf("  -> BAD JACOBIAN (non-finite residuals) delt=%.3e\n",(double)delt);
-            printIterRow(iter2, fsqr_i, fsqz_i, fsql_i, delt);
+            printf("  -> BAD JACOBIAN (non-finite residuals) delt=%.3e\n",
+                   (double)controller.delta_t());
+            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
+                         controller.delta_t());
             continue;
         }
-        if (fsqr_i <= p.ftol && fsqz_i <= p.ftol && fsql_i <= p.ftol) {
+        if (verdict.converged) {
 #ifdef DUMP_CUMES_VERIFY
-            recordPass(0, fsqr_i, fsqz_i, fsql_i, 0,0,0, delt,0,0,0,0);
+            recordPass(0, fsqr_i, fsqz_i, fsql_i, 0,0,0, controller.delta_t(),0,0,0,0,
+                       controller.effective_iteration(), controller.restart_anchor());
 #endif
-            res.converged=true; res.iterations=iter2;
-            res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=delt;
+            res.converged=true; res.iterations=controller.effective_iteration();
+            res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=controller.delta_t();
             // Report the EFFECTIVE iteration count (iter2): restart passes
             // don't advance it, matching vmecpp's bad_resets counter and the
             // ITER column of the table above (the raw pass count, iter+1,
             // would disagree after any restart).
-            printf("  -> CONVERGED at iter %d\n",iter2);
-            printIterRow(iter2, fsqr_i, fsqz_i, fsql_i, delt); break;
+            printf("  -> CONVERGED at iter %d\n", controller.effective_iteration());
+            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
+                         controller.delta_t()); break;
         }
 
         // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve
@@ -1142,56 +1149,20 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         T fsqr = h_sq[0] * plainPerEl * fNorm1;
         T fsqz = h_sq[1] * plainPerEl * fNorm1;
         T fsql = h_sq[2] * plainPerEl * rp.delta_s;
-        T fsq = fsqr + fsqz + fsql;  // vmecpp fsq1: drives damping/restart control
-
-        // ---- Damping parameter (vmecpp Evolve) ----
-        // 1/tau tracks the RATE of decrease of fsq (log-ratio), capped at
-        // 0.15/delt, averaged over a 10-iteration window. On the first pass
-        // after a restart (iter2 == iter1) the history is reinitialized.
-        if (iter2 == iter1) {
-            for (int ii = 0; ii < 10; ++ii) inv_tau_hist[ii] = T(0.15) / delt;
-        }
-        for (int ii = 0; ii < 9; ++ii) inv_tau_hist[ii] = inv_tau_hist[ii + 1];
-        if (iter2 > iter1) {
-            T invtau_num = T(0.0);
-            if (fsq != T(0.0)) {
-                invtau_num = std::min(std::abs(std::log(fsq / fsq_prev)), T(0.15));
-            }
-            inv_tau_hist[9] = invtau_num / delt;
-        }
-        fsq_prev = fsq;
-
-        T otav = T(0.0);
-        for (T v : inv_tau_hist) otav += v;
-        otav /= T(10.0);
-        T dtau = delt * otav / T(2.0);
-        if (kDtauFloor > 0.0) dtau = fmax(dtau, T(kDtauFloor));  // E4-A experiment
-        T b1 = T(1.0) - dtau, fac = T(1.0) / (T(1.0) + dtau);
-
-        // ---- Time-step control (vmecpp VMEC_8_52) ----
-        // res0 is the running minimum of fsq. The state is backed up
-        // whenever fsq hits a new minimum after 10 consistent iterations;
-        // BAD_JACOBIAN restores it when fsq blows up 100x past the minimum;
-        // BAD_PROGRESS restores it when the solver stalls at large invariant
-        // forces for too long.
-        if (iter2 == iter1 || res0 == T(-1.0)) res0 = fsq;
-        res0 = std::min(res0, fsq);
-
-        enum RestartReason { kNoRestart, kBadJacobian, kBadProgress };
-        RestartReason reason = kNoRestart;
-        bool doRefresh = false;  // refresh the backup AFTER the descent
-        if (fsq <= res0 && (iter2 - iter1) > 10) {
-            doRefresh = true;  // consistent progress: refresh rollback target
-        } else if (fsq > T(100.0) * res0 && iter2 > iter1) {
-            reason = kBadJacobian;
-        } else if ((iter2 - iter1) > 12 && iter2 > 50 &&
-                   (fsqr_i + fsqz_i) > T(1.0e-2)) {
-            reason = kBadProgress;
-        }
+        // ---- Damping + time-step control (vmecpp Evolve / VMEC_8_52) ----
+        // 1/tau tracks the rate of decrease of fsq (log-ratio), capped at
+        // 0.15/delt, averaged over a 10-iteration window; res0 is the running
+        // minimum of fsq. All of this (and the refresh/restart predicate) is
+        // now the controller's decide_restart(), preserving the exact order.
+        const T prec_triple[3] = {fsqr, fsqz, fsql};
+        cumes::RestartDecision<T> decision =
+            controller.decide_restart(prec_triple, inv_triple);
 
 #ifdef DUMP_CUMES_VERIFY
-        recordPass((int)reason, fsqr_i, fsqz_i, fsql_i,
-                   fsqr, fsqz, fsql, delt, otav, dtau, b1, fac);
+        recordPass((int)decision.reason, fsqr_i, fsqz_i, fsql_i,
+                   fsqr, fsqz, fsql, controller.delta_t(), decision.damping.otav,
+                   decision.damping.dtau, decision.damping.b1, decision.damping.fac,
+                   controller.effective_iteration(), controller.restart_anchor());
 #endif
 
         // ---- Descent step (Garabedian second-order Richardson) ----------
@@ -1209,36 +1180,37 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
               st.d_rmncc,st.d_rmnss,st.d_zmnsc,st.d_zmncs,st.d_lmnsc,st.d_lmncs,
               st.d_v_rmncc,st.d_v_rmnss,st.d_v_zmnsc,st.d_v_zmncs,st.d_v_lmnsc,st.d_v_lmncs,
               d_f_spec.data(), fp.basis.d_xm, fp.basis.d_xn,
-              p.ns,p.mnmax,delt,b1,fac);
+              p.ns,p.mnmax,controller.delta_t(),decision.damping.b1,decision.damping.fac);
           cumes::check_cuda(cudaGetLastError(),"descent"); }
 
-        if (doRefresh) {
+        if (decision.do_refresh) {
             backupState();  // POST-descent state (vmecpp RestartIteration
                             // NO_RESTART semantics — see comment above)
         }
-        if (reason != kNoRestart) {
+        if (decision.reason != cumes::RestartReason::kNone) {
             // Restore overwrites the just-descended state and zeroes the
             // velocities (vmecpp does the same: Evolve()'s descent is
             // discarded by the control block's RestartIteration).
             restoreState();
-            if (reason == kBadJacobian) { delt *= T(0.9); ++ijacob; }
-            else { delt /= T(1.03); }
-            iter1 = iter2; log_anchor = iter2;
+            controller.after_descent(decision);
             printf("  -> %s (iter2=%d) delt=%.3e\n",
-                   reason == kBadJacobian ? "BAD JACOBIAN" : "BAD PROGRESS",
-                   iter2, (double)delt);
+                   decision.reason == cumes::RestartReason::kBadJacobian
+                       ? "BAD JACOBIAN" : "BAD PROGRESS",
+                   controller.effective_iteration(), (double)controller.delta_t());
         } else {
-            iter2++;  // effective counter advances on good passes only
+            controller.after_descent(decision);  // advances iter2 on good passes
         }
 
         // ---- Output (every 100 effective iters on the restart-anchored
         // grid, plus the final pass of a max-iteration run) ----
-        if ((iter2 - log_anchor) % 100 == 0 || iter == kMaxIterEff - 1) {
-            printIterRow(iter2, fsqr_i, fsqz_i, fsql_i, delt);
+        if ((controller.effective_iteration() - controller.output_anchor()) % 100 == 0 ||
+            iter == kMaxIterEff - 1) {
+            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
+                         controller.delta_t());
         }
 
-        if(iter==kMaxIterEff-1){ res.iterations=iter2;
-            res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=delt; }
+        if(iter==kMaxIterEff-1){ res.iterations=controller.effective_iteration();
+            res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=controller.delta_t(); }
     }
 
 #ifdef DUMP_CUMES_VERIFY
