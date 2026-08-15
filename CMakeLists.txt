@@ -179,7 +179,8 @@ target_link_libraries(test_input_json PRIVATE cumes_config)
 cumes_enable_warnings(test_input_json)
 
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
-                   test_geometry_ncurr test_regression_kernels test_constraint_tcon)
+                   test_geometry_ncurr test_regression_kernels test_constraint_tcon
+                   test_force_reference)
   add_executable(${t} tests/${t}.cu)
   target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(${t} PRIVATE cumes_test_support cumes_config cumes_cuda_double cumes_cuda_float)
@@ -249,6 +250,7 @@ cumes_add_test(test_constraint_tcon  unit;constraint)
 cumes_add_test(test_regression_kernels unit;constraint;precon)
 cumes_add_test(test_geometry_iso     unit;geometry)
 cumes_add_test(test_force_verify     unit;forces)
+cumes_add_test(test_force_reference  unit;forces)
 
 # Compute Sanitizer memcheck variants of the kernel-driving tests only
 # (test_input_json is host-only and compute-sanitizer refuses to profile it).
