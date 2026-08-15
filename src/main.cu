@@ -23,6 +23,7 @@
 
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/state/spectral_storage.hpp"
+#include "cumes/solver/multigrid_solver.hpp"
 
 static GridParams<Real> initParams(const InputParams& ip) {
     GridParams<Real> p;
@@ -263,51 +264,39 @@ int main(int argc, char** argv) {
     for (int g = 0; g < ip.n_grids; ++g) printf(" %.0e", ip.ftol_array[g]);
     printf(")\n");
 
-    // ---- Multi-radial-grid stage loop ----
+    // ---- Multi-radial-grid stage loop (delegated to MultigridSolver) ----
     // Each stage runs the solver on its own radial grid (with its own
     // iteration cap and ftol), seeded by the previous stage's converged
-    // state interpolated onto the new grid (vmecpp grid sequencing). All
-    // ns-dependent objects are re-created per stage; profiles re-evaluate
-    // analytically on the new grid.
+    // state interpolated onto the new grid (vmecpp grid sequencing). The
+    // schedule, prolongation, and per-stage report live in MultigridSolver.
     cumes::SpectralStorage<Real> storage;
-    GridParams<Real> p_prev;
     SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9)};
     int total_iter = 0;
 
     try {
-        for (int g = 0; g < ip.n_grids; ++g) {
-            p_prev = p;                // previous stage's params (ns, ...)
-            p.ns = ip.ns_array[g];
-            p.max_iter = ip.niter_array[g];
-            p.ftol = ip.ftol_array[g];
-            printf("\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d ftol=%.0e ===\n",
-                   g + 1, ip.n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol);
-            if (g == 0) {
-                storage = initState<Real>(p, ip);  // cold start (interpFromBoundaryAndAxis)
-            } else {
-                storage = interpolateState<Real>(p, storage, p_prev);
-            }
-            RadialProfiles<Real> rp = profilesCreate<Real>(p, ip);  // sets p.lamscale
-            FourierPlan<Real> fp = fourierCreate<Real>(p);
-            MetricWorkspace<Real> mw = metricCreate<Real>(p);
+        // Stage-0 cold start on ns_array[0] (MultigridSolver re-assigns the
+        // per-stage ns/max_iter/ftol from ip before each stage).
+        p.ns = ip.ns_array[0];
+        p.max_iter = ip.niter_array[0];
+        p.ftol = ip.ftol_array[0];
+        cumes::SpectralStorage<Real> seed = initState<Real>(p, ip);
+        auto outcome = cumes::MultigridSolver<Real>::run(p, ip, std::move(seed));
+        storage = std::move(outcome.state);
+        result = outcome.result;
+        total_iter = outcome.total_iterations;
 
-            result = solverRun<Real>(storage, p, rp, fp, mw);
-
-            fourierFree(fp); metricFree(mw); profilesFree(rp);
-            total_iter += result.iterations;
-
-            // vmecpp semantics (vmec.cc:367-392): a stage that exhausts its
-            // iteration cap without meeting ftol fails the whole run. Single-
-            // grid runs keep the lenient report-and-return path below.
-            if (!result.converged && ip.n_grids > 1) {
-                fprintf(stderr, "FATAL: grid stage %d/%d (ns=%d) completed %d/%d "
-                                "iterations without meeting ftol=%.0e; final "
-                                "residuals fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
-                        g + 1, ip.n_grids, p.ns, result.iterations, p.max_iter,
-                        (double)p.ftol, (double)result.fsqr, (double)result.fsqz,
-                        (double)result.fsql);
-                return EXIT_FAILURE;
-            }
+        // vmecpp semantics (vmec.cc:367-392): a stage that exhausts its
+        // iteration cap without meeting ftol fails the whole run. Single-grid
+        // runs keep the lenient report-and-return path below.
+        if (outcome.failed_stage >= 0) {
+            int g = outcome.failed_stage;
+            fprintf(stderr, "FATAL: grid stage %d/%d (ns=%d) completed %d/%d "
+                            "iterations without meeting ftol=%.0e; final "
+                            "residuals fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
+                    g + 1, ip.n_grids, p.ns, result.iterations, p.max_iter,
+                    (double)p.ftol, (double)result.fsqr, (double)result.fsqz,
+                    (double)result.fsql);
+            return EXIT_FAILURE;
         }
 
         // Output success is part of the run result: a converged solve whose
