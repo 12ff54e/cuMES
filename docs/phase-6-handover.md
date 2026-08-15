@@ -1,4 +1,4 @@
-# cuMES Phase 6A handover — low-risk control-path performance
+# cuMES Phase 6 handover — low-risk control-path performance
 
 Status date: 2026-08-15. Branch: `overhaul` (Phase 0 `bd26857` + Phase 1
 `12bcc44` + Phase 2 `168170a` + Phase 3 `c21564c` + Phase 4 `1b0d099` + Phase 5
@@ -21,8 +21,10 @@ changing a single arithmetic result. The blueprint splits the phase into
   force-normalization reduction, explicit/replanned shared cuFFT work area,
   event-DAG scratch reuse.
 
-This phase delivers **all six 6A items**; 6B is deferred with specific
-guidance (§5). Every commit is Class A — bitwise-identical trajectory.
+This phase delivers **all six 6A items** plus the 6B **device force-norm
+reduction** and **shared cuFFT work area**; the 6B **event-DAG scratch reuse**
+is deferred (§5). The 6A commits are Class A (bitwise-identical); the 6B
+force-norm reduction is Class B (ULP-level, verified by trajectory bounds).
 
 | Blueprint 6A deliverable | Status |
 | ------------------------ | ------ |
@@ -32,6 +34,12 @@ guidance (§5). Every commit is Class A — bitwise-identical trajectory.
 | One-copy state checkpoint | **Already done** since Phase 3 (re-verified, made stream-ordered) |
 | Fixed-iota update skip | **Done** (commit `8a53ced`) |
 | Complete recover writes (no force memset) | **Done** (commit `bb1281f`) |
+
+| Blueprint 6B deliverable | Status |
+| ------------------------ | ------ |
+| Device-only force-normalization reduction | **Done** (commit `e29c713`, Class B) |
+| Explicit/shared cuFFT work area | **Done** (commit `e43a936`, bitwise-neutral) |
+| Event-DAG scratch reuse | **Deferred** (§5) |
 
 ## 2. What changed
 
@@ -181,27 +189,79 @@ reproduce the frozen trajectory exactly (Solovev 251 → 199 → 456; W7-X
 and still passes; the `test_fourier`/`test_force_verify`/`test_force_reference`
 operators exercise the defaulted `stream = 0` path unchanged.
 
-## 5. Deferred (documented, not hidden)
+## 5. Phase 6B (Class B)
 
-The **6B** items (blueprint §11) are out of scope for this phase:
+### 5.1 Device-only force-normalization reduction (`e29c713`)
 
-- **Device-only force-normalization reduction** (§6.9/§8.8). `computeForceNorms`
-  still does `cudaDeviceSynchronize` + several D2H copies on the refresh cadence
-  (every 25 passes). Move the `E_mag`/`E_therm`/`V`/`S_RZ`/`S_L` partial sums and
-  `rzNorm` into one device reduction + one record.
-- **Explicit/replanned shared cuFFT work area** (§6.6/§8.7). The plans use
-  cuFFT's automatic workspace; query work sizes, disable auto-allocation, and
-  reuse one maximum-sized area for plans whose event-DAG lifetimes cannot
-  overlap.
-- **Event-DAG scratch reuse** (§6.5/§8.7). De-alias/rCon-zCon scratch leasing
-  and overlap.
+`computeForceNorms` is split into `enqueueForceNorms` (device) and
+`finalizeForceNorms` (host). The device part reduces the per-surface partial
+sums (`sRZ`/`sL`/`sMag`/`eTherm`/`vol`) with a new `forceNormReduceKernel` and
+the `rzNorm` with the existing kernel, writing six scalars into the combined
+control record's `[10..15]` slots; the host finalize derives
+`fNormRZ`/`fNormL`/`fNorm1` after the single control fence.
+`computeForceNormPartials` no longer synchronizes the stream.
+
+This removes the refresh-cadence `cudaDeviceSynchronize` and the three
+synchronous D2H copies (`psum` 4·nH, `dVdsH` nH, `presH` nH) plus the host
+sequential sum, folding the force-norm transfer into the one combined control
+copy. **Class B**: the device tree reduction (and fast-math FMA in the eTherm
+dot-product) changes summation order, moving the force-norm factors by 2–4 ULP.
+
+### 5.2 Explicit/shared cuFFT work area (`e43a936`)
+
+cuFFT auto-allocation is disabled and one max-sized work area is shared per
+module — the two Fourier plans (`z2d`/`d2z`) reuse one buffer, the three
+constraint plans (`d2z_da`/`z2d_da`/`z2d_rz`) reuse another. All five
+transforms are sequential on the one compute stream, so their work-area
+lifetimes never overlap. For the W7-X double shape this replaces cuFFT's five
+per-plan auto allocations (`~4.1 MB × 2 + 0.55 MB × 2 + 1.37 MB ≈ 10.4 MB`)
+with two buffers (`4.1 MB + 1.37 MB ≈ 5.5 MB`). Bitwise-neutral (cuFFT results
+are deterministic independent of the work-area location).
+
+### 5.3 Verification
+
+| Item | Gate | Result |
+| ---- | ---- | ------ |
+| Force-norm reduction | `compare_runs.py` (Class B) | PASS: restart sequence identical (W7-X 15 events), convergence identical (Solovev 456 / W7-X 2011), converged **state bitwise-identical**, residual/force-norm records differ ≤ 4 ULP |
+| cuFFT work area | `compare_bitwise.py` vs pre-change tree | PASS: byte-identical (bitwise-neutral) |
+
+Full test matrix re-verified: double `verify` **26/26**, `float` **18/18**.
+
+### 5.4 Benchmark deltas
+
+These are host-serialization-removal and memory changes, not a measurable
+wall-clock speedup on this GPU-bound workload (W7-X solve ≈ 7.2 s either way);
+the "no regression" evidence is the identical trajectory (same iteration
+counts → same GPU work) plus strictly fewer host barriers/copies.
+
+- **Host-blocking:** the refresh-cadence fence + 3 synchronous D2H copies are
+  removed (folded into the one per-pass control copy). Per effective iteration
+  the host blocks once (the control fence) instead of 5 times (pre-6A).
+- **Submission:** per refresh pass, 4 D2H copies replaced by 1 async copy of 6
+  scalars + 1 reduction kernel launch.
+- **Memory:** cuFFT work area ≈ 10.4 MB → ≈ 5.5 MB for the W7-X double shape.
+
+## 6. Deferred (documented, not hidden)
+
+- **Event-DAG scratch reuse** (§6.5/§8.7). The de-alias and rCon/zCon ζ-scratch
+  buffers could alias (they are sequential on the single stream, and rCon/zCon
+  is the larger), saving ~1.2 MB for W7-X. Deferred: the aliasing would be
+  *unsafe* under the future multi-stream/graph architecture (§6.8
+  `ScratchLease`), so it is better introduced together with the event-DAG
+  lifetime machinery (Phase 7+) than as a hardcoded alias that must later be
+  undone.
 - **Full §6.9 device terminal-predicate + guarded kernels.** The delivered
   one-fence form is host-decision-after-one-fence (§3.3); the device
   `status_bits` + no-op-guarded field/force/constraint/preconditioner kernels
   and the §6.9 `ControlRecord` with `status_bits` remain as a follow-up if the
   self-healing argument is ever invalidated by a new persistent cache.
+- **`cumes_benchmark_fixed_iteration`** (§8.1). A fixed-iteration benchmark
+  harness with median/p95 wall microseconds, host-blocking counts, arena/cuFFT
+  bytes, and residual/state hashes was not built; the deltas above are
+  analytical. It should precede the Phase 7 transform-specialization work,
+  where measured speedups are the acceptance criterion.
 
-## 6. Next steps (Phase 7 — transform specialization)
+## 7. Next steps (Phase 7 — transform specialization)
 
 Blueprint §11 Phase 7: axisymmetric transform + constraint/bandpass backend,
 weighted R/Z constraint accumulation fused into the inverse DFT, bounded
