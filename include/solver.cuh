@@ -7,6 +7,8 @@
 #include "forces.cuh"
 #include "cumes/state/spectral_storage.hpp"
 
+namespace cumes { class DeviceArena; }
+
 // Run the full fixed-point solve on GPU.
 // Returns: iterations used, and whether converged.
 // On exit, state contains the converged (or final) spectral coefficients.
@@ -18,7 +20,11 @@ struct SolverResult {
     T delt;               // final time step
 };
 
+// `arena`, when non-null, backs the preconditioner/constraint workspaces the
+// solver allocates internally (one stage allocation instead of per-array
+// cudaMalloc). nullptr keeps the legacy per-array allocation path.
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
-                          MetricWorkspace<T>& mw);
+                          MetricWorkspace<T>& mw,
+                          cumes::DeviceArena* arena = nullptr);

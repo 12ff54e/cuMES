@@ -43,40 +43,49 @@ __device__ void* dynSharedBase() {
 }
 
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_arena.cuh"
 
 template <typename T>
-MetricWorkspace<T> metricCreate(const GridParams<T>& p) {
+MetricWorkspace<T> metricCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
     MetricWorkspace<T> mw{};
-    size_t nH = (p.ns - 1) * p.nZnT * sizeof(T);
+    size_t nH = (p.ns - 1) * p.nZnT;
 
-    cumes::check_cuda(cudaMalloc(&mw.d_r12,  nH), "r12");
-    cumes::check_cuda(cudaMalloc(&mw.d_ru12, nH), "ru12");
-    cumes::check_cuda(cudaMalloc(&mw.d_zu12, nH), "zu12");
-    cumes::check_cuda(cudaMalloc(&mw.d_rs,   nH), "rs");
-    cumes::check_cuda(cudaMalloc(&mw.d_zs,   nH), "zs");
-    cumes::check_cuda(cudaMalloc(&mw.d_tau,  nH), "tau");
-    cumes::check_cuda(cudaMalloc(&mw.d_gsqrt, nH), "gsqrt");
-    cumes::check_cuda(cudaMalloc(&mw.d_guu,   nH), "guu");
-    cumes::check_cuda(cudaMalloc(&mw.d_guv,   nH), "guv");
-    cumes::check_cuda(cudaMalloc(&mw.d_gvv,   nH), "gvv");
-    cumes::check_cuda(cudaMalloc(&mw.d_bsupu, nH), "bsupu");
-    cumes::check_cuda(cudaMalloc(&mw.d_bsupv, nH), "bsupv");
-    cumes::check_cuda(cudaMalloc(&mw.d_bsubu, nH), "bsubu");
-    cumes::check_cuda(cudaMalloc(&mw.d_bsubv, nH), "bsubv");
-    cumes::check_cuda(cudaMalloc(&mw.d_totalPressure, nH), "totalP");
+    auto alloc = [&](T*& dst, const char* name) {
+        if (arena) dst = arena->alloc_span<T>(name, nH);
+        else cumes::check_cuda(cudaMalloc(&dst, nH * sizeof(T)), name);
+    };
+    alloc(mw.d_r12,  "metric/r12");
+    alloc(mw.d_ru12, "metric/ru12");
+    alloc(mw.d_zu12, "metric/zu12");
+    alloc(mw.d_rs,   "metric/rs");
+    alloc(mw.d_zs,   "metric/zs");
+    alloc(mw.d_tau,  "metric/tau");
+    alloc(mw.d_gsqrt, "metric/gsqrt");
+    alloc(mw.d_guu,  "metric/guu");
+    alloc(mw.d_guv,  "metric/guv");
+    alloc(mw.d_gvv,  "metric/gvv");
+    alloc(mw.d_bsupu, "metric/bsupu");
+    alloc(mw.d_bsupv, "metric/bsupv");
+    alloc(mw.d_bsubu, "metric/bsubu");
+    alloc(mw.d_bsubv, "metric/bsubv");
+    alloc(mw.d_totalPressure, "metric/totalPressure");
+    mw.arena_backed = (arena != nullptr);
 
     return mw;
 }
 
 template <typename T>
 void metricFree(MetricWorkspace<T>& mw) {
-    cudaFree(mw.d_r12);  cudaFree(mw.d_ru12); cudaFree(mw.d_zu12);
-    cudaFree(mw.d_rs);   cudaFree(mw.d_zs);   cudaFree(mw.d_tau);
-    cudaFree(mw.d_gsqrt);
-    cudaFree(mw.d_guu);  cudaFree(mw.d_guv);  cudaFree(mw.d_gvv);
-    cudaFree(mw.d_bsupu); cudaFree(mw.d_bsupv);
-    cudaFree(mw.d_bsubu); cudaFree(mw.d_bsubv);
-    cudaFree(mw.d_totalPressure);
+    if (!mw.arena_backed) {
+        cudaFree(mw.d_r12);  cudaFree(mw.d_ru12); cudaFree(mw.d_zu12);
+        cudaFree(mw.d_rs);   cudaFree(mw.d_zs);   cudaFree(mw.d_tau);
+        cudaFree(mw.d_gsqrt);
+        cudaFree(mw.d_guu);  cudaFree(mw.d_guv);  cudaFree(mw.d_gvv);
+        cudaFree(mw.d_bsupu); cudaFree(mw.d_bsupv);
+        cudaFree(mw.d_bsubu); cudaFree(mw.d_bsubv);
+        cudaFree(mw.d_totalPressure);
+    }
+    mw = MetricWorkspace<T>{};
 }
 
 // ---- geometry kernel ----------------------------------------------------

@@ -15,6 +15,8 @@
 #include "fourier.cuh"
 #include "geometry.cuh"
 
+namespace cumes { class DeviceArena; }
+
 // Per-mode tridiagonal preconditioner workspace.
 // All arrays are GPU-resident.
 template <typename T>
@@ -65,10 +67,14 @@ struct PreconWorkspace {
     T* d_dLambda;
     T* d_cLambda;
     T* d_rmsPhiP;  // scratch [1]: sum of phipH^2 (for lamscale)
+
+    // true when the device arrays above are subspans of a shared DeviceArena.
+    bool arena_backed = false;
 };
 
 template <typename T>
-PreconWorkspace<T> preconCreate(const GridParams<T>& p);
+PreconWorkspace<T> preconCreate(const GridParams<T>& p,
+                                cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void preconFree(PreconWorkspace<T>& pw);
 

@@ -4,6 +4,8 @@
 #include "vmec_types.h"
 #include "fourier.cuh"
 
+namespace cumes { class DeviceArena; }
+
 // Intermediate arrays computed per iteration (on GPU).
 // All shapes are (ns-1, nZnT) column-major (half-grid).
 template <typename T>
@@ -34,10 +36,18 @@ struct MetricWorkspace {
 
     // Total pressure (kinetic + magnetic) on half-grid
     T* d_totalPressure;
+
+    // true when the device arrays above are subspans of a shared DeviceArena
+    // (metricFree then only resets the struct; the arena owns the memory).
+    bool arena_backed = false;
 };
 
+// metricCreate allocates the 15 half-grid arrays. With `arena == nullptr` it
+// uses one cudaMalloc per array (the legacy path, unchanged); with an arena it
+// carves aligned named subspans from that single stage allocation.
 template <typename T>
-MetricWorkspace<T> metricCreate(const GridParams<T>& p);
+MetricWorkspace<T> metricCreate(const GridParams<T>& p,
+                                cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void metricFree(MetricWorkspace<T>& mw);
 

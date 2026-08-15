@@ -50,9 +50,10 @@ __device__ void* dynSharedBase() {
 }
 
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_arena.cuh"
 
 template <typename T>
-FourierPlan<T> fourierCreate(const GridParams<T>& p) {
+FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
     FourierPlan<T> fp{};
     int nZnT = p.nZnT, mnmax = p.mnmax;
     size_t nbytes_mode  = mnmax * sizeof(int);
@@ -70,13 +71,20 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p) {
             int mode = m * (p.ntor + 1) + n;
             h_xm[mode] = m; h_xn[mode] = n;
         }
-    cumes::check_cuda(cudaMalloc(&fp.basis.d_xm, nbytes_mode), "xm");
-    cumes::check_cuda(cudaMalloc(&fp.basis.d_xn, nbytes_mode), "xn");
+    auto allocInt = [&](int*& dst, size_t count, const char* name) {
+        if (arena) dst = arena->alloc_span<int>(name, count);
+        else cumes::check_cuda(cudaMalloc(&dst, count * sizeof(int)), name);
+    };
+    allocInt(fp.basis.d_xm, mnmax, "fourier/xm");
+    allocInt(fp.basis.d_xn, mnmax, "fourier/xn");
     cumes::check_cuda(cudaMemcpy(fp.basis.d_xm, h_xm, nbytes_mode, cudaMemcpyHostToDevice), "xm");
     cumes::check_cuda(cudaMemcpy(fp.basis.d_xn, h_xn, nbytes_mode, cudaMemcpyHostToDevice), "xn");
     delete[] h_xm; delete[] h_xn;
 
-    auto am = [&](T*& p_, const char* n) { cumes::check_cuda(cudaMalloc(&p_, nbytes_real), n); };
+    auto am = [&](T*& p_, const char* n) {
+        if (arena) p_ = arena->alloc_span<T>(n, (size_t)p.ns * nZnT);
+        else cumes::check_cuda(cudaMalloc(&p_, nbytes_real), n);
+    };
     am(fp.d_r_e,"r_e"); am(fp.d_z_e,"z_e"); am(fp.d_l_e,"l_e");
     am(fp.d_ru_e,"ru_e"); am(fp.d_zu_e,"zu_e"); am(fp.d_lu_e,"lu_e");
     am(fp.d_r_o,"r_o"); am(fp.d_z_o,"z_o"); am(fp.d_l_o,"l_o");
@@ -113,12 +121,27 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p) {
     am(fp.d_clmn_e,"cle"); am(fp.d_clmn_o,"clo");
 
     // ---- cuFFT backend: poloidal tables, scratch, plans ----
-    cumes::check_cuda(cudaMalloc(&fp.d_zeta_spectra,
-        (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex)), "spectra");
-    cumes::check_cuda(cudaMalloc(&fp.d_zeta_real,
-        (size_t)12 * p.mpol * p.ns * p.nzeta * sizeof(T)), "zeta");
+    {
+        using Complex = typename FftTraits<T>::Complex;
+        size_t n_spectra = (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1);
+        size_t n_zeta    = (size_t)12 * p.mpol * p.ns * p.nzeta;
+        if (arena) {
+            // cuFFT requires 16-byte-aligned data (cufftDoubleComplex is a
+            // 16-byte vector; the real input of a D2Z is processed as double2
+            // chunks). cudaMalloc's 256-byte alignment masked this in the
+            // legacy path; the arena must request it explicitly.
+            fp.d_zeta_spectra = arena->alloc_span<Complex>("fourier/zeta_spectra", n_spectra, 16);
+            fp.d_zeta_real    = arena->alloc_span<T>("fourier/zeta_real", n_zeta, 16);
+        } else {
+            cumes::check_cuda(cudaMalloc(&fp.d_zeta_spectra,
+                n_spectra * sizeof(Complex)), "spectra");
+            cumes::check_cuda(cudaMalloc(&fp.d_zeta_real,
+                n_zeta * sizeof(T)), "zeta");
+        }
+    }
     auto amt = [&](T*& q, const char* n, size_t cnt) {
-        cumes::check_cuda(cudaMalloc(&q, cnt * sizeof(T)), n);
+        if (arena) q = arena->alloc_span<T>(n, cnt);
+        else cumes::check_cuda(cudaMalloc(&q, cnt * sizeof(T)), n);
     };
     amt(fp.d_cos_th, "costh", p.mpol * p.ntheta);  amt(fp.d_sin_th, "sinth", p.mpol * p.ntheta);
     amt(fp.d_mcos_th, "mcosth", p.mpol * p.ntheta); amt(fp.d_msin_th, "msinth", p.mpol * p.ntheta);
@@ -167,32 +190,36 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p) {
                              &outemb, 1, n, FftTraits<T>::kInverse, batch), "plan z2d");
     cumes::check_cufft(cufftPlanMany(&fp.plan_d2z, 1, &n, &outemb, 1, n,
                              &inemb, 1, nz2, FftTraits<T>::kForward, batch), "plan d2z");
+    fp.arena_backed = (arena != nullptr);
     return fp;
 }
 
 template <typename T>
 void fourierFree(FourierPlan<T>& fp) {
-    auto cuFree = [](T* p) { cudaFree(p); };
-    cudaFree(fp.basis.d_xm); cudaFree(fp.basis.d_xn);
-    cuFree(fp.d_r_e);cuFree(fp.d_z_e);cuFree(fp.d_l_e);
-    cuFree(fp.d_ru_e);cuFree(fp.d_zu_e);cuFree(fp.d_lu_e);
-    cuFree(fp.d_r_o);cuFree(fp.d_z_o);cuFree(fp.d_l_o);
-    cuFree(fp.d_ru_o);cuFree(fp.d_zu_o);cuFree(fp.d_lu_o);
-    cuFree(fp.d_r_real);cuFree(fp.d_z_real);cuFree(fp.d_l_real);
-    cuFree(fp.d_ru_real);cuFree(fp.d_zu_real);cuFree(fp.d_lu_real);
-    cuFree(fp.d_rv_real);cuFree(fp.d_zv_real);cuFree(fp.d_lv_real);
-    cuFree(fp.d_rv_e);cuFree(fp.d_rv_o);
-    cuFree(fp.d_zv_e);cuFree(fp.d_zv_o);
-    cuFree(fp.d_lv_e);cuFree(fp.d_lv_o);
-    cuFree(fp.d_armn_e);cuFree(fp.d_armn_o);cuFree(fp.d_azmn_e);cuFree(fp.d_azmn_o);
-    cuFree(fp.d_brmn_e);cuFree(fp.d_brmn_o);cuFree(fp.d_bzmn_e);cuFree(fp.d_bzmn_o);
-    cuFree(fp.d_blmn_e);cuFree(fp.d_blmn_o);
-    cuFree(fp.d_crmn_e);cuFree(fp.d_crmn_o);cuFree(fp.d_czmn_e);cuFree(fp.d_czmn_o);
-    cuFree(fp.d_clmn_e);cuFree(fp.d_clmn_o);
+    if (!fp.arena_backed) {
+        auto cuFree = [](T* p) { cudaFree(p); };
+        cudaFree(fp.basis.d_xm); cudaFree(fp.basis.d_xn);
+        cuFree(fp.d_r_e);cuFree(fp.d_z_e);cuFree(fp.d_l_e);
+        cuFree(fp.d_ru_e);cuFree(fp.d_zu_e);cuFree(fp.d_lu_e);
+        cuFree(fp.d_r_o);cuFree(fp.d_z_o);cuFree(fp.d_l_o);
+        cuFree(fp.d_ru_o);cuFree(fp.d_zu_o);cuFree(fp.d_lu_o);
+        cuFree(fp.d_r_real);cuFree(fp.d_z_real);cuFree(fp.d_l_real);
+        cuFree(fp.d_ru_real);cuFree(fp.d_zu_real);cuFree(fp.d_lu_real);
+        cuFree(fp.d_rv_real);cuFree(fp.d_zv_real);cuFree(fp.d_lv_real);
+        cuFree(fp.d_rv_e);cuFree(fp.d_rv_o);
+        cuFree(fp.d_zv_e);cuFree(fp.d_zv_o);
+        cuFree(fp.d_lv_e);cuFree(fp.d_lv_o);
+        cuFree(fp.d_armn_e);cuFree(fp.d_armn_o);cuFree(fp.d_azmn_e);cuFree(fp.d_azmn_o);
+        cuFree(fp.d_brmn_e);cuFree(fp.d_brmn_o);cuFree(fp.d_bzmn_e);cuFree(fp.d_bzmn_o);
+        cuFree(fp.d_blmn_e);cuFree(fp.d_blmn_o);
+        cuFree(fp.d_crmn_e);cuFree(fp.d_crmn_o);cuFree(fp.d_czmn_e);cuFree(fp.d_czmn_o);
+        cuFree(fp.d_clmn_e);cuFree(fp.d_clmn_o);
+        cudaFree(fp.d_zeta_spectra); cudaFree(fp.d_zeta_real);
+        cudaFree(fp.d_cos_th); cudaFree(fp.d_sin_th);
+        cudaFree(fp.d_mcos_th); cudaFree(fp.d_msin_th); cudaFree(fp.d_fwd_w);
+    }
     cufftDestroy(fp.plan_z2d); cufftDestroy(fp.plan_d2z);
-    cudaFree(fp.d_zeta_spectra); cudaFree(fp.d_zeta_real);
-    cudaFree(fp.d_cos_th); cudaFree(fp.d_sin_th);
-    cudaFree(fp.d_mcos_th); cudaFree(fp.d_msin_th); cudaFree(fp.d_fwd_w);
+    fp = FourierPlan<T>{};
 }
 
 // ---- cuFFT backend: inverse ---------------------------------------------

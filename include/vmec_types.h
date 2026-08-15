@@ -61,6 +61,8 @@ struct RadialProfiles {
     T* d_curr_H;  // prescribed toroidal current profile (ncurr=1), half grid
     T* d_chip_H;  // dχ/ds (poloidal flux derivative), half grid
     T delta_s;
+    // true when the radial arrays are subspans of a shared DeviceArena.
+    bool arena_backed = false;
 };
 
 // Spectral state with independent coefficient arrays.

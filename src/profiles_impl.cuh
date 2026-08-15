@@ -25,6 +25,7 @@
 #include <cmath>
 
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_arena.cuh"
 
 // Horner evaluation of a power series; with integrate=true gives the
 // integral ∫₀ˣ Σ c_i t^i dt = x*Σ c_i*x^i/(i+1) (vmecpp evalPowerSeries).
@@ -75,24 +76,30 @@ static T evalCurrProfile(const InputParams& ip, T x) {
 }
 
 template <typename T>
-RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
+RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip,
+                                 cumes::DeviceArena* arena) {
     RadialProfiles<T> rp{};
     rp.delta_s = T(1.0) / T(p.ns - 1);
 
     size_t nF = p.ns * sizeof(T);
     size_t nH = (p.ns - 1) * sizeof(T);
 
-    cumes::check_cuda(cudaMalloc(&rp.d_iota_F, nF), "iota_F");
-    cumes::check_cuda(cudaMalloc(&rp.d_phip_F, nF), "phip_F");
-    cumes::check_cuda(cudaMalloc(&rp.d_chi_F,  nF), "chi_F");
-    cumes::check_cuda(cudaMalloc(&rp.d_sqrtS_F, nF), "sqrtS_F");
-    cumes::check_cuda(cudaMalloc(&rp.d_iota_H, nH), "iota_H");
-    cumes::check_cuda(cudaMalloc(&rp.d_pres_H, nH), "pres_H");
-    cumes::check_cuda(cudaMalloc(&rp.d_phip_H, nH), "phip_H");
-    cumes::check_cuda(cudaMalloc(&rp.d_dVds_H, nH), "dVds_H");
-    cumes::check_cuda(cudaMalloc(&rp.d_sqrtS_H, nH), "sqrtS_H");
-    cumes::check_cuda(cudaMalloc(&rp.d_curr_H, nH), "curr_H");
-    cumes::check_cuda(cudaMalloc(&rp.d_chip_H, nH), "chip_H");
+    auto alloc = [&](T*& dst, size_t count, const char* name) {
+        if (arena) dst = arena->alloc_span<T>(name, count);
+        else cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
+    };
+    alloc(rp.d_iota_F,  p.ns,      "profiles/iota_F");
+    alloc(rp.d_phip_F,  p.ns,      "profiles/phip_F");
+    alloc(rp.d_chi_F,   p.ns,      "profiles/chi_F");
+    alloc(rp.d_sqrtS_F, p.ns,      "profiles/sqrtS_F");
+    alloc(rp.d_iota_H,  p.ns - 1,  "profiles/iota_H");
+    alloc(rp.d_pres_H,  p.ns - 1,  "profiles/pres_H");
+    alloc(rp.d_phip_H,  p.ns - 1,  "profiles/phip_H");
+    alloc(rp.d_dVds_H,  p.ns - 1,  "profiles/dVds_H");
+    alloc(rp.d_sqrtS_H, p.ns - 1,  "profiles/sqrtS_H");
+    alloc(rp.d_curr_H,  p.ns - 1,  "profiles/curr_H");
+    alloc(rp.d_chip_H,  p.ns - 1,  "profiles/chip_H");
+    rp.arena_backed = (arena != nullptr);
 
     // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
     // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
@@ -196,12 +203,15 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
 
 template <typename T>
 void profilesFree(RadialProfiles<T>& rp) {
-    cudaFree(rp.d_iota_F);
-    cudaFree(rp.d_phip_F); cudaFree(rp.d_chi_F);
-    cudaFree(rp.d_sqrtS_F);
-    cudaFree(rp.d_iota_H); cudaFree(rp.d_pres_H);
-    cudaFree(rp.d_phip_H);
-    cudaFree(rp.d_dVds_H); cudaFree(rp.d_sqrtS_H);
-    cudaFree(rp.d_curr_H); cudaFree(rp.d_chip_H);
+    if (!rp.arena_backed) {
+        cudaFree(rp.d_iota_F);
+        cudaFree(rp.d_phip_F); cudaFree(rp.d_chi_F);
+        cudaFree(rp.d_sqrtS_F);
+        cudaFree(rp.d_iota_H); cudaFree(rp.d_pres_H);
+        cudaFree(rp.d_phip_H);
+        cudaFree(rp.d_dVds_H); cudaFree(rp.d_sqrtS_H);
+        cudaFree(rp.d_curr_H); cudaFree(rp.d_chip_H);
+    }
+    rp = RadialProfiles<T>{};
 }
 

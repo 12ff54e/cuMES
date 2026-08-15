@@ -33,63 +33,66 @@ __device__ void* dynSharedBase() {
 }
 
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_arena.cuh"
 
 // ---------------------------------------------------------------------------
 // Allocate
 // ---------------------------------------------------------------------------
 template <typename T>
-PreconWorkspace<T> preconCreate(const GridParams<T>& p) {
+PreconWorkspace<T> preconCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
     PreconWorkspace<T> pw{};
     int nH = p.ns - 1, nF = p.ns;
-    size_t szH  = nH * sizeof(T);
-    size_t szF  = nF * sizeof(T);
-    size_t szH4 = 4 * nH * sizeof(T);
-    size_t szH3 = 3 * nH * sizeof(T);
-    size_t sz2H = 2 * nH * sizeof(T);
-    size_t sz2F = 2 * nF * sizeof(T);
-    size_t szMN = p.mnmax * nF * sizeof(T);
 
-    cumes::check_cuda(cudaMalloc(&pw.d_ax_R, szH4), "ax_R");  cumes::check_cuda(cudaMalloc(&pw.d_ax_Z, szH4), "ax_Z");
-    cumes::check_cuda(cudaMalloc(&pw.d_bx_R, szH3), "bx_R");  cumes::check_cuda(cudaMalloc(&pw.d_bx_Z, szH3), "bx_Z");
-    cumes::check_cuda(cudaMalloc(&pw.d_cx,  szH),  "cx");
-    cumes::check_cuda(cudaMalloc(&pw.d_arm, sz2H), "arm");    cumes::check_cuda(cudaMalloc(&pw.d_brm, sz2H), "brm");
-    cumes::check_cuda(cudaMalloc(&pw.d_azm, sz2H), "azm");    cumes::check_cuda(cudaMalloc(&pw.d_bzm, sz2H), "bzm");
-    cumes::check_cuda(cudaMalloc(&pw.d_ard, sz2F), "ard");    cumes::check_cuda(cudaMalloc(&pw.d_brd, sz2F), "brd");
-    cumes::check_cuda(cudaMalloc(&pw.d_azd, sz2F), "azd");    cumes::check_cuda(cudaMalloc(&pw.d_bzd, sz2F), "bzd");
-    cumes::check_cuda(cudaMalloc(&pw.d_cxd, szF),  "cxd");
-    cumes::check_cuda(cudaMalloc(&pw.d_sm,  szH),  "sm");     cumes::check_cuda(cudaMalloc(&pw.d_sp,  szH),  "sp");
-    cumes::check_cuda(cudaMalloc(&pw.d_ar, szMN),  "ar");     cumes::check_cuda(cudaMalloc(&pw.d_dr, szMN),  "dr");
-    cumes::check_cuda(cudaMalloc(&pw.d_br, szMN),  "br");
-    cumes::check_cuda(cudaMalloc(&pw.d_az, szMN),  "az");     cumes::check_cuda(cudaMalloc(&pw.d_dz, szMN),  "dz");
-    cumes::check_cuda(cudaMalloc(&pw.d_bz, szMN),  "bz");
-    cumes::check_cuda(cudaMalloc(&pw.d_jMin, p.mnmax * sizeof(int)), "jMin");
-    cumes::check_cuda(cudaMalloc(&pw.d_lambdaPrec, szMN), "lambdaPrec");
-    cumes::check_cuda(cudaMalloc(&pw.d_bLambda, (p.ns + 1) * sizeof(T)), "bLambda");
-    cumes::check_cuda(cudaMalloc(&pw.d_dLambda, (p.ns + 1) * sizeof(T)), "dLambda");
-    cumes::check_cuda(cudaMalloc(&pw.d_cLambda, (p.ns + 1) * sizeof(T)), "cLambda");
-    cumes::check_cuda(cudaMalloc(&pw.d_rmsPhiP, sizeof(T)), "rmsPhiP");
+    auto alloc = [&](T*& dst, size_t count, const char* name) {
+        if (arena) dst = arena->alloc_span<T>(name, count);
+        else cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
+    };
+    alloc(pw.d_ax_R, 4 * nH, "precon/ax_R");  alloc(pw.d_ax_Z, 4 * nH, "precon/ax_Z");
+    alloc(pw.d_bx_R, 3 * nH, "precon/bx_R");  alloc(pw.d_bx_Z, 3 * nH, "precon/bx_Z");
+    alloc(pw.d_cx,  nH,      "precon/cx");
+    alloc(pw.d_arm, 2 * nH, "precon/arm");    alloc(pw.d_brm, 2 * nH, "precon/brm");
+    alloc(pw.d_azm, 2 * nH, "precon/azm");    alloc(pw.d_bzm, 2 * nH, "precon/bzm");
+    alloc(pw.d_ard, 2 * nF, "precon/ard");    alloc(pw.d_brd, 2 * nF, "precon/brd");
+    alloc(pw.d_azd, 2 * nF, "precon/azd");    alloc(pw.d_bzd, 2 * nF, "precon/bzd");
+    alloc(pw.d_cxd, nF,      "precon/cxd");
+    alloc(pw.d_sm,  nH,      "precon/sm");    alloc(pw.d_sp,  nH,      "precon/sp");
+    alloc(pw.d_ar,  p.mnmax * nF, "precon/ar"); alloc(pw.d_dr, p.mnmax * nF, "precon/dr");
+    alloc(pw.d_br,  p.mnmax * nF, "precon/br");
+    alloc(pw.d_az,  p.mnmax * nF, "precon/az"); alloc(pw.d_dz, p.mnmax * nF, "precon/dz");
+    alloc(pw.d_bz,  p.mnmax * nF, "precon/bz");
+    if (arena) pw.d_jMin = arena->alloc_span<int>("precon/jMin", p.mnmax);
+    else cumes::check_cuda(cudaMalloc(&pw.d_jMin, p.mnmax * sizeof(int)), "jMin");
+    alloc(pw.d_lambdaPrec, p.mnmax * nF, "precon/lambdaPrec");
+    alloc(pw.d_bLambda, p.ns + 1, "precon/bLambda");
+    alloc(pw.d_dLambda, p.ns + 1, "precon/dLambda");
+    alloc(pw.d_cLambda, p.ns + 1, "precon/cLambda");
+    alloc(pw.d_rmsPhiP, 1, "precon/rmsPhiP");
     // Index ns of bLambda/cLambda must stay zero: the LCFS full-grid average
     // reads it (vmecpp: array sized ns+1, last entry never written).
     cumes::check_cuda(cudaMemset(pw.d_bLambda, 0, (p.ns + 1) * sizeof(T)), "bLambda zero");
     cumes::check_cuda(cudaMemset(pw.d_dLambda, 0, (p.ns + 1) * sizeof(T)), "dLambda zero");
     cumes::check_cuda(cudaMemset(pw.d_cLambda, 0, (p.ns + 1) * sizeof(T)), "cLambda zero");
+    pw.arena_backed = (arena != nullptr);
     return pw;
 }
 
 template <typename T>
 void preconFree(PreconWorkspace<T>& pw) {
-    cudaFree(pw.d_ax_R); cudaFree(pw.d_ax_Z);
-    cudaFree(pw.d_bx_R); cudaFree(pw.d_bx_Z); cudaFree(pw.d_cx);
-    cudaFree(pw.d_arm);  cudaFree(pw.d_brm);
-    cudaFree(pw.d_azm);  cudaFree(pw.d_bzm);
-    cudaFree(pw.d_ard);  cudaFree(pw.d_brd);
-    cudaFree(pw.d_azd);  cudaFree(pw.d_bzd);  cudaFree(pw.d_cxd);
-    cudaFree(pw.d_sm);   cudaFree(pw.d_sp);
-    cudaFree(pw.d_ar);   cudaFree(pw.d_dr);   cudaFree(pw.d_br);
-    cudaFree(pw.d_az);   cudaFree(pw.d_dz);   cudaFree(pw.d_bz);
-    cudaFree(pw.d_jMin);
-    cudaFree(pw.d_lambdaPrec);
-    cudaFree(pw.d_bLambda); cudaFree(pw.d_dLambda); cudaFree(pw.d_cLambda); cudaFree(pw.d_rmsPhiP);
+    if (!pw.arena_backed) {
+        cudaFree(pw.d_ax_R); cudaFree(pw.d_ax_Z);
+        cudaFree(pw.d_bx_R); cudaFree(pw.d_bx_Z); cudaFree(pw.d_cx);
+        cudaFree(pw.d_arm);  cudaFree(pw.d_brm);
+        cudaFree(pw.d_azm);  cudaFree(pw.d_bzm);
+        cudaFree(pw.d_ard);  cudaFree(pw.d_brd);
+        cudaFree(pw.d_azd);  cudaFree(pw.d_bzd);  cudaFree(pw.d_cxd);
+        cudaFree(pw.d_sm);   cudaFree(pw.d_sp);
+        cudaFree(pw.d_ar);   cudaFree(pw.d_dr);   cudaFree(pw.d_br);
+        cudaFree(pw.d_az);   cudaFree(pw.d_dz);   cudaFree(pw.d_bz);
+        cudaFree(pw.d_jMin);
+        cudaFree(pw.d_lambdaPrec);
+        cudaFree(pw.d_bLambda); cudaFree(pw.d_dLambda); cudaFree(pw.d_cLambda); cudaFree(pw.d_rmsPhiP);
+    }
+    pw = PreconWorkspace<T>{};
 }
 
 // ---------------------------------------------------------------------------

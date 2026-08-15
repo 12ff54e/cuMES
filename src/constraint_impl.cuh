@@ -41,6 +41,7 @@ __device__ void* dynSharedBase() {
 }
 
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_arena.cuh"
 
 // ζ-tile width for the accumulate/synthesize/analyze kernels (mirrors the
 // helper in fourier.cu): the block no longer embeds the full theta/2 × zeta
@@ -54,16 +55,23 @@ static int computeKTile(int blkX, int nzeta) {
 // Allocate/free
 // ---------------------------------------------------------------------------
 template <typename T>
-ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p) {
+ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
+                                        cumes::DeviceArena* arena) {
     using Complex = typename FftTraits<T>::Complex;
     ConstraintWorkspace<T> cw{};
     size_t nF = p.ns * p.nZnT * sizeof(T);
-    cumes::check_cuda(cudaMalloc(&cw.d_gConEff, nF), "gConEff");
-    cumes::check_cuda(cudaMalloc(&cw.d_gCon,    nF), "gCon");
-    cumes::check_cuda(cudaMalloc(&cw.d_rCon,    nF), "rCon");
-    cumes::check_cuda(cudaMalloc(&cw.d_zCon,    nF), "zCon");
-    cumes::check_cuda(cudaMalloc(&cw.d_rCon0,   nF), "rCon0");
-    cumes::check_cuda(cudaMalloc(&cw.d_zCon0,   nF), "zCon0");
+    size_t nFull = p.ns * p.nZnT;
+
+    auto alloc = [&](T*& dst, size_t count, const char* name) {
+        if (arena) dst = arena->alloc_span<T>(name, count);
+        else cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
+    };
+    alloc(cw.d_gConEff, nFull, "constraint/gConEff");
+    alloc(cw.d_gCon,    nFull, "constraint/gCon");
+    alloc(cw.d_rCon,    nFull, "constraint/rCon");
+    alloc(cw.d_zCon,    nFull, "constraint/zCon");
+    alloc(cw.d_rCon0,   nFull, "constraint/rCon0");
+    alloc(cw.d_zCon0,   nFull, "constraint/zCon0");
     // Initialize rCon0/zCon0 to zero
     cumes::check_cuda(cudaMemset(cw.d_rCon0, 0, nF), "rCon0 zero");
     cumes::check_cuda(cudaMemset(cw.d_zCon0, 0, nF), "zCon0 zero");
@@ -72,11 +80,11 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p) {
     // iteration 0 before computeTconKernel writes it — with zeros the
     // constraint force is inactive on the first iteration (deterministic,
     // matches vmecpp where the constraint has no prior tcon either).
-    cumes::check_cuda(cudaMalloc(&cw.d_tcon, p.ns * sizeof(T)), "tcon dev");
+    alloc(cw.d_tcon, p.ns, "constraint/tcon");
     cumes::check_cuda(cudaMemset(cw.d_tcon, 0, p.ns * sizeof(T)), "tcon zero");
-    // faccon: allocate on host and device
+    // faccon: host (pinned, never arena) + device
     cumes::check_cuda(cudaMallocHost(&cw.h_faccon, p.mnmax * sizeof(T)), "faccon host");
-    cumes::check_cuda(cudaMalloc(&cw.d_faccon, p.mnmax * sizeof(T)), "faccon dev");
+    alloc(cw.d_faccon, p.mnmax, "constraint/faccon");
     // Precompute faccon[m] = -0.25 * signJ / (xmpq[m+1]^2) with
     // xmpq[m+1] = (m+1)*m, matching vmecpp (ideal_mhd_model.cc lines
     // 238-242): faccon[i] = 0.25 / (i^2 (i+1)^2) for i >= 1.
@@ -89,10 +97,10 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p) {
     // Constraint-force outputs (frcon/fzcon), zero-initialized so the axis
     // surface (skipped by the add kernel) reads zero like vmecpp.
     size_t nFc = p.ns * p.nZnT * sizeof(T);
-    cumes::check_cuda(cudaMalloc(&cw.d_frcon_e, nFc), "frcon_e");
-    cumes::check_cuda(cudaMalloc(&cw.d_frcon_o, nFc), "frcon_o");
-    cumes::check_cuda(cudaMalloc(&cw.d_fzcon_e, nFc), "fzcon_e");
-    cumes::check_cuda(cudaMalloc(&cw.d_fzcon_o, nFc), "fzcon_o");
+    alloc(cw.d_frcon_e, nFull, "constraint/frcon_e");
+    alloc(cw.d_frcon_o, nFull, "constraint/frcon_o");
+    alloc(cw.d_fzcon_e, nFull, "constraint/fzcon_e");
+    alloc(cw.d_fzcon_o, nFull, "constraint/fzcon_o");
     cumes::check_cuda(cudaMemset(cw.d_frcon_e, 0, nFc), "frcon_e zero");
     cumes::check_cuda(cudaMemset(cw.d_frcon_o, 0, nFc), "frcon_o zero");
     cumes::check_cuda(cudaMemset(cw.d_fzcon_e, 0, nFc), "fzcon_e zero");
@@ -102,8 +110,14 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p) {
     // batch elements instead of the full 12*mpol*ns).
     int n = p.nzeta, nz2 = p.nzeta / 2 + 1;
     int batchDa = 2 * (p.mpol - 2) * (p.ns - 1);
-    cumes::check_cuda(cudaMalloc(&cw.d_zeta_real_c, (size_t)batchDa * n * sizeof(T)), "zeta_real_c");
-    cumes::check_cuda(cudaMalloc(&cw.d_zeta_spectra_c, (size_t)batchDa * nz2 * sizeof(Complex)), "zeta_spectra_c");
+    if (arena) {
+        // cuFFT needs 16-byte-aligned data (see fourierCreate).
+        cw.d_zeta_real_c = arena->alloc_span<T>("constraint/zeta_real_c", (size_t)batchDa * n, 16);
+        cw.d_zeta_spectra_c = arena->alloc_span<Complex>("constraint/zeta_spectra_c", (size_t)batchDa * nz2, 16);
+    } else {
+        cumes::check_cuda(cudaMalloc(&cw.d_zeta_real_c, (size_t)batchDa * n * sizeof(T)), "zeta_real_c");
+        cumes::check_cuda(cudaMalloc(&cw.d_zeta_spectra_c, (size_t)batchDa * nz2 * sizeof(Complex)), "zeta_spectra_c");
+    }
     cumes::check_cufft(cufftPlanMany(&cw.plan_d2z_da, 1, &n, &n, 1, n, &nz2, 1, nz2,
                       FftTraits<T>::kForward, batchDa), "plan d2z_da");
     cumes::check_cufft(cufftPlanMany(&cw.plan_z2d_da, 1, &n, &nz2, 1, nz2, &n, 1, n,
@@ -111,27 +125,38 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p) {
 
     // Compact rCon/zCon workspace (value slots 0/1/4/5 only).
     int batchRz = 4 * p.mpol * p.ns;
-    cumes::check_cuda(cudaMalloc(&cw.d_zeta_real_rz, (size_t)batchRz * n * sizeof(T)), "zeta_real_rz");
-    cumes::check_cuda(cudaMalloc(&cw.d_zeta_spectra_rz, (size_t)batchRz * nz2 * sizeof(Complex)), "zeta_spectra_rz");
+    if (arena) {
+        // cuFFT needs 16-byte-aligned data (see fourierCreate).
+        cw.d_zeta_real_rz = arena->alloc_span<T>("constraint/zeta_real_rz", (size_t)batchRz * n, 16);
+        cw.d_zeta_spectra_rz = arena->alloc_span<Complex>("constraint/zeta_spectra_rz", (size_t)batchRz * nz2, 16);
+    } else {
+        cumes::check_cuda(cudaMalloc(&cw.d_zeta_real_rz, (size_t)batchRz * n * sizeof(T)), "zeta_real_rz");
+        cumes::check_cuda(cudaMalloc(&cw.d_zeta_spectra_rz, (size_t)batchRz * nz2 * sizeof(Complex)), "zeta_spectra_rz");
+    }
     cumes::check_cufft(cufftPlanMany(&cw.plan_z2d_rz, 1, &n, &nz2, 1, nz2, &n, 1, n,
                       FftTraits<T>::kInverse, batchRz), "plan z2d_rz");
 
+    cw.arena_backed = (arena != nullptr);
     return cw;
 }
 
 template <typename T>
 void constraintFree(ConstraintWorkspace<T>& cw) {
-    cudaFree(cw.d_gConEff); cudaFree(cw.d_gCon);
-    cudaFree(cw.d_rCon);    cudaFree(cw.d_zCon);
-    cudaFree(cw.d_rCon0);   cudaFree(cw.d_zCon0);
-    cudaFree(cw.d_tcon);
-    cudaFreeHost(cw.h_faccon); cudaFree(cw.d_faccon);
-    cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o);
-    cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
-    cudaFree(cw.d_zeta_real_c); cudaFree(cw.d_zeta_spectra_c);
+    if (!cw.arena_backed) {
+        cudaFree(cw.d_gConEff); cudaFree(cw.d_gCon);
+        cudaFree(cw.d_rCon);    cudaFree(cw.d_zCon);
+        cudaFree(cw.d_rCon0);   cudaFree(cw.d_zCon0);
+        cudaFree(cw.d_tcon);
+        cudaFree(cw.d_faccon);
+        cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o);
+        cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
+        cudaFree(cw.d_zeta_real_c); cudaFree(cw.d_zeta_spectra_c);
+        cudaFree(cw.d_zeta_real_rz); cudaFree(cw.d_zeta_spectra_rz);
+    }
+    cudaFreeHost(cw.h_faccon);
     cufftDestroy(cw.plan_d2z_da); cufftDestroy(cw.plan_z2d_da);
-    cudaFree(cw.d_zeta_real_rz); cudaFree(cw.d_zeta_spectra_rz);
     cufftDestroy(cw.plan_z2d_rz);
+    cw = ConstraintWorkspace<T>{};
 }
 
 // ---------------------------------------------------------------------------

@@ -446,15 +446,15 @@ static void dumpDeviceArray(const char* filename, const T* d_data, size_t nelem)
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
-                          MetricWorkspace<T>& mw) {
+                          MetricWorkspace<T>& mw, cumes::DeviceArena* arena) {
     // The legacy 12-pointer view over the contiguous slabs: every kernel and
     // consumer below keeps its unchanged pointer arithmetic and layout.
     SpectralState<T> st = storage.legacy_view();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
     cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
     cumes::DeviceBuffer<T> d_sq(3);
-    PreconWorkspace<T> pw = preconCreate(p);
-    ConstraintWorkspace<T> cw = constraintCreate(p);
+    PreconWorkspace<T> pw = preconCreate(p, arena);
+    ConstraintWorkspace<T> cw = constraintCreate(p, arena);
 
     // ---- transform timing (cudaEvent pairs around inverseDFT/forwardDFT) ----
     cudaEvent_t ev0, ev1;

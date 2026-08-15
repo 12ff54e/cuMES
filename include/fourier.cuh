@@ -4,6 +4,8 @@
 #include "fft_traits.h"
 #include <cufft.h>
 
+namespace cumes { class DeviceArena; }
+
 template <typename T> struct ConstraintWorkspace;  // defined in constraint.cuh
 
 // Transforms use a batched 1D real FFT in the toroidal (ζ) direction plus
@@ -57,10 +59,19 @@ struct FourierPlan {
     T* d_crmn_e; T* d_crmn_o;
     T* d_czmn_e; T* d_czmn_o;
     T* d_clmn_e; T* d_clmn_o;
+
+    // true when the device arrays above are subspans of a shared DeviceArena
+    // (fourierFree then destroys only the cuFFT plans; the arena owns memory).
+    bool arena_backed = false;
 };
 
+// fourierCreate builds the mode tables, allocates the real-space/force/zeta
+// scratch and poloidal tables, and creates the two cuFFT plans. With
+// `arena == nullptr` every array is its own cudaMalloc (legacy); with an
+// arena the arrays are aligned named subspans of one stage allocation.
 template <typename T>
-FourierPlan<T> fourierCreate(const GridParams<T>& p);
+FourierPlan<T> fourierCreate(const GridParams<T>& p,
+                             cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void fourierFree(FourierPlan<T>& fp);
 

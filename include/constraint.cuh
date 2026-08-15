@@ -5,6 +5,8 @@
 #include "fourier.cuh"
 #include "precon.cuh"
 
+namespace cumes { class DeviceArena; }
+
 template <typename T>
 struct ConstraintWorkspace {
     // Effective constraint force and bandpass-filtered version
@@ -52,10 +54,15 @@ struct ConstraintWorkspace {
     T* d_zeta_real_rz;     // [4*mpol*ns * nzeta]
     typename FftTraits<T>::Complex* d_zeta_spectra_rz; // [4*mpol*ns * nz2]
     cufftHandle plan_z2d_rz;
+
+    // true when the device arrays above are subspans of a shared DeviceArena
+    // (constraintFree then frees only the pinned host faccon + cuFFT plans).
+    bool arena_backed = false;
 };
 
 template <typename T>
-ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p);
+ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
+                                        cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void constraintFree(ConstraintWorkspace<T>& cw);
 
