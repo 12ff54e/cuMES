@@ -457,7 +457,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     SpectralState<T> st = storage.legacy_view();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
     cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
-    cumes::DeviceBuffer<T> d_sq(3);
+    // Combined control record (Phase 6A one-fence): [0..3] oriented-Jacobian
+    // stats, [4..6] invariant residual, [7..9] preconditioned residual — one
+    // device buffer reduced into and transferred with one async copy per pass.
+    cumes::DeviceBuffer<T> d_control(10);
     // Typed spectral views over the contiguous slabs + residual buffer (the
     // migrated kernel inputs). Each indexes bit-for-bit like the legacy
     // pointers it replaces; the const views are the read-only side.
@@ -521,17 +524,9 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     cumes::DeviceBuffer<T> d_psum(4 * (size_t)(p.ns - 1));
     cumes::DeviceBuffer<T> d_rzsum(1);
 
-    // Jacobian-validity stats scratch (computeJacobianStats): device 4-vec +
-    // pinned staging. Allocated once, checked every iteration after
-    // computeGeometry so a degenerate surface fails via the BAD_JACOBIAN
-    // restore path before the forces/constraint/precon consume the geometry.
-    cumes::DeviceBuffer<T> d_jac_stats(4);
-    cumes::PinnedBuffer<T> h_jac_stats(4);
-
-    // Pinned residual staging (async D2H copies avoid the pageable staging
-    // of synchronous cudaMemcpy on the default stream).
-    cumes::PinnedBuffer<T> h_sq_i_pin(3);
-    cumes::PinnedBuffer<T> h_sq_pin(3);
+    // Pinned mirror of the combined control record (one async D2H per pass,
+    // delivered by the single control fence).
+    cumes::PinnedBuffer<T> h_control_pin(10);
 
     // State rollback: one contiguous state-only checkpoint slab (6*mnmax*ns),
     // replacing the six separate d_bk_* arrays. The slab order matches the six
@@ -759,48 +754,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         computeGeometry(fp, p, rp, mw, stream,
                         /*update_iota_chi=*/ (p.ncurr == 1) || (iter == 0));
 
-        // ---- Jacobian validity check (vmecpp's bad-jacobian detection) ----
-        // A collapsed or sign-flipped surface must fail the iteration here,
-        // BEFORE the constraint/forces/preconditioner kernels consume the
-        // geometry (the kernels' inv_gsqrt guards keep those buffers finite
-        // in the interim). The threshold is relative to the run's own |√g|
-        // scale: any non-finite entry, a fully-degenerate grid (max == 0),
-        // or a surface whose |√g| is < 1e-12 of the maximum is treated as an
-        // invalid Jacobian — same recovery as the non-finite-residual path.
-        computeJacobianStats(p, mw, d_jac_stats.data(), h_jac_stats.data(), stream);
-        {
-            // Oriented statistics: h_jac_stats.data()[0] = min(signJ·√g),
-            // [1] = max |√g|, [2] = nonfinite count, [3] = min index.
-            // signJ = -1 and √g is negative on a valid surface, so
-            // signJ·√g = |√g| > 0 there. A NEGATIVE oriented min means the
-            // Jacobian flipped sign somewhere — a genuine interior collapse
-            // that |√g| would hide — and is always invalid, regardless of
-            // index. A positive oriented min that is tiny (< 1e-12 of the
-            // scale) is only invalid away from the axis-adjacent singularity
-            // (gminIdx >= nZnT). The predicate and the delt shrink/re-anchor
-            // bookkeeping live in the controller; the solver only restores.
-            cumes::JacobianStatus<T> js;
-            js.min_oriented = h_jac_stats.data()[0];
-            js.max_abs = h_jac_stats.data()[1];
-            js.nonfinite_count = h_jac_stats.data()[2];
-            js.min_index = (int)h_jac_stats.data()[3];
-            T delt_before = controller.delta_t();
-            int it2_before = controller.effective_iteration();
-            int it1_before = controller.restart_anchor();
-            if (controller.jacobian_invalid(js, p.nZnT)) {
-                recordPass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
-                           it2_before, it1_before);
-                restoreState();
-                printf("  -> BAD JACOBIAN (invalid √g: min(signJ·√g)=%.3e "
-                       "max|√g|=%.3e nonfinite=%.0f at jH=%d) delt=%.3e\n",
-                       (double)js.min_oriented, (double)js.max_abs,
-                       (double)js.nonfinite_count,
-                       js.min_index / p.nZnT, (double)controller.delta_t());
-                printIterRow(controller.effective_iteration(), T(1.0), T(1.0),
-                             T(1.0), controller.delta_t());
-                continue;
-            }
-        }
+        // ---- Jacobian statistics (vmecpp's bad-jacobian detection) ----
+        // Reduced into d_control[0..3] (device-only). The validity decision is
+        // made at the single control fence after the full DAG is enqueued; a
+        // collapsed or sign-flipped surface then fails the pass there and the
+        // state is restored (see the gate below). The geometry kernels' own
+        // inv_gsqrt guards keep their buffers finite in the interim.
+        computeJacobianStats(p, mw, d_control.data(), stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 2) {
@@ -1058,71 +1018,18 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
           cumes::check_cuda(cudaGetLastError(), "m1Constraint"); }
 
         // ---- Invariant (unpreconditioned) residuals ----
-        // Used for the stopping criterion and the BAD_PROGRESS threshold,
-        // matching vmecpp's fsqr/fsqz/fsql (evalFResInvar). Computed before
-        // preconditioning so a false minimum (tiny preconditioned forces on
-        // garbage geometry) can never be mistaken for convergence.
+        // Reduced into d_control[4..6]. The nonfinite/converged decision and
+        // the in-place preconditioner are both deferred to the single control
+        // fence below (Phase 6A one-fence path); stream order guarantees the
+        // invariant reduction completes before the preconditioner runs, so the
+        // two never race on the residual slab.
 #ifdef DUMP_CUMES_VERIFY
         if (iter == kMaxIterEff - 1) {
             dumpDeviceArray("dump/cuMES/step_final_f_spec.bin", d_f_spec.data(),
                             (size_t)6 * p.mnmax * p.ns);
         }
 #endif
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3,0,stream>>>(residual_view_const,p.ns,p.mnmax,d_sq.data()); }
-        cumes::check_cuda(cudaMemcpyAsync(h_sq_i_pin.data(), d_sq.data(), 3 * sizeof(T),
-                               cudaMemcpyDeviceToHost, stream), "cpy sqi");
-        cumes::check_cuda(cudaStreamSynchronize(stream), "sqi sync");
-        const T* h_sq_i = h_sq_i_pin.data();
-        // Sample the transform-timing events at this already-required fence
-        // (both transforms preceded it on the same stream), replacing the two
-        // per-iteration event syncs removed above.
-        { float ms; cudaEventElapsedTime(&ms, ev0_inv, ev1_inv); t_inv_ms += ms; }
-        { float ms; cudaEventElapsedTime(&ms, ev0_fwd, ev1_fwd); t_fwd_ms += ms; }
-        // vmecpp evalFResInvar: fsqr = fResInvar[0]·fNormRZ·0.25 (same for
-        // fsqz), fsql = fResInvar[2]·fNormL, where fResInvar are the plain
-        // sums. The cuMES kernel returns ΣF²/(mnmax·ns), so undo that first.
-        const T plainPerEl = T(p.mnmax) * T(p.ns);
-        T fsqr_i = h_sq_i[0] * plainPerEl * fNormRZ * T(0.25);
-        T fsqz_i = h_sq_i[1] * plainPerEl * fNormRZ * T(0.25);
-        T fsql_i = h_sq_i[2] * plainPerEl * fNormL;
-        const T inv_triple[3] = {fsqr_i, fsqz_i, fsql_i};
-
-        // ---- Stopping criterion (vmecpp Evolve) ----
-        // classify_invariant records fsqz_prev for the next pass's gauge
-        // condition, then reports nonfinite (recover) or converged (stop).
-        const T delt_before_i = controller.delta_t();
-        const int it2_before_i = controller.effective_iteration();
-        const int it1_before_i = controller.restart_anchor();
-        cumes::InvariantVerdict<T> verdict = controller.classify_invariant(inv_triple);
-        if (verdict.nonfinite) {
-            // vmecpp hard-fails on non-finite residuals (status BAD_JACOBIAN);
-            // we recover instead: restore the last good state and shrink delt.
-#ifdef DUMP_CUMES_VERIFY
-            recordPass(1, fsqr_i, fsqz_i, fsql_i, 0,0,0, delt_before_i,0,0,0,0,
-                       it2_before_i, it1_before_i);
-#endif
-            restoreState();
-            printf("  -> BAD JACOBIAN (non-finite residuals) delt=%.3e\n",
-                   (double)controller.delta_t());
-            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
-                         controller.delta_t());
-            continue;
-        }
-        if (verdict.converged) {
-#ifdef DUMP_CUMES_VERIFY
-            recordPass(0, fsqr_i, fsqz_i, fsql_i, 0,0,0, controller.delta_t(),0,0,0,0,
-                       controller.effective_iteration(), controller.restart_anchor());
-#endif
-            res.converged=true; res.iterations=controller.effective_iteration();
-            res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=controller.delta_t();
-            // Report the EFFECTIVE iteration count (iter2): restart passes
-            // don't advance it, matching vmecpp's bad_resets counter and the
-            // ITER column of the table above (the raw pass count, iter+1,
-            // would disagree after any restart).
-            printf("  -> CONVERGED at iter %d\n", controller.effective_iteration());
-            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
-                         controller.delta_t()); break;
-        }
+        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3,0,stream>>>(residual_view_const,p.ns,p.mnmax,d_control.data()+4); }
 
         // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve
         { dim3 b1(256), g1((p.ns + 255) / 256);
@@ -1182,16 +1089,105 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif
 
         // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3,0,stream>>>(residual_view_const,p.ns,p.mnmax,d_sq.data()); }
-        cumes::check_cuda(cudaMemcpyAsync(h_sq_pin.data(), d_sq.data(), 3 * sizeof(T),
-                               cudaMemcpyDeviceToHost, stream), "cpy sq");
-        cumes::check_cuda(cudaStreamSynchronize(stream), "sq sync");
-        const T* h_sq = h_sq_pin.data();
-        // vmecpp evalFResPrecd: fsqr1 = fResPrecd[0]·fNorm1 (same for fsqz1),
-        // fsql1 = fResPrecd[2]·deltaS — NOTE: deltaS, not fNormL.
-        T fsqr = h_sq[0] * plainPerEl * fNorm1;
-        T fsqz = h_sq[1] * plainPerEl * fNorm1;
-        T fsql = h_sq[2] * plainPerEl * rp.delta_s;
+        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3,0,stream>>>(residual_view_const,p.ns,p.mnmax,d_control.data()+7); }
+
+        // ---- ONE combined control fence (Phase 6A) ----
+        // Jacobian stats + invariant + preconditioned residuals are one device
+        // record; transfer it with one async copy and sync once. This replaces
+        // the three per-pass host barriers (Jacobian gate, invariant,
+        // preconditioned) of the pre-6A loop.
+        cumes::check_cuda(cudaMemcpyAsync(h_control_pin.data(), d_control.data(),
+                               10 * sizeof(T), cudaMemcpyDeviceToHost, stream), "cpy control");
+        cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
+        const T* hc = h_control_pin.data();
+        // Sample the transform-timing events at this fence (both transforms
+        // preceded it on the same stream).
+        { float ms; cudaEventElapsedTime(&ms, ev0_inv, ev1_inv); t_inv_ms += ms; }
+        { float ms; cudaEventElapsedTime(&ms, ev0_fwd, ev1_fwd); t_fwd_ms += ms; }
+
+        const T plainPerEl = T(p.mnmax) * T(p.ns);
+
+        // ---- Oriented-Jacobian validity gate (vmecpp bad-jacobian) ----
+        // Checked FIRST: an invalid geometry can make the downstream residual
+        // (reduced on that geometry) nonfinite or garbage, so the restore
+        // decision must precede the residual classification. The delt shrink
+        // and re-anchor bookkeeping live in the controller; the solver only
+        // restores. The persistent preconditioner/constraint caches the pass
+        // may have touched are self-healing: the re-anchor makes the next pass
+        // a refresh+reset pass (iter2==iter1), which rebuilds them from the
+        // restored geometry.
+        cumes::JacobianStatus<T> js;
+        js.min_oriented = hc[0];
+        js.max_abs = hc[1];
+        js.nonfinite_count = hc[2];
+        js.min_index = (int)hc[3];
+        const T delt_before = controller.delta_t();
+        const int it2_before = controller.effective_iteration();
+        const int it1_before = controller.restart_anchor();
+        if (controller.jacobian_invalid(js, p.nZnT)) {
+#ifdef DUMP_CUMES_VERIFY
+            recordPass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
+                       it2_before, it1_before);
+#endif
+            restoreState();
+            printf("  -> BAD JACOBIAN (invalid √g: min(signJ·√g)=%.3e "
+                   "max|√g|=%.3e nonfinite=%.0f at jH=%d) delt=%.3e\n",
+                   (double)js.min_oriented, (double)js.max_abs,
+                   (double)js.nonfinite_count,
+                   js.min_index / p.nZnT, (double)controller.delta_t());
+            printIterRow(controller.effective_iteration(), T(1.0), T(1.0),
+                         T(1.0), controller.delta_t());
+            continue;
+        }
+
+        // ---- Invariant residuals (vmecpp evalFResInvar) ----
+        // fsqr = fResInvar[0]·fNormRZ·0.25 (same for fsqz), fsql =
+        // fResInvar[2]·fNormL. The kernel returns ΣF²/(mnmax·ns); undo first.
+        T fsqr_i = hc[4] * plainPerEl * fNormRZ * T(0.25);
+        T fsqz_i = hc[5] * plainPerEl * fNormRZ * T(0.25);
+        T fsql_i = hc[6] * plainPerEl * fNormL;
+        const T inv_triple[3] = {fsqr_i, fsqz_i, fsql_i};
+
+        // ---- Stopping criterion (vmecpp Evolve) ----
+        // classify_invariant records fsqz_prev for the next pass's gauge
+        // condition, then reports nonfinite (recover) or converged (stop).
+        cumes::InvariantVerdict<T> verdict = controller.classify_invariant(inv_triple);
+        if (verdict.nonfinite) {
+            // vmecpp hard-fails on non-finite residuals (status BAD_JACOBIAN);
+            // we recover instead: restore the last good state and shrink delt.
+#ifdef DUMP_CUMES_VERIFY
+            recordPass(1, fsqr_i, fsqz_i, fsql_i, 0,0,0, delt_before,0,0,0,0,
+                       it2_before, it1_before);
+#endif
+            restoreState();
+            printf("  -> BAD JACOBIAN (non-finite residuals) delt=%.3e\n",
+                   (double)controller.delta_t());
+            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
+                         controller.delta_t());
+            continue;
+        }
+        if (verdict.converged) {
+#ifdef DUMP_CUMES_VERIFY
+            recordPass(0, fsqr_i, fsqz_i, fsql_i, 0,0,0, controller.delta_t(),0,0,0,0,
+                       controller.effective_iteration(), controller.restart_anchor());
+#endif
+            res.converged=true; res.iterations=controller.effective_iteration();
+            res.fsqr=fsqr_i;res.fsqz=fsqz_i;res.fsql=fsql_i;res.delt=controller.delta_t();
+            // Report the EFFECTIVE iteration count (iter2): restart passes
+            // don't advance it, matching vmecpp's bad_resets counter and the
+            // ITER column of the table above (the raw pass count, iter+1,
+            // would disagree after any restart).
+            printf("  -> CONVERGED at iter %d\n", controller.effective_iteration());
+            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
+                         controller.delta_t()); break;
+        }
+
+        // ---- Preconditioned residuals (vmecpp evalFResPrecd) ----
+        // fsqr1 = fResPrecd[0]·fNorm1 (same for fsqz1), fsql1 =
+        // fResPrecd[2]·deltaS — NOTE: deltaS, not fNormL.
+        T fsqr = hc[7] * plainPerEl * fNorm1;
+        T fsqz = hc[8] * plainPerEl * fNorm1;
+        T fsql = hc[9] * plainPerEl * rp.delta_s;
         // ---- Damping + time-step control (vmecpp Evolve / VMEC_8_52) ----
         // 1/tau tracks the rate of decrease of fsq (log-ratio), capped at
         // 0.15/delt, averaged over a 10-iteration window; res0 is the running

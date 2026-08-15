@@ -586,20 +586,18 @@ __global__ void jacobianStatsKernel(
     }
 }
 
-// Host wrapper: d_stats is a caller-owned 4-element device scratch
-// (allocated once by the solver, not per call — no cudaMalloc in the hot
-// loop); h_stats receives {min|√g|, max|√g|, nonfinite count, min index}.
-// Synchronous (the caller consumes the values immediately).
+// Host wrapper: d_stats is a caller-owned 4-element device scratch (allocated
+// once by the solver, not per call — no cudaMalloc in the hot loop). Device-
+// only: it reduces the oriented Jacobian statistics into d_stats and returns;
+// the caller transfers the values with its combined ControlRecord (Phase 6A
+// one-fence control path), so there is no host copy or fence here.
 template <typename T>
 void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
-                          T* d_stats, T* h_stats, cudaStream_t stream) {
+                          T* d_stats, cudaStream_t stream) {
     const int nHalf = (p.ns - 1) * p.nZnT;
     jacobianStatsKernel<T><<<1, 256, 0, stream>>>(mw.d_gsqrt, nHalf, 1,
                                        T(p.kSignJacobian), d_stats);
     cumes::check_cuda(cudaGetLastError(), "jacobianStats");
-    cumes::check_cuda(cudaMemcpyAsync(h_stats, d_stats, 4 * sizeof(T),
-                                      cudaMemcpyDeviceToHost, stream), "jac stats cpy");
-    cumes::check_cuda(cudaStreamSynchronize(stream), "jac stats sync");
 }
 
 template <typename T>

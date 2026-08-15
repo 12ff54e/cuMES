@@ -109,10 +109,12 @@ static void runGeometry(int ns, int ncurr, const char* label) {
         if (!std::isfinite((double)h_chip[j]) || !std::isfinite((double)h_iota[j])) all_finite = false;
     }
     CHECK(all_finite, label);
-    // Jacobian stats must be finite and the max nonzero.
+    // Jacobian stats must be finite and the max nonzero. computeJacobianStats
+    // is device-only (Phase 6A one-fence path); copy the 4 values out here.
     T* d_stats; T h_stats[4];
     checkCuda(cudaMalloc(&d_stats, 4 * sizeof(T)), "stats");
-    computeJacobianStats(p, mw, d_stats, h_stats);
+    computeJacobianStats(p, mw, d_stats);
+    checkCuda(cudaMemcpy(h_stats, d_stats, 4 * sizeof(T), cudaMemcpyDeviceToHost), "stats cpy");
     CHECK(std::isfinite((double)h_stats[0]) && std::isfinite((double)h_stats[1]) &&
           h_stats[2] == T(0.0) && h_stats[1] > T(0.0),
           "jacobian stats finite, nonzero max");

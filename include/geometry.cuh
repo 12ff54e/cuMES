@@ -71,14 +71,15 @@ template <typename T>
 void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& mw,
                               T* dVdsH, T* psum, cudaStream_t stream = 0);
 
-// Jacobian validity stats (vmecpp's bad-jacobian detection): h_stats[4] =
-// {min |√g| over the half grid, max |√g|, count of non-finite entries,
-// linear index (jH*nZnT + point) of the min-|√g| element}.
-// d_stats is a caller-owned 4-element device scratch (allocate once; never
-// cudaMalloc per call). Synchronous; the solver uses it to fail an iteration
-// through the BAD_JACOBIAN restore path before dependent kernels run.
+// Jacobian validity stats (vmecpp's bad-jacobian detection): writes to
+// d_stats[4] = {min signJ·√g over the half grid, max |√g|, count of non-finite
+// entries, linear index (jH*nZnT + point) of the minimum}. d_stats is a
+// caller-owned 4-element device scratch (allocate once; never cudaMalloc per
+// call). Device-only — the caller folds the 4 values into its combined
+// ControlRecord and transfers them with one async copy (Phase 6A one-fence
+// control path); there is no host copy or fence here.
 // NOTE: |√g| -> 0 at the innermost half-grid (axis singularity) is expected;
 // the solver's threshold is relative to the run's own |√g| scale.
 template <typename T>
 void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
-                          T* d_stats, T* h_stats, cudaStream_t stream = 0);
+                          T* d_stats, cudaStream_t stream = 0);
