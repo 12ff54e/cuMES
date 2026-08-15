@@ -695,6 +695,47 @@ void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
 }
 
 // ---------------------------------------------------------------------------
+// Step 2: Bandpass filter (de-alias) — cuFFT round trip on the compact batch
+// (2 slots x (mpol-2) modes x (ns-1) surfaces instead of the full 12*mpol*ns):
+// θ-reduce gConEff into the slot-0/1 ζ-signals, D2Z, scale the per-mode
+// coefficients into slots 4/5 (the spectra tail bins n>ntor are zeroed by the
+// memset — the pack writes only the used bins), Z2D, poloidal synthesis -> gCon.
+// Extracted so the bandpass is testable in isolation (the axisymmetric backend
+// replaces exactly this step).
+// ---------------------------------------------------------------------------
+template <typename T>
+void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
+                               ConstraintWorkspace<T>& cw, cudaStream_t stream) {
+    {   int kTileA = computeKTile(8, p.nzeta);
+        int nKTilesA = (p.nzeta + kTileA - 1) / kTileA;
+        dim3 blkA(8, kTileA), grdA(p.mpol - 2, p.ns, nKTilesA);
+        deAliasAnalyzeKernel<T><<<grdA, blkA, 0, stream>>>(
+            cw.d_gConEff, fp.d_cos_th, fp.d_sin_th,
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_zeta_real_c, kTileA);
+        cumes::check_cuda(cudaGetLastError(), "deAlias analyze");
+    }
+    cumes::check_cufft(FftTraits<T>::execForward(cw.plan_d2z_da, cw.d_zeta_real_c, cw.d_zeta_spectra_c), "deAlias d2z");
+    {   int nBand = (p.mpol - 2) * (p.ns - 1);
+        deAliasCoeffPackKernel<T><<<(nBand + 255) / 256, 256, 0, stream>>>(
+            cw.d_zeta_spectra_c, cw.d_tcon, cw.d_faccon,
+            p.ns, p.mpol, p.ntor, p.nzeta / 2 + 1, p.nZnT,
+            cw.d_zeta_spectra_c);
+        cumes::check_cuda(cudaGetLastError(), "deAlias coeff");
+    }
+    cumes::check_cufft(FftTraits<T>::execInverse(cw.plan_z2d_da, cw.d_zeta_spectra_c, cw.d_zeta_real_c), "deAlias z2d");
+    {   int kTileS = computeKTile(p.ntheta / 2, p.nzeta);
+        int nKTilesS = (p.nzeta + kTileS - 1) / kTileS;
+        dim3 blkS(p.ntheta / 2, kTileS);
+        dim3 grdS(p.ns, nKTilesS);
+        deAliasSynthesizeKernel<T><<<grdS, blkS,
+            2 * (p.mpol - 2) * kTileS * sizeof(T), stream>>>(
+            cw.d_zeta_real_c, fp.d_cos_th, fp.d_sin_th,
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon, kTileS);
+        cumes::check_cuda(cudaGetLastError(), "deAlias synth");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Host orchestration
 // ---------------------------------------------------------------------------
 template <typename T>
@@ -745,33 +786,7 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
     // the per-mode coefficients into slots 4/5 (the spectra tail bins n>ntor
     // are zeroed by the memset — the pack writes only the used bins), Z2D,
     // poloidal synthesis -> gCon.
-    {   int kTileA = computeKTile(8, p.nzeta);
-        int nKTilesA = (p.nzeta + kTileA - 1) / kTileA;
-        dim3 blkA(8, kTileA), grdA(p.mpol - 2, p.ns, nKTilesA);
-        deAliasAnalyzeKernel<T><<<grdA, blkA, 0, stream>>>(
-            cw.d_gConEff, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_zeta_real_c, kTileA);
-        cumes::check_cuda(cudaGetLastError(), "deAlias analyze");
-    }
-    cumes::check_cufft(FftTraits<T>::execForward(cw.plan_d2z_da, cw.d_zeta_real_c, cw.d_zeta_spectra_c), "deAlias d2z");
-    {   int nBand = (p.mpol - 2) * (p.ns - 1);
-        deAliasCoeffPackKernel<T><<<(nBand + 255) / 256, 256, 0, stream>>>(
-            cw.d_zeta_spectra_c, cw.d_tcon, cw.d_faccon,
-            p.ns, p.mpol, p.ntor, p.nzeta / 2 + 1, p.nZnT,
-            cw.d_zeta_spectra_c);
-        cumes::check_cuda(cudaGetLastError(), "deAlias coeff");
-    }
-    cumes::check_cufft(FftTraits<T>::execInverse(cw.plan_z2d_da, cw.d_zeta_spectra_c, cw.d_zeta_real_c), "deAlias z2d");
-    {   int kTileS = computeKTile(p.ntheta / 2, p.nzeta);
-        int nKTilesS = (p.nzeta + kTileS - 1) / kTileS;
-        dim3 blkS(p.ntheta / 2, kTileS);
-        dim3 grdS(p.ns, nKTilesS);
-        deAliasSynthesizeKernel<T><<<grdS, blkS,
-            2 * (p.mpol - 2) * kTileS * sizeof(T), stream>>>(
-            cw.d_zeta_real_c, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon, kTileS);
-        cumes::check_cuda(cudaGetLastError(), "deAlias synth");
-    }
+    constraintDealiasBandpass(p, fp, cw, stream);
 
     // Step 3: Add constraint force to brmn/bzmn + write frcon/fzcon outputs
     addConstraintKernel<T><<<grid, block, 0, stream>>>(

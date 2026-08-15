@@ -102,4 +102,15 @@ struct ForceParityViews {
   RealFieldView<T> crmn_e, crmn_o, czmn_e, czmn_o;
 };
 
+// Full-grid constraint-force views (constraint.cu frcon/fzcon outputs): the
+// forward DFT adds xmpq[m]*frcon to the R cos-term and xmpq[m]*fzcon to the Z
+// sin-term (vmecpp frcon/fzcon in AddConstraintForces). Split by poloidal
+// m-parity like the MHD force families. A separate bundle from ForceParityViews
+// because these come from the constraint operator, not the MHD force operator
+// (blueprint §5.1 dependency rule: the forward operator consumes both).
+template <class T>
+struct ConstraintForceViews {
+  RealFieldView<T> frcon_e, frcon_o, fzcon_e, fzcon_o;
+};
+
 }  // namespace cumes

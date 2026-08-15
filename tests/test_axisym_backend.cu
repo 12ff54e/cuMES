@@ -1,0 +1,304 @@
+// test_axisym_backend.cu — differential test: the axisymmetric direct-poloidal
+// backend (AxisymmetricOperator) vs the generic cuFFT backend on identical
+// frozen axisymmetric inputs (blueprint §8.5 gate).
+//
+// For ntor=0, nzeta=1 the generic backend executes length-one cuFFT plans that
+// are the identity transform; the axisymmetric backend replaces them with
+// direct poloidal sums over cos(mθ)/sin(mθ). This test runs BOTH backends on
+// the same state / forces / constraint input and compares every transform
+// product:
+//   - inverse: 18 parity-split real-space geometry arrays (R/Z/λ ×
+//     value/θ-deriv/ζ-deriv × even/odd)
+//   - forward: 6 spectral-force families
+//   - constraint rzCon: rCon/zCon
+//   - constraint bandpass: gCon
+// The comparison is Class B (the two paths differ in summation order / the
+// length-one FFT elision), so the gate is a ULP-level tolerance, not bytes.
+#include <cstdio>
+#include <cmath>
+#include <vector>
+#include "vmec_types.h"
+#include "fourier.cuh"
+#include "constraint.cuh"
+#include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/axisymmetric_operator.hpp"
+#include "cumes_test_support.cuh"
+
+constexpr int kNs = 5, kMpol = 6, kNtor = 0, kNtheta = 18, kNzeta = 1, kNfp = 1;
+constexpr int kMnmax = kMpol * (kNtor + 1), kNZnT = kNtheta * kNzeta;
+
+static int g_failures = 0;
+
+template <typename T>
+static constexpr double tolNear() {
+    return sizeof(T) == sizeof(float) ? 1e-3 : 1e-11;
+}
+
+// Compare two device arrays elementwise at an absolute tolerance.
+template <typename T>
+static void compareArrays(const char* label, const T* a, const T* b, int n,
+                          double tol) {
+    std::vector<T> ha((size_t)n), hb((size_t)n);
+    cc(cudaMemcpy(ha.data(), a, (size_t)n * sizeof(T), cudaMemcpyDeviceToHost),
+       "cp a");
+    cc(cudaMemcpy(hb.data(), b, (size_t)n * sizeof(T), cudaMemcpyDeviceToHost),
+       "cp b");
+    double maxd = 0.0;
+    for (int i = 0; i < n; ++i)
+        maxd = fmax(maxd, fabs((double)ha[i] - (double)hb[i]));
+    if (maxd > tol) {
+        fprintf(stderr, "FAIL [%s] max abs diff = %.3e (tol %.3e)\n", label,
+                maxd, tol);
+        ++g_failures;
+    } else {
+        printf("  PASS %-22s (max abs diff %.3e)\n", label, maxd);
+    }
+}
+
+template <typename T>
+static void fillState(cumes::SpectralStorage<T>& storage, int ns, int mnmax) {
+    // Deterministic frozen pattern; fills all six families (the sin(nζ)
+    // families Rss/Zcs/Lcs are nonzero so the test proves both backends ignore
+    // them identically for n=0).
+    std::vector<T> v((size_t)6 * ns * mnmax);
+    for (int c = 0; c < 6; ++c)
+        for (int m = 0; m < mnmax; ++m)
+            for (int j = 0; j < ns; ++j)
+                v[(size_t)c * mnmax * ns + m * ns + j] =
+                    T(0.001 * (c + 1) * (m + 1) * (j + 1));
+    cc(cudaMemcpy(storage.state_slab(), v.data(), v.size() * sizeof(T),
+                  cudaMemcpyHostToDevice),
+       "fill state");
+}
+
+template <typename T>
+static void fillForces(FourierPlan<T>& fp, ConstraintWorkspace<T>& cw, int ns,
+                       int nZnT) {
+    const int n = ns * nZnT;
+    std::vector<T> v((size_t)n);
+    auto fill = [&](T* dst, double base) {
+        for (int i = 0; i < n; ++i) v[i] = T(base * (1.0 + 0.01 * (i % 7)));
+        cc(cudaMemcpy(dst, v.data(), (size_t)n * sizeof(T),
+                      cudaMemcpyHostToDevice),
+           "fill force");
+    };
+    fill(fp.d_armn_e, 0.5); fill(fp.d_armn_o, 0.4); fill(fp.d_azmn_e, 0.3);
+    fill(fp.d_azmn_o, 0.2); fill(fp.d_brmn_e, 0.1); fill(fp.d_brmn_o, 0.05);
+    fill(fp.d_bzmn_e, 0.03); fill(fp.d_bzmn_o, 0.02); fill(fp.d_blmn_e, 0.01);
+    fill(fp.d_blmn_o, 0.005);
+    fill(cw.d_frcon_e, 0.7); fill(cw.d_frcon_o, 0.6); fill(cw.d_fzcon_e, 0.5);
+    fill(cw.d_fzcon_o, 0.4);
+}
+
+template <typename T>
+static void fillTcon(ConstraintWorkspace<T>& cw, int ns) {
+    std::vector<T> v((size_t)ns);
+    for (int j = 0; j < ns; ++j) v[j] = T(0.5 + 0.1 * j);
+    cc(cudaMemcpy(cw.d_tcon, v.data(), (size_t)ns * sizeof(T),
+                  cudaMemcpyHostToDevice),
+       "fill tcon");
+}
+
+template <typename T>
+static void fillGconEff(ConstraintWorkspace<T>& cw, int ns, int nZnT) {
+    std::vector<T> v((size_t)ns * nZnT);
+    for (int i = 0; i < ns * nZnT; ++i) v[i] = T(sin(0.3 * i) + 0.1 * cos(i));
+    cc(cudaMemcpy(cw.d_gConEff, v.data(), v.size() * sizeof(T),
+                  cudaMemcpyHostToDevice),
+       "fill gConEff");
+}
+
+// Inverse: compare the 18 parity-split geometry arrays.
+template <typename T>
+static void testInverse(GridParams<T>& p, FourierPlan<T>& fp,
+                        cumes::SpectralStorage<T>& storage,
+                        cumes::AxisymmetricOperator<T>& op) {
+    printf("  inverse (18 geometry arrays) ...\n");
+    const int n = p.ns * p.nZnT;
+    // Generic backend.
+    inverseDFT(fp, storage.physical_const(), p, false, 0);
+    // Axisymmetric backend -> one contiguous scratch carved into 18 views.
+    std::vector<T> scratch((size_t)18 * n, T(0));
+    T* d_ax = nullptr;
+    cc(cudaMalloc(&d_ax, (size_t)18 * n * sizeof(T)), "ax geom");
+    cc(cudaMemcpy(d_ax, scratch.data(), (size_t)18 * n * sizeof(T),
+                  cudaMemcpyHostToDevice),
+       "ax geom seed");
+    auto view = [&](int k) {
+        return cumes::RealFieldView<T>(d_ax + (size_t)k * n, p.ns, p.ntheta,
+                                       p.nzeta);
+    };
+    cumes::GeometryParityViews<T> g;
+    g.r_e = view(0); g.z_e = view(1); g.l_e = view(2);
+    g.ru_e = view(3); g.zu_e = view(4); g.lu_e = view(5);
+    g.r_o = view(6); g.z_o = view(7); g.l_o = view(8);
+    g.ru_o = view(9); g.zu_o = view(10); g.lu_o = view(11);
+    g.rv_e = view(12); g.zv_e = view(13); g.lv_e = view(14);
+    g.rv_o = view(15); g.zv_o = view(16); g.lv_o = view(17);
+    op.enqueue_inverse(storage.physical_const(), g, 0);
+
+    const T* gen[18] = {fp.d_r_e,   fp.d_z_e,   fp.d_l_e,   fp.d_ru_e,
+                        fp.d_zu_e,  fp.d_lu_e,  fp.d_r_o,   fp.d_z_o,
+                        fp.d_l_o,   fp.d_ru_o,  fp.d_zu_o,  fp.d_lu_o,
+                        fp.d_rv_e,  fp.d_zv_e,  fp.d_lv_e,  fp.d_rv_o,
+                        fp.d_zv_o,  fp.d_lv_o};
+    const char* names[18] = {"r_e",   "z_e",   "l_e",   "ru_e",  "zu_e",
+                             "lu_e",  "r_o",   "z_o",   "l_o",   "ru_o",
+                             "zu_o",  "lu_o",  "rv_e",  "zv_e",  "lv_e",
+                             "rv_o",  "zv_o",  "lv_o"};
+    const T* ax[18] = {d_ax + (size_t)0 * n,  d_ax + (size_t)1 * n,
+                       d_ax + (size_t)2 * n,  d_ax + (size_t)3 * n,
+                       d_ax + (size_t)4 * n,  d_ax + (size_t)5 * n,
+                       d_ax + (size_t)6 * n,  d_ax + (size_t)7 * n,
+                       d_ax + (size_t)8 * n,  d_ax + (size_t)9 * n,
+                       d_ax + (size_t)10 * n, d_ax + (size_t)11 * n,
+                       d_ax + (size_t)12 * n, d_ax + (size_t)13 * n,
+                       d_ax + (size_t)14 * n, d_ax + (size_t)15 * n,
+                       d_ax + (size_t)16 * n, d_ax + (size_t)17 * n};
+    for (int k = 0; k < 18; ++k)
+        compareArrays(names[k], gen[k], ax[k], n, tolNear<T>());
+    cudaFree(d_ax);
+}
+
+// Forward: compare the 6 spectral-force families.
+template <typename T>
+static void testForward(GridParams<T>& p, FourierPlan<T>& fp,
+                        ConstraintWorkspace<T>& cw,
+                        cumes::AxisymmetricOperator<T>& op) {
+    printf("  forward (6 spectral families) ...\n");
+    const int n = p.ns * p.mnmax;
+    T* d_gen = nullptr, *d_ax = nullptr;
+    cc(cudaMalloc(&d_gen, (size_t)6 * n * sizeof(T)), "gen fwd");
+    cc(cudaMalloc(&d_ax, (size_t)6 * n * sizeof(T)), "ax fwd");
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> gen_v(d_gen, p.ns,
+                                                                  p.mnmax);
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> ax_v(d_ax, p.ns,
+                                                                 p.mnmax);
+    forwardDFT(fp, gen_v, p, cw, 0);
+
+    cumes::ForceParityViews<const T> f;
+    f.armn_e = cumes::RealFieldView<const T>(fp.d_armn_e, p.ns, p.ntheta, p.nzeta);
+    f.armn_o = cumes::RealFieldView<const T>(fp.d_armn_o, p.ns, p.ntheta, p.nzeta);
+    f.azmn_e = cumes::RealFieldView<const T>(fp.d_azmn_e, p.ns, p.ntheta, p.nzeta);
+    f.azmn_o = cumes::RealFieldView<const T>(fp.d_azmn_o, p.ns, p.ntheta, p.nzeta);
+    f.brmn_e = cumes::RealFieldView<const T>(fp.d_brmn_e, p.ns, p.ntheta, p.nzeta);
+    f.brmn_o = cumes::RealFieldView<const T>(fp.d_brmn_o, p.ns, p.ntheta, p.nzeta);
+    f.bzmn_e = cumes::RealFieldView<const T>(fp.d_bzmn_e, p.ns, p.ntheta, p.nzeta);
+    f.bzmn_o = cumes::RealFieldView<const T>(fp.d_bzmn_o, p.ns, p.ntheta, p.nzeta);
+    f.blmn_e = cumes::RealFieldView<const T>(fp.d_blmn_e, p.ns, p.ntheta, p.nzeta);
+    f.blmn_o = cumes::RealFieldView<const T>(fp.d_blmn_o, p.ns, p.ntheta, p.nzeta);
+    f.crmn_e = cumes::RealFieldView<const T>(fp.d_crmn_e, p.ns, p.ntheta, p.nzeta);
+    f.crmn_o = cumes::RealFieldView<const T>(fp.d_crmn_o, p.ns, p.ntheta, p.nzeta);
+    f.czmn_e = cumes::RealFieldView<const T>(fp.d_czmn_e, p.ns, p.ntheta, p.nzeta);
+    f.czmn_o = cumes::RealFieldView<const T>(fp.d_czmn_o, p.ns, p.ntheta, p.nzeta);
+    f.clmn_e = cumes::RealFieldView<const T>(fp.d_clmn_e, p.ns, p.ntheta, p.nzeta);
+    f.clmn_o = cumes::RealFieldView<const T>(fp.d_clmn_o, p.ns, p.ntheta, p.nzeta);
+    cumes::ConstraintForceViews<const T> cf;
+    cf.frcon_e = cumes::RealFieldView<const T>(cw.d_frcon_e, p.ns, p.ntheta, p.nzeta);
+    cf.frcon_o = cumes::RealFieldView<const T>(cw.d_frcon_o, p.ns, p.ntheta, p.nzeta);
+    cf.fzcon_e = cumes::RealFieldView<const T>(cw.d_fzcon_e, p.ns, p.ntheta, p.nzeta);
+    cf.fzcon_o = cumes::RealFieldView<const T>(cw.d_fzcon_o, p.ns, p.ntheta, p.nzeta);
+    op.enqueue_forward(f, cf, ax_v, 0);
+
+    const char* names[6] = {"frcc", "fzsc", "flsc", "frss", "fzcs", "flcs"};
+    for (int c = 0; c < 6; ++c)
+        compareArrays(names[c], d_gen + (size_t)c * n, d_ax + (size_t)c * n, n,
+                      tolNear<T>());
+    cudaFree(d_gen);
+    cudaFree(d_ax);
+}
+
+// Constraint rzCon: rCon/zCon.
+template <typename T>
+static void testRzCon(GridParams<T>& p, FourierPlan<T>& fp,
+                      ConstraintWorkspace<T>& cw,
+                      cumes::SpectralStorage<T>& storage,
+                      cumes::AxisymmetricOperator<T>& op) {
+    printf("  constraint rzCon (rCon/zCon) ...\n");
+    const int n = p.ns * p.nZnT;
+    constraintRzConCompute(p, fp, storage.physical_const(), cw,
+                           static_cast<const T*>(nullptr), 0);
+    T *d_ax_r = nullptr, *d_ax_z = nullptr;
+    cc(cudaMalloc(&d_ax_r, (size_t)n * sizeof(T)), "ax rcon");
+    cc(cudaMalloc(&d_ax_z, (size_t)n * sizeof(T)), "ax zcon");
+    op.enqueue_rzcon(storage.physical_const(),
+                     cumes::RealFieldView<T>(d_ax_r, p.ns, p.ntheta, p.nzeta),
+                     cumes::RealFieldView<T>(d_ax_z, p.ns, p.ntheta, p.nzeta), 0);
+    compareArrays("rCon", cw.d_rCon, d_ax_r, n, tolNear<T>());
+    compareArrays("zCon", cw.d_zCon, d_ax_z, n, tolNear<T>());
+    cudaFree(d_ax_r);
+    cudaFree(d_ax_z);
+}
+
+// Constraint bandpass: gCon (skip the axis row, which neither backend writes).
+template <typename T>
+static void testDealias(GridParams<T>& p, FourierPlan<T>& fp,
+                        ConstraintWorkspace<T>& cw,
+                        cumes::AxisymmetricOperator<T>& op) {
+    printf("  constraint bandpass (gCon) ...\n");
+    const int n = p.ns * p.nZnT;
+    constraintDealiasBandpass(p, fp, cw, 0);
+    T* d_ax = nullptr;
+    cc(cudaMalloc(&d_ax, (size_t)n * sizeof(T)), "ax gcon");
+    op.enqueue_dealias(
+        cumes::RealFieldView<const T>(cw.d_gConEff, p.ns, p.ntheta, p.nzeta),
+        cw.d_tcon, cw.d_faccon,
+        cumes::RealFieldView<T>(d_ax, p.ns, p.ntheta, p.nzeta), 0);
+    // Both kernels leave the axis (surface 0) untouched; compare surfaces 1..
+    std::vector<T> hg((size_t)n), ha((size_t)n);
+    cc(cudaMemcpy(hg.data(), cw.d_gCon, (size_t)n * sizeof(T),
+                  cudaMemcpyDeviceToHost),
+       "cp g");
+    cc(cudaMemcpy(ha.data(), d_ax, (size_t)n * sizeof(T), cudaMemcpyDeviceToHost),
+       "cp a");
+    double maxd = 0.0;
+    for (int j = 1; j < p.ns; ++j)
+        for (int l = 0; l < p.nZnT; ++l)
+            maxd = fmax(maxd, fabs((double)hg[(size_t)j * p.nZnT + l] -
+                                  (double)ha[(size_t)j * p.nZnT + l]));
+    if (maxd > tolNear<T>()) {
+        fprintf(stderr, "FAIL [gCon] max abs diff = %.3e\n", maxd);
+        ++g_failures;
+    } else {
+        printf("  PASS gCon (interior, max abs diff %.3e)\n", maxd);
+    }
+    cudaFree(d_ax);
+}
+
+template <typename T>
+static int runTests() {
+    printf("--- %s precision ---\n",
+           sizeof(T) == sizeof(double) ? "double" : "float");
+    GridParams<T> p;
+    p.ns = kNs; p.mnmax = kMnmax; p.ntheta = kNtheta; p.nzeta = kNzeta;
+    p.nfp = kNfp; p.nZnT = kNZnT; p.mpol = kMpol; p.ntor = kNtor;
+    p.ncurr = 0; p.delt = T(1.0); p.ftol = T(1e-14); p.max_iter = 10;
+    p.lamscale = T(1.0);
+
+    FourierPlan<T> fp = fourierCreate<T>(p);
+    ConstraintWorkspace<T> cw = constraintCreate<T>(p);
+    cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
+    cumes::AxisymmetricOperator<T> op(p);
+
+    fillState(storage, p.ns, p.mnmax);
+    fillForces(fp, cw, p.ns, p.nZnT);
+    fillTcon(cw, p.ns);
+    fillGconEff(cw, p.ns, p.nZnT);
+
+    testInverse(p, fp, storage, op);
+    testForward(p, fp, cw, op);
+    testRzCon(p, fp, cw, storage, op);
+    testDealias(p, fp, cw, op);
+
+    fourierFree(fp);
+    constraintFree(cw);
+    return 0;
+}
+
+int main() {
+    printf("=== Axisymmetric backend differential test ===\n");
+    runTests<double>();
+    runTests<float>();
+    printf(g_failures == 0 ? "ALL PASS\n" : "%d FAILURES\n", g_failures);
+    return g_failures == 0 ? 0 : 1;
+}

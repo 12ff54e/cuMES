@@ -6,3 +6,4 @@ template void constraintFree<double>(ConstraintWorkspace<double>&);
 template void constraintRzConCompute<double>(const GridParams<double>&, const FourierPlan<double>&, cumes::SpectralView<const double, cumes::PhysicalStateDomain>, ConstraintWorkspace<double>&, const double*, cudaStream_t);
 template void constraintResetRzCon0<double>(const GridParams<double>&, ConstraintWorkspace<double>&, const double*, cudaStream_t);
 template void constraintCompute<double>(const GridParams<double>&, const FourierPlan<double>&, const PreconWorkspace<double>&, ConstraintWorkspace<double>&, const double*, bool, cudaStream_t);
+template void constraintDealiasBandpass<double>(const GridParams<double>&, const FourierPlan<double>&, ConstraintWorkspace<double>&, cudaStream_t);

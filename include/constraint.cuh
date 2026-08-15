@@ -83,6 +83,16 @@ void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
                             ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
                             cudaStream_t stream = 0);
 
+// De-alias bandpass (vmecpp deAliasConstraintForce): gConEff -> gCon via the
+// compact cuFFT round trip (θ-reduce → D2Z → scale → Z2D → poloidal
+// synthesis). Extracted from constraintCompute so the bandpass is testable in
+// isolation (the axisymmetric backend replaces exactly this step). Reads
+// cw.d_gConEff/cw.d_tcon/cw.d_faccon, writes cw.d_gCon.
+template <typename T>
+void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
+                               ConstraintWorkspace<T>& cw,
+                               cudaStream_t stream = 0);
+
 // Reset rCon0/zCon0 to the LCFS-extrapolated profile (vmecpp
 // rzConIntoVolume): rCon0 = rCon_LCFS * s. Call with the current rCon/zCon
 // on the first iteration and on the reinit pass after a restart.

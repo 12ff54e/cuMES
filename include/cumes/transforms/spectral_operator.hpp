@@ -28,8 +28,11 @@ class SpectralOperator {
                                GeometryParityViews<T> geometry,
                                cudaStream_t stream) = 0;
 
-  // Parity-split real-space forces -> six spectral-force families.
+  // Parity-split real-space forces + the constraint force (frcon/fzcon) ->
+  // six spectral-force families. The constraint force folds into the R/Z
+  // projections with the xmpq = m(m-1) weight (blueprint §4.8, §7 pipeline).
   virtual void enqueue_forward(ForceParityViews<const T> real_force,
+                               ConstraintForceViews<const T> constraint_force,
                                SpectralView<T, DecomposedResidualDomain> residual,
                                cudaStream_t stream) = 0;
 };
