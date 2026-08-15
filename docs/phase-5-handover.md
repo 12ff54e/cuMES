@@ -2,10 +2,11 @@
 
 Status date: 2026-08-15. Branch: `overhaul` (Phase 0 `bd26857` + Phase 1
 `12bcc44` + Phase 2 `168170a` + Phase 3 `c21564c` + Phase 4 `1b0d099` + this
-Phase 5 work, followed by the config/I-O wiring completion in §7). This
-document records what Phase 5 of `docs/cuda-overhaul-blueprint.md` delivered,
-how it was verified, what was deliberately deferred and why, and how the
-deferred config/I-O wiring was subsequently landed.
+Phase 5 work, followed by the config/I-O wiring completion in §7 and the
+kernel-signature migration + scalar references in §8). This document records
+what Phase 5 of `docs/cuda-overhaul-blueprint.md` delivered, how it was
+verified, what was deliberately deferred and why, and how the deferred items
+were subsequently landed.
 
 ## 1. Scope
 
@@ -24,7 +25,7 @@ This phase delivers three of the blueprint's four Phase-5 deliverables plus the
 | stage arena with reported liveness/peak memory | **Done** (DeviceArena + arena-backed workspaces + StageSolver report) |
 | transform-only `SpectralOperator` | **Contract declared** (abstract interface; backends are Phase 7) |
 | profiles/geometry/B/force/constraint/residual/preconditioner/descent interfaces | **Contracts declared** (header-only boundary types) |
-| scalar CPU references + old/new dual-run hooks | **Deferred** (§5) |
+| scalar CPU references + old/new dual-run hooks | **Done** (§8) |
 
 The remaining Phase-5 items from the Phase-4 handover — full `SpectralView`
 kernel-signature migration, config/I-O wiring in `main.cu` — are deferred with
@@ -150,20 +151,11 @@ call.
 
 ## 5. Deferred (documented, not hidden)
 
-Phase 5 is delivered as the **boundary layer**. The config/I-O wiring in
-`main.cu` was the first deferred item to land (see §7). The remaining Phase-5
-items, each substantial enough to be its own focused change:
+Phase 5 is delivered as the **boundary layer**; the deferred items that complete
+it — config/I-O wiring (§7), the full kernel-signature migration and the scalar
+CPU references + dual-run hooks (§8) — have since landed. The one item that
+remains **out of scope** for Phase 5:
 
-- **Full `SpectralView`/`RealFieldView` kernel-signature migration** (§6.3). The
-  kernels still take raw `T*` + `int ns/mnmax`; the operator contracts now name
-  the target signatures. Migrate one module at a time (fourier → geometry →
-  forces → constraint → precon → solver descent/residual), each a Class A
-  bitwise change, then wire `StageSolver` to the operators.
-- **Scalar CPU references + old/new dual-run hooks** (§10.1). A local scalar
-  reference for transforms/geometry/force/residuals (the first layer of truth)
-  and a dual-run harness that runs legacy vs migrated kernels on one frozen
-  input at every boundary. This is the natural companion to the kernel
-  migration above.
 - **`dynSharedBase()` removal** is still a Class B change (Phase-1 handover §3),
   not part of this phase.
 
@@ -172,9 +164,9 @@ items, each substantial enough to be its own focused change:
 1. ~~Golden-test the versioned legacy-v0 writer against `outputSaveBinary`, then
    wire `main.cu` to `read_and_validate` + versioned writers + checkpoint
    reader (config/I-O wiring).~~ **Done** — see §7.
-2. Migrate the kernels onto the operator signatures module-by-module, with
+2. ~~Migrate the kernels onto the operator signatures module-by-module, with
    Class A bitwise verification after each, and add the scalar CPU references +
-   dual-run hooks as the per-boundary gate.
+   dual-run hooks as the per-boundary gate.~~ **Done** — see §8.
 3. Then Phase 6 (control-path performance): explicit nonblocking streams,
    one combined control fence, one-copy checkpoint (already one copy since
    Phase 3), fixed-iota update skip.
@@ -209,3 +201,33 @@ Verification: `test_io_golden` passes (both precisions); the full test matrix is
 25/25; and `scripts/compare_bitwise.py` reports **byte-identical** for both
 Solovev and W7-X (state, trajectory, step_0, and the full 235/526-file dump
 manifest) against the Phase-5 baseline.
+
+## 8. Kernel-signature migration + scalar references (landed 2026-08-15)
+
+The remaining two deferred items are delivered, completing Phase 5's kernel
+side. Every kernel now takes the typed views/bundles its operator contract
+names, while keeping the flat-index arithmetic bit-for-bit unchanged (Class A).
+
+- **Spectral side** (`SpectralView<T, Domain>`): the inverse/forward DFT
+  (`inverseDFT`/`forwardDFT`), the constraint reconstruction
+  (`constraintRzConCompute`), the preconditioner apply (`preconApply`/
+  `tridiagSolveKernel`), and the solver's `extrapolateAxis`/`rzNorm`/`scalxc`/
+  `m1Constraint`/`m1PreconScale`/`computeResiduals`/`descentStep` kernels all
+  read/write through `SpectralComponent::Rcc..Lcs` and the domain tags
+  (`PhysicalStateDomain`/`DecomposedVelocityDomain`/`DecomposedResidualDomain`).
+- **Real-space side** (`GeometryParityViews`/`RadialProfileViews`/
+  `BaseGeometryHalfViews`/`MagneticFieldViews`/`ForceParityViews`): `geometryKernel`
+  and `forcesKernel` take the typed bundles (the kernels re-derive their raw
+  pointers from the bundles, so the `surface*nZnT + zeta*ntheta + theta`
+  arithmetic is unchanged).
+- **Scalar CPU reference + dual-run** (blueprint §10.1): `tests/
+  test_force_reference.cu` adds the missing local scalar oracle for the force
+  operator (the transforms already had `cpuInvDFT` and the tridiagonal solve a
+  Thomas reference) and a dual-run gate comparing the GPU kernel against the
+  CPU reference on a frozen input across all 16 force families.
+
+Verification: each migration commit is Class A — `scripts/compare_bitwise.py`
+reports **byte-identical** on Solovev (235 dump files) and W7-X (526 dump files)
+after every module — and the full test matrix is 26/26 (17 unit + 8 memcheck +
+1 force reference). The force reference agrees to 5.7e-14 (axisymmetric) /
+9.3e-10 (3D, fast-math vs IEEE) in double.
