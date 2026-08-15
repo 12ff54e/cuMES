@@ -186,6 +186,10 @@ target_include_directories(test_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_link_libraries(test_runtime PRIVATE cumes_test_support cumes_cuda_runtime)
 cumes_enable_warnings(test_runtime)
 
+add_executable(test_controller tests/test_controller.cpp)
+target_include_directories(test_controller PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+cumes_enable_warnings(test_controller)
+
 # ---- ctest registration ----------------------------------------------------
 enable_testing()
 cumes_add_test(test_fourier          unit;fourier)
@@ -194,6 +198,7 @@ cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_checkpoint       unit;io)
 cumes_add_test(test_runtime          unit;runtime)
+cumes_add_test(test_controller       unit;solver)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
