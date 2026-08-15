@@ -480,8 +480,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     cumes::check_cufft(cufftSetStream(cw.plan_z2d_rz, stream), "set stream z2d_rz");
 
     // ---- transform timing (cudaEvent pairs around inverseDFT/forwardDFT) ----
-    cudaEvent_t ev0, ev1;
-    cudaEventCreate(&ev0); cudaEventCreate(&ev1);
+    // The events are RECORDED on the compute stream every iteration but only
+    // READ at the already-required invariant-residual fence (Phase 6A removes
+    // the per-iteration cudaEventSynchronize that used to follow each transform,
+    // turning two host barriers per pass into zero).
+    cudaEvent_t ev0_inv, ev1_inv, ev0_fwd, ev1_fwd;
+    cudaEventCreate(&ev0_inv); cudaEventCreate(&ev1_inv);
+    cudaEventCreate(&ev0_fwd); cudaEventCreate(&ev1_fwd);
     float t_inv_ms = 0.0f, t_fwd_ms = 0.0f;
 
     // ---- env-gated knobs for convergence experiments (defaults = input
@@ -671,11 +676,9 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
             state_view, p.ns, p.mnmax, p.ntor + 1);
         cumes::check_cuda(cudaGetLastError(), "extrapAxis");
 
-        cudaEventRecord(ev0, stream);
+        cudaEventRecord(ev0_inv, stream);
         inverseDFT(fp, storage.physical_const(), p, false, stream);
-        cudaEventRecord(ev1, stream);
-        cudaEventSynchronize(ev1);
-        { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_inv_ms += ms; }
+        cudaEventRecord(ev1_inv, stream);
 
         if (iter == 0 && dumpEnabled()) {
             auto* h_test = new T[p.nZnT * p.ns];
@@ -1000,13 +1003,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         }
 #endif
 
-        cudaEventRecord(ev0, stream);
+        cudaEventRecord(ev0_fwd, stream);
         forwardDFT(fp, cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
                           d_f_spec.data(), p.ns, p.mnmax),
                    p, cw, stream);
-        cudaEventRecord(ev1, stream);
-        cudaEventSynchronize(ev1);
-        { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_fwd_ms += ms; }
+        cudaEventRecord(ev1_fwd, stream);
 
         // Apply the odd-m decomposition scaling (vmecpp decomposeInto).
         // The forward DFT already zeroed the LCFS R/Z entries and the axis
@@ -1068,6 +1069,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
                                cudaMemcpyDeviceToHost, stream), "cpy sqi");
         cumes::check_cuda(cudaStreamSynchronize(stream), "sqi sync");
         const T* h_sq_i = h_sq_i_pin.data();
+        // Sample the transform-timing events at this already-required fence
+        // (both transforms preceded it on the same stream), replacing the two
+        // per-iteration event syncs removed above.
+        { float ms; cudaEventElapsedTime(&ms, ev0_inv, ev1_inv); t_inv_ms += ms; }
+        { float ms; cudaEventElapsedTime(&ms, ev0_fwd, ev1_fwd); t_fwd_ms += ms; }
         // vmecpp evalFResInvar: fsqr = fResInvar[0]·fNormRZ·0.25 (same for
         // fsqz), fsql = fResInvar[2]·fNormL, where fResInvar are the plain
         // sums. The cuMES kernel returns ΣF²/(mnmax·ns), so undo that first.
@@ -1272,7 +1278,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
            "forwardDFT total %.1f ms (%.3f ms/iter)\n",
            t_inv_ms, t_inv_ms / (res.iterations > 0 ? res.iterations : 1),
            t_fwd_ms, t_fwd_ms / (res.iterations > 0 ? res.iterations : 1));
-    cudaEventDestroy(ev0); cudaEventDestroy(ev1);
+    cudaEventDestroy(ev0_inv); cudaEventDestroy(ev1_inv);
+    cudaEventDestroy(ev0_fwd); cudaEventDestroy(ev1_fwd);
     return res;
 }
 
