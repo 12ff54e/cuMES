@@ -476,7 +476,6 @@ void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& 
         p.ntheta, p.nzeta, p.ns,
         dVdsH, psum);
     cumes::check_cuda(cudaGetLastError(), "norm partials");
-    cumes::check_cuda(cudaStreamSynchronize(stream), "norm partials sync");
 }
 
 // ---- full-grid iota/chip update (vmecpp ideal_mhd_model.cc) -------------

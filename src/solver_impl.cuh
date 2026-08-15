@@ -54,46 +54,79 @@ __global__ void rzNormKernel(  // defined below (before computeResidualsKernel)
 //   fNormL = 1/(Σ (bsubu²+bsubv²)·wInt · lamscale²)
 //   fNorm1 = 1/rzNorm
 // with the wInt trapezoid over the reduced poloidal grid [0, pi].
-// Called on the same cadence as the preconditioner update (vmecpp:
-// computeForceNorms inside shouldUpdateRadialPreconditioner).
+//
+// Phase 6B splits this into a device reduction (enqueueForceNorms, writing six
+// scalars into the combined control record) and a host finalize
+// (finalizeForceNorms, called after the single control fence). The old path
+// D2H-copied psum/dVds/pres and summed them sequentially behind a
+// cudaDeviceSynchronize; the device reduction removes that fence and those
+// three copies, at the cost of a ULP-level (Class B) change in summation order.
+
+// Device reduction over the half-grid surfaces of the force-norm partials:
+// out[0..4] = {sRZ, sL, sMag, eTherm, vol} (before the deltaS scaling).
 template <typename T>
-static void computeForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
-                              const FourierPlan<T>& fp,
-                              const GridParams<T>& p, const RadialProfiles<T>& rp,
-                              const MetricWorkspace<T>& mw,
-                              T* d_psum, T* d_rzsum, int iter2,
-                              T& fNormRZ, T& fNormL, T& fNorm1,
-                              cudaStream_t stream) {
-    computeForceNormPartials(p, mw, rp.d_dVds_H, d_psum, stream);
-
-    { dim3 b1(256), g1(1);
-      rzNormKernel<T><<<g1, b1, 0, stream>>>(st, fp.basis.d_xm, fp.basis.d_xn,
-                                  p.ns, p.mnmax, d_rzsum);
-      cumes::check_cuda(cudaGetLastError(), "rzNorm");
-      cumes::check_cuda(cudaStreamSynchronize(stream), "rzNorm sync"); }
-
-    int nH = p.ns - 1;
-    T* h_psum = new T[4 * nH];
-    T* h_dVds = new T[nH];
-    T* h_pres = new T[nH];
-    T h_rz = T(0.0);
-    cumes::check_cuda(cudaMemcpy(h_psum, d_psum, 4 * nH * sizeof(T),
-                         cudaMemcpyDeviceToHost), "psum cpy");
-    cumes::check_cuda(cudaMemcpy(h_dVds, rp.d_dVds_H, nH * sizeof(T),
-                         cudaMemcpyDeviceToHost), "dVds cpy");
-    cumes::check_cuda(cudaMemcpy(h_pres, rp.d_pres_H, nH * sizeof(T),
-                         cudaMemcpyDeviceToHost), "pres cpy");
-    cumes::check_cuda(cudaMemcpy(&h_rz, d_rzsum, sizeof(T),
-                         cudaMemcpyDeviceToHost), "rz cpy");
-
-    T sRZ = T(0.0), sL = T(0.0), sMag = T(0.0), eTherm = T(0.0), vol = T(0.0);
-    for (int j = 0; j < nH; ++j) {
-        sRZ += h_psum[4 * j + 0];
-        sL  += h_psum[4 * j + 1];
-        sMag += h_psum[4 * j + 2];
-        eTherm += h_pres[j] * h_dVds[j];
-        vol += h_dVds[j];
+__global__ void forceNormReduceKernel(
+    const T* __restrict__ psum,   // 4*(ns-1): sRZ sL sMag sG per surface
+    const T* __restrict__ dVdsH,  // ns-1
+    const T* __restrict__ presH,  // ns-1
+    int nH, T* __restrict__ out)  // [5]
+{
+    int tid = threadIdx.x;
+    T sRZ = T(0), sL = T(0), sMag = T(0), eTherm = T(0), vol = T(0);
+    for (int j = tid; j < nH; j += blockDim.x) {
+        sRZ += psum[4 * j + 0];
+        sL  += psum[4 * j + 1];
+        sMag += psum[4 * j + 2];
+        eTherm += presH[j] * dVdsH[j];
+        vol += dVdsH[j];
     }
+    __shared__ T s_buf[5][256];
+    s_buf[0][tid] = sRZ;  s_buf[1][tid] = sL;  s_buf[2][tid] = sMag;
+    s_buf[3][tid] = eTherm;  s_buf[4][tid] = vol;
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            s_buf[0][tid] += s_buf[0][tid + s];
+            s_buf[1][tid] += s_buf[1][tid + s];
+            s_buf[2][tid] += s_buf[2][tid + s];
+            s_buf[3][tid] += s_buf[3][tid + s];
+            s_buf[4][tid] += s_buf[4][tid + s];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        out[0] = s_buf[0][0];  out[1] = s_buf[1][0];  out[2] = s_buf[2][0];
+        out[3] = s_buf[3][0];  out[4] = s_buf[4][0];
+    }
+}
+
+// Device-only force-norm reduction (no host copy or fence): writes the six
+// scalars {sRZ, sL, sMag, eTherm, vol, rzNorm} into d_out[0..5], which the
+// solver folds into the combined control record and transfers at the single
+// control fence. Called on the preconditioner-refresh cadence.
+template <typename T>
+static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
+                              const FourierPlan<T>& fp, const GridParams<T>& p,
+                              const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
+                              T* d_psum, T* d_out, cudaStream_t stream) {
+    computeForceNormPartials(p, mw, rp.d_dVds_H, d_psum, stream);
+    { dim3 b1(256), g1(1);
+      forceNormReduceKernel<T><<<g1, b1, 0, stream>>>(d_psum, rp.d_dVds_H, rp.d_pres_H,
+                                                       p.ns - 1, d_out); }
+    { dim3 b2(256), g2(1);
+      rzNormKernel<T><<<g2, b2, 0, stream>>>(st, fp.basis.d_xm, fp.basis.d_xn,
+                                              p.ns, p.mnmax, d_out + 5); }
+    cumes::check_cuda(cudaGetLastError(), "force norms");
+}
+
+// Host finalize (called after the single control fence, on refresh passes):
+// reduce the six device scalars hc[0..5] = {sRZ, sL, sMag, eTherm, vol, rzNorm}
+// into fNormRZ/fNormL/fNorm1, and dump the force-norm record.
+template <typename T>
+static void finalizeForceNorms(const T* hc, const GridParams<T>& p,
+                               const RadialProfiles<T>& rp, int iter2,
+                               T& fNormRZ, T& fNormL, T& fNorm1) {
+    T sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3], vol = hc[4], h_rz = hc[5];
     T deltaS = rp.delta_s;
     T eMag = fabs(sMag) * deltaS;   // vmecpp: fabs(localMagneticEnergy)*deltaS
     eTherm *= deltaS;
@@ -135,10 +168,6 @@ static void computeForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateD
         }
     }
 #endif
-
-    delete[] h_psum;
-    delete[] h_dVds;
-    delete[] h_pres;
 }
 
 // extrapolateTowardsAxis: copy m=1 coefficients from first interior
@@ -458,9 +487,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
     cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
     // Combined control record (Phase 6A one-fence): [0..3] oriented-Jacobian
-    // stats, [4..6] invariant residual, [7..9] preconditioned residual — one
-    // device buffer reduced into and transferred with one async copy per pass.
-    cumes::DeviceBuffer<T> d_control(10);
+    // stats, [4..6] invariant residual, [7..9] preconditioned residual,
+    // [10..15] force-norm scalars (Phase 6B device reduction) — one device
+    // buffer reduced into and transferred with one async copy per pass.
+    cumes::DeviceBuffer<T> d_control(16);
     // Typed spectral views over the contiguous slabs + residual buffer (the
     // migrated kernel inputs). Each indexes bit-for-bit like the legacy
     // pointers it replaces; the const views are the read-only side.
@@ -522,11 +552,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // the same cadence as the preconditioner (every kPreconInterval passes).
     T fNormRZ = T(0.0), fNormL = T(0.0), fNorm1 = T(0.0);
     cumes::DeviceBuffer<T> d_psum(4 * (size_t)(p.ns - 1));
-    cumes::DeviceBuffer<T> d_rzsum(1);
 
     // Pinned mirror of the combined control record (one async D2H per pass,
     // delivered by the single control fence).
-    cumes::PinnedBuffer<T> h_control_pin(10);
+    cumes::PinnedBuffer<T> h_control_pin(16);
 
     // State rollback: one contiguous state-only checkpoint slab (6*mnmax*ns),
     // replacing the six separate d_bk_* arrays. The slab order matches the six
@@ -809,11 +838,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         if (precon_updated) {
             preconCompute(fp, p, rp, mw, pw, stream);
 
-            // vmecpp computeForceNorms (same cadence): residual normalization
-            // factors feeding fsqr/fsqz/fsql and fsqr1/fsqz1/fsql1.
-            computeForceNorms(storage.physical_const(), fp, p, rp, mw,
-                              d_psum.data(), d_rzsum.data(),
-                              iter2, fNormRZ, fNormL, fNorm1, stream);
+            // vmecpp computeForceNorms (same cadence): device-side reduction
+            // of the force-norm partial sums into the combined control record
+            // (finalized on the host after the single control fence).
+            enqueueForceNorms(storage.physical_const(), fp, p, rp, mw,
+                              d_psum.data(), d_control.data() + 10, stream);
 
 #ifdef DUMP_CUMES_VERIFY
             if (iter == 0) {
@@ -1097,7 +1126,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // the three per-pass host barriers (Jacobian gate, invariant,
         // preconditioned) of the pre-6A loop.
         cumes::check_cuda(cudaMemcpyAsync(h_control_pin.data(), d_control.data(),
-                               10 * sizeof(T), cudaMemcpyDeviceToHost, stream), "cpy control");
+                               16 * sizeof(T), cudaMemcpyDeviceToHost, stream), "cpy control");
         cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
         const T* hc = h_control_pin.data();
         // Sample the transform-timing events at this fence (both transforms
@@ -1138,6 +1167,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
             printIterRow(controller.effective_iteration(), T(1.0), T(1.0),
                          T(1.0), controller.delta_t());
             continue;
+        }
+
+        // On a refresh pass, finalize the force-norm factors from the combined
+        // record's force-norm scalars (reduced on device above). On non-refresh
+        // passes the cached factors are reused.
+        if (precon_updated) {
+            finalizeForceNorms(hc + 10, p, rp, iter2, fNormRZ, fNormL, fNorm1);
         }
 
         // ---- Invariant residuals (vmecpp evalFResInvar) ----
