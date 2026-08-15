@@ -605,7 +605,9 @@ __global__ void forwardReduceKernel(
 //   flsc = mn*(Re F_lmksc + nf*Im F_lmkscN)   flcs = mn*(-Im F_lmkcs + nf*Re F_lmkcsN)
 // Surface coverage (vmecpp dft_ForcesToFourier_3d_symm): axis j=0 keeps only
 // the m=0 frcc/fzcs (incl. the crmn/czmn toroidal terms); the LCFS j=ns-1
-// keeps only the λ components; f_spec is pre-zeroed by the caller.
+// keeps only the λ components. Every thread writes ALL SIX families — the
+// skipped entries are written as explicit zeros, so the caller no longer needs
+// to pre-zero the residual slab (Phase 6A removes the per-iteration memset).
 template <typename T>
 __global__ void forwardRecoverKernel(
     const typename FftTraits<T>::Complex* __restrict__ spectra,
@@ -628,13 +630,24 @@ __global__ void forwardRecoverKernel(
     Complex F4 = slot[4 * step],  F5 = slot[5 * step],  F6 = slot[6 * step],  F7 = slot[7 * step];
     Complex F8 = slot[8 * step],  F9 = slot[9 * step],  F10 = slot[10 * step], F11 = slot[11 * step];
     if (j == 0) {
-        if (m > 0) return;   // axis: m=0 only
-        f_spec(cumes::SpectralComponent::Rcc, mode, j) = mn * (F0.x + nf * F2.y);
-        f_spec(cumes::SpectralComponent::Zcs, mode, j) = mn * (-F5.y + nf * F7.x);
+        // axis: m=0 keeps frcc/fzcs; m>0 and the remaining families are zero
+        // (decomposed forces vanish at the magnetic axis).
+        f_spec(cumes::SpectralComponent::Rcc, mode, j) =
+            (m == 0) ? mn * (F0.x + nf * F2.y) : T(0);
+        f_spec(cumes::SpectralComponent::Zsc, mode, j) = T(0);
+        f_spec(cumes::SpectralComponent::Lsc, mode, j) = T(0);
+        f_spec(cumes::SpectralComponent::Rss, mode, j) = T(0);
+        f_spec(cumes::SpectralComponent::Zcs, mode, j) =
+            (m == 0) ? mn * (-F5.y + nf * F7.x) : T(0);
+        f_spec(cumes::SpectralComponent::Lcs, mode, j) = T(0);
         return;
     }
-    if (j == ns - 1) {       // LCFS: λ only
+    if (j == ns - 1) {       // LCFS: λ only (R/Z are fixed-boundary)
+        f_spec(cumes::SpectralComponent::Rcc, mode, j) = T(0);
+        f_spec(cumes::SpectralComponent::Zsc, mode, j) = T(0);
         f_spec(cumes::SpectralComponent::Lsc, mode, j) = mn * (F8.x + nf * F10.y);
+        f_spec(cumes::SpectralComponent::Rss, mode, j) = T(0);
+        f_spec(cumes::SpectralComponent::Zcs, mode, j) = T(0);
         f_spec(cumes::SpectralComponent::Lcs, mode, j) = mn * (-F9.y + nf * F11.x);
         return;
     }
@@ -651,10 +664,8 @@ static void forwardDFTCufft(const FourierPlan<T>& fp,
                             cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                             const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
                             cudaStream_t stream) {
-    // vmecpp zeroes the target before projecting (m_physical_f.setZero());
-    // the kernels write only the entries vmecpp computes.
-    cumes::check_cuda(cudaMemsetAsync(f_spec.data(), 0,
-                         (size_t)6 * p.mnmax * p.ns * sizeof(T), stream), "fwd zero");
+    // The recover kernel writes all six families (explicit axis/LCFS zeros), so
+    // no pre-zero of the residual slab is needed (Phase 6A removes the memset).
     // ζ-tiled reduce (see forwardReduceKernel): block (16 lanes, kTile),
     // grid (mpol, ns, k-tiles).
     int kTile = computeKTile(16, p.nzeta);
