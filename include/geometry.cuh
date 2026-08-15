@@ -53,10 +53,15 @@ void metricFree(MetricWorkspace<T>& mw);
 
 // Compute Jacobian, metric, B, and total pressure on the half-grid
 // from parity-split real-space geometry.
+// `update_iota_chi` gates the full-grid iota/chip update (updateIotaChipF):
+// it must run every pass for ncurr=1 (the half-grid profiles evolve via the
+// current closure), but for ncurr=0 the half-grid iotaH/chipH are fixed, so the
+// full-grid values are computed once on the first pass and the per-iteration
+// relaunch is skipped (Phase 6A fixed-iota update skip).
 template <typename T>
 void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
                      const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
-                     cudaStream_t stream = 0);
+                     cudaStream_t stream = 0, bool update_iota_chi = true);
 
 // Force-norm partial sums for the residual normalization (vmecpp
 // computeForceNorms): writes dVdsH[jH] = signJ * sum(gsqrt * wInt) and the

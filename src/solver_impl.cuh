@@ -753,7 +753,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         }
 #endif
 
-        computeGeometry(fp, p, rp, mw, stream);
+        // Full-grid iota/chip update: every pass for ncurr=1 (current closure
+        // evolves iotaH/chipH), but for ncurr=0 the half-grid profiles are
+        // fixed so the update is idempotent and runs only on the first pass.
+        computeGeometry(fp, p, rp, mw, stream,
+                        /*update_iota_chi=*/ (p.ncurr == 1) || (iter == 0));
 
         // ---- Jacobian validity check (vmecpp's bad-jacobian detection) ----
         // A collapsed or sign-flipped surface must fail the iteration here,

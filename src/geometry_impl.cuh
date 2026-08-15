@@ -605,7 +605,7 @@ void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
 template <typename T>
 void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
                      const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
-                     cudaStream_t stream) {
+                     cudaStream_t stream, bool update_iota_chi) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     geometryKernel<T><<<grid, block, 0, stream>>>(
@@ -627,10 +627,12 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
         cumes::check_cuda(cudaGetLastError(), "ncurr1 kernel");
         }
 
-    dim3 ib(256), ig((p.ns + 255) / 256);
-    updateIotaChipFKernel<T><<<ig, ib, 0, stream>>>(
-        rp.d_iota_H, rp.d_chip_H, p.ns, rp.d_iota_F, rp.d_chi_F);
-    cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
+    if (update_iota_chi) {
+        dim3 ib(256), ig((p.ns + 255) / 256);
+        updateIotaChipFKernel<T><<<ig, ib, 0, stream>>>(
+            rp.d_iota_H, rp.d_chip_H, p.ns, rp.d_iota_F, rp.d_chi_F);
+        cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
+    }
 
 }
 
