@@ -132,11 +132,36 @@ endif()
 
 add_executable(cuMES src/main.cu)
 target_include_directories(cuMES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(cuMES PRIVATE cumes_config cumes_io ${CUMES_SELECTED_CUDA})
+target_link_libraries(cuMES PRIVATE cumes_config_json cumes_io cumes_io_host ${CUMES_SELECTED_CUDA})
 cumes_enable_warnings(cuMES)
 if(CUMES_USE_FLOAT)
   target_compile_definitions(cuMES PRIVATE CUMES_USE_FLOAT)
 endif()
+
+# ---- build provenance (recorded in the v1 output schema) --------------------
+# Configure-time git revision/dirty flag; empty when git is unavailable. These
+# are best-effort provenance, not a build gate.
+execute_process(
+  COMMAND git rev-parse HEAD
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE CUMES_GIT_REVISION
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET)
+execute_process(
+  COMMAND git status --porcelain
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE CUMES_GIT_STATUS
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET)
+if(CUMES_GIT_STATUS STREQUAL "")
+  set(CUMES_GIT_DIRTY 0)
+else()
+  set(CUMES_GIT_DIRTY 1)
+endif()
+target_compile_definitions(cuMES PRIVATE
+  CUMES_GIT_REVISION="${CUMES_GIT_REVISION}"
+  CUMES_GIT_DIRTY=${CUMES_GIT_DIRTY}
+  CUMES_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 
 # ---- tests (standalone executables, no framework) --------------------------
 # Each test links the full device libraries (both scalar types) so every test
@@ -181,6 +206,11 @@ target_include_directories(test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_link_libraries(test_checkpoint PRIVATE cumes_io_host)
 cumes_enable_warnings(test_checkpoint)
 
+add_executable(test_io_golden tests/test_io_golden.cu)
+target_include_directories(test_io_golden PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_io_golden PRIVATE cumes_test_support cumes_io cumes_io_host)
+cumes_enable_warnings(test_io_golden)
+
 add_executable(test_runtime tests/test_runtime.cu)
 target_include_directories(test_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_runtime PRIVATE cumes_test_support cumes_cuda_runtime)
@@ -207,6 +237,7 @@ cumes_add_test(test_input_json       unit;input)
 cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_checkpoint       unit;io)
+cumes_add_test(test_io_golden        unit;io)
 cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
 cumes_add_test(test_arena            unit;runtime)

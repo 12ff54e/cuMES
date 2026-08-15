@@ -1,17 +1,32 @@
-// main.cu — entry point: init → solve → output.
-// Input selection: argv[1] is the JSON input file (vmecpp indata schema);
-// without an argument the default inputs/solovev.json is used. Parsing and
-// validation live in src/input_json.cpp (see include/input_json.h).
+// main.cu — entry point: parse/validate → init → solve → output.
+//
+// Input: argv[1] is the JSON input file (vmecpp indata schema), or
+// --input <path>; without either, inputs/solovev.json is used. Config is
+// parsed + validated by the Phase 2 host model (read_and_validate →
+// to_input_params, see cumes/config/*.hpp), which reproduces the legacy
+// parser's defaults/folding field-for-field (proved by test_host_config's
+// testAdapterParity).
+//
+// Output: argv[2] (or --output <path>) selects the destination; binary output
+// goes through the versioned writers (legacy-v0 by default — byte-identical to
+// the pre-overhaul outputSaveBinary — or v1 via --output-schema v1), while
+// .nc/.h5 keep the legacy device-reading backends.
+//
+// Restart: --restart <checkpoint> (v1 checkpoint) or --restart-legacy <init>
+// (legacy six-family vmecpp_init payload) replace the removed CUMES_LOAD_INIT
+// environment path.
 //
 // Precision: `Real` (vmec_types.h) is the compile-time switch between double
-// and float — configure with -DCUMES_USE_FLOAT=ON. All modules are templated
-// on T; this file instantiates them with Real.
+// and float — configure with -DCUMES_USE_FLOAT=ON.
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cstdint>
 #include <exception>
+#include <fstream>
+#include <string>
 
-#include "input_json.h"
+#include "input.h"  // InputParams (via the to_input_params bridge)
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
@@ -21,9 +36,29 @@
 #include "profiles.cuh"
 #include "refine.cuh"
 
+#include "cumes/config/json_reader.hpp"
+#include "cumes/config/precision_policy.hpp"
+#include "cumes/config/solver_options.hpp"
+#include "cumes/config/validated_problem.hpp"
+#include "cumes/io/checkpoint.hpp"
+#include "cumes/io/output_spec.hpp"
+#include "cumes/io/run_report.hpp"
+#include "cumes/io/snapshot_bridge.cuh"
+#include "cumes/io/writer.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/solver/multigrid_solver.hpp"
+
+// Build provenance injected at configure time (see CMakeLists.txt).
+#ifndef CUMES_GIT_REVISION
+#define CUMES_GIT_REVISION ""
+#endif
+#ifndef CUMES_GIT_DIRTY
+#define CUMES_GIT_DIRTY 0
+#endif
+#ifndef CUMES_BUILD_TYPE
+#define CUMES_BUILD_TYPE ""
+#endif
 
 static GridParams<Real> initParams(const InputParams& ip) {
     GridParams<Real> p;
@@ -47,109 +82,9 @@ static GridParams<Real> initParams(const InputParams& ip) {
 // reconstruction identical).
 template <typename T>
 static cumes::SpectralStorage<T> initState(const GridParams<T>& p, const InputParams& ip) {
-    bool loadInit = false;
-    if (const char* e = getenv("CUMES_LOAD_INIT")) loadInit = atoi(e) != 0;
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     SpectralState<T> st = storage.legacy_view();
-    if (loadInit) {
-        FILE* fp = fopen("vmecpp_init.bin", "rb");
-    if (fp) {
-        int ns_file, mnmax_file;
-        bool hdrRead = fread(&ns_file, sizeof(int), 1, fp) == 1 &&
-                       fread(&mnmax_file, sizeof(int), 1, fp) == 1;
-        bool headerOk = hdrRead && ns_file == p.ns && mnmax_file == p.mnmax;
-        if (headerOk) {
-            printf("Loading initial state from vmecpp_init.bin (ns=%d, mnmax=%d)\n", ns_file, mnmax_file);
-            // The file stores doubles regardless of T: read into double
-            // staging, convert, then upload.
-            auto* h_rmncc = new double[p.ns * p.mnmax];
-            auto* h_zmnsc = new double[p.ns * p.mnmax];
-            auto* h_lmnsc = new double[p.ns * p.mnmax];
-            auto* h_rmnss = new double[p.ns * p.mnmax];
-            auto* h_zmncs = new double[p.ns * p.mnmax];
-            auto* h_lmncs = new double[p.ns * p.mnmax];
-            if (fread(h_rmncc, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax) ||
-                fread(h_zmnsc, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax) ||
-                fread(h_lmnsc, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax) ||
-                fread(h_rmnss, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax) ||
-                fread(h_zmncs, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax) ||
-                fread(h_lmncs, sizeof(double), p.ns * p.mnmax, fp) != (size_t)(p.ns * p.mnmax)) {
-                fprintf(stderr, "vmecpp_init.bin: truncated state data\n");
-                fclose(fp);
-                exit(1);
-            }
-            fclose(fp);
-
-            auto* c = new T[p.ns * p.mnmax];
-            auto* s = new T[p.ns * p.mnmax];
-            auto* zsc = new T[p.ns * p.mnmax];
-            auto* zcs = new T[p.ns * p.mnmax];
-            auto* lsc = new T[p.ns * p.mnmax];
-            auto* lcs = new T[p.ns * p.mnmax];
-            for (size_t i = 0; i < (size_t)p.ns * p.mnmax; ++i) {
-                c[i] = T(h_rmncc[i]); s[i] = T(h_rmnss[i]);
-                zsc[i] = T(h_zmnsc[i]); zcs[i] = T(h_zmncs[i]);
-                lsc[i] = T(h_lmnsc[i]); lcs[i] = T(h_lmncs[i]);
-            }
-            delete[] h_rmncc; delete[] h_zmnsc; delete[] h_lmnsc;
-            delete[] h_rmnss; delete[] h_zmncs; delete[] h_lmncs;
-
-            cumes::check_cuda(cudaMemcpy(st.d_rmncc, c, nb, cudaMemcpyHostToDevice), "cpy cc");
-            cumes::check_cuda(cudaMemcpy(st.d_zmnsc, zsc, nb, cudaMemcpyHostToDevice), "cpy zsc");
-            cumes::check_cuda(cudaMemcpy(st.d_lmnsc, lsc, nb, cudaMemcpyHostToDevice), "cpy lsc");
-            cumes::check_cuda(cudaMemcpy(st.d_rmnss, s, nb, cudaMemcpyHostToDevice), "cpy ss");
-            cumes::check_cuda(cudaMemcpy(st.d_zmncs, zcs, nb, cudaMemcpyHostToDevice), "cpy zcs");
-            cumes::check_cuda(cudaMemcpy(st.d_lmncs, lcs, nb, cudaMemcpyHostToDevice), "cpy lcs");
-
-            // vmecpp stores boundary values separately (not in the spectral
-            // state). cuMES embeds the boundary in the spectral coefficients
-            // at j=ns-1. Patch the LCFS values to match the folded boundary;
-            // also zero out m>0 modes at the magnetic axis (j=0) — vmecpp
-            // does this via extrapolateTowardsAxis().
-            {
-                int jB = p.ns - 1;  // LCFS index
-                for (int m = 0; m < p.mpol; ++m) {
-                    for (int n = 0; n < p.ntor + 1; ++n) {
-                        int mn = m * (p.ntor + 1) + n;
-                        c[jB + mn * p.ns] = T(ip.rbcc[m][n]);
-                        s[jB + mn * p.ns] = T(ip.rbss[m][n]);
-                        zsc[jB + mn * p.ns] = T(ip.zbsc[m][n]);
-                        zcs[jB + mn * p.ns] = T(ip.zbcs[m][n]);
-                        // Fix axis: zero all m>0 modes at j=0 (axis regularity)
-                        if (m > 0) {
-                            c[0 + mn * p.ns] = T(0.0);
-                            s[0 + mn * p.ns] = T(0.0);
-                            zsc[0 + mn * p.ns] = T(0.0);
-                            zcs[0 + mn * p.ns] = T(0.0);
-                            lsc[0 + mn * p.ns] = T(0.0);
-                            lcs[0 + mn * p.ns] = T(0.0);
-                        }
-                    }
-                }
-                cumes::check_cuda(cudaMemcpy(st.d_rmncc, c, nb, cudaMemcpyHostToDevice), "set cc");
-                cumes::check_cuda(cudaMemcpy(st.d_rmnss, s, nb, cudaMemcpyHostToDevice), "set ss");
-                cumes::check_cuda(cudaMemcpy(st.d_zmnsc, zsc, nb, cudaMemcpyHostToDevice), "set zsc");
-                cumes::check_cuda(cudaMemcpy(st.d_zmncs, zcs, nb, cudaMemcpyHostToDevice), "set zcs");
-                cumes::check_cuda(cudaMemcpy(st.d_lmnsc, lsc, nb, cudaMemcpyHostToDevice), "set lsc");
-                cumes::check_cuda(cudaMemcpy(st.d_lmncs, lcs, nb, cudaMemcpyHostToDevice), "set lcs");
-            }
-            delete[] c; delete[] s; delete[] zsc; delete[] zcs; delete[] lsc; delete[] lcs;
-            printf("  Fixed LCFS boundary and axis regularity\n");
-            return storage;
-        }
-        if (hdrRead) {
-            // File exists but the resolution doesn't match the (stage-0)
-            // grid — e.g. an init file from another ns. Established behavior
-            // is a silent cold-start fallback; vmecpp hard-errors instead.
-            fprintf(stderr, "WARNING: vmecpp_init.bin header (ns=%d, mnmax=%d) "
-                            "does not match ns=%d, mnmax=%d — falling back to "
-                            "the cold start\n",
-                    ns_file, mnmax_file, p.ns, p.mnmax);
-        }
-            fclose(fp);
-        }
-    }
 
     auto* c=new T[p.ns*p.mnmax](), *s=new T[p.ns*p.mnmax]();
     auto* zsc=new T[p.ns*p.mnmax](), *zcs=new T[p.ns*p.mnmax]();
@@ -204,51 +139,230 @@ static cumes::SpectralStorage<T> initState(const GridParams<T>& p, const InputPa
     return storage;
 }
 
+// Restart state from a host snapshot (read_checkpoint / convert_legacy_init),
+// uploading the six families and applying the same LCFS-boundary + axis-
+// regularity patch the legacy CUMES_LOAD_INIT path did. The checkpoint stores
+// doubles regardless of T; the conversion mirrors outputSaveBinary's T->double
+// in reverse.
+template <typename T>
+static cumes::SpectralStorage<T> restartState(const GridParams<T>& p, const InputParams& ip,
+                                              const cumes::EquilibriumSnapshot& snap) {
+    const size_t one = (size_t)p.ns * p.mnmax;
+    const size_t nb = one * sizeof(T);
+    cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
+    SpectralState<T> st = storage.legacy_view();
+
+    auto* c = new T[one];   // rmncc
+    auto* zsc = new T[one]; // zmnsc
+    auto* lsc = new T[one]; // lmnsc
+    auto* s = new T[one];   // rmnss
+    auto* zcs = new T[one]; // zmncs
+    auto* lcs = new T[one]; // lmncs
+    for (size_t i = 0; i < one; ++i) {
+        c[i]   = T(snap.families[cumes::EquilibriumSnapshot::kRmncc][i]);
+        zsc[i] = T(snap.families[cumes::EquilibriumSnapshot::kZmnsc][i]);
+        lsc[i] = T(snap.families[cumes::EquilibriumSnapshot::kLmnsc][i]);
+        s[i]   = T(snap.families[cumes::EquilibriumSnapshot::kRmnss][i]);
+        zcs[i] = T(snap.families[cumes::EquilibriumSnapshot::kZmncs][i]);
+        lcs[i] = T(snap.families[cumes::EquilibriumSnapshot::kLmncs][i]);
+    }
+
+    // vmecpp stores boundary values separately (not in the spectral state);
+    // cuMES embeds the boundary in the spectral coefficients at j=ns-1. Patch
+    // the LCFS values to match the folded boundary; also zero m>0 modes at the
+    // magnetic axis (j=0) — vmecpp does this via extrapolateTowardsAxis().
+    {
+        int jB = p.ns - 1;  // LCFS index
+        for (int m = 0; m < p.mpol; ++m) {
+            for (int n = 0; n < p.ntor + 1; ++n) {
+                int mn = m * (p.ntor + 1) + n;
+                c[jB + mn * p.ns] = T(ip.rbcc[m][n]);
+                s[jB + mn * p.ns] = T(ip.rbss[m][n]);
+                zsc[jB + mn * p.ns] = T(ip.zbsc[m][n]);
+                zcs[jB + mn * p.ns] = T(ip.zbcs[m][n]);
+                if (m > 0) {
+                    c[0 + mn * p.ns] = T(0.0);
+                    s[0 + mn * p.ns] = T(0.0);
+                    zsc[0 + mn * p.ns] = T(0.0);
+                    zcs[0 + mn * p.ns] = T(0.0);
+                    lsc[0 + mn * p.ns] = T(0.0);
+                    lcs[0 + mn * p.ns] = T(0.0);
+                }
+            }
+        }
+    }
+
+    cumes::check_cuda(cudaMemcpy(st.d_rmncc, c, nb, cudaMemcpyHostToDevice), "restart cc");
+    cumes::check_cuda(cudaMemcpy(st.d_zmnsc, zsc, nb, cudaMemcpyHostToDevice), "restart zsc");
+    cumes::check_cuda(cudaMemcpy(st.d_lmnsc, lsc, nb, cudaMemcpyHostToDevice), "restart lsc");
+    cumes::check_cuda(cudaMemcpy(st.d_rmnss, s, nb, cudaMemcpyHostToDevice), "restart ss");
+    cumes::check_cuda(cudaMemcpy(st.d_zmncs, zcs, nb, cudaMemcpyHostToDevice), "restart zcs");
+    cumes::check_cuda(cudaMemcpy(st.d_lmncs, lcs, nb, cudaMemcpyHostToDevice), "restart lcs");
+    delete[] c; delete[] s; delete[] zsc; delete[] zcs; delete[] lsc; delete[] lcs;
+    printf("  restartState: uploaded checkpoint + LCFS/axis patch\n");
+    return storage;
+}
+
+// FNV-1a 64-bit hash of a file's bytes, hex-encoded ("" on open failure). Cheap
+// input provenance for the v1 schema; not a cryptographic digest.
+static std::string hashFile(const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return "";
+    std::uint64_t h = 1469598103934665603ULL;  // FNV-1a offset basis
+    char c;
+    while (in.get(c)) {
+        h ^= static_cast<unsigned char>(c);
+        h *= 1099511628211ULL;  // FNV-1a prime
+    }
+    char buf[17];
+    snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(h));
+    return buf;
+}
+
+// Fill the build/input/runtime provenance of `report` (consumed only by the v1
+// writer; the legacy-v0 writer ignores it). Called after the solve so a CUDA
+// context is live for the device/driver queries.
+static void fill_provenance(cumes::RunReport& report, const char* inputPath) {
+    report.build.revision = CUMES_GIT_REVISION;
+    report.build.dirty = (CUMES_GIT_DIRTY != 0);
+    report.build.build_type = CUMES_BUILD_TYPE;
+    report.build.scalar_type = sizeof(Real) == sizeof(double) ? "double" : "float";
+    report.input.source_path = inputPath;
+    report.input.source_hash = hashFile(inputPath);
+
+    int driver = 0, runtime = 0;
+    cudaDriverGetVersion(&driver);
+    cudaRuntimeGetVersion(&runtime);
+    report.runtime.driver = std::to_string(driver);
+    report.runtime.runtime = std::to_string(runtime);
+    report.runtime.toolkit = std::to_string(CUDART_VERSION);
+
+    cudaDeviceProp prop{};
+    if (cudaGetDeviceProperties(&prop, 0) == cudaSuccess) {
+        report.runtime.gpu_name = prop.name;
+    }
+}
+
+static const char* severityName(cumes::Severity s) {
+    return s == cumes::Severity::kError ? "error" : "warning";
+}
 
 int main(int argc, char** argv) {
-    const char* inputPath = (argc > 1) ? argv[1] : "inputs/solovev.json";
-    // Output format is selected by the argv[2] suffix: .nc -> NetCDF,
-    // .h5/.hdf5 -> HDF5, .bin -> binary at that path; missing or
-    // unrecognized falls back to the legacy binary cumes_state.bin.
-    const char* outputPath = (argc > 2) ? argv[2] : "cumes_state.bin";
-    if (argc <= 2)
-        fprintf(stderr, "WARNING: no output path given (argv[2]) - "
+    // ---- CLI ----------------------------------------------------------------
+    const char* inputPath = "inputs/solovev.json";
+    const char* outputPath = "cumes_state.bin";
+    cumes::OutputSchema schema = cumes::OutputSchema::kLegacyV0;
+    std::string restartPath;        // --restart (v1 checkpoint)
+    std::string restartLegacyPath;  // --restart-legacy (six-family payload)
+    std::string checkpointPath;     // --checkpoint (write a v1 checkpoint after solve)
+    bool haveOutput = false;
+    int positional = 0;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        auto match = [&](const char* name, std::string& out) -> bool {
+            const std::string prefix = std::string("--") + name;
+            if (a == prefix) {
+                if (i + 1 >= argc) return false;
+                out = argv[++i];
+                return true;
+            }
+            if (a.compare(0, prefix.size() + 1, prefix + "=") == 0) {
+                out = a.substr(prefix.size() + 1);
+                return true;
+            }
+            return false;
+        };
+        std::string v;
+        if (match("output-schema", v)) {
+            if (v == "legacy-v0") {
+                schema = cumes::OutputSchema::kLegacyV0;
+            } else if (v == "v1") {
+                schema = cumes::OutputSchema::kV1;
+            } else {
+                fprintf(stderr, "cuMES: unknown --output-schema '%s' "
+                                "(expected legacy-v0|v1)\n", v.c_str());
+                return EXIT_FAILURE;
+            }
+        } else if (match("restart", v)) {
+            restartPath = v;
+        } else if (match("restart-legacy", v)) {
+            restartLegacyPath = v;
+        } else if (match("checkpoint", v)) {
+            checkpointPath = v;
+        } else if (!a.empty() && a[0] == '-') {
+            fprintf(stderr, "cuMES: unknown option '%s'\n", a.c_str());
+            return EXIT_FAILURE;
+        } else if (positional == 0) {
+            inputPath = argv[i];
+            ++positional;
+        } else if (positional == 1) {
+            outputPath = argv[i];
+            haveOutput = true;
+            ++positional;
+        } else {
+            fprintf(stderr, "cuMES: unexpected extra argument '%s'\n", a.c_str());
+            return EXIT_FAILURE;
+        }
+    }
+    if (!restartPath.empty() && !restartLegacyPath.empty()) {
+        fprintf(stderr, "cuMES: --restart and --restart-legacy are mutually "
+                        "exclusive\n");
+        return EXIT_FAILURE;
+    }
+    if (!haveOutput)
+        fprintf(stderr, "WARNING: no output path given - "
                         "writing binary cumes_state.bin\n");
-    InputParams ip;
+
+    // ---- output preflight (before any CUDA work) ----------------------------
+    // A requested-but-unlinked format (e.g. .nc on a binary-only build) and an
+    // unknown suffix are rejected HERE, before the CUDA context is created and
+    // before any grid stage runs.
+    auto resolved = cumes::resolve_output_spec(outputPath, /*compatibility=*/false);
+    if (!resolved.has_value()) {
+        fprintf(stderr, "cuMES: %s\n", resolved.error().c_str());
+        return EXIT_FAILURE;
+    }
+    const cumes::OutputSpec outSpec = resolved.value();
+    if (!cumes::output_format_available(outSpec.format)) {
+        fprintf(stderr, "cuMES: output format '%s' is not available in this "
+                        "build; no output will be written\n",
+                cumes::output_suffix(outSpec.format));
+        return EXIT_FAILURE;
+    }
+
+    // ---- config: parse + validate -------------------------------------------
+    cumes::SolverOptions opts;
+#ifdef CUMES_USE_FLOAT
+    // Float runs stall at ~1e-7 (the float rounding floor) and can never meet
+    // the double-tuned stage tolerances. Declaring the mixed-float policy lets
+    // validation reject impossible tolerances instead of failing every stage at
+    // the end of the run.
+    opts.precision = cumes::PrecisionPolicy::kMixedFloat;
+#endif
+    cumes::ValidationResult vr = cumes::ValidationResult(cumes::ValidationReport{});
     try {
-        ip = initInputParams(inputPath);
+        vr = cumes::read_and_validate(inputPath, opts);
     } catch (const std::exception& e) {
         fprintf(stderr, "cuMES: error loading input file: %s\n", e.what());
         return EXIT_FAILURE;
     }
-
-    // Output-backend preflight: a requested-but-unlinked format (e.g. .nc on
-    // a build without NetCDF) is rejected HERE, before the CUDA context is
-    // created and before any grid stage runs — not after thousands of
-    // solver iterations (and without the deep exit() that used to bypass
-    // cleanup).
-    if (!outputFormatAvailable(outputPath)) {
-        fprintf(stderr, "cuMES: no output will be written; bailing out\n");
+    if (!vr.has_value()) {
+        fprintf(stderr, "cuMES: input validation failed:\n");
+        for (const auto& issue : vr.error().issues()) {
+            fprintf(stderr, "  [%s] %s: %s\n", severityName(issue.severity),
+                    issue.key.c_str(), issue.message.c_str());
+        }
         return EXIT_FAILURE;
     }
-
-#ifdef CUMES_USE_FLOAT
-    // Float runs stall at ~1e-7 (the float rounding floor) and can never
-    // meet the double-tuned stage tolerances — reject impossible values
-    // instead of failing every stage at the end of the run.
-    for (int g = 0; g < ip.n_grids; ++g) {
-        if (ip.ftol_array[g] < 1.0e-6) {
-            fprintf(stderr,
-                    "cuMES: float build cannot meet ftol_array[%d]=%.0e "
-                    "(float residual floor is ~1e-7); relax the ftol_array "
-                    "entries to >= 1e-6 for float experiments\n",
-                    g, ip.ftol_array[g]);
-            return EXIT_FAILURE;
-        }
+    const auto to_ip = vr.value().to_input_params();
+    if (!to_ip.has_value()) {
+        fprintf(stderr, "cuMES: %s\n", to_ip.error().c_str());
+        return EXIT_FAILURE;
     }
-#endif
+    InputParams ip = to_ip.value();
 
-    GridParams<Real> p=initParams(ip);
+    GridParams<Real> p = initParams(ip);
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
     printf("input: %s\n", inputPath);
@@ -265,21 +379,42 @@ int main(int argc, char** argv) {
     printf(")\n");
 
     // ---- Multi-radial-grid stage loop (delegated to MultigridSolver) ----
-    // Each stage runs the solver on its own radial grid (with its own
-    // iteration cap and ftol), seeded by the previous stage's converged
-    // state interpolated onto the new grid (vmecpp grid sequencing). The
-    // schedule, prolongation, and per-stage report live in MultigridSolver.
     cumes::SpectralStorage<Real> storage;
     SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9)};
     int total_iter = 0;
 
     try {
-        // Stage-0 cold start on ns_array[0] (MultigridSolver re-assigns the
-        // per-stage ns/max_iter/ftol from ip before each stage).
+        // Stage-0 seed on ns_array[0]: a checkpoint/legacy-init restart, or the
+        // interpFromBoundaryAndAxis cold start.
         p.ns = ip.ns_array[0];
         p.max_iter = ip.niter_array[0];
         p.ftol = ip.ftol_array[0];
-        cumes::SpectralStorage<Real> seed = initState<Real>(p, ip);
+        cumes::SpectralStorage<Real> seed;
+        if (!restartPath.empty()) {
+            auto ck = cumes::read_checkpoint(restartPath);
+            if (!ck.has_value()) {
+                fprintf(stderr, "cuMES: %s\n", ck.error().c_str());
+                return EXIT_FAILURE;
+            }
+            const auto& snap = ck.value();
+            if (snap.ns != ip.ns_array[0] || snap.mnmax != p.mnmax) {
+                fprintf(stderr, "cuMES: restart checkpoint (ns=%d, mnmax=%d) "
+                                "does not match stage-0 grid (ns=%d, mnmax=%d)\n",
+                        snap.ns, snap.mnmax, ip.ns_array[0], p.mnmax);
+                return EXIT_FAILURE;
+            }
+            seed = restartState<Real>(p, ip, snap);
+        } else if (!restartLegacyPath.empty()) {
+            auto ck = cumes::convert_legacy_init(restartLegacyPath, ip.ns_array[0], p.mnmax);
+            if (!ck.has_value()) {
+                fprintf(stderr, "cuMES: %s\n", ck.error().c_str());
+                return EXIT_FAILURE;
+            }
+            seed = restartState<Real>(p, ip, ck.value());
+        } else {
+            seed = initState<Real>(p, ip);
+        }
+
         auto outcome = cumes::MultigridSolver<Real>::run(p, ip, std::move(seed));
         storage = std::move(outcome.state);
         result = outcome.result;
@@ -300,10 +435,56 @@ int main(int argc, char** argv) {
         }
 
         // Output success is part of the run result: a converged solve whose
-        // state file could not be written must NOT exit 0 (the writers return
-        // false on open/write/close failure and clean up partial files).
-        const bool output_ok = outputSave<Real>(storage.legacy_view(), p, ip,
-                                                 result, outputPath, inputPath);
+        // state file could not be written must NOT exit 0.
+        bool output_ok = true;
+        // One host snapshot serves the binary writer and/or the optional
+        // checkpoint (built once, only when either needs it).
+        cumes::EquilibriumSnapshot snapshot;
+        if (outSpec.format == cumes::OutputFormat::kBinary || !checkpointPath.empty()) {
+            snapshot = cumes::snapshot_from_device(storage);
+        }
+        if (outSpec.format == cumes::OutputFormat::kBinary) {
+            // Versioned binary writer: legacy-v0 (default) is byte-identical to
+            // the pre-overhaul outputSaveBinary (proved by test_io_golden); v1
+            // adds the provenance trailer.
+            cumes::OutputSpec spec = outSpec;
+            spec.schema = schema;
+            auto writer = cumes::make_writer(spec.format, spec.schema);
+            if (!writer) {
+                fprintf(stderr, "cuMES: no writer for binary schema\n");
+                output_ok = false;
+            } else {
+                fill_provenance(outcome.report, inputPath);
+                const cumes::Status status =
+                    writer->write_atomic(snapshot, outcome.report, spec);
+                if (status.has_value()) {
+                    printf("Saved binary state to %s\n", spec.path.c_str());
+                } else {
+                    fprintf(stderr, "cuMES: %s\n", status.error().c_str());
+                    output_ok = false;
+                }
+            }
+        } else {
+            // NetCDF/HDF5: the legacy device-reading backends (host adapters
+            // deferred). outputSave is never called for .bin from here.
+            output_ok = outputSave<Real>(storage.legacy_view(), p, ip, result,
+                                         outputPath, inputPath);
+        }
+
+        // Optional v1 restart checkpoint (blueprint §6.13): written after the
+        // solve so a run that stops at its iteration cap can be resumed via
+        // --restart.
+        if (!checkpointPath.empty()) {
+            const cumes::Status status =
+                cumes::write_checkpoint(snapshot, checkpointPath);
+            if (status.has_value()) {
+                printf("Saved checkpoint to %s\n", checkpointPath.c_str());
+            } else {
+                fprintf(stderr, "cuMES: %s\n", status.error().c_str());
+                output_ok = false;
+            }
+        }
+
         outputPrint<Real>(storage.legacy_view(), p, result.iterations,
                           result.converged, result.fsqr, result.fsqz, result.fsql);
         if (ip.n_grids > 1)

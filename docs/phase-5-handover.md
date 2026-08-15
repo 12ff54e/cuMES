@@ -2,9 +2,10 @@
 
 Status date: 2026-08-15. Branch: `overhaul` (Phase 0 `bd26857` + Phase 1
 `12bcc44` + Phase 2 `168170a` + Phase 3 `c21564c` + Phase 4 `1b0d099` + this
-Phase 5 work). This document records what Phase 5 of
-`docs/cuda-overhaul-blueprint.md` delivered, how it was verified, and what was
-deliberately deferred and why.
+Phase 5 work, followed by the config/I-O wiring completion in §7). This
+document records what Phase 5 of `docs/cuda-overhaul-blueprint.md` delivered,
+how it was verified, what was deliberately deferred and why, and how the
+deferred config/I-O wiring was subsequently landed.
 
 ## 1. Scope
 
@@ -27,7 +28,7 @@ This phase delivers three of the blueprint's four Phase-5 deliverables plus the
 
 The remaining Phase-5 items from the Phase-4 handover — full `SpectralView`
 kernel-signature migration, config/I-O wiring in `main.cu` — are deferred with
-specific guidance (§5).
+specific guidance (§5); the config/I-O wiring has since been landed (§7).
 
 ## 2. What changed
 
@@ -149,20 +150,15 @@ call.
 
 ## 5. Deferred (documented, not hidden)
 
-Phase 5 is delivered as the **boundary layer**; the following are the remaining
-Phase-5 items, each substantial enough to be its own focused change:
+Phase 5 is delivered as the **boundary layer**. The config/I-O wiring in
+`main.cu` was the first deferred item to land (see §7). The remaining Phase-5
+items, each substantial enough to be its own focused change:
 
 - **Full `SpectralView`/`RealFieldView` kernel-signature migration** (§6.3). The
   kernels still take raw `T*` + `int ns/mnmax`; the operator contracts now name
   the target signatures. Migrate one module at a time (fourier → geometry →
   forces → constraint → precon → solver descent/residual), each a Class A
   bitwise change, then wire `StageSolver` to the operators.
-- **Config/I-O wiring in `main.cu`** (§6.1, §6.13). `main.cu` still parses via
-  `initInputParams` and writes via `outputSave`; `read_and_validate` +
-  versioned writers + `read_checkpoint`/`convert_legacy_init` (all host-only,
-  already tested in Phase 2) must replace them. The legacy-v0 writer must first
-  be proven byte-identical to `outputSaveBinary` (a golden test) before the
-  swap, because `compare_bitwise.py` compares the on-disk `cumes_state.bin`.
 - **Scalar CPU references + old/new dual-run hooks** (§10.1). A local scalar
   reference for transforms/geometry/force/residuals (the first layer of truth)
   and a dual-run harness that runs legacy vs migrated kernels on one frozen
@@ -173,12 +169,43 @@ Phase-5 items, each substantial enough to be its own focused change:
 
 ## 6. Next steps (Phase 5 completion)
 
-1. Golden-test the versioned legacy-v0 writer against `outputSaveBinary`, then
+1. ~~Golden-test the versioned legacy-v0 writer against `outputSaveBinary`, then
    wire `main.cu` to `read_and_validate` + versioned writers + checkpoint
-   reader (config/I-O wiring).
+   reader (config/I-O wiring).~~ **Done** — see §7.
 2. Migrate the kernels onto the operator signatures module-by-module, with
    Class A bitwise verification after each, and add the scalar CPU references +
    dual-run hooks as the per-boundary gate.
 3. Then Phase 6 (control-path performance): explicit nonblocking streams,
    one combined control fence, one-copy checkpoint (already one copy since
    Phase 3), fixed-iota update skip.
+
+## 7. Config/I-O wiring (landed 2026-08-15)
+
+The first §6.1 deferred item is delivered: `main.cu` now runs the Phase 2 host
+layer end-to-end, with the numerical path and the on-disk `cumes_state.bin`
+bytes unchanged (Class A).
+
+- **Snapshot bridge** (`include/cumes/io/snapshot_bridge.cuh`): a single D2H
+  copy of the contiguous `SpectralStorage` state slab converted T→double into a
+  host `EquilibriumSnapshot` — the "Phase 3 snapshot bridge" the writers were
+  designed to consume.
+- **Golden byte-identity test** (`tests/test_io_golden.cu`): proves
+  `LegacyBinaryV0Writer` ≡ `outputSaveBinary` byte-for-byte (both precisions),
+  the prerequisite the handover demanded before the swap.
+- **Config**: `read_and_validate` → `to_input_params()` replaces
+  `initInputParams`; the float build declares `kMixedFloat` so validation
+  rejects impossible tolerances.
+- **Output**: binary goes through the versioned writers (`legacy-v0` default,
+  `v1` via `--output-schema v1`); `.nc`/`.h5` keep the legacy device-reading
+  backends.
+- **Checkpoint**: `--restart <ckpt>` (v1) and `--restart-legacy <init>`
+  (six-family) replace the removed `CUMES_LOAD_INIT` env path, with
+  dimension/mode validation; `--checkpoint <path>` writes a v1 checkpoint after
+  the solve for a resumable run.
+- **Provenance**: the v1 writer records git revision/dirty/build-type, the input
+  source hash, and GPU/driver/runtime/toolkit.
+
+Verification: `test_io_golden` passes (both precisions); the full test matrix is
+25/25; and `scripts/compare_bitwise.py` reports **byte-identical** for both
+Solovev and W7-X (state, trajectory, step_0, and the full 235/526-file dump
+manifest) against the Phase-5 baseline.
