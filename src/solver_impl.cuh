@@ -26,6 +26,7 @@
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/solver/iteration_controller.hpp"
+#include "cumes/solver/pass_record.hpp"
 
 #ifdef DUMP_CUMES_VERIFY
 static bool dumpEnabled();  // defined below with the dump machinery
@@ -523,12 +524,12 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
 #ifdef DUMP_CUMES_VERIFY
     // Per-pass record for convergence analysis (mirrors vmecpp's
-    // per_iter_residuals.bin + control scalars). 15 columns:
-    // fsqr_i fsqz_i fsql_i fsqr fsqz fsql delt otav dtau b1 fac
-    // iter2 iter1 reason rax(axis R at zeta=0, pre-descent of the pass).
-    // Stays double (dump-format record).
-    double (*per_iter)[15] = new double[kMaxIterEff][15];
-    int n_passes = 0;
+    // per_iter_residuals.bin + control scalars). Typed PassRecord; the field
+    // order is the frozen 15-column on-disk contract (fsqr_i fsqz_i fsql_i
+    // fsqr fsqz fsql delt otav dtau b1 fac iter2 iter1 reason rax). Observers
+    // read these scalars and cannot affect the controller's decisions.
+    std::vector<cumes::PassRecord> per_iter;
+    per_iter.reserve((size_t)kMaxIterEff);
     // Radial location of the magnetic axis at zeta=0, matching vmecpp's r00
     // (Printout: geometric_offset.r_00 = r1_e[0] — the real-space even-m R
     // at the axis at theta=0, zeta=0). With the axis coefficients this is
@@ -554,12 +555,15 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
                           double o, double dt, double b1v, double fcv,
                           int it2, int it1) {
         if (!dumpEnabled()) return;
-        if (n_passes < kMaxIterEff) {
-            double* r = per_iter[n_passes++];
-            r[0]=fRi; r[1]=fZi; r[2]=fLi; r[3]=fR; r[4]=fZ; r[5]=fL;
-            r[6]=d; r[7]=o; r[8]=dt; r[9]=b1v; r[10]=fcv;
-            r[11]=(double)it2; r[12]=(double)it1; r[13]=(double)reason;
-            r[14]=(double)axisRAtZeta0();
+        if ((int)per_iter.size() < kMaxIterEff) {
+            cumes::PassRecord r;
+            r.invariant_fsqr = fRi; r.invariant_fsqz = fZi; r.invariant_fsql = fLi;
+            r.preconditioned_fsqr = fR; r.preconditioned_fsqz = fZ;
+            r.preconditioned_fsql = fL;
+            r.delta_t = d; r.otav = o; r.dtau = dt; r.b1 = b1v; r.fac = fcv;
+            r.iter2 = (double)it2; r.iter1 = (double)it1; r.reason = (double)reason;
+            r.axis_r = (double)axisRAtZeta0();
+            per_iter.push_back(r);
         }
     };
 #endif
@@ -1215,19 +1219,20 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
 #ifdef DUMP_CUMES_VERIFY
     if (dumpEnabled()) {
-        // Per-pass record, column-major: 15 blocks of n_passes doubles.
+        // Per-pass record, column-major: 15 blocks of per_iter.size() doubles
+        // (byte-identical to the legacy array-of-doubles layout).
         FILE* fpr = fopen("dump/cuMES/per_iter_residuals_cumes.bin", "wb");
         if (fpr) {
-            uint64_t n = (uint64_t)n_passes;
+            uint64_t n = (uint64_t)per_iter.size();
             fwrite(&n, sizeof(uint64_t), 1, fpr);
-            for (int c = 0; c < 15; ++c)
-                for (int i = 0; i < n_passes; ++i)
-                    fwrite(&per_iter[i][c], sizeof(double), 1, fpr);
+            for (int c = 0; c < cumes::PassRecord::kColumnCount; ++c) {
+                for (const cumes::PassRecord& r : per_iter) {
+                    const double* base = &r.invariant_fsqr;
+                    fwrite(base + c, sizeof(double), 1, fpr);
+                }
+            }
             fclose(fpr);
         }
-        delete[] per_iter;
-    } else {
-        delete[] per_iter;
     }
 #endif
 
