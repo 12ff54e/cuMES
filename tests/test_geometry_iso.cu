@@ -16,6 +16,7 @@
 #include "input_json.h"
 #include "vmec_types.h"
 #include "fourier.cuh"
+#include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "profiles.cuh"
 #include "cumes_test_support.cuh"
@@ -70,14 +71,9 @@ int main() {
     p.delt = ip.delt; p.ftol = ip.ftol; p.max_iter = ip.max_iter;
     p.lamscale = 0.0;
 
-    SpectralState<double> st{};
+    cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
+    SpectralState<double> st = storage.legacy_view();
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
-    cc(cudaMalloc(&st.d_rmncc, nb), "cc"); cc(cudaMalloc(&st.d_rmnss, nb), "ss");
-    cc(cudaMalloc(&st.d_zmnsc, nb), "zsc"); cc(cudaMalloc(&st.d_zmncs, nb), "zcs");
-    cc(cudaMalloc(&st.d_lmnsc, nb), "lsc"); cc(cudaMalloc(&st.d_lmncs, nb), "lcs");
-    cc(cudaMalloc(&st.d_v_rmncc, nb), "vcc"); cc(cudaMalloc(&st.d_v_rmnss, nb), "vss");
-    cc(cudaMalloc(&st.d_v_zmnsc, nb), "vzsc"); cc(cudaMalloc(&st.d_v_zmncs, nb), "vzcs");
-    cc(cudaMalloc(&st.d_v_lmnsc, nb), "vlsc"); cc(cudaMalloc(&st.d_v_lmncs, nb), "vlcs");
 
     fillState(st, p);
     RadialProfiles<double> rp = profilesCreate(p, ip);
@@ -96,7 +92,7 @@ int main() {
         delete[] hcc;
     }
 
-    inverseDFT(fp, st, p);
+    inverseDFT(fp, storage.physical_const(), p);
     computeGeometry(fp, p, rp, mw);
 
     // check bsupu coverage on a mid-volume surface. All indices are computed

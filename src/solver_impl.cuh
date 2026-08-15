@@ -573,7 +573,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // combined *_real buffers are materialized on demand (fourierCombineParity)
     // at the dump site, never read stale.
     if (dumpEnabled()) {
-        inverseDFT(fp, st, p, false);
+        inverseDFT(fp, storage.physical_const(), p, false);
         auto* h_re = new T[p.nZnT * p.ns];
         auto* h_ro = new T[p.nZnT * p.ns];
         cumes::check_cuda(cudaMemcpy(h_re, fp.d_r_e, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "diag re");
@@ -646,7 +646,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         cumes::check_cuda(cudaGetLastError(), "extrapAxis");
 
         cudaEventRecord(ev0);
-        inverseDFT(fp,st,p,false);
+        inverseDFT(fp, storage.physical_const(), p, false);
         cudaEventRecord(ev1);
         cudaEventSynchronize(ev1);
         { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_inv_ms += ms; }
@@ -974,7 +974,9 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif
 
         cudaEventRecord(ev0);
-        forwardDFT(fp,d_f_spec.data(),p,cw);
+        forwardDFT(fp, cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
+                          d_f_spec.data(), p.ns, p.mnmax),
+                   p, cw);
         cudaEventRecord(ev1);
         cudaEventSynchronize(ev1);
         { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_fwd_ms += ms; }

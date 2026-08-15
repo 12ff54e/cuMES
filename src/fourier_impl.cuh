@@ -230,9 +230,7 @@ void fourierFree(FourierPlan<T>& fp) {
 // the odd-m scalxc division (maxsc) happen on the target side, as in vmecpp.
 template <typename T>
 __global__ void inversePackKernel(
-    const T* __restrict__ rmncc, const T* __restrict__ rmnss,
-    const T* __restrict__ zmnsc, const T* __restrict__ zmncs,
-    const T* __restrict__ lmnsc, const T* __restrict__ lmncs,
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mpol, int ntor, int nfp, int nz2,
     typename FftTraits<T>::Complex* __restrict__ spectra)
@@ -243,9 +241,12 @@ __global__ void inversePackKernel(
     int j = t % ns, mode = t / ns;
     int m = xm[mode], n = xn[mode];
     T nf = T(n * nfp);
-    T rc = rmncc[j + mode * ns], rs = rmnss[j + mode * ns];
-    T zs = zmnsc[j + mode * ns], zc = zmncs[j + mode * ns];
-    T lsc = lmnsc[j + mode * ns], lcs = lmncs[j + mode * ns];
+    T rc = coeff(cumes::SpectralComponent::Rcc, mode, j);
+    T rs = coeff(cumes::SpectralComponent::Rss, mode, j);
+    T zs = coeff(cumes::SpectralComponent::Zsc, mode, j);
+    T zc = coeff(cumes::SpectralComponent::Zcs, mode, j);
+    T lsc = coeff(cumes::SpectralComponent::Lsc, mode, j);
+    T lcs = coeff(cumes::SpectralComponent::Lcs, mode, j);
     // cuFFT's Z2D synthesis is f[k] = X[0] + 2*Σ Re(X[n])cos - 2*Σ Im(X[n])sin,
     // so the n>=1 bins are halved (cancelling the 2× exactly) and the DST
     // slots carry a minus (vmecpp FillDct/FillDst). The ζ-derivative slots
@@ -398,15 +399,15 @@ static int computeKTile(int blkX, int nzeta) {
 }
 
 template <typename T>
-static void inverseDFTCufft(const FourierPlan<T>& fp, const SpectralState<T>& st,
+static void inverseDFTCufft(const FourierPlan<T>& fp,
+                            cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                             const GridParams<T>& p, bool do_combine) {
     // Zero the half-spectra (only bins n <= ntor are filled).
     cumes::check_cuda(cudaMemset(fp.d_zeta_spectra, 0,
         (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex)), "inv zero");
     int total = p.ns * p.mnmax;
     inversePackKernel<T><<<(total + 255) / 256, 256>>>(
-        st.d_rmncc, st.d_rmnss, st.d_zmnsc, st.d_zmncs, st.d_lmnsc, st.d_lmncs,
-        fp.basis.d_xm, fp.basis.d_xn,
+        coeff, fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
     cumes::check_cufft(FftTraits<T>::execInverse(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
     // ζ-tiled accumulate (see inverseAccumulateKernel): block (ntheta/2,
@@ -469,9 +470,10 @@ void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p) {
 }
 
 template <typename T>
-void inverseDFT(const FourierPlan<T>& fp, const SpectralState<T>& st,
+void inverseDFT(const FourierPlan<T>& fp,
+                cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                 const GridParams<T>& p, bool do_combine) {
-    inverseDFTCufft(fp, st, p, do_combine);
+    inverseDFTCufft(fp, coeff, p, do_combine);
 }
 
 // ---- cuFFT backend: forward ----------------------------------------------
@@ -607,7 +609,7 @@ __global__ void forwardRecoverKernel(
     const typename FftTraits<T>::Complex* __restrict__ spectra,
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mpol, int mnmax, int nfp, int nz2,
-    T* __restrict__ f_spec)
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec)
 {
     using Complex = typename FftTraits<T>::Complex;
     int t = blockIdx.x * blockDim.x + threadIdx.x;
@@ -623,32 +625,32 @@ __global__ void forwardRecoverKernel(
     Complex F0 = slot[0 * step],  F1 = slot[1 * step],  F2 = slot[2 * step],  F3 = slot[3 * step];
     Complex F4 = slot[4 * step],  F5 = slot[5 * step],  F6 = slot[6 * step],  F7 = slot[7 * step];
     Complex F8 = slot[8 * step],  F9 = slot[9 * step],  F10 = slot[10 * step], F11 = slot[11 * step];
-    T* out = f_spec + j + mode * ns;
     if (j == 0) {
         if (m > 0) return;   // axis: m=0 only
-        out[0 * mnmax * ns] = mn * (F0.x + nf * F2.y);
-        out[4 * mnmax * ns] = mn * (-F5.y + nf * F7.x);
+        f_spec(cumes::SpectralComponent::Rcc, mode, j) = mn * (F0.x + nf * F2.y);
+        f_spec(cumes::SpectralComponent::Zcs, mode, j) = mn * (-F5.y + nf * F7.x);
         return;
     }
     if (j == ns - 1) {       // LCFS: λ only
-        out[2 * mnmax * ns] = mn * (F8.x + nf * F10.y);
-        out[5 * mnmax * ns] = mn * (-F9.y + nf * F11.x);
+        f_spec(cumes::SpectralComponent::Lsc, mode, j) = mn * (F8.x + nf * F10.y);
+        f_spec(cumes::SpectralComponent::Lcs, mode, j) = mn * (-F9.y + nf * F11.x);
         return;
     }
-    out[0 * mnmax * ns] = mn * (F0.x + nf * F2.y);
-    out[1 * mnmax * ns] = mn * (F4.x + nf * F6.y);
-    out[2 * mnmax * ns] = mn * (F8.x + nf * F10.y);
-    out[3 * mnmax * ns] = mn * (-F1.y + nf * F3.x);
-    out[4 * mnmax * ns] = mn * (-F5.y + nf * F7.x);
-    out[5 * mnmax * ns] = mn * (-F9.y + nf * F11.x);
+    f_spec(cumes::SpectralComponent::Rcc, mode, j) = mn * (F0.x + nf * F2.y);
+    f_spec(cumes::SpectralComponent::Zsc, mode, j) = mn * (F4.x + nf * F6.y);
+    f_spec(cumes::SpectralComponent::Lsc, mode, j) = mn * (F8.x + nf * F10.y);
+    f_spec(cumes::SpectralComponent::Rss, mode, j) = mn * (-F1.y + nf * F3.x);
+    f_spec(cumes::SpectralComponent::Zcs, mode, j) = mn * (-F5.y + nf * F7.x);
+    f_spec(cumes::SpectralComponent::Lcs, mode, j) = mn * (-F9.y + nf * F11.x);
 }
 
 template <typename T>
-static void forwardDFTCufft(const FourierPlan<T>& fp, T* d_f_spectral,
+static void forwardDFTCufft(const FourierPlan<T>& fp,
+                            cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                             const GridParams<T>& p, const ConstraintWorkspace<T>& cw) {
     // vmecpp zeroes the target before projecting (m_physical_f.setZero());
     // the kernels write only the entries vmecpp computes.
-    cumes::check_cuda(cudaMemset(d_f_spectral, 0,
+    cumes::check_cuda(cudaMemset(f_spec.data(), 0,
                          (size_t)6 * p.mnmax * p.ns * sizeof(T)), "fwd zero");
     // ζ-tiled reduce (see forwardReduceKernel): block (16 lanes, kTile),
     // grid (mpol, ns, k-tiles).
@@ -669,13 +671,14 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, T* d_f_spectral,
     int total = p.ns * p.mnmax;
     forwardRecoverKernel<T><<<(total + 255) / 256, 256>>>(
         fp.d_zeta_spectra, fp.basis.d_xm, fp.basis.d_xn,
-        p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, d_f_spectral);
+        p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, f_spec);
     cumes::check_cuda(cudaGetLastError(), "fwd cuFFT");
 }
 
 template <typename T>
-void forwardDFT(const FourierPlan<T>& fp, T* d_f_spectral, const GridParams<T>& p,
-                const ConstraintWorkspace<T>& cw) {
-    forwardDFTCufft(fp, d_f_spectral, p, cw);
+void forwardDFT(const FourierPlan<T>& fp,
+                cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
+                const GridParams<T>& p, const ConstraintWorkspace<T>& cw) {
+    forwardDFTCufft(fp, f_spec, p, cw);
 }
 

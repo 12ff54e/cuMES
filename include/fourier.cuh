@@ -2,6 +2,7 @@
 #pragma once
 #include "vmec_types.h"
 #include "fft_traits.h"
+#include "cumes/core/tensor_view.cuh"
 #include <cufft.h>
 
 namespace cumes { class DeviceArena; }
@@ -77,8 +78,12 @@ void fourierFree(FourierPlan<T>& fp);
 
 // do_combine=false skips the e/o parity combination (only needed for the
 // dump machinery and tests); the hot loop passes false.
+// `coeff` is a component-major view over the contiguous state slab (the
+// SpectralStorage::physical() layout); it replaces the legacy 6-pointer
+// SpectralState input and indexes bit-for-bit identically.
 template <typename T>
-void inverseDFT(const FourierPlan<T>& fp, const SpectralState<T>& st,
+void inverseDFT(const FourierPlan<T>& fp,
+                cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                 const GridParams<T>& p, bool do_combine = true);
 
 // Materialize the 9 combined (e+o) real-space arrays from the current parity
@@ -98,6 +103,9 @@ void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p);
 //   [3*mnmax*ns .. 4*mnmax*ns): f_rmnss
 //   [4*mnmax*ns .. 5*mnmax*ns): f_zmncs
 //   [5*mnmax*ns .. 6*mnmax*ns): f_lmncs
+// `f_spec` is the component-major residual view (DecomposedResidualDomain);
+// the layout matches the legacy `d_f_spectral` 6*mnmax*ns slab exactly.
 template <typename T>
-void forwardDFT(const FourierPlan<T>& fp, T* d_f_spectral,
+void forwardDFT(const FourierPlan<T>& fp,
+                cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                 const GridParams<T>& p, const ConstraintWorkspace<T>& cw);

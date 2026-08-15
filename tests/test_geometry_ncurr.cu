@@ -21,6 +21,7 @@
 #include "vmec_types.h"
 #include "input_json.h"
 #include "fourier.cuh"
+#include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "profiles.cuh"
 #include "cumes_test_support.cuh"
@@ -46,7 +47,8 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     p.ncurr = ncurr; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;
     p.tcon0 = T(1.0); p.lamscale = T(0.0);
 
-    SpectralState<T> st{};
+    cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
+    SpectralState<T> st = storage.legacy_view();
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
     auto* h_cc = new T[p.ns * p.mnmax]();
     auto* h_ss = new T[p.ns * p.mnmax]();
@@ -64,22 +66,12 @@ static void runGeometry(int ns, int ncurr, const char* label) {
             if (m == 1) { h_zsc[j + m * p.ns] = T(-0.5) * s; h_zcs[j + m * p.ns] = T(-0.5) * s; }
         }
     }
-    T** allocs[12] = {&st.d_rmncc, &st.d_zmnsc, &st.d_lmnsc, &st.d_rmnss, &st.d_zmncs, &st.d_lmncs,
-                      &st.d_v_rmncc, &st.d_v_zmnsc, &st.d_v_lmnsc, &st.d_v_rmnss, &st.d_v_zmncs, &st.d_v_lmncs};
-    for (auto q : allocs)
-        checkCuda(cudaMalloc(q, nb), "state malloc");
     checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nb, cudaMemcpyHostToDevice), "cc");
     checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nb, cudaMemcpyHostToDevice), "ss");
     checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
     checkCuda(cudaMemcpy(st.d_zmncs, h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
     checkCuda(cudaMemcpy(st.d_lmnsc, h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
     checkCuda(cudaMemcpy(st.d_lmncs, h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
-    checkCuda(cudaMemset(st.d_v_rmncc, 0, nb), "vcc");
-    checkCuda(cudaMemset(st.d_v_zmnsc, 0, nb), "vzsc");
-    checkCuda(cudaMemset(st.d_v_lmnsc, 0, nb), "vlsc");
-    checkCuda(cudaMemset(st.d_v_rmnss, 0, nb), "vss");
-    checkCuda(cudaMemset(st.d_v_zmncs, 0, nb), "vzcs");
-    checkCuda(cudaMemset(st.d_v_lmncs, 0, nb), "vlcs");
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
     delete[] h_lsc; delete[] h_lcs;
 
@@ -101,7 +93,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     FourierPlan<T> fp = fourierCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
 
-    inverseDFT(fp, st, p);
+    inverseDFT(fp, storage.physical_const(), p);
     computeGeometry(fp, p, rp, mw);
 
     // Assert the half-grid outputs that updateIotaChipFKernel /
@@ -128,10 +120,6 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     delete[] h_chip; delete[] h_iota;
     fourierFree(fp); metricFree(mw); profilesFree(rp);
-    T* frees[12] = {st.d_rmncc, st.d_zmnsc, st.d_lmnsc, st.d_rmnss, st.d_zmncs, st.d_lmncs,
-                    st.d_v_rmncc, st.d_v_zmnsc, st.d_v_lmnsc, st.d_v_rmnss, st.d_v_zmncs, st.d_v_lmncs};
-    for (auto q : frees)
-        cudaFree(q);
 }
 
 int main() {

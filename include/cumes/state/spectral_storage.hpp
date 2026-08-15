@@ -89,6 +89,19 @@ class SpectralStorage {
                                                      mnmax_);
   }
 
+  // Read-only spectral views (the const-input side of the operator boundaries).
+  // `data()` returns T* even on a const DeviceBuffer, so these bind T* to the
+  // const view's `const T*` constructor directly.
+  SpectralView<const T, PhysicalStateDomain> physical_const() const {
+    return SpectralView<const T, PhysicalStateDomain>(state_.data(), ns_,
+                                                      mnmax_);
+  }
+
+  SpectralView<const T, DecomposedVelocityDomain> velocity_const() const {
+    return SpectralView<const T, DecomposedVelocityDomain>(velocity_.data(), ns_,
+                                                           mnmax_);
+  }
+
  private:
   DeviceBuffer<T> state_;
   DeviceBuffer<T> velocity_;

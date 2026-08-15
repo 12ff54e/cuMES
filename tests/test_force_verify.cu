@@ -103,7 +103,7 @@ int main() {
     CHECK(res.converged, "converged equilibrium reached");
 
     // ---- Recompute forces through the test's own path ----
-    inverseDFT(fp, st, p);
+    inverseDFT(fp, storage.physical_const(), p);
     computeGeometry(fp, p, rp, mw);
     computeForces(fp, p, rp, mw);
 
@@ -120,7 +120,9 @@ int main() {
     cc(cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_o zero");
     cc(cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_e zero");
     cc(cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_o zero");
-    forwardDFT(fp, d_f_spec, p, cw_zero);
+    forwardDFT(fp, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
+                       d_f_spec, p.ns, p.mnmax),
+               p, cw_zero);
 
     auto* h_f = new double[n6];
     cc(cudaMemcpy(h_f, d_f_spec, n6 * sizeof(double), cudaMemcpyDeviceToHost), "cpy f");

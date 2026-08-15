@@ -19,6 +19,7 @@
 #include "input_json.h"
 #include "constraint.cuh"
 #include "fourier.cuh"
+#include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "forces.cuh"
 #include "precon.cuh"
@@ -48,7 +49,8 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;
     p.tcon0 = tcon0; p.lamscale = T(0.0);
 
-    SpectralState<T> st{};
+    cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
+    SpectralState<T> st = storage.legacy_view();
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
     auto* h_cc = new T[p.ns * p.mnmax]();
     auto* h_ss = new T[p.ns * p.mnmax]();
@@ -72,9 +74,6 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
             if (m == 1) { h_zsc[j + m * p.ns] = T(-0.5) * s; h_zcs[j + m * p.ns] = T(-0.5) * s; }
         }
     }
-    T** allocs[12] = {&st.d_rmncc, &st.d_zmnsc, &st.d_lmnsc, &st.d_rmnss, &st.d_zmncs, &st.d_lmncs,
-                      &st.d_v_rmncc, &st.d_v_zmnsc, &st.d_v_lmnsc, &st.d_v_rmnss, &st.d_v_zmncs, &st.d_v_lmncs};
-    for (auto q : allocs) checkCuda(cudaMalloc(q, nb), "state malloc");
     checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nb, cudaMemcpyHostToDevice), "cc");
     checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nb, cudaMemcpyHostToDevice), "ss");
     checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
@@ -91,7 +90,7 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     PreconWorkspace<T> pw = preconCreate(p);
     ConstraintWorkspace<T> cw = constraintCreate(p);
 
-    inverseDFT(fp, st, p);
+    inverseDFT(fp, storage.physical_const(), p);
     computeGeometry(fp, p, rp, mw);
     constraintRzConCompute(p, fp, st, cw, rp.d_sqrtS_F);
     constraintResetRzCon0(p, cw, rp.d_sqrtS_F);
@@ -114,9 +113,6 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
 
     fourierFree(fp); metricFree(mw); profilesFree(rp);
     preconFree(pw); constraintFree(cw);
-    T* frees[12] = {st.d_rmncc, st.d_zmnsc, st.d_lmnsc, st.d_rmnss, st.d_zmncs, st.d_lmncs,
-                    st.d_v_rmncc, st.d_v_zmnsc, st.d_v_lmnsc, st.d_v_rmnss, st.d_v_zmncs, st.d_v_lmncs};
-    for (auto q : frees) cudaFree(q);
 }
 
 template <typename T>

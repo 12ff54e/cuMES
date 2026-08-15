@@ -49,6 +49,7 @@
 #include "vmec_types.h"
 #include "input.h"
 #include "fourier.cuh"
+#include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "profiles.cuh"
 #include "precon.cuh"
@@ -123,33 +124,6 @@ static void fillState(std::vector<T>& cc, std::vector<T>& ss,
             lcs[j + mode * ns] = T(0.01 * (m + 1) * s);
         }
     }
-}
-
-template <typename T>
-static void allocState(SpectralState<T>& st, int ns, int mnmax) {
-    size_t nb = (size_t)ns * mnmax * sizeof(T);
-    checkCuda(cudaMalloc(&st.d_rmncc, nb), "rmncc");
-    checkCuda(cudaMalloc(&st.d_rmnss, nb), "rmnss");
-    checkCuda(cudaMalloc(&st.d_zmnsc, nb), "zmnsc");
-    checkCuda(cudaMalloc(&st.d_zmncs, nb), "zmncs");
-    checkCuda(cudaMalloc(&st.d_lmnsc, nb), "lmnsc");
-    checkCuda(cudaMalloc(&st.d_lmncs, nb), "lmncs");
-    checkCuda(cudaMalloc(&st.d_v_rmncc, nb), "v_rmncc");
-    checkCuda(cudaMalloc(&st.d_v_rmnss, nb), "v_rmnss");
-    checkCuda(cudaMalloc(&st.d_v_zmnsc, nb), "v_zmnsc");
-    checkCuda(cudaMalloc(&st.d_v_zmncs, nb), "v_zmncs");
-    checkCuda(cudaMalloc(&st.d_v_lmnsc, nb), "v_lmnsc");
-    checkCuda(cudaMalloc(&st.d_v_lmncs, nb), "v_lmncs");
-}
-
-template <typename T>
-static void freeState(SpectralState<T>& st) {
-    cudaFree(st.d_rmncc); cudaFree(st.d_rmnss);
-    cudaFree(st.d_zmnsc); cudaFree(st.d_zmncs);
-    cudaFree(st.d_lmnsc); cudaFree(st.d_lmncs);
-    cudaFree(st.d_v_rmncc); cudaFree(st.d_v_rmnss);
-    cudaFree(st.d_v_zmnsc); cudaFree(st.d_v_zmncs);
-    cudaFree(st.d_v_lmnsc); cudaFree(st.d_v_lmncs);
 }
 
 template <typename T>
@@ -348,13 +322,13 @@ static int testDealias(int ntheta) {
     MetricWorkspace<T> mw = metricCreate(p);
     PreconWorkspace<T> pw = preconCreate(p);
     ConstraintWorkspace<T> cw = constraintCreate(p);
-    SpectralState<T> st{};
-    allocState(st, ns, p.mnmax);
+    cumes::SpectralStorage<T> storage(ns, p.mnmax);
+    SpectralState<T> st = storage.legacy_view();
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
-    inverseDFT(fp, st, p);
+    inverseDFT(fp, storage.physical_const(), p);
     computeGeometry(fp, p, rp, mw);
     preconCompute(fp, p, rp, mw, pw);
 
@@ -432,7 +406,6 @@ static int testDealias(int ntheta) {
                 checkNear((double)h_gCon[idx], gRef[idx], tol, "dealias", jF, k, l);
             }
 
-    freeState(st);
     constraintFree(cw); preconFree(pw); metricFree(mw);
     fourierFree(fp); profilesFree(rp);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
@@ -453,13 +426,13 @@ static int testPcr(int ns) {
     FourierPlan<T> fp = fourierCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
     PreconWorkspace<T> pw = preconCreate(p);
-    SpectralState<T> st{};
-    allocState(st, ns, p.mnmax);
+    cumes::SpectralStorage<T> storage(ns, p.mnmax);
+    SpectralState<T> st = storage.legacy_view();
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
-    inverseDFT(fp, st, p);
+    inverseDFT(fp, storage.physical_const(), p);
     computeGeometry(fp, p, rp, mw);
     preconCompute(fp, p, rp, mw, pw);
 
@@ -522,7 +495,6 @@ static int testPcr(int ns) {
     }
 
     cudaFree(d_f);
-    freeState(st);
     preconFree(pw); metricFree(mw);
     fourierFree(fp); profilesFree(rp);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");

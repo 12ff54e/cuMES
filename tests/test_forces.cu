@@ -17,6 +17,7 @@
 #include "input_json.h"
 #include "constraint.cuh"
 #include "fourier.cuh"
+#include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "forces.cuh"
 #include "profiles.cuh"
@@ -43,7 +44,8 @@ int main() {
     printf("=== Force Diagnostic Test ===\n");
 
     // Create Solovev-like initial state with independent parity coefficients
-    SpectralState<double> st{};
+    cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
+    SpectralState<double> st = storage.legacy_view();
     size_t nbytes_state = p.ns * p.mnmax * sizeof(double);
     auto* h_cc = new double[p.ns * p.mnmax]();
     auto* h_ss = new double[p.ns * p.mnmax]();
@@ -74,30 +76,12 @@ int main() {
         }
     }
 
-    checkCuda(cudaMalloc(&st.d_rmncc, nbytes_state), "rmncc");
-    checkCuda(cudaMalloc(&st.d_rmnss, nbytes_state), "rmnss");
-    checkCuda(cudaMalloc(&st.d_zmnsc, nbytes_state), "zmnsc");
-    checkCuda(cudaMalloc(&st.d_zmncs, nbytes_state), "zmncs");
-    checkCuda(cudaMalloc(&st.d_lmnsc, nbytes_state), "lmnsc");
-    checkCuda(cudaMalloc(&st.d_lmncs, nbytes_state), "lmncs");
-    checkCuda(cudaMalloc(&st.d_v_rmncc, nbytes_state), "vcc");
-    checkCuda(cudaMalloc(&st.d_v_rmnss, nbytes_state), "vss");
-    checkCuda(cudaMalloc(&st.d_v_zmnsc, nbytes_state), "vzsc");
-    checkCuda(cudaMalloc(&st.d_v_zmncs, nbytes_state), "vzcs");
-    checkCuda(cudaMalloc(&st.d_v_lmnsc, nbytes_state), "vlsc");
-    checkCuda(cudaMalloc(&st.d_v_lmncs, nbytes_state), "vlcs");
     checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nbytes_state, cudaMemcpyHostToDevice), "cpy cc");
     checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nbytes_state, cudaMemcpyHostToDevice), "cpy ss");
     checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nbytes_state, cudaMemcpyHostToDevice), "cpy zsc");
     checkCuda(cudaMemcpy(st.d_zmncs, h_zcs, nbytes_state, cudaMemcpyHostToDevice), "cpy zcs");
     checkCuda(cudaMemcpy(st.d_lmnsc, h_lsc, nbytes_state, cudaMemcpyHostToDevice), "cpy lsc");
     checkCuda(cudaMemcpy(st.d_lmncs, h_lcs, nbytes_state, cudaMemcpyHostToDevice), "cpy lcs");
-    checkCuda(cudaMemset(st.d_v_rmncc, 0, nbytes_state), "vcc");
-    checkCuda(cudaMemset(st.d_v_rmnss, 0, nbytes_state), "vss");
-    checkCuda(cudaMemset(st.d_v_zmnsc, 0, nbytes_state), "vzsc");
-    checkCuda(cudaMemset(st.d_v_zmncs, 0, nbytes_state), "vzcs");
-    checkCuda(cudaMemset(st.d_v_lmnsc, 0, nbytes_state), "vlsc");
-    checkCuda(cudaMemset(st.d_v_lmncs, 0, nbytes_state), "vlcs");
 
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
     delete[] h_lsc; delete[] h_lcs;
@@ -108,7 +92,7 @@ int main() {
     MetricWorkspace<double> mw = metricCreate(p);
 
     // Run one iteration
-    inverseDFT(fp, st, p);
+    inverseDFT(fp, storage.physical_const(), p);
     computeGeometry(fp, p, rp, mw);
     computeForces(fp, p, rp, mw);
 
@@ -169,7 +153,9 @@ int main() {
     cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    forwardDFT(fp, d_fspec_gpu, p, cw_zero);
+    forwardDFT(fp, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
+                       d_fspec_gpu, p.ns, p.mnmax),
+               p, cw_zero);
     checkCuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost), "fspec d");
 
     printf("\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n");
@@ -236,11 +222,7 @@ int main() {
         CHECK(fs_finite, "spectral forces finite");
     }
 
-    // Cleanup
-    cudaFree(st.d_rmncc); cudaFree(st.d_rmnss); cudaFree(st.d_zmnsc);
-    cudaFree(st.d_zmncs); cudaFree(st.d_lmnsc); cudaFree(st.d_lmncs);
-    cudaFree(st.d_v_rmncc); cudaFree(st.d_v_rmnss); cudaFree(st.d_v_zmnsc);
-    cudaFree(st.d_v_zmncs); cudaFree(st.d_v_lmnsc);
+    // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
     fourierFree(fp); metricFree(mw); profilesFree(rp);
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
