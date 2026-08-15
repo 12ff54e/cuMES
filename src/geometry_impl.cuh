@@ -44,6 +44,57 @@ __device__ void* dynSharedBase() {
 
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
+#include "cumes/state/real_fields.cuh"
+
+// ---- typed real-space view bundles over the workspace structs ------------
+// Constructed at the operator boundary (real_fields.cuh's intended use); the
+// kernels then read the raw pointers back out of the bundles, keeping the flat
+// `surface*nZnT + zeta*ntheta + theta` arithmetic bit-for-bit identical.
+template <typename T>
+static cumes::GeometryParityViews<T> geometryParityViews(const FourierPlan<T>& fp,
+                                                         const GridParams<T>& p) {
+    auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
+    cumes::GeometryParityViews<T> v;
+    v.r_e = f(fp.d_r_e); v.z_e = f(fp.d_z_e); v.l_e = f(fp.d_l_e);
+    v.ru_e = f(fp.d_ru_e); v.zu_e = f(fp.d_zu_e); v.lu_e = f(fp.d_lu_e);
+    v.r_o = f(fp.d_r_o); v.z_o = f(fp.d_z_o); v.l_o = f(fp.d_l_o);
+    v.ru_o = f(fp.d_ru_o); v.zu_o = f(fp.d_zu_o); v.lu_o = f(fp.d_lu_o);
+    v.rv_e = f(fp.d_rv_e); v.zv_e = f(fp.d_zv_e); v.lv_e = f(fp.d_lv_e);
+    v.rv_o = f(fp.d_rv_o); v.zv_o = f(fp.d_zv_o); v.lv_o = f(fp.d_lv_o);
+    return v;
+}
+
+template <typename T>
+static cumes::BaseGeometryHalfViews<T> baseGeometryHalfViews(const MetricWorkspace<T>& mw,
+                                                             const GridParams<T>& p) {
+    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
+    cumes::BaseGeometryHalfViews<T> v;
+    v.r12 = h(mw.d_r12); v.ru12 = h(mw.d_ru12); v.zu12 = h(mw.d_zu12);
+    v.rs = h(mw.d_rs); v.zs = h(mw.d_zs); v.tau = h(mw.d_tau);
+    v.gsqrt = h(mw.d_gsqrt); v.guu = h(mw.d_guu); v.guv = h(mw.d_guv); v.gvv = h(mw.d_gvv);
+    return v;
+}
+
+template <typename T>
+static cumes::MagneticFieldViews<T> magneticFieldViews(const MetricWorkspace<T>& mw,
+                                                       const GridParams<T>& p) {
+    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
+    cumes::MagneticFieldViews<T> v;
+    v.bsupu = h(mw.d_bsupu); v.bsupv = h(mw.d_bsupv);
+    v.bsubu = h(mw.d_bsubu); v.bsubv = h(mw.d_bsubv);
+    v.total_pressure = h(mw.d_totalPressure);
+    return v;
+}
+
+template <typename T>
+static cumes::RadialProfileViews<T> radialProfileViews(const RadialProfiles<T>& rp) {
+    cumes::RadialProfileViews<T> v;
+    v.iota_F = rp.d_iota_F; v.phip_F = rp.d_phip_F; v.chi_F = rp.d_chi_F; v.sqrtS_F = rp.d_sqrtS_F;
+    v.iota_H = rp.d_iota_H; v.pres_H = rp.d_pres_H; v.phip_H = rp.d_phip_H;
+    v.dVds_H = rp.d_dVds_H; v.sqrtS_H = rp.d_sqrtS_H;
+    v.curr_H = rp.d_curr_H; v.chip_H = rp.d_chip_H;
+    return v;
+}
 
 template <typename T>
 MetricWorkspace<T> metricCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
@@ -96,35 +147,38 @@ void metricFree(MetricWorkspace<T>& mw) {
 // ncurr1FinalizeKernel (it needs surface integrals of the λ-only field).
 template <typename T>
 __global__ void geometryKernel(
-    // Full-grid geometry, even/odd parity: (nZnT, ns) col-major
-    const T* __restrict__ r_e,  const T* __restrict__ r_o,
-    const T* __restrict__ z_e,  const T* __restrict__ z_o,
-    const T* __restrict__ ru_e, const T* __restrict__ ru_o,
-    const T* __restrict__ zu_e, const T* __restrict__ zu_o,
-    const T* __restrict__ lu_e, const T* __restrict__ lu_o,
-    const T* __restrict__ lv_e, const T* __restrict__ lv_o,
-    const T* __restrict__ rv_e, const T* __restrict__ rv_o,
-    const T* __restrict__ zv_e, const T* __restrict__ zv_o,
-    // Full-grid sqrt(s) for parity mixing
-    const T* __restrict__ sqrtS_F,   // (ns,)
-    // Half-grid profiles
-    const T* __restrict__ sqrtS_H,   // (ns-1,)
-    const T* __restrict__ phip_H,    // (ns-1,)
-    const T* __restrict__ pres_H,    // (ns-1,)
-    const T* __restrict__ phip_F,    // (ns,) full grid (bsupv norm)
-    const T* __restrict__ chip_H,    // (ns-1,) dχ/ds (ncurr=0: fixed)
-    T lamscale, int ncurr,
-    int ns, int nZnT, T delta_s,
-    // half-grid outputs (all (ns-1, nZnT) col-major)
-    T* __restrict__ r12,   T* __restrict__ ru12,
-    T* __restrict__ zu12,  T* __restrict__ rs,
-    T* __restrict__ zs,    T* __restrict__ tau,
-    T* __restrict__ gsqrt, T* __restrict__ guu,
-    T* __restrict__ guv,   T* __restrict__ gvv,
-    T* __restrict__ bsupu, T* __restrict__ bsupv,
-    T* __restrict__ bsubu, T* __restrict__ bsubv,
-    T* __restrict__ totalPressure)
+    cumes::GeometryParityViews<T> full,
+    cumes::RadialProfileViews<T> radial,
+    cumes::BaseGeometryHalfViews<T> half,
+    cumes::MagneticFieldViews<T> field,
+    T lamscale, int ncurr, int ns, int nZnT, T delta_s)
 {
+    // Full-grid geometry, even/odd parity
+    const T* r_e = full.r_e.data(); const T* r_o = full.r_o.data();
+    const T* z_e = full.z_e.data(); const T* z_o = full.z_o.data();
+    const T* ru_e = full.ru_e.data(); const T* ru_o = full.ru_o.data();
+    const T* zu_e = full.zu_e.data(); const T* zu_o = full.zu_o.data();
+    const T* lu_e = full.lu_e.data(); const T* lu_o = full.lu_o.data();
+    const T* lv_e = full.lv_e.data(); const T* lv_o = full.lv_o.data();
+    const T* rv_e = full.rv_e.data(); const T* rv_o = full.rv_o.data();
+    const T* zv_e = full.zv_e.data(); const T* zv_o = full.zv_o.data();
+    // Radial profiles
+    const T* sqrtS_F = radial.sqrtS_F;
+    const T* sqrtS_H = radial.sqrtS_H;
+    const T* phip_H = radial.phip_H;
+    const T* pres_H = radial.pres_H;
+    const T* phip_F = radial.phip_F;
+    const T* chip_H = radial.chip_H;
+    // Half-grid outputs
+    T* r12 = half.r12.data(); T* ru12 = half.ru12.data();
+    T* zu12 = half.zu12.data(); T* rs = half.rs.data();
+    T* zs = half.zs.data(); T* tau = half.tau.data();
+    T* gsqrt = half.gsqrt.data(); T* guu = half.guu.data();
+    T* guv = half.guv.data(); T* gvv = half.gvv.data();
+    T* bsupu = field.bsupu.data(); T* bsupv = field.bsupv.data();
+    T* bsubu = field.bsubu.data(); T* bsubv = field.bsubv.data();
+    T* totalPressure = field.total_pressure.data();
+
     int jH = blockIdx.y;   // half-grid surface index (0 .. ns-2)
     int k   = threadIdx.x + blockIdx.x * blockDim.x;
     if (jH >= ns - 1 || k >= nZnT) return;
@@ -552,24 +606,9 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     geometryKernel<T><<<grid, block>>>(
-        fp.d_r_e, fp.d_r_o,
-        fp.d_z_e, fp.d_z_o,
-        fp.d_ru_e, fp.d_ru_o,
-        fp.d_zu_e, fp.d_zu_o,
-        fp.d_lu_e, fp.d_lu_o,
-        fp.d_lv_e, fp.d_lv_o,
-        fp.d_rv_e, fp.d_rv_o,
-        fp.d_zv_e, fp.d_zv_o,
-        rp.d_sqrtS_F,
-        rp.d_sqrtS_H, rp.d_phip_H, rp.d_pres_H,
-        rp.d_phip_F, rp.d_chip_H,
-        p.lamscale, p.ncurr,
-        p.ns, p.nZnT, rp.delta_s,
-        mw.d_r12, mw.d_ru12, mw.d_zu12, mw.d_rs, mw.d_zs, mw.d_tau,
-        mw.d_gsqrt, mw.d_guu, mw.d_guv, mw.d_gvv,
-        mw.d_bsupu, mw.d_bsupv,
-        mw.d_bsubu, mw.d_bsubv,
-        mw.d_totalPressure);
+        geometryParityViews(fp, p), radialProfileViews(rp),
+        baseGeometryHalfViews(mw, p), magneticFieldViews(mw, p),
+        p.lamscale, p.ncurr, p.ns, p.nZnT, rp.delta_s);
     cumes::check_cuda(cudaGetLastError(), "geometry kernel");
 
     if (p.ncurr == 1) {

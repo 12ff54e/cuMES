@@ -19,51 +19,119 @@
 #include <cstdio>
 
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/state/real_fields.cuh"
+
+// ---- typed real-space view bundles over the workspace structs ------------
+// (mirror of geometry_impl.cuh's helpers + the force-bundle variant).
+template <typename T>
+static cumes::GeometryParityViews<T> geometryParityViews(const FourierPlan<T>& fp,
+                                                         const GridParams<T>& p) {
+    auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
+    cumes::GeometryParityViews<T> v;
+    v.r_e = f(fp.d_r_e); v.z_e = f(fp.d_z_e); v.l_e = f(fp.d_l_e);
+    v.ru_e = f(fp.d_ru_e); v.zu_e = f(fp.d_zu_e); v.lu_e = f(fp.d_lu_e);
+    v.r_o = f(fp.d_r_o); v.z_o = f(fp.d_z_o); v.l_o = f(fp.d_l_o);
+    v.ru_o = f(fp.d_ru_o); v.zu_o = f(fp.d_zu_o); v.lu_o = f(fp.d_lu_o);
+    v.rv_e = f(fp.d_rv_e); v.zv_e = f(fp.d_zv_e); v.lv_e = f(fp.d_lv_e);
+    v.rv_o = f(fp.d_rv_o); v.zv_o = f(fp.d_zv_o); v.lv_o = f(fp.d_lv_o);
+    return v;
+}
+
+template <typename T>
+static cumes::BaseGeometryHalfViews<T> baseGeometryHalfViews(const MetricWorkspace<T>& mw,
+                                                             const GridParams<T>& p) {
+    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
+    cumes::BaseGeometryHalfViews<T> v;
+    v.r12 = h(mw.d_r12); v.ru12 = h(mw.d_ru12); v.zu12 = h(mw.d_zu12);
+    v.rs = h(mw.d_rs); v.zs = h(mw.d_zs); v.tau = h(mw.d_tau);
+    v.gsqrt = h(mw.d_gsqrt); v.guu = h(mw.d_guu); v.guv = h(mw.d_guv); v.gvv = h(mw.d_gvv);
+    return v;
+}
+
+template <typename T>
+static cumes::MagneticFieldViews<T> magneticFieldViews(const MetricWorkspace<T>& mw,
+                                                       const GridParams<T>& p) {
+    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
+    cumes::MagneticFieldViews<T> v;
+    v.bsupu = h(mw.d_bsupu); v.bsupv = h(mw.d_bsupv);
+    v.bsubu = h(mw.d_bsubu); v.bsubv = h(mw.d_bsubv);
+    v.total_pressure = h(mw.d_totalPressure);
+    return v;
+}
+
+template <typename T>
+static cumes::RadialProfileViews<T> radialProfileViews(const RadialProfiles<T>& rp) {
+    cumes::RadialProfileViews<T> v;
+    v.iota_F = rp.d_iota_F; v.phip_F = rp.d_phip_F; v.chi_F = rp.d_chi_F; v.sqrtS_F = rp.d_sqrtS_F;
+    v.iota_H = rp.d_iota_H; v.pres_H = rp.d_pres_H; v.phip_H = rp.d_phip_H;
+    v.dVds_H = rp.d_dVds_H; v.sqrtS_H = rp.d_sqrtS_H;
+    v.curr_H = rp.d_curr_H; v.chip_H = rp.d_chip_H;
+    return v;
+}
+
+template <typename T>
+static cumes::ForceParityViews<T> forceParityViews(const FourierPlan<T>& fp,
+                                                   const GridParams<T>& p) {
+    auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
+    cumes::ForceParityViews<T> v;
+    v.armn_e = f(fp.d_armn_e); v.armn_o = f(fp.d_armn_o);
+    v.azmn_e = f(fp.d_azmn_e); v.azmn_o = f(fp.d_azmn_o);
+    v.brmn_e = f(fp.d_brmn_e); v.brmn_o = f(fp.d_brmn_o);
+    v.bzmn_e = f(fp.d_bzmn_e); v.bzmn_o = f(fp.d_bzmn_o);
+    v.blmn_e = f(fp.d_blmn_e); v.blmn_o = f(fp.d_blmn_o);
+    v.clmn_e = f(fp.d_clmn_e); v.clmn_o = f(fp.d_clmn_o);
+    v.crmn_e = f(fp.d_crmn_e); v.crmn_o = f(fp.d_crmn_o);
+    v.czmn_e = f(fp.d_czmn_e); v.czmn_o = f(fp.d_czmn_o);
+    return v;
+}
 
 // One thread per (theta,zeta) point on one full-grid surface.
 template <typename T>
 __global__ void forcesKernel(
-    // Full-grid geometry at this surface (parity-split)
-    const T* __restrict__ r_e,   const T* __restrict__ r_o,
-    const T* __restrict__ z_e,   const T* __restrict__ z_o,
-    const T* __restrict__ ru_e,  const T* __restrict__ ru_o,
-    const T* __restrict__ zu_e,  const T* __restrict__ zu_o,
-    const T* __restrict__ rv_e,  const T* __restrict__ rv_o,
-    const T* __restrict__ zv_e,  const T* __restrict__ zv_o,
-    // Half-grid geometry
-    const T* __restrict__ r12,
-    const T* __restrict__ ru12,
-    const T* __restrict__ zu12,
-    const T* __restrict__ rs,
-    const T* __restrict__ zs,
-    const T* __restrict__ tau,
-    const T* __restrict__ gsqrt,
-    const T* __restrict__ guv,
-    const T* __restrict__ gvv,
-    const T* __restrict__ bsupu,
-    const T* __restrict__ bsupv,
-    const T* __restrict__ bsubu,
-    const T* __restrict__ bsubv,
-    const T* __restrict__ totalPressure,
-    // Full-grid lambda theta (decomposed, from the inverse DFT)
-    const T* __restrict__ lu_e,
-    const T* __restrict__ lu_o,
-    // Radial profiles for parity weighting
-    const T* __restrict__ sqrtS_F,   // sqrt(s) on full grid
-    const T* __restrict__ sqrtS_H,   // sqrt(s) on half grid
-    const T* __restrict__ phip_F,    // dPhi/ds on full grid (negative)
-    T lamscale,
-    int ns, int nZnT, T delta_s,
-    // Output force components (parity-split)
-    T* __restrict__ d_armn_e, T* __restrict__ d_armn_o,
-    T* __restrict__ d_azmn_e, T* __restrict__ d_azmn_o,
-    T* __restrict__ d_brmn_e, T* __restrict__ d_brmn_o,
-    T* __restrict__ d_bzmn_e, T* __restrict__ d_bzmn_o,
-    T* __restrict__ d_crmn_e, T* __restrict__ d_crmn_o,
-    T* __restrict__ d_czmn_e, T* __restrict__ d_czmn_o,
-    T* __restrict__ d_blmn_e, T* __restrict__ d_blmn_o,
-    T* __restrict__ d_clmn_e, T* __restrict__ d_clmn_o)
+    cumes::GeometryParityViews<T> full,
+    cumes::BaseGeometryHalfViews<T> base,
+    cumes::MagneticFieldViews<T> field,
+    cumes::RadialProfileViews<T> radial,
+    cumes::ForceParityViews<T> force,
+    T lamscale, int ns, int nZnT, T delta_s)
 {
+    const T* r_e = full.r_e.data(); const T* r_o = full.r_o.data();
+    const T* z_e = full.z_e.data(); const T* z_o = full.z_o.data();
+    const T* ru_e = full.ru_e.data(); const T* ru_o = full.ru_o.data();
+    const T* zu_e = full.zu_e.data(); const T* zu_o = full.zu_o.data();
+    const T* rv_e = full.rv_e.data(); const T* rv_o = full.rv_o.data();
+    const T* zv_e = full.zv_e.data(); const T* zv_o = full.zv_o.data();
+    const T* lu_e = full.lu_e.data(); const T* lu_o = full.lu_o.data();
+
+    const T* r12 = base.r12.data();
+    const T* ru12 = base.ru12.data();
+    const T* zu12 = base.zu12.data();
+    const T* rs = base.rs.data();
+    const T* zs = base.zs.data();
+    const T* tau = base.tau.data();
+    const T* gsqrt = base.gsqrt.data();
+    const T* guv = base.guv.data();
+    const T* gvv = base.gvv.data();
+
+    const T* bsupu = field.bsupu.data();
+    const T* bsupv = field.bsupv.data();
+    const T* bsubu = field.bsubu.data();
+    const T* bsubv = field.bsubv.data();
+    const T* totalPressure = field.total_pressure.data();
+
+    const T* sqrtS_F = radial.sqrtS_F;
+    const T* sqrtS_H = radial.sqrtS_H;
+    const T* phip_F = radial.phip_F;
+
+    T* d_armn_e = force.armn_e.data(); T* d_armn_o = force.armn_o.data();
+    T* d_azmn_e = force.azmn_e.data(); T* d_azmn_o = force.azmn_o.data();
+    T* d_brmn_e = force.brmn_e.data(); T* d_brmn_o = force.brmn_o.data();
+    T* d_bzmn_e = force.bzmn_e.data(); T* d_bzmn_o = force.bzmn_o.data();
+    T* d_crmn_e = force.crmn_e.data(); T* d_crmn_o = force.crmn_o.data();
+    T* d_czmn_e = force.czmn_e.data(); T* d_czmn_o = force.czmn_o.data();
+    T* d_blmn_e = force.blmn_e.data(); T* d_blmn_o = force.blmn_o.data();
+    T* d_clmn_e = force.clmn_e.data(); T* d_clmn_o = force.clmn_o.data();
+
     int j = blockIdx.y;  // full-grid surface
     int k = threadIdx.x + blockIdx.x * blockDim.x;
     if (j >= ns || k >= nZnT) return;
@@ -255,28 +323,10 @@ void computeForces(const FourierPlan<T>& fp, const GridParams<T>& p,
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     forcesKernel<T><<<grid, block>>>(
-        fp.d_r_e, fp.d_r_o,
-        fp.d_z_e, fp.d_z_o,
-        fp.d_ru_e, fp.d_ru_o,
-        fp.d_zu_e, fp.d_zu_o,
-        fp.d_rv_e, fp.d_rv_o,
-        fp.d_zv_e, fp.d_zv_o,
-        mw.d_r12, mw.d_ru12, mw.d_zu12, mw.d_rs, mw.d_zs, mw.d_tau,
-        mw.d_gsqrt, mw.d_guv, mw.d_gvv,
-        mw.d_bsupu, mw.d_bsupv,
-        mw.d_bsubu, mw.d_bsubv,
-        mw.d_totalPressure,
-        fp.d_lu_e, fp.d_lu_o,
-        rp.d_sqrtS_F, rp.d_sqrtS_H, rp.d_phip_F, p.lamscale,
-        p.ns, p.nZnT, rp.delta_s,
-        fp.d_armn_e, fp.d_armn_o,
-        fp.d_azmn_e, fp.d_azmn_o,
-        fp.d_brmn_e, fp.d_brmn_o,
-        fp.d_bzmn_e, fp.d_bzmn_o,
-        fp.d_crmn_e, fp.d_crmn_o,
-        fp.d_czmn_e, fp.d_czmn_o,
-        fp.d_blmn_e, fp.d_blmn_o,
-        fp.d_clmn_e, fp.d_clmn_o);
+        geometryParityViews(fp, p), baseGeometryHalfViews(mw, p),
+        magneticFieldViews(mw, p), radialProfileViews(rp),
+        forceParityViews(fp, p),
+        p.lamscale, p.ns, p.nZnT, rp.delta_s);
     cumes::check_cuda(cudaGetLastError(), "forces kernel");
 }
 
