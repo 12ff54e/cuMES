@@ -21,12 +21,7 @@
 #include <string>
 #include <unistd.h>   // getpid, rename
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 template <typename T>
 bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
@@ -152,7 +147,7 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
     auto* dbuf = new double[n];
     const size_t nb = n * sizeof(T);
     auto writeFam = [&](const T* d, int varid) -> int {
-        checkCuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), "cpy fam");
+        cumes::check_cuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), "cpy fam");
         for (size_t i = 0; i < n; ++i) { dbuf[i] = (double)buf[i]; }
         for (int m = 0; m < p.mnmax; ++m) {
             const size_t start[2] = {0, (size_t)m};

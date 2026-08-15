@@ -19,6 +19,7 @@
 #include "forces.cuh"
 #include "profiles.cuh"
 #include "solver.cuh"
+#include "cumes/state/spectral_storage.hpp"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -46,7 +47,8 @@ int main() {
     // main.cu initState): m=0 linear in s between axis and boundary, m>0 with
     // a s^(m/2) radial envelope. Uses the folded boundary from the JSON.
     InputParams ip = initInputParams();
-    SpectralState<double> st{};
+    cumes::SpectralStorage<double> storage(ns, p.mnmax);
+    SpectralState<double> st = storage.legacy_view();
     size_t nb = (size_t)ns * p.mnmax * sizeof(double);
     auto* h_rmncc = new double[ns * p.mnmax]();
     auto* h_zmnsc = new double[ns * p.mnmax]();
@@ -80,21 +82,12 @@ int main() {
         }
     }
 
-    cc(cudaMalloc(&st.d_rmncc, nb), "rmncc"); cc(cudaMalloc(&st.d_zmnsc, nb), "zmnsc");
-    cc(cudaMalloc(&st.d_lmnsc, nb), "lmnsc"); cc(cudaMalloc(&st.d_lmncs, nb), "lmncs");
-    cc(cudaMalloc(&st.d_rmnss, nb), "rmnss"); cc(cudaMalloc(&st.d_zmncs, nb), "zmncs");
-    cc(cudaMalloc(&st.d_v_rmncc, nb), "vcc"); cc(cudaMalloc(&st.d_v_zmnsc, nb), "vzsc");
-    cc(cudaMalloc(&st.d_v_lmnsc, nb), "vlsc"); cc(cudaMalloc(&st.d_v_lmncs, nb), "vlcs");
-    cc(cudaMalloc(&st.d_v_rmnss, nb), "vss"); cc(cudaMalloc(&st.d_v_zmncs, nb), "vzcs");
     cc(cudaMemcpy(st.d_rmncc, h_rmncc, nb, cudaMemcpyHostToDevice), "cpy rmncc");
     cc(cudaMemcpy(st.d_zmnsc, h_zmnsc, nb, cudaMemcpyHostToDevice), "cpy zmnsc");
     cc(cudaMemcpy(st.d_lmnsc, h_lmnsc, nb, cudaMemcpyHostToDevice), "cpy lmnsc");
     cc(cudaMemcpy(st.d_rmnss, h_rmnss, nb, cudaMemcpyHostToDevice), "cpy rmnss");
     cc(cudaMemcpy(st.d_zmncs, h_zmncs, nb, cudaMemcpyHostToDevice), "cpy zmncs");
     cc(cudaMemcpy(st.d_lmncs, h_lmncs, nb, cudaMemcpyHostToDevice), "cpy lmncs");
-    cc(cudaMemset(st.d_v_rmncc, 0, nb), "vcc"); cc(cudaMemset(st.d_v_zmnsc, 0, nb), "vzsc");
-    cc(cudaMemset(st.d_v_lmnsc, 0, nb), "vlsc"); cc(cudaMemset(st.d_v_lmncs, 0, nb), "vlcs");
-    cc(cudaMemset(st.d_v_rmnss, 0, nb), "vss"); cc(cudaMemset(st.d_v_zmncs, 0, nb), "vzcs");
     delete[] h_rmncc; delete[] h_zmnsc; delete[] h_lmnsc;
     delete[] h_rmnss; delete[] h_zmncs; delete[] h_lmncs;
 
@@ -104,7 +97,7 @@ int main() {
     MetricWorkspace<double> mw = metricCreate(p);
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
-    SolverResult<double> res = solverRun(st, p, rp, fp, mw);
+    SolverResult<double> res = solverRun(storage, p, rp, fp, mw);
     printf("solver: converged=%d iterations=%d fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
            res.converged, res.iterations, res.fsqr, res.fsqz, res.fsql);
     CHECK(res.converged, "converged equilibrium reached");
@@ -161,10 +154,6 @@ int main() {
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
     fourierFree(fp); metricFree(mw); profilesFree(rp);
-    cudaFree(st.d_rmncc); cudaFree(st.d_zmnsc); cudaFree(st.d_lmnsc);
-    cudaFree(st.d_rmnss); cudaFree(st.d_zmncs); cudaFree(st.d_lmncs);
-    cudaFree(st.d_v_rmncc); cudaFree(st.d_v_zmnsc); cudaFree(st.d_v_lmnsc);
-    cudaFree(st.d_v_lmncs); cudaFree(st.d_v_rmnss); cudaFree(st.d_v_zmncs);
     delete[] h_f;
 
     if (failures == 0) { printf("test_force_verify: ALL PASS\n"); return 0; }

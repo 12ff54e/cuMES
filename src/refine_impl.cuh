@@ -24,9 +24,7 @@
 
 #include "refine.cuh"
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) { fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err)); exit(EXIT_FAILURE); }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 // vmecpp decomposeInto scalxc for odd-m: 1/max(sqrt(s), sqrt(1/(ns-1))).
 // The max() clamp makes this identical to cuMES's sqrtS_F for every j
@@ -91,8 +89,9 @@ __global__ void interpolateStateKernel(
 }
 
 template <typename T>
-void interpolateState(SpectralState<T>& st_new, const GridParams<T>& p_new,
-                      const SpectralState<T>& st_old, const GridParams<T>& p_old) {
+cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
+                                           const cumes::SpectralStorage<T>& st_old,
+                                           const GridParams<T>& p_old) {
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         fprintf(stderr, "interpolateState: need ns_new > ns_old >= 3 and equal "
                 "mnmax (ns_old=%d ns_new=%d mnmax %d/%d)\n",
@@ -100,37 +99,22 @@ void interpolateState(SpectralState<T>& st_new, const GridParams<T>& p_new,
         exit(EXIT_FAILURE);
     }
 
-    size_t nb = (size_t)p_new.ns * p_new.mnmax * sizeof(T);
-    checkCuda(cudaMalloc(&st_new.d_rmncc, nb), "cc");
-    checkCuda(cudaMalloc(&st_new.d_rmnss, nb), "ss");
-    checkCuda(cudaMalloc(&st_new.d_zmnsc, nb), "zsc");
-    checkCuda(cudaMalloc(&st_new.d_zmncs, nb), "zcs");
-    checkCuda(cudaMalloc(&st_new.d_lmnsc, nb), "lsc");
-    checkCuda(cudaMalloc(&st_new.d_lmncs, nb), "lcs");
-    checkCuda(cudaMalloc(&st_new.d_v_rmncc, nb), "vcc");
-    checkCuda(cudaMalloc(&st_new.d_v_rmnss, nb), "vss");
-    checkCuda(cudaMalloc(&st_new.d_v_zmnsc, nb), "vzsc");
-    checkCuda(cudaMalloc(&st_new.d_v_zmncs, nb), "vzcs");
-    checkCuda(cudaMalloc(&st_new.d_v_lmnsc, nb), "vlsc");
-    checkCuda(cudaMalloc(&st_new.d_v_lmncs, nb), "vlcs");
-
-    // Velocities are never interpolated (vmecpp zeroes them per stage).
-    checkCuda(cudaMemset(st_new.d_v_rmncc, 0, nb), "vcc");
-    checkCuda(cudaMemset(st_new.d_v_rmnss, 0, nb), "vss");
-    checkCuda(cudaMemset(st_new.d_v_zmnsc, 0, nb), "vzsc");
-    checkCuda(cudaMemset(st_new.d_v_zmncs, 0, nb), "vzcs");
-    checkCuda(cudaMemset(st_new.d_v_lmnsc, 0, nb), "vlsc");
-    checkCuda(cudaMemset(st_new.d_v_lmncs, 0, nb), "vlcs");
+    // New grid's contiguous slabs; the ctor zeroes both (velocities are never
+    // interpolated — vmecpp zeroes them per stage).
+    cumes::SpectralStorage<T> st_new(p_new.ns, p_new.mnmax);
+    SpectralState<T> v_new = st_new.legacy_view();
+    SpectralState<T> v_old = st_old.legacy_view();
 
     dim3 bd(256), gd((p_new.ns * p_new.mnmax + 255) / 256);
     interpolateStateKernel<T><<<gd, bd>>>(
-        st_new.d_rmncc, st_new.d_zmnsc, st_new.d_lmnsc,
-        st_new.d_rmnss, st_new.d_zmncs, st_new.d_lmncs,
-        st_old.d_rmncc, st_old.d_zmnsc, st_old.d_lmnsc,
-        st_old.d_rmnss, st_old.d_zmncs, st_old.d_lmncs,
+        v_new.d_rmncc, v_new.d_zmnsc, v_new.d_lmnsc,
+        v_new.d_rmnss, v_new.d_zmncs, v_new.d_lmncs,
+        v_old.d_rmncc, v_old.d_zmnsc, v_old.d_lmnsc,
+        v_old.d_rmnss, v_old.d_zmncs, v_old.d_lmncs,
         p_new.ns, p_old.ns, p_new.mnmax, p_new.ntor + 1);
-    checkCuda(cudaGetLastError(), "interpolateState");
+    cumes::check_cuda(cudaGetLastError(), "interpolateState");
     printf("  interpolateState: ns=%d -> ns=%d (linear in s, scalxc-scaled odd-m)\n",
            p_old.ns, p_new.ns);
+    return st_new;
 }
 

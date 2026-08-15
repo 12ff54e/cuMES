@@ -103,16 +103,24 @@ cumes_link_output_backends(cumes_io)
 add_library(cumes_test_support INTERFACE)
 target_include_directories(cumes_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tests/support)
 
+# ---- CUDA runtime RAII (host-only CUDA runtime API) ------------------------
+# DeviceBuffer/PinnedBuffer/Stream/Event/DeviceContext and the centralized
+# check_cuda/check_cufft error boundary. No device code; links cudart+cufft.
+add_library(cumes_cuda_runtime STATIC src/cumes/runtime/device_context.cpp)
+target_include_directories(cumes_cuda_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(cumes_cuda_runtime PUBLIC CUDA::cudart CUDA::cufft)
+cumes_enable_warnings(cumes_cuda_runtime)
+
 # ---- CUDA operator libraries (one scalar type each) ------------------------
 
 add_library(cumes_cuda_double STATIC ${CUMES_CUDA_DOUBLE_SOURCES})
 target_include_directories(cumes_cuda_double PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(cumes_cuda_double PUBLIC CUDA::cufft)
+target_link_libraries(cumes_cuda_double PUBLIC CUDA::cufft cumes_cuda_runtime)
 cumes_enable_warnings(cumes_cuda_double)
 
 add_library(cumes_cuda_float STATIC ${CUMES_CUDA_FLOAT_SOURCES})
 target_include_directories(cumes_cuda_float PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(cumes_cuda_float PUBLIC CUDA::cufft)
+target_link_libraries(cumes_cuda_float PUBLIC CUDA::cufft cumes_cuda_runtime)
 cumes_enable_warnings(cumes_cuda_float)
 
 # ---- CLI executable --------------------------------------------------------
@@ -173,6 +181,11 @@ target_include_directories(test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_link_libraries(test_checkpoint PRIVATE cumes_io_host)
 cumes_enable_warnings(test_checkpoint)
 
+add_executable(test_runtime tests/test_runtime.cu)
+target_include_directories(test_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_runtime PRIVATE cumes_test_support cumes_cuda_runtime)
+cumes_enable_warnings(test_runtime)
+
 # ---- ctest registration ----------------------------------------------------
 enable_testing()
 cumes_add_test(test_fourier          unit;fourier)
@@ -180,6 +193,7 @@ cumes_add_test(test_input_json       unit;input)
 cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_checkpoint       unit;io)
+cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
@@ -192,4 +206,4 @@ cumes_add_test(test_force_verify     unit;forces)
 # (test_input_json is host-only and compute-sanitizer refuses to profile it).
 cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
-    test_regression_kernels)
+    test_regression_kernels test_runtime)

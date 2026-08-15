@@ -24,9 +24,9 @@
 
 static constexpr int kPreconInterval = 25;  // update preconditioner every N iters
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) { fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err)); exit(EXIT_FAILURE); }
-}
+#include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_buffer.cuh"
+#include "cumes/runtime/pinned_buffer.hpp"
 
 #ifdef DUMP_CUMES_VERIFY
 static bool dumpEnabled();  // defined below with the dump machinery
@@ -69,21 +69,21 @@ static void computeForceNorms(SpectralState<T>& st, const FourierPlan<T>& fp,
       rzNormKernel<T><<<g1, b1>>>(st.d_rmncc, st.d_zmnsc, st.d_rmnss, st.d_zmncs,
                                   fp.basis.d_xm, fp.basis.d_xn,
                                   p.ns, p.mnmax, d_rzsum);
-      checkCuda(cudaGetLastError(), "rzNorm");
-      checkCuda(cudaDeviceSynchronize(), "rzNorm sync"); }
+      cumes::check_cuda(cudaGetLastError(), "rzNorm");
+      cumes::check_cuda(cudaDeviceSynchronize(), "rzNorm sync"); }
 
     int nH = p.ns - 1;
     T* h_psum = new T[4 * nH];
     T* h_dVds = new T[nH];
     T* h_pres = new T[nH];
     T h_rz = T(0.0);
-    checkCuda(cudaMemcpy(h_psum, d_psum, 4 * nH * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(h_psum, d_psum, 4 * nH * sizeof(T),
                          cudaMemcpyDeviceToHost), "psum cpy");
-    checkCuda(cudaMemcpy(h_dVds, rp.d_dVds_H, nH * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(h_dVds, rp.d_dVds_H, nH * sizeof(T),
                          cudaMemcpyDeviceToHost), "dVds cpy");
-    checkCuda(cudaMemcpy(h_pres, rp.d_pres_H, nH * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(h_pres, rp.d_pres_H, nH * sizeof(T),
                          cudaMemcpyDeviceToHost), "pres cpy");
-    checkCuda(cudaMemcpy(&h_rz, d_rzsum, sizeof(T),
+    cumes::check_cuda(cudaMemcpy(&h_rz, d_rzsum, sizeof(T),
                          cudaMemcpyDeviceToHost), "rz cpy");
 
     T sRZ = T(0.0), sL = T(0.0), sMag = T(0.0), eTherm = T(0.0), vol = T(0.0);
@@ -444,14 +444,15 @@ static void dumpDeviceArray(const char* filename, const T* d_data, size_t nelem)
 #endif
 
 template <typename T>
-SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
+SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
                           MetricWorkspace<T>& mw) {
+    // The legacy 12-pointer view over the contiguous slabs: every kernel and
+    // consumer below keeps its unchanged pointer arithmetic and layout.
+    SpectralState<T> st = storage.legacy_view();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
-    size_t nb = 6*p.ns*p.mnmax*sizeof(T);
-    T *d_f_spec, *d_sq;
-    checkCuda(cudaMalloc(&d_f_spec,nb),"malloc f");
-    checkCuda(cudaMalloc(&d_sq,3*sizeof(T)),"malloc sq");
+    cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
+    cumes::DeviceBuffer<T> d_sq(3);
     PreconWorkspace<T> pw = preconCreate(p);
     ConstraintWorkspace<T> cw = constraintCreate(p);
 
@@ -498,58 +499,33 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
     // vmecpp residual normalization factors (computeForceNorms), refreshed on
     // the same cadence as the preconditioner (every kPreconInterval passes).
     T fNormRZ = T(0.0), fNormL = T(0.0), fNorm1 = T(0.0);
-    T *d_psum, *d_rzsum;
-    checkCuda(cudaMalloc(&d_psum, 4 * (size_t)(p.ns - 1) * sizeof(T)), "malloc psum");
-    checkCuda(cudaMalloc(&d_rzsum, sizeof(T)), "malloc rzsum");
+    cumes::DeviceBuffer<T> d_psum(4 * (size_t)(p.ns - 1));
+    cumes::DeviceBuffer<T> d_rzsum(1);
 
     // Jacobian-validity stats scratch (computeJacobianStats): device 4-vec +
     // pinned staging. Allocated once, checked every iteration after
     // computeGeometry so a degenerate surface fails via the BAD_JACOBIAN
     // restore path before the forces/constraint/precon consume the geometry.
-    T *d_jac_stats, *h_jac_stats;
-    checkCuda(cudaMalloc(&d_jac_stats, 4 * sizeof(T)), "malloc jac");
-    checkCuda(cudaMallocHost(&h_jac_stats, 4 * sizeof(T)), "pin jac");
+    cumes::DeviceBuffer<T> d_jac_stats(4);
+    cumes::PinnedBuffer<T> h_jac_stats(4);
 
     // Pinned residual staging (async D2H copies avoid the pageable staging
     // of synchronous cudaMemcpy on the default stream).
-    T* h_sq_i_pin; T* h_sq_pin;
-    checkCuda(cudaMallocHost(&h_sq_i_pin, 3 * sizeof(T)), "pin sqi");
-    checkCuda(cudaMallocHost(&h_sq_pin, 3 * sizeof(T)), "pin sq");
+    cumes::PinnedBuffer<T> h_sq_i_pin(3);
+    cumes::PinnedBuffer<T> h_sq_pin(3);
 
-    // State rollback: backup arrays for restoring spectral state on restart.
-    size_t nb_one = (size_t)p.ns * (size_t)p.mnmax * sizeof(T);
-    T *d_bk_rmncc, *d_bk_zmnsc, *d_bk_lmnsc, *d_bk_rmnss, *d_bk_zmncs, *d_bk_lmncs;
-    checkCuda(cudaMalloc(&d_bk_rmncc, nb_one), "bk cc");
-    checkCuda(cudaMalloc(&d_bk_zmnsc, nb_one), "bk zsc");
-    checkCuda(cudaMalloc(&d_bk_lmnsc, nb_one), "bk lsc");
-    checkCuda(cudaMalloc(&d_bk_rmnss, nb_one), "bk ss");
-    checkCuda(cudaMalloc(&d_bk_zmncs, nb_one), "bk zcs");
-    checkCuda(cudaMalloc(&d_bk_lmncs, nb_one), "bk lcs");
+    // State rollback: one contiguous state-only checkpoint slab (6*mnmax*ns),
+    // replacing the six separate d_bk_* arrays. The slab order matches the six
+    // old families, so backup/restore become single copies.
+    cumes::DeviceBuffer<T> checkpoint(6 * (size_t)p.ns * p.mnmax);
 
-    // Helper: copy current spectral state to backup (GPU device-to-device)
-    auto backupState = [&]() {
-        cudaMemcpy(d_bk_rmncc, st.d_rmncc, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_bk_zmnsc, st.d_zmnsc, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_bk_lmnsc, st.d_lmnsc, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_bk_rmnss, st.d_rmnss, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_bk_zmncs, st.d_zmncs, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_bk_lmncs, st.d_lmncs, nb_one, cudaMemcpyDeviceToDevice);
-    };
+    // Helper: copy current spectral state to backup (one device-to-device copy)
+    auto backupState = [&]() { checkpoint.copy_from(storage.state_buffer()); };
 
     // Helper: restore spectral state from backup + zero velocities
     auto restoreState = [&]() {
-        cudaMemcpy(st.d_rmncc, d_bk_rmncc, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(st.d_zmnsc, d_bk_zmnsc, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(st.d_lmnsc, d_bk_lmnsc, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(st.d_rmnss, d_bk_rmnss, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(st.d_zmncs, d_bk_zmncs, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(st.d_lmncs, d_bk_lmncs, nb_one, cudaMemcpyDeviceToDevice);
-        cudaMemset(st.d_v_rmncc, 0, nb_one);
-        cudaMemset(st.d_v_zmnsc, 0, nb_one);
-        cudaMemset(st.d_v_lmnsc, 0, nb_one);
-        cudaMemset(st.d_v_rmnss, 0, nb_one);
-        cudaMemset(st.d_v_zmncs, 0, nb_one);
-        cudaMemset(st.d_v_lmncs, 0, nb_one);
+        storage.state_buffer().copy_from(checkpoint);
+        storage.velocity_buffer().zero();
     };
 
     // Take initial backup
@@ -575,7 +551,7 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         // grabs all ntor+1 values instead of ntor+1 individual 1-double
         // copies (each of which synchronized the device).
         T h_ax[64];   // ntor+1 <= 64 for the hardcoded inputs
-        checkCuda(cudaMemcpy2D(h_ax, sizeof(T), st.d_rmncc,
+        cumes::check_cuda(cudaMemcpy2D(h_ax, sizeof(T), st.d_rmncc,
                                (size_t)p.ns * sizeof(T),
                                sizeof(T), p.ntor + 1,
                                cudaMemcpyDeviceToHost), "cpy Rax");
@@ -605,8 +581,8 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         inverseDFT(fp, st, p, false);
         auto* h_re = new T[p.nZnT * p.ns];
         auto* h_ro = new T[p.nZnT * p.ns];
-        checkCuda(cudaMemcpy(h_re, fp.d_r_e, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "diag re");
-        checkCuda(cudaMemcpy(h_ro, fp.d_r_o, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "diag ro");
+        cumes::check_cuda(cudaMemcpy(h_re, fp.d_r_e, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "diag re");
+        cumes::check_cuda(cudaMemcpy(h_ro, fp.d_r_o, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "diag ro");
         // Check surface j=ns-1 (LCFS): r_e should be rbc[0]*cos(0)=3.999, r_o should be sum of odd m
         int jB = p.ns - 1;
         double re_lcfs = h_re[0 + jB * p.nZnT];  // theta=0
@@ -626,7 +602,7 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         printf("%5d | %11.3e %11.3e %11.3e | %8.2e", it2,
                (double)fsqr_v, (double)fsqz_v, (double)fsql_v, (double)delt_v);
         T h_rmncc_axis = axisRAtZeta0(), h_rmncc_bnd;
-        checkCuda(cudaMemcpy(&h_rmncc_bnd, st.d_rmncc + (p.ns - 1), sizeof(T),
+        cumes::check_cuda(cudaMemcpy(&h_rmncc_bnd, st.d_rmncc + (p.ns - 1), sizeof(T),
                              cudaMemcpyDeviceToHost), "cpy Rbnd");
         printf(" | Rax=%.4f Rbnd=%.4f\n", (double)h_rmncc_axis, (double)h_rmncc_bnd);
     };
@@ -672,7 +648,7 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         extrapolateAxisKernel<T><<<(p.mnmax + 31) / 32, 32>>>(
             st.d_rmncc, st.d_zmnsc, st.d_lmnsc, st.d_rmnss, st.d_zmncs,
             st.d_lmncs, p.ns, p.mnmax, p.ntor + 1);
-        checkCuda(cudaGetLastError(), "extrapAxis");
+        cumes::check_cuda(cudaGetLastError(), "extrapAxis");
 
         cudaEventRecord(ev0);
         inverseDFT(fp,st,p,false);
@@ -682,7 +658,7 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
 
         if (iter == 0 && dumpEnabled()) {
             auto* h_test = new T[p.nZnT * p.ns];
-            checkCuda(cudaMemcpy(h_test, fp.d_r_e, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "loop test");
+            cumes::check_cuda(cudaMemcpy(h_test, fp.d_r_e, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "loop test");
             int jB = p.ns - 1;
             printf("  [loop diag] LCFS theta=0: r_e=%.4f (expect ~3.93)\n", (double)h_test[0 + jB * p.nZnT]);
             // Also write to file for comparison
@@ -763,9 +739,9 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         // scale: any non-finite entry, a fully-degenerate grid (max == 0),
         // or a surface whose |√g| is < 1e-12 of the maximum is treated as an
         // invalid Jacobian — same recovery as the non-finite-residual path.
-        computeJacobianStats(p, mw, d_jac_stats, h_jac_stats);
+        computeJacobianStats(p, mw, d_jac_stats.data(), h_jac_stats.data());
         {
-            // Oriented statistics: h_jac_stats[0] = min(signJ·√g),
+            // Oriented statistics: h_jac_stats.data()[0] = min(signJ·√g),
             // [1] = max |√g|, [2] = nonfinite count, [3] = min index.
             // signJ = -1 and √g is negative on a valid surface, so
             // signJ·√g = |√g| > 0 there. A NEGATIVE oriented min means the
@@ -774,8 +750,8 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
             // index. A positive oriented min that is tiny (< 1e-12 of the
             // scale) is only invalid away from the axis-adjacent singularity
             // (gminIdx >= nZnT).
-            T gmin = h_jac_stats[0], gmax = h_jac_stats[1], gbad = h_jac_stats[2];
-            int gminIdx = (int)h_jac_stats[3];
+            T gmin = h_jac_stats.data()[0], gmax = h_jac_stats.data()[1], gbad = h_jac_stats.data()[2];
+            int gminIdx = (int)h_jac_stats.data()[3];
             if (gbad > T(0.0) || gmax <= T(0.0) || gmin <= T(0.0) ||
                 (gmin < T(1e-12) * gmax && gminIdx >= p.nZnT)) {
                 recordPass(1, 0, 0, 0, 0, 0, 0, delt, 0, 0, 0, 0);
@@ -840,8 +816,8 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
 
             // vmecpp computeForceNorms (same cadence): residual normalization
             // factors feeding fsqr/fsqz/fsql and fsqr1/fsqz1/fsql1.
-            computeForceNorms(st, fp, p, rp, mw, d_psum, d_rzsum, iter2,
-                              fNormRZ, fNormL, fNorm1);
+            computeForceNorms(st, fp, p, rp, mw, d_psum.data(), d_rzsum.data(),
+                              iter2, fNormRZ, fNormL, fNorm1);
 
 #ifdef DUMP_CUMES_VERIFY
             if (iter == 0) {
@@ -996,7 +972,7 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
 #endif
 
         cudaEventRecord(ev0);
-        forwardDFT(fp,d_f_spec,p,cw);
+        forwardDFT(fp,d_f_spec.data(),p,cw);
         cudaEventRecord(ev1);
         cudaEventSynchronize(ev1);
         { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_fwd_ms += ms; }
@@ -1006,10 +982,10 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         // m>0 entries, so the boundary stays rigid and only the lambda
         // force is present at the LCFS (free gauge, evolved by descent).
         { dim3 bs(256), gs((p.ns*p.mnmax+255)/256);
-          scalxcApplyKernel<T><<<gs,bs>>>(d_f_spec, rp.d_sqrtS_F, fp.basis.d_xm,
+          scalxcApplyKernel<T><<<gs,bs>>>(d_f_spec.data(), rp.d_sqrtS_F, fp.basis.d_xm,
                                           p.ns, p.mnmax,
                                           std::sqrt(T(1.0) / T(p.ns - 1)));
-          checkCuda(cudaGetLastError(), "scalxc"); }
+          cumes::check_cuda(cudaGetLastError(), "scalxc"); }
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == kDumpIter) {
@@ -1021,12 +997,12 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
             char fn[128];
             snprintf(fn, sizeof fn, "dump/cuMES/step_H_f_spec_iter_%d.bin",
                      iter == 0 ? 1 : iter2);
-            dumpDeviceArray(fn, d_f_spec, n_fspec);
+            dumpDeviceArray(fn, d_f_spec.data(), n_fspec);
         }
         if (iter2 >= kE2Start && iter2 < kE2Start + 40) {
             char fn[128];
             snprintf(fn, sizeof fn, "dump/cuMES/fspec_invariant_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, d_f_spec, (size_t)6 * p.mnmax * p.ns);
+            dumpDeviceArray(fn, d_f_spec.data(), (size_t)6 * p.mnmax * p.ns);
         }
 #endif
 
@@ -1040,9 +1016,9 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         // pass's invariant Z-residual dropped below 1e-6.
         { dim3 b1(256), g1((p.ns + 255) / 256);
           int zeroZ = (iter2 < 2) || (fsqz_prev < T(1.0e-6));
-          m1ConstraintKernel<T><<<g1, b1>>>(d_f_spec, p.ns, p.mnmax, p.ntor,
+          m1ConstraintKernel<T><<<g1, b1>>>(d_f_spec.data(), p.ns, p.mnmax, p.ntor,
                                             zeroZ);
-          checkCuda(cudaGetLastError(), "m1Constraint"); }
+          cumes::check_cuda(cudaGetLastError(), "m1Constraint"); }
 
         // ---- Invariant (unpreconditioned) residuals ----
         // Used for the stopping criterion and the BAD_PROGRESS threshold,
@@ -1051,15 +1027,15 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         // garbage geometry) can never be mistaken for convergence.
 #ifdef DUMP_CUMES_VERIFY
         if (iter == kMaxIterEff - 1) {
-            dumpDeviceArray("dump/cuMES/step_final_f_spec.bin", d_f_spec,
+            dumpDeviceArray("dump/cuMES/step_final_f_spec.bin", d_f_spec.data(),
                             (size_t)6 * p.mnmax * p.ns);
         }
 #endif
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(d_f_spec,p.ns,p.mnmax,d_sq); }
-        checkCuda(cudaMemcpyAsync(h_sq_i_pin, d_sq, 3 * sizeof(T),
+        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(d_f_spec.data(),p.ns,p.mnmax,d_sq.data()); }
+        cumes::check_cuda(cudaMemcpyAsync(h_sq_i_pin.data(), d_sq.data(), 3 * sizeof(T),
                                cudaMemcpyDeviceToHost), "cpy sqi");
-        checkCuda(cudaStreamSynchronize(0), "sqi sync");
-        const T* h_sq_i = h_sq_i_pin;
+        cumes::check_cuda(cudaStreamSynchronize(0), "sqi sync");
+        const T* h_sq_i = h_sq_i_pin.data();
         // vmecpp evalFResInvar: fsqr = fResInvar[0]·fNormRZ·0.25 (same for
         // fsqz), fsql = fResInvar[2]·fNormL, where fResInvar are the plain
         // sums. The cuMES kernel returns ΣF²/(mnmax·ns), so undo that first.
@@ -1100,14 +1076,14 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
 
         // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve
         { dim3 b1(256), g1((p.ns + 255) / 256);
-          m1PreconScaleKernel<T><<<g1, b1>>>(d_f_spec, pw.d_ard, pw.d_brd,
+          m1PreconScaleKernel<T><<<g1, b1>>>(d_f_spec.data(), pw.d_ard, pw.d_brd,
                                              pw.d_azd, pw.d_bzd,
                                              p.ns, p.mnmax, p.ntor);
-          checkCuda(cudaGetLastError(), "m1PreconScale"); }
+          cumes::check_cuda(cudaGetLastError(), "m1PreconScale"); }
 
         // Apply the radial tridiagonal + lambda preconditioners to the
         // (decomposed) spectral forces.
-        preconApply(d_f_spec, p, pw, fp.basis.d_xm, fp.basis.d_xn);
+        preconApply(d_f_spec.data(), p, pw, fp.basis.d_xm, fp.basis.d_xn);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 51 || (iter2 >= kDumpIter && iter2 <= kDumpIter + 2) ||
@@ -1117,7 +1093,7 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
             char fn[128];
             snprintf(fn, sizeof fn, "dump/cuMES/step_I_f_spec_iter_%d.bin",
                      iter == 0 ? 1 : iter2);
-            dumpDeviceArray(fn, d_f_spec, n_fspec);
+            dumpDeviceArray(fn, d_f_spec.data(), n_fspec);
             // State + velocities at the handoff window (pre-descent of the
             // pass, matching vmecpp's dump phase at vmec.cc). Also at the
             // iter-2..4 window (first lambda != 0 passes) for the state check.
@@ -1151,16 +1127,16 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
         if (iter2 >= kE2Start && iter2 < kE2Start + 40) {
             char fn[128];
             snprintf(fn, sizeof fn, "dump/cuMES/fspec_precon_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, d_f_spec, (size_t)6 * p.mnmax * p.ns);
+            dumpDeviceArray(fn, d_f_spec.data(), (size_t)6 * p.mnmax * p.ns);
         }
 #endif
 
         // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(d_f_spec,p.ns,p.mnmax,d_sq); }
-        checkCuda(cudaMemcpyAsync(h_sq_pin, d_sq, 3 * sizeof(T),
+        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(d_f_spec.data(),p.ns,p.mnmax,d_sq.data()); }
+        cumes::check_cuda(cudaMemcpyAsync(h_sq_pin.data(), d_sq.data(), 3 * sizeof(T),
                                cudaMemcpyDeviceToHost), "cpy sq");
-        checkCuda(cudaStreamSynchronize(0), "sq sync");
-        const T* h_sq = h_sq_pin;
+        cumes::check_cuda(cudaStreamSynchronize(0), "sq sync");
+        const T* h_sq = h_sq_pin.data();
         // vmecpp evalFResPrecd: fsqr1 = fResPrecd[0]·fNorm1 (same for fsqz1),
         // fsql1 = fResPrecd[2]·deltaS — NOTE: deltaS, not fNormL.
         T fsqr = h_sq[0] * plainPerEl * fNorm1;
@@ -1232,9 +1208,9 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
           descentStepKernel<T><<<gd,bd>>>(
               st.d_rmncc,st.d_rmnss,st.d_zmnsc,st.d_zmncs,st.d_lmnsc,st.d_lmncs,
               st.d_v_rmncc,st.d_v_rmnss,st.d_v_zmnsc,st.d_v_zmncs,st.d_v_lmnsc,st.d_v_lmncs,
-              d_f_spec, fp.basis.d_xm, fp.basis.d_xn,
+              d_f_spec.data(), fp.basis.d_xm, fp.basis.d_xn,
               p.ns,p.mnmax,delt,b1,fac);
-          checkCuda(cudaGetLastError(),"descent"); }
+          cumes::check_cuda(cudaGetLastError(),"descent"); }
 
         if (doRefresh) {
             backupState();  // POST-descent state (vmecpp RestartIteration
@@ -1283,20 +1259,6 @@ SolverResult<T> solverRun(SpectralState<T>& st, const GridParams<T>& p,
     }
 #endif
 
-    checkCuda(cudaFree(d_f_spec),"free f");
-    checkCuda(cudaFree(d_sq),"free sq");
-    checkCuda(cudaFreeHost(h_sq_i_pin), "unpin sqi");
-    checkCuda(cudaFreeHost(h_sq_pin), "unpin sq");
-    checkCuda(cudaFree(d_psum),"free psum");
-    checkCuda(cudaFree(d_rzsum),"free rzsum");
-    checkCuda(cudaFree(d_jac_stats),"free jac");
-    checkCuda(cudaFreeHost(h_jac_stats), "unpin jac");
-    checkCuda(cudaFree(d_bk_rmncc),"free bk cc");
-    checkCuda(cudaFree(d_bk_zmnsc),"free bk zsc");
-    checkCuda(cudaFree(d_bk_lmnsc),"free bk lsc");
-    checkCuda(cudaFree(d_bk_rmnss),"free bk ss");
-    checkCuda(cudaFree(d_bk_zmncs),"free bk zcs");
-    checkCuda(cudaFree(d_bk_lmncs),"free bk lcs");
     preconFree(pw); constraintFree(cw);
     printf("transform timing: inverseDFT total %.1f ms (%.3f ms/iter), "
            "forwardDFT total %.1f ms (%.3f ms/iter)\n",

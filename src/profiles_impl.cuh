@@ -24,12 +24,7 @@
 #include <cstdio>
 #include <cmath>
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(1);
-    }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 // Horner evaluation of a power series; with integrate=true gives the
 // integral ∫₀ˣ Σ c_i t^i dt = x*Σ c_i*x^i/(i+1) (vmecpp evalPowerSeries).
@@ -87,17 +82,17 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
     size_t nF = p.ns * sizeof(T);
     size_t nH = (p.ns - 1) * sizeof(T);
 
-    checkCuda(cudaMalloc(&rp.d_iota_F, nF), "iota_F");
-    checkCuda(cudaMalloc(&rp.d_phip_F, nF), "phip_F");
-    checkCuda(cudaMalloc(&rp.d_chi_F,  nF), "chi_F");
-    checkCuda(cudaMalloc(&rp.d_sqrtS_F, nF), "sqrtS_F");
-    checkCuda(cudaMalloc(&rp.d_iota_H, nH), "iota_H");
-    checkCuda(cudaMalloc(&rp.d_pres_H, nH), "pres_H");
-    checkCuda(cudaMalloc(&rp.d_phip_H, nH), "phip_H");
-    checkCuda(cudaMalloc(&rp.d_dVds_H, nH), "dVds_H");
-    checkCuda(cudaMalloc(&rp.d_sqrtS_H, nH), "sqrtS_H");
-    checkCuda(cudaMalloc(&rp.d_curr_H, nH), "curr_H");
-    checkCuda(cudaMalloc(&rp.d_chip_H, nH), "chip_H");
+    cumes::check_cuda(cudaMalloc(&rp.d_iota_F, nF), "iota_F");
+    cumes::check_cuda(cudaMalloc(&rp.d_phip_F, nF), "phip_F");
+    cumes::check_cuda(cudaMalloc(&rp.d_chi_F,  nF), "chi_F");
+    cumes::check_cuda(cudaMalloc(&rp.d_sqrtS_F, nF), "sqrtS_F");
+    cumes::check_cuda(cudaMalloc(&rp.d_iota_H, nH), "iota_H");
+    cumes::check_cuda(cudaMalloc(&rp.d_pres_H, nH), "pres_H");
+    cumes::check_cuda(cudaMalloc(&rp.d_phip_H, nH), "phip_H");
+    cumes::check_cuda(cudaMalloc(&rp.d_dVds_H, nH), "dVds_H");
+    cumes::check_cuda(cudaMalloc(&rp.d_sqrtS_H, nH), "sqrtS_H");
+    cumes::check_cuda(cudaMalloc(&rp.d_curr_H, nH), "curr_H");
+    cumes::check_cuda(cudaMalloc(&rp.d_chip_H, nH), "chip_H");
 
     // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
     // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
@@ -129,20 +124,20 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
         T tf = fmin(torflux<T>(ip, s), T(1.0));
         h[j] = evalIotaProfile<T>(ip, tf);
     }
-    checkCuda(cudaMemcpy(rp.d_iota_F, h, nF, cudaMemcpyHostToDevice), "iota_F cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_iota_F, h, nF, cudaMemcpyHostToDevice), "iota_F cpy");
     for (int j = 0; j < p.ns; ++j) {
         T s = rp.delta_s * T(j);
         h[j] = maxToroidalFlux * torfluxDeriv<T>(ip, s);
     }
-    checkCuda(cudaMemcpy(rp.d_phip_F, h, nF, cudaMemcpyHostToDevice), "phip_F cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_phip_F, h, nF, cudaMemcpyHostToDevice), "phip_F cpy");
     for (int j = 0; j < p.ns; ++j) {
         T s = rp.delta_s * T(j);
         T tf = fmin(torflux<T>(ip, s), T(1.0));
         h[j] = maxToroidalFlux * evalIotaProfile<T>(ip, tf) * torfluxDeriv<T>(ip, s);
     }
-    checkCuda(cudaMemcpy(rp.d_chi_F, h, nF, cudaMemcpyHostToDevice), "chi_F cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_chi_F, h, nF, cudaMemcpyHostToDevice), "chi_F cpy");
     for (int j = 0; j < p.ns; ++j) h[j] = sqrt(rp.delta_s * T(j) + T(1e-12));
-    checkCuda(cudaMemcpy(rp.d_sqrtS_F, h, nF, cudaMemcpyHostToDevice), "sqrtS_F cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_sqrtS_F, h, nF, cudaMemcpyHostToDevice), "sqrtS_F cpy");
 
     // ---- Half grid ----
     for (int j = 0; j < p.ns - 1; ++j) {
@@ -150,18 +145,18 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
         T tf = fmin(torflux<T>(ip, sh), T(1.0));
         h[j] = evalIotaProfile<T>(ip, tf);
     }
-    checkCuda(cudaMemcpy(rp.d_iota_H, h, nH, cudaMemcpyHostToDevice), "iota_H cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_iota_H, h, nH, cudaMemcpyHostToDevice), "iota_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = rp.delta_s * (T(j) + T(0.5));
         T tf = fmin(torflux<T>(ip, fmin(sh, T(ip.spres_ped))), T(1.0));
         h[j] = evalMassProfile<T>(ip, tf);  // pres = mass (gamma = 0)
     }
-    checkCuda(cudaMemcpy(rp.d_pres_H, h, nH, cudaMemcpyHostToDevice), "pres_H cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_pres_H, h, nH, cudaMemcpyHostToDevice), "pres_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = rp.delta_s * (T(j) + T(0.5));
         h[j] = maxToroidalFlux * torfluxDeriv<T>(ip, sh);
     }
-    checkCuda(cudaMemcpy(rp.d_phip_H, h, nH, cudaMemcpyHostToDevice), "phip_H cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_phip_H, h, nH, cudaMemcpyHostToDevice), "phip_H cpy");
     // Note: d_mass_H (dead storage, never read) was removed; d_pres_H holds
     // the mass profile (gamma=0 -> pres = mass).
     for (int j = 0; j < p.ns - 1; ++j) {
@@ -169,26 +164,26 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip) {
         T tf = fmin(torflux<T>(ip, sh), T(1.0));
         h[j] = maxToroidalFlux * evalIotaProfile<T>(ip, tf) * torfluxDeriv<T>(ip, sh);
     }
-    checkCuda(cudaMemcpy(rp.d_chip_H, h, nH, cudaMemcpyHostToDevice), "chip_H cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_chip_H, h, nH, cudaMemcpyHostToDevice), "chip_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) h[j] = T(1.0);  // dVds placeholder (gamma=0)
-    checkCuda(cudaMemcpy(rp.d_dVds_H, h, nH, cudaMemcpyHostToDevice), "dVds_H cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_dVds_H, h, nH, cudaMemcpyHostToDevice), "dVds_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = rp.delta_s * (T(j) + T(0.5));
         h[j] = Itor * evalCurrProfile<T>(ip, fmin(torflux<T>(ip, sh), T(1.0)));
     }
-    checkCuda(cudaMemcpy(rp.d_curr_H, h, nH, cudaMemcpyHostToDevice), "curr_H cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_curr_H, h, nH, cudaMemcpyHostToDevice), "curr_H cpy");
     // sqrt(s) on half-grid for parity mixing
     for (int j = 0; j < p.ns - 1; ++j) {
         h[j] = sqrt(rp.delta_s * (T(j) + T(0.5)));
     }
-    checkCuda(cudaMemcpy(rp.d_sqrtS_H, h, nH, cudaMemcpyHostToDevice), "sqrtS_H cpy");
+    cumes::check_cuda(cudaMemcpy(rp.d_sqrtS_H, h, nH, cudaMemcpyHostToDevice), "sqrtS_H cpy");
 
     delete[] h;
 
     // lamscale = sqrt(deltaS * Σ phipH²) (vmecpp constants_.lamscale)
     T rmsPhiP = T(0.0);
     auto* h_phip = new T[p.ns - 1];
-    checkCuda(cudaMemcpy(h_phip, rp.d_phip_H, nH, cudaMemcpyDeviceToHost), "phip_H get");
+    cumes::check_cuda(cudaMemcpy(h_phip, rp.d_phip_H, nH, cudaMemcpyDeviceToHost), "phip_H get");
     for (int j = 0; j < p.ns - 1; ++j) rmsPhiP += h_phip[j] * h_phip[j];
     delete[] h_phip;
     p.lamscale = sqrt(rmsPhiP * rp.delta_s);

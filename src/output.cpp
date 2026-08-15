@@ -54,12 +54,7 @@ static bool publishAtomic(FILE* fp, const char* tmp, const char* path) {
     return true;
 }
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 // Compile-time summary of the output libraries linked into this build,
 // for the disabled-backend error hints.
@@ -115,7 +110,7 @@ bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
     auto* dbuf = new double[ns * mnmax];
     bool ok = true;
     auto writeFam = [&](const T* d, const char* tag) {
-        checkCuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), tag);
+        cumes::check_cuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), tag);
         for (size_t i = 0; i < (size_t)ns * mnmax; ++i) dbuf[i] = (double)buf[i];
         if (fwrite(dbuf, sizeof(double), ns * mnmax, fp) != (size_t)(ns * mnmax)) {
             ok = false;
@@ -149,15 +144,15 @@ void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
     auto* h_zmns = new T[p.mnmax];
     auto* h_lmnc = new T[p.mnmax];
 
-    checkCuda(cudaMemcpy2D(h_rmnc, sizeof(T),
+    cumes::check_cuda(cudaMemcpy2D(h_rmnc, sizeof(T),
                            st.d_rmncc + j, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy rmnc out");
-    checkCuda(cudaMemcpy2D(h_zmns, sizeof(T),
+    cumes::check_cuda(cudaMemcpy2D(h_zmns, sizeof(T),
                            st.d_zmnsc + j, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy zmns out");
-    checkCuda(cudaMemcpy2D(h_lmnc, sizeof(T),
+    cumes::check_cuda(cudaMemcpy2D(h_lmnc, sizeof(T),
                            st.d_lmnsc + j, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy lmnc out");
@@ -166,22 +161,22 @@ void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
     auto* h_rmnc_ax = new T[p.mnmax];
     auto* h_zmns_ax = new T[p.mnmax];
     auto* h_lmnc_ax = new T[p.mnmax];
-    checkCuda(cudaMemcpy2D(h_rmnc_ax, sizeof(T),
+    cumes::check_cuda(cudaMemcpy2D(h_rmnc_ax, sizeof(T),
                            st.d_rmncc, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy rmnc ax");
-    checkCuda(cudaMemcpy2D(h_zmns_ax, sizeof(T),
+    cumes::check_cuda(cudaMemcpy2D(h_zmns_ax, sizeof(T),
                            st.d_zmnsc, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy zmns ax");
-    checkCuda(cudaMemcpy2D(h_lmnc_ax, sizeof(T),
+    cumes::check_cuda(cudaMemcpy2D(h_lmnc_ax, sizeof(T),
                            st.d_lmnsc, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy lmnc ax");
 
     // Read R_00 radial profile
     auto* h_rmnc_r = new T[p.ns];
-    checkCuda(cudaMemcpy(h_rmnc_r, st.d_rmncc, p.ns * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(h_rmnc_r, st.d_rmncc, p.ns * sizeof(T),
                          cudaMemcpyDeviceToHost), "cpy rmnc radial");
 
     printf("\n========================================\n");

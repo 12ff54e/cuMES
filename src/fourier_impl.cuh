@@ -49,18 +49,7 @@ __device__ void* dynSharedBase() {
 }
 }
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-}
-static void checkCufft(cufftResult r, const char* tag) {
-    if (r != CUFFT_SUCCESS) {
-        fprintf(stderr, "cuFFT error [%s]: %d\n", tag, (int)r);
-        exit(EXIT_FAILURE);
-    }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 template <typename T>
 FourierPlan<T> fourierCreate(const GridParams<T>& p) {
@@ -81,13 +70,13 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p) {
             int mode = m * (p.ntor + 1) + n;
             h_xm[mode] = m; h_xn[mode] = n;
         }
-    checkCuda(cudaMalloc(&fp.basis.d_xm, nbytes_mode), "xm");
-    checkCuda(cudaMalloc(&fp.basis.d_xn, nbytes_mode), "xn");
-    checkCuda(cudaMemcpy(fp.basis.d_xm, h_xm, nbytes_mode, cudaMemcpyHostToDevice), "xm");
-    checkCuda(cudaMemcpy(fp.basis.d_xn, h_xn, nbytes_mode, cudaMemcpyHostToDevice), "xn");
+    cumes::check_cuda(cudaMalloc(&fp.basis.d_xm, nbytes_mode), "xm");
+    cumes::check_cuda(cudaMalloc(&fp.basis.d_xn, nbytes_mode), "xn");
+    cumes::check_cuda(cudaMemcpy(fp.basis.d_xm, h_xm, nbytes_mode, cudaMemcpyHostToDevice), "xm");
+    cumes::check_cuda(cudaMemcpy(fp.basis.d_xn, h_xn, nbytes_mode, cudaMemcpyHostToDevice), "xn");
     delete[] h_xm; delete[] h_xn;
 
-    auto am = [&](T*& p_, const char* n) { checkCuda(cudaMalloc(&p_, nbytes_real), n); };
+    auto am = [&](T*& p_, const char* n) { cumes::check_cuda(cudaMalloc(&p_, nbytes_real), n); };
     am(fp.d_r_e,"r_e"); am(fp.d_z_e,"z_e"); am(fp.d_l_e,"l_e");
     am(fp.d_ru_e,"ru_e"); am(fp.d_zu_e,"zu_e"); am(fp.d_lu_e,"lu_e");
     am(fp.d_r_o,"r_o"); am(fp.d_z_o,"z_o"); am(fp.d_l_o,"l_o");
@@ -95,6 +84,21 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p) {
     am(fp.d_r_real,"r_r"); am(fp.d_z_real,"z_r"); am(fp.d_l_real,"l_r");
     am(fp.d_ru_real,"ru_r"); am(fp.d_zu_real,"zu_r"); am(fp.d_lu_real,"lu_r");
     am(fp.d_rv_real,"rv_r"); am(fp.d_zv_real,"zv_r"); am(fp.d_lv_real,"lv_r");
+    // The combined (e+o) *_real buffers are only produced by
+    // fourierCombineParity / inverseDFT(do_combine=true). Zero them here so a
+    // diagnostic dump taken before the first combine is deterministic (the old
+    // code dumped uninitialized memory, whose bytes shifted with the allocation
+    // order — see the step_A_l_real_iter_1 dump in solver_impl.cuh). Parity
+    // arrays are left as-is: inverseDFT writes them before any consumer reads.
+    cumes::check_cuda(cudaMemset(fp.d_r_real,  0, nbytes_real), "zero r_r");
+    cumes::check_cuda(cudaMemset(fp.d_z_real,  0, nbytes_real), "zero z_r");
+    cumes::check_cuda(cudaMemset(fp.d_l_real,  0, nbytes_real), "zero l_r");
+    cumes::check_cuda(cudaMemset(fp.d_ru_real, 0, nbytes_real), "zero ru_r");
+    cumes::check_cuda(cudaMemset(fp.d_zu_real, 0, nbytes_real), "zero zu_r");
+    cumes::check_cuda(cudaMemset(fp.d_lu_real, 0, nbytes_real), "zero lu_r");
+    cumes::check_cuda(cudaMemset(fp.d_rv_real, 0, nbytes_real), "zero rv_r");
+    cumes::check_cuda(cudaMemset(fp.d_zv_real, 0, nbytes_real), "zero zv_r");
+    cumes::check_cuda(cudaMemset(fp.d_lv_real, 0, nbytes_real), "zero lv_r");
     // Parity-split toroidal derivatives (3D geometry needs them separately)
     am(fp.d_rv_e,"rve"); am(fp.d_rv_o,"rvo");
     am(fp.d_zv_e,"zve"); am(fp.d_zv_o,"zvo");
@@ -109,12 +113,12 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p) {
     am(fp.d_clmn_e,"cle"); am(fp.d_clmn_o,"clo");
 
     // ---- cuFFT backend: poloidal tables, scratch, plans ----
-    checkCuda(cudaMalloc(&fp.d_zeta_spectra,
+    cumes::check_cuda(cudaMalloc(&fp.d_zeta_spectra,
         (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex)), "spectra");
-    checkCuda(cudaMalloc(&fp.d_zeta_real,
+    cumes::check_cuda(cudaMalloc(&fp.d_zeta_real,
         (size_t)12 * p.mpol * p.ns * p.nzeta * sizeof(T)), "zeta");
     auto amt = [&](T*& q, const char* n, size_t cnt) {
-        checkCuda(cudaMalloc(&q, cnt * sizeof(T)), n);
+        cumes::check_cuda(cudaMalloc(&q, cnt * sizeof(T)), n);
     };
     amt(fp.d_cos_th, "costh", p.mpol * p.ntheta);  amt(fp.d_sin_th, "sinth", p.mpol * p.ntheta);
     amt(fp.d_mcos_th, "mcosth", p.mpol * p.ntheta); amt(fp.d_msin_th, "msinth", p.mpol * p.ntheta);
@@ -142,15 +146,15 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p) {
         h_fwd_w[l] = intNorm;
         if (l == 0 || l == nThetaRed - 1) h_fwd_w[l] *= T(0.5);
     }
-    checkCuda(cudaMemcpy(fp.d_cos_th, h_cos_th, (size_t)p.mpol * p.ntheta * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(fp.d_cos_th, h_cos_th, (size_t)p.mpol * p.ntheta * sizeof(T),
                          cudaMemcpyHostToDevice), "cp costh");
-    checkCuda(cudaMemcpy(fp.d_sin_th, h_sin_th, (size_t)p.mpol * p.ntheta * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(fp.d_sin_th, h_sin_th, (size_t)p.mpol * p.ntheta * sizeof(T),
                          cudaMemcpyHostToDevice), "cp sinth");
-    checkCuda(cudaMemcpy(fp.d_mcos_th, h_mcos_th, (size_t)p.mpol * p.ntheta * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(fp.d_mcos_th, h_mcos_th, (size_t)p.mpol * p.ntheta * sizeof(T),
                          cudaMemcpyHostToDevice), "cp mcosth");
-    checkCuda(cudaMemcpy(fp.d_msin_th, h_msin_th, (size_t)p.mpol * p.ntheta * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(fp.d_msin_th, h_msin_th, (size_t)p.mpol * p.ntheta * sizeof(T),
                          cudaMemcpyHostToDevice), "cp msinth");
-    checkCuda(cudaMemcpy(fp.d_fwd_w, h_fwd_w, (size_t)nThetaRed * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(fp.d_fwd_w, h_fwd_w, (size_t)nThetaRed * sizeof(T),
                          cudaMemcpyHostToDevice), "cp fwdw");
     delete[] h_cos_th; delete[] h_sin_th; delete[] h_mcos_th; delete[] h_msin_th;
     delete[] h_fwd_w;
@@ -159,9 +163,9 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p) {
     int n = p.nzeta, nz2 = p.nzeta / 2 + 1;
     int batch = 12 * p.mpol * p.ns;
     int inemb = nz2, outemb = n;
-    checkCufft(cufftPlanMany(&fp.plan_z2d, 1, &n, &inemb, 1, nz2,
+    cumes::check_cufft(cufftPlanMany(&fp.plan_z2d, 1, &n, &inemb, 1, nz2,
                              &outemb, 1, n, FftTraits<T>::kInverse, batch), "plan z2d");
-    checkCufft(cufftPlanMany(&fp.plan_d2z, 1, &n, &outemb, 1, n,
+    cumes::check_cufft(cufftPlanMany(&fp.plan_d2z, 1, &n, &outemb, 1, n,
                              &inemb, 1, nz2, FftTraits<T>::kForward, batch), "plan d2z");
     return fp;
 }
@@ -370,14 +374,14 @@ template <typename T>
 static void inverseDFTCufft(const FourierPlan<T>& fp, const SpectralState<T>& st,
                             const GridParams<T>& p, bool do_combine) {
     // Zero the half-spectra (only bins n <= ntor are filled).
-    checkCuda(cudaMemset(fp.d_zeta_spectra, 0,
+    cumes::check_cuda(cudaMemset(fp.d_zeta_spectra, 0,
         (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex)), "inv zero");
     int total = p.ns * p.mnmax;
     inversePackKernel<T><<<(total + 255) / 256, 256>>>(
         st.d_rmncc, st.d_rmnss, st.d_zmnsc, st.d_zmncs, st.d_lmnsc, st.d_lmncs,
         fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
-    checkCufft(FftTraits<T>::execInverse(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
+    cumes::check_cufft(FftTraits<T>::execInverse(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
     // ζ-tiled accumulate (see inverseAccumulateKernel): block (ntheta/2,
     // kTile), one grid row per (surface, k-tile).
     int kTile = computeKTile(p.ntheta / 2, p.nzeta);
@@ -416,7 +420,7 @@ static void inverseDFTCufft(const FourierPlan<T>& fp, const SpectralState<T>& st
             fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
             fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
     }
-    checkCuda(cudaGetLastError(), "inv cuFFT");
+    cumes::check_cuda(cudaGetLastError(), "inv cuFFT");
 }
 
 // Public snapshot: refresh the 9 combined arrays from the CURRENT parity
@@ -434,7 +438,7 @@ void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p) {
         fp.d_r_real, fp.d_z_real, fp.d_l_real,
         fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
         fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
-    checkCuda(cudaGetLastError(), "combine parity");
+    cumes::check_cuda(cudaGetLastError(), "combine parity");
 }
 
 template <typename T>
@@ -617,7 +621,7 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, T* d_f_spectral,
                             const GridParams<T>& p, const ConstraintWorkspace<T>& cw) {
     // vmecpp zeroes the target before projecting (m_physical_f.setZero());
     // the kernels write only the entries vmecpp computes.
-    checkCuda(cudaMemset(d_f_spectral, 0,
+    cumes::check_cuda(cudaMemset(d_f_spectral, 0,
                          (size_t)6 * p.mnmax * p.ns * sizeof(T)), "fwd zero");
     // ζ-tiled reduce (see forwardReduceKernel): block (16 lanes, kTile),
     // grid (mpol, ns, k-tiles).
@@ -634,12 +638,12 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, T* d_f_spectral,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th, fp.d_fwd_w,
         p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT,
         fp.d_zeta_real, kTile);
-    checkCufft(FftTraits<T>::execForward(fp.plan_d2z, fp.d_zeta_real, fp.d_zeta_spectra), "fwd d2z");
+    cumes::check_cufft(FftTraits<T>::execForward(fp.plan_d2z, fp.d_zeta_real, fp.d_zeta_spectra), "fwd d2z");
     int total = p.ns * p.mnmax;
     forwardRecoverKernel<T><<<(total + 255) / 256, 256>>>(
         fp.d_zeta_spectra, fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, d_f_spectral);
-    checkCuda(cudaGetLastError(), "fwd cuFFT");
+    cumes::check_cuda(cudaGetLastError(), "fwd cuFFT");
 }
 
 template <typename T>

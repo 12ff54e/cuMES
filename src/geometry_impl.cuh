@@ -42,33 +42,28 @@ __device__ void* dynSharedBase() {
 }
 }
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 template <typename T>
 MetricWorkspace<T> metricCreate(const GridParams<T>& p) {
     MetricWorkspace<T> mw{};
     size_t nH = (p.ns - 1) * p.nZnT * sizeof(T);
 
-    checkCuda(cudaMalloc(&mw.d_r12,  nH), "r12");
-    checkCuda(cudaMalloc(&mw.d_ru12, nH), "ru12");
-    checkCuda(cudaMalloc(&mw.d_zu12, nH), "zu12");
-    checkCuda(cudaMalloc(&mw.d_rs,   nH), "rs");
-    checkCuda(cudaMalloc(&mw.d_zs,   nH), "zs");
-    checkCuda(cudaMalloc(&mw.d_tau,  nH), "tau");
-    checkCuda(cudaMalloc(&mw.d_gsqrt, nH), "gsqrt");
-    checkCuda(cudaMalloc(&mw.d_guu,   nH), "guu");
-    checkCuda(cudaMalloc(&mw.d_guv,   nH), "guv");
-    checkCuda(cudaMalloc(&mw.d_gvv,   nH), "gvv");
-    checkCuda(cudaMalloc(&mw.d_bsupu, nH), "bsupu");
-    checkCuda(cudaMalloc(&mw.d_bsupv, nH), "bsupv");
-    checkCuda(cudaMalloc(&mw.d_bsubu, nH), "bsubu");
-    checkCuda(cudaMalloc(&mw.d_bsubv, nH), "bsubv");
-    checkCuda(cudaMalloc(&mw.d_totalPressure, nH), "totalP");
+    cumes::check_cuda(cudaMalloc(&mw.d_r12,  nH), "r12");
+    cumes::check_cuda(cudaMalloc(&mw.d_ru12, nH), "ru12");
+    cumes::check_cuda(cudaMalloc(&mw.d_zu12, nH), "zu12");
+    cumes::check_cuda(cudaMalloc(&mw.d_rs,   nH), "rs");
+    cumes::check_cuda(cudaMalloc(&mw.d_zs,   nH), "zs");
+    cumes::check_cuda(cudaMalloc(&mw.d_tau,  nH), "tau");
+    cumes::check_cuda(cudaMalloc(&mw.d_gsqrt, nH), "gsqrt");
+    cumes::check_cuda(cudaMalloc(&mw.d_guu,   nH), "guu");
+    cumes::check_cuda(cudaMalloc(&mw.d_guv,   nH), "guv");
+    cumes::check_cuda(cudaMalloc(&mw.d_gvv,   nH), "gvv");
+    cumes::check_cuda(cudaMalloc(&mw.d_bsupu, nH), "bsupu");
+    cumes::check_cuda(cudaMalloc(&mw.d_bsupv, nH), "bsupv");
+    cumes::check_cuda(cudaMalloc(&mw.d_bsubu, nH), "bsubu");
+    cumes::check_cuda(cudaMalloc(&mw.d_bsubv, nH), "bsubv");
+    cumes::check_cuda(cudaMalloc(&mw.d_totalPressure, nH), "totalP");
 
     return mw;
 }
@@ -417,8 +412,8 @@ void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& 
         mw.d_bsubu, mw.d_bsubv,
         p.ntheta, p.nzeta, p.ns,
         dVdsH, psum);
-    checkCuda(cudaGetLastError(), "norm partials");
-    checkCuda(cudaDeviceSynchronize(), "norm partials sync");
+    cumes::check_cuda(cudaGetLastError(), "norm partials");
+    cumes::check_cuda(cudaDeviceSynchronize(), "norm partials sync");
 }
 
 // ---- full-grid iota/chip update (vmecpp ideal_mhd_model.cc) -------------
@@ -538,8 +533,8 @@ void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
     const int nHalf = (p.ns - 1) * p.nZnT;
     jacobianStatsKernel<T><<<1, 256>>>(mw.d_gsqrt, nHalf, 1,
                                        T(p.kSignJacobian), d_stats);
-    checkCuda(cudaGetLastError(), "jacobianStats");
-    checkCuda(cudaMemcpy(h_stats, d_stats, 4 * sizeof(T), cudaMemcpyDeviceToHost), "jac stats cpy");
+    cumes::check_cuda(cudaGetLastError(), "jacobianStats");
+    cumes::check_cuda(cudaMemcpy(h_stats, d_stats, 4 * sizeof(T), cudaMemcpyDeviceToHost), "jac stats cpy");
 }
 
 template <typename T>
@@ -566,7 +561,7 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
         mw.d_bsupu, mw.d_bsupv,
         mw.d_bsubu, mw.d_bsubv,
         mw.d_totalPressure);
-    checkCuda(cudaGetLastError(), "geometry kernel");
+    cumes::check_cuda(cudaGetLastError(), "geometry kernel");
 
     if (p.ncurr == 1) {
         dim3 fb(256), fg(p.ns - 1);
@@ -578,13 +573,13 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
             p.ns, p.nZnT, p.ntheta, p.nzeta, p.lamscale,
             mw.d_bsubu, mw.d_bsubv, mw.d_totalPressure,
             rp.d_chip_H, rp.d_iota_H);
-        checkCuda(cudaGetLastError(), "ncurr1 kernel");
+        cumes::check_cuda(cudaGetLastError(), "ncurr1 kernel");
         }
 
     dim3 ib(256), ig((p.ns + 255) / 256);
     updateIotaChipFKernel<T><<<ig, ib>>>(
         rp.d_iota_H, rp.d_chip_H, p.ns, rp.d_iota_F, rp.d_chi_F);
-    checkCuda(cudaGetLastError(), "iotaChipF kernel");
+    cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
 
 }
 

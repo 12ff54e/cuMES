@@ -32,9 +32,7 @@ __device__ void* dynSharedBase() {
 }
 }
 
-static void cc(cudaError_t e, const char* t) {
-    if (e != cudaSuccess) { fprintf(stderr, "CUDA[%s]: %s\n", t, cudaGetErrorString(e)); exit(1); }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 // ---------------------------------------------------------------------------
 // Allocate
@@ -51,30 +49,30 @@ PreconWorkspace<T> preconCreate(const GridParams<T>& p) {
     size_t sz2F = 2 * nF * sizeof(T);
     size_t szMN = p.mnmax * nF * sizeof(T);
 
-    cc(cudaMalloc(&pw.d_ax_R, szH4), "ax_R");  cc(cudaMalloc(&pw.d_ax_Z, szH4), "ax_Z");
-    cc(cudaMalloc(&pw.d_bx_R, szH3), "bx_R");  cc(cudaMalloc(&pw.d_bx_Z, szH3), "bx_Z");
-    cc(cudaMalloc(&pw.d_cx,  szH),  "cx");
-    cc(cudaMalloc(&pw.d_arm, sz2H), "arm");    cc(cudaMalloc(&pw.d_brm, sz2H), "brm");
-    cc(cudaMalloc(&pw.d_azm, sz2H), "azm");    cc(cudaMalloc(&pw.d_bzm, sz2H), "bzm");
-    cc(cudaMalloc(&pw.d_ard, sz2F), "ard");    cc(cudaMalloc(&pw.d_brd, sz2F), "brd");
-    cc(cudaMalloc(&pw.d_azd, sz2F), "azd");    cc(cudaMalloc(&pw.d_bzd, sz2F), "bzd");
-    cc(cudaMalloc(&pw.d_cxd, szF),  "cxd");
-    cc(cudaMalloc(&pw.d_sm,  szH),  "sm");     cc(cudaMalloc(&pw.d_sp,  szH),  "sp");
-    cc(cudaMalloc(&pw.d_ar, szMN),  "ar");     cc(cudaMalloc(&pw.d_dr, szMN),  "dr");
-    cc(cudaMalloc(&pw.d_br, szMN),  "br");
-    cc(cudaMalloc(&pw.d_az, szMN),  "az");     cc(cudaMalloc(&pw.d_dz, szMN),  "dz");
-    cc(cudaMalloc(&pw.d_bz, szMN),  "bz");
-    cc(cudaMalloc(&pw.d_jMin, p.mnmax * sizeof(int)), "jMin");
-    cc(cudaMalloc(&pw.d_lambdaPrec, szMN), "lambdaPrec");
-    cc(cudaMalloc(&pw.d_bLambda, (p.ns + 1) * sizeof(T)), "bLambda");
-    cc(cudaMalloc(&pw.d_dLambda, (p.ns + 1) * sizeof(T)), "dLambda");
-    cc(cudaMalloc(&pw.d_cLambda, (p.ns + 1) * sizeof(T)), "cLambda");
-    cc(cudaMalloc(&pw.d_rmsPhiP, sizeof(T)), "rmsPhiP");
+    cumes::check_cuda(cudaMalloc(&pw.d_ax_R, szH4), "ax_R");  cumes::check_cuda(cudaMalloc(&pw.d_ax_Z, szH4), "ax_Z");
+    cumes::check_cuda(cudaMalloc(&pw.d_bx_R, szH3), "bx_R");  cumes::check_cuda(cudaMalloc(&pw.d_bx_Z, szH3), "bx_Z");
+    cumes::check_cuda(cudaMalloc(&pw.d_cx,  szH),  "cx");
+    cumes::check_cuda(cudaMalloc(&pw.d_arm, sz2H), "arm");    cumes::check_cuda(cudaMalloc(&pw.d_brm, sz2H), "brm");
+    cumes::check_cuda(cudaMalloc(&pw.d_azm, sz2H), "azm");    cumes::check_cuda(cudaMalloc(&pw.d_bzm, sz2H), "bzm");
+    cumes::check_cuda(cudaMalloc(&pw.d_ard, sz2F), "ard");    cumes::check_cuda(cudaMalloc(&pw.d_brd, sz2F), "brd");
+    cumes::check_cuda(cudaMalloc(&pw.d_azd, sz2F), "azd");    cumes::check_cuda(cudaMalloc(&pw.d_bzd, sz2F), "bzd");
+    cumes::check_cuda(cudaMalloc(&pw.d_cxd, szF),  "cxd");
+    cumes::check_cuda(cudaMalloc(&pw.d_sm,  szH),  "sm");     cumes::check_cuda(cudaMalloc(&pw.d_sp,  szH),  "sp");
+    cumes::check_cuda(cudaMalloc(&pw.d_ar, szMN),  "ar");     cumes::check_cuda(cudaMalloc(&pw.d_dr, szMN),  "dr");
+    cumes::check_cuda(cudaMalloc(&pw.d_br, szMN),  "br");
+    cumes::check_cuda(cudaMalloc(&pw.d_az, szMN),  "az");     cumes::check_cuda(cudaMalloc(&pw.d_dz, szMN),  "dz");
+    cumes::check_cuda(cudaMalloc(&pw.d_bz, szMN),  "bz");
+    cumes::check_cuda(cudaMalloc(&pw.d_jMin, p.mnmax * sizeof(int)), "jMin");
+    cumes::check_cuda(cudaMalloc(&pw.d_lambdaPrec, szMN), "lambdaPrec");
+    cumes::check_cuda(cudaMalloc(&pw.d_bLambda, (p.ns + 1) * sizeof(T)), "bLambda");
+    cumes::check_cuda(cudaMalloc(&pw.d_dLambda, (p.ns + 1) * sizeof(T)), "dLambda");
+    cumes::check_cuda(cudaMalloc(&pw.d_cLambda, (p.ns + 1) * sizeof(T)), "cLambda");
+    cumes::check_cuda(cudaMalloc(&pw.d_rmsPhiP, sizeof(T)), "rmsPhiP");
     // Index ns of bLambda/cLambda must stay zero: the LCFS full-grid average
     // reads it (vmecpp: array sized ns+1, last entry never written).
-    cc(cudaMemset(pw.d_bLambda, 0, (p.ns + 1) * sizeof(T)), "bLambda zero");
-    cc(cudaMemset(pw.d_dLambda, 0, (p.ns + 1) * sizeof(T)), "dLambda zero");
-    cc(cudaMemset(pw.d_cLambda, 0, (p.ns + 1) * sizeof(T)), "cLambda zero");
+    cumes::check_cuda(cudaMemset(pw.d_bLambda, 0, (p.ns + 1) * sizeof(T)), "bLambda zero");
+    cumes::check_cuda(cudaMemset(pw.d_dLambda, 0, (p.ns + 1) * sizeof(T)), "dLambda zero");
+    cumes::check_cuda(cudaMemset(pw.d_cLambda, 0, (p.ns + 1) * sizeof(T)), "cLambda zero");
     return pw;
 }
 
@@ -764,7 +762,7 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
         mw.d_rs, mw.d_ru12, fp.d_ru_e, fp.d_ru_o, fp.d_r_o,
         p.ns, p.nZnT, rp.delta_s,
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx);
-    cc(cudaGetLastError(), "preconCompute");
+    cumes::check_cuda(cudaGetLastError(), "preconCompute");
 
     // Step 2a: Assemble off-diagonal terms + sm/sp on half-grid
     int gridH = (nH + 255) / 256;
@@ -775,7 +773,7 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
         pw.d_arm, pw.d_brm, pw.d_azm, pw.d_bzm,
         pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd,
         pw.d_sm, pw.d_sp);
-    cc(cudaGetLastError(), "preconAssemble");
+    cumes::check_cuda(cudaGetLastError(), "preconAssemble");
 
     // Step 2b: Average half-grid diagonals to full-grid
     int gridF = (nF + 255) / 256;
@@ -783,7 +781,7 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx,
         pw.d_sm, pw.d_sp, p.ns,
         pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd);
-    cc(cudaGetLastError(), "preconDiag");
+    cumes::check_cuda(cudaGetLastError(), "preconDiag");
 
     // Step 3: Assemble tridiagonal matrices per (m,n) mode
     int total = p.mnmax * nF;
@@ -796,24 +794,24 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
         pw.d_ar, pw.d_dr, pw.d_br,
         pw.d_az, pw.d_dz, pw.d_bz,
         pw.d_jMin);
-    cc(cudaGetLastError(), "tridiagAssembly");
+    cumes::check_cuda(cudaGetLastError(), "tridiagAssembly");
 
     // Step 4a/4b: Lambda diagonal preconditioner (components 2 and 5)
     {
-        cc(cudaMemset(pw.d_rmsPhiP, 0, sizeof(T)), "rmsPhiP zero");
+        cumes::check_cuda(cudaMemset(pw.d_rmsPhiP, 0, sizeof(T)), "rmsPhiP zero");
         lambdaPrecAssembleKernel<T><<<nH, threads>>>(
             mw.d_guu, mw.d_guv, mw.d_gvv, mw.d_gsqrt,
             rp.d_phip_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta,
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda, pw.d_rmsPhiP);
-        cc(cudaGetLastError(), "lambdaPrecAssemble");
+        cumes::check_cuda(cudaGetLastError(), "lambdaPrecAssemble");
         lambdaPrecFinalizeKernel<T><<<dim3(p.mnmax, (p.ns + 127) / 128), 128>>>(
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda,
             rp.d_sqrtS_F, pw.d_rmsPhiP,
             fp.basis.d_xm, fp.basis.d_xn,
             p.ns, p.mnmax, rp.delta_s, p.nfp,
             pw.d_lambdaPrec);
-        cc(cudaGetLastError(), "lambdaPrecFinalize");
+        cumes::check_cuda(cudaGetLastError(), "lambdaPrecFinalize");
     }
 }
 
@@ -831,6 +829,6 @@ void preconApply(T* d_f_inout, const GridParams<T>& p,
         pw.d_lambdaPrec,
         pw.d_jMin, xm, xn,
         p.ns, p.mnmax);
-    cc(cudaGetLastError(), "tridiagSolve");
+    cumes::check_cuda(cudaGetLastError(), "tridiagSolve");
 }
 

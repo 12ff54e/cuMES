@@ -18,12 +18,7 @@
 #include "forces.cuh"
 #include <cstdio>
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 // One thread per (theta,zeta) point on one full-grid surface.
 template <typename T>
@@ -282,6 +277,6 @@ void computeForces(const FourierPlan<T>& fp, const GridParams<T>& p,
         fp.d_czmn_e, fp.d_czmn_o,
         fp.d_blmn_e, fp.d_blmn_o,
         fp.d_clmn_e, fp.d_clmn_o);
-    checkCuda(cudaGetLastError(), "forces kernel");
+    cumes::check_cuda(cudaGetLastError(), "forces kernel");
 }
 

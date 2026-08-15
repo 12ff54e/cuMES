@@ -21,12 +21,7 @@
 #include <string>
 #include <unistd.h>   // getpid, rename
 
-static void checkCuda(cudaError_t err, const char* tag) {
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error [%s]: %s\n", tag, cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-}
+#include "cumes/runtime/cuda_status.hpp"
 
 namespace {
 
@@ -151,7 +146,7 @@ bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
     const size_t nb = n * sizeof(T);
     const hsize_t state_dims[2] = {(hsize_t)p.ns, (hsize_t)p.mnmax};
     auto writeFam = [&](const T* d, const char* name) -> herr_t {
-        checkCuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), "cpy fam");
+        cumes::check_cuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), "cpy fam");
         for (size_t i = 0; i < n; ++i) { dbuf[i] = (double)buf[i]; }
         hid_t sp = H5Screate_simple(2, state_dims, nullptr);
         if (sp < 0) { return -1; }

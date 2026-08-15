@@ -5,6 +5,7 @@
 #include "fourier.cuh"
 #include "geometry.cuh"
 #include "forces.cuh"
+#include "cumes/state/spectral_storage.hpp"
 
 // Run the full fixed-point solve on GPU.
 // Returns: iterations used, and whether converged.
@@ -18,6 +19,6 @@ struct SolverResult {
 };
 
 template <typename T>
-SolverResult<T> solverRun(SpectralState<T>& state, const GridParams<T>& p,
+SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
                           MetricWorkspace<T>& mw);

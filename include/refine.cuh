@@ -1,6 +1,7 @@
 // refine.cuh — grid-sequencing state interpolation (multi-radial-grid).
 #pragma once
 #include "vmec_types.h"
+#include "cumes/state/spectral_storage.hpp"
 
 // vmecpp Vmec::InterpolateToNextMultigridStep (vmec.cc:1795-2042), kLinear
 // scheme: the converged PHYSICAL state on p_old is interpolated in
@@ -9,5 +10,6 @@
 // exactly (boundary pinned). st_new's 12 arrays are allocated here and the
 // velocities zeroed; the caller owns st_new and must freeState() it.
 template <typename T>
-void interpolateState(SpectralState<T>& st_new, const GridParams<T>& p_new,
-                      const SpectralState<T>& st_old, const GridParams<T>& p_old);
+cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
+                                           const cumes::SpectralStorage<T>& st_old,
+                                           const GridParams<T>& p_old);
