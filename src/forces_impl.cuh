@@ -319,10 +319,11 @@ __global__ void forcesKernel(
 
 template <typename T>
 void computeForces(const FourierPlan<T>& fp, const GridParams<T>& p,
-                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw) {
+                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
+                   cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
-    forcesKernel<T><<<grid, block>>>(
+    forcesKernel<T><<<grid, block, 0, stream>>>(
         geometryParityViews(fp, p), baseGeometryHalfViews(mw, p),
         magneticFieldViews(mw, p), radialProfileViews(rp),
         forceParityViews(fp, p),

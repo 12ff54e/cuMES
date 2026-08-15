@@ -73,13 +73,18 @@ template <typename T>
 class StageSolver {
   public:
     static SolverResult<T> run(GridParams<T>& p, const InputParams& ip,
-                               SpectralStorage<T>& state) {
+                               SpectralStorage<T>& state,
+                               cudaStream_t stream = 0) {
         DeviceArena arena;
         arena.allocate(stage_arena_bytes<T>(p));
+        // Setup (profiles/Fourier/metric) is synchronous on the default
+        // stream, so it completes before the solve; the hot loop runs on the
+        // explicit nonblocking compute stream (Phase 6A).
         RadialProfiles<T> rp = profilesCreate<T>(p, ip, &arena);
         FourierPlan<T> fp = fourierCreate<T>(p, &arena);
         MetricWorkspace<T> mw = metricCreate<T>(p, &arena);
-        SolverResult<T> result = solverRun<T>(state, p, rp, fp, mw, &arena);
+        SolverResult<T> result = solverRun<T>(state, p, rp, fp, mw, &arena,
+                                              stream);
         fourierFree(fp);
         metricFree(mw);
         profilesFree(rp);

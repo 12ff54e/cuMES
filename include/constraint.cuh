@@ -72,14 +72,15 @@ void constraintFree(ConstraintWorkspace<T>& cw);
 template <typename T>
 void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
                             cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
-                            ConstraintWorkspace<T>& cw, const T* d_sqrtS_F);
+                            ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
+                            cudaStream_t stream = 0);
 
 // Reset rCon0/zCon0 to the LCFS-extrapolated profile (vmecpp
 // rzConIntoVolume): rCon0 = rCon_LCFS * s. Call with the current rCon/zCon
 // on the first iteration and on the reinit pass after a restart.
 template <typename T>
 void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
-                           const T* d_sqrtS_F);
+                           const T* d_sqrtS_F, cudaStream_t stream = 0);
 
 // Compute constraint force and add to brmn/bzmn forces in the FourierPlan.
 // Must be called after computeForces and after preconCompute; tcon is
@@ -90,4 +91,5 @@ void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
 template <typename T>
 void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
                        const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
-                       const T* d_sqrtS_F, bool precon_updated);
+                       const T* d_sqrtS_F, bool precon_updated,
+                       cudaStream_t stream = 0);

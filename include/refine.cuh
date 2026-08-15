@@ -1,5 +1,6 @@
 // refine.cuh — grid-sequencing state interpolation (multi-radial-grid).
 #pragma once
+#include <cuda_runtime.h>
 #include "vmec_types.h"
 #include "cumes/state/spectral_storage.hpp"
 
@@ -12,4 +13,5 @@
 template <typename T>
 cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
                                            const cumes::SpectralStorage<T>& st_old,
-                                           const GridParams<T>& p_old);
+                                           const GridParams<T>& p_old,
+                                           cudaStream_t stream = 0);

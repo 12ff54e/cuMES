@@ -83,7 +83,7 @@ void preconFree(PreconWorkspace<T>& pw);
 template <typename T>
 void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
                    const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
-                   PreconWorkspace<T>& pw);
+                   PreconWorkspace<T>& pw, cudaStream_t stream = 0);
 
 // Apply the tridiagonal preconditioner to the 5-component spectral forces.
 // Solves tridiagonal systems for R (components 0,3) and Z (components 1,4).
@@ -93,4 +93,4 @@ template <typename T>
 void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
                  const GridParams<T>& p,
                  const PreconWorkspace<T>& pw,
-                 const int* xm, const int* xn);
+                 const int* xm, const int* xn, cudaStream_t stream = 0);

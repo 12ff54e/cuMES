@@ -34,7 +34,8 @@ class MultigridSolver {
     // stage from ip (exactly the legacy stage loop). `seed` is the stage-0
     // cold-start state (already interpolated from boundary + axis).
     static MultigridOutcome<T> run(GridParams<T>& p, const InputParams& ip,
-                                   SpectralStorage<T> seed) {
+                                   SpectralStorage<T> seed,
+                                   cudaStream_t stream = 0) {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
         GridParams<T> p_prev;
@@ -51,10 +52,11 @@ class MultigridSolver {
                         g + 1, ip.n_grids, p.ns, p.mnmax, p.max_iter,
                         (double)p.ftol);
             if (g > 0) {
-                // Prolong the previous stage's converged state onto this grid.
-                storage = interpolateState<T>(p, storage, p_prev);
+                // Prolong the previous stage's converged state onto this grid
+                // on the same compute stream (ordered before the next stage).
+                storage = interpolateState<T>(p, storage, p_prev, stream);
             }
-            result = StageSolver<T>::run(p, ip, storage);
+            result = StageSolver<T>::run(p, ip, storage, stream);
 
             StageReport sr;
             sr.ns = p.ns;

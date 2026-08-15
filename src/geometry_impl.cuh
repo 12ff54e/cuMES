@@ -467,16 +467,16 @@ __global__ void computeNormPartialsKernel(
 
 template <typename T>
 void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& mw,
-                              T* dVdsH, T* psum) {
+                              T* dVdsH, T* psum, cudaStream_t stream) {
     dim3 block(256), grid(p.ns - 1);
     size_t shmem = 4 * block.x * sizeof(T);
-    computeNormPartialsKernel<T><<<grid, block, shmem>>>(
+    computeNormPartialsKernel<T><<<grid, block, shmem, stream>>>(
         mw.d_gsqrt, mw.d_guu, mw.d_r12, mw.d_bsupu, mw.d_bsupv,
         mw.d_bsubu, mw.d_bsubv,
         p.ntheta, p.nzeta, p.ns,
         dVdsH, psum);
     cumes::check_cuda(cudaGetLastError(), "norm partials");
-    cumes::check_cuda(cudaDeviceSynchronize(), "norm partials sync");
+    cumes::check_cuda(cudaStreamSynchronize(stream), "norm partials sync");
 }
 
 // ---- full-grid iota/chip update (vmecpp ideal_mhd_model.cc) -------------
@@ -592,20 +592,23 @@ __global__ void jacobianStatsKernel(
 // Synchronous (the caller consumes the values immediately).
 template <typename T>
 void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
-                          T* d_stats, T* h_stats) {
+                          T* d_stats, T* h_stats, cudaStream_t stream) {
     const int nHalf = (p.ns - 1) * p.nZnT;
-    jacobianStatsKernel<T><<<1, 256>>>(mw.d_gsqrt, nHalf, 1,
+    jacobianStatsKernel<T><<<1, 256, 0, stream>>>(mw.d_gsqrt, nHalf, 1,
                                        T(p.kSignJacobian), d_stats);
     cumes::check_cuda(cudaGetLastError(), "jacobianStats");
-    cumes::check_cuda(cudaMemcpy(h_stats, d_stats, 4 * sizeof(T), cudaMemcpyDeviceToHost), "jac stats cpy");
+    cumes::check_cuda(cudaMemcpyAsync(h_stats, d_stats, 4 * sizeof(T),
+                                      cudaMemcpyDeviceToHost, stream), "jac stats cpy");
+    cumes::check_cuda(cudaStreamSynchronize(stream), "jac stats sync");
 }
 
 template <typename T>
 void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
-                     const RadialProfiles<T>& rp, MetricWorkspace<T>& mw) {
+                     const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                     cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
-    geometryKernel<T><<<grid, block>>>(
+    geometryKernel<T><<<grid, block, 0, stream>>>(
         geometryParityViews(fp, p), radialProfileViews(rp),
         baseGeometryHalfViews(mw, p), magneticFieldViews(mw, p),
         p.lamscale, p.ncurr, p.ns, p.nZnT, rp.delta_s);
@@ -614,7 +617,7 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
     if (p.ncurr == 1) {
         dim3 fb(256), fg(p.ns - 1);
         size_t shmem = 2 * 256 * sizeof(T);
-        ncurr1FinalizeKernel<T><<<fg, fb, shmem>>>(
+        ncurr1FinalizeKernel<T><<<fg, fb, shmem, stream>>>(
             mw.d_guu, mw.d_guv, mw.d_gsqrt, mw.d_gvv,
             mw.d_bsupu, mw.d_bsupv,
             rp.d_curr_H, rp.d_phip_H, rp.d_pres_H, rp.d_sqrtS_H,
@@ -625,7 +628,7 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
         }
 
     dim3 ib(256), ig((p.ns + 255) / 256);
-    updateIotaChipFKernel<T><<<ig, ib>>>(
+    updateIotaChipFKernel<T><<<ig, ib, 0, stream>>>(
         rp.d_iota_H, rp.d_chip_H, p.ns, rp.d_iota_F, rp.d_chi_F);
     cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
 

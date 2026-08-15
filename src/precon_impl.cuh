@@ -751,13 +751,13 @@ __global__ void tridiagSolveKernel(
 template <typename T>
 void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
                    const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
-                   PreconWorkspace<T>& pw) {
+                   PreconWorkspace<T>& pw, cudaStream_t stream) {
     int nH = p.ns - 1, nF = p.ns;
     int threads = 256;
     size_t smem = threads * 15 * sizeof(T);  // 15 accumulators
 
     // Step 1: Compute ax, bx, cx on half-grid
-    preconComputeKernel<T><<<nH, threads, smem>>>(
+    preconComputeKernel<T><<<nH, threads, smem, stream>>>(
         mw.d_r12, mw.d_tau, mw.d_totalPressure, mw.d_bsupv, mw.d_gsqrt,
         rp.d_sqrtS_H,
         mw.d_zs, mw.d_zu12, fp.d_zu_e, fp.d_zu_o, fp.d_z_o,
@@ -768,7 +768,7 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
 
     // Step 2a: Assemble off-diagonal terms + sm/sp on half-grid
     int gridH = (nH + 255) / 256;
-    preconAssembleKernel<T><<<gridH, 256>>>(
+    preconAssembleKernel<T><<<gridH, 256, 0, stream>>>(
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx,
         rp.d_sqrtS_H, rp.d_sqrtS_F,
         p.ns,
@@ -779,7 +779,7 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
 
     // Step 2b: Average half-grid diagonals to full-grid
     int gridF = (nF + 255) / 256;
-    preconDiagKernel<T><<<gridF, 256>>>(
+    preconDiagKernel<T><<<gridF, 256, 0, stream>>>(
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx,
         pw.d_sm, pw.d_sp, p.ns,
         pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd);
@@ -788,7 +788,7 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
     // Step 3: Assemble tridiagonal matrices per (m,n) mode
     int total = p.mnmax * nF;
     int gridMN = (total + 255) / 256;
-    tridiagAssemblyKernel<T><<<gridMN, 256>>>(
+    tridiagAssemblyKernel<T><<<gridMN, 256, 0, stream>>>(
         pw.d_arm, pw.d_brm, pw.d_azm, pw.d_bzm,
         pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd,
         fp.basis.d_xm, fp.basis.d_xn,
@@ -800,14 +800,14 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
 
     // Step 4a/4b: Lambda diagonal preconditioner (components 2 and 5)
     {
-        cumes::check_cuda(cudaMemset(pw.d_rmsPhiP, 0, sizeof(T)), "rmsPhiP zero");
-        lambdaPrecAssembleKernel<T><<<nH, threads>>>(
+        cumes::check_cuda(cudaMemsetAsync(pw.d_rmsPhiP, 0, sizeof(T), stream), "rmsPhiP zero");
+        lambdaPrecAssembleKernel<T><<<nH, threads, 0, stream>>>(
             mw.d_guu, mw.d_guv, mw.d_gvv, mw.d_gsqrt,
             rp.d_phip_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta,
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda, pw.d_rmsPhiP);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecAssemble");
-        lambdaPrecFinalizeKernel<T><<<dim3(p.mnmax, (p.ns + 127) / 128), 128>>>(
+        lambdaPrecFinalizeKernel<T><<<dim3(p.mnmax, (p.ns + 127) / 128), 128, 0, stream>>>(
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda,
             rp.d_sqrtS_F, pw.d_rmsPhiP,
             fp.basis.d_xm, fp.basis.d_xn,
@@ -820,11 +820,11 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
 template <typename T>
 void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
                  const GridParams<T>& p, const PreconWorkspace<T>& pw,
-                 const int* xm, const int* xn) {
+                 const int* xm, const int* xn, cudaStream_t stream) {
     // Step 4: PCR solve — one block per mode, 128 threads per block
     // (the threads cover up to ns-1 solved rows; PCR rounds in parallel)
     size_t smem = 10 * p.ns * sizeof(T);  // coeffs + RHS buffers
-    tridiagSolveKernel<T><<<p.mnmax, 128, smem>>>(
+    tridiagSolveKernel<T><<<p.mnmax, 128, smem, stream>>>(
         f,
         pw.d_ar, pw.d_dr, pw.d_br,
         pw.d_az, pw.d_dz, pw.d_bz,

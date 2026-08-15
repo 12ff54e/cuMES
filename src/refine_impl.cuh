@@ -91,7 +91,8 @@ __global__ void interpolateStateKernel(
 template <typename T>
 cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
                                            const cumes::SpectralStorage<T>& st_old,
-                                           const GridParams<T>& p_old) {
+                                           const GridParams<T>& p_old,
+                                           cudaStream_t stream) {
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         fprintf(stderr, "interpolateState: need ns_new > ns_old >= 3 and equal "
                 "mnmax (ns_old=%d ns_new=%d mnmax %d/%d)\n",
@@ -106,7 +107,7 @@ cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
     SpectralState<T> v_old = st_old.legacy_view();
 
     dim3 bd(256), gd((p_new.ns * p_new.mnmax + 255) / 256);
-    interpolateStateKernel<T><<<gd, bd>>>(
+    interpolateStateKernel<T><<<gd, bd, 0, stream>>>(
         v_new.d_rmncc, v_new.d_zmnsc, v_new.d_lmnsc,
         v_new.d_rmnss, v_new.d_zmncs, v_new.d_lmncs,
         v_old.d_rmncc, v_old.d_zmnsc, v_old.d_lmnsc,

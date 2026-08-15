@@ -27,4 +27,5 @@ template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
                           MetricWorkspace<T>& mw,
-                          cumes::DeviceArena* arena = nullptr);
+                          cumes::DeviceArena* arena = nullptr,
+                          cudaStream_t stream = 0);

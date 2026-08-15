@@ -624,17 +624,18 @@ __global__ void tconLcfsHalfKernel(T* __restrict__ tcon, int ns) {
 template <typename T>
 void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
                             cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
-                            ConstraintWorkspace<T>& cw, const T* d_sqrtS_F) {
+                            ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
+                            cudaStream_t stream) {
     using Complex = typename FftTraits<T>::Complex;
     (void)d_sqrtS_F;   // the odd-m factor is exactly 1.0 (see rzConPackKernel)
     // xmpq-weighted inverse transform on the compact value-slot batch:
     // pack slots 0/1/4/5 (compact 0..3), Z2D, accumulate rCon/zCon (the
     // poloidal sum over all m with the raw cos/sin tables). The memset
     // zeros the m=0,1 elements (xmpq == 0) and the unused n > ntor bins.
-    cumes::check_cuda(cudaMemset(cw.d_zeta_spectra_rz, 0,
-        (size_t)4 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(Complex)), "rzcon zero");
+    cumes::check_cuda(cudaMemsetAsync(cw.d_zeta_spectra_rz, 0,
+        (size_t)4 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(Complex), stream), "rzcon zero");
     int total = p.ns * p.mnmax;
-    rzConPackKernel<T><<<(total + 255) / 256, 256>>>(
+    rzConPackKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
         st, fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, cw.d_zeta_spectra_rz);
     cumes::check_cuda(cudaGetLastError(), "rzcon pack");
@@ -643,7 +644,7 @@ void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
     int nKTiles = (p.nzeta + kTile - 1) / kTile;
     dim3 blk(p.ntheta / 2, kTile);
     dim3 grd(p.ns, nKTiles);
-    rzConAccumulateKernel<T><<<grd, blk, 4 * p.mpol * kTile * sizeof(T)>>>(
+    rzConAccumulateKernel<T><<<grd, blk, 4 * p.mpol * kTile * sizeof(T), stream>>>(
         cw.d_zeta_real_rz, fp.d_cos_th, fp.d_sin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
         cw.d_rCon, cw.d_zCon, kTile);
@@ -657,10 +658,10 @@ void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
 // ---------------------------------------------------------------------------
 template <typename T>
 void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
-                           const T* d_sqrtS_F) {
+                           const T* d_sqrtS_F, cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
-    rzConIntoVolumeKernel<T><<<grid, block>>>(
+    rzConIntoVolumeKernel<T><<<grid, block, 0, stream>>>(
         cw.d_rCon, cw.d_zCon, d_sqrtS_F,
         p.ns, p.nZnT, cw.d_rCon0, cw.d_zCon0);
     cumes::check_cuda(cudaGetLastError(), "rzConIntoVolume");
@@ -672,7 +673,8 @@ void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
 template <typename T>
 void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
                        const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
-                       const T* d_sqrtS_F, bool precon_updated) {
+                       const T* d_sqrtS_F, bool precon_updated,
+                       cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
 
@@ -688,21 +690,21 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
         // shipped configs unchanged).
         T tcon_multiplier = p.tcon0 * T(1.0 * (1.0 + p.ns * (1.0/60.0 + p.ns/(200.0*120.0))) / 16.0);
         int gridF = (p.ns + 255) / 256;
-        computeTconKernel<T><<<gridF, 256>>>(
+        computeTconKernel<T><<<gridF, 256, 0, stream>>>(
             fp.d_ru_e, fp.d_ru_o, fp.d_zu_e, fp.d_zu_o,
             d_sqrtS_F,
             pw.d_ard, pw.d_azd,
             p.ns, p.nZnT, p.ntheta, p.nzeta, T(1.0)/T(p.ns-1.0), tcon_multiplier,
             cw.d_tcon);
         cumes::check_cuda(cudaGetLastError(), "tcon");
-        tconLcfsHalfKernel<T><<<1, 1>>>(cw.d_tcon, p.ns);
+        tconLcfsHalfKernel<T><<<1, 1, 0, stream>>>(cw.d_tcon, p.ns);
         cumes::check_cuda(cudaGetLastError(), "tcon lcfs");
     }
 
     // Zero gCon before accumulation
 
     // Step 1: Effective constraint force
-    effectiveConstraintKernel<T><<<grid, block>>>(
+    effectiveConstraintKernel<T><<<grid, block, 0, stream>>>(
         cw.d_rCon, cw.d_zCon,
         fp.d_ru_e, fp.d_ru_o, fp.d_zu_e, fp.d_zu_o,
         d_sqrtS_F,
@@ -719,14 +721,14 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
     {   int kTileA = computeKTile(8, p.nzeta);
         int nKTilesA = (p.nzeta + kTileA - 1) / kTileA;
         dim3 blkA(8, kTileA), grdA(p.mpol - 2, p.ns, nKTilesA);
-        deAliasAnalyzeKernel<T><<<grdA, blkA>>>(
+        deAliasAnalyzeKernel<T><<<grdA, blkA, 0, stream>>>(
             cw.d_gConEff, fp.d_cos_th, fp.d_sin_th,
             p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_zeta_real_c, kTileA);
         cumes::check_cuda(cudaGetLastError(), "deAlias analyze");
     }
     cumes::check_cufft(FftTraits<T>::execForward(cw.plan_d2z_da, cw.d_zeta_real_c, cw.d_zeta_spectra_c), "deAlias d2z");
     {   int nBand = (p.mpol - 2) * (p.ns - 1);
-        deAliasCoeffPackKernel<T><<<(nBand + 255) / 256, 256>>>(
+        deAliasCoeffPackKernel<T><<<(nBand + 255) / 256, 256, 0, stream>>>(
             cw.d_zeta_spectra_c, cw.d_tcon, cw.d_faccon,
             p.ns, p.mpol, p.ntor, p.nzeta / 2 + 1, p.nZnT,
             cw.d_zeta_spectra_c);
@@ -738,14 +740,14 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
         dim3 blkS(p.ntheta / 2, kTileS);
         dim3 grdS(p.ns, nKTilesS);
         deAliasSynthesizeKernel<T><<<grdS, blkS,
-            2 * (p.mpol - 2) * kTileS * sizeof(T)>>>(
+            2 * (p.mpol - 2) * kTileS * sizeof(T), stream>>>(
             cw.d_zeta_real_c, fp.d_cos_th, fp.d_sin_th,
             p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon, kTileS);
         cumes::check_cuda(cudaGetLastError(), "deAlias synth");
     }
 
     // Step 3: Add constraint force to brmn/bzmn + write frcon/fzcon outputs
-    addConstraintKernel<T><<<grid, block>>>(
+    addConstraintKernel<T><<<grid, block, 0, stream>>>(
         cw.d_rCon, cw.d_zCon, cw.d_rCon0, cw.d_zCon0,
         cw.d_gCon, d_sqrtS_F,
         fp.d_ru_e, fp.d_ru_o, fp.d_zu_e, fp.d_zu_o,

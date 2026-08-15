@@ -62,14 +62,15 @@ static void computeForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateD
                               const GridParams<T>& p, const RadialProfiles<T>& rp,
                               const MetricWorkspace<T>& mw,
                               T* d_psum, T* d_rzsum, int iter2,
-                              T& fNormRZ, T& fNormL, T& fNorm1) {
-    computeForceNormPartials(p, mw, rp.d_dVds_H, d_psum);
+                              T& fNormRZ, T& fNormL, T& fNorm1,
+                              cudaStream_t stream) {
+    computeForceNormPartials(p, mw, rp.d_dVds_H, d_psum, stream);
 
     { dim3 b1(256), g1(1);
-      rzNormKernel<T><<<g1, b1>>>(st, fp.basis.d_xm, fp.basis.d_xn,
+      rzNormKernel<T><<<g1, b1, 0, stream>>>(st, fp.basis.d_xm, fp.basis.d_xn,
                                   p.ns, p.mnmax, d_rzsum);
       cumes::check_cuda(cudaGetLastError(), "rzNorm");
-      cumes::check_cuda(cudaDeviceSynchronize(), "rzNorm sync"); }
+      cumes::check_cuda(cudaStreamSynchronize(stream), "rzNorm sync"); }
 
     int nH = p.ns - 1;
     T* h_psum = new T[4 * nH];
@@ -424,6 +425,12 @@ static void dumpEnsureDir() {
 template <typename T>
 static void dumpDeviceArray(const char* filename, const T* d_data, size_t nelem) {
     if (!dumpEnabled()) return;
+    // The dump machinery reads device data on the (synchronous) default stream
+    // while the hot loop produces it on the nonblocking compute stream. Sync
+    // everything first so a dump never reads a stale/in-flight buffer. This is
+    // compile- and runtime-gated observability, so the extra fence is free on
+    // the production path.
+    cudaDeviceSynchronize();
     T* h_tmp = new T[nelem];
     cudaError_t err = cudaMemcpy(h_tmp, d_data, nelem * sizeof(T), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
@@ -443,7 +450,8 @@ static void dumpDeviceArray(const char* filename, const T* d_data, size_t nelem)
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
-                          MetricWorkspace<T>& mw, cumes::DeviceArena* arena) {
+                          MetricWorkspace<T>& mw, cumes::DeviceArena* arena,
+                          cudaStream_t stream) {
     // The legacy 12-pointer view over the contiguous slabs: every kernel and
     // consumer below keeps its unchanged pointer arithmetic and layout.
     SpectralState<T> st = storage.legacy_view();
@@ -460,6 +468,16 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         d_f_spec.data(), p.ns, p.mnmax);
     PreconWorkspace<T> pw = preconCreate(p, arena);
     ConstraintWorkspace<T> cw = constraintCreate(p, arena);
+
+    // Bind every cuFFT plan to the explicit compute stream so the batched
+    // ζ-transforms execute in stream order with the surrounding kernels
+    // (blueprint §6.6). Plans are created once per stage; binding once here,
+    // before any transform runs, is sufficient.
+    cumes::check_cufft(cufftSetStream(fp.plan_z2d, stream), "set stream z2d");
+    cumes::check_cufft(cufftSetStream(fp.plan_d2z, stream), "set stream d2z");
+    cumes::check_cufft(cufftSetStream(cw.plan_d2z_da, stream), "set stream d2z_da");
+    cumes::check_cufft(cufftSetStream(cw.plan_z2d_da, stream), "set stream z2d_da");
+    cumes::check_cufft(cufftSetStream(cw.plan_z2d_rz, stream), "set stream z2d_rz");
 
     // ---- transform timing (cudaEvent pairs around inverseDFT/forwardDFT) ----
     cudaEvent_t ev0, ev1;
@@ -516,12 +534,12 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     cumes::DeviceBuffer<T> checkpoint(6 * (size_t)p.ns * p.mnmax);
 
     // Helper: copy current spectral state to backup (one device-to-device copy)
-    auto backupState = [&]() { checkpoint.copy_from(storage.state_buffer()); };
+    auto backupState = [&]() { checkpoint.copy_from_async(storage.state_buffer(), stream); };
 
     // Helper: restore spectral state from backup + zero velocities
     auto restoreState = [&]() {
-        storage.state_buffer().copy_from(checkpoint);
-        storage.velocity_buffer().zero();
+        storage.state_buffer().copy_from_async(checkpoint, stream);
+        storage.velocity_buffer().zero_async(stream);
     };
 
     // Take initial backup
@@ -545,7 +563,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // mode-major layout [mode*ns + j]: the m=0 modes (mode = n) at the
         // axis row (j=0) sit at indices n*ns — strided, so one cudaMemcpy2D
         // grabs all ntor+1 values instead of ntor+1 individual 1-double
-        // copies (each of which synchronized the device).
+        // copies (each of which synchronized the device). The state is
+        // produced on the compute stream, so sync it before the default-stream
+        // read below (called from printIterRow's post-descent output path).
+        cudaStreamSynchronize(stream);
         T h_ax[64];   // ntor+1 <= 64 for the hardcoded inputs
         cumes::check_cuda(cudaMemcpy2D(h_ax, sizeof(T), st.d_rmncc,
                                (size_t)p.ns * sizeof(T),
@@ -578,7 +599,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // combined *_real buffers are materialized on demand (fourierCombineParity)
     // at the dump site, never read stale.
     if (dumpEnabled()) {
-        inverseDFT(fp, storage.physical_const(), p, false);
+        inverseDFT(fp, storage.physical_const(), p, false, stream);
+        cudaDeviceSynchronize();  // dump-only read of compute-stream data
         auto* h_re = new T[p.nZnT * p.ns];
         auto* h_ro = new T[p.nZnT * p.ns];
         cumes::check_cuda(cudaMemcpy(h_re, fp.d_r_e, p.nZnT*p.ns*sizeof(T), cudaMemcpyDeviceToHost), "diag re");
@@ -645,13 +667,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // before inverse DFT, matching vmecpp's extrapolateTowardsAxis().
         // Must be done each iteration since the descent step updates j=1
         // but skips j=0 for m>0 (axis regularity).
-        extrapolateAxisKernel<T><<<(p.mnmax + 31) / 32, 32>>>(
+        extrapolateAxisKernel<T><<<(p.mnmax + 31) / 32, 32, 0, stream>>>(
             state_view, p.ns, p.mnmax, p.ntor + 1);
         cumes::check_cuda(cudaGetLastError(), "extrapAxis");
 
-        cudaEventRecord(ev0);
-        inverseDFT(fp, storage.physical_const(), p, false);
-        cudaEventRecord(ev1);
+        cudaEventRecord(ev0, stream);
+        inverseDFT(fp, storage.physical_const(), p, false, stream);
+        cudaEventRecord(ev1, stream);
         cudaEventSynchronize(ev1);
         { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_inv_ms += ms; }
 
@@ -697,7 +719,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
             // The combined *_real arrays are NOT refreshed by the hot loop
             // (inverseDFT runs with do_combine=false); materialize a fresh
             // snapshot from the current parity arrays before dumping them.
-            fourierCombineParity(fp, p);
+            fourierCombineParity(fp, p, stream);
             // Full R, Z, lambda (even+odd)
             dumpDeviceArray("dump/cuMES/step_A_r_real_iter_1.bin", fp.d_r_real, n_real);
             dumpDeviceArray("dump/cuMES/step_A_z_real_iter_1.bin", fp.d_z_real, n_real);
@@ -728,7 +750,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         }
 #endif
 
-        computeGeometry(fp,p,rp,mw);
+        computeGeometry(fp, p, rp, mw, stream);
 
         // ---- Jacobian validity check (vmecpp's bad-jacobian detection) ----
         // A collapsed or sign-flipped surface must fail the iteration here,
@@ -738,7 +760,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // scale: any non-finite entry, a fully-degenerate grid (max == 0),
         // or a surface whose |√g| is < 1e-12 of the maximum is treated as an
         // invalid Jacobian — same recovery as the non-finite-residual path.
-        computeJacobianStats(p, mw, d_jac_stats.data(), h_jac_stats.data());
+        computeJacobianStats(p, mw, d_jac_stats.data(), h_jac_stats.data(), stream);
         {
             // Oriented statistics: h_jac_stats.data()[0] = min(signJ·√g),
             // [1] = max |√g|, [2] = nonfinite count, [3] = min index.
@@ -795,14 +817,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // Compute the xmpq-weighted real-space combination rCon/zCon from
         // the current spectral state (vmecpp's rCon/zCon in the inverse
         // DFT), used by the spectral-condensation constraint.
-        constraintRzConCompute(p, fp, storage.physical_const(), cw, rp.d_sqrtS_F);
+        constraintRzConCompute(p, fp, storage.physical_const(), cw, rp.d_sqrtS_F, stream);
 
         // Reset the constraint-force reference (rCon0/zCon0) to the
         // LCFS-extrapolated profile on the first iteration and after every
         // restart (iter2 == iter1), matching vmecpp's rzConIntoVolume
         // ("initialization/soft reset").
         if (controller.reset_constraint_reference()) {
-            constraintResetRzCon0(p, cw, rp.d_sqrtS_F);
+            constraintResetRzCon0(p, cw, rp.d_sqrtS_F, stream);
         }
 
         // Update the radial tridiagonal + lambda preconditioners BEFORE the
@@ -818,13 +840,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // is now a pure function of the iteration counters.
         bool precon_updated = controller.refresh_preconditioner();
         if (precon_updated) {
-            preconCompute(fp, p, rp, mw, pw);
+            preconCompute(fp, p, rp, mw, pw, stream);
 
             // vmecpp computeForceNorms (same cadence): residual normalization
             // factors feeding fsqr/fsqz/fsql and fsqr1/fsqz1/fsql1.
             computeForceNorms(storage.physical_const(), fp, p, rp, mw,
                               d_psum.data(), d_rzsum.data(),
-                              iter2, fNormRZ, fNormL, fNorm1);
+                              iter2, fNormRZ, fNormL, fNorm1, stream);
 
 #ifdef DUMP_CUMES_VERIFY
             if (iter == 0) {
@@ -884,7 +906,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif  // DUMP_CUMES_VERIFY
         }
 
-        computeForces(fp,p,rp,mw);
+        computeForces(fp, p, rp, mw, stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 2) {
@@ -947,7 +969,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // Add spectral condensation constraint force to brmn/bzmn.
         // Uses the current-iteration tcon (refreshed above when the
         // preconditioner was updated), matching vmecpp.
-        constraintCompute(p, fp, pw, cw, rp.d_sqrtS_F, precon_updated);
+        constraintCompute(p, fp, pw, cw, rp.d_sqrtS_F, precon_updated, stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0) {
@@ -978,11 +1000,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         }
 #endif
 
-        cudaEventRecord(ev0);
+        cudaEventRecord(ev0, stream);
         forwardDFT(fp, cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
                           d_f_spec.data(), p.ns, p.mnmax),
-                   p, cw);
-        cudaEventRecord(ev1);
+                   p, cw, stream);
+        cudaEventRecord(ev1, stream);
         cudaEventSynchronize(ev1);
         { float ms; cudaEventElapsedTime(&ms, ev0, ev1); t_fwd_ms += ms; }
 
@@ -991,7 +1013,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // m>0 entries, so the boundary stays rigid and only the lambda
         // force is present at the LCFS (free gauge, evolved by descent).
         { dim3 bs(256), gs((p.ns*p.mnmax+255)/256);
-          scalxcApplyKernel<T><<<gs,bs>>>(residual_view, rp.d_sqrtS_F, fp.basis.d_xm,
+          scalxcApplyKernel<T><<<gs,bs,0,stream>>>(residual_view, rp.d_sqrtS_F, fp.basis.d_xm,
                                           p.ns, p.mnmax,
                                           std::sqrt(T(1.0) / T(p.ns - 1)));
           cumes::check_cuda(cudaGetLastError(), "scalxc"); }
@@ -1026,7 +1048,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         { dim3 b1(256), g1((p.ns + 255) / 256);
           int zeroZ = (controller.effective_iteration() < 2) ||
                       (controller.fsqz_prev() < T(1.0e-6));
-          m1ConstraintKernel<T><<<g1, b1>>>(residual_view, p.ns, p.mnmax, p.ntor,
+          m1ConstraintKernel<T><<<g1, b1, 0, stream>>>(residual_view, p.ns, p.mnmax, p.ntor,
                                             zeroZ);
           cumes::check_cuda(cudaGetLastError(), "m1Constraint"); }
 
@@ -1041,10 +1063,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
                             (size_t)6 * p.mnmax * p.ns);
         }
 #endif
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(residual_view_const,p.ns,p.mnmax,d_sq.data()); }
+        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3,0,stream>>>(residual_view_const,p.ns,p.mnmax,d_sq.data()); }
         cumes::check_cuda(cudaMemcpyAsync(h_sq_i_pin.data(), d_sq.data(), 3 * sizeof(T),
-                               cudaMemcpyDeviceToHost), "cpy sqi");
-        cumes::check_cuda(cudaStreamSynchronize(0), "sqi sync");
+                               cudaMemcpyDeviceToHost, stream), "cpy sqi");
+        cumes::check_cuda(cudaStreamSynchronize(stream), "sqi sync");
         const T* h_sq_i = h_sq_i_pin.data();
         // vmecpp evalFResInvar: fsqr = fResInvar[0]·fNormRZ·0.25 (same for
         // fsqz), fsql = fResInvar[2]·fNormL, where fResInvar are the plain
@@ -1094,14 +1116,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
         // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve
         { dim3 b1(256), g1((p.ns + 255) / 256);
-          m1PreconScaleKernel<T><<<g1, b1>>>(residual_view, pw.d_ard, pw.d_brd,
+          m1PreconScaleKernel<T><<<g1, b1, 0, stream>>>(residual_view, pw.d_ard, pw.d_brd,
                                              pw.d_azd, pw.d_bzd,
                                              p.ns, p.mnmax, p.ntor);
           cumes::check_cuda(cudaGetLastError(), "m1PreconScale"); }
 
         // Apply the radial tridiagonal + lambda preconditioners to the
         // (decomposed) spectral forces.
-        preconApply(residual_view, p, pw, fp.basis.d_xm, fp.basis.d_xn);
+        preconApply(residual_view, p, pw, fp.basis.d_xm, fp.basis.d_xn, stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 51 || (iter2 >= kDumpIter && iter2 <= kDumpIter + 2) ||
@@ -1150,10 +1172,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif
 
         // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3>>>(residual_view_const,p.ns,p.mnmax,d_sq.data()); }
+        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3,0,stream>>>(residual_view_const,p.ns,p.mnmax,d_sq.data()); }
         cumes::check_cuda(cudaMemcpyAsync(h_sq_pin.data(), d_sq.data(), 3 * sizeof(T),
-                               cudaMemcpyDeviceToHost), "cpy sq");
-        cumes::check_cuda(cudaStreamSynchronize(0), "sq sync");
+                               cudaMemcpyDeviceToHost, stream), "cpy sq");
+        cumes::check_cuda(cudaStreamSynchronize(stream), "sq sync");
         const T* h_sq = h_sq_pin.data();
         // vmecpp evalFResPrecd: fsqr1 = fResPrecd[0]·fNorm1 (same for fsqz1),
         // fsql1 = fResPrecd[2]·deltaS — NOTE: deltaS, not fNormL.
@@ -1187,7 +1209,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // the pass-56/57 BAD_PROGRESS restore and splits the trajectory
         // (2791 vs 2953 iters; converged lambda gauge modes 1.4e-2 off).
         { dim3 bd(256), gd((p.ns*p.mnmax+255)/256);
-          descentStepKernel<T><<<gd,bd>>>(
+          descentStepKernel<T><<<gd,bd,0,stream>>>(
               state_view, velocity_view, residual_view_const,
               fp.basis.d_xm, fp.basis.d_xn,
               p.ns,p.mnmax,controller.delta_t(),decision.damping.b1,decision.damping.fac);
@@ -1242,6 +1264,9 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     }
 #endif
 
+    // Drain the compute stream before destroying the stage's cuFFT plans (the
+    // last descent/backup enqueue may still be in flight when the loop exits).
+    cumes::check_cuda(cudaStreamSynchronize(stream), "solver end sync");
     preconFree(pw); constraintFree(cw);
     printf("transform timing: inverseDFT total %.1f ms (%.3f ms/iter), "
            "forwardDFT total %.1f ms (%.3f ms/iter)\n",

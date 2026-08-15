@@ -401,12 +401,13 @@ static int computeKTile(int blkX, int nzeta) {
 template <typename T>
 static void inverseDFTCufft(const FourierPlan<T>& fp,
                             cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                            const GridParams<T>& p, bool do_combine) {
+                            const GridParams<T>& p, bool do_combine,
+                            cudaStream_t stream) {
     // Zero the half-spectra (only bins n <= ntor are filled).
-    cumes::check_cuda(cudaMemset(fp.d_zeta_spectra, 0,
-        (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex)), "inv zero");
+    cumes::check_cuda(cudaMemsetAsync(fp.d_zeta_spectra, 0,
+        (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex), stream), "inv zero");
     int total = p.ns * p.mnmax;
-    inversePackKernel<T><<<(total + 255) / 256, 256>>>(
+    inversePackKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
         coeff, fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
     cumes::check_cufft(FftTraits<T>::execInverse(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
@@ -418,19 +419,19 @@ static void inverseDFTCufft(const FourierPlan<T>& fp,
     dim3 grd(p.ns, nKTiles);
     size_t invSmem = 4 * p.mpol * kTile * sizeof(T);
     // R slots 0-3 -> r/ru/rv, Z slots 4-7 -> z/zu/zv, λ slots 8-11 -> l/lu/lv
-    inverseAccumulateKernel<T><<<grd, blk, invSmem>>>(
+    inverseAccumulateKernel<T><<<grd, blk, invSmem, stream>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 0,
         fp.d_r_e, fp.d_ru_e, fp.d_rv_e, fp.d_r_o, fp.d_ru_o, fp.d_rv_o,
         kTile);
-    inverseAccumulateKernel<T><<<grd, blk, invSmem>>>(
+    inverseAccumulateKernel<T><<<grd, blk, invSmem, stream>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 4,
         fp.d_z_e, fp.d_zu_e, fp.d_zv_e, fp.d_z_o, fp.d_zu_o, fp.d_zv_o,
         kTile);
-    inverseAccumulateKernel<T><<<grd, blk, invSmem>>>(
+    inverseAccumulateKernel<T><<<grd, blk, invSmem, stream>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 8,
@@ -438,7 +439,7 @@ static void inverseDFTCufft(const FourierPlan<T>& fp,
         kTile);
     if (do_combine) {
         dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
-        combineParityKernel<T><<<cgrd, cblk>>>(
+        combineParityKernel<T><<<cgrd, cblk, 0, stream>>>(
             fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
             fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
             fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
@@ -455,9 +456,10 @@ static void inverseDFTCufft(const FourierPlan<T>& fp,
 // arrays (the hot loop runs with do_combine=false and never refreshes them;
 // call this before reading any *_real array after a do_combine=false pass).
 template <typename T>
-void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p) {
+void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p,
+                          cudaStream_t stream) {
     dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
-    combineParityKernel<T><<<cgrd, cblk>>>(
+    combineParityKernel<T><<<cgrd, cblk, 0, stream>>>(
         fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
         fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
         fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
@@ -472,8 +474,8 @@ void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p) {
 template <typename T>
 void inverseDFT(const FourierPlan<T>& fp,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                const GridParams<T>& p, bool do_combine) {
-    inverseDFTCufft(fp, coeff, p, do_combine);
+                const GridParams<T>& p, bool do_combine, cudaStream_t stream) {
+    inverseDFTCufft(fp, coeff, p, do_combine, stream);
 }
 
 // ---- cuFFT backend: forward ----------------------------------------------
@@ -647,18 +649,19 @@ __global__ void forwardRecoverKernel(
 template <typename T>
 static void forwardDFTCufft(const FourierPlan<T>& fp,
                             cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                            const GridParams<T>& p, const ConstraintWorkspace<T>& cw) {
+                            const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
+                            cudaStream_t stream) {
     // vmecpp zeroes the target before projecting (m_physical_f.setZero());
     // the kernels write only the entries vmecpp computes.
-    cumes::check_cuda(cudaMemset(f_spec.data(), 0,
-                         (size_t)6 * p.mnmax * p.ns * sizeof(T)), "fwd zero");
+    cumes::check_cuda(cudaMemsetAsync(f_spec.data(), 0,
+                         (size_t)6 * p.mnmax * p.ns * sizeof(T), stream), "fwd zero");
     // ζ-tiled reduce (see forwardReduceKernel): block (16 lanes, kTile),
     // grid (mpol, ns, k-tiles).
     int kTile = computeKTile(16, p.nzeta);
     int nKTiles = (p.nzeta + kTile - 1) / kTile;
     dim3 blk(16, kTile);  // x padded to 16 lanes (warp shuffle width)
     dim3 grd(p.mpol, p.ns, nKTiles);
-    forwardReduceKernel<T><<<grd, blk>>>(
+    forwardReduceKernel<T><<<grd, blk, 0, stream>>>(
         fp.d_armn_e, fp.d_armn_o, fp.d_azmn_e, fp.d_azmn_o,
         fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
         fp.d_crmn_e, fp.d_crmn_o, fp.d_czmn_e, fp.d_czmn_o,
@@ -669,7 +672,7 @@ static void forwardDFTCufft(const FourierPlan<T>& fp,
         fp.d_zeta_real, kTile);
     cumes::check_cufft(FftTraits<T>::execForward(fp.plan_d2z, fp.d_zeta_real, fp.d_zeta_spectra), "fwd d2z");
     int total = p.ns * p.mnmax;
-    forwardRecoverKernel<T><<<(total + 255) / 256, 256>>>(
+    forwardRecoverKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
         fp.d_zeta_spectra, fp.basis.d_xm, fp.basis.d_xn,
         p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, f_spec);
     cumes::check_cuda(cudaGetLastError(), "fwd cuFFT");
@@ -678,7 +681,8 @@ static void forwardDFTCufft(const FourierPlan<T>& fp,
 template <typename T>
 void forwardDFT(const FourierPlan<T>& fp,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                const GridParams<T>& p, const ConstraintWorkspace<T>& cw) {
-    forwardDFTCufft(fp, f_spec, p, cw);
+                const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
+                cudaStream_t stream) {
+    forwardDFTCufft(fp, f_spec, p, cw, stream);
 }
 

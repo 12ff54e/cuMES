@@ -55,7 +55,8 @@ void metricFree(MetricWorkspace<T>& mw);
 // from parity-split real-space geometry.
 template <typename T>
 void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
-                     const RadialProfiles<T>& rp, MetricWorkspace<T>& mw);
+                     const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                     cudaStream_t stream = 0);
 
 // Force-norm partial sums for the residual normalization (vmecpp
 // computeForceNorms): writes dVdsH[jH] = signJ * sum(gsqrt * wInt) and the
@@ -63,7 +64,7 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
 // psum (4 * (ns-1)). dVdsH: (ns-1), psum: 4*(ns-1), both device arrays.
 template <typename T>
 void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& mw,
-                              T* dVdsH, T* psum);
+                              T* dVdsH, T* psum, cudaStream_t stream = 0);
 
 // Jacobian validity stats (vmecpp's bad-jacobian detection): h_stats[4] =
 // {min |√g| over the half grid, max |√g|, count of non-finite entries,
@@ -75,4 +76,4 @@ void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& 
 // the solver's threshold is relative to the run's own |√g| scale.
 template <typename T>
 void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
-                          T* d_stats, T* h_stats);
+                          T* d_stats, T* h_stats, cudaStream_t stream = 0);

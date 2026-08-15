@@ -81,6 +81,27 @@ class DeviceBuffer {
                "DeviceBuffer::copy_from");
   }
 
+  // Stream-ordered variants (Phase 6A): the solver's state checkpoint/restore
+  // and velocity zero run after the descent kernel on the same compute stream,
+  // so they must be enqueued asynchronously rather than as blocking default-
+  // stream operations (which would race with the nonblocking stream).
+  void zero_async(cudaStream_t stream) {
+    if (count_ != 0) {
+      check_cuda(cudaMemsetAsync(data_, 0, count_ * sizeof(T), stream),
+                 "DeviceBuffer::zero_async");
+    }
+  }
+
+  void copy_from_async(const DeviceBuffer& other, cudaStream_t stream) {
+    if (other.count_ != count_) {
+      throw CumesError("DeviceBuffer::copy_from_async: size mismatch");
+    }
+    if (count_ == 0) return;
+    check_cuda(cudaMemcpyAsync(data_, other.data_, count_ * sizeof(T),
+                               cudaMemcpyDeviceToDevice, stream),
+               "DeviceBuffer::copy_from_async");
+  }
+
   T* data() const { return data_; }
   std::size_t size() const { return count_; }
   std::size_t byte_size() const { return count_ * sizeof(T); }

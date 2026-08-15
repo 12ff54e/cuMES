@@ -9,4 +9,5 @@
 // stored in FourierPlan scratch arrays.
 template <typename T>
 void computeForces(const FourierPlan<T>& fp, const GridParams<T>& p,
-                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw);
+                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
+                   cudaStream_t stream = 0);

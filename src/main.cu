@@ -46,6 +46,7 @@
 #include "cumes/io/snapshot_bridge.cuh"
 #include "cumes/io/writer.hpp"
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/stream.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/solver/multigrid_solver.hpp"
 
@@ -415,7 +416,13 @@ int main(int argc, char** argv) {
             seed = initState<Real>(p, ip);
         }
 
-        auto outcome = cumes::MultigridSolver<Real>::run(p, ip, std::move(seed));
+        // One explicit nonblocking compute stream owns the whole run: the
+        // stage setup (synchronous default-stream copies) completes before the
+        // solve, and every hot-loop kernel / cuFFT transform / D2H transfer is
+        // enqueued on this stream (Phase 6A explicit-stream scheduling).
+        cumes::Stream compute_stream;
+        auto outcome = cumes::MultigridSolver<Real>::run(p, ip, std::move(seed),
+                                                         compute_stream.get());
         storage = std::move(outcome.state);
         result = outcome.result;
         total_iter = outcome.total_iterations;

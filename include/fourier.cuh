@@ -84,7 +84,8 @@ void fourierFree(FourierPlan<T>& fp);
 template <typename T>
 void inverseDFT(const FourierPlan<T>& fp,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                const GridParams<T>& p, bool do_combine = true);
+                const GridParams<T>& p, bool do_combine = true,
+                cudaStream_t stream = 0);
 
 // Materialize the 9 combined (e+o) real-space arrays from the current parity
 // arrays. The combined buffers hold whatever the last do_combine=true
@@ -93,7 +94,8 @@ void inverseDFT(const FourierPlan<T>& fp,
 // a snapshot of the CURRENT state (never read the combined arrays after a
 // do_combine=false pass and assume they are fresh).
 template <typename T>
-void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p);
+void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p,
+                          cudaStream_t stream = 0);
 
 // forwardDFT: parity forces → 6-component spectral forces
 // Layout: (6*mnmax, ns) col-major
@@ -108,4 +110,5 @@ void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p);
 template <typename T>
 void forwardDFT(const FourierPlan<T>& fp,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                const GridParams<T>& p, const ConstraintWorkspace<T>& cw);
+                const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
+                cudaStream_t stream = 0);
