@@ -1,7 +1,9 @@
 // solver.cuh — GPU-resident fixed-point iteration with Garabedian acceleration.
 // All computation happens on device; host only orchestrates.
 #pragma once
+#include <vector>
 #include "vmec_types.h"
+#include "cumes/io/run_report.hpp"
 #include "cumes/state/spectral_storage.hpp"
 
 namespace cumes {
@@ -23,6 +25,11 @@ struct SolverResult {
     int iterations;
     T fsqr, fsqz, fsql;   // final force residuals
     T delt;               // final time step
+    // Every pass that restored the checkpoint and re-anchored (maintenance
+    // reset, Jacobian gate, nonfinite recovery, bad-jacobian / bad-progress),
+    // in order, with the effective iteration at the event. Carried so the
+    // multigrid driver can fill StageReport.restarts for the v1 container.
+    std::vector<cumes::RestartEvent> restarts;
 };
 
 // `arena`, when non-null, backs the preconditioner/constraint workspaces the

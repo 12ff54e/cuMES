@@ -977,9 +977,7 @@ void cumes::ThomasBackend<T>::enqueue_solve(
 
 template <typename T>
 void cumes::Preconditioner<T>::enqueue_apply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
-                 const DeviceParams<T>& p,
-                 const int* xm, const int* xn, cudaStream_t stream) const {
-    (void)xm; (void)xn;  // legacy signature; the solve no longer needs m/n tables
+                 const DeviceParams<T>& p, cudaStream_t stream) const {
     // Phase 8: route the tridiagonal solve through the backend-neutral
     // PcrBackend (the extracted production PCR, bit-identical to the legacy
     // tridiagSolveKernel). The R and Z systems each carry two RHS spectral

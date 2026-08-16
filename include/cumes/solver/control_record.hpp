@@ -32,7 +32,6 @@ struct JacobianStatus {
 // Result of classifying the invariant (unpreconditioned, normalized) residual
 // triple. The controller owns the delt/restart-anchor bookkeeping for the
 // nonfinite path; the solver only restores device state and continues.
-template <typename T>
 struct InvariantVerdict {
     bool nonfinite = false;
     bool converged = false;
@@ -54,16 +53,6 @@ struct RestartDecision {
     RestartReason reason = RestartReason::kNone;
     bool do_refresh = false;  // refresh the checkpoint AFTER descent
     Damping<T> damping;
-};
-
-// The full per-pass scalar record. Phase 4 feeds the controller across two
-// fences (the Jacobian gate, then the invariant/preconditioned residuals); the
-// single-fence `advance(ControlRecord)` form is the Phase 6A target.
-template <typename T>
-struct ControlRecord {
-    T invariant[3];       // fsqr_i, fsqz_i, fsql_i (normalized)
-    T preconditioned[3];  // fsqr, fsqz, fsql (normalized)
-    JacobianStatus<T> jacobian;
 };
 
 }  // namespace cumes

@@ -1,12 +1,13 @@
 // test_runtime.cu — Phase 3 runtime RAII, typed views, and contiguous slabs.
 //
 // Exercises the new host-only CUDA runtime layer (DeviceBuffer/PinnedBuffer/
-// Stream/Event/DeviceContext, centralized check_cuda/check_cufft), the typed
+// Stream, centralized check_cuda/check_cufft), the typed
 // SpectralView (device round-trip at the component-major layout), and the
 // SpectralStorage contiguous state/velocity slabs — in particular that
 // family_ptr() reproduces the exact six-family layout the legacy code read.
 #include <cstdio>
 #include <cstdlib>
+#include <utility>
 #include <vector>
 
 #include "vmec_types.h"
@@ -14,7 +15,6 @@
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/runtime/stream.hpp"
-#include "cumes/runtime/device_context.hpp"
 #include "cumes/core/tensor_view.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
@@ -98,15 +98,20 @@ int main() {
         CHECK(p.data()[3] == 4.0, "PinnedBuffer writable from host");
     }
 
-    // ---- Stream / DeviceContext ----
+    // ---- Stream ----
     {
-        cumes::DeviceContext ctx;
-        CHECK(ctx.compute_stream() != nullptr &&
-                  ctx.auxiliary_stream() != nullptr,
-              "DeviceContext creates compute+aux streams");
-        CHECK(ctx.capabilities().device >= 0, "DeviceContext reports a device");
         cumes::Stream s;
         CHECK(s.get() != nullptr, "Stream creates a cudaStream_t");
+        s.synchronize();  // real synchronize on a live stream
+        cumes::Stream moved_from = std::move(s);
+        moved_from.synchronize();  // moved-to stream still usable
+        bool threw = false;
+        try {
+            s.synchronize();  // moved-from must throw, not sync stream 0
+        } catch (const cumes::CumesError&) {
+            threw = true;
+        }
+        CHECK(threw, "synchronize() on a moved-from Stream throws");
     }
 
     // ---- SpectralStorage layout: slab offsets match the legacy 6-family order

@@ -93,7 +93,6 @@ class EquilibriumOperator {
   ToroidalFftOperator<T>& transform_;
   RealSpaceStorage<T>& rs_;
   GeometryOperator<T>& geometry_;
-  SpectralOperator<T>* op_ = nullptr;
 
   Preconditioner<T> precon_;
   ConstraintOperator<T> constraint_;

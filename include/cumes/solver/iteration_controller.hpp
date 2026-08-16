@@ -25,7 +25,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
+#include "cumes/io/run_report.hpp"
 #include "cumes/solver/control_record.hpp"
 
 namespace cumes {
@@ -66,6 +68,13 @@ class IterationController {
     // Accumulated bad-Jacobian counter (observability only; the 25/50
     // maintenance reset keys off it internally).
     int bad_jacobian_count() const noexcept { return ijacob_; }
+    // Restart history: one event per pass that restored the checkpoint and
+    // re-anchored (maintenance reset, Jacobian gate, nonfinite recovery,
+    // bad-jacobian, bad-progress), with the effective iteration at the event.
+    // Carried into SolverResult / StageReport.restarts for the v1 container.
+    const std::vector<RestartEvent>& restart_events() const noexcept {
+        return restart_events_;
+    }
     // rzConIntoVolume soft-reset: true on the first pass and after a restart.
     bool reset_constraint_reference() const noexcept { return iter2_ == iter1_; }
     bool refresh_preconditioner() const noexcept {
@@ -84,6 +93,7 @@ class IterationController {
             delt_ = (ijacob_ < 50 ? T(0.98) : T(0.96)) * delt0_;
             iter1_ = iter2_;
             log_anchor_ = iter2_;
+            restart_events_.push_back(RestartEvent{iter2_});
             return true;
         }
         return false;
@@ -92,6 +102,26 @@ class IterationController {
     // Oriented-Jacobian validity gate. Returns true when the geometry is
     // degenerate (the caller restores and continues); the delt shrink and
     // restart-anchor reset happen here, matching the legacy inline check.
+    //
+    // Deviation from the legacy gate (deliberate — review finding 3.1, kept):
+    // legacy tested `gbad>0 || gmax<=0 || (gmin < 1e-12*gmax && gminIdx >=
+    // nZnT)` over |√g|. The absolute `min_oriented <= 0` term here
+    // additionally rejects a sign-flipped or exactly-zero signJ·√g anywhere
+    // on the half grid — including the jH=0 axis row, which the legacy
+    // relative test excluded (it compared against gmax and required
+    // gminIdx >= nZnT). The stats themselves reduce the ORIENTED signJ·√g
+    // (geometry_impl.cuh jacobianStatsKernel), which |√g| cannot express at
+    // all. Trigger conditions in practice: the frozen W7-X trajectory fires
+    // this branch three times in stage 1 (min(signJ·√g) ≈ -9.9e-1 / -8.2e-1 /
+    // -1.2e-1 at interior jH — genuine sign flips of the early transient,
+    // recovered by the standard restore + delt×0.9 path; the trajectory is
+    // Class A with them). A float build or a harsh --restart guess could
+    // additionally fire it at the axis row, where √g → 0 is the expected
+    // coordinate singularity: an exact-0.0 rounding there is treated as
+    // degenerate and restored, which is the safe recovery — a flipped
+    // Jacobian left running would poison the force/constraint/preconditioner
+    // kernels' 1/√g divisions (geometry_impl.cuh documents the inv_gsqrt
+    // guards that keep the buffers finite in the interim).
     bool jacobian_invalid(const JacobianStatus<T>& s, int nZnT) {
         if (s.nonfinite_count > T(0) || s.max_abs <= T(0) ||
             s.min_oriented <= T(0) ||
@@ -99,6 +129,7 @@ class IterationController {
             delt_ *= T(0.9);
             iter1_ = iter2_;
             log_anchor_ = iter2_;
+            restart_events_.push_back(RestartEvent{iter2_});
             return true;
         }
         return false;
@@ -107,7 +138,7 @@ class IterationController {
     // Classify the invariant (unpreconditioned, normalized) residual triple:
     // updates fsqz_prev for the next pass's gauge condition, then reports
     // nonfinite (recover) or converged (stop).
-    InvariantVerdict<T> classify_invariant(const T invariant[3]) {
+    InvariantVerdict classify_invariant(const T invariant[3]) {
         fsqz_prev_ = invariant[1];
         const bool nonfinite = !(std::isfinite(invariant[0]) &&
                                  std::isfinite(invariant[1]) &&
@@ -116,9 +147,10 @@ class IterationController {
             delt_ *= T(0.9);
             iter1_ = iter2_;
             log_anchor_ = iter2_;
-            return InvariantVerdict<T>{true, false};
+            restart_events_.push_back(RestartEvent{iter2_});
+            return InvariantVerdict{true, false};
         }
-        InvariantVerdict<T> v;
+        InvariantVerdict v;
         v.converged = invariant[0] <= ftol_ && invariant[1] <= ftol_ &&
                       invariant[2] <= ftol_;
         return v;
@@ -195,6 +227,7 @@ class IterationController {
             }
             iter1_ = iter2_;
             log_anchor_ = iter2_;
+            restart_events_.push_back(RestartEvent{iter2_});
         } else {
             ++iter2_;
         }
@@ -213,6 +246,7 @@ class IterationController {
     T fsq_prev_ = T(1.0);  // previous preconditioned sum
     T fsqz_prev_ = T(0.0); // previous invariant Z-residual
     T inv_tau_hist_[10];   // ten-sample 1/tau history
+    std::vector<RestartEvent> restart_events_;
 };
 
 }  // namespace cumes

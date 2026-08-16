@@ -1,22 +1,28 @@
 // stage_solver.hpp — one radial stage's resource lifecycle + solve
 // (blueprint §6.11). The stage owns its ns-dependent profile/Fourier/metric
-// workspaces (and, transitively, the preconditioner/constraint workspaces the
-// solver builds) and invokes the solver; the spectral state is owned by the
-// multigrid driver (it persists across stages via prolongation).
+// workspaces (and, transitively, the preconditioner/constraint/solver
+// workspaces the solver builds) and invokes the solver; the spectral state is
+// owned by the multigrid driver (it persists across stages via prolongation).
 //
 // Phase 5: all five workspaces are backed by a single DeviceArena — one
-// cudaMalloc per stage instead of ~110 per-array allocations. stage_arena_bytes
-// is the host-side "plan" (blueprint §6.5 StageWorkspace::plan) that sums each
-// module's named subspans before the arena is allocated; the arena's
-// liveness/peak report is emitted after the solve. alloc_span throws on a too-
-// small plan, so a miscounted size is a loud setup error, not silent aliasing.
+// cudaMalloc per stage instead of ~110 per-array allocations. The arena plan
+// is MEASURED (7.2): stage_arena_bytes runs the real module constructors
+// against a measuring arena (growth-retry on overflow) and returns the exact
+// carved byte total, so a buffer added/removed in any module updates the plan
+// automatically — the old hand-summed arithmetic is gone except as a
+// non-authoritative seed for the measuring pass's first budget guess. The
+// arena's liveness/peak report is emitted after the solve.
 #pragma once
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <vector>
 
 #include "cumes/runtime/device_arena.cuh"
+#include "cumes/numerics/preconditioner.hpp"
+#include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/solver/solver_bench.hpp"
@@ -29,12 +35,126 @@
 #include "solver.cuh"
 
 namespace cumes {
+namespace stage_detail {
 
-// Exact byte total of one stage's workspaces (profiles + Fourier + metric +
-// preconditioner + constraint), including a small alignment slack. The per-span
-// sizes mirror the *Create functions' alloc_span calls; keep the two in sync.
+// ---- RAII wrappers for the two free-function stage resources (8.3) -------
+// realSpaceCreate/Free and modeTableCreate/Free are plain function pairs; the
+// wrappers restore the "xCreate/xFree replaced by RAII classes" convention
+// without restructuring the (sibling-owned) state headers. The wrapped frees
+// keep their arena-backed no-op semantics: on the always-arena stage path the
+// arena owns the memory, and on a nullptr-arena path the destructor frees the
+// per-array cudaMallocs even when a later constructor throws.
 template <typename T>
-std::size_t stage_arena_bytes(const DeviceParams<T>& p) {
+class ScopedRealSpace {
+ public:
+  ScopedRealSpace(const DeviceParams<T>& p, DeviceArena* arena)
+      : rs_(realSpaceCreate<T>(p, arena)) {}
+  ~ScopedRealSpace() { realSpaceFree(rs_); }
+
+  // Non-copyable, non-movable: RealSpaceStorage is a raw owning aggregate
+  // with no move semantics, so a move would leave two owners of the same
+  // pointers (double cudaFree on the non-arena path).
+  ScopedRealSpace(const ScopedRealSpace&) = delete;
+  ScopedRealSpace& operator=(const ScopedRealSpace&) = delete;
+  ScopedRealSpace(ScopedRealSpace&&) = delete;
+  ScopedRealSpace& operator=(ScopedRealSpace&&) = delete;
+
+  RealSpaceStorage<T>& get() { return rs_; }
+  RealSpaceStorage<T>* operator->() { return &rs_; }
+  RealSpaceStorage<T>& operator*() { return rs_; }
+
+ private:
+  RealSpaceStorage<T> rs_;
+};
+
+template <typename T>
+class ScopedModeTable {
+ public:
+  ScopedModeTable(const DeviceParams<T>& p, DeviceArena* arena)
+      : mt_(modeTableCreate<T>(p, arena)) {}
+  ~ScopedModeTable() { modeTableFree(mt_); }
+
+  ScopedModeTable(const ScopedModeTable&) = delete;
+  ScopedModeTable& operator=(const ScopedModeTable&) = delete;
+  ScopedModeTable(ScopedModeTable&&) = delete;
+  ScopedModeTable& operator=(ScopedModeTable&&) = delete;
+
+  DeviceModeTable& get() { return mt_; }
+
+ private:
+  DeviceModeTable mt_;
+};
+
+// ---- stage arena measurement (7.2) ----------------------------------------
+// Typed overflow: the measuring pass requires at least `required_bytes` to
+// satisfy the failing span (its aligned offset + size), so a retry loop can
+// grow the budget precisely.
+class ArenaMeasOverflow : public CumesError {
+ public:
+  explicit ArenaMeasOverflow(std::size_t required)
+      : CumesError("stage arena measurement overflow"),
+        required_bytes(required) {}
+  std::size_t required_bytes;
+};
+
+// A DeviceArena whose carve throws the typed overflow instead of the generic
+// CumesError. Real device memory IS allocated: the module constructors
+// upload/memset into the carved spans (modeTableCreate, the transform
+// poloidal tables, the precon/constraint zeroing), so a pointerless
+// counting-only arena would fault. The carve bookkeeping is otherwise the
+// base arena's (same offsets, same span table, same peak accounting).
+class MeasuringArena : public DeviceArena {
+ protected:
+  void* carve_span(const char* name, std::size_t bytes,
+                   std::size_t align) override {
+    std::size_t off = 0;
+    if (!carve_offsets(bytes, align, off)) {
+      throw ArenaMeasOverflow(off + bytes);
+    }
+    return DeviceArena::carve_span(name, bytes, align);
+  }
+};
+
+// Construct the exact arena-allocation sequence of one stage against `arena`,
+// in the same order StageSolver::run (and the benchmark harnesses) use, so
+// the arena's used bytes become the authoritative stage plan:
+//   Profiles → RealSpaceStorage → DeviceModeTable → ToroidalFftOperator →
+//   GeometryOperator → Preconditioner → ConstraintOperator → the solver's
+//   f_spec / control / psum buffers (EquilibriumOperator ctor order).
+// With `vp == nullptr` (the benchmark-facing stage_arena_bytes(p) form) the
+// Profiles constructor cannot run (it needs the validated spec), so its exact
+// 4-full + 7-half T-element spans are reserved by one equivalent span: every
+// profile span is sizeof(T)-aligned, so the trailing offset matches the real
+// pass bit-for-bit.
+template <typename T>
+void measure_stage_stack(DeviceParams<T>& p, const ValidatedProblem* vp,
+                         DeviceArena* arena) {
+    if (vp != nullptr) {
+        Profiles<T> profiles(p, *vp, arena);
+    } else {
+        arena->alloc_span<T>("profiles", (size_t)4 * p.ns + 7 * (p.ns - 1));
+    }
+    RealSpaceStorage<T> rs = realSpaceCreate<T>(p, arena);
+    DeviceModeTable mt = modeTableCreate<T>(p, arena);
+    ToroidalFftOperator<T> transform(p, rs, mt, arena);
+    GeometryOperator<T> geometry(p, arena);
+    Preconditioner<T> precon(p, arena);
+    ConstraintOperator<T> constraint(p, arena);
+    // EquilibriumOperator's own buffers (6.4): carved from the same arena.
+    arena->alloc_span<T>("solver/f_spec", 6 * (size_t)p.ns * p.mnmax);
+    arena->alloc_span<double>("solver/control", 16);
+    arena->alloc_span<T>("solver/psum", 4 * (size_t)(p.ns - 1));
+}
+
+}  // namespace stage_detail
+
+// Non-authoritative sizing hint for the measuring pass's first budget guess
+// (the pre-7.2 hand-sum, retained only so the measurement succeeds on the
+// first attempt for the current shapes). An underestimate merely costs one
+// more measuring attempt; the value returned by stage_arena_bytes is always
+// the MEASURED total, never this arithmetic.
+template <typename T>
+std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     using Complex = typename FftTraits<T>::Complex;
     const std::size_t ns = p.ns, nH = ns - 1, nZnT = p.nZnT, mnmax = p.mnmax;
     const std::size_t szT = sizeof(T), szI = sizeof(int), szC = sizeof(Complex);
@@ -64,9 +184,34 @@ std::size_t stage_arena_bytes(const DeviceParams<T>& p) {
     // constraint: 10 full-grid arrays + tcon + faccon (the de-alias compact
     // scratch now lives in the fourier section above).
     bytes += (10 * ns * nZnT + ns + mnmax) * szT;
+    // solver: f_spec + control + psum (6.4 — carved from the stage arena).
+    bytes += (6 * mnmax * ns + 4 * (ns - 1)) * szT + 16 * sizeof(double);
     // Alignment slack for the ~110 subspans (each padded to alignof <= 16).
     bytes += 64 * 1024;
     return bytes;
+}
+
+// Exact byte total of one stage's workspaces (profiles + Fourier + metric +
+// preconditioner + constraint + the solver's own buffers), measured by
+// running the real module constructors against a growth-retry measuring
+// arena — the modules' authoritative alloc_span calls are the plan. `vp`,
+// when available, lets the measurement include the real Profiles constructor
+// (StageSolver passes it); the benchmarks' vp-less form reserves the profile
+// spans equivalently.
+template <typename T>
+std::size_t stage_arena_bytes(DeviceParams<T>& p, const ValidatedProblem* vp = nullptr) {
+    std::size_t budget = stage_arena_seed_bytes<T>(p);
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        stage_detail::MeasuringArena arena;
+        arena.allocate(budget);
+        try {
+            stage_detail::measure_stage_stack<T>(p, vp, &arena);
+            return arena.used_bytes();
+        } catch (const stage_detail::ArenaMeasOverflow& over) {
+            budget = 2 * over.required_bytes + (1u << 20);
+        }
+    }
+    throw CumesError("stage_arena_bytes: measurement did not converge");
 }
 
 // Runs a single radial stage on `p` (already carrying this stage's
@@ -82,14 +227,16 @@ class StageSolver {
                                cudaStream_t stream = 0,
                                SolverBench* bench = nullptr) {
         DeviceArena arena;
-        arena.allocate(stage_arena_bytes<T>(p));
+        arena.allocate(stage_arena_bytes<T>(p, &vp));
         // Setup (profiles/Fourier/metric) is synchronous on the default
         // stream, so it completes before the solve; the hot loop runs on the
-        // explicit nonblocking compute stream (Phase 6A).
+        // explicit nonblocking compute stream (Phase 6A). The real-space
+        // storage and the mode table are scoped RAII (their frees no-op on
+        // the arena path and cover the nullptr-arena path).
         Profiles<T> profiles(p, vp, &arena);
-        RealSpaceStorage<T> rs = realSpaceCreate<T>(p, &arena);
-        DeviceModeTable mt = modeTableCreate<T>(p, &arena);
-        ToroidalFftOperator<T> transform(p, rs, mt, &arena);
+        stage_detail::ScopedRealSpace<T> rs(p, &arena);
+        stage_detail::ScopedModeTable<T> mt(p, &arena);
+        ToroidalFftOperator<T> transform(p, *rs, mt.get(), &arena);
         GeometryOperator<T> geometry(p, &arena);
 
         // Transform backend selection (blueprint §8.5): for ntor=0/nzeta=1
@@ -108,11 +255,10 @@ class StageSolver {
         if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
         SolverResult<T> result = solverRun<T>(state, p, profiles,
-                                              transform, rs, geometry, &arena, stream,
+                                              transform, *rs, geometry, &arena, stream,
                                               bench, axisym.get());
-        realSpaceFree(rs);
-        modeTableFree(mt);
-        // profiles/transform/geometry are RAII (operator destructors).
+        // profiles/transform/geometry/rs/mt are RAII (scoped wrappers + the
+        // operator destructors); nothing to free manually.
 
         std::printf("  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
                     "reserved %zu bytes\n",

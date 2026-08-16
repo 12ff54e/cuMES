@@ -23,15 +23,23 @@ class DeviceBuffer {
 
   explicit DeviceBuffer(std::size_t count) { allocate(count); }
 
+  // Non-owning view over externally-managed device memory (an arena-carved
+  // span): release() leaves the memory untouched. `data` may be nullptr only
+  // when `count == 0`.
+  DeviceBuffer(T* data, std::size_t count) : data_(data), count_(count) {
+    owned_ = false;
+  }
+
   ~DeviceBuffer() { release(); }
 
   DeviceBuffer(const DeviceBuffer&) = delete;
   DeviceBuffer& operator=(const DeviceBuffer&) = delete;
 
   DeviceBuffer(DeviceBuffer&& other) noexcept
-      : data_(other.data_), count_(other.count_) {
+      : data_(other.data_), count_(other.count_), owned_(other.owned_) {
     other.data_ = nullptr;
     other.count_ = 0;
+    other.owned_ = true;
   }
 
   DeviceBuffer& operator=(DeviceBuffer&& other) noexcept {
@@ -39,8 +47,10 @@ class DeviceBuffer {
       release();
       data_ = other.data_;
       count_ = other.count_;
+      owned_ = other.owned_;
       other.data_ = nullptr;
       other.count_ = 0;
+      other.owned_ = true;
     }
     return *this;
   }
@@ -51,16 +61,18 @@ class DeviceBuffer {
     check_cuda(cudaMalloc(&data_, count * sizeof(T)),
                "DeviceBuffer::allocate");
     count_ = count;
+    owned_ = true;
   }
 
   void release() {
     // A free failure is not recoverable and must not throw from a destructor
     // path; the allocation/transfer/copy entry points are the checked boundary.
-    if (data_ != nullptr) {
+    if (data_ != nullptr && owned_) {
       cudaFree(data_);
-      data_ = nullptr;
     }
+    data_ = nullptr;
     count_ = 0;
+    owned_ = true;
   }
 
   void zero() {
@@ -110,6 +122,7 @@ class DeviceBuffer {
  private:
   T* data_ = nullptr;
   std::size_t count_ = 0;
+  bool owned_ = true;
 };
 
 }  // namespace cumes

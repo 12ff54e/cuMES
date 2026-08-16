@@ -1,8 +1,7 @@
 // stream.hpp — nonblocking CUDA stream RAII.
 //
-// Owns one `cudaStream_t` created with `cudaStreamNonBlocking`. Introduced in
-// Phase 3; the solver still runs on the legacy default stream until the Phase
-// 6A control-path performance work wires explicit streams into cuFFT/kernels.
+// Owns one `cudaStream_t` created with `cudaStreamNonBlocking`. The solver's
+// hot loop runs on one such stream (Phase 6A); main.cu creates its own.
 #pragma once
 
 #include <cuda_runtime.h>
@@ -41,6 +40,12 @@ class Stream {
   cudaStream_t get() const { return stream_; }
 
   void synchronize() const {
+    // A moved-from Stream must not silently sync the legacy default stream:
+    // cudaStreamSynchronize(0) would report success without waiting for any
+    // of the (nonblocking) compute-stream work. Fail loudly instead.
+    if (stream_ == nullptr) {
+      throw CumesError("Stream::synchronize: stream is null (moved-from)");
+    }
     check_cuda(cudaStreamSynchronize(stream_), "Stream::synchronize");
   }
 

@@ -41,6 +41,8 @@ class DeviceArena {
 
     DeviceArena() = default;
 
+    virtual ~DeviceArena() = default;
+
     DeviceArena(const DeviceArena&) = delete;
     DeviceArena& operator=(const DeviceArena&) = delete;
 
@@ -96,20 +98,7 @@ class DeviceArena {
     T* alloc_span(const char* name, std::size_t count,
                   std::size_t align = alignof(T)) {
         if (count == 0) return nullptr;
-        const std::size_t elem = sizeof(T);
-        const std::size_t raw = count * elem;
-        const std::size_t off = align_up(used_bytes_, align);
-        if (off > total_bytes_ || raw > total_bytes_ - off) {
-            throw CumesError(std::string("DeviceArena::alloc_span: '") + name +
-                             "' of " + std::to_string(raw) +
-                             " bytes overflows arena (used=" +
-                             std::to_string(used_bytes_) +
-                             ", total=" + std::to_string(total_bytes_) + ")");
-        }
-        spans_.push_back(SpanInfo{std::string(name), off, raw});
-        used_bytes_ = off + raw;
-        if (used_bytes_ > peak_bytes_) peak_bytes_ = used_bytes_;
-        return reinterpret_cast<T*>(storage_.data() + off);
+        return reinterpret_cast<T*>(carve_span(name, count * sizeof(T), align));
     }
 
     // Zero a previously-carved span (the arena does not know element counts,
@@ -135,14 +124,40 @@ class DeviceArena {
     const std::vector<SpanInfo>& spans() const { return spans_; }
     bool empty() const { return total_bytes_ == 0; }
 
- private:
-    static std::size_t align_up(std::size_t value, std::size_t align) {
+ protected:
+    // Non-template carve seam: `alloc_span` forwards here, and subclasses may
+    // intercept it (the stage-solver's measuring arena throws a typed
+    // overflow carrying the byte requirement instead of the generic
+    // CumesError). The base implementation is exactly the pre-seam logic —
+    // same offsets, same span table, same exception message.
+    virtual void* carve_span(const char* name, std::size_t bytes,
+                             std::size_t align) {
+        std::size_t off = 0;
+        if (!carve_offsets(bytes, align, off)) {
+            throw CumesError(std::string("DeviceArena::alloc_span: '") + name +
+                             "' of " + std::to_string(bytes) +
+                             " bytes overflows arena (used=" +
+                             std::to_string(used_bytes_) +
+                             ", total=" + std::to_string(total_bytes_) + ")");
+        }
+        spans_.push_back(SpanInfo{std::string(name), off, bytes});
+        used_bytes_ = off + bytes;
+        if (used_bytes_ > peak_bytes_) peak_bytes_ = used_bytes_;
+        return storage_.data() + off;
+    }
+
+    // Validates `align` and computes the aligned offset for a `bytes` span at
+    // the current used offset; returns false when it would overflow.
+    bool carve_offsets(std::size_t bytes, std::size_t align,
+                       std::size_t& off) const {
         if (align == 0 || (align & (align - 1)) != 0) {
             throw CumesError("DeviceArena: alignment must be a non-zero power of two");
         }
-        return (value + align - 1) & ~(align - 1);
+        off = (used_bytes_ + align - 1) & ~(align - 1);
+        return !(off > total_bytes_ || bytes > total_bytes_ - off);
     }
 
+ private:
     DeviceBuffer<char> storage_;
     std::vector<SpanInfo> spans_;
     std::size_t total_bytes_ = 0;

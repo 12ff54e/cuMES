@@ -69,6 +69,9 @@ class MultigridSolver {
             sr.final_residual = ResidualTriple{(double)result.fsqr,
                                                (double)result.fsqz,
                                                (double)result.fsql};
+            // Restart history the controller recorded during this stage
+            // (serialized into the v1 container's per-stage section).
+            sr.restarts = result.restarts;
             out.report.stages.push_back(sr);
             total_iter += result.iterations;
 
