@@ -23,9 +23,12 @@ template <class T>
 class ResidualOperator {
  public:
   // Reduce the decomposed residual into `sq_out` (3 elements: the fsqr/fsqz/
-  // fsql group sums, ΣF²/(mnmax·ns)). One kernel, three output groups.
+  // fsql group sums, ΣF²/(mnmax·ns)). One kernel, three output groups. The
+  // output is DOUBLE in both builds (ADR-0001 follow-up): the kernel
+  // accumulates in NormAccum<T>::type (double for mixed-float) and stores
+  // without rounding to T.
   void enqueue(SpectralView<const T, DecomposedResidualDomain> residual,
-               int ns, int mnmax, T* sq_out, cudaStream_t stream) const;
+               int ns, int mnmax, double* sq_out, cudaStream_t stream) const;
 };
 
 }  // namespace cumes

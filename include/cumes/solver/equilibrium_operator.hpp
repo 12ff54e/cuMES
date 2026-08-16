@@ -56,7 +56,10 @@ class EquilibriumOperator {
 
   // The reduced control record (16 scalars: [0..3] Jacobian stats, [4..6]
   // invariant residual, [7..9] preconditioned residual, [10..15] force norms).
-  T* control_device() { return d_control_.data(); }
+  // DOUBLE in both builds (ADR-0001 follow-up): the double accumulations reach
+  // the host controller unrounded; the double build is identical by
+  // construction.
+  double* control_device() { return d_control_.data(); }
 
   // The decomposed residual slab (for the solver's descent + dump machinery).
   SpectralView<T, DecomposedResidualDomain> residual() { return residual_view_; }
@@ -98,7 +101,7 @@ class EquilibriumOperator {
   MagneticFieldViews<T> field_views_;
   RadialProfileViews<T> rpv_;
   DeviceBuffer<T> d_f_spec_;
-  DeviceBuffer<T> d_control_;
+  DeviceBuffer<double> d_control_;
   DeviceBuffer<T> d_psum_;
 
   SpectralView<T, PhysicalStateDomain> state_view_;

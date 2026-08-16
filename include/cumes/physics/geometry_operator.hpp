@@ -33,8 +33,9 @@ class GeometryOperator {
   void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                const RadialProfileViews<T>& rpv, cudaStream_t stream);
 
-  // Oriented-Jacobian statistics into a caller-owned 4-element device scratch.
-  void jacobian_stats(const DeviceParams<T>& p, T* d_stats, cudaStream_t stream) const;
+  // Oriented-Jacobian statistics into a caller-owned 4-element device scratch
+  // (DOUBLE in both builds — ADR-0001 control-record follow-up).
+  void jacobian_stats(const DeviceParams<T>& p, double* d_stats, cudaStream_t stream) const;
 
   // Force-norm partial sums (dVdsH + psum) for the residual normalization.
   void force_norm_partials(const DeviceParams<T>& p, T* dVdsH, T* psum,

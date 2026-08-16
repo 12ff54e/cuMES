@@ -508,8 +508,8 @@ __global__ void updateIotaChipFKernel(
 template <typename T>
 __global__ void jacobianStatsKernel(
     const T* __restrict__ gsqrt, int nHalf, int stride, T signJ,
-    T* __restrict__ out)  // [4]: min signJ·√g, max |√g|, nonfinite count,
-                          // min-signJ·√g linear index (as T)
+    double* __restrict__ out)  // [4]: min signJ·√g, max |√g|, nonfinite count,
+                               // min-signJ·√g linear index (as double)
 {
     // Reduction identities: min starts at +inf (NOT 0) and max at 0, and a
     // lane that saw no finite data contributes the identity via a `seen` flag
@@ -562,7 +562,7 @@ __global__ void jacobianStatsKernel(
         // the solver treats max <= 0 (or here inf) as invalid.
         out[0] = s_seen[0] ? s_min[0] : kInf;
         out[1] = s_max[0]; out[2] = s_bad[0];
-        out[3] = T(s_arg[0]);
+        out[3] = (double)s_arg[0];
     }
 }
 
@@ -584,7 +584,7 @@ void cumes::GeometryOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
 }
 
 template <typename T>
-void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p, T* d_stats,
+void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p, double* d_stats,
                                                 cudaStream_t stream) const {
     const int nHalf = (p.ns - 1) * p.nZnT;
     jacobianStatsKernel<T><<<1, 256, 0, stream>>>(d_gsqrt_, nHalf, 1,
