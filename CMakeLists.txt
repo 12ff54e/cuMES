@@ -43,7 +43,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
 # Eight templated operator modules, each split into a *_double.cu and a
 # *_float.cu explicit-instantiation TU (one scalar type per TU). The CLI links
 # only the TU matching `Real`; the tests link both (they instantiate both).
-set(CUMES_CUDA_MODULES fourier geometry forces solver profiles precon constraint refine axisymmetric)
+set(CUMES_CUDA_MODULES fourier geometry forces solver profiles precon constraint prolongation axisymmetric)
 set(CUMES_CUDA_DOUBLE_SOURCES "")
 set(CUMES_CUDA_FLOAT_SOURCES "")
 foreach(mod IN LISTS CUMES_CUDA_MODULES)

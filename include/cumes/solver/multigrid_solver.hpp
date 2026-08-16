@@ -16,7 +16,6 @@
 #include "cumes/io/run_report.hpp"
 #include "cumes/numerics/prolongation.hpp"
 #include "cumes/solver/stage_solver.hpp"
-#include "refine.cuh"
 
 namespace cumes {
 

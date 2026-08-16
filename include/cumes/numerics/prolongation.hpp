@@ -3,17 +3,15 @@
 //
 // Interpolates a converged state onto a finer radial grid: odd modes in the
 // scalxc-decomposed coordinate, old-axis 2*x1-x2 extrapolation, odd-m zeroed at
-// the new axis, LCFS copied exactly. The legacy interpolateState (refine.cu) is
-// the reference implementation.
-//
-// Strangler-fig form: a stateless thin wrapper over interpolateState (verbatim
-// — migration step 11), which allocates the new state's slabs and returns them.
+// the new axis, LCFS copied exactly (vmecpp Vmec::InterpolateToNextMultigridStep,
+// kLinear). (Migration step 13.3: the legacy interpolateState free function and
+// the refine.cuh/refine_impl.cuh module are gone — the body is
+// Prolongation::enqueue, defined in src/prolongation_impl.cuh.)
 #pragma once
 
 #include <cuda_runtime.h>
 
 #include "cumes/state/spectral_storage.hpp"
-#include "refine.cuh"
 
 namespace cumes {
 
@@ -25,9 +23,7 @@ class Prolongation {
   SpectralStorage<T> enqueue(const DeviceParams<T>& p_new,
                              const SpectralStorage<T>& state_old,
                              const DeviceParams<T>& p_old,
-                             cudaStream_t stream) const {
-    return interpolateState(p_new, state_old, p_old, stream);
-  }
+                             cudaStream_t stream) const;
 };
 
 }  // namespace cumes

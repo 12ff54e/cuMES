@@ -1,8 +1,8 @@
-// refine_impl.cuh — template definitions for refine.cuh.
-// Included once per scalar type by refine_double.cu / refine_float.cu; see the
-// explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+// prolongation_impl.cuh — template definitions for prolongation.hpp.
+// Included once per scalar type by prolongation_double.cu / prolongation_float.cu;
+// see the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
 #pragma once
-// refine.cu — grid-sequencing state interpolation (multi-radial-grid).
+// prolongation.cu — grid-sequencing state interpolation (multi-radial-grid).
 //
 // Mirrors vmecpp's Vmec::InterpolateToNextMultigridStep (vmec.cc:1795-2042),
 // kLinear scheme: each spectral coefficient is a function of the radial
@@ -22,7 +22,7 @@
 #include <cstdlib>
 #include <cmath>
 
-#include "refine.cuh"
+#include "cumes/numerics/prolongation.hpp"
 
 #include "cumes/runtime/cuda_status.hpp"
 
@@ -89,10 +89,9 @@ __global__ void interpolateStateKernel(
 }
 
 template <typename T>
-cumes::SpectralStorage<T> interpolateState(const DeviceParams<T>& p_new,
-                                           const cumes::SpectralStorage<T>& st_old,
-                                           const DeviceParams<T>& p_old,
-                                           cudaStream_t stream) {
+cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
+    const DeviceParams<T>& p_new, const cumes::SpectralStorage<T>& st_old,
+    const DeviceParams<T>& p_old, cudaStream_t stream) const {
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         fprintf(stderr, "interpolateState: need ns_new > ns_old >= 3 and equal "
                 "mnmax (ns_old=%d ns_new=%d mnmax %d/%d)\n",

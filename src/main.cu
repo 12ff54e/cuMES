@@ -28,7 +28,6 @@
 #include "vmec_types.h"
 #include "solver.cuh"
 #include "output.cuh"
-#include "refine.cuh"
 
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/precision_policy.hpp"
