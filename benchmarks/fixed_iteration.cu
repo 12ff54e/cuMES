@@ -1,0 +1,298 @@
+// fixed_iteration.cu — the §8.1 fixed-iteration benchmark harness.
+//
+// Runs ONE radial stage at a config's FINAL shape (Solovev ns=55, W7-X ns=99)
+// for a fixed number of passes with ftol=0 (so the solver never converges), and
+// reports the hot-loop cost. The first `--warmup` passes are discarded and the
+// remainder summarized by median/p95 wall microseconds per evaluated pass
+// (sampled at the single control fence via cumes::SolverBench — see
+// solver_bench.hpp). The controller's refresh/restart/gauge decisions are NOT
+// disabled: the fixed window replays the real trajectory's first N passes, and
+// a `--restart` checkpoint lets a steady-state window be measured instead.
+//
+// Emits one JSON object (stdout, or `--out <path>`) with the §8.1 fields:
+//   gpu{name,compute_cap,memory_mib,driver,runtime,toolkit}, build{scalar,
+//   fast_math}, shape{ns,mnmax,mpol,ntor,nfp,ntheta,nzeta,nZnT,ncurr,backend},
+//   memory{arena_bytes,cufft_work_bytes}, timing{setup_us,solve_wall_us,
+//   solve_gpu_us,passes,median_us_per_iter,p95_us_per_iter},
+//   result{state_hash,total_effective_iterations}.
+//
+// Usage:
+//   cumes_benchmark_fixed_iteration --config solovev --passes 100 [--warmup 10]
+//                                   [--restart <ckpt>] [--out <json>]
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <algorithm>
+#include <chrono>
+#include <string>
+#include <vector>
+
+#include "input.h"
+#include "vmec_types.h"
+#include "fourier.cuh"
+#include "geometry.cuh"
+#include "solver.cuh"
+#include "profiles.cuh"
+
+#include "cumes/config/json_reader.hpp"
+#include "cumes/config/solver_options.hpp"
+#include "cumes/io/checkpoint.hpp"
+#include "cumes/io/equilibrium_snapshot.hpp"
+#include "cumes/io/snapshot_bridge.cuh"
+#include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_arena.cuh"
+#include "cumes/runtime/stream.hpp"
+#include "cumes/solver/solver_bench.hpp"
+#include "cumes/solver/stage_solver.hpp"
+#include "cumes/state/seed_state.hpp"
+#include "cumes/state/spectral_storage.hpp"
+
+using Clock = std::chrono::steady_clock;
+
+static double now_us() {
+    return std::chrono::duration<double, std::micro>(Clock::now().time_since_epoch())
+        .count();
+}
+
+// FNV-1a 64-bit hash over the raw little-endian double bytes of all six
+// families (component order Rcc Zsc Lsc Rss Zcs Lcs), hex-encoded. A different
+// final state (fast-but-wrong run) produces a different hash.
+static std::string hash_snapshot(const cumes::EquilibriumSnapshot& snap) {
+    std::uint64_t h = 1469598103934665603ULL;
+    for (int c = 0; c < cumes::EquilibriumSnapshot::kCount; ++c) {
+        for (double v : snap.families[c]) {
+            unsigned char b[8];
+            std::memcpy(b, &v, 8);
+            for (unsigned char byte : b) {
+                h ^= byte;
+                h *= 1099511628211ULL;
+            }
+        }
+    }
+    char buf[17];
+    snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(h));
+    return buf;
+}
+
+static double median(std::vector<double> v) {
+    if (v.empty()) return 0.0;
+    std::sort(v.begin(), v.end());
+    const std::size_t n = v.size();
+    if (n % 2) return v[n / 2];
+    return 0.5 * (v[n / 2 - 1] + v[n / 2]);
+}
+
+// 95th percentile: v[ceil(0.95*n)-1] (>= 95% of samples are <= this value).
+static double p95(std::vector<double> v) {
+    if (v.empty()) return 0.0;
+    std::sort(v.begin(), v.end());
+    const std::size_t n = v.size();
+    std::size_t k = static_cast<std::size_t>(std::ceil(0.95 * n));
+    if (k == 0) k = 1;
+    if (k > n) k = n;
+    return v[k - 1];
+}
+
+int main(int argc, char** argv) {
+    const char* config = "solovev";
+    const char* restart_path = nullptr;
+    const char* out_path = nullptr;
+    int warmup = 10;
+    int passes = 100;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        auto need = [&](const char* name) -> const char* {
+            if (a == std::string("--") + name) {
+                if (i + 1 >= argc) { fprintf(stderr, "bench: --%s needs a value\n", name); exit(2); }
+                return argv[++i];
+            }
+            std::string pfx = std::string("--") + name + "=";
+            if (a.compare(0, pfx.size(), pfx) == 0) return argv[i] + pfx.size();
+            return nullptr;
+        };
+        if (const char* v = need("config")) config = v;
+        else if (const char* v = need("restart")) restart_path = v;
+        else if (const char* v = need("out")) out_path = v;
+        else if (const char* v = need("warmup")) warmup = atoi(v);
+        else if (const char* v = need("passes")) passes = atoi(v);
+        else { fprintf(stderr, "bench: unknown option '%s'\n", a.c_str()); return 2; }
+    }
+    if (passes < 1) { fprintf(stderr, "bench: --passes must be >= 1\n"); return 2; }
+    if (warmup < 0) { fprintf(stderr, "bench: --warmup must be >= 0\n"); return 2; }
+
+    std::string input_path = std::string("inputs/") + config + ".json";
+
+    // ---- config: parse + validate (same host model as the CLI) ----
+    cumes::SolverOptions opts;  // default precision policy (verify-double)
+    cumes::ValidationResult vr = cumes::ValidationResult(cumes::ValidationReport{});
+    try {
+        vr = cumes::read_and_validate(input_path, opts);
+    } catch (const std::exception& e) {
+        fprintf(stderr, "bench: %s\n", e.what());
+        return 2;
+    }
+    if (!vr.has_value()) {
+        fprintf(stderr, "bench: input validation failed\n");
+        for (const auto& issue : vr.error().issues())
+            fprintf(stderr, "  [%d] %s: %s\n", static_cast<int>(issue.severity),
+                    issue.key.c_str(), issue.message.c_str());
+        return 2;
+    }
+    const auto to_ip = vr.value().to_input_params();
+    if (!to_ip.has_value()) { fprintf(stderr, "bench: %s\n", to_ip.error().c_str()); return 2; }
+    InputParams ip = to_ip.value();
+
+    // Single stage at the config's FINAL radial grid.
+    GridParams<Real> p = cumes::init_params<Real>(ip);
+    p.ns = ip.ns_array[ip.n_grids - 1];
+    p.max_iter = warmup + passes;
+    p.ftol = Real(0.0);  // never converge: run exactly warmup+passes passes
+
+    // ---- seed ----
+    cumes::SpectralStorage<Real> storage;
+    if (restart_path) {
+        auto ck = cumes::read_checkpoint(restart_path);
+        if (!ck.has_value()) { fprintf(stderr, "bench: %s\n", ck.error().c_str()); return 2; }
+        if (ck.value().ns != p.ns || ck.value().mnmax != p.mnmax) {
+            fprintf(stderr, "bench: checkpoint (ns=%d,mnmax=%d) does not match "
+                            "shape (ns=%d,mnmax=%d)\n",
+                    ck.value().ns, ck.value().mnmax, p.ns, p.mnmax);
+            return 2;
+        }
+        storage = cumes::restart_state<Real>(p, ip, ck.value());
+    } else {
+        storage = cumes::init_state<Real>(p, ip);
+    }
+
+    // ---- drive one stage directly (mirrors StageSolver::run) with timing ----
+    cumes::DeviceArena arena;
+    cumes::SolverBench bench;
+    bench.enabled = true;
+    cumes::Stream stream;
+
+    double setup_us = 0.0, solve_wall_us = 0.0, solve_gpu_us = 0.0;
+
+    double t0 = now_us();
+    arena.allocate(cumes::stage_arena_bytes<Real>(p));
+    RadialProfiles<Real> rp = profilesCreate<Real>(p, ip, &arena);
+    FourierPlan<Real> fp = fourierCreate<Real>(p, &arena);
+    MetricWorkspace<Real> mw = metricCreate<Real>(p, &arena);
+    setup_us = now_us() - t0;
+
+    cudaEvent_t ev0, ev1;
+    cudaEventCreate(&ev0);
+    cudaEventCreate(&ev1);
+    cudaEventRecord(ev0, stream.get());
+    double w0 = now_us();
+    SolverResult<Real> result = solverRun<Real>(storage, p, rp, fp, mw, &arena,
+                                                stream.get(), &bench);
+    double w1 = now_us();
+    cudaEventRecord(ev1, stream.get());
+    cudaEventSynchronize(ev1);
+    float gpu_ms = 0.0f;
+    cudaEventElapsedTime(&gpu_ms, ev0, ev1);
+    solve_wall_us = w1 - w0;
+    solve_gpu_us = gpu_ms * 1000.0;
+
+    const std::size_t arena_bytes = arena.peak_bytes();
+    const std::size_t cufft_work_bytes = fp.cufft_work_bytes;
+
+    fourierFree(fp);
+    metricFree(mw);
+    profilesFree(rp);
+    cudaEventDestroy(ev0);
+    cudaEventDestroy(ev1);
+
+    // ---- residual/state hash (a fast-but-different run is obvious) ----
+    cumes::EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
+    std::string state_hash = hash_snapshot(snap);
+
+    // ---- per-pass statistics (discard warmup) ----
+    std::vector<double> timed;
+    if (bench.pass_wall_us.size() > static_cast<std::size_t>(warmup)) {
+        timed.assign(bench.pass_wall_us.begin() + warmup, bench.pass_wall_us.end());
+    }
+    const double med = median(timed);
+    const double p95us = p95(timed);
+
+    // ---- GPU identity ----
+    int driver = 0, runtime = 0;
+    cudaDriverGetVersion(&driver);
+    cudaRuntimeGetVersion(&runtime);
+    cudaDeviceProp prop{};
+    cudaGetDeviceProperties(&prop, 0);
+
+    // ---- emit JSON ----
+    std::string json;
+    auto q = [](const std::string& s) { return "\"" + s + "\""; };
+    auto kv = [&](const std::string& k, const std::string& v) {
+        return q(k) + ": " + v;
+    };
+    char num[64];
+    json += "{\n";
+    json += "  " + kv("config", q(config)) + ",\n";
+    snprintf(num, sizeof num, "%d", prop.major * 10 + prop.minor);
+    json += "  " + kv("gpu_name", q(prop.name)) + ",\n";
+    json += "  " + kv("gpu_compute_cap", num) + ",\n";
+    snprintf(num, sizeof num, "%zu", prop.totalGlobalMem / (1024 * 1024));
+    json += "  " + kv("gpu_memory_mib", num) + ",\n";
+    snprintf(num, sizeof num, "%d", driver);
+    json += "  " + kv("driver", num) + ",\n";
+    snprintf(num, sizeof num, "%d", runtime);
+    json += "  " + kv("runtime", num) + ",\n";
+    snprintf(num, sizeof num, "%d", CUDART_VERSION);
+    json += "  " + kv("toolkit", num) + ",\n";
+    json += "  " + kv("scalar_type", q(sizeof(Real) == sizeof(double) ? "double" : "float")) + ",\n";
+    json += "  " + kv("fast_math", q("true")) + ",\n";
+    snprintf(num, sizeof num, "%d", p.ns);
+    json += "  " + kv("ns", num) + ",\n";
+    snprintf(num, sizeof num, "%d", p.mnmax);
+    json += "  " + kv("mnmax", num) + ",\n";
+    snprintf(num, sizeof num, "%d", p.mpol);
+    json += "  " + kv("mpol", num) + ",\n";
+    snprintf(num, sizeof num, "%d", p.ntor);
+    json += "  " + kv("ntor", num) + ",\n";
+    snprintf(num, sizeof num, "%d", p.nfp);
+    json += "  " + kv("nfp", num) + ",\n";
+    snprintf(num, sizeof num, "%d", p.ntheta);
+    json += "  " + kv("ntheta", num) + ",\n";
+    snprintf(num, sizeof num, "%d", p.nzeta);
+    json += "  " + kv("nzeta", num) + ",\n";
+    snprintf(num, sizeof num, "%d", p.ncurr);
+    json += "  " + kv("ncurr", num) + ",\n";
+    json += "  " + kv("transform_backend", q(p.ntor == 0 ? "axisymmetric-available"
+                                                        : "toroidal-fft")) + ",\n";
+    snprintf(num, sizeof num, "%zu", arena_bytes);
+    json += "  " + kv("arena_bytes", num) + ",\n";
+    snprintf(num, sizeof num, "%zu", cufft_work_bytes);
+    json += "  " + kv("cufft_work_bytes", num) + ",\n";
+    snprintf(num, sizeof num, "%.1f", setup_us);
+    json += "  " + kv("setup_us", num) + ",\n";
+    snprintf(num, sizeof num, "%.1f", solve_wall_us);
+    json += "  " + kv("solve_wall_us", num) + ",\n";
+    snprintf(num, sizeof num, "%.1f", solve_gpu_us);
+    json += "  " + kv("solve_gpu_us", num) + ",\n";
+    snprintf(num, sizeof num, "%zu", timed.size());
+    json += "  " + kv("timed_passes", num) + ",\n";
+    snprintf(num, sizeof num, "%.2f", med);
+    json += "  " + kv("median_us_per_iter", num) + ",\n";
+    snprintf(num, sizeof num, "%.2f", p95us);
+    json += "  " + kv("p95_us_per_iter", num) + ",\n";
+    json += "  " + kv("state_hash", q(state_hash)) + ",\n";
+    snprintf(num, sizeof num, "%d", result.iterations);
+    json += "  " + kv("total_effective_iterations", num) + "\n";
+    json += "}\n";
+
+    if (out_path) {
+        FILE* f = fopen(out_path, "w");
+        if (!f) { fprintf(stderr, "bench: cannot open --out %s\n", out_path); return 2; }
+        fputs(json.c_str(), f);
+        fclose(f);
+        printf("wrote benchmark JSON to %s\n", out_path);
+    } else {
+        fputs(json.c_str(), stdout);
+    }
+    return 0;
+}

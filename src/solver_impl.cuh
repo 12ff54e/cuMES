@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <algorithm>
+#include <chrono>
 #include <vector>
 
 #include "cumes/runtime/cuda_status.hpp"
@@ -27,6 +28,7 @@
 #include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes/solver/pass_record.hpp"
+#include "cumes/solver/solver_bench.hpp"
 
 #ifdef DUMP_CUMES_VERIFY
 static bool dumpEnabled();  // defined below with the dump machinery
@@ -480,7 +482,7 @@ template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
                           MetricWorkspace<T>& mw, cumes::DeviceArena* arena,
-                          cudaStream_t stream) {
+                          cudaStream_t stream, cumes::SolverBench* bench) {
     // The legacy 12-pointer view over the contiguous slabs: every kernel and
     // consumer below keeps its unchanged pointer arithmetic and layout.
     SpectralState<T> st = storage.legacy_view();
@@ -674,6 +676,16 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         dumpDeviceArray("dump/cuMES/step_0_iotaF.bin",      rp.d_iota_F, p.ns);
     }
 #endif
+
+    // Opt-in benchmark observer: wall-clock the hot loop at the single control
+    // fence (see solver_bench.hpp). bench_t_prev is reset at each fence so each
+    // sample spans one full evaluated pass (host decisions + descent enqueue +
+    // the next pass's kernels, synced by that next fence).
+    std::chrono::steady_clock::time_point bench_t_prev{};
+    if (bench && bench->enabled) {
+        bench->pass_wall_us.reserve((size_t)kMaxIterEff);
+        bench_t_prev = std::chrono::steady_clock::now();
+    }
 
     for(int iter=0; iter<kMaxIterEff; ++iter){
         // Snapshot of the controller's effective iteration for this pass's
@@ -1129,6 +1141,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         cumes::check_cuda(cudaMemcpyAsync(h_control_pin.data(), d_control.data(),
                                16 * sizeof(T), cudaMemcpyDeviceToHost, stream), "cpy control");
         cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
+        if (bench && bench->enabled) {
+            auto bench_now = std::chrono::steady_clock::now();
+            bench->pass_wall_us.push_back(
+                std::chrono::duration<double, std::micro>(bench_now - bench_t_prev)
+                    .count());
+            bench_t_prev = bench_now;
+        }
         const T* hc = h_control_pin.data();
         // Sample the transform-timing events at this fence (both transforms
         // preceded it on the same stream).

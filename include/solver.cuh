@@ -7,7 +7,10 @@
 #include "forces.cuh"
 #include "cumes/state/spectral_storage.hpp"
 
-namespace cumes { class DeviceArena; }
+namespace cumes {
+class DeviceArena;
+struct SolverBench;
+}
 
 // Run the full fixed-point solve on GPU.
 // Returns: iterations used, and whether converged.
@@ -28,4 +31,5 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>&
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
                           MetricWorkspace<T>& mw,
                           cumes::DeviceArena* arena = nullptr,
-                          cudaStream_t stream = 0);
+                          cudaStream_t stream = 0,
+                          cumes::SolverBench* bench = nullptr);

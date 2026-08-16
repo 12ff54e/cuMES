@@ -15,6 +15,7 @@
 #include <cstdio>
 
 #include "cumes/runtime/device_arena.cuh"
+#include "cumes/solver/solver_bench.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "fft_traits.h"
 #include "fourier.cuh"
@@ -74,7 +75,8 @@ class StageSolver {
   public:
     static SolverResult<T> run(GridParams<T>& p, const InputParams& ip,
                                SpectralStorage<T>& state,
-                               cudaStream_t stream = 0) {
+                               cudaStream_t stream = 0,
+                               SolverBench* bench = nullptr) {
         DeviceArena arena;
         arena.allocate(stage_arena_bytes<T>(p));
         // Setup (profiles/Fourier/metric) is synchronous on the default
@@ -84,7 +86,7 @@ class StageSolver {
         FourierPlan<T> fp = fourierCreate<T>(p, &arena);
         MetricWorkspace<T> mw = metricCreate<T>(p, &arena);
         SolverResult<T> result = solverRun<T>(state, p, rp, fp, mw, &arena,
-                                              stream);
+                                              stream, bench);
         fourierFree(fp);
         metricFree(mw);
         profilesFree(rp);

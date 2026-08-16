@@ -269,3 +269,19 @@ cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
     test_regression_kernels test_runtime test_arena test_operator_views
     test_axisym_backend test_rzcon_fusion test_tridiagonal)
+
+# ---- benchmarks (not part of the default CTest unit gate) --------------------
+# The fixed-iteration harness (§8.1). Always double (verify-double is the
+# benchmark reference config), regardless of CUMES_USE_FLOAT.
+add_executable(cumes_benchmark_fixed_iteration benchmarks/fixed_iteration.cu)
+target_include_directories(cumes_benchmark_fixed_iteration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(cumes_benchmark_fixed_iteration PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
+cumes_enable_warnings(cumes_benchmark_fixed_iteration)
+
+# Smoke gate: runs two passes and exits 0 on success (verifies the harness
+# builds, seeds, drives a stage, and emits JSON — not a timing acceptance).
+add_test(NAME cumes_benchmark_smoke
+         COMMAND cumes_benchmark_fixed_iteration --config solovev --passes 2 --warmup 0)
+set_tests_properties(cumes_benchmark_smoke PROPERTIES
+    LABELS "performance;smoke" TIMEOUT 120
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
