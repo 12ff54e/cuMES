@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cmath>
 
+#include "cumes/state/mode_table.cuh"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 
 
@@ -55,12 +56,10 @@ __device__ void* dynSharedBase() {
 #include "cumes/runtime/device_arena.cuh"
 
 template <typename T>
-FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
-    FourierPlan<T> fp{};
-    int nZnT = p.nZnT, mnmax = p.mnmax;
-    size_t nbytes_mode  = mnmax * sizeof(int);
-
-    auto* h_xm  = new int[mnmax], *h_xn = new int[mnmax];
+cumes::DeviceModeTable cumes::modeTableCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
+    cumes::DeviceModeTable mt{};
+    const int mnmax = p.mnmax;
+    auto* h_xm = new int[mnmax], *h_xn = new int[mnmax];
 
     // Folded mode table: m = 0..mpol-1, n = 0..ntor, mode = m*(ntor+1)+n.
     // xn = the RAW toroidal mode number n. The zeta grid covers one field
@@ -76,15 +75,23 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) 
         if (arena) dst = arena->alloc_span<int>(name, count);
         else cumes::check_cuda(cudaMalloc(&dst, count * sizeof(int)), name);
     };
-    allocInt(fp.basis.d_xm, mnmax, "fourier/xm");
-    allocInt(fp.basis.d_xn, mnmax, "fourier/xn");
-    cumes::check_cuda(cudaMemcpy(fp.basis.d_xm, h_xm, nbytes_mode, cudaMemcpyHostToDevice), "xm");
-    cumes::check_cuda(cudaMemcpy(fp.basis.d_xn, h_xn, nbytes_mode, cudaMemcpyHostToDevice), "xn");
+    allocInt(mt.d_xm, mnmax, "mode_table/xm");
+    allocInt(mt.d_xn, mnmax, "mode_table/xn");
+    cumes::check_cuda(cudaMemcpy(mt.d_xm, h_xm, (size_t)mnmax * sizeof(int), cudaMemcpyHostToDevice), "xm");
+    cumes::check_cuda(cudaMemcpy(mt.d_xn, h_xn, (size_t)mnmax * sizeof(int), cudaMemcpyHostToDevice), "xn");
     delete[] h_xm; delete[] h_xn;
+    mt.arena_backed = (arena != nullptr);
+    return mt;
+}
 
-    // The real-space geometry/force/combined arrays now live in the stage-owned
-    // RealSpaceStorage (realSpaceCreate), so the FourierPlan owns only transform
-    // scratch below (blueprint §6.6).
+template <typename T>
+FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
+    FourierPlan<T> fp{};
+
+    // The mode table (d_xm/d_xn) is built by cumes::modeTableCreate (resolution
+    // metadata, not transform scratch); the real-space geometry/force/combined
+    // arrays live in the stage-owned RealSpaceStorage (realSpaceCreate). The
+    // FourierPlan therefore owns only transform scratch below (blueprint §6.2/§6.6).
 
     // ---- cuFFT backend: poloidal tables, scratch, plans ----
     {
@@ -219,7 +226,6 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) 
 template <typename T>
 void fourierFree(FourierPlan<T>& fp) {
     if (!fp.arena_backed) {
-        cudaFree(fp.basis.d_xm); cudaFree(fp.basis.d_xn);
         cudaFree(fp.d_zeta_spectra); cudaFree(fp.d_zeta_real);
         cudaFree(fp.d_cos_th); cudaFree(fp.d_sin_th);
         cudaFree(fp.d_mcos_th); cudaFree(fp.d_msin_th); cudaFree(fp.d_fwd_w);
@@ -503,14 +509,14 @@ static int computeKTile(int blkX, int nzeta) {
 template <typename T, bool FuseRzCon = false>
 static void inverseDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                             cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                            const GridParams<T>& p, bool do_combine,
-                            T* rCon, T* zCon, cudaStream_t stream) {
+                            const GridParams<T>& p, const int* xm, const int* xn,
+                            bool do_combine, T* rCon, T* zCon, cudaStream_t stream) {
     // Zero the half-spectra (only bins n <= ntor are filled).
     cumes::check_cuda(cudaMemsetAsync(fp.d_zeta_spectra, 0,
         (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex), stream), "inv zero");
     int total = p.ns * p.mnmax;
     inversePackKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
-        coeff, fp.basis.d_xm, fp.basis.d_xn,
+        coeff, xm, xn,
         p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, fp.d_zeta_spectra);
     cumes::check_cufft(FftTraits<T>::execInverse(fp.plan_z2d, fp.d_zeta_spectra, fp.d_zeta_real), "inv z2d");
     // ζ-tiled accumulate (see inverseAccumulateKernel): block (ntheta/2,
@@ -577,16 +583,18 @@ void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& 
 template <typename T>
 void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                const GridParams<T>& p, bool do_combine, cudaStream_t stream) {
-    inverseDFTCufft<T, false>(fp, rs, coeff, p, do_combine, nullptr, nullptr, stream);
+                const GridParams<T>& p, const int* xm, const int* xn,
+                bool do_combine, cudaStream_t stream) {
+    inverseDFTCufft<T, false>(fp, rs, coeff, p, xm, xn, do_combine, nullptr, nullptr, stream);
 }
 
 template <typename T>
 void inverseDFTFused(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                      cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                     const GridParams<T>& p, bool do_combine, T* rCon, T* zCon,
+                     const GridParams<T>& p, const int* xm, const int* xn,
+                     bool do_combine, T* rCon, T* zCon,
                      cudaStream_t stream) {
-    inverseDFTCufft<T, true>(fp, rs, coeff, p, do_combine, rCon, zCon, stream);
+    inverseDFTCufft<T, true>(fp, rs, coeff, p, xm, xn, do_combine, rCon, zCon, stream);
 }
 
 // ---- cuFFT backend: forward ----------------------------------------------
@@ -773,7 +781,7 @@ __global__ void forwardRecoverKernel(
 template <typename T>
 static void forwardDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                             cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                            const GridParams<T>& p,
+                            const GridParams<T>& p, const int* xm, const int* xn,
                             const T* frcon_e, const T* frcon_o,
                             const T* fzcon_e, const T* fzcon_o,
                             cudaStream_t stream) {
@@ -797,7 +805,7 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>
     cumes::check_cufft(FftTraits<T>::execForward(fp.plan_d2z, fp.d_zeta_real, fp.d_zeta_spectra), "fwd d2z");
     int total = p.ns * p.mnmax;
     forwardRecoverKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
-        fp.d_zeta_spectra, fp.basis.d_xm, fp.basis.d_xn,
+        fp.d_zeta_spectra, xm, xn,
         p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, f_spec);
     cumes::check_cuda(cudaGetLastError(), "fwd cuFFT");
 }
@@ -805,9 +813,9 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>
 template <typename T>
 void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
-                cudaStream_t stream) {
-    forwardDFTCufft(fp, rs, f_spec, p, cw.d_frcon_e, cw.d_frcon_o,
+                const GridParams<T>& p, const int* xm, const int* xn,
+                const ConstraintWorkspace<T>& cw, cudaStream_t stream) {
+    forwardDFTCufft(fp, rs, f_spec, p, xm, xn, cw.d_frcon_e, cw.d_frcon_o,
                     cw.d_fzcon_e, cw.d_fzcon_o, stream);
 }
 
@@ -824,8 +832,8 @@ void cumes::ToroidalFftOperator<T>::enqueue_inverse(
     // those same arrays. do_combine is false on the hot loop (combined buffers
     // are dump-only and materialized on demand).
     (void)geometry;
-    inverseDFTFused(fp_, *rs_, coeff, p_, /*do_combine=*/false, rCon.data(),
-                    zCon.data(), stream);
+    inverseDFTFused(fp_, *rs_, coeff, p_, mt_->d_xm, mt_->d_xn,
+                    /*do_combine=*/false, rCon.data(), zCon.data(), stream);
 }
 
 template <typename T>
@@ -837,7 +845,8 @@ void cumes::ToroidalFftOperator<T>::enqueue_forward(
     // `real_force` aliases *rs_ (same arrays); the constraint force is read
     // from the constraint_force views (the constraint owns those buffers).
     (void)real_force;
-    forwardDFTCufft(fp_, *rs_, residual, p_, constraint_force.frcon_e.data(),
+    forwardDFTCufft(fp_, *rs_, residual, p_, mt_->d_xm, mt_->d_xn,
+                    constraint_force.frcon_e.data(),
                     constraint_force.frcon_o.data(),
                     constraint_force.fzcon_e.data(),
                     constraint_force.fzcon_o.data(), stream);

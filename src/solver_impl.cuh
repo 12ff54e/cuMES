@@ -118,7 +118,7 @@ __global__ void forceNormReduceKernel(
 // control fence. Called on the preconditioner-refresh cadence.
 template <typename T>
 static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
-                              const FourierPlan<T>& fp, const GridParams<T>& p,
+                              const int* xm, const int* xn, const GridParams<T>& p,
                               const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
                               T* d_psum, T* d_out, cudaStream_t stream) {
     computeForceNormPartials(p, mw, rp.d_dVds_H, d_psum, stream);
@@ -126,7 +126,7 @@ static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateD
       forceNormReduceKernel<T><<<g1, b1, 0, stream>>>(d_psum, rp.d_dVds_H, rp.d_pres_H,
                                                        p.ns - 1, d_out); }
     { dim3 b2(256), g2(1);
-      rzNormKernel<T><<<g2, b2, 0, stream>>>(st, fp.basis.d_xm, fp.basis.d_xn,
+      rzNormKernel<T><<<g2, b2, 0, stream>>>(st, xm, xn,
                                               p.ns, p.mnmax, d_out + 5); }
     cumes::check_cuda(cudaGetLastError(), "force norms");
 }
@@ -720,7 +720,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // combined *_real buffers are materialized on demand (fourierCombineParity)
     // at the dump site, never read stale.
     if (dumpEnabled()) {
-        inverseDFT(fp, rs, storage.physical_const(), p, false, stream);
+        inverseDFT(fp, rs, storage.physical_const(), p, transform.xm(),
+                   transform.xn(), false, stream);
         cudaDeviceSynchronize();  // dump-only read of compute-stream data
         auto* h_re = new T[p.nZnT * p.ns];
         auto* h_ro = new T[p.nZnT * p.ns];
@@ -943,12 +944,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // is now a pure function of the iteration counters.
         bool precon_updated = controller.refresh_preconditioner();
         if (precon_updated) {
-            precon.enqueue_compute(rs, fp, p, rp, mw, stream);
+            precon.enqueue_compute(rs, transform.xm(), transform.xn(), p, rp, mw,
+                                   stream);
 
             // vmecpp computeForceNorms (same cadence): device-side reduction
             // of the force-norm partial sums into the combined control record
             // (finalized on the host after the single control fence).
-            enqueueForceNorms(storage.physical_const(), fp, p, rp, mw,
+            enqueueForceNorms(storage.physical_const(), transform.xm(),
+                              transform.xn(), p, rp, mw,
                               d_psum.data(), d_control.data() + 10, stream);
 
 #ifdef DUMP_CUMES_VERIFY
@@ -1115,7 +1118,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // m>0 entries, so the boundary stays rigid and only the lambda
         // force is present at the LCFS (free gauge, evolved by descent).
         { dim3 bs(256), gs((p.ns*p.mnmax+255)/256);
-          scalxcApplyKernel<T><<<gs,bs,0,stream>>>(residual_view, rp.d_sqrtS_F, fp.basis.d_xm,
+          scalxcApplyKernel<T><<<gs,bs,0,stream>>>(residual_view, rp.d_sqrtS_F, transform.xm(),
                                           p.ns, p.mnmax,
                                           std::sqrt(T(1.0) / T(p.ns - 1)));
           cumes::check_cuda(cudaGetLastError(), "scalxc"); }
@@ -1177,7 +1180,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
         // Apply the radial tridiagonal + lambda preconditioners to the
         // (decomposed) spectral forces.
-        precon.enqueue_apply(residual_view, p, fp.basis.d_xm, fp.basis.d_xn, stream);
+        precon.enqueue_apply(residual_view, p, transform.xm(), transform.xn(), stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 51 || (iter2 >= kDumpIter && iter2 <= kDumpIter + 2) ||
@@ -1371,7 +1374,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         dact.damping_b1 = (double)decision.damping.b1;
         dact.damping_fac = (double)decision.damping.fac;
         descent_op.enqueue(state_view, velocity_view, residual_view_const,
-                           fp.basis.d_xm, fp.basis.d_xn, p.ns, p.mnmax, dact,
+                           transform.xm(), transform.xn(), p.ns, p.mnmax, dact,
                            stream);
 
         if (decision.do_refresh) {

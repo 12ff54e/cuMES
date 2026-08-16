@@ -17,6 +17,7 @@
 #include "input_json.h"
 #include "constraint.cuh"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "forces.cuh"
@@ -89,11 +90,12 @@ int main() {
     InputParams ip = initInputParams();
     RadialProfiles<double> rp = profilesCreate(p, ip);
     FourierPlan<double> fp = fourierCreate(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     MetricWorkspace<double> mw = metricCreate(p);
 
     // Run one iteration
-    inverseDFT(fp, rs, storage.physical_const(), p);
+    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
     computeGeometry(rs, p, rp, mw);
     computeForces(rs, p, rp, mw);
 
@@ -156,7 +158,7 @@ int main() {
     cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     forwardDFT(fp, rs, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
                        d_fspec_gpu, p.ns, p.mnmax),
-               p, cw_zero);
+               p, mt.d_xm, mt.d_xn, cw_zero);
     checkCuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost), "fspec d");
 
     printf("\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n");
@@ -225,7 +227,7 @@ int main() {
 
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp);
+    fourierFree(fp); metricFree(mw); profilesFree(rp); cumes::modeTableFree(mt);
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
 

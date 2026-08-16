@@ -46,11 +46,6 @@ struct GridParams {
     static constexpr T kMu0 = 4.0 * M_PI * 1.0e-7;  // exact, = vmecpp MU_0
 };
 
-struct FourierBasis {
-    // Mode tables only: the basis functions are evaluated analytically via
-    // the cuFFT machinery and the small per-m poloidal tables in FourierPlan.
-    int* d_xm; int* d_xn;
-};
 
 template <typename T>
 struct RadialProfiles {

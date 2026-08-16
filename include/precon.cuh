@@ -90,9 +90,10 @@ void preconFree(PreconWorkspace<T>& pw);
 
 // Compute (or update) the preconditioner matrix elements from current
 // geometry and metric arrays.  Called every ~25 iterations. `rs` carries the
-// parity-split geometry derivatives; `fp` the mode tables.
+// parity-split geometry derivatives; `xm`/`xn` the shared folded-mode table
+// (cumes::DeviceModeTable).
 template <typename T>
-void preconCompute(const cumes::RealSpaceStorage<T>& rs, const FourierPlan<T>& fp,
+void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const int* xn,
                    const GridParams<T>& p, const RadialProfiles<T>& rp,
                    const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
                    cudaStream_t stream = 0);

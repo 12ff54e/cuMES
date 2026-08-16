@@ -96,7 +96,8 @@ int main() {
     // ---- Profiles / plan / workspace ----
     RadialProfiles<double> rp = profilesCreate(p, ip);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
-    cumes::ToroidalFftOperator<double> transform(p, rs, nullptr);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate<double>(p);
+    cumes::ToroidalFftOperator<double> transform(p, rs, mt, nullptr);
     FourierPlan<double>& fp = transform.fourier_plan();
     cumes::GeometryOperator<double> geometry(p, nullptr);
     MetricWorkspace<double>& mw = geometry.workspace();
@@ -108,7 +109,7 @@ int main() {
     CHECK(res.converged, "converged equilibrium reached");
 
     // ---- Recompute forces through the test's own path ----
-    inverseDFT(fp, rs, storage.physical_const(), p);
+    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
     computeGeometry(rs, p, rp, mw);
     computeForces(rs, p, rp, mw);
 
@@ -127,7 +128,7 @@ int main() {
     cc(cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_o zero");
     forwardDFT(fp, rs, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
                        d_f_spec, p.ns, p.mnmax),
-               p, cw_zero);
+               p, mt.d_xm, mt.d_xn, cw_zero);
 
     auto* h_f = new double[n6];
     cc(cudaMemcpy(h_f, d_f_spec, n6 * sizeof(double), cudaMemcpyDeviceToHost), "cpy f");
@@ -161,6 +162,7 @@ int main() {
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
     profilesFree(rp);  // fp/mw owned by ToroidalFftOperator/GeometryOperator (RAII)
+    cumes::modeTableFree(mt);
     delete[] h_f;
 
     if (failures == 0) { printf("test_force_verify: ALL PASS\n"); return 0; }

@@ -19,6 +19,7 @@
 #include <vector>
 #include "vmec_types.h"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "constraint.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
@@ -111,12 +112,13 @@ static void fillGconEff(ConstraintWorkspace<T>& cw, int ns, int nZnT) {
 // Inverse: compare the 18 parity-split geometry arrays.
 template <typename T>
 static void testInverse(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
-                        FourierPlan<T>& fp, cumes::SpectralStorage<T>& storage,
+                        FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
+                        cumes::SpectralStorage<T>& storage,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  inverse (18 geometry arrays) ...\n");
     const int n = p.ns * p.nZnT;
     // Generic backend.
-    inverseDFT(fp, rs, storage.physical_const(), p, false, 0);
+    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn, false, 0);
     // Axisymmetric backend -> one contiguous scratch carved into 18 views.
     std::vector<T> scratch((size_t)18 * n, T(0));
     T* d_ax = nullptr;
@@ -164,7 +166,8 @@ static void testInverse(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
 // Forward: compare the 6 spectral-force families.
 template <typename T>
 static void testForward(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
-                        FourierPlan<T>& fp, ConstraintWorkspace<T>& cw,
+                        FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
+                        ConstraintWorkspace<T>& cw,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  forward (6 spectral families) ...\n");
     const int n = p.ns * p.mnmax;
@@ -175,7 +178,7 @@ static void testForward(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
                                                                   p.mnmax);
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> ax_v(d_ax, p.ns,
                                                                  p.mnmax);
-    forwardDFT(fp, rs, gen_v, p, cw, 0);
+    forwardDFT(fp, rs, gen_v, p, mt.d_xm, mt.d_xn, cw, 0);
 
     cumes::ForceParityViews<const T> f;
     f.armn_e = cumes::RealFieldView<const T>(rs.d_armn_e, p.ns, p.ntheta, p.nzeta);
@@ -212,15 +215,16 @@ static void testForward(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
 // Constraint rzCon: rCon/zCon.
 template <typename T>
 static void testRzCon(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
-                      FourierPlan<T>& fp, ConstraintWorkspace<T>& cw,
+                      FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
+                      ConstraintWorkspace<T>& cw,
                       cumes::SpectralStorage<T>& storage,
                       cumes::AxisymmetricOperator<T>& op) {
     printf("  constraint rzCon (rCon/zCon) ...\n");
     const int n = p.ns * p.nZnT;
     // rCon/zCon reference is the fused inverse DFT (the production path); the
     // axisymmetric enqueue_rzcon is Class B ULP-equivalent to it.
-    inverseDFTFused(fp, rs, storage.physical_const(), p, /*do_combine=*/false,
-                    cw.d_rCon, cw.d_zCon, 0);
+    inverseDFTFused(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn,
+                    /*do_combine=*/false, cw.d_rCon, cw.d_zCon, 0);
     T *d_ax_r = nullptr, *d_ax_z = nullptr;
     cc(cudaMalloc(&d_ax_r, (size_t)n * sizeof(T)), "ax rcon");
     cc(cudaMalloc(&d_ax_z, (size_t)n * sizeof(T)), "ax zcon");
@@ -280,6 +284,7 @@ static int runTests() {
     p.lamscale = T(1.0);
 
     FourierPlan<T> fp = fourierCreate<T>(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate<T>(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     ConstraintWorkspace<T> cw = constraintCreate<T>(p);
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
@@ -290,14 +295,15 @@ static int runTests() {
     fillTcon(cw, p.ns);
     fillGconEff(cw, p.ns, p.nZnT);
 
-    testInverse(p, rs, fp, storage, op);
-    testForward(p, rs, fp, cw, op);
-    testRzCon(p, rs, fp, cw, storage, op);
+    testInverse(p, rs, fp, mt, storage, op);
+    testForward(p, rs, fp, mt, cw, op);
+    testRzCon(p, rs, fp, mt, cw, storage, op);
     testDealias(p, fp, cw, op);
 
     realSpaceFree(rs);
     fourierFree(fp);
     constraintFree(cw);
+    cumes::modeTableFree(mt);
     return 0;
 }
 

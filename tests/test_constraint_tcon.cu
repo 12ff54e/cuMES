@@ -19,6 +19,7 @@
 #include "input_json.h"
 #include "constraint.cuh"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "forces.cuh"
@@ -86,16 +87,17 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     InputParams ip = initInputParams("inputs/solovev.json");
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
     PreconWorkspace<T> pw = preconCreate(p);
     ConstraintWorkspace<T> cw = constraintCreate(p);
 
-    inverseDFTFused(fp, rs, storage.physical_const(), p, /*do_combine=*/false,
-                    cw.d_rCon, cw.d_zCon);
+    inverseDFTFused(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn,
+                    /*do_combine=*/false, cw.d_rCon, cw.d_zCon);
     computeGeometry(rs, p, rp, mw);
     constraintResetRzCon0(p, cw, rp.d_sqrtS_F);
-    preconCompute(rs, fp, p, rp, mw, pw);
+    preconCompute(rs, mt.d_xm, mt.d_xn, p, rp, mw, pw);
     computeForces(rs, p, rp, mw);
     // precon_updated=true recomputes tcon from the current tcon0.
     constraintCompute(p, rs, fp, pw, cw, rp.d_sqrtS_F, /*precon_updated=*/true);
@@ -114,7 +116,7 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
 
     realSpaceFree(rs);
     fourierFree(fp); metricFree(mw); profilesFree(rp);
-    preconFree(pw); constraintFree(cw);
+    preconFree(pw); constraintFree(cw); cumes::modeTableFree(mt);
 }
 
 template <typename T>

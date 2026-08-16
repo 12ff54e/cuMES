@@ -48,9 +48,10 @@ std::size_t stage_arena_bytes(const GridParams<T>& p) {
     bytes += (4 * ns + 7 * nH) * szT;
     // metric: 15 half-grid (ns-1, nZnT) arrays.
     bytes += 15 * nH * nZnT * szT;
-    // fourier: 2 int mode tables, 43 real arrays, zeta scratch (main + compact
-    // de-alias), 5 poloidal tables.
+    // mode table: 2 int arrays (d_xm/d_xn, resolution-scoped — blueprint §6.2).
     bytes += 2 * mnmax * szI;
+    // fourier: 43 real arrays, zeta scratch (main + compact de-alias), 5
+    // poloidal tables.
     bytes += 43 * ns * nZnT * szT;
     bytes += 12 * p.mpol * ns * nz2 * szC;      // d_zeta_spectra
     bytes += 12 * p.mpol * ns * p.nzeta * szT;  // d_zeta_real
@@ -89,7 +90,8 @@ class StageSolver {
         // explicit nonblocking compute stream (Phase 6A).
         Profiles<T> profiles(p, ip, &arena);
         RealSpaceStorage<T> rs = realSpaceCreate<T>(p, &arena);
-        ToroidalFftOperator<T> transform(p, rs, &arena);
+        DeviceModeTable mt = modeTableCreate<T>(p, &arena);
+        ToroidalFftOperator<T> transform(p, rs, mt, &arena);
         GeometryOperator<T> geometry(p, &arena);
 
         // Transform backend selection (blueprint §8.5): for ntor=0/nzeta=1
@@ -111,6 +113,7 @@ class StageSolver {
                                               transform, rs, geometry, &arena, stream,
                                               bench, axisym.get());
         realSpaceFree(rs);
+        modeTableFree(mt);
         // profiles/transform/geometry are RAII (operator destructors).
 
         std::printf("  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "

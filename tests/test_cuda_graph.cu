@@ -14,6 +14,7 @@
 
 #include "vmec_types.h"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/runtime/cuda_graph.hpp"
 #include "cumes/runtime/cuda_status.hpp"
@@ -109,13 +110,14 @@ int main() {
         delete[] h_cc; delete[] h_ss;
 
         FourierPlan<double> fp = fourierCreate(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
         cumes::Stream stream;
         cumes::check_cufft(cufftSetStream(fp.plan_z2d, stream.get()), "cufft set z2d stream");
         cumes::check_cufft(cufftSetStream(fp.plan_d2z, stream.get()), "cufft set d2z stream");
 
         // stream reference
-        inverseDFT(fp, rs, storage.physical_const(), p, false, stream.get());
+        inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn, false, stream.get());
         stream.synchronize();
         const size_t nF = (size_t)p.ns * p.nZnT;
         std::vector<double> r_e_stream(nF);
@@ -126,7 +128,7 @@ int main() {
         std::string err;
         try {
             auto g = cumes::CudaGraph::capture(stream.get(), [&]() {
-                inverseDFT(fp, rs, storage.physical_const(), p, false, stream.get());
+                inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn, false, stream.get());
             });
             g.launch(stream.get());
             stream.synchronize();
@@ -142,6 +144,7 @@ int main() {
         if (!cufft_graph_ok) printf("  cuFFT capture error: %s\n", err.c_str());
 
         realSpaceFree(rs);
+    cumes::modeTableFree(mt);
     fourierFree(fp);
     }
 

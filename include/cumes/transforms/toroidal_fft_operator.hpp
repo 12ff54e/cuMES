@@ -12,6 +12,7 @@
 
 #include <cuda_runtime.h>
 
+#include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/spectral_operator.hpp"
 #include "constraint.cuh"
@@ -25,8 +26,8 @@ template <class T>
 class ToroidalFftOperator : public SpectralOperator<T> {
  public:
   ToroidalFftOperator(const GridParams<T>& p, RealSpaceStorage<T>& rs,
-                      DeviceArena* arena)
-      : fp_(fourierCreate(p, arena)), p_(p), rs_(&rs) {}
+                      const DeviceModeTable& mt, DeviceArena* arena)
+      : fp_(fourierCreate(p, arena)), p_(p), rs_(&rs), mt_(&mt) {}
   ~ToroidalFftOperator() override { fourierFree(fp_); }
 
   ToroidalFftOperator(const ToroidalFftOperator&) = delete;
@@ -36,6 +37,10 @@ class ToroidalFftOperator : public SpectralOperator<T> {
 
   FourierPlan<T>& fourier_plan() { return fp_; }
   const FourierPlan<T>& fourier_plan() const { return fp_; }
+
+  // The shared folded-mode table (non-owning; stage/resolution-scoped).
+  const int* xm() const { return mt_->d_xm; }
+  const int* xn() const { return mt_->d_xn; }
 
   // Fused inverse (blueprint §8.4): parity-split geometry + xmpq-weighted
   // rCon/zCon. The geometry views alias the stage-owned `rs` this operator was
@@ -62,6 +67,7 @@ class ToroidalFftOperator : public SpectralOperator<T> {
   FourierPlan<T> fp_;
   GridParams<T> p_{};
   RealSpaceStorage<T>* rs_ = nullptr;  // non-owning (stage-owned)
+  const DeviceModeTable* mt_ = nullptr;  // non-owning (stage/resolution-owned)
 };
 
 }  // namespace cumes

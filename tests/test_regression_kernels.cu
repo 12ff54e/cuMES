@@ -49,6 +49,7 @@
 #include "vmec_types.h"
 #include "input.h"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "profiles.cuh"
@@ -319,6 +320,7 @@ static int testDealias(int ntheta) {
     InputParams ip = solovevInput();
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
     PreconWorkspace<T> pw = preconCreate(p);
@@ -329,9 +331,9 @@ static int testDealias(int ntheta) {
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
-    inverseDFT(fp, rs, storage.physical_const(), p);
+    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
     computeGeometry(rs, p, rp, mw);
-    preconCompute(rs, fp, p, rp, mw, pw);
+    preconCompute(rs, mt.d_xm, mt.d_xn, p, rp, mw, pw);
 
     // Manufacture the bandpass INPUT through the public operator.  With
     // ruFull = zuFull = 1 (ru_e = zu_e = 1, ru_o = zu_o = 0), rCon = pattern,
@@ -409,7 +411,7 @@ static int testDealias(int ntheta) {
 
     constraintFree(cw); preconFree(pw); metricFree(mw);
     realSpaceFree(rs);
-    fourierFree(fp); profilesFree(rp);
+    fourierFree(fp); profilesFree(rp); cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;
 }
@@ -426,6 +428,7 @@ static int testPcr(int ns) {
     InputParams ip = solovevInput();
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
     PreconWorkspace<T> pw = preconCreate(p);
@@ -435,9 +438,9 @@ static int testPcr(int ns) {
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
-    inverseDFT(fp, rs, storage.physical_const(), p);
+    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
     computeGeometry(rs, p, rp, mw);
-    preconCompute(rs, fp, p, rp, mw, pw);
+    preconCompute(rs, mt.d_xm, mt.d_xn, p, rp, mw, pw);
 
     // Copy the assembled matrix coefficients to host: the CPU Thomas reference
     // must use the EXACT same ar/dr/br/az/dz/bz, jMin and lambdaPrec the GPU
@@ -470,7 +473,7 @@ static int testPcr(int ns) {
     checkCuda(cudaMemcpy(d_f, h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
     preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
                     d_f, p.ns, p.mnmax),
-                p, pw, fp.basis.d_xm, fp.basis.d_xn);
+                p, pw, mt.d_xm, mt.d_xn);
     std::vector<T> h_g(6 * stride);
     checkCuda(cudaMemcpy(h_g.data(), d_f, 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
 
@@ -501,7 +504,7 @@ static int testPcr(int ns) {
 
     cudaFree(d_f);
     preconFree(pw); metricFree(mw);
-    fourierFree(fp); profilesFree(rp);
+    fourierFree(fp); profilesFree(rp); cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;
 }

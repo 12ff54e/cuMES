@@ -15,6 +15,7 @@
 #include <vector>
 #include "vmec_types.h"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "constraint.cuh"
 #include "cumes_test_support.cuh"
@@ -110,7 +111,7 @@ static void cpuInvDFT(const double* cc_, const double* ss_, const double* zsc_, 
 }
 
 template <typename T>
-static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
     const T* cc_, const T* ss_, const T* zsc_, const T* zcs_,
     const T* lsc_, const T* lcs_){
     size_t nb=p.ns*p.mnmax*sizeof(T);
@@ -124,11 +125,11 @@ static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, cumes::RealSpaceSto
     // component-major view over it matches SpectralStorage::physical_const().
     inverseDFT(fp,rs, cumes::SpectralView<const T, cumes::PhysicalStateDomain>(
                        st.d_rmncc, p.ns, p.mnmax),
-               p);
+               p, mt.d_xm, mt.d_xn);
 }
 
 template <typename T>
-static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_constantR ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) cc_[j+0*p.ns]=T(4.0);  // R_00
@@ -136,7 +137,7 @@ static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceSt
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,fp,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    gpuInv(st,fp,mt,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
     cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
     cc(cudaMemcpy(h_rv,rs.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
@@ -158,7 +159,7 @@ static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceSt
 }
 
 template <typename T>
-static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_thetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+0;
@@ -167,7 +168,7 @@ static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceSto
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,fp,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    gpuInv(st,fp,mt,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
     cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
     cc(cudaMemcpy(h_ru,rs.d_ru_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get ru");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
@@ -189,7 +190,7 @@ static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceSto
 }
 
 template <typename T>
-static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_zetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+1;  // R_11 (cos(θ-ζ)): folded rmncc=rmnss=0.2
@@ -198,7 +199,7 @@ static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStor
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,fp,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    gpuInv(st,fp,mt,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
     cc(cudaMemcpy(h_rv,rs.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
     hostBasis(p,hcc,hss,hsc,hcs,hxm,hxn);
@@ -216,7 +217,7 @@ static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStor
 }
 
 template <typename T>
-static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs){
+static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_constant ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(3.0));
@@ -237,7 +238,7 @@ static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceSto
     cc(cudaMemset(rs.d_crmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_crmn_o, 0, nbr), "ms");
     cc(cudaMemset(rs.d_czmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_czmn_o, 0, nbr), "ms");
     cc(cudaMemset(rs.d_clmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_clmn_o, 0, nbr), "ms");
-    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
+    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,mt.d_xm,mt.d_xn,cw_zero);
     cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
     for(int j=0;j<p.ns-1;++j){
         checkNear((double)fs[j+0*p.mnmax*p.ns],3.0,tolFwd<T>(),"fR_cc",j,0);
@@ -254,7 +255,7 @@ static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceSto
 }
 
 template <typename T>
-static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs){
+static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_sine ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fz(p.ns*p.nZnT,T(0));
@@ -282,7 +283,7 @@ static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStor
     cc(cudaMemset(rs.d_crmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_crmn_o, 0, nbr), "ms");
     cc(cudaMemset(rs.d_czmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_czmn_o, 0, nbr), "ms");
     cc(cudaMemset(rs.d_clmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_clmn_o, 0, nbr), "ms");
-    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
+    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,mt.d_xm,mt.d_xn,cw_zero);
     cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
     int m11=1*(p.ntor+1)+1;
     // vmecpp convention: the reduced-grid trapezoid with mscale*nscale
@@ -301,7 +302,7 @@ static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStor
 }
 
 template <typename T>
-static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_gpuVcpu_inverseDFT ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
@@ -320,7 +321,7 @@ static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceS
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,fp,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    gpuInv(st,fp,mt,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
     cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
     cc(cudaMemcpy(h_z,rs.d_z_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get z");
     cc(cudaMemcpy(h_l,rs.d_l_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get l");
@@ -362,7 +363,7 @@ static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceS
 // floating-point summation order).
 // host with the same reduced-grid trapezoid as the kernels.
 template <typename T>
-static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs){
+static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_axis ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(0));
@@ -397,7 +398,7 @@ static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStor
     cudaMalloc(&cw_zero.d_frcon_o,nfc); cudaMemset(cw_zero.d_frcon_o,0,nfc);
     cudaMalloc(&cw_zero.d_fzcon_e,nfc); cudaMemset(cw_zero.d_fzcon_e,0,nfc);
     cudaMalloc(&cw_zero.d_fzcon_o,nfc); cudaMemset(cw_zero.d_fzcon_o,0,nfc);
-    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
+    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,mt.d_xm,mt.d_xn,cw_zero);
     std::vector<T> fs(6*p.ns*p.mnmax);
     cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
@@ -433,7 +434,7 @@ static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStor
 
 // LCFS branch (j=ns-1 keeps only the λ components flsc/flcs).
 template <typename T>
-static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs){
+static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_lcfs ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     int jB=p.ns-1;
@@ -460,7 +461,7 @@ static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStor
     cudaMalloc(&cw_zero.d_frcon_o,nfc); cudaMemset(cw_zero.d_frcon_o,0,nfc);
     cudaMalloc(&cw_zero.d_fzcon_e,nfc); cudaMemset(cw_zero.d_fzcon_e,0,nfc);
     cudaMalloc(&cw_zero.d_fzcon_o,nfc); cudaMemset(cw_zero.d_fzcon_o,0,nfc);
-    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
+    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,mt.d_xm,mt.d_xn,cw_zero);
     std::vector<T> fs(6*p.ns*p.mnmax);
     cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
@@ -504,6 +505,7 @@ static int runTests(){
     p.ncurr=0; p.delt=T(1.0); p.ftol=T(1e-14); p.max_iter=10; p.lamscale=T(1.0);
 
     FourierPlan<T> fp=fourierCreate<T>(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate<T>(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     SpectralState<T> st = storage.legacy_view();
@@ -512,16 +514,17 @@ static int runTests(){
     // host CPU reference (the direct-sum kernels were removed after the
     // cuFFT A/B validation; the git history has them).
     int nf = 0;
-    nf += t_inv_constR(p,fp,rs,st);
-    nf += t_inv_theta(p,fp,rs,st);
-    nf += t_inv_zeta(p,fp,rs,st);
-    nf += t_fwd_const(p,fp,rs);
-    nf += t_fwd_sine(p,fp,rs);
-    nf += t_gpuVcpu_inv(p,fp,rs,st);
-    nf += t_fwd_axis(p,fp,rs);
-    nf += t_fwd_lcfs(p,fp,rs);
+    nf += t_inv_constR(p,fp,mt,rs,st);
+    nf += t_inv_theta(p,fp,mt,rs,st);
+    nf += t_inv_zeta(p,fp,mt,rs,st);
+    nf += t_fwd_const(p,fp,mt,rs);
+    nf += t_fwd_sine(p,fp,mt,rs);
+    nf += t_gpuVcpu_inv(p,fp,mt,rs,st);
+    nf += t_fwd_axis(p,fp,mt,rs);
+    nf += t_fwd_lcfs(p,fp,mt,rs);
 
     realSpaceFree(rs);
+    cumes::modeTableFree(mt);
     fourierFree(fp);
 
     return nf;

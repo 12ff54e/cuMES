@@ -20,6 +20,7 @@
 #include "vmec_types.h"
 #include "input_json.h"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "geometry.cuh"
 #include "forces.cuh"
 #include "profiles.cuh"
@@ -231,10 +232,11 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     InputParams ip = initInputParams("inputs/solovev.json");
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
 
-    inverseDFT(fp, rs, storage.physical_const(), p);
+    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
     computeGeometry(rs, p, rp, mw);
     computeForces(rs, p, rp, mw);
 
@@ -302,7 +304,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     CHECK(md < tol, msg);
 
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp);
+    fourierFree(fp); metricFree(mw); profilesFree(rp); cumes::modeTableFree(mt);
 }
 
 int main() {

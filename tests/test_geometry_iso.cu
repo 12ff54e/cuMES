@@ -16,6 +16,7 @@
 #include "input_json.h"
 #include "vmec_types.h"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "profiles.cuh"
@@ -78,6 +79,7 @@ int main() {
     fillState(st, p);
     RadialProfiles<double> rp = profilesCreate(p, ip);
     FourierPlan<double> fp = fourierCreate(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     MetricWorkspace<double> mw = metricCreate(p);
 
@@ -93,7 +95,7 @@ int main() {
         delete[] hcc;
     }
 
-    inverseDFT(fp, rs, storage.physical_const(), p);
+    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
     computeGeometry(rs, p, rp, mw);
 
     // check bsupu coverage on a mid-volume surface. All indices are computed
@@ -121,7 +123,7 @@ int main() {
     delete[] h_all;
 
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp);
+    fourierFree(fp); metricFree(mw); profilesFree(rp); cumes::modeTableFree(mt);
 
     // Assertions: a full-coverage kernel must leave no unwritten point on an
     // interior surface (zero is not a physical bsupu/bsubu value there).

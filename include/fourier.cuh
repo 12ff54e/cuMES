@@ -14,8 +14,6 @@ template <typename T> struct ConstraintWorkspace;  // defined in constraint.cuh
 // direct poloidal synthesis, mirroring vmecpp's FFTX fft_toroidal.cc.
 template <typename T>
 struct FourierPlan {
-    FourierBasis basis;
-
     // Batched 1D real FFTs of length nzeta, one batch element per
     // (slot, m, j) with slot in 0..11 (the vmecpp kBatch layout below) and
     // element index ((slot*mpol + m)*ns + j). Slot layout per poloidal
@@ -66,10 +64,12 @@ struct FourierPlan {
     size_t cufft_work_bytes_c = 0;
 };
 
-// fourierCreate builds the mode tables, allocates the real-space/force/zeta
-// scratch and poloidal tables, and creates the two cuFFT plans. With
-// `arena == nullptr` every array is its own cudaMalloc (legacy); with an
-// arena the arrays are aligned named subspans of one stage allocation.
+// fourierCreate allocates the transform scratch (zeta spectra/real, poloidal
+// tables, compact de-alias scratch) and creates the four cuFFT plans. The
+// folded mode table (d_xm/d_xn) is now built separately by cumes::modeTableCreate
+// (resolution-scoped metadata, not transform scratch — blueprint §6.2). With
+// `arena == nullptr` every array is its own cudaMalloc (legacy); with an arena
+// the arrays are aligned named subspans of one stage allocation.
 template <typename T>
 FourierPlan<T> fourierCreate(const GridParams<T>& p,
                              cumes::DeviceArena* arena = nullptr);
@@ -93,8 +93,8 @@ void realSpaceFree(cumes::RealSpaceStorage<T>& rs);
 template <typename T>
 void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                const GridParams<T>& p, bool do_combine = true,
-                cudaStream_t stream = 0);
+                const GridParams<T>& p, const int* xm, const int* xn,
+                bool do_combine = true, cudaStream_t stream = 0);
 
 // Fused inverse DFT (blueprint §8.4): in addition to the 18 parity-split
 // geometry arrays, accumulate the xmpq = m(m-1)-weighted R/Z sums into `rCon`
@@ -112,7 +112,8 @@ void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
 template <typename T>
 void inverseDFTFused(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                      cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                     const GridParams<T>& p, bool do_combine, T* rCon, T* zCon,
+                     const GridParams<T>& p, const int* xm, const int* xn,
+                     bool do_combine, T* rCon, T* zCon,
                      cudaStream_t stream = 0);
 
 // Materialize the 9 combined (e+o) real-space arrays from the current parity
@@ -138,5 +139,5 @@ void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& 
 template <typename T>
 void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
-                cudaStream_t stream = 0);
+                const GridParams<T>& p, const int* xm, const int* xn,
+                const ConstraintWorkspace<T>& cw, cudaStream_t stream = 0);

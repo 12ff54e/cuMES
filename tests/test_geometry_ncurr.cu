@@ -21,6 +21,7 @@
 #include "vmec_types.h"
 #include "input_json.h"
 #include "fourier.cuh"
+#include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "profiles.cuh"
@@ -91,10 +92,11 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
 
-    inverseDFT(fp, rs, storage.physical_const(), p);
+    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
     computeGeometry(rs, p, rp, mw);
 
     // Assert the half-grid outputs that updateIotaChipFKernel /
@@ -123,7 +125,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     delete[] h_chip; delete[] h_iota;
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp);
+    fourierFree(fp); metricFree(mw); profilesFree(rp); cumes::modeTableFree(mt);
 }
 
 int main() {

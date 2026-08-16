@@ -184,7 +184,8 @@ int main(int argc, char** argv) {
     arena.allocate(cumes::stage_arena_bytes<Real>(p));
     cumes::Profiles<Real> profiles(p, ip, &arena);
     cumes::RealSpaceStorage<Real> rs = realSpaceCreate<Real>(p, &arena);
-    cumes::ToroidalFftOperator<Real> transform(p, rs, &arena);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate<Real>(p, &arena);
+    cumes::ToroidalFftOperator<Real> transform(p, rs, mt, &arena);
     cumes::GeometryOperator<Real> geometry(p, &arena);
 
     // Axisymmetric transform backend (blueprint §8.5), mirroring
