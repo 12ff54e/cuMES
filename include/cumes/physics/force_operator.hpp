@@ -21,7 +21,7 @@ template <class T>
 class ForceOperator {
  public:
   void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-               const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
+               const cumes::RadialProfileViews<T>& rp, const MetricWorkspace<T>& mw,
                cudaStream_t stream) const {
     computeForces(rs, p, rp, mw, stream);
   }

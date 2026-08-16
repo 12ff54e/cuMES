@@ -508,7 +508,7 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       rs_(rs), geometry_(geometry), op_(op),
       precon_(p, arena), constraint_(p, arena),
       mw_(geometry.workspace()), rpv_(profiles.profile_views()),
-      rp_(profiles.workspace()), st_(storage.legacy_view()),
+      st_(storage.legacy_view()),
       d_f_spec_(6 * (size_t)p.ns * p.mnmax), d_control_(16),
       d_psum_(4 * (size_t)(p.ns - 1)),
       state_view_(storage.physical()), state_view_const_(storage.physical_const()),
@@ -573,7 +573,6 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     cumes::ConstraintOperator<T>& constraint = constraint_;
     MetricWorkspace<T>& mw = mw_;
     const cumes::RadialProfileViews<T>& rpv = rpv_;
-    const RadialProfiles<T>& rp = rp_;
     ::SpectralState<T>& st = st_;
     cumes::DeviceBuffer<T>& d_f_spec = d_f_spec_;
     cumes::DeviceBuffer<T>& d_control = d_control_;
@@ -683,7 +682,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
 
     // Base geometry (blueprint §6.7): staggered interpolation, Jacobian,
     // covariant metric — no 1/√g division.
-    geometry.enqueue(rs, p, rp, stream);
+    geometry.enqueue(rs, p, rpv, stream);
 
     // ---- Jacobian statistics (vmecpp's bad-jacobian detection) ----
     // Reduced into d_control[0..3] (device-only), ordered after the base
@@ -701,7 +700,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // profiles are fixed so the update is idempotent and runs only on the
     // first pass.
     cumes::MagneticFieldOperator<T> field_op;
-    field_op.enqueue(rs, p, rp, mw, stream, schedule.update_iota_chi);
+    field_op.enqueue(rs, p, rpv, mw, stream, schedule.update_iota_chi);
 
 #ifdef DUMP_CUMES_VERIFY
     if (iter == 0 || iter2 == 2) {
@@ -739,7 +738,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // shouldUpdateRadialPreconditioner: (iter2 - iter1) % 25 == 0.
     const bool precon_updated = schedule.refresh_preconditioner;
     if (precon_updated) {
-        precon.enqueue_compute(rs, transform.xm(), transform.xn(), p, rp, mw,
+        precon.enqueue_compute(rs, transform.xm(), transform.xn(), p, rpv, mw,
                                stream);
 
         // vmecpp computeForceNorms (same cadence): device-side reduction
@@ -809,7 +808,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     }
 
     cumes::ForceOperator<T> force_op;
-    force_op.enqueue(rs, p, rp, mw, stream);
+    force_op.enqueue(rs, p, rpv, mw, stream);
 
 #ifdef DUMP_CUMES_VERIFY
     if (iter == 0 || iter2 == 2) {
@@ -1040,7 +1039,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
     // sealed behind the EquilibriumOperator; these aliases serve only the
     // per_iter/axis/step_0 dump blocks and printIterRow below).
     SpectralState<T> st = storage.legacy_view();
-    const RadialProfiles<T>& rp = profiles.workspace();
+    const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
@@ -1202,10 +1201,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         dumpDeviceArray("dump/cuMES/step_0_rmnss.bin",      st.d_rmnss, n_spec);
         dumpDeviceArray("dump/cuMES/step_0_zmncs.bin",      st.d_zmncs, n_spec);
         dumpDeviceArray("dump/cuMES/step_0_lmncs.bin",      st.d_lmncs, n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_currH.bin",      rp.d_curr_H, p.ns - 1);
-        dumpDeviceArray("dump/cuMES/step_0_chipH.bin",      rp.d_chip_H, p.ns - 1);
-        dumpDeviceArray("dump/cuMES/step_0_iotaH.bin",      rp.d_iota_H, p.ns - 1);
-        dumpDeviceArray("dump/cuMES/step_0_iotaF.bin",      rp.d_iota_F, p.ns);
+        dumpDeviceArray("dump/cuMES/step_0_currH.bin",      rpv.curr_H, p.ns - 1);
+        dumpDeviceArray("dump/cuMES/step_0_chipH.bin",      rpv.chip_H, p.ns - 1);
+        dumpDeviceArray("dump/cuMES/step_0_iotaH.bin",      rpv.iota_H, p.ns - 1);
+        dumpDeviceArray("dump/cuMES/step_0_iotaF.bin",      rpv.iota_F, p.ns);
     }
 #endif
 

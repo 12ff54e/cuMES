@@ -23,7 +23,7 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
-#include "profiles.cuh"
+#include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -94,7 +94,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
         return loadValidated("inputs/solovev.json");
     }();
 
-    RadialProfiles<T> rp = profilesCreate(p, vp);
+    cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
@@ -109,8 +109,8 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     size_t nH = (size_t)(p.ns - 1) * p.nZnT;
     auto* h_chip = new T[p.ns - 1];
     auto* h_iota = new T[p.ns - 1];
-    checkCuda(cudaMemcpy(h_chip, rp.d_chip_H, (p.ns - 1) * sizeof(T), cudaMemcpyDeviceToHost), "chipH");
-    checkCuda(cudaMemcpy(h_iota, rp.d_iota_H, (p.ns - 1) * sizeof(T), cudaMemcpyDeviceToHost), "iotaH");
+    checkCuda(cudaMemcpy(h_chip, rp.chip_H, (p.ns - 1) * sizeof(T), cudaMemcpyDeviceToHost), "chipH");
+    checkCuda(cudaMemcpy(h_iota, rp.iota_H, (p.ns - 1) * sizeof(T), cudaMemcpyDeviceToHost), "iotaH");
     bool all_finite = true;
     for (int j = 0; j < p.ns - 1; ++j) {
         if (!std::isfinite((double)h_chip[j]) || !std::isfinite((double)h_iota[j])) all_finite = false;
@@ -129,7 +129,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     delete[] h_chip; delete[] h_iota;
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp); cumes::modeTableFree(mt);
+    fourierFree(fp); metricFree(mw); cumes::modeTableFree(mt);
 }
 
 int main() {

@@ -23,7 +23,7 @@
 #include "geometry.cuh"
 #include "forces.cuh"
 #include "precon.cuh"
-#include "profiles.cuh"
+#include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -84,7 +84,7 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     delete[] h_lsc; delete[] h_lcs;
 
     cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
-    RadialProfiles<T> rp = profilesCreate(p, vp);
+    cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
@@ -95,11 +95,11 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     inverseDFTFused(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn,
                     /*do_combine=*/false, cw.d_rCon, cw.d_zCon);
     computeGeometry(rs, p, rp, mw);
-    constraintResetRzCon0(p, cw, rp.d_sqrtS_F);
+    constraintResetRzCon0(p, cw, rp.sqrtS_F);
     preconCompute(rs, mt.d_xm, mt.d_xn, p, rp, mw, pw);
     computeForces(rs, p, rp, mw);
     // precon_updated=true recomputes tcon from the current tcon0.
-    constraintCompute(p, rs, fp, pw, cw, rp.d_sqrtS_F, /*precon_updated=*/true);
+    constraintCompute(p, rs, fp, pw, cw, rp.sqrtS_F, /*precon_updated=*/true);
 
     size_t nF = (size_t)p.ns * p.nZnT;
     auto* h = new T[nF];
@@ -114,7 +114,7 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     delete[] ht;
 
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp);
+    fourierFree(fp); metricFree(mw); 
     preconFree(pw); constraintFree(cw); cumes::modeTableFree(mt);
 }
 

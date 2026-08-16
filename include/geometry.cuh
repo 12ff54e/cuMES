@@ -60,7 +60,7 @@ void metricFree(MetricWorkspace<T>& mw);
 // relaunch is skipped (Phase 6A fixed-iota update skip).
 template <typename T>
 void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                     const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                     const cumes::RadialProfileViews<T>& rp, MetricWorkspace<T>& mw,
                      cudaStream_t stream = 0, bool update_iota_chi = true);
 
 // Split geometry pipeline (blueprint §6.7): base geometry (staggered
@@ -75,11 +75,11 @@ void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>
 // Jacobian-status chain.
 template <typename T>
 void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                         const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                         const cumes::RadialProfileViews<T>& rp, MetricWorkspace<T>& mw,
                          cudaStream_t stream = 0);
 template <typename T>
 void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                          const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                          const cumes::RadialProfileViews<T>& rp, MetricWorkspace<T>& mw,
                           cudaStream_t stream = 0, bool update_iota_chi = true);
 
 // Force-norm partial sums for the residual normalization (vmecpp

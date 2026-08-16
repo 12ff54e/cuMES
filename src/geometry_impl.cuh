@@ -20,7 +20,6 @@
 
 #include "geometry.cuh"
 #include "fourier.cuh"
-#include "profiles.cuh"
 #include <cstdio>
 #include <math_constants.h>
 
@@ -84,16 +83,6 @@ static cumes::MagneticFieldViews<T> magneticFieldViews(const MetricWorkspace<T>&
     v.bsupu = h(mw.d_bsupu); v.bsupv = h(mw.d_bsupv);
     v.bsubu = h(mw.d_bsubu); v.bsubv = h(mw.d_bsubv);
     v.total_pressure = h(mw.d_totalPressure);
-    return v;
-}
-
-template <typename T>
-static cumes::RadialProfileViews<T> radialProfileViews(const RadialProfiles<T>& rp) {
-    cumes::RadialProfileViews<T> v;
-    v.iota_F = rp.d_iota_F; v.phip_F = rp.d_phip_F; v.chi_F = rp.d_chi_F; v.sqrtS_F = rp.d_sqrtS_F;
-    v.iota_H = rp.d_iota_H; v.pres_H = rp.d_pres_H; v.phip_H = rp.d_phip_H;
-    v.dVds_H = rp.d_dVds_H; v.sqrtS_H = rp.d_sqrtS_H;
-    v.curr_H = rp.d_curr_H; v.chip_H = rp.d_chip_H;
     return v;
 }
 
@@ -640,24 +629,24 @@ void computeJacobianStats(const DeviceParams<T>& p, const MetricWorkspace<T>& mw
 
 template <typename T>
 void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                         const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                         const cumes::RadialProfileViews<T>& rpv, MetricWorkspace<T>& mw,
                          cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     baseGeometryKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), radialProfileViews(rp),
-        baseGeometryHalfViews(mw, p), p.ns, p.nZnT, rp.delta_s);
+        geometryParityViews(rs, p), rpv,
+        baseGeometryHalfViews(mw, p), p.ns, p.nZnT, T(1.0) / T(p.ns - 1));
     cumes::check_cuda(cudaGetLastError(), "base geometry kernel");
 }
 
 template <typename T>
 void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                          const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                          const cumes::RadialProfileViews<T>& rpv, MetricWorkspace<T>& mw,
                           cudaStream_t stream, bool update_iota_chi) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     magneticFieldKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), radialProfileViews(rp),
+        geometryParityViews(rs, p), rpv,
         baseGeometryHalfViews(mw, p), magneticFieldViews(mw, p),
         p.lamscale, p.ncurr, p.ns, p.nZnT);
     cumes::check_cuda(cudaGetLastError(), "magnetic field kernel");
@@ -668,27 +657,27 @@ void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const DevicePara
         ncurr1FinalizeKernel<T><<<fg, fb, shmem, stream>>>(
             mw.d_guu, mw.d_guv, mw.d_gsqrt, mw.d_gvv,
             mw.d_bsupu, mw.d_bsupv,
-            rp.d_curr_H, rp.d_phip_H, rp.d_pres_H, rp.d_sqrtS_H,
+            rpv.curr_H, rpv.phip_H, rpv.pres_H, rpv.sqrtS_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta, p.lamscale,
             mw.d_bsubu, mw.d_bsubv, mw.d_totalPressure,
-            rp.d_chip_H, rp.d_iota_H);
+            rpv.chip_H, rpv.iota_H);
         cumes::check_cuda(cudaGetLastError(), "ncurr1 kernel");
         }
 
     if (update_iota_chi) {
         dim3 ib(256), ig((p.ns + 255) / 256);
         updateIotaChipFKernel<T><<<ig, ib, 0, stream>>>(
-            rp.d_iota_H, rp.d_chip_H, p.ns, rp.d_iota_F, rp.d_chi_F);
+            rpv.iota_H, rpv.chip_H, p.ns, rpv.iota_F, rpv.chi_F);
         cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
     }
 }
 
 template <typename T>
 void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                     const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                     const cumes::RadialProfileViews<T>& rpv, MetricWorkspace<T>& mw,
                      cudaStream_t stream, bool update_iota_chi) {
-    computeBaseGeometry(rs, p, rp, mw, stream);
-    computeMagneticField(rs, p, rp, mw, stream, update_iota_chi);
+    computeBaseGeometry(rs, p, rpv, mw, stream);
+    computeMagneticField(rs, p, rpv, mw, stream, update_iota_chi);
 }
 
 // ---------------------------------------------------------------------------
@@ -698,8 +687,9 @@ void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>
 template <typename T>
 void cumes::GeometryOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
                                          const DeviceParams<T>& p,
-                                         const RadialProfiles<T>& rp, cudaStream_t stream) {
-    computeBaseGeometry(rs, p, rp, mw_, stream);
+                                         const cumes::RadialProfileViews<T>& rpv,
+                                         cudaStream_t stream) {
+    computeBaseGeometry(rs, p, rpv, mw_, stream);
 }
 
 template <typename T>

@@ -31,7 +31,6 @@
 #include "forces.cuh"
 #include "solver.cuh"
 #include "output.cuh"
-#include "profiles.cuh"
 #include "refine.cuh"
 
 #include "cumes/config/json_reader.hpp"

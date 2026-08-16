@@ -94,7 +94,7 @@ void preconFree(PreconWorkspace<T>& pw);
 // (cumes::DeviceModeTable).
 template <typename T>
 void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                   const DeviceParams<T>& p, const RadialProfiles<T>& rp,
+                   const DeviceParams<T>& p, const cumes::RadialProfileViews<T>& rp,
                    const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
                    cudaStream_t stream = 0);
 

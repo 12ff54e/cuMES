@@ -51,7 +51,7 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
-#include "profiles.cuh"
+#include "cumes/physics/profiles.hpp"
 #include "precon.cuh"
 #include "constraint.cuh"
 #include "cumes_test_support.cuh"
@@ -321,7 +321,7 @@ static int testDealias(int ntheta) {
     const int ns = 11, mpol = 6, ntor = 0, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     cumes::ValidatedProblem vp = solovevInput();
-    RadialProfiles<T> rp = profilesCreate(p, vp);
+    cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
@@ -366,7 +366,7 @@ static int testDealias(int ntheta) {
 
     // tcon is refreshed from the (real) preconditioner + manufactured ru/zu;
     // the bandpass runs on the manufactured gConEff.
-    constraintCompute(p, rs, fp, pw, cw, rp.d_sqrtS_F, /*precon_updated=*/true);
+    constraintCompute(p, rs, fp, pw, cw, rp.sqrtS_F, /*precon_updated=*/true);
 
     std::vector<T> h_tcon(p.ns);
     checkCuda(cudaMemcpy(h_tcon.data(), cw.d_tcon, p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
@@ -414,7 +414,7 @@ static int testDealias(int ntheta) {
 
     constraintFree(cw); preconFree(pw); metricFree(mw);
     realSpaceFree(rs);
-    fourierFree(fp); profilesFree(rp); cumes::modeTableFree(mt);
+    fourierFree(fp); cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;
 }
@@ -429,7 +429,7 @@ static int testPcr(int ns) {
     const int mpol = 4, ntor = 0, ntheta = 18, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     cumes::ValidatedProblem vp = solovevInput();
-    RadialProfiles<T> rp = profilesCreate(p, vp);
+    cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
@@ -507,7 +507,7 @@ static int testPcr(int ns) {
 
     cudaFree(d_f);
     preconFree(pw); metricFree(mw);
-    fourierFree(fp); profilesFree(rp); cumes::modeTableFree(mt);
+    fourierFree(fp); cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;
 }

@@ -19,19 +19,6 @@
 
 #include "cumes/config/device_params.hpp"  // DeviceParams<T> (the per-stage pack)
 
-template <typename T>
-struct RadialProfiles {
-    T* d_iota_F; T* d_phip_F;
-    T* d_chi_F;  T* d_sqrtS_F;
-    T* d_iota_H; T* d_pres_H; T* d_phip_H;
-    T* d_dVds_H; T* d_sqrtS_H;
-    T* d_curr_H;  // prescribed toroidal current profile (ncurr=1), half grid
-    T* d_chip_H;  // dχ/ds (poloidal flux derivative), half grid
-    T delta_s;
-    // true when the radial arrays are subspans of a shared DeviceArena.
-    bool arena_backed = false;
-};
-
 // Spectral state with independent coefficient arrays.
 // Each is shape (ns, mnmax) column-major.
 // Total DOFs: 6 * ns * mnmax  (6 components in 3D stellarator-symmetric).

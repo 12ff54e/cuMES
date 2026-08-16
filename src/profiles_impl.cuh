@@ -1,4 +1,4 @@
-// profiles_impl.cuh — template definitions for profiles.cuh.
+// profiles_impl.cuh — template definitions for the cumes::Profiles operator.
 // Included once per scalar type by profiles_double.cu / profiles_float.cu; see the
 // explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
 #pragma once
@@ -19,7 +19,7 @@
 // All computation is templated on the scalar type T (double or float); the
 // ValidatedProblem profile coefficients stay double (host config) and are
 // converted at the point of use.
-#include "profiles.cuh"
+#include "cumes/physics/profiles.hpp"
 #include "cumes/config/validated_problem.hpp"
 #include <cstdio>
 #include <cmath>
@@ -83,12 +83,11 @@ static T evalCurrProfile(const cumes::ProblemSpec& sp, T x) {
 }
 
 template <typename T>
-RadialProfiles<T> profilesCreate(DeviceParams<T>& p, const cumes::ValidatedProblem& vp,
-                                 cumes::DeviceArena* arena) {
+cumes::Profiles<T>::Profiles(DeviceParams<T>& p, const cumes::ValidatedProblem& vp,
+                             cumes::DeviceArena* arena) {
     const cumes::ProblemSpec& sp = vp.spec();
     const int ncurr = (sp.current_model == cumes::CurrentModel::kPrescribedCurrent) ? 1 : 0;
-    RadialProfiles<T> rp{};
-    rp.delta_s = T(1.0) / T(p.ns - 1);
+    delta_s_ = T(1.0) / T(p.ns - 1);
 
     size_t nF = p.ns * sizeof(T);
     size_t nH = (p.ns - 1) * sizeof(T);
@@ -97,18 +96,18 @@ RadialProfiles<T> profilesCreate(DeviceParams<T>& p, const cumes::ValidatedProbl
         if (arena) dst = arena->alloc_span<T>(name, count);
         else cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
     };
-    alloc(rp.d_iota_F,  p.ns,      "profiles/iota_F");
-    alloc(rp.d_phip_F,  p.ns,      "profiles/phip_F");
-    alloc(rp.d_chi_F,   p.ns,      "profiles/chi_F");
-    alloc(rp.d_sqrtS_F, p.ns,      "profiles/sqrtS_F");
-    alloc(rp.d_iota_H,  p.ns - 1,  "profiles/iota_H");
-    alloc(rp.d_pres_H,  p.ns - 1,  "profiles/pres_H");
-    alloc(rp.d_phip_H,  p.ns - 1,  "profiles/phip_H");
-    alloc(rp.d_dVds_H,  p.ns - 1,  "profiles/dVds_H");
-    alloc(rp.d_sqrtS_H, p.ns - 1,  "profiles/sqrtS_H");
-    alloc(rp.d_curr_H,  p.ns - 1,  "profiles/curr_H");
-    alloc(rp.d_chip_H,  p.ns - 1,  "profiles/chip_H");
-    rp.arena_backed = (arena != nullptr);
+    alloc(d_iota_F_,  p.ns,      "profiles/iota_F");
+    alloc(d_phip_F_,  p.ns,      "profiles/phip_F");
+    alloc(d_chi_F_,   p.ns,      "profiles/chi_F");
+    alloc(d_sqrtS_F_, p.ns,      "profiles/sqrtS_F");
+    alloc(d_iota_H_,  p.ns - 1,  "profiles/iota_H");
+    alloc(d_pres_H_,  p.ns - 1,  "profiles/pres_H");
+    alloc(d_phip_H_,  p.ns - 1,  "profiles/phip_H");
+    alloc(d_dVds_H_,  p.ns - 1,  "profiles/dVds_H");
+    alloc(d_sqrtS_H_, p.ns - 1,  "profiles/sqrtS_H");
+    alloc(d_curr_H_,  p.ns - 1,  "profiles/curr_H");
+    alloc(d_chip_H_,  p.ns - 1,  "profiles/chip_H");
+    arena_backed_ = (arena != nullptr);
 
     // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
     // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
@@ -136,91 +135,87 @@ RadialProfiles<T> profilesCreate(DeviceParams<T>& p, const cumes::ValidatedProbl
     auto* h = new T[p.ns];
     // ---- Full grid ----
     for (int j = 0; j < p.ns; ++j) {
-        T s = rp.delta_s * T(j);
+        T s = delta_s_ * T(j);
         T tf = fmin(torflux<T>(sp, s), T(1.0));
         h[j] = evalIotaProfile<T>(sp, tf);
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_iota_F, h, nF, cudaMemcpyHostToDevice), "iota_F cpy");
+    cumes::check_cuda(cudaMemcpy(d_iota_F_, h, nF, cudaMemcpyHostToDevice), "iota_F cpy");
     for (int j = 0; j < p.ns; ++j) {
-        T s = rp.delta_s * T(j);
+        T s = delta_s_ * T(j);
         h[j] = maxToroidalFlux * torfluxDeriv<T>(sp, s);
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_phip_F, h, nF, cudaMemcpyHostToDevice), "phip_F cpy");
+    cumes::check_cuda(cudaMemcpy(d_phip_F_, h, nF, cudaMemcpyHostToDevice), "phip_F cpy");
     for (int j = 0; j < p.ns; ++j) {
-        T s = rp.delta_s * T(j);
+        T s = delta_s_ * T(j);
         T tf = fmin(torflux<T>(sp, s), T(1.0));
         h[j] = maxToroidalFlux * evalIotaProfile<T>(sp, tf) * torfluxDeriv<T>(sp, s);
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_chi_F, h, nF, cudaMemcpyHostToDevice), "chi_F cpy");
-    for (int j = 0; j < p.ns; ++j) h[j] = sqrt(rp.delta_s * T(j) + T(1e-12));
-    cumes::check_cuda(cudaMemcpy(rp.d_sqrtS_F, h, nF, cudaMemcpyHostToDevice), "sqrtS_F cpy");
+    cumes::check_cuda(cudaMemcpy(d_chi_F_, h, nF, cudaMemcpyHostToDevice), "chi_F cpy");
+    for (int j = 0; j < p.ns; ++j) h[j] = sqrt(delta_s_ * T(j) + T(1e-12));
+    cumes::check_cuda(cudaMemcpy(d_sqrtS_F_, h, nF, cudaMemcpyHostToDevice), "sqrtS_F cpy");
 
     // ---- Half grid ----
     for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = rp.delta_s * (T(j) + T(0.5));
+        T sh = delta_s_ * (T(j) + T(0.5));
         T tf = fmin(torflux<T>(sp, sh), T(1.0));
         h[j] = evalIotaProfile<T>(sp, tf);
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_iota_H, h, nH, cudaMemcpyHostToDevice), "iota_H cpy");
+    cumes::check_cuda(cudaMemcpy(d_iota_H_, h, nH, cudaMemcpyHostToDevice), "iota_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = rp.delta_s * (T(j) + T(0.5));
+        T sh = delta_s_ * (T(j) + T(0.5));
         T tf = fmin(torflux<T>(sp, fmin(sh, T(sp.physical.spres_ped))), T(1.0));
         h[j] = evalMassProfile<T>(sp, tf);  // pres = mass (gamma = 0)
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_pres_H, h, nH, cudaMemcpyHostToDevice), "pres_H cpy");
+    cumes::check_cuda(cudaMemcpy(d_pres_H_, h, nH, cudaMemcpyHostToDevice), "pres_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = rp.delta_s * (T(j) + T(0.5));
+        T sh = delta_s_ * (T(j) + T(0.5));
         h[j] = maxToroidalFlux * torfluxDeriv<T>(sp, sh);
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_phip_H, h, nH, cudaMemcpyHostToDevice), "phip_H cpy");
+    cumes::check_cuda(cudaMemcpy(d_phip_H_, h, nH, cudaMemcpyHostToDevice), "phip_H cpy");
     // Note: d_mass_H (dead storage, never read) was removed; d_pres_H holds
     // the mass profile (gamma=0 -> pres = mass).
     for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = rp.delta_s * (T(j) + T(0.5));
+        T sh = delta_s_ * (T(j) + T(0.5));
         T tf = fmin(torflux<T>(sp, sh), T(1.0));
         h[j] = maxToroidalFlux * evalIotaProfile<T>(sp, tf) * torfluxDeriv<T>(sp, sh);
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_chip_H, h, nH, cudaMemcpyHostToDevice), "chip_H cpy");
+    cumes::check_cuda(cudaMemcpy(d_chip_H_, h, nH, cudaMemcpyHostToDevice), "chip_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) h[j] = T(1.0);  // dVds placeholder (gamma=0)
-    cumes::check_cuda(cudaMemcpy(rp.d_dVds_H, h, nH, cudaMemcpyHostToDevice), "dVds_H cpy");
+    cumes::check_cuda(cudaMemcpy(d_dVds_H_, h, nH, cudaMemcpyHostToDevice), "dVds_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = rp.delta_s * (T(j) + T(0.5));
+        T sh = delta_s_ * (T(j) + T(0.5));
         h[j] = Itor * evalCurrProfile<T>(sp, fmin(torflux<T>(sp, sh), T(1.0)));
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_curr_H, h, nH, cudaMemcpyHostToDevice), "curr_H cpy");
+    cumes::check_cuda(cudaMemcpy(d_curr_H_, h, nH, cudaMemcpyHostToDevice), "curr_H cpy");
     // sqrt(s) on half-grid for parity mixing
     for (int j = 0; j < p.ns - 1; ++j) {
-        h[j] = sqrt(rp.delta_s * (T(j) + T(0.5)));
+        h[j] = sqrt(delta_s_ * (T(j) + T(0.5)));
     }
-    cumes::check_cuda(cudaMemcpy(rp.d_sqrtS_H, h, nH, cudaMemcpyHostToDevice), "sqrtS_H cpy");
+    cumes::check_cuda(cudaMemcpy(d_sqrtS_H_, h, nH, cudaMemcpyHostToDevice), "sqrtS_H cpy");
 
     delete[] h;
 
     // lamscale = sqrt(deltaS * Σ phipH²) (vmecpp constants_.lamscale)
     T rmsPhiP = T(0.0);
     auto* h_phip = new T[p.ns - 1];
-    cumes::check_cuda(cudaMemcpy(h_phip, rp.d_phip_H, nH, cudaMemcpyDeviceToHost), "phip_H get");
+    cumes::check_cuda(cudaMemcpy(h_phip, d_phip_H_, nH, cudaMemcpyDeviceToHost), "phip_H get");
     for (int j = 0; j < p.ns - 1; ++j) rmsPhiP += h_phip[j] * h_phip[j];
     delete[] h_phip;
-    p.lamscale = sqrt(rmsPhiP * rp.delta_s);
+    p.lamscale = sqrt(rmsPhiP * delta_s_);
     printf("  profiles: ns=%d phip=%.6e lamscale=%.6e maxToroidalFlux=%.6e\n",
            p.ns, (double)(maxToroidalFlux * torfluxDeriv<T>(sp, T(0.5))),
            (double)p.lamscale, (double)maxToroidalFlux);
-
-    return rp;
 }
 
 template <typename T>
-void profilesFree(RadialProfiles<T>& rp) {
-    if (!rp.arena_backed) {
-        cudaFree(rp.d_iota_F);
-        cudaFree(rp.d_phip_F); cudaFree(rp.d_chi_F);
-        cudaFree(rp.d_sqrtS_F);
-        cudaFree(rp.d_iota_H); cudaFree(rp.d_pres_H);
-        cudaFree(rp.d_phip_H);
-        cudaFree(rp.d_dVds_H); cudaFree(rp.d_sqrtS_H);
-        cudaFree(rp.d_curr_H); cudaFree(rp.d_chip_H);
+cumes::Profiles<T>::~Profiles() {
+    if (!arena_backed_) {
+        cudaFree(d_iota_F_);
+        cudaFree(d_phip_F_); cudaFree(d_chi_F_);
+        cudaFree(d_sqrtS_F_);
+        cudaFree(d_iota_H_); cudaFree(d_pres_H_);
+        cudaFree(d_phip_H_);
+        cudaFree(d_dVds_H_); cudaFree(d_sqrtS_H_);
+        cudaFree(d_curr_H_); cudaFree(d_chip_H_);
     }
-    rp = RadialProfiles<T>{};
 }
-

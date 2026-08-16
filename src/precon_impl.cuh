@@ -842,7 +842,7 @@ __global__ void preconBoundaryKernel(
 // ---------------------------------------------------------------------------
 template <typename T>
 void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                   const DeviceParams<T>& p, const RadialProfiles<T>& rp,
+                   const DeviceParams<T>& p, const cumes::RadialProfileViews<T>& rpv,
                    const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
                    cudaStream_t stream) {
     int nH = p.ns - 1, nF = p.ns;
@@ -852,10 +852,10 @@ void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const in
     // now a warp-shuffle + fixed cross-warp combine, so no dynamic shared mem).
     preconComputeKernel<T><<<nH, threads, 0, stream>>>(
         mw.d_r12, mw.d_tau, mw.d_totalPressure, mw.d_bsupv, mw.d_gsqrt,
-        rp.d_sqrtS_H,
+        rpv.sqrtS_H,
         mw.d_zs, mw.d_zu12, rs.d_zu_e, rs.d_zu_o, rs.d_z_o,
         mw.d_rs, mw.d_ru12, rs.d_ru_e, rs.d_ru_o, rs.d_r_o,
-        p.ns, p.nZnT, rp.delta_s,
+        p.ns, p.nZnT, T(1.0) / T(p.ns - 1),
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx);
     cumes::check_cuda(cudaGetLastError(), "preconCompute");
 
@@ -863,7 +863,7 @@ void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const in
     int gridH = (nH + 255) / 256;
     preconAssembleKernel<T><<<gridH, 256, 0, stream>>>(
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx,
-        rp.d_sqrtS_H, rp.d_sqrtS_F,
+        rpv.sqrtS_H, rpv.sqrtS_F,
         p.ns,
         pw.d_arm, pw.d_brm, pw.d_azm, pw.d_bzm,
         pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd,
@@ -904,15 +904,15 @@ void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const in
         cumes::check_cuda(cudaMemsetAsync(pw.d_rmsPhiP, 0, sizeof(T), stream), "rmsPhiP zero");
         lambdaPrecAssembleKernel<T><<<nH, threads, 0, stream>>>(
             mw.d_guu, mw.d_guv, mw.d_gvv, mw.d_gsqrt,
-            rp.d_phip_H,
+            rpv.phip_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta,
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda, pw.d_rmsPhiP);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecAssemble");
         lambdaPrecFinalizeKernel<T><<<dim3(p.mnmax, (p.ns + 127) / 128), 128, 0, stream>>>(
             pw.d_bLambda, pw.d_dLambda, pw.d_cLambda,
-            rp.d_sqrtS_F, pw.d_rmsPhiP,
+            rpv.sqrtS_F, pw.d_rmsPhiP,
             xm, xn,
-            p.ns, p.mnmax, rp.delta_s, p.nfp,
+            p.ns, p.mnmax, T(1.0) / T(p.ns - 1), p.nfp,
             pw.d_lambdaPrec);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecFinalize");
     }
@@ -1062,10 +1062,10 @@ template <typename T>
 void cumes::Preconditioner<T>::enqueue_compute(const cumes::RealSpaceStorage<T>& rs,
                                                const int* xm, const int* xn,
                                                const DeviceParams<T>& p,
-                                               const RadialProfiles<T>& rp,
+                                               const cumes::RadialProfileViews<T>& rpv,
                                                const MetricWorkspace<T>& mw,
                                                cudaStream_t stream) {
-    preconCompute(rs, xm, xn, p, rp, mw, pw_, stream);
+    preconCompute(rs, xm, xn, p, rpv, mw, pw_, stream);
 }
 
 template <typename T>

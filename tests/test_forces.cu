@@ -20,7 +20,7 @@
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
 #include "forces.cuh"
-#include "profiles.cuh"
+#include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -87,7 +87,7 @@ int main() {
     delete[] h_lsc; delete[] h_lcs;
 
     cumes::ValidatedProblem vp = loadValidated();
-    RadialProfiles<double> rp = profilesCreate(p, vp);
+    cumes::Profiles<double> profiles(p, vp, nullptr); cumes::RadialProfileViews<double> rp = profiles.profile_views();
     FourierPlan<double> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
@@ -226,7 +226,7 @@ int main() {
 
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp); cumes::modeTableFree(mt);
+    fourierFree(fp); metricFree(mw); cumes::modeTableFree(mt);
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
 

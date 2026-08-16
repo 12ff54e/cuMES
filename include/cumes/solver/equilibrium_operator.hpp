@@ -98,7 +98,6 @@ class EquilibriumOperator {
   ConstraintOperator<T> constraint_;
   MetricWorkspace<T>& mw_;
   RadialProfileViews<T> rpv_;
-  const RadialProfiles<T>& rp_;
   ::SpectralState<T> st_;
 
   DeviceBuffer<T> d_f_spec_;

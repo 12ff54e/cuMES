@@ -26,7 +26,6 @@
 #include "fft_traits.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
-#include "profiles.cuh"
 #include "solver.cuh"
 
 namespace cumes {

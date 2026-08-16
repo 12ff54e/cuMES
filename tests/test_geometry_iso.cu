@@ -18,7 +18,7 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "geometry.cuh"
-#include "profiles.cuh"
+#include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
 
 
@@ -79,7 +79,7 @@ int main() {
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
 
     fillState(st, p);
-    RadialProfiles<double> rp = profilesCreate(p, vp);
+    cumes::Profiles<double> profiles(p, vp, nullptr); cumes::RadialProfileViews<double> rp = profiles.profile_views();
     FourierPlan<double> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
@@ -125,7 +125,7 @@ int main() {
     delete[] h_all;
 
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp); cumes::modeTableFree(mt);
+    fourierFree(fp); metricFree(mw); cumes::modeTableFree(mt);
 
     // Assertions: a full-coverage kernel must leave no unwritten point on an
     // interior surface (zero is not a physical bsupu/bsubu value there).

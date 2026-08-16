@@ -32,7 +32,6 @@
 #include "fourier.cuh"
 #include "geometry.cuh"
 #include "solver.cuh"
-#include "profiles.cuh"
 
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/solver_options.hpp"

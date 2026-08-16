@@ -2,7 +2,7 @@
 //
 // Owns the MetricWorkspace and wraps the legacy computeGeometry /
 // computeJacobianStats / computeForceNormPartials. Transitional strangler-fig
-// form: it still names the legacy FourierPlan/RadialProfiles in the enqueue
+// form: it still names the legacy FourierPlan/cumes::RadialProfileViews in the enqueue
 // signature (for the parity-split full-grid geometry and radial profiles);
 // those become typed views once the FourierPlan split lands. The base-geometry
 // vs Jacobian-division decomposition (blueprint §6.7) is a separate follow-up.
@@ -13,7 +13,6 @@
 #include "cumes/state/real_fields.cuh"
 #include "fourier.cuh"
 #include "geometry.cuh"
-#include "profiles.cuh"
 
 namespace cumes {
 
@@ -37,7 +36,7 @@ class GeometryOperator {
   // MagneticFieldOperator, ordered after this kernel (and the Jacobian-status
   // chain) on the same stream. Reads the parity-split geometry from `rs`.
   void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-               const RadialProfiles<T>& rp, cudaStream_t stream);
+               const cumes::RadialProfileViews<T>& rp, cudaStream_t stream);
 
   // Oriented-Jacobian statistics into a caller-owned 4-element device scratch.
   void jacobian_stats(const DeviceParams<T>& p, T* d_stats, cudaStream_t stream) const;

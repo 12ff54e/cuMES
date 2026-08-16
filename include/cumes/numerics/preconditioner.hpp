@@ -7,7 +7,7 @@
 // legacy preconCompute/preconApply are the reference implementation.
 //
 // Transitional strangler-fig form: the operator OWNS its PreconWorkspace but
-// still names the legacy FourierPlan/RadialProfiles/MetricWorkspace in the
+// still names the legacy FourierPlan/cumes::RadialProfileViews/MetricWorkspace in the
 // assemble step (it reads the mode tables and geometry). Those become typed
 // views once the mode-table extraction and FourierPlan split land (blueprint
 // §6.2/§6.6); the solve step already goes through the clean TridiagonalBackend.
@@ -20,7 +20,6 @@
 #include "fourier.cuh"
 #include "geometry.cuh"
 #include "precon.cuh"
-#include "profiles.cuh"
 
 namespace cumes {
 
@@ -38,7 +37,7 @@ class Preconditioner {
 
   // Refresh the matrix coefficients from the current geometry/field.
   void enqueue_compute(const RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                       const DeviceParams<T>& p, const RadialProfiles<T>& rp,
+                       const DeviceParams<T>& p, const cumes::RadialProfileViews<T>& rp,
                        const MetricWorkspace<T>& mw, cudaStream_t stream);
 
   // Apply the preconditioner in place to the decomposed residual.

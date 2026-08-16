@@ -60,16 +60,6 @@ static cumes::MagneticFieldViews<T> magneticFieldViews(const MetricWorkspace<T>&
 }
 
 template <typename T>
-static cumes::RadialProfileViews<T> radialProfileViews(const RadialProfiles<T>& rp) {
-    cumes::RadialProfileViews<T> v;
-    v.iota_F = rp.d_iota_F; v.phip_F = rp.d_phip_F; v.chi_F = rp.d_chi_F; v.sqrtS_F = rp.d_sqrtS_F;
-    v.iota_H = rp.d_iota_H; v.pres_H = rp.d_pres_H; v.phip_H = rp.d_phip_H;
-    v.dVds_H = rp.d_dVds_H; v.sqrtS_H = rp.d_sqrtS_H;
-    v.curr_H = rp.d_curr_H; v.chip_H = rp.d_chip_H;
-    return v;
-}
-
-template <typename T>
 static cumes::ForceParityViews<T> forceParityViews(const cumes::RealSpaceStorage<T>& rs,
                                                    const DeviceParams<T>& p) {
     auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
@@ -319,15 +309,15 @@ __global__ void forcesKernel(
 
 template <typename T>
 void computeForces(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
+                   const cumes::RadialProfileViews<T>& rpv, const MetricWorkspace<T>& mw,
                    cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     forcesKernel<T><<<grid, block, 0, stream>>>(
         geometryParityViews(rs, p), baseGeometryHalfViews(mw, p),
-        magneticFieldViews(mw, p), radialProfileViews(rp),
+        magneticFieldViews(mw, p), rpv,
         forceParityViews(rs, p),
-        p.lamscale, p.ns, p.nZnT, rp.delta_s);
+        p.lamscale, p.ns, p.nZnT, T(1.0) / T(p.ns - 1));
     cumes::check_cuda(cudaGetLastError(), "forces kernel");
 }
 

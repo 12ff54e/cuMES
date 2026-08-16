@@ -18,7 +18,6 @@
 
 #include "cumes/state/real_space_storage.hpp"
 #include "geometry.cuh"
-#include "profiles.cuh"
 
 namespace cumes {
 
@@ -30,7 +29,7 @@ class MagneticFieldOperator {
   // Reads the parity-split λ derivatives from `rs`, the base geometry from
   // `mw`, and the radial profiles from `rp`.
   void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-               const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+               const cumes::RadialProfileViews<T>& rp, MetricWorkspace<T>& mw,
                cudaStream_t stream, bool update_iota_chi) const {
     computeMagneticField(rs, p, rp, mw, stream, update_iota_chi);
   }

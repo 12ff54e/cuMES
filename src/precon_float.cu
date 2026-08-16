@@ -3,7 +3,7 @@
 // Explicit instantiation for float (cumes_cuda_float).
 template PreconWorkspace<float>  preconCreate<float>(const DeviceParams<float>&, cumes::DeviceArena*);
 template void preconFree<float>(PreconWorkspace<float>&);
-template void preconCompute<float>(const cumes::RealSpaceStorage<float>&, const int*, const int*, const DeviceParams<float>&, const RadialProfiles<float>&, const MetricWorkspace<float>&, PreconWorkspace<float>&, cudaStream_t);
+template void preconCompute<float>(const cumes::RealSpaceStorage<float>&, const int*, const int*, const DeviceParams<float>&, const cumes::RadialProfileViews<float>&, const MetricWorkspace<float>&, PreconWorkspace<float>&, cudaStream_t);
 template void preconApply<float>(cumes::SpectralView<float, cumes::DecomposedResidualDomain>, const DeviceParams<float>&, const PreconWorkspace<float>&, const int*, const int*, cudaStream_t);
 
 // Phase 8 tridiagonal backends (linkable from test_tridiagonal).

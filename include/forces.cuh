@@ -9,5 +9,5 @@
 // stored in FourierPlan scratch arrays.
 template <typename T>
 void computeForces(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
+                   const cumes::RadialProfileViews<T>& rp, const MetricWorkspace<T>& mw,
                    cudaStream_t stream = 0);

@@ -22,7 +22,7 @@
 #include "cumes/state/mode_table.cuh"
 #include "geometry.cuh"
 #include "forces.cuh"
-#include "profiles.cuh"
+#include "cumes/physics/profiles.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes_test_support.cuh"
 
@@ -229,7 +229,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc; delete[] h_lcs;
 
     cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
-    RadialProfiles<T> rp = profilesCreate(p, vp);
+    cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
@@ -257,7 +257,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     std::vector<T> bsubu = g(mw.d_bsubu, nH), bsubv = g(mw.d_bsubv, nH);
     std::vector<T> totalP = g(mw.d_totalPressure, nH);
     // profiles
-    std::vector<T> sqrtS_F = g(rp.d_sqrtS_F, ns), sqrtS_H = g(rp.d_sqrtS_H, ns - 1), phip_F = g(rp.d_phip_F, ns);
+    std::vector<T> sqrtS_F = g(rp.sqrtS_F, ns), sqrtS_H = g(rp.sqrtS_H, ns - 1), phip_F = g(rp.phip_F, ns);
 
     // GPU force outputs
     std::vector<T> g_armn_e = g(rs.d_armn_e, nF), g_armn_o = g(rs.d_armn_o, nF);
@@ -277,7 +277,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     cpuForces(r_e, r_o, z_o, ru_e, ru_o, zu_e, zu_o, rv_e, rv_o, zv_e, zv_o,
               lu_e, lu_o, r12, ru12, zu12, rs_h, zs, tau, gsqrt, guv, gvv,
               bsupu, bsupv, bsubu, bsubv, totalP, sqrtS_F, sqrtS_H, phip_F,
-              ns, p.nZnT, p.lamscale, rp.delta_s,
+              ns, p.nZnT, p.lamscale, profiles.delta_s(),
               c_armn_e, c_armn_o, c_azmn_e, c_azmn_o, c_brmn_e, c_brmn_o,
               c_bzmn_e, c_bzmn_o, c_crmn_e, c_crmn_o, c_czmn_e, c_czmn_o,
               c_blmn_e, c_blmn_o, c_clmn_e, c_clmn_o);
@@ -303,7 +303,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     CHECK(md < tol, msg);
 
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); profilesFree(rp); cumes::modeTableFree(mt);
+    fourierFree(fp); metricFree(mw); cumes::modeTableFree(mt);
 }
 
 int main() {

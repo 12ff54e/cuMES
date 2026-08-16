@@ -16,7 +16,6 @@
 #include "fourier.cuh"
 #include "geometry.cuh"
 #include "forces.cuh"
-#include "profiles.cuh"
 #include "solver.cuh"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/profiles.hpp"
@@ -98,7 +97,7 @@ int main() {
 
     // ---- Profiles / plan / workspace ----
     cumes::Profiles<double> profiles(p, vp, nullptr);
-    const RadialProfiles<double>& rp = profiles.workspace();
+    const cumes::RadialProfileViews<double> rp = profiles.profile_views();
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate<double>(p);
     cumes::ToroidalFftOperator<double> transform(p, rs, mt, nullptr);
