@@ -32,8 +32,9 @@ class GeometryOperator {
   GeometryOperator& operator=(GeometryOperator&&) noexcept = default;
 
   // Half-grid geometry, metric, field and current closure; update the full-grid
-  // iota/chip on the first pass (ncurr=0) or every pass (ncurr=1).
-  void enqueue(const FourierPlan<T>& fp, const GridParams<T>& p,
+  // iota/chip on the first pass (ncurr=0) or every pass (ncurr=1). Reads the
+  // parity-split geometry from the stage-owned `rs`.
+  void enqueue(const RealSpaceStorage<T>& rs, const GridParams<T>& p,
                const RadialProfiles<T>& rp, cudaStream_t stream, bool update_iota_chi);
 
   // Oriented-Jacobian statistics into a caller-owned 4-element device scratch.

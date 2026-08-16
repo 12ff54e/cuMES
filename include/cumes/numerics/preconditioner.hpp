@@ -37,9 +37,9 @@ class Preconditioner {
   Preconditioner& operator=(Preconditioner&&) noexcept = default;
 
   // Refresh the matrix coefficients from the current geometry/field.
-  void enqueue_compute(const FourierPlan<T>& fp, const GridParams<T>& p,
-                       const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
-                       cudaStream_t stream);
+  void enqueue_compute(const RealSpaceStorage<T>& rs, const FourierPlan<T>& fp,
+                       const GridParams<T>& p, const RadialProfiles<T>& rp,
+                       const MetricWorkspace<T>& mw, cudaStream_t stream);
 
   // Apply the preconditioner in place to the decomposed residual.
   void enqueue_apply(SpectralView<T, DecomposedResidualDomain> residual,

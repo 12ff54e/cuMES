@@ -89,11 +89,13 @@ template <typename T>
 void preconFree(PreconWorkspace<T>& pw);
 
 // Compute (or update) the preconditioner matrix elements from current
-// geometry and metric arrays.  Called every ~25 iterations.
+// geometry and metric arrays.  Called every ~25 iterations. `rs` carries the
+// parity-split geometry derivatives; `fp` the mode tables.
 template <typename T>
-void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
-                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
-                   PreconWorkspace<T>& pw, cudaStream_t stream = 0);
+void preconCompute(const cumes::RealSpaceStorage<T>& rs, const FourierPlan<T>& fp,
+                   const GridParams<T>& p, const RadialProfiles<T>& rp,
+                   const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
+                   cudaStream_t stream = 0);
 
 // Apply the tridiagonal preconditioner to the 5-component spectral forces.
 // Solves tridiagonal systems for R (components 0,3) and Z (components 1,4).

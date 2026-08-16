@@ -93,9 +93,9 @@ void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
 // update, applied in the same iteration).
 // Modifies fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o in-place.
 template <typename T>
-void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
-                       const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
-                       const T* d_sqrtS_F, bool precon_updated,
+void constraintCompute(const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
+                       const FourierPlan<T>& fp, const PreconWorkspace<T>& pw,
+                       ConstraintWorkspace<T>& cw, const T* d_sqrtS_F, bool precon_updated,
                        cudaStream_t stream = 0);
 
 // Axisymmetric variant of constraintCompute (blueprint §8.5): identical steps
@@ -104,7 +104,7 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
 // cuFFT round trip (constraintDealiasBandpass). The two are Class B ULP-
 // equivalent on the ntor=0/nzeta=1 grid (pinned by test_axisym_backend).
 template <typename T>
-void constraintComputeAxisym(const GridParams<T>& p, const FourierPlan<T>& fp,
+void constraintComputeAxisym(const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
                              const PreconWorkspace<T>& pw,
                              ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
                              bool precon_updated,

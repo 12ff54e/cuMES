@@ -319,6 +319,7 @@ static int testDealias(int ntheta) {
     InputParams ip = solovevInput();
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
     PreconWorkspace<T> pw = preconCreate(p);
     ConstraintWorkspace<T> cw = constraintCreate(p);
@@ -328,9 +329,9 @@ static int testDealias(int ntheta) {
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
-    inverseDFT(fp, storage.physical_const(), p);
-    computeGeometry(fp, p, rp, mw);
-    preconCompute(fp, p, rp, mw, pw);
+    inverseDFT(fp, rs, storage.physical_const(), p);
+    computeGeometry(rs, p, rp, mw);
+    preconCompute(rs, fp, p, rp, mw, pw);
 
     // Manufacture the bandpass INPUT through the public operator.  With
     // ruFull = zuFull = 1 (ru_e = zu_e = 1, ru_o = zu_o = 0), rCon = pattern,
@@ -348,19 +349,19 @@ static int testDealias(int ntheta) {
     checkCuda(cudaMemset(cw.d_rCon0, 0, nF), "rCon0 zero");
     checkCuda(cudaMemset(cw.d_zCon0, 0, nF), "zCon0 zero");
     std::vector<T> ones(ns * p.nZnT, T(1.0));
-    checkCuda(cudaMemcpy(fp.d_ru_e, ones.data(), nF, cudaMemcpyHostToDevice), "ru_e up");
-    checkCuda(cudaMemcpy(fp.d_zu_e, ones.data(), nF, cudaMemcpyHostToDevice), "zu_e up");
-    checkCuda(cudaMemset(fp.d_ru_o, 0, nF), "ru_o zero");
-    checkCuda(cudaMemset(fp.d_zu_o, 0, nF), "zu_o zero");
+    checkCuda(cudaMemcpy(rs.d_ru_e, ones.data(), nF, cudaMemcpyHostToDevice), "ru_e up");
+    checkCuda(cudaMemcpy(rs.d_zu_e, ones.data(), nF, cudaMemcpyHostToDevice), "zu_e up");
+    checkCuda(cudaMemset(rs.d_ru_o, 0, nF), "ru_o zero");
+    checkCuda(cudaMemset(rs.d_zu_o, 0, nF), "zu_o zero");
     // Deterministic addConstraint outputs (not compared, but keeps the pass clean).
-    checkCuda(cudaMemset(fp.d_brmn_e, 0, nF), "brmn_e zero");
-    checkCuda(cudaMemset(fp.d_brmn_o, 0, nF), "brmn_o zero");
-    checkCuda(cudaMemset(fp.d_bzmn_e, 0, nF), "bzmn_e zero");
-    checkCuda(cudaMemset(fp.d_bzmn_o, 0, nF), "bzmn_o zero");
+    checkCuda(cudaMemset(rs.d_brmn_e, 0, nF), "brmn_e zero");
+    checkCuda(cudaMemset(rs.d_brmn_o, 0, nF), "brmn_o zero");
+    checkCuda(cudaMemset(rs.d_bzmn_e, 0, nF), "bzmn_e zero");
+    checkCuda(cudaMemset(rs.d_bzmn_o, 0, nF), "bzmn_o zero");
 
     // tcon is refreshed from the (real) preconditioner + manufactured ru/zu;
     // the bandpass runs on the manufactured gConEff.
-    constraintCompute(p, fp, pw, cw, rp.d_sqrtS_F, /*precon_updated=*/true);
+    constraintCompute(p, rs, fp, pw, cw, rp.d_sqrtS_F, /*precon_updated=*/true);
 
     std::vector<T> h_tcon(p.ns);
     checkCuda(cudaMemcpy(h_tcon.data(), cw.d_tcon, p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
@@ -407,6 +408,7 @@ static int testDealias(int ntheta) {
             }
 
     constraintFree(cw); preconFree(pw); metricFree(mw);
+    realSpaceFree(rs);
     fourierFree(fp); profilesFree(rp);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;
@@ -424,6 +426,7 @@ static int testPcr(int ns) {
     InputParams ip = solovevInput();
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
     PreconWorkspace<T> pw = preconCreate(p);
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
@@ -432,9 +435,9 @@ static int testPcr(int ns) {
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
-    inverseDFT(fp, storage.physical_const(), p);
-    computeGeometry(fp, p, rp, mw);
-    preconCompute(fp, p, rp, mw, pw);
+    inverseDFT(fp, rs, storage.physical_const(), p);
+    computeGeometry(rs, p, rp, mw);
+    preconCompute(rs, fp, p, rp, mw, pw);
 
     // Copy the assembled matrix coefficients to host: the CPU Thomas reference
     // must use the EXACT same ar/dr/br/az/dz/bz, jMin and lambdaPrec the GPU

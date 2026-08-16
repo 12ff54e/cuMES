@@ -35,13 +35,17 @@ class ToroidalFftOperator {
   const FourierPlan<T>& fourier_plan() const { return fp_; }
 
   // Fused inverse (blueprint §8.4): parity-split geometry + xmpq-weighted
-  // rCon/zCon (null skips either output).
-  void enqueue_inverse(SpectralView<const T, PhysicalStateDomain> coeff,
+  // rCon/zCon (null skips either output). `rs` is the stage-owned real-space
+  // storage the geometry arrays are written into.
+  void enqueue_inverse(RealSpaceStorage<T>& rs,
+                       SpectralView<const T, PhysicalStateDomain> coeff,
                        const GridParams<T>& p, bool do_combine, T* rCon, T* zCon,
                        cudaStream_t stream);
 
-  // Forward projection: parity forces + constraint force -> six spectral forces.
-  void enqueue_forward(SpectralView<T, DecomposedResidualDomain> f_spec,
+  // Forward projection: parity forces (in `rs`) + constraint force -> six
+  // spectral forces.
+  void enqueue_forward(RealSpaceStorage<T>& rs,
+                       SpectralView<T, DecomposedResidualDomain> f_spec,
                        const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
                        cudaStream_t stream);
 

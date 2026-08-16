@@ -97,19 +97,20 @@ int main() {
     RadialProfiles<double> rp = profilesCreate(p, ip);
     cumes::ToroidalFftOperator<double> transform(p, nullptr);
     FourierPlan<double>& fp = transform.fourier_plan();
+    cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     cumes::GeometryOperator<double> geometry(p, nullptr);
     MetricWorkspace<double>& mw = geometry.workspace();
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
-    SolverResult<double> res = solverRun(storage, p, rp, transform, geometry);
+    SolverResult<double> res = solverRun(storage, p, rp, transform, rs, geometry);
     printf("solver: converged=%d iterations=%d fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
            res.converged, res.iterations, res.fsqr, res.fsqz, res.fsql);
     CHECK(res.converged, "converged equilibrium reached");
 
     // ---- Recompute forces through the test's own path ----
-    inverseDFT(fp, storage.physical_const(), p);
-    computeGeometry(fp, p, rp, mw);
-    computeForces(fp, p, rp, mw);
+    inverseDFT(fp, rs, storage.physical_const(), p);
+    computeGeometry(rs, p, rp, mw);
+    computeForces(rs, p, rp, mw);
 
     // Forward DFT to get spectral forces (6 families).
     const size_t n6 = (size_t)6 * ns * p.mnmax;
@@ -124,7 +125,7 @@ int main() {
     cc(cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_o zero");
     cc(cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_e zero");
     cc(cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_o zero");
-    forwardDFT(fp, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
+    forwardDFT(fp, rs, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
                        d_f_spec, p.ns, p.mnmax),
                p, cw_zero);
 

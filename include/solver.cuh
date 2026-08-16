@@ -13,6 +13,7 @@ struct SolverBench;
 template <typename T> class AxisymmetricOperator;
 template <typename T> class GeometryOperator;
 template <typename T> class ToroidalFftOperator;
+template <typename T> struct RealSpaceStorage;
 }
 
 // Run the full fixed-point solve on GPU.
@@ -39,6 +40,7 @@ template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
                           const RadialProfiles<T>& rp,
                           cumes::ToroidalFftOperator<T>& transform,
+                          cumes::RealSpaceStorage<T>& rs,
                           cumes::GeometryOperator<T>& geometry,
                           cumes::DeviceArena* arena = nullptr,
                           cudaStream_t stream = 0,

@@ -72,8 +72,8 @@ static void fillState(cumes::SpectralStorage<T>& storage, int ns, int mnmax) {
 }
 
 template <typename T>
-static void fillForces(FourierPlan<T>& fp, ConstraintWorkspace<T>& cw, int ns,
-                       int nZnT) {
+static void fillForces(cumes::RealSpaceStorage<T>& rs, FourierPlan<T>& fp,
+                       ConstraintWorkspace<T>& cw, int ns, int nZnT) {
     const int n = ns * nZnT;
     std::vector<T> v((size_t)n);
     auto fill = [&](T* dst, double base) {
@@ -82,10 +82,10 @@ static void fillForces(FourierPlan<T>& fp, ConstraintWorkspace<T>& cw, int ns,
                       cudaMemcpyHostToDevice),
            "fill force");
     };
-    fill(fp.d_armn_e, 0.5); fill(fp.d_armn_o, 0.4); fill(fp.d_azmn_e, 0.3);
-    fill(fp.d_azmn_o, 0.2); fill(fp.d_brmn_e, 0.1); fill(fp.d_brmn_o, 0.05);
-    fill(fp.d_bzmn_e, 0.03); fill(fp.d_bzmn_o, 0.02); fill(fp.d_blmn_e, 0.01);
-    fill(fp.d_blmn_o, 0.005);
+    fill(rs.d_armn_e, 0.5); fill(rs.d_armn_o, 0.4); fill(rs.d_azmn_e, 0.3);
+    fill(rs.d_azmn_o, 0.2); fill(rs.d_brmn_e, 0.1); fill(rs.d_brmn_o, 0.05);
+    fill(rs.d_bzmn_e, 0.03); fill(rs.d_bzmn_o, 0.02); fill(rs.d_blmn_e, 0.01);
+    fill(rs.d_blmn_o, 0.005);
     fill(cw.d_frcon_e, 0.7); fill(cw.d_frcon_o, 0.6); fill(cw.d_fzcon_e, 0.5);
     fill(cw.d_fzcon_o, 0.4);
 }
@@ -110,13 +110,13 @@ static void fillGconEff(ConstraintWorkspace<T>& cw, int ns, int nZnT) {
 
 // Inverse: compare the 18 parity-split geometry arrays.
 template <typename T>
-static void testInverse(GridParams<T>& p, FourierPlan<T>& fp,
-                        cumes::SpectralStorage<T>& storage,
+static void testInverse(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
+                        FourierPlan<T>& fp, cumes::SpectralStorage<T>& storage,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  inverse (18 geometry arrays) ...\n");
     const int n = p.ns * p.nZnT;
     // Generic backend.
-    inverseDFT(fp, storage.physical_const(), p, false, 0);
+    inverseDFT(fp, rs, storage.physical_const(), p, false, 0);
     // Axisymmetric backend -> one contiguous scratch carved into 18 views.
     std::vector<T> scratch((size_t)18 * n, T(0));
     T* d_ax = nullptr;
@@ -137,11 +137,11 @@ static void testInverse(GridParams<T>& p, FourierPlan<T>& fp,
     g.rv_o = view(15); g.zv_o = view(16); g.lv_o = view(17);
     op.enqueue_inverse(storage.physical_const(), g, 0);
 
-    const T* gen[18] = {fp.d_r_e,   fp.d_z_e,   fp.d_l_e,   fp.d_ru_e,
-                        fp.d_zu_e,  fp.d_lu_e,  fp.d_r_o,   fp.d_z_o,
-                        fp.d_l_o,   fp.d_ru_o,  fp.d_zu_o,  fp.d_lu_o,
-                        fp.d_rv_e,  fp.d_zv_e,  fp.d_lv_e,  fp.d_rv_o,
-                        fp.d_zv_o,  fp.d_lv_o};
+    const T* gen[18] = {rs.d_r_e,   rs.d_z_e,   rs.d_l_e,   rs.d_ru_e,
+                        rs.d_zu_e,  rs.d_lu_e,  rs.d_r_o,   rs.d_z_o,
+                        rs.d_l_o,   rs.d_ru_o,  rs.d_zu_o,  rs.d_lu_o,
+                        rs.d_rv_e,  rs.d_zv_e,  rs.d_lv_e,  rs.d_rv_o,
+                        rs.d_zv_o,  rs.d_lv_o};
     const char* names[18] = {"r_e",   "z_e",   "l_e",   "ru_e",  "zu_e",
                              "lu_e",  "r_o",   "z_o",   "l_o",   "ru_o",
                              "zu_o",  "lu_o",  "rv_e",  "zv_e",  "lv_e",
@@ -162,8 +162,8 @@ static void testInverse(GridParams<T>& p, FourierPlan<T>& fp,
 
 // Forward: compare the 6 spectral-force families.
 template <typename T>
-static void testForward(GridParams<T>& p, FourierPlan<T>& fp,
-                        ConstraintWorkspace<T>& cw,
+static void testForward(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
+                        FourierPlan<T>& fp, ConstraintWorkspace<T>& cw,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  forward (6 spectral families) ...\n");
     const int n = p.ns * p.mnmax;
@@ -174,25 +174,25 @@ static void testForward(GridParams<T>& p, FourierPlan<T>& fp,
                                                                   p.mnmax);
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> ax_v(d_ax, p.ns,
                                                                  p.mnmax);
-    forwardDFT(fp, gen_v, p, cw, 0);
+    forwardDFT(fp, rs, gen_v, p, cw, 0);
 
     cumes::ForceParityViews<const T> f;
-    f.armn_e = cumes::RealFieldView<const T>(fp.d_armn_e, p.ns, p.ntheta, p.nzeta);
-    f.armn_o = cumes::RealFieldView<const T>(fp.d_armn_o, p.ns, p.ntheta, p.nzeta);
-    f.azmn_e = cumes::RealFieldView<const T>(fp.d_azmn_e, p.ns, p.ntheta, p.nzeta);
-    f.azmn_o = cumes::RealFieldView<const T>(fp.d_azmn_o, p.ns, p.ntheta, p.nzeta);
-    f.brmn_e = cumes::RealFieldView<const T>(fp.d_brmn_e, p.ns, p.ntheta, p.nzeta);
-    f.brmn_o = cumes::RealFieldView<const T>(fp.d_brmn_o, p.ns, p.ntheta, p.nzeta);
-    f.bzmn_e = cumes::RealFieldView<const T>(fp.d_bzmn_e, p.ns, p.ntheta, p.nzeta);
-    f.bzmn_o = cumes::RealFieldView<const T>(fp.d_bzmn_o, p.ns, p.ntheta, p.nzeta);
-    f.blmn_e = cumes::RealFieldView<const T>(fp.d_blmn_e, p.ns, p.ntheta, p.nzeta);
-    f.blmn_o = cumes::RealFieldView<const T>(fp.d_blmn_o, p.ns, p.ntheta, p.nzeta);
-    f.crmn_e = cumes::RealFieldView<const T>(fp.d_crmn_e, p.ns, p.ntheta, p.nzeta);
-    f.crmn_o = cumes::RealFieldView<const T>(fp.d_crmn_o, p.ns, p.ntheta, p.nzeta);
-    f.czmn_e = cumes::RealFieldView<const T>(fp.d_czmn_e, p.ns, p.ntheta, p.nzeta);
-    f.czmn_o = cumes::RealFieldView<const T>(fp.d_czmn_o, p.ns, p.ntheta, p.nzeta);
-    f.clmn_e = cumes::RealFieldView<const T>(fp.d_clmn_e, p.ns, p.ntheta, p.nzeta);
-    f.clmn_o = cumes::RealFieldView<const T>(fp.d_clmn_o, p.ns, p.ntheta, p.nzeta);
+    f.armn_e = cumes::RealFieldView<const T>(rs.d_armn_e, p.ns, p.ntheta, p.nzeta);
+    f.armn_o = cumes::RealFieldView<const T>(rs.d_armn_o, p.ns, p.ntheta, p.nzeta);
+    f.azmn_e = cumes::RealFieldView<const T>(rs.d_azmn_e, p.ns, p.ntheta, p.nzeta);
+    f.azmn_o = cumes::RealFieldView<const T>(rs.d_azmn_o, p.ns, p.ntheta, p.nzeta);
+    f.brmn_e = cumes::RealFieldView<const T>(rs.d_brmn_e, p.ns, p.ntheta, p.nzeta);
+    f.brmn_o = cumes::RealFieldView<const T>(rs.d_brmn_o, p.ns, p.ntheta, p.nzeta);
+    f.bzmn_e = cumes::RealFieldView<const T>(rs.d_bzmn_e, p.ns, p.ntheta, p.nzeta);
+    f.bzmn_o = cumes::RealFieldView<const T>(rs.d_bzmn_o, p.ns, p.ntheta, p.nzeta);
+    f.blmn_e = cumes::RealFieldView<const T>(rs.d_blmn_e, p.ns, p.ntheta, p.nzeta);
+    f.blmn_o = cumes::RealFieldView<const T>(rs.d_blmn_o, p.ns, p.ntheta, p.nzeta);
+    f.crmn_e = cumes::RealFieldView<const T>(rs.d_crmn_e, p.ns, p.ntheta, p.nzeta);
+    f.crmn_o = cumes::RealFieldView<const T>(rs.d_crmn_o, p.ns, p.ntheta, p.nzeta);
+    f.czmn_e = cumes::RealFieldView<const T>(rs.d_czmn_e, p.ns, p.ntheta, p.nzeta);
+    f.czmn_o = cumes::RealFieldView<const T>(rs.d_czmn_o, p.ns, p.ntheta, p.nzeta);
+    f.clmn_e = cumes::RealFieldView<const T>(rs.d_clmn_e, p.ns, p.ntheta, p.nzeta);
+    f.clmn_o = cumes::RealFieldView<const T>(rs.d_clmn_o, p.ns, p.ntheta, p.nzeta);
     cumes::ConstraintForceViews<const T> cf;
     cf.frcon_e = cumes::RealFieldView<const T>(cw.d_frcon_e, p.ns, p.ntheta, p.nzeta);
     cf.frcon_o = cumes::RealFieldView<const T>(cw.d_frcon_o, p.ns, p.ntheta, p.nzeta);
@@ -210,15 +210,15 @@ static void testForward(GridParams<T>& p, FourierPlan<T>& fp,
 
 // Constraint rzCon: rCon/zCon.
 template <typename T>
-static void testRzCon(GridParams<T>& p, FourierPlan<T>& fp,
-                      ConstraintWorkspace<T>& cw,
+static void testRzCon(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
+                      FourierPlan<T>& fp, ConstraintWorkspace<T>& cw,
                       cumes::SpectralStorage<T>& storage,
                       cumes::AxisymmetricOperator<T>& op) {
     printf("  constraint rzCon (rCon/zCon) ...\n");
     const int n = p.ns * p.nZnT;
     // rCon/zCon reference is the fused inverse DFT (the production path); the
     // axisymmetric enqueue_rzcon is Class B ULP-equivalent to it.
-    inverseDFTFused(fp, storage.physical_const(), p, /*do_combine=*/false,
+    inverseDFTFused(fp, rs, storage.physical_const(), p, /*do_combine=*/false,
                     cw.d_rCon, cw.d_zCon, 0);
     T *d_ax_r = nullptr, *d_ax_z = nullptr;
     cc(cudaMalloc(&d_ax_r, (size_t)n * sizeof(T)), "ax rcon");
@@ -278,20 +278,22 @@ static int runTests() {
     p.lamscale = T(1.0);
 
     FourierPlan<T> fp = fourierCreate<T>(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     ConstraintWorkspace<T> cw = constraintCreate<T>(p);
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     cumes::AxisymmetricOperator<T> op(p);
 
     fillState(storage, p.ns, p.mnmax);
-    fillForces(fp, cw, p.ns, p.nZnT);
+    fillForces(rs, fp, cw, p.ns, p.nZnT);
     fillTcon(cw, p.ns);
     fillGconEff(cw, p.ns, p.nZnT);
 
-    testInverse(p, fp, storage, op);
-    testForward(p, fp, cw, op);
-    testRzCon(p, fp, cw, storage, op);
+    testInverse(p, rs, fp, storage, op);
+    testForward(p, rs, fp, cw, op);
+    testRzCon(p, rs, fp, cw, storage, op);
     testDealias(p, fp, cw, op);
 
+    realSpaceFree(rs);
     fourierFree(fp);
     constraintFree(cw);
     return 0;

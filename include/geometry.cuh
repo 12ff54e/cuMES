@@ -59,7 +59,7 @@ void metricFree(MetricWorkspace<T>& mw);
 // full-grid values are computed once on the first pass and the per-iteration
 // relaunch is skipped (Phase 6A fixed-iota update skip).
 template <typename T>
-void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
+void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
                      const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                      cudaStream_t stream = 0, bool update_iota_chi = true);
 

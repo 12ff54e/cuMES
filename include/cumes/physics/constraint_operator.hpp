@@ -44,10 +44,12 @@ class ConstraintOperator {
   // inverse / axisymmetric rzCon), compute the effective constraint force,
   // bandpass it, and add it to brmn/bzmn. `precon_updated` refreshes tcon from
   // the current preconditioner elements. `axisym` selects the direct-poloidal
-  // de-alias; nullptr selects the generic cuFFT bandpass.
-  void enqueue(const GridParams<T>& p, const FourierPlan<T>& fp,
-               const PreconWorkspace<T>& pw, const T* sqrtS_F, bool precon_updated,
-               AxisymmetricOperator<T>* axisym, cudaStream_t stream);
+  // de-alias; nullptr selects the generic cuFFT bandpass. `rs` carries the
+  // parity-split geometry derivatives + force buffers; `fp` the poloidal tables
+  // (generic bandpass only).
+  void enqueue(const GridParams<T>& p, const RealSpaceStorage<T>& rs,
+               const FourierPlan<T>& fp, const PreconWorkspace<T>& pw, const T* sqrtS_F,
+               bool precon_updated, AxisymmetricOperator<T>* axisym, cudaStream_t stream);
 
   // Reset rCon0/zCon0 to the LCFS-extrapolated profile (first pass / restart).
   void reset_reference(const GridParams<T>& p, const T* sqrtS_F, cudaStream_t stream);

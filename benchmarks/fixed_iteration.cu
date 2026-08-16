@@ -183,6 +183,7 @@ int main(int argc, char** argv) {
     double t0 = now_us();
     arena.allocate(cumes::stage_arena_bytes<Real>(p));
     cumes::Profiles<Real> profiles(p, ip, &arena);
+    cumes::RealSpaceStorage<Real> rs = realSpaceCreate<Real>(p, &arena);
     cumes::ToroidalFftOperator<Real> transform(p, &arena);
     cumes::GeometryOperator<Real> geometry(p, &arena);
 
@@ -204,7 +205,7 @@ int main(int argc, char** argv) {
     cudaEventRecord(ev0, stream.get());
     double w0 = now_us();
     SolverResult<Real> result = solverRun<Real>(storage, p, profiles.workspace(),
-                                                transform, geometry, &arena, stream.get(),
+                                                transform, rs, geometry, &arena, stream.get(),
                                                 &bench, axisym.get());
     double w1 = now_us();
     cudaEventRecord(ev1, stream.get());

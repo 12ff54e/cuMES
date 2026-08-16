@@ -78,6 +78,7 @@ int main() {
     fillState(st, p);
     RadialProfiles<double> rp = profilesCreate(p, ip);
     FourierPlan<double> fp = fourierCreate(p);
+    cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     MetricWorkspace<double> mw = metricCreate(p);
 
     // extrapolate m=1 to the axis (as the solver does each iteration)
@@ -92,8 +93,8 @@ int main() {
         delete[] hcc;
     }
 
-    inverseDFT(fp, storage.physical_const(), p);
-    computeGeometry(fp, p, rp, mw);
+    inverseDFT(fp, rs, storage.physical_const(), p);
+    computeGeometry(rs, p, rp, mw);
 
     // check bsupu coverage on a mid-volume surface. All indices are computed
     // from the actual grid (the old hardcoded ks/1080 were W7-X-specific).
@@ -119,6 +120,7 @@ int main() {
     printf("bsubu[jMid=%d] zeros: %d/%d\n", jMid, nz2, nZnT);
     delete[] h_all;
 
+    realSpaceFree(rs);
     fourierFree(fp); metricFree(mw); profilesFree(rp);
 
     // Assertions: a full-coverage kernel must leave no unwritten point on an

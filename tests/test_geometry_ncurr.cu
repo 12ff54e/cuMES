@@ -91,10 +91,11 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
 
-    inverseDFT(fp, storage.physical_const(), p);
-    computeGeometry(fp, p, rp, mw);
+    inverseDFT(fp, rs, storage.physical_const(), p);
+    computeGeometry(rs, p, rp, mw);
 
     // Assert the half-grid outputs that updateIotaChipFKernel /
     // ncurr1FinalizeKernel produce are finite (an OOB read would surface as
@@ -121,6 +122,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     checkCuda(cudaFree(d_stats), "free stats");
 
     delete[] h_chip; delete[] h_iota;
+    realSpaceFree(rs);
     fourierFree(fp); metricFree(mw); profilesFree(rp);
 }
 

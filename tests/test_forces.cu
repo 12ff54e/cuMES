@@ -89,19 +89,20 @@ int main() {
     InputParams ip = initInputParams();
     RadialProfiles<double> rp = profilesCreate(p, ip);
     FourierPlan<double> fp = fourierCreate(p);
+    cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     MetricWorkspace<double> mw = metricCreate(p);
 
     // Run one iteration
-    inverseDFT(fp, storage.physical_const(), p);
-    computeGeometry(fp, p, rp, mw);
-    computeForces(fp, p, rp, mw);
+    inverseDFT(fp, rs, storage.physical_const(), p);
+    computeGeometry(rs, p, rp, mw);
+    computeForces(rs, p, rp, mw);
 
     // Check combined geometry at axis (j=0) and mid (j=8)
     size_t nbr = p.ns * p.nZnT * sizeof(double);
     auto* h_r = new double[p.ns * p.nZnT];
     auto* h_z = new double[p.ns * p.nZnT];
-    checkCuda(cudaMemcpy(h_r, fp.d_r_real, nbr, cudaMemcpyDeviceToHost), "r");
-    checkCuda(cudaMemcpy(h_z, fp.d_z_real, nbr, cudaMemcpyDeviceToHost), "z");
+    checkCuda(cudaMemcpy(h_r, rs.d_r_real, nbr, cudaMemcpyDeviceToHost), "r");
+    checkCuda(cudaMemcpy(h_z, rs.d_z_real, nbr, cudaMemcpyDeviceToHost), "z");
 
     // Print R at first theta point for all surfaces
     printf("\nR(s,theta=0,zeta=0):\n");
@@ -113,15 +114,15 @@ int main() {
     auto* h_armn_e = new double[p.ns * p.nZnT];
     auto* h_armn_o = new double[p.ns * p.nZnT];
     auto* h_blmn_e = new double[p.ns * p.nZnT];
-    checkCuda(cudaMemcpy(h_armn_e, fp.d_armn_e, nbr, cudaMemcpyDeviceToHost), "armn_e");
-    checkCuda(cudaMemcpy(h_armn_o, fp.d_armn_o, nbr, cudaMemcpyDeviceToHost), "armn_o");
-    checkCuda(cudaMemcpy(h_blmn_e, fp.d_blmn_e, nbr, cudaMemcpyDeviceToHost), "blmn_e");
+    checkCuda(cudaMemcpy(h_armn_e, rs.d_armn_e, nbr, cudaMemcpyDeviceToHost), "armn_e");
+    checkCuda(cudaMemcpy(h_armn_o, rs.d_armn_o, nbr, cudaMemcpyDeviceToHost), "armn_o");
+    checkCuda(cudaMemcpy(h_blmn_e, rs.d_blmn_e, nbr, cudaMemcpyDeviceToHost), "blmn_e");
 
     printf("\nForces at theta=0,zeta=0:\n");
     printf("  j  |  armn_e      armn_o      azmn_e      blmn_e\n");
     printf("  ---+----------------------------------------------\n");
     auto* h_az = new double[p.ns * p.nZnT];
-    checkCuda(cudaMemcpy(h_az, fp.d_azmn_e, nbr, cudaMemcpyDeviceToHost), "az");
+    checkCuda(cudaMemcpy(h_az, rs.d_azmn_e, nbr, cudaMemcpyDeviceToHost), "az");
     for (int j = 0; j < p.ns; ++j) {
         printf("  %2d | %11.4e %11.4e %11.4e %11.4e\n",
                j, h_armn_e[j * p.nZnT], h_armn_o[j * p.nZnT],
@@ -153,7 +154,7 @@ int main() {
     cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    forwardDFT(fp, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
+    forwardDFT(fp, rs, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
                        d_fspec_gpu, p.ns, p.mnmax),
                p, cw_zero);
     checkCuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost), "fspec d");
@@ -223,6 +224,7 @@ int main() {
     }
 
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
+    realSpaceFree(rs);
     fourierFree(fp); metricFree(mw); profilesFree(rp);
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);

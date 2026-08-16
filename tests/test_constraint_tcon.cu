@@ -86,24 +86,25 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     InputParams ip = initInputParams("inputs/solovev.json");
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
     PreconWorkspace<T> pw = preconCreate(p);
     ConstraintWorkspace<T> cw = constraintCreate(p);
 
-    inverseDFTFused(fp, storage.physical_const(), p, /*do_combine=*/false,
+    inverseDFTFused(fp, rs, storage.physical_const(), p, /*do_combine=*/false,
                     cw.d_rCon, cw.d_zCon);
-    computeGeometry(fp, p, rp, mw);
+    computeGeometry(rs, p, rp, mw);
     constraintResetRzCon0(p, cw, rp.d_sqrtS_F);
-    preconCompute(fp, p, rp, mw, pw);
-    computeForces(fp, p, rp, mw);
+    preconCompute(rs, fp, p, rp, mw, pw);
+    computeForces(rs, p, rp, mw);
     // precon_updated=true recomputes tcon from the current tcon0.
-    constraintCompute(p, fp, pw, cw, rp.d_sqrtS_F, /*precon_updated=*/true);
+    constraintCompute(p, rs, fp, pw, cw, rp.d_sqrtS_F, /*precon_updated=*/true);
 
     size_t nF = (size_t)p.ns * p.nZnT;
     auto* h = new T[nF];
-    checkCuda(cudaMemcpy(h, fp.d_brmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost), "brmn_e");
+    checkCuda(cudaMemcpy(h, rs.d_brmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost), "brmn_e");
     for (size_t i = 0; i < nF; ++i) out_brmn_e[i] = (double)h[i];
-    checkCuda(cudaMemcpy(h, fp.d_bzmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost), "bzmn_e");
+    checkCuda(cudaMemcpy(h, rs.d_bzmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost), "bzmn_e");
     for (size_t i = 0; i < nF; ++i) out_bzmn_e[i] = (double)h[i];
     delete[] h;
     auto* ht = new T[p.ns];
@@ -111,6 +112,7 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     for (int j = 0; j < p.ns; ++j) out_tcon[j] = (double)ht[j];
     delete[] ht;
 
+    realSpaceFree(rs);
     fourierFree(fp); metricFree(mw); profilesFree(rp);
     preconFree(pw); constraintFree(cw);
 }

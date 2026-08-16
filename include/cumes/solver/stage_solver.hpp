@@ -89,6 +89,7 @@ class StageSolver {
         // stream, so it completes before the solve; the hot loop runs on the
         // explicit nonblocking compute stream (Phase 6A).
         Profiles<T> profiles(p, ip, &arena);
+        RealSpaceStorage<T> rs = realSpaceCreate<T>(p, &arena);
         ToroidalFftOperator<T> transform(p, &arena);
         GeometryOperator<T> geometry(p, &arena);
 
@@ -106,8 +107,9 @@ class StageSolver {
         if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
         SolverResult<T> result = solverRun<T>(state, p, profiles.workspace(),
-                                              transform, geometry, &arena, stream,
+                                              transform, rs, geometry, &arena, stream,
                                               bench, axisym.get());
+        realSpaceFree(rs);
         // profiles/transform/geometry are RAII (operator destructors).
 
         std::printf("  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "

@@ -109,28 +109,29 @@ int main() {
         delete[] h_cc; delete[] h_ss;
 
         FourierPlan<double> fp = fourierCreate(p);
+    cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
         cumes::Stream stream;
         cumes::check_cufft(cufftSetStream(fp.plan_z2d, stream.get()), "cufft set z2d stream");
         cumes::check_cufft(cufftSetStream(fp.plan_d2z, stream.get()), "cufft set d2z stream");
 
         // stream reference
-        inverseDFT(fp, storage.physical_const(), p, false, stream.get());
+        inverseDFT(fp, rs, storage.physical_const(), p, false, stream.get());
         stream.synchronize();
         const size_t nF = (size_t)p.ns * p.nZnT;
         std::vector<double> r_e_stream(nF);
-        checkCuda(cudaMemcpy(r_e_stream.data(), fp.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read stream r_e");
+        checkCuda(cudaMemcpy(r_e_stream.data(), rs.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read stream r_e");
 
         // graph capture + replay of the same inverse transform
         bool cufft_graph_ok = false;
         std::string err;
         try {
             auto g = cumes::CudaGraph::capture(stream.get(), [&]() {
-                inverseDFT(fp, storage.physical_const(), p, false, stream.get());
+                inverseDFT(fp, rs, storage.physical_const(), p, false, stream.get());
             });
             g.launch(stream.get());
             stream.synchronize();
             std::vector<double> r_e_graph(nF);
-            checkCuda(cudaMemcpy(r_e_graph.data(), fp.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read graph r_e");
+            checkCuda(cudaMemcpy(r_e_graph.data(), rs.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read graph r_e");
             const double md = maxDiff(r_e_graph.data(), r_e_stream.data(), (int)nF);
             cufft_graph_ok = (md == 0.0);
             printf("  cuFFT-in-graph: max |diff| = %.3e\n", md);
@@ -140,7 +141,8 @@ int main() {
         CHECK(cufft_graph_ok, "cuFFT inverse transform graph == stream (bitwise)");
         if (!cufft_graph_ok) printf("  cuFFT capture error: %s\n", err.c_str());
 
-        fourierFree(fp);
+        realSpaceFree(rs);
+    fourierFree(fp);
     }
 
     if (failures == 0) {

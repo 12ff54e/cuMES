@@ -110,7 +110,7 @@ static void cpuInvDFT(const double* cc_, const double* ss_, const double* zsc_, 
 }
 
 template <typename T>
-static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, const GridParams<T>& p,
+static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
     const T* cc_, const T* ss_, const T* zsc_, const T* zcs_,
     const T* lsc_, const T* lcs_){
     size_t nb=p.ns*p.mnmax*sizeof(T);
@@ -122,13 +122,13 @@ static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, const GridParams<T>
     cc(cudaMemcpy(st.d_lmncs,lcs_,nb,cudaMemcpyHostToDevice),"up lcs");
     // st.d_rmncc is the contiguous state-slab base (Rcc is component 0), so a
     // component-major view over it matches SpectralStorage::physical_const().
-    inverseDFT(fp, cumes::SpectralView<const T, cumes::PhysicalStateDomain>(
+    inverseDFT(fp,rs, cumes::SpectralView<const T, cumes::PhysicalStateDomain>(
                        st.d_rmncc, p.ns, p.mnmax),
                p);
 }
 
 template <typename T>
-static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
+static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_constantR ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) cc_[j+0*p.ns]=T(4.0);  // R_00
@@ -136,9 +136,9 @@ static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& 
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,fp,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
-    cc(cudaMemcpy(h_r,fp.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
-    cc(cudaMemcpy(h_rv,fp.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
+    gpuInv(st,fp,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
+    cc(cudaMemcpy(h_rv,rs.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
     hostBasis(p,hcc,hss,hsc,hcs,hxm,hxn);
     std::vector<double> cc_d(cc_.begin(),cc_.end()),ss_d(ss_.begin(),ss_.end());
@@ -158,7 +158,7 @@ static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& 
 }
 
 template <typename T>
-static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
+static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_thetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+0;
@@ -167,9 +167,9 @@ static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& s
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,fp,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
-    cc(cudaMemcpy(h_r,fp.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
-    cc(cudaMemcpy(h_ru,fp.d_ru_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get ru");
+    gpuInv(st,fp,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
+    cc(cudaMemcpy(h_ru,rs.d_ru_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get ru");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
     hostBasis(p,hcc,hss,hsc,hcs,hxm,hxn);
     std::vector<double> cc_d(cc_.begin(),cc_.end()),ss_d(ss_.begin(),ss_.end());
@@ -189,7 +189,7 @@ static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& s
 }
 
 template <typename T>
-static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
+static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_zetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+1;  // R_11 (cos(θ-ζ)): folded rmncc=rmnss=0.2
@@ -198,8 +198,8 @@ static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,fp,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
-    cc(cudaMemcpy(h_rv,fp.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
+    gpuInv(st,fp,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    cc(cudaMemcpy(h_rv,rs.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
     hostBasis(p,hcc,hss,hsc,hcs,hxm,hxn);
     std::vector<double> cc_d(cc_.begin(),cc_.end()),ss_d(ss_.begin(),ss_.end());
@@ -216,7 +216,7 @@ static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st
 }
 
 template <typename T>
-static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp){
+static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_constant ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(3.0));
@@ -229,15 +229,15 @@ static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp){
     cudaMalloc(&cw_zero.d_fzcon_e, nfc); cudaMemset(cw_zero.d_fzcon_e, 0, nfc);
     cudaMalloc(&cw_zero.d_fzcon_o, nfc); cudaMemset(cw_zero.d_fzcon_o, 0, nfc);
     // armn_e = 3.0 on all surfaces; everything else zero.
-    cc(cudaMemset(fp.d_armn_e, 0, nbr), "ms"); cc(cudaMemcpy(fp.d_armn_e, fr.data(), nbr, cudaMemcpyHostToDevice), "armn_e");
-    cc(cudaMemset(fp.d_armn_o, 0, nbr), "ms"); cc(cudaMemset(fp.d_azmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_azmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_brmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_brmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_bzmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_bzmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_blmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_blmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_crmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_crmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_czmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_czmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_clmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_clmn_o, 0, nbr), "ms");
-    forwardDFT(fp,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
+    cc(cudaMemset(rs.d_armn_e, 0, nbr), "ms"); cc(cudaMemcpy(rs.d_armn_e, fr.data(), nbr, cudaMemcpyHostToDevice), "armn_e");
+    cc(cudaMemset(rs.d_armn_o, 0, nbr), "ms"); cc(cudaMemset(rs.d_azmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_azmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_brmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_brmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_bzmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_bzmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_blmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_blmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_crmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_crmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_czmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_czmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_clmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_clmn_o, 0, nbr), "ms");
+    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
     cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
     for(int j=0;j<p.ns-1;++j){
         checkNear((double)fs[j+0*p.mnmax*p.ns],3.0,tolFwd<T>(),"fR_cc",j,0);
@@ -254,7 +254,7 @@ static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp){
 }
 
 template <typename T>
-static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp){
+static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_sine ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fz(p.ns*p.nZnT,T(0));
@@ -273,16 +273,16 @@ static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp){
         double th=2*M_PI*it/p.ntheta, ze=2*M_PI*iz/p.nzeta;
         fz[k+j*p.nZnT]=T(sin(th)*cos(ze));
     }
-    cc(cudaMemset(fp.d_armn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_armn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_azmn_e, 0, nbr), "ms");
-    cc(cudaMemcpy(fp.d_azmn_o, fz.data(), nbr, cudaMemcpyHostToDevice), "azmn_o");
-    cc(cudaMemset(fp.d_brmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_brmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_bzmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_bzmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_blmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_blmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_crmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_crmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_czmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_czmn_o, 0, nbr), "ms");
-    cc(cudaMemset(fp.d_clmn_e, 0, nbr), "ms"); cc(cudaMemset(fp.d_clmn_o, 0, nbr), "ms");
-    forwardDFT(fp,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
+    cc(cudaMemset(rs.d_armn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_armn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_azmn_e, 0, nbr), "ms");
+    cc(cudaMemcpy(rs.d_azmn_o, fz.data(), nbr, cudaMemcpyHostToDevice), "azmn_o");
+    cc(cudaMemset(rs.d_brmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_brmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_bzmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_bzmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_blmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_blmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_crmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_crmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_czmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_czmn_o, 0, nbr), "ms");
+    cc(cudaMemset(rs.d_clmn_e, 0, nbr), "ms"); cc(cudaMemset(rs.d_clmn_o, 0, nbr), "ms");
+    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
     cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
     int m11=1*(p.ntor+1)+1;
     // vmecpp convention: the reduced-grid trapezoid with mscale*nscale
@@ -301,7 +301,7 @@ static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp){
 }
 
 template <typename T>
-static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>& st){
+static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_gpuVcpu_inverseDFT ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
@@ -320,16 +320,16 @@ static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>&
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,fp,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
-    cc(cudaMemcpy(h_r,fp.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
-    cc(cudaMemcpy(h_z,fp.d_z_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get z");
-    cc(cudaMemcpy(h_l,fp.d_l_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get l");
-    cc(cudaMemcpy(h_ru,fp.d_ru_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get ru");
-    cc(cudaMemcpy(h_zu,fp.d_zu_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get zu");
-    cc(cudaMemcpy(h_lu,fp.d_lu_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get lu");
-    cc(cudaMemcpy(h_rv,fp.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
-    cc(cudaMemcpy(h_zv,fp.d_zv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get zv");
-    cc(cudaMemcpy(h_lv,fp.d_lv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get lv");
+    gpuInv(st,fp,rs,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
+    cc(cudaMemcpy(h_z,rs.d_z_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get z");
+    cc(cudaMemcpy(h_l,rs.d_l_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get l");
+    cc(cudaMemcpy(h_ru,rs.d_ru_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get ru");
+    cc(cudaMemcpy(h_zu,rs.d_zu_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get zu");
+    cc(cudaMemcpy(h_lu,rs.d_lu_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get lu");
+    cc(cudaMemcpy(h_rv,rs.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
+    cc(cudaMemcpy(h_zv,rs.d_zv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get zv");
+    cc(cudaMemcpy(h_lv,rs.d_lv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get lv");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
     hostBasis(p,hcc,hss,hsc,hcs,hxm,hxn);
     std::vector<double> cc_d(cc_.begin(),cc_.end()),ss_d(ss_.begin(),ss_.end());
@@ -362,7 +362,7 @@ static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, SpectralState<T>&
 // floating-point summation order).
 // host with the same reduced-grid trapezoid as the kernels.
 template <typename T>
-static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp){
+static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_axis ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(0));
@@ -370,26 +370,26 @@ static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp){
         double ze=2*M_PI*(k/p.ntheta)/p.nzeta;
         fr[k+0*p.nZnT]=T(2.0+cos(ze));               // armn_e at axis
     }
-    cc(cudaMemset(fp.d_armn_e,0,nbr),"ms");
-    cc(cudaMemcpy(fp.d_armn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"armn_e");
+    cc(cudaMemset(rs.d_armn_e,0,nbr),"ms");
+    cc(cudaMemcpy(rs.d_armn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"armn_e");
     for(int k=0;k<p.nZnT;++k){
         double ze=2*M_PI*(k/p.ntheta)/p.nzeta;
         fr[k+0*p.nZnT]=T(sin(ze));                   // crmn_e at axis
     }
-    cc(cudaMemset(fp.d_crmn_e,0,nbr),"ms");
-    cc(cudaMemcpy(fp.d_crmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"crmn_e");
+    cc(cudaMemset(rs.d_crmn_e,0,nbr),"ms");
+    cc(cudaMemcpy(rs.d_crmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"crmn_e");
     for(int k=0;k<p.nZnT;++k){
         double ze=2*M_PI*(k/p.ntheta)/p.nzeta;
         fr[k+0*p.nZnT]=T(sin(ze));                   // azmn_e at axis
     }
-    cc(cudaMemset(fp.d_azmn_e,0,nbr),"ms");
-    cc(cudaMemcpy(fp.d_azmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"azmn_e");
+    cc(cudaMemset(rs.d_azmn_e,0,nbr),"ms");
+    cc(cudaMemcpy(rs.d_azmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"azmn_e");
     for(int k=0;k<p.nZnT;++k){
         double ze=2*M_PI*(k/p.ntheta)/p.nzeta;
         fr[k+0*p.nZnT]=T(cos(ze));                   // czmn_e at axis
     }
-    cc(cudaMemset(fp.d_czmn_e,0,nbr),"ms");
-    cc(cudaMemcpy(fp.d_czmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"czmn_e");
+    cc(cudaMemset(rs.d_czmn_e,0,nbr),"ms");
+    cc(cudaMemcpy(rs.d_czmn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"czmn_e");
     T* d_fs; cc(cudaMalloc(&d_fs,6*p.ns*p.mnmax*sizeof(T)),"fs");
     ConstraintWorkspace<T> cw_zero{};
     size_t nfc=(size_t)p.ns*p.nZnT*sizeof(T);
@@ -397,7 +397,7 @@ static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp){
     cudaMalloc(&cw_zero.d_frcon_o,nfc); cudaMemset(cw_zero.d_frcon_o,0,nfc);
     cudaMalloc(&cw_zero.d_fzcon_e,nfc); cudaMemset(cw_zero.d_fzcon_e,0,nfc);
     cudaMalloc(&cw_zero.d_fzcon_o,nfc); cudaMemset(cw_zero.d_fzcon_o,0,nfc);
-    forwardDFT(fp,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
+    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
     std::vector<T> fs(6*p.ns*p.mnmax);
     cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
@@ -433,7 +433,7 @@ static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp){
 
 // LCFS branch (j=ns-1 keeps only the λ components flsc/flcs).
 template <typename T>
-static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp){
+static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_lcfs ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     int jB=p.ns-1;
@@ -444,15 +444,15 @@ static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp){
         double th=2*M_PI*it/p.ntheta, ze=2*M_PI*iz/p.nzeta;
         fr[k+jB*p.nZnT]=T(1.0+sin(th)*cos(ze));
     }
-    cc(cudaMemset(fp.d_blmn_o,0,nbr),"ms");
-    cc(cudaMemcpy(fp.d_blmn_o,fr.data(),nbr,cudaMemcpyHostToDevice),"blmn_o");
+    cc(cudaMemset(rs.d_blmn_o,0,nbr),"ms");
+    cc(cudaMemcpy(rs.d_blmn_o,fr.data(),nbr,cudaMemcpyHostToDevice),"blmn_o");
     for(int k=0;k<p.nZnT;++k){
         int it=k%p.ntheta, iz=k/p.ntheta;
         double th=2*M_PI*it/p.ntheta, ze=2*M_PI*iz/p.nzeta;
         fr[k+jB*p.nZnT]=T(cos(th)*sin(ze));
     }
-    cc(cudaMemset(fp.d_clmn_o,0,nbr),"ms");
-    cc(cudaMemcpy(fp.d_clmn_o,fr.data(),nbr,cudaMemcpyHostToDevice),"clmn_o");
+    cc(cudaMemset(rs.d_clmn_o,0,nbr),"ms");
+    cc(cudaMemcpy(rs.d_clmn_o,fr.data(),nbr,cudaMemcpyHostToDevice),"clmn_o");
     T* d_fs; cc(cudaMalloc(&d_fs,6*p.ns*p.mnmax*sizeof(T)),"fs");
     ConstraintWorkspace<T> cw_zero{};
     size_t nfc=(size_t)p.ns*p.nZnT*sizeof(T);
@@ -460,7 +460,7 @@ static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp){
     cudaMalloc(&cw_zero.d_frcon_o,nfc); cudaMemset(cw_zero.d_frcon_o,0,nfc);
     cudaMalloc(&cw_zero.d_fzcon_e,nfc); cudaMemset(cw_zero.d_fzcon_e,0,nfc);
     cudaMalloc(&cw_zero.d_fzcon_o,nfc); cudaMemset(cw_zero.d_fzcon_o,0,nfc);
-    forwardDFT(fp,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
+    forwardDFT(fp,rs,cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),p,cw_zero);
     std::vector<T> fs(6*p.ns*p.mnmax);
     cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
@@ -504,6 +504,7 @@ static int runTests(){
     p.ncurr=0; p.delt=T(1.0); p.ftol=T(1e-14); p.max_iter=10; p.lamscale=T(1.0);
 
     FourierPlan<T> fp=fourierCreate<T>(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     SpectralState<T> st = storage.legacy_view();
 
@@ -511,15 +512,16 @@ static int runTests(){
     // host CPU reference (the direct-sum kernels were removed after the
     // cuFFT A/B validation; the git history has them).
     int nf = 0;
-    nf += t_inv_constR(p,fp,st);
-    nf += t_inv_theta(p,fp,st);
-    nf += t_inv_zeta(p,fp,st);
-    nf += t_fwd_const(p,fp);
-    nf += t_fwd_sine(p,fp);
-    nf += t_gpuVcpu_inv(p,fp,st);
-    nf += t_fwd_axis(p,fp);
-    nf += t_fwd_lcfs(p,fp);
+    nf += t_inv_constR(p,fp,rs,st);
+    nf += t_inv_theta(p,fp,rs,st);
+    nf += t_inv_zeta(p,fp,rs,st);
+    nf += t_fwd_const(p,fp,rs);
+    nf += t_fwd_sine(p,fp,rs);
+    nf += t_gpuVcpu_inv(p,fp,rs,st);
+    nf += t_fwd_axis(p,fp,rs);
+    nf += t_fwd_lcfs(p,fp,rs);
 
+    realSpaceFree(rs);
     fourierFree(fp);
 
     return nf;

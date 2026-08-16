@@ -52,16 +52,16 @@ __device__ void* dynSharedBase() {
 // kernels then read the raw pointers back out of the bundles, keeping the flat
 // `surface*nZnT + zeta*ntheta + theta` arithmetic bit-for-bit identical.
 template <typename T>
-static cumes::GeometryParityViews<T> geometryParityViews(const FourierPlan<T>& fp,
+static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceStorage<T>& rs,
                                                          const GridParams<T>& p) {
     auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
     cumes::GeometryParityViews<T> v;
-    v.r_e = f(fp.d_r_e); v.z_e = f(fp.d_z_e); v.l_e = f(fp.d_l_e);
-    v.ru_e = f(fp.d_ru_e); v.zu_e = f(fp.d_zu_e); v.lu_e = f(fp.d_lu_e);
-    v.r_o = f(fp.d_r_o); v.z_o = f(fp.d_z_o); v.l_o = f(fp.d_l_o);
-    v.ru_o = f(fp.d_ru_o); v.zu_o = f(fp.d_zu_o); v.lu_o = f(fp.d_lu_o);
-    v.rv_e = f(fp.d_rv_e); v.zv_e = f(fp.d_zv_e); v.lv_e = f(fp.d_lv_e);
-    v.rv_o = f(fp.d_rv_o); v.zv_o = f(fp.d_zv_o); v.lv_o = f(fp.d_lv_o);
+    v.r_e = f(rs.d_r_e); v.z_e = f(rs.d_z_e); v.l_e = f(rs.d_l_e);
+    v.ru_e = f(rs.d_ru_e); v.zu_e = f(rs.d_zu_e); v.lu_e = f(rs.d_lu_e);
+    v.r_o = f(rs.d_r_o); v.z_o = f(rs.d_z_o); v.l_o = f(rs.d_l_o);
+    v.ru_o = f(rs.d_ru_o); v.zu_o = f(rs.d_zu_o); v.lu_o = f(rs.d_lu_o);
+    v.rv_e = f(rs.d_rv_e); v.zv_e = f(rs.d_zv_e); v.lv_e = f(rs.d_lv_e);
+    v.rv_o = f(rs.d_rv_o); v.zv_o = f(rs.d_zv_o); v.lv_o = f(rs.d_lv_o);
     return v;
 }
 
@@ -601,13 +601,13 @@ void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
 }
 
 template <typename T>
-void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
+void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
                      const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                      cudaStream_t stream, bool update_iota_chi) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     geometryKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(fp, p), radialProfileViews(rp),
+        geometryParityViews(rs, p), radialProfileViews(rp),
         baseGeometryHalfViews(mw, p), magneticFieldViews(mw, p),
         p.lamscale, p.ncurr, p.ns, p.nZnT, rp.delta_s);
     cumes::check_cuda(cudaGetLastError(), "geometry kernel");
@@ -638,10 +638,11 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
 // GeometryOperator (owns the MetricWorkspace; wraps computeGeometry + stats)
 // ---------------------------------------------------------------------------
 template <typename T>
-void cumes::GeometryOperator<T>::enqueue(const FourierPlan<T>& fp, const GridParams<T>& p,
+void cumes::GeometryOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
+                                         const GridParams<T>& p,
                                          const RadialProfiles<T>& rp, cudaStream_t stream,
                                          bool update_iota_chi) {
-    computeGeometry(fp, p, rp, mw_, stream, update_iota_chi);
+    computeGeometry(rs, p, rp, mw_, stream, update_iota_chi);
 }
 
 template <typename T>

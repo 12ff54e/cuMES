@@ -3,6 +3,7 @@
 #include "vmec_types.h"
 #include "fft_traits.h"
 #include "cumes/core/tensor_view.cuh"
+#include "cumes/state/real_space_storage.hpp"
 #include <cufft.h>
 
 namespace cumes { class DeviceArena; }
@@ -37,30 +38,6 @@ struct FourierPlan {
     T* d_mcos_th; T* d_msin_th;
     T* d_fwd_w;         // [ntheta/2+1] intNorm weights (endpoints 1/2)
 
-    // Real-space geometry (parity-split, full grid)
-    T* d_r_e;  T* d_z_e;  T* d_l_e;
-    T* d_ru_e; T* d_zu_e; T* d_lu_e;
-    T* d_r_o;  T* d_z_o;  T* d_l_o;
-    T* d_ru_o; T* d_zu_o; T* d_lu_o;
-    T* d_r_real; T* d_z_real; T* d_l_real;
-    T* d_ru_real; T* d_zu_real; T* d_lu_real;
-    T* d_rv_real; T* d_zv_real; T* d_lv_real;
-    // Parity-split toroidal derivatives (the 3D metric/forces need them)
-    T* d_rv_e; T* d_rv_o;
-    T* d_zv_e; T* d_zv_o;
-    T* d_lv_e; T* d_lv_o;
-
-    // Force components (parity-split). crmn/czmn/clmn are the toroidal force
-    // components (3D only; zero for axisymmetric).
-    T* d_armn_e; T* d_armn_o;
-    T* d_azmn_e; T* d_azmn_o;
-    T* d_brmn_e; T* d_brmn_o;
-    T* d_bzmn_e; T* d_bzmn_o;
-    T* d_blmn_e; T* d_blmn_o;
-    T* d_crmn_e; T* d_crmn_o;
-    T* d_czmn_e; T* d_czmn_o;
-    T* d_clmn_e; T* d_clmn_o;
-
     // true when the device arrays above are subspans of a shared DeviceArena
     // (fourierFree then destroys only the cuFFT plans; the arena owns memory).
     bool arena_backed = false;
@@ -84,13 +61,22 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p,
 template <typename T>
 void fourierFree(FourierPlan<T>& fp);
 
+// Stage-owned real-space storage (geometry + force + combined buffers), split
+// out of FourierPlan so the transform operator owns only transform scratch
+// (blueprint §6.6). Same pointers/layout the FourierPlan used to hold.
+template <typename T>
+cumes::RealSpaceStorage<T> realSpaceCreate(const GridParams<T>& p,
+                                           cumes::DeviceArena* arena = nullptr);
+template <typename T>
+void realSpaceFree(cumes::RealSpaceStorage<T>& rs);
+
 // do_combine=false skips the e/o parity combination (only needed for the
 // dump machinery and tests); the hot loop passes false.
 // `coeff` is a component-major view over the contiguous state slab (the
 // SpectralStorage::physical() layout); it replaces the legacy 6-pointer
 // SpectralState input and indexes bit-for-bit identically.
 template <typename T>
-void inverseDFT(const FourierPlan<T>& fp,
+void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                 const GridParams<T>& p, bool do_combine = true,
                 cudaStream_t stream = 0);
@@ -109,7 +95,7 @@ void inverseDFT(const FourierPlan<T>& fp,
 // weight moves across the reconstruction, changing summation order at the ULP
 // level).
 template <typename T>
-void inverseDFTFused(const FourierPlan<T>& fp,
+void inverseDFTFused(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                      cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                      const GridParams<T>& p, bool do_combine, T* rCon, T* zCon,
                      cudaStream_t stream = 0);
@@ -121,8 +107,8 @@ void inverseDFTFused(const FourierPlan<T>& fp,
 // a snapshot of the CURRENT state (never read the combined arrays after a
 // do_combine=false pass and assume they are fresh).
 template <typename T>
-void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p,
-                          cudaStream_t stream = 0);
+void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
+                          const GridParams<T>& p, cudaStream_t stream = 0);
 
 // forwardDFT: parity forces → 6-component spectral forces
 // Layout: (6*mnmax, ns) col-major
@@ -135,7 +121,7 @@ void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p,
 // `f_spec` is the component-major residual view (DecomposedResidualDomain);
 // the layout matches the legacy `d_f_spectral` 6*mnmax*ns slab exactly.
 template <typename T>
-void forwardDFT(const FourierPlan<T>& fp,
+void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                 const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
                 cudaStream_t stream = 0);

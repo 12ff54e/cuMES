@@ -24,16 +24,16 @@
 // ---- typed real-space view bundles over the workspace structs ------------
 // (mirror of geometry_impl.cuh's helpers + the force-bundle variant).
 template <typename T>
-static cumes::GeometryParityViews<T> geometryParityViews(const FourierPlan<T>& fp,
+static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceStorage<T>& rs,
                                                          const GridParams<T>& p) {
     auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
     cumes::GeometryParityViews<T> v;
-    v.r_e = f(fp.d_r_e); v.z_e = f(fp.d_z_e); v.l_e = f(fp.d_l_e);
-    v.ru_e = f(fp.d_ru_e); v.zu_e = f(fp.d_zu_e); v.lu_e = f(fp.d_lu_e);
-    v.r_o = f(fp.d_r_o); v.z_o = f(fp.d_z_o); v.l_o = f(fp.d_l_o);
-    v.ru_o = f(fp.d_ru_o); v.zu_o = f(fp.d_zu_o); v.lu_o = f(fp.d_lu_o);
-    v.rv_e = f(fp.d_rv_e); v.zv_e = f(fp.d_zv_e); v.lv_e = f(fp.d_lv_e);
-    v.rv_o = f(fp.d_rv_o); v.zv_o = f(fp.d_zv_o); v.lv_o = f(fp.d_lv_o);
+    v.r_e = f(rs.d_r_e); v.z_e = f(rs.d_z_e); v.l_e = f(rs.d_l_e);
+    v.ru_e = f(rs.d_ru_e); v.zu_e = f(rs.d_zu_e); v.lu_e = f(rs.d_lu_e);
+    v.r_o = f(rs.d_r_o); v.z_o = f(rs.d_z_o); v.l_o = f(rs.d_l_o);
+    v.ru_o = f(rs.d_ru_o); v.zu_o = f(rs.d_zu_o); v.lu_o = f(rs.d_lu_o);
+    v.rv_e = f(rs.d_rv_e); v.zv_e = f(rs.d_zv_e); v.lv_e = f(rs.d_lv_e);
+    v.rv_o = f(rs.d_rv_o); v.zv_o = f(rs.d_zv_o); v.lv_o = f(rs.d_lv_o);
     return v;
 }
 
@@ -70,18 +70,18 @@ static cumes::RadialProfileViews<T> radialProfileViews(const RadialProfiles<T>& 
 }
 
 template <typename T>
-static cumes::ForceParityViews<T> forceParityViews(const FourierPlan<T>& fp,
+static cumes::ForceParityViews<T> forceParityViews(const cumes::RealSpaceStorage<T>& rs,
                                                    const GridParams<T>& p) {
     auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
     cumes::ForceParityViews<T> v;
-    v.armn_e = f(fp.d_armn_e); v.armn_o = f(fp.d_armn_o);
-    v.azmn_e = f(fp.d_azmn_e); v.azmn_o = f(fp.d_azmn_o);
-    v.brmn_e = f(fp.d_brmn_e); v.brmn_o = f(fp.d_brmn_o);
-    v.bzmn_e = f(fp.d_bzmn_e); v.bzmn_o = f(fp.d_bzmn_o);
-    v.blmn_e = f(fp.d_blmn_e); v.blmn_o = f(fp.d_blmn_o);
-    v.clmn_e = f(fp.d_clmn_e); v.clmn_o = f(fp.d_clmn_o);
-    v.crmn_e = f(fp.d_crmn_e); v.crmn_o = f(fp.d_crmn_o);
-    v.czmn_e = f(fp.d_czmn_e); v.czmn_o = f(fp.d_czmn_o);
+    v.armn_e = f(rs.d_armn_e); v.armn_o = f(rs.d_armn_o);
+    v.azmn_e = f(rs.d_azmn_e); v.azmn_o = f(rs.d_azmn_o);
+    v.brmn_e = f(rs.d_brmn_e); v.brmn_o = f(rs.d_brmn_o);
+    v.bzmn_e = f(rs.d_bzmn_e); v.bzmn_o = f(rs.d_bzmn_o);
+    v.blmn_e = f(rs.d_blmn_e); v.blmn_o = f(rs.d_blmn_o);
+    v.clmn_e = f(rs.d_clmn_e); v.clmn_o = f(rs.d_clmn_o);
+    v.crmn_e = f(rs.d_crmn_e); v.crmn_o = f(rs.d_crmn_o);
+    v.czmn_e = f(rs.d_czmn_e); v.czmn_o = f(rs.d_czmn_o);
     return v;
 }
 
@@ -318,15 +318,15 @@ __global__ void forcesKernel(
 }
 
 template <typename T>
-void computeForces(const FourierPlan<T>& fp, const GridParams<T>& p,
+void computeForces(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
                    const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
                    cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     forcesKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(fp, p), baseGeometryHalfViews(mw, p),
+        geometryParityViews(rs, p), baseGeometryHalfViews(mw, p),
         magneticFieldViews(mw, p), radialProfileViews(rp),
-        forceParityViews(fp, p),
+        forceParityViews(rs, p),
         p.lamscale, p.ns, p.nZnT, rp.delta_s);
     cumes::check_cuda(cudaGetLastError(), "forces kernel");
 }

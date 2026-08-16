@@ -59,7 +59,6 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) 
     FourierPlan<T> fp{};
     int nZnT = p.nZnT, mnmax = p.mnmax;
     size_t nbytes_mode  = mnmax * sizeof(int);
-    size_t nbytes_real  = p.ns * nZnT * sizeof(T);
 
     auto* h_xm  = new int[mnmax], *h_xn = new int[mnmax];
 
@@ -83,44 +82,9 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) 
     cumes::check_cuda(cudaMemcpy(fp.basis.d_xn, h_xn, nbytes_mode, cudaMemcpyHostToDevice), "xn");
     delete[] h_xm; delete[] h_xn;
 
-    auto am = [&](T*& p_, const char* n) {
-        if (arena) p_ = arena->alloc_span<T>(n, (size_t)p.ns * nZnT);
-        else cumes::check_cuda(cudaMalloc(&p_, nbytes_real), n);
-    };
-    am(fp.d_r_e,"r_e"); am(fp.d_z_e,"z_e"); am(fp.d_l_e,"l_e");
-    am(fp.d_ru_e,"ru_e"); am(fp.d_zu_e,"zu_e"); am(fp.d_lu_e,"lu_e");
-    am(fp.d_r_o,"r_o"); am(fp.d_z_o,"z_o"); am(fp.d_l_o,"l_o");
-    am(fp.d_ru_o,"ru_o"); am(fp.d_zu_o,"zu_o"); am(fp.d_lu_o,"lu_o");
-    am(fp.d_r_real,"r_r"); am(fp.d_z_real,"z_r"); am(fp.d_l_real,"l_r");
-    am(fp.d_ru_real,"ru_r"); am(fp.d_zu_real,"zu_r"); am(fp.d_lu_real,"lu_r");
-    am(fp.d_rv_real,"rv_r"); am(fp.d_zv_real,"zv_r"); am(fp.d_lv_real,"lv_r");
-    // The combined (e+o) *_real buffers are only produced by
-    // fourierCombineParity / inverseDFT(do_combine=true). Zero them here so a
-    // diagnostic dump taken before the first combine is deterministic (the old
-    // code dumped uninitialized memory, whose bytes shifted with the allocation
-    // order — see the step_A_l_real_iter_1 dump in solver_impl.cuh). Parity
-    // arrays are left as-is: inverseDFT writes them before any consumer reads.
-    cumes::check_cuda(cudaMemset(fp.d_r_real,  0, nbytes_real), "zero r_r");
-    cumes::check_cuda(cudaMemset(fp.d_z_real,  0, nbytes_real), "zero z_r");
-    cumes::check_cuda(cudaMemset(fp.d_l_real,  0, nbytes_real), "zero l_r");
-    cumes::check_cuda(cudaMemset(fp.d_ru_real, 0, nbytes_real), "zero ru_r");
-    cumes::check_cuda(cudaMemset(fp.d_zu_real, 0, nbytes_real), "zero zu_r");
-    cumes::check_cuda(cudaMemset(fp.d_lu_real, 0, nbytes_real), "zero lu_r");
-    cumes::check_cuda(cudaMemset(fp.d_rv_real, 0, nbytes_real), "zero rv_r");
-    cumes::check_cuda(cudaMemset(fp.d_zv_real, 0, nbytes_real), "zero zv_r");
-    cumes::check_cuda(cudaMemset(fp.d_lv_real, 0, nbytes_real), "zero lv_r");
-    // Parity-split toroidal derivatives (3D geometry needs them separately)
-    am(fp.d_rv_e,"rve"); am(fp.d_rv_o,"rvo");
-    am(fp.d_zv_e,"zve"); am(fp.d_zv_o,"zvo");
-    am(fp.d_lv_e,"lve"); am(fp.d_lv_o,"lvo");
-    am(fp.d_armn_e,"ae"); am(fp.d_armn_o,"ao");
-    am(fp.d_azmn_e,"aze"); am(fp.d_azmn_o,"azo");
-    am(fp.d_brmn_e,"be"); am(fp.d_brmn_o,"bo");
-    am(fp.d_bzmn_e,"bze"); am(fp.d_bzmn_o,"bzo");
-    am(fp.d_blmn_e,"ble"); am(fp.d_blmn_o,"blo");
-    am(fp.d_crmn_e,"ce"); am(fp.d_crmn_o,"co");
-    am(fp.d_czmn_e,"cze"); am(fp.d_czmn_o,"czo");
-    am(fp.d_clmn_e,"cle"); am(fp.d_clmn_o,"clo");
+    // The real-space geometry/force/combined arrays now live in the stage-owned
+    // RealSpaceStorage (realSpaceCreate), so the FourierPlan owns only transform
+    // scratch below (blueprint §6.6).
 
     // ---- cuFFT backend: poloidal tables, scratch, plans ----
     {
@@ -220,23 +184,7 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) 
 template <typename T>
 void fourierFree(FourierPlan<T>& fp) {
     if (!fp.arena_backed) {
-        auto cuFree = [](T* p) { cudaFree(p); };
         cudaFree(fp.basis.d_xm); cudaFree(fp.basis.d_xn);
-        cuFree(fp.d_r_e);cuFree(fp.d_z_e);cuFree(fp.d_l_e);
-        cuFree(fp.d_ru_e);cuFree(fp.d_zu_e);cuFree(fp.d_lu_e);
-        cuFree(fp.d_r_o);cuFree(fp.d_z_o);cuFree(fp.d_l_o);
-        cuFree(fp.d_ru_o);cuFree(fp.d_zu_o);cuFree(fp.d_lu_o);
-        cuFree(fp.d_r_real);cuFree(fp.d_z_real);cuFree(fp.d_l_real);
-        cuFree(fp.d_ru_real);cuFree(fp.d_zu_real);cuFree(fp.d_lu_real);
-        cuFree(fp.d_rv_real);cuFree(fp.d_zv_real);cuFree(fp.d_lv_real);
-        cuFree(fp.d_rv_e);cuFree(fp.d_rv_o);
-        cuFree(fp.d_zv_e);cuFree(fp.d_zv_o);
-        cuFree(fp.d_lv_e);cuFree(fp.d_lv_o);
-        cuFree(fp.d_armn_e);cuFree(fp.d_armn_o);cuFree(fp.d_azmn_e);cuFree(fp.d_azmn_o);
-        cuFree(fp.d_brmn_e);cuFree(fp.d_brmn_o);cuFree(fp.d_bzmn_e);cuFree(fp.d_bzmn_o);
-        cuFree(fp.d_blmn_e);cuFree(fp.d_blmn_o);
-        cuFree(fp.d_crmn_e);cuFree(fp.d_crmn_o);cuFree(fp.d_czmn_e);cuFree(fp.d_czmn_o);
-        cuFree(fp.d_clmn_e);cuFree(fp.d_clmn_o);
         cudaFree(fp.d_zeta_spectra); cudaFree(fp.d_zeta_real);
         cudaFree(fp.d_cos_th); cudaFree(fp.d_sin_th);
         cudaFree(fp.d_mcos_th); cudaFree(fp.d_msin_th); cudaFree(fp.d_fwd_w);
@@ -244,6 +192,80 @@ void fourierFree(FourierPlan<T>& fp) {
     cufftDestroy(fp.plan_z2d); cufftDestroy(fp.plan_d2z);
     if (fp.d_cufft_work) cudaFree(fp.d_cufft_work);
     fp = FourierPlan<T>{};
+}
+
+// ---------------------------------------------------------------------------
+// RealSpaceStorage (stage-owned geometry/force/combined buffers)
+// ---------------------------------------------------------------------------
+template <typename T>
+cumes::RealSpaceStorage<T> realSpaceCreate(const GridParams<T>& p,
+                                           cumes::DeviceArena* arena) {
+    cumes::RealSpaceStorage<T> rs{};
+    const int nZnT = p.nZnT;
+    const size_t nbytes_real = p.ns * nZnT * sizeof(T);
+    auto am = [&](T*& q, const char* n) {
+        if (arena) q = arena->alloc_span<T>(n, (size_t)p.ns * nZnT);
+        else cumes::check_cuda(cudaMalloc(&q, nbytes_real), n);
+    };
+    am(rs.d_r_e, "r_e"); am(rs.d_z_e, "z_e"); am(rs.d_l_e, "l_e");
+    am(rs.d_ru_e, "ru_e"); am(rs.d_zu_e, "zu_e"); am(rs.d_lu_e, "lu_e");
+    am(rs.d_r_o, "r_o"); am(rs.d_z_o, "z_o"); am(rs.d_l_o, "l_o");
+    am(rs.d_ru_o, "ru_o"); am(rs.d_zu_o, "zu_o"); am(rs.d_lu_o, "lu_o");
+    am(rs.d_r_real, "r_r"); am(rs.d_z_real, "z_r"); am(rs.d_l_real, "l_r");
+    am(rs.d_ru_real, "ru_r"); am(rs.d_zu_real, "zu_r"); am(rs.d_lu_real, "lu_r");
+    am(rs.d_rv_real, "rv_r"); am(rs.d_zv_real, "zv_r"); am(rs.d_lv_real, "lv_r");
+    // The combined (e+o) *_real buffers are only produced by
+    // fourierCombineParity / inverseDFT(do_combine=true). Zero them here so a
+    // diagnostic dump taken before the first combine is deterministic (the old
+    // code dumped uninitialized memory, whose bytes shifted with the allocation
+    // order — see the step_A_l_real_iter_1 dump in solver_impl.cuh). Parity
+    // arrays are left as-is: inverseDFT writes them before any consumer reads.
+    cumes::check_cuda(cudaMemset(rs.d_r_real, 0, nbytes_real), "zero r_r");
+    cumes::check_cuda(cudaMemset(rs.d_z_real, 0, nbytes_real), "zero z_r");
+    cumes::check_cuda(cudaMemset(rs.d_l_real, 0, nbytes_real), "zero l_r");
+    cumes::check_cuda(cudaMemset(rs.d_ru_real, 0, nbytes_real), "zero ru_r");
+    cumes::check_cuda(cudaMemset(rs.d_zu_real, 0, nbytes_real), "zero zu_r");
+    cumes::check_cuda(cudaMemset(rs.d_lu_real, 0, nbytes_real), "zero lu_r");
+    cumes::check_cuda(cudaMemset(rs.d_rv_real, 0, nbytes_real), "zero rv_r");
+    cumes::check_cuda(cudaMemset(rs.d_zv_real, 0, nbytes_real), "zero zv_r");
+    cumes::check_cuda(cudaMemset(rs.d_lv_real, 0, nbytes_real), "zero lv_r");
+    // Parity-split toroidal derivatives (3D geometry needs them separately)
+    am(rs.d_rv_e, "rve"); am(rs.d_rv_o, "rvo");
+    am(rs.d_zv_e, "zve"); am(rs.d_zv_o, "zvo");
+    am(rs.d_lv_e, "lve"); am(rs.d_lv_o, "lvo");
+    am(rs.d_armn_e, "ae"); am(rs.d_armn_o, "ao");
+    am(rs.d_azmn_e, "aze"); am(rs.d_azmn_o, "azo");
+    am(rs.d_brmn_e, "be"); am(rs.d_brmn_o, "bo");
+    am(rs.d_bzmn_e, "bze"); am(rs.d_bzmn_o, "bzo");
+    am(rs.d_blmn_e, "ble"); am(rs.d_blmn_o, "blo");
+    am(rs.d_crmn_e, "ce"); am(rs.d_crmn_o, "co");
+    am(rs.d_czmn_e, "cze"); am(rs.d_czmn_o, "czo");
+    am(rs.d_clmn_e, "cle"); am(rs.d_clmn_o, "clo");
+    rs.arena_backed = (arena != nullptr);
+    return rs;
+}
+
+template <typename T>
+void realSpaceFree(cumes::RealSpaceStorage<T>& rs) {
+    if (!rs.arena_backed) {
+        auto cuFree = [](T* p) { cudaFree(p); };
+        cuFree(rs.d_r_e); cuFree(rs.d_z_e); cuFree(rs.d_l_e);
+        cuFree(rs.d_ru_e); cuFree(rs.d_zu_e); cuFree(rs.d_lu_e);
+        cuFree(rs.d_r_o); cuFree(rs.d_z_o); cuFree(rs.d_l_o);
+        cuFree(rs.d_ru_o); cuFree(rs.d_zu_o); cuFree(rs.d_lu_o);
+        cuFree(rs.d_r_real); cuFree(rs.d_z_real); cuFree(rs.d_l_real);
+        cuFree(rs.d_ru_real); cuFree(rs.d_zu_real); cuFree(rs.d_lu_real);
+        cuFree(rs.d_rv_real); cuFree(rs.d_zv_real); cuFree(rs.d_lv_real);
+        cuFree(rs.d_rv_e); cuFree(rs.d_rv_o);
+        cuFree(rs.d_zv_e); cuFree(rs.d_zv_o);
+        cuFree(rs.d_lv_e); cuFree(rs.d_lv_o);
+        cuFree(rs.d_armn_e); cuFree(rs.d_armn_o); cuFree(rs.d_azmn_e); cuFree(rs.d_azmn_o);
+        cuFree(rs.d_brmn_e); cuFree(rs.d_brmn_o); cuFree(rs.d_bzmn_e); cuFree(rs.d_bzmn_o);
+        cuFree(rs.d_blmn_e); cuFree(rs.d_blmn_o);
+        cuFree(rs.d_crmn_e); cuFree(rs.d_crmn_o); cuFree(rs.d_czmn_e); cuFree(rs.d_czmn_o);
+        cuFree(rs.d_clmn_e); cuFree(rs.d_clmn_o);
+    }
+    rs = cumes::RealSpaceStorage<T>{};
 }
 
 // ---- cuFFT backend: inverse ---------------------------------------------
@@ -441,7 +463,7 @@ static int computeKTile(int blkX, int nzeta) {
 }
 
 template <typename T, bool FuseRzCon = false>
-static void inverseDFTCufft(const FourierPlan<T>& fp,
+static void inverseDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                             cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                             const GridParams<T>& p, bool do_combine,
                             T* rCon, T* zCon, cudaStream_t stream) {
@@ -466,31 +488,31 @@ static void inverseDFTCufft(const FourierPlan<T>& fp,
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 0,
-        fp.d_r_e, fp.d_ru_e, fp.d_rv_e, fp.d_r_o, fp.d_ru_o, fp.d_rv_o,
+        rs.d_r_e, rs.d_ru_e, rs.d_rv_e, rs.d_r_o, rs.d_ru_o, rs.d_rv_o,
         kTile, rCon, nullptr);
     inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, invSmem, stream>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 4,
-        fp.d_z_e, fp.d_zu_e, fp.d_zv_e, fp.d_z_o, fp.d_zu_o, fp.d_zv_o,
+        rs.d_z_e, rs.d_zu_e, rs.d_zv_e, rs.d_z_o, rs.d_zu_o, rs.d_zv_o,
         kTile, nullptr, zCon);
     inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, invSmem, stream>>>(
         fp.d_zeta_real,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th,
         p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 8,
-        fp.d_l_e, fp.d_lu_e, fp.d_lv_e, fp.d_l_o, fp.d_lu_o, fp.d_lv_o,
+        rs.d_l_e, rs.d_lu_e, rs.d_lv_e, rs.d_l_o, rs.d_lu_o, rs.d_lv_o,
         kTile, nullptr, nullptr);
     if (do_combine) {
         dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
         combineParityKernel<T><<<cgrd, cblk, 0, stream>>>(
-            fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
-            fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
-            fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
-            fp.d_rv_o, fp.d_zv_o, fp.d_lv_o,
+            rs.d_r_e, rs.d_z_e, rs.d_l_e, rs.d_ru_e, rs.d_zu_e, rs.d_lu_e,
+            rs.d_rv_e, rs.d_zv_e, rs.d_lv_e,
+            rs.d_r_o, rs.d_z_o, rs.d_l_o, rs.d_ru_o, rs.d_zu_o, rs.d_lu_o,
+            rs.d_rv_o, rs.d_zv_o, rs.d_lv_o,
             p.nZnT, p.ns,
-            fp.d_r_real, fp.d_z_real, fp.d_l_real,
-            fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
-            fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
+            rs.d_r_real, rs.d_z_real, rs.d_l_real,
+            rs.d_ru_real, rs.d_zu_real, rs.d_lu_real,
+            rs.d_rv_real, rs.d_zv_real, rs.d_lv_real);
     }
     cumes::check_cuda(cudaGetLastError(), "inv cuFFT");
 }
@@ -499,34 +521,34 @@ static void inverseDFTCufft(const FourierPlan<T>& fp,
 // arrays (the hot loop runs with do_combine=false and never refreshes them;
 // call this before reading any *_real array after a do_combine=false pass).
 template <typename T>
-void fourierCombineParity(const FourierPlan<T>& fp, const GridParams<T>& p,
-                          cudaStream_t stream) {
+void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
+                          const GridParams<T>& p, cudaStream_t stream) {
     dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
     combineParityKernel<T><<<cgrd, cblk, 0, stream>>>(
-        fp.d_r_e, fp.d_z_e, fp.d_l_e, fp.d_ru_e, fp.d_zu_e, fp.d_lu_e,
-        fp.d_rv_e, fp.d_zv_e, fp.d_lv_e,
-        fp.d_r_o, fp.d_z_o, fp.d_l_o, fp.d_ru_o, fp.d_zu_o, fp.d_lu_o,
-        fp.d_rv_o, fp.d_zv_o, fp.d_lv_o,
+        rs.d_r_e, rs.d_z_e, rs.d_l_e, rs.d_ru_e, rs.d_zu_e, rs.d_lu_e,
+        rs.d_rv_e, rs.d_zv_e, rs.d_lv_e,
+        rs.d_r_o, rs.d_z_o, rs.d_l_o, rs.d_ru_o, rs.d_zu_o, rs.d_lu_o,
+        rs.d_rv_o, rs.d_zv_o, rs.d_lv_o,
         p.nZnT, p.ns,
-        fp.d_r_real, fp.d_z_real, fp.d_l_real,
-        fp.d_ru_real, fp.d_zu_real, fp.d_lu_real,
-        fp.d_rv_real, fp.d_zv_real, fp.d_lv_real);
+        rs.d_r_real, rs.d_z_real, rs.d_l_real,
+        rs.d_ru_real, rs.d_zu_real, rs.d_lu_real,
+        rs.d_rv_real, rs.d_zv_real, rs.d_lv_real);
     cumes::check_cuda(cudaGetLastError(), "combine parity");
 }
 
 template <typename T>
-void inverseDFT(const FourierPlan<T>& fp,
+void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                 const GridParams<T>& p, bool do_combine, cudaStream_t stream) {
-    inverseDFTCufft<T, false>(fp, coeff, p, do_combine, nullptr, nullptr, stream);
+    inverseDFTCufft<T, false>(fp, rs, coeff, p, do_combine, nullptr, nullptr, stream);
 }
 
 template <typename T>
-void inverseDFTFused(const FourierPlan<T>& fp,
+void inverseDFTFused(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                      cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
                      const GridParams<T>& p, bool do_combine, T* rCon, T* zCon,
                      cudaStream_t stream) {
-    inverseDFTCufft<T, true>(fp, coeff, p, do_combine, rCon, zCon, stream);
+    inverseDFTCufft<T, true>(fp, rs, coeff, p, do_combine, rCon, zCon, stream);
 }
 
 // ---- cuFFT backend: forward ----------------------------------------------
@@ -711,7 +733,7 @@ __global__ void forwardRecoverKernel(
 }
 
 template <typename T>
-static void forwardDFTCufft(const FourierPlan<T>& fp,
+static void forwardDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                             cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                             const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
                             cudaStream_t stream) {
@@ -724,10 +746,10 @@ static void forwardDFTCufft(const FourierPlan<T>& fp,
     dim3 blk(16, kTile);  // x padded to 16 lanes (warp shuffle width)
     dim3 grd(p.mpol, p.ns, nKTiles);
     forwardReduceKernel<T><<<grd, blk, 0, stream>>>(
-        fp.d_armn_e, fp.d_armn_o, fp.d_azmn_e, fp.d_azmn_o,
-        fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
-        fp.d_crmn_e, fp.d_crmn_o, fp.d_czmn_e, fp.d_czmn_o,
-        fp.d_blmn_e, fp.d_blmn_o, fp.d_clmn_e, fp.d_clmn_o,
+        rs.d_armn_e, rs.d_armn_o, rs.d_azmn_e, rs.d_azmn_o,
+        rs.d_brmn_e, rs.d_brmn_o, rs.d_bzmn_e, rs.d_bzmn_o,
+        rs.d_crmn_e, rs.d_crmn_o, rs.d_czmn_e, rs.d_czmn_o,
+        rs.d_blmn_e, rs.d_blmn_o, rs.d_clmn_e, rs.d_clmn_o,
         cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th, fp.d_fwd_w,
         p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT,
@@ -741,11 +763,11 @@ static void forwardDFTCufft(const FourierPlan<T>& fp,
 }
 
 template <typename T>
-void forwardDFT(const FourierPlan<T>& fp,
+void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                 const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
                 cudaStream_t stream) {
-    forwardDFTCufft(fp, f_spec, p, cw, stream);
+    forwardDFTCufft(fp, rs, f_spec, p, cw, stream);
 }
 
 // ---------------------------------------------------------------------------
@@ -753,15 +775,17 @@ void forwardDFT(const FourierPlan<T>& fp,
 // ---------------------------------------------------------------------------
 template <typename T>
 void cumes::ToroidalFftOperator<T>::enqueue_inverse(
+    cumes::RealSpaceStorage<T>& rs,
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
     const GridParams<T>& p, bool do_combine, T* rCon, T* zCon, cudaStream_t stream) {
-    inverseDFTFused(fp_, coeff, p, do_combine, rCon, zCon, stream);
+    inverseDFTFused(fp_, rs, coeff, p, do_combine, rCon, zCon, stream);
 }
 
 template <typename T>
 void cumes::ToroidalFftOperator<T>::enqueue_forward(
+    cumes::RealSpaceStorage<T>& rs,
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
     const GridParams<T>& p, const ConstraintWorkspace<T>& cw, cudaStream_t stream) {
-    forwardDFT(fp_, f_spec, p, cw, stream);
+    forwardDFT(fp_, rs, f_spec, p, cw, stream);
 }
 

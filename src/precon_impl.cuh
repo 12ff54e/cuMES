@@ -841,9 +841,10 @@ __global__ void preconBoundaryKernel(
 // Host-side orchestration
 // ---------------------------------------------------------------------------
 template <typename T>
-void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
-                   const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
-                   PreconWorkspace<T>& pw, cudaStream_t stream) {
+void preconCompute(const cumes::RealSpaceStorage<T>& rs, const FourierPlan<T>& fp,
+                   const GridParams<T>& p, const RadialProfiles<T>& rp,
+                   const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
+                   cudaStream_t stream) {
     int nH = p.ns - 1, nF = p.ns;
     int threads = 256;
 
@@ -852,8 +853,8 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
     preconComputeKernel<T><<<nH, threads, 0, stream>>>(
         mw.d_r12, mw.d_tau, mw.d_totalPressure, mw.d_bsupv, mw.d_gsqrt,
         rp.d_sqrtS_H,
-        mw.d_zs, mw.d_zu12, fp.d_zu_e, fp.d_zu_o, fp.d_z_o,
-        mw.d_rs, mw.d_ru12, fp.d_ru_e, fp.d_ru_o, fp.d_r_o,
+        mw.d_zs, mw.d_zu12, rs.d_zu_e, rs.d_zu_o, rs.d_z_o,
+        mw.d_rs, mw.d_ru12, rs.d_ru_e, rs.d_ru_o, rs.d_r_o,
         p.ns, p.nZnT, rp.delta_s,
         pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx);
     cumes::check_cuda(cudaGetLastError(), "preconCompute");
@@ -1025,12 +1026,13 @@ void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
 // Preconditioner operator (owns the PreconWorkspace; wraps preconCompute/Apply)
 // ---------------------------------------------------------------------------
 template <typename T>
-void cumes::Preconditioner<T>::enqueue_compute(const FourierPlan<T>& fp,
+void cumes::Preconditioner<T>::enqueue_compute(const cumes::RealSpaceStorage<T>& rs,
+                                               const FourierPlan<T>& fp,
                                                const GridParams<T>& p,
                                                const RadialProfiles<T>& rp,
                                                const MetricWorkspace<T>& mw,
                                                cudaStream_t stream) {
-    preconCompute(fp, p, rp, mw, pw_, stream);
+    preconCompute(rs, fp, p, rp, mw, pw_, stream);
 }
 
 template <typename T>

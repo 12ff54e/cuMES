@@ -231,25 +231,26 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     InputParams ip = initInputParams("inputs/solovev.json");
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     MetricWorkspace<T> mw = metricCreate(p);
 
-    inverseDFT(fp, storage.physical_const(), p);
-    computeGeometry(fp, p, rp, mw);
-    computeForces(fp, p, rp, mw);
+    inverseDFT(fp, rs, storage.physical_const(), p);
+    computeGeometry(rs, p, rp, mw);
+    computeForces(rs, p, rp, mw);
 
     const size_t nF = (size_t)ns * p.nZnT, nH = (size_t)(ns - 1) * p.nZnT;
     auto g = [&](const T* d, size_t n) { std::vector<T> v(n); checkCuda(cudaMemcpy(v.data(), d, n * sizeof(T), cudaMemcpyDeviceToHost), "g"); return v; };
     // full-grid parity
-    std::vector<T> r_e = g(fp.d_r_e, nF), r_o = g(fp.d_r_o, nF);
-    std::vector<T> z_e = g(fp.d_z_e, nF), z_o = g(fp.d_z_o, nF);
-    std::vector<T> ru_e = g(fp.d_ru_e, nF), ru_o = g(fp.d_ru_o, nF);
-    std::vector<T> zu_e = g(fp.d_zu_e, nF), zu_o = g(fp.d_zu_o, nF);
-    std::vector<T> rv_e = g(fp.d_rv_e, nF), rv_o = g(fp.d_rv_o, nF);
-    std::vector<T> zv_e = g(fp.d_zv_e, nF), zv_o = g(fp.d_zv_o, nF);
-    std::vector<T> lu_e = g(fp.d_lu_e, nF), lu_o = g(fp.d_lu_o, nF);
+    std::vector<T> r_e = g(rs.d_r_e, nF), r_o = g(rs.d_r_o, nF);
+    std::vector<T> z_e = g(rs.d_z_e, nF), z_o = g(rs.d_z_o, nF);
+    std::vector<T> ru_e = g(rs.d_ru_e, nF), ru_o = g(rs.d_ru_o, nF);
+    std::vector<T> zu_e = g(rs.d_zu_e, nF), zu_o = g(rs.d_zu_o, nF);
+    std::vector<T> rv_e = g(rs.d_rv_e, nF), rv_o = g(rs.d_rv_o, nF);
+    std::vector<T> zv_e = g(rs.d_zv_e, nF), zv_o = g(rs.d_zv_o, nF);
+    std::vector<T> lu_e = g(rs.d_lu_e, nF), lu_o = g(rs.d_lu_o, nF);
     // half-grid
     std::vector<T> r12 = g(mw.d_r12, nH), ru12 = g(mw.d_ru12, nH), zu12 = g(mw.d_zu12, nH);
-    std::vector<T> rs = g(mw.d_rs, nH), zs = g(mw.d_zs, nH), tau = g(mw.d_tau, nH);
+    std::vector<T> rs_h = g(mw.d_rs, nH), zs = g(mw.d_zs, nH), tau = g(mw.d_tau, nH);
     std::vector<T> gsqrt = g(mw.d_gsqrt, nH), guv = g(mw.d_guv, nH), gvv = g(mw.d_gvv, nH);
     std::vector<T> bsupu = g(mw.d_bsupu, nH), bsupv = g(mw.d_bsupv, nH);
     std::vector<T> bsubu = g(mw.d_bsubu, nH), bsubv = g(mw.d_bsubv, nH);
@@ -258,14 +259,14 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     std::vector<T> sqrtS_F = g(rp.d_sqrtS_F, ns), sqrtS_H = g(rp.d_sqrtS_H, ns - 1), phip_F = g(rp.d_phip_F, ns);
 
     // GPU force outputs
-    std::vector<T> g_armn_e = g(fp.d_armn_e, nF), g_armn_o = g(fp.d_armn_o, nF);
-    std::vector<T> g_azmn_e = g(fp.d_azmn_e, nF), g_azmn_o = g(fp.d_azmn_o, nF);
-    std::vector<T> g_brmn_e = g(fp.d_brmn_e, nF), g_brmn_o = g(fp.d_brmn_o, nF);
-    std::vector<T> g_bzmn_e = g(fp.d_bzmn_e, nF), g_bzmn_o = g(fp.d_bzmn_o, nF);
-    std::vector<T> g_crmn_e = g(fp.d_crmn_e, nF), g_crmn_o = g(fp.d_crmn_o, nF);
-    std::vector<T> g_czmn_e = g(fp.d_czmn_e, nF), g_czmn_o = g(fp.d_czmn_o, nF);
-    std::vector<T> g_blmn_e = g(fp.d_blmn_e, nF), g_blmn_o = g(fp.d_blmn_o, nF);
-    std::vector<T> g_clmn_e = g(fp.d_clmn_e, nF), g_clmn_o = g(fp.d_clmn_o, nF);
+    std::vector<T> g_armn_e = g(rs.d_armn_e, nF), g_armn_o = g(rs.d_armn_o, nF);
+    std::vector<T> g_azmn_e = g(rs.d_azmn_e, nF), g_azmn_o = g(rs.d_azmn_o, nF);
+    std::vector<T> g_brmn_e = g(rs.d_brmn_e, nF), g_brmn_o = g(rs.d_brmn_o, nF);
+    std::vector<T> g_bzmn_e = g(rs.d_bzmn_e, nF), g_bzmn_o = g(rs.d_bzmn_o, nF);
+    std::vector<T> g_crmn_e = g(rs.d_crmn_e, nF), g_crmn_o = g(rs.d_crmn_o, nF);
+    std::vector<T> g_czmn_e = g(rs.d_czmn_e, nF), g_czmn_o = g(rs.d_czmn_o, nF);
+    std::vector<T> g_blmn_e = g(rs.d_blmn_e, nF), g_blmn_o = g(rs.d_blmn_o, nF);
+    std::vector<T> g_clmn_e = g(rs.d_clmn_e, nF), g_clmn_o = g(rs.d_clmn_o, nF);
 
     // CPU reference
     std::vector<T> c_armn_e(nF), c_armn_o(nF), c_azmn_e(nF), c_azmn_o(nF);
@@ -273,7 +274,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     std::vector<T> c_crmn_e(nF), c_crmn_o(nF), c_czmn_e(nF), c_czmn_o(nF);
     std::vector<T> c_blmn_e(nF), c_blmn_o(nF), c_clmn_e(nF), c_clmn_o(nF);
     cpuForces(r_e, r_o, z_o, ru_e, ru_o, zu_e, zu_o, rv_e, rv_o, zv_e, zv_o,
-              lu_e, lu_o, r12, ru12, zu12, rs, zs, tau, gsqrt, guv, gvv,
+              lu_e, lu_o, r12, ru12, zu12, rs_h, zs, tau, gsqrt, guv, gvv,
               bsupu, bsupv, bsubu, bsubv, totalP, sqrtS_F, sqrtS_H, phip_F,
               ns, p.nZnT, p.lamscale, rp.delta_s,
               c_armn_e, c_armn_o, c_azmn_e, c_azmn_o, c_brmn_e, c_brmn_o,
@@ -300,6 +301,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     snprintf(msg, sizeof msg, "%s: GPU force == CPU scalar reference (max |diff| %.3e < %.1e)", label, md, tol);
     CHECK(md < tol, msg);
 
+    realSpaceFree(rs);
     fourierFree(fp); metricFree(mw); profilesFree(rp);
 }
 
