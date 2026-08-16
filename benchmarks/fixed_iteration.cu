@@ -19,43 +19,33 @@
 // Usage:
 //   cumes_benchmark_fixed_iteration --config solovev --passes 100 [--warmup 10]
 //                                   [--restart <ckpt>] [--out <json>]
+//
+// Shared harness pieces (timing helpers, the --option scanner, the config
+// loader, the operator stack) live in bench_common.cuh.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
-#include <algorithm>
-#include <chrono>
 #include <string>
 #include <vector>
 
 #include "vmec_types.h"
 #include "solver.cuh"
 
+#include "bench_common.cuh"
+
 #include "cumes/config/json_reader.hpp"
-#include "cumes/config/solver_options.hpp"
 #include "cumes/io/checkpoint.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/snapshot_bridge.cuh"
-#include "cumes/physics/geometry_operator.hpp"
-#include "cumes/physics/profiles.hpp"
-#include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/runtime/stream.hpp"
 #include "cumes/solver/solver_bench.hpp"
 #include "cumes/solver/stage_solver.hpp"
 #include "cumes/state/seed_state.hpp"
 #include "cumes/state/spectral_storage.hpp"
-#include "cumes/transforms/axisymmetric_operator.hpp"
-#include "cumes/transforms/toroidal_fft_operator.hpp"
 
-#include <memory>
-
-using Clock = std::chrono::steady_clock;
-
-static double now_us() {
-    return std::chrono::duration<double, std::micro>(Clock::now().time_since_epoch())
-        .count();
-}
+using namespace bench_common;
 
 // FNV-1a 64-bit hash over the raw little-endian double bytes of all six
 // families (component order Rcc Zsc Lsc Rss Zcs Lcs), hex-encoded. A different
@@ -77,25 +67,6 @@ static std::string hash_snapshot(const cumes::EquilibriumSnapshot& snap) {
     return buf;
 }
 
-static double median(std::vector<double> v) {
-    if (v.empty()) return 0.0;
-    std::sort(v.begin(), v.end());
-    const std::size_t n = v.size();
-    if (n % 2) return v[n / 2];
-    return 0.5 * (v[n / 2 - 1] + v[n / 2]);
-}
-
-// 95th percentile: v[ceil(0.95*n)-1] (>= 95% of samples are <= this value).
-static double p95(std::vector<double> v) {
-    if (v.empty()) return 0.0;
-    std::sort(v.begin(), v.end());
-    const std::size_t n = v.size();
-    std::size_t k = static_cast<std::size_t>(std::ceil(0.95 * n));
-    if (k == 0) k = 1;
-    if (k > n) k = n;
-    return v[k - 1];
-}
-
 int main(int argc, char** argv) {
     const char* config = "solovev";
     const char* restart_path = nullptr;
@@ -103,23 +74,14 @@ int main(int argc, char** argv) {
     int warmup = 10;
     int passes = 100;
 
+    ArgParser args(argc, argv, "bench");
     for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        auto need = [&](const char* name) -> const char* {
-            if (a == std::string("--") + name) {
-                if (i + 1 >= argc) { fprintf(stderr, "bench: --%s needs a value\n", name); exit(2); }
-                return argv[++i];
-            }
-            std::string pfx = std::string("--") + name + "=";
-            if (a.compare(0, pfx.size(), pfx) == 0) return argv[i] + pfx.size();
-            return nullptr;
-        };
-        if (const char* v = need("config")) config = v;
-        else if (const char* v = need("restart")) restart_path = v;
-        else if (const char* v = need("out")) out_path = v;
-        else if (const char* v = need("warmup")) warmup = atoi(v);
-        else if (const char* v = need("passes")) passes = atoi(v);
-        else { fprintf(stderr, "bench: unknown option '%s'\n", a.c_str()); return 2; }
+        if (const char* v = args.need(i, "config")) config = v;
+        else if (const char* v = args.need(i, "restart")) restart_path = v;
+        else if (const char* v = args.need(i, "out")) out_path = v;
+        else if (const char* v = args.need(i, "warmup")) warmup = atoi(v);
+        else if (const char* v = args.need(i, "passes")) passes = atoi(v);
+        else { fprintf(stderr, "bench: unknown option '%s'\n", argv[i]); return 2; }
     }
     if (passes < 1) { fprintf(stderr, "bench: --passes must be >= 1\n"); return 2; }
     if (warmup < 0) { fprintf(stderr, "bench: --warmup must be >= 0\n"); return 2; }
@@ -127,21 +89,8 @@ int main(int argc, char** argv) {
     std::string input_path = std::string("inputs/") + config + ".json";
 
     // ---- config: parse + validate (same host model as the CLI) ----
-    cumes::SolverOptions opts;  // default precision policy (verify-double)
-    cumes::ValidationResult vr = cumes::ValidationResult(cumes::ValidationReport{});
-    try {
-        vr = cumes::read_and_validate(input_path, opts);
-    } catch (const std::exception& e) {
-        fprintf(stderr, "bench: %s\n", e.what());
-        return 2;
-    }
-    if (!vr.has_value()) {
-        fprintf(stderr, "bench: input validation failed\n");
-        for (const auto& issue : vr.error().issues())
-            fprintf(stderr, "  [%d] %s: %s\n", static_cast<int>(issue.severity),
-                    issue.key.c_str(), issue.message.c_str());
-        return 2;
-    }
+    cumes::ValidationResult vr = load_validated(input_path, "bench");
+    if (!vr.has_value()) return 2;
     const cumes::ValidatedProblem& vp = vr.value();
     const cumes::ProblemSpec& spec = vp.spec();
 
@@ -175,24 +124,14 @@ int main(int argc, char** argv) {
 
     double setup_us = 0.0, solve_wall_us = 0.0, solve_gpu_us = 0.0;
 
+    // The production operator stack (bench_common::OperatorStack): stage arena
+    // carve + profiles/real-space/mode-table/transform/geometry operators, with
+    // the axisymmetric direct-poloidal backend for ntor=0/nzeta=1 shapes
+    // (blueprint §8.5) unless CUMES_FORCE_GENERIC=1 restores the generic cuFFT
+    // backend for A/B comparison.
     double t0 = now_us();
     arena.allocate(cumes::stage_arena_bytes<Real>(p));
-    cumes::Profiles<Real> profiles(p, vp, &arena);
-    cumes::RealSpaceStorage<Real> rs = realSpaceCreate<Real>(p, &arena);
-    cumes::DeviceModeTable mt = cumes::modeTableCreate<Real>(p, &arena);
-    cumes::ToroidalFftOperator<Real> transform(p, rs, mt, &arena);
-    cumes::GeometryOperator<Real> geometry(p, &arena);
-
-    // Axisymmetric transform backend (blueprint §8.5), mirroring
-    // StageSolver::run: for ntor=0/nzeta=1 the direct-poloidal operator replaces
-    // the length-one cuFFT round trips. CUMES_FORCE_GENERIC=1 restores the
-    // generic backend for A/B comparison.
-    bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
-    if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
-        if (std::atoi(e) != 0) use_axisym = false;
-    std::unique_ptr<cumes::AxisymmetricOperator<Real>> axisym;
-    if (use_axisym) axisym = std::make_unique<cumes::AxisymmetricOperator<Real>>(p);
-
+    OperatorStack<Real> stack(p, vp, arena);
     setup_us = now_us() - t0;
 
     cudaEvent_t ev0, ev1;
@@ -200,9 +139,9 @@ int main(int argc, char** argv) {
     cudaEventCreate(&ev1);
     cudaEventRecord(ev0, stream.get());
     double w0 = now_us();
-    SolverResult<Real> result = solverRun<Real>(storage, p, profiles,
-                                                transform, rs, geometry, &arena, stream.get(),
-                                                &bench, axisym.get());
+    SolverResult<Real> result = solverRun<Real>(storage, p, stack.profiles,
+                                                stack.transform, stack.rs, stack.geometry, &arena, stream.get(),
+                                                &bench, stack.axisym.get());
     double w1 = now_us();
     cudaEventRecord(ev1, stream.get());
     cudaEventSynchronize(ev1);
@@ -212,7 +151,7 @@ int main(int argc, char** argv) {
     solve_gpu_us = gpu_ms * 1000.0;
 
     const std::size_t arena_bytes = arena.peak_bytes();
-    const std::size_t cufft_work_bytes = transform.cufft_work_bytes();
+    const std::size_t cufft_work_bytes = stack.transform.cufft_work_bytes();
 
     // profiles/transform/geometry are RAII (operator destructors).
     cudaEventDestroy(ev0);
@@ -275,7 +214,7 @@ int main(int argc, char** argv) {
     json += "  " + kv("nzeta", num) + ",\n";
     snprintf(num, sizeof num, "%d", p.ncurr);
     json += "  " + kv("ncurr", num) + ",\n";
-    json += "  " + kv("transform_backend", q(use_axisym ? "axisymmetric"
+    json += "  " + kv("transform_backend", q(stack.use_axisym ? "axisymmetric"
                                                         : "toroidal-fft")) + ",\n";
     snprintf(num, sizeof num, "%zu", arena_bytes);
     json += "  " + kv("arena_bytes", num) + ",\n";

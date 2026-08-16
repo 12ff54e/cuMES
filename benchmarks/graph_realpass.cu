@@ -43,48 +43,34 @@
 // Usage:
 //   cumes_benchmark_graph_realpass --config solovev [--passes 200] [--warmup 5]
 //                                   [--out <json>]
+//
+// Shared harness pieces (timing helpers, the --option scanner, the config
+// loader, the operator stack) live in bench_common.cuh. The per-pass control
+// copy uses the same pinned-host staging as production (PinnedBuffer<double>,
+// solver_impl.cuh) so the measured D2H stays asynchronous.
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <cstdint>
 #include <algorithm>
-#include <chrono>
+#include <cmath>
 #include <string>
 #include <vector>
 
 #include "vmec_types.h"
 
+#include "bench_common.cuh"
+
 #include "cumes/config/json_reader.hpp"
-#include "cumes/config/solver_options.hpp"
-#include "cumes/physics/geometry_operator.hpp"
-#include "cumes/physics/profiles.hpp"
 #include "cumes/runtime/cuda_graph.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
+#include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/runtime/stream.hpp"
 #include "cumes/solver/equilibrium_operator.hpp"
 #include "cumes/solver/stage_solver.hpp"
 #include "cumes/state/seed_state.hpp"
 #include "cumes/state/spectral_storage.hpp"
-#include "cumes/transforms/axisymmetric_operator.hpp"
-#include "cumes/transforms/toroidal_fft_operator.hpp"
 
-#include <memory>
-
-using Clock = std::chrono::steady_clock;
-
-static double now_us() {
-    return std::chrono::duration<double, std::micro>(Clock::now().time_since_epoch())
-        .count();
-}
-
-static double median(std::vector<double> v) {
-    if (v.empty()) return 0.0;
-    std::sort(v.begin(), v.end());
-    const std::size_t n = v.size();
-    if (n % 2) return v[n / 2];
-    return 0.5 * (v[n / 2 - 1] + v[n / 2]);
-}
+using namespace bench_common;
 
 // Capture + instantiate one pass variant; returns the wall cost in µs.
 static double capture_variant(cumes::EquilibriumOperator<Real>& eq,
@@ -121,43 +107,21 @@ int main(int argc, char** argv) {
     int passes = 200;
     const int sync_period = 50;  // bound the async queue during submission timing
 
+    ArgParser args(argc, argv, "graph_realpass");
     for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        auto need = [&](const char* name) -> const char* {
-            if (a == std::string("--") + name) {
-                if (i + 1 >= argc) { fprintf(stderr, "graph_realpass: --%s needs a value\n", name); exit(2); }
-                return argv[++i];
-            }
-            std::string pfx = std::string("--") + name + "=";
-            if (a.compare(0, pfx.size(), pfx) == 0) return argv[i] + pfx.size();
-            return nullptr;
-        };
-        if (const char* v = need("config")) config = v;
-        else if (const char* v = need("out")) out_path = v;
-        else if (const char* v = need("warmup")) warmup = atoi(v);
-        else if (const char* v = need("passes")) passes = atoi(v);
-        else { fprintf(stderr, "graph_realpass: unknown option '%s'\n", a.c_str()); return 2; }
+        if (const char* v = args.need(i, "config")) config = v;
+        else if (const char* v = args.need(i, "out")) out_path = v;
+        else if (const char* v = args.need(i, "warmup")) warmup = atoi(v);
+        else if (const char* v = args.need(i, "passes")) passes = atoi(v);
+        else { fprintf(stderr, "graph_realpass: unknown option '%s'\n", argv[i]); return 2; }
     }
     if (passes < 1 || warmup < 0) { fprintf(stderr, "graph_realpass: bad --passes/--warmup\n"); return 2; }
 
     std::string input_path = std::string("inputs/") + config + ".json";
 
     // ---- config: parse + validate (same host model as the CLI/benchmarks) ----
-    cumes::SolverOptions opts;
-    cumes::ValidationResult vr = cumes::ValidationResult(cumes::ValidationReport{});
-    try {
-        vr = cumes::read_and_validate(input_path, opts);
-    } catch (const std::exception& e) {
-        fprintf(stderr, "graph_realpass: %s\n", e.what());
-        return 2;
-    }
-    if (!vr.has_value()) {
-        fprintf(stderr, "graph_realpass: input validation failed\n");
-        for (const auto& issue : vr.error().issues())
-            fprintf(stderr, "  [%d] %s: %s\n", static_cast<int>(issue.severity),
-                    issue.key.c_str(), issue.message.c_str());
-        return 2;
-    }
+    cumes::ValidationResult vr = load_validated(input_path, "graph_realpass");
+    if (!vr.has_value()) return 2;
     const cumes::ValidatedProblem& vp = vr.value();
     const cumes::ProblemSpec& spec = vp.spec();
 
@@ -171,24 +135,14 @@ int main(int argc, char** argv) {
 
     cumes::DeviceArena arena;
     arena.allocate(cumes::stage_arena_bytes<Real>(p));
-    cumes::Profiles<Real> profiles(p, vp, &arena);
-    cumes::RealSpaceStorage<Real> rs = realSpaceCreate<Real>(p, &arena);
-    cumes::DeviceModeTable mt = cumes::modeTableCreate<Real>(p, &arena);
-    cumes::ToroidalFftOperator<Real> transform(p, rs, mt, &arena);
-    cumes::GeometryOperator<Real> geometry(p, &arena);
-
-    bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
-    if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
-        if (std::atoi(e) != 0) use_axisym = false;
-    std::unique_ptr<cumes::AxisymmetricOperator<Real>> axisym;
-    if (use_axisym) axisym = std::make_unique<cumes::AxisymmetricOperator<Real>>(p);
+    OperatorStack<Real> stack(p, vp, arena);
 
     cumes::Stream stream;
-    transform.bind_stream(stream.get());
+    stack.transform.bind_stream(stream.get());
 
     cumes::EquilibriumOperator<Real> equilibrium(
-        p, storage, profiles, transform, rs, geometry, &arena,
-        use_axisym ? static_cast<cumes::SpectralOperator<Real>*>(axisym.get()) : nullptr);
+        p, storage, stack.profiles, stack.transform, stack.rs, stack.geometry, &arena,
+        stack.use_axisym ? static_cast<cumes::SpectralOperator<Real>*>(stack.axisym.get()) : nullptr);
 
     // Steady-state pass schedules (iter/iter2 far from any first-pass or
     // dump-window branch; the env-gated dump machinery is off by default).
@@ -200,10 +154,13 @@ int main(int argc, char** argv) {
     zeroz_sched.zero_z_force_m1 = true;
 
     // ---- warmup: production-pattern direct passes ----
-    Real* h_ctl = new Real[16];
+    // Pinned staging like production (solver_impl.cuh's h_control_pin): the
+    // async D2H stays a one-hop DMA copy instead of degrading to a
+    // synchronous pageable two-hop (review finding 6.2).
+    cumes::PinnedBuffer<double> h_ctl(16);
     for (int w = 0; w < warmup; ++w) {
         equilibrium.enqueue(iter, iter2, base_sched, stream.get());
-        cumes::check_cuda(cudaMemcpyAsync(h_ctl, equilibrium.control_device(),
+        cumes::check_cuda(cudaMemcpyAsync(h_ctl.data(), equilibrium.control_device(),
                                           16 * sizeof(Real), cudaMemcpyDeviceToHost,
                                           stream.get()), "warmup control copy");
         stream.synchronize();
@@ -290,7 +247,7 @@ int main(int argc, char** argv) {
             max_diff = std::max(max_diff, std::fabs((double)h_direct[i] - (double)h_graph[i]));
         printf("gate_graph_vs_direct     : %s (max |diff| = %.3e over 16 control scalars)\n",
                max_diff == 0.0 ? "PASS bitwise" : "FAIL", max_diff);
-        if (max_diff != 0.0) { delete[] h_ctl; return 1; }
+        if (max_diff != 0.0) return 1;
     }
 
     // ---- capture + instantiate costs (one-time per variant) ----
@@ -332,7 +289,7 @@ int main(int argc, char** argv) {
             } else {
                 equilibrium.enqueue(iter, iter2, base_sched, stream.get());
             }
-            cumes::check_cuda(cudaMemcpyAsync(h_ctl, equilibrium.control_device(),
+            cumes::check_cuda(cudaMemcpyAsync(h_ctl.data(), equilibrium.control_device(),
                                               16 * sizeof(Real), cudaMemcpyDeviceToHost,
                                               stream.get()), "control copy");
             stream.synchronize();
@@ -356,7 +313,7 @@ int main(int argc, char** argv) {
 
     // ---- report ----
     printf("config                   : %s (%s backend, ns=%d)\n", config,
-           use_axisym ? "axisymmetric" : "toroidal-fft", p.ns);
+           stack.use_axisym ? "axisymmetric" : "toroidal-fft", p.ns);
     printf("gpu                      : %s (sm_%d%d)\n", prop.name,
            prop.major, prop.minor);
     printf("capture+instantiate_us   : base %.1f | refresh %.1f | zeroZ %.1f\n",
@@ -387,7 +344,7 @@ int main(int argc, char** argv) {
                 "  \"setparams_us_per_update\": %.2f,\n"
                 "  \"param_update_works\": %s\n"
                 "}\n",
-                config, use_axisym ? "axisymmetric" : "toroidal-fft", p.ns,
+                config, stack.use_axisym ? "axisymmetric" : "toroidal-fft", p.ns,
                 prop.name, prop.major, prop.minor,
                 cap_base_us, cap_refresh_us, cap_zeroz_us,
                 median(enc_us), median(lch_us), median(enc_us) - median(lch_us),
@@ -398,6 +355,5 @@ int main(int argc, char** argv) {
         printf("wrote benchmark JSON to %s\n", out_path);
     }
 
-    delete[] h_ctl;
     return 0;
 }

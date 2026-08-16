@@ -16,43 +16,30 @@
 // iteration's µs/iter to decide "select by measured shape".
 //
 // Usage: cumes_benchmark_graph_overhead [--kernels 24] [--reps 1000]
+//
+// Shared harness pieces (the clock helper and the --option scanner) live in
+// bench_common.cuh.
 #include <cstdio>
 #include <cstdlib>
-#include <algorithm>
-#include <chrono>
-#include <string>
 #include <vector>
 
 #include "cumes/runtime/cuda_graph.hpp"
 #include "cumes/runtime/stream.hpp"
-#include "cumes_test_support.cuh"
+
+#include "bench_common.cuh"
+
+using namespace bench_common;
 
 __global__ void emptyKernel() {}
-
-using Clock = std::chrono::steady_clock;
-
-static double median(std::vector<double> v) {
-    std::sort(v.begin(), v.end());
-    return v[v.size() / 2];
-}
 
 int main(int argc, char** argv) {
     int k = 24;     // kernels per "pass"
     int reps = 200; // timed launches
+    ArgParser args(argc, argv, "graph_overhead");
     for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        auto need = [&](const char* name) -> const char* {
-            if (a == std::string("--") + name) {
-                if (i + 1 >= argc) { fprintf(stderr, "graph_overhead: --%s needs a value\n", name); exit(2); }
-                return argv[++i];
-            }
-            std::string pfx = std::string("--") + name + "=";
-            if (a.compare(0, pfx.size(), pfx) == 0) return argv[i] + pfx.size();
-            return nullptr;
-        };
-        if (const char* v = need("kernels")) k = atoi(v);
-        else if (const char* v = need("reps")) reps = atoi(v);
-        else { fprintf(stderr, "graph_overhead: unknown option '%s'\n", a.c_str()); return 2; }
+        if (const char* v = args.need(i, "kernels")) k = atoi(v);
+        else if (const char* v = args.need(i, "reps")) reps = atoi(v);
+        else { fprintf(stderr, "graph_overhead: unknown option '%s'\n", argv[i]); return 2; }
     }
 
     cumes::Stream stream;
@@ -60,21 +47,19 @@ int main(int argc, char** argv) {
     // ---- one-time capture + instantiate cost ----
     double capture_us = 0.0;
     {
-        auto t0 = Clock::now();
+        double t0 = now_us();
         auto g = cumes::CudaGraph::capture(stream.get(), [&]() {
             for (int i = 0; i < k; ++i) emptyKernel<<<1, 32, 0, stream.get()>>>();
         });
-        auto t1 = Clock::now();
-        capture_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+        capture_us = now_us() - t0;
     }
 
     // ---- enqueue K kernels per pass, host wall time (no sync) ----
     std::vector<double> enqueue_us;
     for (int r = 0; r < reps; ++r) {
-        auto t0 = Clock::now();
+        double t0 = now_us();
         for (int i = 0; i < k; ++i) emptyKernel<<<1, 32, 0, stream.get()>>>();
-        auto t1 = Clock::now();
-        enqueue_us.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
+        enqueue_us.push_back(now_us() - t0);
     }
 
     // ---- launch one graph per pass, host wall time (no sync) ----
@@ -83,10 +68,9 @@ int main(int argc, char** argv) {
     });
     std::vector<double> launch_us;
     for (int r = 0; r < reps; ++r) {
-        auto t0 = Clock::now();
+        double t0 = now_us();
         g.launch(stream.get());
-        auto t1 = Clock::now();
-        launch_us.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
+        launch_us.push_back(now_us() - t0);
     }
     stream.synchronize();
 
