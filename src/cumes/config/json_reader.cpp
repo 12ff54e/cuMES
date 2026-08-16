@@ -1,7 +1,10 @@
 // json_reader.cpp — JSON-file-driven input (vmecpp indata schema).
 //
-// The only TU that defines ZQ_JSON_PARSER_IMPLEMENTATION (JsonParser.h is
-// C++20). Maps a vmecpp-style flat JSON document onto the dynamic ProblemSpec,
+// JsonParser.h is a header-only JSON library (C++20) gated on
+// ZQ_JSON_PARSER_IMPLEMENTATION; it is included here WITHOUT the macro — the
+// one implementation TU is src/json_parser.cpp (cumes_json), which this
+// library PUBLIC-links, so the json:: symbols ride along for every consumer.
+// Maps a vmecpp-style flat JSON document onto the dynamic ProblemSpec,
 // reproducing the legacy src/input_json.cpp semantics: every key is optional,
 // a wrong type is an error, keys for features cuMES does not implement are
 // rejected, and unknown keys warn (compatibility) or error (strict).
@@ -10,7 +13,6 @@
 // ValidationReport rather than thrown one-at-a-time, and the fixed capacities
 // (8 stages, 16 coefficients, 256 boundary entries, 32 axis entries) are gone
 // — the model is dynamic.
-#define ZQ_JSON_PARSER_IMPLEMENTATION
 #include "JsonParser.h"
 #include "cumes/config/json_reader.hpp"
 

@@ -52,44 +52,69 @@ foreach(mod IN LISTS CUMES_CUDA_MODULES)
 endforeach()
 
 # ---- host-only library targets ---------------------------------------------
+# Source lists are defined once here and reused verbatim by the sanitizer
+# twins below (CUMES_HOST_SANITIZERS): adding a TU to one of these libraries
+# must not require editing a second, divergent list (blueprint §10.5).
+set(CUMES_JSON_SOURCES src/json_parser.cpp)
+set(CUMES_CORE_SOURCES
+  src/cumes/core/grid_shape.cpp
+  src/cumes/core/mode_table.cpp)
+set(CUMES_CONFIG_JSON_SOURCES
+  src/cumes/config/validation_report.cpp
+  src/cumes/config/validated_problem.cpp
+  src/cumes/config/json_reader.cpp)
+set(CUMES_IO_HOST_SOURCES
+  src/cumes/io/output_spec.cpp
+  src/cumes/io/legacy_binary_v0.cpp
+  src/cumes/io/versioned_binary.cpp
+  src/cumes/io/checkpoint.cpp)
+
+# Define a host-only static library from a source list, with the common
+# include-dir/warnings setup. `asan_twin` additionally applies the ASan/UBSan
+# flags via cumes_apply_host_sanitizers (a no-op unless CUMES_HOST_SANITIZERS
+# is ON) — used by the *_asan twins below.
+function(cumes_add_host_library name asan_twin)
+  add_library(${name} STATIC ${ARGN})
+  target_include_directories(${name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  cumes_enable_warnings(${name})
+  if(asan_twin)
+    cumes_apply_host_sanitizers(${name})
+  endif()
+endfunction()
+
+# Host-only ASan test twin: links the _asan library directly (PRIVATE) so the
+# sanitized runtime stays FIRST in the link line (never propagated through
+# INTERFACE — see CumesSanitizers.cmake), then registers it under CTest label
+# `sanitizer;asan;<label>`.
+function(cumes_add_host_asan_test name source lib label)
+  add_executable(${name} ${source})
+  target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(${name} PRIVATE ${lib})
+  cumes_enable_warnings(${name})
+  cumes_apply_host_sanitizers(${name})
+  cumes_add_test(${name} "sanitizer;asan;${label}")
+endfunction()
 
 # JsonParser implementation (header-only library, compiled once), shared by the
 # host-model reader.
-add_library(cumes_json STATIC src/json_parser.cpp)
-target_include_directories(cumes_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-cumes_enable_warnings(cumes_json)
+cumes_add_host_library(cumes_json FALSE ${CUMES_JSON_SOURCES})
 
 # ---- Phase 2: validated host model (namespace cumes) -----------------------
 # Core host model: result/status, checked arithmetic, grid shape, mode table.
 # Header-mostly; the two non-trivial TU implementations live in src/cumes/core.
-add_library(cumes_core STATIC
-  src/cumes/core/grid_shape.cpp
-  src/cumes/core/mode_table.cpp)
-target_include_directories(cumes_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-cumes_enable_warnings(cumes_core)
+cumes_add_host_library(cumes_core FALSE ${CUMES_CORE_SOURCES})
 
 # Config model + JSON reader: dynamic ProblemSpec -> ValidatedProblem, the
 # legacy InputParams bridge, and the normalization emitter. Host-only C++.
-add_library(cumes_config_json STATIC
-  src/cumes/config/validation_report.cpp
-  src/cumes/config/validated_problem.cpp
-  src/cumes/config/json_reader.cpp)
-target_include_directories(cumes_config_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+cumes_add_host_library(cumes_config_json FALSE ${CUMES_CONFIG_JSON_SOURCES})
 target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
-cumes_enable_warnings(cumes_config_json)
 
 # Versioned + legacy host I/O: output spec, run report, snapshot, binary v0
 # (byte-exact) and v1 writers/readers, and the versioned checkpoint + legacy
 # init converter. Host-only C++ (no CUDA); NetCDF/HDF5 host adapters are
 # deferred to Phase 3.
-add_library(cumes_io_host STATIC
-  src/cumes/io/output_spec.cpp
-  src/cumes/io/legacy_binary_v0.cpp
-  src/cumes/io/versioned_binary.cpp
-  src/cumes/io/checkpoint.cpp)
-target_include_directories(cumes_io_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+cumes_add_host_library(cumes_io_host FALSE ${CUMES_IO_HOST_SOURCES})
 target_link_libraries(cumes_io_host PUBLIC cumes_core)
-cumes_enable_warnings(cumes_io_host)
 
 # Output writers: binary dispatcher + optional NetCDF/HDF5 backends (host-only
 # C++, using only the CUDA runtime API for D2H copies — no device code).
@@ -99,18 +124,35 @@ target_link_libraries(cumes_io PUBLIC CUDA::cudart CUDA::cufft)
 cumes_enable_warnings(cumes_io)
 cumes_link_output_backends(cumes_io)
 
+# cumes_io_host compiles output_spec.cpp SEPARATELY from the writer TUs, and
+# its output_format_available() preflight gates the .nc/.h5 dispatcher on these
+# defines. cumes_link_output_backends() above gives them to cumes_io only — a
+# stock build with the backends found must not silently report them
+# unavailable, so mirror the availability defines onto cumes_io_host (and its
+# sanitizer twin, same sources).
+function(cumes_apply_backend_avail_defines target)
+  if(CUMES_HAVE_NETCDF)
+    target_compile_definitions(${target} PUBLIC CUMES_HAVE_NETCDF)
+  endif()
+  if(CUMES_HAVE_HDF5)
+    target_compile_definitions(${target} PUBLIC CUMES_HAVE_HDF5)
+  endif()
+endfunction()
+cumes_apply_backend_avail_defines(cumes_io_host)
+
 # Header-only shared test helpers (checkCuda/cc). Tests include
 # cumes_test_support.cuh; this target only exposes its include dir.
 add_library(cumes_test_support INTERFACE)
 target_include_directories(cumes_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tests/support)
 
 # ---- CUDA runtime RAII (host-only CUDA runtime API) ------------------------
-# DeviceBuffer/PinnedBuffer/Stream/Event/DeviceContext and the centralized
-# check_cuda/check_cufft error boundary. No device code; links cudart+cufft.
-add_library(cumes_cuda_runtime STATIC src/cumes/runtime/device_context.cpp)
-target_include_directories(cumes_cuda_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(cumes_cuda_runtime PUBLIC CUDA::cudart CUDA::cufft)
-cumes_enable_warnings(cumes_cuda_runtime)
+# DeviceBuffer/PinnedBuffer/Stream/Event and the centralized check_cuda/
+# check_cufft error boundary — header-only since the DeviceContext removal
+# (2026-08-17), so the target carries no sources and is INTERFACE (propagates
+# the include dir + cudart/cufft links). No device code.
+add_library(cumes_cuda_runtime INTERFACE)
+target_include_directories(cumes_cuda_runtime INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(cumes_cuda_runtime INTERFACE CUDA::cudart CUDA::cufft)
 
 # ---- CUDA operator libraries (one scalar type each) ------------------------
 
@@ -253,66 +295,29 @@ cumes_add_test(test_controller       unit;solver)
 # Dedicated ASan+UBSan copies of the host-only libraries and their tests, so
 # the sanitized runtime is FIRST in each asan executable's library list and
 # never leaks into the CUDA targets (whose link order would break it). The
-# normal targets above are untouched.
+# normal targets above are untouched. Source lists are shared with the normal
+# targets (CUMES_*_SOURCES above); cumes_add_host_library/cumes_add_host_asan_test
+# apply the identical include-dir/warning setup plus the sanitizer flags.
 if(CUMES_HOST_SANITIZERS)
-  add_library(cumes_json_asan STATIC src/json_parser.cpp)
-  target_include_directories(cumes_json_asan PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  cumes_enable_warnings(cumes_json_asan)
-  cumes_apply_host_sanitizers(cumes_json_asan)
+  cumes_add_host_library(cumes_json_asan TRUE ${CUMES_JSON_SOURCES})
 
-  add_library(cumes_core_asan STATIC
-    src/cumes/core/grid_shape.cpp
-    src/cumes/core/mode_table.cpp)
-  target_include_directories(cumes_core_asan PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  cumes_enable_warnings(cumes_core_asan)
-  cumes_apply_host_sanitizers(cumes_core_asan)
+  cumes_add_host_library(cumes_core_asan TRUE ${CUMES_CORE_SOURCES})
 
-  add_library(cumes_config_json_asan STATIC
-    src/cumes/config/validation_report.cpp
-    src/cumes/config/validated_problem.cpp
-    src/cumes/config/json_reader.cpp)
-  target_include_directories(cumes_config_json_asan PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  cumes_add_host_library(cumes_config_json_asan TRUE ${CUMES_CONFIG_JSON_SOURCES})
   target_link_libraries(cumes_config_json_asan PUBLIC cumes_core_asan cumes_json_asan)
-  cumes_enable_warnings(cumes_config_json_asan)
-  cumes_apply_host_sanitizers(cumes_config_json_asan)
 
-  add_library(cumes_io_host_asan STATIC
-    src/cumes/io/output_spec.cpp
-    src/cumes/io/legacy_binary_v0.cpp
-    src/cumes/io/versioned_binary.cpp
-    src/cumes/io/checkpoint.cpp)
-  target_include_directories(cumes_io_host_asan PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  cumes_add_host_library(cumes_io_host_asan TRUE ${CUMES_IO_HOST_SOURCES})
   target_link_libraries(cumes_io_host_asan PUBLIC cumes_core_asan)
-  cumes_enable_warnings(cumes_io_host_asan)
-  cumes_apply_host_sanitizers(cumes_io_host_asan)
+  cumes_apply_backend_avail_defines(cumes_io_host_asan)
 
-  add_executable(asan_test_host_config tests/test_host_config.cpp)
-  target_include_directories(asan_test_host_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(asan_test_host_config PRIVATE cumes_config_json_asan)
-  cumes_enable_warnings(asan_test_host_config)
-  cumes_apply_host_sanitizers(asan_test_host_config)
-  cumes_add_test(asan_test_host_config    sanitizer;asan;config)
-
-  add_executable(asan_test_host_io tests/test_host_io.cpp)
-  target_include_directories(asan_test_host_io PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(asan_test_host_io PRIVATE cumes_io_host_asan)
-  cumes_enable_warnings(asan_test_host_io)
-  cumes_apply_host_sanitizers(asan_test_host_io)
-  cumes_add_test(asan_test_host_io        sanitizer;asan;io)
-
-  add_executable(asan_test_checkpoint tests/test_checkpoint.cpp)
-  target_include_directories(asan_test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(asan_test_checkpoint PRIVATE cumes_io_host_asan)
-  cumes_enable_warnings(asan_test_checkpoint)
-  cumes_apply_host_sanitizers(asan_test_checkpoint)
-  cumes_add_test(asan_test_checkpoint     sanitizer;asan;io)
-
-  add_executable(asan_test_controller tests/test_controller.cpp)
-  target_include_directories(asan_test_controller PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(asan_test_controller PRIVATE cumes_core_asan)
-  cumes_enable_warnings(asan_test_controller)
-  cumes_apply_host_sanitizers(asan_test_controller)
-  cumes_add_test(asan_test_controller     sanitizer;asan;solver)
+  cumes_add_host_asan_test(asan_test_host_config tests/test_host_config.cpp
+                           cumes_config_json_asan config)
+  cumes_add_host_asan_test(asan_test_host_io tests/test_host_io.cpp
+                           cumes_io_host_asan io)
+  cumes_add_host_asan_test(asan_test_checkpoint tests/test_checkpoint.cpp
+                           cumes_io_host_asan io)
+  cumes_add_host_asan_test(asan_test_controller tests/test_controller.cpp
+                           cumes_core_asan solver)
 endif()
 cumes_add_test(test_arena            unit;runtime)
 cumes_add_test(test_operator_views   unit;runtime)

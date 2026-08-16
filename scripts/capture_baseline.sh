@@ -86,8 +86,20 @@ done
 
 [ -n "$BUILD" ] || { echo "error: --build is required" >&2; exit 2; }
 [ -n "$OUT" ]   || { echo "error: --out is required" >&2; exit 2; }
-[ -x "$BUILD/cuMES" ] || { echo "error: $BUILD/cuMES not found" >&2; exit 2; }
+
+# Normalize the build/out paths to absolute ONCE here. The per-tree launch
+# subshells below `cd` away from the repo root, so every path used inside them
+# must already be absolute: the old "$OLDPWD/$build" concatenation mangled an
+# absolute --build into <repo-root>//<abs>/cuMES (exit 127 under set -e), and
+# a relative path would stop resolving correctly the moment the subshell moves.
+BUILD="$(cd "$BUILD" && pwd)" || { echo "error: --build dir not found: $BUILD" >&2; exit 2; }
+if [ -n "$FLOAT_BUILD" ]; then
+  FLOAT_BUILD="$(cd "$FLOAT_BUILD" && pwd)" || { echo "error: --float-build dir not found: $FLOAT_BUILD" >&2; exit 2; }
+fi
 mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
+
+[ -x "$BUILD/cuMES" ] || { echo "error: $BUILD/cuMES not found" >&2; exit 2; }
 
 run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
   local build="$1" prec="$2" input="$3" sub="$4"
@@ -95,10 +107,17 @@ run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
   rm -rf "$tree"
   mkdir -p "$tree"
   echo "== capturing $prec/$sub from $input =="
-  # inputs/*.json are read relative to the CWD; the tree IS the run scratch,
-  # so dump/ and cumes_state.bin land inside it.
+  # $build is already absolute (normalized at startup); resolve $input against
+  # the repo root (the script CWD) so the launches below work from inside the
+  # per-tree subshells. The tree IS the run scratch, so dump/ and
+  # cumes_state.bin land inside it.
+  local input_abs="$input"
+  case "$input_abs" in
+    /*) ;;
+    *) input_abs="$PWD/$input_abs" ;;
+  esac
   ( cd "$tree" \
-    && CUMES_DUMP=1 "$OLDPWD/$build/cuMES" "$OLDPWD/$input" cumes_state.bin \
+    && CUMES_DUMP=1 "$build/cuMES" "$input_abs" cumes_state.bin \
        > run.log 2>&1 )
   [ -f "$tree/cumes_state.bin" ] || { echo "error: $prec/$sub produced no state" >&2; exit 1; }
 
@@ -113,9 +132,9 @@ run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
   # suffixes so the on-disk schemas are frozen as part of the recipe. These are
   # separate files in the tree; compare_bitwise.py's --full mode includes them.
   if [ "$SCHEMA" = 1 ]; then
-    ( cd "$tree" && CUMES_DUMP=1 "$OLDPWD/$build/cuMES" "$OLDPWD/$input" state.nc \
+    ( cd "$tree" && CUMES_DUMP=1 "$build/cuMES" "$input_abs" state.nc \
        > run-schema-nc.log 2>&1 )
-    ( cd "$tree" && CUMES_DUMP=1 "$OLDPWD/$build/cuMES" "$OLDPWD/$input" state.h5 \
+    ( cd "$tree" && CUMES_DUMP=1 "$build/cuMES" "$input_abs" state.h5 \
        > run-schema-h5.log 2>&1 )
     echo "  schema: state.nc + state.h5 captured"
   fi
@@ -154,8 +173,30 @@ if [ -n "$FLOAT_BUILD" ]; then
   mkdir -p "$local_scratch"
   for cfg in ${CONFIGS//,/ }; do
     ft=${FLOAT_FTOL[$cfg]:-1.0e-6}
-    sed -E "s/\"(ftol_array)\"[^]]*\]/\"\1\" : [${ft}, ${ft}, ${ft}]/" \
-        "inputs/$cfg.json" > "$local_scratch/$cfg.json"
+    # JSON-aware ftol rewrite (the old line-based sed always emitted exactly
+    # three entries — breaking 2-/4-stage configs — and missed multi-line
+    # ftol_array documents, which then hit the float 1e-6 tolerance floor):
+    # size ftol_array to match ns_array and survive any JSON formatting.
+    cp "inputs/$cfg.json" "$local_scratch/$cfg.json"
+    python3 - "$local_scratch/$cfg.json" "$ft" <<'PY'
+import json
+import sys
+
+path, ftol = sys.argv[1], sys.argv[2]
+try:
+    ft = float(ftol)
+except ValueError:
+    sys.exit(f"error: invalid --float-ftol value {ftol!r}")
+with open(path, encoding="utf-8") as f:
+    doc = json.load(f)
+ns = doc.get("ns_array")
+if not ns:
+    sys.exit(f"error: {path} has no ns_array to size ftol_array against")
+doc["ftol_array"] = [ft] * len(ns)
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(doc, f, indent=2)
+    f.write("\n")
+PY
     run_capture "$FLOAT_BUILD" float "$local_scratch/$cfg.json" "$cfg"
   done
 fi
