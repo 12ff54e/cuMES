@@ -99,17 +99,20 @@ optional-backend matrix (none/netcdf/hdf5), float build clean.
 ## 4. Commits (this handover)
 
 ```
+0ef9e82 Phase 11 step 13.3 (part 4): delete ConstraintWorkspace + constraint free functions
+ba88d05 Phase 11 step 13.3 (part 3): delete PreconWorkspace + preconCreate/preconFree/preconApply
+c9da234 Phase 11 step 13.3 (part 2): delete MetricWorkspace + geometry/forces/precon free functions
 b483428 Phase 11 step 13.3 (part 1): delete RadialProfiles + profilesCreate/profilesFree
 22e71d0 Phase 11 step 13.2: InputParams -> ValidatedProblem (delete the legacy parser)
 a7c0030 Phase 11 step 13.1: GridParams<T> -> DeviceParams<T> (per-stage param pack)
 ```
 
-Step 13.3 has started. `RadialProfiles` is deleted: `cumes::Profiles` now owns
-its 11 radial arrays directly and exposes a typed `RadialProfileViews` bundle +
-`delta_s()`; the `profilesCreate`/`profilesFree` free functions and the
-`RadialProfiles` struct (vmec_types.h) are gone, and every consumer that took
-`const RadialProfiles<T>&` (the geometry/forces/precon free functions and their
-operators) now takes `RadialProfileViews`, deriving `delta_s = 1/(ns-1)` in
-place (bit-identical). The remaining five structs (`MetricWorkspace`,
-`PreconWorkspace`, `ConstraintWorkspace`, `FourierPlan`, `SpectralState`) and
-the `interpolateState` free function follow the same pattern.
+Step 13.3 is four-sixths done: `RadialProfiles`, `MetricWorkspace`,
+`PreconWorkspace`, and `ConstraintWorkspace` are deleted (each operator owns its
+buffers directly and exposes typed views/accessors; the matching
+`*Create`/`*Free` + `compute*`/`inverseDFT`/`forwardDFT`/`precon*`/
+`constraint*` free functions are gone). Remaining: `FourierPlan` (the cuFFT
+plans + transform scratch, owned by `ToroidalFftOperator`), `SpectralState`
+(`SpectralStorage::legacy_view()`), and the `interpolateState` free function
+(`Prolongation`), followed by the remaining kernel tests and the CMake/docs
+close-out. All follow the same established pattern.

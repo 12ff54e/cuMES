@@ -111,13 +111,14 @@ Retired in Phase 10 (dead code only — both configs re-verified bit-identical):
 
 Still pending (blocked on consumers, blueprint §11 Phase 10 exit gate):
 
-- the legacy `include/*.cuh` kernel structs (`FourierPlan`, `MetricWorkspace`,
-  `RadialProfiles`, `PreconWorkspace`, `ConstraintWorkspace`, `SpectralState`)
+- the legacy `include/*.cuh` kernel structs `FourierPlan` and `SpectralState`
   are still the production implementation and cannot be deleted until the
   `cumes` operator classes fully replace them. Migration step 13.1/13.2 have
   landed (`GridParams` is now `DeviceParams<T>` in
   `include/cumes/config/device_params.hpp`; `InputParams` is deleted — the
-  solver consumes `ValidatedProblem` directly).
+  solver consumes `ValidatedProblem` directly), and step 13.3 parts 1–4 have
+  deleted `RadialProfiles`, `MetricWorkspace`, `PreconWorkspace`, and
+  `ConstraintWorkspace` (each operator now owns its buffers directly).
 
 Emitted after Phase 10: `configs/schema-v1.json` freezes the `cumes-config-v1`
 normalized-config schema (blueprint §6.1, `ValidatedProblem::normalize_to_json`,
