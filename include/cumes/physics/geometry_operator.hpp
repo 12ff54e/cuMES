@@ -22,7 +22,7 @@ class DeviceArena;
 template <class T>
 class GeometryOperator {
  public:
-  GeometryOperator(const GridParams<T>& p, DeviceArena* arena)
+  GeometryOperator(const DeviceParams<T>& p, DeviceArena* arena)
       : mw_(metricCreate(p, arena)) {}
   ~GeometryOperator() { metricFree(mw_); }
 
@@ -36,14 +36,14 @@ class GeometryOperator {
   // ncurr closure + full-grid iota/chip update) is the separate
   // MagneticFieldOperator, ordered after this kernel (and the Jacobian-status
   // chain) on the same stream. Reads the parity-split geometry from `rs`.
-  void enqueue(const RealSpaceStorage<T>& rs, const GridParams<T>& p,
+  void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                const RadialProfiles<T>& rp, cudaStream_t stream);
 
   // Oriented-Jacobian statistics into a caller-owned 4-element device scratch.
-  void jacobian_stats(const GridParams<T>& p, T* d_stats, cudaStream_t stream) const;
+  void jacobian_stats(const DeviceParams<T>& p, T* d_stats, cudaStream_t stream) const;
 
   // Force-norm partial sums (dVdsH + psum) for the residual normalization.
-  void force_norm_partials(const GridParams<T>& p, T* dVdsH, T* psum,
+  void force_norm_partials(const DeviceParams<T>& p, T* dVdsH, T* psum,
                            cudaStream_t stream) const;
 
   MetricWorkspace<T>& workspace() { return mw_; }

@@ -76,11 +76,11 @@ static void checkNear(double gpu, double ref, double tol,
 }
 
 // ---------------------------------------------------------------------------
-// GridParams / InputParams construction (self-contained, no JSON/files).
+// DeviceParams / InputParams construction (self-contained, no JSON/files).
 // ---------------------------------------------------------------------------
 template <typename T>
-static GridParams<T> makeParams(int ns, int mpol, int ntor, int ntheta, int nzeta) {
-    GridParams<T> p;
+static DeviceParams<T> makeParams(int ns, int mpol, int ntor, int ntheta, int nzeta) {
+    DeviceParams<T> p;
     p.ns = ns; p.mnmax = mpol * (ntor + 1);
     p.ntheta = ntheta; p.nzeta = nzeta; p.nfp = 1;
     p.nZnT = ntheta * nzeta; p.mpol = mpol; p.ntor = ntor;
@@ -316,7 +316,7 @@ static int testDealias(int ntheta) {
     int lf = g_failures;
     printf("  de-alias bandpass theta coverage: ns=11 mpol=6 ntor=0 nzeta=1 ntheta=%d ... ", ntheta);
     const int ns = 11, mpol = 6, ntor = 0, nzeta = 1;
-    GridParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
+    DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     InputParams ip = solovevInput();
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);
@@ -424,7 +424,7 @@ static int testPcr(int ns) {
     int lf = g_failures;
     printf("  PCR solve row coverage: mpol=4 ntor=0 ntheta=18 nzeta=1 ns=%d ... ", ns);
     const int mpol = 4, ntor = 0, ntheta = 18, nzeta = 1;
-    GridParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
+    DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     InputParams ip = solovevInput();
     RadialProfiles<T> rp = profilesCreate(p, ip);
     FourierPlan<T> fp = fourierCreate(p);

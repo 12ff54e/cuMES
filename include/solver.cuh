@@ -44,7 +44,7 @@ struct SolverResult {
 // two backends are Class B ULP-equivalent (test_axisym_backend); selecting the
 // axisymmetric backend for ntor=0/nzeta=1 is a trajectory re-freeze.
 template <typename T>
-SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
+SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const DeviceParams<T>& p,
                           const cumes::Profiles<T>& profiles,
                           cumes::ToroidalFftOperator<T>& transform,
                           cumes::RealSpaceStorage<T>& rs,

@@ -13,10 +13,10 @@
 // output status into the CLI exit code, so a run can never report success
 // without a durable result.
 template <typename T>
-bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveBinary(const SpectralState<T>& st, const DeviceParams<T>& p,
                       const char* filename);
 template <typename T>
-void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
+void outputPrint(const SpectralState<T>& st, const DeviceParams<T>& p, int niter,
                  bool converged, T fsqr, T fsqz, T fsql);
 
 #ifdef CUMES_HAVE_NETCDF
@@ -24,7 +24,7 @@ void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
 // a netCDF classic-3 file (NC_CLOBBER). Declared under the CMake define;
 // the definition + explicit instantiation live in src/output_netcdf.cpp.
 template <typename T>
-bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
                       const InputParams& ip, const SolverResult<T>& result,
                       const char* path, const char* input_file);
 #endif
@@ -33,7 +33,7 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
 // Same content as a serial HDF5 file (scalars as root-group attributes).
 // Definition + explicit instantiation live in src/output_hdf5.cpp.
 template <typename T>
-bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
                     const InputParams& ip, const SolverResult<T>& result,
                     const char* path, const char* input_file);
 #endif
@@ -44,7 +44,7 @@ bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
 // false (the caller should have preflighted via outputFormatAvailable before
 // running the solve). Always compiled (output.cpp).
 template <typename T>
-bool outputSave(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
                 const InputParams& ip, const SolverResult<T>& result,
                 const char* path, const char* input_file);
 

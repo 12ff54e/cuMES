@@ -12,7 +12,7 @@
 //
 // Strangler-fig transitional form: it still references the legacy workspace
 // structs (MetricWorkspace/RadialProfiles/…) as non-owning aliases and the
-// legacy GridParams; those become DeviceParams + typed views once the legacy
+// legacy DeviceParams; those become DeviceParams + typed views once the legacy
 // structs are deleted (migration step 13). The hot-loop dump machinery is
 // carried inside enqueue so it stays interleaved at the same observation points.
 #pragma once
@@ -42,7 +42,7 @@ struct EvaluationSchedule {
 template <class T>
 class EquilibriumOperator {
  public:
-  EquilibriumOperator(const GridParams<T>& p, SpectralStorage<T>& storage,
+  EquilibriumOperator(const DeviceParams<T>& p, SpectralStorage<T>& storage,
                       const Profiles<T>& profiles, ToroidalFftOperator<T>& transform,
                       RealSpaceStorage<T>& rs, GeometryOperator<T>& geometry,
                       DeviceArena* arena, SpectralOperator<T>* op);
@@ -86,7 +86,7 @@ class EquilibriumOperator {
   }
 
  private:
-  const GridParams<T>& p_;
+  const DeviceParams<T>& p_;
   SpectralStorage<T>& storage_;
   const Profiles<T>& profiles_;
   ToroidalFftOperator<T>& transform_;

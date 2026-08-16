@@ -46,7 +46,7 @@ struct MetricWorkspace {
 // uses one cudaMalloc per array (the legacy path, unchanged); with an arena it
 // carves aligned named subspans from that single stage allocation.
 template <typename T>
-MetricWorkspace<T> metricCreate(const GridParams<T>& p,
+MetricWorkspace<T> metricCreate(const DeviceParams<T>& p,
                                 cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void metricFree(MetricWorkspace<T>& mw);
@@ -59,7 +59,7 @@ void metricFree(MetricWorkspace<T>& mw);
 // full-grid values are computed once on the first pass and the per-iteration
 // relaunch is skipped (Phase 6A fixed-iota update skip).
 template <typename T>
-void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                      const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                      cudaStream_t stream = 0, bool update_iota_chi = true);
 
@@ -74,11 +74,11 @@ void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& 
 // MagneticFieldOperator (field) so the field is ordered after the
 // Jacobian-status chain.
 template <typename T>
-void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                          const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                          cudaStream_t stream = 0);
 template <typename T>
-void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                           const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                           cudaStream_t stream = 0, bool update_iota_chi = true);
 
@@ -87,7 +87,7 @@ void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const GridParams
 // per-surface sums (guu*r12^2, bsubu^2+bsubv^2, gsqrt*|B|^2/2, gsqrt) to
 // psum (4 * (ns-1)). dVdsH: (ns-1), psum: 4*(ns-1), both device arrays.
 template <typename T>
-void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& mw,
+void computeForceNormPartials(const DeviceParams<T>& p, const MetricWorkspace<T>& mw,
                               T* dVdsH, T* psum, cudaStream_t stream = 0);
 
 // Jacobian validity stats (vmecpp's bad-jacobian detection): writes to
@@ -100,5 +100,5 @@ void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& 
 // NOTE: |√g| -> 0 at the innermost half-grid (axis singularity) is expected;
 // the solver's threshold is relative to the run's own |√g| scale.
 template <typename T>
-void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
+void computeJacobianStats(const DeviceParams<T>& p, const MetricWorkspace<T>& mw,
                           T* d_stats, cudaStream_t stream = 0);

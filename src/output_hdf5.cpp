@@ -40,7 +40,7 @@ herr_t putAttr(hid_t loc, const char* name, hid_t dtype, const void* val) {
 }  // namespace
 
 template <typename T>
-bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
                     const InputParams& ip, const SolverResult<T>& result,
                     const char* path, const char* input_file) {
     // Atomic publication: create at a same-directory temp path, then rename()
@@ -201,5 +201,5 @@ bool outputSaveHdf5(const SpectralState<T>& st, const GridParams<T>& p,
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template bool outputSaveHdf5<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template bool outputSaveHdf5<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveHdf5<double>(const SpectralState<double>&, const DeviceParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
+template bool outputSaveHdf5<float>(const SpectralState<float>&, const DeviceParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);

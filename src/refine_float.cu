@@ -2,4 +2,4 @@
 
 // Explicit instantiation for float (cumes_cuda_float).
 template cumes::SpectralStorage<float> interpolateState<float>(
-    const GridParams<float>&, const cumes::SpectralStorage<float>&, const GridParams<float>&, cudaStream_t);
+    const DeviceParams<float>&, const cumes::SpectralStorage<float>&, const DeviceParams<float>&, cudaStream_t);

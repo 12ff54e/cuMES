@@ -89,9 +89,9 @@ __global__ void interpolateStateKernel(
 }
 
 template <typename T>
-cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
+cumes::SpectralStorage<T> interpolateState(const DeviceParams<T>& p_new,
                                            const cumes::SpectralStorage<T>& st_old,
-                                           const GridParams<T>& p_old,
+                                           const DeviceParams<T>& p_old,
                                            cudaStream_t stream) {
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         fprintf(stderr, "interpolateState: need ns_new > ns_old >= 3 and equal "

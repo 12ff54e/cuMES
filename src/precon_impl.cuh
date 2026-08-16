@@ -42,7 +42,7 @@ __device__ void* dynSharedBase() {
 // Allocate
 // ---------------------------------------------------------------------------
 template <typename T>
-PreconWorkspace<T> preconCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
+PreconWorkspace<T> preconCreate(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
     PreconWorkspace<T> pw{};
     int nH = p.ns - 1, nF = p.ns;
 
@@ -842,7 +842,7 @@ __global__ void preconBoundaryKernel(
 // ---------------------------------------------------------------------------
 template <typename T>
 void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                   const GridParams<T>& p, const RadialProfiles<T>& rp,
+                   const DeviceParams<T>& p, const RadialProfiles<T>& rp,
                    const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
                    cudaStream_t stream) {
     int nH = p.ns - 1, nF = p.ns;
@@ -985,7 +985,7 @@ void cumes::ThomasBackend<T>::enqueue_solve(
 
 template <typename T>
 void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
-                 const GridParams<T>& p, const PreconWorkspace<T>& pw,
+                 const DeviceParams<T>& p, const PreconWorkspace<T>& pw,
                  const int* xm, const int* xn, cudaStream_t stream) {
     (void)xm; (void)xn;  // legacy signature; the solve no longer needs m/n tables
     // Phase 8: route the tridiagonal solve through the backend-neutral
@@ -1061,7 +1061,7 @@ __global__ void m1PreconScaleKernel(cumes::SpectralView<T, cumes::DecomposedResi
 template <typename T>
 void cumes::Preconditioner<T>::enqueue_compute(const cumes::RealSpaceStorage<T>& rs,
                                                const int* xm, const int* xn,
-                                               const GridParams<T>& p,
+                                               const DeviceParams<T>& p,
                                                const RadialProfiles<T>& rp,
                                                const MetricWorkspace<T>& mw,
                                                cudaStream_t stream) {
@@ -1071,14 +1071,14 @@ void cumes::Preconditioner<T>::enqueue_compute(const cumes::RealSpaceStorage<T>&
 template <typename T>
 void cumes::Preconditioner<T>::enqueue_apply(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
-    const GridParams<T>& p, const int* xm, const int* xn, cudaStream_t stream) const {
+    const DeviceParams<T>& p, const int* xm, const int* xn, cudaStream_t stream) const {
     preconApply(residual, p, pw_, xm, xn, stream);
 }
 
 template <typename T>
 void cumes::Preconditioner<T>::enqueue_m1_scale(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
-    const GridParams<T>& p, cudaStream_t stream) const {
+    const DeviceParams<T>& p, cudaStream_t stream) const {
     dim3 b1(256), g1((p.ns + 255) / 256);
     m1PreconScaleKernel<T><<<g1, b1, 0, stream>>>(
         residual, pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd,

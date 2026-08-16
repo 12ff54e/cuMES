@@ -29,7 +29,7 @@ class MagneticFieldOperator {
   // full-grid iota/chip on the first pass (ncurr=0) or every pass (ncurr=1).
   // Reads the parity-split λ derivatives from `rs`, the base geometry from
   // `mw`, and the radial profiles from `rp`.
-  void enqueue(const RealSpaceStorage<T>& rs, const GridParams<T>& p,
+  void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                cudaStream_t stream, bool update_iota_chi) const {
     computeMagneticField(rs, p, rp, mw, stream, update_iota_chi);

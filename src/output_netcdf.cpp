@@ -24,7 +24,7 @@
 #include "cumes/runtime/cuda_status.hpp"
 
 template <typename T>
-bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
                       const InputParams& ip, const SolverResult<T>& result,
                       const char* path, const char* input_file) {
     // Atomic publication: create the file at a same-directory temp path, then
@@ -216,5 +216,5 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const GridParams<T>& p,
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template bool outputSaveNetcdf<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template bool outputSaveNetcdf<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveNetcdf<double>(const SpectralState<double>&, const DeviceParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
+template bool outputSaveNetcdf<float>(const SpectralState<float>&, const DeviceParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);

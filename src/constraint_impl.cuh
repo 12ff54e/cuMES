@@ -57,7 +57,7 @@ static int computeKTile(int blkX, int nzeta) {
 // Allocate/free
 // ---------------------------------------------------------------------------
 template <typename T>
-ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
+ConstraintWorkspace<T> constraintCreate(const DeviceParams<T>& p,
                                         cumes::DeviceArena* arena) {
     using Complex = typename FftTraits<T>::Complex;
     ConstraintWorkspace<T> cw{};
@@ -486,7 +486,7 @@ __global__ void tconLcfsHalfKernel(T* __restrict__ tcon, int ns) {
 // the reinit pass after every restart.
 // ---------------------------------------------------------------------------
 template <typename T>
-void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
+void constraintResetRzCon0(const DeviceParams<T>& p, ConstraintWorkspace<T>& cw,
                            const T* d_sqrtS_F, cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
@@ -506,7 +506,7 @@ void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
 // replaces exactly this step).
 // ---------------------------------------------------------------------------
 template <typename T>
-void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
+void constraintDealiasBandpass(const DeviceParams<T>& p, const FourierPlan<T>& fp,
                                const T* gConEff, const T* tcon, const T* faccon,
                                T* gCon, cudaStream_t stream) {
     {   int kTileA = computeKTile(8, p.nzeta);
@@ -544,7 +544,7 @@ void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
 // Steps 0 (tcon refresh) + 1 (effective constraint force gConEff) — shared by
 // the generic and axisymmetric backends; only the step-2 bandpass differs.
 template <typename T>
-static void constraintComputeHead(const GridParams<T>& p,
+static void constraintComputeHead(const DeviceParams<T>& p,
                                   const cumes::RealSpaceStorage<T>& rs,
                                   const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
                                   const T* d_sqrtS_F, bool precon_updated,
@@ -560,7 +560,7 @@ static void constraintComputeHead(const GridParams<T>& p,
     if (precon_updated) {
         // Pure constant: compute in double, convert once to T. The vmecpp
         // indata tcon0 scales the whole profile (the parsed value reaches
-        // the kernel through GridParams::tcon0; default 1.0 keeps the
+        // the kernel through DeviceParams::tcon0; default 1.0 keeps the
         // shipped configs unchanged).
         T tcon_multiplier = p.tcon0 * T(1.0 * (1.0 + p.ns * (1.0/60.0 + p.ns/(200.0*120.0))) / 16.0);
         int gridF = (p.ns + 255) / 256;
@@ -587,7 +587,7 @@ static void constraintComputeHead(const GridParams<T>& p,
 
 // Step 3: Add constraint force to brmn/bzmn + write frcon/fzcon outputs.
 template <typename T>
-static void constraintComputeTail(const GridParams<T>& p,
+static void constraintComputeTail(const DeviceParams<T>& p,
                                   const cumes::RealSpaceStorage<T>& rs,
                                   ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
                                   cudaStream_t stream) {
@@ -604,7 +604,7 @@ static void constraintComputeTail(const GridParams<T>& p,
 }
 
 template <typename T>
-void constraintCompute(const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
+void constraintCompute(const DeviceParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
                        const FourierPlan<T>& fp, const PreconWorkspace<T>& pw,
                        ConstraintWorkspace<T>& cw, const T* d_sqrtS_F, bool precon_updated,
                        cudaStream_t stream) {
@@ -628,7 +628,7 @@ void constraintCompute(const GridParams<T>& p, const cumes::RealSpaceStorage<T>&
 // ---------------------------------------------------------------------------
 template <typename T>
 void cumes::ConstraintOperator<T>::enqueue(
-    const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
+    const DeviceParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
     const PreconWorkspace<T>& pw, const T* sqrtS_F, bool precon_updated,
     cumes::SpectralOperator<T>* op, cudaStream_t stream) {
     // Steps 0/1 (tcon refresh + gConEff) are shared by both backends; step 2
@@ -645,7 +645,7 @@ void cumes::ConstraintOperator<T>::enqueue(
 }
 
 template <typename T>
-void cumes::ConstraintOperator<T>::reset_reference(const GridParams<T>& p,
+void cumes::ConstraintOperator<T>::reset_reference(const DeviceParams<T>& p,
                                                    const T* sqrtS_F,
                                                    cudaStream_t stream) {
     constraintResetRzCon0(p, cw_, sqrtS_F, stream);

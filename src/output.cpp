@@ -87,7 +87,7 @@ const char* linkedOutputSuffixes() {
 // partial file) when the file cannot be opened, written, or closed — the
 // caller reports the run's output status in the CLI exit code.
 template <typename T>
-bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSaveBinary(const SpectralState<T>& st, const DeviceParams<T>& p,
                       const char* filename) {
     const std::string tmp = tempPathFor(filename);
     FILE* fp = fopen(tmp.c_str(), "wb");
@@ -134,7 +134,7 @@ bool outputSaveBinary(const SpectralState<T>& st, const GridParams<T>& p,
 }
 
 template <typename T>
-void outputPrint(const SpectralState<T>& st, const GridParams<T>& p, int niter,
+void outputPrint(const SpectralState<T>& st, const DeviceParams<T>& p, int niter,
                  bool converged, T fsqr, T fsqz, T fsql) {
     // Pull boundary-surface spectral coefficients back to host for inspection.
     // Column-major layout: index(surface=j, mode=m) = j + m * ns.
@@ -256,7 +256,7 @@ bool outputFormatAvailable(const char* path) {
 // preflights via outputFormatAvailable before the solve, so this is only a
 // belt-and-suspenders path) — never exit()s, so normal cleanup runs.
 template <typename T>
-bool outputSave(const SpectralState<T>& st, const GridParams<T>& p,
+bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
                 const InputParams& ip, const SolverResult<T>& result,
                 const char* path, const char* input_file) {
     // ip/result/input_file are only read by the backend writers; silence
@@ -291,9 +291,9 @@ bool outputSave(const SpectralState<T>& st, const GridParams<T>& p,
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template bool outputSaveBinary<double>(const SpectralState<double>&, const GridParams<double>&, const char*);
-template bool outputSaveBinary<float>(const SpectralState<float>&, const GridParams<float>&, const char*);
-template void outputPrint<double>(const SpectralState<double>&, const GridParams<double>&, int, bool, double, double, double);
-template void outputPrint<float>(const SpectralState<float>&, const GridParams<float>&, int, bool, float, float, float);
-template bool outputSave<double>(const SpectralState<double>&, const GridParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template bool outputSave<float>(const SpectralState<float>&, const GridParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveBinary<double>(const SpectralState<double>&, const DeviceParams<double>&, const char*);
+template bool outputSaveBinary<float>(const SpectralState<float>&, const DeviceParams<float>&, const char*);
+template void outputPrint<double>(const SpectralState<double>&, const DeviceParams<double>&, int, bool, double, double, double);
+template void outputPrint<float>(const SpectralState<float>&, const DeviceParams<float>&, int, bool, float, float, float);
+template bool outputSave<double>(const SpectralState<double>&, const DeviceParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
+template bool outputSave<float>(const SpectralState<float>&, const DeviceParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);

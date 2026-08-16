@@ -84,7 +84,7 @@ int main() {
 
     // ---- gate 2: cuFFT inverse transform, graph == stream ----
     {
-        GridParams<double> p;
+        DeviceParams<double> p;
         p.ns = 5; p.mnmax = 4; p.mpol = 4; p.ntor = 0;
         p.ntheta = 18; p.nzeta = 1; p.nfp = 1; p.nZnT = 18;
         p.ncurr = 0; p.delt = 0.9; p.ftol = 1e-14; p.max_iter = 5;

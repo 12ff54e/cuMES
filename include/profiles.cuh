@@ -12,7 +12,7 @@ namespace cumes { class DeviceArena; }
 // With `arena == nullptr` each radial array is its own cudaMalloc (legacy);
 // with an arena the 11 arrays are named subspans of one stage allocation.
 template <typename T>
-RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip,
+RadialProfiles<T> profilesCreate(DeviceParams<T>& p, const InputParams& ip,
                                  cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void profilesFree(RadialProfiles<T>& rp);

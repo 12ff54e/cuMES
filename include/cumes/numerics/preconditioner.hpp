@@ -27,7 +27,7 @@ namespace cumes {
 template <class T>
 class Preconditioner {
  public:
-  Preconditioner(const GridParams<T>& p, DeviceArena* arena)
+  Preconditioner(const DeviceParams<T>& p, DeviceArena* arena)
       : pw_(preconCreate(p, arena)) {}
   ~Preconditioner() { preconFree(pw_); }
 
@@ -38,19 +38,19 @@ class Preconditioner {
 
   // Refresh the matrix coefficients from the current geometry/field.
   void enqueue_compute(const RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                       const GridParams<T>& p, const RadialProfiles<T>& rp,
+                       const DeviceParams<T>& p, const RadialProfiles<T>& rp,
                        const MetricWorkspace<T>& mw, cudaStream_t stream);
 
   // Apply the preconditioner in place to the decomposed residual.
   void enqueue_apply(SpectralView<T, DecomposedResidualDomain> residual,
-                     const GridParams<T>& p, const int* xm, const int* xn,
+                     const DeviceParams<T>& p, const int* xm, const int* xn,
                      cudaStream_t stream) const;
 
   // vmecpp applyM1Preconditioner: scale the m=1 frss/fzcs pair by the
   // odd-parity diagonal elements (ard/brd/azd/bzd) before the RZ solve. Runs
   // after the invariant residuals, before enqueue_apply.
   void enqueue_m1_scale(SpectralView<T, DecomposedResidualDomain> residual,
-                        const GridParams<T>& p, cudaStream_t stream) const;
+                        const DeviceParams<T>& p, cudaStream_t stream) const;
 
   const PreconWorkspace<T>& workspace() const { return pw_; }
 

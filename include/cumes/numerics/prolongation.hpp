@@ -22,9 +22,9 @@ class Prolongation {
  public:
   // state_old (coarse) -> state_new (fine), both physical coefficients. The new
   // state's slabs are allocated here (velocities zeroed) and returned.
-  SpectralStorage<T> enqueue(const GridParams<T>& p_new,
+  SpectralStorage<T> enqueue(const DeviceParams<T>& p_new,
                              const SpectralStorage<T>& state_old,
-                             const GridParams<T>& p_old,
+                             const DeviceParams<T>& p_old,
                              cudaStream_t stream) const {
     return interpolateState(p_new, state_old, p_old, stream);
   }

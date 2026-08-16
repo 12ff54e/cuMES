@@ -37,7 +37,7 @@ static int failures = 0;
 
 
 int main() {
-    GridParams<double> p;
+    DeviceParams<double> p;
     p.ns = 17; p.mnmax = 6*(2+1); p.ntheta = 32; p.nzeta = 64;
     p.nfp = 1; p.nZnT = 2048; p.mpol = 6; p.ntor = 2;
     p.ncurr = 0; p.delt = 1.0; p.ftol = 1e-14; p.max_iter = 10;

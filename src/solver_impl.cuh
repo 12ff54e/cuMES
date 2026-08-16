@@ -121,7 +121,7 @@ __global__ void forceNormReduceKernel(
 // control fence. Called on the preconditioner-refresh cadence.
 template <typename T>
 static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
-                              const int* xm, const int* xn, const GridParams<T>& p,
+                              const int* xm, const int* xn, const DeviceParams<T>& p,
                               const cumes::RadialProfileViews<T>& rpv,
                               const MetricWorkspace<T>& mw,
                               T* d_psum, T* d_out, cudaStream_t stream) {
@@ -139,7 +139,7 @@ static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateD
 // reduce the six device scalars hc[0..5] = {sRZ, sL, sMag, eTherm, vol, rzNorm}
 // into fNormRZ/fNormL/fNorm1, and dump the force-norm record.
 template <typename T>
-static void finalizeForceNorms(const T* hc, const GridParams<T>& p,
+static void finalizeForceNorms(const T* hc, const DeviceParams<T>& p,
                                T delta_s, int iter2,
                                T& fNormRZ, T& fNormL, T& fNorm1) {
     T sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3], vol = hc[4], h_rz = hc[5];
@@ -501,7 +501,7 @@ static void dumpDeviceArray(const char* filename, const T* d_data, size_t nelem)
 // ---------------------------------------------------------------------------
 template <typename T>
 cumes::EquilibriumOperator<T>::EquilibriumOperator(
-    const GridParams<T>& p, cumes::SpectralStorage<T>& storage,
+    const DeviceParams<T>& p, cumes::SpectralStorage<T>& storage,
     const cumes::Profiles<T>& profiles, cumes::ToroidalFftOperator<T>& transform,
     cumes::RealSpaceStorage<T>& rs, cumes::GeometryOperator<T>& geometry,
     cumes::DeviceArena* arena, cumes::SpectralOperator<T>* op)
@@ -564,7 +564,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
                                            cudaStream_t stream) {
     // Local aliases mirror the pre-step-12 solverRun variable names so the DAG
     // body below is a verbatim move (same arithmetic, same order).
-    const GridParams<T>& p = p_;
+    const DeviceParams<T>& p = p_;
     cumes::SpectralStorage<T>& storage = storage_;
     const cumes::Profiles<T>& profiles = profiles_;
     cumes::ToroidalFftOperator<T>& transform = transform_;
@@ -1030,7 +1030,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
 }
 
 template <typename T>
-SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T>& p,
+SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
                           const cumes::Profiles<T>& profiles,
                           cumes::ToroidalFftOperator<T>& transform,
                           cumes::RealSpaceStorage<T>& rs,

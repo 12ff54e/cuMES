@@ -17,35 +17,7 @@
 // cosnvn=+n*nfp*cos(nζ)); bsupu = (lamscale*lv + chip')/√g.
 #pragma once
 
-// Self-contained: M_PI (used by GridParams::kMu0 below) is a POSIX/GNU
-// extension, not ISO C++. Host-only .cpp TUs compiled by g++ (rather than
-// nvcc, which pre-defines it) need it to be visible here, before any other
-// header has a chance to include <cmath>. The fallback is glibc's exact
-// double value, so kMu0 is bit-identical on every toolchain.
-#include <cmath>
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-// The computation scalar type, templated on T throughout; the app-level
-// compile-time switch between double and float is `Real` (see below).
-template <typename T>
-struct GridParams {
-    int ns; int mnmax; int ntheta; int nzeta;
-    int nfp; int nZnT; int mpol; int ntor;
-    // Runtime input knobs (host-side; a JSON parser will fill them later).
-    int ncurr;              // 0: prescribed iota, 1: prescribed current
-    T delt = T(0.9);        // initial time step
-    T ftol = T(1e-16);      // convergence tolerance (invariant residuals)
-    int max_iter = 1000;
-    T tcon0 = T(1.0);       // constraint-force multiplier (vmecpp indata
-                            // tcon0; scales the tcon profile in constraint.cu)
-    T lamscale = T(0.0);    // sqrt(deltaS * sum phipH^2), vmecpp constants_,
-                            // set by profilesCreate
-    static constexpr int kSignJacobian = -1;
-    static constexpr T kMu0 = 4.0 * M_PI * 1.0e-7;  // exact, = vmecpp MU_0
-};
-
+#include "cumes/config/device_params.hpp"  // DeviceParams<T> (the per-stage pack)
 
 template <typename T>
 struct RadialProfiles {

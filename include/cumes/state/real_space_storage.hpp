@@ -45,7 +45,7 @@ struct RealSpaceStorage {
     bool arena_backed = false;
 
     // Typed view bundles over the owned arrays (bit-identical indexing).
-    GeometryParityViews<T> geometry_views(const GridParams<T>& p) const {
+    GeometryParityViews<T> geometry_views(const DeviceParams<T>& p) const {
         auto f = [&](T* d) { return RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
         GeometryParityViews<T> v;
         v.r_e = f(d_r_e); v.z_e = f(d_z_e); v.l_e = f(d_l_e);
@@ -57,7 +57,7 @@ struct RealSpaceStorage {
         return v;
     }
 
-    ForceParityViews<T> force_views(const GridParams<T>& p) const {
+    ForceParityViews<T> force_views(const DeviceParams<T>& p) const {
         auto f = [&](T* d) { return RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
         ForceParityViews<T> v;
         v.armn_e = f(d_armn_e); v.armn_o = f(d_armn_o);

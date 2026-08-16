@@ -358,7 +358,7 @@ InputParams initInputParamsFromJson(const char* json_path) {
 
         // ---- finalize ----
         applyResolutionDefaults(p);
-        // Stage-0 invariant: GridParams and the tests read p.ns/max_iter/ftol
+        // Stage-0 invariant: DeviceParams and the tests read p.ns/max_iter/ftol
         // directly; they must equal the stage-0 multigrid entries.
         p.ns = p.ns_array[0];
         p.max_iter = p.niter_array[0];

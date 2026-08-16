@@ -46,7 +46,7 @@ struct ConstraintWorkspace {
 };
 
 template <typename T>
-ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
+ConstraintWorkspace<T> constraintCreate(const DeviceParams<T>& p,
                                         cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void constraintFree(ConstraintWorkspace<T>& cw);
@@ -59,7 +59,7 @@ void constraintFree(ConstraintWorkspace<T>& cw);
 // §5.1/§6.8); only the constraint data fields (gConEff/tcon/faccon/gCon) are
 // borrowed by pointer here.
 template <typename T>
-void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
+void constraintDealiasBandpass(const DeviceParams<T>& p, const FourierPlan<T>& fp,
                                const T* gConEff, const T* tcon, const T* faccon,
                                T* gCon, cudaStream_t stream = 0);
 
@@ -67,7 +67,7 @@ void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
 // rzConIntoVolume): rCon0 = rCon_LCFS * s. Call with the current rCon/zCon
 // on the first iteration and on the reinit pass after a restart.
 template <typename T>
-void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
+void constraintResetRzCon0(const DeviceParams<T>& p, ConstraintWorkspace<T>& cw,
                            const T* d_sqrtS_F, cudaStream_t stream = 0);
 
 // Compute constraint force and add to brmn/bzmn forces in the FourierPlan.
@@ -77,7 +77,7 @@ void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
 // update, applied in the same iteration).
 // Modifies fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o in-place.
 template <typename T>
-void constraintCompute(const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
+void constraintCompute(const DeviceParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
                        const FourierPlan<T>& fp, const PreconWorkspace<T>& pw,
                        ConstraintWorkspace<T>& cw, const T* d_sqrtS_F, bool precon_updated,
                        cudaStream_t stream = 0);

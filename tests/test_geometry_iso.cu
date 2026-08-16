@@ -31,7 +31,7 @@
 // dependency (gitignored, only present after a CUMES_DUMP=1 run) — the test
 // is now self-contained and registerable.
 template <typename T>
-static void fillState(SpectralState<T>& st, const GridParams<T>& p) {
+static void fillState(SpectralState<T>& st, const DeviceParams<T>& p) {
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
     std::vector<T> hcc_(p.ns * p.mnmax, T(0)), hss(p.ns * p.mnmax, T(0));
     std::vector<T> hzsc(p.ns * p.mnmax, T(0)), hzcs(p.ns * p.mnmax, T(0));
@@ -61,7 +61,7 @@ static void fillState(SpectralState<T>& st, const GridParams<T>& p) {
 
 int main() {
     InputParams ip = initInputParams("inputs/w7x.json");
-    GridParams<double> p{};
+    DeviceParams<double> p{};
     // Full W7-X shape (the largest angular grid the solver runs), exercising
     // the same kernel launch shapes the real runs use.
     p.ns = ip.ns_array[ip.n_grids - 1]; p.mpol = ip.mpol; p.ntor = ip.ntor;

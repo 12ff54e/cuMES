@@ -36,7 +36,7 @@ namespace cumes {
 // preconditioner + constraint), including a small alignment slack. The per-span
 // sizes mirror the *Create functions' alloc_span calls; keep the two in sync.
 template <typename T>
-std::size_t stage_arena_bytes(const GridParams<T>& p) {
+std::size_t stage_arena_bytes(const DeviceParams<T>& p) {
     using Complex = typename FftTraits<T>::Complex;
     const std::size_t ns = p.ns, nH = ns - 1, nZnT = p.nZnT, mnmax = p.mnmax;
     const std::size_t szT = sizeof(T), szI = sizeof(int), szC = sizeof(Complex);
@@ -79,7 +79,7 @@ std::size_t stage_arena_bytes(const GridParams<T>& p) {
 template <typename T>
 class StageSolver {
   public:
-    static SolverResult<T> run(GridParams<T>& p, const InputParams& ip,
+    static SolverResult<T> run(DeviceParams<T>& p, const InputParams& ip,
                                SpectralStorage<T>& state,
                                cudaStream_t stream = 0,
                                SolverBench* bench = nullptr) {

@@ -83,7 +83,7 @@ struct PreconWorkspace {
 };
 
 template <typename T>
-PreconWorkspace<T> preconCreate(const GridParams<T>& p,
+PreconWorkspace<T> preconCreate(const DeviceParams<T>& p,
                                 cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void preconFree(PreconWorkspace<T>& pw);
@@ -94,7 +94,7 @@ void preconFree(PreconWorkspace<T>& pw);
 // (cumes::DeviceModeTable).
 template <typename T>
 void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                   const GridParams<T>& p, const RadialProfiles<T>& rp,
+                   const DeviceParams<T>& p, const RadialProfiles<T>& rp,
                    const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
                    cudaStream_t stream = 0);
 
@@ -104,6 +104,6 @@ void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const in
 // Modifies forces in-place.
 template <typename T>
 void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
-                 const GridParams<T>& p,
+                 const DeviceParams<T>& p,
                  const PreconWorkspace<T>& pw,
                  const int* xm, const int* xn, cudaStream_t stream = 0);

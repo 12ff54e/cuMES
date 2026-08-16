@@ -208,7 +208,7 @@ __global__ void dealiasKernel(
 // AxisymmetricOperator member definitions
 // ---------------------------------------------------------------------------
 template <class T>
-AxisymmetricOperator<T>::AxisymmetricOperator(const GridParams<T>& p) : p_(p) {
+AxisymmetricOperator<T>::AxisymmetricOperator(const DeviceParams<T>& p) : p_(p) {
   if (p.ntor != 0 || p.nzeta != 1) {
     throw CumesError("AxisymmetricOperator: requires ntor=0, nzeta=1 "
                      "(got ntor=" + std::to_string(p.ntor) +

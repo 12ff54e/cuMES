@@ -31,7 +31,7 @@ struct ConstraintState {
 template <class T>
 class ConstraintOperator {
  public:
-  ConstraintOperator(const GridParams<T>& p, DeviceArena* arena)
+  ConstraintOperator(const DeviceParams<T>& p, DeviceArena* arena)
       : cw_(constraintCreate(p, arena)) {}
   ~ConstraintOperator() { constraintFree(cw_); }
 
@@ -46,12 +46,12 @@ class ConstraintOperator {
   // the current preconditioner elements. `op` is the selected transform
   // backend whose enqueue_dealias performs the bandpass. `rs` carries the
   // parity-split geometry derivatives + force buffers.
-  void enqueue(const GridParams<T>& p, const RealSpaceStorage<T>& rs,
+  void enqueue(const DeviceParams<T>& p, const RealSpaceStorage<T>& rs,
                const PreconWorkspace<T>& pw, const T* sqrtS_F,
                bool precon_updated, SpectralOperator<T>* op, cudaStream_t stream);
 
   // Reset rCon0/zCon0 to the LCFS-extrapolated profile (first pass / restart).
-  void reset_reference(const GridParams<T>& p, const T* sqrtS_F, cudaStream_t stream);
+  void reset_reference(const DeviceParams<T>& p, const T* sqrtS_F, cudaStream_t stream);
 
   const ConstraintWorkspace<T>& workspace() const { return cw_; }
 
@@ -60,13 +60,13 @@ class ConstraintOperator {
   // `d_*` pointers. rCon/zCon are the xmpq-weighted reconstruction fields
   // (produced by the fused inverse / axisym rzCon); the constraint-force views
   // are the frcon/fzcon outputs folded into the forward DFT.
-  RealFieldView<T> rcon_view(const GridParams<T>& p) const {
+  RealFieldView<T> rcon_view(const DeviceParams<T>& p) const {
     return RealFieldView<T>(cw_.d_rCon, p.ns, p.ntheta, p.nzeta);
   }
-  RealFieldView<T> zcon_view(const GridParams<T>& p) const {
+  RealFieldView<T> zcon_view(const DeviceParams<T>& p) const {
     return RealFieldView<T>(cw_.d_zCon, p.ns, p.ntheta, p.nzeta);
   }
-  ConstraintForceViews<const T> constraint_force_views(const GridParams<T>& p) const {
+  ConstraintForceViews<const T> constraint_force_views(const DeviceParams<T>& p) const {
     auto f = [&](T* d) {
       return RealFieldView<const T>(d, p.ns, p.ntheta, p.nzeta);
     };

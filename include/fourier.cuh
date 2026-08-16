@@ -71,7 +71,7 @@ struct FourierPlan {
 // `arena == nullptr` every array is its own cudaMalloc (legacy); with an arena
 // the arrays are aligned named subspans of one stage allocation.
 template <typename T>
-FourierPlan<T> fourierCreate(const GridParams<T>& p,
+FourierPlan<T> fourierCreate(const DeviceParams<T>& p,
                              cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void fourierFree(FourierPlan<T>& fp);
@@ -80,7 +80,7 @@ void fourierFree(FourierPlan<T>& fp);
 // out of FourierPlan so the transform operator owns only transform scratch
 // (blueprint §6.6). Same pointers/layout the FourierPlan used to hold.
 template <typename T>
-cumes::RealSpaceStorage<T> realSpaceCreate(const GridParams<T>& p,
+cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
                                            cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void realSpaceFree(cumes::RealSpaceStorage<T>& rs);
@@ -93,7 +93,7 @@ void realSpaceFree(cumes::RealSpaceStorage<T>& rs);
 template <typename T>
 void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                const GridParams<T>& p, const int* xm, const int* xn,
+                const DeviceParams<T>& p, const int* xm, const int* xn,
                 bool do_combine = true, cudaStream_t stream = 0);
 
 // Fused inverse DFT (blueprint §8.4): in addition to the 18 parity-split
@@ -112,7 +112,7 @@ void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
 template <typename T>
 void inverseDFTFused(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                      cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                     const GridParams<T>& p, const int* xm, const int* xn,
+                     const DeviceParams<T>& p, const int* xm, const int* xn,
                      bool do_combine, T* rCon, T* zCon,
                      cudaStream_t stream = 0);
 
@@ -124,7 +124,7 @@ void inverseDFTFused(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
 // do_combine=false pass and assume they are fresh).
 template <typename T>
 void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
-                          const GridParams<T>& p, cudaStream_t stream = 0);
+                          const DeviceParams<T>& p, cudaStream_t stream = 0);
 
 // forwardDFT: parity forces → 6-component spectral forces
 // Layout: (6*mnmax, ns) col-major
@@ -139,5 +139,5 @@ void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& 
 template <typename T>
 void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                const GridParams<T>& p, const int* xm, const int* xn,
+                const DeviceParams<T>& p, const int* xm, const int* xn,
                 const ConstraintWorkspace<T>& cw, cudaStream_t stream = 0);

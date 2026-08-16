@@ -18,7 +18,7 @@ class DeviceArena;
 template <class T>
 class Profiles {
  public:
-  Profiles(GridParams<T>& p, const InputParams& ip, DeviceArena* arena)
+  Profiles(DeviceParams<T>& p, const InputParams& ip, DeviceArena* arena)
       : rp_(profilesCreate(p, ip, arena)) {}
   ~Profiles() { profilesFree(rp_); }
 

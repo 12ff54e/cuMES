@@ -199,7 +199,7 @@ static void cpuForces(const std::vector<T>& r_e, const std::vector<T>& r_o,
 
 template <typename T>
 static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, const char* label) {
-    GridParams<T> p;
+    DeviceParams<T> p;
     p.ns = ns; p.mnmax = mpol * (ntor + 1); p.ntheta = ntheta; p.nzeta = nzeta;
     p.nfp = 1; p.nZnT = ntheta * nzeta; p.mpol = mpol; p.ntor = ntor;
     p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;

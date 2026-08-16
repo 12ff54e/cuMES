@@ -34,7 +34,7 @@ class AxisymmetricOperator : public SpectralOperator<T> {
   // Build the poloidal tables and validate that the shape is axisymmetric
   // (ntor == 0, nzeta == 1). Throws CumesError otherwise. Table construction
   // is synchronous H2D work (stage setup, not the hot loop).
-  explicit AxisymmetricOperator(const GridParams<T>& p);
+  explicit AxisymmetricOperator(const DeviceParams<T>& p);
 
   ~AxisymmetricOperator() override = default;
 
@@ -81,10 +81,10 @@ class AxisymmetricOperator : public SpectralOperator<T> {
                        const T* faccon, RealFieldView<T> gCon,
                        cudaStream_t stream) override;
 
-  const GridParams<T>& params() const { return p_; }
+  const DeviceParams<T>& params() const { return p_; }
 
  private:
-  GridParams<T> p_{};
+  DeviceParams<T> p_{};
   DeviceBuffer<T> cos_th_;   // [mpol][ntheta]  cos(mθ)
   DeviceBuffer<T> sin_th_;   // [mpol][ntheta]  sin(mθ)
   DeviceBuffer<T> mcos_th_;  // [mpol][ntheta]  m·cos(mθ)

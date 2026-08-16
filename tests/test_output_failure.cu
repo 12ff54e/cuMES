@@ -51,7 +51,7 @@ static int failures = 0;
 // physical — the writers copy whatever is there. ns=5, mnmax=2.
 template <typename T>
 struct TinyBundle {
-    GridParams<T> p;
+    DeviceParams<T> p;
     InputParams ip;
     SolverResult<T> res;
     SpectralState<T> st;

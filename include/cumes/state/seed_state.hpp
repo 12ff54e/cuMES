@@ -4,7 +4,7 @@
 //
 // Three host-side helpers reproduce the legacy seeding verbatim:
 //
-//   init_params   — GridParams<T> from InputParams (the to_input_params bridge)
+//   init_params   — DeviceParams<T> from InputParams (the to_input_params bridge)
 //   init_state    — vmecpp interpFromBoundaryAndAxis cold start
 //   restart_state — upload a host EquilibriumSnapshot + LCFS/axis patch
 //
@@ -25,10 +25,10 @@
 
 namespace cumes {
 
-// GridParams<T> from InputParams. lamscale is set later by profilesCreate.
+// DeviceParams<T> from InputParams. lamscale is set later by profilesCreate.
 template <typename T>
-GridParams<T> init_params(const InputParams& ip) {
-    GridParams<T> p;
+DeviceParams<T> init_params(const InputParams& ip) {
+    DeviceParams<T> p;
     p.ns = ip.ns; p.mpol = ip.mpol; p.ntor = ip.ntor;
     p.ntheta = ip.ntheta; p.nzeta = ip.nzeta; p.nfp = ip.nfp;
     p.nZnT = p.ntheta * p.nzeta;
@@ -48,7 +48,7 @@ GridParams<T> init_params(const InputParams& ip) {
 // divides by mscale*nscale, but its mscale'd basis makes the real-space
 // reconstruction identical).
 template <typename T>
-SpectralStorage<T> init_state(const GridParams<T>& p, const InputParams& ip) {
+SpectralStorage<T> init_state(const DeviceParams<T>& p, const InputParams& ip) {
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
     SpectralStorage<T> storage(p.ns, p.mnmax);
 
@@ -112,7 +112,7 @@ SpectralStorage<T> init_state(const GridParams<T>& p, const InputParams& ip) {
 // doubles regardless of T; the conversion mirrors outputSaveBinary's T->double
 // in reverse.
 template <typename T>
-SpectralStorage<T> restart_state(const GridParams<T>& p, const InputParams& ip,
+SpectralStorage<T> restart_state(const DeviceParams<T>& p, const InputParams& ip,
                                  const EquilibriumSnapshot& snap) {
     const size_t one = (size_t)p.ns * p.mnmax;
     const size_t nb = one * sizeof(T);

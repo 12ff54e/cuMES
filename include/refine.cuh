@@ -11,7 +11,7 @@
 // exactly (boundary pinned). st_new's 12 arrays are allocated here and the
 // velocities zeroed; the caller owns st_new and must freeState() it.
 template <typename T>
-cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
+cumes::SpectralStorage<T> interpolateState(const DeviceParams<T>& p_new,
                                            const cumes::SpectralStorage<T>& st_old,
-                                           const GridParams<T>& p_old,
+                                           const DeviceParams<T>& p_old,
                                            cudaStream_t stream = 0);

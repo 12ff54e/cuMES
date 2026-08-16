@@ -66,7 +66,7 @@ template <typename T>
 static T evalMassProfile(const InputParams& ip, T x) {
     T normX = fmin(fabs(x * T(ip.bloat)), T(1.0));
     return evalPowerSeries<T>(ip.am, ip.am_n, normX, false) *
-           (GridParams<T>::kMu0 * T(ip.pres_scale));
+           (DeviceParams<T>::kMu0 * T(ip.pres_scale));
 }
 
 template <typename T>
@@ -76,7 +76,7 @@ static T evalCurrProfile(const InputParams& ip, T x) {
 }
 
 template <typename T>
-RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip,
+RadialProfiles<T> profilesCreate(DeviceParams<T>& p, const InputParams& ip,
                                  cumes::DeviceArena* arena) {
     RadialProfiles<T> rp{};
     rp.delta_s = T(1.0) / T(p.ns - 1);
@@ -103,7 +103,7 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip,
 
     // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
     // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
-    T maxToroidalFlux = T(GridParams<T>::kSignJacobian * ip.phiedge) / T(2.0 * M_PI);
+    T maxToroidalFlux = T(DeviceParams<T>::kSignJacobian * ip.phiedge) / T(2.0 * M_PI);
     T tf1 = torflux<T>(ip, T(1.0));
     if (tf1 != T(0.0)) maxToroidalFlux /= tf1;
 
@@ -120,7 +120,7 @@ RadialProfiles<T> profilesCreate(GridParams<T>& p, const InputParams& ip,
                             "integral (ac profile integrates to 0 at s=1)\n");
             exit(1);
         }
-        Itor = T(GridParams<T>::kSignJacobian) * GridParams<T>::kMu0 * T(ip.curtor) /
+        Itor = T(DeviceParams<T>::kSignJacobian) * DeviceParams<T>::kMu0 * T(ip.curtor) /
                (T(2.0 * M_PI) * edgeCurrent);
     }
 

@@ -111,7 +111,7 @@ static void fillGconEff(ConstraintWorkspace<T>& cw, int ns, int nZnT) {
 
 // Inverse: compare the 18 parity-split geometry arrays.
 template <typename T>
-static void testInverse(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
+static void testInverse(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
                         FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
                         cumes::SpectralStorage<T>& storage,
                         cumes::AxisymmetricOperator<T>& op) {
@@ -165,7 +165,7 @@ static void testInverse(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
 
 // Forward: compare the 6 spectral-force families.
 template <typename T>
-static void testForward(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
+static void testForward(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
                         FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
                         ConstraintWorkspace<T>& cw,
                         cumes::AxisymmetricOperator<T>& op) {
@@ -214,7 +214,7 @@ static void testForward(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
 
 // Constraint rzCon: rCon/zCon.
 template <typename T>
-static void testRzCon(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
+static void testRzCon(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
                       FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
                       ConstraintWorkspace<T>& cw,
                       cumes::SpectralStorage<T>& storage,
@@ -239,7 +239,7 @@ static void testRzCon(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
 
 // Constraint bandpass: gCon (skip the axis row, which neither backend writes).
 template <typename T>
-static void testDealias(GridParams<T>& p, FourierPlan<T>& fp,
+static void testDealias(DeviceParams<T>& p, FourierPlan<T>& fp,
                         ConstraintWorkspace<T>& cw,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  constraint bandpass (gCon) ...\n");
@@ -277,7 +277,7 @@ template <typename T>
 static int runTests() {
     printf("--- %s precision ---\n",
            sizeof(T) == sizeof(double) ? "double" : "float");
-    GridParams<T> p;
+    DeviceParams<T> p;
     p.ns = kNs; p.mnmax = kMnmax; p.ntheta = kNtheta; p.nzeta = kNzeta;
     p.nfp = kNfp; p.nZnT = kNZnT; p.mpol = kMpol; p.ntor = kNtor;
     p.ncurr = 0; p.delt = T(1.0); p.ftol = T(1e-14); p.max_iter = 10;

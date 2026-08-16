@@ -40,7 +40,7 @@ static int failures = 0;
 int main() {
     // ---- Initial Solovev state (ns=55 = the Solovev final grid, ntor=0) ----
     const int ns = 55, mpol = 6, ntor = 0, ntheta = 18, nzeta = 1;
-    GridParams<double> p;
+    DeviceParams<double> p;
     p.ns = ns; p.mnmax = mpol * (ntor + 1); p.ntheta = ntheta; p.nzeta = nzeta;
     p.nfp = 1; p.nZnT = ntheta * nzeta; p.mpol = mpol; p.ntor = ntor;
     p.ncurr = 0; p.delt = 0.9; p.ftol = 1e-14; p.max_iter = 2000;

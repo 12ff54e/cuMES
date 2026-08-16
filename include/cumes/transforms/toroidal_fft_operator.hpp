@@ -25,7 +25,7 @@ class DeviceArena;
 template <class T>
 class ToroidalFftOperator : public SpectralOperator<T> {
  public:
-  ToroidalFftOperator(const GridParams<T>& p, RealSpaceStorage<T>& rs,
+  ToroidalFftOperator(const DeviceParams<T>& p, RealSpaceStorage<T>& rs,
                       const DeviceModeTable& mt, DeviceArena* arena)
       : fp_(fourierCreate(p, arena)), p_(p), rs_(&rs), mt_(&mt) {}
   ~ToroidalFftOperator() override { fourierFree(fp_); }
@@ -81,7 +81,7 @@ class ToroidalFftOperator : public SpectralOperator<T> {
 
  private:
   FourierPlan<T> fp_;
-  GridParams<T> p_{};
+  DeviceParams<T> p_{};
   RealSpaceStorage<T>* rs_ = nullptr;  // non-owning (stage-owned)
   const DeviceModeTable* mt_ = nullptr;  // non-owning (stage/resolution-owned)
 };

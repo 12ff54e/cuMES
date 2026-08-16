@@ -31,15 +31,15 @@ struct MultigridOutcome {
 template <typename T>
 class MultigridSolver {
   public:
-    // `p` is the base GridParams; its ns/max_iter/ftol are overwritten per
+    // `p` is the base DeviceParams; its ns/max_iter/ftol are overwritten per
     // stage from ip (exactly the legacy stage loop). `seed` is the stage-0
     // cold-start state (already interpolated from boundary + axis).
-    static MultigridOutcome<T> run(GridParams<T>& p, const InputParams& ip,
+    static MultigridOutcome<T> run(DeviceParams<T>& p, const InputParams& ip,
                                    SpectralStorage<T> seed,
                                    cudaStream_t stream = 0) {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
-        GridParams<T> p_prev;
+        DeviceParams<T> p_prev;
         SolverResult<T> result{false, 0, T(1.0), T(1.0), T(1.0), T(0.9)};
         int total_iter = 0;
 

@@ -42,7 +42,7 @@ static int failures = 0;
 // Build a Solovev-like state with a few modes and run one geometry pass.
 template <typename T>
 static void runGeometry(int ns, int ncurr, const char* label) {
-    GridParams<T> p;
+    DeviceParams<T> p;
     p.ns = ns; p.mnmax = 4; p.ntheta = 18; p.nzeta = 1;
     p.nfp = 1; p.nZnT = 18; p.mpol = 4; p.ntor = 0;
     p.ncurr = ncurr; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;

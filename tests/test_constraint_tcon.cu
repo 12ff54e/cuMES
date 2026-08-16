@@ -44,7 +44,7 @@ static int failures = 0;
 template <typename T>
 static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
                           double* out_tcon, int ns, int mnmax, int nZnT) {
-    GridParams<T> p;
+    DeviceParams<T> p;
     p.ns = ns; p.mnmax = mnmax; p.ntheta = 18; p.nzeta = 1;
     p.nfp = 1; p.nZnT = nZnT; p.mpol = mnmax; p.ntor = 0;
     p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;

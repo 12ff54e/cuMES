@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
     InputParams ip = to_ip.value();
 
     // Single stage at the config's FINAL radial grid.
-    GridParams<Real> p = cumes::init_params<Real>(ip);
+    DeviceParams<Real> p = cumes::init_params<Real>(ip);
     p.ns = ip.ns_array[ip.n_grids - 1];
     p.max_iter = warmup + passes;
     p.ftol = Real(0.0);  // never converge: run exactly warmup+passes passes

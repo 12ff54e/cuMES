@@ -97,7 +97,7 @@ static void runPrecision() {
     const int ns = 5, mnmax = 3;
     auto storage = makeStorage<T>(ns, mnmax);
 
-    GridParams<T> p{};
+    DeviceParams<T> p{};
     p.ns = ns;
     p.mnmax = mnmax;
 

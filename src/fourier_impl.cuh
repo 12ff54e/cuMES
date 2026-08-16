@@ -56,7 +56,7 @@ __device__ void* dynSharedBase() {
 #include "cumes/runtime/device_arena.cuh"
 
 template <typename T>
-cumes::DeviceModeTable cumes::modeTableCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
+cumes::DeviceModeTable cumes::modeTableCreate(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
     cumes::DeviceModeTable mt{};
     const int mnmax = p.mnmax;
     auto* h_xm = new int[mnmax], *h_xn = new int[mnmax];
@@ -85,7 +85,7 @@ cumes::DeviceModeTable cumes::modeTableCreate(const GridParams<T>& p, cumes::Dev
 }
 
 template <typename T>
-FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
+FourierPlan<T> fourierCreate(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
     FourierPlan<T> fp{};
 
     // The mode table (d_xm/d_xn) is built by cumes::modeTableCreate (resolution
@@ -242,7 +242,7 @@ void fourierFree(FourierPlan<T>& fp) {
 // RealSpaceStorage (stage-owned geometry/force/combined buffers)
 // ---------------------------------------------------------------------------
 template <typename T>
-cumes::RealSpaceStorage<T> realSpaceCreate(const GridParams<T>& p,
+cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
                                            cumes::DeviceArena* arena) {
     cumes::RealSpaceStorage<T> rs{};
     const int nZnT = p.nZnT;
@@ -509,7 +509,7 @@ static int computeKTile(int blkX, int nzeta) {
 template <typename T, bool FuseRzCon = false>
 static void inverseDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                             cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                            const GridParams<T>& p, const int* xm, const int* xn,
+                            const DeviceParams<T>& p, const int* xm, const int* xn,
                             bool do_combine, T* rCon, T* zCon, cudaStream_t stream) {
     // Zero the half-spectra (only bins n <= ntor are filled).
     cumes::check_cuda(cudaMemsetAsync(fp.d_zeta_spectra, 0,
@@ -566,7 +566,7 @@ static void inverseDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>
 // call this before reading any *_real array after a do_combine=false pass).
 template <typename T>
 void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
-                          const GridParams<T>& p, cudaStream_t stream) {
+                          const DeviceParams<T>& p, cudaStream_t stream) {
     dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
     combineParityKernel<T><<<cgrd, cblk, 0, stream>>>(
         rs.d_r_e, rs.d_z_e, rs.d_l_e, rs.d_ru_e, rs.d_zu_e, rs.d_lu_e,
@@ -583,7 +583,7 @@ void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& 
 template <typename T>
 void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                const GridParams<T>& p, const int* xm, const int* xn,
+                const DeviceParams<T>& p, const int* xm, const int* xn,
                 bool do_combine, cudaStream_t stream) {
     inverseDFTCufft<T, false>(fp, rs, coeff, p, xm, xn, do_combine, nullptr, nullptr, stream);
 }
@@ -591,7 +591,7 @@ void inverseDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
 template <typename T>
 void inverseDFTFused(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                      cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-                     const GridParams<T>& p, const int* xm, const int* xn,
+                     const DeviceParams<T>& p, const int* xm, const int* xn,
                      bool do_combine, T* rCon, T* zCon,
                      cudaStream_t stream) {
     inverseDFTCufft<T, true>(fp, rs, coeff, p, xm, xn, do_combine, rCon, zCon, stream);
@@ -781,7 +781,7 @@ __global__ void forwardRecoverKernel(
 template <typename T>
 static void forwardDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                             cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                            const GridParams<T>& p, const int* xm, const int* xn,
+                            const DeviceParams<T>& p, const int* xm, const int* xn,
                             const T* frcon_e, const T* frcon_o,
                             const T* fzcon_e, const T* fzcon_o,
                             cudaStream_t stream) {
@@ -813,7 +813,7 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>
 template <typename T>
 void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                const GridParams<T>& p, const int* xm, const int* xn,
+                const DeviceParams<T>& p, const int* xm, const int* xn,
                 const ConstraintWorkspace<T>& cw, cudaStream_t stream) {
     forwardDFTCufft(fp, rs, f_spec, p, xm, xn, cw.d_frcon_e, cw.d_frcon_o,
                     cw.d_fzcon_e, cw.d_fzcon_o, stream);

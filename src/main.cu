@@ -221,7 +221,7 @@ int main(int argc, char** argv) {
     }
     InputParams ip = to_ip.value();
 
-    GridParams<Real> p = cumes::init_params<Real>(ip);
+    DeviceParams<Real> p = cumes::init_params<Real>(ip);
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
     printf("input: %s\n", inputPath);

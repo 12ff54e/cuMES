@@ -25,7 +25,7 @@
 // (mirror of geometry_impl.cuh's helpers + the force-bundle variant).
 template <typename T>
 static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceStorage<T>& rs,
-                                                         const GridParams<T>& p) {
+                                                         const DeviceParams<T>& p) {
     auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
     cumes::GeometryParityViews<T> v;
     v.r_e = f(rs.d_r_e); v.z_e = f(rs.d_z_e); v.l_e = f(rs.d_l_e);
@@ -39,7 +39,7 @@ static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceS
 
 template <typename T>
 static cumes::BaseGeometryHalfViews<T> baseGeometryHalfViews(const MetricWorkspace<T>& mw,
-                                                             const GridParams<T>& p) {
+                                                             const DeviceParams<T>& p) {
     auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
     cumes::BaseGeometryHalfViews<T> v;
     v.r12 = h(mw.d_r12); v.ru12 = h(mw.d_ru12); v.zu12 = h(mw.d_zu12);
@@ -50,7 +50,7 @@ static cumes::BaseGeometryHalfViews<T> baseGeometryHalfViews(const MetricWorkspa
 
 template <typename T>
 static cumes::MagneticFieldViews<T> magneticFieldViews(const MetricWorkspace<T>& mw,
-                                                       const GridParams<T>& p) {
+                                                       const DeviceParams<T>& p) {
     auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
     cumes::MagneticFieldViews<T> v;
     v.bsupu = h(mw.d_bsupu); v.bsupv = h(mw.d_bsupv);
@@ -71,7 +71,7 @@ static cumes::RadialProfileViews<T> radialProfileViews(const RadialProfiles<T>& 
 
 template <typename T>
 static cumes::ForceParityViews<T> forceParityViews(const cumes::RealSpaceStorage<T>& rs,
-                                                   const GridParams<T>& p) {
+                                                   const DeviceParams<T>& p) {
     auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
     cumes::ForceParityViews<T> v;
     v.armn_e = f(rs.d_armn_e); v.armn_o = f(rs.d_armn_o);
@@ -318,7 +318,7 @@ __global__ void forcesKernel(
 }
 
 template <typename T>
-void computeForces(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+void computeForces(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                    const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
                    cudaStream_t stream) {
     dim3 block(128);

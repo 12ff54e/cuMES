@@ -29,7 +29,7 @@ struct DeviceModeTable {
 // cudaMalloc; with an arena they are aligned named subspans of the stage
 // allocation.
 template <typename T>
-DeviceModeTable modeTableCreate(const GridParams<T>& p, DeviceArena* arena = nullptr);
+DeviceModeTable modeTableCreate(const DeviceParams<T>& p, DeviceArena* arena = nullptr);
 
 inline void modeTableFree(DeviceModeTable& mt) {
     if (!mt.arena_backed) {

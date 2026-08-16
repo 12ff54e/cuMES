@@ -39,7 +39,7 @@ template <typename T> static constexpr double tolAxis() { return sizeof(T) == si
 // Computed in double: the CPU reference always evaluates in double from the
 // (possibly float) T inputs.
 template <typename T>
-static void hostBasis(const GridParams<T>& p,
+static void hostBasis(const DeviceParams<T>& p,
     std::vector<double>& hcc, std::vector<double>& hss,
     std::vector<double>& hsc, std::vector<double>& hcs,
     std::vector<int>& hxm, std::vector<int>& hxn){
@@ -111,7 +111,7 @@ static void cpuInvDFT(const double* cc_, const double* ss_, const double* zsc_, 
 }
 
 template <typename T>
-static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
     const T* cc_, const T* ss_, const T* zsc_, const T* zcs_,
     const T* lsc_, const T* lcs_){
     size_t nb=p.ns*p.mnmax*sizeof(T);
@@ -129,7 +129,7 @@ static void gpuInv(SpectralState<T>& st, FourierPlan<T>& fp, const cumes::Device
 }
 
 template <typename T>
-static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_constR(DeviceParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_constantR ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) cc_[j+0*p.ns]=T(4.0);  // R_00
@@ -159,7 +159,7 @@ static int t_inv_constR(GridParams<T>& p, FourierPlan<T>& fp, const cumes::Devic
 }
 
 template <typename T>
-static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_theta(DeviceParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_thetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+0;
@@ -190,7 +190,7 @@ static int t_inv_theta(GridParams<T>& p, FourierPlan<T>& fp, const cumes::Device
 }
 
 template <typename T>
-static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_zeta(DeviceParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_inverseDFT_zetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+1;  // R_11 (cos(θ-ζ)): folded rmncc=rmnss=0.2
@@ -217,7 +217,7 @@ static int t_inv_zeta(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceM
 }
 
 template <typename T>
-static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
+static int t_fwd_const(DeviceParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_constant ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(3.0));
@@ -255,7 +255,7 @@ static int t_fwd_const(GridParams<T>& p, FourierPlan<T>& fp, const cumes::Device
 }
 
 template <typename T>
-static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
+static int t_fwd_sine(DeviceParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_sine ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fz(p.ns*p.nZnT,T(0));
@@ -302,7 +302,7 @@ static int t_fwd_sine(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceM
 }
 
 template <typename T>
-static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_gpuVcpu_inv(DeviceParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
     int lf=g_failures; printf("  test_gpuVcpu_inverseDFT ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
@@ -363,7 +363,7 @@ static int t_gpuVcpu_inv(GridParams<T>& p, FourierPlan<T>& fp, const cumes::Devi
 // floating-point summation order).
 // host with the same reduced-grid trapezoid as the kernels.
 template <typename T>
-static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
+static int t_fwd_axis(DeviceParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_axis ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(0));
@@ -434,7 +434,7 @@ static int t_fwd_axis(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceM
 
 // LCFS branch (j=ns-1 keeps only the λ components flsc/flcs).
 template <typename T>
-static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
+static int t_fwd_lcfs(DeviceParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceModeTable& mt, cumes::RealSpaceStorage<T>& rs){
     int lf=g_failures; printf("  test_forwardDFT_lcfs ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     int jB=p.ns-1;
@@ -499,7 +499,7 @@ static int t_fwd_lcfs(GridParams<T>& p, FourierPlan<T>& fp, const cumes::DeviceM
 template <typename T>
 static int runTests(){
     printf("--- %s precision ---\n", sizeof(T) == sizeof(double) ? "double" : "float");
-    GridParams<T> p;
+    DeviceParams<T> p;
     p.ns=kNs; p.mnmax=kMnmax; p.ntheta=kNtheta; p.nzeta=kNzeta;
     p.nfp=kNfp; p.nZnT=kNZnT; p.mpol=kMpol; p.ntor=kNtor;
     p.ncurr=0; p.delt=T(1.0); p.ftol=T(1e-14); p.max_iter=10; p.lamscale=T(1.0);

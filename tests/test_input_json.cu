@@ -95,7 +95,7 @@ static void testSolovev() {
     CHECK(p.niter_array[0] == 1000 && p.niter_array[1] == 2000 &&
               p.niter_array[2] == 2000, "solovev: niter_array");
     CHECK(p.ftol_array[0] == 1e-16 && p.ftol_array[2] == 1e-16, "solovev: ftol_array");
-    // stage-0 invariant: GridParams and other tests read these directly
+    // stage-0 invariant: DeviceParams and other tests read these directly
     CHECK(p.ns == 5 && p.max_iter == 1000 && p.ftol == 1e-16, "solovev: stage-0 invariant");
     CHECK(p.am_n == 2 && p.am[0] == 0.125 && p.am[1] == -0.125, "solovev: am");
     CHECK(p.ac_n == 0 && p.ai_n == 1 && p.ai[0] == 1.0, "solovev: ac/ai");

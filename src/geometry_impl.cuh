@@ -53,7 +53,7 @@ __device__ void* dynSharedBase() {
 // `surface*nZnT + zeta*ntheta + theta` arithmetic bit-for-bit identical.
 template <typename T>
 static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceStorage<T>& rs,
-                                                         const GridParams<T>& p) {
+                                                         const DeviceParams<T>& p) {
     auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
     cumes::GeometryParityViews<T> v;
     v.r_e = f(rs.d_r_e); v.z_e = f(rs.d_z_e); v.l_e = f(rs.d_l_e);
@@ -67,7 +67,7 @@ static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceS
 
 template <typename T>
 static cumes::BaseGeometryHalfViews<T> baseGeometryHalfViews(const MetricWorkspace<T>& mw,
-                                                             const GridParams<T>& p) {
+                                                             const DeviceParams<T>& p) {
     auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
     cumes::BaseGeometryHalfViews<T> v;
     v.r12 = h(mw.d_r12); v.ru12 = h(mw.d_ru12); v.zu12 = h(mw.d_zu12);
@@ -78,7 +78,7 @@ static cumes::BaseGeometryHalfViews<T> baseGeometryHalfViews(const MetricWorkspa
 
 template <typename T>
 static cumes::MagneticFieldViews<T> magneticFieldViews(const MetricWorkspace<T>& mw,
-                                                       const GridParams<T>& p) {
+                                                       const DeviceParams<T>& p) {
     auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
     cumes::MagneticFieldViews<T> v;
     v.bsupu = h(mw.d_bsupu); v.bsupv = h(mw.d_bsupv);
@@ -98,7 +98,7 @@ static cumes::RadialProfileViews<T> radialProfileViews(const RadialProfiles<T>& 
 }
 
 template <typename T>
-MetricWorkspace<T> metricCreate(const GridParams<T>& p, cumes::DeviceArena* arena) {
+MetricWorkspace<T> metricCreate(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
     MetricWorkspace<T> mw{};
     size_t nH = (p.ns - 1) * p.nZnT;
 
@@ -496,7 +496,7 @@ __global__ void computeNormPartialsKernel(
         __syncthreads();
     }
     if (tid == 0) {
-        dVdsH[jH] = GridParams<T>::kSignJacobian * s_G[0];
+        dVdsH[jH] = DeviceParams<T>::kSignJacobian * s_G[0];
         psum[4 * jH + 0] = s_RZ[0];
         psum[4 * jH + 1] = s_L[0];
         psum[4 * jH + 2] = s_M[0];
@@ -505,7 +505,7 @@ __global__ void computeNormPartialsKernel(
 }
 
 template <typename T>
-void computeForceNormPartials(const GridParams<T>& p, const MetricWorkspace<T>& mw,
+void computeForceNormPartials(const DeviceParams<T>& p, const MetricWorkspace<T>& mw,
                               T* dVdsH, T* psum, cudaStream_t stream) {
     dim3 block(256), grid(p.ns - 1);
     size_t shmem = 4 * block.x * sizeof(T);
@@ -630,7 +630,7 @@ __global__ void jacobianStatsKernel(
 // the caller transfers the values with its combined ControlRecord (Phase 6A
 // one-fence control path), so there is no host copy or fence here.
 template <typename T>
-void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
+void computeJacobianStats(const DeviceParams<T>& p, const MetricWorkspace<T>& mw,
                           T* d_stats, cudaStream_t stream) {
     const int nHalf = (p.ns - 1) * p.nZnT;
     jacobianStatsKernel<T><<<1, 256, 0, stream>>>(mw.d_gsqrt, nHalf, 1,
@@ -639,7 +639,7 @@ void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
 }
 
 template <typename T>
-void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                          const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                          cudaStream_t stream) {
     dim3 block(128);
@@ -651,7 +651,7 @@ void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<
 }
 
 template <typename T>
-void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                           const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                           cudaStream_t stream, bool update_iota_chi) {
     dim3 block(128);
@@ -684,7 +684,7 @@ void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const GridParams
 }
 
 template <typename T>
-void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                      const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                      cudaStream_t stream, bool update_iota_chi) {
     computeBaseGeometry(rs, p, rp, mw, stream);
@@ -697,19 +697,19 @@ void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& 
 // ---------------------------------------------------------------------------
 template <typename T>
 void cumes::GeometryOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
-                                         const GridParams<T>& p,
+                                         const DeviceParams<T>& p,
                                          const RadialProfiles<T>& rp, cudaStream_t stream) {
     computeBaseGeometry(rs, p, rp, mw_, stream);
 }
 
 template <typename T>
-void cumes::GeometryOperator<T>::jacobian_stats(const GridParams<T>& p, T* d_stats,
+void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p, T* d_stats,
                                                 cudaStream_t stream) const {
     computeJacobianStats(p, mw_, d_stats, stream);
 }
 
 template <typename T>
-void cumes::GeometryOperator<T>::force_norm_partials(const GridParams<T>& p, T* dVdsH,
+void cumes::GeometryOperator<T>::force_norm_partials(const DeviceParams<T>& p, T* dVdsH,
                                                      T* psum, cudaStream_t stream) const {
     computeForceNormPartials(p, mw_, dVdsH, psum, stream);
 }

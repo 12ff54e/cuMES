@@ -20,7 +20,7 @@ namespace cumes {
 template <class T>
 class ForceOperator {
  public:
-  void enqueue(const RealSpaceStorage<T>& rs, const GridParams<T>& p,
+  void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
                cudaStream_t stream) const {
     computeForces(rs, p, rp, mw, stream);
