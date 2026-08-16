@@ -23,10 +23,12 @@ class Profiles {
   Profiles(DeviceParams<T>& p, const ValidatedProblem& vp, DeviceArena* arena);
   ~Profiles();
 
+  // Non-movable: the destructor frees the owned radial arrays without
+  // nulling, so a defaulted move would double-free (review finding 3.2).
   Profiles(const Profiles&) = delete;
   Profiles& operator=(const Profiles&) = delete;
-  Profiles(Profiles&&) noexcept = default;
-  Profiles& operator=(Profiles&&) noexcept = default;
+  Profiles(Profiles&&) noexcept = delete;
+  Profiles& operator=(Profiles&&) noexcept = delete;
 
   // Typed radial-profile view bundle (the 11 half/full-grid arrays) — the
   // solver consumes this instead of naming raw `d_*` pointers.

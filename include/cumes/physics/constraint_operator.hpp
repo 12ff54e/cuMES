@@ -34,10 +34,12 @@ class ConstraintOperator {
   ConstraintOperator(const DeviceParams<T>& p, DeviceArena* arena);
   ~ConstraintOperator();
 
+  // Non-movable: the destructor frees the owned constraint buffers without
+  // nulling, so a defaulted move would double-free (review finding 3.2).
   ConstraintOperator(const ConstraintOperator&) = delete;
   ConstraintOperator& operator=(const ConstraintOperator&) = delete;
-  ConstraintOperator(ConstraintOperator&&) noexcept = default;
-  ConstraintOperator& operator=(ConstraintOperator&&) noexcept = default;
+  ConstraintOperator(ConstraintOperator&&) noexcept = delete;
+  ConstraintOperator& operator=(ConstraintOperator&&) noexcept = delete;
 
   // Reconstruct the xmpq-weighted R_con/Z_con (already produced by the fused
   // inverse / axisymmetric rzCon), compute the effective constraint force,

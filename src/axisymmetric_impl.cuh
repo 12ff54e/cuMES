@@ -171,8 +171,10 @@ __global__ void rzconKernel(
     z += zs * sin_th[m * ntheta + l];
   }
   const int idx = j * nZnT + l;
-  rCon[idx] = r;
-  zCon[idx] = z;
+  // Null guards: the interface documents null views as "skip that output"
+  // (review finding 3.3); one-null callers must not fault.
+  if (rCon != nullptr) rCon[idx] = r;
+  if (zCon != nullptr) zCon[idx] = z;
 }
 
 // --- constraint: de-alias bandpass ----------------------------------------

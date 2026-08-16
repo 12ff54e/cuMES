@@ -257,6 +257,64 @@ static void testRzCon(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
     cudaFree(d_ax_z);
 }
 
+// One-null rzCon (review 3.3): the SpectralOperator interface documents
+// rCon/zCon as "may be null views to skip that output". The axisymmetric
+// backend must write only the requested output — an rCon-only (or zCon-only)
+// caller must not fault and the produced output must match the generic fused
+// inverse. Runs through enqueue_inverse (the documented entry point) with a
+// valid geometry scratch so only the rzCon side is one-null.
+template <typename T>
+static void testRzConOneNull(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
+                             Cw<T>& cw, cumes::SpectralStorage<T>& storage,
+                             cumes::AxisymmetricOperator<T>& op) {
+    printf("  constraint rzCon one-null (skip-one-output) ...\n");
+    const int n = p.ns * p.nZnT;
+    gen.inverse_fused(storage.physical_const(), /*do_combine=*/false,
+                      cw.d_rCon, cw.d_zCon);
+    T* d_geom = nullptr;
+    cc(cudaMalloc(&d_geom, (size_t)18 * n * sizeof(T)), "ax geom (one-null)");
+    auto view = [&](int k) {
+        return cumes::RealFieldView<T>(d_geom + (size_t)k * n, p.ns, p.ntheta,
+                                       p.nzeta);
+    };
+    cumes::GeometryParityViews<T> g;
+    g.r_e = view(0); g.z_e = view(1); g.l_e = view(2);
+    g.ru_e = view(3); g.zu_e = view(4); g.lu_e = view(5);
+    g.r_o = view(6); g.z_o = view(7); g.l_o = view(8);
+    g.ru_o = view(9); g.zu_o = view(10); g.lu_o = view(11);
+    g.rv_e = view(12); g.zv_e = view(13); g.lv_e = view(14);
+    g.rv_o = view(15); g.zv_o = view(16); g.lv_o = view(17);
+
+    auto run_one_null = [&](const char* label, bool rcon_null, const T* ref) {
+        T* d_one = nullptr;
+        cc(cudaMalloc(&d_one, (size_t)n * sizeof(T)), "ax one output");
+        std::vector<T> poison((size_t)n, T(123.5));
+        cc(cudaMemcpy(d_one, poison.data(), (size_t)n * sizeof(T),
+                      cudaMemcpyHostToDevice),
+           "poison one");
+        op.enqueue_inverse(
+            storage.physical_const(), g,
+            rcon_null
+                ? cumes::RealFieldView<T>()
+                : cumes::RealFieldView<T>(d_one, p.ns, p.ntheta, p.nzeta),
+            rcon_null ? cumes::RealFieldView<T>(d_one, p.ns, p.ntheta, p.nzeta)
+                      : cumes::RealFieldView<T>(),
+            0);
+        cudaError_t e = cudaDeviceSynchronize();
+        if (e != cudaSuccess) {
+            fprintf(stderr, "FAIL [%s] kernel error: %s\n", label,
+                    cudaGetErrorString(e));
+            ++g_failures;
+        } else {
+            compareArrays(label, ref, d_one, n, tolNear<T>());
+        }
+        cudaFree(d_one);
+    };
+    run_one_null("zCon (rCon null)", /*rcon_null=*/true, cw.d_zCon);
+    run_one_null("rCon (zCon null)", /*rcon_null=*/false, cw.d_rCon);
+    cudaFree(d_geom);
+}
+
 // Constraint bandpass: gCon (skip the axis row, which neither backend writes).
 template <typename T>
 static void testDealias(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
@@ -325,6 +383,7 @@ static int runTests() {
     testInverse(p, rs, gen, storage, op);
     testForward(p, rs, gen, cw, op);
     testRzCon(p, gen, cw, storage, op);
+    testRzConOneNull(p, gen, cw, storage, op);
     testDealias(p, gen, cw, op);
 
     realSpaceFree(rs);

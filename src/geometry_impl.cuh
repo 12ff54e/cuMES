@@ -38,24 +38,10 @@
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 
-// ---- typed real-space view bundles over the workspace structs ------------
-// Constructed at the operator boundary (real_fields.cuh's intended use); the
-// kernels then read the raw pointers back out of the bundles, keeping the flat
-// `surface*nZnT + zeta*ntheta + theta` arithmetic bit-for-bit identical.
-template <typename T>
-static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceStorage<T>& rs,
-                                                         const DeviceParams<T>& p) {
-    auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
-    cumes::GeometryParityViews<T> v;
-    v.r_e = f(rs.d_r_e); v.z_e = f(rs.d_z_e); v.l_e = f(rs.d_l_e);
-    v.ru_e = f(rs.d_ru_e); v.zu_e = f(rs.d_zu_e); v.lu_e = f(rs.d_lu_e);
-    v.r_o = f(rs.d_r_o); v.z_o = f(rs.d_z_o); v.l_o = f(rs.d_l_o);
-    v.ru_o = f(rs.d_ru_o); v.zu_o = f(rs.d_zu_o); v.lu_o = f(rs.d_lu_o);
-    v.rv_e = f(rs.d_rv_e); v.zv_e = f(rs.d_zv_e); v.lv_e = f(rs.d_lv_e);
-    v.rv_o = f(rs.d_rv_o); v.zv_o = f(rs.d_zv_o); v.lv_o = f(rs.d_lv_o);
-    return v;
-}
-
+// The geometryParityViews factory (typed real-space view bundle over the
+// workspace structs) is the single shared inline definition in
+// cumes/state/real_fields.cuh (review finding 4.2 — was duplicated
+// byte-identically here and in forces_impl.cuh).
 template <typename T>
 cumes::GeometryOperator<T>::GeometryOperator(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
     size_t nH = (p.ns - 1) * p.nZnT;
@@ -531,8 +517,11 @@ __global__ void jacobianStatsKernel(
             T a = fabs(g);            // scale statistic
             T ov = signJ * g;         // ORIENTED value: = |g| when √g keeps
                                       // the expected sign, negative on a flip
+            // vmax tracks max |√g| in EVERY branch: a sign-flipped element
+            // (ov = -a < vmin) still contributes its magnitude |g| = a to the
+            // BAD-JACOBIAN diagnostic (review finding 2.2).
             if (!seen) { vmin = vmax = a; argmin = i + s * nHalf; seen = true; }
-            else if (ov < vmin) { vmin = ov; argmin = i + s * nHalf; }
+            else if (ov < vmin) { vmin = ov; argmin = i + s * nHalf; vmax = fmax(vmax, a); }
             else { vmax = fmax(vmax, a); }
         }
     }

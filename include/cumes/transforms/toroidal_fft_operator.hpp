@@ -32,10 +32,12 @@ class ToroidalFftOperator : public SpectralOperator<T> {
                       const DeviceModeTable& mt, DeviceArena* arena = nullptr);
   ~ToroidalFftOperator() override;
 
+  // Non-movable: the destructor frees the owned cuFFT plans/scratch without
+  // nulling, so a defaulted move would double-free (review finding 3.2).
   ToroidalFftOperator(const ToroidalFftOperator&) = delete;
   ToroidalFftOperator& operator=(const ToroidalFftOperator&) = delete;
-  ToroidalFftOperator(ToroidalFftOperator&&) noexcept = default;
-  ToroidalFftOperator& operator=(ToroidalFftOperator&&) noexcept = default;
+  ToroidalFftOperator(ToroidalFftOperator&&) noexcept = delete;
+  ToroidalFftOperator& operator=(ToroidalFftOperator&&) noexcept = delete;
 
   // The shared folded-mode table (non-owning; stage/resolution-scoped).
   const int* xm() const { return mt_->d_xm; }

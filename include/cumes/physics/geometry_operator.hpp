@@ -23,10 +23,12 @@ class GeometryOperator {
   GeometryOperator(const DeviceParams<T>& p, DeviceArena* arena);
   ~GeometryOperator();
 
+  // Non-movable: the destructor frees the owned half-grid buffers without
+  // nulling, so a defaulted move would double-free (review finding 3.2).
   GeometryOperator(const GeometryOperator&) = delete;
   GeometryOperator& operator=(const GeometryOperator&) = delete;
-  GeometryOperator(GeometryOperator&&) noexcept = default;
-  GeometryOperator& operator=(GeometryOperator&&) noexcept = default;
+  GeometryOperator(GeometryOperator&&) noexcept = delete;
+  GeometryOperator& operator=(GeometryOperator&&) noexcept = delete;
 
   // Half-grid base geometry: staggered interpolation, Jacobian, covariant
   // metric — no 1/√g division. Reads the parity-split geometry from `rs`.

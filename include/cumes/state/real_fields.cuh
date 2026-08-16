@@ -14,9 +14,16 @@
 // legacy `surface*nZnT + zeta*ntheta + theta` arithmetic.
 #pragma once
 
+#include "cumes/config/device_params.hpp"
 #include "cumes/core/tensor_view.cuh"
 
 namespace cumes {
+
+// Defined in real_space_storage.hpp (which includes this header back, so the
+// shared view-bundle factory below only needs the forward declaration — its
+// body is a template and instantiates where RealSpaceStorage is complete).
+template <class T>
+struct RealSpaceStorage;
 
 // Reduced-theta quadrature view (blueprint §4.1): the compact [0, pi] poloidal
 // subset used by the forward quadrature and the constraint bandpass. It is a
@@ -67,6 +74,25 @@ struct GeometryParityViews {
   RealFieldView<T> rv_e, zv_e, lv_e;
   RealFieldView<T> rv_o, zv_o, lv_o;
 };
+
+// Shared factory for the parity-split geometry view bundle (single definition;
+// previously duplicated byte-identically in geometry_impl.cuh and
+// forces_impl.cuh — review finding 4.2). Constructed at the operator boundary;
+// the kernels then read the raw pointers back out of the bundles, keeping the
+// flat `surface*nZnT + zeta*ntheta + theta` arithmetic bit-for-bit identical.
+template <typename T>
+inline GeometryParityViews<T> geometryParityViews(const RealSpaceStorage<T>& rs,
+                                                  const DeviceParams<T>& p) {
+  auto f = [&](T* d) { return RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
+  GeometryParityViews<T> v;
+  v.r_e = f(rs.d_r_e); v.z_e = f(rs.d_z_e); v.l_e = f(rs.d_l_e);
+  v.ru_e = f(rs.d_ru_e); v.zu_e = f(rs.d_zu_e); v.lu_e = f(rs.d_lu_e);
+  v.r_o = f(rs.d_r_o); v.z_o = f(rs.d_z_o); v.l_o = f(rs.d_l_o);
+  v.ru_o = f(rs.d_ru_o); v.zu_o = f(rs.d_zu_o); v.lu_o = f(rs.d_lu_o);
+  v.rv_e = f(rs.d_rv_e); v.zv_e = f(rs.d_zv_e); v.lv_e = f(rs.d_lv_e);
+  v.rv_o = f(rs.d_rv_o); v.zv_o = f(rs.d_zv_o); v.lv_o = f(rs.d_lv_o);
+  return v;
+}
 
 // Full-grid radial profile views (ns-length 1D arrays).
 template <class T>

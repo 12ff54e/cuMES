@@ -23,21 +23,10 @@
 #include "cumes/state/real_fields.cuh"
 
 // ---- typed real-space view bundles over the workspace structs ------------
-// (mirror of geometry_impl.cuh's helpers + the force-bundle variant).
-template <typename T>
-static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceStorage<T>& rs,
-                                                         const DeviceParams<T>& p) {
-    auto f = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
-    cumes::GeometryParityViews<T> v;
-    v.r_e = f(rs.d_r_e); v.z_e = f(rs.d_z_e); v.l_e = f(rs.d_l_e);
-    v.ru_e = f(rs.d_ru_e); v.zu_e = f(rs.d_zu_e); v.lu_e = f(rs.d_lu_e);
-    v.r_o = f(rs.d_r_o); v.z_o = f(rs.d_z_o); v.l_o = f(rs.d_l_o);
-    v.ru_o = f(rs.d_ru_o); v.zu_o = f(rs.d_zu_o); v.lu_o = f(rs.d_lu_o);
-    v.rv_e = f(rs.d_rv_e); v.zv_e = f(rs.d_zv_e); v.lv_e = f(rs.d_lv_e);
-    v.rv_o = f(rs.d_rv_o); v.zv_o = f(rs.d_zv_o); v.lv_o = f(rs.d_lv_o);
-    return v;
-}
-
+// geometryParityViews is the shared inline definition in
+// cumes/state/real_fields.cuh (review finding 4.2 — was a byte-identical
+// mirror of geometry_impl.cuh's copy here); this TU keeps the force-bundle
+// variant.
 template <typename T>
 static cumes::ForceParityViews<T> forceParityViews(const cumes::RealSpaceStorage<T>& rs,
                                                    const DeviceParams<T>& p) {
