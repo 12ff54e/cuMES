@@ -6,9 +6,10 @@
 // inverseDFT/inverseDFTFused/forwardDFT/fourierCombineParity/constraintDealiasBandpass
 // free functions are gone — migration step 13.3); the parity-split
 // geometry/force arrays live in the stage-owned RealSpaceStorage (non-owning),
-// which the operator references so the unified enqueue_inverse/enqueue_forward
-// view parameters alias that storage. The folded mode table (xm/xn) is
-// resolution-scoped metadata shared via DeviceModeTable.
+// which the operator references. enqueue_inverse/enqueue_forward honor the
+// view bundles they are passed (the solver passes aliasing views over that
+// storage — the common case, but non-aliasing views are legal). The folded
+// mode table (xm/xn) is resolution-scoped metadata shared via DeviceModeTable.
 #pragma once
 
 #include <cstddef>
@@ -63,8 +64,9 @@ class ToroidalFftOperator : public SpectralOperator<T> {
   void inverse_fused(SpectralView<const T, PhysicalStateDomain> coeff,
                      bool do_combine, T* rCon, T* zCon, cudaStream_t stream = 0);
 
-  // Forward projection: parity forces (aliasing `rs`) + constraint force -> six
-  // spectral forces (component-major DecomposedResidualDomain).
+  // Forward projection: parity forces (the caller's views — today aliasing
+  // `rs`) + constraint force -> six spectral forces (component-major
+  // DecomposedResidualDomain).
   void forward(SpectralView<T, DecomposedResidualDomain> f_spec,
                const T* frcon_e, const T* frcon_o, const T* fzcon_e,
                const T* fzcon_o, cudaStream_t stream = 0);

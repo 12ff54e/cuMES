@@ -43,16 +43,6 @@ class Preconditioner {
   void enqueue_apply(SpectralView<T, DecomposedResidualDomain> residual,
                      const DeviceParams<T>& p, cudaStream_t stream) const;
 
-  // Legacy-compat shim: tests/test_regression_kernels.cu (sibling-owned)
-  // still passes the mode tables; the solve itself no longer needs m/n.
-  // Remove this overload together with that test's call site.
-  void enqueue_apply(SpectralView<T, DecomposedResidualDomain> residual,
-                     const DeviceParams<T>& p, const int* xm, const int* xn,
-                     cudaStream_t stream) const {
-    (void)xm; (void)xn;
-    enqueue_apply(residual, p, stream);
-  }
-
   // vmecpp applyM1Preconditioner: scale the m=1 frss/fzcs pair by the
   // odd-parity diagonal elements (ard/brd/azd/bzd) before the RZ solve. Runs
   // after the invariant residuals, before enqueue_apply.
