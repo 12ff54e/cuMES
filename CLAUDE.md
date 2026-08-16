@@ -1,4 +1,4 @@
-# AGENTS.md — cuMES (CUDA Magnetic Equilibrium Solver)
+# CLAUDE.md — cuMES (CUDA Magnetic Equilibrium Solver)
 
 ## Project Overview
 
@@ -9,6 +9,11 @@ but the architecture is real.
 
 Reference implementation: `https://github.com/proximafusion/vmecpp` (CPU-based C++ VMEC solver) at tag 0.7.0.
 
+The codebase completed a CUDA overhaul (blueprint: `docs/cuda-overhaul-blueprint.md`,
+phases 0–11; see `docs/architecture.md` for the current shape and the
+`docs/phase-*-handover.md` trail for history). Everything below describes the
+post-overhaul code.
+
 ## Build & Run
 
 ```bash
@@ -16,30 +21,40 @@ Reference implementation: `https://github.com/proximafusion/vmecpp` (CPU-based C
 cmake -B build -G Ninja
 cmake --build build -j
 
-# Run main solver
-./build/cuMES
+# Run main solver (default input inputs/solovev.json, output cumes_state.bin)
+./build/cuMES inputs/solovev.json out.bin        # positional: <input> <output>
 
-# run tests
-./build/test_fourier
+# run tests (35 registered via CTest, incl. compute-sanitizer memcheck entries)
+ctest --test-dir build --output-on-failure
 
 # single-precision build (all computation templated on T; Real = float)
 cmake -B build-float -G Ninja -DCUMES_USE_FLOAT=ON
 cmake --build build-float -j
 ```
 
+CLI: `--output-schema legacy-v0|v1` (v1 = versioned binary container),
+`--restart <checkpoint>`, `--restart-legacy <six-family payload>`,
+`--checkpoint <path>` (write a v1 checkpoint after solve); a `.nc`/`.h5`
+suffix dispatches to the NetCDF/HDF5 writers when compiled in
+(`outputFormatAvailable` preflights before any CUDA work).
+`CUMES_FORCE_GENERIC=1` forces the generic cuFFT transform backend on
+axisymmetric shapes (default: the axisymmetric direct-poloidal backend).
+
 **Requirements:** CUDA Toolkit >= 11, CMake >= 3.20, GPU compute capability >= 6.1.
 If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must point to g++-12 (set in
 `CMakeLists.txt`).
 
 **Precision:** every computation function is `template<typename T>` (double or
-float); the executable's `Real` alias (vmec_types.h) is the compile-time switch
-(`-DCUMES_USE_FLOAT=ON`). The tests instantiate both types in every build.
+float); the executable's `Real` alias (include/vmec_types.h) is the compile-time
+switch (`-DCUMES_USE_FLOAT=ON`). The tests instantiate both types in every build.
 On-disk state files stay double (Python scripts unaffected); dump files are
 T-native. Float runs stall at ~1e-7 residuals and never reach the hardcoded
-ftol — relax ftol for float experiments. Note: nvcc rejects `extern __shared__`
-arrays in function templates instantiated with different element types in one
-TU — the dynamic shared-memory base is routed through the non-templated
-`dynSharedBase()` helper (see the comment at the top of each .cu that uses it).
+ftol — float builds hard-error at startup when any `ftol_array` entry is below
+1e-6, so relax the stage ftols for float experiments. Device code is split into
+explicit double/float instantiation TUs (`src/*_double.cu` / `src/*_float.cu`,
+one scalar type per TU), so kernels may declare dynamic shared memory directly
+as `extern __shared__ T[]` (the old non-templated `dynSharedBase()` indirection
+was removed 2026-08-16).
 
 **CUDA architectures:** 61 (Pascal), 75 (Turing), 80 (Ampere), 86, 89 (Ada).
 
@@ -47,51 +62,67 @@ TU — the dynamic shared-memory base is routed through the non-templated
 
 ```
 cuMES/
-├── CMakeLists.txt          Build config (two targets: cuda_vmec + test_fourier)
-├── README.md               Architecture overview, data flow, omitted features
-├── include/                Public headers
-│   ├── vmec_types.h        Shared GPU data structures (GridParams, SpectralState, …)
-│   ├── input.h             Hardcoded Solovev boundary + profile functions
-│   ├── fourier.cuh         DFT plan, inverseDFT / forwardDFT declarations
-│   ├── geometry.cuh        MetricWorkspace, computeGeometry declaration
-│   ├── forces.cuh          computeForces declaration
-│   ├── profiles.cuh        profilesCreate / profilesFree declarations
-│   ├── solver.cuh          SolverResult, solverRun declaration
-│   ├── output.cuh          outputPrint declaration
-│   └── refine.cuh          interpolateState declaration (grid sequencing)
-├── src/                    Implementation files (.cu = CUDA C++)
-│   ├── main.cu             Entry point: multigrid stage loop → solve → output
-│   ├── fourier.cu          cuFFT inverse/forward transform kernels (12-slot ζ-FFT)
-│   ├── geometry.cu         Jacobian, metric g^ij, contravariant B on half-grid
-│   ├── forces.cu           MHD force residuals (brmn/bzmn/crmn/czmn/blmn/clmn)
-│   ├── profiles.cu         Radial profile evaluation + GPU upload
-│   ├── solver.cu           Fixed-point loop with Garabedian accelerated descent
-│   ├── refine.cu           interpolateState: coarse→fine grid state interpolation
-│   └── output.cu           Copy results from GPU → print
-└── tests/
-    └── test_fourier.cu     Standalone correctness tests (no framework)
+├── CMakeLists.txt          Library split + executable/tests (see architecture.md §2)
+├── include/
+│   ├── vmec_types.h        `Real` alias + parity/basis convention comment
+│   ├── solver.cuh          SolverResult<T> + solverRun declaration (thin app shim)
+│   ├── output.cuh          outputSave/outputPrint declarations (app shim)
+│   ├── fft_traits.h        FftTraits<T>: cuFFT type/enum/exec dispatch
+│   ├── JsonParser.h        Legacy parser kept only for the netcdf/hdf5 v0 writers
+│   └── cumes/              The operator library (see below)
+├── src/
+│   ├── main.cu             Entry point: validate config → multigrid stage loop → output
+│   ├── <mod>_impl.cuh      Templated kernel bodies, one file per operator module
+│   ├── <mod>_double.cu     Explicit double instantiation TU (cumes_cuda_double)
+│   ├── <mod>_float.cu      Explicit float instantiation TU (cumes_cuda_float)
+│   │                       modules: fourier geometry forces solver profiles precon
+│   │                                constraint prolongation axisymmetric
+│   ├── cumes/              Host-side C++: config, io, core, runtime
+│   └── output*.cpp         Binary/NetCDF/HDF5 writers + format dispatcher
+├── tests/                  Standalone correctness tests (no framework) + support/
+├── benchmarks/             fixed_iteration + graph_overhead harnesses
+├── scripts/                compare_runs.py / compare_states.py / compare_bitwise.py
+├── inputs/                 solovev.json, w7x.json (vmecpp indata schema)
+└── docs/                   Blueprint, architecture, ADRs, phase handovers
 ```
+
+`include/cumes/`: `config` (ProblemSpec → ValidatedProblem, DeviceParams<T>,
+validation), `core` (GridShape, checked arithmetic, Result), `io` (output
+specs, checkpoint, versioned containers), `runtime` (DeviceBuffer/DeviceArena/
+Stream/Event/DeviceContext), `state` (SpectralStorage, RealSpaceStorage,
+typed views), `transforms` (SpectralOperator interface + ToroidalFftOperator +
+AxisymmetricOperator), `physics` (Geometry/MagneticField/Force/Constraint/
+Profiles operators), `numerics` (Residual/Descent/Prolongation/Preconditioner +
+tridiagonal backends), `solver` (EquilibriumOperator, IterationController,
+StageSolver, MultigridSolver).
 
 ## Architecture: Data Flow per Iteration
 
 ```
 Spectral coefs (rmnc, zmns, lmnc)              ← degrees of freedom
          │
-         ▼  [inverse DFT — GPU kernel]
+         ▼  [ToroidalFftOperator::inverse_fused — inverse DFT + rCon/zCon]
 Real-space geometry R, Z, λ + derivatives      (ns × ntheta × nzeta)
          │
-         ▼  [geometry kernel]
+         ▼  [GeometryOperator / MagneticFieldOperator]
 Half-grid: √g, g_uu, g_uv, g_vv, B^θ, B^ζ    (ns-1 × ntheta × nzeta)
          │
-         ▼  [forces kernel]
+         ▼  [ForceOperator]
 Real-space forces F_R, F_Z, F_λ                (ns × ntheta × nzeta)
          │
-         ▼  [forward DFT — GPU kernel]
+         ▼  [ConstraintOperator (bandpass) + forward DFT]
 Spectral forces                                 (3, mnmax, ns)
          │
-         ▼  [descent kernel — Garabedian step]
-v = fac×(b1·v + delt·f) ,  x += delt·v
+         ▼  [ResidualOperator + Preconditioner + DescentOperator]
+v = fac×(b1·v + delt·f) ,  x += delt·v        (Garabedian accelerated descent)
 ```
+
+The whole per-iteration DAG is composed inside `EquilibriumOperator::enqueue`
+(`src/solver_impl.cuh`); `solverRun` is a thin loop over the pure-host
+`IterationController` + that DAG on one explicit compute stream, with one
+deliberate host fence per iteration. All operators own their device buffers
+(directly or via one `DeviceArena` carved per stage) and expose typed view
+bundles; no legacy workspace structs remain.
 
 ## Key Design Decisions
 
@@ -102,7 +133,10 @@ v = fac×(b1·v + delt·f) ,  x += delt·v
 | **Staggered half-grid**            | Dynamic variables on full grid (flux surfaces); metric elements on half grid (between surfaces). Prevents checkerboard instability. Matches VMEC convention.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | **All GPU allocations at startup** | Scratch arrays allocated once, reused every iteration. Zero `cudaMalloc` calls in the hot loop.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | **Host checks convergence**        | Residual reduction runs on GPU, but the scalar comparison `fsq < ftol` happens on host.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **Precision via templates**        | All computation is `template<typename T>`; `Real` (vmec_types.h) + `-DCUMES_USE_FLOAT=ON` selects float, otherwise double. Double is the verified default — residuals pushed to 1e-14. Single precision stalls at ~1e-7 (float rounding floor), so float runs need a relaxed ftol. cuFFT dispatches through `FftTraits<T>` (D2Z/Z2D ↔ R2C/C2R).                                                                                                                                                                                                                                                        |
+| **Precision via templates**        | All computation is `template<typename T>`; `Real` (vmec_types.h) + `-DCUMES_USE_FLOAT=ON` selects float, otherwise double. Double is the verified default — residuals pushed to 1e-14. Single precision stalls at ~1e-7 (float rounding floor), so float runs need a relaxed ftol. cuFFT dispatches through `FftTraits<T>` (D2Z/Z2D ↔ R2C/C2R).                                                                                                                                                                                                                                                            |
+| **Explicit instantiation split**   | Each operator's kernels live in `src/<mod>_impl.cuh` included only by its `_double.cu`/`_float.cu` TUs (one scalar type per TU, linked as `cumes_cuda_double`/`cumes_cuda_float`). This makes direct `extern __shared__ T[]` legal in the templated kernels (see Precision).                                                                                                                                                                                                                                                                                                                            |
+| **Config validation**              | The JSON input is parsed and validated host-side into a `ValidatedProblem` (`cumes-config-v1` normalized schema, `configs/schema-v1.json`); the solver consumes `ValidatedProblem` + per-stage `DeviceParams<T>` packs. No solver code parses input.                                                                                                                                                                                                                                                                                                                                                    |
+| **Class A / Class B changes**      | Class A = bit-identical to the frozen trajectory (Solovev `251→199→456` FSQR 9.583e-17, W7-X `1877→1617→2011` FSQR 9.778e-13) — the regression oracle for every change. Class B = ULP-equivalent with identical controller decisions (iteration counts + restart sequence), a deliberate re-freeze. Verify with `scripts/compare_runs.py` + CTest.                                                                                                                                                                                                                                                      |
 
 ## Fourier Transform Details
 
@@ -230,56 +264,61 @@ the older docs were wrong), averaged over a 10-iteration window.
 | VMEC++ feature                       | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FFT-accelerated transforms           | cuFFT backend (batched 1D ζ-FFT + direct poloidal), mirroring vmecpp's FFTX structure                                                                                                                                                                                                                                                                                                                                                                      |
-| Multigrid grid sequencing            | Implemented: per-config `ns_array`/`niter_array`/`ftol_array` stage loop (Solovev 5→11→55, W7-X 33→66→99), each stage seeded by the previous converged state via `interpolateState` (refine.cu) — vmecpp `InterpolateToNextMultigridStep`, linear in s on scalxc-scaled odd-m coefficients, 2·x₁−x₂ axis extrapolation, odd-m zeroed at the axis, LCFS copied exactly. A stage that exhausts its cap without meeting ftol fails the run (vmecpp semantics) |
+| Multigrid grid sequencing            | Implemented: per-config `ns_array`/`niter_array`/`ftol_array` stage loop (Solovev 5→11→55, W7-X 33→66→99), each stage seeded by the previous converged state via `Prolongation` — vmecpp `InterpolateToNextMultigridStep`, linear in s on scalxc-scaled odd-m coefficients, 2·x₁−x₂ axis extrapolation, odd-m zeroed at the axis, LCFS copied exactly. A stage that exhausts its cap without meeting ftol fails the run (vmecpp semantics) |
+| De-aliased constraint force          | Implemented (spectral-condensation bandpass inside `ConstraintOperator`; the fused rCon/zCon synthesis lives in `ToroidalFftOperator::inverse_fused`)                                                                                                                                                                                                                                                                                                    |
+| Hot restart / checkpointing          | Implemented (v1 checkpoint container: `--checkpoint` / `--restart`; legacy six-family payload: `--restart-legacy`)                                                                                                                                                                                                                                                                                                                                        |
 | Free boundary / vacuum solver        | Fixed boundary only                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Mercier stability, jxbout, wout      | Post-processing; not needed for core loop                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Hot restart / checkpointing          | Not yet                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Adaptive time-step (Jacobian resets) | Fixed step; add when convergence is poor                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| De-aliased constraint force          | Not yet                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Python interface                     | Not yet; C++/CUDA executable only                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Input file parsing                   | Hardcoded in `input.h`                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Python interface                     | Not yet; C++/CUDA executable only                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Coding Conventions
 
 ### Naming
 
-- **Types:** `CamelCase` (e.g., `GridParams`, `SpectralState`, `FourierPlan`)
+- **Types:** `CamelCase` (e.g., `DeviceParams`, `ToroidalFftOperator`, `ValidatedProblem`)
 - **Functions:** `camelCase` (e.g., `fourierCreate`, `computeGeometry`)
 - **Variables:** `snake_case` (e.g., `d_rmnc`, `delta_s`, `nZnT`)
 - **Constants:** `kCamelCase` (e.g., `kSignJacobian`, `kNsVal`, `kFtol`)
 - **Device pointers:** `d_` prefix (e.g., `d_rmnc`, `d_gsqrt`)
 - **Host pointers:** `h_` prefix (e.g., `h_rmnc`, `h_cos`)
+- **Operators:** `cumes` namespace, `xCreate`/`xFree` replaced by RAII classes
+  owning their buffers (`ToroidalFftOperator`, `GeometryOperator`, …)
 
 ### GPU Memory
 
 - Column-major throughout: `index(point, surface) = point + surface * nZnT`
-- All device allocations via `cudaMalloc`, freed with `cudaFree`
-- Error checking: always check `cudaError_t` return values
+- All device allocations via RAII (`DeviceBuffer`/`DeviceArena`), error-checked
+  through the centralized `cumes::check_cuda`/`check_cufft` in `cumes/runtime`
+- New device code belongs behind an operator class with typed views; kernel
+  bodies live in the module's `src/<mod>_impl.cuh`
 
 ### API pattern
 
-- `xCreate(params)` — allocates GPU memory, returns struct
-- `xFree(struct)` — frees all GPU allocations
-- Each module has a `.cuh` header (types + declarations) and a `.cu` source
+- Each operator module has a `.hpp` header (types + declarations) under
+  `include/cumes/<area>/` and its kernel bodies in `src/<mod>_impl.cuh`,
+  explicitly instantiated by `src/<mod>_{double,float}.cu`
+- Host-side modules are plain C++ under `src/cumes/`
 
 ### Tests
 
 - Standalone executables, no framework dependency
 - CPU reference implementation mirrors GPU kernel logic
 - Pattern: create known input → run GPU → run CPU reference → compare
+- Shared builders live in `tests/support/cumes_test_support.cuh`
 
-## Known Issues / Next Steps
+## Status and Known Issues
 
-\*\*Status (2026-08-07): grid sequencing is implemented and verified against
-vmecpp. Both configs now run multi-stage by default (Solovev 5→11→55,
-W7-X 33→66→99, mirroring the reference JSONs), each stage seeded by the
-previous converged state via `interpolateState` (refine.cu). Verification
-vs vmecpp's own multigrid runs:
+**Status (2026-08-16): the CUDA overhaul (blueprint phases 0–11) is complete —
+the strangler-fig migration is done, the legacy kernel structs and their free
+functions are deleted, and the `dynSharedBase()` dynamic-shared-memory
+indirection is removed (the deferred step-13 item, measured bit-identical
+rather than the anticipated Class B re-freeze). The frozen baselines are:**
 
-- Solovev: 251 → 199 → 456 effective iters, final FSQR 9.58e-17 — the
+- Solovev: 251 → 199 → 456 effective iters, final FSQR 9.583e-17 — the
   final stage matches vmecpp's playground reference exactly (456, 9.99e-17).
 - W7-X: 1877 → 1617 → 2011 effective iters (total 5505), final FSQR
-  9.78e-13; vmecpp multigrid runs 1877 → 1635 → 2012. The converged final
+  9.778e-13; vmecpp multigrid runs 1877 → 1635 → 2012. The converged final
   states agree at ~1e-5 in R/Z, ~1e-4 in the weakly-determined near-axis λ.
 - The multigrid final state is a different member of the (near-degenerate)
   λ-gauge family than the single-grid-99 run: rmncc(0,1) differs by
@@ -289,13 +328,12 @@ vs vmecpp's own multigrid runs:
   multigrid final state converges at iter 1 (it is a genuine fixed point).
 - Single-grid regression: with `n_grids=1` (ns_array={99}) the run is
   bit-identical to the pre-multigrid code (compare_runs.py PASS, 2953
-  effective iters, FSQR 9.924e-13, state identical).\*\*
-  (The 2026-08-02 status below remains true for single-grid runs: the
-  per-iteration residuals track vmecpp at ≤1e-8 over the ENTIRE run with an
-  identical restart sequence — BJs iter2 3,5,8,11,15; BPs 51,64,78,91 — and
-  the single-grid converged state matches the wout at ≤1.5e-9 in all six
-  families including the λ gauge modes. Note: scripts/compare_converged_state.py
-  must read the FULL-grid wout `lmns_full`, not the half-grid `lmns`.)
+  effective iters, FSQR 9.924e-13, state identical).
+- The per-iteration residuals track vmecpp at ≤1e-8 over the ENTIRE run with an
+  identical restart sequence, and the single-grid converged state matches the
+  wout at ≤1.5e-9 in all six families including the λ gauge modes. Note:
+  scripts/compare_converged_state.py must read the FULL-grid wout `lmns_full`,
+  not the half-grid `lmns`.
 
 1. **Axis representation (state-file only, real-space-irrelevant).** cuMES
    constant-extrapolates the axis row from j=1 (extrapolateAxisKernel — m=1
@@ -308,8 +346,8 @@ vs vmecpp's own multigrid runs:
 
 2. **Float builds reject impossible tolerances.** Float runs stall at ~1e-7
    (float rounding floor), so the double-tuned stage ftols (1e-16/1e-12) can
-   never be met. main now hard-errors at startup when any `ftol_array` entry
-   is below 1e-6 in a float build — for float experiments, relax the
+   never be met. main hard-errors at startup when any `ftol_array` entry is
+   below 1e-6 in a float build — for float experiments, relax the
    `ftol_array` entries to >= 1e-6 (and note `CUMES_MAX_ITER`/`CUMES_DELT0`
    override every stage's cap when set).
 

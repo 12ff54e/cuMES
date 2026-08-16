@@ -1,11 +1,12 @@
 # cuMES architecture
 
-Status date: 2026-08-16 (Phase 11 step 13 complete). This document describes
-the architecture as it exists after Phase 10 — the tested operator boundaries,
-the build/library split, and the state of the strangler-fig migration. The
-normative numerical contracts live in `docs/cuda-overhaul-blueprint.md` §4; the
-layout contracts in `docs/data-layout.md`; the measured performance in
-`docs/performance.md`.
+Status date: 2026-08-16 (Phase 11 complete — step 13 + the deferred
+`dynSharedBase()` removal landed, both measured bit-identical). This document
+describes the architecture as it exists after Phase 10 — the tested operator
+boundaries, the build/library split, and the state of the strangler-fig
+migration. The normative numerical contracts live in
+`docs/cuda-overhaul-blueprint.md` §4; the layout contracts in
+`docs/data-layout.md`; the measured performance in `docs/performance.md`.
 
 ## 1. One layer: the `cumes` operator library
 
@@ -55,11 +56,12 @@ monolithic compile (blueprint §9):
 | `cuMES` | executable | `main.cu`, links only the TU matching `Real` |
 | `cumes_benchmark_fixed_iteration`, `cumes_benchmark_graph_overhead` | bench | §8.1 harness, graph microbenchmark |
 
-The CUDA operator libraries are the explicit-instantiation split that makes the
-non-templated `dynSharedBase()` shared-memory indirection unnecessary in new
-code; it is retained only because switching to `extern __shared__ T[]` changes
-`--use_fast_math` FMA fusion and perturbs the trajectory (~1e-10) — a Class B
-change left for a future re-freeze.
+The CUDA operator libraries are the explicit-instantiation split that made the
+old non-templated `dynSharedBase()` shared-memory indirection removable: since
+each TU instantiates exactly one scalar type, the kernels now declare their
+dynamic shared memory directly as `extern __shared__ T[]`. The switch was
+expected to be a Class B re-freeze but measured **bit-identical** on both
+configs (2026-08-16), so the frozen trajectory baseline stands unchanged.
 
 ## 3. Production per-iteration pipeline
 
