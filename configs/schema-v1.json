@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cumes.local/schema-v1.json",
+  "title": "cuMES normalized configuration (cumes-config-v1)",
+  "description": "Canonical, deterministic JSON form of a validated cuMES problem (ValidatedProblem::normalize_to_json). This is the schema v1 *configuration* contract (blueprint §6.1/§6.13); the on-disk state containers are frozen separately by the reader/writer modules and are summarized under 'x-cumes-on-disk-contracts' below for a single artifact of record. Golden files: tests/fixtures/solovev.normalized.json, tests/fixtures/w7x.normalized.json (pinned by test_host_config).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "mpol", "ntor", "nfp", "ntheta", "nzeta", "ncurr", "delt",
+    "physical", "profiles", "axis", "stages", "boundary", "folded"
+  ],
+  "properties": {
+    "schema": { "const": "cumes-config-v1" },
+
+    "mpol":  { "type": "integer", "minimum": 1 },
+    "ntor":  { "type": "integer", "minimum": 0 },
+    "nfp":   { "type": "integer", "minimum": 1 },
+    "ntheta": { "type": "integer", "minimum": 4 },
+    "nzeta":  { "type": "integer", "minimum": 1 },
+    "ncurr":  { "type": "integer", "enum": [0, 1] },
+    "delt":   { "type": "number" },
+
+    "physical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phiedge", "pres_scale", "adiabatic_index", "spres_ped", "bloat", "curtor", "tcon0"],
+      "properties": {
+        "phiedge":        { "type": "number" },
+        "pres_scale":     { "type": "number" },
+        "adiabatic_index": { "type": "number", "const": 0 },
+        "spres_ped":      { "type": "number" },
+        "bloat":          { "type": "number" },
+        "curtor":         { "type": "number" },
+        "tcon0":          { "type": "number" }
+      }
+    },
+
+    "profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["am", "ac", "ai", "aphi"],
+      "properties": {
+        "am":   { "type": "array", "items": { "type": "number" } },
+        "ac":   { "type": "array", "items": { "type": "number" } },
+        "ai":   { "type": "array", "items": { "type": "number" } },
+        "aphi": { "type": "array", "items": { "type": "number" } }
+      }
+    },
+
+    "axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raxis_c", "zaxis_s"],
+      "properties": {
+        "raxis_c": { "type": "array", "items": { "type": "number" } },
+        "zaxis_s": { "type": "array", "items": { "type": "number" } }
+      }
+    },
+
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ns", "max_iter", "ftol"],
+        "properties": {
+          "ns":       { "type": "integer", "minimum": 3 },
+          "max_iter": { "type": "integer", "minimum": 1 },
+          "ftol":     { "type": "number" }
+        }
+      }
+    },
+
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rbc", "zbs"],
+      "properties": {
+        "rbc": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["m", "n", "value"],
+            "properties": {
+              "m":     { "type": "integer", "minimum": 0 },
+              "n":     { "type": "integer" },
+              "value": { "type": "number" }
+            }
+          }
+        },
+        "zbs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["m", "n", "value"],
+            "properties": {
+              "m":     { "type": "integer", "minimum": 0 },
+              "n":     { "type": "integer" },
+              "value": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+
+    "folded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rbcc", "rbss", "zbsc", "zbcs"],
+      "properties": {
+        "rbcc": { "type": "array", "items": { "type": "number" } },
+        "rbss": { "type": "array", "items": { "type": "number" } },
+        "zbsc": { "type": "array", "items": { "type": "number" } },
+        "zbcs": { "type": "array", "items": { "type": "number" } }
+      }
+    }
+  },
+
+  "x-cumes-on-disk-contracts": {
+    "title": "frozen on-disk state containers (blueprint §6.13)",
+    "legacy-binary-v0": {
+      "description": "int32 ns; int32 mnmax; then six families rmncc/zmnsc/lmnsc/rmnss/zmncs/lmncs, each mnmax*ns native little-endian doubles, surface-contiguous (index = surface + mode*ns). Trailing data is a read error.",
+      "magic": null,
+      "version": 0
+    },
+    "versioned-binary-v1": {
+      "description": "magic 'CUMES001' (8 bytes); int32 version = 1; int32 ns; int32 mnmax; six families (mode-major doubles); then a provenance trailer: int32 precision (0=double,1=float); int32 status; int32 total_iter; int32 nstages; strings build.revision/dirty/build_type/scalar_type, input.source_path/source_hash, runtime.gpu_name/driver/runtime/toolkit; per-stage int32 ns/iterations, u8 converged, f64 fsqr/fsqz/fsql, int32 nrestarts + int32 restart iterations.",
+      "magic": "CUMES001",
+      "version": 1
+    },
+    "versioned-checkpoint-v1": {
+      "description": "magic 'CUMECKP1' (8 bytes); int32 version = 1; int32 precision = 0 (always double on disk); int32 ns; int32 mnmax; six families (mode-major doubles). Header mismatch or corrupt input is an error, never a silent cold start.",
+      "magic": "CUMECKP1",
+      "version": 1
+    },
+    "legacy-init-converter": {
+      "description": "convert_legacy_init reads the legacy CUMES_LOAD_INIT / vmecpp_init.bin six-family double payload (int32 ns; int32 mnmax; six families) and validates the header against the expected (ns, mnmax) before producing a checkpoint snapshot."
+    },
+    "endianness": "little-endian; the legacy adapter must either require a little-endian host or byte-swap explicitly",
+    "family-order": ["rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs"]
+  }
+}

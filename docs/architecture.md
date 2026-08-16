@@ -112,9 +112,18 @@ Still pending (blocked on consumers, blueprint §11 Phase 10 exit gate):
 
 - the legacy `include/*.cuh` kernel structs (`FourierPlan`, `MetricWorkspace`,
   `InputParams`, …) are still the production implementation and cannot be
-  deleted until the `cumes` operator classes fully replace them;
-- `AxisymmetricOperator` (Phase 7.1) is built and gated but not yet wired into
-  the Solovev production path (a Class B trajectory change);
-- schema v1 and the checkpoint compatibility policy are defined in
-  `docs/cuda-overhaul-blueprint.md` §6.13 but the `configs/schema-v1.json`
-  artifact is not yet emitted.
+  deleted until the `cumes` operator classes fully replace them.
+
+Emitted after Phase 10: `configs/schema-v1.json` freezes the `cumes-config-v1`
+normalized-config schema (blueprint §6.1, `ValidatedProblem::normalize_to_json`,
+pinned by the `tests/fixtures/*.normalized.json` goldens) and, under
+`x-cumes-on-disk-contracts`, the legacy-v0 / versioned-v1 / checkpoint-v1
+binary container layouts (blueprint §6.13).
+
+Wired in after Phase 10 (see `docs/adr/0004`): `AxisymmetricOperator` (Phase
+7.1) now runs the Solovev production path — `StageSolver::run` builds it when
+`ntor=0/nzeta=1` and `solverRun` selects `enqueue_inverse`/`enqueue_rzcon`/
+`enqueue_forward`/`constraintComputeAxisym` instead of the generic cuFFT calls
+(`CUMES_FORCE_GENERIC=1` restores the generic backend). It is a Class B
+trajectory member (ULP-equivalent, identical iteration counts), and a ~29%
+median wall-time win on the submission-bound Solovev shape.

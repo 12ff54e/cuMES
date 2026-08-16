@@ -21,11 +21,12 @@ CTest.
 
 ## 2. Steady-state wall time (TITAN Xp, sm_61)
 
-Measured by the fixed-iteration harness (Phase 9):
+Measured by the fixed-iteration harness (Phase 9, updated post-Phase-10 with
+the axisymmetric production wiring — see ADR-0004):
 
 | shape | µs / effective iteration |
 | ----- | ------------------------ |
-| Solovev `ns=55` (axisymmetric) | ~213 |
+| Solovev `ns=55` (axisymmetric) | ~153 (was ~213 on the generic backend) |
 | W7-X `ns=99` (3D) | ~2110 |
 
 Historical hotspot profiles (different sessions; not cross-GPU ratios — see the

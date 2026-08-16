@@ -22,6 +22,8 @@
 #include <cstdio>
 #include <cmath>
 
+#include "cumes/transforms/axisymmetric_operator.hpp"
+
 
 // Dynamic shared-memory base accessor. Each block reserves one extern __shared__
 // region per kernel launch; the consuming kernels reinterpret that base as T*.
@@ -576,11 +578,13 @@ void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
 // ---------------------------------------------------------------------------
 // Host orchestration
 // ---------------------------------------------------------------------------
+// Steps 0 (tcon refresh) + 1 (effective constraint force gConEff) — shared by
+// the generic and axisymmetric backends; only the step-2 bandpass differs.
 template <typename T>
-void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
-                       const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
-                       const T* d_sqrtS_F, bool precon_updated,
-                       cudaStream_t stream) {
+static void constraintComputeHead(const GridParams<T>& p, const FourierPlan<T>& fp,
+                                  const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
+                                  const T* d_sqrtS_F, bool precon_updated,
+                                  cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
 
@@ -607,8 +611,6 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
         cumes::check_cuda(cudaGetLastError(), "tcon lcfs");
     }
 
-    // Zero gCon before accumulation
-
     // Step 1: Effective constraint force
     effectiveConstraintKernel<T><<<grid, block, 0, stream>>>(
         cw.d_rCon, cw.d_zCon,
@@ -617,6 +619,31 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
         cw.d_rCon0, cw.d_zCon0,
         p.ns, p.nZnT, cw.d_gConEff);
     cumes::check_cuda(cudaGetLastError(), "gConEff");
+}
+
+// Step 3: Add constraint force to brmn/bzmn + write frcon/fzcon outputs.
+template <typename T>
+static void constraintComputeTail(const GridParams<T>& p, const FourierPlan<T>& fp,
+                                  ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
+                                  cudaStream_t stream) {
+    dim3 block(128);
+    dim3 grid((p.nZnT + 127) / 128, p.ns);
+    addConstraintKernel<T><<<grid, block, 0, stream>>>(
+        cw.d_rCon, cw.d_zCon, cw.d_rCon0, cw.d_zCon0,
+        cw.d_gCon, d_sqrtS_F,
+        fp.d_ru_e, fp.d_ru_o, fp.d_zu_e, fp.d_zu_o,
+        p.ns, p.nZnT,
+        fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
+        cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o);
+    cumes::check_cuda(cudaGetLastError(), "addConstraint");
+}
+
+template <typename T>
+void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
+                       const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
+                       const T* d_sqrtS_F, bool precon_updated,
+                       cudaStream_t stream) {
+    constraintComputeHead(p, fp, pw, cw, d_sqrtS_F, precon_updated, stream);
 
     // Step 2: Bandpass filter (de-alias) — cuFFT round trip on the compact
     // batch (2 slots x (mpol-2) modes x (ns-1) surfaces instead of the full
@@ -626,14 +653,24 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
     // poloidal synthesis -> gCon.
     constraintDealiasBandpass(p, fp, cw, stream);
 
-    // Step 3: Add constraint force to brmn/bzmn + write frcon/fzcon outputs
-    addConstraintKernel<T><<<grid, block, 0, stream>>>(
-        cw.d_rCon, cw.d_zCon, cw.d_rCon0, cw.d_zCon0,
-        cw.d_gCon, d_sqrtS_F,
-        fp.d_ru_e, fp.d_ru_o, fp.d_zu_e, fp.d_zu_o,
-        p.ns, p.nZnT,
-        fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o,
-        cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o);
-    cumes::check_cuda(cudaGetLastError(), "addConstraint");
+    constraintComputeTail(p, fp, cw, d_sqrtS_F, stream);
+}
+
+template <typename T>
+void constraintComputeAxisym(const GridParams<T>& p, const FourierPlan<T>& fp,
+                             const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
+                             const T* d_sqrtS_F, bool precon_updated,
+                             cumes::AxisymmetricOperator<T>& op,
+                             cudaStream_t stream) {
+    constraintComputeHead(p, fp, pw, cw, d_sqrtS_F, precon_updated, stream);
+
+    // Step 2: direct-poloidal de-alias (ntor=0/nzeta=1). Replaces the compact
+    // cuFFT round trip above; Class B ULP-equivalent (test_axisym_backend).
+    op.enqueue_dealias(
+        cumes::RealFieldView<const T>(cw.d_gConEff, p.ns, p.ntheta, p.nzeta),
+        cw.d_tcon, cw.d_faccon,
+        cumes::RealFieldView<T>(cw.d_gCon, p.ns, p.ntheta, p.nzeta), stream);
+
+    constraintComputeTail(p, fp, cw, d_sqrtS_F, stream);
 }
 

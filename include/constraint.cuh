@@ -5,7 +5,10 @@
 #include "fourier.cuh"
 #include "precon.cuh"
 
-namespace cumes { class DeviceArena; }
+namespace cumes {
+class DeviceArena;
+template <typename T> class AxisymmetricOperator;
+}
 
 template <typename T>
 struct ConstraintWorkspace {
@@ -94,3 +97,16 @@ void constraintCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
                        const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
                        const T* d_sqrtS_F, bool precon_updated,
                        cudaStream_t stream = 0);
+
+// Axisymmetric variant of constraintCompute (blueprint §8.5): identical steps
+// 0 (tcon refresh) / 1 (gConEff) / 3 (add to brmn/bzmn) but the step-2 bandpass
+// is the AxisymmetricOperator's direct-poloidal de-alias instead of the compact
+// cuFFT round trip (constraintDealiasBandpass). The two are Class B ULP-
+// equivalent on the ntor=0/nzeta=1 grid (pinned by test_axisym_backend).
+template <typename T>
+void constraintComputeAxisym(const GridParams<T>& p, const FourierPlan<T>& fp,
+                             const PreconWorkspace<T>& pw,
+                             ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
+                             bool precon_updated,
+                             cumes::AxisymmetricOperator<T>& op,
+                             cudaStream_t stream = 0);

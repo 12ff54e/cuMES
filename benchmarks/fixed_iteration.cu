@@ -47,6 +47,9 @@
 #include "cumes/solver/stage_solver.hpp"
 #include "cumes/state/seed_state.hpp"
 #include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/axisymmetric_operator.hpp"
+
+#include <memory>
 
 using Clock = std::chrono::steady_clock;
 
@@ -179,6 +182,17 @@ int main(int argc, char** argv) {
     RadialProfiles<Real> rp = profilesCreate<Real>(p, ip, &arena);
     FourierPlan<Real> fp = fourierCreate<Real>(p, &arena);
     MetricWorkspace<Real> mw = metricCreate<Real>(p, &arena);
+
+    // Axisymmetric transform backend (blueprint §8.5), mirroring
+    // StageSolver::run: for ntor=0/nzeta=1 the direct-poloidal operator replaces
+    // the length-one cuFFT round trips. CUMES_FORCE_GENERIC=1 restores the
+    // generic backend for A/B comparison.
+    bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
+    if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
+        if (std::atoi(e) != 0) use_axisym = false;
+    std::unique_ptr<cumes::AxisymmetricOperator<Real>> axisym;
+    if (use_axisym) axisym = std::make_unique<cumes::AxisymmetricOperator<Real>>(p);
+
     setup_us = now_us() - t0;
 
     cudaEvent_t ev0, ev1;
@@ -187,7 +201,7 @@ int main(int argc, char** argv) {
     cudaEventRecord(ev0, stream.get());
     double w0 = now_us();
     SolverResult<Real> result = solverRun<Real>(storage, p, rp, fp, mw, &arena,
-                                                stream.get(), &bench);
+                                                stream.get(), &bench, axisym.get());
     double w1 = now_us();
     cudaEventRecord(ev1, stream.get());
     cudaEventSynchronize(ev1);
@@ -262,7 +276,7 @@ int main(int argc, char** argv) {
     json += "  " + kv("nzeta", num) + ",\n";
     snprintf(num, sizeof num, "%d", p.ncurr);
     json += "  " + kv("ncurr", num) + ",\n";
-    json += "  " + kv("transform_backend", q(p.ntor == 0 ? "axisymmetric-available"
+    json += "  " + kv("transform_backend", q(use_axisym ? "axisymmetric"
                                                         : "toroidal-fft")) + ",\n";
     snprintf(num, sizeof num, "%zu", arena_bytes);
     json += "  " + kv("arena_bytes", num) + ",\n";

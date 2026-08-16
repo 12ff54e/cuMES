@@ -13,10 +13,13 @@
 #pragma once
 
 #include <cstdio>
+#include <cstdlib>
+#include <memory>
 
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/solver/solver_bench.hpp"
 #include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/axisymmetric_operator.hpp"
 #include "fft_traits.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
@@ -85,8 +88,22 @@ class StageSolver {
         RadialProfiles<T> rp = profilesCreate<T>(p, ip, &arena);
         FourierPlan<T> fp = fourierCreate<T>(p, &arena);
         MetricWorkspace<T> mw = metricCreate<T>(p, &arena);
+
+        // Axisymmetric transform backend (blueprint §8.5): for ntor=0/nzeta=1
+        // the toroidal direction is a single point, so the length-one cuFFT
+        // round trips are replaced by direct-poloidal synthesis/projection. The
+        // operator holds only ns-independent poloidal tables, but its kernels
+        // launch on `p.ns`, so one is built per stage (re-uploading the tiny
+        // tables is negligible). CUMES_FORCE_GENERIC=1 restores the generic
+        // backend for A/B comparison against the frozen trajectory.
+        bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
+        if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
+            if (std::atoi(e) != 0) use_axisym = false;
+        std::unique_ptr<AxisymmetricOperator<T>> axisym;
+        if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
+
         SolverResult<T> result = solverRun<T>(state, p, rp, fp, mw, &arena,
-                                              stream, bench);
+                                              stream, bench, axisym.get());
         fourierFree(fp);
         metricFree(mw);
         profilesFree(rp);
