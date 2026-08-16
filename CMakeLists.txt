@@ -284,6 +284,16 @@ target_include_directories(cumes_benchmark_graph_overhead PRIVATE ${CMAKE_CURREN
 target_link_libraries(cumes_benchmark_graph_overhead PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(cumes_benchmark_graph_overhead)
 
+# ADR-0003 re-measure: CUDA Graph capture of the REAL per-iteration DAG
+# (builds the production operator stack and captures EquilibriumOperator::
+# enqueue; the empty-kernel overhead benchmark's upper bound is replaced by
+# real-pass submission numbers). Always double, like the fixed-iteration
+# harness (verify-double is the benchmark reference config).
+add_executable(cumes_benchmark_graph_realpass benchmarks/graph_realpass.cu)
+target_include_directories(cumes_benchmark_graph_realpass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(cumes_benchmark_graph_realpass PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
+cumes_enable_warnings(cumes_benchmark_graph_realpass)
+
 # Smoke gate: runs two passes and exits 0 on success (verifies the harness
 # builds, seeds, drives a stage, and emits JSON — not a timing acceptance).
 add_test(NAME cumes_benchmark_smoke
