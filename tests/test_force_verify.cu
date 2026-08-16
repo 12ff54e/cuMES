@@ -11,7 +11,6 @@
 #include <cmath>
 #include <vector>
 
-#include "constraint.cuh"
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "solver.cuh"
@@ -119,18 +118,18 @@ int main() {
     const size_t n6 = (size_t)6 * ns * p.mnmax;
     double* d_f_spec;
     cc(cudaMalloc(&d_f_spec, n6 * sizeof(double)), "f_spec");
-    ConstraintWorkspace<double> cw_zero{};
-    cc(cudaMalloc(&cw_zero.d_frcon_e, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_e");
-    cc(cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_o");
-    cc(cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_e");
-    cc(cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_o");
-    cc(cudaMemset(cw_zero.d_frcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_e zero");
-    cc(cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_o zero");
-    cc(cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_e zero");
-    cc(cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_o zero");
+    double *frcon_e, *frcon_o, *fzcon_e, *fzcon_o;
+    cc(cudaMalloc(&frcon_e, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_e");
+    cc(cudaMalloc(&frcon_o, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_o");
+    cc(cudaMalloc(&fzcon_e, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_e");
+    cc(cudaMalloc(&fzcon_o, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_o");
+    cc(cudaMemset(frcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_e zero");
+    cc(cudaMemset(frcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_o zero");
+    cc(cudaMemset(fzcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_e zero");
+    cc(cudaMemset(fzcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_o zero");
     forwardDFT(fp, rs, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
                        d_f_spec, p.ns, p.mnmax),
-               p, mt.d_xm, mt.d_xn, cw_zero);
+               p, mt.d_xm, mt.d_xn, frcon_e, frcon_o, fzcon_e, fzcon_o);
 
     auto* h_f = new double[n6];
     cc(cudaMemcpy(h_f, d_f_spec, n6 * sizeof(double), cudaMemcpyDeviceToHost), "cpy f");
@@ -161,8 +160,8 @@ int main() {
 
     // Cleanup
     cudaFree(d_f_spec);
-    cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
-    cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
+    cudaFree(frcon_e); cudaFree(frcon_o);
+    cudaFree(fzcon_e); cudaFree(fzcon_o);
     // profiles/fp/mw owned by Profiles/ToroidalFftOperator/GeometryOperator (RAII)
     cumes::modeTableFree(mt);
     delete[] h_f;

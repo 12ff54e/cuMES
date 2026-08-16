@@ -52,9 +52,10 @@
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
+#include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes/numerics/preconditioner.hpp"
-#include "constraint.cuh"
 #include "cumes_test_support.cuh"
 
 static int g_failures = 0;
@@ -327,8 +328,9 @@ static int testDealias(int ntheta) {
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::ToroidalFftOperator<T> transform(p, rs, mt, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
-    ConstraintWorkspace<T> cw = constraintCreate(p);
+    cumes::ConstraintOperator<T> constraint(p, nullptr);
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
     SpectralState<T> st = storage.legacy_view();
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
@@ -350,10 +352,10 @@ static int testDealias(int ntheta) {
         for (int k = 0; k < nzeta; ++k)
             for (int it = 0; it < p.ntheta; ++it)
                 pat[jF * p.nZnT + k * p.ntheta + it] = T(daPatternValue(jF, it, p.ntheta, ns));
-    checkCuda(cudaMemcpy(cw.d_rCon, pat.data(), nF, cudaMemcpyHostToDevice), "rCon up");
-    checkCuda(cudaMemset(cw.d_zCon, 0, nF), "zCon zero");
-    checkCuda(cudaMemset(cw.d_rCon0, 0, nF), "rCon0 zero");
-    checkCuda(cudaMemset(cw.d_zCon0, 0, nF), "zCon0 zero");
+    checkCuda(cudaMemcpy(constraint.rcon_view(p).data(), pat.data(), nF, cudaMemcpyHostToDevice), "rCon up");
+    checkCuda(cudaMemset(constraint.zcon_view(p).data(), 0, nF), "zCon zero");
+    checkCuda(cudaMemset(constraint.rcon0(), 0, nF), "rCon0 zero");
+    checkCuda(cudaMemset(constraint.zcon0(), 0, nF), "zCon0 zero");
     std::vector<T> ones(ns * p.nZnT, T(1.0));
     checkCuda(cudaMemcpy(rs.d_ru_e, ones.data(), nF, cudaMemcpyHostToDevice), "ru_e up");
     checkCuda(cudaMemcpy(rs.d_zu_e, ones.data(), nF, cudaMemcpyHostToDevice), "zu_e up");
@@ -367,15 +369,15 @@ static int testDealias(int ntheta) {
 
     // tcon is refreshed from the (real) preconditioner + manufactured ru/zu;
     // the bandpass runs on the manufactured gConEff.
-    constraintCompute(p, rs, fp, precon.ard(), precon.azd(), cw, rp.sqrtS_F, /*precon_updated=*/true);
+    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true, &transform, 0);
 
     std::vector<T> h_tcon(p.ns);
-    checkCuda(cudaMemcpy(h_tcon.data(), cw.d_tcon, p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
+    checkCuda(cudaMemcpy(h_tcon.data(), constraint.tcon(), p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
     std::vector<T> h_gCon(ns * p.nZnT);
-    checkCuda(cudaMemcpy(h_gCon.data(), cw.d_gCon, nF, cudaMemcpyDeviceToHost), "gCon get");
+    checkCuda(cudaMemcpy(h_gCon.data(), constraint.gcon(), nF, cudaMemcpyDeviceToHost), "gCon get");
     std::vector<double> tcon(p.ns), faccon(p.mnmax);
     for (int jF = 0; jF < p.ns; ++jF) tcon[jF] = (double)h_tcon[jF];
-    for (int m = 0; m < p.mnmax; ++m) faccon[m] = (double)cw.h_faccon[m];
+    for (int m = 0; m < p.mnmax; ++m) faccon[m] = (double)constraint.h_faccon()[m];
 
     // CPU reference bandpass of the same (float-rounded) pattern, in double.
     std::vector<double> gEff(ns * p.nZnT, 0.0), gRef(ns * p.nZnT, 0.0);
@@ -413,7 +415,7 @@ static int testDealias(int ntheta) {
                 checkNear((double)h_gCon[idx], gRef[idx], tol, "dealias", jF, k, l);
             }
 
-    constraintFree(cw); 
+    
     realSpaceFree(rs);
     fourierFree(fp); cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
@@ -435,6 +437,7 @@ static int testPcr(int ns) {
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::ToroidalFftOperator<T> transform(p, rs, mt, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
     SpectralState<T> st = storage.legacy_view();

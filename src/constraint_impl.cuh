@@ -18,11 +18,12 @@
 // All computation is templated on the scalar type T (double or float); the
 // cuFFT plans / exec calls dispatch through FftTraits<T>.
 
-#include "constraint.cuh"
 #include <cstdio>
 #include <cmath>
 
 #include "cumes/physics/constraint_operator.hpp"
+#include "fourier.cuh"
+#include "fft_traits.h"
 
 
 // Dynamic shared-memory base accessor. Each block reserves one extern __shared__
@@ -57,10 +58,9 @@ static int computeKTile(int blkX, int nzeta) {
 // Allocate/free
 // ---------------------------------------------------------------------------
 template <typename T>
-ConstraintWorkspace<T> constraintCreate(const DeviceParams<T>& p,
+cumes::ConstraintOperator<T>::ConstraintOperator(const DeviceParams<T>& p,
                                         cumes::DeviceArena* arena) {
     using Complex = typename FftTraits<T>::Complex;
-    ConstraintWorkspace<T> cw{};
     size_t nF = p.ns * p.nZnT * sizeof(T);
     size_t nFull = p.ns * p.nZnT;
 
@@ -68,66 +68,64 @@ ConstraintWorkspace<T> constraintCreate(const DeviceParams<T>& p,
         if (arena) dst = arena->alloc_span<T>(name, count);
         else cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
     };
-    alloc(cw.d_gConEff, nFull, "constraint/gConEff");
-    alloc(cw.d_gCon,    nFull, "constraint/gCon");
-    alloc(cw.d_rCon,    nFull, "constraint/rCon");
-    alloc(cw.d_zCon,    nFull, "constraint/zCon");
-    alloc(cw.d_rCon0,   nFull, "constraint/rCon0");
-    alloc(cw.d_zCon0,   nFull, "constraint/zCon0");
+    alloc(d_gConEff_, nFull, "constraint/gConEff");
+    alloc(d_gCon_,    nFull, "constraint/gCon");
+    alloc(d_rCon_,    nFull, "constraint/rCon");
+    alloc(d_zCon_,    nFull, "constraint/zCon");
+    alloc(d_rCon0_,   nFull, "constraint/rCon0");
+    alloc(d_zCon0_,   nFull, "constraint/zCon0");
     // Initialize rCon0/zCon0 to zero
-    cumes::check_cuda(cudaMemset(cw.d_rCon0, 0, nF), "rCon0 zero");
-    cumes::check_cuda(cudaMemset(cw.d_zCon0, 0, nF), "zCon0 zero");
+    cumes::check_cuda(cudaMemset(d_rCon0_, 0, nF), "rCon0 zero");
+    cumes::check_cuda(cudaMemset(d_zCon0_, 0, nF), "zCon0 zero");
 
     // tcon profile (device). Zero-init: deAliasKernelFast reads tcon on
     // iteration 0 before computeTconKernel writes it — with zeros the
     // constraint force is inactive on the first iteration (deterministic,
     // matches vmecpp where the constraint has no prior tcon either).
-    alloc(cw.d_tcon, p.ns, "constraint/tcon");
-    cumes::check_cuda(cudaMemset(cw.d_tcon, 0, p.ns * sizeof(T)), "tcon zero");
+    alloc(d_tcon_, p.ns, "constraint/tcon");
+    cumes::check_cuda(cudaMemset(d_tcon_, 0, p.ns * sizeof(T)), "tcon zero");
     // faccon: host (pinned, never arena) + device
-    cumes::check_cuda(cudaMallocHost(&cw.h_faccon, p.mnmax * sizeof(T)), "faccon host");
-    alloc(cw.d_faccon, p.mnmax, "constraint/faccon");
+    cumes::check_cuda(cudaMallocHost(&h_faccon_, p.mnmax * sizeof(T)), "faccon host");
+    alloc(d_faccon_, p.mnmax, "constraint/faccon");
     // Precompute faccon[m] = -0.25 * signJ / (xmpq[m+1]^2) with
     // xmpq[m+1] = (m+1)*m, matching vmecpp (ideal_mhd_model.cc lines
     // 238-242): faccon[i] = 0.25 / (i^2 (i+1)^2) for i >= 1.
     for (int m = 0; m < p.mnmax; ++m) {
         T xmpq = T((m + 1) * m);
-        cw.h_faccon[m] = (m > 0) ? (T(0.25) / (xmpq * xmpq)) : T(0.0);
+        h_faccon_[m] = (m > 0) ? (T(0.25) / (xmpq * xmpq)) : T(0.0);
     }
-    cumes::check_cuda(cudaMemcpy(cw.d_faccon, cw.h_faccon, p.mnmax * sizeof(T), cudaMemcpyHostToDevice), "faccon copy");
+    cumes::check_cuda(cudaMemcpy(d_faccon_, h_faccon_, p.mnmax * sizeof(T), cudaMemcpyHostToDevice), "faccon copy");
 
     // Constraint-force outputs (frcon/fzcon), zero-initialized so the axis
     // surface (skipped by the add kernel) reads zero like vmecpp.
     size_t nFc = p.ns * p.nZnT * sizeof(T);
-    alloc(cw.d_frcon_e, nFull, "constraint/frcon_e");
-    alloc(cw.d_frcon_o, nFull, "constraint/frcon_o");
-    alloc(cw.d_fzcon_e, nFull, "constraint/fzcon_e");
-    alloc(cw.d_fzcon_o, nFull, "constraint/fzcon_o");
-    cumes::check_cuda(cudaMemset(cw.d_frcon_e, 0, nFc), "frcon_e zero");
-    cumes::check_cuda(cudaMemset(cw.d_frcon_o, 0, nFc), "frcon_o zero");
-    cumes::check_cuda(cudaMemset(cw.d_fzcon_e, 0, nFc), "fzcon_e zero");
-    cumes::check_cuda(cudaMemset(cw.d_fzcon_o, 0, nFc), "fzcon_o zero");
+    alloc(d_frcon_e_, nFull, "constraint/frcon_e");
+    alloc(d_frcon_o_, nFull, "constraint/frcon_o");
+    alloc(d_fzcon_e_, nFull, "constraint/fzcon_e");
+    alloc(d_fzcon_o_, nFull, "constraint/fzcon_o");
+    cumes::check_cuda(cudaMemset(d_frcon_e_, 0, nFc), "frcon_e zero");
+    cumes::check_cuda(cudaMemset(d_frcon_o_, 0, nFc), "frcon_o zero");
+    cumes::check_cuda(cudaMemset(d_fzcon_e_, 0, nFc), "fzcon_e zero");
+    cumes::check_cuda(cudaMemset(d_fzcon_o_, 0, nFc), "fzcon_o zero");
 
     // The compact de-alias bandpass scratch + plans now live in the
     // FourierPlan (fourierCreate), so the constraint owns only its data
     // fields; the bandpass is reached through the SpectralOperator interface.
-    cw.arena_backed = (arena != nullptr);
-    return cw;
+    arena_backed_ = (arena != nullptr);
 }
 
 template <typename T>
-void constraintFree(ConstraintWorkspace<T>& cw) {
-    if (!cw.arena_backed) {
-        cudaFree(cw.d_gConEff); cudaFree(cw.d_gCon);
-        cudaFree(cw.d_rCon);    cudaFree(cw.d_zCon);
-        cudaFree(cw.d_rCon0);   cudaFree(cw.d_zCon0);
-        cudaFree(cw.d_tcon);
-        cudaFree(cw.d_faccon);
-        cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o);
-        cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
+cumes::ConstraintOperator<T>::~ConstraintOperator() {
+    if (!arena_backed_) {
+        cudaFree(d_gConEff_); cudaFree(d_gCon_);
+        cudaFree(d_rCon_);    cudaFree(d_zCon_);
+        cudaFree(d_rCon0_);   cudaFree(d_zCon0_);
+        cudaFree(d_tcon_);
+        cudaFree(d_faccon_);
+        cudaFree(d_frcon_e_); cudaFree(d_frcon_o_);
+        cudaFree(d_fzcon_e_); cudaFree(d_fzcon_o_);
     }
-    cudaFreeHost(cw.h_faccon);
-    cw = ConstraintWorkspace<T>{};
+    cudaFreeHost(h_faccon_);
 }
 
 // ---------------------------------------------------------------------------
@@ -486,13 +484,13 @@ __global__ void tconLcfsHalfKernel(T* __restrict__ tcon, int ns) {
 // the reinit pass after every restart.
 // ---------------------------------------------------------------------------
 template <typename T>
-void constraintResetRzCon0(const DeviceParams<T>& p, ConstraintWorkspace<T>& cw,
+void cumes::ConstraintOperator<T>::reset_reference(const DeviceParams<T>& p,
                            const T* d_sqrtS_F, cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     rzConIntoVolumeKernel<T><<<grid, block, 0, stream>>>(
-        cw.d_rCon, cw.d_zCon, d_sqrtS_F,
-        p.ns, p.nZnT, cw.d_rCon0, cw.d_zCon0);
+        d_rCon_, d_zCon_, d_sqrtS_F,
+        p.ns, p.nZnT, d_rCon0_, d_zCon0_);
     cumes::check_cuda(cudaGetLastError(), "rzConIntoVolume");
 }
 
@@ -544,11 +542,11 @@ void constraintDealiasBandpass(const DeviceParams<T>& p, const FourierPlan<T>& f
 // Steps 0 (tcon refresh) + 1 (effective constraint force gConEff) — shared by
 // the generic and axisymmetric backends; only the step-2 bandpass differs.
 template <typename T>
-static void constraintComputeHead(const DeviceParams<T>& p,
-                                  const cumes::RealSpaceStorage<T>& rs,
-                                  const T* ard, const T* azd, ConstraintWorkspace<T>& cw,
-                                  const T* d_sqrtS_F, bool precon_updated,
-                                  cudaStream_t stream) {
+void cumes::ConstraintOperator<T>::enqueue_head(const DeviceParams<T>& p,
+                                                const cumes::RealSpaceStorage<T>& rs,
+                                                const T* ard, const T* azd,
+                                                const T* d_sqrtS_F, bool precon_updated,
+                                                cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
 
@@ -569,61 +567,42 @@ static void constraintComputeHead(const DeviceParams<T>& p,
             d_sqrtS_F,
             ard, azd,
             p.ns, p.nZnT, p.ntheta, p.nzeta, T(1.0)/T(p.ns-1.0), tcon_multiplier,
-            cw.d_tcon);
+            d_tcon_);
         cumes::check_cuda(cudaGetLastError(), "tcon");
-        tconLcfsHalfKernel<T><<<1, 1, 0, stream>>>(cw.d_tcon, p.ns);
+        tconLcfsHalfKernel<T><<<1, 1, 0, stream>>>(d_tcon_, p.ns);
         cumes::check_cuda(cudaGetLastError(), "tcon lcfs");
     }
 
     // Step 1: Effective constraint force
     effectiveConstraintKernel<T><<<grid, block, 0, stream>>>(
-        cw.d_rCon, cw.d_zCon,
+        d_rCon_, d_zCon_,
         rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o,
         d_sqrtS_F,
-        cw.d_rCon0, cw.d_zCon0,
-        p.ns, p.nZnT, cw.d_gConEff);
+        d_rCon0_, d_zCon0_,
+        p.ns, p.nZnT, d_gConEff_);
     cumes::check_cuda(cudaGetLastError(), "gConEff");
 }
 
 // Step 3: Add constraint force to brmn/bzmn + write frcon/fzcon outputs.
 template <typename T>
-static void constraintComputeTail(const DeviceParams<T>& p,
-                                  const cumes::RealSpaceStorage<T>& rs,
-                                  ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
-                                  cudaStream_t stream) {
+void cumes::ConstraintOperator<T>::enqueue_tail(const DeviceParams<T>& p,
+                                                const cumes::RealSpaceStorage<T>& rs,
+                                                const T* d_sqrtS_F,
+                                                cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     addConstraintKernel<T><<<grid, block, 0, stream>>>(
-        cw.d_rCon, cw.d_zCon, cw.d_rCon0, cw.d_zCon0,
-        cw.d_gCon, d_sqrtS_F,
+        d_rCon_, d_zCon_, d_rCon0_, d_zCon0_,
+        d_gCon_, d_sqrtS_F,
         rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o,
         p.ns, p.nZnT,
         rs.d_brmn_e, rs.d_brmn_o, rs.d_bzmn_e, rs.d_bzmn_o,
-        cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o);
+        d_frcon_e_, d_frcon_o_, d_fzcon_e_, d_fzcon_o_);
     cumes::check_cuda(cudaGetLastError(), "addConstraint");
 }
 
-template <typename T>
-void constraintCompute(const DeviceParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
-                       const FourierPlan<T>& fp, const T* ard, const T* azd,
-                       ConstraintWorkspace<T>& cw, const T* d_sqrtS_F, bool precon_updated,
-                       cudaStream_t stream) {
-    constraintComputeHead(p, rs, ard, azd, cw, d_sqrtS_F, precon_updated, stream);
-
-    // Step 2: Bandpass filter (de-alias) — cuFFT round trip on the compact
-    // batch (2 slots x (mpol-2) modes x (ns-1) surfaces instead of the full
-    // 12*mpol*ns): θ-reduce gConEff into the slot-0/1 ζ-signals, D2Z, scale
-    // the per-mode coefficients into slots 4/5 (the spectra tail bins n>ntor
-    // are zeroed by the memset — the pack writes only the used bins), Z2D,
-    // poloidal synthesis -> gCon.
-    constraintDealiasBandpass(p, fp, cw.d_gConEff, cw.d_tcon, cw.d_faccon,
-                              cw.d_gCon, stream);
-
-    constraintComputeTail(p, rs, cw, d_sqrtS_F, stream);
-}
-
 // ---------------------------------------------------------------------------
-// ConstraintOperator (owns the ConstraintWorkspace; the bandpass goes through
+// ConstraintOperator (owns the constraint buffers; the bandpass goes through
 // the unified SpectralOperator interface — no backend branch)
 // ---------------------------------------------------------------------------
 template <typename T>
@@ -636,18 +615,11 @@ void cumes::ConstraintOperator<T>::enqueue(
     // unified enqueue_dealias — the generic backend runs the compact cuFFT
     // round trip, the axisymmetric backend its direct-poloidal kernel. Step 3
     // (add to brmn/bzmn + frcon/fzcon) is shared again.
-    constraintComputeHead(p, rs, ard, azd, cw_, sqrtS_F, precon_updated, stream);
+    enqueue_head(p, rs, ard, azd, sqrtS_F, precon_updated, stream);
     op->enqueue_dealias(
-        cumes::RealFieldView<const T>(cw_.d_gConEff, p.ns, p.ntheta, p.nzeta),
-        cw_.d_tcon, cw_.d_faccon,
-        cumes::RealFieldView<T>(cw_.d_gCon, p.ns, p.ntheta, p.nzeta), stream);
-    constraintComputeTail(p, rs, cw_, sqrtS_F, stream);
-}
-
-template <typename T>
-void cumes::ConstraintOperator<T>::reset_reference(const DeviceParams<T>& p,
-                                                   const T* sqrtS_F,
-                                                   cudaStream_t stream) {
-    constraintResetRzCon0(p, cw_, sqrtS_F, stream);
+        cumes::RealFieldView<const T>(d_gConEff_, p.ns, p.ntheta, p.nzeta),
+        d_tcon_, d_faccon_,
+        cumes::RealFieldView<T>(d_gCon_, p.ns, p.ntheta, p.nzeta), stream);
+    enqueue_tail(p, rs, sqrtS_F, stream);
 }
 

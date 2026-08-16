@@ -16,7 +16,6 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "constraint.cuh"
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
@@ -24,7 +23,9 @@
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/force_operator.hpp"
+#include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -90,17 +91,18 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::ToroidalFftOperator<T> transform(p, rs, mt, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
-    ConstraintWorkspace<T> cw = constraintCreate(p);
+    cumes::ConstraintOperator<T> constraint(p, nullptr);
 
     inverseDFTFused(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn,
-                    /*do_combine=*/false, cw.d_rCon, cw.d_zCon);
+                    /*do_combine=*/false, constraint.rcon_view(p).data(), constraint.zcon_view(p).data());
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
-    constraintResetRzCon0(p, cw, rp.sqrtS_F);
+    constraint.reset_reference(p, rp.sqrtS_F, 0);
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
     cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
     // precon_updated=true recomputes tcon from the current tcon0.
-    constraintCompute(p, rs, fp, precon.ard(), precon.azd(), cw, rp.sqrtS_F, /*precon_updated=*/true);
+    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true, &transform, 0);
 
     size_t nF = (size_t)p.ns * p.nZnT;
     auto* h = new T[nF];
@@ -110,13 +112,13 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     for (size_t i = 0; i < nF; ++i) out_bzmn_e[i] = (double)h[i];
     delete[] h;
     auto* ht = new T[p.ns];
-    checkCuda(cudaMemcpy(ht, cw.d_tcon, p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon");
+    checkCuda(cudaMemcpy(ht, constraint.tcon(), p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon");
     for (int j = 0; j < p.ns; ++j) out_tcon[j] = (double)ht[j];
     delete[] ht;
 
     realSpaceFree(rs);
     fourierFree(fp); 
-    constraintFree(cw); cumes::modeTableFree(mt);
+    cumes::modeTableFree(mt);
 }
 
 template <typename T>

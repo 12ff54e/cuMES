@@ -8,7 +8,6 @@
 
 namespace cumes { class DeviceArena; }
 
-template <typename T> struct ConstraintWorkspace;  // defined in constraint.cuh
 
 // Transforms use a batched 1D real FFT in the toroidal (ζ) direction plus
 // direct poloidal synthesis, mirroring vmecpp's FFTX fft_toroidal.cc.
@@ -126,6 +125,15 @@ template <typename T>
 void fourierCombineParity(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                           const DeviceParams<T>& p, cudaStream_t stream = 0);
 
+// De-alias bandpass (constraint step 2, blueprint §6.8): gConEff -> gCon over
+// the bandpass modes m = 1..mpol-2, scaled by tcon/faccon. The compact cuFFT
+// round trip uses this FourierPlan's scratch + plans. (Defined in
+// constraint_impl.cuh; reached through ToroidalFftOperator::enqueue_dealias.)
+template <typename T>
+void constraintDealiasBandpass(const DeviceParams<T>& p, const FourierPlan<T>& fp,
+                               const T* gConEff, const T* tcon, const T* faccon,
+                               T* gCon, cudaStream_t stream = 0);
+
 // forwardDFT: parity forces → 6-component spectral forces
 // Layout: (6*mnmax, ns) col-major
 //   [0*mnmax*ns .. 1*mnmax*ns): f_rmncc
@@ -140,4 +148,4 @@ template <typename T>
 void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                 const DeviceParams<T>& p, const int* xm, const int* xn,
-                const ConstraintWorkspace<T>& cw, cudaStream_t stream = 0);
+                const T* frcon_e, const T* frcon_o, const T* fzcon_e, const T* fzcon_o, cudaStream_t stream = 0);

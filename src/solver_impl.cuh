@@ -12,7 +12,6 @@
 // per_iter_residuals record stays double.
 #define DUMP_CUMES_VERIFY
 #include "solver.cuh"
-#include "constraint.cuh"
 #include <cstdio>
 #include <cmath>
 #include <cstdint>
@@ -877,7 +876,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
 
 #ifdef DUMP_CUMES_VERIFY
     if (iter == 0) {
-        const ConstraintWorkspace<T>& cw = constraint.workspace();
+        
         size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
         dumpDeviceArray("dump/cuMES/step_G_brmn_e_iter_1.bin", rs.d_brmn_e, n_real);
         dumpDeviceArray("dump/cuMES/step_G_brmn_o_iter_1.bin", rs.d_brmn_o, n_real);
@@ -890,18 +889,18 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
         dumpDeviceArray("dump/cuMES/step_GC_rmnss_iter_1.bin", st.d_rmnss, n_spec2);
         dumpDeviceArray("dump/cuMES/step_GC_zmnsc_iter_1.bin", st.d_zmnsc, n_spec2);
         dumpDeviceArray("dump/cuMES/step_GC_zmncs_iter_1.bin", st.d_zmncs, n_spec2);
-        dumpDeviceArray("dump/cuMES/step_GC_rCon_iter_1.bin", cw.d_rCon, n_real);
-        dumpDeviceArray("dump/cuMES/step_GC_zCon_iter_1.bin", cw.d_zCon, n_real);
-        dumpDeviceArray("dump/cuMES/step_GC_gConEff_iter_1.bin", cw.d_gConEff, n_real);
-        dumpDeviceArray("dump/cuMES/step_GC_gCon_iter_1.bin", cw.d_gCon, n_real);
-        dumpDeviceArray("dump/cuMES/step_GC_frcon_e_iter_1.bin", cw.d_frcon_e, n_real);
-        dumpDeviceArray("dump/cuMES/step_GC_frcon_o_iter_1.bin", cw.d_frcon_o, n_real);
-        dumpDeviceArray("dump/cuMES/step_GC_fzcon_e_iter_1.bin", cw.d_fzcon_e, n_real);
-        dumpDeviceArray("dump/cuMES/step_GC_fzcon_o_iter_1.bin", cw.d_fzcon_o, n_real);
+        dumpDeviceArray("dump/cuMES/step_GC_rCon_iter_1.bin", constraint.rcon_view(p).data(), n_real);
+        dumpDeviceArray("dump/cuMES/step_GC_zCon_iter_1.bin", constraint.zcon_view(p).data(), n_real);
+        dumpDeviceArray("dump/cuMES/step_GC_gConEff_iter_1.bin", constraint.gcon_eff(), n_real);
+        dumpDeviceArray("dump/cuMES/step_GC_gCon_iter_1.bin", constraint.gcon(), n_real);
+        dumpDeviceArray("dump/cuMES/step_GC_frcon_e_iter_1.bin", constraint.constraint_force_views(p).frcon_e.data(), n_real);
+        dumpDeviceArray("dump/cuMES/step_GC_frcon_o_iter_1.bin", constraint.constraint_force_views(p).frcon_o.data(), n_real);
+        dumpDeviceArray("dump/cuMES/step_GC_fzcon_e_iter_1.bin", constraint.constraint_force_views(p).fzcon_e.data(), n_real);
+        dumpDeviceArray("dump/cuMES/step_GC_fzcon_o_iter_1.bin", constraint.constraint_force_views(p).fzcon_o.data(), n_real);
         // tcon/faccon profiles (device arrays; h_tcon is stale -- the
         // kernel writes d_tcon directly)
-        dumpDeviceArray("dump/cuMES/step_GC_tcon_iter_1.bin", cw.d_tcon, p.ns);
-        dumpDeviceArray("dump/cuMES/step_GC_faccon_iter_1.bin", cw.d_faccon, p.mpol);
+        dumpDeviceArray("dump/cuMES/step_GC_tcon_iter_1.bin", constraint.tcon(), p.ns);
+        dumpDeviceArray("dump/cuMES/step_GC_faccon_iter_1.bin", constraint.faccon(), p.mpol);
     }
 #endif
 

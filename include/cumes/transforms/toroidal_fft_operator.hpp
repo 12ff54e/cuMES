@@ -15,7 +15,6 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/spectral_operator.hpp"
-#include "constraint.cuh"
 #include "fourier.cuh"
 
 namespace cumes {

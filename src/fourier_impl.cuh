@@ -27,7 +27,6 @@
 // cuFFT plan types / exec calls dispatch through FftTraits<T>.
 
 #include "fourier.cuh"
-#include "constraint.cuh"
 #include <cstdio>
 #include <cmath>
 
@@ -814,9 +813,9 @@ template <typename T>
 void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                 const DeviceParams<T>& p, const int* xm, const int* xn,
-                const ConstraintWorkspace<T>& cw, cudaStream_t stream) {
-    forwardDFTCufft(fp, rs, f_spec, p, xm, xn, cw.d_frcon_e, cw.d_frcon_o,
-                    cw.d_fzcon_e, cw.d_fzcon_o, stream);
+                const T* frcon_e, const T* frcon_o, const T* fzcon_e, const T* fzcon_o, cudaStream_t stream) {
+    forwardDFTCufft(fp, rs, f_spec, p, xm, xn, frcon_e, frcon_o,
+                    fzcon_e, fzcon_o, stream);
 }
 
 // ---------------------------------------------------------------------------

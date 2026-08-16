@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "constraint.cuh"
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
@@ -152,13 +151,13 @@ int main() {
     auto* d_fspec = new double[6 * p.ns * p.mnmax];  // host
     double* d_fspec_gpu;
     checkCuda(cudaMalloc(&d_fspec_gpu, nbs), "fspec");
-    ConstraintWorkspace<double> cw_zero{}; cudaMalloc(&cw_zero.d_frcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    cudaMalloc(&cw_zero.d_frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    cudaMalloc(&cw_zero.d_fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    cudaMalloc(&cw_zero.d_fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(cw_zero.d_fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    double *frcon_e, *frcon_o, *fzcon_e, *fzcon_o; cudaMalloc(&frcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(frcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    cudaMalloc(&fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     forwardDFT(fp, rs, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
                        d_fspec_gpu, p.ns, p.mnmax),
-               p, mt.d_xm, mt.d_xn, cw_zero);
+               p, mt.d_xm, mt.d_xn, frcon_e, frcon_o, fzcon_e, fzcon_o);
     checkCuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost), "fspec d");
 
     printf("\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n");
@@ -228,8 +227,8 @@ int main() {
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
     realSpaceFree(rs);
     fourierFree(fp); cumes::modeTableFree(mt);
-    cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
-    cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
+    cudaFree(frcon_e); cudaFree(frcon_o);
+    cudaFree(fzcon_e); cudaFree(fzcon_o);
 
     delete[] h_r; delete[] h_z;
     delete[] h_armn_e; delete[] h_armn_o; delete[] h_blmn_e;
