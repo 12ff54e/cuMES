@@ -6,6 +6,18 @@ graph matches section 5, … and no legacy code is required for normal
 execution."* It is the handover's "next step 3" and the one remaining large item
 after the Phase 10 tail (axisymmetric wiring, schema v1).
 
+**Progress (2026-08-16):** all five owning operators are landed and wired into
+the solver — `Profiles`, `ToroidalFftOperator`, `GeometryOperator`,
+`Preconditioner`, `ConstraintOperator` (commits `87cec03`, `75dcc65`). Each owns
+its workspace (RadialProfiles / FourierPlan / MetricWorkspace / PreconWorkspace /
+ConstraintWorkspace) and `solverRun`/`StageSolver` now construct and drive the
+operators instead of the raw structs. Verified Class A bit-identical (Solovev
+`251→199→456` FSQR 9.583e-17, W7-X `1877→1617→2011` FSQR 9.778e-13, 35/35
+CTest). Remaining: the §4 step-1 `FourierPlan` split (transform scratch vs
+real-space storage — the linchpin), the stateless operators (force/residual/
+descent/prolongation), the `SpectralOperator` unification, and legacy-struct
+deletion.
+
 The term "strangler fig" is from blueprint §1: wrap the current implementation
 behind tested operator interfaces and let the operators *replace* the legacy
 structs one at a time, rather than rewriting the solver in one pass. Every step
