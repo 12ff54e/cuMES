@@ -5,12 +5,19 @@ cmake_minimum_required(VERSION 3.20)
 # -DCMAKE_CUDA_HOST_COMPILER=<path> if your toolchain differs.
 set(CMAKE_CUDA_HOST_COMPILER /usr/bin/g++-12 CACHE FILEPATH "CUDA host compiler")
 
-project(cuMES VERSION 0.1.0 LANGUAGES CXX CUDA)
-
 # ---- cmake modules ---------------------------------------------------------
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
-include(CumesOptions)
+
+# CUDA architectures must be defaulted BEFORE project()/enable_language(CUDA):
+# CMake otherwise substitutes its own fallback (sm_52, which lacks 64-bit
+# atomics) into the cache, and a later non-FORCE set(... CACHE ...) cannot
+# override an already-cached value. CumesCudaArchitectures.cmake sets the
+# default only when CMAKE_CUDA_ARCHITECTURES was not already provided.
 include(CumesCudaArchitectures)
+
+project(cuMES VERSION 0.1.0 LANGUAGES CXX CUDA)
+
+include(CumesOptions)
 include(CumesDependencies)
 include(CumesWarnings)
 include(CumesTest)
