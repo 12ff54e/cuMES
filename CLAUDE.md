@@ -95,7 +95,7 @@ cuMES/
 `include/cumes/`: `config` (ProblemSpec → ValidatedProblem, DeviceParams<T>,
 validation), `core` (GridShape, checked arithmetic, Result), `io` (output
 specs, checkpoint, versioned containers), `runtime` (DeviceBuffer/DeviceArena/
-Stream/Event/DeviceContext), `state` (SpectralStorage, RealSpaceStorage,
+Stream/DeviceContext), `state` (SpectralStorage, RealSpaceStorage,
 typed views), `transforms` (SpectralOperator interface + ToroidalFftOperator +
 AxisymmetricOperator), `physics` (Geometry/MagneticField/Force/Constraint/
 Profiles operators), `numerics` (Residual/Descent/Prolongation/Preconditioner +

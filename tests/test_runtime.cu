@@ -14,7 +14,6 @@
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/runtime/stream.hpp"
-#include "cumes/runtime/event.hpp"
 #include "cumes/runtime/device_context.hpp"
 #include "cumes/core/tensor_view.cuh"
 #include "cumes/state/spectral_storage.hpp"
@@ -99,7 +98,7 @@ int main() {
         CHECK(p.data()[3] == 4.0, "PinnedBuffer writable from host");
     }
 
-    // ---- Stream / Event / DeviceContext ----
+    // ---- Stream / DeviceContext ----
     {
         cumes::DeviceContext ctx;
         CHECK(ctx.compute_stream() != nullptr &&
@@ -108,10 +107,6 @@ int main() {
         CHECK(ctx.capabilities().device >= 0, "DeviceContext reports a device");
         cumes::Stream s;
         CHECK(s.get() != nullptr, "Stream creates a cudaStream_t");
-        cumes::Event e;
-        CHECK(e.get() != nullptr, "Event creates a cudaEvent_t");
-        e.record(s.get());
-        e.synchronize();
     }
 
     // ---- SpectralStorage layout: slab offsets match the legacy 6-family order

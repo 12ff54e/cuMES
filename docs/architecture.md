@@ -30,7 +30,7 @@ trajectories bit-for-bit.
   (`RadialProfileViews`, `BaseGeometryHalfViews`, `GeometryParityViews`, …).
 - **Host-side `cumes` namespace** — `include/cumes/*` + `src/cumes/*`. Validated
   config model (`ProblemSpec` → `ValidatedProblem`), RAII CUDA runtime
-  (`DeviceBuffer`, `DeviceArena`, `Stream`, `Event`, `DeviceContext`), typed
+  (`DeviceBuffer`, `DeviceArena`, `Stream`, `DeviceContext`), typed
   non-owning views (`SpectralView`, `RealFieldView`, the parity bundles), the
   output/IO stack, and the host orchestration (`MultigridSolver`,
   `StageSolver`, `IterationController`, …).
