@@ -22,6 +22,38 @@ struct DeviceModeTable {
     int* d_xm = nullptr;  // [mnmax] poloidal mode m per folded mode index
     int* d_xn = nullptr;  // [mnmax] toroidal mode n per folded mode index
     bool arena_backed = false;
+
+    DeviceModeTable() = default;
+
+    // Raw owning pointers: an implicit copy would leave two tables holding
+    // the same allocations, and modeTableFree frees them unconditionally
+    // (unless arena_backed) — a guaranteed double-free. Copies are deleted;
+    // the modeTableCreate call sites use copy-init from a prvalue, which is
+    // guaranteed copy elision in C++17/20, so they need no change.
+    DeviceModeTable(const DeviceModeTable&) = delete;
+    DeviceModeTable& operator=(const DeviceModeTable&) = delete;
+
+    // The move ctor exists so `return mt;` in modeTableCreate keeps working
+    // (a deleted copy ctor would otherwise suppress the implicit move). It
+    // nulls the source, keeping a moved-from table inert and safe to pass
+    // to modeTableFree.
+    DeviceModeTable(DeviceModeTable&& o) noexcept
+        : d_xm(o.d_xm), d_xn(o.d_xn), arena_backed(o.arena_backed) {
+        o.d_xm = nullptr;
+        o.d_xn = nullptr;
+        o.arena_backed = false;
+    }
+    DeviceModeTable& operator=(DeviceModeTable&& o) noexcept {
+        if (this != &o) {
+            d_xm = o.d_xm;
+            d_xn = o.d_xn;
+            arena_backed = o.arena_backed;
+            o.d_xm = nullptr;
+            o.d_xn = nullptr;
+            o.arena_backed = false;
+        }
+        return *this;
+    }
 };
 
 // Build + upload the folded-mode table (same values/layout the legacy
