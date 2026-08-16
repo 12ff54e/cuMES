@@ -175,7 +175,7 @@ debug output.
   - **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR
     9.58e-17; the final stage matches the vmecpp playground reference
     exactly (456 iters, 9.99e-17).
-  - **W7-X 33→66→99**: 1878 → 1617 → 2011 effective iters (total 5506),
+  - **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505),
     final FSQR 9.78e-13 (vmecpp multigrid: 1877 → 1635 → 2012); converged
     states agree at ~1e-5 in R/Z and ~1e-4 in the weakly-determined
     near-axis λ. The final state is a different member of the (near-

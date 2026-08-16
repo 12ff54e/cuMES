@@ -278,7 +278,7 @@ vs vmecpp's own multigrid runs:
 
 - Solovev: 251 → 199 → 456 effective iters, final FSQR 9.58e-17 — the
   final stage matches vmecpp's playground reference exactly (456, 9.99e-17).
-- W7-X: 1878 → 1617 → 2011 effective iters (total 5506), final FSQR
+- W7-X: 1877 → 1617 → 2011 effective iters (total 5505), final FSQR
   9.78e-13; vmecpp multigrid runs 1877 → 1635 → 2012. The converged final
   states agree at ~1e-5 in R/Z, ~1e-4 in the weakly-determined near-axis λ.
 - The multigrid final state is a different member of the (near-degenerate)
@@ -323,4 +323,4 @@ vs vmecpp's own multigrid runs:
    cuBLAS removal, CTest registration, and the parser validation gaps
    (wide ints, angular caps, unknown-key warnings, aux/asym type checks).
    Both config regressions re-verified: Solovev 251→199→456 (FSQR 9.58e-17),
-   W7-X 1878→1617→2011 (FSQR 9.78e-13).
+   W7-X 1877→1617→2011 (FSQR 9.78e-13).
