@@ -24,13 +24,32 @@ operators landed (`3296ae1`): `ForceOperator`/`ResidualOperator`/
 Class A bit-identical (Solovev `251→199→456` FSQR 9.583e-17, W7-X
 `1877→1617→2011` FSQR 9.778e-13, 35/35 CTest, float build clean).
 
+Legacy-struct deletion then began with three ownership slices (all Class A):
+`53ed57a` extracted the folded-mode table out of `FourierPlan` into a stage-owned
+`cumes::DeviceModeTable` (`FourierBasis` deleted from `vmec_types.h`; the
+transform free functions + `preconCompute` now take `const int* xm/xn`);
+`67ff2fd` moved the cuFFT stream binding into `ToroidalFftOperator::bind_stream`;
+`b8fa3a0` moved `m1PreconScale` into `Preconditioner::enqueue_m1_scale`.
+
 Remaining: step 5 (base-geometry vs B/pressure split — Class B), step 12
 (`EquilibriumOperator` composition), and step 13 (legacy-struct deletion),
 gated on `solverRun` naming no legacy struct. Steps 5 and 12 are the blocking
-predecessors of step 13; `solverRun` still names `GridParams`,
-`RadialProfiles`, `MetricWorkspace`, `PreconWorkspace`, `ConstraintWorkspace`,
-and `FourierPlan` (mode tables + cuFFT stream binding), and no `DeviceParams<T>`
-replacement exists yet.
+predecessors of step 13. After the three slices `solverRun`'s remaining legacy
+naming is:
+
+- `FourierPlan` — only the dump-gated `inverseDFT`/`fourierCombineParity`
+  observability path (the hot loop is sealed behind the operator +
+  `bind_stream`); `FourierBasis`/`fp.basis` and `fp.plan_*` are already gone.
+- `PreconWorkspace` / `MetricWorkspace` — named as arguments (`constraint.enqueue`
+  takes `pw`; `precon.enqueue_compute`/`enqueueForceNorms` take `mw`); their
+  `.d_*` field reads are now dump-only.
+- `ConstraintWorkspace` / `RadialProfiles` — still read in the hot loop (the
+  `RealFieldView`s over `cw.d_rCon/d_zCon/d_frcon/d_fzcon`, and `rp.d_sqrtS_F`/
+  `rp.delta_s`/`rp.d_dVds_H`/`rp.d_pres_H`).
+- `GridParams<T>` everywhere (needs the `DeviceParams<T>` replacement) and
+  `InputParams` in `StageSolver`/`main` (needs `ValidatedProblem`).
+
+No `DeviceParams<T>` replacement exists yet.
 
 The term "strangler fig" is from blueprint §1: wrap the current implementation
 behind tested operator interfaces and let the operators *replace* the legacy
