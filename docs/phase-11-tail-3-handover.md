@@ -99,6 +99,17 @@ optional-backend matrix (none/netcdf/hdf5), float build clean.
 ## 4. Commits (this handover)
 
 ```
+b483428 Phase 11 step 13.3 (part 1): delete RadialProfiles + profilesCreate/profilesFree
 22e71d0 Phase 11 step 13.2: InputParams -> ValidatedProblem (delete the legacy parser)
 a7c0030 Phase 11 step 13.1: GridParams<T> -> DeviceParams<T> (per-stage param pack)
 ```
+
+Step 13.3 has started. `RadialProfiles` is deleted: `cumes::Profiles` now owns
+its 11 radial arrays directly and exposes a typed `RadialProfileViews` bundle +
+`delta_s()`; the `profilesCreate`/`profilesFree` free functions and the
+`RadialProfiles` struct (vmec_types.h) are gone, and every consumer that took
+`const RadialProfiles<T>&` (the geometry/forces/precon free functions and their
+operators) now takes `RadialProfileViews`, deriving `delta_s = 1/(ns-1)` in
+place (bit-identical). The remaining five structs (`MetricWorkspace`,
+`PreconWorkspace`, `ConstraintWorkspace`, `FourierPlan`, `SpectralState`) and
+the `interpolateState` free function follow the same pattern.
