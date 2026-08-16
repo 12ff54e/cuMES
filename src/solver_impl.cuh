@@ -12,7 +12,6 @@
 // per_iter_residuals record stays double.
 #define DUMP_CUMES_VERIFY
 #include "solver.cuh"
-#include "precon.cuh"
 #include "constraint.cuh"
 #include <cstdio>
 #include <cmath>
@@ -757,20 +756,20 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
             size_t n_half_2 = (size_t)2 * (size_t)(p.ns - 1);
             size_t n_full_2 = (size_t)2 * (size_t)p.ns;
             size_t n_full_1 = (size_t)p.ns;
-            const PreconWorkspace<T>& pw = precon.workspace();
+            
 
             // Tridiagonal matrix elements (mode-major: [mode, jF])
-            dumpDeviceArray("dump/cuMES/step_precon_ar_iter_1.bin", pw.d_ar, n_tri);
-            dumpDeviceArray("dump/cuMES/step_precon_dr_iter_1.bin", pw.d_dr, n_tri);
-            dumpDeviceArray("dump/cuMES/step_precon_br_iter_1.bin", pw.d_br, n_tri);
-            dumpDeviceArray("dump/cuMES/step_precon_az_iter_1.bin", pw.d_az, n_tri);
-            dumpDeviceArray("dump/cuMES/step_precon_dz_iter_1.bin", pw.d_dz, n_tri);
-            dumpDeviceArray("dump/cuMES/step_precon_bz_iter_1.bin", pw.d_bz, n_tri);
+            dumpDeviceArray("dump/cuMES/step_precon_ar_iter_1.bin", precon.ar(), n_tri);
+            dumpDeviceArray("dump/cuMES/step_precon_dr_iter_1.bin", precon.dr(), n_tri);
+            dumpDeviceArray("dump/cuMES/step_precon_br_iter_1.bin", precon.br(), n_tri);
+            dumpDeviceArray("dump/cuMES/step_precon_az_iter_1.bin", precon.az(), n_tri);
+            dumpDeviceArray("dump/cuMES/step_precon_dz_iter_1.bin", precon.dz(), n_tri);
+            dumpDeviceArray("dump/cuMES/step_precon_bz_iter_1.bin", precon.bz(), n_tri);
 
             // jMin per mode (stored as int, convert to double for dump)
             {
                 int* h_jMin = new int[p.mnmax];
-                cudaMemcpy(h_jMin, pw.d_jMin, p.mnmax * sizeof(int), cudaMemcpyDeviceToHost);
+                cudaMemcpy(h_jMin, precon.jmin(), p.mnmax * sizeof(int), cudaMemcpyDeviceToHost);
                 double* h_jMin_dbl = new double[p.mnmax];
                 for (int i = 0; i < p.mnmax; ++i) h_jMin_dbl[i] = (double)h_jMin[i];
                 FILE* fj = fopen("dump/cuMES/step_precon_jMin_iter_1.bin", "wb");
@@ -785,15 +784,15 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
             }
 
             // Intermediate arrays
-            dumpDeviceArray("dump/cuMES/step_precon_arm_iter_1.bin", pw.d_arm, n_half_2);
-            dumpDeviceArray("dump/cuMES/step_precon_ard_iter_1.bin", pw.d_ard, n_full_2);
-            dumpDeviceArray("dump/cuMES/step_precon_brm_iter_1.bin", pw.d_brm, n_half_2);
-            dumpDeviceArray("dump/cuMES/step_precon_brd_iter_1.bin", pw.d_brd, n_full_2);
-            dumpDeviceArray("dump/cuMES/step_precon_azm_iter_1.bin", pw.d_azm, n_half_2);
-            dumpDeviceArray("dump/cuMES/step_precon_azd_iter_1.bin", pw.d_azd, n_full_2);
-            dumpDeviceArray("dump/cuMES/step_precon_bzm_iter_1.bin", pw.d_bzm, n_half_2);
-            dumpDeviceArray("dump/cuMES/step_precon_bzd_iter_1.bin", pw.d_bzd, n_full_2);
-            dumpDeviceArray("dump/cuMES/step_precon_cxd_iter_1.bin", pw.d_cxd, n_full_1);
+            dumpDeviceArray("dump/cuMES/step_precon_arm_iter_1.bin", precon.arm(), n_half_2);
+            dumpDeviceArray("dump/cuMES/step_precon_ard_iter_1.bin", precon.ard(), n_full_2);
+            dumpDeviceArray("dump/cuMES/step_precon_brm_iter_1.bin", precon.brm(), n_half_2);
+            dumpDeviceArray("dump/cuMES/step_precon_brd_iter_1.bin", precon.brd(), n_full_2);
+            dumpDeviceArray("dump/cuMES/step_precon_azm_iter_1.bin", precon.azm(), n_half_2);
+            dumpDeviceArray("dump/cuMES/step_precon_azd_iter_1.bin", precon.azd(), n_full_2);
+            dumpDeviceArray("dump/cuMES/step_precon_bzm_iter_1.bin", precon.bzm(), n_half_2);
+            dumpDeviceArray("dump/cuMES/step_precon_bzd_iter_1.bin", precon.bzd(), n_full_2);
+            dumpDeviceArray("dump/cuMES/step_precon_cxd_iter_1.bin", precon.cxd(), n_full_1);
 
             // Sizes for comparison script
             double sizes_dbl[4] = {(double)p.ns, (double)(p.ns-1), (double)p.mpol, 1.0};
@@ -873,7 +872,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // Uses the current-iteration tcon (refreshed above when the
     // preconditioner was updated), matching vmecpp. The de-alias bandpass
     // is dispatched through the unified SpectralOperator interface.
-    constraint.enqueue(p, rs, precon.workspace(), rpv.sqrtS_F, precon_updated,
+    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rpv.sqrtS_F, precon_updated,
                        transform_op, stream);
 
 #ifdef DUMP_CUMES_VERIFY

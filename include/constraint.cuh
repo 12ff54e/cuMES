@@ -3,7 +3,6 @@
 #pragma once
 #include "vmec_types.h"
 #include "fourier.cuh"
-#include "precon.cuh"
 
 namespace cumes {
 class DeviceArena;
@@ -78,6 +77,6 @@ void constraintResetRzCon0(const DeviceParams<T>& p, ConstraintWorkspace<T>& cw,
 // Modifies fp.d_brmn_e, fp.d_brmn_o, fp.d_bzmn_e, fp.d_bzmn_o in-place.
 template <typename T>
 void constraintCompute(const DeviceParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
-                       const FourierPlan<T>& fp, const PreconWorkspace<T>& pw,
+                       const FourierPlan<T>& fp, const T* ard, const T* azd,
                        ConstraintWorkspace<T>& cw, const T* d_sqrtS_F, bool precon_updated,
                        cudaStream_t stream = 0);

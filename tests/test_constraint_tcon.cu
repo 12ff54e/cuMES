@@ -24,7 +24,6 @@
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/force_operator.hpp"
-#include "precon.cuh"
 #include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
 
@@ -101,7 +100,7 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
     cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
     // precon_updated=true recomputes tcon from the current tcon0.
-    constraintCompute(p, rs, fp, precon.workspace(), cw, rp.sqrtS_F, /*precon_updated=*/true);
+    constraintCompute(p, rs, fp, precon.ard(), precon.azd(), cw, rp.sqrtS_F, /*precon_updated=*/true);
 
     size_t nF = (size_t)p.ns * p.nZnT;
     auto* h = new T[nF];

@@ -10,7 +10,6 @@
 // TridiagonalSolveSerial.
 //
 // All computation is templated on the scalar type T (double or float).
-#include "precon.cuh"
 #include <cstdio>
 #include <cmath>
 #include <limits>
@@ -42,65 +41,62 @@ __device__ void* dynSharedBase() {
 // Allocate
 // ---------------------------------------------------------------------------
 template <typename T>
-PreconWorkspace<T> preconCreate(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
-    PreconWorkspace<T> pw{};
+cumes::Preconditioner<T>::Preconditioner(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
     int nH = p.ns - 1, nF = p.ns;
 
     auto alloc = [&](T*& dst, size_t count, const char* name) {
         if (arena) dst = arena->alloc_span<T>(name, count);
         else cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
     };
-    alloc(pw.d_ax_R, 4 * nH, "precon/ax_R");  alloc(pw.d_ax_Z, 4 * nH, "precon/ax_Z");
-    alloc(pw.d_bx_R, 3 * nH, "precon/bx_R");  alloc(pw.d_bx_Z, 3 * nH, "precon/bx_Z");
-    alloc(pw.d_cx,  nH,      "precon/cx");
-    alloc(pw.d_arm, 2 * nH, "precon/arm");    alloc(pw.d_brm, 2 * nH, "precon/brm");
-    alloc(pw.d_azm, 2 * nH, "precon/azm");    alloc(pw.d_bzm, 2 * nH, "precon/bzm");
-    alloc(pw.d_ard, 2 * nF, "precon/ard");    alloc(pw.d_brd, 2 * nF, "precon/brd");
-    alloc(pw.d_azd, 2 * nF, "precon/azd");    alloc(pw.d_bzd, 2 * nF, "precon/bzd");
-    alloc(pw.d_cxd, nF,      "precon/cxd");
-    alloc(pw.d_sm,  nH,      "precon/sm");    alloc(pw.d_sp,  nH,      "precon/sp");
-    alloc(pw.d_ar,  p.mnmax * nF, "precon/ar"); alloc(pw.d_dr, p.mnmax * nF, "precon/dr");
-    alloc(pw.d_br,  p.mnmax * nF, "precon/br");
-    alloc(pw.d_az,  p.mnmax * nF, "precon/az"); alloc(pw.d_dz, p.mnmax * nF, "precon/dz");
-    alloc(pw.d_bz,  p.mnmax * nF, "precon/bz");
-    if (arena) pw.d_jMin = arena->alloc_span<int>("precon/jMin", p.mnmax);
-    else cumes::check_cuda(cudaMalloc(&pw.d_jMin, p.mnmax * sizeof(int)), "jMin");
-    alloc(pw.d_lambdaPrec, p.mnmax * nF, "precon/lambdaPrec");
-    alloc(pw.d_bLambda, p.ns + 1, "precon/bLambda");
-    alloc(pw.d_dLambda, p.ns + 1, "precon/dLambda");
-    alloc(pw.d_cLambda, p.ns + 1, "precon/cLambda");
-    alloc(pw.d_rmsPhiP, 1, "precon/rmsPhiP");
-    alloc(pw.d_preconScale, p.mnmax, "precon/scale");
-    if (arena) pw.d_preconStatus = arena->alloc_span<int>("precon/status", 1);
-    else cumes::check_cuda(cudaMalloc(&pw.d_preconStatus, sizeof(int)), "precon status");
+    alloc(d_ax_R_, 4 * nH, "precon/ax_R");  alloc(d_ax_Z_, 4 * nH, "precon/ax_Z");
+    alloc(d_bx_R_, 3 * nH, "precon/bx_R");  alloc(d_bx_Z_, 3 * nH, "precon/bx_Z");
+    alloc(d_cx_,  nH,      "precon/cx");
+    alloc(d_arm_, 2 * nH, "precon/arm");    alloc(d_brm_, 2 * nH, "precon/brm");
+    alloc(d_azm_, 2 * nH, "precon/azm");    alloc(d_bzm_, 2 * nH, "precon/bzm");
+    alloc(d_ard_, 2 * nF, "precon/ard");    alloc(d_brd_, 2 * nF, "precon/brd");
+    alloc(d_azd_, 2 * nF, "precon/azd");    alloc(d_bzd_, 2 * nF, "precon/bzd");
+    alloc(d_cxd_, nF,      "precon/cxd");
+    alloc(d_sm_,  nH,      "precon/sm");    alloc(d_sp_,  nH,      "precon/sp");
+    alloc(d_ar_,  p.mnmax * nF, "precon/ar"); alloc(d_dr_, p.mnmax * nF, "precon/dr");
+    alloc(d_br_,  p.mnmax * nF, "precon/br");
+    alloc(d_az_,  p.mnmax * nF, "precon/az"); alloc(d_dz_, p.mnmax * nF, "precon/dz");
+    alloc(d_bz_,  p.mnmax * nF, "precon/bz");
+    if (arena) d_jMin_ = arena->alloc_span<int>("precon/jMin", p.mnmax);
+    else cumes::check_cuda(cudaMalloc(&d_jMin_, p.mnmax * sizeof(int)), "jMin");
+    alloc(d_lambdaPrec_, p.mnmax * nF, "precon/lambdaPrec");
+    alloc(d_bLambda_, p.ns + 1, "precon/bLambda");
+    alloc(d_dLambda_, p.ns + 1, "precon/dLambda");
+    alloc(d_cLambda_, p.ns + 1, "precon/cLambda");
+    alloc(d_rmsPhiP_, 1, "precon/rmsPhiP");
+    alloc(d_preconScale_, p.mnmax, "precon/scale");
+    if (arena) d_preconStatus_ = arena->alloc_span<int>("precon/status", 1);
+    else cumes::check_cuda(cudaMalloc(&d_preconStatus_, sizeof(int)), "precon status");
     // Index ns of bLambda/cLambda must stay zero: the LCFS full-grid average
     // reads it (vmecpp: array sized ns+1, last entry never written).
-    cumes::check_cuda(cudaMemset(pw.d_bLambda, 0, (p.ns + 1) * sizeof(T)), "bLambda zero");
-    cumes::check_cuda(cudaMemset(pw.d_dLambda, 0, (p.ns + 1) * sizeof(T)), "dLambda zero");
-    cumes::check_cuda(cudaMemset(pw.d_cLambda, 0, (p.ns + 1) * sizeof(T)), "cLambda zero");
-    pw.arena_backed = (arena != nullptr);
-    return pw;
+    cumes::check_cuda(cudaMemset(d_bLambda_, 0, (p.ns + 1) * sizeof(T)), "bLambda zero");
+    cumes::check_cuda(cudaMemset(d_dLambda_, 0, (p.ns + 1) * sizeof(T)), "dLambda zero");
+    cumes::check_cuda(cudaMemset(d_cLambda_, 0, (p.ns + 1) * sizeof(T)), "cLambda zero");
+    arena_backed_ = (arena != nullptr);
 }
 
 template <typename T>
-void preconFree(PreconWorkspace<T>& pw) {
-    if (!pw.arena_backed) {
-        cudaFree(pw.d_ax_R); cudaFree(pw.d_ax_Z);
-        cudaFree(pw.d_bx_R); cudaFree(pw.d_bx_Z); cudaFree(pw.d_cx);
-        cudaFree(pw.d_arm);  cudaFree(pw.d_brm);
-        cudaFree(pw.d_azm);  cudaFree(pw.d_bzm);
-        cudaFree(pw.d_ard);  cudaFree(pw.d_brd);
-        cudaFree(pw.d_azd);  cudaFree(pw.d_bzd);  cudaFree(pw.d_cxd);
-        cudaFree(pw.d_sm);   cudaFree(pw.d_sp);
-        cudaFree(pw.d_ar);   cudaFree(pw.d_dr);   cudaFree(pw.d_br);
-        cudaFree(pw.d_az);   cudaFree(pw.d_dz);   cudaFree(pw.d_bz);
-        cudaFree(pw.d_jMin);
-        cudaFree(pw.d_lambdaPrec);
-        cudaFree(pw.d_bLambda); cudaFree(pw.d_dLambda); cudaFree(pw.d_cLambda); cudaFree(pw.d_rmsPhiP);
-        cudaFree(pw.d_preconScale);
-        cudaFree(pw.d_preconStatus);
+cumes::Preconditioner<T>::~Preconditioner() {
+    if (!arena_backed_) {
+        cudaFree(d_ax_R_); cudaFree(d_ax_Z_);
+        cudaFree(d_bx_R_); cudaFree(d_bx_Z_); cudaFree(d_cx_);
+        cudaFree(d_arm_);  cudaFree(d_brm_);
+        cudaFree(d_azm_);  cudaFree(d_bzm_);
+        cudaFree(d_ard_);  cudaFree(d_brd_);
+        cudaFree(d_azd_);  cudaFree(d_bzd_);  cudaFree(d_cxd_);
+        cudaFree(d_sm_);   cudaFree(d_sp_);
+        cudaFree(d_ar_);   cudaFree(d_dr_);   cudaFree(d_br_);
+        cudaFree(d_az_);   cudaFree(d_dz_);   cudaFree(d_bz_);
+        cudaFree(d_jMin_);
+        cudaFree(d_lambdaPrec_);
+        cudaFree(d_bLambda_); cudaFree(d_dLambda_); cudaFree(d_cLambda_); cudaFree(d_rmsPhiP_);
+        cudaFree(d_preconScale_);
+        cudaFree(d_preconStatus_);
     }
-    pw = PreconWorkspace<T>{};
 }
 
 // ---------------------------------------------------------------------------
@@ -860,64 +856,64 @@ void cumes::Preconditioner<T>::enqueue_compute(const cumes::RealSpaceStorage<T>&
         base.zs.data(), base.zu12.data(), rs.d_zu_e, rs.d_zu_o, rs.d_z_o,
         base.rs.data(), base.ru12.data(), rs.d_ru_e, rs.d_ru_o, rs.d_r_o,
         p.ns, p.nZnT, T(1.0) / T(p.ns - 1),
-        pw_.d_ax_R, pw_.d_ax_Z, pw_.d_bx_R, pw_.d_bx_Z, pw_.d_cx);
+        d_ax_R_, d_ax_Z_, d_bx_R_, d_bx_Z_, d_cx_);
     cumes::check_cuda(cudaGetLastError(), "preconCompute");
 
     // Step 2a: Assemble off-diagonal terms + sm/sp on half-grid
     int gridH = (nH + 255) / 256;
     preconAssembleKernel<T><<<gridH, 256, 0, stream>>>(
-        pw_.d_ax_R, pw_.d_ax_Z, pw_.d_bx_R, pw_.d_bx_Z, pw_.d_cx,
+        d_ax_R_, d_ax_Z_, d_bx_R_, d_bx_Z_, d_cx_,
         rpv.sqrtS_H, rpv.sqrtS_F,
         p.ns,
-        pw_.d_arm, pw_.d_brm, pw_.d_azm, pw_.d_bzm,
-        pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd, pw_.d_cxd,
-        pw_.d_sm, pw_.d_sp);
+        d_arm_, d_brm_, d_azm_, d_bzm_,
+        d_ard_, d_brd_, d_azd_, d_bzd_, d_cxd_,
+        d_sm_, d_sp_);
     cumes::check_cuda(cudaGetLastError(), "preconAssemble");
 
     // Step 2b: Average half-grid diagonals to full-grid
     int gridF = (nF + 255) / 256;
     preconDiagKernel<T><<<gridF, 256, 0, stream>>>(
-        pw_.d_ax_R, pw_.d_ax_Z, pw_.d_bx_R, pw_.d_bx_Z, pw_.d_cx,
-        pw_.d_sm, pw_.d_sp, p.ns,
-        pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd, pw_.d_cxd);
+        d_ax_R_, d_ax_Z_, d_bx_R_, d_bx_Z_, d_cx_,
+        d_sm_, d_sp_, p.ns,
+        d_ard_, d_brd_, d_azd_, d_bzd_, d_cxd_);
     cumes::check_cuda(cudaGetLastError(), "preconDiag");
 
     // Step 3: Assemble tridiagonal matrices per (m,n) mode
     int total = p.mnmax * nF;
     int gridMN = (total + 255) / 256;
     tridiagAssemblyKernel<T><<<gridMN, 256, 0, stream>>>(
-        pw_.d_arm, pw_.d_brm, pw_.d_azm, pw_.d_bzm,
-        pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd, pw_.d_cxd,
+        d_arm_, d_brm_, d_azm_, d_bzm_,
+        d_ard_, d_brd_, d_azd_, d_bzd_, d_cxd_,
         xm, xn,
         p.ns, p.mnmax, p.nfp,
-        pw_.d_ar, pw_.d_dr, pw_.d_br,
-        pw_.d_az, pw_.d_dz, pw_.d_bz,
-        pw_.d_jMin);
+        d_ar_, d_dr_, d_br_,
+        d_az_, d_dz_, d_bz_,
+        d_jMin_);
     cumes::check_cuda(cudaGetLastError(), "tridiagAssembly");
 
     // Step 3b: per-mode coefficient scale for the scale-aware pivot floor
     // (blueprint §4.9). Computed once per refresh, read by the solve kernels.
     preconScaleKernel<T><<<p.mnmax, 256, 0, stream>>>(
-        pw_.d_ar, pw_.d_dr, pw_.d_br,
-        pw_.d_az, pw_.d_dz, pw_.d_bz,
-        p.ns, p.mnmax, pw_.d_preconScale);
+        d_ar_, d_dr_, d_br_,
+        d_az_, d_dz_, d_bz_,
+        p.ns, p.mnmax, d_preconScale_);
     cumes::check_cuda(cudaGetLastError(), "preconScale");
 
     // Step 4a/4b: Lambda diagonal preconditioner (components 2 and 5)
     {
-        cumes::check_cuda(cudaMemsetAsync(pw_.d_rmsPhiP, 0, sizeof(T), stream), "rmsPhiP zero");
+        cumes::check_cuda(cudaMemsetAsync(d_rmsPhiP_, 0, sizeof(T), stream), "rmsPhiP zero");
         lambdaPrecAssembleKernel<T><<<nH, threads, 0, stream>>>(
             base.guu.data(), base.guv.data(), base.gvv.data(), base.gsqrt.data(),
             rpv.phip_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta,
-            pw_.d_bLambda, pw_.d_dLambda, pw_.d_cLambda, pw_.d_rmsPhiP);
+            d_bLambda_, d_dLambda_, d_cLambda_, d_rmsPhiP_);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecAssemble");
         lambdaPrecFinalizeKernel<T><<<dim3(p.mnmax, (p.ns + 127) / 128), 128, 0, stream>>>(
-            pw_.d_bLambda, pw_.d_dLambda, pw_.d_cLambda,
-            rpv.sqrtS_F, pw_.d_rmsPhiP,
+            d_bLambda_, d_dLambda_, d_cLambda_,
+            rpv.sqrtS_F, d_rmsPhiP_,
             xm, xn,
             p.ns, p.mnmax, T(1.0) / T(p.ns - 1), p.nfp,
-            pw_.d_lambdaPrec);
+            d_lambdaPrec_);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecFinalize");
     }
 }
@@ -988,9 +984,9 @@ void cumes::ThomasBackend<T>::enqueue_solve(
 }
 
 template <typename T>
-void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
-                 const DeviceParams<T>& p, const PreconWorkspace<T>& pw,
-                 const int* xm, const int* xn, cudaStream_t stream) {
+void cumes::Preconditioner<T>::enqueue_apply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
+                 const DeviceParams<T>& p,
+                 const int* xm, const int* xn, cudaStream_t stream) const {
     (void)xm; (void)xn;  // legacy signature; the solve no longer needs m/n tables
     // Phase 8: route the tridiagonal solve through the backend-neutral
     // PcrBackend (the extracted production PCR, bit-identical to the legacy
@@ -998,31 +994,31 @@ void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
     // components sharing one elimination (rhs_count = 2).
     const size_t comp_stride = (size_t)p.mnmax * p.ns;
     cumes::StridedBatchTridiagonalView<T> rv, zv;
-    rv.lower = pw.d_br; rv.diagonal = pw.d_dr; rv.upper = pw.d_ar;
+    rv.lower = d_br_; rv.diagonal = d_dr_; rv.upper = d_ar_;
     rv.rhs = f.data();                          // comp 0 (Rcc)
-    rv.first_surface = pw.d_jMin;
-    rv.scale = pw.d_preconScale;
+    rv.first_surface = d_jMin_;
+    rv.scale = d_preconScale_;
     rv.rhs_count = 2; rv.rhs_stride = 3 * comp_stride;  // comp 0 -> comp 3
     rv.modes = p.mnmax; rv.surfaces = p.ns; rv.last_surface = p.ns - 1;
 
-    zv.lower = pw.d_bz; zv.diagonal = pw.d_dz; zv.upper = pw.d_az;
+    zv.lower = d_bz_; zv.diagonal = d_dz_; zv.upper = d_az_;
     zv.rhs = f.data() + comp_stride;            // comp 1 (Zsc)
-    zv.first_surface = pw.d_jMin;
-    zv.scale = pw.d_preconScale;
+    zv.first_surface = d_jMin_;
+    zv.scale = d_preconScale_;
     zv.rhs_count = 2; zv.rhs_stride = 3 * comp_stride;  // comp 1 -> comp 4
     zv.modes = p.mnmax; zv.surfaces = p.ns; zv.last_surface = p.ns - 1;
 
     // Reset the breakdown accumulator once, then accumulate across both solves.
-    cumes::check_cuda(cudaMemsetAsync(pw.d_preconStatus, 0, sizeof(int), stream),
+    cumes::check_cuda(cudaMemsetAsync(d_preconStatus_, 0, sizeof(int), stream),
                       "preconStatus zero");
 
     cumes::PcrBackend<T> pcr;
-    pcr.enqueue_solve(rv, pw.d_preconStatus, stream);
-    pcr.enqueue_solve(zv, pw.d_preconStatus, stream);
+    pcr.enqueue_solve(rv, d_preconStatus_, stream);
+    pcr.enqueue_solve(zv, d_preconStatus_, stream);
 
     // Boundary + lambda-diagonal finishing (the tail of the legacy kernel).
     preconBoundaryKernel<T><<<p.mnmax, 128, 0, stream>>>(
-        f, pw.d_lambdaPrec, pw.d_jMin, p.ns, p.mnmax);
+        f, d_lambdaPrec_, d_jMin_, p.ns, p.mnmax);
     cumes::check_cuda(cudaGetLastError(), "preconBoundary");
 }
 
@@ -1059,23 +1055,13 @@ __global__ void m1PreconScaleKernel(cumes::SpectralView<T, cumes::DecomposedResi
     }
 }
 
-// ---------------------------------------------------------------------------
-// Preconditioner operator (owns the PreconWorkspace; applies the preconditioner)
-// ---------------------------------------------------------------------------
-template <typename T>
-void cumes::Preconditioner<T>::enqueue_apply(
-    cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
-    const DeviceParams<T>& p, const int* xm, const int* xn, cudaStream_t stream) const {
-    preconApply(residual, p, pw_, xm, xn, stream);
-}
-
 template <typename T>
 void cumes::Preconditioner<T>::enqueue_m1_scale(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
     const DeviceParams<T>& p, cudaStream_t stream) const {
     dim3 b1(256), g1((p.ns + 255) / 256);
     m1PreconScaleKernel<T><<<g1, b1, 0, stream>>>(
-        residual, pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd,
+        residual, d_ard_, d_brd_, d_azd_, d_bzd_,
         p.ns, p.mnmax, p.ntor);
     cumes::check_cuda(cudaGetLastError(), "m1PreconScale");
 }

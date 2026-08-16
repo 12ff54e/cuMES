@@ -546,7 +546,7 @@ void constraintDealiasBandpass(const DeviceParams<T>& p, const FourierPlan<T>& f
 template <typename T>
 static void constraintComputeHead(const DeviceParams<T>& p,
                                   const cumes::RealSpaceStorage<T>& rs,
-                                  const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
+                                  const T* ard, const T* azd, ConstraintWorkspace<T>& cw,
                                   const T* d_sqrtS_F, bool precon_updated,
                                   cudaStream_t stream) {
     dim3 block(128);
@@ -567,7 +567,7 @@ static void constraintComputeHead(const DeviceParams<T>& p,
         computeTconKernel<T><<<gridF, 256, 0, stream>>>(
             rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o,
             d_sqrtS_F,
-            pw.d_ard, pw.d_azd,
+            ard, azd,
             p.ns, p.nZnT, p.ntheta, p.nzeta, T(1.0)/T(p.ns-1.0), tcon_multiplier,
             cw.d_tcon);
         cumes::check_cuda(cudaGetLastError(), "tcon");
@@ -605,10 +605,10 @@ static void constraintComputeTail(const DeviceParams<T>& p,
 
 template <typename T>
 void constraintCompute(const DeviceParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
-                       const FourierPlan<T>& fp, const PreconWorkspace<T>& pw,
+                       const FourierPlan<T>& fp, const T* ard, const T* azd,
                        ConstraintWorkspace<T>& cw, const T* d_sqrtS_F, bool precon_updated,
                        cudaStream_t stream) {
-    constraintComputeHead(p, rs, pw, cw, d_sqrtS_F, precon_updated, stream);
+    constraintComputeHead(p, rs, ard, azd, cw, d_sqrtS_F, precon_updated, stream);
 
     // Step 2: Bandpass filter (de-alias) — cuFFT round trip on the compact
     // batch (2 slots x (mpol-2) modes x (ns-1) surfaces instead of the full
@@ -629,14 +629,14 @@ void constraintCompute(const DeviceParams<T>& p, const cumes::RealSpaceStorage<T
 template <typename T>
 void cumes::ConstraintOperator<T>::enqueue(
     const DeviceParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
-    const PreconWorkspace<T>& pw, const T* sqrtS_F, bool precon_updated,
+    const T* ard, const T* azd, const T* sqrtS_F, bool precon_updated,
     cumes::SpectralOperator<T>* op, cudaStream_t stream) {
     // Steps 0/1 (tcon refresh + gConEff) are shared by both backends; step 2
     // (de-alias bandpass) is dispatched through the transform operator's
     // unified enqueue_dealias — the generic backend runs the compact cuFFT
     // round trip, the axisymmetric backend its direct-poloidal kernel. Step 3
     // (add to brmn/bzmn + frcon/fzcon) is shared again.
-    constraintComputeHead(p, rs, pw, cw_, sqrtS_F, precon_updated, stream);
+    constraintComputeHead(p, rs, ard, azd, cw_, sqrtS_F, precon_updated, stream);
     op->enqueue_dealias(
         cumes::RealFieldView<const T>(cw_.d_gConEff, p.ns, p.ntheta, p.nzeta),
         cw_.d_tcon, cw_.d_faccon,

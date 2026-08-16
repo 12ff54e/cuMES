@@ -27,7 +27,7 @@
 //     no longer left at their staged values.  The regression runs
 //     ns = 3, 17, 65, 127, 129, 130, 257 and compares the preconditioned
 //     force buffer against a serial Thomas solve on the SAME assembled matrix
-//     coefficients (precon.workspace().d_ar/dr/br/az/dz/bz, precon.workspace().d_jMin, precon.workspace().d_lambdaPrec copied
+//     coefficients (precon.ar()/dr/br/az/dz/bz, precon.jmin(), precon.lambdaPrec() copied
 //     to host after the real preconCompute).
 //
 // Conventions match the other tests: everything is templated on T and both
@@ -54,7 +54,6 @@
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/numerics/preconditioner.hpp"
-#include "precon.cuh"
 #include "constraint.cuh"
 #include "cumes_test_support.cuh"
 
@@ -368,7 +367,7 @@ static int testDealias(int ntheta) {
 
     // tcon is refreshed from the (real) preconditioner + manufactured ru/zu;
     // the bandpass runs on the manufactured gConEff.
-    constraintCompute(p, rs, fp, precon.workspace(), cw, rp.sqrtS_F, /*precon_updated=*/true);
+    constraintCompute(p, rs, fp, precon.ard(), precon.azd(), cw, rp.sqrtS_F, /*precon_updated=*/true);
 
     std::vector<T> h_tcon(p.ns);
     checkCuda(cudaMemcpy(h_tcon.data(), cw.d_tcon, p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
@@ -455,14 +454,14 @@ static int testPcr(int ns) {
     std::vector<T> lam(p.mnmax * ns);
     std::vector<int> jMin(p.mnmax);
     size_t szMN = (size_t)p.mnmax * ns * sizeof(T);
-    checkCuda(cudaMemcpy(ar.data(), precon.workspace().d_ar, szMN, cudaMemcpyDeviceToHost), "ar get");
-    checkCuda(cudaMemcpy(dr.data(), precon.workspace().d_dr, szMN, cudaMemcpyDeviceToHost), "dr get");
-    checkCuda(cudaMemcpy(br.data(), precon.workspace().d_br, szMN, cudaMemcpyDeviceToHost), "br get");
-    checkCuda(cudaMemcpy(az.data(), precon.workspace().d_az, szMN, cudaMemcpyDeviceToHost), "az get");
-    checkCuda(cudaMemcpy(dz.data(), precon.workspace().d_dz, szMN, cudaMemcpyDeviceToHost), "dz get");
-    checkCuda(cudaMemcpy(bz.data(), precon.workspace().d_bz, szMN, cudaMemcpyDeviceToHost), "bz get");
-    checkCuda(cudaMemcpy(lam.data(), precon.workspace().d_lambdaPrec, szMN, cudaMemcpyDeviceToHost), "lambdaPrec get");
-    checkCuda(cudaMemcpy(jMin.data(), precon.workspace().d_jMin, p.mnmax * sizeof(int), cudaMemcpyDeviceToHost), "jMin get");
+    checkCuda(cudaMemcpy(ar.data(), precon.ar(), szMN, cudaMemcpyDeviceToHost), "ar get");
+    checkCuda(cudaMemcpy(dr.data(), precon.dr(), szMN, cudaMemcpyDeviceToHost), "dr get");
+    checkCuda(cudaMemcpy(br.data(), precon.br(), szMN, cudaMemcpyDeviceToHost), "br get");
+    checkCuda(cudaMemcpy(az.data(), precon.az(), szMN, cudaMemcpyDeviceToHost), "az get");
+    checkCuda(cudaMemcpy(dz.data(), precon.dz(), szMN, cudaMemcpyDeviceToHost), "dz get");
+    checkCuda(cudaMemcpy(bz.data(), precon.bz(), szMN, cudaMemcpyDeviceToHost), "bz get");
+    checkCuda(cudaMemcpy(lam.data(), precon.lambdaPrec(), szMN, cudaMemcpyDeviceToHost), "lambdaPrec get");
+    checkCuda(cudaMemcpy(jMin.data(), precon.jmin(), p.mnmax * sizeof(int), cudaMemcpyDeviceToHost), "jMin get");
 
     // Manufacture a smooth, non-trivial 6-family spectral force buffer.
     int stride = p.mnmax * ns;
@@ -476,9 +475,9 @@ static int testPcr(int ns) {
     T* d_f;
     checkCuda(cudaMalloc(&d_f, 6 * stride * sizeof(T)), "d_f");
     checkCuda(cudaMemcpy(d_f, h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
-    preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
+    precon.enqueue_apply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
                     d_f, p.ns, p.mnmax),
-                p, precon.workspace(), mt.d_xm, mt.d_xn);
+                p, mt.d_xm, mt.d_xn, 0);
     std::vector<T> h_g(6 * stride);
     checkCuda(cudaMemcpy(h_g.data(), d_f, 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
 

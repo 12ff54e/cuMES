@@ -17,7 +17,6 @@
 #include "cumes/state/real_fields.cuh"
 #include "cumes/transforms/spectral_operator.hpp"
 #include "constraint.cuh"
-#include "precon.cuh"
 
 namespace cumes {
 
@@ -47,7 +46,7 @@ class ConstraintOperator {
   // backend whose enqueue_dealias performs the bandpass. `rs` carries the
   // parity-split geometry derivatives + force buffers.
   void enqueue(const DeviceParams<T>& p, const RealSpaceStorage<T>& rs,
-               const PreconWorkspace<T>& pw, const T* sqrtS_F,
+               const T* ard, const T* azd, const T* sqrtS_F,
                bool precon_updated, SpectralOperator<T>* op, cudaStream_t stream);
 
   // Reset rCon0/zCon0 to the LCFS-extrapolated profile (first pass / restart).
