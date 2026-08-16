@@ -130,7 +130,6 @@ __global__ void preconComputeKernel(
     T* __restrict__ bx_R, T* __restrict__ bx_Z,
     T* __restrict__ cx)
 {
-    T* s_buf = static_cast<T*>(dynSharedBase());
     int jH = blockIdx.x, tid = threadIdx.x;
     if (jH >= ns - 1) return;
 
@@ -204,40 +203,40 @@ __global__ void preconComputeKernel(
         cx_v += -bsupv[idx] * bsupv[idx] * gsqrt[idx] * wInt;
     }
 
-    // Parallel reduction for all 4+4+3+3+1 = 15 accumulators
-    // Store in shared memory and reduce
-    int nRed = 15;
-    T* s = s_buf;
-    s[tid] = aR[0]; s[tid + blockDim.x] = aR[1];
-    s[tid + 2*blockDim.x] = aR[2]; s[tid + 3*blockDim.x] = aR[3];
-    s[tid + 4*blockDim.x] = aZ[0]; s[tid + 5*blockDim.x] = aZ[1];
-    s[tid + 6*blockDim.x] = aZ[2]; s[tid + 7*blockDim.x] = aZ[3];
-    s[tid + 8*blockDim.x] = bR[0]; s[tid + 9*blockDim.x] = bR[1];
-    s[tid + 10*blockDim.x] = bR[2];
-    s[tid + 11*blockDim.x] = bZ[0]; s[tid + 12*blockDim.x] = bZ[1];
-    s[tid + 13*blockDim.x] = bZ[2];
-    s[tid + 14*blockDim.x] = cx_v;
+    // Deterministic warp-shuffle reduction of the 15 accumulators (blueprint
+    // §8.8): within-warp __shfl_down_sync tree, then a fixed cross-warp combine
+    // by thread 0. The tree is fixed, so the result is deterministic; the
+    // summation ORDER differs from the old shared-memory binary tree, a Class B
+    // (ULP-level) change.
+    T acc[15] = {aR[0], aR[1], aR[2], aR[3], aZ[0], aZ[1], aZ[2], aZ[3],
+                 bR[0], bR[1], bR[2], bZ[0], bZ[1], bZ[2], cx_v};
+    #pragma unroll
+    for (int c = 0; c < 15; ++c)
+        for (int o = 16; o > 0; o >>= 1)
+            acc[c] += __shfl_down_sync(0xffffffffu, acc[c], o);
+    const int lane = tid & 31, warp = tid >> 5;
+    __shared__ T warp_sum[8 * 15];
+    if (lane == 0)
+        #pragma unroll
+        for (int c = 0; c < 15; ++c) warp_sum[warp * 15 + c] = acc[c];
     __syncthreads();
-
-    for (int sVal = blockDim.x/2; sVal > 0; sVal >>= 1) {
-        if (tid < sVal) {
-            for (int c = 0; c < nRed; ++c)
-                s[tid + c*blockDim.x] += s[tid + sVal + c*blockDim.x];
-        }
-        __syncthreads();
-    }
-
     if (tid == 0) {
+        T tot[15];
+        #pragma unroll
+        for (int c = 0; c < 15; ++c) tot[c] = warp_sum[0 * 15 + c];
+        for (int w = 1; w < blockDim.x / 32; ++w)
+            #pragma unroll
+            for (int c = 0; c < 15; ++c) tot[c] += warp_sum[w * 15 + c];
         int jH4 = jH * 4, jH3 = jH * 3;
-        ax_R[jH4+0]=s[0*blockDim.x]; ax_R[jH4+1]=s[1*blockDim.x];
-        ax_R[jH4+2]=s[2*blockDim.x]; ax_R[jH4+3]=s[3*blockDim.x];
-        ax_Z[jH4+0]=s[4*blockDim.x]; ax_Z[jH4+1]=s[5*blockDim.x];
-        ax_Z[jH4+2]=s[6*blockDim.x]; ax_Z[jH4+3]=s[7*blockDim.x];
-        bx_R[jH3+0]=s[8*blockDim.x]; bx_R[jH3+1]=s[9*blockDim.x];
-        bx_R[jH3+2]=s[10*blockDim.x];
-        bx_Z[jH3+0]=s[11*blockDim.x]; bx_Z[jH3+1]=s[12*blockDim.x];
-        bx_Z[jH3+2]=s[13*blockDim.x];
-        cx[jH] = s[14*blockDim.x];
+        ax_R[jH4+0]=tot[0]; ax_R[jH4+1]=tot[1];
+        ax_R[jH4+2]=tot[2]; ax_R[jH4+3]=tot[3];
+        ax_Z[jH4+0]=tot[4]; ax_Z[jH4+1]=tot[5];
+        ax_Z[jH4+2]=tot[6]; ax_Z[jH4+3]=tot[7];
+        bx_R[jH3+0]=tot[8]; bx_R[jH3+1]=tot[9];
+        bx_R[jH3+2]=tot[10];
+        bx_Z[jH3+0]=tot[11]; bx_Z[jH3+1]=tot[12];
+        bx_Z[jH3+2]=tot[13];
+        cx[jH] = tot[14];
     }
 }
 
@@ -502,18 +501,27 @@ __global__ void lambdaPrecAssembleKernel(
         csum += gvv[idx] / gsqrt[idx] * w;
     }
 
-    __shared__ T s_b[256], s_d[256], s_c[256];
-    s_b[tid] = bsum; s_d[tid] = dsum; s_c[tid] = csum;
-    __syncthreads();
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (tid < s) { s_b[tid] += s_b[tid + s]; s_d[tid] += s_d[tid + s]; s_c[tid] += s_c[tid + s]; }
-        __syncthreads();
+    // Deterministic warp-shuffle reduction (blueprint §8.8): within-warp
+    // __shfl_down_sync tree, then a fixed cross-warp combine by thread 0. The
+    // tree is fixed (deterministic); the summation ORDER differs from the old
+    // shared-memory binary tree, a Class B (ULP-level) change.
+    for (int o = 16; o > 0; o >>= 1) {
+        bsum += __shfl_down_sync(0xffffffffu, bsum, o);
+        dsum += __shfl_down_sync(0xffffffffu, dsum, o);
+        csum += __shfl_down_sync(0xffffffffu, csum, o);
     }
-
+    const int lane = tid & 31, warp = tid >> 5;
+    __shared__ T w_b[8], w_d[8], w_c[8];
+    if (lane == 0) { w_b[warp] = bsum; w_d[warp] = dsum; w_c[warp] = csum; }
+    __syncthreads();
     if (tid == 0) {
-        bLambda[jH + 1] = s_b[0];
-        dLambda[jH + 1] = s_d[0];
-        cLambda[jH + 1] = s_c[0];
+        T tb = w_b[0], td = w_d[0], tc = w_c[0];
+        for (int w = 1; w < blockDim.x / 32; ++w) {
+            tb += w_b[w]; td += w_d[w]; tc += w_c[w];
+        }
+        bLambda[jH + 1] = tb;
+        dLambda[jH + 1] = td;
+        cLambda[jH + 1] = tc;
         // Deterministic rmsPhiP: one atomic from the last block, summing in
         // jH order (the original per-block atomicAdd's cross-block FP order
         // is scheduling-dependent, making rmsPhiP — and hence the lambda
@@ -837,10 +845,10 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
                    PreconWorkspace<T>& pw, cudaStream_t stream) {
     int nH = p.ns - 1, nF = p.ns;
     int threads = 256;
-    size_t smem = threads * 15 * sizeof(T);  // 15 accumulators
 
-    // Step 1: Compute ax, bx, cx on half-grid
-    preconComputeKernel<T><<<nH, threads, smem, stream>>>(
+    // Step 1: Compute ax, bx, cx on half-grid (the 15-accumulator reduction is
+    // now a warp-shuffle + fixed cross-warp combine, so no dynamic shared mem).
+    preconComputeKernel<T><<<nH, threads, 0, stream>>>(
         mw.d_r12, mw.d_tau, mw.d_totalPressure, mw.d_bsupv, mw.d_gsqrt,
         rp.d_sqrtS_H,
         mw.d_zs, mw.d_zu12, fp.d_zu_e, fp.d_zu_o, fp.d_z_o,
