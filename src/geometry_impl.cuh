@@ -18,7 +18,6 @@
 //
 // All computation is templated on the scalar type T (double or float).
 
-#include "geometry.cuh"
 #include "fourier.cuh"
 #include <cstdio>
 #include <math_constants.h>
@@ -45,6 +44,7 @@ __device__ void* dynSharedBase() {
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/state/real_fields.cuh"
 #include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
 
 // ---- typed real-space view bundles over the workspace structs ------------
 // Constructed at the operator boundary (real_fields.cuh's intended use); the
@@ -65,68 +65,42 @@ static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceS
 }
 
 template <typename T>
-static cumes::BaseGeometryHalfViews<T> baseGeometryHalfViews(const MetricWorkspace<T>& mw,
-                                                             const DeviceParams<T>& p) {
-    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
-    cumes::BaseGeometryHalfViews<T> v;
-    v.r12 = h(mw.d_r12); v.ru12 = h(mw.d_ru12); v.zu12 = h(mw.d_zu12);
-    v.rs = h(mw.d_rs); v.zs = h(mw.d_zs); v.tau = h(mw.d_tau);
-    v.gsqrt = h(mw.d_gsqrt); v.guu = h(mw.d_guu); v.guv = h(mw.d_guv); v.gvv = h(mw.d_gvv);
-    return v;
-}
-
-template <typename T>
-static cumes::MagneticFieldViews<T> magneticFieldViews(const MetricWorkspace<T>& mw,
-                                                       const DeviceParams<T>& p) {
-    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
-    cumes::MagneticFieldViews<T> v;
-    v.bsupu = h(mw.d_bsupu); v.bsupv = h(mw.d_bsupv);
-    v.bsubu = h(mw.d_bsubu); v.bsubv = h(mw.d_bsubv);
-    v.total_pressure = h(mw.d_totalPressure);
-    return v;
-}
-
-template <typename T>
-MetricWorkspace<T> metricCreate(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
-    MetricWorkspace<T> mw{};
+cumes::GeometryOperator<T>::GeometryOperator(const DeviceParams<T>& p, cumes::DeviceArena* arena) {
     size_t nH = (p.ns - 1) * p.nZnT;
 
     auto alloc = [&](T*& dst, const char* name) {
         if (arena) dst = arena->alloc_span<T>(name, nH);
         else cumes::check_cuda(cudaMalloc(&dst, nH * sizeof(T)), name);
     };
-    alloc(mw.d_r12,  "metric/r12");
-    alloc(mw.d_ru12, "metric/ru12");
-    alloc(mw.d_zu12, "metric/zu12");
-    alloc(mw.d_rs,   "metric/rs");
-    alloc(mw.d_zs,   "metric/zs");
-    alloc(mw.d_tau,  "metric/tau");
-    alloc(mw.d_gsqrt, "metric/gsqrt");
-    alloc(mw.d_guu,  "metric/guu");
-    alloc(mw.d_guv,  "metric/guv");
-    alloc(mw.d_gvv,  "metric/gvv");
-    alloc(mw.d_bsupu, "metric/bsupu");
-    alloc(mw.d_bsupv, "metric/bsupv");
-    alloc(mw.d_bsubu, "metric/bsubu");
-    alloc(mw.d_bsubv, "metric/bsubv");
-    alloc(mw.d_totalPressure, "metric/totalPressure");
-    mw.arena_backed = (arena != nullptr);
-
-    return mw;
+    alloc(d_r12_,  "metric/r12");
+    alloc(d_ru12_, "metric/ru12");
+    alloc(d_zu12_, "metric/zu12");
+    alloc(d_rs_,   "metric/rs");
+    alloc(d_zs_,   "metric/zs");
+    alloc(d_tau_,  "metric/tau");
+    alloc(d_gsqrt_, "metric/gsqrt");
+    alloc(d_guu_,  "metric/guu");
+    alloc(d_guv_,  "metric/guv");
+    alloc(d_gvv_,  "metric/gvv");
+    alloc(d_bsupu_, "metric/bsupu");
+    alloc(d_bsupv_, "metric/bsupv");
+    alloc(d_bsubu_, "metric/bsubu");
+    alloc(d_bsubv_, "metric/bsubv");
+    alloc(d_totalPressure_, "metric/totalPressure");
+    arena_backed_ = (arena != nullptr);
 }
 
 template <typename T>
-void metricFree(MetricWorkspace<T>& mw) {
-    if (!mw.arena_backed) {
-        cudaFree(mw.d_r12);  cudaFree(mw.d_ru12); cudaFree(mw.d_zu12);
-        cudaFree(mw.d_rs);   cudaFree(mw.d_zs);   cudaFree(mw.d_tau);
-        cudaFree(mw.d_gsqrt);
-        cudaFree(mw.d_guu);  cudaFree(mw.d_guv);  cudaFree(mw.d_gvv);
-        cudaFree(mw.d_bsupu); cudaFree(mw.d_bsupv);
-        cudaFree(mw.d_bsubu); cudaFree(mw.d_bsubv);
-        cudaFree(mw.d_totalPressure);
+cumes::GeometryOperator<T>::~GeometryOperator() {
+    if (!arena_backed_) {
+        cudaFree(d_r12_);  cudaFree(d_ru12_); cudaFree(d_zu12_);
+        cudaFree(d_rs_);   cudaFree(d_zs_);   cudaFree(d_tau_);
+        cudaFree(d_gsqrt_);
+        cudaFree(d_guu_);  cudaFree(d_guv_);  cudaFree(d_gvv_);
+        cudaFree(d_bsupu_); cudaFree(d_bsupv_);
+        cudaFree(d_bsubu_); cudaFree(d_bsubv_);
+        cudaFree(d_totalPressure_);
     }
-    mw = MetricWorkspace<T>{};
 }
 
 // ---- base geometry kernel (blueprint §6.7) -----------------------------
@@ -493,19 +467,6 @@ __global__ void computeNormPartialsKernel(
     }
 }
 
-template <typename T>
-void computeForceNormPartials(const DeviceParams<T>& p, const MetricWorkspace<T>& mw,
-                              T* dVdsH, T* psum, cudaStream_t stream) {
-    dim3 block(256), grid(p.ns - 1);
-    size_t shmem = 4 * block.x * sizeof(T);
-    computeNormPartialsKernel<T><<<grid, block, shmem, stream>>>(
-        mw.d_gsqrt, mw.d_guu, mw.d_r12, mw.d_bsupu, mw.d_bsupv,
-        mw.d_bsubu, mw.d_bsubv,
-        p.ntheta, p.nzeta, p.ns,
-        dVdsH, psum);
-    cumes::check_cuda(cudaGetLastError(), "norm partials");
-}
-
 // ---- full-grid iota/chip update (vmecpp ideal_mhd_model.cc) -------------
 // iotaF[0]    = 1.5*iotaH[0] - 0.5*iotaH[1]          (axis extrapolation)
 // iotaF[j]    = 0.5*(iotaH[j] + iotaH[j-1])          (interior average)
@@ -613,41 +574,80 @@ __global__ void jacobianStatsKernel(
     }
 }
 
-// Host wrapper: d_stats is a caller-owned 4-element device scratch (allocated
-// once by the solver, not per call — no cudaMalloc in the hot loop). Device-
-// only: it reduces the oriented Jacobian statistics into d_stats and returns;
-// the caller transfers the values with its combined ControlRecord (Phase 6A
-// one-fence control path), so there is no host copy or fence here.
+// ---------------------------------------------------------------------------
+// GeometryOperator (owns the half-grid buffers; launches the base-geometry
+// kernel + stats). The magnetic field is the separate MagneticFieldOperator.
+// ---------------------------------------------------------------------------
 template <typename T>
-void computeJacobianStats(const DeviceParams<T>& p, const MetricWorkspace<T>& mw,
-                          T* d_stats, cudaStream_t stream) {
+void cumes::GeometryOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
+                                         const DeviceParams<T>& p,
+                                         const cumes::RadialProfileViews<T>& rpv,
+                                         cudaStream_t stream) {
+    dim3 block(128);
+    dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
+    baseGeometryKernel<T><<<grid, block, 0, stream>>>(
+        geometryParityViews(rs, p), rpv,
+        base_geometry_views(p), p.ns, p.nZnT, T(1.0) / T(p.ns - 1));
+    cumes::check_cuda(cudaGetLastError(), "base geometry kernel");
+}
+
+template <typename T>
+void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p, T* d_stats,
+                                                cudaStream_t stream) const {
     const int nHalf = (p.ns - 1) * p.nZnT;
-    jacobianStatsKernel<T><<<1, 256, 0, stream>>>(mw.d_gsqrt, nHalf, 1,
+    jacobianStatsKernel<T><<<1, 256, 0, stream>>>(d_gsqrt_, nHalf, 1,
                                        T(p.kSignJacobian), d_stats);
     cumes::check_cuda(cudaGetLastError(), "jacobianStats");
 }
 
 template <typename T>
-void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                         const cumes::RadialProfileViews<T>& rpv, MetricWorkspace<T>& mw,
-                         cudaStream_t stream) {
-    dim3 block(128);
-    dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
-    baseGeometryKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), rpv,
-        baseGeometryHalfViews(mw, p), p.ns, p.nZnT, T(1.0) / T(p.ns - 1));
-    cumes::check_cuda(cudaGetLastError(), "base geometry kernel");
+void cumes::GeometryOperator<T>::force_norm_partials(const DeviceParams<T>& p, T* dVdsH,
+                                                     T* psum, cudaStream_t stream) const {
+    dim3 block(256), grid(p.ns - 1);
+    size_t shmem = 4 * block.x * sizeof(T);
+    computeNormPartialsKernel<T><<<grid, block, shmem, stream>>>(
+        d_gsqrt_, d_guu_, d_r12_, d_bsupu_, d_bsupv_,
+        d_bsubu_, d_bsubv_,
+        p.ntheta, p.nzeta, p.ns,
+        dVdsH, psum);
+    cumes::check_cuda(cudaGetLastError(), "norm partials");
 }
 
 template <typename T>
-void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                          const cumes::RadialProfileViews<T>& rpv, MetricWorkspace<T>& mw,
-                          cudaStream_t stream, bool update_iota_chi) {
+cumes::BaseGeometryHalfViews<T> cumes::GeometryOperator<T>::base_geometry_views(const DeviceParams<T>& p) const {
+    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
+    cumes::BaseGeometryHalfViews<T> v;
+    v.r12 = h(d_r12_); v.ru12 = h(d_ru12_); v.zu12 = h(d_zu12_);
+    v.rs = h(d_rs_); v.zs = h(d_zs_); v.tau = h(d_tau_);
+    v.gsqrt = h(d_gsqrt_); v.guu = h(d_guu_); v.guv = h(d_guv_); v.gvv = h(d_gvv_);
+    return v;
+}
+
+template <typename T>
+cumes::MagneticFieldViews<T> cumes::GeometryOperator<T>::magnetic_field_views(const DeviceParams<T>& p) const {
+    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
+    cumes::MagneticFieldViews<T> v;
+    v.bsupu = h(d_bsupu_); v.bsupv = h(d_bsupv_);
+    v.bsubu = h(d_bsubu_); v.bsubv = h(d_bsubv_);
+    v.total_pressure = h(d_totalPressure_);
+    return v;
+}
+
+// ---------------------------------------------------------------------------
+// MagneticFieldOperator (stateless; launches the field kernel + ncurr closure
+// + full-grid iota/chip update over the GeometryOperator's typed views).
+// ---------------------------------------------------------------------------
+template <typename T>
+void cumes::MagneticFieldOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
+                                              const DeviceParams<T>& p,
+                                              const cumes::RadialProfileViews<T>& rpv,
+                                              const cumes::BaseGeometryHalfViews<T>& base,
+                                              cumes::MagneticFieldViews<T> field,
+                                              cudaStream_t stream, bool update_iota_chi) const {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     magneticFieldKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), rpv,
-        baseGeometryHalfViews(mw, p), magneticFieldViews(mw, p),
+        geometryParityViews(rs, p), rpv, base, field,
         p.lamscale, p.ncurr, p.ns, p.nZnT);
     cumes::check_cuda(cudaGetLastError(), "magnetic field kernel");
 
@@ -655,11 +655,11 @@ void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const DevicePara
         dim3 fb(256), fg(p.ns - 1);
         size_t shmem = 2 * 256 * sizeof(T);
         ncurr1FinalizeKernel<T><<<fg, fb, shmem, stream>>>(
-            mw.d_guu, mw.d_guv, mw.d_gsqrt, mw.d_gvv,
-            mw.d_bsupu, mw.d_bsupv,
+            base.guu.data(), base.guv.data(), base.gsqrt.data(), base.gvv.data(),
+            field.bsupu.data(), field.bsupv.data(),
             rpv.curr_H, rpv.phip_H, rpv.pres_H, rpv.sqrtS_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta, p.lamscale,
-            mw.d_bsubu, mw.d_bsubv, mw.d_totalPressure,
+            field.bsubu.data(), field.bsubv.data(), field.total_pressure.data(),
             rpv.chip_H, rpv.iota_H);
         cumes::check_cuda(cudaGetLastError(), "ncurr1 kernel");
         }
@@ -670,37 +670,5 @@ void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const DevicePara
             rpv.iota_H, rpv.chip_H, p.ns, rpv.iota_F, rpv.chi_F);
         cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
     }
-}
-
-template <typename T>
-void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                     const cumes::RadialProfileViews<T>& rpv, MetricWorkspace<T>& mw,
-                     cudaStream_t stream, bool update_iota_chi) {
-    computeBaseGeometry(rs, p, rpv, mw, stream);
-    computeMagneticField(rs, p, rpv, mw, stream, update_iota_chi);
-}
-
-// ---------------------------------------------------------------------------
-// GeometryOperator (owns the MetricWorkspace; wraps the base-geometry kernel
-// + stats). The magnetic-field kernel is the separate MagneticFieldOperator.
-// ---------------------------------------------------------------------------
-template <typename T>
-void cumes::GeometryOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
-                                         const DeviceParams<T>& p,
-                                         const cumes::RadialProfileViews<T>& rpv,
-                                         cudaStream_t stream) {
-    computeBaseGeometry(rs, p, rpv, mw_, stream);
-}
-
-template <typename T>
-void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p, T* d_stats,
-                                                cudaStream_t stream) const {
-    computeJacobianStats(p, mw_, d_stats, stream);
-}
-
-template <typename T>
-void cumes::GeometryOperator<T>::force_norm_partials(const DeviceParams<T>& p, T* dVdsH,
-                                                     T* psum, cudaStream_t stream) const {
-    computeForceNormPartials(p, mw_, dVdsH, psum, stream);
 }
 

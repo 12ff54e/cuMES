@@ -30,7 +30,6 @@
 
 #include "vmec_types.h"
 #include "fourier.cuh"
-#include "geometry.cuh"
 #include "solver.cuh"
 
 #include "cumes/config/json_reader.hpp"

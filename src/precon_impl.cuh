@@ -841,79 +841,83 @@ __global__ void preconBoundaryKernel(
 // Host-side orchestration
 // ---------------------------------------------------------------------------
 template <typename T>
-void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                   const DeviceParams<T>& p, const cumes::RadialProfileViews<T>& rpv,
-                   const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
-                   cudaStream_t stream) {
+void cumes::Preconditioner<T>::enqueue_compute(const cumes::RealSpaceStorage<T>& rs,
+                                               const int* xm, const int* xn,
+                                               const DeviceParams<T>& p,
+                                               const cumes::RadialProfileViews<T>& rpv,
+                                               const cumes::BaseGeometryHalfViews<T>& base,
+                                               const cumes::MagneticFieldViews<T>& field,
+                                               cudaStream_t stream) {
     int nH = p.ns - 1, nF = p.ns;
     int threads = 256;
 
     // Step 1: Compute ax, bx, cx on half-grid (the 15-accumulator reduction is
     // now a warp-shuffle + fixed cross-warp combine, so no dynamic shared mem).
     preconComputeKernel<T><<<nH, threads, 0, stream>>>(
-        mw.d_r12, mw.d_tau, mw.d_totalPressure, mw.d_bsupv, mw.d_gsqrt,
+        base.r12.data(), base.tau.data(), field.total_pressure.data(),
+        field.bsupv.data(), base.gsqrt.data(),
         rpv.sqrtS_H,
-        mw.d_zs, mw.d_zu12, rs.d_zu_e, rs.d_zu_o, rs.d_z_o,
-        mw.d_rs, mw.d_ru12, rs.d_ru_e, rs.d_ru_o, rs.d_r_o,
+        base.zs.data(), base.zu12.data(), rs.d_zu_e, rs.d_zu_o, rs.d_z_o,
+        base.rs.data(), base.ru12.data(), rs.d_ru_e, rs.d_ru_o, rs.d_r_o,
         p.ns, p.nZnT, T(1.0) / T(p.ns - 1),
-        pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx);
+        pw_.d_ax_R, pw_.d_ax_Z, pw_.d_bx_R, pw_.d_bx_Z, pw_.d_cx);
     cumes::check_cuda(cudaGetLastError(), "preconCompute");
 
     // Step 2a: Assemble off-diagonal terms + sm/sp on half-grid
     int gridH = (nH + 255) / 256;
     preconAssembleKernel<T><<<gridH, 256, 0, stream>>>(
-        pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx,
+        pw_.d_ax_R, pw_.d_ax_Z, pw_.d_bx_R, pw_.d_bx_Z, pw_.d_cx,
         rpv.sqrtS_H, rpv.sqrtS_F,
         p.ns,
-        pw.d_arm, pw.d_brm, pw.d_azm, pw.d_bzm,
-        pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd,
-        pw.d_sm, pw.d_sp);
+        pw_.d_arm, pw_.d_brm, pw_.d_azm, pw_.d_bzm,
+        pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd, pw_.d_cxd,
+        pw_.d_sm, pw_.d_sp);
     cumes::check_cuda(cudaGetLastError(), "preconAssemble");
 
     // Step 2b: Average half-grid diagonals to full-grid
     int gridF = (nF + 255) / 256;
     preconDiagKernel<T><<<gridF, 256, 0, stream>>>(
-        pw.d_ax_R, pw.d_ax_Z, pw.d_bx_R, pw.d_bx_Z, pw.d_cx,
-        pw.d_sm, pw.d_sp, p.ns,
-        pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd);
+        pw_.d_ax_R, pw_.d_ax_Z, pw_.d_bx_R, pw_.d_bx_Z, pw_.d_cx,
+        pw_.d_sm, pw_.d_sp, p.ns,
+        pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd, pw_.d_cxd);
     cumes::check_cuda(cudaGetLastError(), "preconDiag");
 
     // Step 3: Assemble tridiagonal matrices per (m,n) mode
     int total = p.mnmax * nF;
     int gridMN = (total + 255) / 256;
     tridiagAssemblyKernel<T><<<gridMN, 256, 0, stream>>>(
-        pw.d_arm, pw.d_brm, pw.d_azm, pw.d_bzm,
-        pw.d_ard, pw.d_brd, pw.d_azd, pw.d_bzd, pw.d_cxd,
+        pw_.d_arm, pw_.d_brm, pw_.d_azm, pw_.d_bzm,
+        pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd, pw_.d_cxd,
         xm, xn,
         p.ns, p.mnmax, p.nfp,
-        pw.d_ar, pw.d_dr, pw.d_br,
-        pw.d_az, pw.d_dz, pw.d_bz,
-        pw.d_jMin);
+        pw_.d_ar, pw_.d_dr, pw_.d_br,
+        pw_.d_az, pw_.d_dz, pw_.d_bz,
+        pw_.d_jMin);
     cumes::check_cuda(cudaGetLastError(), "tridiagAssembly");
 
     // Step 3b: per-mode coefficient scale for the scale-aware pivot floor
     // (blueprint §4.9). Computed once per refresh, read by the solve kernels.
     preconScaleKernel<T><<<p.mnmax, 256, 0, stream>>>(
-        pw.d_ar, pw.d_dr, pw.d_br,
-        pw.d_az, pw.d_dz, pw.d_bz,
-        p.ns, p.mnmax, pw.d_preconScale);
+        pw_.d_ar, pw_.d_dr, pw_.d_br,
+        pw_.d_az, pw_.d_dz, pw_.d_bz,
+        p.ns, p.mnmax, pw_.d_preconScale);
     cumes::check_cuda(cudaGetLastError(), "preconScale");
 
     // Step 4a/4b: Lambda diagonal preconditioner (components 2 and 5)
     {
-        cumes::check_cuda(cudaMemsetAsync(pw.d_rmsPhiP, 0, sizeof(T), stream), "rmsPhiP zero");
+        cumes::check_cuda(cudaMemsetAsync(pw_.d_rmsPhiP, 0, sizeof(T), stream), "rmsPhiP zero");
         lambdaPrecAssembleKernel<T><<<nH, threads, 0, stream>>>(
-            mw.d_guu, mw.d_guv, mw.d_gvv, mw.d_gsqrt,
+            base.guu.data(), base.guv.data(), base.gvv.data(), base.gsqrt.data(),
             rpv.phip_H,
             p.ns, p.nZnT, p.ntheta, p.nzeta,
-            pw.d_bLambda, pw.d_dLambda, pw.d_cLambda, pw.d_rmsPhiP);
+            pw_.d_bLambda, pw_.d_dLambda, pw_.d_cLambda, pw_.d_rmsPhiP);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecAssemble");
         lambdaPrecFinalizeKernel<T><<<dim3(p.mnmax, (p.ns + 127) / 128), 128, 0, stream>>>(
-            pw.d_bLambda, pw.d_dLambda, pw.d_cLambda,
-            rpv.sqrtS_F, pw.d_rmsPhiP,
+            pw_.d_bLambda, pw_.d_dLambda, pw_.d_cLambda,
+            rpv.sqrtS_F, pw_.d_rmsPhiP,
             xm, xn,
             p.ns, p.mnmax, T(1.0) / T(p.ns - 1), p.nfp,
-            pw.d_lambdaPrec);
+            pw_.d_lambdaPrec);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecFinalize");
     }
 }
@@ -1056,18 +1060,8 @@ __global__ void m1PreconScaleKernel(cumes::SpectralView<T, cumes::DecomposedResi
 }
 
 // ---------------------------------------------------------------------------
-// Preconditioner operator (owns the PreconWorkspace; wraps preconCompute/Apply)
+// Preconditioner operator (owns the PreconWorkspace; applies the preconditioner)
 // ---------------------------------------------------------------------------
-template <typename T>
-void cumes::Preconditioner<T>::enqueue_compute(const cumes::RealSpaceStorage<T>& rs,
-                                               const int* xm, const int* xn,
-                                               const DeviceParams<T>& p,
-                                               const cumes::RadialProfileViews<T>& rpv,
-                                               const MetricWorkspace<T>& mw,
-                                               cudaStream_t stream) {
-    preconCompute(rs, xm, xn, p, rpv, mw, pw_, stream);
-}
-
 template <typename T>
 void cumes::Preconditioner<T>::enqueue_apply(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,

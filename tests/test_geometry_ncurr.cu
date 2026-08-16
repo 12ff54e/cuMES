@@ -22,7 +22,8 @@
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
-#include "geometry.cuh"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
 
@@ -98,10 +99,10 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
-    MetricWorkspace<T> mw = metricCreate(p);
+    cumes::GeometryOperator<T> geometry(p, nullptr);
 
     inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
-    computeGeometry(rs, p, rp, mw);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
 
     // Assert the half-grid outputs that updateIotaChipFKernel /
     // ncurr1FinalizeKernel produce are finite (an OOB read would surface as
@@ -120,7 +121,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     // is device-only (Phase 6A one-fence path); copy the 4 values out here.
     T* d_stats; T h_stats[4];
     checkCuda(cudaMalloc(&d_stats, 4 * sizeof(T)), "stats");
-    computeJacobianStats(p, mw, d_stats);
+    geometry.jacobian_stats(p, d_stats, 0);
     checkCuda(cudaMemcpy(h_stats, d_stats, 4 * sizeof(T), cudaMemcpyDeviceToHost), "stats cpy");
     CHECK(std::isfinite((double)h_stats[0]) && std::isfinite((double)h_stats[1]) &&
           h_stats[2] == T(0.0) && h_stats[1] > T(0.0),
@@ -129,7 +130,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     delete[] h_chip; delete[] h_iota;
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); cumes::modeTableFree(mt);
+    fourierFree(fp); cumes::modeTableFree(mt);
 }
 
 int main() {

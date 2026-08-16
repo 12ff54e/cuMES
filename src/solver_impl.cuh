@@ -122,9 +122,9 @@ template <typename T>
 static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
                               const int* xm, const int* xn, const DeviceParams<T>& p,
                               const cumes::RadialProfileViews<T>& rpv,
-                              const MetricWorkspace<T>& mw,
+                              const cumes::GeometryOperator<T>& geometry,
                               T* d_psum, T* d_out, cudaStream_t stream) {
-    computeForceNormPartials(p, mw, rpv.dVds_H, d_psum, stream);
+    geometry.force_norm_partials(p, rpv.dVds_H, d_psum, stream);
     { dim3 b1(256), g1(1);
       forceNormReduceKernel<T><<<g1, b1, 0, stream>>>(d_psum, rpv.dVds_H, rpv.pres_H,
                                                        p.ns - 1, d_out); }
@@ -507,7 +507,7 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
     : p_(p), storage_(storage), profiles_(profiles), transform_(transform),
       rs_(rs), geometry_(geometry), op_(op),
       precon_(p, arena), constraint_(p, arena),
-      mw_(geometry.workspace()), rpv_(profiles.profile_views()),
+      base_views_(geometry.base_geometry_views(p)), field_views_(geometry.magnetic_field_views(p)), rpv_(profiles.profile_views()),
       st_(storage.legacy_view()),
       d_f_spec_(6 * (size_t)p.ns * p.mnmax), d_control_(16),
       d_psum_(4 * (size_t)(p.ns - 1)),
@@ -571,7 +571,8 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     cumes::GeometryOperator<T>& geometry = geometry_;
     cumes::Preconditioner<T>& precon = precon_;
     cumes::ConstraintOperator<T>& constraint = constraint_;
-    MetricWorkspace<T>& mw = mw_;
+    cumes::BaseGeometryHalfViews<T>& base = base_views_;
+    cumes::MagneticFieldViews<T>& field = field_views_;
     const cumes::RadialProfileViews<T>& rpv = rpv_;
     ::SpectralState<T>& st = st_;
     cumes::DeviceBuffer<T>& d_f_spec = d_f_spec_;
@@ -700,7 +701,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // profiles are fixed so the update is idempotent and runs only on the
     // first pass.
     cumes::MagneticFieldOperator<T> field_op;
-    field_op.enqueue(rs, p, rpv, mw, stream, schedule.update_iota_chi);
+    field_op.enqueue(rs, p, rpv, base, field, stream, schedule.update_iota_chi);
 
 #ifdef DUMP_CUMES_VERIFY
     if (iter == 0 || iter2 == 2) {
@@ -708,16 +709,16 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/step_D_bsupu_iter_%d.bin", iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, mw.d_bsupu, n_half);
+        dumpDeviceArray(fn, field.bsupu.data(), n_half);
         snprintf(fn, sizeof fn, "dump/cuMES/step_D_bsupv_iter_%d.bin", iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, mw.d_bsupv, n_half);
+        dumpDeviceArray(fn, field.bsupv.data(), n_half);
     }
     if (iter == 0) {
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
-        dumpDeviceArray("dump/cuMES/step_B_gsqrt_iter_1.bin", mw.d_gsqrt, n_half);
-        dumpDeviceArray("dump/cuMES/step_C_guu_iter_1.bin",   mw.d_guu, n_half);
-        dumpDeviceArray("dump/cuMES/step_C_guv_iter_1.bin",   mw.d_guv, n_half);
-        dumpDeviceArray("dump/cuMES/step_C_gvv_iter_1.bin",   mw.d_gvv, n_half);
+        dumpDeviceArray("dump/cuMES/step_B_gsqrt_iter_1.bin", base.gsqrt.data(), n_half);
+        dumpDeviceArray("dump/cuMES/step_C_guu_iter_1.bin",   base.guu.data(), n_half);
+        dumpDeviceArray("dump/cuMES/step_C_guv_iter_1.bin",   base.guv.data(), n_half);
+        dumpDeviceArray("dump/cuMES/step_C_gvv_iter_1.bin",   base.gvv.data(), n_half);
     }
 #endif
 
@@ -738,14 +739,14 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // shouldUpdateRadialPreconditioner: (iter2 - iter1) % 25 == 0.
     const bool precon_updated = schedule.refresh_preconditioner;
     if (precon_updated) {
-        precon.enqueue_compute(rs, transform.xm(), transform.xn(), p, rpv, mw,
+        precon.enqueue_compute(rs, transform.xm(), transform.xn(), p, rpv, base, field,
                                stream);
 
         // vmecpp computeForceNorms (same cadence): device-side reduction
         // of the force-norm partial sums into the combined control record
         // (finalized on the host after the single control fence).
         enqueueForceNorms(storage.physical_const(), transform.xm(),
-                          transform.xn(), p, rpv, mw,
+                          transform.xn(), p, rpv, geometry,
                           d_psum.data(), d_control.data() + 10, stream);
 
 #ifdef DUMP_CUMES_VERIFY
@@ -808,24 +809,24 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     }
 
     cumes::ForceOperator<T> force_op;
-    force_op.enqueue(rs, p, rpv, mw, stream);
+    force_op.enqueue(rs, p, rpv, base, field, stream);
 
 #ifdef DUMP_CUMES_VERIFY
     if (iter == 0 || iter2 == 2) {
         // iter 2 = first pass with lambda != 0 (E3-B blmn blending check)
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
         if (iter == 0) {
-            dumpDeviceArray("dump/cuMES/step_half_r12_iter_1.bin", mw.d_r12, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_zu12_iter_1.bin", mw.d_zu12, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_tau_iter_1.bin", mw.d_tau, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_gsqrt_iter_1.bin", mw.d_gsqrt, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_totalP_iter_1.bin", mw.d_totalPressure, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_bsupu_iter_1.bin", mw.d_bsupu, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_bsupv_iter_1.bin", mw.d_bsupv, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_bsubu_iter_1.bin", mw.d_bsubu, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_bsubv_iter_1.bin", mw.d_bsubv, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_rs_iter_1.bin", mw.d_rs, n_half);
-            dumpDeviceArray("dump/cuMES/step_half_zs_iter_1.bin", mw.d_zs, n_half);
+            dumpDeviceArray("dump/cuMES/step_half_r12_iter_1.bin", base.r12.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_zu12_iter_1.bin", base.zu12.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_tau_iter_1.bin", base.tau.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_gsqrt_iter_1.bin", base.gsqrt.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_totalP_iter_1.bin", field.total_pressure.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_bsupu_iter_1.bin", field.bsupu.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_bsupv_iter_1.bin", field.bsupv.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_bsubu_iter_1.bin", field.bsubu.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_bsubv_iter_1.bin", field.bsubv.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_rs_iter_1.bin", base.rs.data(), n_half);
+            dumpDeviceArray("dump/cuMES/step_half_zs_iter_1.bin", base.zs.data(), n_half);
         }
 
         size_t n_real = (size_t)p.ns * (size_t)p.nZnT;

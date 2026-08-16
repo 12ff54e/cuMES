@@ -15,9 +15,10 @@
 //
 // All computation is templated on the scalar type T (double or float).
 
-#include "forces.cuh"
+#include "cumes/state/real_space_storage.hpp"
 #include <cstdio>
 
+#include "cumes/physics/force_operator.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/state/real_fields.cuh"
 
@@ -34,28 +35,6 @@ static cumes::GeometryParityViews<T> geometryParityViews(const cumes::RealSpaceS
     v.ru_o = f(rs.d_ru_o); v.zu_o = f(rs.d_zu_o); v.lu_o = f(rs.d_lu_o);
     v.rv_e = f(rs.d_rv_e); v.zv_e = f(rs.d_zv_e); v.lv_e = f(rs.d_lv_e);
     v.rv_o = f(rs.d_rv_o); v.zv_o = f(rs.d_zv_o); v.lv_o = f(rs.d_lv_o);
-    return v;
-}
-
-template <typename T>
-static cumes::BaseGeometryHalfViews<T> baseGeometryHalfViews(const MetricWorkspace<T>& mw,
-                                                             const DeviceParams<T>& p) {
-    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
-    cumes::BaseGeometryHalfViews<T> v;
-    v.r12 = h(mw.d_r12); v.ru12 = h(mw.d_ru12); v.zu12 = h(mw.d_zu12);
-    v.rs = h(mw.d_rs); v.zs = h(mw.d_zs); v.tau = h(mw.d_tau);
-    v.gsqrt = h(mw.d_gsqrt); v.guu = h(mw.d_guu); v.guv = h(mw.d_guv); v.gvv = h(mw.d_gvv);
-    return v;
-}
-
-template <typename T>
-static cumes::MagneticFieldViews<T> magneticFieldViews(const MetricWorkspace<T>& mw,
-                                                       const DeviceParams<T>& p) {
-    auto h = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns - 1, p.ntheta, p.nzeta); };
-    cumes::MagneticFieldViews<T> v;
-    v.bsupu = h(mw.d_bsupu); v.bsupv = h(mw.d_bsupv);
-    v.bsubu = h(mw.d_bsubu); v.bsubv = h(mw.d_bsubv);
-    v.total_pressure = h(mw.d_totalPressure);
     return v;
 }
 
@@ -308,14 +287,16 @@ __global__ void forcesKernel(
 }
 
 template <typename T>
-void computeForces(const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-                   const cumes::RadialProfileViews<T>& rpv, const MetricWorkspace<T>& mw,
-                   cudaStream_t stream) {
+void cumes::ForceOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
+                                      const DeviceParams<T>& p,
+                                      const cumes::RadialProfileViews<T>& rpv,
+                                      const cumes::BaseGeometryHalfViews<T>& base,
+                                      const cumes::MagneticFieldViews<T>& field,
+                                      cudaStream_t stream) const {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     forcesKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), baseGeometryHalfViews(mw, p),
-        magneticFieldViews(mw, p), rpv,
+        geometryParityViews(rs, p), base, field, rpv,
         forceParityViews(rs, p),
         p.lamscale, p.ns, p.nZnT, T(1.0) / T(p.ns - 1));
     cumes::check_cuda(cudaGetLastError(), "forces kernel");

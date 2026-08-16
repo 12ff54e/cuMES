@@ -14,10 +14,10 @@
 #include "constraint.cuh"
 #include "vmec_types.h"
 #include "fourier.cuh"
-#include "geometry.cuh"
-#include "forces.cuh"
 #include "solver.cuh"
+#include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
@@ -103,7 +103,6 @@ int main() {
     cumes::ToroidalFftOperator<double> transform(p, rs, mt, nullptr);
     FourierPlan<double>& fp = transform.fourier_plan();
     cumes::GeometryOperator<double> geometry(p, nullptr);
-    MetricWorkspace<double>& mw = geometry.workspace();
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
     SolverResult<double> res = solverRun(storage, p, profiles, transform, rs, geometry);
@@ -113,8 +112,8 @@ int main() {
 
     // ---- Recompute forces through the test's own path ----
     inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
-    computeGeometry(rs, p, rp, mw);
-    computeForces(rs, p, rp, mw);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
+    cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
     // Forward DFT to get spectral forces (6 families).
     const size_t n6 = (size_t)6 * ns * p.mnmax;

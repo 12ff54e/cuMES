@@ -13,7 +13,6 @@
 #pragma once
 #include "vmec_types.h"
 #include "fourier.cuh"
-#include "geometry.cuh"
 
 namespace cumes { class DeviceArena; }
 
@@ -87,16 +86,6 @@ PreconWorkspace<T> preconCreate(const DeviceParams<T>& p,
                                 cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void preconFree(PreconWorkspace<T>& pw);
-
-// Compute (or update) the preconditioner matrix elements from current
-// geometry and metric arrays.  Called every ~25 iterations. `rs` carries the
-// parity-split geometry derivatives; `xm`/`xn` the shared folded-mode table
-// (cumes::DeviceModeTable).
-template <typename T>
-void preconCompute(const cumes::RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                   const DeviceParams<T>& p, const cumes::RadialProfileViews<T>& rp,
-                   const MetricWorkspace<T>& mw, PreconWorkspace<T>& pw,
-                   cudaStream_t stream = 0);
 
 // Apply the tridiagonal preconditioner to the 5-component spectral forces.
 // Solves tridiagonal systems for R (components 0,3) and Z (components 1,4).

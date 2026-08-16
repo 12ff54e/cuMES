@@ -3,8 +3,6 @@
 #pragma once
 #include "vmec_types.h"
 #include "fourier.cuh"
-#include "geometry.cuh"
-#include "forces.cuh"
 #include "cumes/state/spectral_storage.hpp"
 
 namespace cumes {

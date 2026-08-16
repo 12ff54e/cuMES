@@ -1,18 +1,17 @@
 // geometry_operator.hpp — base-geometry operator boundary (blueprint §6.7).
 //
-// Owns the MetricWorkspace and wraps the legacy computeGeometry /
-// computeJacobianStats / computeForceNormPartials. Transitional strangler-fig
-// form: it still names the legacy FourierPlan/cumes::RadialProfileViews in the enqueue
-// signature (for the parity-split full-grid geometry and radial profiles);
-// those become typed views once the FourierPlan split lands. The base-geometry
-// vs Jacobian-division decomposition (blueprint §6.7) is a separate follow-up.
+// Owns the 15 half-grid buffers (staggered interpolation, Jacobian, covariant
+// metric, contravariant/covariant B, total pressure) and exposes them as typed
+// BaseGeometryHalfViews / MagneticFieldViews. (Migration step 13.3: the legacy
+// MetricWorkspace struct + metricCreate/metricFree/compute* free functions are
+// gone; the operator owns the buffers directly and launches the kernels.)
 #pragma once
 
 #include <cuda_runtime.h>
 
+#include "cumes/config/device_params.hpp"
 #include "cumes/state/real_fields.cuh"
-#include "fourier.cuh"
-#include "geometry.cuh"
+#include "cumes/state/real_space_storage.hpp"
 
 namespace cumes {
 
@@ -21,9 +20,8 @@ class DeviceArena;
 template <class T>
 class GeometryOperator {
  public:
-  GeometryOperator(const DeviceParams<T>& p, DeviceArena* arena)
-      : mw_(metricCreate(p, arena)) {}
-  ~GeometryOperator() { metricFree(mw_); }
+  GeometryOperator(const DeviceParams<T>& p, DeviceArena* arena);
+  ~GeometryOperator();
 
   GeometryOperator(const GeometryOperator&) = delete;
   GeometryOperator& operator=(const GeometryOperator&) = delete;
@@ -31,12 +29,9 @@ class GeometryOperator {
   GeometryOperator& operator=(GeometryOperator&&) noexcept = default;
 
   // Half-grid base geometry: staggered interpolation, Jacobian, covariant
-  // metric — no 1/√g division. The magnetic field (1/√g B + total pressure +
-  // ncurr closure + full-grid iota/chip update) is the separate
-  // MagneticFieldOperator, ordered after this kernel (and the Jacobian-status
-  // chain) on the same stream. Reads the parity-split geometry from `rs`.
+  // metric — no 1/√g division. Reads the parity-split geometry from `rs`.
   void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-               const cumes::RadialProfileViews<T>& rp, cudaStream_t stream);
+               const RadialProfileViews<T>& rpv, cudaStream_t stream);
 
   // Oriented-Jacobian statistics into a caller-owned 4-element device scratch.
   void jacobian_stats(const DeviceParams<T>& p, T* d_stats, cudaStream_t stream) const;
@@ -45,11 +40,28 @@ class GeometryOperator {
   void force_norm_partials(const DeviceParams<T>& p, T* dVdsH, T* psum,
                            cudaStream_t stream) const;
 
-  MetricWorkspace<T>& workspace() { return mw_; }
-  const MetricWorkspace<T>& workspace() const { return mw_; }
+  // Typed view bundles over the owned buffers (the field/force/precon
+  // operators consume these instead of the deleted MetricWorkspace).
+  BaseGeometryHalfViews<T> base_geometry_views(const DeviceParams<T>& p) const;
+  MagneticFieldViews<T> magnetic_field_views(const DeviceParams<T>& p) const;
 
  private:
-  MetricWorkspace<T> mw_;
+  T* d_r12_ = nullptr;
+  T* d_ru12_ = nullptr;
+  T* d_zu12_ = nullptr;
+  T* d_rs_ = nullptr;
+  T* d_zs_ = nullptr;
+  T* d_tau_ = nullptr;
+  T* d_gsqrt_ = nullptr;
+  T* d_guu_ = nullptr;
+  T* d_guv_ = nullptr;
+  T* d_gvv_ = nullptr;
+  T* d_bsupu_ = nullptr;
+  T* d_bsupv_ = nullptr;
+  T* d_bsubu_ = nullptr;
+  T* d_bsubv_ = nullptr;
+  T* d_totalPressure_ = nullptr;
+  bool arena_backed_ = false;
 };
 
 }  // namespace cumes

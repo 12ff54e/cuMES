@@ -18,8 +18,9 @@
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
-#include "geometry.cuh"
-#include "forces.cuh"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
+#include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
 
@@ -91,12 +92,12 @@ int main() {
     FourierPlan<double> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
-    MetricWorkspace<double> mw = metricCreate(p);
+    cumes::GeometryOperator<double> geometry(p, nullptr);
 
     // Run one iteration
     inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
-    computeGeometry(rs, p, rp, mw);
-    computeForces(rs, p, rp, mw);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
+    cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
     // Check combined geometry at axis (j=0) and mid (j=8)
     size_t nbr = p.ns * p.nZnT * sizeof(double);
@@ -134,13 +135,13 @@ int main() {
     size_t nH = (p.ns - 1) * p.nZnT * sizeof(double);
     auto* h_gs = new double[(p.ns-1) * p.nZnT];
     auto* h_tau = new double[(p.ns-1) * p.nZnT];
-    checkCuda(cudaMemcpy(h_gs, mw.d_gsqrt, nH, cudaMemcpyDeviceToHost), "gs");
-    checkCuda(cudaMemcpy(h_tau, mw.d_tau, nH, cudaMemcpyDeviceToHost), "tau");
+    checkCuda(cudaMemcpy(h_gs, geometry.base_geometry_views(p).gsqrt.data(), nH, cudaMemcpyDeviceToHost), "gs");
+    checkCuda(cudaMemcpy(h_tau, geometry.base_geometry_views(p).tau.data(), nH, cudaMemcpyDeviceToHost), "tau");
 
     printf("\nHalf-grid at theta=0,zeta=0:\n");
     printf("  jH |  tau         gsqrt       r12\n");
     auto* h_r12 = new double[(p.ns-1) * p.nZnT];
-    checkCuda(cudaMemcpy(h_r12, mw.d_r12, nH, cudaMemcpyDeviceToHost), "r12");
+    checkCuda(cudaMemcpy(h_r12, geometry.base_geometry_views(p).r12.data(), nH, cudaMemcpyDeviceToHost), "r12");
     for (int j = 0; j < p.ns - 1; ++j) {
         printf("  %2d | %11.4e %11.4e %11.4e\n",
                j, h_tau[j * p.nZnT], h_gs[j * p.nZnT], h_r12[j * p.nZnT]);
@@ -180,7 +181,7 @@ int main() {
         // surface (a flipped Jacobian from a bad parity combination would
         // make it negative).
         size_t nH = (size_t)(p.ns - 1) * p.nZnT;
-        checkCuda(cudaMemcpy(h_gs, mw.d_gsqrt, nH * sizeof(double), cudaMemcpyDeviceToHost), "gs");
+        checkCuda(cudaMemcpy(h_gs, geometry.base_geometry_views(p).gsqrt.data(), nH * sizeof(double), cudaMemcpyDeviceToHost), "gs");
         bool geo_finite = true;
         double jmin = 1e300, jmax = 0.0;
         for (size_t i = 0; i < nH; ++i) {
@@ -226,7 +227,7 @@ int main() {
 
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); cumes::modeTableFree(mt);
+    fourierFree(fp); cumes::modeTableFree(mt);
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
 

@@ -17,7 +17,8 @@
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
-#include "geometry.cuh"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
 
@@ -83,7 +84,7 @@ int main() {
     FourierPlan<double> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
-    MetricWorkspace<double> mw = metricCreate(p);
+    cumes::GeometryOperator<double> geometry(p, nullptr);
 
     // extrapolate m=1 to the axis (as the solver does each iteration)
     {
@@ -98,7 +99,7 @@ int main() {
     }
 
     inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
-    computeGeometry(rs, p, rp, mw);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
 
     // check bsupu coverage on a mid-volume surface. All indices are computed
     // from the actual grid (the old hardcoded ks/1080 were W7-X-specific).
@@ -109,23 +110,23 @@ int main() {
     for (int i = 0; i < nks; ++i) ks[i] = (i * nZnT) / nks;  // spread over the plane
     double hb[8];
     for (int i = 0; i < nks; ++i)
-        cudaMemcpy(&hb[i], mw.d_bsupu + jMid * nZnT + ks[i], sizeof(double), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&hb[i], geometry.magnetic_field_views(p).bsupu.data() + jMid * nZnT + ks[i], sizeof(double), cudaMemcpyDeviceToHost);
     int nz = 0;
     double* h_all = new double[(p.ns - 1) * nZnT];
-    cudaMemcpy(h_all, mw.d_bsupu, (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsupu.data(), (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost);
     for (int k = 0; k < nZnT; ++k) if (h_all[jMid * nZnT + k] == 0.0) ++nz;
     printf("bsupu[jMid=%d] zeros: %d/%d\n", jMid, nz, nZnT);
     for (int i = 0; i < nks; ++i)
         printf("  k=%d: %.6f\n", ks[i], hb[i]);
     // also check the bsubu coverage
-    cudaMemcpy(h_all, mw.d_bsubu, (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsubu.data(), (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost);
     int nz2 = 0;
     for (int k = 0; k < nZnT; ++k) if (h_all[jMid * nZnT + k] == 0.0) ++nz2;
     printf("bsubu[jMid=%d] zeros: %d/%d\n", jMid, nz2, nZnT);
     delete[] h_all;
 
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); cumes::modeTableFree(mt);
+    fourierFree(fp); cumes::modeTableFree(mt);
 
     // Assertions: a full-coverage kernel must leave no unwritten point on an
     // interior surface (zero is not a physical bsupu/bsubu value there).

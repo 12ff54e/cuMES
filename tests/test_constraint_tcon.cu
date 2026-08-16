@@ -20,8 +20,10 @@
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
-#include "geometry.cuh"
-#include "forces.cuh"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/numerics/preconditioner.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
+#include "cumes/physics/force_operator.hpp"
 #include "precon.cuh"
 #include "cumes/physics/profiles.hpp"
 #include "cumes_test_support.cuh"
@@ -88,18 +90,18 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
-    MetricWorkspace<T> mw = metricCreate(p);
-    PreconWorkspace<T> pw = preconCreate(p);
+    cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::Preconditioner<T> precon(p, nullptr);
     ConstraintWorkspace<T> cw = constraintCreate(p);
 
     inverseDFTFused(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn,
                     /*do_combine=*/false, cw.d_rCon, cw.d_zCon);
-    computeGeometry(rs, p, rp, mw);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
     constraintResetRzCon0(p, cw, rp.sqrtS_F);
-    preconCompute(rs, mt.d_xm, mt.d_xn, p, rp, mw, pw);
-    computeForces(rs, p, rp, mw);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
+    cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
     // precon_updated=true recomputes tcon from the current tcon0.
-    constraintCompute(p, rs, fp, pw, cw, rp.sqrtS_F, /*precon_updated=*/true);
+    constraintCompute(p, rs, fp, precon.workspace(), cw, rp.sqrtS_F, /*precon_updated=*/true);
 
     size_t nF = (size_t)p.ns * p.nZnT;
     auto* h = new T[nF];
@@ -114,8 +116,8 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     delete[] ht;
 
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); 
-    preconFree(pw); constraintFree(cw); cumes::modeTableFree(mt);
+    fourierFree(fp); 
+    constraintFree(cw); cumes::modeTableFree(mt);
 }
 
 template <typename T>

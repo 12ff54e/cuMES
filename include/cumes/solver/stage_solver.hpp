@@ -25,7 +25,6 @@
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "fft_traits.h"
 #include "fourier.cuh"
-#include "geometry.cuh"
 #include "solver.cuh"
 
 namespace cumes {

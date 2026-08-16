@@ -20,8 +20,9 @@
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
-#include "geometry.cuh"
-#include "forces.cuh"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
+#include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes_test_support.cuh"
@@ -233,11 +234,11 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
-    MetricWorkspace<T> mw = metricCreate(p);
+    cumes::GeometryOperator<T> geometry(p, nullptr);
 
     inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
-    computeGeometry(rs, p, rp, mw);
-    computeForces(rs, p, rp, mw);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
+    cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
     const size_t nF = (size_t)ns * p.nZnT, nH = (size_t)(ns - 1) * p.nZnT;
     auto g = [&](const T* d, size_t n) { std::vector<T> v(n); checkCuda(cudaMemcpy(v.data(), d, n * sizeof(T), cudaMemcpyDeviceToHost), "g"); return v; };
@@ -250,12 +251,12 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     std::vector<T> zv_e = g(rs.d_zv_e, nF), zv_o = g(rs.d_zv_o, nF);
     std::vector<T> lu_e = g(rs.d_lu_e, nF), lu_o = g(rs.d_lu_o, nF);
     // half-grid
-    std::vector<T> r12 = g(mw.d_r12, nH), ru12 = g(mw.d_ru12, nH), zu12 = g(mw.d_zu12, nH);
-    std::vector<T> rs_h = g(mw.d_rs, nH), zs = g(mw.d_zs, nH), tau = g(mw.d_tau, nH);
-    std::vector<T> gsqrt = g(mw.d_gsqrt, nH), guv = g(mw.d_guv, nH), gvv = g(mw.d_gvv, nH);
-    std::vector<T> bsupu = g(mw.d_bsupu, nH), bsupv = g(mw.d_bsupv, nH);
-    std::vector<T> bsubu = g(mw.d_bsubu, nH), bsubv = g(mw.d_bsubv, nH);
-    std::vector<T> totalP = g(mw.d_totalPressure, nH);
+    std::vector<T> r12 = g(geometry.base_geometry_views(p).r12.data(), nH), ru12 = g(geometry.base_geometry_views(p).ru12.data(), nH), zu12 = g(geometry.base_geometry_views(p).zu12.data(), nH);
+    std::vector<T> rs_h = g(geometry.base_geometry_views(p).rs.data(), nH), zs = g(geometry.base_geometry_views(p).zs.data(), nH), tau = g(geometry.base_geometry_views(p).tau.data(), nH);
+    std::vector<T> gsqrt = g(geometry.base_geometry_views(p).gsqrt.data(), nH), guv = g(geometry.base_geometry_views(p).guv.data(), nH), gvv = g(geometry.base_geometry_views(p).gvv.data(), nH);
+    std::vector<T> bsupu = g(geometry.magnetic_field_views(p).bsupu.data(), nH), bsupv = g(geometry.magnetic_field_views(p).bsupv.data(), nH);
+    std::vector<T> bsubu = g(geometry.magnetic_field_views(p).bsubu.data(), nH), bsubv = g(geometry.magnetic_field_views(p).bsubv.data(), nH);
+    std::vector<T> totalP = g(geometry.magnetic_field_views(p).total_pressure.data(), nH);
     // profiles
     std::vector<T> sqrtS_F = g(rp.sqrtS_F, ns), sqrtS_H = g(rp.sqrtS_H, ns - 1), phip_F = g(rp.phip_F, ns);
 
@@ -303,7 +304,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     CHECK(md < tol, msg);
 
     realSpaceFree(rs);
-    fourierFree(fp); metricFree(mw); cumes::modeTableFree(mt);
+    fourierFree(fp); cumes::modeTableFree(mt);
 }
 
 int main() {

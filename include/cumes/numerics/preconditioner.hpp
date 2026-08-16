@@ -17,8 +17,7 @@
 
 #include "cumes/numerics/tridiagonal_backend.hpp"
 #include "cumes/state/real_fields.cuh"
-#include "fourier.cuh"
-#include "geometry.cuh"
+#include "cumes/state/real_space_storage.hpp"
 #include "precon.cuh"
 
 namespace cumes {
@@ -37,8 +36,9 @@ class Preconditioner {
 
   // Refresh the matrix coefficients from the current geometry/field.
   void enqueue_compute(const RealSpaceStorage<T>& rs, const int* xm, const int* xn,
-                       const DeviceParams<T>& p, const cumes::RadialProfileViews<T>& rp,
-                       const MetricWorkspace<T>& mw, cudaStream_t stream);
+                       const DeviceParams<T>& p, const RadialProfileViews<T>& rpv,
+                       const BaseGeometryHalfViews<T>& base, const MagneticFieldViews<T>& field,
+                       cudaStream_t stream);
 
   // Apply the preconditioner in place to the decomposed residual.
   void enqueue_apply(SpectralView<T, DecomposedResidualDomain> residual,

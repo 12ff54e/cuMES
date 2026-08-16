@@ -8,16 +8,16 @@
 // geometryKernel/ncurr1FinalizeKernel are the reference implementation (the
 // field was fused into the base geometry kernel until Phase 11 step 5).
 //
-// Strangler-fig form: a stateless thin wrapper over computeMagneticField
-// (verbatim — migration step 5). It reads/writes the MetricWorkspace owned by
-// the GeometryOperator (the base-geometry and field arrays share one workspace);
-// the view-based boundary (base geometry + field views) is a later follow-up.
+// (Migration step 13.3: it reads/writes the typed BaseGeometryHalfViews /
+// MagneticFieldViews owned by the GeometryOperator, not the deleted
+// MetricWorkspace.)
 #pragma once
 
 #include <cuda_runtime.h>
 
+#include "cumes/config/device_params.hpp"
+#include "cumes/state/real_fields.cuh"
 #include "cumes/state/real_space_storage.hpp"
-#include "geometry.cuh"
 
 namespace cumes {
 
@@ -27,12 +27,11 @@ class MagneticFieldOperator {
   // Half-grid magnetic field + total pressure + ncurr closure; update the
   // full-grid iota/chip on the first pass (ncurr=0) or every pass (ncurr=1).
   // Reads the parity-split λ derivatives from `rs`, the base geometry from
-  // `mw`, and the radial profiles from `rp`.
+  // `base`, writes `field`, and reads the radial profiles from `rpv`.
   void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
-               const cumes::RadialProfileViews<T>& rp, MetricWorkspace<T>& mw,
-               cudaStream_t stream, bool update_iota_chi) const {
-    computeMagneticField(rs, p, rp, mw, stream, update_iota_chi);
-  }
+               const RadialProfileViews<T>& rpv,
+               const BaseGeometryHalfViews<T>& base, MagneticFieldViews<T> field,
+               cudaStream_t stream, bool update_iota_chi) const;
 };
 
 }  // namespace cumes

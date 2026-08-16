@@ -27,7 +27,7 @@
 //     no longer left at their staged values.  The regression runs
 //     ns = 3, 17, 65, 127, 129, 130, 257 and compares the preconditioned
 //     force buffer against a serial Thomas solve on the SAME assembled matrix
-//     coefficients (pw.d_ar/dr/br/az/dz/bz, pw.d_jMin, pw.d_lambdaPrec copied
+//     coefficients (precon.workspace().d_ar/dr/br/az/dz/bz, precon.workspace().d_jMin, precon.workspace().d_lambdaPrec copied
 //     to host after the real preconCompute).
 //
 // Conventions match the other tests: everything is templated on T and both
@@ -50,8 +50,10 @@
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
-#include "geometry.cuh"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/numerics/preconditioner.hpp"
 #include "precon.cuh"
 #include "constraint.cuh"
 #include "cumes_test_support.cuh"
@@ -325,8 +327,8 @@ static int testDealias(int ntheta) {
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
-    MetricWorkspace<T> mw = metricCreate(p);
-    PreconWorkspace<T> pw = preconCreate(p);
+    cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::Preconditioner<T> precon(p, nullptr);
     ConstraintWorkspace<T> cw = constraintCreate(p);
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
     SpectralState<T> st = storage.legacy_view();
@@ -335,8 +337,8 @@ static int testDealias(int ntheta) {
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
-    computeGeometry(rs, p, rp, mw);
-    preconCompute(rs, mt.d_xm, mt.d_xn, p, rp, mw, pw);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
     // Manufacture the bandpass INPUT through the public operator.  With
     // ruFull = zuFull = 1 (ru_e = zu_e = 1, ru_o = zu_o = 0), rCon = pattern,
@@ -366,7 +368,7 @@ static int testDealias(int ntheta) {
 
     // tcon is refreshed from the (real) preconditioner + manufactured ru/zu;
     // the bandpass runs on the manufactured gConEff.
-    constraintCompute(p, rs, fp, pw, cw, rp.sqrtS_F, /*precon_updated=*/true);
+    constraintCompute(p, rs, fp, precon.workspace(), cw, rp.sqrtS_F, /*precon_updated=*/true);
 
     std::vector<T> h_tcon(p.ns);
     checkCuda(cudaMemcpy(h_tcon.data(), cw.d_tcon, p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
@@ -412,7 +414,7 @@ static int testDealias(int ntheta) {
                 checkNear((double)h_gCon[idx], gRef[idx], tol, "dealias", jF, k, l);
             }
 
-    constraintFree(cw); preconFree(pw); metricFree(mw);
+    constraintFree(cw); 
     realSpaceFree(rs);
     fourierFree(fp); cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
@@ -433,8 +435,8 @@ static int testPcr(int ns) {
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
-    MetricWorkspace<T> mw = metricCreate(p);
-    PreconWorkspace<T> pw = preconCreate(p);
+    cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::Preconditioner<T> precon(p, nullptr);
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
     SpectralState<T> st = storage.legacy_view();
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
@@ -442,8 +444,8 @@ static int testPcr(int ns) {
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
-    computeGeometry(rs, p, rp, mw);
-    preconCompute(rs, mt.d_xm, mt.d_xn, p, rp, mw, pw);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
     // Copy the assembled matrix coefficients to host: the CPU Thomas reference
     // must use the EXACT same ar/dr/br/az/dz/bz, jMin and lambdaPrec the GPU
@@ -453,14 +455,14 @@ static int testPcr(int ns) {
     std::vector<T> lam(p.mnmax * ns);
     std::vector<int> jMin(p.mnmax);
     size_t szMN = (size_t)p.mnmax * ns * sizeof(T);
-    checkCuda(cudaMemcpy(ar.data(), pw.d_ar, szMN, cudaMemcpyDeviceToHost), "ar get");
-    checkCuda(cudaMemcpy(dr.data(), pw.d_dr, szMN, cudaMemcpyDeviceToHost), "dr get");
-    checkCuda(cudaMemcpy(br.data(), pw.d_br, szMN, cudaMemcpyDeviceToHost), "br get");
-    checkCuda(cudaMemcpy(az.data(), pw.d_az, szMN, cudaMemcpyDeviceToHost), "az get");
-    checkCuda(cudaMemcpy(dz.data(), pw.d_dz, szMN, cudaMemcpyDeviceToHost), "dz get");
-    checkCuda(cudaMemcpy(bz.data(), pw.d_bz, szMN, cudaMemcpyDeviceToHost), "bz get");
-    checkCuda(cudaMemcpy(lam.data(), pw.d_lambdaPrec, szMN, cudaMemcpyDeviceToHost), "lambdaPrec get");
-    checkCuda(cudaMemcpy(jMin.data(), pw.d_jMin, p.mnmax * sizeof(int), cudaMemcpyDeviceToHost), "jMin get");
+    checkCuda(cudaMemcpy(ar.data(), precon.workspace().d_ar, szMN, cudaMemcpyDeviceToHost), "ar get");
+    checkCuda(cudaMemcpy(dr.data(), precon.workspace().d_dr, szMN, cudaMemcpyDeviceToHost), "dr get");
+    checkCuda(cudaMemcpy(br.data(), precon.workspace().d_br, szMN, cudaMemcpyDeviceToHost), "br get");
+    checkCuda(cudaMemcpy(az.data(), precon.workspace().d_az, szMN, cudaMemcpyDeviceToHost), "az get");
+    checkCuda(cudaMemcpy(dz.data(), precon.workspace().d_dz, szMN, cudaMemcpyDeviceToHost), "dz get");
+    checkCuda(cudaMemcpy(bz.data(), precon.workspace().d_bz, szMN, cudaMemcpyDeviceToHost), "bz get");
+    checkCuda(cudaMemcpy(lam.data(), precon.workspace().d_lambdaPrec, szMN, cudaMemcpyDeviceToHost), "lambdaPrec get");
+    checkCuda(cudaMemcpy(jMin.data(), precon.workspace().d_jMin, p.mnmax * sizeof(int), cudaMemcpyDeviceToHost), "jMin get");
 
     // Manufacture a smooth, non-trivial 6-family spectral force buffer.
     int stride = p.mnmax * ns;
@@ -476,7 +478,7 @@ static int testPcr(int ns) {
     checkCuda(cudaMemcpy(d_f, h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
     preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
                     d_f, p.ns, p.mnmax),
-                p, pw, mt.d_xm, mt.d_xn);
+                p, precon.workspace(), mt.d_xm, mt.d_xn);
     std::vector<T> h_g(6 * stride);
     checkCuda(cudaMemcpy(h_g.data(), d_f, 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
 
@@ -506,7 +508,7 @@ static int testPcr(int ns) {
     }
 
     cudaFree(d_f);
-    preconFree(pw); metricFree(mw);
+    
     fourierFree(fp); cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;

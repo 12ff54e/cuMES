@@ -96,7 +96,8 @@ class EquilibriumOperator {
 
   Preconditioner<T> precon_;
   ConstraintOperator<T> constraint_;
-  MetricWorkspace<T>& mw_;
+  BaseGeometryHalfViews<T> base_views_;
+  MagneticFieldViews<T> field_views_;
   RadialProfileViews<T> rpv_;
   ::SpectralState<T> st_;
 

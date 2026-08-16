@@ -27,8 +27,6 @@
 
 #include "vmec_types.h"
 #include "fourier.cuh"
-#include "geometry.cuh"
-#include "forces.cuh"
 #include "solver.cuh"
 #include "output.cuh"
 #include "refine.cuh"
