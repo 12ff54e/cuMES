@@ -46,6 +46,12 @@ class Preconditioner {
                      const GridParams<T>& p, const int* xm, const int* xn,
                      cudaStream_t stream) const;
 
+  // vmecpp applyM1Preconditioner: scale the m=1 frss/fzcs pair by the
+  // odd-parity diagonal elements (ard/brd/azd/bzd) before the RZ solve. Runs
+  // after the invariant residuals, before enqueue_apply.
+  void enqueue_m1_scale(SpectralView<T, DecomposedResidualDomain> residual,
+                        const GridParams<T>& p, cudaStream_t stream) const;
+
   const PreconWorkspace<T>& workspace() const { return pw_; }
 
  private:

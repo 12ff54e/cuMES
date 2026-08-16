@@ -1022,6 +1022,39 @@ void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
     cumes::check_cuda(cudaGetLastError(), "preconBoundary");
 }
 
+// vmecpp's applyM1Preconditioner (FourierForces): scales the m=1 frss by
+// (ard+brd)/denom and fzcs by (azd+bzd)/denom using the odd-parity diagonal
+// precon elements. The fzcs scale matters only when the mixed fzcs is
+// nonzero (fix_m1_gauge = false), i.e. for iter2 >= 2 before convergence.
+// Applied right before the RZ preconditioner (after the invariant residuals).
+// (Moved from solver_impl.cuh — the operator owns the PreconWorkspace these
+// elements live in.)
+template <typename T>
+__global__ void m1PreconScaleKernel(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
+                                    const T* __restrict__ ard,
+                                    const T* __restrict__ brd,
+                                    const T* __restrict__ azd,
+                                    const T* __restrict__ bzd,
+                                    int ns, int mnmax, int ntor) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= ns) return;
+    int m1base = ntor + 1;
+    T denom = ard[j * 2 + 1] + brd[j * 2 + 1] +
+              azd[j * 2 + 1] + bzd[j * 2 + 1];
+    // Degenerate-denominator guard: all-zero odd-parity precon diagonals
+    // (e.g. a zero-√g surface) would make both scales NaN. Leave the forces
+    // unscaled instead — the jacobian-stats check fails such surfaces before
+    // this kernel normally runs.
+    if (fabs(denom) < T(1e-30)) return;
+    T scaleR = (ard[j * 2 + 1] + brd[j * 2 + 1]) / denom;
+    T scaleZ = (azd[j * 2 + 1] + bzd[j * 2 + 1]) / denom;
+    for (int n = 0; n < ntor + 1; ++n) {
+        int mn = m1base + n;
+        f_spec(cumes::SpectralComponent::Rss, mn, j) *= scaleR;
+        f_spec(cumes::SpectralComponent::Zcs, mn, j) *= scaleZ;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Preconditioner operator (owns the PreconWorkspace; wraps preconCompute/Apply)
 // ---------------------------------------------------------------------------
@@ -1040,5 +1073,16 @@ void cumes::Preconditioner<T>::enqueue_apply(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
     const GridParams<T>& p, const int* xm, const int* xn, cudaStream_t stream) const {
     preconApply(residual, p, pw_, xm, xn, stream);
+}
+
+template <typename T>
+void cumes::Preconditioner<T>::enqueue_m1_scale(
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
+    const GridParams<T>& p, cudaStream_t stream) const {
+    dim3 b1(256), g1((p.ns + 255) / 256);
+    m1PreconScaleKernel<T><<<g1, b1, 0, stream>>>(
+        residual, pw_.d_ard, pw_.d_brd, pw_.d_azd, pw_.d_bzd,
+        p.ns, p.mnmax, p.ntor);
+    cumes::check_cuda(cudaGetLastError(), "m1PreconScale");
 }
 
