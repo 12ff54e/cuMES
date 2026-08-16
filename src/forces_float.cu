@@ -2,3 +2,4 @@
 
 // Explicit instantiation for float (cumes_cuda_float).
 template void computeForces<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, const MetricWorkspace<float>&, cudaStream_t);
+template void computeForcesSplit<float>(const FourierPlan<float>&, const GridParams<float>&, const RadialProfiles<float>&, const MetricWorkspace<float>&, cudaStream_t);

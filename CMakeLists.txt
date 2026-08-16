@@ -188,7 +188,7 @@ cumes_enable_warnings(test_input_json)
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend test_rzcon_fusion
-                   test_tridiagonal)
+                   test_tridiagonal test_force_split)
   add_executable(${t} tests/${t}.cu)
   target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(${t} PRIVATE cumes_test_support cumes_config cumes_cuda_double cumes_cuda_float)
@@ -268,13 +268,15 @@ cumes_add_test(test_force_reference  unit;forces)
 cumes_add_test(test_axisym_backend   unit;fourier)
 cumes_add_test(test_rzcon_fusion     unit;fourier;constraint)
 cumes_add_test(test_tridiagonal      unit;precon)
+cumes_add_test(test_force_split      unit;forces)
 
 # Compute Sanitizer memcheck variants of the kernel-driving tests only
 # (test_input_json is host-only and compute-sanitizer refuses to profile it).
 cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
     test_regression_kernels test_runtime test_arena test_operator_views
-    test_accumulation test_axisym_backend test_rzcon_fusion test_tridiagonal)
+    test_accumulation test_axisym_backend test_rzcon_fusion test_tridiagonal
+    test_force_split)
 
 # ---- benchmarks (not part of the default CTest unit gate) --------------------
 # The fixed-iteration harness (§8.1). Always double (verify-double is the
