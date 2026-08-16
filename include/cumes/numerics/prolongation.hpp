@@ -20,6 +20,10 @@ class Prolongation {
  public:
   // state_old (coarse) -> state_new (fine), both physical coefficients. The new
   // state's slabs are allocated here (velocities zeroed) and returned.
+  //
+  // Precondition: ns_new > ns_old >= 3 with equal mnmax (validation enforces
+  // this for validated problems). A violation throws cumes::CumesError — the
+  // library never calls exit().
   SpectralStorage<T> enqueue(const DeviceParams<T>& p_new,
                              const SpectralStorage<T>& state_old,
                              const DeviceParams<T>& p_old,

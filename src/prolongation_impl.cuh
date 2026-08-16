@@ -19,8 +19,8 @@
 // SpectralStorage convention (the odd-m decomposition factor appears only
 // transiently in the real-space DFT slots).
 #include <cstdio>
-#include <cstdlib>
 #include <cmath>
+#include <string>
 
 #include "cumes/numerics/prolongation.hpp"
 
@@ -93,10 +93,17 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     const DeviceParams<T>& p_new, const cumes::SpectralStorage<T>& st_old,
     const DeviceParams<T>& p_old, cudaStream_t stream) const {
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
-        fprintf(stderr, "interpolateState: need ns_new > ns_old >= 3 and equal "
-                "mnmax (ns_old=%d ns_new=%d mnmax %d/%d)\n",
-                p_old.ns, p_new.ns, p_old.mnmax, p_new.mnmax);
-        exit(EXIT_FAILURE);
+        // Library contract: never exit() here — the RAII device buffers, the
+        // caller's --checkpoint write, and the CLI run-report mapping must
+        // unwind. Validation guarantees this precondition for validated
+        // problems (ns_array strictly increasing, common mode counts); throw
+        // the library error boundary so main's run-report mapping reports it.
+        throw cumes::CumesError(
+            "interpolateState: need ns_new > ns_old >= 3 and equal mnmax "
+            "(ns_old=" + std::to_string(p_old.ns) +
+            " ns_new=" + std::to_string(p_new.ns) + " mnmax " +
+            std::to_string(p_old.mnmax) + "/" + std::to_string(p_new.mnmax) +
+            ")");
     }
 
     // New grid's contiguous slabs; the ctor zeroes both (velocities are never

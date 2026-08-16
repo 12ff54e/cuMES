@@ -60,6 +60,8 @@
     "stages": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 8,
+      "description": "Radial-grid stages with strictly increasing ns (each stage's ns greater than the previous — the grid-prolongation precondition ns_new > ns_old); at most 8 entries, the fixed capacity of the v0 provenance writers.",
       "items": {
         "type": "object",
         "additionalProperties": false,

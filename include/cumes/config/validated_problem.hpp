@@ -4,7 +4,8 @@
 // (ProblemSpec -> ValidationReport -> ValidatedProblem -> DeviceParams<T>).
 // Construction via validate() proves the invariants the solver needs:
 //   - scalar/angular/radial ranges, resolution defaults applied (even ntheta);
-//   - a non-empty, monotonic stage schedule;
+//   - a non-empty, strictly increasing stage schedule of at most
+//     LegacyInputProvenance::kMaxGrids entries (the v0 provenance capacity);
 //   - boundary harmonics folded into the stellarator-symmetric product basis;
 //   - the per-mode table (physical_n, mn_scale, xmpq, parity, first_surface);
 //   - precision/tolerance compatibility.
