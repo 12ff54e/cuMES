@@ -68,6 +68,16 @@ struct PreconWorkspace {
     T* d_cLambda;
     T* d_rmsPhiP;  // scratch [1]: sum of phipH^2 (for lamscale)
 
+    // Phase 8 scale-aware pivot support: per-mode coefficient scale (max
+    // |lower|/|diagonal|/|upper| over the assembled R+Z tridiagonal systems)
+    // computed once per refresh and read by the PCR/Thomas solve kernels as
+    // the pivot floor reference. [mnmax]
+    T* d_preconScale;
+    // Breakdown accumulator (device int[1]): incremented by the solve kernels
+    // for each system whose pivot falls below the scale-aware floor. Reset by
+    // preconApply before the solves; not yet folded into the control record.
+    int* d_preconStatus;
+
     // true when the device arrays above are subspans of a shared DeviceArena.
     bool arena_backed = false;
 };

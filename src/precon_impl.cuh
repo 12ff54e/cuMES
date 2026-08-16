@@ -13,6 +13,7 @@
 #include "precon.cuh"
 #include <cstdio>
 #include <cmath>
+#include <limits>
 
 
 // Dynamic shared-memory base accessor. Each block reserves one extern __shared__
@@ -34,6 +35,7 @@ __device__ void* dynSharedBase() {
 
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
+#include "cumes/numerics/tridiagonal_backend.hpp"
 
 // ---------------------------------------------------------------------------
 // Allocate
@@ -67,6 +69,9 @@ PreconWorkspace<T> preconCreate(const GridParams<T>& p, cumes::DeviceArena* aren
     alloc(pw.d_dLambda, p.ns + 1, "precon/dLambda");
     alloc(pw.d_cLambda, p.ns + 1, "precon/cLambda");
     alloc(pw.d_rmsPhiP, 1, "precon/rmsPhiP");
+    alloc(pw.d_preconScale, p.mnmax, "precon/scale");
+    if (arena) pw.d_preconStatus = arena->alloc_span<int>("precon/status", 1);
+    else cumes::check_cuda(cudaMalloc(&pw.d_preconStatus, sizeof(int)), "precon status");
     // Index ns of bLambda/cLambda must stay zero: the LCFS full-grid average
     // reads it (vmecpp: array sized ns+1, last entry never written).
     cumes::check_cuda(cudaMemset(pw.d_bLambda, 0, (p.ns + 1) * sizeof(T)), "bLambda zero");
@@ -91,6 +96,8 @@ void preconFree(PreconWorkspace<T>& pw) {
         cudaFree(pw.d_jMin);
         cudaFree(pw.d_lambdaPrec);
         cudaFree(pw.d_bLambda); cudaFree(pw.d_dLambda); cudaFree(pw.d_cLambda); cudaFree(pw.d_rmsPhiP);
+        cudaFree(pw.d_preconScale);
+        cudaFree(pw.d_preconStatus);
     }
     pw = PreconWorkspace<T>{};
 }
@@ -577,152 +584,235 @@ __global__ void lambdaPrecFinalizeKernel(
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Thomas algorithm — one thread per (m,n) mode.
-// Solves the tridiagonal system in-place on the 5 RHS components.
-// Layout: f[component * mnmax * ns + mode * ns + jF]
-//   comp 0=rmncc (R even)  → R tridiag
-//   comp 1=zmnsc (Z even)  → Z tridiag
-//   comp 2=lmnsc (lambda)  → lambda diagonal preconditioner (no tridiag)
-//   comp 3=rmnss (R odd)   → R tridiag
-//   comp 4=zmncs (Z odd)   → Z tridiag
-//
-// Fixed boundary: the solve covers rows jMin..ns-2 (jMax = ns-1), matching
-// vmecpp's applyRZPreconditioner (jMax = fc_.ns - 1 for lfreeb=false). The
-// LCFS row does not participate in the tridiagonal solve.
-//
-// Parallel cyclic reduction (PCR), 128 threads per block, one block per
-// mode. The original kernel ran a serial Thomas with one thread per block:
-// each of the ~500 dependent fp64 steps (with division) paid full latency
-// with zero ILP — ~600 us/iter on W7-X, the single largest kernel. PCR
-// eliminates the coupling distance doubling per round (k = 1,2,4,...) with
-// all rows updated in parallel: ~7 rounds for ns ~ 100, each round one
-// dependent reciprocal. Measured ~60 us/iter (~10x). The arithmetic differs
-// from Thomas at the rounding level (different elimination order) — the
-// solve is verified against the Thomas result at ~1e-12 in the benchmark.
-//
-// Naming follows the original kernel: a_in = upper coeff (x[j+1]),
-// b_in = lower coeff (x[j-1]), d_in = diagonal. The R system (comps 0,3)
-// uses ar/dr/br; the Z system (comps 1,4) uses az/dz/bz; the two passes
-// reuse the same shared coefficient buffers.
-//
-// Shared layout: cL,cD,cU,nL,nD,nU (3+3 arrays of ns) + cF,nF (2+2 RHS
-// rows of ns) = 10*ns doubles. ns ~ 100, so ~8KB.
+// Per-mode coefficient scale for the scale-aware pivot floor (blueprint §4.9).
+// scale[mode] = max over the solved rows of |lower|,|diagonal|,|upper| for the
+// assembled R+Z tridiagonal systems. One block per mode; deterministic block
+// tree reduction over the surface dimension. Runs once per preconditioner
+// refresh (the matrix changes only on refresh); the solve kernels read it every
+// pass.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void tridiagSolveKernel(
-    cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
-    const T* __restrict__ ar, const T* __restrict__ dr,
-    const T* __restrict__ br,
-    const T* __restrict__ az, const T* __restrict__ dz,
-    const T* __restrict__ bz,
-    const T* __restrict__ lambdaPrec,
-    const int* __restrict__ jMin,
-    const int* __restrict__ xm, const int* __restrict__ xn,
-    int ns, int mnmax)
+__global__ void preconScaleKernel(
+    const T* __restrict__ ar, const T* __restrict__ dr, const T* __restrict__ br,
+    const T* __restrict__ az, const T* __restrict__ dz, const T* __restrict__ bz,
+    int ns, int mnmax, T* __restrict__ scale)
+{
+    int mode = blockIdx.x, tid = threadIdx.x;
+    if (mode >= mnmax) return;
+    T m = T(0.0);
+    for (int j = tid; j < ns; j += blockDim.x) {
+        T v = fmax(fmax(fabs(ar[mode * ns + j]), fabs(dr[mode * ns + j])),
+                   fabs(br[mode * ns + j]));
+        v = fmax(v, fmax(fmax(fabs(az[mode * ns + j]), fabs(dz[mode * ns + j])),
+                         fabs(bz[mode * ns + j])));
+        m = fmax(m, v);
+    }
+    __shared__ T s[256];
+    s[tid] = m;
+    __syncthreads();
+    for (int off = blockDim.x / 2; off > 0; off >>= 1) {
+        if (tid < off) s[tid] = fmax(s[tid], s[tid + off]);
+        __syncthreads();
+    }
+    if (tid == 0) scale[mode] = s[0];
+}
+
+// ---------------------------------------------------------------------------
+// Batched parallel cyclic reduction (PCR) solve (blueprint §8.9). One block per
+// mode (system), 128 threads, grid-stride over the solved rows. Backend-neutral:
+// it operates on the raw lower/diagonal/upper + rhs planes of a
+// StridedBatchTridiagonalView rather than the spectral slab, so the PCR and
+// Thomas backends share one contract.
+//
+// Extracted bit-for-bit from the legacy tridiagSolveKernel: the staged
+// coefficients, the grid-stride PCR rounds, and the final divide are unchanged.
+// The only behavioral difference is the pivot guard: the legacy absolute 1e-30
+// clamp is replaced by a scale-aware floor `kappa * eps * scale[mode]` (eps =
+// machine epsilon), so a genuinely sub-scale pivot is *reported* (atomicAdd into
+// status) instead of silently clamped. For the frozen trajectories the diagonals
+// are O(1)..O(m^2), far above the floor, so the guard never fires and the solve
+// is byte-identical. `rhs_count` is a compile-time parameter so the RHS loop
+// stays fully unrolled exactly as in the original kernel (fast-math FMA
+// contraction is preserved).
+// ---------------------------------------------------------------------------
+template <typename T, int rhs_count>
+__global__ void pcrSolveKernel(
+    const T* __restrict__ lower, const T* __restrict__ diagonal,
+    const T* __restrict__ upper,
+    T* __restrict__ rhs,
+    const int* __restrict__ first_surface,
+    const T* __restrict__ scale,
+    T pivot_floor_rel,
+    int modes, int ns, int last_surface, size_t rhs_stride,
+    int* __restrict__ status)
 {
     int mode = blockIdx.x;
-    if (mode >= mnmax) return;
+    if (mode >= modes) return;
     int tid = threadIdx.x;
-    int jMin_m = jMin[mode];
-    int jMax = ns - 1;          // LCFS row excluded
-    int nRow = jMax - jMin_m;   // solved rows jMin_m .. jMax-1
+    int jMin_m = first_surface[mode];
+    int jMax = last_surface;          // LCFS row excluded
+    int nRow = jMax - jMin_m;         // solved rows jMin_m .. jMax-1
 
-    // The 128-thread block covers the solved rows in a grid-stride loop (the
-    // old kernel assumed nRow <= 128: for ns > 129 the tail rows were
-    // silently left at their staged values — an incomplete solve). Each row
-    // of a PCR round depends only on the PREVIOUS round's arrays, so the
-    // per-row arithmetic is unchanged; a __syncthreads() between rounds
-    // preserves the dependency. For the shipped grids (ns <= 99) the stride
-    // loop runs exactly once per round — bit-identical to the old kernel.
+    // Scale-aware pivot floor; a zero scale (all-zero system) falls back to
+    // kappa * eps so the guard still fires and the breakdown is reported.
+    T fl = pivot_floor_rel * scale[mode];
+    if (scale[mode] <= T(0.0)) fl = pivot_floor_rel;
 
-    // Shared: cur L,d,U; nxt L,d,U; f rows (2 per pass) cur+nxt
     T* s_tri = static_cast<T*>(dynSharedBase());
-    T* cL = s_tri;            // [ns]
+    T* cL = s_tri;                   // [ns]
     T* cD = cL + ns;
     T* cU = cD + ns;
     T* nL = cU + ns;
     T* nD = nL + ns;
     T* nU = nD + ns;
-    T* cF = nU + ns;          // [2][ns]
-    T* nF = cF + 2 * ns;      // [2][ns]
+    T* cF = nU + ns;                 // [rhs_count][ns]
+    T* nF = cF + rhs_count * ns;     // [rhs_count][ns]
 
-    // One PCR pass for the system (upper, diag, lower) applied to the two
-    // RHS components cA and cB; writes the solutions back to f.
-    auto pass = [&](const T* aU, const T* dD, const T* bL,
-                    int cA, int cB) {
-        const int comp[2] = {cA, cB};
-        // stage lower=L=b_in, diag=D=d_in, upper=U=a_in + 2 RHS rows
-        for (int j = tid; j < ns; j += blockDim.x) {
-            cL[j] = bL[mode * ns + j];
-            cD[j] = dD[mode * ns + j];
-            cU[j] = aU[mode * ns + j];
-            cF[0 * ns + j] = f(static_cast<cumes::SpectralComponent>(comp[0]), mode, j);
-            cF[1 * ns + j] = f(static_cast<cumes::SpectralComponent>(comp[1]), mode, j);
-        }
-        // zero the j < jMin region of the staged RHS (mirrors Thomas zeroing)
-        for (int j = tid; j < jMin_m; j += blockDim.x) {
-            cF[0 * ns + j] = T(0.0);
-            cF[1 * ns + j] = T(0.0);
-        }
-        __syncthreads();
-        // PCR rounds: eliminate the two neighbors at distance k each round.
-        // Each round processes ALL solved rows via a grid-stride loop; the
-        // rounds are separated by __syncthreads (round r+1 reads every row
-        // written in round r, so the tiles cannot overlap).
-        for (int k = 1; k <= nRow; k <<= 1) {
-            for (int r = tid; r < nRow; r += blockDim.x) {
-                int j = jMin_m + r;
-                bool hasL = (j - k >= jMin_m), hasR = (j + k < jMax);
-                T dL = hasL ? cD[j - k] : T(0.0);
-                T dR = hasR ? cD[j + k] : T(0.0);
-                // Pivot guard with sign preservation: a tiny (or zero)
-                // diagonal is replaced by a tiny value of the SAME sign —
-                // the old clamp to +1e-30 flipped the pivot (and hence the
-                // solve direction) for negative diagonals.
-                if (fabs(dL) < T(1e-30)) dL = copysign(T(1e-30), dL);
-                if (fabs(dR) < T(1e-30)) dR = copysign(T(1e-30), dR);
-                T invL = hasL ? T(1.0) / dL : T(0.0);
-                T invR = hasR ? T(1.0) / dR : T(0.0);
-                T L = cL[j], D = cD[j], U = cU[j];
-                T Ll = hasL ? cL[j - k] : T(0.0), Ul = hasL ? cU[j - k] : T(0.0);
-                T Lr = hasR ? cL[j + k] : T(0.0), Ur = hasR ? cU[j + k] : T(0.0);
-                nL[j] = -L * Ll * invL;
-                nU[j] = -U * Ur * invR;
-                T nDv = D - L * Ul * invL - U * Lr * invR;
-                if (fabs(nDv) < T(1e-30)) nDv = copysign(T(1e-30), nDv);
-                nD[j] = nDv;
-                #pragma unroll
-                for (int c = 0; c < 2; ++c) {
-                    T fv = cF[c * ns + j];
-                    T fl = hasL ? cF[c * ns + j - k] : T(0.0);
-                    T fr = hasR ? cF[c * ns + j + k] : T(0.0);
-                    nF[c * ns + j] = fv - L * fl * invL - U * fr * invR;
-                }
-            }
-            __syncthreads();
-            T* t;
-            t = cL; cL = nL; nL = t;
-            t = cD; cD = nD; nD = t;
-            t = cU; cU = nU; nU = t;
-            t = cF; cF = nF; nF = t;
-            __syncthreads();
-        }
-        // ---- Final solve: x = f'' / d'' (decoupled after the rounds) ----
+    // stage lower=L, diag=D, upper=U + rhs planes
+    for (int j = tid; j < ns; j += blockDim.x) {
+        cL[j] = lower[mode * ns + j];
+        cD[j] = diagonal[mode * ns + j];
+        cU[j] = upper[mode * ns + j];
+        #pragma unroll
+        for (int c = 0; c < rhs_count; ++c)
+            cF[c * ns + j] = rhs[c * rhs_stride + mode * ns + j];
+    }
+    // zero the j < jMin region of the staged RHS (mirrors Thomas zeroing)
+    for (int j = tid; j < jMin_m; j += blockDim.x)
+        #pragma unroll
+        for (int c = 0; c < rhs_count; ++c)
+            cF[c * ns + j] = T(0.0);
+    __syncthreads();
+
+    bool broke = false;
+    for (int k = 1; k <= nRow; k <<= 1) {
         for (int r = tid; r < nRow; r += blockDim.x) {
             int j = jMin_m + r;
-            T d = cD[j];
-            if (fabs(d) < T(1e-30)) d = copysign(T(1e-30), d);
-            T inv = T(1.0) / d;
-            f(static_cast<cumes::SpectralComponent>(comp[0]), mode, j) = cF[0 * ns + j] * inv;
-            f(static_cast<cumes::SpectralComponent>(comp[1]), mode, j) = cF[1 * ns + j] * inv;
+            bool hasL = (j - k >= jMin_m), hasR = (j + k < jMax);
+            T dL = hasL ? cD[j - k] : T(0.0);
+            T dR = hasR ? cD[j + k] : T(0.0);
+            // Scale-aware pivot guard with sign preservation (copysign keeps a
+            // negative pivot negative — the old +1e-30 clamp flipped it). Only a
+            // genuinely in-range (hasL/hasR) sub-scale diagonal is a breakdown;
+            // the boundary dL=0 sentinel is not.
+            if (fabs(dL) < fl) { dL = copysign(fl, dL); if (hasL) broke = true; }
+            if (fabs(dR) < fl) { dR = copysign(fl, dR); if (hasR) broke = true; }
+            T invL = hasL ? T(1.0) / dL : T(0.0);
+            T invR = hasR ? T(1.0) / dR : T(0.0);
+            T L = cL[j], D = cD[j], U = cU[j];
+            T Ll = hasL ? cL[j - k] : T(0.0), Ul = hasL ? cU[j - k] : T(0.0);
+            T Lr = hasR ? cL[j + k] : T(0.0), Ur = hasR ? cU[j + k] : T(0.0);
+            nL[j] = -L * Ll * invL;
+            nU[j] = -U * Ur * invR;
+            T nDv = D - L * Ul * invL - U * Lr * invR;
+            if (fabs(nDv) < fl) { nDv = copysign(fl, nDv); broke = true; }
+            nD[j] = nDv;
+            #pragma unroll
+            for (int c = 0; c < rhs_count; ++c) {
+                T fv = cF[c * ns + j];
+                T fLeft = hasL ? cF[c * ns + j - k] : T(0.0);
+                T fRight = hasR ? cF[c * ns + j + k] : T(0.0);
+                nF[c * ns + j] = fv - L * fLeft * invL - U * fRight * invR;
+            }
         }
-    };
-    pass(ar, dr, br, 0, 3);
-    __syncthreads();
-    pass(az, dz, bz, 1, 4);
+        __syncthreads();
+        T* t;
+        t = cL; cL = nL; nL = t;
+        t = cD; cD = nD; nD = t;
+        t = cU; cU = nU; nU = t;
+        t = cF; cF = nF; nF = t;
+        __syncthreads();
+    }
+    // ---- Final solve: x = f'' / d'' (decoupled after the rounds) ----
+    for (int r = tid; r < nRow; r += blockDim.x) {
+        int j = jMin_m + r;
+        T d = cD[j];
+        if (fabs(d) < fl) { d = copysign(fl, d); broke = true; }
+        T inv = T(1.0) / d;
+        #pragma unroll
+        for (int c = 0; c < rhs_count; ++c)
+            rhs[c * rhs_stride + mode * ns + j] = cF[c * ns + j] * inv;
+    }
 
-    // ---- Zero out RHS for j < jMin (identity matrix region): comps 0..4
-    // (matching the original kernel's zeroing; comp 5 is not zeroed) ----
+    if (broke) atomicAdd(status, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Serial Thomas solve (blueprint §8.9 "Thomas-based backend for small
+// axisymmetric batches"). One thread per mode; O(ns) dynamic shared memory for
+// the forward-elimination cp/dp scratch. Same scale-aware pivot floor as the PCR
+// backend; a sub-floor pivot is guarded and counted into status. Numerically
+// distinct from PCR at the rounding level (different elimination order).
+// ---------------------------------------------------------------------------
+template <typename T>
+__global__ void thomasSolveKernel(
+    const T* __restrict__ lower, const T* __restrict__ diagonal,
+    const T* __restrict__ upper,
+    T* __restrict__ rhs,
+    const int* __restrict__ first_surface,
+    const T* __restrict__ scale,
+    T pivot_floor_rel,
+    int modes, int ns, int last_surface, int rhs_count, size_t rhs_stride,
+    int* __restrict__ status)
+{
+    int mode = blockIdx.x;
+    if (mode >= modes) return;
+    int jMin = first_surface[mode];
+    int jMax = last_surface;
+    int n = jMax - jMin;
+    if (n <= 0) return;
+
+    T fl = pivot_floor_rel * scale[mode];
+    if (scale[mode] <= T(0.0)) fl = pivot_floor_rel;
+
+    T* s = static_cast<T*>(dynSharedBase());
+    T* cp = s;              // [n]
+    T* dp = cp + n;         // [rhs_count][n]
+
+    bool broke = false;
+    T denom = diagonal[mode * ns + jMin];
+    if (fabs(denom) < fl) { denom = copysign(fl, denom); broke = true; }
+    cp[0] = upper[mode * ns + jMin] / denom;
+    for (int c = 0; c < rhs_count; ++c)
+        dp[c * n] = rhs[c * rhs_stride + mode * ns + jMin] / denom;
+    for (int i = 1; i < n; ++i) {
+        int j = jMin + i;
+        T d = diagonal[mode * ns + j] - lower[mode * ns + j] * cp[i - 1];
+        if (fabs(d) < fl) { d = copysign(fl, d); broke = true; }
+        cp[i] = upper[mode * ns + j] / d;
+        for (int c = 0; c < rhs_count; ++c)
+            dp[c * n + i] = (rhs[c * rhs_stride + mode * ns + j]
+                             - lower[mode * ns + j] * dp[c * n + i - 1]) / d;
+    }
+    // back substitution (x[jMax] = 0 boundary is implied by the dropped term)
+    for (int c = 0; c < rhs_count; ++c)
+        rhs[c * rhs_stride + mode * ns + jMax - 1] = dp[c * n + n - 1];
+    for (int i = n - 2; i >= 0; --i) {
+        int j = jMin + i;
+        for (int c = 0; c < rhs_count; ++c)
+            rhs[c * rhs_stride + mode * ns + j] =
+                dp[c * n + i] - cp[i] * rhs[c * rhs_stride + mode * ns + j + 1];
+    }
+
+    if (broke) atomicAdd(status, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Boundary + lambda-diagonal finishing of the preconditioned residual. Extracted
+// from the tail of the legacy tridiagSolveKernel: comps 0..4 are zeroed below
+// jMin (comp 5 keeps its value), and comps 2/5 are scaled by the lambda diagonal
+// on every surface. One block per mode, 128 threads, grid-stride over surfaces.
+// ---------------------------------------------------------------------------
+template <typename T>
+__global__ void preconBoundaryKernel(
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
+    const T* __restrict__ lambdaPrec,
+    const int* __restrict__ jMin,
+    int ns, int mnmax)
+{
+    int mode = blockIdx.x, tid = threadIdx.x;
+    if (mode >= mnmax) return;
+    int jMin_m = jMin[mode];
     for (int j = tid; j < jMin_m; j += blockDim.x) {
         f(cumes::SpectralComponent::Rcc, mode, j) = T(0.0);
         f(cumes::SpectralComponent::Zsc, mode, j) = T(0.0);
@@ -730,13 +820,6 @@ __global__ void tridiagSolveKernel(
         f(cumes::SpectralComponent::Rss, mode, j) = T(0.0);
         f(cumes::SpectralComponent::Zcs, mode, j) = T(0.0);
     }
-
-    // ---- Components 2 (lmnsc) and 5 (lmncs): lambda diagonal
-    // preconditioner ----
-    // vmecpp's applyLambdaPreconditioner: flsc/flcs[mode, jF] *= lambdaPrec
-    // for all surfaces 0..ns-1 (including the LCFS). lambdaPrec is zero
-    // for the m=0 mode, at the axis (jF=0), and below... no jMin filter —
-    // the axis m>0 entries are zeroed by lambdaPrec itself (sqrt(s)^pwr=0).
     for (int j = tid; j < ns; j += blockDim.x) {
         T lp = lambdaPrec[mode * ns + j];
         f(cumes::SpectralComponent::Lsc, mode, j) *= lp;
@@ -798,6 +881,14 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
         pw.d_jMin);
     cumes::check_cuda(cudaGetLastError(), "tridiagAssembly");
 
+    // Step 3b: per-mode coefficient scale for the scale-aware pivot floor
+    // (blueprint §4.9). Computed once per refresh, read by the solve kernels.
+    preconScaleKernel<T><<<p.mnmax, 256, 0, stream>>>(
+        pw.d_ar, pw.d_dr, pw.d_br,
+        pw.d_az, pw.d_dz, pw.d_bz,
+        p.ns, p.mnmax, pw.d_preconScale);
+    cumes::check_cuda(cudaGetLastError(), "preconScale");
+
     // Step 4a/4b: Lambda diagonal preconditioner (components 2 and 5)
     {
         cumes::check_cuda(cudaMemsetAsync(pw.d_rmsPhiP, 0, sizeof(T), stream), "rmsPhiP zero");
@@ -817,20 +908,107 @@ void preconCompute(const FourierPlan<T>& fp, const GridParams<T>& p,
     }
 }
 
+// ---------------------------------------------------------------------------
+// Backend implementations (blueprint §8.9).
+// ---------------------------------------------------------------------------
+
+// The production PcrBackend dispatches on rhs_count to the compile-time RHS
+// count so the RHS loop stays fully unrolled (bitwise parity with the legacy
+// tridiagSolveKernel's `#pragma unroll`).
+template <typename T, int R>
+static void launchPcr(const cumes::StridedBatchTridiagonalView<T>& m,
+                      T pivot_floor_rel, int* status, cudaStream_t stream) {
+    size_t smem = (size_t)(6 + 2 * R) * m.surfaces * sizeof(T);
+    pcrSolveKernel<T, R><<<m.modes, 128, smem, stream>>>(
+        m.lower, m.diagonal, m.upper, m.rhs, m.first_surface, m.scale,
+        pivot_floor_rel, m.modes, m.surfaces, m.last_surface, m.rhs_stride,
+        status);
+    cumes::check_cuda(cudaGetLastError(), "pcrSolve");
+}
+
+template <typename T>
+cumes::BackendLimits cumes::PcrBackend<T>::limits() const noexcept {
+    // Grid-stride PCR handles arbitrary row counts; the O(ns) dynamic shared
+    // memory (10*ns*sizeof(T) for rhs_count=2) is the real bound, already
+    // enforced by the ns <= 512 shape validation. 0 = unbounded by the algorithm.
+    cumes::BackendLimits l;
+    l.max_rows = 0;
+    l.max_batch = 0;
+    return l;
+}
+
+template <typename T>
+void cumes::PcrBackend<T>::enqueue_solve(const cumes::StridedBatchTridiagonalView<T>& m,
+                                         int* status, cudaStream_t stream) {
+    // pivot_floor_rel = kappa * epsilon_T (the caller owns the per-mode scale).
+    T pivot_floor_rel = T(policy_.kappa) * T(std::numeric_limits<T>::epsilon());
+    if (m.rhs_count == 1) {
+        launchPcr<T, 1>(m, pivot_floor_rel, status, stream);
+    } else if (m.rhs_count == 2) {
+        launchPcr<T, 2>(m, pivot_floor_rel, status, stream);
+    } else {
+        throw cumes::CumesError("PcrBackend: rhs_count must be 1 or 2");
+    }
+}
+
+template <typename T>
+cumes::BackendLimits cumes::ThomasBackend<T>::limits() const noexcept {
+    cumes::BackendLimits l;
+    l.max_rows = 0;    // bounded by the ns <= 512 shape cap (shared memory)
+    l.max_batch = 0;   // grid-stride over modes
+    return l;
+}
+
+template <typename T>
+void cumes::ThomasBackend<T>::enqueue_solve(
+    const cumes::StridedBatchTridiagonalView<T>& m, int* status,
+    cudaStream_t stream) {
+    T pivot_floor_rel = T(policy_.kappa) * T(std::numeric_limits<T>::epsilon());
+    // One mode per block, one thread per block; O(ns) shared for cp + dp.
+    size_t smem = (size_t)(1 + m.rhs_count) * m.surfaces * sizeof(T);
+    thomasSolveKernel<T><<<m.modes, 1, smem, stream>>>(
+        m.lower, m.diagonal, m.upper, m.rhs, m.first_surface, m.scale,
+        pivot_floor_rel, m.modes, m.surfaces, m.last_surface, m.rhs_count,
+        m.rhs_stride, status);
+    cumes::check_cuda(cudaGetLastError(), "thomasSolve");
+}
+
 template <typename T>
 void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
                  const GridParams<T>& p, const PreconWorkspace<T>& pw,
                  const int* xm, const int* xn, cudaStream_t stream) {
-    // Step 4: PCR solve — one block per mode, 128 threads per block
-    // (the threads cover up to ns-1 solved rows; PCR rounds in parallel)
-    size_t smem = 10 * p.ns * sizeof(T);  // coeffs + RHS buffers
-    tridiagSolveKernel<T><<<p.mnmax, 128, smem, stream>>>(
-        f,
-        pw.d_ar, pw.d_dr, pw.d_br,
-        pw.d_az, pw.d_dz, pw.d_bz,
-        pw.d_lambdaPrec,
-        pw.d_jMin, xm, xn,
-        p.ns, p.mnmax);
-    cumes::check_cuda(cudaGetLastError(), "tridiagSolve");
+    (void)xm; (void)xn;  // legacy signature; the solve no longer needs m/n tables
+    // Phase 8: route the tridiagonal solve through the backend-neutral
+    // PcrBackend (the extracted production PCR, bit-identical to the legacy
+    // tridiagSolveKernel). The R and Z systems each carry two RHS spectral
+    // components sharing one elimination (rhs_count = 2).
+    const size_t comp_stride = (size_t)p.mnmax * p.ns;
+    cumes::StridedBatchTridiagonalView<T> rv, zv;
+    rv.lower = pw.d_br; rv.diagonal = pw.d_dr; rv.upper = pw.d_ar;
+    rv.rhs = f.data();                          // comp 0 (Rcc)
+    rv.first_surface = pw.d_jMin;
+    rv.scale = pw.d_preconScale;
+    rv.rhs_count = 2; rv.rhs_stride = 3 * comp_stride;  // comp 0 -> comp 3
+    rv.modes = p.mnmax; rv.surfaces = p.ns; rv.last_surface = p.ns - 1;
+
+    zv.lower = pw.d_bz; zv.diagonal = pw.d_dz; zv.upper = pw.d_az;
+    zv.rhs = f.data() + comp_stride;            // comp 1 (Zsc)
+    zv.first_surface = pw.d_jMin;
+    zv.scale = pw.d_preconScale;
+    zv.rhs_count = 2; zv.rhs_stride = 3 * comp_stride;  // comp 1 -> comp 4
+    zv.modes = p.mnmax; zv.surfaces = p.ns; zv.last_surface = p.ns - 1;
+
+    // Reset the breakdown accumulator once, then accumulate across both solves.
+    cumes::check_cuda(cudaMemsetAsync(pw.d_preconStatus, 0, sizeof(int), stream),
+                      "preconStatus zero");
+
+    cumes::PcrBackend<T> pcr;
+    pcr.enqueue_solve(rv, pw.d_preconStatus, stream);
+    pcr.enqueue_solve(zv, pw.d_preconStatus, stream);
+
+    // Boundary + lambda-diagonal finishing (the tail of the legacy kernel).
+    preconBoundaryKernel<T><<<p.mnmax, 128, 0, stream>>>(
+        f, pw.d_lambdaPrec, pw.d_jMin, p.ns, p.mnmax);
+    cumes::check_cuda(cudaGetLastError(), "preconBoundary");
 }
 
