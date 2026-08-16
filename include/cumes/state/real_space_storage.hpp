@@ -1,11 +1,11 @@
 // real_space_storage.hpp — stage-owned real-space arrays (blueprint §6.5/§6.6).
 //
-// Splits the parity-split geometry + force + combined buffers out of the legacy
-// FourierPlan so a transform operator owns only transform scratch. The storage
-// owns 43 device arrays with the SAME layout and names the FourierPlan used
-// (bit-for-bit identical pointers/indices):
+// Splits the parity-split geometry + force + combined buffers out of the
+// transform operator so it owns only transform scratch (plans/tables/ζ
+// buffers). The storage owns 43 device arrays with the SAME layout and names
+// the legacy FourierPlan used (bit-for-bit identical pointers/indices):
 //   18 parity-split geometry (R/Z/λ × value/θ-deriv/ζ-deriv × even/odd),
-//    9 combined (e+o) geometry buffers (fourierCombineParity / do_combine=true),
+//    9 combined (e+o) geometry buffers (combine_parity / do_combine=true),
 //   16 parity-split force buffers (computeForces output, forward-DFT input).
 // It is a plain owning bundle + typed view accessors; no kernels live here.
 // Ownership lives in the stage; the transform/geometry/force/constraint
@@ -16,6 +16,8 @@
 #include "vmec_types.h"
 
 namespace cumes {
+
+class DeviceArena;
 
 template <class T>
 struct RealSpaceStorage {
@@ -73,3 +75,15 @@ struct RealSpaceStorage {
 };
 
 }  // namespace cumes
+
+// Stage-owned real-space allocation (the 43 parity/combined geometry+force
+// arrays above). With `arena == nullptr` every array is its own cudaMalloc
+// (legacy); with an arena the arrays are named subspans of one stage
+// allocation. (Declared at global scope like the old fourier.cuh — the call
+// sites are unqualified; defined in src/fourier_impl.cuh — the transform
+// module.)
+template <typename T>
+cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
+                                           cumes::DeviceArena* arena = nullptr);
+template <typename T>
+void realSpaceFree(cumes::RealSpaceStorage<T>& rs);

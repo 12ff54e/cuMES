@@ -1,5 +1,5 @@
 // fft_traits.h — precision dispatch for the batched ζ-cuFFT plans.
-// The FourierPlan/ConstraintWorkspace structs and the plan/exec call sites are
+// The transform/constraint plan and exec call sites are
 // templated on the scalar type T; this trait maps T onto the cuFFT types,
 // plan enums and exec functions (double -> D2Z/Z2D, float -> R2C/C2R).
 // The plan strides (inembed/idist/onembed/odist, in elements) are identical

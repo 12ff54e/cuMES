@@ -18,7 +18,7 @@
 #include <cmath>
 #include <vector>
 #include "vmec_types.h"
-#include "fourier.cuh"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
@@ -81,8 +81,7 @@ static void fillState(cumes::SpectralStorage<T>& storage, int ns, int mnmax) {
 }
 
 template <typename T>
-static void fillForces(cumes::RealSpaceStorage<T>& rs, FourierPlan<T>& fp,
-                       Cw<T>& cw, int ns, int nZnT) {
+static void fillForces(cumes::RealSpaceStorage<T>& rs, Cw<T>& cw, int ns, int nZnT) {
     const int n = ns * nZnT;
     std::vector<T> v((size_t)n);
     auto fill = [&](T* dst, double base) {
@@ -109,6 +108,21 @@ static void fillTcon(Cw<T>& cw, int ns) {
 }
 
 template <typename T>
+static void fillFaccon(Cw<T>& cw, int mpol) {
+    // The production faccon[m] = 0.25/(xmpq[m+1]^2) profile (ConstraintOperator
+    // ctor); the old test left this buffer as cudaMalloc garbage and passed only
+    // because the stale pages happened to read zero.
+    std::vector<T> v((size_t)mpol);
+    for (int m = 0; m < mpol; ++m) {
+        T xmpq = T((m + 1) * m);
+        v[m] = (m > 0) ? (T(0.25) / (xmpq * xmpq)) : T(0.0);
+    }
+    cc(cudaMemcpy(cw.d_faccon, v.data(), (size_t)mpol * sizeof(T),
+                  cudaMemcpyHostToDevice),
+       "fill faccon");
+}
+
+template <typename T>
 static void fillGconEff(Cw<T>& cw, int ns, int nZnT) {
     std::vector<T> v((size_t)ns * nZnT);
     for (int i = 0; i < ns * nZnT; ++i) v[i] = T(sin(0.3 * i) + 0.1 * cos(i));
@@ -120,13 +134,13 @@ static void fillGconEff(Cw<T>& cw, int ns, int nZnT) {
 // Inverse: compare the 18 parity-split geometry arrays.
 template <typename T>
 static void testInverse(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
-                        FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
+                        cumes::ToroidalFftOperator<T>& generic,
                         cumes::SpectralStorage<T>& storage,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  inverse (18 geometry arrays) ...\n");
     const int n = p.ns * p.nZnT;
     // Generic backend.
-    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn, false, 0);
+    generic.inverse(storage.physical_const(), /*do_combine=*/false);
     // Axisymmetric backend -> one contiguous scratch carved into 18 views.
     std::vector<T> scratch((size_t)18 * n, T(0));
     T* d_ax = nullptr;
@@ -174,8 +188,7 @@ static void testInverse(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
 // Forward: compare the 6 spectral-force families.
 template <typename T>
 static void testForward(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
-                        FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
-                        Cw<T>& cw,
+                        cumes::ToroidalFftOperator<T>& gen, Cw<T>& cw,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  forward (6 spectral families) ...\n");
     const int n = p.ns * p.mnmax;
@@ -186,7 +199,7 @@ static void testForward(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
                                                                   p.mnmax);
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> ax_v(d_ax, p.ns,
                                                                  p.mnmax);
-    forwardDFT(fp, rs, gen_v, p, mt.d_xm, mt.d_xn, cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o, 0);
+    gen.forward(gen_v, cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o);
 
     cumes::ForceParityViews<const T> f;
     f.armn_e = cumes::RealFieldView<const T>(rs.d_armn_e, p.ns, p.ntheta, p.nzeta);
@@ -222,8 +235,7 @@ static void testForward(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
 
 // Constraint rzCon: rCon/zCon.
 template <typename T>
-static void testRzCon(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
-                      FourierPlan<T>& fp, const cumes::DeviceModeTable& mt,
+static void testRzCon(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
                       Cw<T>& cw,
                       cumes::SpectralStorage<T>& storage,
                       cumes::AxisymmetricOperator<T>& op) {
@@ -231,8 +243,8 @@ static void testRzCon(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
     const int n = p.ns * p.nZnT;
     // rCon/zCon reference is the fused inverse DFT (the production path); the
     // axisymmetric enqueue_rzcon is Class B ULP-equivalent to it.
-    inverseDFTFused(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn,
-                    /*do_combine=*/false, cw.d_rCon, cw.d_zCon, 0);
+    gen.inverse_fused(storage.physical_const(), /*do_combine=*/false,
+                      cw.d_rCon, cw.d_zCon);
     T *d_ax_r = nullptr, *d_ax_z = nullptr;
     cc(cudaMalloc(&d_ax_r, (size_t)n * sizeof(T)), "ax rcon");
     cc(cudaMalloc(&d_ax_z, (size_t)n * sizeof(T)), "ax zcon");
@@ -247,13 +259,12 @@ static void testRzCon(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
 
 // Constraint bandpass: gCon (skip the axis row, which neither backend writes).
 template <typename T>
-static void testDealias(DeviceParams<T>& p, FourierPlan<T>& fp,
+static void testDealias(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
                         Cw<T>& cw,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  constraint bandpass (gCon) ...\n");
     const int n = p.ns * p.nZnT;
-    constraintDealiasBandpass(p, fp, cw.d_gConEff, cw.d_tcon, cw.d_faccon,
-                              cw.d_gCon, 0);
+    gen.dealias_bandpass(cw.d_gConEff, cw.d_tcon, cw.d_faccon, cw.d_gCon);
     T* d_ax = nullptr;
     cc(cudaMalloc(&d_ax, (size_t)n * sizeof(T)), "ax gcon");
     op.enqueue_dealias(
@@ -291,9 +302,9 @@ static int runTests() {
     p.ncurr = 0; p.delt = T(1.0); p.ftol = T(1e-14); p.max_iter = 10;
     p.lamscale = T(1.0);
 
-    FourierPlan<T> fp = fourierCreate<T>(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate<T>(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::ToroidalFftOperator<T> gen(p, rs, mt);
     const size_t nF = (size_t)p.ns * p.nZnT;
     Cw<T> cw{};
     auto balloc = [&](T*& d, const char* tag) { cc(cudaMalloc(&d, nF * sizeof(T)), tag); };
@@ -306,17 +317,17 @@ static int runTests() {
     cumes::AxisymmetricOperator<T> op(p);
 
     fillState(storage, p.ns, p.mnmax);
-    fillForces(rs, fp, cw, p.ns, p.nZnT);
+    fillForces(rs, cw, p.ns, p.nZnT);
     fillTcon(cw, p.ns);
+    fillFaccon(cw, p.mpol);
     fillGconEff(cw, p.ns, p.nZnT);
 
-    testInverse(p, rs, fp, mt, storage, op);
-    testForward(p, rs, fp, mt, cw, op);
-    testRzCon(p, rs, fp, mt, cw, storage, op);
-    testDealias(p, fp, cw, op);
+    testInverse(p, rs, gen, storage, op);
+    testForward(p, rs, gen, cw, op);
+    testRzCon(p, gen, cw, storage, op);
+    testDealias(p, gen, cw, op);
 
     realSpaceFree(rs);
-    fourierFree(fp);
     cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o);
     cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
     cudaFree(cw.d_tcon); cudaFree(cw.d_gConEff);

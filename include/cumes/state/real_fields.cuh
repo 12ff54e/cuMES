@@ -8,8 +8,8 @@
 // signature names one typed bundle instead of a dozen raw pointers.
 //
 // Views never allocate or free; they carry a raw pointer plus the extents
-// needed to index it on host or device. They are constructed from the legacy
-// raw-pointer workspaces (FourierPlan/MetricWorkspace/RadialProfiles) at the
+// needed to index it on host or device. They are constructed from the owning
+// raw-pointer bundles (RealSpaceStorage/the operator workspaces) at the
 // operator boundary; the layout is identical, so indexing is bit-for-bit the
 // legacy `surface*nZnT + zeta*ntheta + theta` arithmetic.
 #pragma once

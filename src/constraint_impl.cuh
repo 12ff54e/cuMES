@@ -1,4 +1,4 @@
-// constraint_impl.cuh — template definitions for constraint.cuh.
+// constraint_impl.cuh — template definitions for constraint_operator.hpp.
 // Included once per scalar type by constraint_double.cu / constraint_float.cu; see the
 // explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
 #pragma once
@@ -22,37 +22,10 @@
 #include <cmath>
 
 #include "cumes/physics/constraint_operator.hpp"
-#include "fourier.cuh"
 #include "fft_traits.h"
-
-
-// Dynamic shared-memory base accessor. Each block reserves one extern __shared__
-// region per kernel launch; the consuming kernels reinterpret that base as T*.
-// NOTE: the explicit double/float instantiation split (one scalar type per TU)
-// removes the ORIGINAL reason for this indirection — nvcc rejecting a direct
-// `extern __shared__ T[]` in a template instantiated with two scalar types in
-// one TU. It is nevertheless RETAINED here: switching to the direct form
-// changes -use_fast_math FMA fusion in the consumers (opaque function return
-// vs. known shared-array aliasing) and perturbs the trajectory at ~1e-10 — a
-// Class B change, not the Class A bitwise-equivalence the build/library split
-// must preserve. Removal is deferred to a Class B phase (re-frozen baseline).
-namespace {
-__device__ void* dynSharedBase() {
-    extern __shared__ unsigned char smem_base[];
-    return smem_base;
-}
-}
 
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
-
-// ζ-tile width for the accumulate/synthesize/analyze kernels (mirrors the
-// helper in fourier.cu): the block no longer embeds the full theta/2 × zeta
-// product, so block sizes stay bounded for larger angular grids.
-static int computeKTile(int blkX, int nzeta) {
-    int kt = (blkX >= 1024) ? 1 : (16 < 1024 / blkX ? 16 : 1024 / blkX);
-    return kt < nzeta ? kt : nzeta;
-}
 
 // ---------------------------------------------------------------------------
 // Allocate/free
@@ -108,9 +81,10 @@ cumes::ConstraintOperator<T>::ConstraintOperator(const DeviceParams<T>& p,
     cumes::check_cuda(cudaMemset(d_fzcon_e_, 0, nFc), "fzcon_e zero");
     cumes::check_cuda(cudaMemset(d_fzcon_o_, 0, nFc), "fzcon_o zero");
 
-    // The compact de-alias bandpass scratch + plans now live in the
-    // FourierPlan (fourierCreate), so the constraint owns only its data
-    // fields; the bandpass is reached through the SpectralOperator interface.
+    // The compact de-alias bandpass scratch + plans live in the
+    // ToroidalFftOperator (transform scratch), so the constraint owns only its
+    // data fields; the bandpass is reached through the SpectralOperator
+    // interface.
     arena_backed_ = (arena != nullptr);
 }
 
@@ -190,175 +164,6 @@ __global__ void rzConIntoVolumeKernel(
     int idx = k + jF * nZnT;
     rCon0[idx] = rCon[lcfs] * sFull;
     zCon0[idx] = zCon[lcfs] * sFull;
-}
-
-// ---------------------------------------------------------------------------
-// Step 2: Bandpass filter gConEff -> gCon via the cuFFT machinery.
-// Analysis (full-grid uniform sums, matching deAliasKernelFast's quadrature):
-//   w_sc(m,n) = Σ gConEff*sin(mθ)cos(nζ) = Re F_sc(n)
-//   w_cs(m,n) = Σ gConEff*cos(mθ)sin(nζ) = -Im F_cs(n)
-// where F_sc/F_cs are the 1D-ζ real FFTs of the per-(m,jF) θ-reduced signals
-// s_sc[ζ] = Σ_θ gConEff*sin(mθ), s_cs[ζ] = Σ_θ gConEff*cos(mθ) (both θ and ζ
-// sums are uniform over the full grid, as in the original kernel).
-// Synthesis: slots 4/5 (zmksc/zmkcs) are packed with the normalized
-// coefficients (norm = 4/nZnT for n>0, 2/nZnT for n=0; scale = tcon*faccon),
-// and the inverse FFT + poloidal sum rebuilds
-// gCon = Σ coeff_sc*sin(mθ)cos(nζ) + coeff_cs*cos(mθ)sin(nζ)
-// over the bandpass modes m = 1..mpol-2, surfaces jF >= 1.
-// ---------------------------------------------------------------------------
-
-template <typename T>
-__global__ void deAliasAnalyzeKernel(
-    const T* __restrict__ gConEff,
-    const T* __restrict__ cos_th, const T* __restrict__ sin_th,
-    int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    T* __restrict__ zeta_real,   // compact slots 0 (sc), 1 (cs)
-    int kTile)
-{
-    // 8 threads per (m, jF, k) split the theta sum (4 contiguous points
-    // each), reduced by a warp shuffle tree over the 8 lanes (4 k-groups
-    // per warp, width 8). The original ran one serial 30-point dot per
-    // thread (36 threads/block, latency-bound at ~41 us/iter); the
-    // summation order differs at the rounding level.
-    // Theta coverage LOOPS over 32-point groups (8 lanes x 4 points), so
-    // grids with ntheta > 32 are fully summed instead of silently dropping
-    // the tail; the ζ direction is TILED (blockIdx.z selects the k-tile) so
-    // the launch block stays bounded for larger angular grids. For the
-    // shipped configs (ntheta <= 32) the loop runs exactly once per thread
-    // — same arithmetic as the pre-fix kernel.
-    int jF = blockIdx.y, m1 = blockIdx.x;   // m = m1 + 1 in [1, mpol-2]
-    if (jF == 0) return;
-    int t = threadIdx.x;                    // t in [0,8)
-    int k = threadIdx.y + blockIdx.z * kTile;
-    int m = m1 + 1;
-    T s_sc = T(0.0), s_cs = T(0.0);
-    if (k < nzeta) {
-        const T* g = gConEff + jF * nZnT + k * ntheta;
-        const T* sth = sin_th + m * ntheta;
-        const T* cth = cos_th + m * ntheta;
-        for (int it0 = 4 * t; it0 < ntheta; it0 += 32) {
-            int itEnd = it0 + 4;
-            if (itEnd > ntheta) itEnd = ntheta;
-            for (int it = it0; it < itEnd; ++it) {
-                s_sc += g[it] * sth[it];
-                s_cs += g[it] * cth[it];
-            }
-        }
-    }
-    // Shuffle tree over the 8 theta-split lanes (width 8). All block threads
-    // converge here (the k >= nzeta tail contributes zeros, discarded by the
-    // store guard), so __activemask names exactly the existing lanes — a
-    // 0xffffffff mask would be an invalid contract for partial warps, e.g.
-    // the 8-thread blocks of the nzeta=1 Solovev grid.
-    unsigned mask = __activemask();
-    #pragma unroll
-    for (int off = 4; off > 0; off >>= 1) {
-        s_sc += __shfl_down_sync(mask, s_sc, off, 8);
-        s_cs += __shfl_down_sync(mask, s_cs, off, 8);
-    }
-    if (t == 0 && k < nzeta) {
-        // Compact layout: ((slot*(mpol-2) + m1)*(ns-1) + (jF-1))*nzeta + k
-        size_t base = ((size_t)m1 * (ns - 1) + (jF - 1)) * nzeta + k;
-        size_t step = (size_t)(mpol - 2) * (ns - 1) * nzeta;
-        zeta_real[0 * step + base] = s_sc;
-        zeta_real[1 * step + base] = s_cs;
-    }
-}
-
-template <typename T>
-__global__ void deAliasCoeffPackKernel(
-    const typename FftTraits<T>::Complex* spectra,   // compact analysis output
-                                                      // (slots 0,1) — no
-    const T* __restrict__ tcon, const T* __restrict__ faccon,
-    int ns, int mpol, int ntor, int nz2, int nZnT,
-    typename FftTraits<T>::Complex* out)  // compact slots 4,5 — intentionally
-                                          // the SAME buffer as spectra
-                                          // (in-place, see below)
-{
-    using Complex = typename FftTraits<T>::Complex;
-    int t = blockIdx.x * blockDim.x + threadIdx.x;
-    int nBand = (mpol - 2) * (ns - 1);
-    if (t >= nBand) return;
-    int m1 = t / (ns - 1), jF1 = t % (ns - 1);
-    int jF = jF1 + 1, m = m1 + 1;
-    // scale == 0 (tcon or faccon zero) must still produce a zero synthesis
-    // element: the compact Z2D synthesizes every bin, and there is no
-    // memset to zero the slots otherwise (the full-batch path relied on
-    // d_zeta_real's memset).
-    T scale = tcon[jF] * faccon[m];
-    // Compact layout: ((slot*(mpol-2) + m1)*(ns-1) + jF1)*nz2 + n
-    size_t base = ((size_t)m1 * (ns - 1) + jF1) * nz2;
-    size_t step = (size_t)(mpol - 2) * (ns - 1) * nz2;
-    const Complex* in = spectra + base;
-    Complex* slot = out + base;
-    for (int n = 0; n <= ntor; ++n) {
-        // Normalization: 4/nZnT for n>0 (sin²(mθ)cos²(nζ) sums to nZnT/4),
-        // 2/nZnT for n=0 (sin²(mθ) sums to nZnT/2) — the full-grid equivalent
-        // of vmecpp's mscale*nscale*intNorm round trip; the sc/cs projections
-        // are kept separate (as in vmecpp's sinmu/cosmu round trip).
-        T norm = (n > 0) ? T(4.0) / T(nZnT) : T(2.0) / T(nZnT);
-        T coeff_sc = norm * scale * in[0 * step + n].x;      // Re F_sc
-        T coeff_cs = norm * scale * (-in[1 * step + n].y);   // -Im F_cs
-        T half = (n == 0) ? T(1.0) : T(0.5);
-        T shalf = (n == 0) ? T(0.0) : T(0.5);
-        // In-place: compact slots 0,1 carry the analysis (sc/cs) and are
-        // overwritten with the synthesis coefficients (the full-batch path
-        // wrote slots 4,5, which were disjoint from 0,1 there).
-        slot[0 * step + n] = Complex{coeff_sc * half, T(0.0)};
-        slot[1 * step + n] = Complex{T(0.0), -coeff_cs * shalf};
-    }
-    // Zero the unused tail bins: the compact Z2D synthesizes every bin, so
-    // bins n > ntor must be zero (the full-batch path got this from the
-    // d_zeta_real memset; the compact buffers have no such memset).
-    for (int n = ntor + 1; n < nz2; ++n) {
-        slot[0 * step + n] = Complex{T(0.0), T(0.0)};
-        slot[1 * step + n] = Complex{T(0.0), T(0.0)};
-    }
-}
-
-template <typename T>
-__global__ void deAliasSynthesizeKernel(
-    const T* __restrict__ zeta_real,   // Z2D output (slots 4,5)
-    const T* __restrict__ cos_th, const T* __restrict__ sin_th,
-    int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    T* __restrict__ gCon, int kTile)
-{
-    int jF = blockIdx.x;
-    if (jF == 0) return;
-    // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
-    // gCon stores at jF*nZnT + k*ntheta + l then vary l fastest and coalesce.
-    // The ζ direction is TILED (blockIdx.y selects the k-tile), so the launch
-    // block stays bounded for larger grids; every (k, l) output point is
-    // independent, so the per-point arithmetic is unchanged.
-    int k0 = blockIdx.y * kTile;
-    int k = threadIdx.y + k0;
-    int l1 = threadIdx.x;
-    int nthreads = blockDim.x * blockDim.y;
-    T* sh = static_cast<T*>(dynSharedBase());   // [2][mpol-2][kTile] (compact slots 0,1)
-    int nb = 2 * (mpol - 2);
-    int jF1 = jF - 1;
-    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < nb * kTile; i += nthreads) {
-        int s = i / ((mpol - 2) * kTile), rem = i - s * (mpol - 2) * kTile;
-        int m1 = rem / kTile, kk = rem % kTile;
-        int kk_abs = k0 + kk;
-        sh[i] = (kk_abs < nzeta)
-                    ? zeta_real[((size_t)(s * (mpol - 2) + m1) * (ns - 1) + jF1) * nzeta + kk_abs]
-                    : T(0.0);  // tail tile: zeros (never used)
-    }
-    __syncthreads();
-    if (k >= nzeta) return;  // tail tile past the grid
-    #pragma unroll
-    for (int pass = 0; pass < 2; ++pass) {
-        int l = l1 + pass * (ntheta / 2);
-        T g = T(0.0);
-        for (int m1 = 0; m1 < mpol - 2; ++m1) {
-            int m = m1 + 1;
-            T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
-            g += sh[0 * (mpol - 2) * kTile + m1 * kTile + (k - k0)] * sinm
-               + sh[1 * (mpol - 2) * kTile + m1 * kTile + (k - k0)] * cosm;
-        }
-        gCon[jF * nZnT + k * ntheta + l] = g;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -492,48 +297,6 @@ void cumes::ConstraintOperator<T>::reset_reference(const DeviceParams<T>& p,
         d_rCon_, d_zCon_, d_sqrtS_F,
         p.ns, p.nZnT, d_rCon0_, d_zCon0_);
     cumes::check_cuda(cudaGetLastError(), "rzConIntoVolume");
-}
-
-// ---------------------------------------------------------------------------
-// Step 2: Bandpass filter (de-alias) — cuFFT round trip on the compact batch
-// (2 slots x (mpol-2) modes x (ns-1) surfaces instead of the full 12*mpol*ns):
-// θ-reduce gConEff into the slot-0/1 ζ-signals, D2Z, scale the per-mode
-// coefficients into slots 4/5 (the spectra tail bins n>ntor are zeroed by the
-// memset — the pack writes only the used bins), Z2D, poloidal synthesis -> gCon.
-// Extracted so the bandpass is testable in isolation (the axisymmetric backend
-// replaces exactly this step).
-// ---------------------------------------------------------------------------
-template <typename T>
-void constraintDealiasBandpass(const DeviceParams<T>& p, const FourierPlan<T>& fp,
-                               const T* gConEff, const T* tcon, const T* faccon,
-                               T* gCon, cudaStream_t stream) {
-    {   int kTileA = computeKTile(8, p.nzeta);
-        int nKTilesA = (p.nzeta + kTileA - 1) / kTileA;
-        dim3 blkA(8, kTileA), grdA(p.mpol - 2, p.ns, nKTilesA);
-        deAliasAnalyzeKernel<T><<<grdA, blkA, 0, stream>>>(
-            gConEff, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, fp.d_zeta_real_c, kTileA);
-        cumes::check_cuda(cudaGetLastError(), "deAlias analyze");
-    }
-    cumes::check_cufft(FftTraits<T>::execForward(fp.plan_d2z_da, fp.d_zeta_real_c, fp.d_zeta_spectra_c), "deAlias d2z");
-    {   int nBand = (p.mpol - 2) * (p.ns - 1);
-        deAliasCoeffPackKernel<T><<<(nBand + 255) / 256, 256, 0, stream>>>(
-            fp.d_zeta_spectra_c, tcon, faccon,
-            p.ns, p.mpol, p.ntor, p.nzeta / 2 + 1, p.nZnT,
-            fp.d_zeta_spectra_c);
-        cumes::check_cuda(cudaGetLastError(), "deAlias coeff");
-    }
-    cumes::check_cufft(FftTraits<T>::execInverse(fp.plan_z2d_da, fp.d_zeta_spectra_c, fp.d_zeta_real_c), "deAlias z2d");
-    {   int kTileS = computeKTile(p.ntheta / 2, p.nzeta);
-        int nKTilesS = (p.nzeta + kTileS - 1) / kTileS;
-        dim3 blkS(p.ntheta / 2, kTileS);
-        dim3 grdS(p.ns, nKTilesS);
-        deAliasSynthesizeKernel<T><<<grdS, blkS,
-            2 * (p.mpol - 2) * kTileS * sizeof(T), stream>>>(
-            fp.d_zeta_real_c, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, gCon, kTileS);
-        cumes::check_cuda(cudaGetLastError(), "deAlias synth");
-    }
 }
 
 // ---------------------------------------------------------------------------

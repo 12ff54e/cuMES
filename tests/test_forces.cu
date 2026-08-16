@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "fourier.cuh"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/physics/geometry_operator.hpp"
@@ -88,13 +88,13 @@ int main() {
 
     cumes::ValidatedProblem vp = loadValidated();
     cumes::Profiles<double> profiles(p, vp, nullptr); cumes::RadialProfileViews<double> rp = profiles.profile_views();
-    FourierPlan<double> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
+    cumes::ToroidalFftOperator<double> op(p, rs, mt);
     cumes::GeometryOperator<double> geometry(p, nullptr);
 
     // Run one iteration
-    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
+    op.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
     cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
@@ -155,9 +155,9 @@ int main() {
     cudaMalloc(&frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     cudaMalloc(&fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
     cudaMalloc(&fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    forwardDFT(fp, rs, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
-                       d_fspec_gpu, p.ns, p.mnmax),
-               p, mt.d_xm, mt.d_xn, frcon_e, frcon_o, fzcon_e, fzcon_o);
+    op.forward(cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
+                d_fspec_gpu, p.ns, p.mnmax),
+            frcon_e, frcon_o, fzcon_e, fzcon_o);
     checkCuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost), "fspec d");
 
     printf("\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n");
@@ -226,7 +226,7 @@ int main() {
 
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
     realSpaceFree(rs);
-    fourierFree(fp); cumes::modeTableFree(mt);
+    cumes::modeTableFree(mt);
     cudaFree(frcon_e); cudaFree(frcon_o);
     cudaFree(fzcon_e); cudaFree(fzcon_o);
 

@@ -18,7 +18,7 @@
 //
 // All computation is templated on the scalar type T (double or float).
 
-#include "fourier.cuh"
+#include "cumes/state/real_space_storage.hpp"
 #include <cstdio>
 #include <math_constants.h>
 

@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "fourier.cuh"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/runtime/cuda_graph.hpp"
@@ -109,15 +109,14 @@ int main() {
         checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nS * 8, cudaMemcpyHostToDevice), "ss");
         delete[] h_cc; delete[] h_ss;
 
-        FourierPlan<double> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
+        cumes::ToroidalFftOperator<double> op(p, rs, mt);
         cumes::Stream stream;
-        cumes::check_cufft(cufftSetStream(fp.plan_z2d, stream.get()), "cufft set z2d stream");
-        cumes::check_cufft(cufftSetStream(fp.plan_d2z, stream.get()), "cufft set d2z stream");
+        op.bind_stream(stream.get());
 
         // stream reference
-        inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn, false, stream.get());
+        op.inverse(storage.physical_const(), false, stream.get());
         stream.synchronize();
         const size_t nF = (size_t)p.ns * p.nZnT;
         std::vector<double> r_e_stream(nF);
@@ -128,7 +127,7 @@ int main() {
         std::string err;
         try {
             auto g = cumes::CudaGraph::capture(stream.get(), [&]() {
-                inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn, false, stream.get());
+                op.inverse(storage.physical_const(), false, stream.get());
             });
             g.launch(stream.get());
             stream.synchronize();
@@ -145,7 +144,6 @@ int main() {
 
         realSpaceFree(rs);
     cumes::modeTableFree(mt);
-    fourierFree(fp);
     }
 
     if (failures == 0) {

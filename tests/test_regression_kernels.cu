@@ -47,7 +47,7 @@
 #include <cstdlib>
 #include <vector>
 #include "vmec_types.h"
-#include "fourier.cuh"
+#include "cumes/state/real_space_storage.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/physics/geometry_operator.hpp"
@@ -324,7 +324,6 @@ static int testDealias(int ntheta) {
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     cumes::ValidatedProblem vp = solovevInput();
     cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
@@ -337,7 +336,7 @@ static int testDealias(int ntheta) {
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
-    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
+    transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
@@ -417,7 +416,7 @@ static int testDealias(int ntheta) {
 
     
     realSpaceFree(rs);
-    fourierFree(fp); cumes::modeTableFree(mt);
+    cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;
 }
@@ -433,7 +432,6 @@ static int testPcr(int ns) {
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     cumes::ValidatedProblem vp = solovevInput();
     cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
@@ -445,7 +443,7 @@ static int testPcr(int ns) {
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
-    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
+    transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
@@ -511,7 +509,7 @@ static int testPcr(int ns) {
 
     cudaFree(d_f);
     
-    fourierFree(fp); cumes::modeTableFree(mt);
+    cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;
 }

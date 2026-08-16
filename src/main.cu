@@ -26,7 +26,6 @@
 #include <string>
 
 #include "vmec_types.h"
-#include "fourier.cuh"
 #include "solver.cuh"
 #include "output.cuh"
 #include "refine.cuh"

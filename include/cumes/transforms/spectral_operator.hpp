@@ -13,9 +13,10 @@
 // synthesis), and the de-alias bandpass is dispatched through the same interface
 // (generic: compact cuFFT round trip; axisymmetric: direct poloidal).
 //
-// The legacy inverseDFT/forwardDFT free functions remain the reference backend
-// until the backends pass differential tests (Phase 7); this header is the
-// typed contract the backends implement.
+// The generic ToroidalFftOperator (cuFFT round trips) is the reference
+// backend the axisymmetric backend is differentially tested against
+// (test_axisym_backend); this header is the typed contract the backends
+// implement.
 #pragma once
 
 #include <cuda_runtime.h>

@@ -11,9 +11,9 @@
 // The operator owns only its per-mode trigonometric tables (cos/sin/mcos/msin
 // plus the reduced-grid trapezoid weights) — never geometry, force, or
 // diagnostics (blueprint §5.1). It is a concrete `SpectralOperator` backend;
-// the generic `ToroidalFftOperator` wraps the existing inverseDFT/forwardDFT
-// and remains the reference the axisymmetric backend is differentially tested
-// against.
+// the generic `ToroidalFftOperator` (batched 1D ζ-cuFFT + tiled direct
+// poloidal accumulation) remains the reference the axisymmetric backend is
+// differentially tested against.
 #pragma once
 
 #include <cuda_runtime.h>

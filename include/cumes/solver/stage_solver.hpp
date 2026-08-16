@@ -20,11 +20,12 @@
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/solver/solver_bench.hpp"
+#include "cumes/state/mode_table.cuh"
+#include "cumes/state/real_space_storage.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "fft_traits.h"
-#include "fourier.cuh"
 #include "solver.cuh"
 
 namespace cumes {

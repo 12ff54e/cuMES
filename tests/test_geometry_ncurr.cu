@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "fourier.cuh"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/physics/geometry_operator.hpp"
@@ -96,12 +96,12 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     }();
 
     cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::ToroidalFftOperator<T> op(p, rs, mt);
     cumes::GeometryOperator<T> geometry(p, nullptr);
 
-    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
+    op.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
 
     // Assert the half-grid outputs that updateIotaChipFKernel /
@@ -130,7 +130,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     delete[] h_chip; delete[] h_iota;
     realSpaceFree(rs);
-    fourierFree(fp); cumes::modeTableFree(mt);
+    cumes::modeTableFree(mt);
 }
 
 int main() {

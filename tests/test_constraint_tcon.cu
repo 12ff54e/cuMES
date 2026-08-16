@@ -16,7 +16,6 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/physics/geometry_operator.hpp"
@@ -87,7 +86,6 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
 
     cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
     cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
@@ -95,8 +93,8 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     cumes::Preconditioner<T> precon(p, nullptr);
     cumes::ConstraintOperator<T> constraint(p, nullptr);
 
-    inverseDFTFused(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn,
-                    /*do_combine=*/false, constraint.rcon_view(p).data(), constraint.zcon_view(p).data());
+    transform.inverse_fused(storage.physical_const(), /*do_combine=*/false,
+                            constraint.rcon_view(p).data(), constraint.zcon_view(p).data());
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
     constraint.reset_reference(p, rp.sqrtS_F, 0);
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
@@ -117,7 +115,6 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     delete[] ht;
 
     realSpaceFree(rs);
-    fourierFree(fp); 
     cumes::modeTableFree(mt);
 }
 

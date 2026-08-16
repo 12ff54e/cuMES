@@ -16,6 +16,8 @@
 //   real half: the same with `surfaces = ns-1`.
 #pragma once
 
+#include <cuda_runtime.h>  // __host__/__device__ (this header is included by
+                            // host-only .cpp TUs, e.g. the output writers)
 #include <cstdint>
 
 namespace cumes {

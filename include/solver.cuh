@@ -2,7 +2,6 @@
 // All computation happens on device; host only orchestrates.
 #pragma once
 #include "vmec_types.h"
-#include "fourier.cuh"
 #include "cumes/state/spectral_storage.hpp"
 
 namespace cumes {
@@ -32,8 +31,8 @@ struct SolverResult {
 //
 // `transform` is the generic ToroidalFft operator — always present: the solver
 // reads its mode tables (xm()/xn(), the resolution-scoped DeviceModeTable) and
-// binds the cuFFT plans to the compute stream; the FourierPlan itself is sealed
-// behind the operator's dump-only accessors. `profiles` carries the radial
+// binds the cuFFT plans to the compute stream; the transform scratch/plans are
+// sealed behind the operator's dump-only accessors. `profiles` carries the radial
 // profiles as typed `RadialProfileViews` (the solver never reads the raw
 // RadialProfiles `d_*` pointers in the hot loop). `op`, when non-null, is the
 // selected transform backend the solver drives (a `SpectralOperator<T>*`); the

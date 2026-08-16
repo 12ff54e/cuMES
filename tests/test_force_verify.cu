@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "fourier.cuh"
 #include "solver.cuh"
 #include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
@@ -100,7 +99,6 @@ int main() {
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate<double>(p);
     cumes::ToroidalFftOperator<double> transform(p, rs, mt, nullptr);
-    FourierPlan<double>& fp = transform.fourier_plan();
     cumes::GeometryOperator<double> geometry(p, nullptr);
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
@@ -110,7 +108,7 @@ int main() {
     CHECK(res.converged, "converged equilibrium reached");
 
     // ---- Recompute forces through the test's own path ----
-    inverseDFT(fp, rs, storage.physical_const(), p, mt.d_xm, mt.d_xn);
+    transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
     cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
 
@@ -127,9 +125,9 @@ int main() {
     cc(cudaMemset(frcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "frcon_o zero");
     cc(cudaMemset(fzcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_e zero");
     cc(cudaMemset(fzcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double)), "fzcon_o zero");
-    forwardDFT(fp, rs, cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
-                       d_f_spec, p.ns, p.mnmax),
-               p, mt.d_xm, mt.d_xn, frcon_e, frcon_o, fzcon_e, fzcon_o);
+    transform.forward(cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
+                          d_f_spec, p.ns, p.mnmax),
+                      frcon_e, frcon_o, fzcon_e, fzcon_o);
 
     auto* h_f = new double[n6];
     cc(cudaMemcpy(h_f, d_f_spec, n6 * sizeof(double), cudaMemcpyDeviceToHost), "cpy f");

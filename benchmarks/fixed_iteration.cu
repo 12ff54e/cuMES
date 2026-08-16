@@ -29,7 +29,6 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "fourier.cuh"
 #include "solver.cuh"
 
 #include "cumes/config/json_reader.hpp"
@@ -213,7 +212,7 @@ int main(int argc, char** argv) {
     solve_gpu_us = gpu_ms * 1000.0;
 
     const std::size_t arena_bytes = arena.peak_bytes();
-    const std::size_t cufft_work_bytes = transform.fourier_plan().cufft_work_bytes;
+    const std::size_t cufft_work_bytes = transform.cufft_work_bytes();
 
     // profiles/transform/geometry are RAII (operator destructors).
     cudaEventDestroy(ev0);
