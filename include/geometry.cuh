@@ -63,6 +63,25 @@ void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& 
                      const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
                      cudaStream_t stream = 0, bool update_iota_chi = true);
 
+// Split geometry pipeline (blueprint §6.7): base geometry (staggered
+// interpolation, Jacobian, covariant metric — no 1/√g division) is computed
+// before the magnetic field (the 1/√g contravariant B + covariant B + total
+// pressure + ncurr closure). The full-grid iota/chip update (`update_iota_chi`)
+// reads the half-grid iotaH/chipH that ncurr=1 finalization refreshes, so it
+// lives with the field stage, not the base geometry. `computeGeometry` below is
+// the full pipeline (base + field) kept for the tests' convenience; the solver
+// drives the two stages separately through GeometryOperator (base) and
+// MagneticFieldOperator (field) so the field is ordered after the
+// Jacobian-status chain.
+template <typename T>
+void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+                         const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                         cudaStream_t stream = 0);
+template <typename T>
+void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+                          const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                          cudaStream_t stream = 0, bool update_iota_chi = true);
+
 // Force-norm partial sums for the residual normalization (vmecpp
 // computeForceNorms): writes dVdsH[jH] = signJ * sum(gsqrt * wInt) and the
 // per-surface sums (guu*r12^2, bsubu^2+bsubv^2, gsqrt*|B|^2/2, gsqrt) to

@@ -33,6 +33,7 @@
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes/solver/pass_record.hpp"
@@ -505,7 +506,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // reads unchanged; the hot loop goes through the operator enqueue methods.
     // (The FourierPlan is sealed behind the ToroidalFftOperator's dump-only
     // accessors — see enqueue_inverse_dump/combine_parity.)
-    const MetricWorkspace<T>& mw = geometry.workspace();
+    MetricWorkspace<T>& mw = geometry.workspace();
     // Typed radial-profile view bundle (hot-loop reads) + the workspace alias
     // (dump-only reads only — the hot loop consumes rpv, not rp.d_*).
     const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
@@ -529,8 +530,9 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     cumes::ConstraintOperator<T> constraint(p, arena);
     const PreconWorkspace<T>& pw = precon.workspace();
     const ConstraintWorkspace<T>& cw = constraint.workspace();
-    // Stateless operators (migration steps 6/8/10): thin wrappers over the
-    // force/residual/descent kernels the loop below drives.
+    // Stateless operators (migration steps 5/6/8/10): thin wrappers over the
+    // magnetic-field / force / residual / descent kernels the loop below drives.
+    cumes::MagneticFieldOperator<T> field_op;
     cumes::ForceOperator<T> force_op;
     cumes::ResidualOperator<T> residual_op;
     cumes::DescentOperator<T> descent_op;
@@ -859,19 +861,27 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         }
 #endif
 
-        // Full-grid iota/chip update: every pass for ncurr=1 (current closure
-        // evolves iotaH/chipH), but for ncurr=0 the half-grid profiles are
-        // fixed so the update is idempotent and runs only on the first pass.
-        geometry.enqueue(rs, p, rp, stream,
-                         /*update_iota_chi=*/ (p.ncurr == 1) || (iter == 0));
+        // Base geometry (blueprint §6.7): staggered interpolation, Jacobian,
+        // covariant metric — no 1/√g division.
+        geometry.enqueue(rs, p, rp, stream);
 
         // ---- Jacobian statistics (vmecpp's bad-jacobian detection) ----
-        // Reduced into d_control[0..3] (device-only). The validity decision is
-        // made at the single control fence after the full DAG is enqueued; a
-        // collapsed or sign-flipped surface then fails the pass there and the
-        // state is restored (see the gate below). The geometry kernels' own
-        // inv_gsqrt guards keep their buffers finite in the interim.
+        // Reduced into d_control[0..3] (device-only), ordered after the base
+        // geometry but before the magnetic field (blueprint §6.7: the field is
+        // status-guarded downstream). The validity decision is made at the
+        // single control fence after the full DAG is enqueued; a collapsed or
+        // sign-flipped surface then fails the pass there and the state is
+        // restored (see the gate below). The geometry kernels' own inv_gsqrt
+        // guards keep their buffers finite in the interim.
         geometry.jacobian_stats(p, d_control.data(), stream);
+
+        // Magnetic field (1/√g B^θ/B^ζ + covariant B + total pressure + ncurr
+        // closure) + the full-grid iota/chip update: every pass for ncurr=1
+        // (current closure evolves iotaH/chipH), but for ncurr=0 the half-grid
+        // profiles are fixed so the update is idempotent and runs only on the
+        // first pass.
+        field_op.enqueue(rs, p, rp, mw, stream,
+                         /*update_iota_chi=*/ (p.ncurr == 1) || (iter == 0));
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 2) {

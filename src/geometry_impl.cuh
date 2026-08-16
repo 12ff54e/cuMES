@@ -140,45 +140,36 @@ void metricFree(MetricWorkspace<T>& mw) {
     mw = MetricWorkspace<T>{};
 }
 
-// ---- geometry kernel ----------------------------------------------------
-// One thread per (theta,zeta) point, one block per half-grid surface.
-// For ncurr=0 the kernel also finalizes bsupu (adds chipH/√g) and computes
-// the covariant field + total pressure. For ncurr=1 the λ-only part of
-// bsupu/bsupv is computed here and the current-constraint solve happens in
-// ncurr1FinalizeKernel (it needs surface integrals of the λ-only field).
+// ---- base geometry kernel (blueprint §6.7) -----------------------------
+// One thread per (theta,zeta) point, one block per half-grid surface. Computes
+// the staggered half-grid interpolation, the Jacobian (tau, √g), and the
+// covariant metric g_uu/g_uv/g_vv — NO 1/√g division and NO magnetic field.
+// The field (B^θ/B^ζ, B_θ/B_ζ, total pressure) is the separate
+// magneticFieldKernel below, ordered after this kernel (and, in the solver,
+// after the Jacobian-status chain) on the same stream.
 template <typename T>
-__global__ void geometryKernel(
+__global__ void baseGeometryKernel(
     cumes::GeometryParityViews<T> full,
     cumes::RadialProfileViews<T> radial,
     cumes::BaseGeometryHalfViews<T> half,
-    cumes::MagneticFieldViews<T> field,
-    T lamscale, int ncurr, int ns, int nZnT, T delta_s)
+    int ns, int nZnT, T delta_s)
 {
-    // Full-grid geometry, even/odd parity
+    // Full-grid geometry, even/odd parity (R/Z only — λ enters the field kernel)
     const T* r_e = full.r_e.data(); const T* r_o = full.r_o.data();
     const T* z_e = full.z_e.data(); const T* z_o = full.z_o.data();
     const T* ru_e = full.ru_e.data(); const T* ru_o = full.ru_o.data();
     const T* zu_e = full.zu_e.data(); const T* zu_o = full.zu_o.data();
-    const T* lu_e = full.lu_e.data(); const T* lu_o = full.lu_o.data();
-    const T* lv_e = full.lv_e.data(); const T* lv_o = full.lv_o.data();
     const T* rv_e = full.rv_e.data(); const T* rv_o = full.rv_o.data();
     const T* zv_e = full.zv_e.data(); const T* zv_o = full.zv_o.data();
     // Radial profiles
     const T* sqrtS_F = radial.sqrtS_F;
     const T* sqrtS_H = radial.sqrtS_H;
-    const T* phip_H = radial.phip_H;
-    const T* pres_H = radial.pres_H;
-    const T* phip_F = radial.phip_F;
-    const T* chip_H = radial.chip_H;
     // Half-grid outputs
     T* r12 = half.r12.data(); T* ru12 = half.ru12.data();
     T* zu12 = half.zu12.data(); T* rs = half.rs.data();
     T* zs = half.zs.data(); T* tau = half.tau.data();
     T* gsqrt = half.gsqrt.data(); T* guu = half.guu.data();
     T* guv = half.guv.data(); T* gvv = half.gvv.data();
-    T* bsupu = field.bsupu.data(); T* bsupv = field.bsupv.data();
-    T* bsubu = field.bsubu.data(); T* bsubv = field.bsubv.data();
-    T* totalPressure = field.total_pressure.data();
 
     int jH = blockIdx.y;   // half-grid surface index (0 .. ns-2)
     int k   = threadIdx.x + blockIdx.x * blockDim.x;
@@ -254,6 +245,60 @@ __global__ void geometryKernel(
            + sH * ((rv_e[i_in]*rv_o[i_in] + zv_e[i_in]*zv_o[i_in]) +
                    (rv_e[i_out]*rv_o[i_out] + zv_e[i_out]*zv_o[i_out]));
 
+    int idx_out = k + jH * nZnT;
+    r12[idx_out]  = r12_v;
+    ru12[idx_out] = ru12_v;
+    zu12[idx_out] = zu12_v;
+    rs[idx_out]   = rs_v;
+    zs[idx_out]   = zs_v;
+    tau[idx_out]  = tau_v;
+    gsqrt[idx_out] = gsqrt_v;
+    guu[idx_out]   = guu_v;
+    guv[idx_out]   = guv_v;
+    gvv[idx_out]   = gvv_v;
+}
+
+// ---- magnetic field kernel (blueprint §6.7) -----------------------------
+// One thread per (theta,zeta) point, one block per half-grid surface. Reads the
+// base geometry (√g, g_uu/g_uv/g_vv) and recomputes the half-grid λ_θ/λ_ζ and
+// Φ' averages, then forms the contravariant B^θ/B^ζ with the 1/√g division and
+// (ncurr=0) the covariant B_θ/B_ζ + total pressure. For ncurr=1 the λ-only part
+// of bsupu/bsupv is produced here and the current-constraint solve happens in
+// ncurr1FinalizeKernel (it needs surface integrals of the λ-only field).
+template <typename T>
+__global__ void magneticFieldKernel(
+    cumes::GeometryParityViews<T> full,
+    cumes::RadialProfileViews<T> radial,
+    cumes::BaseGeometryHalfViews<T> half,
+    cumes::MagneticFieldViews<T> field,
+    T lamscale, int ncurr, int ns, int nZnT)
+{
+    // λ full-grid derivatives (the R/Z geometry is consumed by baseGeometryKernel)
+    const T* lu_e = full.lu_e.data(); const T* lu_o = full.lu_o.data();
+    const T* lv_e = full.lv_e.data(); const T* lv_o = full.lv_o.data();
+    // Radial profiles
+    const T* sqrtS_H = radial.sqrtS_H;
+    const T* pres_H = radial.pres_H;
+    const T* phip_F = radial.phip_F;
+    const T* chip_H = radial.chip_H;
+    // Base geometry (read-only)
+    const T* gsqrt = half.gsqrt.data();
+    const T* guu = half.guu.data();
+    const T* guv = half.guv.data();
+    const T* gvv = half.gvv.data();
+    // Field outputs
+    T* bsupu = field.bsupu.data(); T* bsupv = field.bsupv.data();
+    T* bsubu = field.bsubu.data(); T* bsubv = field.bsubv.data();
+    T* totalPressure = field.total_pressure.data();
+
+    int jH = blockIdx.y;
+    int k   = threadIdx.x + blockIdx.x * blockDim.x;
+    if (jH >= ns - 1 || k >= nZnT) return;
+
+    int i_in  = k + (jH) * nZnT;
+    int i_out = k + (jH + 1) * nZnT;
+    T sH = sqrtS_H[jH];
+
     // ---- contravariant B with lambda + flux contribution ---------------
     // Normalized angular derivatives on the half grid with parity mixing.
     // vmecpp normalizes per FULL-grid point (lu*lamscale + phipF[jF]) before
@@ -273,6 +318,10 @@ __global__ void geometryKernel(
     // BAD_JACOBIAN restore path. The guard branches on validity instead of
     // computing a reciprocal, so the valid branch keeps the exact x/y
     // rounding (x * (1/y) would round twice and shift the trajectory).
+    int idx = k + jH * nZnT;
+    T gsqrt_v = gsqrt[idx];
+    T guu_v = guu[idx], guv_v = guv[idx], gvv_v = gvv[idx];
+
     T bsupv_v, bsupu_v;
     if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
         bsupv_v = (lamscale * lu_h + phipF_avg) / gsqrt_v;
@@ -284,19 +333,8 @@ __global__ void geometryKernel(
         bsupu_v = T(0.0);
     }
 
-    int idx_out = k + jH * nZnT;
-    r12[idx_out]  = r12_v;
-    ru12[idx_out] = ru12_v;
-    zu12[idx_out] = zu12_v;
-    rs[idx_out]   = rs_v;
-    zs[idx_out]   = zs_v;
-    tau[idx_out]  = tau_v;
-    gsqrt[idx_out] = gsqrt_v;
-    guu[idx_out]   = guu_v;
-    guv[idx_out]   = guv_v;
-    gvv[idx_out]   = gvv_v;
-    bsupu[idx_out] = bsupu_v;
-    bsupv[idx_out] = bsupv_v;
+    bsupu[idx] = bsupu_v;
+    bsupv[idx] = bsupv_v;
 
     if (ncurr == 0) {
         // Fixed iota profile: chipH is precomputed in profiles.
@@ -304,13 +342,13 @@ __global__ void geometryKernel(
         if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
             bsupu_v += chip_H[jH] / gsqrt_v;
         }
-        bsupu[idx_out] = bsupu_v;
+        bsupu[idx] = bsupu_v;
         T bsubu_v = guu_v * bsupu_v + guv_v * bsupv_v;
         T bsubv_v = guv_v * bsupu_v + gvv_v * bsupv_v;
-        bsubu[idx_out] = bsubu_v;
-        bsubv[idx_out] = bsubv_v;
+        bsubu[idx] = bsubu_v;
+        bsubv[idx] = bsubv_v;
         T bsq_half = T(0.5) * (bsupu_v * bsubu_v + bsupv_v * bsubv_v);
-        totalPressure[idx_out] = bsq_half + pres_H[jH];
+        totalPressure[idx] = bsq_half + pres_H[jH];
     }
 }
 
@@ -601,16 +639,28 @@ void computeJacobianStats(const GridParams<T>& p, const MetricWorkspace<T>& mw,
 }
 
 template <typename T>
-void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
-                     const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
-                     cudaStream_t stream, bool update_iota_chi) {
+void computeBaseGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+                         const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                         cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
-    geometryKernel<T><<<grid, block, 0, stream>>>(
+    baseGeometryKernel<T><<<grid, block, 0, stream>>>(
+        geometryParityViews(rs, p), radialProfileViews(rp),
+        baseGeometryHalfViews(mw, p), p.ns, p.nZnT, rp.delta_s);
+    cumes::check_cuda(cudaGetLastError(), "base geometry kernel");
+}
+
+template <typename T>
+void computeMagneticField(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+                          const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                          cudaStream_t stream, bool update_iota_chi) {
+    dim3 block(128);
+    dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
+    magneticFieldKernel<T><<<grid, block, 0, stream>>>(
         geometryParityViews(rs, p), radialProfileViews(rp),
         baseGeometryHalfViews(mw, p), magneticFieldViews(mw, p),
-        p.lamscale, p.ncurr, p.ns, p.nZnT, rp.delta_s);
-    cumes::check_cuda(cudaGetLastError(), "geometry kernel");
+        p.lamscale, p.ncurr, p.ns, p.nZnT);
+    cumes::check_cuda(cudaGetLastError(), "magnetic field kernel");
 
     if (p.ncurr == 1) {
         dim3 fb(256), fg(p.ns - 1);
@@ -631,18 +681,25 @@ void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& 
             rp.d_iota_H, rp.d_chip_H, p.ns, rp.d_iota_F, rp.d_chi_F);
         cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
     }
+}
 
+template <typename T>
+void computeGeometry(const cumes::RealSpaceStorage<T>& rs, const GridParams<T>& p,
+                     const RadialProfiles<T>& rp, MetricWorkspace<T>& mw,
+                     cudaStream_t stream, bool update_iota_chi) {
+    computeBaseGeometry(rs, p, rp, mw, stream);
+    computeMagneticField(rs, p, rp, mw, stream, update_iota_chi);
 }
 
 // ---------------------------------------------------------------------------
-// GeometryOperator (owns the MetricWorkspace; wraps computeGeometry + stats)
+// GeometryOperator (owns the MetricWorkspace; wraps the base-geometry kernel
+// + stats). The magnetic-field kernel is the separate MagneticFieldOperator.
 // ---------------------------------------------------------------------------
 template <typename T>
 void cumes::GeometryOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
                                          const GridParams<T>& p,
-                                         const RadialProfiles<T>& rp, cudaStream_t stream,
-                                         bool update_iota_chi) {
-    computeGeometry(rs, p, rp, mw_, stream, update_iota_chi);
+                                         const RadialProfiles<T>& rp, cudaStream_t stream) {
+    computeBaseGeometry(rs, p, rp, mw_, stream);
 }
 
 template <typename T>

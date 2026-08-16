@@ -31,11 +31,13 @@ class GeometryOperator {
   GeometryOperator(GeometryOperator&&) noexcept = default;
   GeometryOperator& operator=(GeometryOperator&&) noexcept = default;
 
-  // Half-grid geometry, metric, field and current closure; update the full-grid
-  // iota/chip on the first pass (ncurr=0) or every pass (ncurr=1). Reads the
-  // parity-split geometry from the stage-owned `rs`.
+  // Half-grid base geometry: staggered interpolation, Jacobian, covariant
+  // metric — no 1/√g division. The magnetic field (1/√g B + total pressure +
+  // ncurr closure + full-grid iota/chip update) is the separate
+  // MagneticFieldOperator, ordered after this kernel (and the Jacobian-status
+  // chain) on the same stream. Reads the parity-split geometry from `rs`.
   void enqueue(const RealSpaceStorage<T>& rs, const GridParams<T>& p,
-               const RadialProfiles<T>& rp, cudaStream_t stream, bool update_iota_chi);
+               const RadialProfiles<T>& rp, cudaStream_t stream);
 
   // Oriented-Jacobian statistics into a caller-owned 4-element device scratch.
   void jacobian_stats(const GridParams<T>& p, T* d_stats, cudaStream_t stream) const;
