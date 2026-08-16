@@ -45,9 +45,12 @@ class AxisymmetricOperator : public SpectralOperator<T> {
 
   // Direct poloidal synthesis: coefficients -> the 18 parity-split real-space
   // geometry arrays (R/Z/λ × value/θ-deriv/ζ-deriv × even/odd). Toroidal
-  // derivatives are written as zero.
+  // derivatives are written as zero. The xmpq-weighted rCon/zCon (when non-null)
+  // are produced by the same direct-poloidal rzcon kernel (a separate launch,
+  // ordered after the synthesis — see enqueue_rzcon).
   void enqueue_inverse(SpectralView<const T, PhysicalStateDomain> coefficients,
                        GeometryParityViews<T> geometry,
+                       RealFieldView<T> rCon, RealFieldView<T> zCon,
                        cudaStream_t stream) override;
 
   // Direct reduced-θ trapezoid projection: parity forces + constraint force ->
@@ -76,7 +79,7 @@ class AxisymmetricOperator : public SpectralOperator<T> {
   // profiles (the same arrays deAliasCoeffPackKernel reads).
   void enqueue_dealias(RealFieldView<const T> gConEff, const T* tcon,
                        const T* faccon, RealFieldView<T> gCon,
-                       cudaStream_t stream);
+                       cudaStream_t stream) override;
 
   const GridParams<T>& params() const { return p_; }
 

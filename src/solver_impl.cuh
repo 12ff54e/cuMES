@@ -494,7 +494,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
                           cumes::RealSpaceStorage<T>& rs,
                           cumes::GeometryOperator<T>& geometry, cumes::DeviceArena* arena,
                           cudaStream_t stream, cumes::SolverBench* bench,
-                          cumes::AxisymmetricOperator<T>* axisym) {
+                          cumes::SpectralOperator<T>* op) {
     // The legacy 12-pointer view over the contiguous slabs: every kernel and
     // consumer below keeps its unchanged pointer arithmetic and layout.
     SpectralState<T> st = storage.legacy_view();
@@ -524,37 +524,39 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     const PreconWorkspace<T>& pw = precon.workspace();
     const ConstraintWorkspace<T>& cw = constraint.workspace();
 
-    // Axisymmetric transform backend (blueprint §8.5): when `axisym` is non-null
-    // the length-one cuFFT round trips (inverse/forward/de-alias) are replaced by
-    // the direct-poloidal operator. Its inputs/outputs are the SAME parity-split
-    // FourierPlan/ConstraintWorkspace arrays the generic backend reads/writes, so
-    // the downstream geometry/force/constraint/preconditioner code is unchanged.
-    // The view bundles below are built once per stage (cheap pointer aggregates).
-    const bool axisym_active = (axisym != nullptr);
-    cumes::GeometryParityViews<T> ax_geom;
-    cumes::ForceParityViews<const T> ax_force;
-    cumes::ConstraintForceViews<const T> ax_conforce;
-    if (axisym_active) {
+    // Unified transform backend (blueprint §8.5 / migration step 3): `op` is the
+    // caller's selected `SpectralOperator<T>` — the axisymmetric direct-poloidal
+    // operator for ntor=0/nzeta=1, or (default) the generic ToroidalFft. There
+    // is NO axisym_active branch in the loop: inverse/forward/de-alias all go
+    // through `op`. Its inputs/outputs are the SAME parity-split rs/
+    // ConstraintWorkspace arrays either backend reads/writes, so the downstream
+    // geometry/force/constraint/preconditioner code is unchanged. The view
+    // bundles are built once per stage (cheap pointer aggregates).
+    cumes::SpectralOperator<T>* transform_op = (op != nullptr) ? op : &transform;
+    cumes::GeometryParityViews<T> geom_views;
+    cumes::ForceParityViews<const T> force_views;
+    cumes::ConstraintForceViews<const T> conforce_views;
+    {
         auto geom = [&](T* d) { return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
-        ax_geom.r_e = geom(rs.d_r_e); ax_geom.z_e = geom(rs.d_z_e); ax_geom.l_e = geom(rs.d_l_e);
-        ax_geom.ru_e = geom(rs.d_ru_e); ax_geom.zu_e = geom(rs.d_zu_e); ax_geom.lu_e = geom(rs.d_lu_e);
-        ax_geom.r_o = geom(rs.d_r_o); ax_geom.z_o = geom(rs.d_z_o); ax_geom.l_o = geom(rs.d_l_o);
-        ax_geom.ru_o = geom(rs.d_ru_o); ax_geom.zu_o = geom(rs.d_zu_o); ax_geom.lu_o = geom(rs.d_lu_o);
-        ax_geom.rv_e = geom(rs.d_rv_e); ax_geom.zv_e = geom(rs.d_zv_e); ax_geom.lv_e = geom(rs.d_lv_e);
-        ax_geom.rv_o = geom(rs.d_rv_o); ax_geom.zv_o = geom(rs.d_zv_o); ax_geom.lv_o = geom(rs.d_lv_o);
+        geom_views.r_e = geom(rs.d_r_e); geom_views.z_e = geom(rs.d_z_e); geom_views.l_e = geom(rs.d_l_e);
+        geom_views.ru_e = geom(rs.d_ru_e); geom_views.zu_e = geom(rs.d_zu_e); geom_views.lu_e = geom(rs.d_lu_e);
+        geom_views.r_o = geom(rs.d_r_o); geom_views.z_o = geom(rs.d_z_o); geom_views.l_o = geom(rs.d_l_o);
+        geom_views.ru_o = geom(rs.d_ru_o); geom_views.zu_o = geom(rs.d_zu_o); geom_views.lu_o = geom(rs.d_lu_o);
+        geom_views.rv_e = geom(rs.d_rv_e); geom_views.zv_e = geom(rs.d_zv_e); geom_views.lv_e = geom(rs.d_lv_e);
+        geom_views.rv_o = geom(rs.d_rv_o); geom_views.zv_o = geom(rs.d_zv_o); geom_views.lv_o = geom(rs.d_lv_o);
 
         auto forc = [&](T* d) { return cumes::RealFieldView<const T>(d, p.ns, p.ntheta, p.nzeta); };
-        ax_force.armn_e = forc(rs.d_armn_e); ax_force.armn_o = forc(rs.d_armn_o);
-        ax_force.azmn_e = forc(rs.d_azmn_e); ax_force.azmn_o = forc(rs.d_azmn_o);
-        ax_force.brmn_e = forc(rs.d_brmn_e); ax_force.brmn_o = forc(rs.d_brmn_o);
-        ax_force.bzmn_e = forc(rs.d_bzmn_e); ax_force.bzmn_o = forc(rs.d_bzmn_o);
-        ax_force.blmn_e = forc(rs.d_blmn_e); ax_force.blmn_o = forc(rs.d_blmn_o);
-        ax_force.clmn_e = forc(rs.d_clmn_e); ax_force.clmn_o = forc(rs.d_clmn_o);
-        ax_force.crmn_e = forc(rs.d_crmn_e); ax_force.crmn_o = forc(rs.d_crmn_o);
-        ax_force.czmn_e = forc(rs.d_czmn_e); ax_force.czmn_o = forc(rs.d_czmn_o);
+        force_views.armn_e = forc(rs.d_armn_e); force_views.armn_o = forc(rs.d_armn_o);
+        force_views.azmn_e = forc(rs.d_azmn_e); force_views.azmn_o = forc(rs.d_azmn_o);
+        force_views.brmn_e = forc(rs.d_brmn_e); force_views.brmn_o = forc(rs.d_brmn_o);
+        force_views.bzmn_e = forc(rs.d_bzmn_e); force_views.bzmn_o = forc(rs.d_bzmn_o);
+        force_views.blmn_e = forc(rs.d_blmn_e); force_views.blmn_o = forc(rs.d_blmn_o);
+        force_views.clmn_e = forc(rs.d_clmn_e); force_views.clmn_o = forc(rs.d_clmn_o);
+        force_views.crmn_e = forc(rs.d_crmn_e); force_views.crmn_o = forc(rs.d_crmn_o);
+        force_views.czmn_e = forc(rs.d_czmn_e); force_views.czmn_o = forc(rs.d_czmn_o);
 
-        ax_conforce.frcon_e = forc(cw.d_frcon_e); ax_conforce.frcon_o = forc(cw.d_frcon_o);
-        ax_conforce.fzcon_e = forc(cw.d_fzcon_e); ax_conforce.fzcon_o = forc(cw.d_fzcon_o);
+        conforce_views.frcon_e = forc(cw.d_frcon_e); conforce_views.frcon_o = forc(cw.d_frcon_o);
+        conforce_views.fzcon_e = forc(cw.d_fzcon_e); conforce_views.fzcon_o = forc(cw.d_fzcon_o);
     }
 
     // Bind every cuFFT plan to the explicit compute stream so the batched
@@ -563,8 +565,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // before any transform runs, is sufficient.
     cumes::check_cufft(cufftSetStream(fp.plan_z2d, stream), "set stream z2d");
     cumes::check_cufft(cufftSetStream(fp.plan_d2z, stream), "set stream d2z");
-    cumes::check_cufft(cufftSetStream(cw.plan_d2z_da, stream), "set stream d2z_da");
-    cumes::check_cufft(cufftSetStream(cw.plan_z2d_da, stream), "set stream z2d_da");
+    cumes::check_cufft(cufftSetStream(fp.plan_d2z_da, stream), "set stream d2z_da");
+    cumes::check_cufft(cufftSetStream(fp.plan_z2d_da, stream), "set stream z2d_da");
 
     // ---- transform timing (cudaEvent pairs around inverseDFT/forwardDFT) ----
     // The events are RECORDED on the compute stream every iteration but only
@@ -765,20 +767,16 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         cumes::check_cuda(cudaGetLastError(), "extrapAxis");
 
         cudaEventRecord(ev0_inv, stream);
-        if (axisym_active) {
-            // Direct-poloidal synthesis + xmpq-weighted rCon/zCon (blueprint
-            // §8.4/§8.5): two kernels replace the generic fused inverse.
-            axisym->enqueue_inverse(storage.physical_const(), ax_geom, stream);
-            axisym->enqueue_rzcon(storage.physical_const(),
-                                  cumes::RealFieldView<T>(cw.d_rCon, p.ns, p.ntheta, p.nzeta),
-                                  cumes::RealFieldView<T>(cw.d_zCon, p.ns, p.ntheta, p.nzeta),
-                                  stream);
-        } else {
-            // Fused inverse (blueprint §8.4): the xmpq-weighted rCon/zCon are
-            // accumulated alongside the geometry (no separate rzCon transform).
-            transform.enqueue_inverse(rs, storage.physical_const(), p, false,
-                                      cw.d_rCon, cw.d_zCon, stream);
-        }
+        // Fused inverse (blueprint §8.4/§8.5): geometry + the xmpq-weighted
+        // rCon/zCon, dispatched through the unified SpectralOperator interface.
+        // The generic backend accumulates rCon/zCon in the same launch as the
+        // geometry; the axisymmetric backend runs its direct-poloidal rzCon
+        // kernel right after its synthesis — both leave rCon/zCon produced on
+        // the stream before this returns.
+        transform_op->enqueue_inverse(
+            storage.physical_const(), geom_views,
+            cumes::RealFieldView<T>(cw.d_rCon, p.ns, p.ntheta, p.nzeta),
+            cumes::RealFieldView<T>(cw.d_zCon, p.ns, p.ntheta, p.nzeta), stream);
         cudaEventRecord(ev1_inv, stream);
 
         if (iter == 0 && dumpEnabled()) {
@@ -1037,8 +1035,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
         // Add spectral condensation constraint force to brmn/bzmn.
         // Uses the current-iteration tcon (refreshed above when the
-        // preconditioner was updated), matching vmecpp.
-        constraint.enqueue(p, rs, fp, pw, rp.d_sqrtS_F, precon_updated, axisym, stream);
+        // preconditioner was updated), matching vmecpp. The de-alias bandpass
+        // is dispatched through the unified SpectralOperator interface.
+        constraint.enqueue(p, rs, pw, rp.d_sqrtS_F, precon_updated, transform_op,
+                           stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0) {
@@ -1070,14 +1070,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif
 
         cudaEventRecord(ev0_fwd, stream);
-        if (axisym_active) {
-            axisym->enqueue_forward(ax_force, ax_conforce, residual_view, stream);
-        } else {
-            transform.enqueue_forward(
-                rs, cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                    d_f_spec.data(), p.ns, p.mnmax),
-                p, cw, stream);
-        }
+        transform_op->enqueue_forward(force_views, conforce_views, residual_view,
+                                      stream);
         cudaEventRecord(ev1_fwd, stream);
 
         // Apply the odd-m decomposition scaling (vmecpp decomposeInto).

@@ -49,6 +49,21 @@ struct FourierPlan {
     // the W7-X shape). Owned here, freed in fourierFree after the plans.
     void* d_cufft_work = nullptr;
     size_t cufft_work_bytes = 0;
+
+    // Compact de-alias bandpass scratch + plans (the constraint's step-2 D2Z/Z2D
+    // round trip, blueprint §6.8). Moved here from the ConstraintWorkspace so
+    // the transform operator owns all transform tables/plans/scratch and the
+    // constraint reaches the bandpass through the SpectralOperator interface
+    // (blueprint §5.1 dependency rule). Batch elements: 2*(mpol-2)*(ns-1) —
+    // only slots 0/1 (analysis) and 4/5 (synthesis), modes m = 1..mpol-2,
+    // surfaces jF = 1..ns-1. Element order: ((slot*(mpol-2)+(m-1))*(ns-1)+(jF-1)),
+    // then nzeta (real) / nz2 (spectra) contiguous.
+    T* d_zeta_real_c = nullptr;     // [2*(mpol-2)*(ns-1) * nzeta]
+    typename FftTraits<T>::Complex* d_zeta_spectra_c = nullptr;  // [... * nz2]
+    cufftHandle plan_d2z_da;
+    cufftHandle plan_z2d_da;
+    void* d_cufft_work_c = nullptr;  // shared work area for the two compact plans
+    size_t cufft_work_bytes_c = 0;
 };
 
 // fourierCreate builds the mode tables, allocates the real-space/force/zeta

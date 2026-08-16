@@ -42,30 +42,29 @@ std::size_t stage_arena_bytes(const GridParams<T>& p) {
     const std::size_t szT = sizeof(T), szI = sizeof(int), szC = sizeof(Complex);
     const int nz2 = p.nzeta / 2 + 1;
     const std::size_t batchDa = (std::size_t)2 * (p.mpol - 2) * (ns - 1);
-    const std::size_t batchRz = (std::size_t)4 * p.mpol * ns;
 
     std::size_t bytes = 0;
     // profiles: 4 full-grid + 7 half-grid radial arrays.
     bytes += (4 * ns + 7 * nH) * szT;
     // metric: 15 half-grid (ns-1, nZnT) arrays.
     bytes += 15 * nH * nZnT * szT;
-    // fourier: 2 int mode tables, 43 real arrays, zeta scratch, 5 poloidal
-    // tables.
+    // fourier: 2 int mode tables, 43 real arrays, zeta scratch (main + compact
+    // de-alias), 5 poloidal tables.
     bytes += 2 * mnmax * szI;
     bytes += 43 * ns * nZnT * szT;
     bytes += 12 * p.mpol * ns * nz2 * szC;      // d_zeta_spectra
     bytes += 12 * p.mpol * ns * p.nzeta * szT;  // d_zeta_real
     bytes += 4 * p.mpol * p.ntheta * szT;       // cos/sin/mcos/msin_th
     bytes += (p.ntheta / 2 + 1) * szT;          // fwd_w
+    bytes += batchDa * p.nzeta * szT;           // d_zeta_real_c (de-alias)
+    bytes += batchDa * nz2 * szC;               // d_zeta_spectra_c (de-alias)
     // preconditioner: 25*nH + 9*ns + 7*mnmax*ns + 3*(ns+1) + 1 T-elements,
     // plus the mnmax int jMin table.
     bytes += (25 * nH + 9 * ns + 7 * mnmax * ns + 3 * (ns + 1) + 1) * szT;
     bytes += mnmax * szI;
-    // constraint: 10 full-grid arrays + tcon + faccon + the compact zeta
-    // scratch (real + spectra) for deAlias and rCon/zCon round trips.
+    // constraint: 10 full-grid arrays + tcon + faccon (the de-alias compact
+    // scratch now lives in the fourier section above).
     bytes += (10 * ns * nZnT + ns + mnmax) * szT;
-    bytes += (batchDa + batchRz) * p.nzeta * szT;
-    bytes += (batchDa + batchRz) * nz2 * szC;
     // Alignment slack for the ~110 subspans (each padded to alignof <= 16).
     bytes += 64 * 1024;
     return bytes;
@@ -90,16 +89,18 @@ class StageSolver {
         // explicit nonblocking compute stream (Phase 6A).
         Profiles<T> profiles(p, ip, &arena);
         RealSpaceStorage<T> rs = realSpaceCreate<T>(p, &arena);
-        ToroidalFftOperator<T> transform(p, &arena);
+        ToroidalFftOperator<T> transform(p, rs, &arena);
         GeometryOperator<T> geometry(p, &arena);
 
-        // Axisymmetric transform backend (blueprint §8.5): for ntor=0/nzeta=1
+        // Transform backend selection (blueprint §8.5): for ntor=0/nzeta=1
         // the toroidal direction is a single point, so the length-one cuFFT
         // round trips are replaced by direct-poloidal synthesis/projection. The
         // operator holds only ns-independent poloidal tables, but its kernels
         // launch on `p.ns`, so one is built per stage (re-uploading the tiny
         // tables is negligible). CUMES_FORCE_GENERIC=1 restores the generic
-        // backend for A/B comparison against the frozen trajectory.
+        // backend for A/B comparison against the frozen trajectory. The solver
+        // drives a single `SpectralOperator<T>*` (no axisym_active branch);
+        // nullptr selects the generic ToroidalFft operator.
         bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
         if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
             if (std::atoi(e) != 0) use_axisym = false;

@@ -177,6 +177,41 @@ FourierPlan<T> fourierCreate(const GridParams<T>& p, cumes::DeviceArena* arena) 
                                "cufft workarea d2z");
         }
     }
+
+    // ---- compact de-alias bandpass scratch + plans (constraint step 2) -----
+    // Moved here from constraintCreate so the transform operator owns all
+    // transform scratch (blueprint §5.1/§6.8). The bandpass is a D2Z/Z2D round
+    // trip over 2*(mpol-2)*(ns-1) batch elements (slots 0/1 analysis, 4/5
+    // synthesis); its work area is shared the same way as the main plans'.
+    {
+        using Complex = typename FftTraits<T>::Complex;
+        int batchDa = 2 * (p.mpol - 2) * (p.ns - 1);
+        if (arena) {
+            fp.d_zeta_real_c = arena->alloc_span<T>("fourier/zeta_real_c", (size_t)batchDa * n, 16);
+            fp.d_zeta_spectra_c = arena->alloc_span<Complex>("fourier/zeta_spectra_c", (size_t)batchDa * nz2, 16);
+        } else {
+            cumes::check_cuda(cudaMalloc(&fp.d_zeta_real_c, (size_t)batchDa * n * sizeof(T)), "zeta_real_c");
+            cumes::check_cuda(cudaMalloc(&fp.d_zeta_spectra_c, (size_t)batchDa * nz2 * sizeof(Complex)), "zeta_spectra_c");
+        }
+        cumes::check_cufft(cufftPlanMany(&fp.plan_d2z_da, 1, &n, &n, 1, n,
+                                 &nz2, 1, nz2, FftTraits<T>::kForward, batchDa), "plan d2z_da");
+        cumes::check_cufft(cufftPlanMany(&fp.plan_z2d_da, 1, &n, &nz2, 1, nz2,
+                                 &n, 1, n, FftTraits<T>::kInverse, batchDa), "plan z2d_da");
+        size_t wda = 0, wza = 0;
+        cumes::check_cufft(cufftSetAutoAllocation(fp.plan_d2z_da, 0), "cufft noauto d2z_da");
+        cumes::check_cufft(cufftSetAutoAllocation(fp.plan_z2d_da, 0), "cufft noauto z2d_da");
+        cumes::check_cufft(cufftGetSize(fp.plan_d2z_da, &wda), "cufftGetSize d2z_da");
+        cumes::check_cufft(cufftGetSize(fp.plan_z2d_da, &wza), "cufftGetSize z2d_da");
+        fp.cufft_work_bytes_c = (wda > wza) ? wda : wza;
+        if (fp.cufft_work_bytes_c > 0) {
+            cumes::check_cuda(cudaMalloc(&fp.d_cufft_work_c, fp.cufft_work_bytes_c),
+                              "cufft work c");
+            cumes::check_cufft(cufftSetWorkArea(fp.plan_d2z_da, fp.d_cufft_work_c),
+                               "cufft workarea d2z_da");
+            cumes::check_cufft(cufftSetWorkArea(fp.plan_z2d_da, fp.d_cufft_work_c),
+                               "cufft workarea z2d_da");
+        }
+    }
     fp.arena_backed = (arena != nullptr);
     return fp;
 }
@@ -188,9 +223,12 @@ void fourierFree(FourierPlan<T>& fp) {
         cudaFree(fp.d_zeta_spectra); cudaFree(fp.d_zeta_real);
         cudaFree(fp.d_cos_th); cudaFree(fp.d_sin_th);
         cudaFree(fp.d_mcos_th); cudaFree(fp.d_msin_th); cudaFree(fp.d_fwd_w);
+        cudaFree(fp.d_zeta_real_c); cudaFree(fp.d_zeta_spectra_c);
     }
     cufftDestroy(fp.plan_z2d); cufftDestroy(fp.plan_d2z);
+    cufftDestroy(fp.plan_d2z_da); cufftDestroy(fp.plan_z2d_da);
     if (fp.d_cufft_work) cudaFree(fp.d_cufft_work);
+    if (fp.d_cufft_work_c) cudaFree(fp.d_cufft_work_c);
     fp = FourierPlan<T>{};
 }
 
@@ -735,7 +773,9 @@ __global__ void forwardRecoverKernel(
 template <typename T>
 static void forwardDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                             cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-                            const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
+                            const GridParams<T>& p,
+                            const T* frcon_e, const T* frcon_o,
+                            const T* fzcon_e, const T* fzcon_o,
                             cudaStream_t stream) {
     // The recover kernel writes all six families (explicit axis/LCFS zeros), so
     // no pre-zero of the residual slab is needed (Phase 6A removes the memset).
@@ -750,7 +790,7 @@ static void forwardDFTCufft(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>
         rs.d_brmn_e, rs.d_brmn_o, rs.d_bzmn_e, rs.d_bzmn_o,
         rs.d_crmn_e, rs.d_crmn_o, rs.d_czmn_e, rs.d_czmn_o,
         rs.d_blmn_e, rs.d_blmn_o, rs.d_clmn_e, rs.d_clmn_o,
-        cw.d_frcon_e, cw.d_frcon_o, cw.d_fzcon_e, cw.d_fzcon_o,
+        frcon_e, frcon_o, fzcon_e, fzcon_o,
         fp.d_cos_th, fp.d_sin_th, fp.d_mcos_th, fp.d_msin_th, fp.d_fwd_w,
         p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT,
         fp.d_zeta_real, kTile);
@@ -767,25 +807,47 @@ void forwardDFT(const FourierPlan<T>& fp, cumes::RealSpaceStorage<T>& rs,
                 cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
                 const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
                 cudaStream_t stream) {
-    forwardDFTCufft(fp, rs, f_spec, p, cw, stream);
+    forwardDFTCufft(fp, rs, f_spec, p, cw.d_frcon_e, cw.d_frcon_o,
+                    cw.d_fzcon_e, cw.d_fzcon_o, stream);
 }
 
 // ---------------------------------------------------------------------------
-// ToroidalFftOperator (owns the FourierPlan; wraps the inverse/forward paths)
+// ToroidalFftOperator (owns the FourierPlan; a SpectralOperator backend)
 // ---------------------------------------------------------------------------
 template <typename T>
 void cumes::ToroidalFftOperator<T>::enqueue_inverse(
-    cumes::RealSpaceStorage<T>& rs,
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
-    const GridParams<T>& p, bool do_combine, T* rCon, T* zCon, cudaStream_t stream) {
-    inverseDFTFused(fp_, rs, coeff, p, do_combine, rCon, zCon, stream);
+    cumes::GeometryParityViews<T> geometry, cumes::RealFieldView<T> rCon,
+    cumes::RealFieldView<T> zCon, cudaStream_t stream) {
+    // The geometry views alias *rs_ (the stage-owned RealSpaceStorage this
+    // operator was constructed with); the fused inverse writes directly into
+    // those same arrays. do_combine is false on the hot loop (combined buffers
+    // are dump-only and materialized on demand).
+    (void)geometry;
+    inverseDFTFused(fp_, *rs_, coeff, p_, /*do_combine=*/false, rCon.data(),
+                    zCon.data(), stream);
 }
 
 template <typename T>
 void cumes::ToroidalFftOperator<T>::enqueue_forward(
-    cumes::RealSpaceStorage<T>& rs,
-    cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
-    const GridParams<T>& p, const ConstraintWorkspace<T>& cw, cudaStream_t stream) {
-    forwardDFT(fp_, rs, f_spec, p, cw, stream);
+    cumes::ForceParityViews<const T> real_force,
+    cumes::ConstraintForceViews<const T> constraint_force,
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
+    cudaStream_t stream) {
+    // `real_force` aliases *rs_ (same arrays); the constraint force is read
+    // from the constraint_force views (the constraint owns those buffers).
+    (void)real_force;
+    forwardDFTCufft(fp_, *rs_, residual, p_, constraint_force.frcon_e.data(),
+                    constraint_force.frcon_o.data(),
+                    constraint_force.fzcon_e.data(),
+                    constraint_force.fzcon_o.data(), stream);
+}
+
+template <typename T>
+void cumes::ToroidalFftOperator<T>::enqueue_dealias(
+    cumes::RealFieldView<const T> gConEff, const T* tcon, const T* faccon,
+    cumes::RealFieldView<T> gCon, cudaStream_t stream) {
+    constraintDealiasBandpass(p_, fp_, gConEff.data(), tcon, faccon,
+                              gCon.data(), stream);
 }
 

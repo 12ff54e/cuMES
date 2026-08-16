@@ -95,9 +95,9 @@ int main() {
 
     // ---- Profiles / plan / workspace ----
     RadialProfiles<double> rp = profilesCreate(p, ip);
-    cumes::ToroidalFftOperator<double> transform(p, nullptr);
-    FourierPlan<double>& fp = transform.fourier_plan();
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
+    cumes::ToroidalFftOperator<double> transform(p, rs, nullptr);
+    FourierPlan<double>& fp = transform.fourier_plan();
     cumes::GeometryOperator<double> geometry(p, nullptr);
     MetricWorkspace<double>& mw = geometry.workspace();
 

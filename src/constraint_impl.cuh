@@ -22,7 +22,6 @@
 #include <cstdio>
 #include <cmath>
 
-#include "cumes/transforms/axisymmetric_operator.hpp"
 #include "cumes/physics/constraint_operator.hpp"
 
 
@@ -109,44 +108,9 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
     cumes::check_cuda(cudaMemset(cw.d_fzcon_e, 0, nFc), "fzcon_e zero");
     cumes::check_cuda(cudaMemset(cw.d_fzcon_o, 0, nFc), "fzcon_o zero");
 
-    // Compact deAlias bandpass buffers + plans (2 slots x (mpol-2) x (ns-1)
-    // batch elements instead of the full 12*mpol*ns).
-    int n = p.nzeta, nz2 = p.nzeta / 2 + 1;
-    int batchDa = 2 * (p.mpol - 2) * (p.ns - 1);
-    if (arena) {
-        // cuFFT needs 16-byte-aligned data (see fourierCreate).
-        cw.d_zeta_real_c = arena->alloc_span<T>("constraint/zeta_real_c", (size_t)batchDa * n, 16);
-        cw.d_zeta_spectra_c = arena->alloc_span<Complex>("constraint/zeta_spectra_c", (size_t)batchDa * nz2, 16);
-    } else {
-        cumes::check_cuda(cudaMalloc(&cw.d_zeta_real_c, (size_t)batchDa * n * sizeof(T)), "zeta_real_c");
-        cumes::check_cuda(cudaMalloc(&cw.d_zeta_spectra_c, (size_t)batchDa * nz2 * sizeof(Complex)), "zeta_spectra_c");
-    }
-    cumes::check_cufft(cufftPlanMany(&cw.plan_d2z_da, 1, &n, &n, 1, n, &nz2, 1, nz2,
-                      FftTraits<T>::kForward, batchDa), "plan d2z_da");
-    cumes::check_cufft(cufftPlanMany(&cw.plan_z2d_da, 1, &n, &nz2, 1, nz2, &n, 1, n,
-                      FftTraits<T>::kInverse, batchDa), "plan z2d_da");
-
-    // Phase 6B: disable cuFFT auto-allocation and share one max-sized work
-    // area across the two constraint plans (sequential on one stream, so
-    // their lifetimes never overlap). Replaces cuFFT's two per-plan auto
-    // allocations (~0.5-1.4 MB each for the W7-X shape) with one buffer.
-    {
-        size_t wda = 0, wza = 0;
-        cumes::check_cufft(cufftSetAutoAllocation(cw.plan_d2z_da, 0), "cufft noauto d2z_da");
-        cumes::check_cufft(cufftSetAutoAllocation(cw.plan_z2d_da, 0), "cufft noauto z2d_da");
-        cumes::check_cufft(cufftGetSize(cw.plan_d2z_da, &wda), "cufftGetSize d2z_da");
-        cumes::check_cufft(cufftGetSize(cw.plan_z2d_da, &wza), "cufftGetSize z2d_da");
-        cw.cufft_work_bytes = (wda > wza) ? wda : wza;
-        if (cw.cufft_work_bytes > 0) {
-            cumes::check_cuda(cudaMalloc(&cw.d_cufft_work, cw.cufft_work_bytes),
-                              "cufft work c");
-            cumes::check_cufft(cufftSetWorkArea(cw.plan_d2z_da, cw.d_cufft_work),
-                               "cufft workarea d2z_da");
-            cumes::check_cufft(cufftSetWorkArea(cw.plan_z2d_da, cw.d_cufft_work),
-                               "cufft workarea z2d_da");
-        }
-    }
-
+    // The compact de-alias bandpass scratch + plans now live in the
+    // FourierPlan (fourierCreate), so the constraint owns only its data
+    // fields; the bandpass is reached through the SpectralOperator interface.
     cw.arena_backed = (arena != nullptr);
     return cw;
 }
@@ -161,11 +125,8 @@ void constraintFree(ConstraintWorkspace<T>& cw) {
         cudaFree(cw.d_faccon);
         cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o);
         cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
-        cudaFree(cw.d_zeta_real_c); cudaFree(cw.d_zeta_spectra_c);
     }
     cudaFreeHost(cw.h_faccon);
-    cufftDestroy(cw.plan_d2z_da); cufftDestroy(cw.plan_z2d_da);
-    if (cw.d_cufft_work) cudaFree(cw.d_cufft_work);
     cw = ConstraintWorkspace<T>{};
 }
 
@@ -546,32 +507,33 @@ void constraintResetRzCon0(const GridParams<T>& p, ConstraintWorkspace<T>& cw,
 // ---------------------------------------------------------------------------
 template <typename T>
 void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
-                               ConstraintWorkspace<T>& cw, cudaStream_t stream) {
+                               const T* gConEff, const T* tcon, const T* faccon,
+                               T* gCon, cudaStream_t stream) {
     {   int kTileA = computeKTile(8, p.nzeta);
         int nKTilesA = (p.nzeta + kTileA - 1) / kTileA;
         dim3 blkA(8, kTileA), grdA(p.mpol - 2, p.ns, nKTilesA);
         deAliasAnalyzeKernel<T><<<grdA, blkA, 0, stream>>>(
-            cw.d_gConEff, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_zeta_real_c, kTileA);
+            gConEff, fp.d_cos_th, fp.d_sin_th,
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, fp.d_zeta_real_c, kTileA);
         cumes::check_cuda(cudaGetLastError(), "deAlias analyze");
     }
-    cumes::check_cufft(FftTraits<T>::execForward(cw.plan_d2z_da, cw.d_zeta_real_c, cw.d_zeta_spectra_c), "deAlias d2z");
+    cumes::check_cufft(FftTraits<T>::execForward(fp.plan_d2z_da, fp.d_zeta_real_c, fp.d_zeta_spectra_c), "deAlias d2z");
     {   int nBand = (p.mpol - 2) * (p.ns - 1);
         deAliasCoeffPackKernel<T><<<(nBand + 255) / 256, 256, 0, stream>>>(
-            cw.d_zeta_spectra_c, cw.d_tcon, cw.d_faccon,
+            fp.d_zeta_spectra_c, tcon, faccon,
             p.ns, p.mpol, p.ntor, p.nzeta / 2 + 1, p.nZnT,
-            cw.d_zeta_spectra_c);
+            fp.d_zeta_spectra_c);
         cumes::check_cuda(cudaGetLastError(), "deAlias coeff");
     }
-    cumes::check_cufft(FftTraits<T>::execInverse(cw.plan_z2d_da, cw.d_zeta_spectra_c, cw.d_zeta_real_c), "deAlias z2d");
+    cumes::check_cufft(FftTraits<T>::execInverse(fp.plan_z2d_da, fp.d_zeta_spectra_c, fp.d_zeta_real_c), "deAlias z2d");
     {   int kTileS = computeKTile(p.ntheta / 2, p.nzeta);
         int nKTilesS = (p.nzeta + kTileS - 1) / kTileS;
         dim3 blkS(p.ntheta / 2, kTileS);
         dim3 grdS(p.ns, nKTilesS);
         deAliasSynthesizeKernel<T><<<grdS, blkS,
             2 * (p.mpol - 2) * kTileS * sizeof(T), stream>>>(
-            cw.d_zeta_real_c, fp.d_cos_th, fp.d_sin_th,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, cw.d_gCon, kTileS);
+            fp.d_zeta_real_c, fp.d_cos_th, fp.d_sin_th,
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, gCon, kTileS);
         cumes::check_cuda(cudaGetLastError(), "deAlias synth");
     }
 }
@@ -654,42 +616,32 @@ void constraintCompute(const GridParams<T>& p, const cumes::RealSpaceStorage<T>&
     // the per-mode coefficients into slots 4/5 (the spectra tail bins n>ntor
     // are zeroed by the memset — the pack writes only the used bins), Z2D,
     // poloidal synthesis -> gCon.
-    constraintDealiasBandpass(p, fp, cw, stream);
-
-    constraintComputeTail(p, rs, cw, d_sqrtS_F, stream);
-}
-
-template <typename T>
-void constraintComputeAxisym(const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
-                             const PreconWorkspace<T>& pw, ConstraintWorkspace<T>& cw,
-                             const T* d_sqrtS_F, bool precon_updated,
-                             cumes::AxisymmetricOperator<T>& op,
-                             cudaStream_t stream) {
-    constraintComputeHead(p, rs, pw, cw, d_sqrtS_F, precon_updated, stream);
-
-    // Step 2: direct-poloidal de-alias (ntor=0/nzeta=1). Replaces the compact
-    // cuFFT round trip above; Class B ULP-equivalent (test_axisym_backend).
-    op.enqueue_dealias(
-        cumes::RealFieldView<const T>(cw.d_gConEff, p.ns, p.ntheta, p.nzeta),
-        cw.d_tcon, cw.d_faccon,
-        cumes::RealFieldView<T>(cw.d_gCon, p.ns, p.ntheta, p.nzeta), stream);
+    constraintDealiasBandpass(p, fp, cw.d_gConEff, cw.d_tcon, cw.d_faccon,
+                              cw.d_gCon, stream);
 
     constraintComputeTail(p, rs, cw, d_sqrtS_F, stream);
 }
 
 // ---------------------------------------------------------------------------
-// ConstraintOperator (owns the ConstraintWorkspace; wraps the two backends)
+// ConstraintOperator (owns the ConstraintWorkspace; the bandpass goes through
+// the unified SpectralOperator interface — no backend branch)
 // ---------------------------------------------------------------------------
 template <typename T>
 void cumes::ConstraintOperator<T>::enqueue(
-    const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs, const FourierPlan<T>& fp,
+    const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
     const PreconWorkspace<T>& pw, const T* sqrtS_F, bool precon_updated,
-    cumes::AxisymmetricOperator<T>* axisym, cudaStream_t stream) {
-    if (axisym) {
-        constraintComputeAxisym(p, rs, pw, cw_, sqrtS_F, precon_updated, *axisym, stream);
-    } else {
-        constraintCompute(p, rs, fp, pw, cw_, sqrtS_F, precon_updated, stream);
-    }
+    cumes::SpectralOperator<T>* op, cudaStream_t stream) {
+    // Steps 0/1 (tcon refresh + gConEff) are shared by both backends; step 2
+    // (de-alias bandpass) is dispatched through the transform operator's
+    // unified enqueue_dealias — the generic backend runs the compact cuFFT
+    // round trip, the axisymmetric backend its direct-poloidal kernel. Step 3
+    // (add to brmn/bzmn + frcon/fzcon) is shared again.
+    constraintComputeHead(p, rs, pw, cw_, sqrtS_F, precon_updated, stream);
+    op->enqueue_dealias(
+        cumes::RealFieldView<const T>(cw_.d_gConEff, p.ns, p.ntheta, p.nzeta),
+        cw_.d_tcon, cw_.d_faccon,
+        cumes::RealFieldView<T>(cw_.d_gCon, p.ns, p.ntheta, p.nzeta), stream);
+    constraintComputeTail(p, rs, cw_, sqrtS_F, stream);
 }
 
 template <typename T>

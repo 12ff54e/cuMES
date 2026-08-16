@@ -258,7 +258,8 @@ AxisymmetricOperator<T>::AxisymmetricOperator(const GridParams<T>& p) : p_(p) {
 template <class T>
 void AxisymmetricOperator<T>::enqueue_inverse(
     SpectralView<const T, PhysicalStateDomain> coefficients,
-    GeometryParityViews<T> g, cudaStream_t stream) {
+    GeometryParityViews<T> g, RealFieldView<T> rCon, RealFieldView<T> zCon,
+    cudaStream_t stream) {
   const int ntheta = p_.ntheta, nZnT = p_.nZnT;
   const int blk = 32;  // bounded block (theta point lanes)
   const dim3 grid(p_.ns, (ntheta + blk - 1) / blk);
@@ -270,6 +271,12 @@ void AxisymmetricOperator<T>::enqueue_inverse(
       g.lu_o.data(), g.rv_e.data(), g.zv_e.data(), g.lv_e.data(), g.rv_o.data(),
       g.zv_o.data(), g.lv_o.data());
   check_cuda(cudaGetLastError(), "axisym inverse");
+  // Fused rCon/zCon (blueprint §8.4): the generic backend accumulates them in
+  // the same launch as the geometry; the axisymmetric backend runs its direct
+  // poloidal rzcon kernel right after the synthesis, in the same stream order
+  // the solver previously used (enqueue_inverse then enqueue_rzcon).
+  if (rCon.data() != nullptr || zCon.data() != nullptr)
+    enqueue_rzcon(coefficients, rCon, zCon, stream);
 }
 
 template <class T>

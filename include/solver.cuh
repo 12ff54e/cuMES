@@ -10,7 +10,7 @@
 namespace cumes {
 class DeviceArena;
 struct SolverBench;
-template <typename T> class AxisymmetricOperator;
+template <typename T> class SpectralOperator;
 template <typename T> class GeometryOperator;
 template <typename T> class ToroidalFftOperator;
 template <typename T> struct RealSpaceStorage;
@@ -31,11 +31,14 @@ struct SolverResult {
 // solver allocates internally (one stage allocation instead of per-array
 // cudaMalloc). nullptr keeps the legacy per-array allocation path.
 //
-// `axisym`, when non-null, selects the axisymmetric transform backend
-// (blueprint §8.5) for ntor=0/nzeta=1: the direct-poloidal operator replaces
-// the length-one cuFFT inverse/forward/de-alias round trips. nullptr keeps the
-// generic ToroidalFft backend. The two are Class B ULP-equivalent
-// (test_axisym_backend); selecting axisym is a trajectory re-freeze.
+// `transform` is the generic ToroidalFft operator — always present: the solver
+// reads its FourierPlan for the mode tables (d_xm/d_xn) and binds the cuFFT
+// plans to the compute stream. `op`, when non-null, is the selected transform
+// backend the solver drives (a `SpectralOperator<T>*`); the solver has no
+// `axisym_active` branch — inverse/forward/de-alias all go through `op`. When
+// `op` is null it defaults to `&transform` (the generic backend). The two
+// backends are Class B ULP-equivalent (test_axisym_backend); selecting the
+// axisymmetric backend for ntor=0/nzeta=1 is a trajectory re-freeze.
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
                           const RadialProfiles<T>& rp,
@@ -45,4 +48,4 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>&
                           cumes::DeviceArena* arena = nullptr,
                           cudaStream_t stream = 0,
                           cumes::SolverBench* bench = nullptr,
-                          cumes::AxisymmetricOperator<T>* axisym = nullptr);
+                          cumes::SpectralOperator<T>* op = nullptr);

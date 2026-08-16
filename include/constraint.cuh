@@ -7,7 +7,6 @@
 
 namespace cumes {
 class DeviceArena;
-template <typename T> class AxisymmetricOperator;
 }
 
 template <typename T>
@@ -41,26 +40,9 @@ struct ConstraintWorkspace {
     T* d_fzcon_e;  // [ns * nZnT]
     T* d_fzcon_o;  // [ns * nZnT]
 
-    // Compact deAlias bandpass workspace: only slots 0/1 (analysis) and 4/5
-    // (synthesis), modes m = 1..mpol-2, surfaces jF = 1..ns-1 participate in
-    // the round trip — 2*(mpol-2)*(ns-1) batch elements instead of the full
-    // 12*mpol*ns. Element order: ((slot*(mpol-2) + (m-1))*(ns-1) + (jF-1)),
-    // then nzeta (real) / nz2 (spectra) contiguous.
-    T* d_zeta_real_c;     // [2*(mpol-2)*(ns-1) * nzeta]
-    typename FftTraits<T>::Complex* d_zeta_spectra_c; // [2*(mpol-2)*(ns-1) * nz2]
-    cufftHandle plan_d2z_da, plan_z2d_da;
-
     // true when the device arrays above are subspans of a shared DeviceArena
-    // (constraintFree then frees only the pinned host faccon + cuFFT plans).
+    // (constraintFree then frees only the pinned host faccon).
     bool arena_backed = false;
-
-    // Phase 6B: one shared cuFFT work area for the two constraint plans
-    // (d2z_da/z2d_da), with auto-allocation disabled. Their transforms
-    // are sequential on one stream, so a single max-sized buffer replaces
-    // cuFFT's two auto-allocated per-plan areas. Owned here, freed in
-    // constraintFree after the plans.
-    void* d_cufft_work = nullptr;
-    size_t cufft_work_bytes = 0;
 };
 
 template <typename T>
@@ -72,12 +54,14 @@ void constraintFree(ConstraintWorkspace<T>& cw);
 // De-alias bandpass (vmecpp deAliasConstraintForce): gConEff -> gCon via the
 // compact cuFFT round trip (θ-reduce → D2Z → scale → Z2D → poloidal
 // synthesis). Extracted from constraintCompute so the bandpass is testable in
-// isolation (the axisymmetric backend replaces exactly this step). Reads
-// cw.d_gConEff/cw.d_tcon/cw.d_faccon, writes cw.d_gCon.
+// isolation (the axisymmetric backend replaces exactly this step). The compact
+// scratch + plans now live in the FourierPlan (transform-owned, blueprint
+// §5.1/§6.8); only the constraint data fields (gConEff/tcon/faccon/gCon) are
+// borrowed by pointer here.
 template <typename T>
 void constraintDealiasBandpass(const GridParams<T>& p, const FourierPlan<T>& fp,
-                               ConstraintWorkspace<T>& cw,
-                               cudaStream_t stream = 0);
+                               const T* gConEff, const T* tcon, const T* faccon,
+                               T* gCon, cudaStream_t stream = 0);
 
 // Reset rCon0/zCon0 to the LCFS-extrapolated profile (vmecpp
 // rzConIntoVolume): rCon0 = rCon_LCFS * s. Call with the current rCon/zCon
@@ -97,16 +81,3 @@ void constraintCompute(const GridParams<T>& p, const cumes::RealSpaceStorage<T>&
                        const FourierPlan<T>& fp, const PreconWorkspace<T>& pw,
                        ConstraintWorkspace<T>& cw, const T* d_sqrtS_F, bool precon_updated,
                        cudaStream_t stream = 0);
-
-// Axisymmetric variant of constraintCompute (blueprint §8.5): identical steps
-// 0 (tcon refresh) / 1 (gConEff) / 3 (add to brmn/bzmn) but the step-2 bandpass
-// is the AxisymmetricOperator's direct-poloidal de-alias instead of the compact
-// cuFFT round trip (constraintDealiasBandpass). The two are Class B ULP-
-// equivalent on the ntor=0/nzeta=1 grid (pinned by test_axisym_backend).
-template <typename T>
-void constraintComputeAxisym(const GridParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
-                             const PreconWorkspace<T>& pw,
-                             ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
-                             bool precon_updated,
-                             cumes::AxisymmetricOperator<T>& op,
-                             cudaStream_t stream = 0);

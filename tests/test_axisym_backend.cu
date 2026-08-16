@@ -135,7 +135,8 @@ static void testInverse(GridParams<T>& p, cumes::RealSpaceStorage<T>& rs,
     g.ru_o = view(9); g.zu_o = view(10); g.lu_o = view(11);
     g.rv_e = view(12); g.zv_e = view(13); g.lv_e = view(14);
     g.rv_o = view(15); g.zv_o = view(16); g.lv_o = view(17);
-    op.enqueue_inverse(storage.physical_const(), g, 0);
+    op.enqueue_inverse(storage.physical_const(), g,
+                       cumes::RealFieldView<T>(), cumes::RealFieldView<T>(), 0);
 
     const T* gen[18] = {rs.d_r_e,   rs.d_z_e,   rs.d_l_e,   rs.d_ru_e,
                         rs.d_zu_e,  rs.d_lu_e,  rs.d_r_o,   rs.d_z_o,
@@ -239,7 +240,8 @@ static void testDealias(GridParams<T>& p, FourierPlan<T>& fp,
                         cumes::AxisymmetricOperator<T>& op) {
     printf("  constraint bandpass (gCon) ...\n");
     const int n = p.ns * p.nZnT;
-    constraintDealiasBandpass(p, fp, cw, 0);
+    constraintDealiasBandpass(p, fp, cw.d_gConEff, cw.d_tcon, cw.d_faccon,
+                              cw.d_gCon, 0);
     T* d_ax = nullptr;
     cc(cudaMalloc(&d_ax, (size_t)n * sizeof(T)), "ax gcon");
     op.enqueue_dealias(
