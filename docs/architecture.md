@@ -1,10 +1,11 @@
 # cuMES architecture
 
-Status date: 2026-08-16 (Phase 10). This document describes the architecture as
-it exists after Phase 10 — the tested operator boundaries, the build/library
-split, and the state of the strangler-fig migration. The normative numerical
-contracts live in `docs/cuda-overhaul-blueprint.md` §4; the layout contracts in
-`docs/data-layout.md`; the measured performance in `docs/performance.md`.
+Status date: 2026-08-16 (Phase 11 step 13 in progress). This document describes
+the architecture as it exists after Phase 10 — the tested operator boundaries,
+the build/library split, and the state of the strangler-fig migration. The
+normative numerical contracts live in `docs/cuda-overhaul-blueprint.md` §4; the
+layout contracts in `docs/data-layout.md`; the measured performance in
+`docs/performance.md`.
 
 ## 1. Two layers: legacy kernels + the `cumes` scaffold
 
@@ -111,8 +112,12 @@ Retired in Phase 10 (dead code only — both configs re-verified bit-identical):
 Still pending (blocked on consumers, blueprint §11 Phase 10 exit gate):
 
 - the legacy `include/*.cuh` kernel structs (`FourierPlan`, `MetricWorkspace`,
-  `InputParams`, …) are still the production implementation and cannot be
-  deleted until the `cumes` operator classes fully replace them.
+  `RadialProfiles`, `PreconWorkspace`, `ConstraintWorkspace`, `SpectralState`)
+  are still the production implementation and cannot be deleted until the
+  `cumes` operator classes fully replace them. Migration step 13.1/13.2 have
+  landed (`GridParams` is now `DeviceParams<T>` in
+  `include/cumes/config/device_params.hpp`; `InputParams` is deleted — the
+  solver consumes `ValidatedProblem` directly).
 
 Emitted after Phase 10: `configs/schema-v1.json` freezes the `cumes-config-v1`
 normalized-config schema (blueprint §6.1, `ValidatedProblem::normalize_to_json`,
