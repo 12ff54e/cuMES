@@ -1185,5 +1185,5 @@ The overhaul is complete when:
 - Remote corrected baseline `631a16a4c25dde1c94fb001070f62c4200e533c8`, including the input/output integration at `eaba051a24a8891da08d9c8c65ba34e99eaad85b` and the first containment series.
 - [VMEC++ repository](https://github.com/proximafusion/vmecpp), with the comparison revision pinned before generating goldens.
 - [NVIDIA cuFFT documentation](https://docs.nvidia.com/cuda/cufft/index.html).
-- [CUDA programming guide: asynchronous execution](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html) ([local Markdown copy](cuda-asynchronous-execution.md)).
-- [CUDA programming guide: CUDA Graphs](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html) ([local Markdown copy](cuda-graphs.md)).
+- [CUDA programming guide: asynchronous execution](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html).
+- [CUDA programming guide: CUDA Graphs](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html).
