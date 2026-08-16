@@ -516,7 +516,6 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     cumes::check_cufft(cufftSetStream(fp.plan_d2z, stream), "set stream d2z");
     cumes::check_cufft(cufftSetStream(cw.plan_d2z_da, stream), "set stream d2z_da");
     cumes::check_cufft(cufftSetStream(cw.plan_z2d_da, stream), "set stream z2d_da");
-    cumes::check_cufft(cufftSetStream(cw.plan_z2d_rz, stream), "set stream z2d_rz");
 
     // ---- transform timing (cudaEvent pairs around inverseDFT/forwardDFT) ----
     // The events are RECORDED on the compute stream every iteration but only
@@ -718,8 +717,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
         cudaEventRecord(ev0_inv, stream);
         // Fused inverse (blueprint §8.4): the xmpq-weighted rCon/zCon are
-        // accumulated alongside the geometry, replacing the separate
-        // constraintRzConCompute inverse transform below.
+        // accumulated alongside the geometry (no separate rzCon transform).
         inverseDFTFused(fp, storage.physical_const(), p, false,
                         cw.d_rCon, cw.d_zCon, stream);
         cudaEventRecord(ev1_inv, stream);
@@ -831,8 +829,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif
 
         // rCon/zCon were produced by the fused inverse DFT above (blueprint
-        // §8.4); the separate constraintRzConCompute inverse transform is
-        // gone. Reset the constraint-force reference (rCon0/zCon0) to the
+        // §8.4). Reset the constraint-force reference (rCon0/zCon0) to the
         // LCFS-extrapolated profile on the first iteration and after every
         // restart (iter2 == iter1), matching vmecpp's rzConIntoVolume
         // ("initialization/soft reset").

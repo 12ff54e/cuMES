@@ -65,7 +65,7 @@ class AxisymmetricOperator : public SpectralOperator<T> {
 
   // xmpq-weighted rCon/zCon synthesis: rCon = Σ m(m-1)·rmncc·cos(mθ),
   // zCon = Σ m(m-1)·zmnsc·sin(mθ) (no parity split, no scalxc — rCon/zCon are
-  // full real-space fields, matching constraintRzConCompute's cuFFT path).
+  // full real-space fields, matching the fused inverse DFT's rCon/zCon).
   void enqueue_rzcon(SpectralView<const T, PhysicalStateDomain> coefficients,
                      RealFieldView<T> rCon, RealFieldView<T> zCon,
                      cudaStream_t stream);

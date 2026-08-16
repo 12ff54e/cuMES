@@ -123,33 +123,17 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
     cumes::check_cufft(cufftPlanMany(&cw.plan_z2d_da, 1, &n, &nz2, 1, nz2, &n, 1, n,
                       FftTraits<T>::kInverse, batchDa), "plan z2d_da");
 
-    // Compact rCon/zCon workspace (value slots 0/1/4/5 only).
-    int batchRz = 4 * p.mpol * p.ns;
-    if (arena) {
-        // cuFFT needs 16-byte-aligned data (see fourierCreate).
-        cw.d_zeta_real_rz = arena->alloc_span<T>("constraint/zeta_real_rz", (size_t)batchRz * n, 16);
-        cw.d_zeta_spectra_rz = arena->alloc_span<Complex>("constraint/zeta_spectra_rz", (size_t)batchRz * nz2, 16);
-    } else {
-        cumes::check_cuda(cudaMalloc(&cw.d_zeta_real_rz, (size_t)batchRz * n * sizeof(T)), "zeta_real_rz");
-        cumes::check_cuda(cudaMalloc(&cw.d_zeta_spectra_rz, (size_t)batchRz * nz2 * sizeof(Complex)), "zeta_spectra_rz");
-    }
-    cumes::check_cufft(cufftPlanMany(&cw.plan_z2d_rz, 1, &n, &nz2, 1, nz2, &n, 1, n,
-                      FftTraits<T>::kInverse, batchRz), "plan z2d_rz");
-
     // Phase 6B: disable cuFFT auto-allocation and share one max-sized work
-    // area across the three constraint plans (sequential on one stream, so
-    // their lifetimes never overlap). Replaces cuFFT's three per-plan auto
+    // area across the two constraint plans (sequential on one stream, so
+    // their lifetimes never overlap). Replaces cuFFT's two per-plan auto
     // allocations (~0.5-1.4 MB each for the W7-X shape) with one buffer.
     {
-        size_t wda = 0, wza = 0, wrz = 0;
+        size_t wda = 0, wza = 0;
         cumes::check_cufft(cufftSetAutoAllocation(cw.plan_d2z_da, 0), "cufft noauto d2z_da");
         cumes::check_cufft(cufftSetAutoAllocation(cw.plan_z2d_da, 0), "cufft noauto z2d_da");
-        cumes::check_cufft(cufftSetAutoAllocation(cw.plan_z2d_rz, 0), "cufft noauto z2d_rz");
         cumes::check_cufft(cufftGetSize(cw.plan_d2z_da, &wda), "cufftGetSize d2z_da");
         cumes::check_cufft(cufftGetSize(cw.plan_z2d_da, &wza), "cufftGetSize z2d_da");
-        cumes::check_cufft(cufftGetSize(cw.plan_z2d_rz, &wrz), "cufftGetSize z2d_rz");
         cw.cufft_work_bytes = (wda > wza) ? wda : wza;
-        cw.cufft_work_bytes = (cw.cufft_work_bytes > wrz) ? cw.cufft_work_bytes : wrz;
         if (cw.cufft_work_bytes > 0) {
             cumes::check_cuda(cudaMalloc(&cw.d_cufft_work, cw.cufft_work_bytes),
                               "cufft work c");
@@ -157,8 +141,6 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
                                "cufft workarea d2z_da");
             cumes::check_cufft(cufftSetWorkArea(cw.plan_z2d_da, cw.d_cufft_work),
                                "cufft workarea z2d_da");
-            cumes::check_cufft(cufftSetWorkArea(cw.plan_z2d_rz, cw.d_cufft_work),
-                               "cufft workarea z2d_rz");
         }
     }
 
@@ -177,120 +159,11 @@ void constraintFree(ConstraintWorkspace<T>& cw) {
         cudaFree(cw.d_frcon_e); cudaFree(cw.d_frcon_o);
         cudaFree(cw.d_fzcon_e); cudaFree(cw.d_fzcon_o);
         cudaFree(cw.d_zeta_real_c); cudaFree(cw.d_zeta_spectra_c);
-        cudaFree(cw.d_zeta_real_rz); cudaFree(cw.d_zeta_spectra_rz);
     }
     cudaFreeHost(cw.h_faccon);
     cufftDestroy(cw.plan_d2z_da); cufftDestroy(cw.plan_z2d_da);
-    cufftDestroy(cw.plan_z2d_rz);
     if (cw.d_cufft_work) cudaFree(cw.d_cufft_work);
     cw = ConstraintWorkspace<T>{};
-}
-
-// ---------------------------------------------------------------------------
-// vmecpp dft_FourierToReal_2d_symm's rCon/zCon: the xmpq-weighted real-space
-// combination used by the spectral-condensation constraint.
-//   rCon = sum_m xmpq[m] * sqrt(s)^{parity} * rmncc[m] * cos(m*theta)
-//   zCon = sum_m xmpq[m] * sqrt(s)^{parity} * zmnsc[m] * sin(m*theta)
-// with xmpq[m] = m*(m-1): the m=0 and m=1 contributions vanish (the m=1
-// constraint), so rCon measures the deviation of the m>=2 content from the
-// LCFS-extrapolated profile rCon0.
-// ---------------------------------------------------------------------------
-// rCon/zCon in the 3D folded product basis (vmecpp's rCon/zCon in
-// dft_FourierToReal_3d_symm): the xmpq-weighted real-space combination
-//   rCon = Σ xmpq[m]*sqrt(s)^{odd}*(rmncc*cos(mθ)cos(nζ) + rmnss*sin(mθ)sin(nζ))
-//   zCon = Σ xmpq[m]*sqrt(s)^{odd}*(zmnsc*sin(mθ)cos(nζ) + zmncs*cos(mθ)sin(nζ))
-// with xmpq[m] = m*(m-1): the m=0 and m=1 contributions vanish (the m=1
-// constraint), so rCon measures the deviation of the m>=2 content from the
-// LCFS-extrapolated profile rCon0.
-// rCon/zCon via the cuFFT machinery: the xmpq-weighted real-space combination
-// used by the spectral-condensation constraint.
-//   rCon = Σ xmpq[m]*(rmncc*cos(mθ)cos(nζ) + rmnss*sin(mθ)sin(nζ))
-//   zCon = Σ xmpq[m]*(zmnsc*sin(mθ)cos(nζ) + zmncs*cos(mθ)sin(nζ))
-// with xmpq[m] = m*(m-1): the m=0,1 contributions vanish (the m=1
-// constraint), so rCon measures the deviation of the m>=2 content from the
-// LCFS-extrapolated profile rCon0.
-// Odd-m: NO extra sqrt(s) factor. vmecpp's con_factor = xmpq*sqrtSF applies
-// to its PHYSICAL state; cuMES's state carries the 1/scalxc decomposition
-// for odd m and sqrtSF*scalxc = 1, so the factor is exactly 1.0.
-// (FIXED 2026-08-02: the old sqrtS_F factor made odd-m rCon too small by
-// 1/scalxc, ~sqrt(s).)
-// The xmpq weighting is folded into the pack (a per-mode scalar that
-// commutes with the transform); only the value slots 0/1/4/5 are used.
-template <typename T>
-__global__ void rzConPackKernel(
-    cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
-    const int* __restrict__ xm, const int* __restrict__ xn,
-    int ns, int mpol, int ntor, int nfp, int nz2,
-    typename FftTraits<T>::Complex* __restrict__ spectra)
-{
-    using Complex = typename FftTraits<T>::Complex;
-    int t = blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= ns * mpol * (ntor + 1)) return;
-    int j = t % ns, mode = t / ns;
-    int m = xm[mode], n = xn[mode];
-    T xmpq = T(m) * T(m - 1);
-    if (xmpq == T(0.0)) return;   // m=0,1 vanish; the rest stays zero (memset)
-    T half  = (n == 0) ? T(1.0) : T(0.5);
-    T shalf = (n == 0) ? T(0.0) : T(0.5);
-    T rc = xmpq * st(cumes::SpectralComponent::Rcc, mode, j);
-    T rs = xmpq * st(cumes::SpectralComponent::Rss, mode, j);
-    T zs = xmpq * st(cumes::SpectralComponent::Zsc, mode, j);
-    T zc = xmpq * st(cumes::SpectralComponent::Zcs, mode, j);
-    // Compact layout (value slots only): 0 -> full slot 0, 1 -> 1, 2 -> 4,
-    // 3 -> 5. Same m*ns+j element order as the full layout.
-    size_t step = (size_t)mpol * ns * nz2;
-    Complex* slot = spectra + ((size_t)m * ns + j) * nz2 + n;
-    slot[0 * step] = Complex{rc * half, T(0.0)};
-    slot[1 * step] = Complex{T(0.0), -rs * shalf};
-    slot[2 * step] = Complex{zs * half, T(0.0)};
-    slot[3 * step] = Complex{T(0.0), -zc * shalf};
-}
-
-// rCon/zCon poloidal accumulation: the plain reconstruction of the value
-// slots over all m (no parity split, no maxsc — rCon/zCon are full
-// real-space fields, unlike the e/o-split inverse-DFT outputs).
-template <typename T>
-__global__ void rzConAccumulateKernel(
-    const T* __restrict__ zeta_real,
-    const T* __restrict__ cos_th, const T* __restrict__ sin_th,
-    int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    T* __restrict__ rCon, T* __restrict__ zCon, int kTile)
-{
-    int j = blockIdx.x;
-    // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
-    // rCon/zCon stores at idx = j*nZnT + k*ntheta + l then vary l fastest
-    // and coalesce. The ζ direction is TILED (blockIdx.y selects the
-    // k-tile) so the launch block stays bounded for larger grids; every
-    // (k, l) output point is independent, so the arithmetic is unchanged.
-    int k0 = blockIdx.y * kTile;
-    int k = threadIdx.y + k0;
-    int l1 = threadIdx.x;
-    int nthreads = blockDim.x * blockDim.y;
-    T* sh = static_cast<T*>(dynSharedBase());   // [4][mpol][kTile] (compact slots 0,1,2,3)
-    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * kTile; i += nthreads) {
-        int s = i / (mpol * kTile), rem = i - s * mpol * kTile;
-        int m = rem / kTile, kk = rem % kTile;
-        int kk_abs = k0 + kk;
-        sh[i] = (kk_abs < nzeta) ? zeta_real[(((size_t)s * mpol + m) * ns + j) * nzeta + kk_abs]
-                                 : T(0.0);  // tail tile: zeros (never used)
-    }
-    __syncthreads();
-    if (k >= nzeta) return;  // tail tile past the grid
-    size_t mstride = (size_t)mpol * kTile;
-    #pragma unroll
-    for (int pass = 0; pass < 2; ++pass) {
-        int l = l1 + pass * (ntheta / 2);
-        T r = T(0.0), z = T(0.0);
-        for (int m = 0; m < mpol; ++m) {
-            const T* sm = sh + m * kTile;
-            T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
-            r += sm[0 * mstride + (k - k0)] * cosm + sm[1 * mstride + (k - k0)] * sinm;
-            z += sm[2 * mstride + (k - k0)] * sinm + sm[3 * mstride + (k - k0)] * cosm;
-        }
-        int idx = j * nZnT + k * ntheta + l;
-        rCon[idx] = r;
-        zCon[idx] = z;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -641,41 +514,6 @@ __global__ void computeTconKernel(
 template <typename T>
 __global__ void tconLcfsHalfKernel(T* __restrict__ tcon, int ns) {
     if (ns > 1) tcon[ns - 1] = T(0.5) * tcon[ns - 2];
-}
-
-// ---------------------------------------------------------------------------
-// Compute the xmpq-weighted real-space combination rCon/zCon from the
-// current spectral state (vmecpp's rCon/zCon in dft_FourierToReal_2d_symm).
-// Call every iteration before the constraint force is assembled.
-// ---------------------------------------------------------------------------
-template <typename T>
-void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
-                            cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
-                            ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
-                            cudaStream_t stream) {
-    using Complex = typename FftTraits<T>::Complex;
-    (void)d_sqrtS_F;   // the odd-m factor is exactly 1.0 (see rzConPackKernel)
-    // xmpq-weighted inverse transform on the compact value-slot batch:
-    // pack slots 0/1/4/5 (compact 0..3), Z2D, accumulate rCon/zCon (the
-    // poloidal sum over all m with the raw cos/sin tables). The memset
-    // zeros the m=0,1 elements (xmpq == 0) and the unused n > ntor bins.
-    cumes::check_cuda(cudaMemsetAsync(cw.d_zeta_spectra_rz, 0,
-        (size_t)4 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(Complex), stream), "rzcon zero");
-    int total = p.ns * p.mnmax;
-    rzConPackKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
-        st, fp.basis.d_xm, fp.basis.d_xn,
-        p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, cw.d_zeta_spectra_rz);
-    cumes::check_cuda(cudaGetLastError(), "rzcon pack");
-    cumes::check_cufft(FftTraits<T>::execInverse(cw.plan_z2d_rz, cw.d_zeta_spectra_rz, cw.d_zeta_real_rz), "rzcon z2d");
-    int kTile = computeKTile(p.ntheta / 2, p.nzeta);
-    int nKTiles = (p.nzeta + kTile - 1) / kTile;
-    dim3 blk(p.ntheta / 2, kTile);
-    dim3 grd(p.ns, nKTiles);
-    rzConAccumulateKernel<T><<<grd, blk, 4 * p.mpol * kTile * sizeof(T), stream>>>(
-        cw.d_zeta_real_rz, fp.d_cos_th, fp.d_sin_th,
-        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT,
-        cw.d_rCon, cw.d_zCon, kTile);
-    cumes::check_cuda(cudaGetLastError(), "rzcon acc");
 }
 
 // ---------------------------------------------------------------------------

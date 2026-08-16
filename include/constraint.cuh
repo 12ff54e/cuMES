@@ -47,22 +47,14 @@ struct ConstraintWorkspace {
     typename FftTraits<T>::Complex* d_zeta_spectra_c; // [2*(mpol-2)*(ns-1) * nz2]
     cufftHandle plan_d2z_da, plan_z2d_da;
 
-    // Compact rCon/zCon round trip: only the value slots 0/1/4/5 of the 12
-    // participate — 4*mpol*ns batch elements instead of 12*mpol*ns. Element
-    // order: ((slot*mpol + m)*ns + j), then nzeta (real) / nz2 (spectra)
-    // contiguous; slot = 0,1,2,3 maps to the full slots 0,1,4,5.
-    T* d_zeta_real_rz;     // [4*mpol*ns * nzeta]
-    typename FftTraits<T>::Complex* d_zeta_spectra_rz; // [4*mpol*ns * nz2]
-    cufftHandle plan_z2d_rz;
-
     // true when the device arrays above are subspans of a shared DeviceArena
     // (constraintFree then frees only the pinned host faccon + cuFFT plans).
     bool arena_backed = false;
 
-    // Phase 6B: one shared cuFFT work area for the three constraint plans
-    // (d2z_da/z2d_da/z2d_rz), with auto-allocation disabled. Their transforms
+    // Phase 6B: one shared cuFFT work area for the two constraint plans
+    // (d2z_da/z2d_da), with auto-allocation disabled. Their transforms
     // are sequential on one stream, so a single max-sized buffer replaces
-    // cuFFT's three auto-allocated per-plan areas. Owned here, freed in
+    // cuFFT's two auto-allocated per-plan areas. Owned here, freed in
     // constraintFree after the plans.
     void* d_cufft_work = nullptr;
     size_t cufft_work_bytes = 0;
@@ -73,15 +65,6 @@ ConstraintWorkspace<T> constraintCreate(const GridParams<T>& p,
                                         cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void constraintFree(ConstraintWorkspace<T>& cw);
-
-// Compute the xmpq-weighted real-space combination rCon/zCon from the
-// spectral state (vmecpp's rCon/zCon in dft_FourierToReal_2d_symm).
-// Call every iteration before the constraint force is assembled.
-template <typename T>
-void constraintRzConCompute(const GridParams<T>& p, const FourierPlan<T>& fp,
-                            cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
-                            ConstraintWorkspace<T>& cw, const T* d_sqrtS_F,
-                            cudaStream_t stream = 0);
 
 // De-alias bandpass (vmecpp deAliasConstraintForce): gConEff -> gCon via the
 // compact cuFFT round trip (θ-reduce → D2Z → scale → Z2D → poloidal

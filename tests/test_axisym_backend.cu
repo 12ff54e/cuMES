@@ -216,8 +216,10 @@ static void testRzCon(GridParams<T>& p, FourierPlan<T>& fp,
                       cumes::AxisymmetricOperator<T>& op) {
     printf("  constraint rzCon (rCon/zCon) ...\n");
     const int n = p.ns * p.nZnT;
-    constraintRzConCompute(p, fp, storage.physical_const(), cw,
-                           static_cast<const T*>(nullptr), 0);
+    // rCon/zCon reference is the fused inverse DFT (the production path); the
+    // axisymmetric enqueue_rzcon is Class B ULP-equivalent to it.
+    inverseDFTFused(fp, storage.physical_const(), p, /*do_combine=*/false,
+                    cw.d_rCon, cw.d_zCon, 0);
     T *d_ax_r = nullptr, *d_ax_z = nullptr;
     cc(cudaMalloc(&d_ax_r, (size_t)n * sizeof(T)), "ax rcon");
     cc(cudaMalloc(&d_ax_z, (size_t)n * sizeof(T)), "ax zcon");

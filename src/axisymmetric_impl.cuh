@@ -151,8 +151,8 @@ __global__ void forwardKernel(
 
 // --- constraint: xmpq-weighted rCon/zCon ----------------------------------
 // rCon = Σ m(m-1)·rmncc·cos(mθ), zCon = Σ m(m-1)·zmnsc·sin(mθ) — a full
-// real-space field (no parity split, no scalxc), matching rzConAccumulateKernel
-// on the n=0 compact pack (slots 0/2 survive, 1/3 are zero).
+// real-space field (no parity split, no scalxc), matching the fused inverse
+// DFT's rCon/zCon accumulation on the n=0 compact pack (slots 0/2 survive).
 template <class T>
 __global__ void rzconKernel(
     SpectralView<const T, PhysicalStateDomain> coeff, int ns, int mpol,

@@ -4,7 +4,7 @@
 // The constraint operator owns its reference fields, bandpass metadata, and
 // multiplier; it never borrows a raw hidden Fourier pointer. Its explicit inputs
 // are the tcon0 scale, the reset cadence, and a versioned reference. The legacy
-// constraintRzConCompute/constraintCompute are the reference implementation.
+// constraintCompute is the reference implementation.
 #pragma once
 
 #include <cstdint>

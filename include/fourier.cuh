@@ -99,14 +99,15 @@ void inverseDFT(const FourierPlan<T>& fp,
 // geometry arrays, accumulate the xmpq = m(m-1)-weighted R/Z sums into `rCon`
 // and `zCon` at the same time as the main inverse poloidal accumulation. This
 // eliminates the constraint's duplicate pack + zeta inverse + accumulation
-// (constraintRzConCompute's rzCon path), which is a separate xmpq-weighted
-// inverse transform over the compact 4-slot batch.
+// (a separate xmpq-weighted inverse transform over the compact 4-slot batch,
+// retired in Phase 10).
 //
 // `rCon`/`zCon` are full real-space fields [ns * nZnT] (no parity split, no
 // scalxc), matching the ConstraintWorkspace d_rCon/d_zCon layout. `rCon` is
 // written by the R-slot launch, `zCon` by the Z-slot launch; either may be
-// null to skip that output. Class B vs constraintRzConCompute (the xmpq weight
-// moves across the reconstruction, changing summation order at the ULP level).
+// null to skip that output. Class B vs the retired reference path (the xmpq
+// weight moves across the reconstruction, changing summation order at the ULP
+// level).
 template <typename T>
 void inverseDFTFused(const FourierPlan<T>& fp,
                      cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,

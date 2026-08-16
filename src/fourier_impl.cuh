@@ -337,7 +337,7 @@ __global__ void inverseAccumulateKernel(
     // computed by the same arithmetic as the untiled kernel (bit-identical).
     // FuseRzCon (blueprint §8.4) additionally accumulates the xmpq = m(m-1)
     // weighted R/Z sums into rCon/zCon (full fields, no parity split, no
-    // scalxc) — the same arithmetic constraintRzConCompute performs as a
+    // scalxc) — the arithmetic the retired reference path performed as a
     // separate xmpq-weighted inverse transform, moved into the main accumulator
     // and gated at compile time so the FuseRzCon=false path is bit-identical.
     int j = blockIdx.x;
@@ -380,8 +380,8 @@ __global__ void inverseAccumulateKernel(
             T v2 = signV * fac * (c2 * t0 + c3 * t1);
             if constexpr (FuseRzCon) {
                 // rCon from the R slots (c0=Rcc cos, c1=Rss sin), zCon from
-                // the Z slots (c0=Zsc sin, c1=Zcs cos) — no fac/maxsc, matching
-                // rzConAccumulateKernel's full-field reconstruction.
+                // the Z slots (c0=Zsc sin, c1=Zcs cos) — no fac/maxsc, the
+                // full-field reconstruction.
                 T xmpq = T(m) * T(m - 1);
                 rcon += xmpq * (c0 * cosm + c1 * sinm);
                 zcon += xmpq * (c0 * sinm + c1 * cosm);
