@@ -1594,6 +1594,17 @@ Structured telemetry is compared directly. Do not parse human `printf` output to
 
 ### 10.5 Sanitizers and static checks
 
+**Status (2026-08-16): the memcheck matrix was extended.** The `sanitizer`
+preset now registers racecheck + synccheck variants of the kernel tests
+(`CUMES_ENABLE_EXTRA_SANITIZER_TOOLS`, RUN_SERIAL in CTest — racecheck
+instrumentation exhausts the GPU under parallel runs) and builds dedicated
+ASan+UBSan twins of the host-only libraries and their tests
+(`CUMES_HOST_SANITIZERS`; the ASan runtime must be first in each executable's
+library list, so the sanitized libs are `_asan` copies consumed only by
+`asan_test_*` executables — never propagated into CUDA targets). The
+event-DAG stress tests, Nsight audit, and formatting/static-analysis jobs
+remain unbuilt (no CI exists in this repository).
+
 CI jobs:
 
 - host AddressSanitizer and UndefinedBehaviorSanitizer for config, controller, and I/O;

@@ -27,6 +27,12 @@ cmake --build build -j
 # run tests (35 registered via CTest, incl. compute-sanitizer memcheck entries)
 ctest --test-dir build --output-on-failure
 
+# full sanitizer matrix (dedicated preset): memcheck/racecheck/synccheck
+# compute-sanitizer variants of the kernel tests + host-only targets built
+# with ASan+UBSan. Racecheck is slow; the variants are RUN_SERIAL in CTest.
+cmake --preset sanitizer && cmake --build build-sanitize -j
+ctest --test-dir build-sanitize
+
 # single-precision build (all computation templated on T; Real = float)
 cmake -B build-float -G Ninja -DCUMES_USE_FLOAT=ON
 cmake --build build-float -j
