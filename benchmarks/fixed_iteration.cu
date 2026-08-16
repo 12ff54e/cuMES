@@ -205,7 +205,7 @@ int main(int argc, char** argv) {
     cudaEventCreate(&ev1);
     cudaEventRecord(ev0, stream.get());
     double w0 = now_us();
-    SolverResult<Real> result = solverRun<Real>(storage, p, profiles.workspace(),
+    SolverResult<Real> result = solverRun<Real>(storage, p, profiles,
                                                 transform, rs, geometry, &arena, stream.get(),
                                                 &bench, axisym.get());
     double w1 = now_us();

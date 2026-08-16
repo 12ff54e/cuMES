@@ -109,7 +109,7 @@ class StageSolver {
         std::unique_ptr<AxisymmetricOperator<T>> axisym;
         if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
-        SolverResult<T> result = solverRun<T>(state, p, profiles.workspace(),
+        SolverResult<T> result = solverRun<T>(state, p, profiles,
                                               transform, rs, geometry, &arena, stream,
                                               bench, axisym.get());
         realSpaceFree(rs);

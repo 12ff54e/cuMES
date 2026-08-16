@@ -13,6 +13,7 @@ struct SolverBench;
 template <typename T> class SpectralOperator;
 template <typename T> class GeometryOperator;
 template <typename T> class ToroidalFftOperator;
+template <typename T> class Profiles;
 template <typename T> struct RealSpaceStorage;
 }
 
@@ -32,16 +33,19 @@ struct SolverResult {
 // cudaMalloc). nullptr keeps the legacy per-array allocation path.
 //
 // `transform` is the generic ToroidalFft operator — always present: the solver
-// reads its FourierPlan for the mode tables (d_xm/d_xn) and binds the cuFFT
-// plans to the compute stream. `op`, when non-null, is the selected transform
-// backend the solver drives (a `SpectralOperator<T>*`); the solver has no
-// `axisym_active` branch — inverse/forward/de-alias all go through `op`. When
-// `op` is null it defaults to `&transform` (the generic backend). The two
-// backends are Class B ULP-equivalent (test_axisym_backend); selecting the
+// reads its mode tables (xm()/xn(), the resolution-scoped DeviceModeTable) and
+// binds the cuFFT plans to the compute stream; the FourierPlan itself is sealed
+// behind the operator's dump-only accessors. `profiles` carries the radial
+// profiles as typed `RadialProfileViews` (the solver never reads the raw
+// RadialProfiles `d_*` pointers in the hot loop). `op`, when non-null, is the
+// selected transform backend the solver drives (a `SpectralOperator<T>*`); the
+// solver has no `axisym_active` branch — inverse/forward/de-alias all go through
+// `op`. When `op` is null it defaults to `&transform` (the generic backend). The
+// two backends are Class B ULP-equivalent (test_axisym_backend); selecting the
 // axisymmetric backend for ntor=0/nzeta=1 is a trajectory re-freeze.
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
-                          const RadialProfiles<T>& rp,
+                          const cumes::Profiles<T>& profiles,
                           cumes::ToroidalFftOperator<T>& transform,
                           cumes::RealSpaceStorage<T>& rs,
                           cumes::GeometryOperator<T>& geometry,

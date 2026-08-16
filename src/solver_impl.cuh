@@ -33,6 +33,7 @@
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/profiles.hpp"
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes/solver/pass_record.hpp"
 #include "cumes/solver/solver_bench.hpp"
@@ -119,11 +120,12 @@ __global__ void forceNormReduceKernel(
 template <typename T>
 static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
                               const int* xm, const int* xn, const GridParams<T>& p,
-                              const RadialProfiles<T>& rp, const MetricWorkspace<T>& mw,
+                              const cumes::RadialProfileViews<T>& rpv,
+                              const MetricWorkspace<T>& mw,
                               T* d_psum, T* d_out, cudaStream_t stream) {
-    computeForceNormPartials(p, mw, rp.d_dVds_H, d_psum, stream);
+    computeForceNormPartials(p, mw, rpv.dVds_H, d_psum, stream);
     { dim3 b1(256), g1(1);
-      forceNormReduceKernel<T><<<g1, b1, 0, stream>>>(d_psum, rp.d_dVds_H, rp.d_pres_H,
+      forceNormReduceKernel<T><<<g1, b1, 0, stream>>>(d_psum, rpv.dVds_H, rpv.pres_H,
                                                        p.ns - 1, d_out); }
     { dim3 b2(256), g2(1);
       rzNormKernel<T><<<g2, b2, 0, stream>>>(st, xm, xn,
@@ -136,10 +138,10 @@ static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateD
 // into fNormRZ/fNormL/fNorm1, and dump the force-norm record.
 template <typename T>
 static void finalizeForceNorms(const T* hc, const GridParams<T>& p,
-                               const RadialProfiles<T>& rp, int iter2,
+                               T delta_s, int iter2,
                                T& fNormRZ, T& fNormL, T& fNorm1) {
     T sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3], vol = hc[4], h_rz = hc[5];
-    T deltaS = rp.delta_s;
+    T deltaS = delta_s;
     T eMag = fabs(sMag) * deltaS;   // vmecpp: fabs(localMagneticEnergy)*deltaS
     eTherm *= deltaS;
     vol *= deltaS;
@@ -489,7 +491,7 @@ static void dumpDeviceArray(const char* filename, const T* d_data, size_t nelem)
 
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T>& p,
-                          const RadialProfiles<T>& rp,
+                          const cumes::Profiles<T>& profiles,
                           cumes::ToroidalFftOperator<T>& transform,
                           cumes::RealSpaceStorage<T>& rs,
                           cumes::GeometryOperator<T>& geometry, cumes::DeviceArena* arena,
@@ -504,6 +506,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // (The FourierPlan is sealed behind the ToroidalFftOperator's dump-only
     // accessors — see enqueue_inverse_dump/combine_parity.)
     const MetricWorkspace<T>& mw = geometry.workspace();
+    // Typed radial-profile view bundle (hot-loop reads) + the workspace alias
+    // (dump-only reads only — the hot loop consumes rpv, not rp.d_*).
+    const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
+    const RadialProfiles<T>& rp = profiles.workspace();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
     cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
     // Combined control record (Phase 6A one-fence): [0..3] oriented-Jacobian
@@ -560,8 +566,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         force_views.crmn_e = forc(rs.d_crmn_e); force_views.crmn_o = forc(rs.d_crmn_o);
         force_views.czmn_e = forc(rs.d_czmn_e); force_views.czmn_o = forc(rs.d_czmn_o);
 
-        conforce_views.frcon_e = forc(cw.d_frcon_e); conforce_views.frcon_o = forc(cw.d_frcon_o);
-        conforce_views.fzcon_e = forc(cw.d_fzcon_e); conforce_views.fzcon_o = forc(cw.d_fzcon_o);
+        conforce_views = constraint.constraint_force_views(p);
     }
 
     // Bind every cuFFT plan to the explicit compute stream so the batched
@@ -778,8 +783,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // the stream before this returns.
         transform_op->enqueue_inverse(
             storage.physical_const(), geom_views,
-            cumes::RealFieldView<T>(cw.d_rCon, p.ns, p.ntheta, p.nzeta),
-            cumes::RealFieldView<T>(cw.d_zCon, p.ns, p.ntheta, p.nzeta), stream);
+            constraint.rcon_view(p), constraint.zcon_view(p), stream);
         cudaEventRecord(ev1_inv, stream);
 
         if (iter == 0 && dumpEnabled()) {
@@ -894,7 +898,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // restart (iter2 == iter1), matching vmecpp's rzConIntoVolume
         // ("initialization/soft reset").
         if (controller.reset_constraint_reference()) {
-            constraint.reset_reference(p, rp.d_sqrtS_F, stream);
+            constraint.reset_reference(p, rpv.sqrtS_F, stream);
         }
 
         // Update the radial tridiagonal + lambda preconditioners BEFORE the
@@ -917,7 +921,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
             // of the force-norm partial sums into the combined control record
             // (finalized on the host after the single control fence).
             enqueueForceNorms(storage.physical_const(), transform.xm(),
-                              transform.xn(), p, rp, mw,
+                              transform.xn(), p, rpv, mw,
                               d_psum.data(), d_control.data() + 10, stream);
 
 #ifdef DUMP_CUMES_VERIFY
@@ -1042,7 +1046,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // Uses the current-iteration tcon (refreshed above when the
         // preconditioner was updated), matching vmecpp. The de-alias bandpass
         // is dispatched through the unified SpectralOperator interface.
-        constraint.enqueue(p, rs, pw, rp.d_sqrtS_F, precon_updated, transform_op,
+        constraint.enqueue(p, rs, pw, rpv.sqrtS_F, precon_updated, transform_op,
                            stream);
 
 #ifdef DUMP_CUMES_VERIFY
@@ -1084,7 +1088,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // m>0 entries, so the boundary stays rigid and only the lambda
         // force is present at the LCFS (free gauge, evolved by descent).
         { dim3 bs(256), gs((p.ns*p.mnmax+255)/256);
-          scalxcApplyKernel<T><<<gs,bs,0,stream>>>(residual_view, rp.d_sqrtS_F, transform.xm(),
+          scalxcApplyKernel<T><<<gs,bs,0,stream>>>(residual_view, rpv.sqrtS_F, transform.xm(),
                                           p.ns, p.mnmax,
                                           std::sqrt(T(1.0) / T(p.ns - 1)));
           cumes::check_cuda(cudaGetLastError(), "scalxc"); }
@@ -1255,7 +1259,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // record's force-norm scalars (reduced on device above). On non-refresh
         // passes the cached factors are reused.
         if (precon_updated) {
-            finalizeForceNorms(hc + 10, p, rp, iter2, fNormRZ, fNormL, fNorm1);
+            finalizeForceNorms(hc + 10, p, profiles.delta_s(), iter2, fNormRZ,
+                               fNormL, fNorm1);
         }
 
         // ---- Invariant residuals (vmecpp evalFResInvar) ----
@@ -1305,7 +1310,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // fResPrecd[2]·deltaS — NOTE: deltaS, not fNormL.
         T fsqr = hc[7] * plainPerEl * fNorm1;
         T fsqz = hc[8] * plainPerEl * fNorm1;
-        T fsql = hc[9] * plainPerEl * rp.delta_s;
+        T fsql = hc[9] * plainPerEl * profiles.delta_s();
         // ---- Damping + time-step control (vmecpp Evolve / VMEC_8_52) ----
         // 1/tau tracks the rate of decrease of fsq (log-ratio), capped at
         // 0.15/delt, averaged over a 10-iteration window; res0 is the running

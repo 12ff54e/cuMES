@@ -55,6 +55,27 @@ class ConstraintOperator {
 
   const ConstraintWorkspace<T>& workspace() const { return cw_; }
 
+  // ---- typed view accessors (blueprint §6.8) ------------------------------
+  // The solver consumes these instead of naming ConstraintWorkspace's raw
+  // `d_*` pointers. rCon/zCon are the xmpq-weighted reconstruction fields
+  // (produced by the fused inverse / axisym rzCon); the constraint-force views
+  // are the frcon/fzcon outputs folded into the forward DFT.
+  RealFieldView<T> rcon_view(const GridParams<T>& p) const {
+    return RealFieldView<T>(cw_.d_rCon, p.ns, p.ntheta, p.nzeta);
+  }
+  RealFieldView<T> zcon_view(const GridParams<T>& p) const {
+    return RealFieldView<T>(cw_.d_zCon, p.ns, p.ntheta, p.nzeta);
+  }
+  ConstraintForceViews<const T> constraint_force_views(const GridParams<T>& p) const {
+    auto f = [&](T* d) {
+      return RealFieldView<const T>(d, p.ns, p.ntheta, p.nzeta);
+    };
+    ConstraintForceViews<const T> v;
+    v.frcon_e = f(cw_.d_frcon_e); v.frcon_o = f(cw_.d_frcon_o);
+    v.fzcon_e = f(cw_.d_fzcon_e); v.fzcon_o = f(cw_.d_fzcon_o);
+    return v;
+  }
+
  private:
   ConstraintWorkspace<T> cw_;
   ConstraintState state_;

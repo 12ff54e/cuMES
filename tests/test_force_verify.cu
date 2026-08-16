@@ -20,6 +20,7 @@
 #include "profiles.cuh"
 #include "solver.cuh"
 #include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/profiles.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes_test_support.cuh"
@@ -94,7 +95,8 @@ int main() {
     delete[] h_rmnss; delete[] h_zmncs; delete[] h_lmncs;
 
     // ---- Profiles / plan / workspace ----
-    RadialProfiles<double> rp = profilesCreate(p, ip);
+    cumes::Profiles<double> profiles(p, ip, nullptr);
+    const RadialProfiles<double>& rp = profiles.workspace();
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate<double>(p);
     cumes::ToroidalFftOperator<double> transform(p, rs, mt, nullptr);
@@ -103,7 +105,7 @@ int main() {
     MetricWorkspace<double>& mw = geometry.workspace();
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
-    SolverResult<double> res = solverRun(storage, p, rp, transform, rs, geometry);
+    SolverResult<double> res = solverRun(storage, p, profiles, transform, rs, geometry);
     printf("solver: converged=%d iterations=%d fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
            res.converged, res.iterations, res.fsqr, res.fsqz, res.fsql);
     CHECK(res.converged, "converged equilibrium reached");
@@ -161,7 +163,7 @@ int main() {
     cudaFree(d_f_spec);
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
-    profilesFree(rp);  // fp/mw owned by ToroidalFftOperator/GeometryOperator (RAII)
+    // profiles/fp/mw owned by Profiles/ToroidalFftOperator/GeometryOperator (RAII)
     cumes::modeTableFree(mt);
     delete[] h_f;
 

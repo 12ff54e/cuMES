@@ -29,6 +29,21 @@ class Profiles {
 
   const RadialProfiles<T>& workspace() const { return rp_; }
 
+  // Typed radial-profile view bundle (the 11 half/full-grid arrays) — the
+  // solver consumes this instead of naming RadialProfiles' raw `d_*` pointers.
+  RadialProfileViews<T> profile_views() const {
+    RadialProfileViews<T> v;
+    v.iota_F = rp_.d_iota_F; v.phip_F = rp_.d_phip_F;
+    v.chi_F = rp_.d_chi_F; v.sqrtS_F = rp_.d_sqrtS_F;
+    v.iota_H = rp_.d_iota_H; v.pres_H = rp_.d_pres_H; v.phip_H = rp_.d_phip_H;
+    v.dVds_H = rp_.d_dVds_H; v.sqrtS_H = rp_.d_sqrtS_H;
+    v.curr_H = rp_.d_curr_H; v.chip_H = rp_.d_chip_H;
+    return v;
+  }
+
+  // The radial grid spacing (normalised flux coordinate; = 1/(ns-1)).
+  T delta_s() const { return rp_.delta_s; }
+
  private:
   RadialProfiles<T> rp_;
 };
