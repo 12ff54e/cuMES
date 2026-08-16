@@ -55,3 +55,14 @@ second launch. That dominates the occupancy gain.
   is unlikely to pay off and would need its own measured gate.
 - **Force-plus-projection fusion** (§8.10, high risk): avoid materializing the
   real force arrays; deferred for the same reason.
+
+## Status update (Phase 10)
+
+The split prototype was retired in Phase 10 (retire compatibility internals):
+`computeForcesSplit`, `rzForcesKernel`, `lambdaForcesKernel`, and
+`test_force_split.cu` were removed, since `computeForces` (the monolith) is the
+sole production path and is pinned by `test_force_reference.cu` (scalar CPU
+reference) plus the frozen Solovev/W7-X trajectories. The durable conclusion of
+this ADR — the force kernel is input-traffic-bound, so register-reduction
+strategies do not pay — remains, and this document is retained as the record of
+the measured negative result.
