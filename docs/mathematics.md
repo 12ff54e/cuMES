@@ -18,8 +18,8 @@ The redesign may change storage, scheduling, and kernel decomposition, but these
 Use normalized flux coordinate
 
 \[
-s*j = \frac{j}{n_s-1},\qquad
-s*{j+1/2} = \frac{j+1/2}{n_s-1},\qquad
+s_j = \frac{j}{n_s-1},\qquad
+s_{j+1/2} = \frac{j+1/2}{n_s-1},\qquad
 \Delta s = \frac{1}{n_s-1}.
 \]
 
@@ -44,14 +44,14 @@ The stellarator-symmetric product basis is
 
 \[
 \begin{aligned}
-R(s,\theta,\zeta) &= \sum*{m,n}
-\left[R^{cc}*{mn}(s)\cos(m\theta)\cos(n\zeta)
+R(s,\theta,\zeta) &= \sum_{m,n}
+\left[R^{cc}_{mn}(s)\cos(m\theta)\cos(n\zeta)
 +R^{ss}_{mn}(s)\sin(m\theta)\sin(n\zeta)\right],\\
 Z(s,\theta,\zeta) &= \sum_{m,n}
 \left[Z^{sc}_{mn}(s)\sin(m\theta)\cos(n\zeta)
 +Z^{cs}_{mn}(s)\cos(m\theta)\sin(n\zeta)\right],\\
-\lambda(s,\theta,\zeta) &= \sum*{m,n}
-\left[L^{sc}*{mn}(s)\sin(m\theta)\cos(n\zeta)
+\lambda(s,\theta,\zeta) &= \sum_{m,n}
+\left[L^{sc}_{mn}(s)\sin(m\theta)\cos(n\zeta)
 +L^{cs}\_{mn}(s)\cos(m\theta)\sin(n\zeta)\right].
 \end{aligned}
 \]
@@ -80,16 +80,16 @@ That sign convention must be part of the field type or name.
 The state contains physical Fourier amplitudes. Forces and velocities use the VMEC-decomposed representation. A state update therefore reapplies the mode normalization
 
 \[
-S*{mn}=m*{\mathrm{scale}}n*{\mathrm{scale}},\qquad
-m*{\mathrm{scale}}=\begin{cases}1&m=0\\\sqrt2&m>0\end{cases},\quad
+S_{mn}=m_{\mathrm{scale}}n_{\mathrm{scale}},\qquad
+m_{\mathrm{scale}}=\begin{cases}1&m=0\\\sqrt2&m>0\end{cases},\quad
 n\_{\mathrm{scale}}=\begin{cases}1&n=0\\\sqrt2&n>0\end{cases}.
 \]
 
 The `m=1` `R^{ss}/Z^{cs}` pair uses a trajectory-sensitive mixed gauge. For decomposed forces, let the incoming unmixed pair be `(f_Rss,f_Zcs)`. The mixed pair is
 
 \[
-\tilde f*{Rss}=\frac{f*{Rss}+f*{Zcs}}{\sqrt2},\qquad
-\tilde f*{Zcs}=\frac{f*{Rss}-f*{Zcs}}{\sqrt2}.
+\tilde f_{Rss}=\frac{f_{Rss}+f_{Zcs}}{\sqrt2},\qquad
+\tilde f_{Zcs}=\frac{f_{Rss}-f_{Zcs}}{\sqrt2}.
 \]
 
 The second component is instead set to zero when
@@ -102,16 +102,16 @@ The second component is instead set to zero when
 The same mixed representation is used by velocity. Because physical state is stored in the undone gauge, its `m=1` increments are
 
 \[
-\Delta R^{ss}=\Delta t\,S*{mn}(v*{Rss}+v*{Zcs}),\qquad
-\Delta Z^{cs}=\Delta t\,S*{mn}(v*{Rss}-v*{Zcs}).
+\Delta R^{ss}=\Delta t\,S_{mn}(v_{Rss}+v_{Zcs}),\qquad
+\Delta Z^{cs}=\Delta t\,S_{mn}(v_{Rss}-v_{Zcs}).
 \]
 
 Before the radial solve, the odd-parity `m=1` pair is scaled with
 
 \[
-d=a*{R,d}+b*{R,d}+a*{Z,d}+b*{Z,d},\qquad
-\tilde f*{Rss}\leftarrow\frac{a*{R,d}+b*{R,d}}{d}\tilde f*{Rss},\qquad
-\tilde f*{Zcs}\leftarrow\frac{a*{Z,d}+b*{Z,d}}{d}\tilde f*{Zcs},
+d=a_{R,d}+b_{R,d}+a_{Z,d}+b_{Z,d},\qquad
+\tilde f_{Rss}\leftarrow\frac{a_{R,d}+b_{R,d}}{d}\tilde f_{Rss},\qquad
+\tilde f_{Zcs}\leftarrow\frac{a_{Z,d}+b_{Z,d}}{d}\tilde f_{Zcs},
 \]
 
 using a scale-aware check on `d`. These conversions must be named operations, not duplicated index arithmetic.
@@ -141,9 +141,9 @@ Physical state, regularized odd work values, decomposed residuals, decomposed ve
 The forward transform uses the reduced theta trapezoid, not a generic FFT round-trip normalization. For `nThetaRed = ntheta/2 + 1`, its weight is
 
 \[
-w*{k,m,n}=
-\frac{m*{\mathrm{scale}}n*{\mathrm{scale}}}
-{n*\zeta(n\_{\theta,\mathrm{red}}-1)}\,e_k,
+w_{k,m,n}=
+\frac{m_{\mathrm{scale}}n_{\mathrm{scale}}}
+{n_\zeta(n\_{\theta,\mathrm{red}}-1)}\,e_k,
 \qquad
 e_k=\begin{cases}\tfrac12&k\text{ is a theta endpoint}\\1&\text{otherwise.}\end{cases}
 \]
@@ -155,7 +155,7 @@ The exact endpoint, axis, LCFS, parity, and zero-mode rules should live in one `
 Let
 
 \[
-T(s)=s\sum*i a*{\Phi i}s^i.
+T(s)=s\sum_i a_{\Phi i}s^i.
 \]
 
 The normalized toroidal-flux coordinate used by the power-series profiles is
@@ -182,35 +182,35 @@ and for fixed-iota mode
 For fixed-iota mode,
 
 \[
-\iota(s)=\sum*i a*{\iota i}t(s)^i.
+\iota(s)=\sum_i a_{\iota i}t(s)^i.
 \]
 
 For pressure, apply the pedestal clamp before the toroidal-flux mapping:
 
 \[
-s*p=\min(s,s*{\mathrm{pres,ped}}),\qquad
+s_p=\min(s,s_{\mathrm{pres,ped}}),\qquad
 \widehat t_p=\min\left(|bloat\,\min(T(s_p),1)|,1\right).
 \]
 
 The current gamma-zero implementation stores pressure in magnetic units:
 
 \[
-p(s)=\mu*0\,p*{\mathrm{scale}}\sum*i a*{Mi}\widehat t_p^{i}.
+p(s)=\mu_0\,p_{\mathrm{scale}}\sum_i a_{Mi}\widehat t_p^{i}.
 \]
 
 For prescribed-current mode, define the integrated polynomial, its bloat-clamped radial profile, and the separately normalized edge value
 
 \[
-J*C(x)=\sum_i\frac{a*{Ci}}{i+1}x^{i+1},\qquad
-C*H(s)=J_C(\widehat t(s)),\qquad
-C*{edge}=J_C\left(\min(|bloat|,1)\right),
+J_C(x)=\sum_i\frac{a_{Ci}}{i+1}x^{i+1},\qquad
+C_H(s)=J_C(\widehat t(s)),\qquad
+C_{edge}=J_C\left(\min(|bloat|,1)\right),
 \]
 
 then normalize
 
 \[
-I*{tor}=\frac{\operatorname{signJ}\,\mu_0\,curtor}{2\pi C*{edge}},\qquad
-I*H(s)=I*{tor}C_H(s).
+I_{tor}=\frac{\operatorname{signJ}\,\mu_0\,curtor}{2\pi C_{edge}},\qquad
+I_H(s)=I_{tor}C_H(s).
 \]
 
 `C_edge` is intentionally independent of `T(1)`; replacing it by `C_H(1)` changes general non-unit toroidal-flux profiles.
@@ -218,8 +218,8 @@ I*H(s)=I*{tor}C_H(s).
 Its lambda normalization is
 
 \[
-L=\lambda*{\mathrm{scale}}=
-\sqrt{\Delta s\sum*{j+1/2}\Phi'(s\_{j+1/2})^2}.
+L=\lambda_{\mathrm{scale}}=
+\sqrt{\Delta s\sum_{j+1/2}\Phi'(s\_{j+1/2})^2}.
 \]
 
 `Phi'_H` in this sum is evaluated directly at `s_H`. By contrast, magnetic-field construction currently uses the full-grid average
@@ -239,19 +239,19 @@ The current full-grid parity helper uses `sqrt(s+1e-12)` at the axis while trans
 For an even/odd parity pair, the current staggered interpolation is
 
 \[
-q*H=\frac12\left[(q*{e,j}+q*{e,j+1})
-+\sqrt{s_H}(q*{o,j}+q\_{o,j+1})\right],
+q_H=\frac12\left[(q_{e,j}+q_{e,j+1})
++\sqrt{s_H}(q_{o,j}+q\_{o,j+1})\right],
 \]
 
 \[
-q*{s,H}=\frac{q*{e,j+1}-q*{e,j}
-+\sqrt{s_H}(q*{o,j+1}-q\_{o,j})}{\Delta s}.
+q_{s,H}=\frac{q_{e,j+1}-q_{e,j}
++\sqrt{s_H}(q_{o,j+1}-q\_{o,j})}{\Delta s}.
 \]
 
 The code forms
 
 \[
-\tau*1=R*{u,H}Z*{s,H}-R*{s,H}Z\_{u,H},\qquad
+\tau_1=R_{u,H}Z_{s,H}-R_{s,H}Z\_{u,H},\qquad
 \tau=\tau_1+\frac14\tau_2,\qquad
 \sqrt g=R_H\tau,
 \]
@@ -260,11 +260,11 @@ where, writing the two neighboring full surfaces as `in` and `out`,
 
 \[
 \begin{aligned}
-\tau*2={}&R*{u,o}^{out}Z*o^{out}+R*{u,o}^{in}Z*o^{in}
--Z*{u,o}^{out}R*o^{out}-Z*{u,o}^{in}R*o^{in}\\
+\tau_2={}&R_{u,o}^{out}Z_o^{out}+R_{u,o}^{in}Z_o^{in}
+-Z_{u,o}^{out}R_o^{out}-Z_{u,o}^{in}R_o^{in}\\
 &+\frac{1}{\sqrt{s_H}}\left(
-R*{u,e}^{out}Z*o^{out}+R*{u,e}^{in}Z*o^{in}
--Z*{u,e}^{out}R*o^{out}-Z*{u,e}^{in}R_o^{in}
+R_{u,e}^{out}Z_o^{out}+R_{u,e}^{in}Z_o^{in}
+-Z_{u,e}^{out}R_o^{out}-Z_{u,e}^{in}R_o^{in}
 \right).
 \end{aligned}
 \]
@@ -274,9 +274,9 @@ This parity correction must be transcribed into a named, unit-tested host/device
 The stored metric is covariant:
 
 \[
-g*{uu}=R_u^2+Z_u^2,\qquad
-g*{uv}=R*uR_v+Z_uZ_v,\qquad
-g*{vv}=R^2+R_v^2+Z_v^2,
+g_{uu}=R_u^2+Z_u^2,\qquad
+g_{uv}=R_uR_v+Z_uZ_v,\qquad
+g_{vv}=R^2+R_v^2+Z_v^2,
 \]
 
 with the current parity-staggered averaging applied to each term.
@@ -284,14 +284,14 @@ with the current parity-staggered averaging applied to each term.
 Validity uses the orientation-adjusted statistic
 
 \[
-J*{min}=\min*{H,\theta,\zeta}\left(\operatorname{signJ}\sqrt g\right),\qquad
-J*{scale}=\max*{H,\theta,\zeta}|\sqrt g|.
+J_{min}=\min_{H,\theta,\zeta}\left(\operatorname{signJ}\sqrt g\right),\qquad
+J_{scale}=\max_{H,\theta,\zeta}|\sqrt g|.
 \]
 
 A stage point set is valid only when the nonfinite count is zero and
 
 \[
-J*{min}>\kappa_J\,\epsilon_T\,J*{scale},
+J_{min}>\kappa_J\,\epsilon_T\,J_{scale},
 \]
 
 where `kappa_J` is a documented policy constant and the degenerate `J_scale=0` case is invalid. This definition avoids treating the normally negative raw Jacobian as a failure merely because of coordinate orientation.
@@ -301,15 +301,15 @@ where `kappa_J` is a documented policy constant and the degenerate `J_scale=0` c
 Using \(l_v=-\partial_v\lambda\),
 
 \[
-B^v=\frac{L\lambda*u+\Phi'*{F\to H}}{\sqrt g},\qquad
+B^v=\frac{L\lambda_u+\Phi'_{F\to H}}{\sqrt g},\qquad
 B^u=\frac{Ll_v+\chi'}{\sqrt g}.
 \]
 
 The covariant components and total pressure are
 
 \[
-B*u=g*{uu}B^u+g*{uv}B^v,\qquad
-B_v=g*{uv}B^u+g\_{vv}B^v,
+B_u=g_{uu}B^u+g_{uv}B^v,\qquad
+B_v=g_{uv}B^u+g\_{vv}B^v,
 \]
 
 \[
@@ -320,7 +320,7 @@ For prescribed-current mode, the half-grid closure is
 
 \[
 \chi'_H=
-\frac{I_H-\left\langle g_{uu}B^u*\lambda+g*{uv}B^v\right\rangle}
+\frac{I_H-\left\langle g_{uu}B^u_\lambda+g_{uv}B^v\right\rangle}
 {\left\langle g\_{uu}/\sqrt g\right\rangle},
 \qquad
 \iota_H=\frac{\chi'\_H}{\Phi'\_H}.
@@ -333,9 +333,9 @@ The `ncurr=0` and `ncurr=1` data flows should be separate policy paths so fixed 
 The weak-form force kernel builds the reusable half-grid fluxes
 
 \[
-Q=R*HP*{\mathrm{tot}},\qquad
-G*{uu}=\sqrt g(B^u)^2,\qquad
-G*{uv}=\sqrt g B^uB^v,\qquad
+Q=R_HP_{\mathrm{tot}},\qquad
+G_{uu}=\sqrt g(B^u)^2,\qquad
+G_{uv}=\sqrt g B^uB^v,\qquad
 G\_{vv}=\sqrt g(B^v)^2,
 \]
 
@@ -348,7 +348,7 @@ r_b=0.1(1-s),
 \]
 
 \[
-F*{\lambda,u}=-L\left[(1-r_b)\langle B_v\rangle+r_bB*{v,\mathrm{alt}}\right],
+F_{\lambda,u}=-L\left[(1-r_b)\langle B_v\rangle+r_bB_{v,\mathrm{alt}}\right],
 \qquad
 F\_{\lambda,v}=-L\langle B_u\rangle.
 \]
@@ -366,15 +366,15 @@ x\_{mpq}=m(m-1),
 and reconstruct
 
 \[
-R*{\mathrm{con}},Z*{\mathrm{con}}
-=\sum*{m,n}x*{mpq}\{R*{mn},Z*{mn}\}\,\mathrm{basis}\_{mn}.
+R_{\mathrm{con}},Z_{\mathrm{con}}
+=\sum_{m,n}x_{mpq}\{R_{mn},Z_{mn}\}\,\mathrm{basis}\_{mn}.
 \]
 
 With the LCFS-extrapolated reference fields `R_con,0`, `Z_con,0`,
 
 \[
-R*{\mathrm{con},0}(s)=s\,R*{\mathrm{con},\mathrm{LCFS}},\qquad
-Z*{\mathrm{con},0}(s)=s\,Z*{\mathrm{con},\mathrm{LCFS}},
+R_{\mathrm{con},0}(s)=s\,R_{\mathrm{con},\mathrm{LCFS}},\qquad
+Z_{\mathrm{con},0}(s)=s\,Z_{\mathrm{con},\mathrm{LCFS}},
 \]
 
 This reference is reset on the first pass and after every restart, i.e. when `iter2 == iter1`.
@@ -382,9 +382,9 @@ This reference is reset on the first pass and after every restart, i.e. when `it
 and therefore
 
 \[
-g*{\mathrm{eff}}=
-(R*{\mathrm{con}}-R*{\mathrm{con},0})R_u+
-(Z*{\mathrm{con}}-Z\_{\mathrm{con},0})Z_u.
+g_{\mathrm{eff}}=
+(R_{\mathrm{con}}-R_{\mathrm{con},0})R_u+
+(Z_{\mathrm{con}}-Z\_{\mathrm{con},0})Z_u.
 \]
 
 The bandpass covers `m=1,...,mpol-2`. The current per-mode scale is
@@ -405,9 +405,9 @@ M\_{tcon}=tcon0\,
 followed by the existing surface normalization
 
 \[
-tcon*j=\min\left(\frac{|a*{R,d,j}^{even}|}{\langle R*u^2\rangle_j},
-\frac{|a*{Z,d,j}^{even}|}{\langle Z*u^2\rangle_j}\right)
-M*{tcon}(32\Delta s)^2,
+tcon_j=\min\left(\frac{|a_{R,d,j}^{even}|}{\langle R_u^2\rangle_j},
+\frac{|a_{Z,d,j}^{even}|}{\langle Z_u^2\rangle_j}\right)
+M_{tcon}(32\Delta s)^2,
 \]
 
 with `tcon[j=0]=0` on the magnetic axis and the current LCFS half-weight. The overhaul should preserve this formula first, while replacing its exact-zero fallbacks with scale-aware validation.
@@ -421,13 +421,13 @@ D\_{mn}= -\left(A_d^{(p)}+m^2B_d^{(p)}+N^2C_d\right),
 \]
 
 \[
-U*{j,mn},L*{j,mn}= -\left(A_h^{(p)}+m^2B_h^{(p)}\right)
+U_{j,mn},L_{j,mn}= -\left(A_h^{(p)}+m^2B_h^{(p)}\right)
 \]
 
 It solves
 
 \[
-L*jx*{j-1}+D*jx_j+U_jx*{j+1}=f_j.
+L_jx_{j-1}+D_jx_j+U_jx_{j+1}=f_j.
 \]
 
 In current array names, `ar[j]` is `U_j`, the outer/super-diagonal multiplying `x[j+1]`, and `br[j]` is `L_j`, the inner/sub-diagonal multiplying `x[j-1]`. The target API uses `lower/diagonal/upper` names to prevent this historical naming trap.
@@ -445,15 +445,15 @@ and the R/Z solve covers `j_min,...,ns-2`; the LCFS row is excluded. For `m=1`, 
 The lambda factor is
 
 \[
-f*\lambda=N^2b*\lambda+2mN\operatorname{copysign}(d*\lambda,b*\lambda)+m^2c\_\lambda,
+f_\lambda=N^2b_\lambda+2mN\operatorname{copysign}(d_\lambda,b_\lambda)+m^2c\_\lambda,
 \]
 
 Here `copysign(d,b)=sign(b)|d|`; it is not `sign(b)*d` when `d<0`. Any proposed change to this expression must first establish the intended VMEC++ contract with a differential test.
 
 \[
-P*\lambda=
+P_\lambda=
 \frac{2}{4L^2}
-\frac{(\sqrt{s})^{\min(m^2/256,8)}}{f*\lambda}.
+\frac{(\sqrt{s})^{\min(m^2/256,8)}}{f_\lambda}.
 \]
 
 Every denominator must be checked relative to a norm of its local coefficients. A breakdown returns `NumericalStatus::SingularPreconditioner`; it must not be converted silently to a positive constant.
@@ -472,11 +472,11 @@ With reduced-grid trapezoidal weight `w`, define
 
 \[
 \begin{aligned}
-E*{mag}&=\left|\sum \sqrt g\,\frac{|B|^2}{2}w\right|\Delta s,\\
-E*{therm}&=\left(\sum*H p_H\frac{dV}{ds}\_H\right)\Delta s,\\
+E_{mag}&=\left|\sum \sqrt g\,\frac{|B|^2}{2}w\right|\Delta s,\\
+E_{therm}&=\left(\sum_H p_H\frac{dV}{ds}\_H\right)\Delta s,\\
 V&=\left(\sum_H\frac{dV}{ds}\_H\right)\Delta s,\\
-e&=\frac{\max(E*{mag},E*{therm})}{V},\\
-S*{RZ}&=\sum g\_{uu}R_H^2w,\\
+e&=\frac{\max(E_{mag},E_{therm})}{V},\\
+S_{RZ}&=\sum g\_{uu}R_H^2w,\\
 S_L&=\sum(B_u^2+B_v^2)w.
 \end{aligned}
 \]
@@ -484,9 +484,9 @@ S_L&=\sum(B_u^2+B_v^2)w.
 Then
 
 \[
-f*{norm,RZ}=\frac{1}{S*{RZ}e^2},\qquad
-f*{norm,L}=\frac{1}{S_L\,L^2},\qquad
-f*{norm,1}=\frac{1}{RZNorm}.
+f_{norm,RZ}=\frac{1}{S_{RZ}e^2},\qquad
+f_{norm,L}=\frac{1}{S_L\,L^2},\qquad
+f_{norm,1}=\frac{1}{RZNorm}.
 \]
 
 `RZNorm` is the squared decomposed R/Z state norm: divide physical coefficients by `S_mn`, exclude the `Rcc(0,0)` offset and stored `m>0` axis values, and use a factor `1/2` for the squared `m=1` `Rss/Zcs` pair because of its mixed representation. Every denominator above must pass a scale-aware positive check.
@@ -495,12 +495,12 @@ The invariant residuals are
 
 \[
 \begin{aligned}
-\mathrm{FSQR}&=\frac14 f*{\mathrm{norm,RZ}}
+\mathrm{FSQR}&=\frac14 f_{\mathrm{norm,RZ}}
 \sum[(F_R^{cc})^2+(F_R^{ss})^2],\\
-\mathrm{FSQZ}&=\frac14 f*{\mathrm{norm,RZ}}
+\mathrm{FSQZ}&=\frac14 f_{\mathrm{norm,RZ}}
 \sum[(F_Z^{sc})^2+(F_Z^{cs})^2],\\
-\mathrm{FSQL}&=f*{\mathrm{norm,L}}
-\sum[(F*\lambda^{sc})^2+(F\_\lambda^{cs})^2].
+\mathrm{FSQL}&=f_{\mathrm{norm,L}}
+\sum[(F_\lambda^{sc})^2+(F\_\lambda^{cs})^2].
 \end{aligned}
 \]
 
@@ -514,8 +514,8 @@ After preconditioning, define the controller scalar
 
 \[
 \begin{aligned}
-\mathrm{FSQR1}&=f*{norm,1}\sum[(P^{-1}F_R^{cc})^2+(P^{-1}F_R^{ss})^2],\\
-\mathrm{FSQZ1}&=f*{norm,1}\sum[(P^{-1}F_Z^{sc})^2+(P^{-1}F_Z^{cs})^2],\\
+\mathrm{FSQR1}&=f_{norm,1}\sum[(P^{-1}F_R^{cc})^2+(P^{-1}F_R^{ss})^2],\\
+\mathrm{FSQZ1}&=f_{norm,1}\sum[(P^{-1}F_Z^{sc})^2+(P^{-1}F_Z^{cs})^2],\\
 \mathrm{FSQL1}&=\Delta s\sum[(P^{-1}F_\lambda^{sc})^2+(P^{-1}F_\lambda^{cs})^2],\\
 f_k&=\mathrm{FSQR1}\_k+\mathrm{FSQZ1}\_k+\mathrm{FSQL1}\_k.
 \end{aligned}
@@ -524,8 +524,8 @@ f_k&=\mathrm{FSQR1}\_k+\mathrm{FSQZ1}\_k+\mathrm{FSQL1}\_k.
 The damping estimate is based on the residual log-ratio:
 
 \[
-\tau*k^{-1}=
-\frac{\min\left(\left|\log(f_k/f*{k-1})\right|,0.15\right)}{\Delta t}.
+\tau_k^{-1}=
+\frac{\min\left(\left|\log(f_k/f_{k-1})\right|,0.15\right)}{\Delta t}.
 \]
 
 The ten-entry history has exact restart/zero rules:
@@ -539,17 +539,17 @@ The ten-entry history has exact restart/zero rules:
 After the existing ten-sample average,
 
 \[
-d*\tau=\frac{\Delta t}{2}\overline{\tau^{-1}},\qquad
-b_1=1-d*\tau,\qquad
-f*{\mathrm{ac}}=\frac{1}{1+d*\tau}.
+d_\tau=\frac{\Delta t}{2}\overline{\tau^{-1}},\qquad
+b_1=1-d_\tau,\qquad
+f_{\mathrm{ac}}=\frac{1}{1+d_\tau}.
 \]
 
 The accelerated descent is
 
 \[
-v^{k+1}=f*{\mathrm{ac}}\left(b_1v^k+\Delta t\,P^{-1}F^k\right),
+v^{k+1}=f_{\mathrm{ac}}\left(b_1v^k+\Delta t\,P^{-1}F^k\right),
 \qquad
-x^{k+1}=x^k+\Delta t\,S*{mn}v^{k+1}.
+x^{k+1}=x^k+\Delta t\,S_{mn}v^{k+1}.
 \]
 
 For a finite pass that reaches time-step control, the exact application order is:
@@ -566,8 +566,8 @@ With `f_min` the running minimum of the preconditioned sum and `age=iter2-iter1`
 
 \[
 \begin{aligned}
-refresh&:\quad f*k\le f*{min}\ \land\ age>10,\\
-bad_jacobian&:\quad f*k>100f*{min}\ \land\ iter2>iter1,\\
+refresh&:\quad f_k\le f_{min}\ \land\ age>10,\\
+bad_jacobian&:\quad f_k>100f_{min}\ \land\ iter2>iter1,\\
 bad_progress&:\quad age>12\ \land\ iter2>50\ \land\
 (\mathrm{FSQR}+\mathrm{FSQZ})>10^{-2}.
 \end{aligned}
@@ -580,8 +580,8 @@ There is also a top-of-pass convergence-problem branch. If the accumulated bad-J
 \[
 \Delta t=
 \begin{cases}
-0.98\,\Delta t*{initial},&\text{post-increment counter}<50,\\
-0.96\,\Delta t*{initial},&\text{otherwise},
+0.98\,\Delta t_{initial},&\text{post-increment counter}<50,\\
+0.96\,\Delta t_{initial},&\text{otherwise},
 \end{cases}
 \]
 
@@ -592,7 +592,7 @@ resets the restart/log anchors, and continues without geometry, descent, or effe
 Odd modes are interpolated in the scaled coordinate
 
 \[
-x*c(s)=\frac{x*{\mathrm{physical}}(s)}
+x_c(s)=\frac{x_{\mathrm{physical}}(s)}
 {\max(\sqrt{s},\sqrt{\Delta s\_{\mathrm{old}}})}.
 \]
 
