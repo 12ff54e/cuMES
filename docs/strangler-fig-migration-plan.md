@@ -8,15 +8,29 @@ after the Phase 10 tail (axisymmetric wiring, schema v1).
 
 **Progress (2026-08-16):** all five owning operators are landed and wired into
 the solver — `Profiles`, `ToroidalFftOperator`, `GeometryOperator`,
-`Preconditioner`, `ConstraintOperator` (commits `87cec03`, `75dcc65`). Each owns
-its workspace (RadialProfiles / FourierPlan / MetricWorkspace / PreconWorkspace /
-ConstraintWorkspace) and `solverRun`/`StageSolver` now construct and drive the
-operators instead of the raw structs. Verified Class A bit-identical (Solovev
-`251→199→456` FSQR 9.583e-17, W7-X `1877→1617→2011` FSQR 9.778e-13, 35/35
-CTest). Remaining: the §4 step-1 `FourierPlan` split (transform scratch vs
-real-space storage — the linchpin), the stateless operators (force/residual/
-descent/prolongation), the `SpectralOperator` unification, and legacy-struct
-deletion.
+`Preconditioner`, `ConstraintOperator` (commits `87cec03`, `75dcc65`) — each
+owns its workspace (RadialProfiles / FourierPlan / MetricWorkspace /
+PreconWorkspace / ConstraintWorkspace) and `solverRun`/`StageSolver` construct
+and drive the operators instead of the raw structs. The §4 step-1 `FourierPlan`
+split landed (`a692200`: transform scratch vs stage-owned `RealSpaceStorage`).
+Then the `SpectralOperator` unification landed (`d03640f`): the interface grew
+rCon/zCon + `enqueue_dealias`, `ToroidalFftOperator` became a
+`SpectralOperator<T>` peer, the compact de-alias scratch moved into the
+FourierPlan (transform-owned), and `solverRun` drives a single
+`SpectralOperator<T>*` with no `axisym_active` branch. The four stateless
+operators landed (`3296ae1`): `ForceOperator`/`ResidualOperator`/
+`DescentOperator`/`Prolongation` as thin wrappers over `computeForces`/
+`computeResidualsKernel`/`descentStepKernel`/`interpolateState`. All verified
+Class A bit-identical (Solovev `251→199→456` FSQR 9.583e-17, W7-X
+`1877→1617→2011` FSQR 9.778e-13, 35/35 CTest, float build clean).
+
+Remaining: step 5 (base-geometry vs B/pressure split — Class B), step 12
+(`EquilibriumOperator` composition), and step 13 (legacy-struct deletion),
+gated on `solverRun` naming no legacy struct. Steps 5 and 12 are the blocking
+predecessors of step 13; `solverRun` still names `GridParams`,
+`RadialProfiles`, `MetricWorkspace`, `PreconWorkspace`, `ConstraintWorkspace`,
+and `FourierPlan` (mode tables + cuFFT stream binding), and no `DeviceParams<T>`
+replacement exists yet.
 
 The term "strangler fig" is from blueprint §1: wrap the current implementation
 behind tested operator interfaces and let the operators *replace* the legacy
