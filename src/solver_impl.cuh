@@ -27,8 +27,11 @@
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/numerics/accumulation.hpp"
+#include "cumes/numerics/descent_operator.hpp"
 #include "cumes/numerics/preconditioner.hpp"
+#include "cumes/numerics/residual_operator.hpp"
 #include "cumes/physics/constraint_operator.hpp"
+#include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes/solver/pass_record.hpp"
@@ -443,6 +446,34 @@ __global__ void descentStepKernel(
     T vlc=v(SpectralComponent::Lcs,m,j);vlc=fac*(b1*vlc+ delt*f_spec(SpectralComponent::Lcs,m,j));v(SpectralComponent::Lcs,m,j)=vlc;x(SpectralComponent::Lcs,m,j)+=delt*vlc*f;
 }
 
+// ---------------------------------------------------------------------------
+// Stateless operators (migration steps 8/10): thin wrappers over the solver's
+// kernels. The solver drives these instead of the raw kernel launches; the
+// launch configs are bit-identical.
+// ---------------------------------------------------------------------------
+template <typename T>
+void cumes::ResidualOperator<T>::enqueue(
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain> residual,
+    int ns, int mnmax, T* sq_out, cudaStream_t stream) const {
+    dim3 b3(256), g3(3);
+    computeResidualsKernel<T><<<g3, b3, 0, stream>>>(residual, ns, mnmax, sq_out);
+}
+
+template <typename T>
+void cumes::DescentOperator<T>::enqueue(
+    cumes::SpectralView<T, cumes::PhysicalStateDomain> state,
+    cumes::SpectralView<T, cumes::DecomposedVelocityDomain> velocity,
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain> residual,
+    const int* xm, const int* xn, int ns, int mnmax,
+    const cumes::DescentAction& action, cudaStream_t stream) const {
+    if (!action.perform_descent) return;
+    dim3 bd(256), gd((ns * mnmax + 255) / 256);
+    descentStepKernel<T><<<gd, bd, 0, stream>>>(
+        state, velocity, residual, xm, xn, ns, mnmax,
+        T(action.delta_t), T(action.damping_b1), T(action.damping_fac));
+    cumes::check_cuda(cudaGetLastError(), "descent");
+}
+
 #ifdef DUMP_CUMES_VERIFY
 // Master switch for the dump/debug machinery: off unless CUMES_DUMP=1.
 // All dump output routes through dumpEnsureDir/dumpDeviceArray, which no-op
@@ -523,6 +554,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     cumes::ConstraintOperator<T> constraint(p, arena);
     const PreconWorkspace<T>& pw = precon.workspace();
     const ConstraintWorkspace<T>& cw = constraint.workspace();
+    // Stateless operators (migration steps 6/8/10): thin wrappers over the
+    // force/residual/descent kernels the loop below drives.
+    cumes::ForceOperator<T> force_op;
+    cumes::ResidualOperator<T> residual_op;
+    cumes::DescentOperator<T> descent_op;
 
     // Unified transform backend (blueprint §8.5 / migration step 3): `op` is the
     // caller's selected `SpectralOperator<T>` — the axisymmetric direct-poloidal
@@ -973,7 +1009,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif  // DUMP_CUMES_VERIFY
         }
 
-        computeForces(rs, p, rp, mw, stream);
+        force_op.enqueue(rs, p, rp, mw, stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 2) {
@@ -1130,7 +1166,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
                             (size_t)6 * p.mnmax * p.ns);
         }
 #endif
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3,0,stream>>>(residual_view_const,p.ns,p.mnmax,d_control.data()+4); }
+        residual_op.enqueue(residual_view_const, p.ns, p.mnmax, d_control.data() + 4, stream);
 
         // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve
         { dim3 b1(256), g1((p.ns + 255) / 256);
@@ -1190,7 +1226,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 #endif
 
         // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
-        { dim3 b3(256),g3(3); computeResidualsKernel<T><<<g3,b3,0,stream>>>(residual_view_const,p.ns,p.mnmax,d_control.data()+7); }
+        residual_op.enqueue(residual_view_const, p.ns, p.mnmax, d_control.data() + 7, stream);
 
         // ---- ONE combined control fence (Phase 6A) ----
         // Jacobian stats + invariant + preconditioned residuals are one device
@@ -1329,12 +1365,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // lambda gauge modes by ~1e-2 (one step of their ~1e-2/pass drift) at
         // the pass-56/57 BAD_PROGRESS restore and splits the trajectory
         // (2791 vs 2953 iters; converged lambda gauge modes 1.4e-2 off).
-        { dim3 bd(256), gd((p.ns*p.mnmax+255)/256);
-          descentStepKernel<T><<<gd,bd,0,stream>>>(
-              state_view, velocity_view, residual_view_const,
-              fp.basis.d_xm, fp.basis.d_xn,
-              p.ns,p.mnmax,controller.delta_t(),decision.damping.b1,decision.damping.fac);
-          cumes::check_cuda(cudaGetLastError(),"descent"); }
+        cumes::DescentAction dact;
+        dact.perform_descent = true;
+        dact.delta_t = (double)controller.delta_t();
+        dact.damping_b1 = (double)decision.damping.b1;
+        dact.damping_fac = (double)decision.damping.fac;
+        descent_op.enqueue(state_view, velocity_view, residual_view_const,
+                           fp.basis.d_xm, fp.basis.d_xn, p.ns, p.mnmax, dact,
+                           stream);
 
         if (decision.do_refresh) {
             backupState();  // POST-descent state (vmecpp RestartIteration

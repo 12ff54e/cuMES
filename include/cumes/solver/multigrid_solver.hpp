@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "cumes/io/run_report.hpp"
+#include "cumes/numerics/prolongation.hpp"
 #include "cumes/solver/stage_solver.hpp"
 #include "refine.cuh"
 
@@ -54,7 +55,7 @@ class MultigridSolver {
             if (g > 0) {
                 // Prolong the previous stage's converged state onto this grid
                 // on the same compute stream (ordered before the next stage).
-                storage = interpolateState<T>(p, storage, p_prev, stream);
+                storage = cumes::Prolongation<T>{}.enqueue(p, storage, p_prev, stream);
             }
             result = StageSolver<T>::run(p, ip, storage, stream);
 
