@@ -868,3 +868,16 @@ void cumes::ToroidalFftOperator<T>::bind_stream(cudaStream_t stream) {
     cumes::check_cufft(cufftSetStream(fp_.plan_z2d_da, stream), "set stream z2d_da");
 }
 
+template <typename T>
+void cumes::ToroidalFftOperator<T>::enqueue_inverse_dump(
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
+    cudaStream_t stream) {
+    inverseDFT(fp_, *rs_, coeff, p_, mt_->d_xm, mt_->d_xn, /*do_combine=*/false,
+               stream);
+}
+
+template <typename T>
+void cumes::ToroidalFftOperator<T>::combine_parity(cudaStream_t stream) {
+    fourierCombineParity(fp_, *rs_, p_, stream);
+}
+

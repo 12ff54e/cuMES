@@ -499,10 +499,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // consumer below keeps its unchanged pointer arithmetic and layout.
     SpectralState<T> st = storage.legacy_view();
     // The transform/geometry operators own their workspaces; `rs` is the
-    // stage-owned real-space storage. Aliases keep the dump machinery's
-    // `fp.d_*`/`rs.d_*`/`mw.d_*` reads unchanged (the hot loop goes through the
-    // operator enqueue methods).
-    FourierPlan<T>& fp = transform.fourier_plan();
+    // stage-owned real-space storage. `mw` keeps the dump machinery's `mw.d_*`
+    // reads unchanged; the hot loop goes through the operator enqueue methods.
+    // (The FourierPlan is sealed behind the ToroidalFftOperator's dump-only
+    // accessors — see enqueue_inverse_dump/combine_parity.)
     const MetricWorkspace<T>& mw = geometry.workspace();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
     cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
@@ -687,8 +687,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // combined *_real buffers are materialized on demand (fourierCombineParity)
     // at the dump site, never read stale.
     if (dumpEnabled()) {
-        inverseDFT(fp, rs, storage.physical_const(), p, transform.xm(),
-                   transform.xn(), false, stream);
+        transform.enqueue_inverse_dump(storage.physical_const(), stream);
         cudaDeviceSynchronize();  // dump-only read of compute-stream data
         auto* h_re = new T[p.nZnT * p.ns];
         auto* h_ro = new T[p.nZnT * p.ns];
@@ -825,7 +824,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
             // The combined *_real arrays are NOT refreshed by the hot loop
             // (inverseDFT runs with do_combine=false); materialize a fresh
             // snapshot from the current parity arrays before dumping them.
-            fourierCombineParity(fp, rs, p, stream);
+            transform.combine_parity(stream);
             // Full R, Z, lambda (even+odd)
             dumpDeviceArray("dump/cuMES/step_A_r_real_iter_1.bin", rs.d_r_real, n_real);
             dumpDeviceArray("dump/cuMES/step_A_z_real_iter_1.bin", rs.d_z_real, n_real);

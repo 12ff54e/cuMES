@@ -68,6 +68,17 @@ class ToroidalFftOperator : public SpectralOperator<T> {
                        const T* faccon, RealFieldView<T> gCon,
                        cudaStream_t stream) override;
 
+  // ---- dump-only accessors (observability, not the hot loop) -------------
+  // The solver's DUMP_CUMES_VERIFY diagnostics materialize the parity-split
+  // geometry and the combined (e+o) buffers without naming the FourierPlan.
+  // These wrap the plain inverseDFT (do_combine=false — the hot loop's fused
+  // inverse never refreshes the combined buffers) and fourierCombineParity.
+  // Both are gated on dumpEnabled() at the call site; they are never used for
+  // production computation.
+  void enqueue_inverse_dump(SpectralView<const T, PhysicalStateDomain> coeff,
+                            cudaStream_t stream);
+  void combine_parity(cudaStream_t stream);
+
  private:
   FourierPlan<T> fp_;
   GridParams<T> p_{};
