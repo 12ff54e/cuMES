@@ -57,7 +57,7 @@ class ReducedThetaView {
 
 // Full-grid parity-split geometry (inverse-DFT output): R, Z, lambda and their
 // poloidal (u) / toroidal (v) derivatives, split by poloidal m-parity
-// (e = even m, o = odd m). Matches the FourierPlan field groups.
+// (e = even m, o = odd m). Matches the RealSpaceStorage field groups.
 template <class T>
 struct GeometryParityViews {
   RealFieldView<T> r_e, z_e, l_e;

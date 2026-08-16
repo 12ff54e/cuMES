@@ -6,12 +6,22 @@ legacy-struct deletion endgame) as six dependency-ordered items. Items 1 and 2
 have now landed, both **Class A bit-identical**; items 3–6 remain and are
 re-scoped below with the exact current state.
 
+**UPDATE (same day): step 13 is COMPLETE.** Parts 5–7 have landed — `FourierPlan`,
+`SpectralState`, and the `interpolateState` free function are deleted (each
+operator owns its buffers directly and exposes typed views; `fourier.cuh` and
+`refine.cuh` are gone), the kernel tests drive the operators, and the CMake/docs
+close-out is in (`CUMES_CUDA_MODULES` now names `prolongation` instead of
+`refine`; `docs/architecture.md` §1 is "one layer" and §5's pending list is
+empty). All parts Class A: Solovev `251→199→456` FSQR 9.583e-17, W7-X
+`1877→1617→2011` FSQR 9.778e-13, 35/35 CTest, float build clean.
+
 ## 1. Items landed (this handover)
 
 | Item | Migration step | Commit | What |
 | ---- | -------------- | ------ | ---- |
 | 1 | step 13.1 | `a7c0030` | `GridParams<T>` renamed to `DeviceParams<T>` and moved to `include/cumes/config/device_params.hpp` (blueprint §6.1 four-stage config pipeline). Pure rename, global namespace retained so all 65 kernel/operator headers resolve unchanged. |
 | 2 | step 13.2 | `22e71d0` | `InputParams` deleted. `init_params`/`init_state`/`restart_state` (`seed_state.hpp`), `Profiles`/`profilesCreate`, `StageSolver`/`MultigridSolver`, and `outputSave`/NetCDF/HDF5 now consume `ValidatedProblem` directly. The legacy JSON parser (`input.h`/`input_json.h`/`src/input_json.cpp`) and `to_input_params()` are gone; the NetCDF/HDF5 v0 writers keep their padded layout via a new `cumes::io::LegacyInputProvenance`. Tests/benchmark drive `read_and_validate`/`validate` through a `cumes_test_support` `loadValidated`/`validateSpec` helper. |
+| 5–7 | step 13.3 | `bf2d065` `33246e3` `e697a89` | Parts 5–7: `FourierPlan` deleted (ToroidalFftOperator owns the cuFFT plans/scratch/tables; `inverseDFT`/`inverseDFTFused`/`forwardDFT`/`fourierCombineParity`/`constraintDealiasBandpass` become operator methods `inverse`/`inverse_fused`/`forward`/`combine_parity`/`dealias_bandpass`; the de-alias kernels move into the transform module). `SpectralState` deleted (`SpectralStorage::legacy_view()` → `family_ptr`/`velocity_family_ptr`; the output writers now take `const SpectralStorage<T>&`). `interpolateState` deleted (`Prolongation::enqueue` owns the body; `refine.cuh` → the `prolongation` module). All kernel tests drive the operators. | |
 
 Both are Class A: Solovev `251→199→456` FSQR 9.583e-17, W7-X `1877→1617→2011`
 FSQR 9.778e-13, 35/35 CTest, float + none/netcdf/hdf5 backend builds clean.
@@ -27,9 +37,9 @@ bitwise equivalence the library split must preserve. Decision: leave it in
 place and re-freeze only in a dedicated Class B pass (already documented in the
 `.cuh` comment and `docs/architecture.md` §2). No code change in step 13.
 
-## 3. Remaining: migration step 13 items 3, 5, 6 (the legacy-struct endgame)
+## 3. Migration step 13 items 3, 5, 6 — LANDED (see the UPDATE at the top)
 
-This is the same "not a single-session change" endgame `tail-2` §4 described.
+For the record, this is the endgame `tail-2` §4 described, now complete.
 Item 1 and 2 were the mechanical preconditions; the rest is the coupled
 deletion of the owning structs **and** the tests that construct them. In
 dependency order:
@@ -99,6 +109,9 @@ optional-backend matrix (none/netcdf/hdf5), float build clean.
 ## 4. Commits (this handover)
 
 ```
+e697a89 Phase 11 step 13.3 (part 7): delete interpolateState free function (Prolongation owns it)
+33246e3 Phase 11 step 13.3 (part 6): delete SpectralState + SpectralStorage::legacy_view()
+bf2d065 Phase 11 step 13.3 (part 5): delete FourierPlan + fourier transform free functions
 0ef9e82 Phase 11 step 13.3 (part 4): delete ConstraintWorkspace + constraint free functions
 ba88d05 Phase 11 step 13.3 (part 3): delete PreconWorkspace + preconCreate/preconFree/preconApply
 c9da234 Phase 11 step 13.3 (part 2): delete MetricWorkspace + geometry/forces/precon free functions
@@ -107,12 +120,11 @@ b483428 Phase 11 step 13.3 (part 1): delete RadialProfiles + profilesCreate/prof
 a7c0030 Phase 11 step 13.1: GridParams<T> -> DeviceParams<T> (per-stage param pack)
 ```
 
-Step 13.3 is four-sixths done: `RadialProfiles`, `MetricWorkspace`,
-`PreconWorkspace`, and `ConstraintWorkspace` are deleted (each operator owns its
-buffers directly and exposes typed views/accessors; the matching
-`*Create`/`*Free` + `compute*`/`inverseDFT`/`forwardDFT`/`precon*`/
-`constraint*` free functions are gone). Remaining: `FourierPlan` (the cuFFT
-plans + transform scratch, owned by `ToroidalFftOperator`), `SpectralState`
-(`SpectralStorage::legacy_view()`), and the `interpolateState` free function
-(`Prolongation`), followed by the remaining kernel tests and the CMake/docs
-close-out. All follow the same established pattern.
+Step 13.3 is now COMPLETE: `RadialProfiles`, `MetricWorkspace`,
+`PreconWorkspace`, `ConstraintWorkspace`, `FourierPlan`, and `SpectralState`
+are deleted and `interpolateState` folded into `Prolongation::enqueue` (each
+operator owns its buffers directly and exposes typed views/accessors; the
+matching `*Create`/`*Free` + `compute*`/`inverseDFT`/`forwardDFT`/`precon*`/
+`constraint*` free functions are gone), the kernel tests drive the operators,
+and the CMake/docs close-out is in. All Class A bit-identical (see the UPDATE
+at the top).

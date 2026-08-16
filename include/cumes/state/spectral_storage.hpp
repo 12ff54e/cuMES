@@ -40,7 +40,7 @@ class SpectralStorage {
     state_.allocate(count);
     velocity_.allocate(count);
     // Both slabs start zeroed: matches the legacy `new T[n]()` cold start and
-    // the zeroed velocities of interpolateState.
+    // the zeroed velocities of Prolongation::enqueue.
     state_.zero();
     velocity_.zero();
   }

@@ -34,7 +34,7 @@ struct SolverResult {
 // binds the cuFFT plans to the compute stream; the transform scratch/plans are
 // sealed behind the operator's dump-only accessors. `profiles` carries the radial
 // profiles as typed `RadialProfileViews` (the solver never reads the raw
-// RadialProfiles `d_*` pointers in the hot loop). `op`, when non-null, is the
+// profile `d_*` pointers in the hot loop). `op`, when non-null, is the
 // selected transform backend the solver drives (a `SpectralOperator<T>*`); the
 // solver has no `axisym_active` branch — inverse/forward/de-alias all go through
 // `op`. When `op` is null it defaults to `&transform` (the generic backend). The
