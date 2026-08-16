@@ -1,11 +1,9 @@
-// test_host_config.cpp — validated host model: normalization goldens, legacy
-// adapter parity, folding, mode table, precision floor, and the malformed-input
-// matrix.
+// test_host_config.cpp — validated host model: normalization goldens, folding,
+// mode table, precision floor, and the malformed-input matrix.
 //
-// This is the Phase 2 gate for the config half: `read_and_validate` must
-// reproduce the legacy parser's defaults/folding (proved by field-for-field
-// parity of `to_input_params()` against `initInputParamsFromJson`), and its
-// canonical `normalize_to_json()` must match the checked-in goldens.
+// This is the Phase 2 gate for the config half: `read_and_validate` maps the
+// legacy parser's defaults/folding into the immutable model, and its canonical
+// `normalize_to_json()` must match the checked-in goldens.
 //
 // The negative matrix pins the containment-series validation into the new
 // model: nonzero gamma, out-of-range boundary modes (skipped with a warning),
@@ -13,7 +11,6 @@
 // aux/asym keys, unsupported physics, and unknown-key strict vs compatibility.
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/validated_problem.hpp"
-#include "input_json.h"  // legacy initInputParamsFromJson (parity reference)
 
 #include <cmath>
 #include <cstdio>
@@ -96,47 +93,6 @@ static void emitGoldens(const char* dir) {
     }
 }
 
-// ---- field-for-field InputParams parity -------------------------------------
-static bool sameParams(const InputParams& a, const InputParams& b) {
-    if (a.mpol != b.mpol || a.ntor != b.ntor || a.nfp != b.nfp) return false;
-    if (a.ntheta != b.ntheta || a.nzeta != b.nzeta || a.ns != b.ns) return false;
-    if (a.ncurr != b.ncurr || a.delt != b.delt || a.ftol != b.ftol) return false;
-    if (a.max_iter != b.max_iter || a.n_grids != b.n_grids) return false;
-    if (a.phiedge != b.phiedge || a.pres_scale != b.pres_scale) return false;
-    if (a.adiabatic_index != b.adiabatic_index || a.spres_ped != b.spres_ped) return false;
-    if (a.bloat != b.bloat || a.curtor != b.curtor || a.tcon0 != b.tcon0) return false;
-    if (a.am_n != b.am_n || a.ac_n != b.ac_n || a.ai_n != b.ai_n ||
-        a.aphi_n != b.aphi_n) return false;
-    if (a.raxis_n != b.raxis_n || a.rbc_n != b.rbc_n || a.zbs_n != b.zbs_n) return false;
-    for (int g = 0; g < InputParams::kMaxGrids; ++g) {
-        if (a.ns_array[g] != b.ns_array[g]) return false;
-        if (a.niter_array[g] != b.niter_array[g]) return false;
-        if (a.ftol_array[g] != b.ftol_array[g]) return false;
-    }
-    for (int i = 0; i < InputParams::kMaxCoeff; ++i) {
-        if (a.am[i] != b.am[i] || a.ac[i] != b.ac[i] || a.ai[i] != b.ai[i] ||
-            a.aphi[i] != b.aphi[i]) return false;
-    }
-    for (int i = 0; i < 32; ++i) {
-        if (a.raxis_c[i] != b.raxis_c[i] || a.zaxis_s[i] != b.zaxis_s[i]) return false;
-    }
-    for (int i = 0; i < 256; ++i) {
-        if (a.rbc[i].m != b.rbc[i].m || a.rbc[i].n != b.rbc[i].n ||
-            a.rbc[i].value != b.rbc[i].value) return false;
-        if (a.zbs[i].m != b.zbs[i].m || a.zbs[i].n != b.zbs[i].n ||
-            a.zbs[i].value != b.zbs[i].value) return false;
-    }
-    for (int m = 0; m < 16; ++m) {
-        for (int n = 0; n < 16; ++n) {
-            if (a.rbcc[m][n] != b.rbcc[m][n] || a.rbss[m][n] != b.rbss[m][n] ||
-                a.zbsc[m][n] != b.zbsc[m][n] || a.zbcs[m][n] != b.zbcs[m][n]) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 // ---- tests ------------------------------------------------------------------
 
 static void testGoldens() {
@@ -151,22 +107,6 @@ static void testGoldens() {
         CHECK(!golden.empty(), std::string(name) + ": golden fixture present");
         CHECK(vr.value().normalize_to_json() == golden,
               std::string(name) + ": normalize_to_json matches golden");
-    }
-}
-
-static void testAdapterParity() {
-    SolverOptions opts;
-    const char* names[2] = {"solovev", "w7x"};
-    for (const char* name : names) {
-        auto vr = read_and_validate(std::string("inputs/") + name + ".json", opts);
-        CHECK(vr.has_value(), std::string(name) + ": validates for adapter");
-        if (!vr.has_value()) continue;
-        auto legacy = vr.value().to_input_params();
-        CHECK(legacy.has_value(), std::string(name) + ": adapter fits legacy caps");
-        if (!legacy.has_value()) continue;
-        InputParams ref = initInputParams((std::string("inputs/") + name + ".json").c_str());
-        CHECK(sameParams(legacy.value(), ref),
-              std::string(name) + ": to_input_params == legacy parser");
     }
 }
 
@@ -276,8 +216,8 @@ static void testMalformed() {
     vr = read_and_validate(scratchPath(), opts);
     CHECK(vr.has_value(), "malformed: out-of-range mode still validates");
     if (vr.has_value()) {
-        auto ip = vr.value().to_input_params();
-        CHECK(ip.has_value() && ip.value().rbc_n == 1 && ip.value().rbc[0].value == 1.0,
+        const auto& kept = vr.value().spec().rbc;
+        CHECK(kept.size() == 1 && kept[0].value == 1.0,
               "malformed: out-of-range mode skipped, valid entry kept");
     }
 
@@ -289,8 +229,8 @@ static void testMalformed() {
     vr = read_and_validate(scratchPath(), opts);
     CHECK(vr.has_value(), "malformed: negative m still validates");
     if (vr.has_value()) {
-        auto ip = vr.value().to_input_params();
-        CHECK(ip.has_value() && ip.value().rbc_n == 1 && ip.value().rbc[0].value == 1.0,
+        const auto& kept = vr.value().spec().rbc;
+        CHECK(kept.size() == 1 && kept[0].value == 1.0,
               "malformed: negative m skipped, valid entry kept");
     }
 
@@ -378,7 +318,6 @@ int main(int argc, char** argv) {
         return 0;
     }
     testGoldens();
-    testAdapterParity();
     testModeTable();
     testPrecisionFloor();
     testMalformed();

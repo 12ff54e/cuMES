@@ -9,9 +9,10 @@
 //   - the per-mode table (physical_n, mn_scale, xmpq, parity, first_surface);
 //   - precision/tolerance compatibility.
 //
-// It is host-only and owns no device pointers. The legacy InputParams bridge
-// (to_input_params) lets the current fixed-capacity solver path consume a
-// validated problem unchanged; it is the Phase 2 "adapter" deliverable.
+// It is host-only and owns no device pointers. The solver consumes it directly
+// (the legacy InputParams fixed-capacity bridge was deleted in migration step
+// 13.2); the fixed-capacity v0 output provenance is reconstructed separately in
+// cumes/io/legacy_provenance.hpp.
 #pragma once
 
 #include "cumes/core/grid_shape.hpp"
@@ -21,8 +22,6 @@
 #include "cumes/config/problem_spec.hpp"
 #include "cumes/config/solver_options.hpp"
 #include "cumes/config/validation_report.hpp"
-
-#include "input.h"  // legacy InputParams (adapter bridge, global namespace)
 
 #include <string>
 #include <vector>
@@ -61,14 +60,6 @@ class ValidatedProblem {
     void add_warning(std::string key, std::string message) {
         warnings_.warn(std::move(key), std::move(message));
     }
-
-    // Legacy bridge: reproduce the current fixed-capacity InputParams exactly
-    // (folded boundary, resolved angles, profiles, axis, stage schedule). Fails
-    // only when the validated problem exceeds a legacy capacity (dynamic
-    // schedules longer than 8 stages, etc.), which the shipped configs never
-    // do. The parity of this adapter with the legacy JSON parser is the Phase 2
-    // "adapters reproduce the current defaults/folding" gate.
-    Result<InputParams> to_input_params() const;
 
     // Canonical, deterministic JSON representation (for configuration goldens).
     std::string normalize_to_json() const;

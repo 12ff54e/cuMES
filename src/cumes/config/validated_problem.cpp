@@ -1,6 +1,5 @@
 // validated_problem.cpp — validate/fold/resolve the dynamic ProblemSpec into
-// the immutable ValidatedProblem, plus the legacy InputParams bridge and the
-// canonical normalization emitter.
+// the immutable ValidatedProblem and emit the canonical normalization.
 #include "cumes/config/validated_problem.hpp"
 
 #include <algorithm>
@@ -14,7 +13,7 @@ namespace cumes {
 namespace {
 
 // Fold raw signed-n boundary harmonics into the n>=0 product basis (blueprint
-// §4.2), matching the legacy foldBoundary (include/input.h) exactly:
+// §4.2), matching the legacy foldBoundary exactly:
 //   rbcc[m,n] = rbc[m,+n] + rbc[m,-n]        (all m)
 //   rbss[m,n] = rbc[m,+n] - rbc[m,-n]        (m > 0)
 //   zbsc[m,n] = zbs[m,+n] + zbs[m,-n]        (m > 0)
@@ -230,92 +229,6 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     // the model so the caller can report them.
     vp.warnings_ = std::move(report);
     return ValidationResult(vp);
-}
-
-Result<InputParams> ValidatedProblem::to_input_params() const {
-    const ProblemSpec& s = spec_;
-    InputParams p;  // legacy defaults
-
-    p.mpol = s.mpol;
-    p.ntor = s.ntor;
-    p.nfp = s.nfp;
-    p.ntheta = s.angular.ntheta;
-    p.nzeta = s.angular.nzeta;
-    p.ncurr = (s.current_model == CurrentModel::kPrescribedCurrent) ? 1 : 0;
-    p.delt = s.delt;
-    p.phiedge = s.physical.phiedge;
-    p.pres_scale = s.physical.pres_scale;
-    p.adiabatic_index = s.physical.adiabatic_index;
-    p.spres_ped = s.physical.spres_ped;
-    p.bloat = s.physical.bloat;
-    p.curtor = s.physical.curtor;
-    p.tcon0 = s.physical.tcon0;
-
-    // ---- stage schedule (must fit the legacy 8-entry capacity) ----
-    if (s.stages.size() > InputParams::kMaxGrids) {
-        return Result<InputParams>("validated problem has " +
-                                   std::to_string(s.stages.size()) +
-                                   " stages, exceeding legacy capacity " +
-                                   std::to_string(InputParams::kMaxGrids));
-    }
-    p.n_grids = static_cast<int>(s.stages.size());
-    for (std::size_t g = 0; g < s.stages.size(); ++g) {
-        p.ns_array[g] = static_cast<int>(s.stages[g].radial_surfaces);
-        p.niter_array[g] = static_cast<int>(s.stages[g].max_iterations);
-        p.ftol_array[g] = s.stages[g].tolerance;
-    }
-    p.ns = p.ns_array[0];
-    p.max_iter = p.niter_array[0];
-    p.ftol = p.ftol_array[0];
-
-    // ---- profiles (legacy 16-coefficient capacity) ----
-    auto copy_profile = [&](const ProfileSpec& prof, double* dst, int& count) {
-        if (prof.coefficients.size() > InputParams::kMaxCoeff) return false;
-        count = static_cast<int>(prof.coefficients.size());
-        for (std::size_t i = 0; i < prof.coefficients.size(); ++i) {
-            dst[i] = prof.coefficients[i];
-        }
-        return true;
-    };
-    if (!copy_profile(s.mass, p.am, p.am_n) ||
-        !copy_profile(s.iota, p.ai, p.ai_n) ||
-        !copy_profile(s.current, p.ac, p.ac_n) ||
-        !copy_profile(s.toroidal_flux, p.aphi, p.aphi_n)) {
-        return Result<InputParams>(
-            "validated profile exceeds legacy 16-coefficient capacity");
-    }
-
-    // ---- axis (legacy 32-entry capacity) ----
-    if (s.raxis_c.size() > 32 || s.zaxis_s.size() > 32) {
-        return Result<InputParams>("validated axis vector exceeds legacy capacity");
-    }
-    for (std::size_t i = 0; i < s.raxis_c.size(); ++i) p.raxis_c[i] = s.raxis_c[i];
-    for (std::size_t i = 0; i < s.zaxis_s.size(); ++i) p.zaxis_s[i] = s.zaxis_s[i];
-    p.raxis_n = static_cast<int>(s.raxis_c.size());
-
-    // ---- boundary raw + folded (legacy 256-entry / 16x16 capacities) ----
-    if (s.rbc.size() > 256 || s.zbs.size() > 256) {
-        return Result<InputParams>("validated boundary exceeds legacy 256-entry capacity");
-    }
-    p.rbc_n = static_cast<int>(s.rbc.size());
-    for (std::size_t i = 0; i < s.rbc.size(); ++i) {
-        p.rbc[i] = BoundaryEntry{s.rbc[i].m, s.rbc[i].n, s.rbc[i].value};
-    }
-    p.zbs_n = static_cast<int>(s.zbs.size());
-    for (std::size_t i = 0; i < s.zbs.size(); ++i) {
-        p.zbs[i] = BoundaryEntry{s.zbs[i].m, s.zbs[i].n, s.zbs[i].value};
-    }
-    for (int m = 0; m < p.mpol; ++m) {
-        for (int n = 0; n <= p.ntor; ++n) {
-            const std::size_t mode =
-                static_cast<std::size_t>(m) * (p.ntor + 1) + n;
-            p.rbcc[m][n] = boundary_.rbcc[mode];
-            p.rbss[m][n] = boundary_.rbss[mode];
-            p.zbsc[m][n] = boundary_.zbsc[mode];
-            p.zbcs[m][n] = boundary_.zbcs[mode];
-        }
-    }
-    return p;
 }
 
 std::string ValidatedProblem::normalize_to_json() const {

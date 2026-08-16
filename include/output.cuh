@@ -1,10 +1,11 @@
 // output.cuh — dump results from GPU to host and print / save.
 #pragma once
 #include "vmec_types.h"
-#include "input.h"       // InputParams (full provenance bundle)
 #include "solver.cuh"    // SolverResult<T>
 // (no include cycle: nothing in the input/solver/geometry/forces chain
 //  includes output.cuh; only main.cu and output.cpp include this header)
+
+namespace cumes { class ValidatedProblem; }
 
 // The on-disk state format stays double regardless of T (the Python
 // comparison scripts parse doubles); outputSaveBinary converts T -> double.
@@ -20,12 +21,12 @@ void outputPrint(const SpectralState<T>& st, const DeviceParams<T>& p, int niter
                  bool converged, T fsqr, T fsqz, T fsql);
 
 #ifdef CUMES_HAVE_NETCDF
-// Write state + grid params + convergence + full InputParams provenance to
-// a netCDF classic-3 file (NC_CLOBBER). Declared under the CMake define;
+// Write state + grid params + convergence + full validated-problem provenance
+// to a netCDF classic-3 file (NC_CLOBBER). Declared under the CMake define;
 // the definition + explicit instantiation live in src/output_netcdf.cpp.
 template <typename T>
 bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
-                      const InputParams& ip, const SolverResult<T>& result,
+                      const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                       const char* path, const char* input_file);
 #endif
 
@@ -34,7 +35,7 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
 // Definition + explicit instantiation live in src/output_hdf5.cpp.
 template <typename T>
 bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
-                    const InputParams& ip, const SolverResult<T>& result,
+                    const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                     const char* path, const char* input_file);
 #endif
 
@@ -45,7 +46,7 @@ bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
 // running the solve). Always compiled (output.cpp).
 template <typename T>
 bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
-                const InputParams& ip, const SolverResult<T>& result,
+                const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                 const char* path, const char* input_file);
 
 // Preflight: is the format implied by `path`'s suffix produced by this

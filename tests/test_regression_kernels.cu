@@ -47,7 +47,6 @@
 #include <cstdlib>
 #include <vector>
 #include "vmec_types.h"
-#include "input.h"
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
@@ -76,7 +75,7 @@ static void checkNear(double gpu, double ref, double tol,
 }
 
 // ---------------------------------------------------------------------------
-// DeviceParams / InputParams construction (self-contained, no JSON/files).
+// DeviceParams / ValidatedProblem construction (self-contained, no JSON/files).
 // ---------------------------------------------------------------------------
 template <typename T>
 static DeviceParams<T> makeParams(int ns, int mpol, int ntor, int ntheta, int nzeta) {
@@ -91,14 +90,18 @@ static DeviceParams<T> makeParams(int ns, int mpol, int ntor, int ntheta, int nz
 
 // Solovev-like profiles (matches inputs/solovev.json: am=[0.125,-0.125],
 // ai=[1.0]; aphi=[1.0] so the toroidal flux / phip profile is non-degenerate).
-static InputParams solovevInput() {
-    InputParams ip;
-    ip.mpol = 6; ip.ntor = 0; ip.nfp = 1; ip.ns = 11; ip.ncurr = 0;
-    ip.delt = 0.9; ip.ftol = 1e-16; ip.max_iter = 1000;
-    ip.am[0] = 0.125; ip.am[1] = -0.125; ip.am_n = 2;
-    ip.ai[0] = 1.0; ip.ai_n = 1;
-    ip.aphi[0] = 1.0; ip.aphi_n = 1;
-    return ip;
+static cumes::ValidatedProblem solovevInput() {
+    cumes::ProblemSpec spec;
+    spec.mpol = 6; spec.ntor = 0; spec.nfp = 1;
+    spec.current_model = cumes::CurrentModel::kFixedIota;
+    spec.delt = 0.9;
+    spec.mass.coefficients = {0.125, -0.125};
+    spec.iota.coefficients = {1.0};
+    spec.toroidal_flux.coefficients = {1.0};
+    spec.rbc = {{1, 0, 1.0}};
+    spec.zbs = {{1, 0, 0.5}};
+    spec.stages = {{11, 1000, 1e-16}};
+    return validateSpec(std::move(spec));
 }
 
 // ---------------------------------------------------------------------------
@@ -317,8 +320,8 @@ static int testDealias(int ntheta) {
     printf("  de-alias bandpass theta coverage: ns=11 mpol=6 ntor=0 nzeta=1 ntheta=%d ... ", ntheta);
     const int ns = 11, mpol = 6, ntor = 0, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
-    InputParams ip = solovevInput();
-    RadialProfiles<T> rp = profilesCreate(p, ip);
+    cumes::ValidatedProblem vp = solovevInput();
+    RadialProfiles<T> rp = profilesCreate(p, vp);
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
@@ -425,8 +428,8 @@ static int testPcr(int ns) {
     printf("  PCR solve row coverage: mpol=4 ntor=0 ntheta=18 nzeta=1 ns=%d ... ", ns);
     const int mpol = 4, ntor = 0, ntheta = 18, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
-    InputParams ip = solovevInput();
-    RadialProfiles<T> rp = profilesCreate(p, ip);
+    cumes::ValidatedProblem vp = solovevInput();
+    RadialProfiles<T> rp = profilesCreate(p, vp);
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);

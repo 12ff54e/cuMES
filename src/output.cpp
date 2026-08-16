@@ -11,7 +11,6 @@
 // untouched (only the temp is removed). On POSIX rename() within one directory
 // is atomic.
 #include "output.cuh"
-#include "input.h"
 #include <cuda_runtime.h>  // cudaMemcpy/cudaMemcpy2D/cudaGetErrorString (host runtime API)
 #include <cstdio>
 #include <cstdlib>   // getpid
@@ -257,11 +256,11 @@ bool outputFormatAvailable(const char* path) {
 // belt-and-suspenders path) — never exit()s, so normal cleanup runs.
 template <typename T>
 bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
-                const InputParams& ip, const SolverResult<T>& result,
+                const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                 const char* path, const char* input_file) {
-    // ip/result/input_file are only read by the backend writers; silence
+    // vp/result/input_file are only read by the backend writers; silence
     // -Wunused-parameter when both backends are compiled out.
-    (void)ip; (void)result; (void)input_file;
+    (void)vp; (void)result; (void)input_file;
     const char* ext = strrchr(path, '.');
     if (ext == nullptr) { ext = ""; }
     if (strcasecmp(ext, ".bin") == 0) {
@@ -269,7 +268,7 @@ bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
     }
     if (strcasecmp(ext, ".nc") == 0) {
 #ifdef CUMES_HAVE_NETCDF
-        return outputSaveNetcdf<T>(st, p, ip, result, path, input_file);
+        return outputSaveNetcdf<T>(st, p, vp, result, path, input_file);
 #else
         fprintf(stderr, "ERROR: %s: .nc output requested but cuMES was built "
                         "without NetCDF support\n", path);
@@ -278,7 +277,7 @@ bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
     }
     if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
 #ifdef CUMES_HAVE_HDF5
-        return outputSaveHdf5<T>(st, p, ip, result, path, input_file);
+        return outputSaveHdf5<T>(st, p, vp, result, path, input_file);
 #else
         fprintf(stderr, "ERROR: %s: %s output requested but cuMES was built "
                         "without HDF5 support\n", path, ext);
@@ -295,5 +294,5 @@ template bool outputSaveBinary<double>(const SpectralState<double>&, const Devic
 template bool outputSaveBinary<float>(const SpectralState<float>&, const DeviceParams<float>&, const char*);
 template void outputPrint<double>(const SpectralState<double>&, const DeviceParams<double>&, int, bool, double, double, double);
 template void outputPrint<float>(const SpectralState<float>&, const DeviceParams<float>&, int, bool, float, float, float);
-template bool outputSave<double>(const SpectralState<double>&, const DeviceParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template bool outputSave<float>(const SpectralState<float>&, const DeviceParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSave<double>(const SpectralState<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
+template bool outputSave<float>(const SpectralState<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);

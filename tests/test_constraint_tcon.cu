@@ -16,7 +16,6 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "input_json.h"
 #include "constraint.cuh"
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
@@ -84,8 +83,8 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
     delete[] h_lsc; delete[] h_lcs;
 
-    InputParams ip = initInputParams("inputs/solovev.json");
-    RadialProfiles<T> rp = profilesCreate(p, ip);
+    cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
+    RadialProfiles<T> rp = profilesCreate(p, vp);
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);

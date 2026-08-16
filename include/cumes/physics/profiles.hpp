@@ -8,18 +8,18 @@
 #pragma once
 
 #include "cumes/state/real_fields.cuh"
-#include "input.h"
 #include "profiles.cuh"
 
 namespace cumes {
 
 class DeviceArena;
+class ValidatedProblem;
 
 template <class T>
 class Profiles {
  public:
-  Profiles(DeviceParams<T>& p, const InputParams& ip, DeviceArena* arena)
-      : rp_(profilesCreate(p, ip, arena)) {}
+  Profiles(DeviceParams<T>& p, const ValidatedProblem& vp, DeviceArena* arena)
+      : rp_(profilesCreate(p, vp, arena)) {}
   ~Profiles() { profilesFree(rp_); }
 
   Profiles(const Profiles&) = delete;

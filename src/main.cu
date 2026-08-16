@@ -2,10 +2,9 @@
 //
 // Input: argv[1] is the JSON input file (vmecpp indata schema), or
 // --input <path>; without either, inputs/solovev.json is used. Config is
-// parsed + validated by the Phase 2 host model (read_and_validate →
-// to_input_params, see cumes/config/*.hpp), which reproduces the legacy
-// parser's defaults/folding field-for-field (proved by test_host_config's
-// testAdapterParity).
+// parsed + validated by the Phase 2 host model (read_and_validate, see
+// cumes/config/*.hpp) into an immutable ValidatedProblem the solver consumes
+// directly.
 //
 // Output: argv[2] (or --output <path>) selects the destination; binary output
 // goes through the versioned writers (legacy-v0 by default — byte-identical to
@@ -26,7 +25,6 @@
 #include <fstream>
 #include <string>
 
-#include "input.h"  // InputParams (via the to_input_params bridge)
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
@@ -214,14 +212,11 @@ int main(int argc, char** argv) {
         }
         return EXIT_FAILURE;
     }
-    const auto to_ip = vr.value().to_input_params();
-    if (!to_ip.has_value()) {
-        fprintf(stderr, "cuMES: %s\n", to_ip.error().c_str());
-        return EXIT_FAILURE;
-    }
-    InputParams ip = to_ip.value();
+    const cumes::ValidatedProblem& vp = vr.value();
+    const cumes::ProblemSpec& spec = vp.spec();
+    const int n_grids = static_cast<int>(spec.stages.size());
 
-    DeviceParams<Real> p = cumes::init_params<Real>(ip);
+    DeviceParams<Real> p = cumes::init_params<Real>(vp);
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
     printf("input: %s\n", inputPath);
@@ -229,12 +224,14 @@ int main(int argc, char** argv) {
     printf("mpol=%d ntor=%d nfp=%d ntheta=%d nzeta=%d nZnT=%d ncurr=%d\n",
            p.mpol,p.ntor,p.nfp,p.ntheta,p.nzeta,p.nZnT,p.ncurr);
     // Multi-radial-grid stage sequence (vmecpp ns_array/niter_array/ftol_array)
-    printf("grids=%d: ns", ip.n_grids);
-    for (int g = 0; g < ip.n_grids; ++g) printf("%s%d", g == 0 ? "" : "->", ip.ns_array[g]);
+    printf("grids=%d: ns", n_grids);
+    for (int g = 0; g < n_grids; ++g)
+        printf("%s%zu", g == 0 ? "" : "->", spec.stages[g].radial_surfaces);
     printf(" (niter");
-    for (int g = 0; g < ip.n_grids; ++g) printf(" %d", ip.niter_array[g]);
+    for (int g = 0; g < n_grids; ++g)
+        printf(" %zu", spec.stages[g].max_iterations);
     printf(", ftol");
-    for (int g = 0; g < ip.n_grids; ++g) printf(" %.0e", ip.ftol_array[g]);
+    for (int g = 0; g < n_grids; ++g) printf(" %.0e", spec.stages[g].tolerance);
     printf(")\n");
 
     // ---- Multi-radial-grid stage loop (delegated to MultigridSolver) ----
@@ -245,9 +242,9 @@ int main(int argc, char** argv) {
     try {
         // Stage-0 seed on ns_array[0]: a checkpoint/legacy-init restart, or the
         // interpFromBoundaryAndAxis cold start.
-        p.ns = ip.ns_array[0];
-        p.max_iter = ip.niter_array[0];
-        p.ftol = ip.ftol_array[0];
+        p.ns = static_cast<int>(spec.stages[0].radial_surfaces);
+        p.max_iter = static_cast<int>(spec.stages[0].max_iterations);
+        p.ftol = Real(spec.stages[0].tolerance);
         cumes::SpectralStorage<Real> seed;
         if (!restartPath.empty()) {
             auto ck = cumes::read_checkpoint(restartPath);
@@ -256,22 +253,24 @@ int main(int argc, char** argv) {
                 return EXIT_FAILURE;
             }
             const auto& snap = ck.value();
-            if (snap.ns != ip.ns_array[0] || snap.mnmax != p.mnmax) {
+            if (snap.ns != static_cast<int>(spec.stages[0].radial_surfaces) ||
+                snap.mnmax != p.mnmax) {
                 fprintf(stderr, "cuMES: restart checkpoint (ns=%d, mnmax=%d) "
-                                "does not match stage-0 grid (ns=%d, mnmax=%d)\n",
-                        snap.ns, snap.mnmax, ip.ns_array[0], p.mnmax);
+                                "does not match stage-0 grid (ns=%zu, mnmax=%d)\n",
+                        snap.ns, snap.mnmax, spec.stages[0].radial_surfaces, p.mnmax);
                 return EXIT_FAILURE;
             }
-            seed = cumes::restart_state<Real>(p, ip, snap);
+            seed = cumes::restart_state<Real>(p, vp, snap);
         } else if (!restartLegacyPath.empty()) {
-            auto ck = cumes::convert_legacy_init(restartLegacyPath, ip.ns_array[0], p.mnmax);
+            auto ck = cumes::convert_legacy_init(restartLegacyPath,
+                static_cast<int>(spec.stages[0].radial_surfaces), p.mnmax);
             if (!ck.has_value()) {
                 fprintf(stderr, "cuMES: %s\n", ck.error().c_str());
                 return EXIT_FAILURE;
             }
-            seed = cumes::restart_state<Real>(p, ip, ck.value());
+            seed = cumes::restart_state<Real>(p, vp, ck.value());
         } else {
-            seed = cumes::init_state<Real>(p, ip);
+            seed = cumes::init_state<Real>(p, vp);
         }
 
         // One explicit nonblocking compute stream owns the whole run: the
@@ -279,7 +278,7 @@ int main(int argc, char** argv) {
         // solve, and every hot-loop kernel / cuFFT transform / D2H transfer is
         // enqueued on this stream (Phase 6A explicit-stream scheduling).
         cumes::Stream compute_stream;
-        auto outcome = cumes::MultigridSolver<Real>::run(p, ip, std::move(seed),
+        auto outcome = cumes::MultigridSolver<Real>::run(p, vp, std::move(seed),
                                                          compute_stream.get());
         storage = std::move(outcome.state);
         result = outcome.result;
@@ -293,7 +292,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "FATAL: grid stage %d/%d (ns=%d) completed %d/%d "
                             "iterations without meeting ftol=%.0e; final "
                             "residuals fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
-                    g + 1, ip.n_grids, p.ns, result.iterations, p.max_iter,
+                    g + 1, n_grids, p.ns, result.iterations, p.max_iter,
                     (double)p.ftol, (double)result.fsqr, (double)result.fsqz,
                     (double)result.fsql);
             return EXIT_FAILURE;
@@ -332,7 +331,7 @@ int main(int argc, char** argv) {
         } else {
             // NetCDF/HDF5: the legacy device-reading backends (host adapters
             // deferred). outputSave is never called for .bin from here.
-            output_ok = outputSave<Real>(storage.legacy_view(), p, ip, result,
+            output_ok = outputSave<Real>(storage.legacy_view(), p, vp, result,
                                          outputPath, inputPath);
         }
 
@@ -352,9 +351,9 @@ int main(int argc, char** argv) {
 
         outputPrint<Real>(storage.legacy_view(), p, result.iterations,
                           result.converged, result.fsqr, result.fsqz, result.fsql);
-        if (ip.n_grids > 1)
+        if (n_grids > 1)
             printf("multigrid: total effective iterations over %d grids = %d\n",
-                   ip.n_grids, total_iter);
+                   n_grids, total_iter);
         printf("\nDone.\n");
         if (!output_ok) {
             fprintf(stderr, "cuMES: FAILED to write output state (%s)\n", outputPath);

@@ -13,7 +13,6 @@
 #include <cmath>
 #include <vector>
 
-#include "input_json.h"
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
@@ -60,16 +59,19 @@ static void fillState(SpectralState<T>& st, const DeviceParams<T>& p) {
 }
 
 int main() {
-    InputParams ip = initInputParams("inputs/w7x.json");
+    cumes::ValidatedProblem vp = loadValidated("inputs/w7x.json");
+    const cumes::ProblemSpec& spec = vp.spec();
     DeviceParams<double> p{};
     // Full W7-X shape (the largest angular grid the solver runs), exercising
     // the same kernel launch shapes the real runs use.
-    p.ns = ip.ns_array[ip.n_grids - 1]; p.mpol = ip.mpol; p.ntor = ip.ntor;
-    p.ntheta = ip.ntheta; p.nzeta = ip.nzeta; p.nfp = ip.nfp;
+    p.ns = static_cast<int>(spec.stages.back().radial_surfaces);
+    p.mpol = spec.mpol; p.ntor = spec.ntor;
+    p.ntheta = spec.angular.ntheta; p.nzeta = spec.angular.nzeta; p.nfp = spec.nfp;
     p.nZnT = p.ntheta * p.nzeta;
     p.mnmax = p.mpol * (p.ntor + 1);
-    p.ncurr = ip.ncurr;
-    p.delt = ip.delt; p.ftol = ip.ftol; p.max_iter = ip.max_iter;
+    p.ncurr = (spec.current_model == cumes::CurrentModel::kPrescribedCurrent) ? 1 : 0;
+    p.delt = spec.delt; p.ftol = spec.stages.back().tolerance;
+    p.max_iter = static_cast<int>(spec.stages.back().max_iterations);
     p.lamscale = 0.0;
 
     cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
@@ -77,7 +79,7 @@ int main() {
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
 
     fillState(st, p);
-    RadialProfiles<double> rp = profilesCreate(p, ip);
+    RadialProfiles<double> rp = profilesCreate(p, vp);
     FourierPlan<double> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);

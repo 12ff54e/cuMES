@@ -11,7 +11,6 @@
 #include <cmath>
 #include <vector>
 
-#include "input_json.h"
 #include "constraint.cuh"
 #include "vmec_types.h"
 #include "fourier.cuh"
@@ -49,7 +48,10 @@ int main() {
     // ---- Initial state from vmecpp interpFromBoundaryAndAxis (same logic as
     // main.cu initState): m=0 linear in s between axis and boundary, m>0 with
     // a s^(m/2) radial envelope. Uses the folded boundary from the JSON.
-    InputParams ip = initInputParams();
+    cumes::ValidatedProblem vp = loadValidated();
+    const cumes::FoldedBoundary& bnd = vp.boundary();
+    const cumes::ProblemSpec& spec = vp.spec();
+    const int ntorp1 = p.ntor + 1;
     cumes::SpectralStorage<double> storage(ns, p.mnmax);
     SpectralState<double> st = storage.legacy_view();
     size_t nb = (size_t)ns * p.mnmax * sizeof(double);
@@ -66,20 +68,20 @@ int main() {
             for (int n = 0; n < p.ntor + 1; ++n) {
                 int mn = m * (p.ntor + 1) + n;
                 if (m == 0) {
-                    h_rmncc[j + mn * ns] = sFlux * ip.rbcc[0][n] + (1.0 - sFlux) * ip.raxis_c[n];
-                    h_zmncs[j + mn * ns] = sFlux * ip.zbcs[0][n] - (1.0 - sFlux) * ip.zaxis_s[n];
+                    h_rmncc[j + mn * ns] = sFlux * bnd.rbcc[0 * ntorp1 + n] + (1.0 - sFlux) * spec.raxis_c[n];
+                    h_zmncs[j + mn * ns] = sFlux * bnd.zbcs[0 * ntorp1 + n] - (1.0 - sFlux) * spec.zaxis_s[n];
                 } else if (m == 1) {
                     double w = sqrtS;
-                    h_rmncc[j + mn * ns] = w * ip.rbcc[m][n];
-                    h_rmnss[j + mn * ns] = w * ip.rbss[m][n];
-                    h_zmnsc[j + mn * ns] = w * ip.zbsc[m][n];
-                    h_zmncs[j + mn * ns] = w * ip.zbcs[m][n];
+                    h_rmncc[j + mn * ns] = w * bnd.rbcc[m * ntorp1 + n];
+                    h_rmnss[j + mn * ns] = w * bnd.rbss[m * ntorp1 + n];
+                    h_zmnsc[j + mn * ns] = w * bnd.zbsc[m * ntorp1 + n];
+                    h_zmncs[j + mn * ns] = w * bnd.zbcs[m * ntorp1 + n];
                 } else {
                     double w = std::pow(sqrtS, m);
-                    h_rmncc[j + mn * ns] = w * ip.rbcc[m][n];
-                    h_rmnss[j + mn * ns] = w * ip.rbss[m][n];
-                    h_zmnsc[j + mn * ns] = w * ip.zbsc[m][n];
-                    h_zmncs[j + mn * ns] = w * ip.zbcs[m][n];
+                    h_rmncc[j + mn * ns] = w * bnd.rbcc[m * ntorp1 + n];
+                    h_rmnss[j + mn * ns] = w * bnd.rbss[m * ntorp1 + n];
+                    h_zmnsc[j + mn * ns] = w * bnd.zbsc[m * ntorp1 + n];
+                    h_zmncs[j + mn * ns] = w * bnd.zbcs[m * ntorp1 + n];
                 }
             }
         }
@@ -95,7 +97,7 @@ int main() {
     delete[] h_rmnss; delete[] h_zmncs; delete[] h_lmncs;
 
     // ---- Profiles / plan / workspace ----
-    cumes::Profiles<double> profiles(p, ip, nullptr);
+    cumes::Profiles<double> profiles(p, vp, nullptr);
     const RadialProfiles<double>& rp = profiles.workspace();
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate<double>(p);

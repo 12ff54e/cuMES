@@ -11,7 +11,7 @@
 // transpose, so each mode is written as a (ns, 1) hyperslab with the
 // contiguous column at dbuf + m*ns.
 #include "output.cuh"
-#include "input.h"
+#include "cumes/io/legacy_provenance.hpp"
 #include "solver.cuh"
 #include <cuda_runtime.h>  // cudaMemcpy (host runtime API)
 #include <netcdf.h>
@@ -25,8 +25,12 @@
 
 template <typename T>
 bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
-                      const InputParams& ip, const SolverResult<T>& result,
+                      const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                       const char* path, const char* input_file) {
+    // Fixed-capacity provenance for the v0 layout (padded arrays, byte-identical
+    // to the pre-overhaul InputParams).
+    const cumes::LegacyInputProvenance pv =
+        cumes::LegacyInputProvenance::from_validated(vp);
     // Atomic publication: create the file at a same-directory temp path, then
     // rename() it over `path` after a successful close, so a reader never sees
     // a half-written file and a failure leaves the target untouched. The temp
@@ -60,8 +64,8 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
     int dim_ns, dim_mnmax, dim_ngrids, dim_ncoeff, dim_naxis, dim_nbm, dim_nbn;
     NC_CHECK(nc_def_dim(ncid, "ns", (size_t)p.ns, &dim_ns), "def dim ns");
     NC_CHECK(nc_def_dim(ncid, "mnmax", (size_t)p.mnmax, &dim_mnmax), "def dim mnmax");
-    NC_CHECK(nc_def_dim(ncid, "ngrids", InputParams::kMaxGrids, &dim_ngrids), "def dim ngrids");
-    NC_CHECK(nc_def_dim(ncid, "ncoeff", InputParams::kMaxCoeff, &dim_ncoeff), "def dim ncoeff");
+    NC_CHECK(nc_def_dim(ncid, "ngrids", cumes::LegacyInputProvenance::kMaxGrids, &dim_ngrids), "def dim ngrids");
+    NC_CHECK(nc_def_dim(ncid, "ncoeff", cumes::LegacyInputProvenance::kMaxCoeff, &dim_ncoeff), "def dim ncoeff");
     NC_CHECK(nc_def_dim(ncid, "naxis", 32, &dim_naxis), "def dim naxis");
     NC_CHECK(nc_def_dim(ncid, "nbm", 16, &dim_nbm), "def dim nbm");
     NC_CHECK(nc_def_dim(ncid, "nbn", 16, &dim_nbn), "def dim nbn");
@@ -83,10 +87,10 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
         {"ntheta", p.ntheta}, {"nzeta", p.nzeta},
         {"ns", p.ns}, {"mnmax", p.mnmax}, {"nZnT", p.nZnT},
         {"ncurr", p.ncurr}, {"max_iter", p.max_iter},
-        {"n_grids", ip.n_grids},
-        {"am_n", ip.am_n}, {"ac_n", ip.ac_n}, {"ai_n", ip.ai_n},
-        {"aphi_n", ip.aphi_n}, {"raxis_n", ip.raxis_n},
-        {"rbc_n", ip.rbc_n}, {"zbs_n", ip.zbs_n},
+        {"n_grids", pv.n_grids},
+        {"am_n", pv.am_n}, {"ac_n", pv.ac_n}, {"ai_n", pv.ai_n},
+        {"aphi_n", pv.aphi_n}, {"raxis_n", pv.raxis_n},
+        {"rbc_n", pv.rbc_n}, {"zbs_n", pv.zbs_n},
         {"iterations", result.iterations},
         {"converged", result.converged ? 1 : 0},
     };
@@ -99,9 +103,9 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
     const DblScalar dbl_scalars[] = {
         {"delt", (double)p.delt}, {"ftol", (double)p.ftol},
         {"lamscale", (double)p.lamscale},
-        {"phiedge", ip.phiedge}, {"pres_scale", ip.pres_scale},
-        {"adiabatic_index", ip.adiabatic_index}, {"spres_ped", ip.spres_ped},
-        {"bloat", ip.bloat}, {"curtor", ip.curtor}, {"tcon0", ip.tcon0},
+        {"phiedge", pv.phiedge}, {"pres_scale", pv.pres_scale},
+        {"adiabatic_index", pv.adiabatic_index}, {"spres_ped", pv.spres_ped},
+        {"bloat", pv.bloat}, {"curtor", pv.curtor}, {"tcon0", pv.tcon0},
         {"fsqr", (double)result.fsqr}, {"fsqz", (double)result.fsqz},
         {"fsql", (double)result.fsql},
     };
@@ -178,19 +182,19 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
     }
 
     // ---- provenance data (full fixed-size arrays; n_grids records usage) ----
-    NC_CHECK(nc_put_var_int(ncid, v_ns_array, ip.ns_array), "put ns_array");
-    NC_CHECK(nc_put_var_int(ncid, v_niter_array, ip.niter_array), "put niter_array");
-    NC_CHECK(nc_put_var_double(ncid, v_ftol_array, ip.ftol_array), "put ftol_array");
-    NC_CHECK(nc_put_var_double(ncid, v_am, ip.am), "put am");
-    NC_CHECK(nc_put_var_double(ncid, v_ac, ip.ac), "put ac");
-    NC_CHECK(nc_put_var_double(ncid, v_ai, ip.ai), "put ai");
-    NC_CHECK(nc_put_var_double(ncid, v_aphi, ip.aphi), "put aphi");
-    NC_CHECK(nc_put_var_double(ncid, v_raxis_c, ip.raxis_c), "put raxis_c");
-    NC_CHECK(nc_put_var_double(ncid, v_zaxis_s, ip.zaxis_s), "put zaxis_s");
-    NC_CHECK(nc_put_var_double(ncid, v_rbcc, &ip.rbcc[0][0]), "put rbcc");
-    NC_CHECK(nc_put_var_double(ncid, v_rbss, &ip.rbss[0][0]), "put rbss");
-    NC_CHECK(nc_put_var_double(ncid, v_zbsc, &ip.zbsc[0][0]), "put zbsc");
-    NC_CHECK(nc_put_var_double(ncid, v_zbcs, &ip.zbcs[0][0]), "put zbcs");
+    NC_CHECK(nc_put_var_int(ncid, v_ns_array, pv.ns_array), "put ns_array");
+    NC_CHECK(nc_put_var_int(ncid, v_niter_array, pv.niter_array), "put niter_array");
+    NC_CHECK(nc_put_var_double(ncid, v_ftol_array, pv.ftol_array), "put ftol_array");
+    NC_CHECK(nc_put_var_double(ncid, v_am, pv.am), "put am");
+    NC_CHECK(nc_put_var_double(ncid, v_ac, pv.ac), "put ac");
+    NC_CHECK(nc_put_var_double(ncid, v_ai, pv.ai), "put ai");
+    NC_CHECK(nc_put_var_double(ncid, v_aphi, pv.aphi), "put aphi");
+    NC_CHECK(nc_put_var_double(ncid, v_raxis_c, pv.raxis_c), "put raxis_c");
+    NC_CHECK(nc_put_var_double(ncid, v_zaxis_s, pv.zaxis_s), "put zaxis_s");
+    NC_CHECK(nc_put_var_double(ncid, v_rbcc, &pv.rbcc[0][0]), "put rbcc");
+    NC_CHECK(nc_put_var_double(ncid, v_rbss, &pv.rbss[0][0]), "put rbss");
+    NC_CHECK(nc_put_var_double(ncid, v_zbsc, &pv.zbsc[0][0]), "put zbsc");
+    NC_CHECK(nc_put_var_double(ncid, v_zbcs, &pv.zbcs[0][0]), "put zbcs");
 
     // A failed close is not re-closed (the stream is already being torn
     // down); remove the partial temp and report the failure.
@@ -216,5 +220,5 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template bool outputSaveNetcdf<double>(const SpectralState<double>&, const DeviceParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template bool outputSaveNetcdf<float>(const SpectralState<float>&, const DeviceParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveNetcdf<double>(const SpectralState<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
+template bool outputSaveNetcdf<float>(const SpectralState<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);

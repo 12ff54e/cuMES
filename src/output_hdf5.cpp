@@ -11,7 +11,7 @@
 // whole-buffer H5Dwrite would silently transpose, so each mode is written
 // as a hyperslab with the contiguous column at dbuf + m*ns.
 #include "output.cuh"
-#include "input.h"
+#include "cumes/io/legacy_provenance.hpp"
 #include "solver.cuh"
 #include <cuda_runtime.h>  // cudaMemcpy (host runtime API)
 #include <hdf5.h>
@@ -41,8 +41,12 @@ herr_t putAttr(hid_t loc, const char* name, hid_t dtype, const void* val) {
 
 template <typename T>
 bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
-                    const InputParams& ip, const SolverResult<T>& result,
+                    const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                     const char* path, const char* input_file) {
+    // Fixed-capacity provenance for the v0 layout (padded arrays, byte-identical
+    // to the pre-overhaul InputParams).
+    const cumes::LegacyInputProvenance pv =
+        cumes::LegacyInputProvenance::from_validated(vp);
     // Atomic publication: create at a same-directory temp path, then rename()
     // over `path` after a successful close, so a reader never sees a
     // half-written file and a failure leaves the target untouched.
@@ -74,10 +78,10 @@ bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
         {"ntheta", p.ntheta}, {"nzeta", p.nzeta},
         {"ns", p.ns}, {"mnmax", p.mnmax}, {"nZnT", p.nZnT},
         {"ncurr", p.ncurr}, {"max_iter", p.max_iter},
-        {"n_grids", ip.n_grids},
-        {"am_n", ip.am_n}, {"ac_n", ip.ac_n}, {"ai_n", ip.ai_n},
-        {"aphi_n", ip.aphi_n}, {"raxis_n", ip.raxis_n},
-        {"rbc_n", ip.rbc_n}, {"zbs_n", ip.zbs_n},
+        {"n_grids", pv.n_grids},
+        {"am_n", pv.am_n}, {"ac_n", pv.ac_n}, {"ai_n", pv.ai_n},
+        {"aphi_n", pv.aphi_n}, {"raxis_n", pv.raxis_n},
+        {"rbc_n", pv.rbc_n}, {"zbs_n", pv.zbs_n},
         {"iterations", result.iterations},
         {"converged", result.converged ? 1 : 0},
     };
@@ -88,9 +92,9 @@ bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
     const DblAttr dbls[] = {
         {"delt", (double)p.delt}, {"ftol", (double)p.ftol},
         {"lamscale", (double)p.lamscale},
-        {"phiedge", ip.phiedge}, {"pres_scale", ip.pres_scale},
-        {"adiabatic_index", ip.adiabatic_index}, {"spres_ped", ip.spres_ped},
-        {"bloat", ip.bloat}, {"curtor", ip.curtor}, {"tcon0", ip.tcon0},
+        {"phiedge", pv.phiedge}, {"pres_scale", pv.pres_scale},
+        {"adiabatic_index", pv.adiabatic_index}, {"spres_ped", pv.spres_ped},
+        {"bloat", pv.bloat}, {"curtor", pv.curtor}, {"tcon0", pv.tcon0},
         {"fsqr", (double)result.fsqr}, {"fsqz", (double)result.fsqz},
         {"fsql", (double)result.fsql},
     };
@@ -121,23 +125,23 @@ bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
         H5Dclose(ds);
         return r;
     };
-    const hsize_t d8[1] = {InputParams::kMaxGrids};
-    const hsize_t d16[1] = {InputParams::kMaxCoeff};
+    const hsize_t d8[1] = {cumes::LegacyInputProvenance::kMaxGrids};
+    const hsize_t d16[1] = {cumes::LegacyInputProvenance::kMaxCoeff};
     const hsize_t d32[1] = {32};
     const hsize_t d16x16[2] = {16, 16};
-    H5_CHECK(writeArray("ns_array", H5T_NATIVE_INT, 1, d8, ip.ns_array), "write ns_array");
-    H5_CHECK(writeArray("niter_array", H5T_NATIVE_INT, 1, d8, ip.niter_array), "write niter_array");
-    H5_CHECK(writeArray("ftol_array", H5T_NATIVE_DOUBLE, 1, d8, ip.ftol_array), "write ftol_array");
-    H5_CHECK(writeArray("am", H5T_NATIVE_DOUBLE, 1, d16, ip.am), "write am");
-    H5_CHECK(writeArray("ac", H5T_NATIVE_DOUBLE, 1, d16, ip.ac), "write ac");
-    H5_CHECK(writeArray("ai", H5T_NATIVE_DOUBLE, 1, d16, ip.ai), "write ai");
-    H5_CHECK(writeArray("aphi", H5T_NATIVE_DOUBLE, 1, d16, ip.aphi), "write aphi");
-    H5_CHECK(writeArray("raxis_c", H5T_NATIVE_DOUBLE, 1, d32, ip.raxis_c), "write raxis_c");
-    H5_CHECK(writeArray("zaxis_s", H5T_NATIVE_DOUBLE, 1, d32, ip.zaxis_s), "write zaxis_s");
-    H5_CHECK(writeArray("rbcc", H5T_NATIVE_DOUBLE, 2, d16x16, &ip.rbcc[0][0]), "write rbcc");
-    H5_CHECK(writeArray("rbss", H5T_NATIVE_DOUBLE, 2, d16x16, &ip.rbss[0][0]), "write rbss");
-    H5_CHECK(writeArray("zbsc", H5T_NATIVE_DOUBLE, 2, d16x16, &ip.zbsc[0][0]), "write zbsc");
-    H5_CHECK(writeArray("zbcs", H5T_NATIVE_DOUBLE, 2, d16x16, &ip.zbcs[0][0]), "write zbcs");
+    H5_CHECK(writeArray("ns_array", H5T_NATIVE_INT, 1, d8, pv.ns_array), "write ns_array");
+    H5_CHECK(writeArray("niter_array", H5T_NATIVE_INT, 1, d8, pv.niter_array), "write niter_array");
+    H5_CHECK(writeArray("ftol_array", H5T_NATIVE_DOUBLE, 1, d8, pv.ftol_array), "write ftol_array");
+    H5_CHECK(writeArray("am", H5T_NATIVE_DOUBLE, 1, d16, pv.am), "write am");
+    H5_CHECK(writeArray("ac", H5T_NATIVE_DOUBLE, 1, d16, pv.ac), "write ac");
+    H5_CHECK(writeArray("ai", H5T_NATIVE_DOUBLE, 1, d16, pv.ai), "write ai");
+    H5_CHECK(writeArray("aphi", H5T_NATIVE_DOUBLE, 1, d16, pv.aphi), "write aphi");
+    H5_CHECK(writeArray("raxis_c", H5T_NATIVE_DOUBLE, 1, d32, pv.raxis_c), "write raxis_c");
+    H5_CHECK(writeArray("zaxis_s", H5T_NATIVE_DOUBLE, 1, d32, pv.zaxis_s), "write zaxis_s");
+    H5_CHECK(writeArray("rbcc", H5T_NATIVE_DOUBLE, 2, d16x16, &pv.rbcc[0][0]), "write rbcc");
+    H5_CHECK(writeArray("rbss", H5T_NATIVE_DOUBLE, 2, d16x16, &pv.rbss[0][0]), "write rbss");
+    H5_CHECK(writeArray("zbsc", H5T_NATIVE_DOUBLE, 2, d16x16, &pv.zbsc[0][0]), "write zbsc");
+    H5_CHECK(writeArray("zbcs", H5T_NATIVE_DOUBLE, 2, d16x16, &pv.zbcs[0][0]), "write zbcs");
 
     // ---- state datasets (ns, mnmax), per-mode hyperslab writes ----
     const size_t n = (size_t)p.ns * p.mnmax;
@@ -201,5 +205,5 @@ bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template bool outputSaveHdf5<double>(const SpectralState<double>&, const DeviceParams<double>&, const InputParams&, const SolverResult<double>&, const char*, const char*);
-template bool outputSaveHdf5<float>(const SpectralState<float>&, const DeviceParams<float>&, const InputParams&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveHdf5<double>(const SpectralState<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
+template bool outputSaveHdf5<float>(const SpectralState<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);

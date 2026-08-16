@@ -14,7 +14,6 @@
 #include "solver.cuh"
 #include "precon.cuh"
 #include "constraint.cuh"
-#include "input.h"
 #include <cstdio>
 #include <cmath>
 #include <cstdint>

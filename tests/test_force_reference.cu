@@ -18,7 +18,6 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "input_json.h"
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "geometry.cuh"
@@ -229,8 +228,8 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     checkCuda(cudaMemcpy(st.d_lmncs, h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc; delete[] h_lcs;
 
-    InputParams ip = initInputParams("inputs/solovev.json");
-    RadialProfiles<T> rp = profilesCreate(p, ip);
+    cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
+    RadialProfiles<T> rp = profilesCreate(p, vp);
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);

@@ -30,7 +30,6 @@
 #include <unistd.h>
 
 #include "vmec_types.h"
-#include "input.h"
 #include "solver.cuh"
 #include "output.cuh"
 #include "cumes_test_support.cuh"
@@ -52,7 +51,7 @@ static int failures = 0;
 template <typename T>
 struct TinyBundle {
     DeviceParams<T> p;
-    InputParams ip;
+    cumes::ValidatedProblem vp;
     SolverResult<T> res;
     SpectralState<T> st;
 
@@ -61,9 +60,17 @@ struct TinyBundle {
         p.nZnT = 18; p.mpol = 2; p.ntor = 0; p.ncurr = 0;
         p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10; p.tcon0 = T(1.0);
         p.lamscale = T(0.1);
-        ip.ns = p.ns; ip.mpol = p.mpol; ip.ntor = p.ntor; ip.n_grids = 1;
-        ip.ns_array[0] = p.ns; ip.niter_array[0] = p.max_iter;
-        ip.ftol_array[0] = p.ftol;
+        cumes::ProblemSpec spec;
+        spec.mpol = p.mpol; spec.ntor = p.ntor; spec.nfp = 1;
+        spec.angular.ntheta = p.ntheta; spec.angular.nzeta = p.nzeta;
+        spec.mass.coefficients = {1.0};
+        spec.toroidal_flux.coefficients = {1.0};
+        spec.rbc = {{1, 0, 1.0}};
+        spec.zbs = {{1, 0, 0.5}};
+        spec.stages = {{static_cast<std::size_t>(p.ns),
+                        static_cast<std::size_t>(p.max_iter),
+                        static_cast<double>(p.ftol)}};
+        vp = validateSpec(std::move(spec));
         res = SolverResult<T>{false, 3, T(1e-10), T(2e-10), T(3e-10), T(0.9)};
         const size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
         checkCuda(cudaMalloc(&st.d_rmncc, nb), "rmncc");
@@ -114,13 +121,13 @@ static void runAll() {
     const char* no_dir = "no_such_dir_cumes/state.bin";
     {
         // The binary writer must fail at fopen before reading the state.
-        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res, no_dir, "inputs/solovev.json");
+        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, no_dir, "inputs/solovev.json");
         CHECK(!ok, "open failure: binary returns false");
         CHECK(!fileExists(no_dir), "open failure: no partial file created");
     }
 #ifdef CUMES_HAVE_NETCDF
     {
-        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res,
+        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res,
                                 "no_such_dir_cumes/state.nc", "inputs/solovev.json");
         CHECK(!ok, "open failure: netcdf returns false");
         CHECK(!fileExists("no_such_dir_cumes/state.nc"),
@@ -129,7 +136,7 @@ static void runAll() {
 #endif
 #ifdef CUMES_HAVE_HDF5
     {
-        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res,
+        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res,
                                 "no_such_dir_cumes/state.h5", "inputs/solovev.json");
         CHECK(!ok, "open failure: hdf5 returns false");
         CHECK(!fileExists("no_such_dir_cumes/state.h5"),
@@ -148,7 +155,7 @@ static void runAll() {
         // Remove any prior run's leftover, then make a directory as the target.
         remove(dir);
         if (mkdir(dir, 0755) != 0) { fprintf(stderr, "cannot mkdir %s\n", dir); exit(1); }
-        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res, dir, "inputs/solovev.json");
+        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, dir, "inputs/solovev.json");
         CHECK(!ok, "rename failure: target directory -> returns false");
         CHECK(fileExists(dir), "rename failure: target directory untouched");
         // No stray temp file may remain next to the target.
@@ -171,7 +178,7 @@ static void runAll() {
     {
         const char* path = "test_output_trunc.bin";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res, path, "inputs/solovev.json");
+        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, path, "inputs/solovev.json");
         CHECK(ok, "truncation: binary overwrite succeeds");
         // Header is 2 ints = 8 bytes, then data; old 'GARBAGE' must be gone.
         FILE* fp = fopen(path, "rb");
@@ -191,7 +198,7 @@ static void runAll() {
     {
         const char* path = "test_output_trunc.nc";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res, path, "inputs/solovev.json");
+        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, path, "inputs/solovev.json");
         CHECK(ok, "truncation: netcdf overwrite succeeds");
         // NC_CLOBBER must have replaced the garbage; the file now starts with
         // the netCDF magic "CDF".
@@ -212,7 +219,7 @@ static void runAll() {
     {
         const char* path = "test_output_trunc.h5";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = outputSave<T>(b.st, b.p, b.ip, b.res, path, "inputs/solovev.json");
+        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, path, "inputs/solovev.json");
         CHECK(ok, "truncation: hdf5 overwrite succeeds");
         // HDF5 signature is "\211HDF\r\n\032\n".
         FILE* fp = fopen(path, "rb");

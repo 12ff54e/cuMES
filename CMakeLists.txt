@@ -53,17 +53,11 @@ endforeach()
 
 # ---- host-only library targets ---------------------------------------------
 
-# JsonParser implementation (header-only library, compiled once). Shared by the
-# legacy parser and the new host-model reader.
+# JsonParser implementation (header-only library, compiled once), shared by the
+# host-model reader.
 add_library(cumes_json STATIC src/json_parser.cpp)
 target_include_directories(cumes_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 cumes_enable_warnings(cumes_json)
-
-# JSON input parser (no CUDA; compiled by the C++ compiler).
-add_library(cumes_config STATIC src/input_json.cpp)
-target_include_directories(cumes_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(cumes_config PUBLIC cumes_json)
-cumes_enable_warnings(cumes_config)
 
 # ---- Phase 2: validated host model (namespace cumes) -----------------------
 # Core host model: result/status, checked arithmetic, grid shape, mode table.
@@ -182,7 +176,7 @@ cumes_enable_warnings(test_fourier)
 
 add_executable(test_input_json tests/test_input_json.cu)
 target_include_directories(test_input_json PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_input_json PRIVATE cumes_config)
+target_link_libraries(test_input_json PRIVATE cumes_config_json)
 cumes_enable_warnings(test_input_json)
 
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
@@ -191,18 +185,18 @@ foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_tridiagonal test_cuda_graph)
   add_executable(${t} tests/${t}.cu)
   target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(${t} PRIVATE cumes_test_support cumes_config cumes_cuda_double cumes_cuda_float)
+  target_link_libraries(${t} PRIVATE cumes_test_support cumes_config_json cumes_cuda_double cumes_cuda_float)
   cumes_enable_warnings(${t})
 endforeach()
 
 add_executable(test_output_failure tests/test_output_failure.cu)
 target_include_directories(test_output_failure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_output_failure PRIVATE cumes_test_support cumes_io)
+target_link_libraries(test_output_failure PRIVATE cumes_test_support cumes_config_json cumes_io)
 cumes_enable_warnings(test_output_failure)
 
 add_executable(test_host_config tests/test_host_config.cpp)
 target_include_directories(test_host_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_host_config PRIVATE cumes_config_json cumes_config)
+target_link_libraries(test_host_config PRIVATE cumes_config_json)
 cumes_enable_warnings(test_host_config)
 
 add_executable(test_host_io tests/test_host_io.cpp)

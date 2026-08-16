@@ -2,9 +2,11 @@
 // (blueprint §6.11; extracted from main.cu so the CLI and the fixed-iteration
 // benchmark share the exact same seeding, not two drifting copies).
 //
-// Three host-side helpers reproduce the legacy seeding verbatim:
+// Three host-side helpers reproduce the legacy seeding verbatim, now consuming
+// the immutable ValidatedProblem directly (migration step 13.2 — the legacy
+// InputParams fixed-capacity bridge is gone):
 //
-//   init_params   — DeviceParams<T> from InputParams (the to_input_params bridge)
+//   init_params   — DeviceParams<T> from ValidatedProblem (stage 0)
 //   init_state    — vmecpp interpFromBoundaryAndAxis cold start
 //   restart_state — upload a host EquilibriumSnapshot + LCFS/axis patch
 //
@@ -17,25 +19,30 @@
 #include <cmath>
 #include <cstdint>
 
+#include "cumes/config/validated_problem.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/state/spectral_storage.hpp"
-#include "input.h"
 #include "vmec_types.h"
 
 namespace cumes {
 
-// DeviceParams<T> from InputParams. lamscale is set later by profilesCreate.
+// DeviceParams<T> from ValidatedProblem. lamscale is set later by profilesCreate;
+// ns/max_iter/ftol carry stage 0 (the stage loop overwrites them per stage).
 template <typename T>
-DeviceParams<T> init_params(const InputParams& ip) {
+DeviceParams<T> init_params(const ValidatedProblem& vp) {
+    const ProblemSpec& s = vp.spec();
     DeviceParams<T> p;
-    p.ns = ip.ns; p.mpol = ip.mpol; p.ntor = ip.ntor;
-    p.ntheta = ip.ntheta; p.nzeta = ip.nzeta; p.nfp = ip.nfp;
+    p.ns = static_cast<int>(s.stages.front().radial_surfaces);
+    p.mpol = s.mpol; p.ntor = s.ntor;
+    p.ntheta = s.angular.ntheta; p.nzeta = s.angular.nzeta; p.nfp = s.nfp;
     p.nZnT = p.ntheta * p.nzeta;
     p.mnmax = p.mpol * (p.ntor + 1);   // folded basis: mode = m*(ntor+1)+n
-    p.ncurr = ip.ncurr;
-    p.delt = ip.delt; p.ftol = ip.ftol; p.max_iter = ip.max_iter;
-    p.tcon0 = T(ip.tcon0);             // constraint-force multiplier
+    p.ncurr = (s.current_model == CurrentModel::kPrescribedCurrent) ? 1 : 0;
+    p.delt = T(s.delt);
+    p.ftol = T(s.stages.front().tolerance);
+    p.max_iter = static_cast<int>(s.stages.front().max_iterations);
+    p.tcon0 = T(s.physical.tcon0);     // constraint-force multiplier
     p.lamscale = T(0.0);               // set by profilesCreate
     return p;
 }
@@ -48,7 +55,10 @@ DeviceParams<T> init_params(const InputParams& ip) {
 // divides by mscale*nscale, but its mscale'd basis makes the real-space
 // reconstruction identical).
 template <typename T>
-SpectralStorage<T> init_state(const DeviceParams<T>& p, const InputParams& ip) {
+SpectralStorage<T> init_state(const DeviceParams<T>& p, const ValidatedProblem& vp) {
+    const ProblemSpec& sp = vp.spec();
+    const FoldedBoundary& b = vp.boundary();
+    const int ntorp1 = p.ntor + 1;
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
     SpectralStorage<T> storage(p.ns, p.mnmax);
 
@@ -64,8 +74,8 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const InputParams& ip) {
                 int mn = m*(p.ntor+1)+n;
                 if(m==0){
                     // m=0: linear in s between axis and boundary
-                    c[j+mn*p.ns]   = sFlux*T(ip.rbcc[0][n]) + (T(1.0)-sFlux)*T(ip.raxis_c[n]);
-                    zcs[j+mn*p.ns] = sFlux*T(ip.zbcs[0][n]) - (T(1.0)-sFlux)*T(ip.zaxis_s[n]);
+                    c[j+mn*p.ns]   = sFlux*T(b.rbcc[0*ntorp1+n]) + (T(1.0)-sFlux)*T(sp.raxis_c[n]);
+                    zcs[j+mn*p.ns] = sFlux*T(b.zbcs[0*ntorp1+n]) - (T(1.0)-sFlux)*T(sp.zaxis_s[n]);
                     // rmnss/zmnsc: no m=0 content; lambda: zero initially
                 } else if(m==1){
                     // m=1: s^(1/2) radial envelope (s^(m/2)), matching
@@ -77,17 +87,17 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const InputParams& ip) {
                     // vmecpp's decomposed real space (its real-space odd =
                     // physical/max).
                     T w = sqrtS;  // s^(1/2)
-                    c[j+mn*p.ns]   = w * T(ip.rbcc[m][n]);
-                    s[j+mn*p.ns]   = w * T(ip.rbss[m][n]);
-                    zsc[j+mn*p.ns] = w * T(ip.zbsc[m][n]);
-                    zcs[j+mn*p.ns] = w * T(ip.zbcs[m][n]);
+                    c[j+mn*p.ns]   = w * T(b.rbcc[m*ntorp1+n]);
+                    s[j+mn*p.ns]   = w * T(b.rbss[m*ntorp1+n]);
+                    zsc[j+mn*p.ns] = w * T(b.zbsc[m*ntorp1+n]);
+                    zcs[j+mn*p.ns] = w * T(b.zbcs[m*ntorp1+n]);
                 } else {
                     // m>=2: s^(m/2) radial envelope, vanishing at axis
                     T w = std::pow(sqrtS, m);  // s^(m/2)
-                    c[j+mn*p.ns]   = w * T(ip.rbcc[m][n]);
-                    s[j+mn*p.ns]   = w * T(ip.rbss[m][n]);
-                    zsc[j+mn*p.ns] = w * T(ip.zbsc[m][n]);
-                    zcs[j+mn*p.ns] = w * T(ip.zbcs[m][n]);
+                    c[j+mn*p.ns]   = w * T(b.rbcc[m*ntorp1+n]);
+                    s[j+mn*p.ns]   = w * T(b.rbss[m*ntorp1+n]);
+                    zsc[j+mn*p.ns] = w * T(b.zbsc[m*ntorp1+n]);
+                    zcs[j+mn*p.ns] = w * T(b.zbcs[m*ntorp1+n]);
                 }
                 // lmnsc/lmncs: zero initially (lambda is a free gauge)
             }
@@ -112,8 +122,10 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const InputParams& ip) {
 // doubles regardless of T; the conversion mirrors outputSaveBinary's T->double
 // in reverse.
 template <typename T>
-SpectralStorage<T> restart_state(const DeviceParams<T>& p, const InputParams& ip,
+SpectralStorage<T> restart_state(const DeviceParams<T>& p, const ValidatedProblem& vp,
                                  const EquilibriumSnapshot& snap) {
+    const FoldedBoundary& b = vp.boundary();
+    const int ntorp1 = p.ntor + 1;
     const size_t one = (size_t)p.ns * p.mnmax;
     const size_t nb = one * sizeof(T);
     SpectralStorage<T> storage(p.ns, p.mnmax);
@@ -142,10 +154,10 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p, const InputParams& ip
         for (int m = 0; m < p.mpol; ++m) {
             for (int n = 0; n < p.ntor + 1; ++n) {
                 int mn = m * (p.ntor + 1) + n;
-                c[jB + mn * p.ns] = T(ip.rbcc[m][n]);
-                s[jB + mn * p.ns] = T(ip.rbss[m][n]);
-                zsc[jB + mn * p.ns] = T(ip.zbsc[m][n]);
-                zcs[jB + mn * p.ns] = T(ip.zbcs[m][n]);
+                c[jB + mn * p.ns] = T(b.rbcc[m * ntorp1 + n]);
+                s[jB + mn * p.ns] = T(b.rbss[m * ntorp1 + n]);
+                zsc[jB + mn * p.ns] = T(b.zbsc[m * ntorp1 + n]);
+                zcs[jB + mn * p.ns] = T(b.zbcs[m * ntorp1 + n]);
                 if (m > 0) {
                     c[0 + mn * p.ns] = T(0.0);
                     s[0 + mn * p.ns] = T(0.0);

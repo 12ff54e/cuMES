@@ -1,8 +1,8 @@
-// test_input_json.cu — JSON input parsing: mapping and error paths.
-// Exercises src/input_json.cu (initInputParamsFromJson) against the two
-// shipped configs (inputs/*.json, run from the cuMES folder) and the
-// vmecpp-schema error handling. The expected values below pin the
-// mapping: a change here must be a deliberate schema change.
+// test_input_json.cu — JSON input mapping and error paths for the Phase 2
+// host model (read_and_validate). Exercises the two shipped configs
+// (inputs/*.json, run from the cuMES folder) and the vmecpp-schema error
+// handling. The expected values below pin the mapping; a change here must be a
+// deliberate schema change.
 //
 // The negative tests pin the containment-series validation: nonzero gamma,
 // negative/out-of-range boundary m, empty/oversized/mismatched/non-monotonic
@@ -19,7 +19,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "input_json.h"
+#include "cumes/config/json_reader.hpp"
+#include "cumes/config/validated_problem.hpp"
 
 static int failures = 0;
 #define CHECK(cond, msg)                                                     \
@@ -40,18 +41,6 @@ static const char* scratchPath() {
     return buf;
 }
 
-// Expect expr to throw std::runtime_error whose message contains `fragment`.
-#define CHECK_THROWS(expr, fragment, msg)                                    \
-    do {                                                                     \
-        bool thrown = false;                                                 \
-        try {                                                                \
-            (void)(expr);                                                    \
-        } catch (const std::runtime_error& e) {                              \
-            thrown = std::string(e.what()).find(fragment) != std::string::npos; \
-        }                                                                    \
-        CHECK(thrown, msg);                                                  \
-    } while (0)
-
 static void writeScratch(const std::string& content) {
     FILE* fp = fopen(scratchPath(), "w");
     if (!fp) { fprintf(stderr, "cannot write scratch file\n"); exit(1); }
@@ -59,94 +48,132 @@ static void writeScratch(const std::string& content) {
     fclose(fp);
 }
 
-// Return the stderr written while running fn() (for the unknown-key warning).
-template <typename Fn>
-static std::string captureStderr(Fn fn) {
-    const char* path = "test_input_json_stderr.txt";
-    fflush(stderr);
-    int saved = dup(STDERR_FILENO);
-    FILE* tmp = fopen(path, "w");
-    if (!tmp) { fprintf(stderr, "cannot open stderr capture\n"); exit(1); }
-    int fd = fileno(tmp);
-    dup2(fd, STDERR_FILENO);
-    fclose(tmp);
-    fn();
-    fflush(stderr);
-    dup2(saved, STDERR_FILENO);
-    close(saved);
-    FILE* fp = fopen(path, "r");
-    if (!fp) { fprintf(stderr, "cannot read stderr capture\n"); exit(1); }
-    std::string out;
-    char buf[1024];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof buf, fp)) > 0) out.append(buf, n);
-    fclose(fp);
-    remove(path);
-    return out;
+// Validate a JSON fixture; exit if it fails (the value tests below assume it
+// succeeds — a mapping regression should fail loudly, not cascade).
+static cumes::ValidatedProblem load(const char* path) {
+    cumes::SolverOptions opts;
+    auto vr = cumes::read_and_validate(path, opts);
+    if (!vr.has_value()) {
+        fprintf(stderr, "load(%s) failed validation\n", path);
+        exit(1);
+    }
+    return std::move(vr.value());
+}
+
+// Return the first error message whose text contains `fragment`, or "" if none.
+static std::string findError(const cumes::ValidationResult& vr,
+                             const std::string& fragment) {
+    if (vr.has_value()) return "";
+    for (const auto& issue : vr.error().issues()) {
+        if (issue.severity == cumes::Severity::kError &&
+            issue.message.find(fragment) != std::string::npos) {
+            return issue.message;
+        }
+    }
+    return "";
+}
+
+// Folded-boundary index: mode = m*(ntor+1)+n.
+static double fold(const cumes::FoldedBoundary& b, int ntor, int m, int n,
+                   int comp) {
+    const std::size_t mode = static_cast<std::size_t>(m) * (ntor + 1) + n;
+    switch (comp) {
+        case 0: return b.rbcc[mode];
+        case 1: return b.rbss[mode];
+        case 2: return b.zbsc[mode];
+        default: return b.zbcs[mode];
+    }
 }
 
 static void testSolovev() {
-    InputParams p = initInputParams("inputs/solovev.json");
-    CHECK(p.mpol == 6 && p.ntor == 0 && p.nfp == 1, "solovev: mpol/ntor/nfp");
-    CHECK(p.ntheta == 18 && p.nzeta == 1, "solovev: resolution defaults");
-    CHECK(p.ncurr == 0 && p.delt == 0.9 && p.phiedge == 1.0, "solovev: ncurr/delt/phiedge");
-    CHECK(p.n_grids == 3 && p.ns_array[0] == 5 && p.ns_array[1] == 11 &&
-              p.ns_array[2] == 55, "solovev: ns_array 5/11/55");
-    CHECK(p.niter_array[0] == 1000 && p.niter_array[1] == 2000 &&
-              p.niter_array[2] == 2000, "solovev: niter_array");
-    CHECK(p.ftol_array[0] == 1e-16 && p.ftol_array[2] == 1e-16, "solovev: ftol_array");
-    // stage-0 invariant: DeviceParams and other tests read these directly
-    CHECK(p.ns == 5 && p.max_iter == 1000 && p.ftol == 1e-16, "solovev: stage-0 invariant");
-    CHECK(p.am_n == 2 && p.am[0] == 0.125 && p.am[1] == -0.125, "solovev: am");
-    CHECK(p.ac_n == 0 && p.ai_n == 1 && p.ai[0] == 1.0, "solovev: ac/ai");
-    CHECK(p.aphi_n == 1 && p.aphi[0] == 1.0, "solovev: aphi default {1.0}");
-    CHECK(p.raxis_n == 1 && p.raxis_c[0] == 4.0, "solovev: raxis");
-    CHECK(p.rbc_n == 3 && p.zbs_n == 3, "solovev: boundary counts");
-    // folded product basis (foldBoundary)
-    CHECK(p.rbcc[0][0] == 3.999 && p.rbcc[1][0] == 1.026 && p.rbcc[2][0] == -0.068,
-          "solovev: folded rbcc");
-    CHECK(p.zbsc[1][0] == 1.580 && p.zbsc[2][0] == 0.010, "solovev: folded zbsc");
+    cumes::ValidatedProblem vp = load("inputs/solovev.json");
+    const cumes::ProblemSpec& s = vp.spec();
+    const cumes::FoldedBoundary& b = vp.boundary();
+    CHECK(s.mpol == 6 && s.ntor == 0 && s.nfp == 1, "solovev: mpol/ntor/nfp");
+    CHECK(s.angular.ntheta == 18 && s.angular.nzeta == 1, "solovev: resolution defaults");
+    CHECK(s.current_model == cumes::CurrentModel::kFixedIota && s.delt == 0.9 &&
+              s.physical.phiedge == 1.0, "solovev: ncurr/delt/phiedge");
+    CHECK(s.stages.size() == 3 && s.stages[0].radial_surfaces == 5 &&
+              s.stages[1].radial_surfaces == 11 && s.stages[2].radial_surfaces == 55,
+          "solovev: ns_array 5/11/55");
+    CHECK(s.stages[0].max_iterations == 1000 && s.stages[1].max_iterations == 2000 &&
+              s.stages[2].max_iterations == 2000, "solovev: niter_array");
+    CHECK(s.stages[0].tolerance == 1e-16 && s.stages[2].tolerance == 1e-16,
+          "solovev: ftol_array");
+    CHECK(s.mass.coefficients.size() == 2 && s.mass.coefficients[0] == 0.125 &&
+              s.mass.coefficients[1] == -0.125, "solovev: am");
+    CHECK(s.current.coefficients.empty() && s.iota.coefficients.size() == 1 &&
+              s.iota.coefficients[0] == 1.0, "solovev: ac/ai");
+    CHECK(s.toroidal_flux.coefficients.size() == 1 &&
+              s.toroidal_flux.coefficients[0] == 1.0, "solovev: aphi default {1.0}");
+    CHECK(s.raxis_c.size() == 1 && s.raxis_c[0] == 4.0, "solovev: raxis");
+    CHECK(s.rbc.size() == 3 && s.zbs.size() == 3, "solovev: boundary counts");
+    // folded product basis
+    CHECK(fold(b, s.ntor, 0, 0, 0) == 3.999 && fold(b, s.ntor, 1, 0, 0) == 1.026 &&
+              fold(b, s.ntor, 2, 0, 0) == -0.068, "solovev: folded rbcc");
+    CHECK(fold(b, s.ntor, 1, 0, 2) == 1.580 && fold(b, s.ntor, 2, 0, 2) == 0.010,
+          "solovev: folded zbsc");
 }
 
 static void testW7x() {
-    InputParams p = initInputParams("inputs/w7x.json");
-    CHECK(p.mpol == 12 && p.ntor == 12 && p.nfp == 5, "w7x: mpol/ntor/nfp");
-    CHECK(p.ntheta == 30 && p.nzeta == 36, "w7x: resolution defaults");
-    CHECK(p.ncurr == 1 && p.delt == 1.0 && p.phiedge == -1.74, "w7x: ncurr/delt/phiedge");
-    CHECK(p.curtor == 5000.0 && p.bloat == 1.0 && p.spres_ped == 1.0 && p.tcon0 == 1.0,
+    cumes::ValidatedProblem vp = load("inputs/w7x.json");
+    const cumes::ProblemSpec& s = vp.spec();
+    const cumes::FoldedBoundary& b = vp.boundary();
+    CHECK(s.mpol == 12 && s.ntor == 12 && s.nfp == 5, "w7x: mpol/ntor/nfp");
+    CHECK(s.angular.ntheta == 30 && s.angular.nzeta == 36, "w7x: resolution defaults");
+    CHECK(s.current_model == cumes::CurrentModel::kPrescribedCurrent && s.delt == 1.0 &&
+              s.physical.phiedge == -1.74, "w7x: ncurr/delt/phiedge");
+    CHECK(s.physical.curtor == 5000.0 && s.physical.bloat == 1.0 &&
+              s.physical.spres_ped == 1.0 && s.physical.tcon0 == 1.0,
           "w7x: current/profile scalars");
-    CHECK(p.n_grids == 3 && p.ns_array[2] == 99, "w7x: ns_array 33/66/99");
-    CHECK(p.niter_array[2] == 5000 && p.ftol_array[2] == 1e-12, "w7x: multigrid tails");
-    CHECK(p.ns == 33 && p.max_iter == 3000 && p.ftol == 1e-12, "w7x: stage-0 invariant");
-    CHECK(p.am_n == 2 && p.am[0] == 166000.0, "w7x: am");
-    CHECK(p.ac_n == 2 && p.ac[0] == 0.0 && p.ac[1] == 1.0, "w7x: ac");
-    CHECK(p.ai_n == 0, "w7x: no ai");
-    CHECK(p.raxis_n == 13 && p.raxis_c[0] == 5.6343 && p.raxis_c[1] == 0.35209 &&
-              p.zaxis_s[1] == -0.29578, "w7x: raxis/zaxis");
-    CHECK(p.rbc_n == 85 && p.zbs_n == 84, "w7x: boundary counts (85 rbc, 84 zbs)");
+    CHECK(s.stages.size() == 3 && s.stages[2].radial_surfaces == 99,
+          "w7x: ns_array 33/66/99");
+    CHECK(s.stages[2].max_iterations == 5000 && s.stages[2].tolerance == 1e-12,
+          "w7x: multigrid tails");
+    CHECK(s.mass.coefficients.size() == 2 && s.mass.coefficients[0] == 166000.0,
+          "w7x: am");
+    CHECK(s.current.coefficients.size() == 2 && s.current.coefficients[0] == 0.0 &&
+              s.current.coefficients[1] == 1.0, "w7x: ac");
+    CHECK(s.iota.coefficients.empty(), "w7x: no ai");
+    CHECK(s.raxis_c.size() == 13 && s.raxis_c[0] == 5.6343 &&
+              s.raxis_c[1] == 0.35209 && s.zaxis_s[1] == -0.29578,
+          "w7x: raxis/zaxis");
+    CHECK(s.rbc.size() == 85 && s.zbs.size() == 84,
+          "w7x: boundary counts (85 rbc, 84 zbs)");
     // folded product basis: a few asymmetric-mode checks (n can be negative)
-    CHECK(p.rbcc[1][0] == 0.49093, "w7x: rbcc[1][0]");
-    CHECK(std::fabs(p.rbss[1][1] - (-0.25107 - 0.033555)) < 1e-12, "w7x: rbss[1][1] fold");
-    CHECK(p.zbsc[1][0] == 0.61965, "w7x: zbsc[1][0]");
-    CHECK(std::fabs(p.zbcs[1][1] - (0.036669 - 0.17897)) < 1e-12, "w7x: zbcs[1][1] fold");
+    CHECK(fold(b, s.ntor, 1, 0, 0) == 0.49093, "w7x: rbcc[1][0]");
+    CHECK(std::fabs(fold(b, s.ntor, 1, 1, 1) - (-0.25107 - 0.033555)) < 1e-12,
+          "w7x: rbss[1][1] fold");
+    CHECK(fold(b, s.ntor, 1, 0, 2) == 0.61965, "w7x: zbsc[1][0]");
+    CHECK(std::fabs(fold(b, s.ntor, 1, 1, 3) - (0.036669 - 0.17897)) < 1e-12,
+          "w7x: zbcs[1][1] fold");
 }
 
 static void testErrors() {
-    CHECK_THROWS(initInputParamsFromJson("no_such_file.json"), "not found",
-                 "error: missing file");
+    cumes::SolverOptions opts;
+    bool thrown = false;
+    try {
+        cumes::read_and_validate("no_such_file.json", opts);
+    } catch (const std::runtime_error& e) {
+        thrown = std::string(e.what()).find("not found") != std::string::npos;
+    }
+    CHECK(thrown, "error: missing file");
     writeScratch("{\"mpol\": \"six\"}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "expected an integer", "error: wrong type for mpol");
+    auto vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "expected an integer").empty(),
+          "error: wrong type for mpol");
     // (lasym check runs after the boundary-required check, so include one)
     writeScratch("{\"lasym\": true, \"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "lasym=true", "error: lasym rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "lasym=true").empty(),
+          "error: lasym rejected");
     writeScratch("{\"ns_array\": [5, 11], \"niter_array\": [1000, 2000, 2000],"
                  " \"ftol_array\": [1e-16, 1e-16, 1e-16]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "niter_array length must match ns_array", "error: multigrid length mismatch");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "niter_array length must match ns_array").empty(),
+          "error: multigrid length mismatch");
     // out-of-range boundary mode is warned about and skipped (vmecpp semantics)
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"ns_array\": [5],"
                  " \"niter_array\": [100], \"ftol_array\": [1e-12],"
@@ -154,140 +181,143 @@ static void testErrors() {
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0},"
                  "          {\"n\": 0, \"m\": 99, \"value\": 9.9}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    InputParams p = initInputParams(scratchPath());
-    CHECK(p.rbc_n == 1 && p.rbc[0].value == 1.0, "error: out-of-range mode skipped");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(vr.has_value() && vr.value().spec().rbc.size() == 1 &&
+              vr.value().spec().rbc[0].value == 1.0, "error: out-of-range mode skipped");
     // missing boundary is a hard error
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"rbc\": []}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "rbc: at least one boundary coefficient is required",
-                 "error: empty rbc rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "at least one boundary coefficient").empty(),
+          "error: empty rbc rejected");
     // minimal document without multigrid arrays -> single stage, defaults
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    p = initInputParams(scratchPath());
-    CHECK(p.n_grids == 1 && p.ns == p.ns_array[0] && p.aphi_n == 1 && p.aphi[0] == 1.0,
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(vr.has_value() && vr.value().spec().stages.size() == 1 &&
+              vr.value().spec().toroidal_flux.coefficients.size() == 1 &&
+              vr.value().spec().toroidal_flux.coefficients[0] == 1.0,
           "minimal doc: single stage + aphi default");
 }
 
 // ---- containment-series validation negatives (cuMES-issues.md fixes) ----
 // Each case pins an accepted validation path: the offending input must be
 // rejected before any allocation, with a message naming the cause.
-
 static void testNegative() {
-    // Nonzero gamma / adiabatic_index is rejected (input_json.cu:217).
+    cumes::SolverOptions opts;
+    // Nonzero gamma / adiabatic_index is rejected.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"adiabatic_index\": 0.5,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "gamma", "neg: nonzero gamma (adiabatic_index) rejected");
+    auto vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "gamma").empty(),
+          "neg: nonzero gamma (adiabatic_index) rejected");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"gamma\": 1.5,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "gamma", "neg: nonzero gamma (alias) rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "gamma").empty(),
+          "neg: nonzero gamma (alias) rejected");
 
-    // Negative boundary m is skipped with a warning (input_json.cu:151),
-    // matching vmecpp's ignore-and-continue for out-of-range modes. The
-    // folded tables stay in-bounds.
+    // Negative boundary m is skipped with a warning, matching vmecpp.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": -1, \"value\": 9.9},"
                  "          {\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    {
-        InputParams p = initInputParams(scratchPath());
-        CHECK(p.rbc_n == 1 && p.rbc[0].value == 1.0,
-              "neg: negative boundary m skipped, valid entry kept");
-    }
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(vr.has_value() && vr.value().spec().rbc.size() == 1 &&
+              vr.value().spec().rbc[0].value == 1.0,
+          "neg: negative boundary m skipped, valid entry kept");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": 7, \"value\": 9.9},"
                  "          {\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    {
-        InputParams p = initInputParams(scratchPath());
-        CHECK(p.rbc_n == 1 && p.rbc[0].value == 1.0,
-              "neg: m >= mpol boundary skipped");
-    }
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(vr.has_value() && vr.value().spec().rbc.size() == 1 &&
+              vr.value().spec().rbc[0].value == 1.0,
+          "neg: m >= mpol boundary skipped");
 
-    // Empty multigrid schedule is rejected (input_json.cu:270): a zero-stage
-    // run would save/print a null state.
+    // Empty multigrid schedule is rejected.
     writeScratch("{\"ns_array\": [], \"niter_array\": [], \"ftol_array\": []}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "at least one stage", "neg: empty ns_array rejected");
-    // Oversized schedule rejected by the kMaxGrids capacity (readNumberArray).
-    writeScratch("{\"ns_array\": [5,6,7,8,9,10,11,12,13],"
-                 " \"niter_array\": [1,1,1,1,1,1,1,1,1],"
-                 " \"ftol_array\": [1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12,1e-12]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "exceed the 8-entry capacity", "neg: oversized ns_array rejected");
-    // ftol_array length mismatch (only niter length was covered before).
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "at least one stage").empty(),
+          "neg: empty ns_array rejected");
+    // ftol_array length mismatch.
     writeScratch("{\"ns_array\": [5, 11], \"niter_array\": [100, 200],"
                  " \"ftol_array\": [1e-12]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "ftol_array length must match ns_array",
-                 "neg: ftol_array length mismatch rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "ftol_array length must match ns_array").empty(),
+          "neg: ftol_array length mismatch rejected");
     // Non-monotonic schedule.
     writeScratch("{\"ns_array\": [55, 11], \"niter_array\": [100, 200],"
                  " \"ftol_array\": [1e-12, 1e-12]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "monotonically non-decreasing", "neg: non-monotonic ns rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "monotonically non-decreasing").empty(),
+          "neg: non-monotonic ns rejected");
 
-    // Integer narrowing: a huge literal must not silently wrap into a
-    // valid-looking resolution (input_json.cu:67).
+    // Integer narrowing: a huge literal must not silently wrap.
     writeScratch("{\"mpol\": 4294967297}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "out of range", "neg: integer overflow rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "out of range").empty(),
+          "neg: integer overflow rejected");
 
-    // Wrong-type auxiliary/asymmetric keys are hard errors (input_json.cu:317).
+    // Wrong-type auxiliary/asymmetric keys are hard errors.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"am_aux_s\": 5,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "am_aux_s': expected an array", "neg: scalar am_aux_s rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "am_aux_s': expected an array").empty(),
+          "neg: scalar am_aux_s rejected");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"raxis_s\": 5,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "raxis_s': expected an array", "neg: scalar raxis_s rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "raxis_s': expected an array").empty(),
+          "neg: scalar raxis_s rejected");
     // Non-empty asymmetric array is unsupported physics.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"rbs\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "asymmetric (lasym) input is not supported", "neg: rbs content rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "asymmetric (lasym) input is not supported").empty(),
+          "neg: rbs content rejected");
 
     // Unsupported physics keys: lasym, lfreeb, non-power_series profiles.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "lasym=true", "neg: lasym=true rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "lasym=true").empty(),
+          "neg: lasym=true rejected");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "free-boundary", "neg: lfreeb=true rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "free-boundary").empty(),
+          "neg: lfreeb=true rejected");
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"pmass_type\": \"spline\","
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    CHECK_THROWS(initInputParamsFromJson(scratchPath()),
-                 "only \"power_series\"", "neg: non-power_series profile rejected");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "only \"power_series\"").empty(),
+          "neg: non-power_series profile rejected");
 
-    // A typo'd key warns to stderr (not silently ignored) but does not fail
-    // the parse (unknown keys outside the supported/known-ignored sets warn).
+    // A typo'd key warns (not silently ignored) but does not fail the parse.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"n_theta\": 6,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    {
-        std::string err = captureStderr([&]() {
-            InputParams p = initInputParams(scratchPath());
-            CHECK(p.mpol == 2, "neg: unknown key parse succeeds");
-        });
-        CHECK(err.find("unknown input key 'n_theta'") != std::string::npos,
-              "neg: unknown key warned to stderr");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    CHECK(vr.has_value() && vr.value().spec().mpol == 2,
+          "neg: unknown key parse succeeds");
+    if (vr.has_value()) {
+        bool warned = false;
+        for (const auto& issue : vr.value().warnings().issues())
+            if (issue.message.find("unknown input key 'n_theta'") != std::string::npos)
+                warned = true;
+        CHECK(warned, "neg: unknown key recorded as a warning");
     }
 }
 

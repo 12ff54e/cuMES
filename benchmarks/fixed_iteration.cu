@@ -28,7 +28,6 @@
 #include <string>
 #include <vector>
 
-#include "input.h"
 #include "vmec_types.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
@@ -146,13 +145,12 @@ int main(int argc, char** argv) {
                     issue.key.c_str(), issue.message.c_str());
         return 2;
     }
-    const auto to_ip = vr.value().to_input_params();
-    if (!to_ip.has_value()) { fprintf(stderr, "bench: %s\n", to_ip.error().c_str()); return 2; }
-    InputParams ip = to_ip.value();
+    const cumes::ValidatedProblem& vp = vr.value();
+    const cumes::ProblemSpec& spec = vp.spec();
 
     // Single stage at the config's FINAL radial grid.
-    DeviceParams<Real> p = cumes::init_params<Real>(ip);
-    p.ns = ip.ns_array[ip.n_grids - 1];
+    DeviceParams<Real> p = cumes::init_params<Real>(vp);
+    p.ns = static_cast<int>(spec.stages.back().radial_surfaces);
     p.max_iter = warmup + passes;
     p.ftol = Real(0.0);  // never converge: run exactly warmup+passes passes
 
@@ -167,9 +165,9 @@ int main(int argc, char** argv) {
                     ck.value().ns, ck.value().mnmax, p.ns, p.mnmax);
             return 2;
         }
-        storage = cumes::restart_state<Real>(p, ip, ck.value());
+        storage = cumes::restart_state<Real>(p, vp, ck.value());
     } else {
-        storage = cumes::init_state<Real>(p, ip);
+        storage = cumes::init_state<Real>(p, vp);
     }
 
     // ---- drive one stage directly (mirrors StageSolver::run) with timing ----
@@ -182,7 +180,7 @@ int main(int argc, char** argv) {
 
     double t0 = now_us();
     arena.allocate(cumes::stage_arena_bytes<Real>(p));
-    cumes::Profiles<Real> profiles(p, ip, &arena);
+    cumes::Profiles<Real> profiles(p, vp, &arena);
     cumes::RealSpaceStorage<Real> rs = realSpaceCreate<Real>(p, &arena);
     cumes::DeviceModeTable mt = cumes::modeTableCreate<Real>(p, &arena);
     cumes::ToroidalFftOperator<Real> transform(p, rs, mt, &arena);

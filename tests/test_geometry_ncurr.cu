@@ -19,7 +19,6 @@
 #include <vector>
 
 #include "vmec_types.h"
-#include "input_json.h"
 #include "fourier.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
@@ -78,19 +77,24 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     // ncurr=1 needs prescribed-current profiles (curtor/ac); ncurr=0 uses
     // the fixed-iota profiles from inputs/solovev.json.
-    InputParams ip;
-    if (ncurr == 1) {
-        ip.mpol = p.mpol; ip.ntor = p.ntor; ip.ncurr = 1;
-        ip.curtor = 1.0; ip.ac_n = 1; ip.ac[0] = 1.0;
-        ip.am_n = 1; ip.am[0] = 0.1;
-        ip.ns = ns; ip.max_iter = 10; ip.ftol = 1e-14;
-        ip.ns_array[0] = ns; ip.niter_array[0] = 10; ip.ftol_array[0] = 1e-14;
-    } else {
-        ip = initInputParams("inputs/solovev.json");
-    }
-    ip.ncurr = ncurr;
+    cumes::ValidatedProblem vp = [&]() {
+        if (ncurr == 1) {
+            cumes::ProblemSpec spec;
+            spec.mpol = p.mpol; spec.ntor = p.ntor; spec.nfp = 1;
+            spec.angular.ntheta = p.ntheta; spec.angular.nzeta = p.nzeta;
+            spec.current_model = cumes::CurrentModel::kPrescribedCurrent;
+            spec.physical.curtor = 1.0;
+            spec.mass.coefficients = {0.1};
+            spec.current.coefficients = {1.0};
+            spec.rbc = {{1, 0, 1.0}};
+            spec.zbs = {{1, 0, 0.5}};
+            spec.stages = {{static_cast<std::size_t>(ns), 10, 1e-14}};
+            return validateSpec(std::move(spec));
+        }
+        return loadValidated("inputs/solovev.json");
+    }();
 
-    RadialProfiles<T> rp = profilesCreate(p, ip);
+    RadialProfiles<T> rp = profilesCreate(p, vp);
     FourierPlan<T> fp = fourierCreate(p);
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);

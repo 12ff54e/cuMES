@@ -26,7 +26,6 @@
 #include "fft_traits.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
-#include "input.h"
 #include "profiles.cuh"
 #include "solver.cuh"
 
@@ -79,7 +78,7 @@ std::size_t stage_arena_bytes(const DeviceParams<T>& p) {
 template <typename T>
 class StageSolver {
   public:
-    static SolverResult<T> run(DeviceParams<T>& p, const InputParams& ip,
+    static SolverResult<T> run(DeviceParams<T>& p, const ValidatedProblem& vp,
                                SpectralStorage<T>& state,
                                cudaStream_t stream = 0,
                                SolverBench* bench = nullptr) {
@@ -88,7 +87,7 @@ class StageSolver {
         // Setup (profiles/Fourier/metric) is synchronous on the default
         // stream, so it completes before the solve; the hot loop runs on the
         // explicit nonblocking compute stream (Phase 6A).
-        Profiles<T> profiles(p, ip, &arena);
+        Profiles<T> profiles(p, vp, &arena);
         RealSpaceStorage<T> rs = realSpaceCreate<T>(p, &arena);
         DeviceModeTable mt = modeTableCreate<T>(p, &arena);
         ToroidalFftOperator<T> transform(p, rs, mt, &arena);
