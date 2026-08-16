@@ -35,14 +35,16 @@ class LegacyBinaryV0Writer final : public Writer {
         FILE* fp = fopen(tmp.c_str(), "wb");
         if (!fp) return Status("cannot open " + tmp + " for writing");
 
-        const std::size_t n = snapshot.family_size();
         bool ok = io_detail::write_i32(fp, snapshot.ns) &&
                   io_detail::write_i32(fp, snapshot.mnmax);
-        for (const auto& fam : snapshot.families) {
-            if (fam.size() != n) ok = false;
-            ok = ok && io_detail::write_f64_array(fp, fam.data(), n);
-        }
         if (!ok) {
+            fclose(fp);
+            remove(tmp.c_str());
+            return Status("failed to write legacy binary state");
+        }
+        // writeStateFamilies aborts on a family-size mismatch before writing
+        // (an undersized family must not fall through into an OOB read).
+        if (!io_detail::writeStateFamilies(fp, snapshot)) {
             fclose(fp);
             remove(tmp.c_str());
             return Status("failed to write legacy binary state");

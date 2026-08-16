@@ -38,17 +38,17 @@ Status write_checkpoint(const EquilibriumSnapshot& snapshot,
         return Status(reason);
     };
 
-    const std::size_t n = snapshot.family_size();
     bool ok = io_detail::write_bytes(fp, kCheckpointMagic, 8) &&
               io_detail::write_i32(fp, kCheckpointVersion) &&
               io_detail::write_i32(fp, 0 /* precision = double */) &&
               io_detail::write_i32(fp, snapshot.ns) &&
               io_detail::write_i32(fp, snapshot.mnmax);
-    for (const auto& fam : snapshot.families) {
-        if (fam.size() != n) ok = false;
-        ok = ok && io_detail::write_f64_array(fp, fam.data(), n);
-    }
     if (!ok) return fail("failed to write checkpoint payload");
+    // writeStateFamilies aborts on a family-size mismatch before writing (an
+    // undersized family must not fall through into an OOB read).
+    if (!io_detail::writeStateFamilies(fp, snapshot)) {
+        return fail("failed to write checkpoint payload");
+    }
 
     const std::string err = io_detail::publishAtomic(fp, tmp, path);
     if (!err.empty()) return Status("checkpoint publish: " + err);
@@ -88,11 +88,8 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path) {
     EquilibriumSnapshot snapshot;
     snapshot.ns = ns;
     snapshot.mnmax = mnmax;
-    for (auto& fam : snapshot.families) {
-        fam.resize(n);
-        if (!io_detail::read_f64_array(fp, fam.data(), n)) {
-            return fail("checkpoint: truncated state data");
-        }
+    if (!io_detail::readStateFamilies(fp, n, snapshot)) {
+        return fail("checkpoint: truncated state data");
     }
     fclose(fp);
     return snapshot;
@@ -119,15 +116,12 @@ Result<EquilibriumSnapshot> convert_legacy_init(const std::string& path,
                     ") does not match expected (ns=" + std::to_string(expected_ns) +
                     ", mnmax=" + std::to_string(expected_mnmax) + ")");
     }
-    const std::size_t n = static_cast<std::size_t>(ns) * mnmax;
+    const std::size_t n = static_cast<std::size_t>(ns) * static_cast<std::size_t>(mnmax);
     EquilibriumSnapshot snapshot;
     snapshot.ns = ns;
     snapshot.mnmax = mnmax;
-    for (auto& fam : snapshot.families) {
-        fam.resize(n);
-        if (!io_detail::read_f64_array(fp, fam.data(), n)) {
-            return fail("legacy init: truncated state data");
-        }
+    if (!io_detail::readStateFamilies(fp, n, snapshot)) {
+        return fail("legacy init: truncated state data");
     }
     fclose(fp);
     return snapshot;

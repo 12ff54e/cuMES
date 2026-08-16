@@ -11,47 +11,13 @@
 // untouched (only the temp is removed). On POSIX rename() within one directory
 // is atomic.
 #include "output.cuh"
+#define CUMES_IO_DEVICE_STAGE 1  // opt in to FamilyStage (needs CUDA headers)
+#include "cumes/io/writer_helpers.hpp"  // io_detail::tempPathFor/publishAtomic, FamilyStage
 #include <cuda_runtime.h>  // cudaMemcpy/cudaMemcpy2D/cudaGetErrorString (host runtime API)
 #include <cstdio>
-#include <cstdlib>   // getpid
 #include <cstring>   // strrchr
 #include <string>
 #include <strings.h>  // strcasecmp
-#include <unistd.h>   // getpid, fsync, rename
-
-// A same-directory temp path for `path` (so rename() stays on one filesystem).
-static std::string tempPathFor(const char* path) {
-    std::string p = path;
-    p += ".tmp." + std::to_string((long)getpid());
-    return p;
-}
-
-// Flush + fsync + close `fp`, then atomically rename `tmp` over `path`.
-// Returns true on success; on failure prints and removes the temp, leaving
-// `path` untouched. `fp` is always closed exactly once (a close that fails is
-// not re-closed). Used by the atomic writers.
-static bool publishAtomic(FILE* fp, const char* tmp, const char* path) {
-    bool fail = false;
-    if (fflush(fp) != 0) {
-        fprintf(stderr, "output: fflush %s failed\n", tmp);
-        fail = true;
-    }
-    if (!fail && fsync(fileno(fp)) != 0) {
-        fprintf(stderr, "output: fsync %s failed\n", tmp);
-        fail = true;
-    }
-    if (fclose(fp) != 0) {
-        fprintf(stderr, "output: fclose %s failed\n", tmp);
-        fail = true;
-    }
-    if (fail) { remove(tmp); return false; }
-    if (rename(tmp, path) != 0) {
-        fprintf(stderr, "output: rename %s -> %s failed\n", tmp, path);
-        remove(tmp);
-        return false;
-    }
-    return true;
-}
 
 #include "cumes/runtime/cuda_status.hpp"
 
@@ -88,7 +54,7 @@ const char* linkedOutputSuffixes() {
 template <typename T>
 bool outputSaveBinary(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
                       const char* filename) {
-    const std::string tmp = tempPathFor(filename);
+    const std::string tmp = cumes::io_detail::tempPathFor(filename);
     FILE* fp = fopen(tmp.c_str(), "wb");
     if (!fp) { fprintf(stderr, "Cannot open %s\n", tmp.c_str()); return false; }
     // On any failure: close the temp, remove it, return false. The target
@@ -103,31 +69,36 @@ bool outputSaveBinary(const cumes::SpectralStorage<T>& storage, const DevicePara
     int ns = p.ns, mnmax = p.mnmax;
     if (fwrite(&ns, sizeof(int), 1, fp) != 1) return fail("header ns");
     if (fwrite(&mnmax, sizeof(int), 1, fp) != 1) return fail("header mnmax");
-    // Write each coefficient array (6 arrays, each ns*mnmax doubles on disk)
-    size_t nb = ns * mnmax * sizeof(T);
-    auto* buf = new T[ns * mnmax];
-    auto* dbuf = new double[ns * mnmax];
-    bool ok = true;
+    // Write each coefficient array (6 arrays, each ns*mnmax doubles on disk).
+    // The staging buffers are RAII (FamilyStage), and a CUDA copy failure is
+    // reported instead of thrown, so the fail path (close temp, remove temp,
+    // return false) runs even on a device fault.
+    const auto n_opt = cumes::io_detail::familyCount(ns, mnmax);
+    if (!n_opt) return fail("dimension product overflows size_t");
+    const std::size_t n = *n_opt;
+    cumes::io_detail::FamilyStage<T> stage(n);
     auto writeFam = [&](const T* d, const char* tag) {
-        cumes::check_cuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), tag);
-        for (size_t i = 0; i < (size_t)ns * mnmax; ++i) dbuf[i] = (double)buf[i];
-        if (fwrite(dbuf, sizeof(double), ns * mnmax, fp) != (size_t)(ns * mnmax)) {
-            ok = false;
+        std::string reason;
+        if (!stage.copy(d, tag, reason)) return fail(reason.c_str());
+        if (fwrite(stage.data(), sizeof(double), n, fp) != n) {
+            return fail("state write");
         }
+        return true;
     };
-    writeFam(storage.family_ptr(cumes::SpectralComponent::Rcc), "cpy rmncc");
-    writeFam(storage.family_ptr(cumes::SpectralComponent::Zsc), "cpy zmnsc");
-    writeFam(storage.family_ptr(cumes::SpectralComponent::Lsc), "cpy lmnsc");
-    writeFam(storage.family_ptr(cumes::SpectralComponent::Rss), "cpy rmnss");
-    writeFam(storage.family_ptr(cumes::SpectralComponent::Zcs), "cpy zmncs");
-    writeFam(storage.family_ptr(cumes::SpectralComponent::Lcs), "cpy lmncs");
-    delete[] dbuf;
-    delete[] buf;
-    if (!ok) return fail("state write");
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Rcc), "cpy rmncc")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Zsc), "cpy zmnsc")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Lsc), "cpy lmnsc")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Rss), "cpy rmnss")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Zcs), "cpy zmncs")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Lcs), "cpy lmncs")) return false;
     // Flush + fsync + close + atomic rename. publishAtomic always closes fp
     // exactly once (a failing close is not re-closed) and removes the temp on
     // any failure, leaving `filename` untouched.
-    if (!publishAtomic(fp, tmp.c_str(), filename)) return false;
+    const std::string err = cumes::io_detail::publishAtomic(fp, tmp, filename);
+    if (!err.empty()) {
+        fprintf(stderr, "outputSaveBinary: %s (%s)\n", err.c_str(), tmp.c_str());
+        return false;
+    }
     printf("Saved binary state to %s\n", filename);
     return true;
 }

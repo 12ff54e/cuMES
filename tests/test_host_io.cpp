@@ -201,6 +201,72 @@ static void testReaderRejectsMismatchedFormat() {
     remove(v1.path.c_str());
 }
 
+static void testCorruptHeaderHugeDimensions() {
+    // A corrupt v1 header with ns*mnmax*48 bytes in [2^63, 2^64) used to wrap
+    // the size_t -> long long cast in checkStateDimensions negative, pass the
+    // file-size bound, and die in fam.resize(~2e17) with an uncaught
+    // std::bad_alloc (std::terminate). The reader must return the
+    // "dimensions implausible" error instead.
+    const std::string path = scratch("hugedim");
+    {
+        FILE* f = fopen(path.c_str(), "wb");
+        const char magic[8] = {'C', 'U', 'M', 'E', 'S', '0', '0', '1'};
+        fwrite(magic, 1, 8, f);
+        const std::int32_t version = 1, ns = 2147483647, mnmax = 95000000;
+        fwrite(&version, sizeof(version), 1, f);
+        fwrite(&ns, sizeof(ns), 1, f);
+        fwrite(&mnmax, sizeof(mnmax), 1, f);
+        fclose(f);
+    }
+    auto r = cumes::make_reader(OutputFormat::kBinary, OutputSchema::kV1);
+    auto got = r->read(path);
+    CHECK(!got.has_value(),
+          "corrupt header: huge ns*mnmax rejected as implausible (no bad_alloc/terminate)");
+    remove(path.c_str());
+}
+
+static void testShortFamilyRejected() {
+    // A snapshot with a family not sized ns*mnmax must fail the write BEFORE
+    // touching the short vector's memory. The old pattern (`ok = false;` then
+    // `ok = ok && write_f64_array(...)`) only skipped the OOB read through the
+    // && short-circuit; the shared writeStateFamilies now returns early on a
+    // size mismatch, so no reordering can reintroduce the read.
+    EquilibriumSnapshot s = makeSnapshot(4, 2);
+    // rmnss four elements short (32 bytes); shrink_to_fit keeps the capacity
+    // exactly at the short size so any over-read crosses the allocation and is
+    // visible to ASan/valgrind.
+    s.families[3].resize(s.family_size() - 4);
+    s.families[3].shrink_to_fit();
+    OutputSpec spec;
+    spec.format = OutputFormat::kBinary;
+    spec.schema = OutputSchema::kLegacyV0;
+    spec.path = scratch("short");
+    auto w = cumes::make_writer(spec.format, spec.schema);
+    CHECK(w->write_atomic(s, makeReport(), spec).has_value() == false,
+          "short family: write fails cleanly (no OOB read)");
+    FILE* f = fopen(spec.path.c_str(), "rb");
+    CHECK(f == nullptr, "short family: no file published");
+    if (f) fclose(f);
+}
+
+static void testV1UnknownPrecisionRejected() {
+    // An unknown build scalar type must fail the v1 write (typed precision
+    // tag), not silently record 0=double as the old string compare did.
+    EquilibriumSnapshot s = makeSnapshot(4, 2);
+    OutputSpec spec;
+    spec.format = OutputFormat::kBinary;
+    spec.schema = OutputSchema::kV1;
+    spec.path = scratch("v1badprec");
+    auto w = cumes::make_writer(spec.format, spec.schema);
+    RunReport report = makeReport();
+    report.build.scalar_type = "single";
+    CHECK(!w->write_atomic(s, report, spec).has_value(),
+          "v1: unknown precision tag rejected");
+    FILE* f = fopen(spec.path.c_str(), "rb");
+    CHECK(f == nullptr, "v1: no file published on unknown precision tag");
+    if (f) fclose(f);
+}
+
 static void testFailureMatrix() {
     EquilibriumSnapshot s = makeSnapshot(4, 2);
     // open failure: a path in a nonexistent directory.
@@ -237,6 +303,9 @@ int main() {
     testBinaryRoundTrip();
     testV1RoundTrip();
     testReaderRejectsMismatchedFormat();
+    testCorruptHeaderHugeDimensions();
+    testShortFamilyRejected();
+    testV1UnknownPrecisionRejected();
     testFailureMatrix();
     if (failures == 0) {
         printf("test_host_io: ALL PASS\n");

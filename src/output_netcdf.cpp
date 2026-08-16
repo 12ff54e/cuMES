@@ -12,6 +12,8 @@
 // contiguous column at dbuf + m*ns.
 #include "output.cuh"
 #include "cumes/io/legacy_provenance.hpp"
+#define CUMES_IO_DEVICE_STAGE 1  // opt in to FamilyStage (needs CUDA headers)
+#include "cumes/io/writer_helpers.hpp"  // io_detail::tempPathFor/renamePublish, FamilyStage
 #include "solver.cuh"
 #include <cuda_runtime.h>  // cudaMemcpy (host runtime API)
 #include <netcdf.h>
@@ -35,8 +37,7 @@ bool outputSaveNetcdf(const cumes::SpectralStorage<T>& storage, const DevicePara
     // rename() it over `path` after a successful close, so a reader never sees
     // a half-written file and a failure leaves the target untouched. The temp
     // path must live in the same directory as the target for an atomic rename.
-    const std::string tmp = std::string(path) + ".tmp." +
-                            std::to_string((long)getpid());
+    const std::string tmp = cumes::io_detail::tempPathFor(path);
     // NC_CLOBBER alone gives classic-3 (CDF-1); ncdump -k reports "classic".
     int ncid = -1;
     int rc = nc_create(tmp.c_str(), NC_CLOBBER, &ncid);
@@ -48,16 +49,19 @@ bool outputSaveNetcdf(const cumes::SpectralStorage<T>& storage, const DevicePara
     // On any later error: close, delete the half-written file, return false
     // (the caller folds output success into the CLI exit code). A failure OF
     // nc_close itself must not be re-closed (double-close UB) — the closing
-    // call is handled at the call site, not through this macro.
+    // call is handled at the call site, not through this macro. The same fail
+    // path also serves the device-copy failure (the D2H copy reports instead
+    // of throwing, so a GPU fault still removes the temp and returns false).
+    auto fail = [&](const char* tag, const std::string& msg) -> bool {
+        fprintf(stderr, "NetCDF error [%s]: %s\n", tag, msg.c_str());
+        nc_close(ncid);
+        remove(tmp.c_str());
+        return false;
+    };
 #define NC_CHECK(rc_, tag)                                                   \
     do {                                                                     \
         int _rc = (rc_);                                                     \
-        if (_rc != NC_NOERR) {                                               \
-            fprintf(stderr, "NetCDF error [%s]: %s\n", tag, nc_strerror(_rc)); \
-            nc_close(ncid);                                                  \
-            remove(tmp.c_str());                                             \
-            return false;                                                    \
-        }                                                                    \
+        if (_rc != NC_NOERR) return fail(tag, nc_strerror(_rc));             \
     } while (0)
 
     // ---- dimensions ----
@@ -66,9 +70,9 @@ bool outputSaveNetcdf(const cumes::SpectralStorage<T>& storage, const DevicePara
     NC_CHECK(nc_def_dim(ncid, "mnmax", (size_t)p.mnmax, &dim_mnmax), "def dim mnmax");
     NC_CHECK(nc_def_dim(ncid, "ngrids", cumes::LegacyInputProvenance::kMaxGrids, &dim_ngrids), "def dim ngrids");
     NC_CHECK(nc_def_dim(ncid, "ncoeff", cumes::LegacyInputProvenance::kMaxCoeff, &dim_ncoeff), "def dim ncoeff");
-    NC_CHECK(nc_def_dim(ncid, "naxis", 32, &dim_naxis), "def dim naxis");
-    NC_CHECK(nc_def_dim(ncid, "nbm", 16, &dim_nbm), "def dim nbm");
-    NC_CHECK(nc_def_dim(ncid, "nbn", 16, &dim_nbn), "def dim nbn");
+    NC_CHECK(nc_def_dim(ncid, "naxis", cumes::LegacyInputProvenance::kMaxAxis, &dim_naxis), "def dim naxis");
+    NC_CHECK(nc_def_dim(ncid, "nbm", cumes::LegacyInputProvenance::kMaxM, &dim_nbm), "def dim nbm");
+    NC_CHECK(nc_def_dim(ncid, "nbn", cumes::LegacyInputProvenance::kMaxN, &dim_nbn), "def dim nbn");
 
     // ---- state variables (ns, mnmax) ----
     const int state_dims[2] = {dim_ns, dim_mnmax};
@@ -146,30 +150,31 @@ bool outputSaveNetcdf(const cumes::SpectralStorage<T>& storage, const DevicePara
     NC_CHECK(nc_enddef(ncid), "nc_enddef");
 
     // ---- state data (per-mode hyperslabs, see layout note at the top) ----
-    const size_t n = (size_t)p.ns * p.mnmax;
-    auto* buf = new T[n];
-    auto* dbuf = new double[n];
-    const size_t nb = n * sizeof(T);
-    auto writeFam = [&](const T* d, int varid) -> int {
-        cumes::check_cuda(cudaMemcpy(buf, d, nb, cudaMemcpyDeviceToHost), "cpy fam");
-        for (size_t i = 0; i < n; ++i) { dbuf[i] = (double)buf[i]; }
+    const auto n_opt = cumes::io_detail::familyCount(p.ns, p.mnmax);
+    if (!n_opt) return fail("write state", "ns * mnmax overflows size_t");
+    const std::size_t n = *n_opt;
+    // RAII staging (FamilyStage): the buffers cannot leak on a write failure,
+    // and a CUDA copy error is reported (fail path) instead of thrown.
+    cumes::io_detail::FamilyStage<T> stage(n);
+    auto writeFam = [&](const T* d, int varid, const char* tag) -> bool {
+        std::string reason;
+        if (!stage.copy(d, tag, reason)) return fail(tag, reason);
+        const double* dbuf = stage.data();
         for (int m = 0; m < p.mnmax; ++m) {
             const size_t start[2] = {0, (size_t)m};
             const size_t count[2] = {(size_t)p.ns, 1};
             int rc2 = nc_put_vara_double(ncid, varid, start, count,
                                          dbuf + (size_t)m * p.ns);
-            if (rc2 != NC_NOERR) { return rc2; }
+            if (rc2 != NC_NOERR) return fail(tag, nc_strerror(rc2));
         }
-        return NC_NOERR;
+        return true;
     };
-    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Rcc), v_rmncc), "write rmncc");
-    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Zsc), v_zmnsc), "write zmnsc");
-    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Lsc), v_lmnsc), "write lmnsc");
-    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Rss), v_rmnss), "write rmnss");
-    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Zcs), v_zmncs), "write zmncs");
-    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Lcs), v_lmncs), "write lmncs");
-    delete[] dbuf;
-    delete[] buf;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Rcc), v_rmncc, "write rmncc")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Zsc), v_zmnsc, "write zmnsc")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Lsc), v_lmnsc, "write lmnsc")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Rss), v_rmnss, "write rmnss")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Zcs), v_zmncs, "write zmncs")) return false;
+    if (!writeFam(storage.family_ptr(cumes::SpectralComponent::Lcs), v_lmncs, "write lmncs")) return false;
 
     // ---- scalar data ----
     for (size_t i = 0; i < sizeof(int_scalars) / sizeof(int_scalars[0]); ++i) {
@@ -209,9 +214,8 @@ bool outputSaveNetcdf(const cumes::SpectralStorage<T>& storage, const DevicePara
     }
     // Atomic publish: the temp is fully written and closed, so rename it over
     // the target. On failure remove the temp; the target is untouched.
-    if (rename(tmp.c_str(), path) != 0) {
+    if (!cumes::io_detail::renamePublish(tmp, path).empty()) {
         fprintf(stderr, "NetCDF error [rename %s -> %s]\n", tmp.c_str(), path);
-        remove(tmp.c_str());
         return false;
     }
 #undef NC_CHECK

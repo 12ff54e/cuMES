@@ -26,6 +26,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 
 namespace cumes {
@@ -33,6 +34,17 @@ namespace {
 
 constexpr char kMagic[9] = "CUMES001";
 constexpr std::int32_t kVersion = 1;
+
+// The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
+// Typed locally instead of a string compare against BuildProvenance::scalar_type
+// so an unknown tag is a write error rather than a silent "0=double" record.
+enum class PrecisionTag : std::int32_t { kDouble = 0, kFloat = 1 };
+
+std::optional<PrecisionTag> precisionTagFor(const std::string& scalar_type) {
+    if (scalar_type == "double") return PrecisionTag::kDouble;
+    if (scalar_type == "float") return PrecisionTag::kFloat;
+    return std::nullopt;
+}
 
 class VersionedBinaryWriter final : public Writer {
  public:
@@ -48,19 +60,20 @@ class VersionedBinaryWriter final : public Writer {
             return Status(reason);
         };
 
-        const std::size_t n = snapshot.family_size();
         bool ok = io_detail::write_bytes(fp, kMagic, 8) &&
                   io_detail::write_i32(fp, kVersion) &&
                   io_detail::write_i32(fp, snapshot.ns) &&
                   io_detail::write_i32(fp, snapshot.mnmax);
-        for (const auto& fam : snapshot.families) {
-            if (fam.size() != n) ok = false;
-            ok = ok && io_detail::write_f64_array(fp, fam.data(), n);
-        }
         if (!ok) return fail("failed to write versioned state payload");
+        // writeStateFamilies aborts on a family-size mismatch before writing
+        // (an undersized family must not fall through into an OOB read).
+        if (!io_detail::writeStateFamilies(fp, snapshot)) {
+            return fail("failed to write versioned state payload");
+        }
 
-        const int precision = (report.build.scalar_type == "float") ? 1 : 0;
-        ok = io_detail::write_i32(fp, precision) &&
+        const auto precision = precisionTagFor(report.build.scalar_type);
+        if (!precision) return fail("unknown precision tag '" + report.build.scalar_type + "'");
+        ok = io_detail::write_i32(fp, static_cast<std::int32_t>(*precision)) &&
              io_detail::write_i32(fp, static_cast<std::int32_t>(report.status)) &&
              io_detail::write_i32(fp, report.total_effective_iterations) &&
              io_detail::write_i32(fp, static_cast<std::int32_t>(report.stages.size()));
@@ -125,11 +138,8 @@ class VersionedBinaryReader final : public Reader {
         EquilibriumSnapshot snapshot;
         snapshot.ns = ns;
         snapshot.mnmax = mnmax;
-        for (auto& fam : snapshot.families) {
-            fam.resize(n);
-            if (!io_detail::read_f64_array(fp, fam.data(), n)) {
-                return fail("versioned binary: truncated state data");
-            }
+        if (!io_detail::readStateFamilies(fp, n, snapshot)) {
+            return fail("versioned binary: truncated state data");
         }
         fclose(fp);
         return snapshot;

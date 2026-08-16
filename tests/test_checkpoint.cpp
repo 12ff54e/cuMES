@@ -91,6 +91,30 @@ static void testCheckpointRejection() {
     remove(tpath.c_str());
 }
 
+static void testCheckpointCorruptHugeDimensions() {
+    // A corrupt checkpoint header with ns*mnmax*48 bytes in [2^63, 2^64) used
+    // to wrap the size_t -> long long cast in checkStateDimensions negative,
+    // pass the file-size bound, and die in fam.resize(~2e17) with an uncaught
+    // std::bad_alloc (std::terminate). The reader must return the
+    // "dimensions implausible" error instead.
+    const std::string path = scratch("hugedim");
+    {
+        FILE* f = fopen(path.c_str(), "wb");
+        fwrite("CUMECKP1", 1, 8, f);
+        const std::int32_t version = 1, precision = 0;
+        const std::int32_t ns = 2147483647, mnmax = 95000000;
+        fwrite(&version, sizeof(version), 1, f);
+        fwrite(&precision, sizeof(precision), 1, f);
+        fwrite(&ns, sizeof(ns), 1, f);
+        fwrite(&mnmax, sizeof(mnmax), 1, f);
+        fclose(f);
+    }
+    auto got = cumes::read_checkpoint(path);
+    CHECK(!got.has_value(),
+          "checkpoint: huge ns*mnmax rejected as implausible (no bad_alloc/terminate)");
+    remove(path.c_str());
+}
+
 static void testConvertLegacyInit() {
     // Write a legacy six-family payload (int32 ns, int32 mnmax, 6 families).
     EquilibriumSnapshot s = makeSnapshot(4, 2);
@@ -117,6 +141,7 @@ static void testConvertLegacyInit() {
 int main() {
     testCheckpointRoundTrip();
     testCheckpointRejection();
+    testCheckpointCorruptHugeDimensions();
     testConvertLegacyInit();
     if (failures == 0) {
         printf("test_checkpoint: ALL PASS\n");

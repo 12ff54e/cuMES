@@ -1,9 +1,13 @@
 // io_common.hpp — internal helpers shared by the host I/O backends (not
-// installed). Atomic publication (temp + fsync + rename, close-safe) and
-// little-endian binary field serialization.
+// installed). Little-endian binary field serialization and the shared
+// magic-prefixed state payload. The atomic-publication primitives live in the
+// installed include/cumes/io/writer_helpers.hpp (one implementation for every
+// writer); the shared state-dimension check follows.
 #pragma once
 
 #include "cumes/core/checked_size.hpp"
+#include "cumes/io/equilibrium_snapshot.hpp"
+#include "cumes/io/writer_helpers.hpp"
 
 #include <climits>
 #include <cstdint>
@@ -15,29 +19,6 @@
 
 namespace cumes {
 namespace io_detail {
-
-// A same-directory temp path for `path` (rename() stays on one filesystem).
-inline std::string tempPathFor(const std::string& path) {
-    return path + ".tmp." + std::to_string(static_cast<long>(getpid()));
-}
-
-// Flush + fsync + close `fp`, then atomically rename `tmp` over `path`. On any
-// failure removes the temp and leaves `path` untouched; `fp` is closed exactly
-// once. Returns an empty string on success, or a human-readable reason.
-inline std::string publishAtomic(FILE* fp, const std::string& tmp,
-                                 const std::string& path) {
-    bool fail = false;
-    std::string reason;
-    if (fflush(fp) != 0) { reason = "fflush failed"; fail = true; }
-    if (!fail && fsync(fileno(fp)) != 0) { reason = "fsync failed"; fail = true; }
-    if (fclose(fp) != 0 && !fail) { reason = "fclose failed"; fail = true; }
-    if (fail) { remove(tmp.c_str()); return reason; }
-    if (rename(tmp.c_str(), path.c_str()) != 0) {
-        remove(tmp.c_str());
-        return "rename failed";
-    }
-    return "";
-}
 
 // Current file size in bytes (position-preserving), or nullopt on failure.
 inline std::optional<long long> fileSize(FILE* fp) {
@@ -69,7 +50,14 @@ inline bool checkStateDimensions(FILE* fp, std::int32_t ns, std::int32_t mnmax,
     }
     auto needed = checked_mul(*n, 6 * sizeof(double));
     auto sz = fileSize(fp);
-    if (!needed || !sz || static_cast<long long>(*needed) > *sz) {
+    // Compare in size_t: the old `(long long)*needed > *sz` cast wrapped
+    // negative for byte counts in [2^63, 2^64), silently passing the
+    // file-size bound and letting the reader attempt a ~2e17-element
+    // allocation (std::bad_alloc -> terminate) instead of the intended
+    // "dimensions implausible" error. A negative size (ftell failure) also
+    // fails the bound.
+    if (!needed || !sz || *sz < 0 ||
+        static_cast<std::size_t>(*sz) < *needed) {
         reason = "dimensions implausible for file size (truncated or corrupt)";
         return false;
     }
@@ -120,6 +108,33 @@ inline bool read_string(FILE* fp, std::string& s) {
 }
 inline bool read_f64_array(FILE* fp, double* p, std::size_t n) {
     return read_bytes(fp, p, n * sizeof(double));
+}
+
+// ---- shared magic-prefixed state payload (checkpoint.cpp, versioned_binary.cpp) ----
+
+// Write the six families of `snapshot`, each exactly family_size() doubles.
+// Returns false (before writing anything of the short family) when a family is
+// not sized exactly n — a size mismatch must never fall through into an OOB
+// read from a short host vector.
+inline bool writeStateFamilies(FILE* fp, const EquilibriumSnapshot& snapshot) {
+    const std::size_t n = snapshot.family_size();
+    for (const auto& fam : snapshot.families) {
+        if (fam.size() != n) return false;
+        if (!io_detail::write_f64_array(fp, fam.data(), n)) return false;
+    }
+    return true;
+}
+
+// Resize each family to `n` and read it. `n` must come from a successful
+// checkStateDimensions call (the bound against the actual file size already
+// happened). Returns false on truncation.
+inline bool readStateFamilies(FILE* fp, std::size_t n,
+                              EquilibriumSnapshot& snapshot) {
+    for (auto& fam : snapshot.families) {
+        fam.resize(n);
+        if (!io_detail::read_f64_array(fp, fam.data(), n)) return false;
+    }
+    return true;
 }
 
 }  // namespace io_detail
