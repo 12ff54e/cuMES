@@ -183,7 +183,14 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     // transform scratch (blueprint §5.1/§6.8). The bandpass is a D2Z/Z2D round
     // trip over 2*(mpol-2)*(ns-1) batch elements (slots 0/1 analysis, 4/5
     // synthesis); its work area is shared the same way as the main plans'.
-    {
+    // Skipped for mpol <= 2 (review finding 1.2): the pass band m = 1..mpol-2
+    // is empty and the batch would be 0 — cufftPlanMany(batch=0) fails with
+    // CUFFT_INVALID_SIZE, and the launch grid (mpol-2 = 0 blocks) would be an
+    // illegal launch anyway. The main 12-slot plans (12*mpol*ns batch) stay
+    // unconditionally created; the skipped handles/pointers keep their
+    // header-initialized null values and the de-alias entry points below
+    // no-op accordingly.
+    if (p.mpol > 2) {
         using Complex = typename FftTraits<T>::Complex;
         int batchDa = 2 * (p.mpol - 2) * (p.ns - 1);
         if (arena) {
@@ -211,7 +218,7 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
             cumes::check_cufft(cufftSetWorkArea(plan_z2d_da_, d_cufft_work_c_),
                                "cufft workarea z2d_da");
         }
-    }
+    }  // p.mpol > 2 (nonempty de-alias pass band)
     arena_backed_ = (arena != nullptr);
 }
 
@@ -224,7 +231,9 @@ cumes::ToroidalFftOperator<T>::~ToroidalFftOperator() {
         cudaFree(d_zeta_real_c_); cudaFree(d_zeta_spectra_c_);
     }
     cufftDestroy(plan_z2d_); cufftDestroy(plan_d2z_);
-    cufftDestroy(plan_d2z_da_); cufftDestroy(plan_z2d_da_);
+    // The de-alias plans are only created when mpol > 2 (finding 1.2).
+    if (plan_d2z_da_) cufftDestroy(plan_d2z_da_);
+    if (plan_z2d_da_) cufftDestroy(plan_z2d_da_);
     if (d_cufft_work_) cudaFree(d_cufft_work_);
     if (d_cufft_work_c_) cudaFree(d_cufft_work_c_);
 }
@@ -352,6 +361,32 @@ __global__ void inversePackKernel(
     slot[9 * step] = Complex{T(0.0), -lcs * shalf};
     slot[10 * step] = Complex{T(0.0), +lsc * dhalf};
     slot[11 * step] = Complex{+lcs * dhalf, T(0.0)};
+    // Zero the unused tail bins (n > ntor) of this thread's 12 slots: cuFFT's
+    // Z2D synthesizes every bin, so the tails must be zero. Every (m, j) slot
+    // group has exactly one thread with n == ntor, so every tail is covered.
+    // This replaces the per-pass full-buffer memset of the half-spectra
+    // (review finding 6.1); a one-time construction zero does not work because
+    // the forward D2Z overwrites the bins each pass.
+    if (n == ntor) {
+        // `slot` points at (row base + n) — the tail writes must use the row
+        // base, i.e. bins [ntor+1, nz2), NOT slot + nz (which would land at
+        // row base + n + nz and clobber the next row's data bins).
+        Complex* row = slot - n;
+        for (int nz = ntor + 1; nz < nz2; ++nz) {
+            row[0 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[1 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[2 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[3 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[4 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[5 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[6 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[7 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[8 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[9 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[10 * step + nz] = Complex{T(0.0), T(0.0)};
+            row[11 * step + nz] = Complex{T(0.0), T(0.0)};
+        }
+    }
 }
 
 // Poloidal accumulation over the FULL θ grid. Grid (ns, 3): blockIdx.y
@@ -384,13 +419,13 @@ __global__ void inverseAccumulateKernel(
     int ns, int mpol, int ntheta, int nzeta, int nZnT, int slot0,
     T* __restrict__ e0, T* __restrict__ e1, T* __restrict__ e2,
     T* __restrict__ o0, T* __restrict__ o1, T* __restrict__ o2,
-    int kTile, T* __restrict__ rCon, T* __restrict__ zCon)
+    int k_tile, T* __restrict__ rCon, T* __restrict__ zCon)
 {
     // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
     // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
     // coalesce; the m-loop shared reads (sm[.. + k]) become broadcasts.
-    // The ζ direction is TILED (blockIdx.y selects the k-tile, kTile-wide):
+    // The ζ direction is TILED (blockIdx.y selects the k-tile, k_tile-wide):
     // the launch block no longer embeds the full nzeta product, so the block
     // size stays bounded for larger angular grids. Every output point is
     // computed by the same arithmetic as the untiled kernel (bit-identical).
@@ -400,14 +435,14 @@ __global__ void inverseAccumulateKernel(
     // separate xmpq-weighted inverse transform, moved into the main accumulator
     // and gated at compile time so the FuseRzCon=false path is bit-identical.
     int j = blockIdx.x;
-    int k0 = blockIdx.y * kTile;
+    int k0 = blockIdx.y * k_tile;
     int k = threadIdx.y + k0;
     int l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    extern __shared__ T sh[];   // [4][mpol][kTile]
-    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * kTile; i += nthreads) {
-        int s = i / (mpol * kTile), rem = i - s * mpol * kTile;
-        int m = rem / kTile, kk = rem % kTile;
+    extern __shared__ T sh[];   // [4][mpol][k_tile]
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * k_tile; i += nthreads) {
+        int s = i / (mpol * k_tile), rem = i - s * mpol * k_tile;
+        int m = rem / k_tile, kk = rem % k_tile;
         int kk_abs = k0 + kk;
         sh[i] = (kk_abs < nzeta) ? zeta_real[(((size_t)(slot0 + s) * mpol + m) * ns + j) * nzeta + kk_abs]
                                  : T(0.0);  // tail tile: zeros (never used)
@@ -418,7 +453,7 @@ __global__ void inverseAccumulateKernel(
     T facO = T(1.0) / maxsc;
     bool isR = (slot0 == 0);
     T signV = (slot0 == 8) ? T(-1.0) : T(1.0);
-    size_t mstride = (size_t)mpol * kTile;
+    size_t mstride = (size_t)mpol * k_tile;
     #pragma unroll
     for (int pass = 0; pass < 2; ++pass) {
         int l = l1 + pass * (ntheta / 2);
@@ -426,7 +461,7 @@ __global__ void inverseAccumulateKernel(
         T v0o = T(0), v1o = T(0), v2o = T(0);
         T rcon = T(0), zcon = T(0);
         for (int m = 0; m < mpol; ++m) {
-            const T* sm = sh + m * kTile;
+            const T* sm = sh + m * k_tile;
             T c0 = sm[0 * mstride + k - k0], c1 = sm[1 * mstride + k - k0];
             T c2 = sm[2 * mstride + k - k0], c3 = sm[3 * mstride + k - k0];
             T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
@@ -490,11 +525,80 @@ __global__ void combineParityKernel(
 
 // ζ-tile width for the accumulate/reduce kernels: the block no longer embeds
 // the full ntheta/2 × nzeta product (unbounded blocks for larger grids).
-// blockDim.y = kTile, capped so blockDim.x*blockDim.y <= 1024 (and near 512
+// blockDim.y = k_tile, capped so blockDim.x*blockDim.y <= 1024 (and near 512
 // for occupancy); ntheta is input-capped at 256, so blockDim.x <= 128.
-static int computeKTile(int blkX, int nzeta) {
-    int kt = (blkX >= 1024) ? 1 : std::min(16, 1024 / blkX);
+static int computeKTile(int blk_x, int nzeta) {
+    int kt = (blk_x >= 1024) ? 1 : std::min(16, 1024 / blk_x);
     return std::min(kt, nzeta);
+}
+
+// Shared inverse pipeline: pack -> Z2D -> ζ-tiled accumulate -> optional
+// combine. `geom` names the OUTPUT view bundle: the public primitives
+// inverse/inverse_fused pass views over the stage-owned *rs_, while the
+// SpectralOperator enqueue_inverse passes the caller's views (which may be
+// non-aliasing — the same contract the axisymmetric backend honors). The
+// `*_real` combined arrays are only touched when do_combine is true; pass
+// nullptr when it is not.
+template <typename T, bool FuseRzCon>
+static void inversePipeline(
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
+    bool do_combine, T* rCon, T* zCon, cudaStream_t stream,
+    const DeviceParams<T>& p, const cumes::GeometryParityViews<T>& geom,
+    const int* xm, const int* xn,
+    typename FftTraits<T>::Complex* d_zeta_spectra, T* d_zeta_real,
+    const T* d_cos_th, const T* d_sin_th, const T* d_mcos_th, const T* d_msin_th,
+    cufftHandle plan_z2d,
+    T* r_real, T* z_real, T* l_real, T* ru_real, T* zu_real, T* lu_real,
+    T* rv_real, T* zv_real, T* lv_real) {
+    int total = p.ns * p.mnmax;
+    inversePackKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
+        coeff, xm, xn,
+        p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, d_zeta_spectra);
+    cumes::check_cufft(FftTraits<T>::execInverse(plan_z2d, d_zeta_spectra, d_zeta_real), "inv z2d");
+    // ζ-tiled accumulate (see inverseAccumulateKernel): block (ntheta/2,
+    // k_tile), one grid row per (surface, k-tile).
+    int k_tile = computeKTile(p.ntheta / 2, p.nzeta);
+    int n_k_tiles = (p.nzeta + k_tile - 1) / k_tile;
+    dim3 blk(p.ntheta / 2, k_tile);
+    dim3 grd(p.ns, n_k_tiles);
+    size_t inv_smem = 4 * p.mpol * k_tile * sizeof(T);
+    // R slots 0-3 -> r/ru/rv (and fused rCon), Z slots 4-7 -> z/zu/zv (and
+    // fused zCon), λ slots 8-11 -> l/lu/lv.
+    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, inv_smem, stream>>>(
+        d_zeta_real,
+        d_cos_th, d_sin_th, d_mcos_th, d_msin_th,
+        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 0,
+        geom.r_e.data(), geom.ru_e.data(), geom.rv_e.data(),
+        geom.r_o.data(), geom.ru_o.data(), geom.rv_o.data(),
+        k_tile, rCon, nullptr);
+    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, inv_smem, stream>>>(
+        d_zeta_real,
+        d_cos_th, d_sin_th, d_mcos_th, d_msin_th,
+        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 4,
+        geom.z_e.data(), geom.zu_e.data(), geom.zv_e.data(),
+        geom.z_o.data(), geom.zu_o.data(), geom.zv_o.data(),
+        k_tile, nullptr, zCon);
+    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, inv_smem, stream>>>(
+        d_zeta_real,
+        d_cos_th, d_sin_th, d_mcos_th, d_msin_th,
+        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 8,
+        geom.l_e.data(), geom.lu_e.data(), geom.lv_e.data(),
+        geom.l_o.data(), geom.lu_o.data(), geom.lv_o.data(),
+        k_tile, nullptr, nullptr);
+    if (do_combine) {
+        dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
+        combineParityKernel<T><<<cgrd, cblk, 0, stream>>>(
+            geom.r_e.data(), geom.z_e.data(), geom.l_e.data(),
+            geom.ru_e.data(), geom.zu_e.data(), geom.lu_e.data(),
+            geom.rv_e.data(), geom.zv_e.data(), geom.lv_e.data(),
+            geom.r_o.data(), geom.z_o.data(), geom.l_o.data(),
+            geom.ru_o.data(), geom.zu_o.data(), geom.lu_o.data(),
+            geom.rv_o.data(), geom.zv_o.data(), geom.lv_o.data(),
+            p.nZnT, p.ns,
+            r_real, z_real, l_real, ru_real, zu_real, lu_real,
+            rv_real, zv_real, lv_real);
+    }
+    cumes::check_cuda(cudaGetLastError(), "inv cuFFT");
 }
 
 template <typename T>
@@ -504,56 +608,16 @@ void cumes::ToroidalFftOperator<T>::inverse_impl(
     bool do_combine, T* rCon, T* zCon, cudaStream_t stream) {
     const DeviceParams<T>& p = p_;
     cumes::RealSpaceStorage<T>& rs = *rs_;
-    const int* xm = mt_->d_xm;
-    const int* xn = mt_->d_xn;
-    // Zero the half-spectra (only bins n <= ntor are filled).
-    cumes::check_cuda(cudaMemsetAsync(d_zeta_spectra_, 0,
-        (size_t)12 * p.mpol * p.ns * (p.nzeta / 2 + 1) * sizeof(typename FftTraits<T>::Complex), stream), "inv zero");
-    int total = p.ns * p.mnmax;
-    inversePackKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
-        coeff, xm, xn,
-        p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1, d_zeta_spectra_);
-    cumes::check_cufft(FftTraits<T>::execInverse(plan_z2d_, d_zeta_spectra_, d_zeta_real_), "inv z2d");
-    // ζ-tiled accumulate (see inverseAccumulateKernel): block (ntheta/2,
-    // kTile), one grid row per (surface, k-tile).
-    int kTile = computeKTile(p.ntheta / 2, p.nzeta);
-    int nKTiles = (p.nzeta + kTile - 1) / kTile;
-    dim3 blk(p.ntheta / 2, kTile);
-    dim3 grd(p.ns, nKTiles);
-    size_t invSmem = 4 * p.mpol * kTile * sizeof(T);
-    // R slots 0-3 -> r/ru/rv (and fused rCon), Z slots 4-7 -> z/zu/zv (and
-    // fused zCon), λ slots 8-11 -> l/lu/lv.
-    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, invSmem, stream>>>(
-        d_zeta_real_,
-        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_,
-        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 0,
-        rs.d_r_e, rs.d_ru_e, rs.d_rv_e, rs.d_r_o, rs.d_ru_o, rs.d_rv_o,
-        kTile, rCon, nullptr);
-    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, invSmem, stream>>>(
-        d_zeta_real_,
-        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_,
-        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 4,
-        rs.d_z_e, rs.d_zu_e, rs.d_zv_e, rs.d_z_o, rs.d_zu_o, rs.d_zv_o,
-        kTile, nullptr, zCon);
-    inverseAccumulateKernel<T, FuseRzCon><<<grd, blk, invSmem, stream>>>(
-        d_zeta_real_,
-        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_,
-        p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, 8,
-        rs.d_l_e, rs.d_lu_e, rs.d_lv_e, rs.d_l_o, rs.d_lu_o, rs.d_lv_o,
-        kTile, nullptr, nullptr);
-    if (do_combine) {
-        dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
-        combineParityKernel<T><<<cgrd, cblk, 0, stream>>>(
-            rs.d_r_e, rs.d_z_e, rs.d_l_e, rs.d_ru_e, rs.d_zu_e, rs.d_lu_e,
-            rs.d_rv_e, rs.d_zv_e, rs.d_lv_e,
-            rs.d_r_o, rs.d_z_o, rs.d_l_o, rs.d_ru_o, rs.d_zu_o, rs.d_lu_o,
-            rs.d_rv_o, rs.d_zv_o, rs.d_lv_o,
-            p.nZnT, p.ns,
-            rs.d_r_real, rs.d_z_real, rs.d_l_real,
-            rs.d_ru_real, rs.d_zu_real, rs.d_lu_real,
-            rs.d_rv_real, rs.d_zv_real, rs.d_lv_real);
-    }
-    cumes::check_cuda(cudaGetLastError(), "inv cuFFT");
+    // The public primitives write the stage-owned storage this operator was
+    // constructed with (the SpectralOperator view parameters alias it today —
+    // see enqueue_inverse for the view-honoring path).
+    inversePipeline<T, FuseRzCon>(coeff, do_combine, rCon, zCon, stream, p,
+        cumes::geometryParityViews(rs, p), mt_->d_xm, mt_->d_xn,
+        d_zeta_spectra_, d_zeta_real_,
+        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, plan_z2d_,
+        rs.d_r_real, rs.d_z_real, rs.d_l_real,
+        rs.d_ru_real, rs.d_zu_real, rs.d_lu_real,
+        rs.d_rv_real, rs.d_zv_real, rs.d_lv_real);
 }
 
 // Public snapshot: refresh the 9 combined arrays from the CURRENT parity
@@ -614,7 +678,7 @@ __global__ void deAliasAnalyzeKernel(
     const T* __restrict__ cos_th, const T* __restrict__ sin_th,
     int ns, int mpol, int ntheta, int nzeta, int nZnT,
     T* __restrict__ zeta_real,   // compact slots 0 (sc), 1 (cs)
-    int kTile)
+    int k_tile)
 {
     // 8 threads per (m, jF, k) split the theta sum (4 contiguous points
     // each), reduced by a warp shuffle tree over the 8 lanes (4 k-groups
@@ -630,7 +694,7 @@ __global__ void deAliasAnalyzeKernel(
     int jF = blockIdx.y, m1 = blockIdx.x;   // m = m1 + 1 in [1, mpol-2]
     if (jF == 0) return;
     int t = threadIdx.x;                    // t in [0,8)
-    int k = threadIdx.y + blockIdx.z * kTile;
+    int k = threadIdx.y + blockIdx.z * k_tile;
     int m = m1 + 1;
     T s_sc = T(0.0), s_cs = T(0.0);
     if (k < nzeta) {
@@ -722,7 +786,7 @@ __global__ void deAliasSynthesizeKernel(
     const T* __restrict__ zeta_real,   // Z2D output (slots 4,5)
     const T* __restrict__ cos_th, const T* __restrict__ sin_th,
     int ns, int mpol, int ntheta, int nzeta, int nZnT,
-    T* __restrict__ gCon, int kTile)
+    T* __restrict__ gCon, int k_tile)
 {
     int jF = blockIdx.x;
     if (jF == 0) return;
@@ -731,16 +795,16 @@ __global__ void deAliasSynthesizeKernel(
     // The ζ direction is TILED (blockIdx.y selects the k-tile), so the launch
     // block stays bounded for larger grids; every (k, l) output point is
     // independent, so the per-point arithmetic is unchanged.
-    int k0 = blockIdx.y * kTile;
+    int k0 = blockIdx.y * k_tile;
     int k = threadIdx.y + k0;
     int l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    extern __shared__ T sh[];   // [2][mpol-2][kTile] (compact slots 0,1)
+    extern __shared__ T sh[];   // [2][mpol-2][k_tile] (compact slots 0,1)
     int nb = 2 * (mpol - 2);
     int jF1 = jF - 1;
-    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < nb * kTile; i += nthreads) {
-        int s = i / ((mpol - 2) * kTile), rem = i - s * (mpol - 2) * kTile;
-        int m1 = rem / kTile, kk = rem % kTile;
+    for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < nb * k_tile; i += nthreads) {
+        int s = i / ((mpol - 2) * k_tile), rem = i - s * (mpol - 2) * k_tile;
+        int m1 = rem / k_tile, kk = rem % k_tile;
         int kk_abs = k0 + kk;
         sh[i] = (kk_abs < nzeta)
                     ? zeta_real[((size_t)(s * (mpol - 2) + m1) * (ns - 1) + jF1) * nzeta + kk_abs]
@@ -755,8 +819,8 @@ __global__ void deAliasSynthesizeKernel(
         for (int m1 = 0; m1 < mpol - 2; ++m1) {
             int m = m1 + 1;
             T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
-            g += sh[0 * (mpol - 2) * kTile + m1 * kTile + (k - k0)] * sinm
-               + sh[1 * (mpol - 2) * kTile + m1 * kTile + (k - k0)] * cosm;
+            g += sh[0 * (mpol - 2) * k_tile + m1 * k_tile + (k - k0)] * sinm
+               + sh[1 * (mpol - 2) * k_tile + m1 * k_tile + (k - k0)] * cosm;
         }
         gCon[jF * nZnT + k * ntheta + l] = g;
     }
@@ -771,12 +835,21 @@ void cumes::ToroidalFftOperator<T>::dealias_bandpass(
     const T* gConEff, const T* tcon, const T* faccon, T* gCon,
     cudaStream_t stream) {
     const DeviceParams<T>& p = p_;
-    {   int kTileA = computeKTile(8, p.nzeta);
-        int nKTilesA = (p.nzeta + kTileA - 1) / kTileA;
-        dim3 blkA(8, kTileA), grdA(p.mpol - 2, p.ns, nKTilesA);
-        deAliasAnalyzeKernel<T><<<grdA, blkA, 0, stream>>>(
+    if (p.mpol <= 2) {
+        // Empty pass band (no m in [1, mpol-2], finding 1.2): the bandpass
+        // kernels leave gCon zero on j >= 1 (they skip the axis row), and the
+        // constraint's addConstraintKernel never reads the axis row — the
+        // same result the axisymmetric backend's empty m-loop produces.
+        cumes::check_cuda(cudaMemsetAsync(gCon + p.nZnT, 0,
+            (size_t)(p.ns - 1) * p.nZnT * sizeof(T), stream), "dealias zero");
+        return;
+    }
+    {   int k_tile_a = computeKTile(8, p.nzeta);
+        int n_k_tiles_a = (p.nzeta + k_tile_a - 1) / k_tile_a;
+        dim3 blk_a(8, k_tile_a), grd_a(p.mpol - 2, p.ns, n_k_tiles_a);
+        deAliasAnalyzeKernel<T><<<grd_a, blk_a, 0, stream>>>(
             gConEff, d_cos_th_, d_sin_th_,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, d_zeta_real_c_, kTileA);
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, d_zeta_real_c_, k_tile_a);
         cumes::check_cuda(cudaGetLastError(), "deAlias analyze");
     }
     cumes::check_cufft(FftTraits<T>::execForward(plan_d2z_da_, d_zeta_real_c_, d_zeta_spectra_c_), "deAlias d2z");
@@ -788,14 +861,14 @@ void cumes::ToroidalFftOperator<T>::dealias_bandpass(
         cumes::check_cuda(cudaGetLastError(), "deAlias coeff");
     }
     cumes::check_cufft(FftTraits<T>::execInverse(plan_z2d_da_, d_zeta_spectra_c_, d_zeta_real_c_), "deAlias z2d");
-    {   int kTileS = computeKTile(p.ntheta / 2, p.nzeta);
-        int nKTilesS = (p.nzeta + kTileS - 1) / kTileS;
-        dim3 blkS(p.ntheta / 2, kTileS);
-        dim3 grdS(p.ns, nKTilesS);
-        deAliasSynthesizeKernel<T><<<grdS, blkS,
-            2 * (p.mpol - 2) * kTileS * sizeof(T), stream>>>(
+    {   int k_tile_s = computeKTile(p.ntheta / 2, p.nzeta);
+        int n_k_tiles_s = (p.nzeta + k_tile_s - 1) / k_tile_s;
+        dim3 blk_s(p.ntheta / 2, k_tile_s);
+        dim3 grd_s(p.ns, n_k_tiles_s);
+        deAliasSynthesizeKernel<T><<<grd_s, blk_s,
+            2 * (p.mpol - 2) * k_tile_s * sizeof(T), stream>>>(
             d_zeta_real_c_, d_cos_th_, d_sin_th_,
-            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, gCon, kTileS);
+            p.ns, p.mpol, p.ntheta, p.nzeta, p.nZnT, gCon, k_tile_s);
         cumes::check_cuda(cudaGetLastError(), "deAlias synth");
     }
 }
@@ -831,64 +904,70 @@ __global__ void forwardReduceKernel(
     const T* __restrict__ mcos_th, const T* __restrict__ msin_th,
     const T* __restrict__ fwd_w,
     int ns, int mpol, int ntheta, int nThetaRed, int nzeta, int nZnT,
-    T* __restrict__ zeta_real, int kTile)
+    T* __restrict__ zeta_real, int k_tile)
 {
     int j = blockIdx.y, m = blockIdx.x;
     // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the 14
     // force-array loads at idx = j*nZnT + k*ntheta + l then vary l fastest
-    // and coalesce. blockDim.x is padded to 16 lanes; threads with
-    // l >= nThetaRed contribute zero. The per-(slot, k) sum over the 16
-    // l-values is a warp shuffle tree (two k groups per warp, width 16) —
-    // replacing the previous shared-memory atomicAdd, which after the
+    // and coalesce. blockDim.x is padded to 16 lanes. The per-(slot, k) sum
+    // over the lanes is a warp shuffle tree (two k groups per warp, width
+    // 16) — replacing the previous shared-memory atomicAdd, which after the
     // dimension swap serialized 16-way per address (2.5 ms/iter).
-    // The ζ direction is TILED (blockIdx.z selects the k-tile, kTile-wide)
+    // The ζ direction is TILED (blockIdx.z selects the k-tile, k_tile-wide)
     // so the launch block stays bounded for larger grids; every (m, j, k)
     // is independent, so the per-point arithmetic is unchanged.
-    int k = threadIdx.y + blockIdx.z * kTile;
-    int l = threadIdx.x;
-    // The k guard covers the tail tile (k >= nzeta): those threads contribute
-    // zeros to the shuffle tree, whose result is discarded by the store guard.
-    bool active = (l < nThetaRed && k < nzeta);
+    int k = threadIdx.y + blockIdx.z * k_tile;
+    int lane = threadIdx.x;
+    // Theta coverage LOOPS over the 16 lanes (lane, lane+16, ...) so grids
+    // with nThetaRed > 16 are fully summed instead of silently dropping the
+    // tail (review finding 1.1: the pre-fix kernel took exactly one
+    // reduced-theta point per lane). For the shipped configs
+    // (nThetaRed <= 16) the loop runs once per thread — the same arithmetic,
+    // bit-identical. The k guard covers the tail tile (k >= nzeta): those
+    // threads contribute zeros to the shuffle tree, whose result is
+    // discarded by the store guard.
+    bool m_even = (m % 2 == 0);
+    const T* armn = m_even ? armn_e : armn_o;
+    const T* azmn = m_even ? azmn_e : azmn_o;
+    const T* brmn = m_even ? brmn_e : brmn_o;
+    const T* bzmn = m_even ? bzmn_e : bzmn_o;
+    const T* crmn = m_even ? crmn_e : crmn_o;
+    const T* czmn = m_even ? czmn_e : czmn_o;
+    const T* blmn = m_even ? blmn_e : blmn_o;
+    const T* clmn = m_even ? clmn_e : clmn_o;
+    const T* frcon = m_even ? frcon_e : frcon_o;
+    const T* fzcon = m_even ? fzcon_e : fzcon_o;
+    T xmpq = T(m) * T(m - 1);
     T v0 = T(0), v1 = T(0), v2 = T(0), v3 = T(0), v4 = T(0), v5 = T(0);
     T v6 = T(0), v7 = T(0), v8 = T(0), v9 = T(0), v10 = T(0), v11 = T(0);
-    if (active) {
-        bool m_even = (m % 2 == 0);
-        const T* armn = m_even ? armn_e : armn_o;
-        const T* azmn = m_even ? azmn_e : azmn_o;
-        const T* brmn = m_even ? brmn_e : brmn_o;
-        const T* bzmn = m_even ? bzmn_e : bzmn_o;
-        const T* crmn = m_even ? crmn_e : crmn_o;
-        const T* czmn = m_even ? czmn_e : czmn_o;
-        const T* blmn = m_even ? blmn_e : blmn_o;
-        const T* clmn = m_even ? clmn_e : clmn_o;
-        const T* frcon = m_even ? frcon_e : frcon_o;
-        const T* fzcon = m_even ? fzcon_e : fzcon_o;
-        T xmpq = T(m) * T(m - 1);
-        int idx = j * nZnT + k * ntheta + l;
-        T w = fwd_w[l];
-        T cosm = w * cos_th[m * ntheta + l], sinm = w * sin_th[m * ntheta + l];
-        T mcos = w * mcos_th[m * ntheta + l], msin = w * msin_th[m * ntheta + l];
-        T tempR = armn[idx] + xmpq * frcon[idx];
-        T tempZ = azmn[idx] + xmpq * fzcon[idx];
-        T br = brmn[idx], bz = bzmn[idx];
-        T cr = crmn[idx], cz = czmn[idx];
-        T bl = blmn[idx], cl = clmn[idx];
-        v0 = tempR * cosm + br * msin;
-        v1 = tempR * sinm + br * mcos;
-        v2 = -cr * cosm;
-        v3 = -cr * sinm;
-        v4 = tempZ * sinm + bz * mcos;
-        v5 = tempZ * cosm + bz * msin;
-        v6 = -cz * sinm;
-        v7 = -cz * cosm;
-        v8 = bl * mcos;
-        v9 = bl * msin;
-        v10 = -cl * sinm;
-        v11 = -cl * cosm;
+    if (k < nzeta) {
+        for (int l = lane; l < nThetaRed; l += blockDim.x) {
+            int idx = j * nZnT + k * ntheta + l;
+            T w = fwd_w[l];
+            T cosm = w * cos_th[m * ntheta + l], sinm = w * sin_th[m * ntheta + l];
+            T mcos = w * mcos_th[m * ntheta + l], msin = w * msin_th[m * ntheta + l];
+            T tempR = armn[idx] + xmpq * frcon[idx];
+            T tempZ = azmn[idx] + xmpq * fzcon[idx];
+            T br = brmn[idx], bz = bzmn[idx];
+            T cr = crmn[idx], cz = czmn[idx];
+            T bl = blmn[idx], cl = clmn[idx];
+            v0 += tempR * cosm + br * msin;
+            v1 += tempR * sinm + br * mcos;
+            v2 += -cr * cosm;
+            v3 += -cr * sinm;
+            v4 += tempZ * sinm + bz * mcos;
+            v5 += tempZ * cosm + bz * msin;
+            v6 += -cz * sinm;
+            v7 += -cz * cosm;
+            v8 += bl * mcos;
+            v9 += bl * msin;
+            v10 += -cl * sinm;
+            v11 += -cl * cosm;
+        }
     }
-    // Warp reduction over the 16 l-values (two k groups per warp, width 16).
-    // All block threads converge here (threads with l >= nThetaRed only
-    // zeroed their contributions), so the active mask names exactly the
+    // Warp reduction over the 16 lanes (two k groups per warp, width 16).
+    // All block threads converge here (threads with no in-bounds theta point
+    // only zeroed their contributions), so the active mask names exactly the
     // existing lanes — 0xffffffff would be an invalid mask contract for
     // partial warps (e.g. the 16-thread blocks of the nzeta=1 Solovev grid).
     unsigned mask = __activemask();
@@ -907,7 +986,7 @@ __global__ void forwardReduceKernel(
         v10 += __shfl_down_sync(mask, v10, off, 16);
         v11 += __shfl_down_sync(mask, v11, off, 16);
     }
-    if (l == 0 && k < nzeta) {   // k guard: tail tile past the grid
+    if (lane == 0 && k < nzeta) {   // k guard: tail tile past the grid
         T* base = zeta_real + ((size_t)m * ns + j) * nzeta;
         size_t step = (size_t)mpol * ns * nzeta;
         #pragma unroll
@@ -981,38 +1060,87 @@ __global__ void forwardRecoverKernel(
     f_spec(cumes::SpectralComponent::Lcs, mode, j) = mn * (-F9.y + nf * F11.x);
 }
 
+// ForceParityViews<const T> over a RealSpaceStorage (the transform's own
+// rs-backed entry point; the SpectralOperator enqueue_forward passes the
+// caller's views instead). There is no shared factory in real_fields.cuh for
+// the force bundle yet — a candidate for the same consolidation as
+// cumes::geometryParityViews (review finding 4.2's pattern).
+template <typename T>
+static cumes::ForceParityViews<const T> forceViewsOf(
+    const cumes::RealSpaceStorage<T>& rs, const DeviceParams<T>& p) {
+    auto f = [&p](const T* d) {
+        return cumes::RealFieldView<const T>(d, p.ns, p.ntheta, p.nzeta);
+    };
+    cumes::ForceParityViews<const T> v;
+    v.armn_e = f(rs.d_armn_e); v.armn_o = f(rs.d_armn_o);
+    v.azmn_e = f(rs.d_azmn_e); v.azmn_o = f(rs.d_azmn_o);
+    v.brmn_e = f(rs.d_brmn_e); v.brmn_o = f(rs.d_brmn_o);
+    v.bzmn_e = f(rs.d_bzmn_e); v.bzmn_o = f(rs.d_bzmn_o);
+    v.blmn_e = f(rs.d_blmn_e); v.blmn_o = f(rs.d_blmn_o);
+    v.clmn_e = f(rs.d_clmn_e); v.clmn_o = f(rs.d_clmn_o);
+    v.crmn_e = f(rs.d_crmn_e); v.crmn_o = f(rs.d_crmn_o);
+    v.czmn_e = f(rs.d_czmn_e); v.czmn_o = f(rs.d_czmn_o);
+    return v;
+}
+
+// Shared forward pipeline: ζ-tiled reduce -> D2Z -> coefficient recovery.
+// `forces` names the INPUT view bundle: the public primitive forward passes
+// views over the stage-owned *rs_, while the SpectralOperator enqueue_forward
+// passes the caller's views (which may be non-aliasing — the same contract
+// the axisymmetric backend honors).
+template <typename T>
+static void forwardPipeline(
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
+    const cumes::ForceParityViews<const T>& forces,
+    const T* frcon_e, const T* frcon_o, const T* fzcon_e, const T* fzcon_o,
+    cudaStream_t stream, const DeviceParams<T>& p,
+    const int* xm, const int* xn,
+    const T* d_cos_th, const T* d_sin_th, const T* d_mcos_th, const T* d_msin_th,
+    const T* d_fwd_w, T* d_zeta_real,
+    typename FftTraits<T>::Complex* d_zeta_spectra, cufftHandle plan_d2z) {
+    // The recover kernel writes all six families (explicit axis/LCFS zeros), so
+    // no pre-zero of the residual slab is needed (Phase 6A removes the memset).
+    // ζ-tiled reduce (see forwardReduceKernel): block (16 lanes, k_tile),
+    // grid (mpol, ns, k-tiles).
+    int k_tile = computeKTile(16, p.nzeta);
+    int n_k_tiles = (p.nzeta + k_tile - 1) / k_tile;
+    dim3 blk(16, k_tile);  // x padded to 16 lanes (warp shuffle width)
+    dim3 grd(p.mpol, p.ns, n_k_tiles);
+    forwardReduceKernel<T><<<grd, blk, 0, stream>>>(
+        forces.armn_e.data(), forces.armn_o.data(),
+        forces.azmn_e.data(), forces.azmn_o.data(),
+        forces.brmn_e.data(), forces.brmn_o.data(),
+        forces.bzmn_e.data(), forces.bzmn_o.data(),
+        forces.crmn_e.data(), forces.crmn_o.data(),
+        forces.czmn_e.data(), forces.czmn_o.data(),
+        forces.blmn_e.data(), forces.blmn_o.data(),
+        forces.clmn_e.data(), forces.clmn_o.data(),
+        frcon_e, frcon_o, fzcon_e, fzcon_o,
+        d_cos_th, d_sin_th, d_mcos_th, d_msin_th, d_fwd_w,
+        p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT,
+        d_zeta_real, k_tile);
+    cumes::check_cufft(FftTraits<T>::execForward(plan_d2z, d_zeta_real, d_zeta_spectra), "fwd d2z");
+    int total = p.ns * p.mnmax;
+    forwardRecoverKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
+        d_zeta_spectra, xm, xn,
+        p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, f_spec);
+    cumes::check_cuda(cudaGetLastError(), "fwd cuFFT");
+}
+
 template <typename T>
 void cumes::ToroidalFftOperator<T>::forward_impl(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
     const T* frcon_e, const T* frcon_o, const T* fzcon_e, const T* fzcon_o,
     cudaStream_t stream) {
     const DeviceParams<T>& p = p_;
-    cumes::RealSpaceStorage<T>& rs = *rs_;
-    const int* xm = mt_->d_xm;
-    const int* xn = mt_->d_xn;
-    // The recover kernel writes all six families (explicit axis/LCFS zeros), so
-    // no pre-zero of the residual slab is needed (Phase 6A removes the memset).
-    // ζ-tiled reduce (see forwardReduceKernel): block (16 lanes, kTile),
-    // grid (mpol, ns, k-tiles).
-    int kTile = computeKTile(16, p.nzeta);
-    int nKTiles = (p.nzeta + kTile - 1) / kTile;
-    dim3 blk(16, kTile);  // x padded to 16 lanes (warp shuffle width)
-    dim3 grd(p.mpol, p.ns, nKTiles);
-    forwardReduceKernel<T><<<grd, blk, 0, stream>>>(
-        rs.d_armn_e, rs.d_armn_o, rs.d_azmn_e, rs.d_azmn_o,
-        rs.d_brmn_e, rs.d_brmn_o, rs.d_bzmn_e, rs.d_bzmn_o,
-        rs.d_crmn_e, rs.d_crmn_o, rs.d_czmn_e, rs.d_czmn_o,
-        rs.d_blmn_e, rs.d_blmn_o, rs.d_clmn_e, rs.d_clmn_o,
-        frcon_e, frcon_o, fzcon_e, fzcon_o,
+    // The public primitive reads the stage-owned storage this operator was
+    // constructed with (the SpectralOperator view parameters alias it today —
+    // see enqueue_forward for the view-honoring path).
+    forwardPipeline<T>(f_spec, forceViewsOf(*rs_, p),
+        frcon_e, frcon_o, fzcon_e, fzcon_o, stream, p,
+        mt_->d_xm, mt_->d_xn,
         d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, d_fwd_w_,
-        p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT,
-        d_zeta_real_, kTile);
-    cumes::check_cufft(FftTraits<T>::execForward(plan_d2z_, d_zeta_real_, d_zeta_spectra_), "fwd d2z");
-    int total = p.ns * p.mnmax;
-    forwardRecoverKernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
-        d_zeta_spectra_, xm, xn,
-        p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1, f_spec);
-    cumes::check_cuda(cudaGetLastError(), "fwd cuFFT");
+        d_zeta_real_, d_zeta_spectra_, plan_d2z_);
 }
 
 template <typename T>
@@ -1031,13 +1159,19 @@ void cumes::ToroidalFftOperator<T>::enqueue_inverse(
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
     cumes::GeometryParityViews<T> geometry, cumes::RealFieldView<T> rCon,
     cumes::RealFieldView<T> zCon, cudaStream_t stream) {
-    // The geometry views alias *rs_ (the stage-owned RealSpaceStorage this
-    // operator was constructed with); the fused inverse writes directly into
-    // those same arrays. do_combine is false on the hot loop (combined buffers
-    // are dump-only and materialized on demand).
-    (void)geometry;
-    inverse_fused(coeff, /*do_combine=*/false, rCon.data(), zCon.data(),
-                  stream);
+    // Honor the caller-passed geometry views (the SpectralOperator contract,
+    // as the axisymmetric backend does — review finding 3.6). The solver
+    // passes views aliasing *rs_ (the stage-owned storage this operator was
+    // constructed with), so the hot loop is unchanged. do_combine stays false
+    // on the hot loop (the combined buffers are dump-only, materialized on
+    // demand) — the `*_real` combined outputs are therefore not named here.
+    const DeviceParams<T>& p = p_;
+    inversePipeline<T, /*FuseRzCon=*/true>(coeff, /*do_combine=*/false,
+        rCon.data(), zCon.data(), stream, p, geometry,
+        mt_->d_xm, mt_->d_xn, d_zeta_spectra_, d_zeta_real_,
+        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, plan_z2d_,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr);
 }
 
 template <typename T>
@@ -1046,13 +1180,18 @@ void cumes::ToroidalFftOperator<T>::enqueue_forward(
     cumes::ConstraintForceViews<const T> constraint_force,
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
     cudaStream_t stream) {
-    // `real_force` aliases *rs_ (same arrays); the constraint force is read
-    // from the constraint_force views (the constraint owns those buffers).
-    (void)real_force;
-    forward(residual, constraint_force.frcon_e.data(),
-            constraint_force.frcon_o.data(),
-            constraint_force.fzcon_e.data(),
-            constraint_force.fzcon_o.data(), stream);
+    // Honor the caller-passed force views (the SpectralOperator contract, as
+    // the axisymmetric backend does — review finding 3.6). The solver passes
+    // views aliasing *rs_ (same arrays), so the hot loop is unchanged; the
+    // constraint force is read from the constraint_force views (the
+    // constraint owns those buffers).
+    const DeviceParams<T>& p = p_;
+    forwardPipeline<T>(residual, real_force,
+        constraint_force.frcon_e.data(), constraint_force.frcon_o.data(),
+        constraint_force.fzcon_e.data(), constraint_force.fzcon_o.data(),
+        stream, p, mt_->d_xm, mt_->d_xn,
+        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, d_fwd_w_,
+        d_zeta_real_, d_zeta_spectra_, plan_d2z_);
 }
 
 template <typename T>
@@ -1066,8 +1205,10 @@ template <typename T>
 void cumes::ToroidalFftOperator<T>::bind_stream(cudaStream_t stream) {
     cumes::check_cufft(cufftSetStream(plan_z2d_, stream), "set stream z2d");
     cumes::check_cufft(cufftSetStream(plan_d2z_, stream), "set stream d2z");
-    cumes::check_cufft(cufftSetStream(plan_d2z_da_, stream), "set stream d2z_da");
-    cumes::check_cufft(cufftSetStream(plan_z2d_da_, stream), "set stream z2d_da");
+    if (p_.mpol > 2) {  // the de-alias plans are only created for mpol > 2
+        cumes::check_cufft(cufftSetStream(plan_d2z_da_, stream), "set stream d2z_da");
+        cumes::check_cufft(cufftSetStream(plan_z2d_da_, stream), "set stream z2d_da");
+    }
 }
 
 template <typename T>

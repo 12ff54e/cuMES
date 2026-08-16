@@ -494,6 +494,231 @@ static int t_fwd_lcfs(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cum
     return g_failures-lf;
 }
 
+// ---------------------------------------------------------------------------
+// Regression tests added 2026-08-17 for the code-review findings:
+//   1.1 forwardReduceKernel dropped reduced-theta points beyond lane 15
+//       (fixed 16-lane block) -> t_fwd_theta32 below (nThetaRed = 17).
+//   1.2 mpol=2 made the de-alias plan batch 2*(mpol-2)*(ns-1) zero ->
+//       cufftPlanMany(batch=0) threw at construction -> t_mpol2_construct.
+//   3.6 enqueue_inverse/enqueue_forward ignored the passed view bundles
+//       (used the captured rs_) -> t_enqueue_*_views below.
+// ---------------------------------------------------------------------------
+
+// 1.1: forward quadrature over nThetaRed = ntheta/2+1 = 17 > 16 lanes.
+// F_R = cos(theta)cos(zeta) on the interior surface (m=1 -> odd parity
+// armn_o). The reduced-grid endpoint theta=pi contributes cos^2 = 1, so a
+// truncated quadrature (dropping l >= 16) measurably changes frcc(1,1).
+template <typename T>
+static int t_fwd_theta32(){
+    int lf=g_failures; printf("  test_forwardDFT_theta32 (nThetaRed>16 coverage) ... ");
+    DeviceParams<T> p;
+    p.ns=3; p.mnmax=3*(2+1); p.ntheta=32; p.nzeta=8;   // nThetaRed = 17
+    p.nfp=1; p.nZnT=32*8; p.mpol=3; p.ntor=2;
+    p.ncurr=0; p.delt=T(1.0); p.ftol=T(1e-14); p.max_iter=10; p.lamscale=T(1.0);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate<T>(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::ToroidalFftOperator<T> op(p, rs, mt);
+    size_t nbr=(size_t)p.ns*p.nZnT*sizeof(T);
+    std::vector<T> fr(p.ns*p.nZnT,T(0));
+    for(int k=0;k<p.nZnT;++k){
+        int it=k%p.ntheta, iz=k/p.ntheta;
+        double th=2*M_PI*it/p.ntheta, ze=2*M_PI*iz/p.nzeta;
+        fr[k+1*p.nZnT]=T(cos(th)*cos(ze));
+    }
+    cc(cudaMemset(rs.d_armn_e,0,nbr),"ms"); cc(cudaMemset(rs.d_armn_o,0,nbr),"ms");
+    cc(cudaMemset(rs.d_azmn_e,0,nbr),"ms"); cc(cudaMemset(rs.d_azmn_o,0,nbr),"ms");
+    cc(cudaMemset(rs.d_brmn_e,0,nbr),"ms"); cc(cudaMemset(rs.d_brmn_o,0,nbr),"ms");
+    cc(cudaMemset(rs.d_bzmn_e,0,nbr),"ms"); cc(cudaMemset(rs.d_bzmn_o,0,nbr),"ms");
+    cc(cudaMemset(rs.d_blmn_e,0,nbr),"ms"); cc(cudaMemset(rs.d_blmn_o,0,nbr),"ms");
+    cc(cudaMemset(rs.d_crmn_e,0,nbr),"ms"); cc(cudaMemset(rs.d_crmn_o,0,nbr),"ms");
+    cc(cudaMemset(rs.d_czmn_e,0,nbr),"ms"); cc(cudaMemset(rs.d_czmn_o,0,nbr),"ms");
+    cc(cudaMemset(rs.d_clmn_e,0,nbr),"ms"); cc(cudaMemset(rs.d_clmn_o,0,nbr),"ms");
+    cc(cudaMemcpy(rs.d_armn_o,fr.data(),nbr,cudaMemcpyHostToDevice),"armn_o");
+    T* d_fs; cc(cudaMalloc(&d_fs,6*p.ns*p.mnmax*sizeof(T)),"fs");
+    T *frcon_e,*frcon_o,*fzcon_e,*fzcon_o;
+    size_t nfc=(size_t)p.ns*p.nZnT*sizeof(T);
+    cudaMalloc(&frcon_e,nfc); cudaMemset(frcon_e,0,nfc);
+    cudaMalloc(&frcon_o,nfc); cudaMemset(frcon_o,0,nfc);
+    cudaMalloc(&fzcon_e,nfc); cudaMemset(fzcon_e,0,nfc);
+    cudaMalloc(&fzcon_o,nfc); cudaMemset(fzcon_o,0,nfc);
+    op.forward(cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax),frcon_e,frcon_o,fzcon_e,fzcon_o);
+    std::vector<T> fs(6*p.ns*p.mnmax);
+    cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
+    // CPU reference (the reduced-grid trapezoid of CLAUDE.md "Forward DFT
+    // normalization"): frcc(1,1) = mscale*nscale * [sum_l w_l cos^2(theta_l)]
+    // * [sum_iz cos^2(zeta_iz)] with w_l = intNorm, endpoints halved, over
+    // ALL nThetaRed = 17 points (including the half-weight theta=pi point).
+    int m11=1*(p.ntor+1)+1;
+    int nThetaRed=p.ntheta/2+1;
+    double intNorm=1.0/((double)p.nzeta*(nThetaRed-1));
+    double sumth=0, sumze=0;
+    for(int l=0;l<nThetaRed;++l){
+        double w=intNorm; if(l==0||l==nThetaRed-1) w*=0.5;
+        double th=2*M_PI*l/p.ntheta;
+        sumth += w*cos(th)*cos(th);
+    }
+    for(int iz=0;iz<p.nzeta;++iz){
+        double ze=2*M_PI*iz/p.nzeta;
+        sumze += cos(ze)*cos(ze);
+    }
+    double expect = 2.0*sumth*sumze;   // mscale*nscale = sqrt2*sqrt2 for (1,1)
+    checkMode((double)fs[1+m11*p.ns+0*p.mnmax*p.ns],expect,tolFwd<T>(),"theta32_frcc",1,m11);
+    cudaFree(d_fs);
+    cudaFree(frcon_e); cudaFree(frcon_o);
+    cudaFree(fzcon_e); cudaFree(fzcon_o);
+    realSpaceFree(rs); cumes::modeTableFree(mt);
+    printf(g_failures==lf?"PASS\n":"FAIL\n");
+    return g_failures-lf;
+}
+
+// 1.2: the validated minimum mpol=2 must construct (no batch-0 de-alias
+// plans) and the de-alias bandpass (empty pass band) must zero gCon on j>=1.
+template <typename T>
+static int t_mpol2_construct(){
+    int lf=g_failures; printf("  test_mpol2_dealias_plans ... ");
+    DeviceParams<T> p;
+    p.ns=3; p.mnmax=2*(2+1); p.ntheta=16; p.nzeta=8;
+    p.nfp=1; p.nZnT=16*8; p.mpol=2; p.ntor=2;   // validated minimum mpol
+    p.ncurr=0; p.delt=T(1.0); p.ftol=T(1e-14); p.max_iter=10; p.lamscale=T(1.0);
+    cumes::DeviceModeTable mt = cumes::modeTableCreate<T>(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    bool threw=false, ok=true;
+    try {
+        cumes::ToroidalFftOperator<T> op(p, rs, mt);
+        // The skipped de-alias plans must not break stream binding.
+        op.bind_stream(0);
+        // Empty pass band (no m in [1, mpol-2]): gCon rows j>=1 -> zero,
+        // the axis row untouched (the bandpass kernels skip jF==0).
+        std::vector<T> zero(p.ns*p.nZnT,T(0));
+        T* d_eff,*d_g,*d_tcon,*d_faccon;
+        cc(cudaMalloc(&d_eff,zero.size()*sizeof(T)),"eff");
+        cc(cudaMalloc(&d_g,zero.size()*sizeof(T)),"g");
+        cc(cudaMalloc(&d_tcon,p.ns*sizeof(T)),"tcon");
+        cc(cudaMalloc(&d_faccon,p.mpol*sizeof(T)),"faccon");
+        cc(cudaMemcpy(d_eff,zero.data(),zero.size()*sizeof(T),cudaMemcpyHostToDevice),"up eff");
+        std::vector<T> tone(p.ns,T(1)), fone(p.mpol,T(1));
+        cc(cudaMemcpy(d_tcon,tone.data(),p.ns*sizeof(T),cudaMemcpyHostToDevice),"up tcon");
+        cc(cudaMemcpy(d_faccon,fone.data(),p.mpol*sizeof(T),cudaMemcpyHostToDevice),"up faccon");
+        std::vector<T> seed(p.ns*p.nZnT,T(7));
+        cc(cudaMemcpy(d_g,seed.data(),seed.size()*sizeof(T),cudaMemcpyHostToDevice),"up g");
+        op.dealias_bandpass(d_eff,d_tcon,d_faccon,d_g,0);
+        std::vector<T> back(p.ns*p.nZnT);
+        cc(cudaMemcpy(back.data(),d_g,back.size()*sizeof(T),cudaMemcpyDeviceToHost),"get g");
+        for(int j=1;j<p.ns && ok;++j)
+            for(int k=0;k<p.nZnT && ok;++k)
+                if(back[j*p.nZnT+k]!=T(0)) ok=false;
+        if(!ok) fprintf(stderr,"FAIL [mpol2] gCon not zeroed on j>=1\n");
+        cudaFree(d_eff); cudaFree(d_g); cudaFree(d_tcon); cudaFree(d_faccon);
+    } catch (const std::exception& e) {
+        threw=true;
+        fprintf(stderr,"FAIL [mpol2] construction threw: %s\n",e.what());
+    }
+    if(threw) ++g_failures;
+    else if(!ok) ++g_failures;
+    realSpaceFree(rs); cumes::modeTableFree(mt);
+    printf(g_failures==lf?"PASS\n":"FAIL\n");
+    return g_failures-lf;
+}
+
+// 3.6: enqueue_inverse must write the CALLER-PASSED geometry views (not the
+// captured rs_). Reference: the rs_-backed inverse(); target: a non-aliasing
+// scratch bundle seeded with -1 (unwritten before the fix).
+template <typename T>
+static int t_enqueue_inverse_views(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
+    int lf=g_failures; printf("  test_enqueue_inverse_honors_views ... ");
+    size_t nb=p.ns*p.mnmax, nn=p.ns*p.nZnT;
+    std::vector<T> cc_(nb,T(0)),ss_(nb,T(0)),zs(nb,T(0)),zc(nb,T(0)),ls_(nb,T(0)),lcs(nb,T(0));
+    for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
+        cc_[j+m*p.ns]=T(0.001*(m+1)*(j+1));
+        ss_[j+m*p.ns]=T(0.002*(m+1)*(j+1));
+        zs[j+m*p.ns]=T(0.003*(m+1)*(j+1));
+        zc[j+m*p.ns]=T(0.004*(m+1)*(j+1));
+        ls_[j+m*p.ns]=T(0.005*(m+1)*(j+1));
+        lcs[j+m*p.ns]=T(0.006*(m+1)*(j+1));
+    }
+    size_t nbT=nb*sizeof(T);
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc),cc_.data(),nbT,cudaMemcpyHostToDevice),"up cc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss),ss_.data(),nbT,cudaMemcpyHostToDevice),"up ss");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc),zs.data(),nbT,cudaMemcpyHostToDevice),"up zsc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs),zc.data(),nbT,cudaMemcpyHostToDevice),"up zcs");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc),ls_.data(),nbT,cudaMemcpyHostToDevice),"up lsc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs),lcs.data(),nbT,cudaMemcpyHostToDevice),"up lcs");
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff(
+        storage.family_ptr(cumes::SpectralComponent::Rcc), p.ns, p.mnmax);
+    // Reference: the rs_-backed primitive.
+    op.inverse(coeff, /*do_combine=*/false);
+    std::vector<T> ref(18*nn);
+    const T* rp[18]={rs.d_r_e,rs.d_z_e,rs.d_l_e,rs.d_ru_e,rs.d_zu_e,rs.d_lu_e,
+                     rs.d_r_o,rs.d_z_o,rs.d_l_o,rs.d_ru_o,rs.d_zu_o,rs.d_lu_o,
+                     rs.d_rv_e,rs.d_zv_e,rs.d_lv_e,rs.d_rv_o,rs.d_zv_o,rs.d_lv_o};
+    const char* nm[18]={"r_e","z_e","l_e","ru_e","zu_e","lu_e",
+                        "r_o","z_o","l_o","ru_o","zu_o","lu_o",
+                        "rv_e","zv_e","lv_e","rv_o","zv_o","lv_o"};
+    for(int c=0;c<18;++c)
+        cc(cudaMemcpy(ref.data()+c*nn,rp[c],nn*sizeof(T),cudaMemcpyDeviceToHost),"get ref");
+    // Non-aliasing scratch bundle seeded with -1 (proves the views are written).
+    T* d_ax=nullptr;
+    cc(cudaMalloc(&d_ax,(size_t)18*nn*sizeof(T)),"ax geom");
+    std::vector<T> seed(18*nn,T(-1));
+    cc(cudaMemcpy(d_ax,seed.data(),(size_t)18*nn*sizeof(T),cudaMemcpyHostToDevice),"seed ax");
+    auto view=[&](int k){ return cumes::RealFieldView<T>(d_ax+(size_t)k*nn,p.ns,p.ntheta,p.nzeta); };
+    cumes::GeometryParityViews<T> g;
+    g.r_e=view(0); g.z_e=view(1); g.l_e=view(2);
+    g.ru_e=view(3); g.zu_e=view(4); g.lu_e=view(5);
+    g.r_o=view(6); g.z_o=view(7); g.l_o=view(8);
+    g.ru_o=view(9); g.zu_o=view(10); g.lu_o=view(11);
+    g.rv_e=view(12); g.zv_e=view(13); g.lv_e=view(14);
+    g.rv_o=view(15); g.zv_o=view(16); g.lv_o=view(17);
+    op.enqueue_inverse(coeff, g,
+                       cumes::RealFieldView<T>(), cumes::RealFieldView<T>(), 0);
+    std::vector<T> ax(18*nn);
+    cc(cudaMemcpy(ax.data(),d_ax,(size_t)18*nn*sizeof(T),cudaMemcpyDeviceToHost),"get ax");
+    for(int c=0;c<18;++c)
+        for(size_t i=0;i<nn;++i)
+            checkNear((double)ax[c*nn+i],(double)ref[c*nn+i],tolInv<T>(),nm[c],(int)(i/p.nZnT),(int)(i%p.nZnT));
+    cudaFree(d_ax);
+    printf(g_failures==lf?"PASS\n":"FAIL\n");
+    return g_failures-lf;
+}
+
+// 3.6: enqueue_forward must read the CALLER-PASSED force views. rs_ holds a
+// nonzero armn_e pattern; the passed views alias an all-zero buffer, so the
+// honoring implementation returns an all-zero residual (the pre-fix one reads
+// rs_ and returns the nonzero reference instead).
+template <typename T>
+static int t_enqueue_forward_views(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs){
+    int lf=g_failures; printf("  test_enqueue_forward_honors_views ... ");
+    size_t nn=p.ns*p.nZnT, nbr=nn*sizeof(T);
+    std::vector<T> fr(nn,T(3.0));
+    cc(cudaMemset(rs.d_armn_e,0,nbr),"ms"); cc(cudaMemcpy(rs.d_armn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"armn_e");
+    T* d_fs; cc(cudaMalloc(&d_fs,6*p.ns*p.mnmax*sizeof(T)),"fs");
+    // Zero views over a separate buffer + zero constraint force.
+    T* d_zero=nullptr;
+    cc(cudaMalloc(&d_zero,nn*sizeof(T)),"zero");
+    cc(cudaMemset(d_zero,0,nn*sizeof(T)),"ms zero");
+    auto view=[&](int){ return cumes::RealFieldView<const T>(d_zero,p.ns,p.ntheta,p.nzeta); };
+    cumes::ForceParityViews<const T> f;
+    f.armn_e=view(0); f.armn_o=view(1); f.azmn_e=view(2); f.azmn_o=view(3);
+    f.brmn_e=view(4); f.brmn_o=view(5); f.bzmn_e=view(6); f.bzmn_o=view(7);
+    f.blmn_e=view(8); f.blmn_o=view(9); f.crmn_e=view(10); f.crmn_o=view(11);
+    f.czmn_e=view(12); f.czmn_o=view(13); f.clmn_e=view(14); f.clmn_o=view(15);
+    cumes::ConstraintForceViews<const T> cf;
+    cf.frcon_e=view(16); cf.frcon_o=view(16); cf.fzcon_e=view(16); cf.fzcon_o=view(16);
+    op.enqueue_forward(f, cf,
+                       cumes::SpectralView<T,cumes::DecomposedResidualDomain>(d_fs,p.ns,p.mnmax), 0);
+    std::vector<T> fs(6*p.ns*p.mnmax);
+    cc(cudaMemcpy(fs.data(),d_fs,6*p.ns*p.mnmax*sizeof(T),cudaMemcpyDeviceToHost),"get fs");
+    // Zero input -> zero residual (the recover kernel writes all six families
+    // explicitly, so the exact-zero check is meaningful).
+    int bad=0;
+    for(size_t i=0;i<fs.size();++i) if(fs[i]!=T(0)) ++bad;
+    if(bad>0) fprintf(stderr,"FAIL [fwdviews] %d nonzero entries (expected 0)\n",bad);
+    g_failures += (bad>0)?1:0;
+    cudaFree(d_fs); cudaFree(d_zero);
+    printf(g_failures==lf?"PASS\n":"FAIL\n");
+    return g_failures-lf;
+}
+
 // Run the whole suite for one scalar type T.
 template <typename T>
 static int runTests(){
@@ -520,6 +745,10 @@ static int runTests(){
     nf += t_gpuVcpu_inv(p,op,rs,storage);
     nf += t_fwd_axis(p,op,rs);
     nf += t_fwd_lcfs(p,op,rs);
+    nf += t_fwd_theta32<T>();
+    nf += t_mpol2_construct<T>();
+    nf += t_enqueue_inverse_views(p,op,rs,storage);
+    nf += t_enqueue_forward_views(p,op,rs);
 
     realSpaceFree(rs);
     cumes::modeTableFree(mt);
