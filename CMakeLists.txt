@@ -248,6 +248,72 @@ cumes_add_test(test_checkpoint       unit;io)
 cumes_add_test(test_io_golden        unit;io)
 cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
+
+# ---- host sanitizer twins (blueprint §10.5; CUMES_HOST_SANITIZERS=ON) -------
+# Dedicated ASan+UBSan copies of the host-only libraries and their tests, so
+# the sanitized runtime is FIRST in each asan executable's library list and
+# never leaks into the CUDA targets (whose link order would break it). The
+# normal targets above are untouched.
+if(CUMES_HOST_SANITIZERS)
+  add_library(cumes_json_asan STATIC src/json_parser.cpp)
+  target_include_directories(cumes_json_asan PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  cumes_enable_warnings(cumes_json_asan)
+  cumes_apply_host_sanitizers(cumes_json_asan)
+
+  add_library(cumes_core_asan STATIC
+    src/cumes/core/grid_shape.cpp
+    src/cumes/core/mode_table.cpp)
+  target_include_directories(cumes_core_asan PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  cumes_enable_warnings(cumes_core_asan)
+  cumes_apply_host_sanitizers(cumes_core_asan)
+
+  add_library(cumes_config_json_asan STATIC
+    src/cumes/config/validation_report.cpp
+    src/cumes/config/validated_problem.cpp
+    src/cumes/config/json_reader.cpp)
+  target_include_directories(cumes_config_json_asan PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(cumes_config_json_asan PUBLIC cumes_core_asan cumes_json_asan)
+  cumes_enable_warnings(cumes_config_json_asan)
+  cumes_apply_host_sanitizers(cumes_config_json_asan)
+
+  add_library(cumes_io_host_asan STATIC
+    src/cumes/io/output_spec.cpp
+    src/cumes/io/legacy_binary_v0.cpp
+    src/cumes/io/versioned_binary.cpp
+    src/cumes/io/checkpoint.cpp)
+  target_include_directories(cumes_io_host_asan PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(cumes_io_host_asan PUBLIC cumes_core_asan)
+  cumes_enable_warnings(cumes_io_host_asan)
+  cumes_apply_host_sanitizers(cumes_io_host_asan)
+
+  add_executable(asan_test_host_config tests/test_host_config.cpp)
+  target_include_directories(asan_test_host_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(asan_test_host_config PRIVATE cumes_config_json_asan)
+  cumes_enable_warnings(asan_test_host_config)
+  cumes_apply_host_sanitizers(asan_test_host_config)
+  cumes_add_test(asan_test_host_config    sanitizer;asan;config)
+
+  add_executable(asan_test_host_io tests/test_host_io.cpp)
+  target_include_directories(asan_test_host_io PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(asan_test_host_io PRIVATE cumes_io_host_asan)
+  cumes_enable_warnings(asan_test_host_io)
+  cumes_apply_host_sanitizers(asan_test_host_io)
+  cumes_add_test(asan_test_host_io        sanitizer;asan;io)
+
+  add_executable(asan_test_checkpoint tests/test_checkpoint.cpp)
+  target_include_directories(asan_test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(asan_test_checkpoint PRIVATE cumes_io_host_asan)
+  cumes_enable_warnings(asan_test_checkpoint)
+  cumes_apply_host_sanitizers(asan_test_checkpoint)
+  cumes_add_test(asan_test_checkpoint     sanitizer;asan;io)
+
+  add_executable(asan_test_controller tests/test_controller.cpp)
+  target_include_directories(asan_test_controller PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(asan_test_controller PRIVATE cumes_core_asan)
+  cumes_enable_warnings(asan_test_controller)
+  cumes_apply_host_sanitizers(asan_test_controller)
+  cumes_add_test(asan_test_controller     sanitizer;asan;solver)
+endif()
 cumes_add_test(test_arena            unit;runtime)
 cumes_add_test(test_operator_views   unit;runtime)
 cumes_add_test(test_accumulation     unit;numerics)

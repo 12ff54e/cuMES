@@ -1,10 +1,14 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "verify",
-      "displayName": "Verify — double, release, all backends (default)",
+      "displayName": "Verify \u2014 double, release, all backends (default)",
       "description": "The verification configuration: precise double, NetCDF+HDF5 on when found.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
@@ -17,7 +21,7 @@
     },
     {
       "name": "float",
-      "displayName": "Float — single precision (experimental)",
+      "displayName": "Float \u2014 single precision (experimental)",
       "description": "Single-precision CLI. Float stalls at ~1e-7; relax ftol_array entries to >= 1e-6.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-float",
@@ -28,7 +32,7 @@
     },
     {
       "name": "debug",
-      "displayName": "Debug — double, symbols, no optimisation",
+      "displayName": "Debug \u2014 double, symbols, no optimisation",
       "description": "Debug build for host/device debugging.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-debug",
@@ -39,19 +43,21 @@
     },
     {
       "name": "sanitizer",
-      "displayName": "Sanitizer — double + Compute Sanitizer memcheck tests",
-      "description": "Registers compute-sanitizer memcheck variants of the kernel-driving tests.",
+      "displayName": "Sanitizer \u2014 double + full sanitizer matrix",
+      "description": "Registers compute-sanitizer memcheck/racecheck/synccheck variants of the kernel-driving tests and builds the host-only targets with ASan+UBSan.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-sanitize",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CUMES_USE_FLOAT": "OFF",
-        "CUMES_ENABLE_SANITIZER_TESTS": "ON"
+        "CUMES_ENABLE_SANITIZER_TESTS": "ON",
+        "CUMES_ENABLE_EXTRA_SANITIZER_TOOLS": "ON",
+        "CUMES_HOST_SANITIZERS": "ON"
       }
     },
     {
       "name": "nobackend",
-      "displayName": "No-backend — binary-only output (CI matrix entry)",
+      "displayName": "No-backend \u2014 binary-only output (CI matrix entry)",
       "description": "Builds without NetCDF/HDF5 so the binary-only fallback path is exercised.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-nobackend",
@@ -64,7 +70,7 @@
     },
     {
       "name": "profiling",
-      "displayName": "Profiling — double + lineinfo + ptxas verbosity",
+      "displayName": "Profiling \u2014 double + lineinfo + ptxas verbosity",
       "description": "Adds -lineinfo and ptxas -v to the CUDA flags for Nsight/ptxas analysis.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-prof",
@@ -76,23 +82,45 @@
     }
   ],
   "buildPresets": [
-    { "name": "verify", "configurePreset": "verify" },
-    { "name": "float", "configurePreset": "float" },
-    { "name": "debug", "configurePreset": "debug" },
-    { "name": "sanitizer", "configurePreset": "sanitizer" },
-    { "name": "nobackend", "configurePreset": "nobackend" },
-    { "name": "profiling", "configurePreset": "profiling" }
+    {
+      "name": "verify",
+      "configurePreset": "verify"
+    },
+    {
+      "name": "float",
+      "configurePreset": "float"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "sanitizer",
+      "configurePreset": "sanitizer"
+    },
+    {
+      "name": "nobackend",
+      "configurePreset": "nobackend"
+    },
+    {
+      "name": "profiling",
+      "configurePreset": "profiling"
+    }
   ],
   "testPresets": [
     {
       "name": "verify",
       "configurePreset": "verify",
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
     },
     {
       "name": "sanitizer",
       "configurePreset": "sanitizer",
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }
