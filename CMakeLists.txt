@@ -239,6 +239,11 @@ target_include_directories(test_operator_views PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(test_operator_views PRIVATE cumes_test_support cumes_cuda_runtime)
 cumes_enable_warnings(test_operator_views)
 
+add_executable(test_accumulation tests/test_accumulation.cu)
+target_include_directories(test_accumulation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_accumulation PRIVATE cumes_test_support cumes_cuda_runtime)
+cumes_enable_warnings(test_accumulation)
+
 # ---- ctest registration ----------------------------------------------------
 enable_testing()
 cumes_add_test(test_fourier          unit;fourier)
@@ -251,6 +256,7 @@ cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
 cumes_add_test(test_arena            unit;runtime)
 cumes_add_test(test_operator_views   unit;runtime)
+cumes_add_test(test_accumulation     unit;numerics)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
@@ -268,7 +274,7 @@ cumes_add_test(test_tridiagonal      unit;precon)
 cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
     test_regression_kernels test_runtime test_arena test_operator_views
-    test_axisym_backend test_rzcon_fusion test_tridiagonal)
+    test_accumulation test_axisym_backend test_rzcon_fusion test_tridiagonal)
 
 # ---- benchmarks (not part of the default CTest unit gate) --------------------
 # The fixed-iteration harness (§8.1). Always double (verify-double is the

@@ -26,6 +26,7 @@
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/runtime/pinned_buffer.hpp"
+#include "cumes/numerics/accumulation.hpp"
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes/solver/pass_record.hpp"
 #include "cumes/solver/solver_bench.hpp"
@@ -73,16 +74,17 @@ __global__ void forceNormReduceKernel(
     const T* __restrict__ presH,  // ns-1
     int nH, T* __restrict__ out)  // [5]
 {
+    using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
     int tid = threadIdx.x;
-    T sRZ = T(0), sL = T(0), sMag = T(0), eTherm = T(0), vol = T(0);
+    A sRZ = A(0), sL = A(0), sMag = A(0), eTherm = A(0), vol = A(0);
     for (int j = tid; j < nH; j += blockDim.x) {
-        sRZ += psum[4 * j + 0];
-        sL  += psum[4 * j + 1];
-        sMag += psum[4 * j + 2];
-        eTherm += presH[j] * dVdsH[j];
-        vol += dVdsH[j];
+        sRZ += A(psum[4 * j + 0]);
+        sL  += A(psum[4 * j + 1]);
+        sMag += A(psum[4 * j + 2]);
+        eTherm += A(presH[j] * dVdsH[j]);
+        vol += A(dVdsH[j]);
     }
-    __shared__ T s_buf[5][256];
+    __shared__ A s_buf[5][256];
     s_buf[0][tid] = sRZ;  s_buf[1][tid] = sL;  s_buf[2][tid] = sMag;
     s_buf[3][tid] = eTherm;  s_buf[4][tid] = vol;
     __syncthreads();
@@ -97,8 +99,8 @@ __global__ void forceNormReduceKernel(
         __syncthreads();
     }
     if (tid == 0) {
-        out[0] = s_buf[0][0];  out[1] = s_buf[1][0];  out[2] = s_buf[2][0];
-        out[3] = s_buf[3][0];  out[4] = s_buf[4][0];
+        out[0] = T(s_buf[0][0]);  out[1] = T(s_buf[1][0]);  out[2] = T(s_buf[2][0]);
+        out[3] = T(s_buf[3][0]);  out[4] = T(s_buf[4][0]);
     }
 }
 
@@ -322,7 +324,8 @@ __global__ void rzNormKernel(
     const int* __restrict__ xm, const int* __restrict__ xn,
     int ns, int mnmax, T* __restrict__ out)
 {
-    T sum = T(0.0);
+    using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
+    A sum = A(0.0);
     int total = mnmax * ns;
     for (int i = threadIdx.x; i < total; i += blockDim.x) {
         int m = i / ns, j = i % ns, mm = xm[m], nn = xn[m];
@@ -339,17 +342,17 @@ __global__ void rzNormKernel(
         T zsc = st(cumes::SpectralComponent::Zsc, m, j);
         T rss = st(cumes::SpectralComponent::Rss, m, j);
         T zcs = st(cumes::SpectralComponent::Zcs, m, j);
-        if (mm > 0 || nn > 0) sum += rcc * rcc * inv2;
-        sum += zsc * zsc * inv2;
+        if (mm > 0 || nn > 0) sum += A(rcc * rcc * inv2);
+        sum += A(zsc * zsc * inv2);
         if (mm == 1) {
             // decomposed pair is mixed: (rss_d^2 + zcs_d^2) = (rss_p^2 +
             // zcs_p^2) / (2 * (ms*ns)^2)
-            sum += T(0.5) * (rss * rss + zcs * zcs) * inv2;
+            sum += A(T(0.5) * (rss * rss + zcs * zcs) * inv2);
         } else {
-            sum += (rss * rss + zcs * zcs) * inv2;
+            sum += A((rss * rss + zcs * zcs) * inv2);
         }
     }
-    __shared__ T s_sum[256];
+    __shared__ A s_sum[256];
     int tid = threadIdx.x;
     s_sum[tid] = sum;
     __syncthreads();
@@ -357,7 +360,7 @@ __global__ void rzNormKernel(
         if (tid < s) s_sum[tid] += s_sum[tid + s];
         __syncthreads();
     }
-    if (tid == 0) out[0] = s_sum[0];
+    if (tid == 0) out[0] = T(s_sum[0]);
 }
 
 // Residual groups match vmecpp's FourierForces::residuals (folded basis):
@@ -367,17 +370,18 @@ template <typename T>
 __global__ void computeResidualsKernel(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
     int ns, int mnmax, T* __restrict__ sq_out) {
+    using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
     int comp = blockIdx.x; if(comp>=3)return;
-    T sum=T(0); int total=mnmax*ns;
+    A sum=A(0); int total=mnmax*ns;
     for(int i=threadIdx.x; i<total; i+=blockDim.x){
         int mode = i / ns, j = i % ns;
         T a = f_spec(static_cast<cumes::SpectralComponent>(comp), mode, j);
         T b = f_spec(static_cast<cumes::SpectralComponent>(comp + 3), mode, j);
-        sum+=a*a+b*b;
+        sum += A(a * a + b * b);
     }
-    __shared__ T s_sum[256]; int tid=threadIdx.x; s_sum[tid]=sum; __syncthreads();
+    __shared__ A s_sum[256]; int tid=threadIdx.x; s_sum[tid]=sum; __syncthreads();
     for(int s=blockDim.x/2; s>0; s>>=1){if(tid<s)s_sum[tid]+=s_sum[tid+s]; __syncthreads();}
-    if(tid==0) sq_out[comp]=s_sum[0]/(mnmax*ns);
+    if(tid==0) sq_out[comp]=T(s_sum[0]/(mnmax*ns));
 }
 
 template <typename T>
