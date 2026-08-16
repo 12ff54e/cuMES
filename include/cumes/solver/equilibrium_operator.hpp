@@ -10,11 +10,9 @@
 // ordered host-side decisions (descent, post-descent checkpoint capture/restore)
 // stay with the solver/controller (blueprint §6.10/§6.11).
 //
-// Strangler-fig transitional form: it still references the legacy workspace
-// structs (MetricWorkspace/RadialProfiles/…) as non-owning aliases and the
-// legacy DeviceParams; those become DeviceParams + typed views once the legacy
-// structs are deleted (migration step 13). The hot-loop dump machinery is
-// carried inside enqueue so it stays interleaved at the same observation points.
+// The hot-loop dump machinery is carried inside enqueue so it stays
+// interleaved at the same observation points (all legacy workspace structs are
+// gone — migration step 13).
 #pragma once
 
 #include <cuda_runtime.h>
@@ -99,8 +97,6 @@ class EquilibriumOperator {
   BaseGeometryHalfViews<T> base_views_;
   MagneticFieldViews<T> field_views_;
   RadialProfileViews<T> rpv_;
-  ::SpectralState<T> st_;
-
   DeviceBuffer<T> d_f_spec_;
   DeviceBuffer<T> d_control_;
   DeviceBuffer<T> d_psum_;

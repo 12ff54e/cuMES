@@ -91,8 +91,7 @@ int main() {
         p.tcon0 = 1.0; p.lamscale = 0.0;
 
         cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
-        SpectralState<double> st = storage.legacy_view();
-        const size_t nS = (size_t)p.ns * p.mnmax;
+            const size_t nS = (size_t)p.ns * p.mnmax;
         auto* h_cc = new double[nS]();
         auto* h_ss = new double[nS]();
         for (int j = 0; j < p.ns; ++j) {
@@ -105,8 +104,8 @@ int main() {
                 h_ss[j + mode * p.ns] = h_cc[j + mode * p.ns];
             }
         }
-        checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nS * 8, cudaMemcpyHostToDevice), "cc");
-        checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nS * 8, cudaMemcpyHostToDevice), "ss");
+        checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nS * 8, cudaMemcpyHostToDevice), "cc");
+        checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nS * 8, cudaMemcpyHostToDevice), "ss");
         delete[] h_cc; delete[] h_ss;
 
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);

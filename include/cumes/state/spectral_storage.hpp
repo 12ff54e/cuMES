@@ -1,15 +1,15 @@
 // spectral_storage.hpp — owning contiguous state/velocity slabs (blueprint
 // §6.5).
 //
-// The legacy SpectralState<T> is a non-owning bundle of 12 raw pointers, each a
-// separate `[mode][surface]` array. SpectralStorage co-locates those twelve
-// arrays into two component-major slabs — `state` (6*mnmax*ns) and `velocity`
-// (6*mnmax*ns) — in the exact order Rcc Zsc Lsc Rss Zcs Lcs. `legacy_view()`
-// returns the 12 pointers into the slabs, so every existing consumer and kernel
-// keeps its indexing and arithmetic unchanged (bitwise identical); the only new
-// capability is that the whole state/velocity is now one contiguous span, which
-// turns the solver's six D2D backup copies into one and its six velocity memsets
-// into one.
+// The legacy SpectralState<T> (a non-owning bundle of 12 raw pointers, each a
+// separate `[mode][surface]` array) is gone (migration step 13.3). SpectralStorage
+// co-locates those twelve arrays into two component-major slabs — `state`
+// (6*mnmax*ns) and `velocity` (6*mnmax*ns) — in the exact order
+// Rcc Zsc Lsc Rss Zcs Lcs; family_ptr()/velocity_family_ptr() return the 12
+// per-family slab pointers, so every existing consumer and kernel keeps its
+// indexing and arithmetic unchanged (bitwise identical). The whole
+// state/velocity is one contiguous span, which turns the solver's six D2D
+// backup copies into one and its six velocity memsets into one.
 #pragma once
 
 #include <cstddef>
@@ -58,26 +58,18 @@ class SpectralStorage {
   const DeviceBuffer<T>& state_buffer() const { return state_; }
   const DeviceBuffer<T>& velocity_buffer() const { return velocity_; }
 
-  // The 12-pointer legacy view. Component order Rcc Zsc Lsc Rss Zcs Lcs matches
-  // vmec_types.h's field order and EquilibriumSnapshot::Component.
-  ::SpectralState<T> legacy_view() const {
-    ::SpectralState<T> s{};
-    const std::size_t one = static_cast<std::size_t>(ns_) * mnmax_;
-    T* st = state_.data();
-    T* v = velocity_.data();
-    s.d_rmncc = st + 0 * one;
-    s.d_zmnsc = st + 1 * one;
-    s.d_lmnsc = st + 2 * one;
-    s.d_rmnss = st + 3 * one;
-    s.d_zmncs = st + 4 * one;
-    s.d_lmncs = st + 5 * one;
-    s.d_v_rmncc = v + 0 * one;
-    s.d_v_zmnsc = v + 1 * one;
-    s.d_v_lmnsc = v + 2 * one;
-    s.d_v_rmnss = v + 3 * one;
-    s.d_v_zmncs = v + 4 * one;
-    s.d_v_lmncs = v + 5 * one;
-    return s;
+  // The six per-family slab pointers (component-major order
+  // Rcc Zsc Lsc Rss Zcs Lcs — the legacy SpectralState field order and
+  // EquilibriumSnapshot::Component). Each family is the contiguous
+  // [mnmax][ns] block at slab + c*ns*mnmax, indexed [mode*ns + j] exactly as
+  // the legacy separate arrays were.
+  T* family_ptr(SpectralComponent c) const {
+    return state_.data() + static_cast<std::size_t>(static_cast<int>(c)) * ns_ *
+                               mnmax_;
+  }
+  T* velocity_family_ptr(SpectralComponent c) const {
+    return velocity_.data() +
+           static_cast<std::size_t>(static_cast<int>(c)) * ns_ * mnmax_;
   }
 
   SpectralView<T, PhysicalStateDomain> physical() const {

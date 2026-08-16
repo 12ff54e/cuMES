@@ -110,25 +110,25 @@ static void cpuInvDFT(const double* cc_, const double* ss_, const double* zsc_, 
 }
 
 template <typename T>
-static void gpuInv(SpectralState<T>& st, cumes::ToroidalFftOperator<T>& op, const DeviceParams<T>& p,
+static void gpuInv(cumes::SpectralStorage<T>& storage, cumes::ToroidalFftOperator<T>& op, const DeviceParams<T>& p,
     const T* cc_, const T* ss_, const T* zsc_, const T* zcs_,
     const T* lsc_, const T* lcs_){
     size_t nb=p.ns*p.mnmax*sizeof(T);
-    cc(cudaMemcpy(st.d_rmncc,cc_,nb,cudaMemcpyHostToDevice),"up cc");
-    cc(cudaMemcpy(st.d_rmnss,ss_,nb,cudaMemcpyHostToDevice),"up ss");
-    cc(cudaMemcpy(st.d_zmnsc,zsc_,nb,cudaMemcpyHostToDevice),"up zsc");
-    cc(cudaMemcpy(st.d_zmncs,zcs_,nb,cudaMemcpyHostToDevice),"up zcs");
-    cc(cudaMemcpy(st.d_lmnsc,lsc_,nb,cudaMemcpyHostToDevice),"up lsc");
-    cc(cudaMemcpy(st.d_lmncs,lcs_,nb,cudaMemcpyHostToDevice),"up lcs");
-    // st.d_rmncc is the contiguous state-slab base (Rcc is component 0), so a
-    // component-major view over it matches SpectralStorage::physical_const().
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc),cc_,nb,cudaMemcpyHostToDevice),"up cc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss),ss_,nb,cudaMemcpyHostToDevice),"up ss");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc),zsc_,nb,cudaMemcpyHostToDevice),"up zsc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs),zcs_,nb,cudaMemcpyHostToDevice),"up zcs");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc),lsc_,nb,cudaMemcpyHostToDevice),"up lsc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs),lcs_,nb,cudaMemcpyHostToDevice),"up lcs");
+    // family_ptr(Rcc) is the contiguous state-slab base (Rcc is component 0), so
+    // a component-major view over it matches SpectralStorage::physical_const().
     op.inverse(cumes::SpectralView<const T, cumes::PhysicalStateDomain>(
-                    st.d_rmncc, p.ns, p.mnmax),
+                    storage.family_ptr(cumes::SpectralComponent::Rcc), p.ns, p.mnmax),
                /*do_combine=*/true);
 }
 
 template <typename T>
-static int t_inv_constR(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_constR(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
     int lf=g_failures; printf("  test_inverseDFT_constantR ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) cc_[j+0*p.ns]=T(4.0);  // R_00
@@ -136,7 +136,7 @@ static int t_inv_constR(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, c
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,op,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    gpuInv(storage,op,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
     cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
     cc(cudaMemcpy(h_rv,rs.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
@@ -158,7 +158,7 @@ static int t_inv_constR(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, c
 }
 
 template <typename T>
-static int t_inv_theta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_theta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
     int lf=g_failures; printf("  test_inverseDFT_thetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+0;
@@ -167,7 +167,7 @@ static int t_inv_theta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cu
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,op,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    gpuInv(storage,op,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
     cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
     cc(cudaMemcpy(h_ru,rs.d_ru_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get ru");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
@@ -189,7 +189,7 @@ static int t_inv_theta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cu
 }
 
 template <typename T>
-static int t_inv_zeta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_inv_zeta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
     int lf=g_failures; printf("  test_inverseDFT_zetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+1;  // R_11 (cos(θ-ζ)): folded rmncc=rmnss=0.2
@@ -198,7 +198,7 @@ static int t_inv_zeta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cum
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,op,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    gpuInv(storage,op,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
     cc(cudaMemcpy(h_rv,rs.d_rv_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get rv");
     std::vector<double> hcc,hss,hsc,hcs; std::vector<int> hxm,hxn;
     hostBasis(p,hcc,hss,hsc,hcs,hxm,hxn);
@@ -301,7 +301,7 @@ static int t_fwd_sine(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cum
 }
 
 template <typename T>
-static int t_gpuVcpu_inv(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, SpectralState<T>& st){
+static int t_gpuVcpu_inv(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
     int lf=g_failures; printf("  test_gpuVcpu_inverseDFT ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
@@ -320,7 +320,7 @@ static int t_gpuVcpu_inv(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, 
     std::vector<double> r(p.ns*p.nZnT),z(p.ns*p.nZnT),l(p.ns*p.nZnT);
     std::vector<double> ru(p.ns*p.nZnT),zu(p.ns*p.nZnT),lu(p.ns*p.nZnT);
     std::vector<double> rv(p.ns*p.nZnT),zv(p.ns*p.nZnT),lv(p.ns*p.nZnT);
-    gpuInv(st,op,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
+    gpuInv(storage,op,p,cc_.data(),ss_.data(),zs.data(),zc.data(),ls_.data(),lcs.data());
     cc(cudaMemcpy(h_r,rs.d_r_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get r");
     cc(cudaMemcpy(h_z,rs.d_z_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get z");
     cc(cudaMemcpy(h_l,rs.d_l_real,p.ns*p.nZnT*sizeof(T),cudaMemcpyDeviceToHost),"get l");
@@ -507,18 +507,17 @@ static int runTests(){
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     cumes::ToroidalFftOperator<T> op(p, rs, mt);
-    SpectralState<T> st = storage.legacy_view();
 
     // All tests compare the cuFFT backend against the backend-independent
     // host CPU reference (the direct-sum kernels were removed after the
     // cuFFT A/B validation; the git history has them).
     int nf = 0;
-    nf += t_inv_constR(p,op,rs,st);
-    nf += t_inv_theta(p,op,rs,st);
-    nf += t_inv_zeta(p,op,rs,st);
+    nf += t_inv_constR(p,op,rs,storage);
+    nf += t_inv_theta(p,op,rs,storage);
+    nf += t_inv_zeta(p,op,rs,storage);
     nf += t_fwd_const(p,op,rs);
     nf += t_fwd_sine(p,op,rs);
-    nf += t_gpuVcpu_inv(p,op,rs,st);
+    nf += t_gpuVcpu_inv(p,op,rs,storage);
     nf += t_fwd_axis(p,op,rs);
     nf += t_fwd_lcfs(p,op,rs);
 

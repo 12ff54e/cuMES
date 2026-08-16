@@ -207,7 +207,6 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
 
     // Frozen, non-degenerate Solovev-like state (same pattern as test_forces).
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
-    SpectralState<T> st = storage.legacy_view();
     const size_t nS = (size_t)ns * p.mnmax, nb = nS * sizeof(T);
     auto* h_cc = new T[nS](); auto* h_ss = new T[nS](); auto* h_zsc = new T[nS]();
     auto* h_zcs = new T[nS](); auto* h_lsc = new T[nS](); auto* h_lcs = new T[nS]();
@@ -221,12 +220,12 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
             h_ss[j + mode * ns] = h_cc[j + mode * ns];
         }
     }
-    checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nb, cudaMemcpyHostToDevice), "cc");
-    checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nb, cudaMemcpyHostToDevice), "ss");
-    checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
-    checkCuda(cudaMemcpy(st.d_zmncs, h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
-    checkCuda(cudaMemcpy(st.d_lmnsc, h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
-    checkCuda(cudaMemcpy(st.d_lmncs, h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nb, cudaMemcpyHostToDevice), "cc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nb, cudaMemcpyHostToDevice), "ss");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc; delete[] h_lcs;
 
     cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");

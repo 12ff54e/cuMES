@@ -506,7 +506,6 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       rs_(rs), geometry_(geometry), op_(op),
       precon_(p, arena), constraint_(p, arena),
       base_views_(geometry.base_geometry_views(p)), field_views_(geometry.magnetic_field_views(p)), rpv_(profiles.profile_views()),
-      st_(storage.legacy_view()),
       d_f_spec_(6 * (size_t)p.ns * p.mnmax), d_control_(16),
       d_psum_(4 * (size_t)(p.ns - 1)),
       state_view_(storage.physical()), state_view_const_(storage.physical_const()),
@@ -572,7 +571,6 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     cumes::BaseGeometryHalfViews<T>& base = base_views_;
     cumes::MagneticFieldViews<T>& field = field_views_;
     const cumes::RadialProfileViews<T>& rpv = rpv_;
-    ::SpectralState<T>& st = st_;
     cumes::DeviceBuffer<T>& d_f_spec = d_f_spec_;
     cumes::DeviceBuffer<T>& d_control = d_control_;
     cumes::DeviceBuffer<T>& d_psum = d_psum_;
@@ -885,10 +883,10 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
         // Constraint-chain intermediates (stage-by-stage vs vmecpp)
         // State as consumed by the constraint chain at iter 1 (post-descent)
         size_t n_spec2 = (size_t)p.ns * (size_t)p.mnmax;
-        dumpDeviceArray("dump/cuMES/step_GC_rmncc_iter_1.bin", st.d_rmncc, n_spec2);
-        dumpDeviceArray("dump/cuMES/step_GC_rmnss_iter_1.bin", st.d_rmnss, n_spec2);
-        dumpDeviceArray("dump/cuMES/step_GC_zmnsc_iter_1.bin", st.d_zmnsc, n_spec2);
-        dumpDeviceArray("dump/cuMES/step_GC_zmncs_iter_1.bin", st.d_zmncs, n_spec2);
+        dumpDeviceArray("dump/cuMES/step_GC_rmncc_iter_1.bin", storage.family_ptr(cumes::SpectralComponent::Rcc), n_spec2);
+        dumpDeviceArray("dump/cuMES/step_GC_rmnss_iter_1.bin", storage.family_ptr(cumes::SpectralComponent::Rss), n_spec2);
+        dumpDeviceArray("dump/cuMES/step_GC_zmnsc_iter_1.bin", storage.family_ptr(cumes::SpectralComponent::Zsc), n_spec2);
+        dumpDeviceArray("dump/cuMES/step_GC_zmncs_iter_1.bin", storage.family_ptr(cumes::SpectralComponent::Zcs), n_spec2);
         dumpDeviceArray("dump/cuMES/step_GC_rCon_iter_1.bin", constraint.rcon_view(p).data(), n_real);
         dumpDeviceArray("dump/cuMES/step_GC_zCon_iter_1.bin", constraint.zcon_view(p).data(), n_real);
         dumpDeviceArray("dump/cuMES/step_GC_gConEff_iter_1.bin", constraint.gcon_eff(), n_real);
@@ -990,29 +988,29 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
         // iter-2..4 window (first lambda != 0 passes) for the state check.
         if (iter2 >= kDumpIter || iter2 == 51 || (iter2 >= 2 && iter2 <= 4)) {
             snprintf(fn, sizeof fn, "dump/cuMES/state_rmncc_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_rmncc, n_spec);
+            dumpDeviceArray(fn, storage.family_ptr(cumes::SpectralComponent::Rcc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_zmnsc_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_zmnsc, n_spec);
+            dumpDeviceArray(fn, storage.family_ptr(cumes::SpectralComponent::Zsc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_lmnsc_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_lmnsc, n_spec);
+            dumpDeviceArray(fn, storage.family_ptr(cumes::SpectralComponent::Lsc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_rmnss_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_rmnss, n_spec);
+            dumpDeviceArray(fn, storage.family_ptr(cumes::SpectralComponent::Rss), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_zmncs_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_zmncs, n_spec);
+            dumpDeviceArray(fn, storage.family_ptr(cumes::SpectralComponent::Zcs), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_lmncs_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_lmncs, n_spec);
+            dumpDeviceArray(fn, storage.family_ptr(cumes::SpectralComponent::Lcs), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vrmncc_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_v_rmncc, n_spec);
+            dumpDeviceArray(fn, storage.velocity_family_ptr(cumes::SpectralComponent::Rcc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vzmnsc_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_v_zmnsc, n_spec);
+            dumpDeviceArray(fn, storage.velocity_family_ptr(cumes::SpectralComponent::Zsc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vlmnsc_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_v_lmnsc, n_spec);
+            dumpDeviceArray(fn, storage.velocity_family_ptr(cumes::SpectralComponent::Lsc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vrmnss_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_v_rmnss, n_spec);
+            dumpDeviceArray(fn, storage.velocity_family_ptr(cumes::SpectralComponent::Rss), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vzmncs_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_v_zmncs, n_spec);
+            dumpDeviceArray(fn, storage.velocity_family_ptr(cumes::SpectralComponent::Zcs), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vlmncs_iter_%d.bin", iter2);
-            dumpDeviceArray(fn, st.d_v_lmncs, n_spec);
+            dumpDeviceArray(fn, storage.velocity_family_ptr(cumes::SpectralComponent::Lcs), n_spec);
         }
     }
     if (iter2 >= kE2Start && iter2 < kE2Start + 40) {
@@ -1034,10 +1032,6 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
                           cumes::GeometryOperator<T>& geometry, cumes::DeviceArena* arena,
                           cudaStream_t stream, cumes::SolverBench* bench,
                           cumes::SpectralOperator<T>* op) {
-    // Legacy views for the dump observability (NOT the hot loop — the DAG is
-    // sealed behind the EquilibriumOperator; these aliases serve only the
-    // per_iter/axis/step_0 dump blocks and printIterRow below).
-    SpectralState<T> st = storage.legacy_view();
     const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
 
@@ -1129,7 +1123,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         // read below (called from printIterRow's post-descent output path).
         cudaStreamSynchronize(stream);
         T h_ax[64];   // ntor+1 <= 64 for the hardcoded inputs
-        cumes::check_cuda(cudaMemcpy2D(h_ax, sizeof(T), st.d_rmncc,
+        cumes::check_cuda(cudaMemcpy2D(h_ax, sizeof(T), storage.family_ptr(cumes::SpectralComponent::Rcc),
                                (size_t)p.ns * sizeof(T),
                                sizeof(T), p.ntor + 1,
                                cudaMemcpyDeviceToHost), "cpy Rax");
@@ -1185,7 +1179,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         printf("%5d | %11.3e %11.3e %11.3e | %8.2e", it2,
                (double)fsqr_v, (double)fsqz_v, (double)fsql_v, (double)delt_v);
         T h_rmncc_axis = axisRAtZeta0(), h_rmncc_bnd;
-        cumes::check_cuda(cudaMemcpy(&h_rmncc_bnd, st.d_rmncc + (p.ns - 1), sizeof(T),
+        cumes::check_cuda(cudaMemcpy(&h_rmncc_bnd, storage.family_ptr(cumes::SpectralComponent::Rcc) + (p.ns - 1), sizeof(T),
                              cudaMemcpyDeviceToHost), "cpy Rbnd");
         printf(" | Rax=%.4f Rbnd=%.4f\n", (double)h_rmncc_axis, (double)h_rmncc_bnd);
     };
@@ -1194,12 +1188,12 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
     {
         dumpEnsureDir();
         size_t n_spec = (size_t)p.ns * (size_t)p.mnmax;
-        dumpDeviceArray("dump/cuMES/step_0_rmncc.bin",      st.d_rmncc, n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_zmnsc.bin",      st.d_zmnsc, n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_lmnsc.bin",      st.d_lmnsc, n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_rmnss.bin",      st.d_rmnss, n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_zmncs.bin",      st.d_zmncs, n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_lmncs.bin",      st.d_lmncs, n_spec);
+        dumpDeviceArray("dump/cuMES/step_0_rmncc.bin",      storage.family_ptr(cumes::SpectralComponent::Rcc), n_spec);
+        dumpDeviceArray("dump/cuMES/step_0_zmnsc.bin",      storage.family_ptr(cumes::SpectralComponent::Zsc), n_spec);
+        dumpDeviceArray("dump/cuMES/step_0_lmnsc.bin",      storage.family_ptr(cumes::SpectralComponent::Lsc), n_spec);
+        dumpDeviceArray("dump/cuMES/step_0_rmnss.bin",      storage.family_ptr(cumes::SpectralComponent::Rss), n_spec);
+        dumpDeviceArray("dump/cuMES/step_0_zmncs.bin",      storage.family_ptr(cumes::SpectralComponent::Zcs), n_spec);
+        dumpDeviceArray("dump/cuMES/step_0_lmncs.bin",      storage.family_ptr(cumes::SpectralComponent::Lcs), n_spec);
         dumpDeviceArray("dump/cuMES/step_0_currH.bin",      rpv.curr_H, p.ns - 1);
         dumpDeviceArray("dump/cuMES/step_0_chipH.bin",      rpv.chip_H, p.ns - 1);
         dumpDeviceArray("dump/cuMES/step_0_iotaH.bin",      rpv.iota_H, p.ns - 1);

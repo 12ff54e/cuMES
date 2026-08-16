@@ -19,25 +19,6 @@
 
 #include "cumes/config/device_params.hpp"  // DeviceParams<T> (the per-stage pack)
 
-// Spectral state with independent coefficient arrays.
-// Each is shape (ns, mnmax) column-major.
-// Total DOFs: 6 * ns * mnmax  (6 components in 3D stellarator-symmetric).
-// Real-space parity (e/o) is determined by m parity (even m -> e, odd m -> o).
-template <typename T>
-struct SpectralState {
-    // Coefficients for Fourier reconstruction (all m, folded n>=0)
-    T* d_rmncc;   // R: cos(mθ)cos(nζ) component
-    T* d_zmnsc;   // Z: sin(mθ)cos(nζ) component
-    T* d_lmnsc;   // λ: sin(mθ)cos(nζ) component
-    T* d_rmnss;   // R: sin(mθ)sin(nζ) component
-    T* d_zmncs;   // Z: cos(mθ)sin(nζ) component
-    T* d_lmncs;   // λ: cos(mθ)sin(nζ) component
-
-    // Velocities (6 components)
-    T* d_v_rmncc; T* d_v_zmnsc; T* d_v_lmnsc;
-    T* d_v_rmnss; T* d_v_zmncs; T* d_v_lmncs;
-};
-
 // App-level precision switch. All modules are templated on T; this alias is
 // what main.cu (and the diagnostics) build with. Configure via
 //   cmake -B build-float -DCUMES_USE_FLOAT=ON

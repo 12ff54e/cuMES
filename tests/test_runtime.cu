@@ -4,7 +4,7 @@
 // Stream/Event/DeviceContext, centralized check_cuda/check_cufft), the typed
 // SpectralView (device round-trip at the component-major layout), and the
 // SpectralStorage contiguous state/velocity slabs — in particular that
-// legacy_view() reproduces the exact six-family layout the legacy code read.
+// family_ptr() reproduces the exact six-family layout the legacy code read.
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -118,18 +118,17 @@ int main() {
     {
         const int ns = 7, mnmax = 4;
         cumes::SpectralStorage<double> st(ns, mnmax);
-        SpectralState<double> v = st.legacy_view();
         const size_t one = (size_t)ns * mnmax;
         double* slab = st.state_slab();
         double* vslab = st.velocity_slab();
-        CHECK(v.d_rmncc == slab + 0 * one, "legacy_view rmncc at slab+0");
-        CHECK(v.d_zmnsc == slab + 1 * one, "legacy_view zmnsc at slab+1");
-        CHECK(v.d_lmnsc == slab + 2 * one, "legacy_view lmnsc at slab+2");
-        CHECK(v.d_rmnss == slab + 3 * one, "legacy_view rmnss at slab+3");
-        CHECK(v.d_zmncs == slab + 4 * one, "legacy_view zmncs at slab+4");
-        CHECK(v.d_lmncs == slab + 5 * one, "legacy_view lmncs at slab+5");
-        CHECK(v.d_v_rmncc == vslab + 0 * one, "legacy_view v_rmncc at vslab+0");
-        CHECK(v.d_v_lmncs == vslab + 5 * one, "legacy_view v_lmncs at vslab+5");
+        CHECK(st.family_ptr(cumes::SpectralComponent::Rcc) == slab + 0 * one, "family_ptr rmncc at slab+0");
+        CHECK(st.family_ptr(cumes::SpectralComponent::Zsc) == slab + 1 * one, "family_ptr zmnsc at slab+1");
+        CHECK(st.family_ptr(cumes::SpectralComponent::Lsc) == slab + 2 * one, "family_ptr lmnsc at slab+2");
+        CHECK(st.family_ptr(cumes::SpectralComponent::Rss) == slab + 3 * one, "family_ptr rmnss at slab+3");
+        CHECK(st.family_ptr(cumes::SpectralComponent::Zcs) == slab + 4 * one, "family_ptr zmncs at slab+4");
+        CHECK(st.family_ptr(cumes::SpectralComponent::Lcs) == slab + 5 * one, "family_ptr lmncs at slab+5");
+        CHECK(st.velocity_family_ptr(cumes::SpectralComponent::Rcc) == vslab + 0 * one, "velocity_family_ptr v_rmncc at vslab+0");
+        CHECK(st.velocity_family_ptr(cumes::SpectralComponent::Lcs) == vslab + 5 * one, "velocity_family_ptr v_lmncs at vslab+5");
         CHECK(st.state_buffer().size() == 6 * one &&
                   st.velocity_buffer().size() == 6 * one,
               "slab holds 6 components");

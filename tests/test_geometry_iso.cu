@@ -31,7 +31,7 @@
 // dependency (gitignored, only present after a CUMES_DUMP=1 run) — the test
 // is now self-contained and registerable.
 template <typename T>
-static void fillState(SpectralState<T>& st, const DeviceParams<T>& p) {
+static void fillState(cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p) {
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
     std::vector<T> hcc_(p.ns * p.mnmax, T(0)), hss(p.ns * p.mnmax, T(0));
     std::vector<T> hzsc(p.ns * p.mnmax, T(0)), hzcs(p.ns * p.mnmax, T(0));
@@ -51,12 +51,12 @@ static void fillState(SpectralState<T>& st, const DeviceParams<T>& p) {
             hlcs[j + mode * p.ns] = T(0.01 * (m + 1) * s * s);
         }
     }
-    cc(cudaMemcpy(st.d_rmncc, hcc_.data(), nb, cudaMemcpyHostToDevice), "cc");
-    cc(cudaMemcpy(st.d_rmnss, hss.data(), nb, cudaMemcpyHostToDevice), "ss");
-    cc(cudaMemcpy(st.d_zmnsc, hzsc.data(), nb, cudaMemcpyHostToDevice), "zsc");
-    cc(cudaMemcpy(st.d_zmncs, hzcs.data(), nb, cudaMemcpyHostToDevice), "zcs");
-    cc(cudaMemcpy(st.d_lmnsc, hlsc.data(), nb, cudaMemcpyHostToDevice), "lsc");
-    cc(cudaMemcpy(st.d_lmncs, hlcs.data(), nb, cudaMemcpyHostToDevice), "lcs");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), hcc_.data(), nb, cudaMemcpyHostToDevice), "cc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), hss.data(), nb, cudaMemcpyHostToDevice), "ss");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), hzsc.data(), nb, cudaMemcpyHostToDevice), "zsc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), hzcs.data(), nb, cudaMemcpyHostToDevice), "zcs");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), hlsc.data(), nb, cudaMemcpyHostToDevice), "lsc");
+    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), hlcs.data(), nb, cudaMemcpyHostToDevice), "lcs");
 }
 
 int main() {
@@ -76,10 +76,9 @@ int main() {
     p.lamscale = 0.0;
 
     cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
-    SpectralState<double> st = storage.legacy_view();
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
 
-    fillState(st, p);
+    fillState(storage, p);
     cumes::Profiles<double> profiles(p, vp, nullptr); cumes::RadialProfileViews<double> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
@@ -89,12 +88,12 @@ int main() {
     // extrapolate m=1 to the axis (as the solver does each iteration)
     {
         auto* hcc = new double[p.ns * p.mnmax];
-        cudaMemcpy(hcc, st.d_rmncc, nb, cudaMemcpyDeviceToHost);
+        cudaMemcpy(hcc, storage.family_ptr(cumes::SpectralComponent::Rcc), nb, cudaMemcpyDeviceToHost);
         for (int n = 0; n < p.ntor + 1; ++n) {
             int mn = 1 * (p.ntor + 1) + n;
             hcc[0 + mn * p.ns] = hcc[1 + mn * p.ns];
         }
-        cudaMemcpy(st.d_rmncc, hcc, nb, cudaMemcpyHostToDevice);
+        cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), hcc, nb, cudaMemcpyHostToDevice);
         delete[] hcc;
     }
 

@@ -40,7 +40,7 @@ herr_t putAttr(hid_t loc, const char* name, hid_t dtype, const void* val) {
 }  // namespace
 
 template <typename T>
-bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
+bool outputSaveHdf5(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
                     const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                     const char* path, const char* input_file) {
     // Fixed-capacity provenance for the v0 layout (padded arrays, byte-identical
@@ -176,12 +176,12 @@ bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
         H5Dclose(ds);
         return 0;
     };
-    H5_CHECK(writeFam(st.d_rmncc, "rmncc"), "write rmncc");
-    H5_CHECK(writeFam(st.d_zmnsc, "zmnsc"), "write zmnsc");
-    H5_CHECK(writeFam(st.d_lmnsc, "lmnsc"), "write lmnsc");
-    H5_CHECK(writeFam(st.d_rmnss, "rmnss"), "write rmnss");
-    H5_CHECK(writeFam(st.d_zmncs, "zmncs"), "write zmncs");
-    H5_CHECK(writeFam(st.d_lmncs, "lmncs"), "write lmncs");
+    H5_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Rcc), "rmncc"), "write rmncc");
+    H5_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Zsc), "zmnsc"), "write zmnsc");
+    H5_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Lsc), "lmnsc"), "write lmnsc");
+    H5_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Rss), "rmnss"), "write rmnss");
+    H5_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Zcs), "zmncs"), "write zmncs");
+    H5_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Lcs), "lmncs"), "write lmncs");
     delete[] dbuf;
     delete[] buf;
 
@@ -205,5 +205,5 @@ bool outputSaveHdf5(const SpectralState<T>& st, const DeviceParams<T>& p,
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template bool outputSaveHdf5<double>(const SpectralState<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
-template bool outputSaveHdf5<float>(const SpectralState<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveHdf5<double>(const cumes::SpectralStorage<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
+template bool outputSaveHdf5<float>(const cumes::SpectralStorage<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);

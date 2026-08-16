@@ -45,7 +45,6 @@ int main() {
 
     // Create Solovev-like initial state with independent parity coefficients
     cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
-    SpectralState<double> st = storage.legacy_view();
     size_t nbytes_state = p.ns * p.mnmax * sizeof(double);
     auto* h_cc = new double[p.ns * p.mnmax]();
     auto* h_ss = new double[p.ns * p.mnmax]();
@@ -53,8 +52,8 @@ int main() {
     auto* h_zcs = new double[p.ns * p.mnmax]();
     auto* h_lsc = new double[p.ns * p.mnmax]();
     // h_lcs was declared but never filled/uploaded before: the inverse DFT
-    // reads st.d_lmncs, so the kernel consumed uninitialized device memory
-    // (and st.d_lmncs was leaked). Zero it like the other families.
+    // reads the lmncs family, so the kernel consumed uninitialized device
+    // memory (and the family was leaked). Zero it like the other families.
     auto* h_lcs = new double[p.ns * p.mnmax]();
 
     for (int j = 0; j < p.ns; ++j) {
@@ -76,12 +75,12 @@ int main() {
         }
     }
 
-    checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nbytes_state, cudaMemcpyHostToDevice), "cpy cc");
-    checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nbytes_state, cudaMemcpyHostToDevice), "cpy ss");
-    checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nbytes_state, cudaMemcpyHostToDevice), "cpy zsc");
-    checkCuda(cudaMemcpy(st.d_zmncs, h_zcs, nbytes_state, cudaMemcpyHostToDevice), "cpy zcs");
-    checkCuda(cudaMemcpy(st.d_lmnsc, h_lsc, nbytes_state, cudaMemcpyHostToDevice), "cpy lsc");
-    checkCuda(cudaMemcpy(st.d_lmncs, h_lcs, nbytes_state, cudaMemcpyHostToDevice), "cpy lcs");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nbytes_state, cudaMemcpyHostToDevice), "cpy cc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nbytes_state, cudaMemcpyHostToDevice), "cpy ss");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), h_zsc, nbytes_state, cudaMemcpyHostToDevice), "cpy zsc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zcs, nbytes_state, cudaMemcpyHostToDevice), "cpy zcs");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), h_lsc, nbytes_state, cudaMemcpyHostToDevice), "cpy lsc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lcs, nbytes_state, cudaMemcpyHostToDevice), "cpy lcs");
 
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
     delete[] h_lsc; delete[] h_lcs;

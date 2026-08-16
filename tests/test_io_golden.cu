@@ -105,7 +105,7 @@ static void runPrecision() {
     const std::string legacyPath = scratch("legacy");
     const std::string v0Path = scratch("v0");
     {
-        const bool ok = outputSaveBinary<T>(storage.legacy_view(), p,
+        const bool ok = outputSaveBinary<T>(storage, p,
                                             legacyPath.c_str());
         CHECK(ok, "golden: outputSaveBinary (reference) writes");
 

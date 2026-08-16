@@ -53,7 +53,7 @@ struct TinyBundle {
     DeviceParams<T> p;
     cumes::ValidatedProblem vp;
     SolverResult<T> res;
-    SpectralState<T> st;
+    cumes::SpectralStorage<T> st;
 
     TinyBundle() {
         p.ns = 5; p.mnmax = 2; p.ntheta = 18; p.nzeta = 1; p.nfp = 1;
@@ -72,31 +72,9 @@ struct TinyBundle {
                         static_cast<double>(p.ftol)}};
         vp = validateSpec(std::move(spec));
         res = SolverResult<T>{false, 3, T(1e-10), T(2e-10), T(3e-10), T(0.9)};
-        const size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
-        checkCuda(cudaMalloc(&st.d_rmncc, nb), "rmncc");
-        checkCuda(cudaMalloc(&st.d_zmnsc, nb), "zmnsc");
-        checkCuda(cudaMalloc(&st.d_lmnsc, nb), "lmnsc");
-        checkCuda(cudaMalloc(&st.d_rmnss, nb), "rmnss");
-        checkCuda(cudaMalloc(&st.d_zmncs, nb), "zmncs");
-        checkCuda(cudaMalloc(&st.d_lmncs, nb), "lmncs");
-        checkCuda(cudaMalloc(&st.d_v_rmncc, nb), "vcc");
-        checkCuda(cudaMalloc(&st.d_v_zmnsc, nb), "vzsc");
-        checkCuda(cudaMalloc(&st.d_v_lmnsc, nb), "vlsc");
-        checkCuda(cudaMalloc(&st.d_v_rmnss, nb), "vss");
-        checkCuda(cudaMalloc(&st.d_v_zmncs, nb), "vzcs");
-        checkCuda(cudaMalloc(&st.d_v_lmncs, nb), "vlcs");
-        checkCuda(cudaMemset(st.d_rmncc, 0, nb), "zero cc");
-        checkCuda(cudaMemset(st.d_zmnsc, 0, nb), "zero zsc");
-        checkCuda(cudaMemset(st.d_lmnsc, 0, nb), "zero lsc");
-        checkCuda(cudaMemset(st.d_rmnss, 0, nb), "zero ss");
-        checkCuda(cudaMemset(st.d_zmncs, 0, nb), "zero zcs");
-        checkCuda(cudaMemset(st.d_lmncs, 0, nb), "zero lcs");
-    }
-    ~TinyBundle() {
-        cudaFree(st.d_rmncc); cudaFree(st.d_zmnsc); cudaFree(st.d_lmnsc);
-        cudaFree(st.d_rmnss); cudaFree(st.d_zmncs); cudaFree(st.d_lmncs);
-        cudaFree(st.d_v_rmncc); cudaFree(st.d_v_zmnsc); cudaFree(st.d_v_lmnsc);
-        cudaFree(st.d_v_rmnss); cudaFree(st.d_v_zmncs); cudaFree(st.d_v_lmncs);
+        // The state/velocity slabs are allocated + zeroed by SpectralStorage
+        // (RAII); the writers only read the six state families.
+        st.allocate(p.ns, p.mnmax);
     }
 };
 

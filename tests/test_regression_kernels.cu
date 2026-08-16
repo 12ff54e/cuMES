@@ -133,17 +133,17 @@ static void fillState(std::vector<T>& cc, std::vector<T>& ss,
 }
 
 template <typename T>
-static void uploadState(SpectralState<T>& st, const std::vector<T>& cc,
+static void uploadState(cumes::SpectralStorage<T>& storage, const std::vector<T>& cc,
                         const std::vector<T>& ss, const std::vector<T>& zsc,
                         const std::vector<T>& zcs, const std::vector<T>& lsc,
                         const std::vector<T>& lcs, int ns, int mnmax) {
     size_t nb = (size_t)ns * mnmax * sizeof(T);
-    checkCuda(cudaMemcpy(st.d_rmncc, cc.data(), nb, cudaMemcpyHostToDevice), "up cc");
-    checkCuda(cudaMemcpy(st.d_rmnss, ss.data(), nb, cudaMemcpyHostToDevice), "up ss");
-    checkCuda(cudaMemcpy(st.d_zmnsc, zsc.data(), nb, cudaMemcpyHostToDevice), "up zsc");
-    checkCuda(cudaMemcpy(st.d_zmncs, zcs.data(), nb, cudaMemcpyHostToDevice), "up zcs");
-    checkCuda(cudaMemcpy(st.d_lmnsc, lsc.data(), nb, cudaMemcpyHostToDevice), "up lsc");
-    checkCuda(cudaMemcpy(st.d_lmncs, lcs.data(), nb, cudaMemcpyHostToDevice), "up lcs");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), cc.data(), nb, cudaMemcpyHostToDevice), "up cc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), ss.data(), nb, cudaMemcpyHostToDevice), "up ss");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), zsc.data(), nb, cudaMemcpyHostToDevice), "up zsc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), zcs.data(), nb, cudaMemcpyHostToDevice), "up zcs");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), lsc.data(), nb, cudaMemcpyHostToDevice), "up lsc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), lcs.data(), nb, cudaMemcpyHostToDevice), "up lcs");
 }
 
 // ---------------------------------------------------------------------------
@@ -331,11 +331,10 @@ static int testDealias(int ntheta) {
     cumes::Preconditioner<T> precon(p, nullptr);
     cumes::ConstraintOperator<T> constraint(p, nullptr);
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
-    SpectralState<T> st = storage.legacy_view();
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
-    uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
+    uploadState(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
@@ -438,11 +437,10 @@ static int testPcr(int ns) {
     cumes::ToroidalFftOperator<T> transform(p, rs, mt, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
-    SpectralState<T> st = storage.legacy_view();
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
-    uploadState(st, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
+    uploadState(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);

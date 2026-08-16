@@ -327,7 +327,7 @@ int main(int argc, char** argv) {
         } else {
             // NetCDF/HDF5: the legacy device-reading backends (host adapters
             // deferred). outputSave is never called for .bin from here.
-            output_ok = outputSave<Real>(storage.legacy_view(), p, vp, result,
+            output_ok = outputSave<Real>(storage, p, vp, result,
                                          outputPath, inputPath);
         }
 
@@ -345,7 +345,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        outputPrint<Real>(storage.legacy_view(), p, result.iterations,
+        outputPrint<Real>(storage, p, result.iterations,
                           result.converged, result.fsqr, result.fsqz, result.fsql);
         if (n_grids > 1)
             printf("multigrid: total effective iterations over %d grids = %d\n",

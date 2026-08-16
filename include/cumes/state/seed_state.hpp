@@ -105,13 +105,18 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const ValidatedProblem& 
     }
     printf("  initState: vmecpp interpFromBoundaryAndAxis (m>0 s^(m/2))\n");
 
-    SpectralState<T> st = storage.legacy_view();
-    check_cuda(cudaMemcpy(st.d_rmncc,c,nb,cudaMemcpyHostToDevice),"cpy cc");
-    check_cuda(cudaMemcpy(st.d_rmnss,s,nb,cudaMemcpyHostToDevice),"cpy ss");
-    check_cuda(cudaMemcpy(st.d_zmnsc,zsc,nb,cudaMemcpyHostToDevice),"cpy zsc");
-    check_cuda(cudaMemcpy(st.d_zmncs,zcs,nb,cudaMemcpyHostToDevice),"cpy zcs");
-    check_cuda(cudaMemcpy(st.d_lmnsc,lsc,nb,cudaMemcpyHostToDevice),"cpy lsc");
-    check_cuda(cudaMemcpy(st.d_lmncs,lcs,nb,cudaMemcpyHostToDevice),"cpy lcs");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Rcc), c, nb,
+                          cudaMemcpyHostToDevice), "cpy cc");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Rss), s, nb,
+                          cudaMemcpyHostToDevice), "cpy ss");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Zsc), zsc, nb,
+                          cudaMemcpyHostToDevice), "cpy zsc");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Zcs), zcs, nb,
+                          cudaMemcpyHostToDevice), "cpy zcs");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Lsc), lsc, nb,
+                          cudaMemcpyHostToDevice), "cpy lsc");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Lcs), lcs, nb,
+                          cudaMemcpyHostToDevice), "cpy lcs");
     delete[] c; delete[] s; delete[] zsc; delete[] zcs; delete[] lsc; delete[] lcs;
     return storage;
 }
@@ -170,13 +175,18 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p, const ValidatedProble
         }
     }
 
-    SpectralState<T> st = storage.legacy_view();
-    check_cuda(cudaMemcpy(st.d_rmncc, c, nb, cudaMemcpyHostToDevice), "restart cc");
-    check_cuda(cudaMemcpy(st.d_zmnsc, zsc, nb, cudaMemcpyHostToDevice), "restart zsc");
-    check_cuda(cudaMemcpy(st.d_lmnsc, lsc, nb, cudaMemcpyHostToDevice), "restart lsc");
-    check_cuda(cudaMemcpy(st.d_rmnss, s, nb, cudaMemcpyHostToDevice), "restart ss");
-    check_cuda(cudaMemcpy(st.d_zmncs, zcs, nb, cudaMemcpyHostToDevice), "restart zcs");
-    check_cuda(cudaMemcpy(st.d_lmncs, lcs, nb, cudaMemcpyHostToDevice), "restart lcs");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Rcc), c, nb,
+                          cudaMemcpyHostToDevice), "restart cc");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Zsc), zsc, nb,
+                          cudaMemcpyHostToDevice), "restart zsc");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Lsc), lsc, nb,
+                          cudaMemcpyHostToDevice), "restart lsc");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Rss), s, nb,
+                          cudaMemcpyHostToDevice), "restart ss");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Zcs), zcs, nb,
+                          cudaMemcpyHostToDevice), "restart zcs");
+    check_cuda(cudaMemcpy(storage.family_ptr(SpectralComponent::Lcs), lcs, nb,
+                          cudaMemcpyHostToDevice), "restart lcs");
     delete[] c; delete[] s; delete[] zsc; delete[] zcs; delete[] lsc; delete[] lcs;
     printf("  restartState: uploaded checkpoint + LCFS/axis patch\n");
     return storage;

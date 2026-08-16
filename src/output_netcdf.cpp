@@ -24,7 +24,7 @@
 #include "cumes/runtime/cuda_status.hpp"
 
 template <typename T>
-bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
+bool outputSaveNetcdf(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
                       const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                       const char* path, const char* input_file) {
     // Fixed-capacity provenance for the v0 layout (padded arrays, byte-identical
@@ -162,12 +162,12 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
         }
         return NC_NOERR;
     };
-    NC_CHECK(writeFam(st.d_rmncc, v_rmncc), "write rmncc");
-    NC_CHECK(writeFam(st.d_zmnsc, v_zmnsc), "write zmnsc");
-    NC_CHECK(writeFam(st.d_lmnsc, v_lmnsc), "write lmnsc");
-    NC_CHECK(writeFam(st.d_rmnss, v_rmnss), "write rmnss");
-    NC_CHECK(writeFam(st.d_zmncs, v_zmncs), "write zmncs");
-    NC_CHECK(writeFam(st.d_lmncs, v_lmncs), "write lmncs");
+    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Rcc), v_rmncc), "write rmncc");
+    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Zsc), v_zmnsc), "write zmnsc");
+    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Lsc), v_lmnsc), "write lmnsc");
+    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Rss), v_rmnss), "write rmnss");
+    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Zcs), v_zmncs), "write zmncs");
+    NC_CHECK(writeFam(storage.family_ptr(cumes::SpectralComponent::Lcs), v_lmncs), "write lmncs");
     delete[] dbuf;
     delete[] buf;
 
@@ -220,5 +220,5 @@ bool outputSaveNetcdf(const SpectralState<T>& st, const DeviceParams<T>& p,
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template bool outputSaveNetcdf<double>(const SpectralState<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
-template bool outputSaveNetcdf<float>(const SpectralState<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveNetcdf<double>(const cumes::SpectralStorage<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
+template bool outputSaveNetcdf<float>(const cumes::SpectralStorage<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);

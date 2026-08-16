@@ -51,7 +51,6 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     p.tcon0 = tcon0; p.lamscale = T(0.0);
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
-    SpectralState<T> st = storage.legacy_view();
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
     auto* h_cc = new T[p.ns * p.mnmax]();
     auto* h_ss = new T[p.ns * p.mnmax]();
@@ -75,12 +74,12 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
             if (m == 1) { h_zsc[j + m * p.ns] = T(-0.5) * s; h_zcs[j + m * p.ns] = T(-0.5) * s; }
         }
     }
-    checkCuda(cudaMemcpy(st.d_rmncc, h_cc, nb, cudaMemcpyHostToDevice), "cc");
-    checkCuda(cudaMemcpy(st.d_rmnss, h_ss, nb, cudaMemcpyHostToDevice), "ss");
-    checkCuda(cudaMemcpy(st.d_zmnsc, h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
-    checkCuda(cudaMemcpy(st.d_zmncs, h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
-    checkCuda(cudaMemcpy(st.d_lmnsc, h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
-    checkCuda(cudaMemcpy(st.d_lmncs, h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nb, cudaMemcpyHostToDevice), "cc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nb, cudaMemcpyHostToDevice), "ss");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
+    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
     delete[] h_lsc; delete[] h_lcs;
 

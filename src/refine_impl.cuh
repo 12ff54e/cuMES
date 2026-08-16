@@ -16,7 +16,7 @@
 // are copied exactly and the fixed boundary stays pinned.
 //
 // The stored state is physical (unscaled) on both grids, matching cuMES's
-// SpectralState convention (the odd-m decomposition factor appears only
+// SpectralStorage convention (the odd-m decomposition factor appears only
 // transiently in the real-space DFT slots).
 #include <cstdio>
 #include <cstdlib>
@@ -103,8 +103,6 @@ cumes::SpectralStorage<T> interpolateState(const DeviceParams<T>& p_new,
     // New grid's contiguous slabs; the ctor zeroes both (velocities are never
     // interpolated — vmecpp zeroes them per stage).
     cumes::SpectralStorage<T> st_new(p_new.ns, p_new.mnmax);
-    SpectralState<T> v_new = st_new.legacy_view();
-    SpectralState<T> v_old = st_old.legacy_view();
 
     dim3 bd(256), gd((p_new.ns * p_new.mnmax + 255) / 256);
     // The coarse state (st_old) is written by the previous stage's kernels on
@@ -117,10 +115,18 @@ cumes::SpectralStorage<T> interpolateState(const DeviceParams<T>& p_new,
     // stage-boundary point, so the cost is one fence per stage, not per pass.
     cumes::check_cuda(cudaDeviceSynchronize(), "interpolateState pre-sync");
     interpolateStateKernel<T><<<gd, bd, 0, stream>>>(
-        v_new.d_rmncc, v_new.d_zmnsc, v_new.d_lmnsc,
-        v_new.d_rmnss, v_new.d_zmncs, v_new.d_lmncs,
-        v_old.d_rmncc, v_old.d_zmnsc, v_old.d_lmnsc,
-        v_old.d_rmnss, v_old.d_zmncs, v_old.d_lmncs,
+        st_new.family_ptr(cumes::SpectralComponent::Rcc),
+        st_new.family_ptr(cumes::SpectralComponent::Zsc),
+        st_new.family_ptr(cumes::SpectralComponent::Lsc),
+        st_new.family_ptr(cumes::SpectralComponent::Rss),
+        st_new.family_ptr(cumes::SpectralComponent::Zcs),
+        st_new.family_ptr(cumes::SpectralComponent::Lcs),
+        st_old.family_ptr(cumes::SpectralComponent::Rcc),
+        st_old.family_ptr(cumes::SpectralComponent::Zsc),
+        st_old.family_ptr(cumes::SpectralComponent::Lsc),
+        st_old.family_ptr(cumes::SpectralComponent::Rss),
+        st_old.family_ptr(cumes::SpectralComponent::Zcs),
+        st_old.family_ptr(cumes::SpectralComponent::Lcs),
         p_new.ns, p_old.ns, p_new.mnmax, p_new.ntor + 1);
     cumes::check_cuda(cudaGetLastError(), "interpolateState");
     // The kernel reads the OLD (coarse) state asynchronously; the caller frees

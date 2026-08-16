@@ -86,7 +86,7 @@ const char* linkedOutputSuffixes() {
 // partial file) when the file cannot be opened, written, or closed — the
 // caller reports the run's output status in the CLI exit code.
 template <typename T>
-bool outputSaveBinary(const SpectralState<T>& st, const DeviceParams<T>& p,
+bool outputSaveBinary(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
                       const char* filename) {
     const std::string tmp = tempPathFor(filename);
     FILE* fp = fopen(tmp.c_str(), "wb");
@@ -115,12 +115,12 @@ bool outputSaveBinary(const SpectralState<T>& st, const DeviceParams<T>& p,
             ok = false;
         }
     };
-    writeFam(st.d_rmncc, "cpy rmncc");
-    writeFam(st.d_zmnsc, "cpy zmnsc");
-    writeFam(st.d_lmnsc, "cpy lmnsc");
-    writeFam(st.d_rmnss, "cpy rmnss");
-    writeFam(st.d_zmncs, "cpy zmncs");
-    writeFam(st.d_lmncs, "cpy lmncs");
+    writeFam(storage.family_ptr(cumes::SpectralComponent::Rcc), "cpy rmncc");
+    writeFam(storage.family_ptr(cumes::SpectralComponent::Zsc), "cpy zmnsc");
+    writeFam(storage.family_ptr(cumes::SpectralComponent::Lsc), "cpy lmnsc");
+    writeFam(storage.family_ptr(cumes::SpectralComponent::Rss), "cpy rmnss");
+    writeFam(storage.family_ptr(cumes::SpectralComponent::Zcs), "cpy zmncs");
+    writeFam(storage.family_ptr(cumes::SpectralComponent::Lcs), "cpy lmncs");
     delete[] dbuf;
     delete[] buf;
     if (!ok) return fail("state write");
@@ -133,7 +133,7 @@ bool outputSaveBinary(const SpectralState<T>& st, const DeviceParams<T>& p,
 }
 
 template <typename T>
-void outputPrint(const SpectralState<T>& st, const DeviceParams<T>& p, int niter,
+void outputPrint(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p, int niter,
                  bool converged, T fsqr, T fsqz, T fsql) {
     // Pull boundary-surface spectral coefficients back to host for inspection.
     // Column-major layout: index(surface=j, mode=m) = j + m * ns.
@@ -144,15 +144,15 @@ void outputPrint(const SpectralState<T>& st, const DeviceParams<T>& p, int niter
     auto* h_lmnc = new T[p.mnmax];
 
     cumes::check_cuda(cudaMemcpy2D(h_rmnc, sizeof(T),
-                           st.d_rmncc + j, p.ns * sizeof(T),
+                           storage.family_ptr(cumes::SpectralComponent::Rcc) + j, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy rmnc out");
     cumes::check_cuda(cudaMemcpy2D(h_zmns, sizeof(T),
-                           st.d_zmnsc + j, p.ns * sizeof(T),
+                           storage.family_ptr(cumes::SpectralComponent::Zsc) + j, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy zmns out");
     cumes::check_cuda(cudaMemcpy2D(h_lmnc, sizeof(T),
-                           st.d_lmnsc + j, p.ns * sizeof(T),
+                           storage.family_ptr(cumes::SpectralComponent::Lsc) + j, p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy lmnc out");
 
@@ -161,21 +161,21 @@ void outputPrint(const SpectralState<T>& st, const DeviceParams<T>& p, int niter
     auto* h_zmns_ax = new T[p.mnmax];
     auto* h_lmnc_ax = new T[p.mnmax];
     cumes::check_cuda(cudaMemcpy2D(h_rmnc_ax, sizeof(T),
-                           st.d_rmncc, p.ns * sizeof(T),
+                           storage.family_ptr(cumes::SpectralComponent::Rcc), p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy rmnc ax");
     cumes::check_cuda(cudaMemcpy2D(h_zmns_ax, sizeof(T),
-                           st.d_zmnsc, p.ns * sizeof(T),
+                           storage.family_ptr(cumes::SpectralComponent::Zsc), p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy zmns ax");
     cumes::check_cuda(cudaMemcpy2D(h_lmnc_ax, sizeof(T),
-                           st.d_lmnsc, p.ns * sizeof(T),
+                           storage.family_ptr(cumes::SpectralComponent::Lsc), p.ns * sizeof(T),
                            sizeof(T), p.mnmax,
                            cudaMemcpyDeviceToHost), "cpy lmnc ax");
 
     // Read R_00 radial profile
     auto* h_rmnc_r = new T[p.ns];
-    cumes::check_cuda(cudaMemcpy(h_rmnc_r, st.d_rmncc, p.ns * sizeof(T),
+    cumes::check_cuda(cudaMemcpy(h_rmnc_r, storage.family_ptr(cumes::SpectralComponent::Rcc), p.ns * sizeof(T),
                          cudaMemcpyDeviceToHost), "cpy rmnc radial");
 
     printf("\n========================================\n");
@@ -255,7 +255,7 @@ bool outputFormatAvailable(const char* path) {
 // preflights via outputFormatAvailable before the solve, so this is only a
 // belt-and-suspenders path) — never exit()s, so normal cleanup runs.
 template <typename T>
-bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
+bool outputSave(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
                 const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
                 const char* path, const char* input_file) {
     // vp/result/input_file are only read by the backend writers; silence
@@ -264,11 +264,11 @@ bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
     const char* ext = strrchr(path, '.');
     if (ext == nullptr) { ext = ""; }
     if (strcasecmp(ext, ".bin") == 0) {
-        return outputSaveBinary<T>(st, p, path);
+        return outputSaveBinary<T>(storage, p, path);
     }
     if (strcasecmp(ext, ".nc") == 0) {
 #ifdef CUMES_HAVE_NETCDF
-        return outputSaveNetcdf<T>(st, p, vp, result, path, input_file);
+        return outputSaveNetcdf<T>(storage, p, vp, result, path, input_file);
 #else
         fprintf(stderr, "ERROR: %s: .nc output requested but cuMES was built "
                         "without NetCDF support\n", path);
@@ -277,7 +277,7 @@ bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
     }
     if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
 #ifdef CUMES_HAVE_HDF5
-        return outputSaveHdf5<T>(st, p, vp, result, path, input_file);
+        return outputSaveHdf5<T>(storage, p, vp, result, path, input_file);
 #else
         fprintf(stderr, "ERROR: %s: %s output requested but cuMES was built "
                         "without HDF5 support\n", path, ext);
@@ -286,13 +286,13 @@ bool outputSave(const SpectralState<T>& st, const DeviceParams<T>& p,
     }
     fprintf(stderr, "WARNING: %s: unrecognized output suffix '%s' - "
                     "writing binary cumes_state.bin\n", path, ext);
-    return outputSaveBinary<T>(st, p, "cumes_state.bin");
+    return outputSaveBinary<T>(storage, p, "cumes_state.bin");
 }
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template bool outputSaveBinary<double>(const SpectralState<double>&, const DeviceParams<double>&, const char*);
-template bool outputSaveBinary<float>(const SpectralState<float>&, const DeviceParams<float>&, const char*);
-template void outputPrint<double>(const SpectralState<double>&, const DeviceParams<double>&, int, bool, double, double, double);
-template void outputPrint<float>(const SpectralState<float>&, const DeviceParams<float>&, int, bool, float, float, float);
-template bool outputSave<double>(const SpectralState<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
-template bool outputSave<float>(const SpectralState<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);
+template bool outputSaveBinary<double>(const cumes::SpectralStorage<double>&, const DeviceParams<double>&, const char*);
+template bool outputSaveBinary<float>(const cumes::SpectralStorage<float>&, const DeviceParams<float>&, const char*);
+template void outputPrint<double>(const cumes::SpectralStorage<double>&, const DeviceParams<double>&, int, bool, double, double, double);
+template void outputPrint<float>(const cumes::SpectralStorage<float>&, const DeviceParams<float>&, int, bool, float, float, float);
+template bool outputSave<double>(const cumes::SpectralStorage<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
+template bool outputSave<float>(const cumes::SpectralStorage<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);
