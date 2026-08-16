@@ -107,6 +107,15 @@ cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
     SpectralState<T> v_old = st_old.legacy_view();
 
     dim3 bd(256), gd((p_new.ns * p_new.mnmax + 255) / 256);
+    // The coarse state (st_old) is written by the previous stage's kernels on
+    // the nonblocking compute stream. A `cudaStreamSynchronize(stream)` at the
+    // previous stage's exit does NOT make those writes visible to this kernel —
+    // the batched ζ-transforms and the stage's synchronous default-stream
+    // memsets/memcpys leave the coarse slab in a state only a full device sync
+    // orders (observed as an all-zero ns=55 stage on the axisymmetric path).
+    // Full-sync once per grid stage (never in the hot loop): this is a
+    // stage-boundary point, so the cost is one fence per stage, not per pass.
+    cumes::check_cuda(cudaDeviceSynchronize(), "interpolateState pre-sync");
     interpolateStateKernel<T><<<gd, bd, 0, stream>>>(
         v_new.d_rmncc, v_new.d_zmnsc, v_new.d_lmnsc,
         v_new.d_rmnss, v_new.d_zmncs, v_new.d_lmncs,
@@ -114,6 +123,11 @@ cumes::SpectralStorage<T> interpolateState(const GridParams<T>& p_new,
         v_old.d_rmnss, v_old.d_zmncs, v_old.d_lmncs,
         p_new.ns, p_old.ns, p_new.mnmax, p_new.ntor + 1);
     cumes::check_cuda(cudaGetLastError(), "interpolateState");
+    // The kernel reads the OLD (coarse) state asynchronously; the caller frees
+    // that state (via move-assignment of the returned SpectralStorage) as soon
+    // as this returns. Wait for the kernel so the old buffer is not released
+    // while still being read.
+    cumes::check_cuda(cudaStreamSynchronize(stream), "interpolateState sync");
     printf("  interpolateState: ns=%d -> ns=%d (linear in s, scalxc-scaled odd-m)\n",
            p_old.ns, p_new.ns);
     return st_new;
