@@ -68,7 +68,7 @@ re-measure confirms the bound. `CudaGraph` + `test_cuda_graph` (which proves
 cuFFT-in-graph replays bit-identically) are retained as the measurement
 primitive.
 
-## 4. Acceptance policy (blueprint §10.7)
+## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
 workload, the lower bound of the 95% confidence interval shows an improvement

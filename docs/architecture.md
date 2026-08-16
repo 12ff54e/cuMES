@@ -5,8 +5,9 @@ Status date: 2026-08-16 (Phase 11 complete — step 13 + the deferred
 describes the architecture as it exists after Phase 10 — the tested operator
 boundaries, the build/library split, and the state of the strangler-fig
 migration. The normative numerical contracts live in
-`docs/cuda-overhaul-blueprint.md` §4; the layout contracts in
-`docs/data-layout.md`; the measured performance in `docs/performance.md`.
+`docs/mathematics.md`; the layout contracts in `docs/data-layout.md`; the
+verification tiers/gates in `docs/verification.md`; the measured performance
+in `docs/performance.md`.
 
 ## 1. One layer: the `cumes` operator library
 

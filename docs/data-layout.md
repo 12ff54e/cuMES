@@ -3,7 +3,7 @@
 Status date: 2026-08-16 (Phase 10). These are the storage contracts the kernels
 and the typed views enforce. They are tested by `test_fourier`, the operator
 view tests, and the golden I/O tests, and are normative for any migration
-(blueprint §4.1–§4.2).
+(mathematics.md §1–§2).
 
 ## 1. Grid and indexing
 
@@ -41,7 +41,7 @@ amplitudes; the forward quadrature projects onto the orthonormal basis with
 
 ## 3. Real-space fields (parity-split, point contiguous)
 
-Real space is split by **m parity**, not by trig factor (blueprint §4.2):
+Real space is split by **m parity**, not by trig factor (mathematics.md §2):
 
 - even `m` → `*_e` arrays, odd `m` → `*_o` arrays;
 - each parity array carries the full mode contribution.

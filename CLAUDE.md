@@ -93,7 +93,8 @@ cuMES/
 ├── benchmarks/             fixed_iteration + graph_overhead harnesses
 ├── scripts/                compare_runs.py / compare_states.py / compare_bitwise.py
 ├── inputs/                 solovev.json, w7x.json (vmecpp indata schema)
-└── docs/                   Blueprint, architecture, ADRs, phase handovers
+└── docs/                   Blueprint, mathematics, verification, architecture,
+│                           ADRs, phase handovers
 ```
 
 `include/cumes/`: `config` (ProblemSpec → ValidatedProblem, DeviceParams<T>,

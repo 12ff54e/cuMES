@@ -1,0 +1,151 @@
+# cuMES verification strategy
+
+The verification tiers and gates of `docs/cuda-overhaul-blueprint.md` §10,
+extracted verbatim (sections 1–7 correspond to §10.1–§10.7), plus the current
+inventory of what is actually wired into the build, and the change-review
+checklist (§13 of the blueprint) as the appendix.
+
+## Current state (2026-08-16)
+
+- **Verify gate (default `build/`)**: 35 CTest entries — 23 unit tests, 12
+  compute-sanitizer memcheck variants of the kernel-driving tests, and 1
+  benchmark smoke. The frozen trajectory oracle: Solovev `251→199→456`
+  FSQR 9.583e-17 and W7-X `1877→1617→2011` FSQR 9.778e-13 must reproduce
+  **bit-identically** (`scripts/compare_runs.py --max-iter-delta 0`).
+- **Sanitizer preset (`build-sanitize/`)**: 63 CTest entries — the verify
+  gate plus racecheck/synccheck variants of the kernel tests (RUN_SERIAL;
+  racecheck exhausts the GPU under parallel runs) and ASan+UBSan twins of the
+  host-only libraries/tests (`asan_test_*`; the ASan runtime must be first in
+  the executable's library list, so the sanitized libraries are `_asan`
+  copies, never propagated into CUDA targets).
+- **Float preset (`build-float/`)**: 23 CTest entries (the float legs of the
+  double-instantiating tests). Float is experimental: the state floor is
+  ~1e-7 and the CLI hard-errors on `ftol_array` entries below 1e-6.
+- **Trajectory tooling**: `scripts/compare_runs.py` (per-iteration residual
+  rows, restart-marker sequence, converged state), `compare_states.py`
+  (six-family state diff), `compare_bitwise.py`; benchmarks
+  `cumes_benchmark_fixed_iteration` (§8.1 fixed-window median/p95) and
+  `cumes_benchmark_graph_realpass`/`graph_overhead` (ADR-0003 primitives).
+- **Host sanitizers**: no ASan/UBSan presets beyond the `_asan` twins above;
+  event-DAG stress tests, the Nsight audit, and formatting/static-analysis
+  jobs remain unbuilt (no CI exists in this repository).
+
+
+## 1. Reference hierarchy
+
+Use three layers of truth:
+
+1. **Local scalar reference:** simple CPU implementations of transforms, staggered geometry, force terms, constraint, residuals, and tridiagonal solves. These diagnose the first wrong component.
+2. **Frozen legacy trajectory:** per-iteration component snapshots, residuals, damping values, restart events, and final state from the audited cuMES baseline on safe inputs.
+3. **Independent VMEC++ reference:** inputs and outputs generated with a pinned VMEC++ 0.7.0 revision, toolchain, and conversion script.
+
+The legacy solver is not an oracle for a path known to contain undefined behavior. Such paths are validated against a corrected scalar formulation and VMEC++ instead.
+
+Every reference artifact records input hash, code revision, build flags, scalar type, GPU/runtime where applicable, and a schema version. Large binary fixtures should have a manifest with checksums and generation commands.
+
+## 2. CPU unit tests
+
+Required host tests include:
+
+- strict/compatibility JSON parsing, normalized configuration, defaults, aliases, duplicate/unknown keys, wrong types, integer overflow, negative modes, empty stages, and checked extent overflow;
+- mode folding/unfolding for signed toroidal input and every product-basis family;
+- `GridShape`, surface/mode indexing, and quadrature endpoint weights;
+- profile polynomial evaluation, flux normalization, fixed-iota/current policy selection, non-unit `tcon0`, and rejection of unsupported gamma;
+- controller residual histories reproducing convergence, ten-sample initialization/zero cases, bad-progress/Jacobian restarts, `ijacob=25/50` maintenance resets, checkpoint refresh/restore, and effective-iteration counting;
+- multigrid interpolation at axis, interior points, LCFS, odd/even modes, and all six families;
+- output capability preflight and run-status-to-exit-code mapping;
+- versioned/legacy serialization round trips and deliberate I/O failures.
+
+## 3. CUDA component tests
+
+| Component            | Minimum CUDA test                                                                                                                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Transform            | Constant, single theta mode, single zeta mode, analytical derivatives, all six families, parity, axis/LCFS rules, Nyquist and awkward/max angular sizes, direct CPU comparison, float/double.                                        |
+| Axisymmetric backend | Cross-check every intermediate against generic `nzeta=1` backend on several `ns/ntheta/mpol` combinations.                                                                                                                           |
+| Geometry             | Manufactured circular/elliptic and deliberately inverted/degenerate surfaces; compare half interpolation, `tau1`, parity correction, `sqrt(g)`, covariant metric, oriented Jacobian status, and guarded no-write behavior pointwise. |
+| Magnetic field       | Manufactured lambda/iota/current cases with analytical `B^u`, `B^v`, `B_u`, `B_v`, pressure, and `ncurr=0/1`.                                                                                                                        |
+| Force                | CPU scalar weak form for every parity family; isolate radial, poloidal, toroidal, hybrid-lambda, and lambda-axis-exception contributions; include a directional finite-difference/energy consistency check where applicable.         |
+| Constraint           | Verify `m=0,1` annihilation by `m(m-1)`, band edges, non-unit `tcon0`, reset/reference behavior, and theta sizes above/below 32.                                                                                                     |
+| Residual             | Known vectors, deterministic reduction, zero/denormal/nonfinite inputs, and float-state/double-accumulator mode.                                                                                                                     |
+| Preconditioner       | Compare lower/diagonal/upper coefficients and batched solutions with CPU tridiagonal solve for awkward row counts, both parities, `m=1` scaling, `copysign` lambda term, zero modes, scaled near-singular and breakdown cases.       |
+| Descent/checkpoint   | Exact component/mode scaling, conditional `m=1` gauge, axis/LCFS rules, post-descent capture, descent-then-restore discard, velocity zero, and optional fused state-only checkpoint.                                                 |
+| Prolongation         | Device/CPU agreement for coarse/fine pairs including non-power-of-two sizes.                                                                                                                                                         |
+
+Tests must allocate through the same typed slabs as production. No test may spell a magic component count such as five or six.
+
+## 4. Integration and trajectory tests
+
+Maintain the following tiers:
+
+- `smoke`: a few iterations of small axisymmetric and 3D manufactured cases;
+- `short-trajectory`: 25–100 iterations of Solovev and W7-X with component checkpoints at selected iterations;
+- `full-regression`: complete multigrid Solovev and W7-X, including prescribed current, constraint resets, and restarts;
+- `legacy-compatibility`: existing JSON fixtures and old binary reader/writer;
+- `I/O-matrix`: binary plus NetCDF/HDF5 with none/one/both optional libraries, recognized/unknown suffixes, unwritable paths, float-to-on-disk conversion, schema inspection, and restart round trip.
+
+Structured telemetry is compared directly. Do not parse human `printf` output to infer solver behavior.
+
+## 5. Sanitizers and static checks
+
+**Status (2026-08-16): the memcheck matrix was extended.** The `sanitizer`
+preset now registers racecheck + synccheck variants of the kernel tests
+(`CUMES_ENABLE_EXTRA_SANITIZER_TOOLS`, RUN_SERIAL in CTest — racecheck
+instrumentation exhausts the GPU under parallel runs) and builds dedicated
+ASan+UBSan twins of the host-only libraries and their tests
+(`CUMES_HOST_SANITIZERS`; the ASan runtime must be first in each executable's
+library list, so the sanitized libs are `_asan` copies consumed only by
+`asan_test_*` executables — never propagated into CUDA targets). The
+event-DAG stress tests, Nsight audit, and formatting/static-analysis jobs
+remain unbuilt (no CI exists in this repository).
+
+CI jobs:
+
+- host AddressSanitizer and UndefinedBehaviorSanitizer for config, controller, and I/O;
+- Compute Sanitizer `memcheck` and `initcheck` on all small CUDA tests;
+- Compute Sanitizer `racecheck`/`synccheck` for their supported intra-kernel shared-memory/barrier hazards; do not treat them as proof of inter-kernel global-memory ordering;
+- explicit event-DAG stress tests for streams/graphs using randomized delay kernels, versioned poison buffers, and assertions that every consumer observes the intended producer version;
+- an Nsight Systems or CUDA API-trace audit of each multi-stream graph variant and snapshot path;
+- debug launch checking with a named range on failure;
+- compiler warnings as errors for project sources, excluding vendored dependencies;
+- formatting and a lightweight CUDA-aware static-analysis pass where supported.
+
+Fixtures must be self-contained. The historical force verifier's dependency on an absent `vmecpp_init.bin` is resolved: `test_force_verify` generates its own fixture (checked-in asset-free).
+
+## 6. Equivalence gates
+
+Classify each change before review:
+
+- **Class A — ownership/scheduling, same arithmetic order:** require bitwise equality of component outputs and the full residual/controller trajectory in the precise build.
+- **Class B — reduction/kernel reorder:** require per-operator absolute/relative/ULP thresholds derived from the reference scale, identical finite/status classification, and identical controller decisions on the frozen short trajectories.
+- **Class C — numerical algorithm change:** require independent CPU/VMEC++ agreement, physical invariant checks, final-equilibrium comparison, convergence robustness across the fixture matrix, and a written ADR.
+
+Never approve a change only because the final residual is small. Compare R/Z/lambda families, axis/boundary invariants, geometry/field intermediates, restart sequence, and iteration count.
+
+## 7. Performance acceptance
+
+For a performance-motivated change:
+
+- require the lower bound of the 95% confidence interval to show an improvement greater than `max(5%, measured noise floor)` on one named target workload, with the upper confidence bound on the other primary workload's regression at or below 2%, unless the change has a separately approved correctness or memory benefit;
+- use repeated thermally stable warm runs and report median, p95, confidence interval, clocks, and noise floor—not a single timing;
+- include setup and output separately from effective-iteration time;
+- compare on at least the legacy Pascal target and one modern architecture;
+- reject peak arena/cuFFT/graph memory growth beyond an agreed baseline ceiling unless the measured performance or correctness benefit explicitly justifies it;
+- retain the old backend until the new one passes both numerical and performance gates.
+
+These thresholds are review policy, not a claim that every listed optimization will meet them.
+
+## Appendix: review checklist for every CUDA change (blueprint §13)
+
+
+Before merging a kernel or scheduling change, answer:
+
+1. Which mathematical domain and layout does every view use?
+2. Are all extents and products validated before launch?
+3. Is the kernel correct for partial tiles/warps and awkward sizes?
+4. Which stream owns the operation, and where is the necessary dependency established?
+5. Does it allocate, synchronize, or copy in the hot loop?
+6. What is the register/shared-memory/occupancy effect on Pascal and a modern GPU?
+7. Which CPU/intermediate/trajectory test detects a wrong result?
+8. Is arithmetic order preserved? If not, which equivalence class and tolerance apply?
+9. What benchmark demonstrates benefit, including regressions on the other primary shape?
+10. Can the previous backend remain available until the new one passes all gates?
