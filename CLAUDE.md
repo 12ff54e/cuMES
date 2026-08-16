@@ -56,7 +56,11 @@ switch (`-DCUMES_USE_FLOAT=ON`). The tests instantiate both types in every build
 On-disk state files stay double (Python scripts unaffected); dump files are
 T-native. Float runs stall at ~1e-7 residuals and never reach the hardcoded
 ftol — float builds hard-error at startup when any `ftol_array` entry is below
-1e-6, so relax the stage ftols for float experiments. Device code is split into
+1e-6, so relax the stage ftols for float experiments. The per-pass control
+record (residuals, Jacobian stats, force-norm factors) is DOUBLE in both
+builds (ADR-0001): the device norm reductions accumulate in double and the
+host controller (`IterationController<double>`) sees them unrounded, while
+the state/descent physics stays `T`. Device code is split into
 explicit double/float instantiation TUs (`src/*_double.cu` / `src/*_float.cu`,
 one scalar type per TU), so kernels may declare dynamic shared memory directly
 as `extern __shared__ T[]` (the old non-templated `dynSharedBase()` indirection
