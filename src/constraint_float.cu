@@ -7,3 +7,6 @@ template void constraintResetRzCon0<float>(const GridParams<float>&, ConstraintW
 template void constraintCompute<float>(const GridParams<float>&, const FourierPlan<float>&, const PreconWorkspace<float>&, ConstraintWorkspace<float>&, const float*, bool, cudaStream_t);
 template void constraintComputeAxisym<float>(const GridParams<float>&, const FourierPlan<float>&, const PreconWorkspace<float>&, ConstraintWorkspace<float>&, const float*, bool, cumes::AxisymmetricOperator<float>&, cudaStream_t);
 template void constraintDealiasBandpass<float>(const GridParams<float>&, const FourierPlan<float>&, ConstraintWorkspace<float>&, cudaStream_t);
+
+// ConstraintOperator (owns the workspace; wraps the two de-alias backends).
+template class cumes::ConstraintOperator<float>;

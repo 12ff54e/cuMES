@@ -1,27 +1,53 @@
 // geometry_operator.hpp — base-geometry operator boundary (blueprint §6.7).
 //
-// Splits base geometry (tau, sqrt(g), covariant metric) from every Jacobian
-// division. The legacy computeGeometry is the reference implementation; this is
-// the typed enqueue contract the solver/equilibrium operator will drive. The
-// device-side Jacobian-status finalization (reset -> reduce -> finalize, with an
-// event gating every dependent stream) is the Phase 6A concern and is not part
-// of this boundary yet.
+// Owns the MetricWorkspace and wraps the legacy computeGeometry /
+// computeJacobianStats / computeForceNormPartials. Transitional strangler-fig
+// form: it still names the legacy FourierPlan/RadialProfiles in the enqueue
+// signature (for the parity-split full-grid geometry and radial profiles);
+// those become typed views once the FourierPlan split lands. The base-geometry
+// vs Jacobian-division decomposition (blueprint §6.7) is a separate follow-up.
 #pragma once
 
 #include <cuda_runtime.h>
 
 #include "cumes/state/real_fields.cuh"
+#include "fourier.cuh"
+#include "geometry.cuh"
+#include "profiles.cuh"
 
 namespace cumes {
+
+class DeviceArena;
 
 template <class T>
 class GeometryOperator {
  public:
-  // full: parity-split full-grid geometry (inverse-DFT output); radial: the
-  // immutable radial profiles; half: the (ns-1, ntheta, nzeta) outputs.
-  void enqueue(const GeometryParityViews<T>& full,
-               const RadialProfileViews<T>& radial,
-               BaseGeometryHalfViews<T> half, cudaStream_t stream) const;
+  GeometryOperator(const GridParams<T>& p, DeviceArena* arena)
+      : mw_(metricCreate(p, arena)) {}
+  ~GeometryOperator() { metricFree(mw_); }
+
+  GeometryOperator(const GeometryOperator&) = delete;
+  GeometryOperator& operator=(const GeometryOperator&) = delete;
+  GeometryOperator(GeometryOperator&&) noexcept = default;
+  GeometryOperator& operator=(GeometryOperator&&) noexcept = default;
+
+  // Half-grid geometry, metric, field and current closure; update the full-grid
+  // iota/chip on the first pass (ncurr=0) or every pass (ncurr=1).
+  void enqueue(const FourierPlan<T>& fp, const GridParams<T>& p,
+               const RadialProfiles<T>& rp, cudaStream_t stream, bool update_iota_chi);
+
+  // Oriented-Jacobian statistics into a caller-owned 4-element device scratch.
+  void jacobian_stats(const GridParams<T>& p, T* d_stats, cudaStream_t stream) const;
+
+  // Force-norm partial sums (dVdsH + psum) for the residual normalization.
+  void force_norm_partials(const GridParams<T>& p, T* dVdsH, T* psum,
+                           cudaStream_t stream) const;
+
+  MetricWorkspace<T>& workspace() { return mw_; }
+  const MetricWorkspace<T>& workspace() const { return mw_; }
+
+ private:
+  MetricWorkspace<T> mw_;
 };
 
 }  // namespace cumes

@@ -3,25 +3,34 @@
 // Profiles are immutable prescribed data evaluated on the HOST and uploaded once
 // per stage (they do not change across iterations), so unlike the enqueue-only
 // device operators they are a host-side build step. The legacy profilesCreate
-// (src/profiles_impl.cuh) is the reference implementation; this header names the
-// typed boundary and separates the immutable prescribed data (evaluated here)
-// from the geometry-dependent evolving quantities that live in the metric/field
-// operators.
+// (src/profiles_impl.cuh) is the reference implementation; this operator owns
+// the RadialProfiles workspace it builds.
 #pragma once
 
 #include "cumes/state/real_fields.cuh"
-#include "vmec_types.h"
+#include "input.h"
+#include "profiles.cuh"
 
 namespace cumes {
 
-// The host-side profile build: fills the 11 radial arrays (4 full-grid, 7
-// half-grid) from the validated input, and sets the lambda scale. Returns the
-// immutable RadialProfileViews consumed by the geometry/B operators.
+class DeviceArena;
+
 template <class T>
-struct RadialProfilesResult {
-  RadialProfileViews<T> views;
-  T delta_s = T(0);
-  T lamscale = T(0);
+class Profiles {
+ public:
+  Profiles(GridParams<T>& p, const InputParams& ip, DeviceArena* arena)
+      : rp_(profilesCreate(p, ip, arena)) {}
+  ~Profiles() { profilesFree(rp_); }
+
+  Profiles(const Profiles&) = delete;
+  Profiles& operator=(const Profiles&) = delete;
+  Profiles(Profiles&&) noexcept = default;
+  Profiles& operator=(Profiles&&) noexcept = default;
+
+  const RadialProfiles<T>& workspace() const { return rp_; }
+
+ private:
+  RadialProfiles<T> rp_;
 };
 
 }  // namespace cumes

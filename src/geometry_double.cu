@@ -6,3 +6,6 @@ template void metricFree<double>(MetricWorkspace<double>&);
 template void computeGeometry<double>(const FourierPlan<double>&, const GridParams<double>&, const RadialProfiles<double>&, MetricWorkspace<double>&, cudaStream_t, bool);
 template void computeForceNormPartials<double>(const GridParams<double>&, const MetricWorkspace<double>&, double*, double*, cudaStream_t);
 template void computeJacobianStats<double>(const GridParams<double>&, const MetricWorkspace<double>&, double*, cudaStream_t);
+
+// GeometryOperator (owns the workspace; wraps computeGeometry + stats).
+template class cumes::GeometryOperator<double>;

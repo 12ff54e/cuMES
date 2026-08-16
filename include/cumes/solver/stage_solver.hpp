@@ -17,6 +17,8 @@
 #include <memory>
 
 #include "cumes/runtime/device_arena.cuh"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/profiles.hpp"
 #include "cumes/solver/solver_bench.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
@@ -85,9 +87,9 @@ class StageSolver {
         // Setup (profiles/Fourier/metric) is synchronous on the default
         // stream, so it completes before the solve; the hot loop runs on the
         // explicit nonblocking compute stream (Phase 6A).
-        RadialProfiles<T> rp = profilesCreate<T>(p, ip, &arena);
+        Profiles<T> profiles(p, ip, &arena);
         FourierPlan<T> fp = fourierCreate<T>(p, &arena);
-        MetricWorkspace<T> mw = metricCreate<T>(p, &arena);
+        GeometryOperator<T> geometry(p, &arena);
 
         // Axisymmetric transform backend (blueprint §8.5): for ntor=0/nzeta=1
         // the toroidal direction is a single point, so the length-one cuFFT
@@ -102,11 +104,11 @@ class StageSolver {
         std::unique_ptr<AxisymmetricOperator<T>> axisym;
         if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
-        SolverResult<T> result = solverRun<T>(state, p, rp, fp, mw, &arena,
-                                              stream, bench, axisym.get());
+        SolverResult<T> result = solverRun<T>(state, p, profiles.workspace(), fp,
+                                              geometry, &arena, stream, bench,
+                                              axisym.get());
         fourierFree(fp);
-        metricFree(mw);
-        profilesFree(rp);
+        // profiles/geometry are RAII (Profiles/GeometryOperator destructors).
 
         std::printf("  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
                     "reserved %zu bytes\n",

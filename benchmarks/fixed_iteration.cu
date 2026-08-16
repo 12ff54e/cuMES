@@ -40,6 +40,8 @@
 #include "cumes/io/checkpoint.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/snapshot_bridge.cuh"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/profiles.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/runtime/stream.hpp"
@@ -179,9 +181,9 @@ int main(int argc, char** argv) {
 
     double t0 = now_us();
     arena.allocate(cumes::stage_arena_bytes<Real>(p));
-    RadialProfiles<Real> rp = profilesCreate<Real>(p, ip, &arena);
+    cumes::Profiles<Real> profiles(p, ip, &arena);
     FourierPlan<Real> fp = fourierCreate<Real>(p, &arena);
-    MetricWorkspace<Real> mw = metricCreate<Real>(p, &arena);
+    cumes::GeometryOperator<Real> geometry(p, &arena);
 
     // Axisymmetric transform backend (blueprint §8.5), mirroring
     // StageSolver::run: for ntor=0/nzeta=1 the direct-poloidal operator replaces
@@ -200,8 +202,9 @@ int main(int argc, char** argv) {
     cudaEventCreate(&ev1);
     cudaEventRecord(ev0, stream.get());
     double w0 = now_us();
-    SolverResult<Real> result = solverRun<Real>(storage, p, rp, fp, mw, &arena,
-                                                stream.get(), &bench, axisym.get());
+    SolverResult<Real> result = solverRun<Real>(storage, p, profiles.workspace(), fp,
+                                                geometry, &arena, stream.get(), &bench,
+                                                axisym.get());
     double w1 = now_us();
     cudaEventRecord(ev1, stream.get());
     cudaEventSynchronize(ev1);
@@ -214,8 +217,7 @@ int main(int argc, char** argv) {
     const std::size_t cufft_work_bytes = fp.cufft_work_bytes;
 
     fourierFree(fp);
-    metricFree(mw);
-    profilesFree(rp);
+    // profiles/geometry are RAII (Profiles/GeometryOperator destructors).
     cudaEventDestroy(ev0);
     cudaEventDestroy(ev1);
 

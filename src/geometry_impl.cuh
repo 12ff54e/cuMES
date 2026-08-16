@@ -45,6 +45,7 @@ __device__ void* dynSharedBase() {
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/state/real_fields.cuh"
+#include "cumes/physics/geometry_operator.hpp"
 
 // ---- typed real-space view bundles over the workspace structs ------------
 // Constructed at the operator boundary (real_fields.cuh's intended use); the
@@ -631,5 +632,27 @@ void computeGeometry(const FourierPlan<T>& fp, const GridParams<T>& p,
         cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
     }
 
+}
+
+// ---------------------------------------------------------------------------
+// GeometryOperator (owns the MetricWorkspace; wraps computeGeometry + stats)
+// ---------------------------------------------------------------------------
+template <typename T>
+void cumes::GeometryOperator<T>::enqueue(const FourierPlan<T>& fp, const GridParams<T>& p,
+                                         const RadialProfiles<T>& rp, cudaStream_t stream,
+                                         bool update_iota_chi) {
+    computeGeometry(fp, p, rp, mw_, stream, update_iota_chi);
+}
+
+template <typename T>
+void cumes::GeometryOperator<T>::jacobian_stats(const GridParams<T>& p, T* d_stats,
+                                                cudaStream_t stream) const {
+    computeJacobianStats(p, mw_, d_stats, stream);
+}
+
+template <typename T>
+void cumes::GeometryOperator<T>::force_norm_partials(const GridParams<T>& p, T* dVdsH,
+                                                     T* psum, cudaStream_t stream) const {
+    computeForceNormPartials(p, mw_, dVdsH, psum, stream);
 }
 

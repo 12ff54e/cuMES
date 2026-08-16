@@ -36,6 +36,7 @@ __device__ void* dynSharedBase() {
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/numerics/tridiagonal_backend.hpp"
+#include "cumes/numerics/preconditioner.hpp"
 
 // ---------------------------------------------------------------------------
 // Allocate
@@ -1018,5 +1019,24 @@ void preconApply(cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
     preconBoundaryKernel<T><<<p.mnmax, 128, 0, stream>>>(
         f, pw.d_lambdaPrec, pw.d_jMin, p.ns, p.mnmax);
     cumes::check_cuda(cudaGetLastError(), "preconBoundary");
+}
+
+// ---------------------------------------------------------------------------
+// Preconditioner operator (owns the PreconWorkspace; wraps preconCompute/Apply)
+// ---------------------------------------------------------------------------
+template <typename T>
+void cumes::Preconditioner<T>::enqueue_compute(const FourierPlan<T>& fp,
+                                               const GridParams<T>& p,
+                                               const RadialProfiles<T>& rp,
+                                               const MetricWorkspace<T>& mw,
+                                               cudaStream_t stream) {
+    preconCompute(fp, p, rp, mw, pw_, stream);
+}
+
+template <typename T>
+void cumes::Preconditioner<T>::enqueue_apply(
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
+    const GridParams<T>& p, const int* xm, const int* xn, cudaStream_t stream) const {
+    preconApply(residual, p, pw_, xm, xn, stream);
 }
 

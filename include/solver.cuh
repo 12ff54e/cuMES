@@ -11,6 +11,7 @@ namespace cumes {
 class DeviceArena;
 struct SolverBench;
 template <typename T> class AxisymmetricOperator;
+template <typename T> class GeometryOperator;
 }
 
 // Run the full fixed-point solve on GPU.
@@ -36,7 +37,7 @@ struct SolverResult {
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
-                          MetricWorkspace<T>& mw,
+                          cumes::GeometryOperator<T>& geometry,
                           cumes::DeviceArena* arena = nullptr,
                           cudaStream_t stream = 0,
                           cumes::SolverBench* bench = nullptr,

@@ -27,6 +27,9 @@
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/numerics/accumulation.hpp"
+#include "cumes/numerics/preconditioner.hpp"
+#include "cumes/physics/constraint_operator.hpp"
+#include "cumes/physics/geometry_operator.hpp"
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes/solver/pass_record.hpp"
 #include "cumes/solver/solver_bench.hpp"
@@ -486,12 +489,16 @@ static void dumpDeviceArray(const char* filename, const T* d_data, size_t nelem)
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T>& p,
                           const RadialProfiles<T>& rp, FourierPlan<T>& fp,
-                          MetricWorkspace<T>& mw, cumes::DeviceArena* arena,
+                          cumes::GeometryOperator<T>& geometry, cumes::DeviceArena* arena,
                           cudaStream_t stream, cumes::SolverBench* bench,
                           cumes::AxisymmetricOperator<T>* axisym) {
     // The legacy 12-pointer view over the contiguous slabs: every kernel and
     // consumer below keeps its unchanged pointer arithmetic and layout.
     SpectralState<T> st = storage.legacy_view();
+    // The geometry operator owns the MetricWorkspace; a const alias keeps the
+    // dump machinery's `mw.d_*` reads unchanged (the hot loop goes through
+    // geometry.enqueue / jacobian_stats / force_norm_partials).
+    const MetricWorkspace<T>& mw = geometry.workspace();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
     cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
     // Combined control record (Phase 6A one-fence): [0..3] oriented-Jacobian
@@ -507,8 +514,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual_view(d_f_spec.data(), p.ns, p.mnmax);
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> residual_view_const(
         d_f_spec.data(), p.ns, p.mnmax);
-    PreconWorkspace<T> pw = preconCreate(p, arena);
-    ConstraintWorkspace<T> cw = constraintCreate(p, arena);
+    cumes::Preconditioner<T> precon(p, arena);
+    cumes::ConstraintOperator<T> constraint(p, arena);
+    const PreconWorkspace<T>& pw = precon.workspace();
+    const ConstraintWorkspace<T>& cw = constraint.workspace();
 
     // Axisymmetric transform backend (blueprint §8.5): when `axisym` is non-null
     // the length-one cuFFT round trips (inverse/forward/de-alias) are replaced by
@@ -843,8 +852,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // Full-grid iota/chip update: every pass for ncurr=1 (current closure
         // evolves iotaH/chipH), but for ncurr=0 the half-grid profiles are
         // fixed so the update is idempotent and runs only on the first pass.
-        computeGeometry(fp, p, rp, mw, stream,
-                        /*update_iota_chi=*/ (p.ncurr == 1) || (iter == 0));
+        geometry.enqueue(fp, p, rp, stream,
+                         /*update_iota_chi=*/ (p.ncurr == 1) || (iter == 0));
 
         // ---- Jacobian statistics (vmecpp's bad-jacobian detection) ----
         // Reduced into d_control[0..3] (device-only). The validity decision is
@@ -852,7 +861,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // collapsed or sign-flipped surface then fails the pass there and the
         // state is restored (see the gate below). The geometry kernels' own
         // inv_gsqrt guards keep their buffers finite in the interim.
-        computeJacobianStats(p, mw, d_control.data(), stream);
+        geometry.jacobian_stats(p, d_control.data(), stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 2) {
@@ -879,7 +888,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // restart (iter2 == iter1), matching vmecpp's rzConIntoVolume
         // ("initialization/soft reset").
         if (controller.reset_constraint_reference()) {
-            constraintResetRzCon0(p, cw, rp.d_sqrtS_F, stream);
+            constraint.reset_reference(p, rp.d_sqrtS_F, stream);
         }
 
         // Update the radial tridiagonal + lambda preconditioners BEFORE the
@@ -895,7 +904,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // is now a pure function of the iteration counters.
         bool precon_updated = controller.refresh_preconditioner();
         if (precon_updated) {
-            preconCompute(fp, p, rp, mw, pw, stream);
+            precon.enqueue_compute(fp, p, rp, mw, stream);
 
             // vmecpp computeForceNorms (same cadence): device-side reduction
             // of the force-norm partial sums into the combined control record
@@ -1024,12 +1033,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         // Add spectral condensation constraint force to brmn/bzmn.
         // Uses the current-iteration tcon (refreshed above when the
         // preconditioner was updated), matching vmecpp.
-        if (axisym_active) {
-            constraintComputeAxisym(p, fp, pw, cw, rp.d_sqrtS_F, precon_updated,
-                                    *axisym, stream);
-        } else {
-            constraintCompute(p, fp, pw, cw, rp.d_sqrtS_F, precon_updated, stream);
-        }
+        constraint.enqueue(p, fp, pw, rp.d_sqrtS_F, precon_updated, axisym, stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0) {
@@ -1137,7 +1141,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
         // Apply the radial tridiagonal + lambda preconditioners to the
         // (decomposed) spectral forces.
-        preconApply(residual_view, p, pw, fp.basis.d_xm, fp.basis.d_xn, stream);
+        precon.enqueue_apply(residual_view, p, fp.basis.d_xm, fp.basis.d_xn, stream);
 
 #ifdef DUMP_CUMES_VERIFY
         if (iter == 0 || iter2 == 51 || (iter2 >= kDumpIter && iter2 <= kDumpIter + 2) ||
@@ -1384,7 +1388,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
     // Drain the compute stream before destroying the stage's cuFFT plans (the
     // last descent/backup enqueue may still be in flight when the loop exits).
     cumes::check_cuda(cudaStreamSynchronize(stream), "solver end sync");
-    preconFree(pw); constraintFree(cw);
+    // precon/constraint are RAII (Preconditioner/ConstraintOperator destructors
+    // free their arena-backed workspaces); nothing to free here.
     printf("transform timing: inverseDFT total %.1f ms (%.3f ms/iter), "
            "forwardDFT total %.1f ms (%.3f ms/iter)\n",
            t_inv_ms, t_inv_ms / (res.iterations > 0 ? res.iterations : 1),

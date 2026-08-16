@@ -23,6 +23,7 @@
 #include <cmath>
 
 #include "cumes/transforms/axisymmetric_operator.hpp"
+#include "cumes/physics/constraint_operator.hpp"
 
 
 // Dynamic shared-memory base accessor. Each block reserves one extern __shared__
@@ -672,5 +673,27 @@ void constraintComputeAxisym(const GridParams<T>& p, const FourierPlan<T>& fp,
         cumes::RealFieldView<T>(cw.d_gCon, p.ns, p.ntheta, p.nzeta), stream);
 
     constraintComputeTail(p, fp, cw, d_sqrtS_F, stream);
+}
+
+// ---------------------------------------------------------------------------
+// ConstraintOperator (owns the ConstraintWorkspace; wraps the two backends)
+// ---------------------------------------------------------------------------
+template <typename T>
+void cumes::ConstraintOperator<T>::enqueue(
+    const GridParams<T>& p, const FourierPlan<T>& fp, const PreconWorkspace<T>& pw,
+    const T* sqrtS_F, bool precon_updated, cumes::AxisymmetricOperator<T>* axisym,
+    cudaStream_t stream) {
+    if (axisym) {
+        constraintComputeAxisym(p, fp, pw, cw_, sqrtS_F, precon_updated, *axisym, stream);
+    } else {
+        constraintCompute(p, fp, pw, cw_, sqrtS_F, precon_updated, stream);
+    }
+}
+
+template <typename T>
+void cumes::ConstraintOperator<T>::reset_reference(const GridParams<T>& p,
+                                                   const T* sqrtS_F,
+                                                   cudaStream_t stream) {
+    constraintResetRzCon0(p, cw_, sqrtS_F, stream);
 }
 

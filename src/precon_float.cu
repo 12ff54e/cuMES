@@ -9,3 +9,6 @@ template void preconApply<float>(cumes::SpectralView<float, cumes::DecomposedRes
 // Phase 8 tridiagonal backends (linkable from test_tridiagonal).
 template class cumes::PcrBackend<float>;
 template class cumes::ThomasBackend<float>;
+
+// Preconditioner operator (owns the workspace; wraps preconCompute/Apply).
+template class cumes::Preconditioner<float>;
