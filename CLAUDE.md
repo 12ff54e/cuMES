@@ -268,6 +268,12 @@ x_new = x_old + delt * v_new
 the older docs were wrong), averaged over a 10-iteration window.
 `b1 = 1 - dtau`, `fac = 1/(1 + dtau)`.
 
+**Time-step control (vmecpp VMEC_8_52, in `IterationController`):** delt is
+adapted at restarts and maintenance resets — ×0.9 on bad-Jacobian/nonfinite
+passes, ÷1.03 on bad-progress, and 0.98/0.96×delt₀ at the ijacob 25/50
+maintenance reset — matching vmecpp's Evolve control block. (The old docs'
+"adaptive time-step — not yet" row described exactly this; it is implemented.)
+
 **Convergence:** `max(fsqr, fsqz, fsql) < ftol` where `ftol = 1e-14`.
 
 ### What's intentionally omitted vs VMEC++
@@ -280,7 +286,7 @@ the older docs were wrong), averaged over a 10-iteration window.
 | Hot restart / checkpointing          | Implemented (v1 checkpoint container: `--checkpoint` / `--restart`; legacy six-family payload: `--restart-legacy`)                                                                                                                                                                                                                                                                                                                                        |
 | Free boundary / vacuum solver        | Fixed boundary only                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Mercier stability, jxbout, wout      | Post-processing; not needed for core loop                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Adaptive time-step (Jacobian resets) | Fixed step; add when convergence is poor                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Adaptive time-step (Jacobian resets) | Implemented — the restart/maintenance delt control above (vmecpp VMEC_8_52); no per-pass continuous adaptation (matches vmecpp)                                                                                                                                                                                                                                                                                                                            |
 | Python interface                     | Not yet; C++/CUDA executable only                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Coding Conventions
