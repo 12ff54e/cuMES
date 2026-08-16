@@ -597,12 +597,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
 
     // Bind every cuFFT plan to the explicit compute stream so the batched
     // ζ-transforms execute in stream order with the surrounding kernels
-    // (blueprint §6.6). Plans are created once per stage; binding once here,
-    // before any transform runs, is sufficient.
-    cumes::check_cufft(cufftSetStream(fp.plan_z2d, stream), "set stream z2d");
-    cumes::check_cufft(cufftSetStream(fp.plan_d2z, stream), "set stream d2z");
-    cumes::check_cufft(cufftSetStream(fp.plan_d2z_da, stream), "set stream d2z_da");
-    cumes::check_cufft(cufftSetStream(fp.plan_z2d_da, stream), "set stream z2d_da");
+    // (blueprint §6.6). Plans are created once per stage; the operator binds
+    // its own plans here, before any transform runs — the solver does not name
+    // the FourierPlan's plan handles.
+    transform.bind_stream(stream);
 
     // ---- transform timing (cudaEvent pairs around inverseDFT/forwardDFT) ----
     // The events are RECORDED on the compute stream every iteration but only

@@ -860,3 +860,11 @@ void cumes::ToroidalFftOperator<T>::enqueue_dealias(
                               gCon.data(), stream);
 }
 
+template <typename T>
+void cumes::ToroidalFftOperator<T>::bind_stream(cudaStream_t stream) {
+    cumes::check_cufft(cufftSetStream(fp_.plan_z2d, stream), "set stream z2d");
+    cumes::check_cufft(cufftSetStream(fp_.plan_d2z, stream), "set stream d2z");
+    cumes::check_cufft(cufftSetStream(fp_.plan_d2z_da, stream), "set stream d2z_da");
+    cumes::check_cufft(cufftSetStream(fp_.plan_z2d_da, stream), "set stream z2d_da");
+}
+

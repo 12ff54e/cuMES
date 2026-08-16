@@ -42,6 +42,11 @@ class ToroidalFftOperator : public SpectralOperator<T> {
   const int* xm() const { return mt_->d_xm; }
   const int* xn() const { return mt_->d_xn; }
 
+  // Bind every cuFFT plan (main z2d/d2z + compact de-alias d2z_da/z2d_da) to
+  // the explicit compute stream (blueprint §6.6). Called once per stage before
+  // any transform runs; keeps the plan handles out of the solver.
+  void bind_stream(cudaStream_t stream);
+
   // Fused inverse (blueprint §8.4): parity-split geometry + xmpq-weighted
   // rCon/zCon. The geometry views alias the stage-owned `rs` this operator was
   // constructed with; rCon/zCon may be null to skip either output.
