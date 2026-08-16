@@ -25,6 +25,7 @@
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/runtime/device_buffer.cuh"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -49,31 +50,12 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     p.tcon0 = T(1.0); p.lamscale = T(0.0);
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
-    size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
-    auto* h_cc = new T[p.ns * p.mnmax]();
-    auto* h_ss = new T[p.ns * p.mnmax]();
-    auto* h_zsc = new T[p.ns * p.mnmax]();
-    auto* h_zcs = new T[p.ns * p.mnmax]();
-    auto* h_lsc = new T[p.ns * p.mnmax]();
-    auto* h_lcs = new T[p.ns * p.mnmax]();
-    for (int j = 0; j < p.ns; ++j) {
-        T s = T(j) / T(p.ns - 1);
-        for (int m = 0; m < p.mnmax; ++m) {
-            if (m == 0) h_cc[j + m * p.ns] = T(4.0);        // R_00
-            else if (m == 1) h_cc[j + m * p.ns] = T(0.3) * s; // R_10
-            else if (m == 2) h_cc[j + m * p.ns] = T(0.2) * s; // R_20
-            h_ss[j + m * p.ns] = h_cc[j + m * p.ns];
-            if (m == 1) { h_zsc[j + m * p.ns] = T(-0.5) * s; h_zcs[j + m * p.ns] = T(-0.5) * s; }
-        }
-    }
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nb, cudaMemcpyHostToDevice), "cc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nb, cudaMemcpyHostToDevice), "ss");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
-    delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
-    delete[] h_lsc; delete[] h_lcs;
+    // Shared manufactured state (kSolovevLinear in cumes_test_support.cuh):
+    // R_00=4.0, R_10=0.3s, R_20=0.2s, Rss=Rcc, Z_10 (sc+cs)=-0.5s, lambda=0.
+    std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
+    manufacturedState<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+                         p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+    uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
 
     // ncurr=1 needs prescribed-current profiles (curtor/ac); ncurr=0 uses
     // the fixed-iota profiles from inputs/solovev.json.
@@ -117,15 +99,15 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     }
     CHECK(all_finite, label);
     // Jacobian stats must be finite and the max nonzero. computeJacobianStats
-    // is device-only (Phase 6A one-fence path); copy the 4 values out here.
-    T* d_stats; T h_stats[4];
-    checkCuda(cudaMalloc(&d_stats, 4 * sizeof(T)), "stats");
-    geometry.jacobian_stats(p, d_stats, 0);
-    checkCuda(cudaMemcpy(h_stats, d_stats, 4 * sizeof(T), cudaMemcpyDeviceToHost), "stats cpy");
+    // is device-only (Phase 6A one-fence path) and writes DOUBLE stats in
+    // both builds (ADR-0001); copy the 4 values out of a RAII buffer here.
+    cumes::DeviceBuffer<double> stats(4);
+    geometry.jacobian_stats(p, stats.data(), 0);
+    T h_stats[4];
+    checkCuda(cudaMemcpy(h_stats, stats.data(), 4 * sizeof(T), cudaMemcpyDeviceToHost), "stats cpy");
     CHECK(std::isfinite((double)h_stats[0]) && std::isfinite((double)h_stats[1]) &&
           h_stats[2] == T(0.0) && h_stats[1] > T(0.0),
           "jacobian stats finite, nonzero max");
-    checkCuda(cudaFree(d_stats), "free stats");
 
     delete[] h_chip; delete[] h_iota;
     realSpaceFree(rs);

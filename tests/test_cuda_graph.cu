@@ -91,22 +91,16 @@ int main() {
         p.tcon0 = 1.0; p.lamscale = 0.0;
 
         cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
-            const size_t nS = (size_t)p.ns * p.mnmax;
-        auto* h_cc = new double[nS]();
-        auto* h_ss = new double[nS]();
-        for (int j = 0; j < p.ns; ++j) {
-            double s = double(j) / double(p.ns - 1);
-            for (int mode = 0; mode < p.mnmax; ++mode) {
-                int m = mode;
-                if (m == 0) h_cc[j + mode * p.ns] = 4.0;
-                else if (m == 1) h_cc[j + mode * p.ns] = 0.3 * s;
-                else h_cc[j + mode * p.ns] = 0.1 * s * s;
-                h_ss[j + mode * p.ns] = h_cc[j + mode * p.ns];
-            }
-        }
-        checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nS * 8, cudaMemcpyHostToDevice), "cc");
-        checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nS * 8, cudaMemcpyHostToDevice), "ss");
-        delete[] h_cc; delete[] h_ss;
+        // Shared manufactured state (kGraphQuad in cumes_test_support.cuh):
+        // R_00=4.0, R_10=0.3s, m>=2: 0.1s^2, Rss=Rcc. The gate compares r_e
+        // only, which is built from the R slots, so uploading the remaining
+        // four families as deterministic zeros (instead of leaving the device
+        // slab uninitialized) is an equivalent but strictly more reproducible
+        // input.
+        std::vector<double> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
+        manufacturedState<double>(ManufacturedShape::kGraphQuad, p.ns, p.mnmax,
+                                  p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+        uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
 
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);

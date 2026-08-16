@@ -23,40 +23,20 @@
 #include "cumes_test_support.cuh"
 
 
-// Manufacture a non-degenerate spectral state on the W7-X shape. The content
-// is deliberately generic (all modes get a mild radial envelope) so no
-// interior surface collapses to zero geometry: R has a strong m=0/n=0 DC
-// plus a few m>0 modes, Z and lambda get m=1..3 content with the same s
-// envelopes. This replaces the previous external dump/cuMES/step_0_*.bin
-// dependency (gitignored, only present after a CUMES_DUMP=1 run) — the test
-// is now self-contained and registerable.
+// Manufacture a non-degenerate spectral state on the W7-X shape (the shared
+// kW7XGeneric fixture in cumes_test_support.cuh). The content is deliberately
+// generic (all modes get a mild radial envelope) so no interior surface
+// collapses to zero geometry: R has a strong m=0/n=0 DC plus a few m>0 modes,
+// Z and lambda get m=1..3 content with the same s envelopes. This replaces
+// the previous external dump/cuMES/step_0_*.bin dependency (gitignored, only
+// present after a CUMES_DUMP=1 run) — the test is now self-contained and
+// registerable.
 template <typename T>
 static void fillState(cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p) {
-    size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
-    std::vector<T> hcc_(p.ns * p.mnmax, T(0)), hss(p.ns * p.mnmax, T(0));
-    std::vector<T> hzsc(p.ns * p.mnmax, T(0)), hzcs(p.ns * p.mnmax, T(0));
-    std::vector<T> hlsc(p.ns * p.mnmax, T(0)), hlcs(p.ns * p.mnmax, T(0));
-    for (int j = 0; j < p.ns; ++j) {
-        double s = (double)j / (p.ns - 1.0);
-        for (int mode = 0; mode < p.mnmax; ++mode) {
-            int m = mode / (p.ntor + 1), n = mode % (p.ntor + 1);
-            if (m == 0 && n == 0) { hcc_[j + mode * p.ns] = T(5.6); hzcs[j + mode * p.ns] = T(0.0); }
-            else if (m == 0)      { hcc_[j + mode * p.ns] = T(0.02 * s * s); hzcs[j + mode * p.ns] = T(0.01 * s * s); }
-            else if (m == 1)      { hcc_[j + mode * p.ns] = T(0.3 * s); hss[j + mode * p.ns] = T(0.1 * s);
-                                    hzsc[j + mode * p.ns] = T(0.2 * s); hzcs[j + mode * p.ns] = T(-0.1 * s); }
-            else if (m == 2)      { hcc_[j + mode * p.ns] = T(0.04 * s * s); hss[j + mode * p.ns] = T(0.02 * s * s);
-                                    hzsc[j + mode * p.ns] = T(0.03 * s * s); hzcs[j + mode * p.ns] = T(0.01 * s * s); }
-            else if (m <= 6)      { hcc_[j + mode * p.ns] = T(0.01 * s * s); hzsc[j + mode * p.ns] = T(0.008 * s * s); }
-            hlsc[j + mode * p.ns] = T(0.02 * (m + 1) * s * s);
-            hlcs[j + mode * p.ns] = T(0.01 * (m + 1) * s * s);
-        }
-    }
-    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), hcc_.data(), nb, cudaMemcpyHostToDevice), "cc");
-    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), hss.data(), nb, cudaMemcpyHostToDevice), "ss");
-    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), hzsc.data(), nb, cudaMemcpyHostToDevice), "zsc");
-    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), hzcs.data(), nb, cudaMemcpyHostToDevice), "zcs");
-    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), hlsc.data(), nb, cudaMemcpyHostToDevice), "lsc");
-    cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), hlcs.data(), nb, cudaMemcpyHostToDevice), "lcs");
+    std::vector<T> hcc, hss, hzsc, hzcs, hlsc, hlcs;
+    manufacturedState<T>(ManufacturedShape::kW7XGeneric, p.ns, p.mnmax,
+                         p.ntor, hcc, hss, hzsc, hzcs, hlsc, hlcs);
+    uploadState(storage, hcc, hss, hzsc, hzcs, hlsc, hlcs, p.ns, p.mnmax);
 }
 
 int main() {
@@ -85,15 +65,26 @@ int main() {
     cumes::ToroidalFftOperator<double> op(p, rs, mt);
     cumes::GeometryOperator<double> geometry(p, nullptr);
 
+    // Zero the bsupu/bsubu half-grid buffers BEFORE the geometry pass: the
+    // coverage gate below counts exact 0.0 entries as unwritten points, and
+    // those buffers are never zero-initialized by the operators (a fresh
+    // allocation reads 0 only while the driver's pages stay zeroed; allocator
+    // reuse returns stale nonzero bytes), which would make the gate's
+    // fire/no-fire depend on allocator state. Deterministic zeroing means a
+    // launch-shape bug that skips points always surfaces as exact zeros.
+    const size_t nHBytes = (size_t)(p.ns - 1) * p.nZnT * sizeof(double);
+    cc(cudaMemset(geometry.magnetic_field_views(p).bsupu.data(), 0, nHBytes), "zero bsupu");
+    cc(cudaMemset(geometry.magnetic_field_views(p).bsubu.data(), 0, nHBytes), "zero bsubu");
+
     // extrapolate m=1 to the axis (as the solver does each iteration)
     {
         auto* hcc = new double[p.ns * p.mnmax];
-        cudaMemcpy(hcc, storage.family_ptr(cumes::SpectralComponent::Rcc), nb, cudaMemcpyDeviceToHost);
+        cc(cudaMemcpy(hcc, storage.family_ptr(cumes::SpectralComponent::Rcc), nb, cudaMemcpyDeviceToHost), "get rmncc");
         for (int n = 0; n < p.ntor + 1; ++n) {
             int mn = 1 * (p.ntor + 1) + n;
             hcc[0 + mn * p.ns] = hcc[1 + mn * p.ns];
         }
-        cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), hcc, nb, cudaMemcpyHostToDevice);
+        cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), hcc, nb, cudaMemcpyHostToDevice), "put rmncc");
         delete[] hcc;
     }
 
@@ -109,16 +100,16 @@ int main() {
     for (int i = 0; i < nks; ++i) ks[i] = (i * nZnT) / nks;  // spread over the plane
     double hb[8];
     for (int i = 0; i < nks; ++i)
-        cudaMemcpy(&hb[i], geometry.magnetic_field_views(p).bsupu.data() + jMid * nZnT + ks[i], sizeof(double), cudaMemcpyDeviceToHost);
+        cc(cudaMemcpy(&hb[i], geometry.magnetic_field_views(p).bsupu.data() + jMid * nZnT + ks[i], sizeof(double), cudaMemcpyDeviceToHost), "get bsupu probe");
     int nz = 0;
     double* h_all = new double[(p.ns - 1) * nZnT];
-    cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsupu.data(), (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost);
+    cc(cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsupu.data(), (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost), "get bsupu");
     for (int k = 0; k < nZnT; ++k) if (h_all[jMid * nZnT + k] == 0.0) ++nz;
     printf("bsupu[jMid=%d] zeros: %d/%d\n", jMid, nz, nZnT);
     for (int i = 0; i < nks; ++i)
         printf("  k=%d: %.6f\n", ks[i], hb[i]);
     // also check the bsubu coverage
-    cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsubu.data(), (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost);
+    cc(cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsubu.data(), (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost), "get bsubu");
     int nz2 = 0;
     for (int k = 0; k < nZnT; ++k) if (h_all[jMid * nZnT + k] == 0.0) ++nz2;
     printf("bsubu[jMid=%d] zeros: %d/%d\n", jMid, nz2, nZnT);

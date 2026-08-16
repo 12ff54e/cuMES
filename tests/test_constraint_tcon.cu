@@ -51,37 +51,17 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     p.tcon0 = tcon0; p.lamscale = T(0.0);
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
-    size_t nb = (size_t)p.ns * p.mnmax * sizeof(T);
-    auto* h_cc = new T[p.ns * p.mnmax]();
-    auto* h_ss = new T[p.ns * p.mnmax]();
-    auto* h_zsc = new T[p.ns * p.mnmax]();
-    auto* h_zcs = new T[p.ns * p.mnmax]();
-    auto* h_lsc = new T[p.ns * p.mnmax]();
-    auto* h_lcs = new T[p.ns * p.mnmax]();
-    for (int j = 0; j < p.ns; ++j) {
-        T s = T(j) / T(p.ns - 1);
-        for (int m = 0; m < p.mnmax; ++m) {
-            if (m == 0) h_cc[j + m * p.ns] = T(4.0);
-            else if (m == 1) h_cc[j + m * p.ns] = T(0.3) * s;
-            // m>=2 uses a QUADRATIC radial envelope (not linear s): with a
-            // linear profile rCon(s) == s*rCon_LCFS exactly, so rCon - rCon0
-            // is identically zero and the constraint force vanishes no matter
-            // what tcon0 is — the test would pass vacuously. The quadratic
-            // envelope puts the interior off the LCFS-extrapolated reference,
-            // making the constraint-force contribution genuinely nonzero.
-            else if (m == 2) h_cc[j + m * p.ns] = T(0.2) * s * s;
-            h_ss[j + m * p.ns] = h_cc[j + m * p.ns];
-            if (m == 1) { h_zsc[j + m * p.ns] = T(-0.5) * s; h_zcs[j + m * p.ns] = T(-0.5) * s; }
-        }
-    }
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nb, cudaMemcpyHostToDevice), "cc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nb, cudaMemcpyHostToDevice), "ss");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
-    delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
-    delete[] h_lsc; delete[] h_lcs;
+    // Shared manufactured state — kSolovevQuadM2, whose m>=2 R content uses a
+    // QUADRATIC radial envelope (not linear s): with a linear profile
+    // rCon(s) == s*rCon_LCFS exactly, so rCon - rCon0 is identically zero and
+    // the constraint force vanishes no matter what tcon0 is — the test would
+    // pass vacuously. The quadratic envelope puts the interior off the
+    // LCFS-extrapolated reference, making the constraint-force contribution
+    // genuinely nonzero. (Deliberate — see the ManufacturedShape comment.)
+    std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
+    manufacturedState<T>(ManufacturedShape::kSolovevQuadM2, p.ns, p.mnmax,
+                         p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+    uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
 
     cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
     cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();

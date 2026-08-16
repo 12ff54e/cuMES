@@ -56,6 +56,7 @@
 #include "cumes/physics/profiles.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes/numerics/preconditioner.hpp"
+#include "cumes/runtime/device_buffer.cuh"
 #include "cumes_test_support.cuh"
 
 static int g_failures = 0;
@@ -132,19 +133,7 @@ static void fillState(std::vector<T>& cc, std::vector<T>& ss,
     }
 }
 
-template <typename T>
-static void uploadState(cumes::SpectralStorage<T>& storage, const std::vector<T>& cc,
-                        const std::vector<T>& ss, const std::vector<T>& zsc,
-                        const std::vector<T>& zcs, const std::vector<T>& lsc,
-                        const std::vector<T>& lcs, int ns, int mnmax) {
-    size_t nb = (size_t)ns * mnmax * sizeof(T);
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), cc.data(), nb, cudaMemcpyHostToDevice), "up cc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), ss.data(), nb, cudaMemcpyHostToDevice), "up ss");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), zsc.data(), nb, cudaMemcpyHostToDevice), "up zsc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), zcs.data(), nb, cudaMemcpyHostToDevice), "up zcs");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), lsc.data(), nb, cudaMemcpyHostToDevice), "up lsc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), lcs.data(), nb, cudaMemcpyHostToDevice), "up lcs");
-}
+// (uploadState is the shared six-family upload in cumes_test_support.cuh.)
 
 // ---------------------------------------------------------------------------
 // CPU scalar reference for the de-alias bandpass.
@@ -471,14 +460,15 @@ static int testPcr(int ns) {
                 h_f[c * stride + mode * ns + j] =
                     T(sin(0.7 * c + 1.3 * mode + 0.11 * j) * (0.4 + 0.05 * c));
 
-    T* d_f;
-    checkCuda(cudaMalloc(&d_f, 6 * stride * sizeof(T)), "d_f");
-    checkCuda(cudaMemcpy(d_f, h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
+    // (checkCuda, not cc: the local spectral vectors named cc/ss/... shadow
+    // the cc() helper in this TU.)
+    cumes::DeviceBuffer<T> d_f(6 * stride);
+    checkCuda(cudaMemcpy(d_f.data(), h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
     precon.enqueue_apply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                    d_f, p.ns, p.mnmax),
+                    d_f.data(), p.ns, p.mnmax),
                 p, mt.d_xm, mt.d_xn, 0);
     std::vector<T> h_g(6 * stride);
-    checkCuda(cudaMemcpy(h_g.data(), d_f, 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
+    checkCuda(cudaMemcpy(h_g.data(), d_f.data(), 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
 
     // CPU reference: serial Thomas on the SAME coefficients.
     std::vector<double> fRef(6 * stride);
@@ -505,8 +495,7 @@ static int testPcr(int ns) {
         checkNear((double)h_g[i], fRef[i], tol, "pcr", c, mode, j);
     }
 
-    cudaFree(d_f);
-    
+    realSpaceFree(rs);
     cumes::modeTableFree(mt);
     printf(g_failures == lf ? "PASS\n" : "FAIL\n");
     return g_failures - lf;
