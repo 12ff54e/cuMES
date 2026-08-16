@@ -21,6 +21,94 @@ Line numbers refer to the files at HEAD at review time.
 
 ---
 
+## Fix Status (2026-08-17)
+
+All 58 findings addressed in an 11-agent fix campaign; 57 fixed (mostly
+with a failing repro added first) and 1 kept with documentation (3.1).
+Verification: full ctest 35/35, float build 23/23, asan 4/4, and
+`compare_runs.py` vs the pre-fix baseline — Solovev and W7-X both PASS
+with **zero relative diff** in every residual row, all restart events,
+convergence, and all six state families (states bit-identical).
+
+| # | Status | Commit |
+|---|--------|--------|
+| 1.1 | fixed (+theta-32 repro) | `d755f37` |
+| 1.2 | fixed (+mpol=2 repro + end-to-end solve) | `d755f37` |
+| 1.3 | fixed (strictly-increasing validation + CumesError throw) | `a7834af` |
+| 1.4 | fixed (+corrupt-header repro, ASan before/after) | `149ea79` |
+| 1.5 | fixed (+typo-key repro) | `b2ae453` |
+| 1.6 | fixed (v1 rejected for nc/h5 at preflight) | `b2ae453` |
+| 1.7 | fixed (flags implemented, 9-case matrix) | `b2ae453` |
+| 1.8 | fixed (stage cap at kMaxGrids, 9-stage rejected) | `a7834af` |
+| 2.1 | fixed (iter-0 dump synced via dumpDeviceArray) | `feec400` |
+| 2.2 | fixed (+scratch repro: reported 5 vs true 9) | `6f89bfd` |
+| 2.3 | fixed (restart events plumbed; v1 container carries them) | `feec400` |
+| 2.4 | fixed (+symlink-swap TOCTOU repro) | `b2ae453` |
+| 2.5 | fixed (independent CPU gate + permanent negative control) | `243a239` |
+| 2.6 | fixed (JSON-aware ftol rewrite, end-to-end float capture) | `4063e85` |
+| 2.7 | fixed (+absolute-path repro, exit 127 before) | `4063e85` |
+| 2.8 | fixed (copy reports instead of throwing; fail path runs) | `149ea79` |
+| 2.9 | fixed (RAII staging in all three writers) | `149ea79` |
+| 2.10 | fixed (+memcheck repro: 6.7 MB in 602 allocs → 0) | `243a239` |
+| 2.11 | fixed (test-side memset; gate sensitivity demonstrated) | `243a239` |
+| 2.12 | fixed (cc() routing) | `243a239` |
+| 2.13 | fixed (toolkit-gated arch list; gates simulated via cmake -P) | `4063e85` |
+| 2.14 | fixed (single-TU impl; nm 82 defs in exactly one object) | `4063e85` |
+| 3.1 | **kept + documented** — see note below | `feec400` |
+| 3.2 | fixed (moves deleted on all 5 classes; memcheck repro 15 errors) | `6f89bfd` `feec400` |
+| 3.3 | fixed (+one-null repros: illegal access before, PASS after) | `6f89bfd` |
+| 3.4 | fixed (return-before-write; no live OOB confirmed) | `149ea79` |
+| 3.5 | fixed (typed enum; unknown tag = write failure) | `149ea79` |
+| 3.6 | fixed (+non-aliasing-view repros) | `d755f37` |
+| 3.7 | fixed (moved-from sync throws; +test) | `feec400` |
+| 3.8 | fixed (copies deleted, nulling moves; +compile probes) | `77f1440` |
+| 4.1 | fixed (one tempPathFor/publishAtomic for all writers) | `149ea79` |
+| 4.2 | fixed (single inline def in real_fields.cuh; byte-identity pre-verified) | `6f89bfd` |
+| 4.3 | fixed (shared FamilyStage copy helper) | `149ea79` |
+| 4.4 | fixed (shared payload readers/writers; golden byte-exact) | `149ea79` |
+| 4.5 | fixed (manufacturedState builder, 4 consumers; envelopes preserved) | `243a239` |
+| 4.6 | fixed (bench_common.cuh; state-hash A/B identical) | `95a395b` |
+| 4.7 | fixed (cc wraps check_cuda; exit-based UX kept) | `243a239` |
+| 5.1 | fixed | `feec400` |
+| 5.2 | fixed (ControlRecord deleted, InvariantVerdict de-templated) | `feec400` |
+| 5.3 | fixed (DeviceContext removed; cumes_cuda_runtime now INTERFACE) | `feec400` `4063e85` |
+| 5.4 | fixed (xm/xn removed; shim dropped once the test moved to the primary signature) | `feec400` |
+| 5.5 | fixed (shared source lists; asan 4/4, link order verified) | `4063e85` |
+| 5.6 | fixed (174 artifacts, not 83; pure `*`→`_`, 3 code cross-checks) | `cc3c03b` |
+| 5.7 | fixed (kMaxAxis/kMaxM/kMaxN) | `149ea79` |
+| 5.8 | fixed (one slab upload in state_slab() order; bit-identical) | `77f1440` |
+| 6.1 | fixed (tail-zero folded into inversePackKernel; an intermediate offset bug was caught by the existing inverse tests) | `d755f37` |
+| 6.2 | fixed (PinnedBuffer; ~1.0–1.6 µs pageable penalty isolated) | `95a395b` |
+| 6.3 | fixed (dataspace hoisted out of the mode loop) | `149ea79` |
+| 6.4 | fixed (three buffers carved from the stage arena) | `feec400` |
+| 7.1 | fixed (9 dump-window helpers; enqueue 468→191 lines; dump md5 identical) | `feec400` |
+| 7.2 | fixed (measuring arena via a virtual carve_span seam; exact byte totals) | `feec400` |
+| 7.3 | fixed (std::vector sized p.ntor+1) | `feec400` |
+| 8.1 | fixed (events through check_cuda) | `feec400` |
+| 8.2 | fixed (snake_case in fourier_impl.cuh + plain_per_el) | `d755f37` `feec400` |
+| 8.3 | fixed (ScopedRealSpace/ScopedModeTable RAII) | `feec400` |
+| 8.4 | fixed (h_ prefixes in both seed functions) | `77f1440` |
+| 8.5 | fixed (DeviceBuffer in both tests) | `243a239` |
+| 8.6 | fixed (checked_mul in snapshot_bridge) | `149ea79` |
+
+Bonus fixes found en route: `CUMES_HAVE_NETCDF/HDF5` defines now reach
+`cumes_io_host`, so `output_format_available()` no longer reports `.nc`/`.h5`
+unavailable in stock builds (the nc/h5 writer path was silently dead —
+`4063e85`); `test_regression_kernels` now calls the primary `enqueue_apply`
+signature; the toroidal header's stale aliasing contract comment refreshed.
+
+**3.1 note (review claim corrected):** the review's PLAUSIBLE verdict said
+the absolute `min_oriented <= 0` gate "never fired in the frozen
+trajectories". The baseline logs prove the opposite — the frozen W7-X
+trajectory fires the branch 3× in stage 1 (min(signJ·√g) ≈ −9.9e−1/−8.2e−1/
+−1.2e−1 at interior jH: genuine sign flips of the early transient, recovered
+by the standard restore + delt×0.9). The legacy relative |√g| gate cannot
+express a sign flip at all, so restoring it would have changed the frozen
+trajectory (Class B). The gate is kept, with a precise deviation comment in
+`iteration_controller.hpp`.
+
+---
+
 ## 1. Correctness — silent wrong results / crashes on validated inputs
 
 ### 1.1 `src/fourier_impl.cuh:999` — forwardReduceKernel drops theta points when nThetaRed > 16 — CONFIRMED

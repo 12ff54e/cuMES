@@ -38,11 +38,16 @@ cmake -B build-float -G Ninja -DCUMES_USE_FLOAT=ON
 cmake --build build-float -j
 ```
 
-CLI: `--output-schema legacy-v0|v1` (v1 = versioned binary container),
-`--restart <checkpoint>`, `--restart-legacy <six-family payload>`,
-`--checkpoint <path>` (write a v1 checkpoint after solve); a `.nc`/`.h5`
-suffix dispatches to the NetCDF/HDF5 writers when compiled in
-(`outputFormatAvailable` preflights before any CUDA work).
+CLI: `--input <path>` / `--output <path>` (flags override the two positional
+slots; positionals fill the first free slot), `--output-schema legacy-v0|v1`
+(v1 = versioned binary container; v1 is rejected for `.nc`/`.h5` suffixes —
+those writers are hard-wired to the legacy-v0 layout), `--restart <checkpoint>`,
+`--restart-legacy <six-family payload>`, `--checkpoint <path>` (write a v1
+checkpoint after solve; the container records per-stage restart histories);
+a `.nc`/`.h5` suffix dispatches to the NetCDF/HDF5 writers when compiled in
+(`outputFormatAvailable` preflights before any CUDA work). Non-fatal
+validation findings (unknown input keys, skipped out-of-range boundary
+harmonics) print as `cuMES: WARNING: ...` on stderr.
 `CUMES_FORCE_GENERIC=1` forces the generic cuFFT transform backend on
 axisymmetric shapes (default: the axisymmetric direct-poloidal backend).
 
