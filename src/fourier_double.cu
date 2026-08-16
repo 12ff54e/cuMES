@@ -7,3 +7,6 @@ template void inverseDFT<double>(const FourierPlan<double>&, cumes::SpectralView
 template void inverseDFTFused<double>(const FourierPlan<double>&, cumes::SpectralView<const double, cumes::PhysicalStateDomain>, const GridParams<double>&, bool, double*, double*, cudaStream_t);
 template void forwardDFT<double>(const FourierPlan<double>&, cumes::SpectralView<double, cumes::DecomposedResidualDomain>, const GridParams<double>&, const ConstraintWorkspace<double>&, cudaStream_t);
 template void fourierCombineParity<double>(const FourierPlan<double>&, const GridParams<double>&, cudaStream_t);
+
+// ToroidalFftOperator (owns the FourierPlan; wraps inverse/forward).
+template class cumes::ToroidalFftOperator<double>;

@@ -22,6 +22,7 @@
 #include "cumes/solver/solver_bench.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "fft_traits.h"
 #include "fourier.cuh"
 #include "geometry.cuh"
@@ -88,7 +89,7 @@ class StageSolver {
         // stream, so it completes before the solve; the hot loop runs on the
         // explicit nonblocking compute stream (Phase 6A).
         Profiles<T> profiles(p, ip, &arena);
-        FourierPlan<T> fp = fourierCreate<T>(p, &arena);
+        ToroidalFftOperator<T> transform(p, &arena);
         GeometryOperator<T> geometry(p, &arena);
 
         // Axisymmetric transform backend (blueprint §8.5): for ntor=0/nzeta=1
@@ -104,11 +105,10 @@ class StageSolver {
         std::unique_ptr<AxisymmetricOperator<T>> axisym;
         if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
-        SolverResult<T> result = solverRun<T>(state, p, profiles.workspace(), fp,
-                                              geometry, &arena, stream, bench,
-                                              axisym.get());
-        fourierFree(fp);
-        // profiles/geometry are RAII (Profiles/GeometryOperator destructors).
+        SolverResult<T> result = solverRun<T>(state, p, profiles.workspace(),
+                                              transform, geometry, &arena, stream,
+                                              bench, axisym.get());
+        // profiles/transform/geometry are RAII (operator destructors).
 
         std::printf("  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
                     "reserved %zu bytes\n",

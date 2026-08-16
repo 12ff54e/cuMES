@@ -31,6 +31,8 @@
 #include <cstdio>
 #include <cmath>
 
+#include "cumes/transforms/toroidal_fft_operator.hpp"
+
 
 // Dynamic shared-memory base accessor. Each block reserves one extern __shared__
 // region per kernel launch; the consuming kernels reinterpret that base as T*.
@@ -744,5 +746,22 @@ void forwardDFT(const FourierPlan<T>& fp,
                 const GridParams<T>& p, const ConstraintWorkspace<T>& cw,
                 cudaStream_t stream) {
     forwardDFTCufft(fp, f_spec, p, cw, stream);
+}
+
+// ---------------------------------------------------------------------------
+// ToroidalFftOperator (owns the FourierPlan; wraps the inverse/forward paths)
+// ---------------------------------------------------------------------------
+template <typename T>
+void cumes::ToroidalFftOperator<T>::enqueue_inverse(
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
+    const GridParams<T>& p, bool do_combine, T* rCon, T* zCon, cudaStream_t stream) {
+    inverseDFTFused(fp_, coeff, p, do_combine, rCon, zCon, stream);
+}
+
+template <typename T>
+void cumes::ToroidalFftOperator<T>::enqueue_forward(
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
+    const GridParams<T>& p, const ConstraintWorkspace<T>& cw, cudaStream_t stream) {
+    forwardDFT(fp_, f_spec, p, cw, stream);
 }
 

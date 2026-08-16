@@ -21,6 +21,7 @@
 #include "solver.cuh"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -94,12 +95,13 @@ int main() {
 
     // ---- Profiles / plan / workspace ----
     RadialProfiles<double> rp = profilesCreate(p, ip);
-    FourierPlan<double> fp = fourierCreate(p);
+    cumes::ToroidalFftOperator<double> transform(p, nullptr);
+    FourierPlan<double>& fp = transform.fourier_plan();
     cumes::GeometryOperator<double> geometry(p, nullptr);
     MetricWorkspace<double>& mw = geometry.workspace();
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
-    SolverResult<double> res = solverRun(storage, p, rp, fp, geometry);
+    SolverResult<double> res = solverRun(storage, p, rp, transform, geometry);
     printf("solver: converged=%d iterations=%d fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
            res.converged, res.iterations, res.fsqr, res.fsqz, res.fsql);
     CHECK(res.converged, "converged equilibrium reached");
@@ -157,7 +159,7 @@ int main() {
     cudaFree(d_f_spec);
     cudaFree(cw_zero.d_frcon_e); cudaFree(cw_zero.d_frcon_o);
     cudaFree(cw_zero.d_fzcon_e); cudaFree(cw_zero.d_fzcon_o);
-    fourierFree(fp); profilesFree(rp);  // mw owned by GeometryOperator (RAII)
+    profilesFree(rp);  // fp/mw owned by ToroidalFftOperator/GeometryOperator (RAII)
     delete[] h_f;
 
     if (failures == 0) { printf("test_force_verify: ALL PASS\n"); return 0; }

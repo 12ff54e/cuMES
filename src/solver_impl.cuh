@@ -34,6 +34,7 @@
 #include "cumes/solver/pass_record.hpp"
 #include "cumes/solver/solver_bench.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 
 #ifdef DUMP_CUMES_VERIFY
 static bool dumpEnabled();  // defined below with the dump machinery
@@ -488,16 +489,18 @@ static void dumpDeviceArray(const char* filename, const T* d_data, size_t nelem)
 
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T>& p,
-                          const RadialProfiles<T>& rp, FourierPlan<T>& fp,
+                          const RadialProfiles<T>& rp,
+                          cumes::ToroidalFftOperator<T>& transform,
                           cumes::GeometryOperator<T>& geometry, cumes::DeviceArena* arena,
                           cudaStream_t stream, cumes::SolverBench* bench,
                           cumes::AxisymmetricOperator<T>* axisym) {
     // The legacy 12-pointer view over the contiguous slabs: every kernel and
     // consumer below keeps its unchanged pointer arithmetic and layout.
     SpectralState<T> st = storage.legacy_view();
-    // The geometry operator owns the MetricWorkspace; a const alias keeps the
-    // dump machinery's `mw.d_*` reads unchanged (the hot loop goes through
-    // geometry.enqueue / jacobian_stats / force_norm_partials).
+    // The transform/geometry operators own their workspaces; const aliases keep
+    // the dump machinery's `fp.d_*`/`mw.d_*` reads unchanged (the hot loop goes
+    // through the operator enqueue methods).
+    FourierPlan<T>& fp = transform.fourier_plan();
     const MetricWorkspace<T>& mw = geometry.workspace();
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
     cumes::DeviceBuffer<T> d_f_spec(6 * (size_t)p.ns * p.mnmax);
@@ -771,8 +774,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         } else {
             // Fused inverse (blueprint §8.4): the xmpq-weighted rCon/zCon are
             // accumulated alongside the geometry (no separate rzCon transform).
-            inverseDFTFused(fp, storage.physical_const(), p, false,
-                            cw.d_rCon, cw.d_zCon, stream);
+            transform.enqueue_inverse(storage.physical_const(), p, false,
+                                      cw.d_rCon, cw.d_zCon, stream);
         }
         cudaEventRecord(ev1_inv, stream);
 
@@ -1068,9 +1071,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const GridParams<T
         if (axisym_active) {
             axisym->enqueue_forward(ax_force, ax_conforce, residual_view, stream);
         } else {
-            forwardDFT(fp, cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                              d_f_spec.data(), p.ns, p.mnmax),
-                       p, cw, stream);
+            transform.enqueue_forward(
+                cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
+                    d_f_spec.data(), p.ns, p.mnmax),
+                p, cw, stream);
         }
         cudaEventRecord(ev1_fwd, stream);
 

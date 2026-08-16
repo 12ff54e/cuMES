@@ -50,6 +50,7 @@
 #include "cumes/state/seed_state.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 
 #include <memory>
 
@@ -182,7 +183,7 @@ int main(int argc, char** argv) {
     double t0 = now_us();
     arena.allocate(cumes::stage_arena_bytes<Real>(p));
     cumes::Profiles<Real> profiles(p, ip, &arena);
-    FourierPlan<Real> fp = fourierCreate<Real>(p, &arena);
+    cumes::ToroidalFftOperator<Real> transform(p, &arena);
     cumes::GeometryOperator<Real> geometry(p, &arena);
 
     // Axisymmetric transform backend (blueprint §8.5), mirroring
@@ -202,9 +203,9 @@ int main(int argc, char** argv) {
     cudaEventCreate(&ev1);
     cudaEventRecord(ev0, stream.get());
     double w0 = now_us();
-    SolverResult<Real> result = solverRun<Real>(storage, p, profiles.workspace(), fp,
-                                                geometry, &arena, stream.get(), &bench,
-                                                axisym.get());
+    SolverResult<Real> result = solverRun<Real>(storage, p, profiles.workspace(),
+                                                transform, geometry, &arena, stream.get(),
+                                                &bench, axisym.get());
     double w1 = now_us();
     cudaEventRecord(ev1, stream.get());
     cudaEventSynchronize(ev1);
@@ -214,10 +215,9 @@ int main(int argc, char** argv) {
     solve_gpu_us = gpu_ms * 1000.0;
 
     const std::size_t arena_bytes = arena.peak_bytes();
-    const std::size_t cufft_work_bytes = fp.cufft_work_bytes;
+    const std::size_t cufft_work_bytes = transform.fourier_plan().cufft_work_bytes;
 
-    fourierFree(fp);
-    // profiles/geometry are RAII (Profiles/GeometryOperator destructors).
+    // profiles/transform/geometry are RAII (operator destructors).
     cudaEventDestroy(ev0);
     cudaEventDestroy(ev1);
 

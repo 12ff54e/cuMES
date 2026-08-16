@@ -12,6 +12,7 @@ class DeviceArena;
 struct SolverBench;
 template <typename T> class AxisymmetricOperator;
 template <typename T> class GeometryOperator;
+template <typename T> class ToroidalFftOperator;
 }
 
 // Run the full fixed-point solve on GPU.
@@ -36,7 +37,8 @@ struct SolverResult {
 // (test_axisym_backend); selecting axisym is a trajectory re-freeze.
 template <typename T>
 SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const GridParams<T>& p,
-                          const RadialProfiles<T>& rp, FourierPlan<T>& fp,
+                          const RadialProfiles<T>& rp,
+                          cumes::ToroidalFftOperator<T>& transform,
                           cumes::GeometryOperator<T>& geometry,
                           cumes::DeviceArena* arena = nullptr,
                           cudaStream_t stream = 0,
