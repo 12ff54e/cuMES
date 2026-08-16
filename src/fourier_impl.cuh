@@ -35,22 +35,14 @@
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 
 
-// Dynamic shared-memory base accessor. Each block reserves one extern __shared__
-// region per kernel launch; the consuming kernels reinterpret that base as T*.
-// NOTE: the explicit double/float instantiation split (one scalar type per TU)
-// removes the ORIGINAL reason for this indirection — nvcc rejecting a direct
-// `extern __shared__ T[]` in a template instantiated with two scalar types in
-// one TU. It is nevertheless RETAINED here: switching to the direct form
-// changes -use_fast_math FMA fusion in the consumers (opaque function return
-// vs. known shared-array aliasing) and perturbs the trajectory at ~1e-10 — a
-// Class B change, not the Class A bitwise-equivalence the build/library split
-// must preserve. Removal is deferred to a Class B phase (re-frozen baseline).
-namespace {
-__device__ void* dynSharedBase() {
-    extern __shared__ unsigned char smem_base[];
-    return smem_base;
-}
-}
+// The consuming kernels declare their dynamic shared memory directly as
+// `extern __shared__ T sh[]` — legal per TU because the explicit
+// double/float instantiation split puts exactly one scalar type in each TU.
+// The old dynSharedBase() indirection (removed 2026-08-16) existed only for
+// the pre-split two-types-per-TU layout; the switch to the direct form was
+// expected to be a Class B re-freeze but measured BIT-IDENTICAL on both
+// configs (Solovev 251->199->456 / W7-X 1877->1617->2011, full-precision
+// state, identical restart sequence) — the frozen baseline stands unchanged.
 
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
@@ -412,7 +404,7 @@ __global__ void inverseAccumulateKernel(
     int k = threadIdx.y + k0;
     int l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    T* sh = static_cast<T*>(dynSharedBase());   // [4][mpol][kTile]
+    extern __shared__ T sh[];   // [4][mpol][kTile]
     for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * kTile; i += nthreads) {
         int s = i / (mpol * kTile), rem = i - s * mpol * kTile;
         int m = rem / kTile, kk = rem % kTile;
@@ -743,7 +735,7 @@ __global__ void deAliasSynthesizeKernel(
     int k = threadIdx.y + k0;
     int l1 = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
-    T* sh = static_cast<T*>(dynSharedBase());   // [2][mpol-2][kTile] (compact slots 0,1)
+    extern __shared__ T sh[];   // [2][mpol-2][kTile] (compact slots 0,1)
     int nb = 2 * (mpol - 2);
     int jF1 = jF - 1;
     for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < nb * kTile; i += nthreads) {

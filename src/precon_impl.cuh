@@ -15,22 +15,14 @@
 #include <limits>
 
 
-// Dynamic shared-memory base accessor. Each block reserves one extern __shared__
-// region per kernel launch; the consuming kernels reinterpret that base as T*.
-// NOTE: the explicit double/float instantiation split (one scalar type per TU)
-// removes the ORIGINAL reason for this indirection — nvcc rejecting a direct
-// `extern __shared__ T[]` in a template instantiated with two scalar types in
-// one TU. It is nevertheless RETAINED here: switching to the direct form
-// changes -use_fast_math FMA fusion in the consumers (opaque function return
-// vs. known shared-array aliasing) and perturbs the trajectory at ~1e-10 — a
-// Class B change, not the Class A bitwise-equivalence the build/library split
-// must preserve. Removal is deferred to a Class B phase (re-frozen baseline).
-namespace {
-__device__ void* dynSharedBase() {
-    extern __shared__ unsigned char smem_base[];
-    return smem_base;
-}
-}
+// The consuming kernels declare their dynamic shared memory directly as
+// `extern __shared__ T s[]` — legal per TU because the explicit
+// double/float instantiation split puts exactly one scalar type in each TU.
+// The old dynSharedBase() indirection (removed 2026-08-16) existed only for
+// the pre-split two-types-per-TU layout; the switch to the direct form was
+// expected to be a Class B re-freeze but measured BIT-IDENTICAL on both
+// configs (Solovev 251->199->456 / W7-X 1877->1617->2011, full-precision
+// state, identical restart sequence) — the frozen baseline stands unchanged.
 
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
@@ -663,7 +655,7 @@ __global__ void pcrSolveKernel(
     T fl = pivot_floor_rel * scale[mode];
     if (scale[mode] <= T(0.0)) fl = pivot_floor_rel;
 
-    T* s_tri = static_cast<T*>(dynSharedBase());
+    extern __shared__ T s_tri[];     // [(6+2*rhs_count)][ns]
     T* cL = s_tri;                   // [ns]
     T* cD = cL + ns;
     T* cU = cD + ns;
@@ -770,7 +762,7 @@ __global__ void thomasSolveKernel(
     T fl = pivot_floor_rel * scale[mode];
     if (scale[mode] <= T(0.0)) fl = pivot_floor_rel;
 
-    T* s = static_cast<T*>(dynSharedBase());
+    extern __shared__ T s[];         // [(1+rhs_count)][n]
     T* cp = s;              // [n]
     T* dp = cp + n;         // [rhs_count][n]
 
