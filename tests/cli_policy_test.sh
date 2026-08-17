@@ -20,12 +20,15 @@ trap 'rm -rf "$tmp"' EXIT
 cd "$tmp" || exit 2
 
 # Input WITH an unknown key (n_theta): strict must reject, compat must warn.
+# ftol 1e-6 sits exactly ON the float policy's documented tolerance floor
+# (mixed-float rejects anything below 1e-6 at startup), so the fixtures reach
+# the behavior under test in EVERY precision (completion-plan follow-up §3.2).
 cat > in_unknown.json <<'EOF'
 {"mpol": 2, "ntor": 0, "nfp": 1, "am": [1.0], "aphi": [1.0], "ai": [0.5],
  "n_theta": 6,
  "rbc": [{"n": 0, "m": 1, "value": 1.0}],
  "zbs": [{"n": 0, "m": 1, "value": 0.5}],
- "ns_array": [5], "niter_array": [1], "ftol_array": [1e-14]}
+ "ns_array": [5], "niter_array": [1], "ftol_array": [1e-6]}
 EOF
 
 # Clean input: one 5-surface stage, one iteration (never converges; the run
@@ -34,7 +37,7 @@ cat > in_clean.json <<'EOF'
 {"mpol": 2, "ntor": 0, "nfp": 1, "am": [1.0], "aphi": [1.0], "ai": [0.5],
  "rbc": [{"n": 0, "m": 1, "value": 1.0}],
  "zbs": [{"n": 0, "m": 1, "value": 0.5}],
- "ns_array": [5], "niter_array": [1], "ftol_array": [1e-14]}
+ "ns_array": [5], "niter_array": [1], "ftol_array": [1e-6]}
 EOF
 
 check() { # name want_exit want_grep want_absent -- cmd...

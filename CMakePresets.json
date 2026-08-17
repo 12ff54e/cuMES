@@ -88,6 +88,32 @@
       }
     },
     {
+      "name": "netcdf-only",
+      "displayName": "NetCDF-only \u2014 binary + NetCDF output (CI matrix entry)",
+      "description": "Builds with NetCDF but without HDF5 so the single-backend adapter path is exercised (completion-plan follow-up §3.3).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-netcdf-only",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_USE_FLOAT": "OFF",
+        "CUMES_USE_NETCDF": "ON",
+        "CUMES_USE_HDF5": "OFF"
+      }
+    },
+    {
+      "name": "hdf5-only",
+      "displayName": "HDF5-only \u2014 binary + HDF5 output (CI matrix entry)",
+      "description": "Builds with HDF5 but without NetCDF so the single-backend adapter path is exercised (completion-plan follow-up §3.3).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-hdf5-only",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_USE_FLOAT": "OFF",
+        "CUMES_USE_NETCDF": "OFF",
+        "CUMES_USE_HDF5": "ON"
+      }
+    },
+    {
       "name": "profiling",
       "displayName": "Profiling \u2014 double + lineinfo + ptxas verbosity",
       "description": "Adds -lineinfo and ptxas -v to the CUDA flags for Nsight/ptxas analysis.",
@@ -124,6 +150,14 @@
     {
       "name": "nobackend",
       "configurePreset": "nobackend"
+    },
+    {
+      "name": "netcdf-only",
+      "configurePreset": "netcdf-only"
+    },
+    {
+      "name": "hdf5-only",
+      "configurePreset": "hdf5-only"
     },
     {
       "name": "profiling",

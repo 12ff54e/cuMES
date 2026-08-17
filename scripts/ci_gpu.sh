@@ -24,9 +24,19 @@ cmake --build build -j "$(nproc)"
 
 ctest --test-dir build --output-on-failure -j4
 
-# Frozen short trajectory: 20-iteration cap; the solver must reach the cap
-# (stage-failure exit 1) with a finite, positive final residual, never a
-# nonfinite blow-up or an early exit.
+# Frozen short trajectory: CUMES_MAX_ITER=20 caps the pass count; the solver
+# must reach the cap and report stage failure (exit 1). The acceptance oracle:
+#
+#   - the documented stage-cap exit code (1) and the FATAL stage-cap message;
+#   - the effective-iteration semantics: the controller's counter is ONE-BASED
+#     (iter2 starts at 1 and advances after every good pass), so 20 capped
+#     passes report `completed 21/1000` — asserting the exact number pins the
+#     documented semantics instead of contradicting them;
+#   - finite, positive final residuals (a nonfinite blow-up or a degenerate
+#     zero state must fail the gate);
+#   - no output artifacts: strict mode (the default) writes no state file for
+#     a max-iteration run, so the requested output path must not exist and no
+#     cumes_state.bin fallback may appear.
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 set +e
@@ -34,9 +44,20 @@ CUMES_MAX_ITER=20 ./build/cuMES inputs/solovev.json "$tmp/short.bin" > "$tmp/sho
 rc=$?
 set -e
 [ "$rc" -eq 1 ] || { echo "ci_gpu: short trajectory expected exit 1 (stage cap), got $rc"; exit 1; }
-grep -q 'completed 20/20 iterations' "$tmp/short.log" || { echo 'ci_gpu: missing stage-cap marker'; exit 1; }
-grep -q 'Done.' "$tmp/short.log" || { echo 'ci_gpu: run did not finish'; exit 1; }
+# The one-based effective-iteration counter: 20 passes -> `completed 21/1000`.
+grep -q 'completed 21/1000 iterations without meeting ftol' "$tmp/short.log" \
+  || { echo 'ci_gpu: stage-cap message does not match the documented 20-pass -> 21-effective-iteration contract'; exit 1; }
+# Final residuals: finite and strictly positive.
+res_line=$(grep -oE 'final residuals fsqr=[0-9.eE+-]+ fsqz=[0-9.eE+-]+ fsql=[0-9.eE+-]+' "$tmp/short.log" \
+  || { echo 'ci_gpu: missing final-residuals line'; exit 1; })
+# Fields of the matched line: $1=final $2=residuals $3=fsqr=.. $4=fsqz=..
+# $5=fsql=... Each value must be finite and strictly positive (inf fails the
+# v == v + 1 test, NaN fails every comparison, nonpositive fails v > 0).
+echo "$res_line" | awk '{ for (i=3; i<=5; i++) { split($i, a, "="); v = a[2] + 0; if (!(v > 0) || v == v + 1) { exit 1 } } }' \
+  || { echo "ci_gpu: final residuals not finite and positive: $res_line"; exit 1; }
 grep -q 'nan\|NaN\|inf' "$tmp/short.log" && { echo 'ci_gpu: nonfinite output in short trajectory'; exit 1; }
+[ ! -e "$tmp/short.bin" ] || { echo 'ci_gpu: strict mode wrote state for a max-iteration run'; exit 1; }
+[ ! -e "$tmp/cumes_state.bin" ] || { echo 'ci_gpu: unexpected cumes_state.bin fallback artifact'; exit 1; }
 
 echo 'ci_gpu: all gates passed'
 

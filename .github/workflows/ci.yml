@@ -3,10 +3,11 @@
 # Two lanes:
 #   - host-matrix (GitHub ubuntu-latest, no GPU): the build matrices that do
 #     not need a device — verify (precise double, warnings-as-errors),
-#     nobackend (binary-only I/O path), float (mixed-float), and the
-#     ASan/UBSan host tests from the sanitizer preset. Building CUDA TUs on
-#     the hosted runner works (nvcc from the Jimver/cuda-toolkit action); only
-#     tests that never launch kernels run here.
+#     nobackend (binary-only I/O path), netcdf-only, hdf5-only (the optional-
+#     backend matrix, completion-plan follow-up §3.3), float (mixed-float),
+#     and the ASan/UBSan host tests from the sanitizer preset. Building CUDA
+#     TUs on the hosted runner works (nvcc from the Jimver/cuda-toolkit
+#     action); only tests that never launch kernels run here.
 #   - gpu (self-hosted runner labelled [self-hosted, gpu]): the full CTest
 #     suite including the compute-sanitizer memcheck/initcheck variants, the
 #     CLI policy gate, the benchmark smoke gate, and a frozen short-trajectory
@@ -29,6 +30,10 @@ jobs:
             binary-dir: build
           - preset: nobackend
             binary-dir: build-nobackend
+          - preset: netcdf-only
+            binary-dir: build-netcdf-only
+          - preset: hdf5-only
+            binary-dir: build-hdf5-only
           - preset: float
             binary-dir: build-float
     steps:
@@ -51,7 +56,7 @@ jobs:
       - name: Build
         run: cmake --build ${{ matrix.binary-dir }} -j2
       - name: Host-only tests
-        run: ctest --test-dir ${{ matrix.binary-dir }} -R 'test_controller|test_host_config|test_host_io|test_checkpoint|test_input_json' --output-on-failure
+        run: ctest --test-dir ${{ matrix.binary-dir }} -R 'test_controller|test_host_config|test_host_io|test_checkpoint|test_input_json|test_io_restart_offsets' --output-on-failure
 
   host-asan:
     runs-on: ubuntu-latest

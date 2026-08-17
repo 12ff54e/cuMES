@@ -48,8 +48,8 @@ static void testOrderingAndDelay(bool probe_notready) {
     cc(cudaEventCreate(&e0), "event e0");
     cc(cudaEventCreate(&e1), "event e1");
 
-    // Calibrate a ~60 ms delay on this GPU.
-    const long long cal_ms = 30;
+    // Calibrate the clock64 busy-wait cost once on this GPU (~60 ms of
+    // device time; the measured cycles-per-ms below is what gates).
     dim3 b(1), g(1);
     cudaEvent_t c0 = nullptr, c1 = nullptr;
     cc(cudaEventCreate(&c0), "event c0");

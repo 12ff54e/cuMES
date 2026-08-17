@@ -41,14 +41,35 @@ static int failures = 0;
         }                                                                    \
     } while (0)
 
-static const char* scratchPath() {
-    static char buf[64];
-    snprintf(buf, sizeof buf, "test_host_config_scratch_%d.json", (int)getpid());
-    return buf;
-}
+// Per-test temp directory with RAII cleanup (completion-plan follow-up §5):
+// the old PID-based scratch path wrote into the repository root, so an
+// interrupted or parallel test left tracked `test_host_config_scratch_*.json`
+// debris behind. The directory is created at startup, destroyed at exit, and
+// never touches the repo root.
+class TempDir {
+ public:
+    TempDir() {
+        char tmpl[] = "/tmp/cumes_host_config_XXXXXX";
+        dir_ = mkdtemp(tmpl);
+    }
+    ~TempDir() {
+        if (dir_.empty()) return;
+        const std::string cmd = "rm -rf '" + dir_ + "'";
+        (void)!system(cmd.c_str());
+    }
+    const std::string& path() const { return dir_; }
+    bool ok() const { return !dir_.empty(); }
+    std::string file(const char* name) const { return dir_ + "/" + name; }
+
+ private:
+    std::string dir_;
+};
+static TempDir g_tmp;
+
+static std::string scratchPath() { return g_tmp.file("scratch.json"); }
 
 static void writeScratch(const std::string& content) {
-    FILE* fp = fopen(scratchPath(), "w");
+    FILE* fp = fopen(scratchPath().c_str(), "w");
     if (!fp) { fprintf(stderr, "cannot write scratch file\n"); exit(1); }
     fputs(content.c_str(), fp);
     fclose(fp);
@@ -449,7 +470,8 @@ int main(int argc, char** argv) {
     testModeTable();
     testPrecisionFloor();
     testMalformed();
-    remove(scratchPath());
+    // No explicit scratch removal: the TempDir RAII destructor cleans the
+    // per-test directory even on an interrupted or failing run.
     if (failures == 0) {
         printf("test_host_config: ALL PASS\n");
         return 0;
