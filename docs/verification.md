@@ -50,6 +50,16 @@ commits:
 - `test_host_config` writes its scratch into a per-test temp directory
   (RAII), and the tracked `test_host_config_scratch_*.json` debris is
   removed.
+- the v1 NetCDF/HDF5 readers prove the EXACT rank, datatype, and extent of
+  every object before reading into a fixed or sized host buffer
+  (`docs/reader-rank-hardening-handoff.md`): checked scalar/vector/family
+  helpers, exact-rank dataspace probes before `H5Sget_simple_extent_dims`,
+  scalar-or-one-element attribute checks with bounded string widths, checked
+  dimension narrowing/byte counts with documented resource caps, and typed
+  allocation-failure conversion. `test_io_malformed_shapes` (host-only, ASan
+  twin) exercises rank 1/3 families, swapped extents, scalar-as-array
+  outcomes, rank 0/2 stage datasets, multi-element attributes, wrong
+  datatypes, and beyond-INT_MAX dimensions on both backends.
 
 The modern-GPU performance gate remains POSTPONED (no second GPU is
 available): the TITAN Xp numbers stay the measured baseline and no

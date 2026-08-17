@@ -9,9 +9,20 @@
 > performance validation is explicitly postponed until suitable hardware is
 > available; it is not part of the immediately actionable closure work.
 >
-> **FOLLOW-UP CLOSED (2026-08-17).** Every actionable item of
-> `post-overhaul-follow-up.md` (§§2–5) is now implemented on top of the four
-> commits: the oriented-Jacobian first-sample fix with a production-path
+> **FINAL ACCEPTANCE RESTORED (2026-08-17).** The malformed-container
+> memory-safety class named by the latest re-review is closed: the v1
+> NetCDF/HDF5 readers now prove the exact rank, datatype, and extent of every
+> object before reading into a fixed or sized host buffer
+> (`docs/reader-rank-hardening-handoff.md`), with malformed-rank fixtures
+> passing under ASan/UBSan. Every available-hardware exit gate passes
+> (verify 58/58, sanitizer 90/90, float/no-backend/NetCDF-only/HDF5-only
+> 30/30 each, `ci_gpu.sh` green, trajectories with accepted decisions, legacy
+> `.bin` states byte-identical to `dc0d0c4`). Modern-GPU performance
+> validation remains separately POSTPONED and is the only outstanding item.
+>
+> **FIRST FOLLOW-UP IMPLEMENTED (2026-08-17).** Every originally actionable
+> item of `post-overhaul-follow-up.md` (§§2–5) was implemented on top of the
+> four commits: the oriented-Jacobian first-sample fix with a production-path
 > regression, validated v1 restart offsets with corrupted fixtures, the
 > refresh-pass terminal contract closed via device-side force-norm
 > finalization, the repaired `scripts/ci_gpu.sh` oracle and precision-aware
@@ -22,7 +33,8 @@
 > `dc0d0c4` baseline (`scripts/compare_bitwise.py`, full dump manifests). Only
 > the hardware-dependent modern-GPU performance validation remains, and it
 > stays explicitly POSTPONED — implementation commits landed and acceptance
-> gates passed are distinct claims; the modern-GPU gate is neither.
+> gates passed are distinct claims; the modern-GPU gate is neither. The later
+> reader-rank finding above must be closed before final code acceptance.
 
 > **EXECUTED (2026-08-17).** All four steps are landed as separately
 > reviewable commits on the `overhaul` branch:
@@ -62,10 +74,14 @@ Status date: 2026-08-17. Reviewed branch: `overhaul` at
 `b9d3429bb36bf56be0e5498c4cf01b7356514e1e`.
 
 Phase 11 completed the structural migration and the two reference problems
-retain their frozen numerical trajectories. The overhaul is nevertheless not
-design-complete: the review found unfinished safety predicates, host/device I/O
-boundaries, precision/build policy, and acceptance gates. The remaining work is
-split into four ordered steps below.
+retain their frozen numerical trajectories. The review at the time found
+unfinished safety predicates, host/device I/O boundaries, precision/build
+policy, and acceptance gates; the remaining work was split into the four
+ordered steps below. Those steps AND the two follow-up reviews that came after
+(the first post-overhaul follow-up and the reader-rank hardening) are now all
+closed — see the status banners at the top of this document and
+`docs/post-overhaul-follow-up.md` / `docs/reader-rank-hardening-handoff.md`.
+The historical step descriptions below are retained as the plan record.
 
 This plan is deliberately a closure plan. It does not add free-boundary physics,
 scientific `wout` output, or speculative CUDA Graph integration.

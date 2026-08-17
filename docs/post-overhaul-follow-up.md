@@ -1,22 +1,33 @@
 # Post-overhaul follow-up handoff
 
-> **CLOSED (2026-08-17).** The actionable items below (§§2–5) are
-> implemented; only the hardware-dependent §6 (modern-GPU performance
-> validation) remains postponed. See `docs/overhaul-completion-plan.md` and
-> `docs/verification.md` for the closure summary. The frozen trajectories
-> were re-verified Class A byte-identical against the `dc0d0c4` baseline
-> after every change. The sections below are retained as the review record.
+> **FIRST FOLLOW-UP IMPLEMENTED; BOTH RE-REVIEWS CLOSED (2026-08-17).** The
+> actionable items below (§§2–5) were implemented and their available-hardware
+> gates pass. A later adversarial review found one remaining malformed-file
+> memory-safety class in the v1 NetCDF/HDF5 readers; that bounded handoff
+> ([`reader-rank-hardening-handoff.md`](reader-rank-hardening-handoff.md)) is
+> now closed too, restoring final code acceptance. The frozen trajectories
+> remain Class A byte-identical to the `dc0d0c4` baseline, and the legacy
+> `.bin` final states are byte-identical. Hardware-dependent §6 remains
+> separately postponed. The historical sections below describe the state at
+> the time of the first review and must not be read as current acceptance
+> status.
 
 Status date: 2026-08-17. Reviewed branch: `overhaul` at
 `dc0d0c46f9bd00840cc80389092ae0a957d3700e` (four commits ahead of
 `origin/overhaul` at review time).
 
-## 1. Acceptance status
+## 1. Acceptance status (archived review record)
 
-The structural CUDA overhaul is substantially implemented and the two frozen
-reference trajectories still pass, but the branch does not yet satisfy the
-completion plan's full definition of done. This document is the bounded
-handoff for the remaining work.
+> This section is the HISTORICAL state at the time of the first review. It
+> described the branch as not yet satisfying the completion plan's definition
+> of done; that assessment has since been superseded — the items below were
+> implemented, and the only remaining reopen (`reader-rank-hardening-
+> handoff.md`) was closed afterwards. See the banner above for current status.
+
+The structural CUDA overhaul was substantially implemented at the reviewed
+commit and the two frozen reference trajectories passed, but the branch did
+not yet satisfy the completion plan's full definition of done at that time.
+This document was the bounded handoff for the remaining work.
 
 Modern-architecture performance validation is **postponed** because no second
 GPU is currently available. Do not represent that gate as passed or failed.
@@ -24,13 +35,17 @@ Keep the existing TITAN Xp measurements, record the hardware limitation, and
 avoid cross-architecture performance claims until the deferred work in section
 6 can be run.
 
-Review evidence at the commit above:
+Historical review evidence at the reviewed commit (superseded counts; the
+current suites at the closure of the first follow-up, `3a1f7b0`, were verify
+57/57, mixed-float 29/29, sanitizer 88/88, and no/one/both-backend 29/29
+each):
 
 - precise-double verify suite: 55/55 passed;
 - sanitizer suite: 85/85 passed, including memcheck, initcheck, racecheck,
   synccheck, ASan, and UBSan;
 - no-optional-backend suite: 27/27 passed;
-- mixed-float suite: 26/27 passed; only `cli_policy` failed;
+- mixed-float suite: 26/27 passed; only `cli_policy` failed (later fixed by
+  the precision-aware fixtures of the first follow-up);
 - Solovev trajectory: `251 -> 199 -> 456`, final FSQR `9.583e-17`;
 - W7-X trajectory: `1877 -> 1617 -> 2011`, final FSQR `9.778e-13`.
 

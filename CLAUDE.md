@@ -361,8 +361,16 @@ complete optional-backend preset/CI matrix, target-scoped precision flags
 (deliberately NO `-march=native` on the CUDA TUs' host pass — the frozen
 codegen never had it and adding it diverges the trajectory), and the checked
 library-publication chain (`publishLibraryFile`) with fault-injection tests.
-Both frozen trajectories were re-verified Class A byte-identical against the
-`dc0d0c4` baseline after every change. The frozen baselines are:**
+A second adversarial review then reopened one malformed-container
+memory-safety class; it is closed as well
+(`docs/reader-rank-hardening-handoff.md`): the v1 NetCDF/HDF5 readers prove
+exact rank/datatype/extent before every read into a fixed or sized buffer
+(checked scalar/vector/family helpers, exact-rank dataspace probes,
+scalar-or-one-element attributes with bounded string widths, checked
+narrowing/byte counts with documented caps), guarded by the host-only
+`test_io_malformed_shapes` under ASan/UBSan. Both frozen trajectories were
+re-verified Class A byte-identical against the `dc0d0c4` baseline after every
+change. The frozen baselines are:**
 
 - Solovev: 251 → 199 → 456 effective iters, final FSQR 9.583e-17 — the
   final stage matches vmecpp's playground reference exactly (456, 9.99e-17).
