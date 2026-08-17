@@ -1,5 +1,13 @@
 # cuMES overhaul completion plan
 
+> **FINAL ACCEPTANCE REOPENED (2026-08-17, review of `611e8d7`).** The
+> exact-rank repair passes every available-hardware gate, but hostile-container
+> resource limits and several schema checks remain open. The bounded repair and
+> its exit criteria are in
+> [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md).
+> That handoff supersedes the “final acceptance restored” statement below until
+> it is closed. Modern-GPU validation remains separately POSTPONED.
+
 > **POST-IMPLEMENTATION REVIEW (2026-08-17).** The four implementation
 > commits below are landed, but a latest-HEAD acceptance review found a small
 > set of correctness, release-gate, I/O, build-matrix, and documentation

@@ -1,5 +1,12 @@
 # cuMES verification strategy
 
+> **Current acceptance note (review of `611e8d7`):** the test inventory below
+> is green, but final acceptance is reopened for the reader resource/schema
+> work in
+> [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md).
+> In particular, the existing “exact datatype” and “documented resource caps”
+> claims are not complete until that handoff closes.
+
 The verification tiers and gates of `docs/cuda-overhaul-blueprint.md` §10,
 extracted verbatim (sections 1–7 correspond to §10.1–§10.7), plus the current
 inventory of what is actually wired into the build, and the change-review

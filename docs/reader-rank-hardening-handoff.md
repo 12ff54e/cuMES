@@ -1,5 +1,10 @@
 # V1 container reader rank-hardening handoff
 
+> **Follow-up acceptance note (review of `611e8d7`):** this exact-rank task is
+> closed, but the subsequent resource/schema audit found additional bounded
+> work. Final acceptance now depends on
+> [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md).
+
 > **CLOSED (2026-08-17).** The bounded repair below is implemented in
 > `102c6ec` (readers + fixtures; docs reconciled in a follow-up commit on top):
 > exact rank/type/extent checks precede every NetCDF/HDF5 read into a fixed or
