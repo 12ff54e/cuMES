@@ -232,7 +232,10 @@ class Hdf5V0Writer final : public Writer {
             return Status("HDF5 H5Fclose failed");
         }
 #undef H5_CHECK
-        const std::string err = io_detail::renamePublish(tmp, spec.path);
+        // Durable publication (completion-plan follow-up §3): the library
+        // owns the descriptor, so publishLibraryFile reopens the completed
+        // temp, checks fsync + close, then renames + directory-fsyncs.
+        const std::string err = io_detail::publishLibraryFile(tmp, spec.path);
         if (!err.empty()) return Status("HDF5 publish: " + err);
         return Status();
     }
@@ -443,7 +446,10 @@ class Hdf5V1Writer final : public Writer {
             return Status("HDF5 H5Fclose failed");
         }
 #undef H5_CHECK
-        const std::string err = io_detail::renamePublish(tmp, spec.path);
+        // Durable publication (completion-plan follow-up §3): the library
+        // owns the descriptor, so publishLibraryFile reopens the completed
+        // temp, checks fsync + close, then renames + directory-fsyncs.
+        const std::string err = io_detail::publishLibraryFile(tmp, spec.path);
         if (!err.empty()) return Status("HDF5 publish: " + err);
         return Status();
     }
@@ -603,6 +609,17 @@ class Hdf5V1Reader final : public Reader {
                 (nrestarts > 0 &&
                  !getIntArr("restart_iteration", rst_iter, nrestarts))) {
                 return fail("stage history read failed");
+            }
+            // Validate the offsets BEFORE they index rst_iter (completion-plan
+            // follow-up §2.2): negative, descending, oversized, or non-zero
+            // first offsets must fail cleanly instead of reading out of
+            // bounds.
+            {
+                const std::string off_err =
+                    validateRestartOffsets(rst_off, nstages, nrestarts);
+                if (!off_err.empty()) {
+                    return fail("invalid restart offsets: " + off_err);
+                }
             }
             for (size_t g = 0; g < nstages; ++g) {
                 StageReport st;

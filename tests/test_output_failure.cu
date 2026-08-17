@@ -35,6 +35,7 @@
 #include "cumes/io/run_report.hpp"
 #include "cumes/io/snapshot_bridge.cuh"
 #include "cumes/io/writer.hpp"
+#include "cumes/io/writer_helpers.hpp"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -258,10 +259,81 @@ static void runAll() {
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// Library-managed publication boundaries (completion-plan follow-up §3): the
+// checked reopen/fsync/close/rename/directory-fsync chain publishLibraryFile
+// implements for the NetCDF/HDF5 writers. Injected failures:
+//
+//   reopen  -> a missing temp fails before any rename;
+//   fsync   -> /proc files reject fsync with EINVAL (a real, deterministic
+//              fault on Linux; no fault-injection hook is needed);
+//   rename  -> the target is a directory (covered end to end above too);
+//   dir-fsync -> fsyncDirectoryOf on /proc propagates the EINVAL instead of
+//              ignoring it (the old helper ignored fsync AND close errors);
+//
+// close failures cannot be injected portably without interposition; the
+// checked close-after-fsync is the same three-line pattern as the fsync
+// check and is exercised by the same code path here.
+static void runPublicationBoundaries() {
+    // Reopen boundary: the temp must exist and be readable.
+    const char* dest1 = "test_output_pub_dest1.bin";
+    remove(dest1);
+    writeGarbage(dest1, "OLD-DESTINATION", 15);
+    {
+        const std::string err = cumes::io_detail::publishLibraryFile(
+            "test_output_pub_missing.tmp.x", dest1);
+        CHECK(!err.empty() && err.find("reopen") != std::string::npos,
+              "library publish: missing temp fails at the reopen boundary");
+        FILE* fp = fopen(dest1, "rb");
+        char buf[16] = {0};
+        const size_t got = fp ? fread(buf, 1, 15, fp) : 0;
+        if (fp) fclose(fp);
+        CHECK(got == 15 && std::memcmp(buf, "OLD-DESTINATION", 15) == 0,
+              "library publish: destination preserved on reopen failure");
+    }
+    remove(dest1);
+
+    // fsync boundary: open succeeds, fsync fails (EINVAL on procfs).
+    {
+        const std::string err = cumes::io_detail::publishLibraryFile(
+            "/proc/self/stat", "test_output_pub_dest2.bin");
+        CHECK(!err.empty() && err.find("fsync") != std::string::npos,
+              "library publish: fsync failure propagates a typed reason");
+        CHECK(!fileExists("test_output_pub_dest2.bin"),
+              "library publish: no destination after fsync failure");
+    }
+
+    // Directory-fsync boundary: checked and propagated (the old helper
+    // ignored both the fsync and the close result).
+    {
+        const std::string err = cumes::io_detail::fsyncDirectoryOf("/proc/self");
+        CHECK(!err.empty() && err.find("fsync") != std::string::npos,
+              "directory fsync failure propagates a typed reason");
+    }
+
+    // Write/fflush boundary of the FILE* protocol: buffered writes to
+    // /dev/full succeed until flush, where fflush fails — publishAtomic must
+    // report it and remove nothing but its temp.
+    {
+        FILE* fp = fopen("/dev/full", "wb");
+        CHECK(fp != nullptr, "write fault: /dev/full opens");
+        if (fp) {
+            (void)fwrite("x", 1, 1, fp);  // buffered; fails at flush time
+            const std::string err = cumes::io_detail::publishAtomic(
+                fp, "/dev/full.tmp.x", "test_output_pub_dest3.bin");
+            CHECK(!err.empty() && err.find("fflush") != std::string::npos,
+                  "write fault: fflush failure propagates a typed reason");
+            CHECK(!fileExists("test_output_pub_dest3.bin"),
+                  "write fault: no destination after flush failure");
+        }
+    }
+}
+
 int main() {
     printf("=== Output failure-injection matrix ===\n");
     runAll<double>();
     runAll<float>();
+    runPublicationBoundaries();
     if (failures == 0) {
         printf("test_output_failure: ALL PASS\n");
         return 0;

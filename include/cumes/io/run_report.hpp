@@ -67,4 +67,41 @@ struct RunReport {
     RuntimeProvenance runtime;
 };
 
+// Validate serialized per-stage restart offsets before they are used to index
+// a restart-iteration array (completion-plan follow-up §2.2). The readers
+// previously cast the serialized ints to size_t and indexed rst_iter[k]
+// directly, so a corrupted file with negative, descending, or oversized
+// offsets read out of bounds (or attributed restarts to the wrong stage).
+// `offsets` must already have nstages entries. Returns an empty string when
+// valid, or a human-readable reason.
+inline std::string validateRestartOffsets(const std::vector<int>& offsets,
+                                          std::size_t nstages,
+                                          std::size_t nrestarts) {
+    if (offsets.size() != nstages) {
+        return "restart_stage_offset length " + std::to_string(offsets.size()) +
+               " != nstages " + std::to_string(nstages);
+    }
+    if (nstages > 0 && offsets[0] != 0) {
+        return "first restart_stage_offset is " + std::to_string(offsets[0]) +
+               ", expected 0";
+    }
+    for (std::size_t g = 0; g < nstages; ++g) {
+        if (offsets[g] < 0) {
+            return "restart_stage_offset[" + std::to_string(g) +
+                   "] is negative";
+        }
+        if (static_cast<std::size_t>(offsets[g]) > nrestarts) {
+            return "restart_stage_offset[" + std::to_string(g) + "] (" +
+                   std::to_string(offsets[g]) + ") exceeds nrestarts " +
+                   std::to_string(nrestarts);
+        }
+        if (g + 1 < nstages && offsets[g + 1] < offsets[g]) {
+            return "restart_stage_offset is not monotonic (" +
+                   std::to_string(offsets[g]) + " then " +
+                   std::to_string(offsets[g + 1]) + ")";
+        }
+    }
+    return "";
+}
+
 }  // namespace cumes

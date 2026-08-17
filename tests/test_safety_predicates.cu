@@ -111,27 +111,37 @@ static void testJacobianFinalizeRules() {
 // ---------------------------------------------------------------------------
 // 2. Terminal predicate == host normalized-triple classification
 // ---------------------------------------------------------------------------
+// use_record_factors selects the factor source (completion-plan follow-up
+// §2.3): 0 = the cached factors passed by value (non-refresh passes),
+// 1 = the record's device-finalized final_f_norm_* fields (refresh passes).
+// The host consumes the same record fields on refresh passes, so the device
+// bits and the host verdict must agree bit-for-bit on EVERY pass.
 static void testInvariantPredicateRules() {
     struct Case {
         double raw[3];
         double f_rz, f_l, plain, ftol;
-        int classify_converged;
+        double rec_f_rz, rec_f_l;
+        int evaluated;
+        int use_record_factors;
         bool want_nf, want_cv;
         const char* label;
     };
     const Case cases[] = {
-        {{1e-10, 2e-10, 3e-10}, 1.0, 1.0, 100.0, 1e-4, 1, false, true,
-         "converged (all below ftol)"},
-        {{1e-10, 2e-10, 3e-10}, 1.0, 1.0, 100.0, 1e-4, 0, false, false,
-         "refresh pass disables convergence"},
-        {{1e-10, 2e-10, 3e-10}, 1.0, 1.0, 100.0, 1e-14, 1, false, false,
-         "below-old-ftol but above ftol: continue"},
-        {{1.0, 2.0, 3.0}, 1.0, 1.0, 100.0, 1e-4, 1, false, false,
-         "large residuals: continue"},
-        {{1.0, NAN, 3.0}, 1.0, 1.0, 100.0, 1e-4, 1, true, false,
-         "nonfinite invariant: recover"},
-        {{1e-10, 2e-10, 3e-10}, 0.0, 1.0, 100.0, 0.0, 1, false, true,
-         "zero fNormRZ collapses fsqr/fsqz (converged)"},
+        {{1e-10, 2e-10, 3e-10}, 1.0, 1.0, 100.0, 1e-4, 0.0, 0.0, 1, 0,
+         false, true, "converged (cached factors, all below ftol)"},
+        {{1e-10, 2e-10, 3e-10}, 99.0, 99.0, 100.0, 1e-4, 1.0, 1.0, 1, 1,
+         false, true, "refresh pass: converged from record factors"},
+        {{1e-10, 2e-10, 3e-10}, 99.0, 99.0, 100.0, 1e-14, 1.0, 1.0, 1, 1,
+         false, false, "refresh pass: record factors above ftol: continue"},
+        {{1e-10, 2e-10, 3e-10}, 99.0, 99.0, 100.0, 1e-4, 0.0, 0.0, 0, 1,
+         false, false,
+         "refresh pass with unevaluated factors: convergence skipped"},
+        {{1.0, 2.0, 3.0}, 1.0, 1.0, 100.0, 1e-4, 0.0, 0.0, 1, 0,
+         false, false, "large residuals: continue"},
+        {{1.0, NAN, 3.0}, 1.0, 1.0, 100.0, 1e-4, 0.0, 0.0, 1, 0,
+         true, false, "nonfinite invariant: recover"},
+        {{1e-10, 2e-10, 3e-10}, 0.0, 1.0, 100.0, 0.0, 0.0, 0.0, 1, 0,
+         false, true, "zero fNormRZ collapses fsqr/fsqz (converged)"},
     };
 
     cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
@@ -140,21 +150,27 @@ static void testInvariantPredicateRules() {
         h.invariant_raw[0] = c.raw[0];
         h.invariant_raw[1] = c.raw[1];
         h.invariant_raw[2] = c.raw[2];
+        h.final_f_norm_rz = c.rec_f_rz;
+        h.final_f_norm_l = c.rec_f_l;
+        h.status.force_norms_evaluated = (unsigned)c.evaluated;
         checkCuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
                   "rec up (pred)");
         invariantPredicateKernel<<<1, 1>>>(d_rec.data(), c.f_rz, c.f_l, c.plain,
-                                           c.ftol, c.classify_converged);
+                                           c.ftol, c.use_record_factors);
         cc(cudaDeviceSynchronize(), "predicate sync");
         checkCuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
                   "rec down (pred)");
 
-        // Host classification with the identical expressions.
-        const double fsqr_i = c.raw[0] * c.plain * c.f_rz * 0.25;
-        const double fsqz_i = c.raw[1] * c.plain * c.f_rz * 0.25;
-        const double fsql_i = c.raw[2] * c.plain * c.f_l;
+        // Host classification with the identical expressions and factor source.
+        const double f_rz = c.use_record_factors ? c.rec_f_rz : c.f_rz;
+        const double f_l = c.use_record_factors ? c.rec_f_l : c.f_l;
+        const double fsqr_i = c.raw[0] * c.plain * f_rz * 0.25;
+        const double fsqz_i = c.raw[1] * c.plain * f_rz * 0.25;
+        const double fsql_i = c.raw[2] * c.plain * f_l;
         const bool host_nf = !(std::isfinite(fsqr_i) && std::isfinite(fsqz_i) &&
                                std::isfinite(fsql_i));
-        const bool host_cv = !host_nf && c.classify_converged != 0 &&
+        const bool host_cv = !host_nf &&
+                             (!c.use_record_factors || c.evaluated != 0) &&
                              fsqr_i <= c.ftol && fsqz_i <= c.ftol &&
                              fsql_i <= c.ftol;
 
@@ -170,8 +186,102 @@ static void testInvariantPredicateRules() {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Device force-norm finalize == the host's finalizeForceNorms expressions
+// ---------------------------------------------------------------------------
+static void testForceNormFinalizeRules() {
+    struct Case {
+        double norms[6];
+        double delta_s, lamscale;
+        const char* label;
+    };
+    const Case cases[] = {
+        {{2.0, 3.0, 4.0, 5.0, 6.0, 7.0}, 0.5, 2.0, "healthy factors"},
+        {{2.0, 3.0, -4.0, 5.0, 6.0, 7.0}, 0.5, 2.0, "negative magnetic energy"},
+        {{0.0, 3.0, 4.0, 5.0, 6.0, 7.0}, 0.5, 2.0, "zero sRZ -> fallback 1"},
+        {{2.0, 0.0, 4.0, 5.0, 6.0, 7.0}, 0.5, 0.0, "zero sL -> fallback 1"},
+        {{2.0, 3.0, 4.0, 5.0, 6.0, 0.0}, 0.5, 2.0, "zero rzNorm -> fallback 1"},
+        {{2.0, 3.0, 4.0, 5.0, 6.0, 7.0}, 0.0, 2.0,
+         "zero deltaS -> NaN density -> fallback 1"},
+    };
+
+    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    for (const Case& c : cases) {
+        cumes::ControlRecord h = {};
+        for (int i = 0; i < 6; ++i) h.force_norms[i] = c.norms[i];
+        h.status.force_norms_evaluated = 1;
+        checkCuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+                  "rec up (fnfinalize)");
+        forceNormFinalizeKernel<<<1, 1>>>(d_rec.data(), c.delta_s, c.lamscale);
+        cc(cudaDeviceSynchronize(), "fnfinalize sync");
+        checkCuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+                  "rec down (fnfinalize)");
+
+        // Host reference: the exact finalizeForceNorms expressions. Every op
+        // is correctly-rounded IEEE double, so the device result must match
+        // BIT-FOR-BIT (the solver relies on this for host/device agreement).
+        const double sRZ = c.norms[0], sL = c.norms[1], sMag = c.norms[2];
+        const double eTherm = c.norms[3] * c.delta_s;
+        const double vol = c.norms[4] * c.delta_s;
+        const double eMag = fabs(sMag) * c.delta_s;
+        const double energyDensity = std::max(eMag, eTherm) / vol;
+        const double denomRZ = sRZ * energyDensity * energyDensity;
+        const double fRZ = denomRZ > 0.0 ? (1.0 / denomRZ) : 1.0;
+        const double denomL = sL * c.lamscale * c.lamscale;
+        const double fL = denomL > 0.0 ? (1.0 / denomL) : 1.0;
+        const double f1 = c.norms[5] > 0.0 ? (1.0 / c.norms[5]) : 1.0;
+
+        char buf[160];
+        snprintf(buf, sizeof buf, "force-norm finalize: %s", c.label);
+        CHECK(h.final_f_norm_rz == fRZ && h.final_f_norm_l == fL &&
+                  h.final_f_norm1 == f1,
+              buf);
+    }
+
+    // Not evaluated (invalid-Jacobian refresh pass): the fields keep the
+    // deterministic zero sentinel the pass-start control reset wrote.
+    cumes::ControlRecord h = {};
+    for (int i = 0; i < 6; ++i) h.force_norms[i] = 1.0;
+    checkCuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+              "rec up (fnfinalize skip)");
+    forceNormFinalizeKernel<<<1, 1>>>(d_rec.data(), 0.5, 2.0);
+    cc(cudaDeviceSynchronize(), "fnfinalize skip sync");
+    checkCuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+              "rec down (fnfinalize skip)");
+    CHECK(h.final_f_norm_rz == 0.0 && h.final_f_norm_l == 0.0 &&
+              h.final_f_norm1 == 0.0,
+          "force-norm finalize: not evaluated -> zero sentinel");
+}
+
+// ---------------------------------------------------------------------------
 // 3. Guarded-operator no-op on invalid Jacobian (and normal run when valid)
 // ---------------------------------------------------------------------------
+
+// The shared guarded-consumer battery (magnetic field + iotaF/chipF cache,
+// constraint reference, preconditioner element cache, MHD force, constraint
+// force). Every consumer reads `status` and must write NOTHING when
+// jacobian_valid is clear. Shared by runGuardNoop and runSignFlipStats so the
+// two invalid-Jacobian scenarios test the identical operator set.
+template <typename T>
+static void enqueueGuardedConsumers(
+    const DeviceParams<T>& p, const cumes::RadialProfileViews<T>& rp,
+    cumes::RealSpaceStorage<T>& rs, cumes::ToroidalFftOperator<T>& transform,
+    cumes::GeometryOperator<T>& geometry, cumes::Preconditioner<T>& precon,
+    cumes::ConstraintOperator<T>& constraint, const cumes::DeviceModeTable& mt,
+    cumes::ControlStatus* status) {
+    cumes::MagneticFieldOperator<T>{}.enqueue(
+        rs, p, rp, geometry.base_geometry_views(p),
+        geometry.magnetic_field_views(p), status, 0, true);
+    constraint.reset_reference(p, rp.sqrtS_F, status, 0);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp,
+                           geometry.base_geometry_views(p),
+                           geometry.magnetic_field_views(p), status, 0);
+    cumes::ForceOperator<T>{}.enqueue(
+        rs, p, rp, geometry.base_geometry_views(p),
+        geometry.magnetic_field_views(p), status, 0);
+    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true,
+                       &transform, status, 0);
+}
+
 template <typename T>
 static void runGuardNoop(T label) {
     (void)label;
@@ -213,19 +323,8 @@ static void runGuardNoop(T label) {
                                 constraint.rcon_view(p).data(),
                                 constraint.zcon_view(p).data());
         geometry.enqueue(rs, p, rp, 0);
-        cumes::MagneticFieldOperator<T>{}.enqueue(
-            rs, p, rp, geometry.base_geometry_views(p),
-            geometry.magnetic_field_views(p), &d_rec.data()->status, 0, true);
-        constraint.reset_reference(p, rp.sqrtS_F, &d_rec.data()->status, 0);
-        precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp,
-                               geometry.base_geometry_views(p),
-                               geometry.magnetic_field_views(p),
-                               &d_rec.data()->status, 0);
-        cumes::ForceOperator<T>{}.enqueue(
-            rs, p, rp, geometry.base_geometry_views(p),
-            geometry.magnetic_field_views(p), &d_rec.data()->status, 0);
-        constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true,
-                           &transform, &d_rec.data()->status, 0);
+        enqueueGuardedConsumers<T>(p, rp, rs, transform, geometry, precon,
+                                   constraint, mt, &d_rec.data()->status);
         cc(cudaDeviceSynchronize(), "pass sync");
     };
     checkCuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
@@ -437,11 +536,155 @@ static void runCollapsedDag(T label) {
           "collapsed pass: field buffers not mutated");
 }
 
+// ---------------------------------------------------------------------------
+// 6. Production-path first-sample sign reversal (completion-plan follow-up
+//    §2.1): jacobianStatsKernel + jacobianFinalizeKernel over a manufactured
+//    half-grid whose ONLY sign reversal is the FIRST sample of reduction
+//    lane 20. Before the vmin-init fix that lane seeded the minimum from
+//    fabs(g), hiding the flip behind the healthy samples; the oriented
+//    minimum must now be the flipped value and the finalize kernel must
+//    report invalid, with every guarded consumer writing nothing.
+// ---------------------------------------------------------------------------
+template <typename T>
+static void runSignFlipStats(T label) {
+    (void)label;
+    DeviceParams<T> p;
+    p.ns = 9; p.mnmax = 4; p.ntheta = 18; p.nzeta = 2;
+    p.nfp = 1; p.nZnT = 36; p.mpol = 4; p.ntor = 0;
+    p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;
+    p.tcon0 = T(1.0); p.lamscale = T(0.0);
+
+    cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
+
+    cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
+    std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
+    manufacturedState<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+                         p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+    uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+
+    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::RadialProfileViews<T> rp = profiles.profile_views();
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::ToroidalFftOperator<T> transform(p, rs, mt);
+    cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::Preconditioner<T> precon(p, nullptr);
+    cumes::ConstraintOperator<T> constraint(p, nullptr);
+
+    const size_t nHalf = (size_t)(p.ns - 1) * p.nZnT;   // 288 half-grid entries
+    const size_t nFull = (size_t)p.ns * p.nZnT;
+
+    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    cumes::ControlRecord h_rec = {};
+    h_rec.status.jacobian_valid = 1;
+
+    // Seed a valid pass (the fused inverse + base geometry), then OVERWRITE
+    // the gsqrt view with the manufactured buffer. jacobian_stats launches
+    // ONE 256-thread block, so lane t's first sample is flat index t: the
+    // flip sits at index 20 (< 256), with lane 20's second sample at 276
+    // (< nHalf = 288) — exactly the bug shape from the review.
+    transform.inverse_fused(storage.physical_const(), /*do_combine=*/false,
+                            constraint.rcon_view(p).data(),
+                            constraint.zcon_view(p).data());
+    geometry.enqueue(rs, p, rp, 0);
+    cc(cudaDeviceSynchronize(), "seed sync");
+
+    // Seed the guarded caches with a VALID pass (jacobian_valid = 1), so the
+    // later no-op comparison runs against real, initialized data.
+    checkCuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
+                         cudaMemcpyHostToDevice), "rec up (seed)");
+    enqueueGuardedConsumers<T>(p, rp, rs, transform, geometry, precon,
+                               constraint, mt, &d_rec.data()->status);
+    cc(cudaDeviceSynchronize(), "seed guarded sync");
+
+    // signJ = -1 and a valid run has sqrt(g) < 0 everywhere, so the
+    // oriented value signJ·sqrt(g) is positive on the healthy grid. The
+    // manufactured buffer is negative everywhere EXCEPT one POSITIVE element
+    // at lane 20's first sample — the only sign reversal of sqrt(g).
+    const double flip = 0.5, maxval = 1.75;
+    std::vector<T> h_gsqrt(nHalf);
+    for (size_t i = 0; i < nHalf; ++i) {
+        h_gsqrt[i] = -T(0.4 + 0.01 * (double)(i % 50));
+    }
+    h_gsqrt[20] = T(flip);     // lane 20's FIRST sample: the only sign reversal
+    h_gsqrt[276] = -T(maxval); // lane 20's SECOND sample (20+256 < 288), above |flip|
+    checkCuda(cudaMemcpy(geometry.base_geometry_views(p).gsqrt.data(),
+                         h_gsqrt.data(), nHalf * sizeof(T),
+                         cudaMemcpyHostToDevice), "gsqrt up");
+
+    // The PRODUCTION chain: GeometryOperator::jacobian_stats (the exact
+    // function the DAG enqueues) followed by jacobianFinalizeKernel.
+    geometry.jacobian_stats(p, d_rec.data(), 0);
+    jacobianFinalizeKernel<<<1, 1>>>(d_rec.data(), p.nZnT);
+    cc(cudaDeviceSynchronize(), "stats sync");
+    checkCuda(cudaMemcpy(&h_rec, d_rec.data(), sizeof(h_rec),
+                         cudaMemcpyDeviceToHost), "rec down (stats)");
+
+    CHECK(h_rec.jacobian_min_oriented == (double)T(-flip),
+          "sign flip: oriented minimum is signJ·(flipped sample)");
+    CHECK(h_rec.jacobian_max_abs == (double)T(maxval),
+          "sign flip: max |sqrt(g)| keeps every magnitude");
+    CHECK(h_rec.jacobian_nonfinite_count == 0.0,
+          "sign flip: no nonfinite entries");
+    CHECK(h_rec.jacobian_min_index == 20.0,
+          "sign flip: argmin index is the flip");
+    CHECK(h_rec.status.jacobian_valid == 0,
+          "sign flip: jacobianFinalizeKernel reports invalid");
+
+    // The guarded consumers with the just-finalized (invalid) status: every
+    // output/cache sentinel must stay byte-unchanged.
+    std::vector<T> snap_bsupu(nHalf), snap_iotaF(p.ns), snap_ard(2 * p.ns);
+    std::vector<T> snap_rcon0(nFull), snap_brmn(nFull);
+    checkCuda(cudaMemcpy(snap_bsupu.data(),
+                         geometry.magnetic_field_views(p).bsupu.data(),
+                         nHalf * sizeof(T), cudaMemcpyDeviceToHost), "snap bsupu");
+    checkCuda(cudaMemcpy(snap_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap iotaF");
+    checkCuda(cudaMemcpy(snap_ard.data(), precon.ard(), 2 * p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap ard");
+    checkCuda(cudaMemcpy(snap_rcon0.data(), constraint.rcon0(), nFull * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap rcon0");
+    checkCuda(cudaMemcpy(snap_brmn.data(), rs.d_brmn_e, nFull * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap brmn");
+
+    enqueueGuardedConsumers<T>(p, rp, rs, transform, geometry, precon,
+                               constraint, mt, &d_rec.data()->status);
+    cc(cudaDeviceSynchronize(), "guarded sync");
+
+    std::vector<T> now_bsupu(nHalf), now_iotaF(p.ns), now_ard(2 * p.ns);
+    std::vector<T> now_rcon0(nFull), now_brmn(nFull);
+    checkCuda(cudaMemcpy(now_bsupu.data(),
+                         geometry.magnetic_field_views(p).bsupu.data(),
+                         nHalf * sizeof(T), cudaMemcpyDeviceToHost), "now bsupu");
+    checkCuda(cudaMemcpy(now_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now iotaF");
+    checkCuda(cudaMemcpy(now_ard.data(), precon.ard(), 2 * p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now ard");
+    checkCuda(cudaMemcpy(now_rcon0.data(), constraint.rcon0(), nFull * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now rcon0");
+    checkCuda(cudaMemcpy(now_brmn.data(), rs.d_brmn_e, nFull * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now brmn");
+
+    CHECK(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nHalf * sizeof(T)) == 0,
+          "sign flip: magnetic-field buffers untouched");
+    CHECK(std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
+          "sign flip: iotaF/chipF profile cache untouched");
+    CHECK(std::memcmp(snap_ard.data(), now_ard.data(), 2 * p.ns * sizeof(T)) == 0,
+          "sign flip: preconditioner element cache untouched");
+    CHECK(std::memcmp(snap_rcon0.data(), now_rcon0.data(), nFull * sizeof(T)) == 0,
+          "sign flip: constraint reference cache untouched");
+    CHECK(std::memcmp(snap_brmn.data(), now_brmn.data(), nFull * sizeof(T)) == 0,
+          "sign flip: MHD force buffers untouched");
+}
+
 int main() {
     testJacobianFinalizeRules();
     testInvariantPredicateRules();
+    testForceNormFinalizeRules();
     runGuardNoop(double(0));
     runGuardNoop(float(0));
+    runSignFlipStats(double(0));
+    runSignFlipStats(float(0));
     runPreconditionedGate(double(0));
     runPreconditionedGate(float(0));
     runCollapsedDag(double(0));

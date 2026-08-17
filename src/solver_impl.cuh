@@ -150,35 +150,25 @@ static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateD
     cumes::check_cuda(cudaGetLastError(), "force norms");
 }
 
-// Host finalize (called after the single control fence, on refresh passes):
-// reduce the six device scalars hc[0..5] = {sRZ, sL, sMag, eTherm, vol, rzNorm}
-// into fNormRZ/fNormL/fNorm1, and dump the force-norm record.
-template <typename T>
-static void finalizeForceNorms(const double* hc, const DeviceParams<T>& p,
-                               double delta_s, int iter2,
-                               double& fNormRZ, double& fNormL, double& fNorm1) {
+// Refresh-pass force-norm dump (dump-only telemetry). The six device scalars
+// hc[0..5] = {sRZ, sL, sMag, eTherm, vol, rzNorm} are printed together with
+// the fNorm factors ACTUALLY used for the convergence decision — those are the
+// record's device-finalized final_f_norm_* fields (completion-plan follow-up
+// §2.3), consumed by the caller, not recomputed here.
+static void dumpForceNorms(const double* hc, double delta_s, int iter2,
+                           double fNormRZ, double fNormL, double fNorm1) {
 #ifndef DUMP_CUMES_VERIFY
-    (void)iter2;  // only the dump filename consumes it
+    (void)hc; (void)delta_s; (void)iter2;
+    (void)fNormRZ; (void)fNormL; (void)fNorm1;
 #endif
-    double sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3], vol = hc[4], h_rz = hc[5];
-    double deltaS = delta_s;
-    double eMag = fabs(sMag) * deltaS;   // vmecpp: fabs(localMagneticEnergy)*deltaS
-    eTherm *= deltaS;
-    vol *= deltaS;
-    double energyDensity = std::max(eMag, eTherm) / vol;
-    // Scale-free-division guards: on degenerate geometry (empty volume, zero
-    // surface norms, zero flux) the vmecpp 1/denominator would silently
-    // produce inf/NaN normalization factors that poison every residual. A
-    // fallback factor of 1.0 keeps the residuals finite (they then fail the
-    // ftol/BAD_PROGRESS checks instead of the finiteness check).
-    double denomRZ = sRZ * energyDensity * energyDensity;
-    fNormRZ = denomRZ > 0.0 ? (1.0 / denomRZ) : 1.0;
-    double denomL = sL * p.lamscale * p.lamscale;
-    fNormL = denomL > 0.0 ? (1.0 / denomL) : 1.0;
-    fNorm1 = h_rz > 0.0 ? (1.0 / h_rz) : 1.0;
-
 #ifdef DUMP_CUMES_VERIFY
     if (dumpEnabled()) {
+        double sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3], vol = hc[4], h_rz = hc[5];
+        double deltaS = delta_s;
+        double eMag = fabs(sMag) * deltaS;   // vmecpp: fabs(localMagneticEnergy)*deltaS
+        eTherm *= deltaS;
+        vol *= deltaS;
+        double energyDensity = std::max(eMag, eTherm) / vol;
         // Same format as vmecpp's dump/vmecpp/force_norms_iter_<iter2>.txt
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/force_norms_iter_%d.txt", iter2);
@@ -1110,11 +1100,22 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
 
         // vmecpp computeForceNorms (same cadence): device-side reduction
         // of the force-norm partial sums into the typed control record
-        // (finalized on the host after the single control fence; guarded +
-        // force_norms_evaluated set on device).
+        // (guarded + force_norms_evaluated set on device).
         enqueueForceNorms(storage.physical_const(), transform.xm(),
                           transform.xn(), p, rpv, geometry,
                           d_psum.data(), d_control.data(), stream);
+
+        // Device finalize of the force-norm factors (completion-plan
+        // follow-up §2.3): on a refresh pass the normalization is now
+        // available BEFORE the device terminal predicate, so the converged
+        // classification is no longer structurally disabled there. The
+        // kernel reproduces the host's finalizeForceNorms expressions
+        // exactly (see device_predicates.cuh); the host consumes the same
+        // record fields at the fence instead of recomputing them.
+        forceNormFinalizeKernel<<<1, 1, 0, stream>>>(
+            d_control.data(), (double)profiles_.delta_s(),
+            (double)p_.lamscale);
+        cumes::check_cuda(cudaGetLastError(), "forceNormFinalize");
 
 #ifdef DUMP_CUMES_VERIFY
         dumpStepPrecon<T>(iter, p, precon);
@@ -1189,17 +1190,19 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
 
     // ---- Device terminal predicate (blueprint §6.9/§7 "Terminal") ----
     // Classify the invariant residual ON DEVICE before in-place
-    // preconditioning: nonfinite always; converged only when this is NOT a
-    // preconditioner-refresh pass (the host's f_norm factors are finalized
-    // from THIS pass's force norms only at the fence, so a refresh pass
-    // cannot classify convergence on device without the factors the host
-    // will use). The preconditioner and the preconditioned reduction read
-    // the bits and no-op on terminal passes, marking their fields
-    // not_evaluated.
+    // preconditioning: nonfinite always; converged on every pass
+    // (completion-plan follow-up §2.3). On a refresh pass the factors were
+    // finalized ON DEVICE from THIS pass's force norms by
+    // forceNormFinalizeKernel above, so the predicate reads them from the
+    // record (use_record_factors=1); on other passes it uses the host's
+    // cached factors by value. The host consumes the same record fields at
+    // the fence, so the device bits and the host decision share bit-identical
+    // inputs. The preconditioner and the preconditioned reduction read the
+    // bits and no-op on terminal passes, marking their fields not_evaluated.
     { invariantPredicateKernel<<<1, 1, 0, stream>>>(
           d_control.data(), f_norm_rz, f_norm_l,
           (double)p.mnmax * (double)p.ns, (double)p.ftol,
-          schedule.refresh_preconditioner ? 0 : 1);
+          schedule.refresh_preconditioner ? 1 : 0);
       cumes::check_cuda(cudaGetLastError(), "invariantPredicate"); }
 
     // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve.
@@ -1544,12 +1547,18 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
             continue;
         }
 
-        // On a refresh pass, finalize the force-norm factors from the combined
-        // record's force-norm scalars (reduced on device above). On non-refresh
+        // On a refresh pass, consume the DEVICE-finalized force-norm factors
+        // (completion-plan follow-up §2.3): forceNormFinalizeKernel computed
+        // them from THIS pass's force norms before the terminal predicate, so
+        // the host decision and the device converged bit share bit-identical
+        // inputs — no recomputation, no disagreement window. On non-refresh
         // passes the cached factors are reused.
         if (schedule.refresh_preconditioner) {
-            finalizeForceNorms(rec.force_norms, p, profiles.delta_s(), iter2, fNormRZ,
-                               fNormL, fNorm1);
+            fNormRZ = rec.final_f_norm_rz;
+            fNormL = rec.final_f_norm_l;
+            fNorm1 = rec.final_f_norm1;
+            dumpForceNorms(rec.force_norms, (double)profiles.delta_s(), iter2,
+                           fNormRZ, fNormL, fNorm1);
         }
 
         // ---- Invariant residuals (vmecpp evalFResInvar) ----
@@ -1565,16 +1574,16 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         // condition, then reports nonfinite (recover) or converged (stop).
         cumes::InvariantVerdict verdict = controller.classify_invariant(inv_triple);
 #ifdef DUMP_CUMES_VERIFY
-        // Device/host terminal-predicate consistency (dump-only): nonfinite is
-        // factor-independent and must always agree; converged is structurally
-        // disabled on refresh passes (the device cannot know the factors the
-        // host finalizes from THIS pass), so it is only compared off-cadence.
+        // Device/host terminal-predicate consistency (dump-only): the device
+        // bits and the host verdict must now agree on EVERY pass — on refresh
+        // passes both consume the record's device-finalized factors
+        // (completion-plan follow-up §2.3), on other passes the host's cached
+        // factors travel by value into the predicate.
         if (dumpEnabled()) {
             const bool dev_nf = rec.status.invariant_nonfinite != 0;
             const bool dev_cv = rec.status.invariant_converged != 0;
             const bool nf_ok = dev_nf == verdict.nonfinite;
-            const bool cv_ok = schedule.refresh_preconditioner ||
-                               dev_cv == verdict.converged;
+            const bool cv_ok = dev_cv == verdict.converged;
             const bool ev_ok = verdict.nonfinite || verdict.converged ||
                                rec.status.preconditioned_evaluated != 0;
             if (!nf_ok || !cv_ok || !ev_ok) {

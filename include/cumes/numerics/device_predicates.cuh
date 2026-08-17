@@ -7,11 +7,15 @@
 //                                      Jacobian validity (the rule is shared
 //                                      with IterationController::jacobian_
 //                                      invalid via cumes::kJacobianEps);
+//   forceNormFinalizeKernel             finalize the force-norm factors ON
+//                                      DEVICE from the refresh-pass force
+//                                      norms, before the terminal predicate
+//                                      (completion-plan follow-up §2.3);
 //   invariantPredicateKernel           classify the invariant residual ON
 //                                      DEVICE before in-place preconditioning
-//                                      (nonfinite always; converged only when
-//                                      the caller's force-norm factors are
-//                                      final — refresh passes disable it);
+//                                      (nonfinite always; converged on every
+//                                      pass — refresh passes use the record's
+//                                      device-finalized factors);
 //   computeResidualsPreconditionedKernel  the terminal-guarded preconditioned
 //                                      reduction (zero sentinel +
 //                                      not_evaluated on terminal passes).
@@ -43,31 +47,80 @@ static __global__ void jacobianFinalizeKernel(cumes::ControlRecord* __restrict__
     rec->status.jacobian_valid = invalid ? 0u : 1u;
 }
 
+// Finalize the force-norm factors ON DEVICE from the just-reduced partials
+// (completion-plan follow-up §2.3). Runs on preconditioner-refresh passes,
+// ordered after forceNormReduceKernel/rzNormKernel on the compute stream, so
+// the required normalization IS available before the device terminal
+// predicate — convergence classification is no longer structurally disabled
+// on refresh passes. The expressions below are EXACTLY the host-side
+// finalizeForceNorms rules (src/solver_impl.cuh), operator for operator:
+// fabs, *, /, max and the ternary are all correctly-rounded IEEE double
+// operations and contain no multiply-add pattern, so the device-computed
+// factors are BIT-IDENTICAL to the previous host-side computation in every
+// build. max is written as the std::max comparison form (a < b ? b : a), NOT
+// fmax — fmax returns the non-NaN operand for (NaN, finite), which would
+// diverge from the host on a pathological pass. Gated on force_norms_
+// evaluated: on an invalid-Jacobian refresh pass the fields stay at the
+// deterministic zero sentinel and the predicate skips convergence
+// classification (see below).
+static __global__ void forceNormFinalizeKernel(cumes::ControlRecord* __restrict__ rec,
+                                               double delta_s, double lamscale) {
+    if (!rec->status.force_norms_evaluated) return;
+    const double sRZ = rec->force_norms[0];
+    const double sL = rec->force_norms[1];
+    const double sMag = rec->force_norms[2];
+    double eTherm = rec->force_norms[3];
+    double vol = rec->force_norms[4];
+    const double h_rz = rec->force_norms[5];
+    const double eMag = fabs(sMag) * delta_s;
+    eTherm *= delta_s;
+    vol *= delta_s;
+    const double energyDensity = ((eMag < eTherm) ? eTherm : eMag) / vol;
+    // Scale-free-division guards (identical to the host): degenerate
+    // denominators produce the 1.0 fallback instead of inf/NaN factors.
+    const double denomRZ = sRZ * energyDensity * energyDensity;
+    rec->final_f_norm_rz = denomRZ > 0.0 ? (1.0 / denomRZ) : 1.0;
+    const double denomL = sL * lamscale * lamscale;
+    rec->final_f_norm_l = denomL > 0.0 ? (1.0 / denomL) : 1.0;
+    rec->final_f_norm1 = h_rz > 0.0 ? (1.0 / h_rz) : 1.0;
+}
+
 // Classify the invariant (unpreconditioned) residual ON DEVICE before the
 // in-place preconditioner (blueprint §6.9/§7 "Terminal"). The normalized
-// triples are formed with the host's cached force-norm factors and the exact
-// host expressions, so the bits agree with IterationController::classify_
-// invariant bit-for-bit. On a preconditioner-refresh pass the host's factors
-// are not yet final (they are finalized from THIS pass's force norms at the
-// fence), so convergence classification is structurally disabled there
-// (classify_converged=0) — a stale-factor false "converged" can then never
-// suppress preconditioning on a pass the host later continues. Nonfinite
-// classification is factor-independent (finite factors preserve non-finite
-// sums) and always runs.
+// triples are formed with the exact host expressions, so the bits agree with
+// IterationController::classify_invariant bit-for-bit. Factor source:
+//   use_record_factors == 0: the host's cached f_norm_rz/f_norm_l (non-refresh
+//     passes — passed by value, identical to what the host will use);
+//   use_record_factors != 0: the record's final_f_norm_* fields, finalized on
+//     device from THIS pass's force norms on refresh passes (completion-plan
+//     follow-up §2.3). The host consumes the same record fields at the fence,
+//     so device and host classification share bit-identical inputs and a
+//     converged refresh pass no-ops preconditioning like any terminal pass.
+//     When the factors were not evaluated (invalid-Jacobian refresh pass, zero
+//     sentinel) convergence classification is skipped: the host's Jacobian
+//     gate restores before reading these bits anyway, and the guarded
+//     preconditioner would no-op regardless.
+// Nonfinite classification is factor-independent and always runs.
 static __global__ void invariantPredicateKernel(cumes::ControlRecord* __restrict__ rec,
                                               double f_norm_rz, double f_norm_l,
                                               double plain_per_el, double ftol,
-                                              int classify_converged) {
+                                              int use_record_factors) {
+    const double f_rz =
+        use_record_factors ? rec->final_f_norm_rz : f_norm_rz;
+    const double f_l =
+        use_record_factors ? rec->final_f_norm_l : f_norm_l;
     const double fsqr_i =
-        rec->invariant_raw[0] * plain_per_el * f_norm_rz * 0.25;
+        rec->invariant_raw[0] * plain_per_el * f_rz * 0.25;
     const double fsqz_i =
-        rec->invariant_raw[1] * plain_per_el * f_norm_rz * 0.25;
-    const double fsql_i = rec->invariant_raw[2] * plain_per_el * f_norm_l;
+        rec->invariant_raw[1] * plain_per_el * f_rz * 0.25;
+    const double fsql_i = rec->invariant_raw[2] * plain_per_el * f_l;
     const bool nonfinite = !(isfinite(fsqr_i) && isfinite(fsqz_i) &&
                              isfinite(fsql_i));
+    const bool can_classify =
+        !use_record_factors || rec->status.force_norms_evaluated != 0;
     rec->status.invariant_nonfinite = nonfinite ? 1u : 0u;
     rec->status.invariant_converged =
-        (!nonfinite && classify_converged != 0 && fsqr_i <= ftol &&
+        (!nonfinite && can_classify && fsqr_i <= ftol &&
          fsqz_i <= ftol && fsql_i <= ftol)
             ? 1u
             : 0u;

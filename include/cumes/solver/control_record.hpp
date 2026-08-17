@@ -88,6 +88,16 @@ struct ControlRecord {
     double preconditioned_raw[3] = {0.0, 0.0, 0.0};  // after the preconditioner
     double force_norms[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     // {sRZ, sL, sMag, eTherm, vol, rzNorm} (before the deltaS scaling)
+    // Device-finalized force-norm factors (completion-plan follow-up §2.3):
+    // forceNormFinalizeKernel fills them from force_norms on refresh passes
+    // (valid iff status.force_norms_evaluated). The device terminal predicate
+    // consumes them for the convergence classification, and the host reads the
+    // SAME fields at the fence instead of recomputing — the two decisions then
+    // share bit-identical inputs, so a converged refresh pass no-ops the
+    // in-place preconditioner exactly like any other terminal pass.
+    double final_f_norm_rz = 0.0;
+    double final_f_norm_l = 0.0;
+    double final_f_norm1 = 0.0;
     ControlStatus status;
 };
 

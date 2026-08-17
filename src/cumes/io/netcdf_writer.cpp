@@ -251,7 +251,10 @@ class NetcdfV0Writer final : public Writer {
             }
         }
 #undef NC_CHECK
-        const std::string err = io_detail::renamePublish(tmp, spec.path);
+        // Durable publication (completion-plan follow-up §3): the library
+        // owns the descriptor, so publishLibraryFile reopens the completed
+        // temp, checks fsync + close, then renames + directory-fsyncs.
+        const std::string err = io_detail::publishLibraryFile(tmp, spec.path);
         if (!err.empty()) return Status("NetCDF publish: " + err);
         return Status();
     }
@@ -498,7 +501,10 @@ class NetcdfV1Writer final : public Writer {
             }
         }
 #undef NC_CHECK
-        const std::string err = io_detail::renamePublish(tmp, spec.path);
+        // Durable publication (completion-plan follow-up §3): the library
+        // owns the descriptor, so publishLibraryFile reopens the completed
+        // temp, checks fsync + close, then renames + directory-fsyncs.
+        const std::string err = io_detail::publishLibraryFile(tmp, spec.path);
         if (!err.empty()) return Status("NetCDF publish: " + err);
         return Status();
     }
@@ -574,6 +580,10 @@ class NetcdfV1Reader final : public Reader {
                     return false;
                 }
                 out.resize(len);
+                // Zero-length attributes (e.g. an empty compile_flags) are
+                // legal; skip the read instead of forming &out[0] on an
+                // empty string (completion-plan follow-up §2.2).
+                if (len == 0) return true;
                 return nc_get_att_text(ncid, NC_GLOBAL, name, &out[0]) ==
                        NC_NOERR;
             };
@@ -608,28 +618,60 @@ class NetcdfV1Reader final : public Reader {
             std::vector<double> st_fsqr(nstages), st_fsqz(nstages),
                 st_fsql(nstages);
             std::vector<int> rst_iter(nrestarts);
-            auto getIntArr = [&](const char* name, int* out) -> bool {
-                int vid = -1;
-                return nc_inq_varid(ncid, name, &vid) == NC_NOERR &&
-                       nc_get_var_int(ncid, vid, out) == NC_NOERR;
+            // Extent-checked reads (completion-plan follow-up §2.2): a
+            // variable must exist AND its single dimension must be exactly
+            // `expect` long before its values are read into the host vector —
+            // nc_get_var_* reads the FULL declared extent, so an unchecked
+            // read of an oversized var would overflow the vector.
+            auto getIntArr = [&](const char* name, std::vector<int>& out,
+                                 size_t expect) -> bool {
+                int vid = -1, dimid = -1;
+                if (nc_inq_varid(ncid, name, &vid) != NC_NOERR) return false;
+                size_t len = 0;
+                if (nc_inq_vardimid(ncid, vid, &dimid) != NC_NOERR) return false;
+                if (nc_inq_dimlen(ncid, dimid, &len) != NC_NOERR) return false;
+                if (len != expect) return false;
+                out.resize(expect);
+                return nc_get_var_int(ncid, vid, out.data()) == NC_NOERR;
             };
-            auto getDblArr = [&](const char* name, double* out) -> bool {
-                int vid = -1;
-                return nc_inq_varid(ncid, name, &vid) == NC_NOERR &&
-                       nc_get_var_double(ncid, vid, out) == NC_NOERR;
+            auto getDblArr = [&](const char* name, std::vector<double>& out,
+                                 size_t expect) -> bool {
+                int vid = -1, dimid = -1;
+                if (nc_inq_varid(ncid, name, &vid) != NC_NOERR) return false;
+                size_t len = 0;
+                if (nc_inq_vardimid(ncid, vid, &dimid) != NC_NOERR) return false;
+                if (nc_inq_dimlen(ncid, dimid, &len) != NC_NOERR) return false;
+                if (len != expect) return false;
+                out.resize(expect);
+                return nc_get_var_double(ncid, vid, out.data()) == NC_NOERR;
             };
-            if (!getIntArr("stage_ns", stage_ns.data()) ||
-                !getIntArr("stage_iterations", stage_iter.data()) ||
-                !getIntArr("stage_converged", stage_conv.data()) ||
-                !getIntArr("restart_stage_offset", rst_off.data()) ||
-                !getDblArr("stage_fsqr", st_fsqr.data()) ||
-                !getDblArr("stage_fsqz", st_fsqz.data()) ||
-                !getDblArr("stage_fsql", st_fsql.data())) {
+            if (!getIntArr("stage_ns", stage_ns, nstages) ||
+                !getIntArr("stage_iterations", stage_iter, nstages) ||
+                !getIntArr("stage_converged", stage_conv, nstages) ||
+                !getIntArr("restart_stage_offset", rst_off, nstages) ||
+                !getDblArr("stage_fsqr", st_fsqr, nstages) ||
+                !getDblArr("stage_fsqz", st_fsqz, nstages) ||
+                !getDblArr("stage_fsql", st_fsql, nstages)) {
                 return fail("stage history read failed");
             }
-            if (nrestarts > 0 &&
-                !getIntArr("restart_iteration", rst_iter.data())) {
-                return fail("restart history read failed");
+            // restart_iteration must exist whenever nrestarts > 0, and its
+            // extent must agree with nrestarts whenever it exists.
+            {
+                int vid = -1;
+                if (nc_inq_varid(ncid, "restart_iteration", &vid) == NC_NOERR) {
+                    if (!getIntArr("restart_iteration", rst_iter, nrestarts)) {
+                        return fail("restart history read failed");
+                    }
+                } else if (nrestarts > 0) {
+                    return fail("restart history read failed");
+                }
+            }
+            {
+                const std::string off_err =
+                    validateRestartOffsets(rst_off, nstages, nrestarts);
+                if (!off_err.empty()) {
+                    return fail("invalid restart offsets: " + off_err);
+                }
             }
             for (size_t g = 0; g < nstages; ++g) {
                 StageReport st;

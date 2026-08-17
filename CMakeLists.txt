@@ -39,17 +39,22 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 # precise double math. The policy and its effective flags are recorded in the
 # build provenance of every v1 output (CUMES_PRECISION_POLICY_NAME /
 # CUMES_PRECISION_FLAGS compile definitions).
-set(CUMES_FAST_MATH_FLAGS "")
-set(CUMES_DEVICE_CHECK_FLAGS "")
+# The flag sets are LISTS (one argv token per element): target_compile_options
+# passes each element separately, unlike the old global CMAKE_CUDA_FLAGS string
+# which CMake split on whitespace.
+set(CUMES_FAST_MATH_FLAGS)
+set(CUMES_DEVICE_CHECK_FLAGS)
 if(CUMES_PRECISION_POLICY STREQUAL "fast-double")
   set(CUMES_FAST_MATH_FLAGS "--use_fast_math")
 elseif(CUMES_PRECISION_POLICY STREQUAL "mixed-float")
   set(CUMES_USE_FLOAT ON CACHE BOOL "implied by CUMES_PRECISION_POLICY=mixed-float" FORCE)
 elseif(CUMES_PRECISION_POLICY STREQUAL "debug-double")
-  set(CUMES_DEVICE_CHECK_FLAGS "-G -lineinfo")
+  set(CUMES_DEVICE_CHECK_FLAGS "-G" "-lineinfo")
 elseif(NOT CUMES_PRECISION_POLICY STREQUAL "verify-double")
   message(FATAL_ERROR "unknown CUMES_PRECISION_POLICY '${CUMES_PRECISION_POLICY}' (expected verify-double|fast-double|mixed-float|debug-double)")
 endif()
+string(JOIN " " CUMES_PRECISION_FLAGS_STR ${CUMES_FAST_MATH_FLAGS}
+                                  ${CUMES_DEVICE_CHECK_FLAGS})
 # A policy/path disagreement is a configure error, not a silent rebuild.
 if(CUMES_PRECISION_POLICY STREQUAL "mixed-float" AND NOT CUMES_USE_FLOAT)
   message(FATAL_ERROR "CUMES_PRECISION_POLICY=mixed-float requires CUMES_USE_FLOAT=ON")
@@ -57,8 +62,31 @@ endif()
 if(CUMES_USE_FLOAT AND NOT CUMES_PRECISION_POLICY STREQUAL "mixed-float")
   message(FATAL_ERROR "CUMES_USE_FLOAT=ON requires CUMES_PRECISION_POLICY=mixed-float")
 endif()
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 ${CUMES_FAST_MATH_FLAGS} ${CUMES_DEVICE_CHECK_FLAGS}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
+
+# Policy flags are TARGET-SCOPED (completion-plan follow-up §3.4): no global
+# CMAKE_CUDA_FLAGS / CMAKE_CXX_FLAGS appends. Only the solver targets (the
+# CUDA operator libraries, the CLI, and the two real-DAG benchmarks) receive
+# the named policy's device flags; the parser, config, I/O, test, and adapter
+# targets get neither. Optimization levels come from CMAKE_BUILD_TYPE
+# (Release = -O3), which also removes the sanitizer configuration's -O2/-O3
+# redefinition warning.
+function(cumes_apply_policy_flags target)
+  # DELIBERATELY no host tuning here: the frozen Class A baseline never
+  # passed CMAKE_CXX_FLAGS into nvcc's host pass (CMake does not forward it),
+  # so the solver TUs' host code must keep compiling WITHOUT -march=native.
+  # Adding it enables FMA contraction in the controller host math and
+  # diverges the trajectory bitwise (measured on the Solovev baseline).
+  target_compile_options(${target} PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:${CUMES_FAST_MATH_FLAGS} ${CUMES_DEVICE_CHECK_FLAGS}>)
+endfunction()
+
+# Host tuning for the production HOST-only libraries (previously the global
+# CMAKE_CXX_FLAGS -march=native). Applied explicitly — never through
+# cumes_add_host_library — so the ASan twins and tests stay free of it.
+function(cumes_apply_host_tuning target)
+  target_compile_options(${target} PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-march=native>)
+endfunction()
 
 # ---- device modules --------------------------------------------------------
 # Eight templated operator modules, each split into a *_double.cu and a
@@ -134,16 +162,19 @@ endfunction()
 # 2.5) and reaches consumers through the PUBLIC interface.
 cumes_add_host_library(cumes_json FALSE ${CUMES_JSON_SOURCES})
 target_compile_features(cumes_json PUBLIC cxx_std_20)
+cumes_apply_host_tuning(cumes_json)
 
 # ---- Phase 2: validated host model (namespace cumes) -----------------------
 # Core host model: result/status, checked arithmetic, grid shape, mode table.
 # Header-mostly; the two non-trivial TU implementations live in src/cumes/core.
 cumes_add_host_library(cumes_core FALSE ${CUMES_CORE_SOURCES})
+cumes_apply_host_tuning(cumes_core)
 
 # Config model + JSON reader: dynamic ProblemSpec -> ValidatedProblem, the
 # legacy InputParams bridge, and the normalization emitter. Host-only C++.
 cumes_add_host_library(cumes_config_json FALSE ${CUMES_CONFIG_JSON_SOURCES})
 target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
+cumes_apply_host_tuning(cumes_config_json)
 
 # Versioned + legacy host I/O: output spec, run report, snapshot, binary v0
 # (byte-exact) and v1 writers/readers, and the versioned checkpoint + legacy
@@ -151,6 +182,7 @@ target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
 # deferred to Phase 3.
 cumes_add_host_library(cumes_io_host FALSE ${CUMES_IO_HOST_SOURCES})
 target_link_libraries(cumes_io_host PUBLIC cumes_core)
+cumes_apply_host_tuning(cumes_io_host)
 
 # Output writers: binary dispatcher + optional NetCDF/HDF5 backends (host-only
 # C++, using only the CUDA runtime API for D2H copies — no device code).
@@ -163,6 +195,7 @@ add_library(cumes_io STATIC src/output.cpp src/cumes/io/writer_dispatch.cpp)
 target_include_directories(cumes_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_io PUBLIC CUDA::cudart CUDA::cufft cumes_io_host)
 cumes_enable_warnings(cumes_io)
+cumes_apply_host_tuning(cumes_io)
 cumes_link_output_backends(cumes_io)
 
 # The CUMES_HAVE_NETCDF/HDF5 availability defines are confined to the adapter
@@ -191,6 +224,7 @@ add_library(cumes_cuda_double STATIC ${CUMES_CUDA_DOUBLE_SOURCES})
 target_include_directories(cumes_cuda_double PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_double PUBLIC CUDA::cufft cumes_cuda_runtime)
 cumes_enable_warnings(cumes_cuda_double)
+cumes_apply_policy_flags(cumes_cuda_double)
 if(CUMES_ENABLE_VERIFY_DUMP)
   target_compile_definitions(cumes_cuda_double PRIVATE DUMP_CUMES_VERIFY)
 endif()
@@ -199,6 +233,7 @@ add_library(cumes_cuda_float STATIC ${CUMES_CUDA_FLOAT_SOURCES})
 target_include_directories(cumes_cuda_float PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_float PUBLIC CUDA::cufft cumes_cuda_runtime)
 cumes_enable_warnings(cumes_cuda_float)
+cumes_apply_policy_flags(cumes_cuda_float)
 if(CUMES_ENABLE_VERIFY_DUMP)
   target_compile_definitions(cumes_cuda_float PRIVATE DUMP_CUMES_VERIFY)
 endif()
@@ -218,6 +253,7 @@ target_include_directories(cuMES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # over the weak null stubs in legacy_binary_v0.cpp (completion plan step 2.5).
 target_link_libraries(cuMES PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
 cumes_enable_warnings(cuMES)
+cumes_apply_policy_flags(cuMES)
 if(CUMES_USE_FLOAT)
   target_compile_definitions(cuMES PRIVATE CUMES_USE_FLOAT)
 endif()
@@ -248,11 +284,11 @@ target_compile_definitions(cuMES PRIVATE
   CUMES_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 
 # Precision-policy provenance (completion plan step 3.1): the named policy and
-# its effective flags travel with the binary into every v1 output.
+# its effective flags (space-joined) travel with the binary into every v1 output.
 function(cumes_add_precision_provenance target)
   target_compile_definitions(${target} PRIVATE
     CUMES_PRECISION_POLICY_NAME="${CUMES_PRECISION_POLICY}"
-    CUMES_PRECISION_FLAGS="${CUMES_FAST_MATH_FLAGS} ${CUMES_DEVICE_CHECK_FLAGS}")
+    CUMES_PRECISION_FLAGS="${CUMES_PRECISION_FLAGS_STR}")
 endfunction()
 cumes_add_precision_provenance(cuMES)
 
@@ -308,6 +344,15 @@ target_link_libraries(test_io_golden PRIVATE cumes_test_support cumes_config_jso
 cumes_apply_backend_test_defines(test_io_golden)
 cumes_enable_warnings(test_io_golden)
 
+# Corrupted v1 restart-metadata fixtures (completion-plan follow-up §2.2):
+# host-only so the ASan/UBSan twin runs the exact source under the host
+# sanitizers.
+add_executable(test_io_restart_offsets tests/test_io_restart_offsets.cpp)
+target_include_directories(test_io_restart_offsets PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_io_restart_offsets PRIVATE cumes_io_host cumes_io)
+cumes_apply_backend_test_defines(test_io_restart_offsets)
+cumes_enable_warnings(test_io_restart_offsets)
+
 add_executable(test_runtime tests/test_runtime.cu)
 target_include_directories(test_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_runtime PRIVATE cumes_test_support cumes_cuda_runtime)
@@ -340,6 +385,7 @@ cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_checkpoint       unit;io)
 cumes_add_test(test_io_golden        unit;io)
+cumes_add_test(test_io_restart_offsets unit;io)
 cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
 
@@ -361,6 +407,18 @@ if(CUMES_HOST_SANITIZERS)
 
   cumes_add_host_library(cumes_io_host_asan TRUE ${CUMES_IO_HOST_SOURCES})
   target_link_libraries(cumes_io_host_asan PUBLIC cumes_core_asan)
+
+  # Reader-only ASan twin of the adapter dispatch + optional backends (the
+  # device-staging output.cpp is excluded; the corrupted-fixture test needs
+  # only the host readers — completion-plan follow-up §2.2).
+  cumes_add_host_library(cumes_io_readers_asan TRUE
+                         src/cumes/io/writer_dispatch.cpp)
+  target_link_libraries(cumes_io_readers_asan PUBLIC cumes_io_host_asan)
+  cumes_link_output_backends(cumes_io_readers_asan)
+  cumes_add_host_asan_test(asan_test_io_restart_offsets
+                           tests/test_io_restart_offsets.cpp
+                           cumes_io_readers_asan io)
+  cumes_apply_backend_test_defines(asan_test_io_restart_offsets)
 
   cumes_add_host_asan_test(asan_test_host_config tests/test_host_config.cpp
                            cumes_config_json_asan config)
@@ -430,6 +488,7 @@ add_executable(cumes_benchmark_fixed_iteration benchmarks/fixed_iteration.cu)
 target_include_directories(cumes_benchmark_fixed_iteration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_benchmark_fixed_iteration PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
 cumes_enable_warnings(cumes_benchmark_fixed_iteration)
+cumes_apply_policy_flags(cumes_benchmark_fixed_iteration)
 cumes_add_precision_provenance(cumes_benchmark_fixed_iteration)
 
 add_executable(cumes_benchmark_graph_overhead benchmarks/graph_overhead.cu)
@@ -446,6 +505,7 @@ add_executable(cumes_benchmark_graph_realpass benchmarks/graph_realpass.cu)
 target_include_directories(cumes_benchmark_graph_realpass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_benchmark_graph_realpass PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
 cumes_enable_warnings(cumes_benchmark_graph_realpass)
+cumes_apply_policy_flags(cumes_benchmark_graph_realpass)
 cumes_add_precision_provenance(cumes_benchmark_graph_realpass)
 
 # CLI policy gate (completion plan step 2.1): strict-vs-compatibility schema
@@ -457,6 +517,20 @@ add_test(NAME cli_policy
                  $<TARGET_FILE:cuMES>)
 set_tests_properties(cli_policy PROPERTIES
     LABELS "unit;cli" TIMEOUT 300
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# End-to-end durable-publication contract (completion-plan follow-up §3): a
+# converged run whose output cannot be published must exit nonzero and must
+# never damage an existing destination. The float build skips the converged
+# cases (its double-tuned ftols are unreachable; the protocol is
+# precision-independent and covered by test_output_failure at both
+# precisions).
+add_test(NAME output_publication
+         COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/output_publication_test.sh
+                 $<TARGET_FILE:cuMES>
+                 ${CMAKE_CURRENT_SOURCE_DIR}/inputs/solovev.json)
+set_tests_properties(output_publication PROPERTIES
+    LABELS "unit;output" TIMEOUT 600
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Smoke gate: runs two passes and exits 0 on success (verifies the harness

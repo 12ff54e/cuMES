@@ -54,10 +54,13 @@ class EquilibriumOperator {
   // (control_device()). The caller transfers it and fences after this returns.
   // f_norm_rz/f_norm_l are the host's cached force-norm factors (from the last
   // refresh pass): the device terminal predicate needs them to classify the
-  // invariant residual against ftol BEFORE in-place preconditioning. The
-  // defaults keep the benchmark harnesses (which drive enqueue directly)
-  // compilable; a refresh pass never classifies convergence on device, so the
-  // stale-factor window is structurally excluded from the decision.
+  // invariant residual against ftol BEFORE in-place preconditioning on
+  // non-refresh passes. On refresh passes the DAG finalizes the factors ON
+  // DEVICE from this pass's force norms (final_f_norm_* in the record) before
+  // the predicate, which then classifies convergence from those — the host
+  // consumes the same record fields at the fence (completion-plan follow-up
+  // §2.3). The defaults keep the benchmark harnesses (which drive enqueue
+  // directly) compilable.
   void enqueue(int iter, int iter2, const EvaluationSchedule& schedule,
                cudaStream_t stream, double f_norm_rz = 1.0,
                double f_norm_l = 1.0);

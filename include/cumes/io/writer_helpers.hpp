@@ -23,9 +23,11 @@
 #endif
 
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <optional>
 #include <string>
@@ -47,30 +49,75 @@ inline std::string tempPathFor(const std::string& path) {
            std::to_string(seq);
 }
 
-// fsync the directory containing `path` so the rename itself is durable
-// (best-effort: only where the platform exposes a directory fd).
-inline void fsyncDirectoryOf(const std::string& path) {
+// fsync the directory containing `path` so the rename itself is durable.
+// CHECKED (completion-plan follow-up §3): the old helper ignored both the
+// fsync and the close result; a failed directory fsync now propagates to the
+// writer and from there to main.
+inline std::string fsyncDirectoryOf(const std::string& path) {
+    const std::size_t slash = path.find_last_of('/');
     const std::string dir =
-        path.substr(0, path.find_last_of('/') == std::string::npos
-                          ? 0
-                          : path.find_last_of('/') + 1);
-    const int fd = open(dir.empty() ? "." : dir.c_str(), O_RDONLY);
-    if (fd >= 0) {
-        fsync(fd);
-        close(fd);
+        (slash == std::string::npos) ? std::string(".") : path.substr(0, slash);
+    const int fd = open(dir.c_str(), O_RDONLY);
+    if (fd < 0) {
+        return "cannot open directory for fsync";
     }
+    const bool fsync_failed = fsync(fd) != 0;
+    const int fsync_errno_saved = errno;
+    const bool close_failed = close(fd) != 0;
+    const int close_errno_saved = errno;
+    if (fsync_failed) {
+        return "directory fsync failed: " + std::string(strerror(fsync_errno_saved));
+    }
+    if (close_failed) {
+        return "directory close failed: " + std::string(strerror(close_errno_saved));
+    }
+    return "";
 }
 
 // Rename `tmp` over `path`, then fsync the containing directory (durable
-// publication protocol — completion plan step 2.4). On failure removes the
-// temp and returns a reason (the target `path` is left untouched either way).
+// publication protocol — completion plan step 2.4). On a rename failure
+// removes the temp and returns a reason (the target `path` is left
+// untouched); a directory-fsync failure propagates as an error so the caller
+// can report the unproven durability to main.
 inline std::string renamePublish(const std::string& tmp, const std::string& path) {
     if (rename(tmp.c_str(), path.c_str()) != 0) {
         remove(tmp.c_str());
         return "rename failed";
     }
-    fsyncDirectoryOf(path);
-    return "";
+    return fsyncDirectoryOf(path);
+}
+
+// Publish a temp file written and closed through a LIBRARY-managed handle
+// (NetCDF/HDF5 own their descriptors, so the FILE* path of publishAtomic
+// cannot fsync them — completion-plan follow-up §3):
+//   1. reopen the completed same-directory temp file read-only;
+//   2. check fsync on it;
+//   3. check close;
+//   4. atomically rename it over the destination;
+//   5. open + fsync + checked-close the containing directory.
+// Every pre-rename failure removes the temp and leaves the destination
+// untouched.
+inline std::string publishLibraryFile(const std::string& tmp,
+                                      const std::string& path) {
+    const int fd = open(tmp.c_str(), O_RDONLY);
+    if (fd < 0) {
+        remove(tmp.c_str());
+        return "cannot reopen temp for fsync";
+    }
+    if (fsync(fd) != 0) {
+        const std::string reason =
+            "fsync failed: " + std::string(strerror(errno));
+        close(fd);
+        remove(tmp.c_str());
+        return reason;
+    }
+    if (close(fd) != 0) {
+        const std::string reason =
+            "close failed: " + std::string(strerror(errno));
+        remove(tmp.c_str());
+        return reason;
+    }
+    return renamePublish(tmp, path);
 }
 
 // Flush + fsync + close `fp`, then atomically rename `tmp` over `path`. On any

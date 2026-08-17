@@ -533,7 +533,12 @@ __global__ void jacobianStatsKernel(
             // vmax tracks max |√g| in EVERY branch: a sign-flipped element
             // (ov = -a < vmin) still contributes its magnitude |g| = a to the
             // BAD-JACOBIAN diagnostic (review finding 2.2).
-            if (!seen) { vmin = vmax = a; argmin = i + s * nHalf; seen = true; }
+            // vmin is initialized from the ORIENTED value (completion-plan
+            // follow-up §2.1): a lane whose FIRST sample is sign-flipped must
+            // seed the minimum with ov = -a, not a — initializing from a hid
+            // the flip whenever later samples in the lane were positive, and
+            // the finalize kernel then reported a VALID pass.
+            if (!seen) { vmin = ov; vmax = a; argmin = i + s * nHalf; seen = true; }
             else if (ov < vmin) { vmin = ov; argmin = i + s * nHalf; vmax = fmax(vmax, a); }
             else { vmax = fmax(vmax, a); }
         }
