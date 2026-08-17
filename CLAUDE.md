@@ -25,8 +25,9 @@ cmake --build build -j
 # REQUIRED in strict mode — the default cumes_state.bin is compatibility-only)
 ./build/cuMES inputs/solovev.json out.bin        # positional: <input> <output>
 
-# run tests (53 registered via CTest, incl. compute-sanitizer memcheck AND
-# initcheck variants)
+# run tests (the full CTest suite, incl. compute-sanitizer memcheck AND
+# initcheck variants; the count varies with the sanitizer/backend
+# configuration, so no fixed number is documented)
 ctest --test-dir build --output-on-failure
 
 # full sanitizer matrix (dedicated preset): memcheck/initcheck/racecheck/
@@ -349,7 +350,19 @@ d602d2c runtime/performance policy, and the release gate (warnings-as-errors,
 initcheck, CI, event-DAG tests, docs). Every step was verified **Class A
 byte-identical** against the frozen baselines (including the
 `--use_fast_math` removal: precise double math IS the frozen codegen), so no
-re-freeze occurred anywhere. The frozen baselines are:**
+re-freeze occurred anywhere. The post-implementation acceptance review's
+loose ends (`docs/post-overhaul-follow-up.md`) are also closed: the
+oriented-Jacobian first-sample fix + production regression, validated v1
+restart offsets + corrupted fixtures, the refresh-pass terminal contract
+closed via device-side force-norm finalization (`forceNormFinalizeKernel` —
+convergence is no longer structurally disabled on refresh passes), the
+repaired `scripts/ci_gpu.sh` oracle, precision-aware CLI fixtures, the
+complete optional-backend preset/CI matrix, target-scoped precision flags
+(deliberately NO `-march=native` on the CUDA TUs' host pass — the frozen
+codegen never had it and adding it diverges the trajectory), and the checked
+library-publication chain (`publishLibraryFile`) with fault-injection tests.
+Both frozen trajectories were re-verified Class A byte-identical against the
+`dc0d0c4` baseline after every change. The frozen baselines are:**
 
 - Solovev: 251 → 199 → 456 effective iters, final FSQR 9.583e-17 — the
   final stage matches vmecpp's playground reference exactly (456, 9.99e-17).

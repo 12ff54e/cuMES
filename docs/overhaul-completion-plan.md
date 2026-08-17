@@ -1,5 +1,29 @@
 # cuMES overhaul completion plan
 
+> **POST-IMPLEMENTATION REVIEW (2026-08-17).** The four implementation
+> commits below are landed, but a latest-HEAD acceptance review found a small
+> set of correctness, release-gate, I/O, build-matrix, and documentation
+> issues. Treat the overhaul as pending follow-up rather than finally accepted.
+> The bounded work and its verification criteria are recorded in
+> [`post-overhaul-follow-up.md`](post-overhaul-follow-up.md). Modern-GPU
+> performance validation is explicitly postponed until suitable hardware is
+> available; it is not part of the immediately actionable closure work.
+>
+> **FOLLOW-UP CLOSED (2026-08-17).** Every actionable item of
+> `post-overhaul-follow-up.md` (§§2–5) is now implemented on top of the four
+> commits: the oriented-Jacobian first-sample fix with a production-path
+> regression, validated v1 restart offsets with corrupted fixtures, the
+> refresh-pass terminal contract closed via device-side force-norm
+> finalization, the repaired `scripts/ci_gpu.sh` oracle and precision-aware
+> CLI fixtures, the complete optional-backend preset/CI matrix, target-scoped
+> precision flags, the checked library-publication chain with fault-injection
+> tests, and the docs/repository-hygiene reconciliation. Both frozen
+> trajectories were re-verified **Class A byte-identical** against the frozen
+> `dc0d0c4` baseline (`scripts/compare_bitwise.py`, full dump manifests). Only
+> the hardware-dependent modern-GPU performance validation remains, and it
+> stays explicitly POSTPONED — implementation commits landed and acceptance
+> gates passed are distinct claims; the modern-GPU gate is neither.
+
 > **EXECUTED (2026-08-17).** All four steps are landed as separately
 > reviewable commits on the `overhaul` branch:
 >
@@ -183,6 +207,9 @@ the operator DAG.
   time, median, p95, 95% confidence interval, clocks, and noise floor on both a
   Pascal GPU and a modern GPU. The other primary workload's upper regression
   bound remains at or below 2% unless separately justified.
+  **Status: the modern-GPU half is POSTPONED** (no second GPU available); the
+  TITAN Xp numbers stay the measured baseline and no cross-architecture claim
+  is made (see `performance.md` §4).
 
 ## Step 4 - Establish the release gate and close the documents
 

@@ -114,6 +114,18 @@ memory benefit justifies it. Requirements:
 - the old backend is retained until the new one passes both numerical and
   performance gates.
 
+**Modern-GPU validation status: POSTPONED (2026-08-17).** No second, modern
+CUDA GPU is attached to this machine, so the "one modern architecture" half of
+this policy has not been run — it is neither passed nor failed. Until suitable
+hardware is available, the TITAN Xp measurements above remain the measured
+baseline and every modern-GPU conclusion is explicitly unknown/deferred
+(`docs/post-overhaul-follow-up.md` §6). The deferred procedure is fixed: same
+commit, precision policy, toolkit provenance, warm-up, and measurement method
+as the TITAN Xp baseline; record GPU model, compute capability, driver/toolkit,
+clocks, power/thermal state, arena/cuFFT/graph memory, setup/output time,
+median, p95, measured noise floor, and a 95% confidence interval; re-run the
+complete numerical trajectory/state gate afterwards.
+
 Equivalence class precedes any timing claim: Class A requires bitwise equality;
 Class B requires per-operator ULP bounds and identical controller decisions;
 Class C requires independent CPU/VMEC++ agreement and a written ADR.

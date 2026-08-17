@@ -5,24 +5,72 @@ extracted verbatim (sections 1–7 correspond to §10.1–§10.7), plus the curr
 inventory of what is actually wired into the build, and the change-review
 checklist (§13 of the blueprint) as the appendix.
 
-## Current state (2026-08-17, post-overhaul)
+## Current state (2026-08-17, post-overhaul follow-up closed)
 
 The overhaul completion plan (`docs/overhaul-completion-plan.md`, steps 1–4)
 is landed in four commits (see `docs/phase-11-closeout-handover.md`):
 numerical safety predicates (48713b2), config/I-O contracts (4363e71),
-runtime/performance policy (d602d2c), and this release gate.
+runtime/performance policy (d602d2c), and this release gate. The
+post-implementation acceptance review then found a bounded set of loose ends
+(`docs/post-overhaul-follow-up.md`); those are closed on top of the four
+commits:
+
+- the oriented-Jacobian reduction seeds the lane minimum from the ORIENTED
+  value (`vmin = signJ·√g`, not `|√g|`), with a production-path
+  first-sample sign-reversal regression (`test_safety_predicates`);
+- the v1 NetCDF/HDF5 readers validate restart offsets and array extents
+  before indexing (`validateRestartOffsets` in `run_report.hpp`; corrupted
+  negative/descending/oversized/extent-mismatch fixtures in
+  `test_io_restart_offsets`, host-only so the ASan twin runs the same
+  source);
+- the refresh-pass terminal contract is CLOSED rather than narrowed: the
+  force-norm factors are finalized ON DEVICE before the terminal predicate
+  (`forceNormFinalizeKernel`), so every converged/nonfinite pass — refresh
+  or not — no-ops preconditioning; the host consumes the same record
+  fields, keeping device and host classification bit-identical;
+- `scripts/ci_gpu.sh` asserts the documented stage-cap contract (exit 1,
+  one-based effective-iteration count `completed 21/1000` for 20 capped
+  passes, finite positive residuals, no output artifacts);
+- `tests/cli_policy_test.sh` fixtures use `ftol 1e-6` (exactly the float
+  floor), so the CLI policy gate passes in every precision;
+- the optional-backend matrix is complete: `netcdf-only` and `hdf5-only`
+  presets join `nobackend` (and the both-backend verify default), each with
+  CI matrix entries;
+- precision/device-check flags are target-scoped (no global
+  `CMAKE_CUDA_FLAGS`/`CMAKE_CXX_FLAGS` appends; the sanitizer
+  configuration's optimization redefinition warning is gone). The CUDA TUs'
+  host pass deliberately receives NO `-march=native`: the frozen Class A
+  baseline never had it there, and adding it enables FMA contraction that
+  diverges the trajectory bitwise (measured);
+- NetCDF/HDF5 publication now runs the full checked chain
+  (`publishLibraryFile`: reopen temp → checked fsync → checked close →
+  atomic rename → checked directory fsync), with fault-injection tests
+  around the reopen/fsync/write-flush/rename/directory-fsync boundaries
+  plus an end-to-end `output_publication` gate on the real binary;
+- `test_host_config` writes its scratch into a per-test temp directory
+  (RAII), and the tracked `test_host_config_scratch_*.json` debris is
+  removed.
+
+The modern-GPU performance gate remains POSTPONED (no second GPU is
+available): the TITAN Xp numbers stay the measured baseline and no
+cross-architecture claim is made (see `docs/performance.md`).
 
 - **Verify gate (default `build/`, `verify-double` precise math,
-  warnings-as-errors)**: 53 CTest entries — unit tests incl. the
+  warnings-as-errors)**: the full CTest suite — unit tests incl. the
   manufactured safety-predicate and event-DAG suites, compute-sanitizer
   memcheck AND initcheck variants of the kernel-driving tests, the CLI
-  strict-vs-compatibility policy gate, and the benchmark smoke. The frozen
+  strict-vs-compatibility policy gate, the end-to-end publication gate,
+  and the benchmark smoke. (No test-count is embedded here: it changes
+  whenever a sanitizer variant or backend fixture is added.) The frozen
   trajectory oracle: Solovev `251→199→456` FSQR 9.583e-17 and W7-X
   `1877→1617→2011` FSQR 9.778e-13 must reproduce **bit-identically**
-  (`scripts/compare_bitwise.py` over the full dump manifests; steps 1–3
-  were each verified Class A byte-identical, including the removal of
-  `--use_fast_math` — precise double math is the verification
-  configuration).
+  (`scripts/compare_bitwise.py` over the full dump manifests). The
+  follow-up closure above was re-verified Class A byte-identical against
+  the frozen `dc0d0c4` baseline (both configs: trajectory record, final
+  state, step-0 snapshots, and full dump manifests). Note: the blueprint's
+  pre-overhaul `FSQZ=4.273e-18` is stale — the axisymmetric backend's
+  algorithm update moved the frozen value to `4.274e-18`, which is what
+  the baseline itself records.
 - **Sanitizer preset (`build-sanitize/`)**: the verify gate plus
   racecheck/synccheck variants of the kernel tests (RUN_SERIAL; racecheck
   exhausts the GPU under parallel runs) and ASan+UBSan twins of the
@@ -33,14 +81,16 @@ runtime/performance policy (d602d2c), and this release gate.
   `ftol_array` entries must be >= 1e-6), `debug-double` (precise + `-G`).
   The policy and its flags are recorded in every v1 output.
 - **Backend matrix**: verify (NetCDF+HDF5), netcdf-only, hdf5-only, and
-  nobackend builds each run their full suites; the v0 NetCDF writer is
+  nobackend builds each run their suites — all four configurations exist
+  as presets and as hosted CI matrix entries; the v0 NetCDF writer is
   byte-identical to the frozen schema dumps, the HDF5 v0 adapter is
   layout-exact (libhdf5 embeds a per-second timestamp), and v1 containers
   round-trip the complete RunReport + restart metadata.
 - **CI**: `.github/workflows/ci.yml` — a hosted build/test matrix
-  (verify/nobackend/float + ASan/UBSan host tests) and a self-hosted GPU
-  job (`scripts/ci_gpu.sh`: full CTest incl. sanitizer variants, CLI
-  policy gate, benchmark smoke, frozen short-trajectory sanity run).
+  (verify/nobackend/netcdf-only/hdf5-only/float + ASan/UBSan host tests)
+  and a self-hosted GPU job (`scripts/ci_gpu.sh`: full CTest incl.
+  sanitizer variants, CLI policy gate, benchmark smoke, and the frozen
+  short-trajectory stage-cap contract).
 - **Event-DAG audit**: `test_event_dag` pins the scheduling contracts
   (pending-event query/elapsed-time semantics, delayed-kernel event
   ordering, stream-fault surfacing); an Nsight Systems/API-trace audit
@@ -105,16 +155,18 @@ Structured telemetry is compared directly. Do not parse human `printf` output to
 
 ## 5. Sanitizers and static checks
 
-**Status (2026-08-16): the memcheck matrix was extended.** The `sanitizer`
-preset now registers racecheck + synccheck variants of the kernel tests
-(`CUMES_ENABLE_EXTRA_SANITIZER_TOOLS`, RUN_SERIAL in CTest — racecheck
+**Status (2026-08-17): the memcheck matrix was extended and CI exists.**
+The `sanitizer` preset registers racecheck + synccheck variants of the kernel
+tests (`CUMES_ENABLE_EXTRA_SANITIZER_TOOLS`, RUN_SERIAL in CTest — racecheck
 instrumentation exhausts the GPU under parallel runs) and builds dedicated
 ASan+UBSan twins of the host-only libraries and their tests
 (`CUMES_HOST_SANITIZERS`; the ASan runtime must be first in each executable's
 library list, so the sanitized libs are `_asan` copies consumed only by
-`asan_test_*` executables — never propagated into CUDA targets). The
-event-DAG stress tests, Nsight audit, and formatting/static-analysis jobs
-remain unbuilt (no CI exists in this repository).
+`asan_test_*` executables — never propagated into CUDA targets). CI lives in
+`.github/workflows/ci.yml` (hosted build matrix incl. the optional-backend
+configurations + ASan/UBSan host tests; self-hosted GPU release gate), and
+`test_event_dag` pins the scheduling contracts. The Nsight Systems/API-trace
+audit and formatting/static-analysis jobs remain documented manual steps.
 
 CI jobs:
 
