@@ -212,8 +212,13 @@ __global__ void magneticFieldKernel(
     cumes::RadialProfileViews<T> radial,
     cumes::BaseGeometryHalfViews<T> half,
     cumes::MagneticFieldViews<T> field,
+    const cumes::ControlStatus* __restrict__ status,
     T lamscale, int ncurr, int ns, int nZnT)
 {
+    // Status guard (completion plan step 1.4): no field writes on an
+    // invalid-Jacobian pass (the per-element inv_gsqrt guards below remain
+    // the finite-buffer backstop on VALID passes).
+    if (status != nullptr && status->jacobian_valid == 0) return;
     // λ full-grid derivatives (the R/Z geometry is consumed by baseGeometryKernel)
     const T* lu_e = full.lu_e.data(); const T* lu_o = full.lu_o.data();
     const T* lv_e = full.lv_e.data(); const T* lv_o = full.lv_o.data();
@@ -307,6 +312,7 @@ __global__ void ncurr1FinalizeKernel(
     T* __restrict__ bsupu, const T* __restrict__ bsupv,
     const T* __restrict__ currH, const T* __restrict__ phipH,
     const T* __restrict__ presH, const T* __restrict__ sqrtSH,
+    const cumes::ControlStatus* __restrict__ status,
     int ns, int nZnT, int ntheta, int nzeta, T lamscale,
     T* __restrict__ bsubu, T* __restrict__ bsubv,
     T* __restrict__ totalPressure, T* __restrict__ chipH_out,
@@ -314,6 +320,9 @@ __global__ void ncurr1FinalizeKernel(
 {
     int jH = blockIdx.x;
     if (jH >= ns - 1) return;
+    // Status guard (completion plan step 1.4): the evolved iotaH/chipH cache
+    // and the field arrays are not written on an invalid-Jacobian pass.
+    if (status != nullptr && status->jacobian_valid == 0) return;
     int tid = threadIdx.x;
     extern __shared__ T s_buf[];   // [2][blockDim.x]
     T* s_jv = s_buf;             // blockDim.x
@@ -453,10 +462,14 @@ __global__ void computeNormPartialsKernel(
 template <typename T>
 __global__ void updateIotaChipFKernel(
     const T* __restrict__ iotaH, const T* __restrict__ chipH,
+    const cumes::ControlStatus* __restrict__ status,
     int ns, T* __restrict__ iotaF, T* __restrict__ chipF)
 {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j <= 0 || j >= ns) return;
+    // Status guard (completion plan step 1.4): the full-grid iotaF/chipF
+    // profile cache is not updated on an invalid-Jacobian pass.
+    if (status != nullptr && status->jacobian_valid == 0) return;
     // The LCFS row (j = ns-1) has no outside half-grid neighbor: the interior
     // average would read iotaH[ns-1]/chipH[ns-1], one element PAST the
     // (ns-1)-element half-grid arrays (an out-of-bounds device read, flagged
@@ -494,8 +507,8 @@ __global__ void updateIotaChipFKernel(
 template <typename T>
 __global__ void jacobianStatsKernel(
     const T* __restrict__ gsqrt, int nHalf, int stride, T signJ,
-    double* __restrict__ out)  // [4]: min signJ·√g, max |√g|, nonfinite count,
-                               // min-signJ·√g linear index (as double)
+    cumes::ControlRecord* __restrict__ rec)  // jacobian_min_oriented / jacobian_max_abs /
+                                            // jacobian_nonfinite_count / jacobian_min_index
 {
     // Reduction identities: min starts at +inf (NOT 0) and max at 0, and a
     // lane that saw no finite data contributes the identity via a `seen` flag
@@ -549,9 +562,9 @@ __global__ void jacobianStatsKernel(
     if (tid == 0) {
         // A fully-empty grid (no finite data anywhere) keeps the +inf identity;
         // the solver treats max <= 0 (or here inf) as invalid.
-        out[0] = s_seen[0] ? s_min[0] : kInf;
-        out[1] = s_max[0]; out[2] = s_bad[0];
-        out[3] = (double)s_arg[0];
+        rec->jacobian_min_oriented = s_seen[0] ? s_min[0] : kInf;
+        rec->jacobian_max_abs = s_max[0]; rec->jacobian_nonfinite_count = s_bad[0];
+        rec->jacobian_min_index = (double)s_arg[0];
     }
 }
 
@@ -573,11 +586,12 @@ void cumes::GeometryOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
 }
 
 template <typename T>
-void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p, double* d_stats,
+void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p,
+                                                cumes::ControlRecord* rec,
                                                 cudaStream_t stream) const {
     const int nHalf = (p.ns - 1) * p.nZnT;
     jacobianStatsKernel<T><<<1, 256, 0, stream>>>(d_gsqrt_, nHalf, 1,
-                                       T(p.kSignJacobian), d_stats);
+                                       T(p.kSignJacobian), rec);
     cumes::check_cuda(cudaGetLastError(), "jacobianStats");
 }
 
@@ -624,11 +638,12 @@ void cumes::MagneticFieldOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& 
                                               const cumes::RadialProfileViews<T>& rpv,
                                               const cumes::BaseGeometryHalfViews<T>& base,
                                               cumes::MagneticFieldViews<T> field,
+                                              const cumes::ControlStatus* status,
                                               cudaStream_t stream, bool update_iota_chi) const {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     magneticFieldKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), rpv, base, field,
+        geometryParityViews(rs, p), rpv, base, field, status,
         p.lamscale, p.ncurr, p.ns, p.nZnT);
     cumes::check_cuda(cudaGetLastError(), "magnetic field kernel");
 
@@ -638,7 +653,7 @@ void cumes::MagneticFieldOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& 
         ncurr1FinalizeKernel<T><<<fg, fb, shmem, stream>>>(
             base.guu.data(), base.guv.data(), base.gsqrt.data(), base.gvv.data(),
             field.bsupu.data(), field.bsupv.data(),
-            rpv.curr_H, rpv.phip_H, rpv.pres_H, rpv.sqrtS_H,
+            rpv.curr_H, rpv.phip_H, rpv.pres_H, rpv.sqrtS_H, status,
             p.ns, p.nZnT, p.ntheta, p.nzeta, p.lamscale,
             field.bsubu.data(), field.bsubv.data(), field.total_pressure.data(),
             rpv.chip_H, rpv.iota_H);
@@ -648,7 +663,7 @@ void cumes::MagneticFieldOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& 
     if (update_iota_chi) {
         dim3 ib(256), ig((p.ns + 255) / 256);
         updateIotaChipFKernel<T><<<ig, ib, 0, stream>>>(
-            rpv.iota_H, rpv.chip_H, p.ns, rpv.iota_F, rpv.chi_F);
+            rpv.iota_H, rpv.chip_H, status, p.ns, rpv.iota_F, rpv.chi_F);
         cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
     }
 }

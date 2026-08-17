@@ -43,6 +43,12 @@ cumes::ConstraintOperator<T>::ConstraintOperator(const DeviceParams<T>& p,
     };
     alloc(d_gConEff_, nFull, "constraint/gConEff");
     alloc(d_gCon_,    nFull, "constraint/gCon");
+    // Zero gConEff/gCon: the effective-constraint and bandpass kernels skip
+    // the axis row (no constraint on axis), so those bytes are never
+    // PRODUCED — zeroing keeps every full-grid read (the dump machinery,
+    // tests, initcheck) defined instead of uninitialized.
+    cumes::check_cuda(cudaMemset(d_gConEff_, 0, nF), "gConEff zero");
+    cumes::check_cuda(cudaMemset(d_gCon_, 0, nF), "gCon zero");
     alloc(d_rCon_,    nFull, "constraint/rCon");
     alloc(d_zCon_,    nFull, "constraint/zCon");
     alloc(d_rCon0_,   nFull, "constraint/rCon0");
@@ -116,12 +122,16 @@ __global__ void effectiveConstraintKernel(
     const T* __restrict__ zu_e,   const T* __restrict__ zu_o,
     const T* __restrict__ sqrtS_F,
     const T* __restrict__ rCon0,  const T* __restrict__ zCon0,
+    const cumes::ControlStatus* __restrict__ status,
     int ns, int nZnT,
     T* __restrict__ gConEff)
 {
     int jF = blockIdx.y;
     int k  = threadIdx.x + blockIdx.x * blockDim.x;
     if (jF >= ns || k >= nZnT) return;
+    // Status guard (completion plan step 1.4): no constraint-cache/scratch
+    // writes on an invalid-Jacobian pass.
+    if (status != nullptr && status->jacobian_valid == 0) return;
     int idx = k + jF * nZnT;
 
     // Skip magnetic axis (no poloidal angle)
@@ -151,12 +161,17 @@ template <typename T>
 __global__ void rzConIntoVolumeKernel(
     const T* __restrict__ rCon, const T* __restrict__ zCon,
     const T* __restrict__ sqrtS_F,
+    const cumes::ControlStatus* __restrict__ status,
     int ns, int nZnT,
     T* __restrict__ rCon0, T* __restrict__ zCon0)
 {
     int jF = blockIdx.y;
     int k  = threadIdx.x + blockIdx.x * blockDim.x;
     if (jF >= ns || k >= nZnT) return;
+    // Status guard (completion plan step 1.4): the rCon0/zCon0 reference
+    // cache is not reset on an invalid pass (the re-anchored next pass
+    // re-runs the reset).
+    if (status != nullptr && status->jacobian_valid == 0) return;
     if (jF == 0) return;  // axis: stays zero (no poloidal angle)
 
     int lcfs = (ns - 1) * nZnT + k;
@@ -181,6 +196,7 @@ __global__ void addConstraintKernel(
     const T* __restrict__ sqrtS_F,
     const T* __restrict__ ru_e, const T* __restrict__ ru_o,
     const T* __restrict__ zu_e, const T* __restrict__ zu_o,
+    const cumes::ControlStatus* __restrict__ status,
     int ns, int nZnT,
     T* __restrict__ brmn_e, T* __restrict__ brmn_o,
     T* __restrict__ bzmn_e, T* __restrict__ bzmn_o,
@@ -190,6 +206,9 @@ __global__ void addConstraintKernel(
     int jF = blockIdx.y;
     int k  = threadIdx.x + blockIdx.x * blockDim.x;
     if (jF >= ns || k >= nZnT) return;
+    // Status guard (completion plan step 1.4): the constraint-force scratch
+    // (and its brmn/bzmn += targets) is not written on an invalid pass.
+    if (status != nullptr && status->jacobian_valid == 0) return;
     int idx = k + jF * nZnT;
 
     if (jF == 0) return;  // no constraint on axis
@@ -233,12 +252,17 @@ __global__ void computeTconKernel(
     const T* __restrict__ zu_e, const T* __restrict__ zu_o,
     const T* __restrict__ sqrtS_F,
     const T* __restrict__ ard, const T* __restrict__ azd,
+    const cumes::ControlStatus* __restrict__ status,
     int ns, int nZnT, int ntheta, int nzeta, T delta_s,
     T tcon_multiplier,
     T* __restrict__ tcon)
 {
     int jF = blockIdx.x * blockDim.x + threadIdx.x;
-    if (jF >= ns || jF == 0) { if (jF == 0) tcon[0] = T(0.0); return; }
+    if (jF >= ns) return;
+    // Status guard (completion plan step 1.4): the tcon cache is not
+    // refreshed on an invalid-Jacobian pass.
+    if (status != nullptr && status->jacobian_valid == 0) return;
+    if (jF == 0) { tcon[0] = T(0.0); return; }
 
     // Surface average of the PHYSICAL derivatives
     // |∇R|² = ruFull², |∇Z|² = zuFull² with ruFull = ru_e + sqrt(s)*ru_o
@@ -279,7 +303,11 @@ __global__ void computeTconKernel(
 // vmecpp: tcon at the LCFS is halved ("maybe related to boundary only having
 // MHD force contributions from the inside"). One thread.
 template <typename T>
-__global__ void tconLcfsHalfKernel(T* __restrict__ tcon, int ns) {
+__global__ void tconLcfsHalfKernel(const cumes::ControlStatus* __restrict__ status,
+                                  T* __restrict__ tcon, int ns) {
+    // Status guard (completion plan step 1.4): tcon cache untouched when
+    // the Jacobian is invalid.
+    if (status != nullptr && status->jacobian_valid == 0) return;
     if (ns > 1) tcon[ns - 1] = T(0.5) * tcon[ns - 2];
 }
 
@@ -290,11 +318,12 @@ __global__ void tconLcfsHalfKernel(T* __restrict__ tcon, int ns) {
 // ---------------------------------------------------------------------------
 template <typename T>
 void cumes::ConstraintOperator<T>::reset_reference(const DeviceParams<T>& p,
-                           const T* d_sqrtS_F, cudaStream_t stream) {
+                           const T* d_sqrtS_F,
+                           const cumes::ControlStatus* status, cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     rzConIntoVolumeKernel<T><<<grid, block, 0, stream>>>(
-        d_rCon_, d_zCon_, d_sqrtS_F,
+        d_rCon_, d_zCon_, d_sqrtS_F, status,
         p.ns, p.nZnT, d_rCon0_, d_zCon0_);
     cumes::check_cuda(cudaGetLastError(), "rzConIntoVolume");
 }
@@ -309,6 +338,7 @@ void cumes::ConstraintOperator<T>::enqueue_head(const DeviceParams<T>& p,
                                                 const cumes::RealSpaceStorage<T>& rs,
                                                 const T* ard, const T* azd,
                                                 const T* d_sqrtS_F, bool precon_updated,
+                                                const cumes::ControlStatus* status,
                                                 cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
@@ -328,11 +358,11 @@ void cumes::ConstraintOperator<T>::enqueue_head(const DeviceParams<T>& p,
         computeTconKernel<T><<<gridF, 256, 0, stream>>>(
             rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o,
             d_sqrtS_F,
-            ard, azd,
+            ard, azd, status,
             p.ns, p.nZnT, p.ntheta, p.nzeta, T(1.0)/T(p.ns-1.0), tcon_multiplier,
             d_tcon_);
         cumes::check_cuda(cudaGetLastError(), "tcon");
-        tconLcfsHalfKernel<T><<<1, 1, 0, stream>>>(d_tcon_, p.ns);
+        tconLcfsHalfKernel<T><<<1, 1, 0, stream>>>(status, d_tcon_, p.ns);
         cumes::check_cuda(cudaGetLastError(), "tcon lcfs");
     }
 
@@ -341,7 +371,7 @@ void cumes::ConstraintOperator<T>::enqueue_head(const DeviceParams<T>& p,
         d_rCon_, d_zCon_,
         rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o,
         d_sqrtS_F,
-        d_rCon0_, d_zCon0_,
+        d_rCon0_, d_zCon0_, status,
         p.ns, p.nZnT, d_gConEff_);
     cumes::check_cuda(cudaGetLastError(), "gConEff");
 }
@@ -351,13 +381,14 @@ template <typename T>
 void cumes::ConstraintOperator<T>::enqueue_tail(const DeviceParams<T>& p,
                                                 const cumes::RealSpaceStorage<T>& rs,
                                                 const T* d_sqrtS_F,
+                                                const cumes::ControlStatus* status,
                                                 cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     addConstraintKernel<T><<<grid, block, 0, stream>>>(
         d_rCon_, d_zCon_, d_rCon0_, d_zCon0_,
         d_gCon_, d_sqrtS_F,
-        rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o,
+        rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o, status,
         p.ns, p.nZnT,
         rs.d_brmn_e, rs.d_brmn_o, rs.d_bzmn_e, rs.d_bzmn_o,
         d_frcon_e_, d_frcon_o_, d_fzcon_e_, d_fzcon_o_);
@@ -372,17 +403,21 @@ template <typename T>
 void cumes::ConstraintOperator<T>::enqueue(
     const DeviceParams<T>& p, const cumes::RealSpaceStorage<T>& rs,
     const T* ard, const T* azd, const T* sqrtS_F, bool precon_updated,
-    cumes::SpectralOperator<T>* op, cudaStream_t stream) {
+    cumes::SpectralOperator<T>* op, const cumes::ControlStatus* status,
+    cudaStream_t stream) {
     // Steps 0/1 (tcon refresh + gConEff) are shared by both backends; step 2
     // (de-alias bandpass) is dispatched through the transform operator's
     // unified enqueue_dealias — the generic backend runs the compact cuFFT
     // round trip, the axisymmetric backend its direct-poloidal kernel. Step 3
-    // (add to brmn/bzmn + frcon/fzcon) is shared again.
-    enqueue_head(p, rs, ard, azd, sqrtS_F, precon_updated, stream);
+    // (add to brmn/bzmn + frcon/fzcon) is shared again. The head/tail kernels
+    // are status-guarded (completion plan step 1.4); the bandpass writes only
+    // transform scratch, which the guarded tail never consumes on an invalid
+    // pass.
+    enqueue_head(p, rs, ard, azd, sqrtS_F, precon_updated, status, stream);
     op->enqueue_dealias(
         cumes::RealFieldView<const T>(d_gConEff_, p.ns, p.ntheta, p.nzeta),
         d_tcon_, d_faccon_,
         cumes::RealFieldView<T>(d_gCon_, p.ns, p.ntheta, p.nzeta), stream);
-    enqueue_tail(p, rs, sqrtS_F, stream);
+    enqueue_tail(p, rs, sqrtS_F, status, stream);
 }
 

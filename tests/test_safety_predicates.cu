@@ -1,0 +1,456 @@
+// test_safety_predicates.cu — manufactured cases for the device safety
+// predicates (completion plan step 1.5; blueprint §6.9/§7).
+//
+// Asserts, on the shipped kernels (public include/cumes/numerics/
+// device_predicates.cuh) and the guarded operators:
+//
+//   1. jacobianFinalizeKernel decides validity with the IDENTICAL rule as
+//      IterationController::jacobian_invalid — manufactured healthy,
+//      collapsed, inverted, nonfinite, empty-grid, axis-row and interior
+//      relative cases;
+//   2. invariantPredicateKernel classifies nonfinite / converged /
+//      continue exactly like the host's normalized-triple expressions,
+//      including the refresh-pass structural disable;
+//   3. the guarded operators (magnetic field, constraint reference + tcon,
+//      preconditioner element cache, MHD force) write NOTHING when
+//      status->jacobian_valid is clear, and run normally when it is set;
+//   4. computeResidualsPreconditionedKernel stores the zero sentinel +
+//      not_evaluated on terminal passes and real values + evaluated otherwise;
+//   5. an end-to-end collapsed-state EquilibriumOperator::enqueue reports
+//      jacobian_valid == 0 and performs no forbidden cache mutation.
+//
+// Both double and float instantiate every case (the predicate math itself is
+// double in both builds — ADR-0001).
+#include <cstdio>
+#include <cmath>
+#include <cstring>
+#include <vector>
+
+#include "vmec_types.h"
+#include "cumes/numerics/device_predicates.cuh"
+#include "cumes/physics/constraint_operator.hpp"
+#include "cumes/physics/force_operator.hpp"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
+#include "cumes/physics/profiles.hpp"
+#include "cumes/numerics/preconditioner.hpp"
+#include "cumes/solver/control_record.hpp"
+#include "cumes/solver/equilibrium_operator.hpp"
+#include "cumes/solver/iteration_controller.hpp"
+#include "cumes/state/mode_table.cuh"
+#include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
+#include "cumes_test_support.cuh"
+
+static int failures = 0;
+#define CHECK(cond, msg)                                                     \
+    do {                                                                     \
+        if (cond) {                                                          \
+            printf("PASS %s\n", msg);                                        \
+        } else {                                                             \
+            printf("FAIL %s\n", msg);                                        \
+            ++failures;                                                      \
+        }                                                                    \
+    } while (0)
+
+// ---------------------------------------------------------------------------
+// 1. Jacobian finalize rule == host controller rule
+// ---------------------------------------------------------------------------
+static void testJacobianFinalizeRules() {
+    const int nZnT = 18;
+    // {min_oriented, max_abs, nonfinite, min_index} + expected host decision.
+    struct Case {
+        double min_o, max_a, nf, idx;
+        const char* label;
+    };
+    const Case cases[] = {
+        {0.5, 1.0, 0.0, 5.0, "healthy interior"},
+        {0.0, 1.0, 0.0, 5.0, "collapsed (zero sqrt(g))"},
+        {-0.2, 1.0, 0.0, 5.0, "inverted (sign flip)"},
+        {0.5, 1.0, 1.0, 5.0, "nonfinite entry"},
+        {0.5, 0.0, 0.0, 5.0, "zero max (empty grid identity)"},
+        {1e-14, 1.0, 0.0, (double)(nZnT + 2), "relative at axis row"},
+        {1e-14, 1.0, 0.0, 5.0, "relative at interior (valid)"},
+        {0.9, 1.0, 0.0, 0.0, "min at first point (valid)"},
+    };
+
+    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    for (const Case& c : cases) {
+        cumes::ControlRecord h;
+        h.jacobian_min_oriented = c.min_o;
+        h.jacobian_max_abs = c.max_a;
+        h.jacobian_nonfinite_count = c.nf;
+        h.jacobian_min_index = c.idx;
+        checkCuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+                  "rec up (jac)");
+
+        // Host decision: the controller's own gate (fresh controller per case).
+        cumes::IterationController<double> ctl(
+            cumes::IterationController<double>::Options{});
+        cumes::JacobianStatus<double> js;
+        js.min_oriented = c.min_o;
+        js.max_abs = c.max_a;
+        js.nonfinite_count = c.nf;
+        js.min_index = (int)c.idx;
+        const bool host_invalid = ctl.jacobian_invalid(js, nZnT);
+
+        jacobianFinalizeKernel<<<1, 1>>>(d_rec.data(), nZnT);
+        cc(cudaDeviceSynchronize(), "jacobianFinalize sync");
+        checkCuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+                  "rec down (jac)");
+
+        const bool dev_valid = h.status.jacobian_valid != 0;
+        char buf[128];
+        snprintf(buf, sizeof buf, "jacobian finalize rule: %s (dev %s, host %s)",
+                 c.label, dev_valid ? "valid" : "invalid",
+                 host_invalid ? "invalid" : "valid");
+        CHECK(dev_valid != host_invalid, buf);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Terminal predicate == host normalized-triple classification
+// ---------------------------------------------------------------------------
+static void testInvariantPredicateRules() {
+    struct Case {
+        double raw[3];
+        double f_rz, f_l, plain, ftol;
+        int classify_converged;
+        bool want_nf, want_cv;
+        const char* label;
+    };
+    const Case cases[] = {
+        {{1e-10, 2e-10, 3e-10}, 1.0, 1.0, 100.0, 1e-4, 1, false, true,
+         "converged (all below ftol)"},
+        {{1e-10, 2e-10, 3e-10}, 1.0, 1.0, 100.0, 1e-4, 0, false, false,
+         "refresh pass disables convergence"},
+        {{1e-10, 2e-10, 3e-10}, 1.0, 1.0, 100.0, 1e-14, 1, false, false,
+         "below-old-ftol but above ftol: continue"},
+        {{1.0, 2.0, 3.0}, 1.0, 1.0, 100.0, 1e-4, 1, false, false,
+         "large residuals: continue"},
+        {{1.0, NAN, 3.0}, 1.0, 1.0, 100.0, 1e-4, 1, true, false,
+         "nonfinite invariant: recover"},
+        {{1e-10, 2e-10, 3e-10}, 0.0, 1.0, 100.0, 0.0, 1, false, true,
+         "zero fNormRZ collapses fsqr/fsqz (converged)"},
+    };
+
+    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    for (const Case& c : cases) {
+        cumes::ControlRecord h = {};
+        h.invariant_raw[0] = c.raw[0];
+        h.invariant_raw[1] = c.raw[1];
+        h.invariant_raw[2] = c.raw[2];
+        checkCuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+                  "rec up (pred)");
+        invariantPredicateKernel<<<1, 1>>>(d_rec.data(), c.f_rz, c.f_l, c.plain,
+                                           c.ftol, c.classify_converged);
+        cc(cudaDeviceSynchronize(), "predicate sync");
+        checkCuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+                  "rec down (pred)");
+
+        // Host classification with the identical expressions.
+        const double fsqr_i = c.raw[0] * c.plain * c.f_rz * 0.25;
+        const double fsqz_i = c.raw[1] * c.plain * c.f_rz * 0.25;
+        const double fsql_i = c.raw[2] * c.plain * c.f_l;
+        const bool host_nf = !(std::isfinite(fsqr_i) && std::isfinite(fsqz_i) &&
+                               std::isfinite(fsql_i));
+        const bool host_cv = !host_nf && c.classify_converged != 0 &&
+                             fsqr_i <= c.ftol && fsqz_i <= c.ftol &&
+                             fsql_i <= c.ftol;
+
+        char buf[128];
+        snprintf(buf, sizeof buf,
+                 "terminal predicate: %s (dev nf=%d cv=%d, host nf=%d cv=%d)",
+                 c.label, (int)h.status.invariant_nonfinite,
+                 (int)h.status.invariant_converged, (int)host_nf, (int)host_cv);
+        CHECK((h.status.invariant_nonfinite != 0) == host_nf &&
+                  (h.status.invariant_converged != 0) == host_cv,
+              buf);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Guarded-operator no-op on invalid Jacobian (and normal run when valid)
+// ---------------------------------------------------------------------------
+template <typename T>
+static void runGuardNoop(T label) {
+    (void)label;
+    DeviceParams<T> p;
+    p.ns = 9; p.mnmax = 4; p.ntheta = 18; p.nzeta = 2;
+    p.nfp = 1; p.nZnT = 36; p.mpol = 4; p.ntor = 0;
+    p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;
+    p.tcon0 = T(1.0); p.lamscale = T(0.0);
+
+    cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
+
+    cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
+    std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
+    manufacturedState<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+                         p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+    uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+
+    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::RadialProfileViews<T> rp = profiles.profile_views();
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::ToroidalFftOperator<T> transform(p, rs, mt);
+    cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::Preconditioner<T> precon(p, nullptr);
+    cumes::ConstraintOperator<T> constraint(p, nullptr);
+
+    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    cumes::ControlRecord h_rec = {};
+    h_rec.status.jacobian_valid = 1;
+
+    const size_t nField = (size_t)(p.ns - 1) * p.nZnT;   // half-grid fields
+    const size_t nFull = (size_t)p.ns * p.nZnT;          // full-grid buffers
+
+    // One guarded pass with valid status, snapshot the written caches.
+    // The fused inverse produces rCon/zCon into the constraint views (the
+    // same production path — a plain inverse would leave them uninitialized).
+    auto runPass = [&]() {
+        transform.inverse_fused(storage.physical_const(), /*do_combine=*/false,
+                                constraint.rcon_view(p).data(),
+                                constraint.zcon_view(p).data());
+        geometry.enqueue(rs, p, rp, 0);
+        cumes::MagneticFieldOperator<T>{}.enqueue(
+            rs, p, rp, geometry.base_geometry_views(p),
+            geometry.magnetic_field_views(p), &d_rec.data()->status, 0, true);
+        constraint.reset_reference(p, rp.sqrtS_F, &d_rec.data()->status, 0);
+        precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp,
+                               geometry.base_geometry_views(p),
+                               geometry.magnetic_field_views(p),
+                               &d_rec.data()->status, 0);
+        cumes::ForceOperator<T>{}.enqueue(
+            rs, p, rp, geometry.base_geometry_views(p),
+            geometry.magnetic_field_views(p), &d_rec.data()->status, 0);
+        constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true,
+                           &transform, &d_rec.data()->status, 0);
+        cc(cudaDeviceSynchronize(), "pass sync");
+    };
+    checkCuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
+                         cudaMemcpyHostToDevice), "rec up (guard)");
+    runPass();
+
+    std::vector<T> snap_bsupu(nField), snap_iotaF(p.ns), snap_ard(2 * p.ns);
+    std::vector<T> snap_rcon0(nFull), snap_brmn(nFull);
+    const auto* bsupu = geometry.magnetic_field_views(p).bsupu.data();
+    checkCuda(cudaMemcpy(snap_bsupu.data(), bsupu, nField * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap bsupu");
+    checkCuda(cudaMemcpy(snap_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap iotaF");
+    checkCuda(cudaMemcpy(snap_ard.data(), precon.ard(), 2 * p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap ard");
+    checkCuda(cudaMemcpy(snap_rcon0.data(), constraint.rcon0(), nFull * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap rcon0");
+    checkCuda(cudaMemcpy(snap_brmn.data(), rs.d_brmn_e, nFull * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap brmn");
+
+    // Invalid pass: same enqueues, guarded kernels must write NOTHING.
+    h_rec.status.jacobian_valid = 0;
+    checkCuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
+                         cudaMemcpyHostToDevice), "rec up (invalid)");
+    runPass();
+
+    std::vector<T> now_bsupu(nField), now_iotaF(p.ns), now_ard(2 * p.ns);
+    std::vector<T> now_rcon0(nFull), now_brmn(nFull);
+    checkCuda(cudaMemcpy(now_bsupu.data(), bsupu, nField * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now bsupu");
+    checkCuda(cudaMemcpy(now_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now iotaF");
+    checkCuda(cudaMemcpy(now_ard.data(), precon.ard(), 2 * p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now ard");
+    checkCuda(cudaMemcpy(now_rcon0.data(), constraint.rcon0(), nFull * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now rcon0");
+    checkCuda(cudaMemcpy(now_brmn.data(), rs.d_brmn_e, nFull * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now brmn");
+
+    CHECK(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nField * sizeof(T)) == 0,
+          "invalid pass: magnetic-field buffers untouched");
+    CHECK(std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
+          "invalid pass: iotaF/chipF profile cache untouched");
+    CHECK(std::memcmp(snap_ard.data(), now_ard.data(), 2 * p.ns * sizeof(T)) == 0,
+          "invalid pass: preconditioner element cache untouched");
+    CHECK(std::memcmp(snap_rcon0.data(), now_rcon0.data(), nFull * sizeof(T)) == 0,
+          "invalid pass: constraint reference cache untouched");
+    CHECK(std::memcmp(snap_brmn.data(), now_brmn.data(), nFull * sizeof(T)) == 0,
+          "invalid pass: MHD force buffers untouched");
+
+    // Valid pass again: the guards must re-enable the real work (outputs move).
+    h_rec.status.jacobian_valid = 1;
+    checkCuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
+                         cudaMemcpyHostToDevice), "rec up (valid again)");
+    runPass();
+    checkCuda(cudaMemcpy(now_bsupu.data(), bsupu, nField * sizeof(T),
+                         cudaMemcpyDeviceToHost), "again bsupu");
+    CHECK(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nField * sizeof(T)) == 0,
+          "valid pass again: guarded work re-enabled");
+}
+
+// ---------------------------------------------------------------------------
+// 4. Preconditioned-reduction terminal gate
+// ---------------------------------------------------------------------------
+template <typename T>
+static void runPreconditionedGate(T label) {
+    (void)label;
+    const int ns = 8, mnmax = 4;
+    std::vector<T> h_f(6 * mnmax * ns);
+    for (size_t i = 0; i < h_f.size(); ++i) {
+        h_f[i] = T(std::sin(0.31 * (double)i + 1.7) + 0.5);
+    }
+    cumes::DeviceBuffer<T> d_f(h_f.size());
+    checkCuda(cudaMemcpy(d_f.data(), h_f.data(), h_f.size() * sizeof(T),
+                         cudaMemcpyHostToDevice), "f up");
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain> view(
+        d_f.data(), ns, mnmax);
+
+    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    cumes::ControlRecord h = {};
+
+    // Terminal (converged): zero sentinel + not_evaluated.
+    h.status.invariant_converged = 1;
+    checkCuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+              "rec up (terminal)");
+    computeResidualsPreconditionedKernel<T><<<3, 256>>>(view, ns, mnmax,
+                                                        d_rec.data());
+    cc(cudaDeviceSynchronize(), "gate sync terminal");
+    checkCuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+              "rec down (terminal)");
+    CHECK(h.preconditioned_raw[0] == 0.0 && h.preconditioned_raw[1] == 0.0 &&
+              h.preconditioned_raw[2] == 0.0 && h.status.preconditioned_evaluated == 0,
+          "terminal pass: preconditioned residuals zero sentinel + not evaluated");
+
+    // Continuing: real reduction + evaluated bit.
+    h = cumes::ControlRecord{};
+    checkCuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+              "rec up (continue)");
+    computeResidualsPreconditionedKernel<T><<<3, 256>>>(view, ns, mnmax,
+                                                        d_rec.data());
+    cc(cudaDeviceSynchronize(), "gate sync continue");
+    checkCuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+              "rec down (continue)");
+    CHECK(h.status.preconditioned_evaluated == 1,
+          "continuing pass: preconditioned residuals marked evaluated");
+    // Host reference sum for group 0 (fsqr = sum frcc^2 + frss^2 over all).
+    double ref0 = 0.0;
+    for (int mode = 0; mode < mnmax; ++mode) {
+        for (int j = 0; j < ns; ++j) {
+            ref0 += (double)h_f[0 * mnmax * ns + mode * ns + j] *
+                        (double)h_f[0 * mnmax * ns + mode * ns + j] +
+                    (double)h_f[3 * mnmax * ns + mode * ns + j] *
+                        (double)h_f[3 * mnmax * ns + mode * ns + j];
+        }
+    }
+    ref0 /= (double)(mnmax * ns);
+    const double got0 = h.preconditioned_raw[0];
+    // Tree-vs-serial summation order differs at rounding level: 1e-9 relative
+    // for double, 1e-4 for the float leg's rounding floor.
+    const double tol = (sizeof(T) == sizeof(double)) ? 1e-9 : 1e-4;
+    CHECK(std::fabs(got0 - ref0) <= tol * std::max(1.0, std::fabs(ref0)),
+          "continuing pass: fsqr group matches host reference sum");
+}
+
+// ---------------------------------------------------------------------------
+// 5. End-to-end collapsed state through EquilibriumOperator::enqueue
+// ---------------------------------------------------------------------------
+template <typename T>
+static void runCollapsedDag(T label) {
+    (void)label;
+    DeviceParams<T> p;
+    p.ns = 9; p.mnmax = 4; p.ntheta = 18; p.nzeta = 2;
+    p.nfp = 1; p.nZnT = 36; p.mpol = 4; p.ntor = 0;
+    p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;
+    p.tcon0 = T(1.0); p.lamscale = T(0.0);
+
+    cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
+
+    cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
+    // Seed with the manufactured geometry so the caches are REAL first. The
+    // Z families are negated: signJ = -1, and the kSolovevLinear Z sign gives
+    // a Jacobian of the opposite orientation (signJ*sqrt(g) < 0 -> invalid).
+    // Mirroring Z flips tau and makes the manufactured state a VALID pass.
+    {
+        std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
+        manufacturedState<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+                             p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+        for (auto& v : h_zsc) v = -v;
+        for (auto& v : h_zcs) v = -v;
+        uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+    }
+
+    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::RadialProfileViews<T> rp = profiles.profile_views();
+    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
+    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::ToroidalFftOperator<T> transform(p, rs, mt);
+    cumes::GeometryOperator<T> geometry(p, nullptr);
+
+    cumes::EquilibriumOperator<T> equilibrium(p, storage, profiles, transform,
+                                              rs, geometry, nullptr, nullptr);
+
+    cumes::EvaluationSchedule schedule;
+    schedule.update_iota_chi = true;
+    schedule.reset_constraint_reference = true;
+    schedule.refresh_preconditioner = true;
+    schedule.zero_z_force_m1 = true;
+
+    // A valid pass first: real caches, real jacobian validity.
+    equilibrium.enqueue(0, 1, schedule, 0, 1.0, 1.0);
+    cc(cudaDeviceSynchronize(), "valid dag sync");
+    cumes::ControlRecord h_rec;
+    checkCuda(cudaMemcpy(&h_rec, equilibrium.control_device(), sizeof(h_rec),
+                         cudaMemcpyDeviceToHost), "rec down (valid dag)");
+    CHECK(h_rec.status.jacobian_valid != 0, "valid state: jacobian_valid set");
+    const size_t nField = (size_t)(p.ns - 1) * p.nZnT;
+    std::vector<T> snap_iotaF(p.ns), snap_bsupu(nField);
+    checkCuda(cudaMemcpy(snap_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "snap iotaF (dag)");
+    checkCuda(cudaMemcpy(snap_bsupu.data(),
+                         geometry.magnetic_field_views(p).bsupu.data(),
+                         nField * sizeof(T), cudaMemcpyDeviceToHost),
+              "snap bsupu (dag)");
+
+    // Collapse the state: all-zero spectral coefficients -> sqrt(g) = 0.
+    {
+        std::vector<T> z((size_t)p.ns * p.mnmax, T(0.0));
+        uploadState(storage, z, z, z, z, z, z, p.ns, p.mnmax);
+        cc(cudaDeviceSynchronize(), "collapse sync");
+    }
+
+    equilibrium.enqueue(0, 2, schedule, 0, 1.0, 1.0);
+    cc(cudaDeviceSynchronize(), "collapsed dag sync");
+    checkCuda(cudaMemcpy(&h_rec, equilibrium.control_device(), sizeof(h_rec),
+                         cudaMemcpyDeviceToHost), "rec down (collapsed dag)");
+    CHECK(h_rec.status.jacobian_valid == 0,
+          "collapsed state: jacobian_valid clear (device finalize)");
+
+    std::vector<T> now_iotaF(p.ns), now_bsupu(nField);
+    checkCuda(cudaMemcpy(now_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
+                         cudaMemcpyDeviceToHost), "now iotaF (dag)");
+    checkCuda(cudaMemcpy(now_bsupu.data(),
+                         geometry.magnetic_field_views(p).bsupu.data(),
+                         nField * sizeof(T), cudaMemcpyDeviceToHost),
+              "now bsupu (dag)");
+    CHECK(std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
+          "collapsed pass: profile cache not mutated");
+    CHECK(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nField * sizeof(T)) == 0,
+          "collapsed pass: field buffers not mutated");
+}
+
+int main() {
+    testJacobianFinalizeRules();
+    testInvariantPredicateRules();
+    runGuardNoop(double(0));
+    runGuardNoop(float(0));
+    runPreconditionedGate(double(0));
+    runPreconditionedGate(float(0));
+    runCollapsedDag(double(0));
+    runCollapsedDag(float(0));
+
+    if (failures == 0) {
+        printf("test_safety_predicates: all checks passed\n");
+        return 0;
+    }
+    printf("test_safety_predicates: %d check(s) FAILED\n", failures);
+    return 1;
+}

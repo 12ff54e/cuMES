@@ -224,7 +224,7 @@ cumes_enable_warnings(test_input_json)
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
-                   test_tridiagonal test_cuda_graph)
+                   test_tridiagonal test_cuda_graph test_safety_predicates)
   add_executable(${t} tests/${t}.cu)
   target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(${t} PRIVATE cumes_test_support cumes_config_json cumes_cuda_double cumes_cuda_float)
@@ -327,6 +327,7 @@ cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
 cumes_add_test(test_constraint_tcon  unit;constraint)
 cumes_add_test(test_regression_kernels unit;constraint;precon)
+cumes_add_test(test_safety_predicates unit;safety)
 cumes_add_test(test_geometry_iso     unit;geometry)
 cumes_add_test(test_force_verify     unit;forces)
 cumes_add_test(test_force_reference  unit;forces)
@@ -340,7 +341,7 @@ cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
     test_regression_kernels test_runtime test_arena test_operator_views
     test_accumulation test_axisym_backend test_tridiagonal
-    test_cuda_graph)
+    test_cuda_graph test_safety_predicates)
 
 # ---- benchmarks (not part of the default CTest unit gate) --------------------
 # The fixed-iteration harness (§8.1). Always double (verify-double is the

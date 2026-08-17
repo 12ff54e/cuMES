@@ -8,6 +8,13 @@ indirection (tail-3 §2, "item 4") — is now removed, and the change measured
 **Class A bit-identical**, stronger than the Class B re-freeze the docs
 predicted. The frozen baselines stand unchanged.
 
+> **Post-closeout acceptance note (2026-08-17):** Phase 11 completed the
+> strangler-fig migration, but it did not close every requirement in the
+> original CUDA overhaul blueprint. The remaining numerical-safety, I/O,
+> precision/runtime, and release-gate work is ordered with explicit exit
+> criteria in [`overhaul-completion-plan.md`](overhaul-completion-plan.md).
+> Do not interpret "Phase 11 is complete" below as final design acceptance.
+
 ## 1. What changed
 
 The non-templated `dynSharedBase()` accessor (an `extern __shared__ unsigned

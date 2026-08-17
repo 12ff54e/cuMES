@@ -89,7 +89,7 @@ int main() {
     }
 
     op.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
 
     // check bsupu coverage on a mid-volume surface. All indices are computed
     // from the actual grid (the old hardcoded ks/1080 were W7-X-specific).

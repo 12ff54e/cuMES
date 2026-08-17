@@ -20,6 +20,7 @@
 // ValidatedProblem profile coefficients stay double (host config) and are
 // converted at the point of use.
 #include "cumes/physics/profiles.hpp"
+#include "cumes/config/profile_functions.hpp"  // shared host/device evaluators
 #include "cumes/config/validated_problem.hpp"
 #include <cstdio>
 #include <cmath>
@@ -27,60 +28,9 @@
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
 
-// Horner evaluation of a power series; with integrate=true gives the
-// integral ∫₀ˣ Σ c_i t^i dt = x*Σ c_i*x^i/(i+1) (vmecpp evalPowerSeries).
-template <typename T>
-static T evalPowerSeries(const double* c, int n, T x, bool integrate) {
-    T ret = T(0.0);
-    for (int i = n - 1; i >= 0; --i) {
-        if (integrate) {
-            ret = x * ret + T(c[i]) / T(i + 1);
-        } else {
-            ret = x * ret + T(c[i]);
-        }
-    }
-    if (integrate) ret *= x;
-    return ret;
-}
-
-// The power-series coefficients live on the ProblemSpec; the helpers read them
-// by (data, length) exactly as the legacy fixed-capacity InputParams did.
-template <typename T>
-static T torflux(const cumes::ProblemSpec& sp, T x) {
-    const auto& c = sp.toroidal_flux.coefficients;
-    return x * evalPowerSeries<T>(c.data(), (int)c.size(), x, false);
-}
-
-template <typename T>
-static T torfluxDeriv(const cumes::ProblemSpec& sp, T x) {
-    T ret = T(0.0);
-    const auto& c = sp.toroidal_flux.coefficients;
-    for (int i = 0; i < (int)c.size(); ++i) {
-        ret += T(i + 1) * T(c[i]) * pow(x, i);
-    }
-    return ret;
-}
-
-template <typename T>
-static T evalIotaProfile(const cumes::ProblemSpec& sp, T x) {
-    const auto& c = sp.iota.coefficients;
-    return evalPowerSeries<T>(c.data(), (int)c.size(), x, false);
-}
-
-template <typename T>
-static T evalMassProfile(const cumes::ProblemSpec& sp, T x) {
-    T normX = fmin(fabs(x * T(sp.physical.bloat)), T(1.0));
-    const auto& c = sp.mass.coefficients;
-    return evalPowerSeries<T>(c.data(), (int)c.size(), normX, false) *
-           (DeviceParams<T>::kMu0 * T(sp.physical.pres_scale));
-}
-
-template <typename T>
-static T evalCurrProfile(const cumes::ProblemSpec& sp, T x) {
-    T normX = fmin(fabs(x * T(sp.physical.bloat)), T(1.0));
-    const auto& c = sp.current.coefficients;
-    return evalPowerSeries<T>(c.data(), (int)c.size(), normX, true);
-}
+// The power-series evaluators (torflux/torfluxDeriv/evalIotaProfile/
+// evalMassProfile/evalCurrProfile) live in the shared header above: the host
+// validator and this upload step must divide by bit-identical normalizations.
 
 template <typename T>
 cumes::Profiles<T>::Profiles(DeviceParams<T>& p, const cumes::ValidatedProblem& vp,
@@ -88,6 +38,35 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p, const cumes::ValidatedProblem& 
     const cumes::ProblemSpec& sp = vp.spec();
     const int ncurr = (sp.current_model == cumes::CurrentModel::kPrescribedCurrent) ? 1 : 0;
     delta_s_ = T(1.0) / T(p.ns - 1);
+
+    // Normalization scalars FIRST — before any device allocation. The host
+    // validator (ValidatedProblem::validate) already rejects non-finite, zero,
+    // and ill-scaled normalizations before CUDA initialization; the guards
+    // here are the belt-and-suspenders error boundary, and they throw a typed
+    // CumesError instead of exit()ing (library code never exits).
+    // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
+    // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
+    T maxToroidalFlux = T(DeviceParams<T>::kSignJacobian * sp.physical.phiedge) / T(2.0 * M_PI);
+    T tf1 = cumes::torflux<T>(sp, T(1.0));
+    if (tf1 != T(0.0)) maxToroidalFlux /= tf1;
+
+    // ncurr=1: normalize the enclosed toroidal current profile
+    // Itor = signJ * μ0*curtor / (2π * I(1)), I(s) = ∫₀ˢ ac
+    T Itor = T(0.0);
+    if (ncurr == 1) {
+        T edgeCurrent = cumes::evalCurrProfile<T>(sp, T(1.0));
+        if (edgeCurrent == T(0.0)) {
+            // The normalization is a division by the edge current integral:
+            // a degenerate (all-zero) ac profile would make Itor infinite and
+            // poison the current constraint. Fail with a typed error (the
+            // validator rejects this case earlier, before any CUDA work).
+            throw cumes::CumesError(
+                "profiles: ncurr=1 with a zero edge current integral "
+                "(ac profile integrates to 0 at s=1)");
+        }
+        Itor = T(DeviceParams<T>::kSignJacobian) * DeviceParams<T>::kMu0 * T(sp.physical.curtor) /
+               (T(2.0 * M_PI) * edgeCurrent);
+    }
 
     size_t nF = p.ns * sizeof(T);
     size_t nH = (p.ns - 1) * sizeof(T);
@@ -108,29 +87,6 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p, const cumes::ValidatedProblem& 
     alloc(d_curr_H_,  p.ns - 1,  "profiles/curr_H");
     alloc(d_chip_H_,  p.ns - 1,  "profiles/chip_H");
     arena_backed_ = (arena != nullptr);
-
-    // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
-    // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
-    T maxToroidalFlux = T(DeviceParams<T>::kSignJacobian * sp.physical.phiedge) / T(2.0 * M_PI);
-    T tf1 = torflux<T>(sp, T(1.0));
-    if (tf1 != T(0.0)) maxToroidalFlux /= tf1;
-
-    // ncurr=1: normalize the enclosed toroidal current profile
-    // Itor = signJ * μ0*curtor / (2π * I(1)), I(s) = ∫₀ˢ ac
-    T Itor = T(0.0);
-    if (ncurr == 1) {
-        T edgeCurrent = evalCurrProfile<T>(sp, T(1.0));
-        if (edgeCurrent == T(0.0)) {
-            // The normalization is a division by the edge current integral:
-            // a degenerate (all-zero) ac profile would make Itor infinite and
-            // poison the current constraint. Fail loudly instead.
-            fprintf(stderr, "profiles: ncurr=1 with a zero edge current "
-                            "integral (ac profile integrates to 0 at s=1)\n");
-            exit(1);
-        }
-        Itor = T(DeviceParams<T>::kSignJacobian) * DeviceParams<T>::kMu0 * T(sp.physical.curtor) /
-               (T(2.0 * M_PI) * edgeCurrent);
-    }
 
     auto* h = new T[p.ns];
     // ---- Full grid ----

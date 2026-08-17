@@ -236,8 +236,8 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     cumes::GeometryOperator<T> geometry(p, nullptr);
 
     op.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
-    cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
+    cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
 
     const size_t nF = (size_t)ns * p.nZnT, nH = (size_t)(ns - 1) * p.nZnT;
     auto g = [&](const T* d, size_t n) { std::vector<T> v(n); checkCuda(cudaMemcpy(v.data(), d, n * sizeof(T), cudaMemcpyDeviceToHost), "g"); return v; };

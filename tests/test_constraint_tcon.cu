@@ -74,12 +74,12 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
 
     transform.inverse_fused(storage.physical_const(), /*do_combine=*/false,
                             constraint.rcon_view(p).data(), constraint.zcon_view(p).data());
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
-    constraint.reset_reference(p, rp.sqrtS_F, 0);
-    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
-    cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
+    constraint.reset_reference(p, rp.sqrtS_F, nullptr, 0);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
+    cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
     // precon_updated=true recomputes tcon from the current tcon0.
-    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true, &transform, 0);
+    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true, &transform, nullptr, 0);
 
     size_t nF = (size_t)p.ns * p.nZnT;
     auto* h = new T[nF];

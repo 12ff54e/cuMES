@@ -12,6 +12,7 @@
 #include <cuda_runtime.h>
 
 #include "cumes/numerics/tridiagonal_backend.hpp"
+#include "cumes/solver/control_record.hpp"
 #include "cumes/state/real_fields.cuh"
 #include "cumes/state/real_space_storage.hpp"
 
@@ -34,20 +35,29 @@ class Preconditioner {
   Preconditioner& operator=(Preconditioner&&) = delete;
 
   // Refresh the matrix coefficients from the current geometry/field.
+  // Status-guarded (completion plan step 1.4): on an invalid-Jacobian pass
+  // (status->jacobian_valid == 0) every kernel no-ops and the element cache
+  // is left untouched (the re-anchor makes the next pass a refresh pass).
   void enqueue_compute(const RealSpaceStorage<T>& rs, const int* xm, const int* xn,
                        const DeviceParams<T>& p, const RadialProfileViews<T>& rpv,
                        const BaseGeometryHalfViews<T>& base, const MagneticFieldViews<T>& field,
-                       cudaStream_t stream);
+                       const ControlStatus* status, cudaStream_t stream);
 
   // Apply the preconditioner in place to the decomposed residual.
+  // Terminal-guarded (completion plan step 1.4): the tridiagonal solves and
+  // the boundary/lambda finishing no-op when `gate` reports a nonfinite or
+  // converged invariant residual (gate may be nullptr for direct callers).
   void enqueue_apply(SpectralView<T, DecomposedResidualDomain> residual,
-                     const DeviceParams<T>& p, cudaStream_t stream) const;
+                     const DeviceParams<T>& p, const ControlStatus* gate,
+                     cudaStream_t stream) const;
 
   // vmecpp applyM1Preconditioner: scale the m=1 frss/fzcs pair by the
   // odd-parity diagonal elements (ard/brd/azd/bzd) before the RZ solve. Runs
-  // after the invariant residuals, before enqueue_apply.
+  // after the invariant residuals, before enqueue_apply. Terminal-guarded
+  // like enqueue_apply.
   void enqueue_m1_scale(SpectralView<T, DecomposedResidualDomain> residual,
-                        const DeviceParams<T>& p, cudaStream_t stream) const;
+                        const DeviceParams<T>& p, const ControlStatus* gate,
+                        cudaStream_t stream) const;
 
   // The m=1 even-parity R/Z diagonal elements, consumed by the constraint's
   // tcon profile (the only workspace elements the constraint reads).

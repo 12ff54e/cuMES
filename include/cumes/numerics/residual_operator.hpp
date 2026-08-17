@@ -16,6 +16,7 @@
 #include <cuda_runtime.h>
 
 #include "cumes/core/tensor_view.cuh"
+#include "cumes/solver/control_record.hpp"
 
 namespace cumes {
 
@@ -29,6 +30,15 @@ class ResidualOperator {
   // without rounding to T.
   void enqueue(SpectralView<const T, DecomposedResidualDomain> residual,
                int ns, int mnmax, double* sq_out, cudaStream_t stream) const;
+
+  // Preconditioned-residual reduction with the device terminal gate
+  // (completion plan step 1.4): on a nonfinite/converged pass the
+  // preconditioner no-op'd, so this reduction stores the zero sentinel into
+  // rec->preconditioned_raw and leaves preconditioned_evaluated clear. On a
+  // continuing pass it reduces normally and sets the evaluated bit.
+  void enqueue_preconditioned(SpectralView<const T, DecomposedResidualDomain> residual,
+                              int ns, int mnmax, ControlRecord* rec,
+                              cudaStream_t stream) const;
 };
 
 }  // namespace cumes

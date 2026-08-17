@@ -2,6 +2,9 @@
 // the immutable ValidatedProblem and emit the canonical normalization.
 #include "cumes/config/validated_problem.hpp"
 
+// Profile normalization evaluation (T_edge/C_edge — completion plan step 1).
+#include "cumes/config/profile_functions.hpp"
+
 // kMaxGrids: the fixed 8-grid capacity of the v0 provenance writers — the
 // stage schedule must fit it or stages 9+ would be silently dropped from the
 // output files (the legacy parser hard-failed this: "entries exceed the
@@ -101,8 +104,53 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     if (spec.nfp < 1) {
         report.error("nfp", "nfp must be >= 1");
     }
-    if (spec.physical.phiedge == 0.0) {
+    if (!std::isfinite(spec.physical.phiedge)) {
+        report.error("phiedge", "phiedge must be finite");
+    } else if (spec.physical.phiedge == 0.0) {
         report.error("phiedge", "phiedge must be nonzero");
+    }
+    if (!std::isfinite(spec.physical.curtor)) {
+        report.error("curtor", "curtor must be finite");
+    }
+    // ---- profile normalization scalars (completion plan step 1) ----
+    // The device-side Profiles step divides by these two host-evaluated
+    // normalization scalars: maxToroidalFlux = signJ·phiedge/(2π·T_edge) with
+    // T_edge = T(1) = torflux(1), and (ncurr=1) Itor = signJ·μ0·curtor/
+    // (2π·C_edge) with C_edge = J_C(min(|bloat|, 1)) — the prescribed-current
+    // edge integral, independent of T(1). A non-finite, zero, or ill-scaled
+    // value here would poison every downstream quantity, so both are rejected
+    // BEFORE any CUDA context or stage construction. The evaluation is the
+    // shared cumes::torflux/evalCurrProfile used by the upload step, so the
+    // validated values are bit-identical to the divided ones.
+    const double torflux_edge = torflux<double>(spec, 1.0);
+    if (!std::isfinite(torflux_edge)) {
+        report.error("aphi",
+                     "toroidal-flux profile is non-finite at the edge "
+                     "(T(1) is not finite); the edge normalization would be unusable");
+    } else if (torflux_edge == 0.0) {
+        report.error("aphi",
+                     "toroidal-flux profile is zero at the edge (T(1) = 0); "
+                     "the edge normalization would divide by zero");
+    } else if (std::fabs(torflux_edge) < 1e-30) {
+        report.error("aphi",
+                     "toroidal-flux profile is ill-scaled at the edge "
+                     "(|T(1)| < 1e-30); the edge normalization would overflow");
+    }
+    if (spec.current_model == CurrentModel::kPrescribedCurrent) {
+        const double curr_edge = evalCurrProfile<double>(spec, 1.0);
+        if (!std::isfinite(curr_edge)) {
+            report.error("ac",
+                         "prescribed-current profile is non-finite at the edge "
+                         "(C_edge is not finite); the current normalization would be unusable");
+        } else if (curr_edge == 0.0) {
+            report.error("ac",
+                         "prescribed-current profile integrates to zero at the edge "
+                         "(C_edge = 0); the current normalization would divide by zero");
+        } else if (std::fabs(curr_edge) < 1e-30) {
+            report.error("ac",
+                         "prescribed-current profile is ill-scaled at the edge "
+                         "(|C_edge| < 1e-30); the current normalization would overflow");
+        }
     }
     if (spec.delt <= 0.0) {
         report.error("delt", "delt must be positive");

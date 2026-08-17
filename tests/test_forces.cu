@@ -94,8 +94,8 @@ int main() {
 
     // Run one iteration
     op.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
-    cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
+    cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
 
     // Check combined geometry at axis (j=0) and mid (j=8)
     size_t nbr = p.ns * p.nZnT * sizeof(double);

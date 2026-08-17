@@ -352,8 +352,8 @@ static ForceGate runForceGate(cumes::SpectralStorage<double>& storage,
     // ---- Production path (the operators the solver itself uses) ----
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0);
-    cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
-    cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
+    cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
+    cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
 
     // Forward DFT to get the production spectral forces (6 families), with
     // zeroed constraint-force inputs (no constraint pass in this recompute).

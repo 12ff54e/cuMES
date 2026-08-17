@@ -13,6 +13,7 @@
 #include <cuda_runtime.h>
 
 #include "cumes/config/device_params.hpp"
+#include "cumes/solver/control_record.hpp"
 #include "cumes/state/real_space_storage.hpp"
 #include "cumes/state/real_fields.cuh"
 #include "cumes/transforms/spectral_operator.hpp"
@@ -47,12 +48,18 @@ class ConstraintOperator {
   // the current preconditioner elements. `op` is the selected transform
   // backend whose enqueue_dealias performs the bandpass. `rs` carries the
   // parity-split geometry derivatives + force buffers.
+  // Status-guarded (completion plan step 1.4): the tcon cache, the
+  // constraint-force scratch, and the brmn/bzmn += targets are not written
+  // when status->jacobian_valid is clear.
   void enqueue(const DeviceParams<T>& p, const RealSpaceStorage<T>& rs,
                const T* ard, const T* azd, const T* sqrtS_F,
-               bool precon_updated, SpectralOperator<T>* op, cudaStream_t stream);
+               bool precon_updated, SpectralOperator<T>* op,
+               const ControlStatus* status, cudaStream_t stream);
 
   // Reset rCon0/zCon0 to the LCFS-extrapolated profile (first pass / restart).
-  void reset_reference(const DeviceParams<T>& p, const T* sqrtS_F, cudaStream_t stream);
+  // Status-guarded: the reference cache is untouched on an invalid pass.
+  void reset_reference(const DeviceParams<T>& p, const T* sqrtS_F,
+                       const ControlStatus* status, cudaStream_t stream);
 
   // ---- typed view accessors (blueprint §6.8) ------------------------------
   // rCon/zCon are the xmpq-weighted reconstruction fields (produced by the fused
@@ -88,9 +95,11 @@ class ConstraintOperator {
   // frcon/fzcon), shared by both transform backends (step 2 bandpass differs).
   void enqueue_head(const DeviceParams<T>& p, const RealSpaceStorage<T>& rs,
                     const T* ard, const T* azd, const T* sqrtS_F,
-                    bool precon_updated, cudaStream_t stream);
+                    bool precon_updated, const ControlStatus* status,
+                    cudaStream_t stream);
   void enqueue_tail(const DeviceParams<T>& p, const RealSpaceStorage<T>& rs,
-                    const T* sqrtS_F, cudaStream_t stream);
+                    const T* sqrtS_F, const ControlStatus* status,
+                    cudaStream_t stream);
 
   T* d_gConEff_ = nullptr;
   T* d_gCon_ = nullptr;

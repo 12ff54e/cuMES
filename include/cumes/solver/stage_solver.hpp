@@ -141,8 +141,10 @@ void measure_stage_stack(DeviceParams<T>& p, const ValidatedProblem* vp,
     Preconditioner<T> precon(p, arena);
     ConstraintOperator<T> constraint(p, arena);
     // EquilibriumOperator's own buffers (6.4): carved from the same arena.
+    // The control record is the typed ControlRecord (completion plan step
+    // 1.3) — one trivially-copyable struct per pass.
     arena->alloc_span<T>("solver/f_spec", 6 * (size_t)p.ns * p.mnmax);
-    arena->alloc_span<double>("solver/control", 16);
+    arena->alloc_span<cumes::ControlRecord>("solver/control", 1);
     arena->alloc_span<T>("solver/psum", 4 * (size_t)(p.ns - 1));
 }
 
@@ -184,8 +186,9 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     // constraint: 10 full-grid arrays + tcon + faccon (the de-alias compact
     // scratch now lives in the fourier section above).
     bytes += (10 * ns * nZnT + ns + mnmax) * szT;
-    // solver: f_spec + control + psum (6.4 — carved from the stage arena).
-    bytes += (6 * mnmax * ns + 4 * (ns - 1)) * szT + 16 * sizeof(double);
+    // solver: f_spec + control + psum (6.4 — carved from the stage arena;
+    // the control span is the typed ControlRecord).
+    bytes += (6 * mnmax * ns + 4 * (ns - 1)) * szT + sizeof(cumes::ControlRecord);
     // Alignment slack for the ~110 subspans (each padded to alignof <= 16).
     bytes += 64 * 1024;
     return bytes;

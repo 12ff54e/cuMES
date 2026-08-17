@@ -350,6 +350,91 @@ static void testMalformed() {
     vr = read_and_validate(scratchPath(), opts);
     CHECK(!vr.has_value() && !findError(vr, "lasym=true").empty(),
           "malformed: lasym=true rejected");
+
+    // ---- profile-normalization scalars (completion plan step 1.1) ----
+    // T_edge = torflux(1) normalizes the toroidal flux; C_edge = J_C(1)
+    // normalizes the prescribed current. Non-finite / zero / ill-scaled values
+    // must fail validation BEFORE any CUDA allocation.
+
+    // Non-finite T(1): the JSON parser cannot express inf/NaN tokens, so the
+    // non-finite normalization cases drive cumes::validate() directly with an
+    // in-memory ProblemSpec (the same gate read_and_validate reaches).
+    {
+        ProblemSpec spec;
+        spec.mpol = 2; spec.ntor = 0; spec.nfp = 1;
+        spec.mass.coefficients = {1.0};
+        spec.toroidal_flux.coefficients = {INFINITY};
+        spec.rbc = {{1, 0, 1.0}};
+        spec.zbs = {{1, 0, 0.5}};
+        auto vr2 = cumes::validate(spec, opts);
+        CHECK(!vr2.has_value() && !findError(vr2, "non-finite at the edge").empty(),
+              "malformed: non-finite toroidal-flux edge normalization rejected");
+    }
+
+    // Non-finite phiedge.
+    {
+        ProblemSpec spec;
+        spec.mpol = 2; spec.ntor = 0; spec.nfp = 1;
+        spec.mass.coefficients = {1.0};
+        spec.toroidal_flux.coefficients = {1.0};
+        spec.physical.phiedge = INFINITY;
+        spec.rbc = {{1, 0, 1.0}};
+        spec.zbs = {{1, 0, 0.5}};
+        auto vr2 = cumes::validate(spec, opts);
+        CHECK(!vr2.has_value() && !findError(vr2, "phiedge must be finite").empty(),
+              "malformed: non-finite phiedge rejected");
+    }
+
+    // Non-finite prescribed-current edge integral.
+    {
+        ProblemSpec spec;
+        spec.mpol = 2; spec.ntor = 0; spec.nfp = 1;
+        spec.current_model = cumes::CurrentModel::kPrescribedCurrent;
+        spec.physical.curtor = 1.0;
+        spec.mass.coefficients = {1.0};
+        spec.toroidal_flux.coefficients = {1.0};
+        spec.current.coefficients = {INFINITY};
+        spec.rbc = {{1, 0, 1.0}};
+        spec.zbs = {{1, 0, 0.5}};
+        auto vr2 = cumes::validate(spec, opts);
+        CHECK(!vr2.has_value() && !findError(vr2, "non-finite at the edge").empty(),
+              "malformed: non-finite prescribed-current edge integral rejected");
+    }
+
+    // Zero T(1) (an explicit empty aphi array: the empty series integrates
+    // to 0; a MISSING aphi gets the vmecpp default {1.0}, so it stays valid).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"aphi\": [],"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "zero at the edge").empty(),
+          "malformed: zero toroidal-flux edge normalization rejected");
+
+    // Ill-scaled T(1) (below the 1e-30 floor).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"aphi\": [1e-31],"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "ill-scaled at the edge").empty(),
+          "malformed: ill-scaled toroidal-flux edge normalization rejected");
+
+    // Prescribed current: C_edge = 0 (no ac at all).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"aphi\": [1.0],"
+                 " \"ncurr\": 1, \"curtor\": 1.0,"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = read_and_validate(scratchPath(), opts);
+    CHECK(!vr.has_value() && !findError(vr, "integrates to zero at the edge").empty(),
+          "malformed: zero prescribed-current edge integral rejected");
+
+    // A healthy prescribed-current fixture still validates (positive control).
+    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"aphi\": [1.0],"
+                 " \"ncurr\": 1, \"curtor\": 1.0, \"ac\": [1.0],"
+                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = read_and_validate(scratchPath(), opts);
+    CHECK(vr.has_value(),
+          "healthy prescribed-current normalization still validates");
 }
 
 int main(int argc, char** argv) {

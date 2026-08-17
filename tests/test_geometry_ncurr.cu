@@ -66,6 +66,12 @@ static void runGeometry(int ns, int ncurr, const char* label) {
             spec.angular.ntheta = p.ntheta; spec.angular.nzeta = p.nzeta;
             spec.current_model = cumes::CurrentModel::kPrescribedCurrent;
             spec.physical.curtor = 1.0;
+            spec.physical.phiedge = 1.0;
+            // A well-scaled toroidal-flux profile: the edge normalization
+            // T(1) is validated now (completion plan step 1.1) and must be
+            // nonzero and finite — the old fixture left it empty (T(1)=0) and
+            // relied on the silent no-divide fallback.
+            spec.toroidal_flux.coefficients = {1.0};
             spec.mass.coefficients = {0.1};
             spec.current.coefficients = {1.0};
             spec.rbc = {{1, 0, 1.0}};
@@ -83,7 +89,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     cumes::GeometryOperator<T> geometry(p, nullptr);
 
     op.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
 
     // Assert the half-grid outputs that updateIotaChipFKernel /
     // ncurr1FinalizeKernel produce are finite (an OOB read would surface as
@@ -100,13 +106,19 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     CHECK(all_finite, label);
     // Jacobian stats must be finite and the max nonzero. computeJacobianStats
     // is device-only (Phase 6A one-fence path) and writes DOUBLE stats in
-    // both builds (ADR-0001); copy the 4 values out of a RAII buffer here.
-    cumes::DeviceBuffer<double> stats(4);
-    geometry.jacobian_stats(p, stats.data(), 0);
-    T h_stats[4];
-    checkCuda(cudaMemcpy(h_stats, stats.data(), 4 * sizeof(T), cudaMemcpyDeviceToHost), "stats cpy");
-    CHECK(std::isfinite((double)h_stats[0]) && std::isfinite((double)h_stats[1]) &&
-          h_stats[2] == T(0.0) && h_stats[1] > T(0.0),
+    // both builds (ADR-0001); the stats now land in the typed ControlRecord
+    // (completion plan step 1.3), copied out of a RAII buffer here.
+    cumes::DeviceBuffer<cumes::ControlRecord> rec(1);
+    // Zero the whole record first: jacobian_stats writes only its four slots,
+    // and initcheck flags a D2H copy of any byte no kernel produced.
+    checkCuda(cudaMemset(rec.data(), 0, sizeof(cumes::ControlRecord)), "rec zero");
+    geometry.jacobian_stats(p, rec.data(), 0);
+    cumes::ControlRecord h_rec;
+    checkCuda(cudaMemcpy(&h_rec, rec.data(), sizeof(h_rec), cudaMemcpyDeviceToHost), "rec cpy");
+    CHECK(std::isfinite(h_rec.jacobian_min_oriented) &&
+              std::isfinite(h_rec.jacobian_max_abs) &&
+          h_rec.jacobian_nonfinite_count == 0.0 &&
+              h_rec.jacobian_max_abs > 0.0,
           "jacobian stats finite, nonzero max");
 
     delete[] h_chip; delete[] h_iota;

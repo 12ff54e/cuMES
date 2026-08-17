@@ -51,8 +51,13 @@ __global__ void forcesKernel(
     cumes::MagneticFieldViews<T> field,
     cumes::RadialProfileViews<T> radial,
     cumes::ForceParityViews<T> force,
+    const cumes::ControlStatus* __restrict__ status,
     T lamscale, int ns, int nZnT, T delta_s)
 {
+    // Status guard (completion plan step 1.4): no force buffers are written
+    // on an invalid-Jacobian pass (the host gate restores before anything
+    // consumes them).
+    if (status != nullptr && status->jacobian_valid == 0) return;
     const T* r_e = full.r_e.data(); const T* r_o = full.r_o.data();
     const T* z_e = full.z_e.data(); const T* z_o = full.z_o.data();
     const T* ru_e = full.ru_e.data(); const T* ru_o = full.ru_o.data();
@@ -281,12 +286,13 @@ void cumes::ForceOperator<T>::enqueue(const cumes::RealSpaceStorage<T>& rs,
                                       const cumes::RadialProfileViews<T>& rpv,
                                       const cumes::BaseGeometryHalfViews<T>& base,
                                       const cumes::MagneticFieldViews<T>& field,
+                                      const cumes::ControlStatus* status,
                                       cudaStream_t stream) const {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
     forcesKernel<T><<<grid, block, 0, stream>>>(
         geometryParityViews(rs, p), base, field, rpv,
-        forceParityViews(rs, p),
+        forceParityViews(rs, p), status,
         p.lamscale, p.ns, p.nZnT, T(1.0) / T(p.ns - 1));
     cumes::check_cuda(cudaGetLastError(), "forces kernel");
 }

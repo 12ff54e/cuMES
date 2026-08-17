@@ -94,6 +94,11 @@ static void fillForces(cumes::RealSpaceStorage<T>& rs, Cw<T>& cw, int ns, int nZ
     fill(rs.d_azmn_o, 0.2); fill(rs.d_brmn_e, 0.1); fill(rs.d_brmn_o, 0.05);
     fill(rs.d_bzmn_e, 0.03); fill(rs.d_bzmn_o, 0.02); fill(rs.d_blmn_e, 0.01);
     fill(rs.d_blmn_o, 0.005);
+    // The constraint MHD-force families too: the forward reduction reads all
+    // twelve parity views, and initcheck flags reads of never-written bytes.
+    fill(rs.d_clmn_e, 0.004); fill(rs.d_clmn_o, 0.003);
+    fill(rs.d_crmn_e, 0.002); fill(rs.d_crmn_o, 0.001);
+    fill(rs.d_czmn_e, 0.0005); fill(rs.d_czmn_o, 0.0004);
     fill(cw.d_frcon_e, 0.7); fill(cw.d_frcon_o, 0.6); fill(cw.d_fzcon_e, 0.5);
     fill(cw.d_fzcon_o, 0.4);
 }
@@ -195,6 +200,11 @@ static void testForward(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
     T* d_gen = nullptr, *d_ax = nullptr;
     cc(cudaMalloc(&d_gen, (size_t)6 * n * sizeof(T)), "gen fwd");
     cc(cudaMalloc(&d_ax, (size_t)6 * n * sizeof(T)), "ax fwd");
+    // The forward reductions leave the boundary/axis zero rows to the kernels;
+    // zero both outputs so the full-slab differential comparison stays
+    // initcheck-defined on every entry either backend may skip.
+    cc(cudaMemset(d_gen, 0, (size_t)6 * n * sizeof(T)), "gen fwd zero");
+    cc(cudaMemset(d_ax, 0, (size_t)6 * n * sizeof(T)), "ax fwd zero");
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> gen_v(d_gen, p.ns,
                                                                   p.mnmax);
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> ax_v(d_ax, p.ns,
@@ -248,6 +258,11 @@ static void testRzCon(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
     T *d_ax_r = nullptr, *d_ax_z = nullptr;
     cc(cudaMalloc(&d_ax_r, (size_t)n * sizeof(T)), "ax rcon");
     cc(cudaMalloc(&d_ax_z, (size_t)n * sizeof(T)), "ax zcon");
+    // The axisymmetric rzCon synthesis leaves the axis row zero (no poloidal
+    // angle there); zero the outputs so the full-grid comparisons stay
+    // initcheck-defined.
+    cc(cudaMemset(d_ax_r, 0, (size_t)n * sizeof(T)), "ax rcon zero");
+    cc(cudaMemset(d_ax_z, 0, (size_t)n * sizeof(T)), "ax zcon zero");
     op.enqueue_rzcon(storage.physical_const(),
                      cumes::RealFieldView<T>(d_ax_r, p.ns, p.ntheta, p.nzeta),
                      cumes::RealFieldView<T>(d_ax_z, p.ns, p.ntheta, p.nzeta), 0);
@@ -325,6 +340,7 @@ static void testDealias(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
     gen.dealias_bandpass(cw.d_gConEff, cw.d_tcon, cw.d_faccon, cw.d_gCon);
     T* d_ax = nullptr;
     cc(cudaMalloc(&d_ax, (size_t)n * sizeof(T)), "ax gcon");
+    cc(cudaMemset(d_ax, 0, (size_t)n * sizeof(T)), "ax gcon zero");
     op.enqueue_dealias(
         cumes::RealFieldView<const T>(cw.d_gConEff, p.ns, p.ntheta, p.nzeta),
         cw.d_tcon, cw.d_faccon,
@@ -370,7 +386,15 @@ static int runTests() {
     balloc(cw.d_fzcon_e, "fzcon_e"); balloc(cw.d_fzcon_o, "fzcon_o");
     balloc(cw.d_tcon, "tcon"); balloc(cw.d_gConEff, "gConEff");
     balloc(cw.d_faccon, "faccon"); balloc(cw.d_gCon, "gCon");
+    // The bandpass skips the axis row (no constraint on axis); zero the
+    // output so the full-grid readback below stays initcheck-defined.
+    cc(cudaMemset(cw.d_gCon, 0, nF * sizeof(T)), "gCon zero");
     balloc(cw.d_rCon, "rCon"); balloc(cw.d_zCon, "zCon");
+    // The fused-inverse rCon/zCon synthesis leaves the axis row to the
+    // reconstruction's natural zero; zero the buffers so the full-grid
+    // comparisons stay initcheck-defined.
+    cc(cudaMemset(cw.d_rCon, 0, nF * sizeof(T)), "rCon zero");
+    cc(cudaMemset(cw.d_zCon, 0, nF * sizeof(T)), "zCon zero");
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     cumes::AxisymmetricOperator<T> op(p);
 

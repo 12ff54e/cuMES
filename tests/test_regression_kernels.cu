@@ -325,8 +325,8 @@ static int testDealias(int ntheta) {
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
-    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
 
     // Manufacture the bandpass INPUT through the public operator.  With
     // ruFull = zuFull = 1 (ru_e = zu_e = 1, ru_o = zu_o = 0), rCon = pattern,
@@ -356,7 +356,7 @@ static int testDealias(int ntheta) {
 
     // tcon is refreshed from the (real) preconditioner + manufactured ru/zu;
     // the bandpass runs on the manufactured gConEff.
-    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true, &transform, 0);
+    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true, &transform, nullptr, 0);
 
     std::vector<T> h_tcon(p.ns);
     checkCuda(cudaMemcpy(h_tcon.data(), constraint.tcon(), p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
@@ -431,8 +431,8 @@ static int testPcr(int ns) {
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     uploadState(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0, true);
-    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), 0);
+    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
 
     // Copy the assembled matrix coefficients to host: the CPU Thomas reference
     // must use the EXACT same ar/dr/br/az/dz/bz, jMin and lambdaPrec the GPU
@@ -466,7 +466,7 @@ static int testPcr(int ns) {
     checkCuda(cudaMemcpy(d_f.data(), h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
     precon.enqueue_apply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
                     d_f.data(), p.ns, p.mnmax),
-                p, 0);
+                p, nullptr, 0);
     std::vector<T> h_g(6 * stride);
     checkCuda(cudaMemcpy(h_g.data(), d_f.data(), 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
 

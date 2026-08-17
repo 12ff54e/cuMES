@@ -24,6 +24,7 @@
 #include "cumes/physics/profiles.hpp"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/numerics/residual_operator.hpp"
+#include "cumes/solver/control_record.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 
@@ -51,15 +52,22 @@ class EquilibriumOperator {
 
   // Enqueue one pass's device DAG, reducing into the owned control record
   // (control_device()). The caller transfers it and fences after this returns.
+  // f_norm_rz/f_norm_l are the host's cached force-norm factors (from the last
+  // refresh pass): the device terminal predicate needs them to classify the
+  // invariant residual against ftol BEFORE in-place preconditioning. The
+  // defaults keep the benchmark harnesses (which drive enqueue directly)
+  // compilable; a refresh pass never classifies convergence on device, so the
+  // stale-factor window is structurally excluded from the decision.
   void enqueue(int iter, int iter2, const EvaluationSchedule& schedule,
-               cudaStream_t stream);
+               cudaStream_t stream, double f_norm_rz = 1.0,
+               double f_norm_l = 1.0);
 
-  // The reduced control record (16 scalars: [0..3] Jacobian stats, [4..6]
-  // invariant residual, [7..9] preconditioned residual, [10..15] force norms).
-  // DOUBLE in both builds (ADR-0001 follow-up): the double accumulations reach
-  // the host controller unrounded; the double build is identical by
-  // construction.
-  double* control_device() { return d_control_.data(); }
+  // The reduced control record: Jacobian stats + status, invariant /
+  // preconditioned raw sums, force-norm partials (completion plan step 1.3).
+  // DOUBLE numeric slots in both builds (ADR-0001 follow-up): the double
+  // accumulations reach the host controller unrounded; the double build is
+  // identical by construction.
+  ControlRecord* control_device() { return d_control_.data(); }
 
   // The decomposed residual slab (for the solver's descent + dump machinery).
   SpectralView<T, DecomposedResidualDomain> residual() { return residual_view_; }
@@ -100,7 +108,7 @@ class EquilibriumOperator {
   MagneticFieldViews<T> field_views_;
   RadialProfileViews<T> rpv_;
   DeviceBuffer<T> d_f_spec_;
-  DeviceBuffer<double> d_control_;
+  DeviceBuffer<ControlRecord> d_control_;
   DeviceBuffer<T> d_psum_;
 
   SpectralView<T, PhysicalStateDomain> state_view_;

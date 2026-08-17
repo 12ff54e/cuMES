@@ -26,6 +26,7 @@
 #include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/numerics/accumulation.hpp"
 #include "cumes/numerics/descent_operator.hpp"
+#include "cumes/numerics/device_predicates.cuh"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/numerics/residual_operator.hpp"
 #include "cumes/physics/constraint_operator.hpp"
@@ -51,7 +52,7 @@ template <typename T>
 __global__ void rzNormKernel(  // defined below (before computeResidualsKernel)
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
     const int* __restrict__ xm, const int* __restrict__ xn,
-    int ns, int mnmax, double* __restrict__ out);
+    int ns, int mnmax, cumes::ControlRecord* __restrict__ rec);
 
 // ---- vmecpp force-norm assembly (ideal_mhd_model.cc computeForceNorms) ---
 // Combines the per-surface partial sums (computeForceNormPartials) with the
@@ -81,7 +82,7 @@ __global__ void forceNormReduceKernel(
     const T* __restrict__ psum,   // 4*(ns-1): sRZ sL sMag sG per surface
     const T* __restrict__ dVdsH,  // ns-1
     const T* __restrict__ presH,  // ns-1
-    int nH, double* __restrict__ out)  // [5]
+    int nH, cumes::ControlRecord* __restrict__ rec)
 {
     using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
     int tid = threadIdx.x;
@@ -108,8 +109,20 @@ __global__ void forceNormReduceKernel(
         __syncthreads();
     }
     if (tid == 0) {
-        out[0] = s_buf[0][0];  out[1] = s_buf[1][0];  out[2] = s_buf[2][0];
-        out[3] = s_buf[3][0];  out[4] = s_buf[4][0];
+        // Status guard (completion plan step 1.4): on an invalid-Jacobian pass
+        // the force norms are NOT evaluated — store the deterministic zero
+        // sentinel and leave the evaluated bit clear (the host gate restores
+        // before reading these slots anyway; the zeros make the record
+        // deterministic instead of stale).
+        if (rec->status.jacobian_valid) {
+            rec->force_norms[0] = s_buf[0][0];  rec->force_norms[1] = s_buf[1][0];
+            rec->force_norms[2] = s_buf[2][0];  rec->force_norms[3] = s_buf[3][0];
+            rec->force_norms[4] = s_buf[4][0];
+            rec->status.force_norms_evaluated = 1;
+        } else {
+            rec->force_norms[0] = rec->force_norms[1] = rec->force_norms[2] =
+                rec->force_norms[3] = rec->force_norms[4] = rec->force_norms[5] = 0.0;
+        }
     }
 }
 
@@ -122,14 +135,14 @@ static void enqueueForceNorms(cumes::SpectralView<const T, cumes::PhysicalStateD
                               const int* xm, const int* xn, const DeviceParams<T>& p,
                               const cumes::RadialProfileViews<T>& rpv,
                               const cumes::GeometryOperator<T>& geometry,
-                              T* d_psum, double* d_out, cudaStream_t stream) {
+                              T* d_psum, cumes::ControlRecord* rec, cudaStream_t stream) {
     geometry.force_norm_partials(p, rpv.dVds_H, d_psum, stream);
     { dim3 b1(256), g1(1);
       forceNormReduceKernel<T><<<g1, b1, 0, stream>>>(d_psum, rpv.dVds_H, rpv.pres_H,
-                                                       p.ns - 1, d_out); }
+                                                       p.ns - 1, rec); }
     { dim3 b2(256), g2(1);
       rzNormKernel<T><<<g2, b2, 0, stream>>>(st, xm, xn,
-                                              p.ns, p.mnmax, d_out + 5); }
+                                              p.ns, p.mnmax, rec); }
     cumes::check_cuda(cudaGetLastError(), "force norms");
 }
 
@@ -301,7 +314,7 @@ template <typename T>
 __global__ void rzNormKernel(
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
     const int* __restrict__ xm, const int* __restrict__ xn,
-    int ns, int mnmax, double* __restrict__ out)
+    int ns, int mnmax, cumes::ControlRecord* __restrict__ rec)
 {
     using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
     A sum = A(0.0);
@@ -339,7 +352,7 @@ __global__ void rzNormKernel(
         if (tid < s) s_sum[tid] += s_sum[tid + s];
         __syncthreads();
     }
-    if (tid == 0) out[0] = s_sum[0];
+    if (tid == 0 && rec->status.jacobian_valid) rec->force_norms[5] = s_sum[0];
 }
 
 // Residual groups match vmecpp's FourierForces::residuals (folded basis):
@@ -428,6 +441,15 @@ void cumes::ResidualOperator<T>::enqueue(
     int ns, int mnmax, double* sq_out, cudaStream_t stream) const {
     dim3 b3(256), g3(3);
     computeResidualsKernel<T><<<g3, b3, 0, stream>>>(residual, ns, mnmax, sq_out);
+}
+
+template <typename T>
+void cumes::ResidualOperator<T>::enqueue_preconditioned(
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain> residual,
+    int ns, int mnmax, cumes::ControlRecord* rec, cudaStream_t stream) const {
+    dim3 b3(256), g3(3);
+    computeResidualsPreconditionedKernel<T><<<g3, b3, 0, stream>>>(
+        residual, ns, mnmax, rec);
 }
 
 template <typename T>
@@ -893,7 +915,7 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       precon_(p, arena), constraint_(p, arena),
       base_views_(geometry.base_geometry_views(p)), field_views_(geometry.magnetic_field_views(p)), rpv_(profiles.profile_views()),
       d_f_spec_(solverArenaBuffer<T>(arena, "solver/f_spec", 6 * (size_t)p.ns * p.mnmax)),
-      d_control_(solverArenaBuffer<double>(arena, "solver/control", 16)),
+      d_control_(solverArenaBuffer<cumes::ControlRecord>(arena, "solver/control", 1)),
       d_psum_(solverArenaBuffer<T>(arena, "solver/psum", 4 * (size_t)(p.ns - 1))),
       state_view_(storage.physical()), state_view_const_(storage.physical_const()),
       velocity_view_(storage.velocity()),
@@ -957,7 +979,8 @@ cumes::EquilibriumOperator<T>::~EquilibriumOperator() {
 template <typename T>
 void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
                                            const cumes::EvaluationSchedule& schedule,
-                                           cudaStream_t stream) {
+                                           cudaStream_t stream, double f_norm_rz,
+                                           double f_norm_l) {
     // Local aliases mirror the pre-step-12 solverRun variable names so the DAG
     // body below is a verbatim move (same arithmetic, same order).
     const DeviceParams<T>& p = p_;
@@ -972,7 +995,7 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     cumes::MagneticFieldViews<T>& field = field_views_;
     const cumes::RadialProfileViews<T>& rpv = rpv_;
     cumes::DeviceBuffer<T>& d_f_spec = d_f_spec_;
-    cumes::DeviceBuffer<double>& d_control = d_control_;
+    cumes::DeviceBuffer<cumes::ControlRecord>& d_control = d_control_;
     cumes::DeviceBuffer<T>& d_psum = d_psum_;
     cumes::SpectralOperator<T>* transform_op = transform_op_;
     cumes::GeometryParityViews<T>& geom_views = geom_views_;
@@ -983,6 +1006,15 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     cudaEvent_t& ev0_inv = ev0_inv_; cudaEvent_t& ev1_inv = ev1_inv_;
     cudaEvent_t& ev0_fwd = ev0_fwd_; cudaEvent_t& ev1_fwd = ev1_fwd_;
     const int kDumpIter = kDumpIter_, kE2Start = kE2Start_, kMaxIterEff = kMaxIterEff_;
+
+    // ---- device status reset (completion plan step 1.4) ----
+    // Zero the WHOLE control record at pass start: the status bits then cannot
+    // leak across passes, and any slot a guarded no-op leaves unwritten reads
+    // as the deterministic zero sentinel (stale slots are never read by the
+    // host on invalid/terminal passes, but determinism is the point).
+    cumes::check_cuda(
+        cudaMemsetAsync(d_control.data(), 0, sizeof(cumes::ControlRecord), stream),
+        "control reset");
 
     // Extrapolate m=1 coefficients to the magnetic axis (j=0)
     // before inverse DFT, matching vmecpp's extrapolateTowardsAxis().
@@ -1013,23 +1045,27 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // covariant metric — no 1/√g division.
     geometry.enqueue(rs, p, rpv, stream);
 
-    // ---- Jacobian statistics (vmecpp's bad-jacobian detection) ----
-    // Reduced into d_control[0..3] (device-only), ordered after the base
-    // geometry but before the magnetic field (blueprint §6.7: the field is
-    // status-guarded downstream). The validity decision is made at the
-    // single control fence after the full DAG is enqueued; a collapsed or
-    // sign-flipped surface then fails the pass there and the state is
-    // restored (see the gate below). The geometry kernels' own inv_gsqrt
-    // guards keep their buffers finite in the interim.
+    // ---- Jacobian statistics: reset -> reduce -> finalize (plan step 1.4) --
+    // Reduced into the typed record (device-only), ordered after the base
+    // geometry but before the magnetic field. The finalize kernel writes
+    // status.jacobian_valid with the SAME rule the host controller applies
+    // at the fence (kJacobianEps / nZnT); every downstream cache/state
+    // mutation and 1/√g consumer reads that bit and no-ops on an invalid
+    // pass. The host gate remains authoritative for the restore/delt
+    // bookkeeping — the device bit only prevents forbidden mutations.
     geometry.jacobian_stats(p, d_control.data(), stream);
+    { jacobianFinalizeKernel<<<1, 1, 0, stream>>>(d_control.data(), p.nZnT);
+      cumes::check_cuda(cudaGetLastError(), "jacobianFinalize"); }
 
     // Magnetic field (1/√g B^θ/B^ζ + covariant B + total pressure + ncurr
     // closure) + the full-grid iota/chip update: every pass for ncurr=1
     // (current closure evolves iotaH/chipH), but for ncurr=0 the half-grid
     // profiles are fixed so the update is idempotent and runs only on the
-    // first pass.
+    // first pass. Status-guarded: on an invalid-Jacobian pass none of the
+    // field arrays or the evolved iotaH/chipH cache are written.
     cumes::MagneticFieldOperator<T> field_op;
-    field_op.enqueue(rs, p, rpv, base, field, stream, schedule.update_iota_chi);
+    field_op.enqueue(rs, p, rpv, base, field, &d_control.data()->status, stream,
+                     schedule.update_iota_chi);
 
 #ifdef DUMP_CUMES_VERIFY
     dumpStepD<T>(iter, iter2, p, base, field);
@@ -1039,9 +1075,10 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // §8.4). Reset the constraint-force reference (rCon0/zCon0) to the
     // LCFS-extrapolated profile on the first iteration and after every
     // restart (iter2 == iter1), matching vmecpp's rzConIntoVolume
-    // ("initialization/soft reset").
+    // ("initialization/soft reset"). Status-guarded: the reference cache is
+    // not mutated on an invalid pass (the re-anchored next pass re-runs it).
     if (schedule.reset_constraint_reference) {
-        constraint.reset_reference(p, rpv.sqrtS_F, stream);
+        constraint.reset_reference(p, rpv.sqrtS_F, &d_control.data()->status, stream);
     }
 
     // Update the radial tridiagonal + lambda preconditioners BEFORE the
@@ -1050,25 +1087,30 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // (updateRadialPreconditioner + constraintForceMultiplier at the
     // start of update()). Cadence matches vmecpp's
     // shouldUpdateRadialPreconditioner: (iter2 - iter1) % 25 == 0.
+    // Status-guarded: the preconditioner element cache is not rebuilt on an
+    // invalid pass (the re-anchor makes the next pass a refresh pass).
     const bool precon_updated = schedule.refresh_preconditioner;
     if (precon_updated) {
         precon.enqueue_compute(rs, transform.xm(), transform.xn(), p, rpv, base, field,
-                               stream);
+                               &d_control.data()->status, stream);
 
         // vmecpp computeForceNorms (same cadence): device-side reduction
-        // of the force-norm partial sums into the combined control record
-        // (finalized on the host after the single control fence).
+        // of the force-norm partial sums into the typed control record
+        // (finalized on the host after the single control fence; guarded +
+        // force_norms_evaluated set on device).
         enqueueForceNorms(storage.physical_const(), transform.xm(),
                           transform.xn(), p, rpv, geometry,
-                          d_psum.data(), d_control.data() + 10, stream);
+                          d_psum.data(), d_control.data(), stream);
 
 #ifdef DUMP_CUMES_VERIFY
         dumpStepPrecon<T>(iter, p, precon);
 #endif
     }
 
+    // Status-guarded MHD force: no force buffers are written on an invalid
+    // pass (the host gate restores before anything consumes them).
     cumes::ForceOperator<T> force_op;
-    force_op.enqueue(rs, p, rpv, base, field, stream);
+    force_op.enqueue(rs, p, rpv, base, field, &d_control.data()->status, stream);
 
 #ifdef DUMP_CUMES_VERIFY
     dumpStepEF<T>(iter, iter2, p, base, field, rs);
@@ -1078,8 +1120,10 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
     // Uses the current-iteration tcon (refreshed above when the
     // preconditioner was updated), matching vmecpp. The de-alias bandpass
     // is dispatched through the unified SpectralOperator interface.
+    // Status-guarded: the tcon cache and the constraint-force scratch are
+    // not written on an invalid pass.
     constraint.enqueue(p, rs, precon.ard(), precon.azd(), rpv.sqrtS_F, precon_updated,
-                       transform_op, stream);
+                       transform_op, &d_control.data()->status, stream);
 
 #ifdef DUMP_CUMES_VERIFY
     dumpStepG<T>(iter, p, rs, storage, constraint);
@@ -1119,32 +1163,49 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
       cumes::check_cuda(cudaGetLastError(), "m1Constraint"); }
 
     // ---- Invariant (unpreconditioned) residuals ----
-    // Reduced into d_control[4..6]. The nonfinite/converged decision and
-    // the in-place preconditioner are both deferred to the single control
-    // fence below (Phase 6A one-fence path); stream order guarantees the
-    // invariant reduction completes before the preconditioner runs, so the
-    // two never race on the residual slab.
+    // Reduced into rec.invariant_raw. Stream order guarantees the reduction
+    // completes before the terminal predicate and the in-place
+    // preconditioner, so the three never race on the residual slab.
 #ifdef DUMP_CUMES_VERIFY
     dumpStepFinal<T>(iter, p, d_f_spec.data(), kMaxIterEff);
 #endif
     cumes::ResidualOperator<T> residual_op;
-    residual_op.enqueue(residual_view_const, p.ns, p.mnmax, d_control.data() + 4, stream);
+    residual_op.enqueue(residual_view_const, p.ns, p.mnmax,
+                        d_control.data()->invariant_raw, stream);
+
+    // ---- Device terminal predicate (blueprint §6.9/§7 "Terminal") ----
+    // Classify the invariant residual ON DEVICE before in-place
+    // preconditioning: nonfinite always; converged only when this is NOT a
+    // preconditioner-refresh pass (the host's f_norm factors are finalized
+    // from THIS pass's force norms only at the fence, so a refresh pass
+    // cannot classify convergence on device without the factors the host
+    // will use). The preconditioner and the preconditioned reduction read
+    // the bits and no-op on terminal passes, marking their fields
+    // not_evaluated.
+    { invariantPredicateKernel<<<1, 1, 0, stream>>>(
+          d_control.data(), f_norm_rz, f_norm_l,
+          (double)p.mnmax * (double)p.ns, (double)p.ftol,
+          schedule.refresh_preconditioner ? 0 : 1);
+      cumes::check_cuda(cudaGetLastError(), "invariantPredicate"); }
 
     // vmecpp applyM1Preconditioner: m=1 frss scale, before the RZ solve.
     // Moved into the Preconditioner operator (it reads the odd-parity
-    // diagonal elements pw.d_ard/d_brd/azd/bzd).
-    precon.enqueue_m1_scale(residual_view, p, stream);
+    // diagonal elements pw.d_ard/d_brd/azd/bzd). Terminal-guarded.
+    precon.enqueue_m1_scale(residual_view, p, &d_control.data()->status, stream);
 
     // Apply the radial tridiagonal + lambda preconditioners to the
-    // (decomposed) spectral forces.
-    precon.enqueue_apply(residual_view, p, stream);
+    // (decomposed) spectral forces. Terminal-guarded.
+    precon.enqueue_apply(residual_view, p, &d_control.data()->status, stream);
 
 #ifdef DUMP_CUMES_VERIFY
     dumpStepI<T>(iter, iter2, p, d_f_spec.data(), storage, kDumpIter, kE2Start);
 #endif
 
     // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
-    residual_op.enqueue(residual_view_const, p.ns, p.mnmax, d_control.data() + 7, stream);
+    // Terminal-guarded reduction: zero sentinel + not_evaluated on
+    // nonfinite/converged passes, real values + evaluated bit otherwise.
+    residual_op.enqueue_preconditioned(residual_view_const, p.ns, p.mnmax,
+                                       d_control.data(), stream);
 }
 
 template <typename T>
@@ -1205,9 +1266,9 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
     // the same cadence as the preconditioner (every kPreconInterval passes).
     double fNormRZ = 0.0, fNormL = 0.0, fNorm1 = 0.0;
 
-    // Pinned mirror of the combined control record (one async D2H per pass,
-    // delivered by the single control fence).
-    cumes::PinnedBuffer<double> h_control_pin(16);
+    // Pinned mirror of the typed control record (one async D2H per pass,
+    // delivered by the single control fence — completion plan step 1.3).
+    cumes::PinnedBuffer<cumes::ControlRecord> h_control_pin(1);
 
     // State rollback: one contiguous state-only checkpoint slab (6*mnmax*ns),
     // replacing the six separate d_bk_* arrays. The slab order matches the six
@@ -1367,7 +1428,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         schedule.refresh_preconditioner = controller.refresh_preconditioner();
         schedule.zero_z_force_m1 = (controller.effective_iteration() < 2) ||
                                    (controller.fsqz_prev() < 1.0e-6);
-        equilibrium.enqueue(iter, iter2, schedule, stream);
+        equilibrium.enqueue(iter, iter2, schedule, stream, fNormRZ, fNormL);
 
         // ---- ONE combined control fence (Phase 6A) ----
         // Jacobian stats + invariant + preconditioned residuals are one device
@@ -1375,7 +1436,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         // the three per-pass host barriers (Jacobian gate, invariant,
         // preconditioned) of the pre-6A loop.
         cumes::check_cuda(cudaMemcpyAsync(h_control_pin.data(), equilibrium.control_device(),
-                               16 * sizeof(double), cudaMemcpyDeviceToHost, stream), "cpy control");
+                               sizeof(cumes::ControlRecord), cudaMemcpyDeviceToHost, stream), "cpy control");
         cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
         if (bench && bench->enabled) {
             auto bench_now = std::chrono::steady_clock::now();
@@ -1384,7 +1445,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
                     .count());
             bench_t_prev = bench_now;
         }
-        const double* hc = h_control_pin.data();
+        const cumes::ControlRecord& rec = *h_control_pin.data();
         // Sample the transform-timing events at this fence (both transforms
         // preceded it on the same stream).
         equilibrium.sample_transform_timing();
@@ -1401,14 +1462,27 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         // a refresh+reset pass (iter2==iter1), which rebuilds them from the
         // restored geometry.
         cumes::JacobianStatus<double> js;
-        js.min_oriented = hc[0];
-        js.max_abs = hc[1];
-        js.nonfinite_count = hc[2];
-        js.min_index = (int)hc[3];
+        js.min_oriented = rec.jacobian_min_oriented;
+        js.max_abs = rec.jacobian_max_abs;
+        js.nonfinite_count = rec.jacobian_nonfinite_count;
+        js.min_index = (int)rec.jacobian_min_index;
         const double delt_before = controller.delta_t();
         const int it2_before = controller.effective_iteration();
         const int it1_before = controller.restart_anchor();
-        if (controller.jacobian_invalid(js, p.nZnT)) {
+        const bool host_jac_invalid = controller.jacobian_invalid(js, p.nZnT);
+#ifdef DUMP_CUMES_VERIFY
+        // Device/host rule consistency (dump-only observability): the finalize
+        // kernel and the controller must decide identically, or the guards
+        // would suppress work the controller later consumes.
+        if (dumpEnabled() && ((rec.status.jacobian_valid != 0) == host_jac_invalid)) {
+            fprintf(stderr, "cuMES: WARNING: device jacobian status (%s) disagrees "
+                            "with the host gate (%s) at pass %d\n",
+                    rec.status.jacobian_valid ? "valid" : "invalid",
+                    host_jac_invalid ? "invalid" : "valid",
+                    controller.effective_iteration());
+        }
+#endif
+        if (host_jac_invalid) {
 #ifdef DUMP_CUMES_VERIFY
             recordPass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
                        it2_before, it1_before);
@@ -1428,22 +1502,46 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         // record's force-norm scalars (reduced on device above). On non-refresh
         // passes the cached factors are reused.
         if (schedule.refresh_preconditioner) {
-            finalizeForceNorms(hc + 10, p, profiles.delta_s(), iter2, fNormRZ,
+            finalizeForceNorms(rec.force_norms, p, profiles.delta_s(), iter2, fNormRZ,
                                fNormL, fNorm1);
         }
 
         // ---- Invariant residuals (vmecpp evalFResInvar) ----
         // fsqr = fResInvar[0]·fNormRZ·0.25 (same for fsqz), fsql =
         // fResInvar[2]·fNormL. The kernel returns ΣF²/(mnmax·ns); undo first.
-        double fsqr_i = hc[4] * plain_per_el * fNormRZ * 0.25;
-        double fsqz_i = hc[5] * plain_per_el * fNormRZ * 0.25;
-        double fsql_i = hc[6] * plain_per_el * fNormL;
+        double fsqr_i = rec.invariant_raw[0] * plain_per_el * fNormRZ * 0.25;
+        double fsqz_i = rec.invariant_raw[1] * plain_per_el * fNormRZ * 0.25;
+        double fsql_i = rec.invariant_raw[2] * plain_per_el * fNormL;
         const double inv_triple[3] = {fsqr_i, fsqz_i, fsql_i};
 
         // ---- Stopping criterion (vmecpp Evolve) ----
         // classify_invariant records fsqz_prev for the next pass's gauge
         // condition, then reports nonfinite (recover) or converged (stop).
         cumes::InvariantVerdict verdict = controller.classify_invariant(inv_triple);
+#ifdef DUMP_CUMES_VERIFY
+        // Device/host terminal-predicate consistency (dump-only): nonfinite is
+        // factor-independent and must always agree; converged is structurally
+        // disabled on refresh passes (the device cannot know the factors the
+        // host finalizes from THIS pass), so it is only compared off-cadence.
+        if (dumpEnabled()) {
+            const bool dev_nf = rec.status.invariant_nonfinite != 0;
+            const bool dev_cv = rec.status.invariant_converged != 0;
+            const bool nf_ok = dev_nf == verdict.nonfinite;
+            const bool cv_ok = schedule.refresh_preconditioner ||
+                               dev_cv == verdict.converged;
+            const bool ev_ok = verdict.nonfinite || verdict.converged ||
+                               rec.status.preconditioned_evaluated != 0;
+            if (!nf_ok || !cv_ok || !ev_ok) {
+                fprintf(stderr, "cuMES: WARNING: device predicates (nf=%d cv=%d "
+                                "prec_eval=%d) disagree with host (%d %d) at pass %d\n",
+                        (int)rec.status.invariant_nonfinite,
+                        (int)rec.status.invariant_converged,
+                        (int)rec.status.preconditioned_evaluated,
+                        (int)verdict.nonfinite, (int)verdict.converged,
+                        controller.effective_iteration());
+            }
+        }
+#endif
         if (verdict.nonfinite) {
             // vmecpp hard-fails on non-finite residuals (status BAD_JACOBIAN);
             // we recover instead: restore the last good state and shrink delt.
@@ -1477,9 +1575,9 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         // ---- Preconditioned residuals (vmecpp evalFResPrecd) ----
         // fsqr1 = fResPrecd[0]·fNorm1 (same for fsqz1), fsql1 =
         // fResPrecd[2]·deltaS — NOTE: deltaS, not fNormL.
-        double fsqr = hc[7] * plain_per_el * fNorm1;
-        double fsqz = hc[8] * plain_per_el * fNorm1;
-        double fsql = hc[9] * plain_per_el * profiles.delta_s();
+        double fsqr = rec.preconditioned_raw[0] * plain_per_el * fNorm1;
+        double fsqz = rec.preconditioned_raw[1] * plain_per_el * fNorm1;
+        double fsql = rec.preconditioned_raw[2] * plain_per_el * profiles.delta_s();
         // ---- Damping + time-step control (vmecpp Evolve / VMEC_8_52) ----
         // 1/tau tracks the rate of decrease of fsq (log-ratio), capped at
         // 0.15/delt, averaged over a 10-iteration window; res0 is the running

@@ -29,6 +29,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "cumes/solver/control_record.hpp"
+
 namespace cumes {
 
 // Per-solve numerical status (blueprint §4.9). A pivot below the scale-aware
@@ -95,8 +97,15 @@ class TridiagonalBackend {
   // Accumulates the sub-floor-pivot breakdown count into *status (device side);
   // the caller owns and resets that int. Never silently processes only a prefix
   // of the rows.
+  //
+  // Terminal gate (completion plan step 1.4): when `gate` is non-null and its
+  // invariant_nonfinite / invariant_converged bits are set, the solve no-ops
+  // (the RHS is left untouched and the caller marks the preconditioned
+  // residual not evaluated). nullptr (direct test/benchmark callers) behaves
+  // exactly as before.
   virtual void enqueue_solve(const StridedBatchTridiagonalView<T>& matrix,
-                             int* status, cudaStream_t stream) = 0;
+                             int* status, cudaStream_t stream,
+                             const ControlStatus* gate = nullptr) = 0;
 };
 
 // The production 128-thread grid-stride PCR (extracted bit-for-bit from the
@@ -109,7 +118,8 @@ class PcrBackend : public TridiagonalBackend<T> {
   explicit PcrBackend(PivotPolicy policy) : policy_(policy) {}
   BackendLimits limits() const noexcept override;
   void enqueue_solve(const StridedBatchTridiagonalView<T>& matrix, int* status,
-                     cudaStream_t stream) override;
+                     cudaStream_t stream,
+                     const ControlStatus* gate = nullptr) override;
 
  private:
   PivotPolicy policy_{};
@@ -127,7 +137,8 @@ class ThomasBackend : public TridiagonalBackend<T> {
   explicit ThomasBackend(PivotPolicy policy) : policy_(policy) {}
   BackendLimits limits() const noexcept override;
   void enqueue_solve(const StridedBatchTridiagonalView<T>& matrix, int* status,
-                     cudaStream_t stream) override;
+                     cudaStream_t stream,
+                     const ControlStatus* gate = nullptr) override;
 
  private:
   PivotPolicy policy_{};

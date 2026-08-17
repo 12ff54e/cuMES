@@ -11,6 +11,7 @@
 #include <cuda_runtime.h>
 
 #include "cumes/config/device_params.hpp"
+#include "cumes/solver/control_record.hpp"
 #include "cumes/state/real_fields.cuh"
 #include "cumes/state/real_space_storage.hpp"
 
@@ -19,10 +20,13 @@ namespace cumes {
 template <class T>
 class ForceOperator {
  public:
+  // Status-guarded (completion plan step 1.4): the kernel no-ops on an
+  // invalid-Jacobian pass (status->jacobian_valid == 0), writing no force
+  // buffers.
   void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                const RadialProfileViews<T>& rpv,
                const BaseGeometryHalfViews<T>& base, const MagneticFieldViews<T>& field,
-               cudaStream_t stream) const;
+               const ControlStatus* status, cudaStream_t stream) const;
 };
 
 }  // namespace cumes

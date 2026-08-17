@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 
 #include "cumes/config/device_params.hpp"
+#include "cumes/solver/control_record.hpp"
 #include "cumes/state/real_fields.cuh"
 #include "cumes/state/real_space_storage.hpp"
 
@@ -35,9 +36,12 @@ class GeometryOperator {
   void enqueue(const RealSpaceStorage<T>& rs, const DeviceParams<T>& p,
                const RadialProfileViews<T>& rpv, cudaStream_t stream);
 
-  // Oriented-Jacobian statistics into a caller-owned 4-element device scratch
-  // (DOUBLE in both builds — ADR-0001 control-record follow-up).
-  void jacobian_stats(const DeviceParams<T>& p, double* d_stats, cudaStream_t stream) const;
+  // Oriented-Jacobian statistics into the typed control record's four
+  // jacobian_* slots (DOUBLE in both builds — ADR-0001 control-record
+  // follow-up). The finalize step that turns the stats into
+  // status.jacobian_valid lives with the solver (jacobianFinalizeKernel in
+  // solver_impl.cuh); both use the shared kJacobianEps rule.
+  void jacobian_stats(const DeviceParams<T>& p, ControlRecord* rec, cudaStream_t stream) const;
 
   // Force-norm partial sums (dVdsH + psum) for the residual normalization.
   void force_norm_partials(const DeviceParams<T>& p, T* dVdsH, T* psum,
