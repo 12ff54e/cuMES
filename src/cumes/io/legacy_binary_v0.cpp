@@ -29,8 +29,10 @@ namespace {
 class LegacyBinaryV0Writer final : public Writer {
  public:
     Status write_atomic(const EquilibriumSnapshot& snapshot,
-                        const RunReport& report, const OutputSpec& spec) override {
-        (void)report;  // the v0 container records only the state
+                        const RunReport& report, const OutputSpec& spec,
+                        const ValidatedProblem& problem,
+                        const LegacyRunScalars& scalars) override {
+        (void)report; (void)problem; (void)scalars;  // v0 records only the state
         const std::string tmp = io_detail::tempPathFor(spec.path);
         FILE* fp = fopen(tmp.c_str(), "wb");
         if (!fp) return Status("cannot open " + tmp + " for writing");
@@ -57,7 +59,9 @@ class LegacyBinaryV0Writer final : public Writer {
 
 class LegacyBinaryV0Reader final : public Reader {
  public:
-    Result<EquilibriumSnapshot> read(const std::string& path) override {
+    Result<EquilibriumSnapshot> read(const std::string& path,
+                                    RunReport* report) override {
+        (void)report;  // the v0 container records no provenance
         FILE* fp = fopen(path.c_str(), "rb");
         if (!fp) return Result<EquilibriumSnapshot>("cannot open " + path);
 
@@ -96,17 +100,24 @@ class LegacyBinaryV0Reader final : public Reader {
 
 }  // namespace
 
-std::unique_ptr<Writer> make_writer(OutputFormat format, OutputSchema schema) {
+// Binary-only factories (completion plan step 2.5): the host I/O library
+// needs no backend defines to answer these. The FULL make_writer/make_reader
+// dispatch (including the NetCDF/HDF5 adapters) lives in the adapter library
+// (src/cumes/io/writer_dispatch.cpp in cumes_io), whose strong references to
+// the adapter factories force the linker to extract the adapter TUs.
+std::unique_ptr<Writer> make_binary_writer(OutputFormat format,
+                                           OutputSchema schema) {
     if (format == OutputFormat::kBinary && schema == OutputSchema::kLegacyV0) {
         return std::make_unique<LegacyBinaryV0Writer>();
     }
     if (format == OutputFormat::kBinary && schema == OutputSchema::kV1) {
         return make_v1_writer();  // defined in versioned_binary.cpp
     }
-    return nullptr;  // NetCDF/HDF5 host adapters: deferred to Phase 3.
+    return nullptr;
 }
 
-std::unique_ptr<Reader> make_reader(OutputFormat format, OutputSchema schema) {
+std::unique_ptr<Reader> make_binary_reader(OutputFormat format,
+                                           OutputSchema schema) {
     if (format == OutputFormat::kBinary && schema == OutputSchema::kLegacyV0) {
         return std::make_unique<LegacyBinaryV0Reader>();
     }

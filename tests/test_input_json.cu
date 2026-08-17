@@ -305,11 +305,14 @@ static void testNegative() {
     CHECK(!vr.has_value() && !findError(vr, "only \"power_series\"").empty(),
           "neg: non-power_series profile rejected");
 
-    // A typo'd key warns (not silently ignored) but does not fail the parse.
+    // A typo'd key: strict is the DEFAULT now (completion plan step 2.1),
+    // so the warn-and-continue path must opt out explicitly.
+    cumes::SolverOptions compat = opts;
+    compat.strict_schema = false;
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"n_theta\": 6,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    vr = cumes::read_and_validate(scratchPath(), opts);
+    vr = cumes::read_and_validate(scratchPath(), compat);
     CHECK(vr.has_value() && vr.value().spec().mpol == 2,
           "neg: unknown key parse succeeds");
     if (vr.has_value()) {

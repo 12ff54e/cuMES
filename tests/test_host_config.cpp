@@ -304,11 +304,14 @@ static void testMalformed() {
     CHECK(!vr.has_value() && !findError(vr, "only \"power_series\"").empty(),
           "malformed: non-power_series profile rejected");
 
-    // Unknown key: compatibility warns (succeeds); strict errors.
+    // Unknown key: strict is the DEFAULT now (completion plan step 2.1),
+    // so the compat path must opt out explicitly.
+    SolverOptions compat = opts;
+    compat.strict_schema = false;
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"n_theta\": 6,"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
-    vr = read_and_validate(scratchPath(), opts);
+    vr = read_and_validate(scratchPath(), compat);
     CHECK(vr.has_value(), "malformed: unknown key (compat) still validates");
     if (vr.has_value()) {
         bool warned = false;

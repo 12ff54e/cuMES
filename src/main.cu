@@ -128,6 +128,11 @@ int main(int argc, char** argv) {
     // positionals); each positional fills the first free slot (input, output).
     bool inputGiven = false;
     bool outputGiven = false;
+    // --compatibility: the named legacy policy (completion plan step 2.1) —
+    // vmecpp-style warn-and-ignore for unknown input keys, the cumes_state.bin
+    // default output path, and the unknown-suffix fallback. Strict schema v1
+    // behavior is the default.
+    bool compatibility = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -167,6 +172,8 @@ int main(int argc, char** argv) {
         } else if (match("output", v)) {
             outputPath = v;
             outputGiven = true;
+        } else if (a == "--compatibility") {
+            compatibility = true;
         } else if (!a.empty() && a[0] == '-') {
             fprintf(stderr, "cuMES: unknown option '%s'\n", a.c_str());
             return EXIT_FAILURE;
@@ -186,32 +193,32 @@ int main(int argc, char** argv) {
                         "exclusive\n");
         return EXIT_FAILURE;
     }
-    if (!outputGiven)
+    if (!outputGiven) {
+        if (!compatibility) {
+            fprintf(stderr, "cuMES: no output path given; pass --output <path> "
+                            "(or --compatibility for the legacy default "
+                            "cumes_state.bin)\n");
+            return EXIT_FAILURE;
+        }
         fprintf(stderr, "WARNING: no output path given - "
                         "writing binary cumes_state.bin\n");
+    }
 
     // ---- output preflight (before any CUDA work) ----------------------------
     // A requested-but-unlinked format (e.g. .nc on a binary-only build) and an
     // unknown suffix are rejected HERE, before the CUDA context is created and
     // before any grid stage runs.
-    auto resolved = cumes::resolve_output_spec(outputPath, /*compatibility=*/false);
+    auto resolved = cumes::resolve_output_spec(outputPath, compatibility);
     if (!resolved.has_value()) {
         fprintf(stderr, "cuMES: %s\n", resolved.error().c_str());
         return EXIT_FAILURE;
     }
     const cumes::OutputSpec outSpec = resolved.value();
-    // The NetCDF/HDF5 writers are hard-wired to the legacy-v0 fixed-capacity
-    // layout (no v1 provenance trailer), so v1 is a binary-only schema. The
-    // check lives in the preflight: rejected before any CUDA work, not
-    // silently downgraded after a full solve.
-    if (schema == cumes::OutputSchema::kV1 &&
-        outSpec.format != cumes::OutputFormat::kBinary) {
-        fprintf(stderr, "cuMES: --output-schema v1 is only supported for "
-                        "binary (.bin) output; %s files are written as "
-                        "legacy-v0 (drop the flag or pass "
-                        "--output-schema legacy-v0)\n",
-                cumes::output_suffix(outSpec.format));
-        return EXIT_FAILURE;
+    // The compat-mode unknown-suffix fallback rewrites the target to
+    // cumes_state.bin; say so (the legacy behavior printed this warning).
+    if (compatibility && outSpec.path != outputPath) {
+        fprintf(stderr, "cuMES: WARNING: unrecognized output suffix, writing "
+                        "binary %s\n", outSpec.path.c_str());
     }
     if (!cumes::output_format_available(outSpec.format)) {
         fprintf(stderr, "cuMES: output format '%s' is not available in this "
@@ -222,6 +229,7 @@ int main(int argc, char** argv) {
 
     // ---- config: parse + validate -------------------------------------------
     cumes::SolverOptions opts;
+    opts.strict_schema = !compatibility;  // strict schema-v1 is the default
 #ifdef CUMES_USE_FLOAT
     // Float runs stall at ~1e-7 (the float rounding floor) and can never meet
     // the double-tuned stage tolerances. Declaring the mixed-float policy lets
@@ -350,39 +358,48 @@ int main(int argc, char** argv) {
 
         // Output success is part of the run result: a converged solve whose
         // state file could not be written must NOT exit 0.
+        //
+        // ONE host snapshot serves every backend and the optional checkpoint
+        // (completion plan step 2.2): the binary, NetCDF and HDF5 writers all
+        // consume the same host EquilibriumSnapshot + RunReport through the
+        // Writer interface — no backend reads device state or performs its own
+        // D2H copies.
         bool output_ok = true;
-        // One host snapshot serves the binary writer and/or the optional
-        // checkpoint (built once, only when either needs it).
-        cumes::EquilibriumSnapshot snapshot;
-        if (outSpec.format == cumes::OutputFormat::kBinary || !checkpointPath.empty()) {
-            snapshot = cumes::snapshot_from_device(storage);
-        }
-        if (outSpec.format == cumes::OutputFormat::kBinary) {
-            // Versioned binary writer: legacy-v0 (default) is byte-identical to
-            // the pre-overhaul outputSaveBinary (proved by test_io_golden); v1
-            // adds the provenance trailer.
-            cumes::OutputSpec spec = outSpec;
-            spec.schema = schema;
-            auto writer = cumes::make_writer(spec.format, spec.schema);
-            if (!writer) {
-                fprintf(stderr, "cuMES: no writer for binary schema\n");
-                output_ok = false;
-            } else {
-                fill_provenance(outcome.report, inputPath, sourceHash);
-                const cumes::Status status =
-                    writer->write_atomic(snapshot, outcome.report, spec);
-                if (status.has_value()) {
-                    printf("Saved binary state to %s\n", spec.path.c_str());
-                } else {
-                    fprintf(stderr, "cuMES: %s\n", status.error().c_str());
-                    output_ok = false;
-                }
-            }
+        cumes::EquilibriumSnapshot snapshot =
+            cumes::snapshot_from_device(storage);
+        cumes::OutputSpec spec = outSpec;
+        spec.schema = schema;
+        // Final-stage scalar pack the legacy-v0 layouts record verbatim.
+        cumes::LegacyRunScalars scalars;
+        scalars.mpol = p.mpol; scalars.ntor = p.ntor; scalars.nfp = p.nfp;
+        scalars.ntheta = p.ntheta; scalars.nzeta = p.nzeta;
+        scalars.ns = p.ns; scalars.mnmax = p.mnmax; scalars.nZnT = p.nZnT;
+        scalars.ncurr = p.ncurr; scalars.max_iter = p.max_iter;
+        scalars.delt = (double)p.delt; scalars.ftol = (double)p.ftol;
+        scalars.lamscale = (double)p.lamscale;
+        scalars.iterations = result.iterations;
+        scalars.converged = result.converged;
+        scalars.fsqr = (double)result.fsqr; scalars.fsqz = (double)result.fsqz;
+        scalars.fsql = (double)result.fsql;
+        auto writer = cumes::make_writer(spec.format, spec.schema);
+        if (!writer) {
+            fprintf(stderr, "cuMES: no writer for (%s, %s)\n",
+                    cumes::output_suffix(spec.format),
+                    spec.schema == cumes::OutputSchema::kV1 ? "v1"
+                                                            : "legacy-v0");
+            output_ok = false;
         } else {
-            // NetCDF/HDF5: the legacy device-reading backends (host adapters
-            // deferred). outputSave is never called for .bin from here.
-            output_ok = outputSave<Real>(storage, p, vp, result,
-                                         outputPath.c_str(), inputPath.c_str());
+            fill_provenance(outcome.report, inputPath, sourceHash);
+            const cumes::Status status =
+                writer->write_atomic(snapshot, outcome.report, spec, vp,
+                                     scalars);
+            if (status.has_value()) {
+                printf("Saved %s state to %s\n",
+                       cumes::output_suffix(spec.format), spec.path.c_str());
+            } else {
+                fprintf(stderr, "cuMES: %s\n", status.error().c_str());
+                output_ok = false;
+            }
         }
 
         // Optional v1 restart checkpoint (blueprint §6.13): written after the

@@ -7,9 +7,11 @@ namespace cumes {
 
 struct SolverOptions {
     PrecisionPolicy precision = PrecisionPolicy::kVerifyDouble;
-    // Strict mode rejects unknown JSON keys (schema v1 default). Compatibility
-    // mode warns and preserves the vmecpp-style ignored-key behavior.
-    bool strict_schema = false;
+    // Strict schema (the schema-v1 default, completion plan step 2.1):
+    // unknown JSON keys are a hard validation error. The named --compatibility
+    // CLI policy clears this to restore the vmecpp-style warn-and-ignore
+    // behavior.
+    bool strict_schema = true;
 };
 
 }  // namespace cumes

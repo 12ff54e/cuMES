@@ -8,25 +8,11 @@
 
 namespace cumes {
 
-bool output_format_available(OutputFormat fmt) {
-    switch (fmt) {
-        case OutputFormat::kBinary:
-            return true;
-        case OutputFormat::kNetCdf:
-#ifdef CUMES_HAVE_NETCDF
-            return true;
-#else
-            return false;
-#endif
-        case OutputFormat::kHdf5:
-#ifdef CUMES_HAVE_HDF5
-            return true;
-#else
-            return false;
-#endif
-    }
-    return false;
-}
+// output_format_available() is deliberately NOT defined here: it depends on
+// the optional-backend availability defines (CUMES_HAVE_NETCDF/CUMES_HAVE_HDF5),
+// which are confined to the adapter library per completion plan step 2.5. The
+// definition lives in src/output.cpp (cumes_io); this host library stays
+// free of NetCDF/HDF5 headers and availability defines.
 
 const char* output_suffix(OutputFormat fmt) {
     switch (fmt) {

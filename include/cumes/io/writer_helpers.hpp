@@ -22,9 +22,11 @@
 #include "cumes/runtime/cuda_status.hpp"
 #endif
 
+#include <atomic>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
 #include <optional>
 #include <string>
 #include <unistd.h>
@@ -33,18 +35,41 @@
 namespace cumes {
 namespace io_detail {
 
-// A same-directory temp path for `path` (rename() stays on one filesystem).
+// A unique same-directory temp path for `path` (rename() stays on one
+// filesystem). PID alone can collide across threads writing in one process, so
+// an atomic per-process counter is mixed in. Uniqueness is best-effort: the
+// writer still creates the file with O_EXCL semantics via fopen's "wx" mode at
+// the call sites that need it, and a collision simply fails cleanly.
 inline std::string tempPathFor(const std::string& path) {
-    return path + ".tmp." + std::to_string(static_cast<long>(getpid()));
+    static std::atomic<unsigned long> counter{0};
+    const unsigned long seq = counter.fetch_add(1, std::memory_order_relaxed);
+    return path + ".tmp." + std::to_string(static_cast<long>(getpid())) + "." +
+           std::to_string(seq);
 }
 
-// Rename `tmp` over `path`; on failure removes the temp and returns a reason
-// (the target `path` is left untouched either way).
+// fsync the directory containing `path` so the rename itself is durable
+// (best-effort: only where the platform exposes a directory fd).
+inline void fsyncDirectoryOf(const std::string& path) {
+    const std::string dir =
+        path.substr(0, path.find_last_of('/') == std::string::npos
+                          ? 0
+                          : path.find_last_of('/') + 1);
+    const int fd = open(dir.empty() ? "." : dir.c_str(), O_RDONLY);
+    if (fd >= 0) {
+        fsync(fd);
+        close(fd);
+    }
+}
+
+// Rename `tmp` over `path`, then fsync the containing directory (durable
+// publication protocol — completion plan step 2.4). On failure removes the
+// temp and returns a reason (the target `path` is left untouched either way).
 inline std::string renamePublish(const std::string& tmp, const std::string& path) {
     if (rename(tmp.c_str(), path.c_str()) != 0) {
         remove(tmp.c_str());
         return "rename failed";
     }
+    fsyncDirectoryOf(path);
     return "";
 }
 

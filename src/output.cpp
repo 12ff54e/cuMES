@@ -11,6 +11,7 @@
 // untouched (only the temp is removed). On POSIX rename() within one directory
 // is atomic.
 #include "output.cuh"
+#include "cumes/io/output_spec.hpp"
 #define CUMES_IO_DEVICE_STAGE 1  // opt in to FamilyStage (needs CUDA headers)
 #include "cumes/io/writer_helpers.hpp"  // io_detail::tempPathFor/publishAtomic, FamilyStage
 #include <cuda_runtime.h>  // cudaMemcpy/cudaMemcpy2D/cudaGetErrorString (host runtime API)
@@ -44,6 +45,30 @@ const char* linkedOutputSuffixes() {
 #else
     return ".bin";
 #endif
+}
+
+// Output-format availability preflight (completion plan step 2.5): this
+// definition lives in the ADAPTER library — the only target with the
+// CUMES_HAVE_NETCDF/CUMES_HAVE_HDF5 availability defines and the NetCDF/HDF5
+// headers. The host I/O library (cumes_io_host) stays free of both.
+bool cumes::output_format_available(cumes::OutputFormat fmt) {
+    switch (fmt) {
+        case cumes::OutputFormat::kBinary:
+            return true;
+        case cumes::OutputFormat::kNetCdf:
+#ifdef CUMES_HAVE_NETCDF
+            return true;
+#else
+            return false;
+#endif
+        case cumes::OutputFormat::kHdf5:
+#ifdef CUMES_HAVE_HDF5
+            return true;
+#else
+            return false;
+#endif
+    }
+    return false;
 }
 
 // Save full spectral state as raw binary for Python analysis.
@@ -178,92 +203,17 @@ void outputPrint(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>
     delete[] h_rmnc; delete[] h_zmns; delete[] h_lmnc;
 }
 
-// Preflight: does this build produce the format implied by `path`'s suffix?
-// True for .bin (always) and for any compiled-in backend; false for a known
-// suffix whose backend is not linked. Prints the same hint the old hard-exit
-// path used. main calls this BEFORE creating the CUDA context / running any
-// grid stage, so a requested-but-unlinked backend fails fast and cleanly
-// instead of after thousands of iterations.
-bool outputFormatAvailable(const char* path) {
-    const char* ext = strrchr(path, '.');
-    if (ext == nullptr) { ext = ""; }
-    if (strcasecmp(ext, ".bin") == 0 || strcasecmp(ext, "") == 0) return true;
-    if (strcasecmp(ext, ".nc") == 0) {
-#ifdef CUMES_HAVE_NETCDF
-        return true;
-#else
-        fprintf(stderr,
-                "ERROR: %s: .nc output requested but cuMES was built "
-                "without NetCDF support\n"
-                "       (linked output libraries: %s; supported suffixes: "
-                "%s; omit argv[2] for the binary fallback)\n",
-                path, linkedOutputLibraries(), linkedOutputSuffixes());
-        return false;
-#endif
-    }
-    if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
-#ifdef CUMES_HAVE_HDF5
-        return true;
-#else
-        fprintf(stderr,
-                "ERROR: %s: %s output requested but cuMES was built "
-                "without HDF5 support\n"
-                "       (linked output libraries: %s; supported suffixes: "
-                "%s; omit argv[2] for the binary fallback)\n",
-                path, ext, linkedOutputLibraries(), linkedOutputSuffixes());
-        return false;
-#endif
-    }
-    // Unknown suffix: the dispatcher warns and falls back to binary.
-    return true;
-}
-
-// Format dispatcher. The path suffix decides the format: .nc -> NetCDF,
-// .h5/.hdf5 -> HDF5, .bin -> binary at the given path. An unrecognized
-// suffix or a missing argv[2] falls back to binary cumes_state.bin in the
-// working directory (the pre-argv[2] behaviour), with a stderr warning.
-// A known suffix whose backend is not compiled in returns false (the caller
-// preflights via outputFormatAvailable before the solve, so this is only a
-// belt-and-suspenders path) — never exit()s, so normal cleanup runs.
-template <typename T>
-bool outputSave(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
-                const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
-                const char* path, const char* input_file) {
-    // vp/result/input_file are only read by the backend writers; silence
-    // -Wunused-parameter when both backends are compiled out.
-    (void)vp; (void)result; (void)input_file;
-    const char* ext = strrchr(path, '.');
-    if (ext == nullptr) { ext = ""; }
-    if (strcasecmp(ext, ".bin") == 0) {
-        return outputSaveBinary<T>(storage, p, path);
-    }
-    if (strcasecmp(ext, ".nc") == 0) {
-#ifdef CUMES_HAVE_NETCDF
-        return outputSaveNetcdf<T>(storage, p, vp, result, path, input_file);
-#else
-        fprintf(stderr, "ERROR: %s: .nc output requested but cuMES was built "
-                        "without NetCDF support\n", path);
-        return false;
-#endif
-    }
-    if (strcasecmp(ext, ".h5") == 0 || strcasecmp(ext, ".hdf5") == 0) {
-#ifdef CUMES_HAVE_HDF5
-        return outputSaveHdf5<T>(storage, p, vp, result, path, input_file);
-#else
-        fprintf(stderr, "ERROR: %s: %s output requested but cuMES was built "
-                        "without HDF5 support\n", path, ext);
-        return false;
-#endif
-    }
-    fprintf(stderr, "WARNING: %s: unrecognized output suffix '%s' - "
-                    "writing binary cumes_state.bin\n", path, ext);
-    return outputSaveBinary<T>(storage, p, "cumes_state.bin");
-}
+// The suffix-based dispatcher (outputSave) and its preflight
+// (outputFormatAvailable) are GONE — completion plan step 2.1/2.2: the CLI
+// resolves a typed OutputSpec up front (resolve_output_spec +
+// cumes::output_format_available, defined here in the adapter library), and
+// every backend consumes the single host EquilibriumSnapshot through the
+// Writer interface. outputSaveBinary/outputPrint remain as the legacy
+// device-reading reference (the byte-golden in test_io_golden.cu) and the
+// console printout.
 
 // ---- Explicit instantiation (double + float) ----------------------------
 template bool outputSaveBinary<double>(const cumes::SpectralStorage<double>&, const DeviceParams<double>&, const char*);
 template bool outputSaveBinary<float>(const cumes::SpectralStorage<float>&, const DeviceParams<float>&, const char*);
 template void outputPrint<double>(const cumes::SpectralStorage<double>&, const DeviceParams<double>&, int, bool, double, double, double);
 template void outputPrint<float>(const cumes::SpectralStorage<float>&, const DeviceParams<float>&, int, bool, float, float, float);
-template bool outputSave<double>(const cumes::SpectralStorage<double>&, const DeviceParams<double>&, const cumes::ValidatedProblem&, const SolverResult<double>&, const char*, const char*);
-template bool outputSave<float>(const cumes::SpectralStorage<float>&, const DeviceParams<float>&, const cumes::ValidatedProblem&, const SolverResult<float>&, const char*, const char*);

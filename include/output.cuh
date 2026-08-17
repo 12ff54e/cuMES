@@ -20,37 +20,12 @@ template <typename T>
 void outputPrint(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p, int niter,
                  bool converged, T fsqr, T fsqz, T fsql);
 
-#ifdef CUMES_HAVE_NETCDF
-// Write state + grid params + convergence + full validated-problem provenance
-// to a netCDF classic-3 file (NC_CLOBBER). Declared under the CMake define;
-// the definition + explicit instantiation live in src/output_netcdf.cpp.
-template <typename T>
-bool outputSaveNetcdf(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
-                      const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
-                      const char* path, const char* input_file);
-#endif
-
-#ifdef CUMES_HAVE_HDF5
-// Same content as a serial HDF5 file (scalars as root-group attributes).
-// Definition + explicit instantiation live in src/output_hdf5.cpp.
-template <typename T>
-bool outputSaveHdf5(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
-                    const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
-                    const char* path, const char* input_file);
-#endif
-
-// Format dispatcher by path suffix (.nc/.h5/.hdf5/.bin). An unrecognized
-// suffix falls back to binary cumes_state.bin in the working directory with
-// a stderr warning. A known suffix whose backend is not compiled in returns
-// false (the caller should have preflighted via outputFormatAvailable before
-// running the solve). Always compiled (output.cpp).
-template <typename T>
-bool outputSave(const cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p,
-                const cumes::ValidatedProblem& vp, const SolverResult<T>& result,
-                const char* path, const char* input_file);
-
-// Preflight: is the format implied by `path`'s suffix produced by this
-// build? No side effects, no exit() — main calls this BEFORE creating the
-// CUDA context / running any grid stage, so a requested-but-unlinked backend
-// fails fast (and cleanly) instead of after thousands of iterations.
-bool outputFormatAvailable(const char* path);
+// The NetCDF/HDF5 writers and the suffix dispatcher are GONE from this legacy
+// header (completion plan steps 2.1/2.2): the CLI resolves a typed OutputSpec
+// (cumes/io/output_spec.hpp) and every backend — binary, NetCDF, HDF5 —
+// consumes the single host EquilibriumSnapshot through the Writer interface
+// (cumes/io/writer.hpp; the NetCDF/HDF5 host adapters live in
+// src/cumes/io/netcdf_writer.cpp / hdf5_writer.cpp and include their backend
+// headers there, and only there). outputSaveBinary/outputPrint remain as the
+// legacy device-reading reference (byte-golden in test_io_golden.cu) and the
+// console printout.

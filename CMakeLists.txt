@@ -23,12 +23,14 @@ include(CumesWarnings)
 include(CumesTest)
 include(CumesSanitizers)
 
-# ---- language standards (project-wide) -------------------------------------
-# C++20: JsonParser.h uses requires-clauses and concepts; CUDA 12.1 nvcc
-# compiles the whole project at C++20.
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CUDA_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# ---- language standards (target-scoped — completion plan step 2.5) ---------
+# The JSON parser's C++20 requirement (JsonParser.h uses requires-clauses and
+# concepts) applies to its host target ONLY: cumes_json declares PUBLIC
+# cxx_std_20 below, which propagates to the config reader and the host tests
+# that consume it. The CUDA language mode is NOT set because of the parser:
+# the CUDA TUs compile at their own C++17 requirement, stated here explicitly
+# (nvcc's default, documented so the coupling cannot creep back).
+set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # ---- global optimisation flags ---------------------------------------------
@@ -82,6 +84,19 @@ function(cumes_add_host_library name asan_twin)
   endif()
 endfunction()
 
+# Backend-availability defines for TEST targets only (completion plan step
+# 2.5: the production targets keep the defines confined to the adapter
+# library; a test asserting build-specific on-disk behavior gets the
+# compile-time flags, not the backend sources or headers).
+function(cumes_apply_backend_test_defines target)
+  if(CUMES_HAVE_NETCDF)
+    target_compile_definitions(${target} PRIVATE CUMES_HAVE_NETCDF)
+  endif()
+  if(CUMES_HAVE_HDF5)
+    target_compile_definitions(${target} PRIVATE CUMES_HAVE_HDF5)
+  endif()
+endfunction()
+
 # Host-only ASan test twin: links the _asan library directly (PRIVATE) so the
 # sanitized runtime stays FIRST in the link line (never propagated through
 # INTERFACE — see CumesSanitizers.cmake), then registers it under CTest label
@@ -96,8 +111,10 @@ function(cumes_add_host_asan_test name source lib label)
 endfunction()
 
 # JsonParser implementation (header-only library, compiled once), shared by the
-# host-model reader.
+# host-model reader. The C++20 requirement is scoped HERE (completion plan step
+# 2.5) and reaches consumers through the PUBLIC interface.
 cumes_add_host_library(cumes_json FALSE ${CUMES_JSON_SOURCES})
+target_compile_features(cumes_json PUBLIC cxx_std_20)
 
 # ---- Phase 2: validated host model (namespace cumes) -----------------------
 # Core host model: result/status, checked arithmetic, grid shape, mode table.
@@ -118,27 +135,22 @@ target_link_libraries(cumes_io_host PUBLIC cumes_core)
 
 # Output writers: binary dispatcher + optional NetCDF/HDF5 backends (host-only
 # C++, using only the CUDA runtime API for D2H copies — no device code).
-add_library(cumes_io STATIC src/output.cpp)
+# The adapter library: legacy device-reading reference writers (output.cpp)
+# + the full Writer/Reader dispatch + the optional NetCDF/HDF5 host adapters
+# (added by cumes_link_output_backends below under their availability defines).
+# Links cumes_io_host for the binary factories / v1 container (completion plan
+# step 2.5: backend headers and defines stay inside this target).
+add_library(cumes_io STATIC src/output.cpp src/cumes/io/writer_dispatch.cpp)
 target_include_directories(cumes_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(cumes_io PUBLIC CUDA::cudart CUDA::cufft)
+target_link_libraries(cumes_io PUBLIC CUDA::cudart CUDA::cufft cumes_io_host)
 cumes_enable_warnings(cumes_io)
 cumes_link_output_backends(cumes_io)
 
-# cumes_io_host compiles output_spec.cpp SEPARATELY from the writer TUs, and
-# its output_format_available() preflight gates the .nc/.h5 dispatcher on these
-# defines. cumes_link_output_backends() above gives them to cumes_io only — a
-# stock build with the backends found must not silently report them
-# unavailable, so mirror the availability defines onto cumes_io_host (and its
-# sanitizer twin, same sources).
-function(cumes_apply_backend_avail_defines target)
-  if(CUMES_HAVE_NETCDF)
-    target_compile_definitions(${target} PUBLIC CUMES_HAVE_NETCDF)
-  endif()
-  if(CUMES_HAVE_HDF5)
-    target_compile_definitions(${target} PUBLIC CUMES_HAVE_HDF5)
-  endif()
-endfunction()
-cumes_apply_backend_avail_defines(cumes_io_host)
+# The CUMES_HAVE_NETCDF/HDF5 availability defines are confined to the adapter
+# library (cumes_io, via cumes_link_output_backends above) — completion plan
+# step 2.5. The output_format_available() preflight lives in the adapter
+# library (src/output.cpp), so the host I/O library needs no backend defines
+# and no NetCDF/HDF5 headers.
 
 # Header-only shared test helpers (checkCuda/cc). Tests include
 # cumes_test_support.cuh; this target only exposes its include dir.
@@ -175,7 +187,11 @@ endif()
 
 add_executable(cuMES src/main.cu)
 target_include_directories(cuMES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(cuMES PRIVATE cumes_config_json cumes_io cumes_io_host ${CUMES_SELECTED_CUDA})
+# Link order matters: cumes_io_host BEFORE cumes_io so the adapter library
+# is scanned while the backend-factory references are still undefined — the
+# linker then extracts the strong NetCDF/HDF5 factory definitions, which win
+# over the weak null stubs in legacy_binary_v0.cpp (completion plan step 2.5).
+target_link_libraries(cuMES PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
 cumes_enable_warnings(cuMES)
 if(CUMES_USE_FLOAT)
   target_compile_definitions(cuMES PRIVATE CUMES_USE_FLOAT)
@@ -233,7 +249,7 @@ endforeach()
 
 add_executable(test_output_failure tests/test_output_failure.cu)
 target_include_directories(test_output_failure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_output_failure PRIVATE cumes_test_support cumes_config_json cumes_io)
+target_link_libraries(test_output_failure PRIVATE cumes_test_support cumes_config_json cumes_io_host cumes_io)
 cumes_enable_warnings(test_output_failure)
 
 add_executable(test_host_config tests/test_host_config.cpp)
@@ -243,7 +259,7 @@ cumes_enable_warnings(test_host_config)
 
 add_executable(test_host_io tests/test_host_io.cpp)
 target_include_directories(test_host_io PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_host_io PRIVATE cumes_io_host)
+target_link_libraries(test_host_io PRIVATE cumes_io_host cumes_config_json)
 cumes_enable_warnings(test_host_io)
 
 add_executable(test_checkpoint tests/test_checkpoint.cpp)
@@ -253,7 +269,8 @@ cumes_enable_warnings(test_checkpoint)
 
 add_executable(test_io_golden tests/test_io_golden.cu)
 target_include_directories(test_io_golden PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_io_golden PRIVATE cumes_test_support cumes_io cumes_io_host)
+target_link_libraries(test_io_golden PRIVATE cumes_test_support cumes_config_json cumes_io_host cumes_io)
+cumes_apply_backend_test_defines(test_io_golden)
 cumes_enable_warnings(test_io_golden)
 
 add_executable(test_runtime tests/test_runtime.cu)
@@ -300,6 +317,7 @@ cumes_add_test(test_controller       unit;solver)
 # apply the identical include-dir/warning setup plus the sanitizer flags.
 if(CUMES_HOST_SANITIZERS)
   cumes_add_host_library(cumes_json_asan TRUE ${CUMES_JSON_SOURCES})
+  target_compile_features(cumes_json_asan PUBLIC cxx_std_20)
 
   cumes_add_host_library(cumes_core_asan TRUE ${CUMES_CORE_SOURCES})
 
@@ -308,12 +326,12 @@ if(CUMES_HOST_SANITIZERS)
 
   cumes_add_host_library(cumes_io_host_asan TRUE ${CUMES_IO_HOST_SOURCES})
   target_link_libraries(cumes_io_host_asan PUBLIC cumes_core_asan)
-  cumes_apply_backend_avail_defines(cumes_io_host_asan)
 
   cumes_add_host_asan_test(asan_test_host_config tests/test_host_config.cpp
                            cumes_config_json_asan config)
   cumes_add_host_asan_test(asan_test_host_io tests/test_host_io.cpp
                            cumes_io_host_asan io)
+  target_link_libraries(asan_test_host_io PRIVATE cumes_config_json_asan)
   cumes_add_host_asan_test(asan_test_checkpoint tests/test_checkpoint.cpp
                            cumes_io_host_asan io)
   cumes_add_host_asan_test(asan_test_controller tests/test_controller.cpp
@@ -365,6 +383,17 @@ add_executable(cumes_benchmark_graph_realpass benchmarks/graph_realpass.cu)
 target_include_directories(cumes_benchmark_graph_realpass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_benchmark_graph_realpass PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
 cumes_enable_warnings(cumes_benchmark_graph_realpass)
+
+# CLI policy gate (completion plan step 2.1): strict-vs-compatibility schema
+# and output-path/suffix policy, exercised end to end against the real binary
+# with one-iteration tiny configs (validation and preflight failures exit
+# before any meaningful GPU work).
+add_test(NAME cli_policy
+         COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_policy_test.sh
+                 $<TARGET_FILE:cuMES>)
+set_tests_properties(cli_policy PROPERTIES
+    LABELS "unit;cli" TIMEOUT 300
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Smoke gate: runs two passes and exits 0 on success (verifies the harness
 # builds, seeds, drives a stage, and emits JSON — not a timing acceptance).

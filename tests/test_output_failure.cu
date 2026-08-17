@@ -31,7 +31,10 @@
 
 #include "vmec_types.h"
 #include "solver.cuh"
-#include "output.cuh"
+#include "cumes/io/output_spec.hpp"
+#include "cumes/io/run_report.hpp"
+#include "cumes/io/snapshot_bridge.cuh"
+#include "cumes/io/writer.hpp"
 #include "cumes_test_support.cuh"
 
 static int failures = 0;
@@ -90,6 +93,38 @@ static void writeGarbage(const char* path, const char* bytes, size_t n) {
     fclose(fp);
 }
 
+// Drive the HOST writers (completion plan step 2.2): build the single host
+// snapshot, then dispatch through the Writer interface — the failure matrix
+// exercises the same publication protocol every backend uses.
+template <typename T>
+static bool writeViaHost(cumes::SpectralStorage<T>& st, const DeviceParams<T>& p,
+                         const cumes::ValidatedProblem& vp,
+                         const SolverResult<T>& res, const char* path,
+                         cumes::OutputFormat fmt) {
+    cumes::OutputSpec spec;
+    spec.format = fmt;
+    spec.schema = cumes::OutputSchema::kLegacyV0;
+    spec.path = path;
+    cumes::LegacyRunScalars s;
+    s.mpol = p.mpol; s.ntor = p.ntor; s.nfp = p.nfp;
+    s.ntheta = p.ntheta; s.nzeta = p.nzeta;
+    s.ns = p.ns; s.mnmax = p.mnmax; s.nZnT = p.nZnT;
+    s.ncurr = p.ncurr; s.max_iter = p.max_iter;
+    s.delt = (double)p.delt; s.ftol = (double)p.ftol;
+    s.lamscale = (double)p.lamscale;
+    s.iterations = res.iterations;
+    s.converged = res.converged;
+    s.fsqr = (double)res.fsqr; s.fsqz = (double)res.fsqz;
+    s.fsql = (double)res.fsql;
+    auto snap = cumes::snapshot_from_device(st);
+    cumes::RunReport rep;
+    rep.input.source_path = "inputs/solovev.json";
+    rep.build.scalar_type = sizeof(T) == sizeof(double) ? "double" : "float";
+    auto w = cumes::make_writer(fmt, cumes::OutputSchema::kLegacyV0);
+    if (!w) return false;
+    return w->write_atomic(snap, rep, spec, vp, s).has_value();
+}
+
 template <typename T>
 static void runAll() {
     printf("== %s precision ==\n", sizeof(T) == sizeof(double) ? "double" : "float");
@@ -99,14 +134,16 @@ static void runAll() {
     const char* no_dir = "no_such_dir_cumes/state.bin";
     {
         // The binary writer must fail at fopen before reading the state.
-        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, no_dir, "inputs/solovev.json");
+        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, no_dir,
+                                  cumes::OutputFormat::kBinary);
         CHECK(!ok, "open failure: binary returns false");
         CHECK(!fileExists(no_dir), "open failure: no partial file created");
     }
 #ifdef CUMES_HAVE_NETCDF
     {
-        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res,
-                                "no_such_dir_cumes/state.nc", "inputs/solovev.json");
+        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res,
+                                  "no_such_dir_cumes/state.nc",
+                                  cumes::OutputFormat::kNetCdf);
         CHECK(!ok, "open failure: netcdf returns false");
         CHECK(!fileExists("no_such_dir_cumes/state.nc"),
               "open failure: netcdf no partial file");
@@ -114,8 +151,9 @@ static void runAll() {
 #endif
 #ifdef CUMES_HAVE_HDF5
     {
-        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res,
-                                "no_such_dir_cumes/state.h5", "inputs/solovev.json");
+        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res,
+                                  "no_such_dir_cumes/state.h5",
+                                  cumes::OutputFormat::kHdf5);
         CHECK(!ok, "open failure: hdf5 returns false");
         CHECK(!fileExists("no_such_dir_cumes/state.h5"),
               "open failure: hdf5 no partial file");
@@ -133,7 +171,8 @@ static void runAll() {
         // Remove any prior run's leftover, then make a directory as the target.
         remove(dir);
         if (mkdir(dir, 0755) != 0) { fprintf(stderr, "cannot mkdir %s\n", dir); exit(1); }
-        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, dir, "inputs/solovev.json");
+        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, dir,
+                                  cumes::OutputFormat::kBinary);
         CHECK(!ok, "rename failure: target directory -> returns false");
         CHECK(fileExists(dir), "rename failure: target directory untouched");
         // No stray temp file may remain next to the target.
@@ -156,7 +195,8 @@ static void runAll() {
     {
         const char* path = "test_output_trunc.bin";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, path, "inputs/solovev.json");
+        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
+                                  cumes::OutputFormat::kBinary);
         CHECK(ok, "truncation: binary overwrite succeeds");
         // Header is 2 ints = 8 bytes, then data; old 'GARBAGE' must be gone.
         FILE* fp = fopen(path, "rb");
@@ -176,7 +216,8 @@ static void runAll() {
     {
         const char* path = "test_output_trunc.nc";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, path, "inputs/solovev.json");
+        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
+                                  cumes::OutputFormat::kNetCdf);
         CHECK(ok, "truncation: netcdf overwrite succeeds");
         // NC_CLOBBER must have replaced the garbage; the file now starts with
         // the netCDF magic "CDF".
@@ -197,7 +238,8 @@ static void runAll() {
     {
         const char* path = "test_output_trunc.h5";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = outputSave<T>(b.st, b.p, b.vp, b.res, path, "inputs/solovev.json");
+        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
+                                  cumes::OutputFormat::kHdf5);
         CHECK(ok, "truncation: hdf5 overwrite succeeds");
         // HDF5 signature is "\211HDF\r\n\032\n".
         FILE* fp = fopen(path, "rb");
