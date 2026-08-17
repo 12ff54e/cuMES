@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -51,18 +53,61 @@ herr_t putStrAttr(hid_t loc, const char* name, const std::string& value) {
     return r1;
 }
 
+// RAII handle closer (reader-rank-hardening handoff §3): every opened
+// dataset/dataspace/datatype/attribute is closed on every failure path.
+// H5Idec_ref closes any object class when its reference count reaches zero.
+class H5Closer {
+ public:
+    explicit H5Closer(hid_t id) : id_(id) {}
+    ~H5Closer() {
+        if (id_ >= 0) H5Idec_ref(id_);
+    }
+    H5Closer(const H5Closer&) = delete;
+    H5Closer& operator=(const H5Closer&) = delete;
+    hid_t get() const { return id_; }
+
+ private:
+    hid_t id_;
+};
+
 // Read a fixed-size string attribute back into a std::string.
+// Hardened (reader-rank-hardening handoff §3): the dataspace must be scalar
+// or exactly one element BEFORE the single-width destination is sized — a
+// multi-element attribute would otherwise overflow it — and the datatype
+// must be a bounded fixed-size string.
 bool getStrAttr(hid_t loc, const char* name, std::string& out) {
-    hid_t aid = H5Aopen(loc, name, H5P_DEFAULT);
-    if (aid < 0) return false;
-    hid_t ty = H5Aget_type(aid);
-    const size_t size = H5Tget_size(ty);
-    out.resize(size + 1, '\0');
-    const herr_t r = H5Aread(aid, ty, &out[0]);
-    H5Tclose(ty);
-    H5Aclose(aid);
+    H5Closer aid(H5Aopen(loc, name, H5P_DEFAULT));
+    if (aid.get() < 0) return false;
+    // Exact dataspace element count: scalar, or a 1-D space of one point.
+    {
+        H5Closer sp(H5Aget_space(aid.get()));
+        if (sp.get() < 0) return false;
+        const int ndims = H5Sget_simple_extent_ndims(sp.get());
+        hssize_t npts = 1;
+        if (ndims == 1) {
+            hsize_t ext[1] = {0};
+            if (H5Sget_simple_extent_dims(sp.get(), ext, nullptr) < 0) {
+                return false;
+            }
+            npts = (hssize_t)ext[0];
+        } else if (ndims != 0) {
+            return false;
+        }
+        if (npts != 1) return false;
+    }
+    H5Closer ty(H5Aget_type(aid.get()));
+    if (ty.get() < 0) return false;
+    if (H5Tget_class(ty.get()) != H5T_STRING) return false;
+    const size_t width = H5Tget_size(ty.get());
+    // Bounded width: the declared type size must fit the documented resource
+    // cap before the destination is allocated.
+    if (width == 0 || width > cumes::io_detail::kMaxProvenanceStringBytes) {
+        return false;
+    }
+    out.resize(width + 1, '\0');
+    const herr_t r = H5Aread(aid.get(), ty.get(), &out[0]);
     if (r < 0) return false;
-    out.resize(size);  // drop the stored NUL; keep embedded NULs if any
+    out.resize(width);  // drop the stored NUL; keep embedded NULs if any
     if (!out.empty() && out.back() == '\0') out.pop_back();
     return true;
 }
@@ -470,26 +515,113 @@ class Hdf5V1Reader final : public Reader {
             H5Fclose(fid);
             return Result<EquilibriumSnapshot>("HDF5: " + msg);
         };
-        auto getDim = [&](const char* name, hsize_t* dims) -> bool {
-            hid_t ds = H5Dopen2(fid, name, H5P_DEFAULT);
-            if (ds < 0) return false;
-            hid_t sp = H5Dget_space(ds);
-            // Rank >= 1: the state datasets are 2-D, the stage/restart arrays
-            // 1-D. A scalar (rank 0) is never queried here.
-            const bool ok = H5Sget_simple_extent_dims(sp, dims, nullptr) >= 1;
-            H5Sclose(sp);
-            H5Dclose(ds);
-            return ok;
+        // Allocation failures in a malformed-container read must become typed
+        // errors, never exceptions across the Reader interface
+        // (reader-rank-hardening handoff §4).
+        try {
+        // ---- exact-rank dataspace helpers (reader-rank-hardening §3) --------
+        // H5Sget_simple_extent_ndims is queried BEFORE H5Sget_simple_extent_
+        // dims: the latter writes `rank` dimension values into the caller's
+        // buffer, so a higher-rank dataspace would overflow it.
+        auto getDimExact = [&](const char* name, int rank,
+                               hsize_t* dims) -> bool {
+            H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+            if (ds.get() < 0) return false;
+            H5Closer sp(H5Dget_space(ds.get()));
+            if (sp.get() < 0) return false;
+            const int ndims = H5Sget_simple_extent_ndims(sp.get());
+            if (ndims != rank) return false;
+            return H5Sget_simple_extent_dims(sp.get(), dims, nullptr) == rank;
         };
+        // Integer-class check: H5Dread with H5T_NATIVE_INT performs a
+        // conversion, so the stored class must be integer to reject silently
+        // converted garbage (exact-size integer match is additionally required
+        // for the scalar attributes below).
+        auto datasetIsInteger = [&](hid_t ds) -> bool {
+            H5Closer ty(H5Dget_type(ds));
+            return ty.get() >= 0 && H5Tget_class(ty.get()) == H5T_INTEGER;
+        };
+        auto datasetIsDouble = [&](hid_t ds) -> bool {
+            H5Closer ty(H5Dget_type(ds));
+            return ty.get() >= 0 && H5Tget_class(ty.get()) == H5T_FLOAT &&
+                   H5Tget_size(ty.get()) == sizeof(double);
+        };
+        // Scalar-or-one-element attribute, integer type, exact 4-byte size,
+        // and a checked element count before the single-int read.
+        auto getIntAttr = [&](const char* name, int& out) -> bool {
+            H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
+            if (aid.get() < 0) return false;
+            {
+                H5Closer sp(H5Aget_space(aid.get()));
+                if (sp.get() < 0) return false;
+                const int ndims = H5Sget_simple_extent_ndims(sp.get());
+                hssize_t npts = 1;
+                if (ndims == 1) {
+                    hsize_t ext[1] = {0};
+                    if (H5Sget_simple_extent_dims(sp.get(), ext, nullptr) < 0) {
+                        return false;
+                    }
+                    npts = (hssize_t)ext[0];
+                } else if (ndims != 0) {
+                    return false;
+                }
+                if (npts != 1) return false;
+            }
+            H5Closer ty(H5Aget_type(aid.get()));
+            if (ty.get() < 0 || H5Tget_class(ty.get()) != H5T_INTEGER) {
+                return false;
+            }
+            if (H5Tget_size(ty.get()) != sizeof(int)) return false;
+            return H5Aread(aid.get(), H5T_NATIVE_INT, &out) >= 0;
+        };
+        // 1-D integer/double vectors with exact rank, extent, and datatype.
+        auto getIntArr = [&](const char* name, std::vector<int>& out,
+                             size_t expect) -> bool {
+            H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+            if (ds.get() < 0) return false;
+            hsize_t dims[1] = {0};
+            if (!getDimExact(name, 1, dims)) return false;
+            if (dims[0] != expect) return false;
+            if (!datasetIsInteger(ds.get())) return false;
+            const auto bytes = checked_mul(expect, sizeof(int));
+            if (!bytes) return false;
+            out.resize(expect);
+            return H5Dread(ds.get(), H5T_NATIVE_INT, H5S_ALL, H5S_ALL,
+                           H5P_DEFAULT, out.data()) >= 0;
+        };
+        auto getDblArr = [&](const char* name, std::vector<double>& out,
+                             size_t expect) -> bool {
+            H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+            if (ds.get() < 0) return false;
+            hsize_t dims[1] = {0};
+            if (!getDimExact(name, 1, dims)) return false;
+            if (dims[0] != expect) return false;
+            if (!datasetIsDouble(ds.get())) return false;
+            const auto bytes = checked_mul(expect, sizeof(double));
+            if (!bytes) return false;
+            out.resize(expect);
+            return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+                           H5P_DEFAULT, out.data()) >= 0;
+        };
+
         hsize_t state_dims[2] = {0, 0};
-        if (!getDim("rmncc", state_dims)) {
-            return fail("missing state dataset");
+        if (!getDimExact("rmncc", 2, state_dims)) {
+            return fail("missing/malformed state dataset (rmncc)");
+        }
+        // Bounds BEFORE narrowing and allocation (handoff §4): dimensions
+        // must fit the EquilibriumSnapshot int fields.
+        if (state_dims[0] < 1 || state_dims[1] < 1 ||
+            state_dims[0] > INT_MAX || state_dims[1] > INT_MAX) {
+            return fail("bad state dimensions");
         }
         const int ns = static_cast<int>(state_dims[0]);
         const int mnmax = static_cast<int>(state_dims[1]);
-        if (ns < 1 || mnmax < 1) return fail("bad state dimensions");
         const auto n_opt = checked_mul((size_t)ns, (size_t)mnmax);
         if (!n_opt) return fail("dimension product overflows size_t");
+        {
+            const auto bytes = checked_mul(*n_opt, sizeof(double));
+            if (!bytes) return fail("state byte count overflows size_t");
+        }
 
         EquilibriumSnapshot snapshot;
         snapshot.ns = ns;
@@ -504,13 +636,29 @@ class Hdf5V1Reader final : public Reader {
         // transpose-aware mirror image.
         std::vector<double> tmp(*n_opt);
         for (int c = 0; c < 6; ++c) {
-            hid_t ds = H5Dopen2(fid, fam_names[c], H5P_DEFAULT);
-            if (ds < 0) return fail("missing state dataset");
-            hid_t sp = H5Screate_simple(2, state_dims, nullptr);
-            const herr_t r = H5Dread(ds, H5T_NATIVE_DOUBLE, sp, H5S_ALL,
-                                     H5P_DEFAULT, tmp.data());
-            H5Sclose(sp);
-            H5Dclose(ds);
+            // EVERY family must independently satisfy rank 2 + the exact
+            // [ns, mnmax] extents + a double-compatible type before the read
+            // (reader-rank-hardening §3): rmncc alone no longer vouches for
+            // the other five.
+            H5Closer ds(H5Dopen2(fid, fam_names[c], H5P_DEFAULT));
+            if (ds.get() < 0) {
+                return fail("missing state dataset (" +
+                            std::string(fam_names[c]) + ")");
+            }
+            hsize_t fam_dims[2] = {0, 0};
+            if (!getDimExact(fam_names[c], 2, fam_dims) ||
+                fam_dims[0] != state_dims[0] || fam_dims[1] != state_dims[1]) {
+                return fail("malformed state dataset (" +
+                            std::string(fam_names[c]) + ")");
+            }
+            if (!datasetIsDouble(ds.get())) {
+                return fail("malformed state dataset type (" +
+                            std::string(fam_names[c]) + ")");
+            }
+            H5Closer sp(H5Screate_simple(2, state_dims, nullptr));
+            if (sp.get() < 0) return fail("state read failed");
+            const herr_t r = H5Dread(ds.get(), H5T_NATIVE_DOUBLE, sp.get(),
+                                     H5S_ALL, H5P_DEFAULT, tmp.data());
             if (r < 0) return fail("state read failed");
             snapshot.families[c].resize(*n_opt);
             for (int m = 0; m < mnmax; ++m) {
@@ -522,55 +670,22 @@ class Hdf5V1Reader final : public Reader {
         }
         if (report) {
             *report = RunReport{};
-            auto getIntAttr = [&](const char* name, int& out) -> bool {
-                hid_t aid = H5Aopen(fid, name, H5P_DEFAULT);
-                if (aid < 0) return false;
-                const herr_t r = H5Aread(aid, H5T_NATIVE_INT, &out);
-                H5Aclose(aid);
-                return r >= 0;
-            };
-            auto getIntArr = [&](const char* name, std::vector<int>& out,
-                                 size_t expect) -> bool {
-                hid_t ds = H5Dopen2(fid, name, H5P_DEFAULT);
-                if (ds < 0) return false;
-                hsize_t dims[1] = {0};
-                hid_t sp = H5Dget_space(ds);
-                H5Sget_simple_extent_dims(sp, dims, nullptr);
-                H5Sclose(sp);
-                if (dims[0] != expect) {
-                    H5Dclose(ds);
-                    return false;
-                }
-                out.resize(expect);
-                const herr_t r = H5Dread(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL,
-                                         H5P_DEFAULT, out.data());
-                H5Dclose(ds);
-                return r >= 0;
-            };
-            auto getDblArr = [&](const char* name, std::vector<double>& out,
-                                 size_t expect) -> bool {
-                hid_t ds = H5Dopen2(fid, name, H5P_DEFAULT);
-                if (ds < 0) return false;
-                hsize_t dims[1] = {0};
-                hid_t sp = H5Dget_space(ds);
-                H5Sget_simple_extent_dims(sp, dims, nullptr);
-                H5Sclose(sp);
-                if (dims[0] != expect) {
-                    H5Dclose(ds);
-                    return false;
-                }
-                out.resize(expect);
-                const herr_t r = H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL,
-                                         H5S_ALL, H5P_DEFAULT, out.data());
-                H5Dclose(ds);
-                return r >= 0;
-            };
             int precision = 0, status = 0, total = 0, dirty = 0;
             if (!getIntAttr("precision", precision) ||
                 !getIntAttr("status", status) ||
                 !getIntAttr("total_iterations", total) ||
                 !getIntAttr("build_dirty", dirty)) {
                 return fail("missing run outcome attributes");
+            }
+            // Closed-range validation of the serialized scalars (handoff §4).
+            if (precision < 0 || precision > 1) {
+                return fail("invalid precision scalar");
+            }
+            if (status < 0 || status > 4) {
+                return fail("invalid run status scalar");
+            }
+            if (total < 0) {
+                return fail("negative total iteration count");
             }
             report->status = static_cast<RunStatus>(status);
             report->total_effective_iterations = total;
@@ -590,12 +705,29 @@ class Hdf5V1Reader final : public Reader {
                 return fail("missing provenance attributes");
             }
             hsize_t d_stages[1] = {0};
-            if (!getDim("stage_ns", d_stages)) return fail("missing stage_ns");
+            if (!getDimExact("stage_ns", 1, d_stages)) {
+                return fail("missing/malformed stage_ns");
+            }
             const size_t nstages = (size_t)d_stages[0];
+            // restart_iteration is OPTIONAL only in the sense of being
+            // absent: when the dataset exists it must be rank 1 (a rank-0 or
+            // rank-2 dataset is malformed and must fail, not be skipped).
             hsize_t d_restarts[1] = {0};
-            const size_t nrestarts =
-                getDim("restart_iteration", d_restarts) ? (size_t)d_restarts[0]
-                                                        : 0;
+            size_t nrestarts = 0;
+            {
+                H5Closer probe(H5Dopen2(fid, "restart_iteration",
+                                        H5P_DEFAULT));
+                if (probe.get() >= 0 &&
+                    !getDimExact("restart_iteration", 1, d_restarts)) {
+                    return fail("malformed restart_iteration dataset");
+                }
+                if (probe.get() >= 0) nrestarts = (size_t)d_restarts[0];
+            }
+            // Documented stage/restart resource caps (handoff §4).
+            if (nstages > cumes::io_detail::kMaxStageCount ||
+                nrestarts > cumes::io_detail::kMaxStageCount) {
+                return fail("stage/restart dimensions exceed the resource cap");
+            }
             std::vector<int> stage_ns, stage_iter, stage_conv, rst_off;
             std::vector<double> st_fsqr, st_fsqz, st_fsql;
             std::vector<int> rst_iter;
@@ -622,6 +754,9 @@ class Hdf5V1Reader final : public Reader {
                 }
             }
             for (size_t g = 0; g < nstages; ++g) {
+                if (stage_iter[g] < 0) {
+                    return fail("negative stage iteration count");
+                }
                 StageReport st;
                 st.ns = stage_ns[g];
                 st.effective_iterations = stage_iter[g];
@@ -640,6 +775,15 @@ class Hdf5V1Reader final : public Reader {
         }
         H5Fclose(fid);
         return snapshot;
+        } catch (const std::bad_alloc&) {
+            H5Fclose(fid);
+            return Result<EquilibriumSnapshot>(
+                "HDF5: allocation failed (dimensions implausible or corrupt)");
+        } catch (const std::length_error&) {
+            H5Fclose(fid);
+            return Result<EquilibriumSnapshot>(
+                "HDF5: allocation failed (dimensions implausible or corrupt)");
+        }
     }
 };
 

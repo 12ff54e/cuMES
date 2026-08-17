@@ -353,6 +353,15 @@ target_link_libraries(test_io_restart_offsets PRIVATE cumes_io_host cumes_io)
 cumes_apply_backend_test_defines(test_io_restart_offsets)
 cumes_enable_warnings(test_io_restart_offsets)
 
+# Malformed v1 rank/type/extent fixtures (reader-rank-hardening-handoff.md §5):
+# host-only so the ASan/UBSan twin runs the exact source under the host
+# sanitizers.
+add_executable(test_io_malformed_shapes tests/test_io_malformed_shapes.cpp)
+target_include_directories(test_io_malformed_shapes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_io_malformed_shapes PRIVATE cumes_io_host cumes_io)
+cumes_apply_backend_test_defines(test_io_malformed_shapes)
+cumes_enable_warnings(test_io_malformed_shapes)
+
 add_executable(test_runtime tests/test_runtime.cu)
 target_include_directories(test_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_runtime PRIVATE cumes_test_support cumes_cuda_runtime)
@@ -386,6 +395,7 @@ cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_checkpoint       unit;io)
 cumes_add_test(test_io_golden        unit;io)
 cumes_add_test(test_io_restart_offsets unit;io)
+cumes_add_test(test_io_malformed_shapes unit;io)
 cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
 
@@ -419,6 +429,10 @@ if(CUMES_HOST_SANITIZERS)
                            tests/test_io_restart_offsets.cpp
                            cumes_io_readers_asan io)
   cumes_apply_backend_test_defines(asan_test_io_restart_offsets)
+  cumes_add_host_asan_test(asan_test_io_malformed_shapes
+                           tests/test_io_malformed_shapes.cpp
+                           cumes_io_readers_asan io)
+  cumes_apply_backend_test_defines(asan_test_io_malformed_shapes)
 
   cumes_add_host_asan_test(asan_test_host_config tests/test_host_config.cpp
                            cumes_config_json_asan config)

@@ -37,6 +37,14 @@
 namespace cumes {
 namespace io_detail {
 
+// Documented reader-side resource caps (reader-rank-hardening handoff §4):
+// a hostile container declaring a multi-megabyte provenance string or a huge
+// stage/restart count must fail with a typed error before the host allocates
+// it. `ns`/`mnmax` are additionally bounded by INT_MAX at the readers
+// (EquilibriumSnapshot stores ints).
+inline constexpr std::size_t kMaxProvenanceStringBytes = 1u << 20;
+inline constexpr std::size_t kMaxStageCount = 1u << 16;
+
 // A unique same-directory temp path for `path` (rename() stays on one
 // filesystem). PID alone can collide across threads writing in one process, so
 // an atomic per-process counter is mixed in. Uniqueness is best-effort: the
