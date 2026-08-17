@@ -74,7 +74,7 @@ struct TinyBundle {
                         static_cast<std::size_t>(p.max_iter),
                         static_cast<double>(p.ftol)}};
         vp = validateSpec(std::move(spec));
-        res = SolverResult<T>{false, 3, T(1e-10), T(2e-10), T(3e-10), T(0.9)};
+        res = SolverResult<T>{false, 3, T(1e-10), T(2e-10), T(3e-10), T(0.9), {}};
         // The state/velocity slabs are allocated + zeroed by SpectralStorage
         // (RAII); the writers only read the six state families.
         st.allocate(p.ns, p.mnmax);

@@ -18,38 +18,47 @@ post-overhaul code.
 
 ```bash
 # in folder cuMES
-cmake -B build -G Ninja
+cmake --preset verify          # verify-double: precise math, all backends, -Werror
 cmake --build build -j
 
-# Run main solver (default input inputs/solovev.json, output cumes_state.bin)
+# Run main solver (default input inputs/solovev.json; an output path is
+# REQUIRED in strict mode — the default cumes_state.bin is compatibility-only)
 ./build/cuMES inputs/solovev.json out.bin        # positional: <input> <output>
 
-# run tests (35 registered via CTest, incl. compute-sanitizer memcheck entries)
+# run tests (53 registered via CTest, incl. compute-sanitizer memcheck AND
+# initcheck variants)
 ctest --test-dir build --output-on-failure
 
-# full sanitizer matrix (dedicated preset): memcheck/racecheck/synccheck
-# compute-sanitizer variants of the kernel tests + host-only targets built
-# with ASan+UBSan. Racecheck is slow; the variants are RUN_SERIAL in CTest.
+# full sanitizer matrix (dedicated preset): memcheck/initcheck/racecheck/
+# synccheck compute-sanitizer variants of the kernel tests + host-only
+# targets built with ASan+UBSan. Racecheck is slow; the variants are
+# RUN_SERIAL in CTest.
 cmake --preset sanitizer && cmake --build build-sanitize -j
 ctest --test-dir build-sanitize
 
-# single-precision build (all computation templated on T; Real = float)
-cmake -B build-float -G Ninja -DCUMES_USE_FLOAT=ON
-cmake --build build-float -j
+# single-precision build (mixed-float policy: float state + double reductions)
+cmake --preset float && cmake --build build-float -j
+# other named precision presets: fast (fast-double, opt-in --use_fast_math,
+# dump machinery compiled out), debug (debug-double, precise + -G)
 ```
 
 CLI: `--input <path>` / `--output <path>` (flags override the two positional
 slots; positionals fill the first free slot), `--output-schema legacy-v0|v1`
-(v1 = versioned binary container; v1 is rejected for `.nc`/`.h5` suffixes —
-those writers are hard-wired to the legacy-v0 layout), `--restart <checkpoint>`,
-`--restart-legacy <six-family payload>`, `--checkpoint <path>` (write a v1
-checkpoint after solve; the container records per-stage restart histories);
-a `.nc`/`.h5` suffix dispatches to the NetCDF/HDF5 writers when compiled in
-(`outputFormatAvailable` preflights before any CUDA work). Non-fatal
-validation findings (unknown input keys, skipped out-of-range boundary
-harmonics) print as `cuMES: WARNING: ...` on stderr.
+(v1 = versioned container with full provenance for binary, NetCDF and HDF5),
+`--restart <checkpoint>`, `--restart-legacy <six-family payload>`,
+`--checkpoint <path>` (write a v1 checkpoint after solve; the container
+records per-stage restart histories). Strict schema-v1 behavior is the
+DEFAULT: unknown input keys are validation errors, an explicit output path is
+required, and unknown suffixes are rejected — the named `--compatibility`
+flag restores the vmecpp-style warn-and-ignore parsing, the cumes_state.bin
+default, and the unknown-suffix fallback. A `.nc`/`.h5` suffix dispatches
+to the host-only NetCDF/HDF5 writers when compiled in (the availability
+preflight runs before any CUDA work). Non-fatal validation warnings (unknown
+input keys in compatibility mode, skipped out-of-range boundary harmonics)
+print as `cuMES: WARNING: ...` on stderr.
 `CUMES_FORCE_GENERIC=1` forces the generic cuFFT transform backend on
 axisymmetric shapes (default: the axisymmetric direct-poloidal backend).
+`CUMES_MAX_ITER`/`CUMES_DELT0`/`CUMES_DUMP` are the env-gated run knobs.
 
 **Requirements:** CUDA Toolkit >= 11, CMake >= 3.20, GPU compute capability >= 6.1.
 If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must point to g++-12 (set in
@@ -331,11 +340,16 @@ maintenance reset — matching vmecpp's Evolve control block. (The old docs'
 
 ## Status and Known Issues
 
-**Status (2026-08-16): the CUDA overhaul (blueprint phases 0–11) is complete —
-the strangler-fig migration is done, the legacy kernel structs and their free
-functions are deleted, and the `dynSharedBase()` dynamic-shared-memory
-indirection is removed (the deferred step-13 item, measured bit-identical
-rather than the anticipated Class B re-freeze). The frozen baselines are:**
+**Status (2026-08-17): the CUDA overhaul is design-complete. Blueprint phases
+0–11 finished the strangler-fig migration (legacy kernel structs and
+`dynSharedBase()` removed, measured bit-identical); the four closure steps of
+`docs/overhaul-completion-plan.md` then landed as separately reviewable
+commits — 48713b2 numerical safety predicates, 4363e71 config/I-O contracts,
+d602d2c runtime/performance policy, and the release gate (warnings-as-errors,
+initcheck, CI, event-DAG tests, docs). Every step was verified **Class A
+byte-identical** against the frozen baselines (including the
+`--use_fast_math` removal: precise double math IS the frozen codegen), so no
+re-freeze occurred anywhere. The frozen baselines are:**
 
 - Solovev: 251 → 199 → 456 effective iters, final FSQR 9.583e-17 — the
   final stage matches vmecpp's playground reference exactly (456, 9.99e-17).

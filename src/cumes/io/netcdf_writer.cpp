@@ -39,10 +39,6 @@ bool putStrAttr(int ncid, const char* name, const std::string& value) {
            NC_NOERR;
 }
 
-bool putIntAttr(int ncid, const char* name, int value) {
-    return nc_put_att_int(ncid, NC_GLOBAL, name, NC_INT, 1, &value) == NC_NOERR;
-}
-
 // ---------------------------------------------------------------------------
 // legacy-v0: byte/layout-exact replica of the deleted device-reading writer
 // ---------------------------------------------------------------------------

@@ -274,7 +274,8 @@ cumes_enable_warnings(test_input_json)
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
-                   test_tridiagonal test_cuda_graph test_safety_predicates)
+                   test_tridiagonal test_cuda_graph test_safety_predicates
+                   test_event_dag)
   add_executable(${t} tests/${t}.cu)
   target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(${t} PRIVATE cumes_test_support cumes_config_json cumes_cuda_double cumes_cuda_float)
@@ -380,6 +381,14 @@ cumes_add_test(test_geometry_ncurr   unit;geometry)
 cumes_add_test(test_constraint_tcon  unit;constraint)
 cumes_add_test(test_regression_kernels unit;constraint;precon)
 cumes_add_test(test_safety_predicates unit;safety)
+cumes_add_test(test_event_dag unit;runtime)
+# The stream-poison case runs in its own process (the trap faults the context
+# for further work); not registered under compute-sanitizer.
+add_test(NAME event_dag_poison
+         COMMAND test_event_dag --poison)
+set_tests_properties(event_dag_poison PROPERTIES
+    LABELS "unit;runtime" TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 cumes_add_test(test_geometry_iso     unit;geometry)
 cumes_add_test(test_force_verify     unit;forces)
 cumes_add_test(test_force_reference  unit;forces)
@@ -394,6 +403,25 @@ cumes_register_sanitizer_variants(
     test_regression_kernels test_runtime test_arena test_operator_views
     test_accumulation test_axisym_backend test_tridiagonal
     test_cuda_graph test_safety_predicates)
+# test_event_dag registers its sanitizer variants manually: the deliberate
+# pending-event API-error probes are skipped under the sanitizers (they count
+# the intended cudaErrorNotReady return as a sanitizer error).
+if(CUMES_ENABLE_SANITIZER_TESTS AND CUMES_COMPUTE_SANITIZER)
+  add_test(NAME sanitizer_test_event_dag
+           COMMAND ${CUMES_COMPUTE_SANITIZER}
+                   --tool memcheck --error-exitcode 3
+                   $<TARGET_FILE:test_event_dag> --no-notready-probe)
+  set_tests_properties(sanitizer_test_event_dag PROPERTIES
+      LABELS "sanitizer" TIMEOUT 600 RUN_SERIAL TRUE
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME initcheck_test_event_dag
+           COMMAND ${CUMES_COMPUTE_SANITIZER}
+                   --tool initcheck --error-exitcode 3
+                   $<TARGET_FILE:test_event_dag> --no-notready-probe)
+  set_tests_properties(initcheck_test_event_dag PROPERTIES
+      LABELS "sanitizer;initcheck" TIMEOUT 600 RUN_SERIAL TRUE
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 
 # ---- benchmarks (not part of the default CTest unit gate) --------------------
 # The fixed-iteration harness (§8.1). Always double (verify-double is the

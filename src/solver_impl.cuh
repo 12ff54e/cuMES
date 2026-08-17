@@ -157,6 +157,9 @@ template <typename T>
 static void finalizeForceNorms(const double* hc, const DeviceParams<T>& p,
                                double delta_s, int iter2,
                                double& fNormRZ, double& fNormL, double& fNorm1) {
+#ifndef DUMP_CUMES_VERIFY
+    (void)iter2;  // only the dump filename consumes it
+#endif
     double sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3], vol = hc[4], h_rz = hc[5];
     double deltaS = delta_s;
     double eMag = fabs(sMag) * deltaS;   // vmecpp: fabs(localMagneticEnergy)*deltaS
@@ -985,6 +988,11 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
                                            const cumes::EvaluationSchedule& schedule,
                                            cudaStream_t stream, double f_norm_rz,
                                            double f_norm_l) {
+#ifndef DUMP_CUMES_VERIFY
+    // iter/iter2 feed only the dump windows; with the dump machinery
+    // compiled out they are unused (completion plan step 4.1 warning-clean).
+    (void)iter; (void)iter2;
+#endif
     // Local aliases mirror the pre-step-12 solverRun variable names so the DAG
     // body below is a verbatim move (same arithmetic, same order).
     const DeviceParams<T>& p = p_;
@@ -1223,7 +1231,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
                           cudaStream_t stream, cumes::SolverBench* bench,
                           cumes::SpectralOperator<T>* op) {
     const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
-    SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt};
+#ifndef DUMP_CUMES_VERIFY
+    (void)rpv;  // only the dump-window step_0 snapshots consume it
+#endif
+    SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt, {}};
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
     // workspaces, views, residual/control buffers and the interleaved dump

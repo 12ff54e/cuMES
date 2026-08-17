@@ -14,6 +14,16 @@ predicted. The frozen baselines stand unchanged.
 > precision/runtime, and release-gate work is ordered with explicit exit
 > criteria in [`overhaul-completion-plan.md`](overhaul-completion-plan.md).
 > Do not interpret "Phase 11 is complete" below as final design acceptance.
+>
+> **EXECUTED (2026-08-17):** the four closure steps are landed —
+> `48713b2` numerical safety predicates, `4363e71` config/I-O contracts,
+> `d602d2c` runtime/performance policy, and the release-gate commit
+> (warnings-as-errors, initcheck, CI, event-DAG tests, docs). Every step
+> re-verified the frozen Solovev `251→199→456` / W7-X `1877→1617→2011`
+> trajectories **Class A byte-identical** (full dump manifests) — including
+> the removal of `--use_fast_math`, which proved codegen-neutral — so the
+> branch now satisfies the original overhaul definition of done with no
+> re-freeze.
 
 ## 1. What changed
 

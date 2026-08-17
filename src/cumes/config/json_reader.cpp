@@ -261,7 +261,11 @@ ParsedProblem read_problem_spec(const std::string& path,
     if (root.contains("aphi")) {
         p.toroidal_flux.coefficients = readDoubleArray(root.at("aphi"), "aphi", report);
     } else {
-        p.toroidal_flux.coefficients = {1.0};  // vmecpp default
+        // vmecpp default. push_back instead of an initializer_list
+        // assignment: g++-13 -O2 -Warray-bounds (warnings-as-errors) mis-
+        // diagnoses the list's internal copy as an out-of-bounds memmove.
+        p.toroidal_flux.coefficients.clear();
+        p.toroidal_flux.coefficients.push_back(1.0);
     }
 
     // ---- magnetic axis ----

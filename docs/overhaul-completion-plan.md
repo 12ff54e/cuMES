@@ -1,5 +1,39 @@
 # cuMES overhaul completion plan
 
+> **EXECUTED (2026-08-17).** All four steps are landed as separately
+> reviewable commits on the `overhaul` branch:
+>
+> - Step 1 — numerical safety and error boundaries: `48713b2` — profile
+>   normalization validation before CUDA init, zero library `exit()` calls,
+>   the typed trivially-copyable `ControlRecord` with validity bits, the
+>   device reset→reduce→finalize Jacobian status, status-guarded no-ops, the
+>   on-device terminal classification, and the manufactured
+>   inverted/collapsed/nonfinite/converged cases (memcheck + initcheck clean).
+> - Step 2 — configuration and I/O contracts: `4363e71` — strict schema-v1
+>   default + named `--compatibility`, the single-snapshot host-only
+>   NetCDF/HDF5 writers (v0 byte/layout-exact + v1 with complete provenance
+>   and round-tripping readers), the durable publication protocol (unique
+>   temp, fsync, atomic rename, directory fsync), and the build-dependency
+>   isolation (parser C++20 host-only, backend headers/defines confined to
+>   the adapter library).
+> - Step 3 — runtime and performance policy: `d602d2c` — named precision
+>   policies (verify-double/fast-double/mixed-float/debug-double; no global
+>   `--use_fast_math`), the single-construction stage arena (one
+>   allocation, one module construction per stage), the fence-delivered
+>   telemetry (one deliberate control fence per pass, no per-print barriers
+>   or allocations), the dump machinery behind a build option, and the
+>   TITAN Xp re-measurement (docs/performance.md).
+> - Step 4 — release gate: warnings-as-errors in the verification presets,
+>   compute-sanitizer initcheck, the CI workflow (hosted matrix + GPU
+>   self-hosted gate), the event-DAG poison/delay tests, and the docs
+>   brought to measured reality (architecture/performance/verification/
+>   CLAUDE.md).
+>
+> Every step passed its exit gate with the frozen Solovev
+> `251→199→456` and W7-X `1877→1617→2011` trajectories **Class A
+> byte-identical** (compare_bitwise over the full dump manifests) — no
+> re-freeze was needed anywhere, including the fast-math removal.
+
 Status date: 2026-08-17. Reviewed branch: `overhaul` at
 `b9d3429bb36bf56be0e5498c4cf01b7356514e1e`.
 

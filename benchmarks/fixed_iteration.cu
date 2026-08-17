@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
     double setup_us = 0.0, solve_wall_us = 0.0, solve_gpu_us = 0.0;
     std::size_t arena_bytes = 0;
     std::size_t cufft_work_bytes = 0;
-    SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9)};
+    SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9), {}};
     cumes::EquilibriumSnapshot snap;
 
     // One arena allocation, one construction of every module, one solve

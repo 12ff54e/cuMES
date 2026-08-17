@@ -1,13 +1,15 @@
 # cuMES architecture
 
-Status date: 2026-08-16 (Phase 11 complete — step 13 + the deferred
-`dynSharedBase()` removal landed, both measured bit-identical). This document
-describes the architecture as it exists after Phase 10 — the tested operator
-boundaries, the build/library split, and the state of the strangler-fig
-migration. The normative numerical contracts live in
-`docs/mathematics.md`; the layout contracts in `docs/data-layout.md`; the
-verification tiers/gates in `docs/verification.md`; the measured performance
-in `docs/performance.md`.
+Status date: 2026-08-17 (overhaul completion plan steps 1–4 landed; commits
+48713b2 safety, 4363e71 config/I-O, d602d2c runtime/performance, and the
+release-gate commit). This document describes the architecture as it exists
+after the overhaul: the tested operator boundaries, the build/library split,
+the device safety predicates, the single-snapshot I/O path, and the precision
+policies. The normative numerical contracts live in `docs/mathematics.md`;
+the layout contracts in `docs/data-layout.md`; the verification tiers/gates
+in `docs/verification.md`; the measured performance in
+`docs/performance.md`; the remaining-work plan (now executed) in
+`docs/overhaul-completion-plan.md`.
 
 ## 1. One layer: the `cumes` operator library
 
@@ -51,11 +53,11 @@ monolithic compile (blueprint §9):
 | `cumes_core` | host C++ | `result.hpp`, `checked_size.hpp`, `grid_shape`, `mode_table` |
 | `cumes_config_json` | host C++ | `validation_report`, `validated_problem`, `json_reader` |
 | `cumes_io_host` | host C++ | `output_spec`, `run_report`, `equilibrium_snapshot`, binary v0/v1, checkpoint |
-| `cumes_io` | host C++ (links cudart/cufft for D2H only) | output dispatcher + NetCDF/HDF5 adapters |
-| `cumes_cuda_runtime` | host CUDA-runtime | `device_context`, centralized `check_cuda`/`check_cufft` |
+| `cumes_io` | host C++ (the legacy reference writer links cudart for D2H) | the full `make_writer` dispatch + host-only NetCDF/HDF5 adapters (the ONLY target with the backend headers and defines) |
+| `cumes_cuda_runtime` | host CUDA-runtime | centralized `check_cuda`/`check_cufft`, `DeviceBuffer`/`DeviceArena` |
 | `cumes_cuda_double` / `cumes_cuda_float` | device | the nine `*_double.cu` / `*_float.cu` operator TUs |
 | `cuMES` | executable | `main.cu`, links only the TU matching `Real` |
-| `cumes_benchmark_fixed_iteration`, `cumes_benchmark_graph_overhead` | bench | §8.1 harness, graph microbenchmark |
+| `cumes_benchmark_fixed_iteration`, `cumes_benchmark_graph_overhead`, `cumes_benchmark_graph_realpass` | bench | §8.1 harness, graph microbenchmark, real-pass graph measurement |
 
 The CUDA operator libraries are the explicit-instantiation split that made the
 old non-templated `dynSharedBase()` shared-memory indirection removable: since

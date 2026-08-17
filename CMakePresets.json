@@ -17,7 +17,8 @@
         "CUMES_PRECISION_POLICY": "verify-double",
         "CUMES_USE_FLOAT": "OFF",
         "CUMES_USE_NETCDF": "ON",
-        "CUMES_USE_HDF5": "ON"
+        "CUMES_USE_HDF5": "ON",
+        "CUMES_WARNINGS_AS_ERRORS": "ON"
       }
     },
     {
@@ -69,7 +70,8 @@
         "CUMES_USE_FLOAT": "OFF",
         "CUMES_ENABLE_SANITIZER_TESTS": "ON",
         "CUMES_ENABLE_EXTRA_SANITIZER_TOOLS": "ON",
-        "CUMES_HOST_SANITIZERS": "ON"
+        "CUMES_HOST_SANITIZERS": "ON",
+        "CUMES_WARNINGS_AS_ERRORS": "ON"
       }
     },
     {

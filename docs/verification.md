@@ -5,30 +5,48 @@ extracted verbatim (sections 1–7 correspond to §10.1–§10.7), plus the curr
 inventory of what is actually wired into the build, and the change-review
 checklist (§13 of the blueprint) as the appendix.
 
-## Current state (2026-08-16)
+## Current state (2026-08-17, post-overhaul)
 
-- **Verify gate (default `build/`)**: 35 CTest entries — 23 unit tests, 12
-  compute-sanitizer memcheck variants of the kernel-driving tests, and 1
-  benchmark smoke. The frozen trajectory oracle: Solovev `251→199→456`
-  FSQR 9.583e-17 and W7-X `1877→1617→2011` FSQR 9.778e-13 must reproduce
-  **bit-identically** (`scripts/compare_runs.py --max-iter-delta 0`).
-- **Sanitizer preset (`build-sanitize/`)**: 63 CTest entries — the verify
-  gate plus racecheck/synccheck variants of the kernel tests (RUN_SERIAL;
-  racecheck exhausts the GPU under parallel runs) and ASan+UBSan twins of the
-  host-only libraries/tests (`asan_test_*`; the ASan runtime must be first in
-  the executable's library list, so the sanitized libraries are `_asan`
-  copies, never propagated into CUDA targets).
-- **Float preset (`build-float/`)**: 23 CTest entries (the float legs of the
-  double-instantiating tests). Float is experimental: the state floor is
-  ~1e-7 and the CLI hard-errors on `ftol_array` entries below 1e-6.
-- **Trajectory tooling**: `scripts/compare_runs.py` (per-iteration residual
-  rows, restart-marker sequence, converged state), `compare_states.py`
-  (six-family state diff), `compare_bitwise.py`; benchmarks
-  `cumes_benchmark_fixed_iteration` (§8.1 fixed-window median/p95) and
-  `cumes_benchmark_graph_realpass`/`graph_overhead` (ADR-0003 primitives).
-- **Host sanitizers**: no ASan/UBSan presets beyond the `_asan` twins above;
-  event-DAG stress tests, the Nsight audit, and formatting/static-analysis
-  jobs remain unbuilt (no CI exists in this repository).
+The overhaul completion plan (`docs/overhaul-completion-plan.md`, steps 1–4)
+is landed in four commits (see `docs/phase-11-closeout-handover.md`):
+numerical safety predicates (48713b2), config/I-O contracts (4363e71),
+runtime/performance policy (d602d2c), and this release gate.
+
+- **Verify gate (default `build/`, `verify-double` precise math,
+  warnings-as-errors)**: 53 CTest entries — unit tests incl. the
+  manufactured safety-predicate and event-DAG suites, compute-sanitizer
+  memcheck AND initcheck variants of the kernel-driving tests, the CLI
+  strict-vs-compatibility policy gate, and the benchmark smoke. The frozen
+  trajectory oracle: Solovev `251→199→456` FSQR 9.583e-17 and W7-X
+  `1877→1617→2011` FSQR 9.778e-13 must reproduce **bit-identically**
+  (`scripts/compare_bitwise.py` over the full dump manifests; steps 1–3
+  were each verified Class A byte-identical, including the removal of
+  `--use_fast_math` — precise double math is the verification
+  configuration).
+- **Sanitizer preset (`build-sanitize/`)**: the verify gate plus
+  racecheck/synccheck variants of the kernel tests (RUN_SERIAL; racecheck
+  exhausts the GPU under parallel runs) and ASan+UBSan twins of the
+  host-only libraries/tests (`asan_test_*`).
+- **Precision presets**: `verify-double` (default, precise), `fast-double`
+  (opt-in `--use_fast_math`, dump machinery compiled out), `mixed-float`
+  (float state + documented double reductions; state floor ~1e-7,
+  `ftol_array` entries must be >= 1e-6), `debug-double` (precise + `-G`).
+  The policy and its flags are recorded in every v1 output.
+- **Backend matrix**: verify (NetCDF+HDF5), netcdf-only, hdf5-only, and
+  nobackend builds each run their full suites; the v0 NetCDF writer is
+  byte-identical to the frozen schema dumps, the HDF5 v0 adapter is
+  layout-exact (libhdf5 embeds a per-second timestamp), and v1 containers
+  round-trip the complete RunReport + restart metadata.
+- **CI**: `.github/workflows/ci.yml` — a hosted build/test matrix
+  (verify/nobackend/float + ASan/UBSan host tests) and a self-hosted GPU
+  job (`scripts/ci_gpu.sh`: full CTest incl. sanitizer variants, CLI
+  policy gate, benchmark smoke, frozen short-trajectory sanity run).
+- **Event-DAG audit**: `test_event_dag` pins the scheduling contracts
+  (pending-event query/elapsed-time semantics, delayed-kernel event
+  ordering, stream-fault surfacing); an Nsight Systems/API-trace audit
+  remains the documented manual step before any multi-stream or CUDA Graph
+  production variant:
+  `nsys profile -o trace ./build/cuMES inputs/solovev.json out.bin`.
 
 
 ## 1. Reference hierarchy

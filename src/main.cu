@@ -296,7 +296,7 @@ int main(int argc, char** argv) {
 
     // ---- Multi-radial-grid stage loop (delegated to MultigridSolver) ----
     cumes::SpectralStorage<Real> storage;
-    SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9)};
+    SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9), {}};
     int total_iter = 0;
 
     try {
