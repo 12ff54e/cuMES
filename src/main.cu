@@ -96,6 +96,8 @@ static void fill_provenance(cumes::RunReport& report, const std::string& inputPa
     report.build.dirty = (CUMES_GIT_DIRTY != 0);
     report.build.build_type = CUMES_BUILD_TYPE;
     report.build.scalar_type = sizeof(Real) == sizeof(double) ? "double" : "float";
+    report.build.precision_policy = CUMES_PRECISION_POLICY_NAME;
+    report.build.compile_flags = CUMES_PRECISION_FLAGS;
     report.input.source_path = inputPath;
     report.input.source_hash = sourceHash;
 

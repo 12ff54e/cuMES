@@ -40,6 +40,10 @@ struct BuildProvenance {
     bool dirty = false;       // working tree dirty at build time
     std::string build_type;   // Release/Debug/...
     std::string scalar_type;  // "double" / "float"
+    // Precision-policy provenance (completion plan step 3.1): the named
+    // policy and its effective flags that produced the binary.
+    std::string precision_policy;  // verify-double|fast-double|mixed-float|debug-double
+    std::string compile_flags;     // effective fast-math/device-check flags
 };
 
 struct InputProvenance {

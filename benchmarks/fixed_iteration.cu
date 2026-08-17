@@ -117,48 +117,59 @@ int main(int argc, char** argv) {
     }
 
     // ---- drive one stage directly (mirrors StageSolver::run) with timing ----
-    cumes::DeviceArena arena;
     cumes::SolverBench bench;
     bench.enabled = true;
     cumes::Stream stream;
 
     double setup_us = 0.0, solve_wall_us = 0.0, solve_gpu_us = 0.0;
+    std::size_t arena_bytes = 0;
+    std::size_t cufft_work_bytes = 0;
+    SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9)};
+    cumes::EquilibriumSnapshot snap;
 
-    // The production operator stack (bench_common::OperatorStack): stage arena
-    // carve + profiles/real-space/mode-table/transform/geometry operators, with
-    // the axisymmetric direct-poloidal backend for ntor=0/nzeta=1 shapes
-    // (blueprint §8.5) unless CUMES_FORCE_GENERIC=1 restores the generic cuFFT
-    // backend for A/B comparison.
-    double t0 = now_us();
-    arena.allocate(cumes::stage_arena_bytes<Real>(p));
-    OperatorStack<Real> stack(p, vp, arena);
-    setup_us = now_us() - t0;
+    // One arena allocation, one construction of every module, one solve
+    // (completion plan step 3.2 — the same growth-retry helper the production
+    // StageSolver uses; no temporary measuring arena). The production
+    // operator stack (bench_common::OperatorStack) carves profiles/
+    // real-space/mode-table/transform/geometry operators, with the
+    // axisymmetric direct-poloidal backend for ntor=0/nzeta=1 shapes
+    // (blueprint §8.5) unless CUMES_FORCE_GENERIC=1 restores the generic
+    // cuFFT backend for A/B comparison.
+    bool backend_axisym = false;
+    cumes::run_in_stage_arena<Real>(p, [&](cumes::DeviceArena& arena) {
+        double t0 = now_us();
+        OperatorStack<Real> stack(p, vp, arena);
+        backend_axisym = stack.use_axisym;
+        setup_us = now_us() - t0;
 
-    cudaEvent_t ev0, ev1;
-    cudaEventCreate(&ev0);
-    cudaEventCreate(&ev1);
-    cudaEventRecord(ev0, stream.get());
-    double w0 = now_us();
-    SolverResult<Real> result = solverRun<Real>(storage, p, stack.profiles,
-                                                stack.transform, stack.rs, stack.geometry, &arena, stream.get(),
-                                                &bench, stack.axisym.get());
-    double w1 = now_us();
-    cudaEventRecord(ev1, stream.get());
-    cudaEventSynchronize(ev1);
-    float gpu_ms = 0.0f;
-    cudaEventElapsedTime(&gpu_ms, ev0, ev1);
-    solve_wall_us = w1 - w0;
-    solve_gpu_us = gpu_ms * 1000.0;
+        cudaEvent_t ev0, ev1;
+        cudaEventCreate(&ev0);
+        cudaEventCreate(&ev1);
+        cudaEventRecord(ev0, stream.get());
+        double w0 = now_us();
+        result = solverRun<Real>(storage, p, stack.profiles,
+                                 stack.transform, stack.rs, stack.geometry,
+                                 &arena, stream.get(), &bench,
+                                 stack.axisym.get());
+        double w1 = now_us();
+        cudaEventRecord(ev1, stream.get());
+        cudaEventSynchronize(ev1);
+        float gpu_ms = 0.0f;
+        cudaEventElapsedTime(&gpu_ms, ev0, ev1);
+        solve_wall_us = w1 - w0;
+        solve_gpu_us = gpu_ms * 1000.0;
 
-    const std::size_t arena_bytes = arena.peak_bytes();
-    const std::size_t cufft_work_bytes = stack.transform.cufft_work_bytes();
+        arena_bytes = arena.peak_bytes();
+        cufft_work_bytes = stack.transform.cufft_work_bytes();
 
-    // profiles/transform/geometry are RAII (operator destructors).
-    cudaEventDestroy(ev0);
-    cudaEventDestroy(ev1);
+        // profiles/transform/geometry are RAII (operator destructors).
+        cudaEventDestroy(ev0);
+        cudaEventDestroy(ev1);
 
-    // ---- residual/state hash (a fast-but-different run is obvious) ----
-    cumes::EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
+        // ---- residual/state hash (a fast-but-different run is obvious) ----
+        snap = cumes::snapshot_from_device(storage);
+        return result;
+    });
     std::string state_hash = hash_snapshot(snap);
 
     // ---- per-pass statistics (discard warmup) ----
@@ -197,7 +208,10 @@ int main(int argc, char** argv) {
     snprintf(num, sizeof num, "%d", CUDART_VERSION);
     json += "  " + kv("toolkit", num) + ",\n";
     json += "  " + kv("scalar_type", q(sizeof(Real) == sizeof(double) ? "double" : "float")) + ",\n";
-    json += "  " + kv("fast_math", q("true")) + ",\n";
+    // Precision-policy provenance (completion plan step 3.1): the named
+    // policy and its effective flags, from the CMake-provided defines.
+    json += "  " + kv("precision_policy", q(CUMES_PRECISION_POLICY_NAME)) + ",\n";
+    json += "  " + kv("precision_flags", q(CUMES_PRECISION_FLAGS)) + ",\n";
     snprintf(num, sizeof num, "%d", p.ns);
     json += "  " + kv("ns", num) + ",\n";
     snprintf(num, sizeof num, "%d", p.mnmax);
@@ -214,7 +228,7 @@ int main(int argc, char** argv) {
     json += "  " + kv("nzeta", num) + ",\n";
     snprintf(num, sizeof num, "%d", p.ncurr);
     json += "  " + kv("ncurr", num) + ",\n";
-    json += "  " + kv("transform_backend", q(stack.use_axisym ? "axisymmetric"
+    json += "  " + kv("transform_backend", q(backend_axisym ? "axisymmetric"
                                                         : "toroidal-fft")) + ",\n";
     snprintf(num, sizeof num, "%zu", arena_bytes);
     json += "  " + kv("arena_bytes", num) + ",\n";

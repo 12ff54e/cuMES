@@ -10,7 +10,11 @@
 // All computation is templated on the scalar type T (double or float).
 // Dump files are T-native (read back by same-build tooling only); the
 // per_iter_residuals record stays double.
-#define DUMP_CUMES_VERIFY
+// DUMP_CUMES_VERIFY is now a BUILD OPTION (completion plan step 3.3): CMake
+// defines it on the solver TUs when CUMES_ENABLE_VERIFY_DUMP=ON (the
+// verify/sanitizer/float presets); production-style builds compile the dump
+// machinery out entirely. The machinery stays runtime-gated (CUMES_DUMP=1)
+// when compiled in.
 #include "solver.cuh"
 #include <cstdio>
 #include <cmath>
@@ -1036,7 +1040,9 @@ void cumes::EquilibriumOperator<T>::enqueue(int iter, int iter2,
         constraint.rcon_view(p), constraint.zcon_view(p), stream);
     cumes::check_cuda(cudaEventRecord(ev1_inv, stream), "event record ev1_inv");
 
+#ifdef DUMP_CUMES_VERIFY
     dumpIter0LoopDiag<T>(iter, p, rs);
+#endif
 #ifdef DUMP_CUMES_VERIFY
     dumpStepA<T>(iter, iter2, p, rs, transform, stream);
 #endif
@@ -1269,6 +1275,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
     // Pinned mirror of the typed control record (one async D2H per pass,
     // delivered by the single control fence — completion plan step 1.3).
     cumes::PinnedBuffer<cumes::ControlRecord> h_control_pin(1);
+    // Persistent pinned mirror for the displayed axis/boundary values
+    // (completion plan step 3.3): [0..ntor] = the m=0 axis R coefficients,
+    // [ntor+1] = the boundary rmncc(0,0) LCFS value. Copied ONCE per pass on
+    // the compute stream at the single control fence — the console output
+    // reads pure host memory and never adds a device/stream-wide fence or a
+    // per-print allocation.
+    cumes::PinnedBuffer<T> h_axis_pin(static_cast<std::size_t>(p.ntor) + 2);
 
     // State rollback: one contiguous state-only checkpoint slab (6*mnmax*ns),
     // replacing the six separate d_bk_* arrays. The slab order matches the six
@@ -1287,6 +1300,22 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
     // Take initial backup
     backupState();
 
+    // Radial location of the magnetic axis at zeta=0, matching vmecpp's r00
+    // (Printout: geometric_offset.r_00 = r1_e[0] — the real-space even-m R
+    // at the axis at theta=0, zeta=0). With the axis coefficients this is
+    // the sum of the m=0 row: sum_n rmncc(0,n)@axis * cos(n*nfp*0) — the
+    // plain R_00 coefficient alone misses the axis R wobble with zeta
+    // (~+0.36 for W7-X, dominated by rmnc(0,1)@axis = +0.35).
+    // Fence-time axis R read from the pinned telemetry mirror (pure host
+    // memory — no sync, no allocation). The displayed value lags the post-
+    // descent state by one descent (the mirror is copied at the pass's
+    // control fence); controller decisions never consume it.
+    auto axisRAtZeta0 = [&]() {
+        T h = T(0.0);
+        for (int n = 0; n <= p.ntor; ++n) h += h_axis_pin.data()[n];
+        return h;
+    };
+
 #ifdef DUMP_CUMES_VERIFY
     // Per-pass record for convergence analysis (mirrors vmecpp's
     // per_iter_residuals.bin + control scalars). Typed PassRecord; the field
@@ -1295,26 +1324,16 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
     // read these scalars and cannot affect the controller's decisions.
     std::vector<cumes::PassRecord> per_iter;
     per_iter.reserve((size_t)kMaxIterEff);
-    // Radial location of the magnetic axis at zeta=0, matching vmecpp's r00
-    // (Printout: geometric_offset.r_00 = r1_e[0] — the real-space even-m R
-    // at the axis at theta=0, zeta=0). With the axis coefficients this is
-    // the sum of the m=0 row: sum_n rmncc(0,n)@axis * cos(n*nfp*0) — the
-    // plain R_00 coefficient alone misses the axis R wobble with zeta
-    // (~+0.36 for W7-X, dominated by rmnc(0,1)@axis = +0.35).
-    auto axisRAtZeta0 = [&]() {
-        // mode-major layout [mode*ns + j]: the m=0 modes (mode = n) at the
-        // axis row (j=0) sit at indices n*ns — strided, so one cudaMemcpy2D
-        // grabs all ntor+1 values instead of ntor+1 individual 1-double
-        // copies (each of which synchronized the device). The state is
-        // produced on the compute stream, so sync it before the default-stream
-        // read below (called from printIterRow's post-descent output path).
+    // The dump record (per_iter_residuals_cumes.bin) must stay byte-identical
+    // to the frozen baseline, whose axis_r column was read POST-descent with
+    // a synchronized copy. Keep that exact read for the dump-only record
+    // (dump mode already performs device-wide dumps; the extra sync costs
+    // nothing there and is compiled out of production).
+    auto axisRAtZeta0Sync = [&]() {
         cudaStreamSynchronize(stream);
-        // Sized from the validated ntor (not a hardcoded cap): a raised
-        // validator ceiling must not overflow a stack array here. The 2D
-        // copy's destination pitch stays sizeof(T) — a contiguous row of
-        // ntor+1 values.
         std::vector<T> h_ax(static_cast<std::size_t>(p.ntor) + 1);
-        cumes::check_cuda(cudaMemcpy2D(h_ax.data(), sizeof(T), storage.family_ptr(cumes::SpectralComponent::Rcc),
+        cumes::check_cuda(cudaMemcpy2D(h_ax.data(), sizeof(T),
+                               storage.family_ptr(cumes::SpectralComponent::Rcc),
                                (size_t)p.ns * sizeof(T),
                                sizeof(T), p.ntor + 1,
                                cudaMemcpyDeviceToHost), "cpy Rax");
@@ -1334,12 +1353,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
             r.preconditioned_fsql = fL;
             r.delta_t = d; r.otav = o; r.dtau = dt; r.b1 = b1v; r.fac = fcv;
             r.iter2 = (double)it2; r.iter1 = (double)it1; r.reason = (double)reason;
-            r.axis_r = (double)axisRAtZeta0();
+            r.axis_r = (double)axisRAtZeta0Sync();
             per_iter.push_back(r);
         }
     };
 #endif
 
+#ifdef DUMP_CUMES_VERIFY
     // Diagnostic: test inverse DFT at specified surface (CUMES_DUMP=1 only).
     // do_combine=false: the diagnostic reads only the parity arrays; the
     // combined *_real buffers are materialized on demand (fourierCombineParity)
@@ -1360,6 +1380,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         delete[] h_re;
         delete[] h_ro;
     }
+#endif  // DUMP_CUMES_VERIFY
 
     printf("\n ITER |    FSQR        FSQZ        FSQL    |   DELT\n");
     printf("------+------------------------------------+----------\n");
@@ -1369,9 +1390,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
     auto printIterRow = [&](int it2, double fsqr_v, double fsqz_v, double fsql_v, double delt_v) {
         printf("%5d | %11.3e %11.3e %11.3e | %8.2e", it2,
                (double)fsqr_v, (double)fsqz_v, (double)fsql_v, (double)delt_v);
-        T h_rmncc_axis = axisRAtZeta0(), h_rmncc_bnd;
-        cumes::check_cuda(cudaMemcpy(&h_rmncc_bnd, storage.family_ptr(cumes::SpectralComponent::Rcc) + (p.ns - 1), sizeof(T),
-                             cudaMemcpyDeviceToHost), "cpy Rbnd");
+        // Both values come from the pinned telemetry mirror (completion
+        // plan step 3.3) — no per-print device copy or synchronization.
+        T h_rmncc_axis = axisRAtZeta0();
+        T h_rmncc_bnd = h_axis_pin.data()[p.ntor + 1];
         printf(" | Rax=%.4f Rbnd=%.4f\n", (double)h_rmncc_axis, (double)h_rmncc_bnd);
     };
 
@@ -1437,6 +1459,19 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
         // preconditioned) of the pre-6A loop.
         cumes::check_cuda(cudaMemcpyAsync(h_control_pin.data(), equilibrium.control_device(),
                                sizeof(cumes::ControlRecord), cudaMemcpyDeviceToHost, stream), "cpy control");
+        // Axis/boundary telemetry mirror: copied on the SAME stream before
+        // the fence (mode-major [mode*ns + j]: the m=0 modes at the axis row
+        // sit at indices n*ns — one 2D strided copy grabs all ntor+1).
+        cumes::check_cuda(cudaMemcpy2DAsync(
+            h_axis_pin.data(), sizeof(T),
+            storage.family_ptr(cumes::SpectralComponent::Rcc),
+            (size_t)p.ns * sizeof(T), sizeof(T),
+            static_cast<std::size_t>(p.ntor) + 1, cudaMemcpyDeviceToHost,
+            stream), "cpy Rax mirror");
+        cumes::check_cuda(cudaMemcpyAsync(
+            h_axis_pin.data() + (p.ntor + 1),
+            storage.family_ptr(cumes::SpectralComponent::Rcc) + (p.ns - 1),
+            sizeof(T), cudaMemcpyDeviceToHost, stream), "cpy Rbnd mirror");
         cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
         if (bench && bench->enabled) {
             auto bench_now = std::chrono::steady_clock::now();

@@ -115,6 +115,8 @@ static RunReport makeIoReport() {
     r.build.dirty = true;
     r.build.build_type = "Release";
     r.build.scalar_type = "double";
+    r.build.precision_policy = "verify-double";
+    r.build.compile_flags = "";
     r.input.source_path = "inputs/w7x.json";
     r.input.source_hash = "0123456789abcdef";
     r.runtime.gpu_name = "NVIDIA TITAN Xp";
@@ -133,6 +135,8 @@ static bool reportsEqual(const RunReport& a, const RunReport& b) {
         a.build.dirty != b.build.dirty ||
         a.build.build_type != b.build.build_type ||
         a.build.scalar_type != b.build.scalar_type ||
+        a.build.precision_policy != b.build.precision_policy ||
+        a.build.compile_flags != b.build.compile_flags ||
         a.input.source_path != b.input.source_path ||
         a.input.source_hash != b.input.source_hash ||
         a.runtime.gpu_name != b.runtime.gpu_name ||

@@ -33,7 +33,10 @@ namespace cumes {
 namespace {
 
 constexpr char kMagic[9] = "CUMES001";
-constexpr std::int32_t kVersion = 1;
+// v2 adds the precision-policy provenance fields to the trailer (completion
+// plan step 3.1); v1 files are still read (the fields default empty).
+constexpr std::int32_t kVersion = 2;
+constexpr std::int32_t kMinReadVersion = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
 // Typed locally instead of a string compare against BuildProvenance::scalar_type
@@ -131,9 +134,10 @@ class VersionedBinaryReader final : public Reader {
         if (std::memcmp(magic, kMagic, 8) != 0) {
             return fail("versioned binary: bad magic (not a cumes v1 state file)");
         }
-        if (version != kVersion) {
+        if (version < kMinReadVersion || version > kVersion) {
             return fail("versioned binary: unsupported version " + std::to_string(version));
         }
+        const bool has_policy_fields = (version >= 2);
         std::size_t n = 0;
         std::string reason;
         if (!io_detail::checkStateDimensions(fp, ns, mnmax, n, reason)) {
@@ -164,6 +168,9 @@ class VersionedBinaryReader final : public Reader {
             if (!io_detail::read_string(fp, report->build.revision) ||
                 !io_detail::read_u8(fp, dirty) ||
                 !io_detail::read_string(fp, report->build.build_type) ||
+                (has_policy_fields &&
+                 (!io_detail::read_string(fp, report->build.precision_policy) ||
+                  !io_detail::read_string(fp, report->build.compile_flags))) ||
                 !io_detail::read_string(fp, report->input.source_path) ||
                 !io_detail::read_string(fp, report->input.source_hash) ||
                 !io_detail::read_string(fp, report->runtime.gpu_name) ||

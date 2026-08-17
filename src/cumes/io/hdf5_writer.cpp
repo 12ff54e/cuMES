@@ -341,6 +341,11 @@ class Hdf5V1Writer final : public Writer {
                  "attr build_type");
         H5_CHECK(putStrAttr(fid, "scalar_type", report.build.scalar_type),
                  "attr scalar_type");
+        H5_CHECK(putStrAttr(fid, "precision_policy",
+                            report.build.precision_policy),
+                 "attr precision_policy");
+        H5_CHECK(putStrAttr(fid, "compile_flags", report.build.compile_flags),
+                 "attr compile_flags");
         H5_CHECK(putStrAttr(fid, "source_path", report.input.source_path),
                  "attr source_path");
         H5_CHECK(putStrAttr(fid, "source_hash", report.input.source_hash),
@@ -567,6 +572,9 @@ class Hdf5V1Reader final : public Reader {
             report->build.scalar_type = (precision == 0) ? "double" : "float";
             if (!getStrAttr(fid, "revision", report->build.revision) ||
                 !getStrAttr(fid, "build_type", report->build.build_type) ||
+                !getStrAttr(fid, "precision_policy",
+                            report->build.precision_policy) ||
+                !getStrAttr(fid, "compile_flags", report->build.compile_flags) ||
                 !getStrAttr(fid, "source_path", report->input.source_path) ||
                 !getStrAttr(fid, "source_hash", report->input.source_hash) ||
                 !getStrAttr(fid, "gpu_name", report->runtime.gpu_name) ||

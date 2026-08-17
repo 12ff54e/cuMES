@@ -33,12 +33,31 @@ include(CumesSanitizers)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-# ---- global optimisation flags ---------------------------------------------
-# Warnings are target-scoped (CumesWarnings.cmake); optimisation stays global
-# so the exact -O3/--use_fast_math/-march=native codegen the baseline was
-# frozen with is preserved. Fast-math is the pre-existing default; precision
-# policies (verify/fast/float/debug) are a Phase 2 PrecisionPolicy concern.
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --use_fast_math")
+# ---- precision policy -> flags (completion plan step 3.1) -------------------
+# No global --use_fast_math: fast intrinsics appear only under the named
+# fast-double policy; the verification configuration (verify-double) is
+# precise double math. The policy and its effective flags are recorded in the
+# build provenance of every v1 output (CUMES_PRECISION_POLICY_NAME /
+# CUMES_PRECISION_FLAGS compile definitions).
+set(CUMES_FAST_MATH_FLAGS "")
+set(CUMES_DEVICE_CHECK_FLAGS "")
+if(CUMES_PRECISION_POLICY STREQUAL "fast-double")
+  set(CUMES_FAST_MATH_FLAGS "--use_fast_math")
+elseif(CUMES_PRECISION_POLICY STREQUAL "mixed-float")
+  set(CUMES_USE_FLOAT ON CACHE BOOL "implied by CUMES_PRECISION_POLICY=mixed-float" FORCE)
+elseif(CUMES_PRECISION_POLICY STREQUAL "debug-double")
+  set(CUMES_DEVICE_CHECK_FLAGS "-G -lineinfo")
+elseif(NOT CUMES_PRECISION_POLICY STREQUAL "verify-double")
+  message(FATAL_ERROR "unknown CUMES_PRECISION_POLICY '${CUMES_PRECISION_POLICY}' (expected verify-double|fast-double|mixed-float|debug-double)")
+endif()
+# A policy/path disagreement is a configure error, not a silent rebuild.
+if(CUMES_PRECISION_POLICY STREQUAL "mixed-float" AND NOT CUMES_USE_FLOAT)
+  message(FATAL_ERROR "CUMES_PRECISION_POLICY=mixed-float requires CUMES_USE_FLOAT=ON")
+endif()
+if(CUMES_USE_FLOAT AND NOT CUMES_PRECISION_POLICY STREQUAL "mixed-float")
+  message(FATAL_ERROR "CUMES_USE_FLOAT=ON requires CUMES_PRECISION_POLICY=mixed-float")
+endif()
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 ${CUMES_FAST_MATH_FLAGS} ${CUMES_DEVICE_CHECK_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
 
 # ---- device modules --------------------------------------------------------
@@ -172,11 +191,17 @@ add_library(cumes_cuda_double STATIC ${CUMES_CUDA_DOUBLE_SOURCES})
 target_include_directories(cumes_cuda_double PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_double PUBLIC CUDA::cufft cumes_cuda_runtime)
 cumes_enable_warnings(cumes_cuda_double)
+if(CUMES_ENABLE_VERIFY_DUMP)
+  target_compile_definitions(cumes_cuda_double PRIVATE DUMP_CUMES_VERIFY)
+endif()
 
 add_library(cumes_cuda_float STATIC ${CUMES_CUDA_FLOAT_SOURCES})
 target_include_directories(cumes_cuda_float PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_float PUBLIC CUDA::cufft cumes_cuda_runtime)
 cumes_enable_warnings(cumes_cuda_float)
+if(CUMES_ENABLE_VERIFY_DUMP)
+  target_compile_definitions(cumes_cuda_float PRIVATE DUMP_CUMES_VERIFY)
+endif()
 
 # ---- CLI executable --------------------------------------------------------
 if(CUMES_USE_FLOAT)
@@ -221,6 +246,15 @@ target_compile_definitions(cuMES PRIVATE
   CUMES_GIT_REVISION="${CUMES_GIT_REVISION}"
   CUMES_GIT_DIRTY=${CUMES_GIT_DIRTY}
   CUMES_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+
+# Precision-policy provenance (completion plan step 3.1): the named policy and
+# its effective flags travel with the binary into every v1 output.
+function(cumes_add_precision_provenance target)
+  target_compile_definitions(${target} PRIVATE
+    CUMES_PRECISION_POLICY_NAME="${CUMES_PRECISION_POLICY}"
+    CUMES_PRECISION_FLAGS="${CUMES_FAST_MATH_FLAGS} ${CUMES_DEVICE_CHECK_FLAGS}")
+endfunction()
+cumes_add_precision_provenance(cuMES)
 
 # ---- tests (standalone executables, no framework) --------------------------
 # Each test links the full device libraries (both scalar types) so every test
@@ -368,6 +402,7 @@ add_executable(cumes_benchmark_fixed_iteration benchmarks/fixed_iteration.cu)
 target_include_directories(cumes_benchmark_fixed_iteration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_benchmark_fixed_iteration PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
 cumes_enable_warnings(cumes_benchmark_fixed_iteration)
+cumes_add_precision_provenance(cumes_benchmark_fixed_iteration)
 
 add_executable(cumes_benchmark_graph_overhead benchmarks/graph_overhead.cu)
 target_include_directories(cumes_benchmark_graph_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/tests/support)
@@ -383,6 +418,7 @@ add_executable(cumes_benchmark_graph_realpass benchmarks/graph_realpass.cu)
 target_include_directories(cumes_benchmark_graph_realpass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_benchmark_graph_realpass PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
 cumes_enable_warnings(cumes_benchmark_graph_realpass)
+cumes_add_precision_provenance(cumes_benchmark_graph_realpass)
 
 # CLI policy gate (completion plan step 2.1): strict-vs-compatibility schema
 # and output-path/suffix policy, exercised end to end against the real binary

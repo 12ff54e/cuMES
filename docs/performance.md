@@ -1,10 +1,23 @@
 # cuMES performance
 
-Status date: 2026-08-16 (Phase 10). This documents what has been *measured*
-(never claimed), on which hardware, and the acceptance policy that governs
-future optimization. It supersedes the historical profiling notes
-(`optimization-2026-08-03.md`, `profiling-2026-08-05.md`) for decision-making;
-those remain as raw inputs.
+Status date: 2026-08-17 (overhaul completion plan step 3.4 re-measurement).
+This documents what has been *measured* (never claimed), on which hardware,
+and the acceptance policy that governs future optimization. It supersedes the
+historical profiling notes (`optimization-2026-08-03.md`,
+`profiling-2026-08-05.md`) for decision-making; those remain as raw inputs.
+
+> **2026-08-17 re-measurement note (completion plan step 3.4).** The numbers
+> in §2 were re-measured with the overhaul's final build configuration:
+> precise double math (`CUMES_PRECISION_POLICY=verify-double`, no
+> `--use_fast_math` — its removal proved **trajectory byte-identical**, so
+> the frozen baselines stand under precise math), the single-construction
+> stage arena (one allocation + one module construction per stage, no
+> measuring pass), and the fence-delivered axis/boundary telemetry (the
+> production path has exactly one deliberate control fence per pass and no
+> per-print synchronization or allocation). Setup and iteration time are
+> reported separately. Only Pascal numbers are reported here: no modern GPU
+> was attached to this session, so the two-architecture comparison remains
+> an open measurement on the RTX-class target.
 
 ## 1. Measurement harness (§8.1)
 
@@ -21,13 +34,28 @@ CTest.
 
 ## 2. Steady-state wall time (TITAN Xp, sm_61)
 
-Measured by the fixed-iteration harness (Phase 9, updated post-Phase-10 with
-the axisymmetric production wiring — see ADR-0004):
+Measured by the fixed-iteration harness with 300 timed passes after 50 warmup
+passes, three thermally stable repeats each (completion plan step 3.4,
+2026-08-17, `verify-double`):
 
-| shape | µs / effective iteration |
-| ----- | ------------------------ |
-| Solovev `ns=55` (axisymmetric) | ~153 (was ~213 on the generic backend) |
-| W7-X `ns=99` (3D) | ~2110 |
+| shape | median µs/iter | p95 µs/iter | repeats |
+| ----- | -------------: | ----------: | ------: |
+| Solovev `ns=55` (axisymmetric) | 167.0 / 167.1 / 166.5 | 175.7 / 177.2 / 175.2 | 3 |
+| Solovev `ns=55` (generic backend, `CUMES_FORCE_GENERIC=1`) | 179.1 | 194.9 | 1 |
+| W7-X `ns=99` (3D, generic toroidal-FFT) | 1757.8 / 1757.7 (first repeat 1874.4: cold-clock ramp, discarded) | 1772.4 / 1772.5 | 3 |
+
+Setup (arena + module construction + profile/table upload, one pass per
+stage): ~3.5 ms Solovev / ~3.9 ms W7-X, reported separately from the
+iteration time. The axisymmetric backend retains a measured ~7% advantage
+over the generic backend on the same shape (167 vs 179 µs/iter).
+
+CUDA Graph re-measurement on the REAL pass DAG (ADR-0003 follow-up,
+`cumes_benchmark_graph_realpass`, Solovev `ns=55`): enqueue submission
+63.9 µs/pass vs graph launch 9.8 µs/pass (54.2 µs saved), production-pattern
+wall 124.0 vs 111.3 µs/pass (12.8 µs ≈ 10% saved), GPU time 125.3 vs
+112.9 µs. The real-pass bound is therefore confirmed beneficial on the
+submission-bound Solovev workload; production graph integration remains a
+separate decision (see §3.3).
 
 Historical hotspot profiles (different sessions; not cross-GPU ratios — see the
 blueprint §2) put the W7-X iteration work in the transform accumulation/reduction
@@ -61,12 +89,13 @@ result.
 ### 3.3 CUDA Graph capture — integration deferred (ADR-0003)
 
 Empty-kernel microbenchmark: enqueue 1.94 µs/kernel, graph launch 6.43 µs/pass
-for 24 kernels → **~40 µs/pass upper-bound saving**. That is ~19% of Solovev
-(submission-bound) but ~2% of W7-X (GPU-bound). Integration is deferred until
-the Phase-7 `AxisymmetricOperator` is wired into Solovev and a real-kernel
-re-measure confirms the bound. `CudaGraph` + `test_cuda_graph` (which proves
-cuFFT-in-graph replays bit-identically) are retained as the measurement
-primitive.
+for 24 kernels → **~40 µs/pass upper-bound saving**. The 2026-08-17 REAL-pass
+re-measure (see §2) confirmed a ~12.8 µs/pass (≈10%) wall saving on Solovev,
+with bitwise replay fidelity (`test_cuda_graph`). Production graph
+integration is still deferred: it remains a separately reviewable scheduling
+change outside the completion plan's scope, and the W7-X workload is
+GPU-bound where the submission saving is proportionally small. `CudaGraph`
++ `test_cuda_graph` are retained as the measurement primitive.
 
 ## 4. Acceptance policy (verification.md §7)
 

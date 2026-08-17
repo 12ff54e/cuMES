@@ -133,9 +133,15 @@ int main(int argc, char** argv) {
     // ---- seed + operator stack (mirrors StageSolver::run / fixed_iteration) ----
     cumes::SpectralStorage<Real> storage = cumes::init_state<Real>(p, vp);
 
-    cumes::DeviceArena arena;
-    arena.allocate(cumes::stage_arena_bytes<Real>(p));
+    // One arena allocation, one construction of every module, one benchmark
+    // body (completion plan step 3.2 — the production growth-retry helper; no
+    // temporary measuring arena). The lambda returns the process exit code;
+    // backend_axisym is captured for the report lines.
+    bool backend_axisym = false;
+    const int ret = cumes::run_in_stage_arena<Real>(
+        p, [&](cumes::DeviceArena& arena) -> int {
     OperatorStack<Real> stack(p, vp, arena);
+    backend_axisym = stack.use_axisym;
 
     cumes::Stream stream;
     stack.transform.bind_stream(stream.get());
@@ -157,11 +163,12 @@ int main(int argc, char** argv) {
     // Pinned staging like production (solver_impl.cuh's h_control_pin): the
     // async D2H stays a one-hop DMA copy instead of degrading to a
     // synchronous pageable two-hop (review finding 6.2).
-    cumes::PinnedBuffer<double> h_ctl(16);
+    cumes::PinnedBuffer<cumes::ControlRecord> h_ctl(1);
     for (int w = 0; w < warmup; ++w) {
         equilibrium.enqueue(iter, iter2, base_sched, stream.get());
         cumes::check_cuda(cudaMemcpyAsync(h_ctl.data(), equilibrium.control_device(),
-                                          16 * sizeof(Real), cudaMemcpyDeviceToHost,
+                                          sizeof(cumes::ControlRecord),
+                                          cudaMemcpyDeviceToHost,
                                           stream.get()), "warmup control copy");
         stream.synchronize();
     }
@@ -290,7 +297,8 @@ int main(int argc, char** argv) {
                 equilibrium.enqueue(iter, iter2, base_sched, stream.get());
             }
             cumes::check_cuda(cudaMemcpyAsync(h_ctl.data(), equilibrium.control_device(),
-                                              16 * sizeof(Real), cudaMemcpyDeviceToHost,
+                                              sizeof(cumes::ControlRecord),
+                                              cudaMemcpyDeviceToHost,
                                               stream.get()), "control copy");
             stream.synchronize();
             wall.push_back(now_us() - t0);
@@ -313,7 +321,7 @@ int main(int argc, char** argv) {
 
     // ---- report ----
     printf("config                   : %s (%s backend, ns=%d)\n", config,
-           stack.use_axisym ? "axisymmetric" : "toroidal-fft", p.ns);
+           backend_axisym ? "axisymmetric" : "toroidal-fft", p.ns);
     printf("gpu                      : %s (sm_%d%d)\n", prop.name,
            prop.major, prop.minor);
     printf("capture+instantiate_us   : base %.1f | refresh %.1f | zeroZ %.1f\n",
@@ -344,7 +352,7 @@ int main(int argc, char** argv) {
                 "  \"setparams_us_per_update\": %.2f,\n"
                 "  \"param_update_works\": %s\n"
                 "}\n",
-                config, stack.use_axisym ? "axisymmetric" : "toroidal-fft", p.ns,
+                config, backend_axisym ? "axisymmetric" : "toroidal-fft", p.ns,
                 prop.name, prop.major, prop.minor,
                 cap_base_us, cap_refresh_us, cap_zeroz_us,
                 median(enc_us), median(lch_us), median(enc_us) - median(lch_us),
@@ -356,4 +364,6 @@ int main(int argc, char** argv) {
     }
 
     return 0;
+    });  // end run_in_stage_arena lambda
+    return ret;
 }

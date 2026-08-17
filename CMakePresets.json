@@ -8,12 +8,13 @@
   "configurePresets": [
     {
       "name": "verify",
-      "displayName": "Verify \u2014 double, release, all backends (default)",
-      "description": "The verification configuration: precise double, NetCDF+HDF5 on when found.",
+      "displayName": "Verify \u2014 verify-double, release, all backends (default)",
+      "description": "The verification configuration: precise double math (CUMES_PRECISION_POLICY=verify-double), NetCDF+HDF5 on when found.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_PRECISION_POLICY": "verify-double",
         "CUMES_USE_FLOAT": "OFF",
         "CUMES_USE_NETCDF": "ON",
         "CUMES_USE_HDF5": "ON"
@@ -21,24 +22,39 @@
     },
     {
       "name": "float",
-      "displayName": "Float \u2014 single precision (experimental)",
-      "description": "Single-precision CLI. Float stalls at ~1e-7; relax ftol_array entries to >= 1e-6.",
+      "displayName": "Float \u2014 mixed-float (experimental)",
+      "description": "Mixed-float policy: float state/FFT with the documented double reductions (CUMES_PRECISION_POLICY=mixed-float implies CUMES_USE_FLOAT). Float stalls at ~1e-7; relax ftol_array entries to >= 1e-6.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-float",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_PRECISION_POLICY": "mixed-float",
         "CUMES_USE_FLOAT": "ON"
       }
     },
     {
       "name": "debug",
-      "displayName": "Debug \u2014 double, symbols, no optimisation",
-      "description": "Debug build for host/device debugging.",
+      "displayName": "Debug \u2014 debug-double, symbols, device checks",
+      "description": "Debug-double policy: precise math plus device debug checks (-G -lineinfo).",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "CUMES_PRECISION_POLICY": "debug-double",
         "CUMES_USE_FLOAT": "OFF"
+      }
+    },
+    {
+      "name": "fast",
+      "displayName": "Fast \u2014 fast-double (attributable fast intrinsics)",
+      "description": "Fast-double policy: --use_fast_math, selected and attributed through the named policy (never the default).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-fast",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_PRECISION_POLICY": "fast-double",
+        "CUMES_USE_FLOAT": "OFF",
+        "CUMES_ENABLE_VERIFY_DUMP": "OFF"
       }
     },
     {
@@ -49,6 +65,7 @@
       "binaryDir": "${sourceDir}/build-sanitize",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CUMES_PRECISION_POLICY": "verify-double",
         "CUMES_USE_FLOAT": "OFF",
         "CUMES_ENABLE_SANITIZER_TESTS": "ON",
         "CUMES_ENABLE_EXTRA_SANITIZER_TOOLS": "ON",
@@ -93,6 +110,10 @@
     {
       "name": "debug",
       "configurePreset": "debug"
+    },
+    {
+      "name": "fast",
+      "configurePreset": "fast"
     },
     {
       "name": "sanitizer",

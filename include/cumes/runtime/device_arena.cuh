@@ -29,6 +29,18 @@
 
 namespace cumes {
 
+// Typed arena exhaustion (completion plan step 3.2): a stage-construction
+// pass that overruns the budget throws this carrying the exact byte
+// requirement, so the caller can grow the single allocation and retry — one
+// real allocation and one construction per stage, no side-effectful
+// measuring pass.
+class ArenaOverflow : public CumesError {
+ public:
+    explicit ArenaOverflow(std::size_t required, const std::string& msg)
+        : CumesError(msg), required_bytes(required) {}
+    std::size_t required_bytes;
+};
+
 class DeviceArena {
  public:
     // One named subspan: where it lives and how big it is. The report groups
@@ -134,11 +146,13 @@ class DeviceArena {
                              std::size_t align) {
         std::size_t off = 0;
         if (!carve_offsets(bytes, align, off)) {
-            throw CumesError(std::string("DeviceArena::alloc_span: '") + name +
-                             "' of " + std::to_string(bytes) +
-                             " bytes overflows arena (used=" +
-                             std::to_string(used_bytes_) +
-                             ", total=" + std::to_string(total_bytes_) + ")");
+            throw ArenaOverflow(
+                off + bytes,
+                std::string("DeviceArena::alloc_span: '") + name +
+                    "' of " + std::to_string(bytes) +
+                    " bytes overflows arena (used=" +
+                    std::to_string(used_bytes_) +
+                    ", total=" + std::to_string(total_bytes_) + ")");
         }
         spans_.push_back(SpanInfo{std::string(name), off, bytes});
         used_bytes_ = off + bytes;

@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "cumes/runtime/device_arena.cuh"
@@ -85,69 +86,10 @@ class ScopedModeTable {
   DeviceModeTable mt_;
 };
 
-// ---- stage arena measurement (7.2) ----------------------------------------
-// Typed overflow: the measuring pass requires at least `required_bytes` to
-// satisfy the failing span (its aligned offset + size), so a retry loop can
-// grow the budget precisely.
-class ArenaMeasOverflow : public CumesError {
- public:
-  explicit ArenaMeasOverflow(std::size_t required)
-      : CumesError("stage arena measurement overflow"),
-        required_bytes(required) {}
-  std::size_t required_bytes;
-};
-
-// A DeviceArena whose carve throws the typed overflow instead of the generic
-// CumesError. Real device memory IS allocated: the module constructors
-// upload/memset into the carved spans (modeTableCreate, the transform
-// poloidal tables, the precon/constraint zeroing), so a pointerless
-// counting-only arena would fault. The carve bookkeeping is otherwise the
-// base arena's (same offsets, same span table, same peak accounting).
-class MeasuringArena : public DeviceArena {
- protected:
-  void* carve_span(const char* name, std::size_t bytes,
-                   std::size_t align) override {
-    std::size_t off = 0;
-    if (!carve_offsets(bytes, align, off)) {
-      throw ArenaMeasOverflow(off + bytes);
-    }
-    return DeviceArena::carve_span(name, bytes, align);
-  }
-};
-
-// Construct the exact arena-allocation sequence of one stage against `arena`,
-// in the same order StageSolver::run (and the benchmark harnesses) use, so
-// the arena's used bytes become the authoritative stage plan:
-//   Profiles → RealSpaceStorage → DeviceModeTable → ToroidalFftOperator →
-//   GeometryOperator → Preconditioner → ConstraintOperator → the solver's
-//   f_spec / control / psum buffers (EquilibriumOperator ctor order).
-// With `vp == nullptr` (the benchmark-facing stage_arena_bytes(p) form) the
-// Profiles constructor cannot run (it needs the validated spec), so its exact
-// 4-full + 7-half T-element spans are reserved by one equivalent span: every
-// profile span is sizeof(T)-aligned, so the trailing offset matches the real
-// pass bit-for-bit.
-template <typename T>
-void measure_stage_stack(DeviceParams<T>& p, const ValidatedProblem* vp,
-                         DeviceArena* arena) {
-    if (vp != nullptr) {
-        Profiles<T> profiles(p, *vp, arena);
-    } else {
-        arena->alloc_span<T>("profiles", (size_t)4 * p.ns + 7 * (p.ns - 1));
-    }
-    RealSpaceStorage<T> rs = realSpaceCreate<T>(p, arena);
-    DeviceModeTable mt = modeTableCreate<T>(p, arena);
-    ToroidalFftOperator<T> transform(p, rs, mt, arena);
-    GeometryOperator<T> geometry(p, arena);
-    Preconditioner<T> precon(p, arena);
-    ConstraintOperator<T> constraint(p, arena);
-    // EquilibriumOperator's own buffers (6.4): carved from the same arena.
-    // The control record is the typed ControlRecord (completion plan step
-    // 1.3) — one trivially-copyable struct per pass.
-    arena->alloc_span<T>("solver/f_spec", 6 * (size_t)p.ns * p.mnmax);
-    arena->alloc_span<cumes::ControlRecord>("solver/control", 1);
-    arena->alloc_span<T>("solver/psum", 4 * (size_t)(p.ns - 1));
-}
-
+// Construct the exact arena-allocation sequence of one stage against `arena`
+// — no longer a SEPARATE measuring pass: the real stage builds inside the
+// retry helper below (completion plan step 3.2), so the constructors' own
+// alloc_span calls ARE the plan and nothing is constructed twice.
 }  // namespace stage_detail
 
 // Non-authoritative sizing hint for the measuring pass's first budget guess
@@ -194,27 +136,28 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     return bytes;
 }
 
-// Exact byte total of one stage's workspaces (profiles + Fourier + metric +
-// preconditioner + constraint + the solver's own buffers), measured by
-// running the real module constructors against a growth-retry measuring
-// arena — the modules' authoritative alloc_span calls are the plan. `vp`,
-// when available, lets the measurement include the real Profiles constructor
-// (StageSolver passes it); the benchmarks' vp-less form reserves the profile
-// spans equivalently.
-template <typename T>
-std::size_t stage_arena_bytes(DeviceParams<T>& p, const ValidatedProblem* vp = nullptr) {
+// Growth-retry single-construction stage helper (completion plan step 3.2).
+// One DeviceArena, one construction of every module, one solve: the retry
+// loop exists only so an underestimating seed budget still succeeds — on the
+// normal path the constructors run exactly once against exactly one
+// allocation, and no temporary measuring arena exists. `fn(arena)` performs
+// the full stage body (module construction + solverRun + arena reporting);
+// an ArenaOverflow aborts the attempt, the scope exits destroy the partial
+// modules, and the budget grows to the reported requirement.
+template <typename T, typename F>
+auto run_in_stage_arena(const DeviceParams<T>& p, F&& fn)
+    -> decltype(fn(std::declval<DeviceArena&>())) {
     std::size_t budget = stage_arena_seed_bytes<T>(p);
     for (int attempt = 0; attempt < 16; ++attempt) {
-        stage_detail::MeasuringArena arena;
+        DeviceArena arena;
         arena.allocate(budget);
         try {
-            stage_detail::measure_stage_stack<T>(p, vp, &arena);
-            return arena.used_bytes();
-        } catch (const stage_detail::ArenaMeasOverflow& over) {
+            return fn(arena);
+        } catch (const ArenaOverflow& over) {
             budget = 2 * over.required_bytes + (1u << 20);
         }
     }
-    throw CumesError("stage_arena_bytes: measurement did not converge");
+    throw CumesError("stage arena: sizing did not converge");
 }
 
 // Runs a single radial stage on `p` (already carrying this stage's
@@ -229,46 +172,55 @@ class StageSolver {
                                SpectralStorage<T>& state,
                                cudaStream_t stream = 0,
                                SolverBench* bench = nullptr) {
-        DeviceArena arena;
-        arena.allocate(stage_arena_bytes<T>(p, &vp));
-        // Setup (profiles/Fourier/metric) is synchronous on the default
-        // stream, so it completes before the solve; the hot loop runs on the
-        // explicit nonblocking compute stream (Phase 6A). The real-space
-        // storage and the mode table are scoped RAII (their frees no-op on
-        // the arena path and cover the nullptr-arena path).
-        Profiles<T> profiles(p, vp, &arena);
-        stage_detail::ScopedRealSpace<T> rs(p, &arena);
-        stage_detail::ScopedModeTable<T> mt(p, &arena);
-        ToroidalFftOperator<T> transform(p, *rs, mt.get(), &arena);
-        GeometryOperator<T> geometry(p, &arena);
+        // One arena allocation, one construction of every module, one solve
+        // (completion plan step 3.2): the modules' alloc_span calls ARE the
+        // plan — there is no temporary measuring arena and nothing is
+        // constructed twice. The retry loop below only grows the budget when
+        // the seed underestimates (an ArenaOverflow aborts the attempt and
+        // the scope exit destroys the partial modules).
+        return run_in_stage_arena<T>(p, [&](DeviceArena& arena) {
+            // Setup (profiles/Fourier/metric) is synchronous on the default
+            // stream, so it completes before the solve; the hot loop runs on
+            // the explicit nonblocking compute stream (Phase 6A). The
+            // real-space storage and the mode table are scoped RAII (their
+            // frees no-op on the arena path and cover the nullptr-arena
+            // path).
+            Profiles<T> profiles(p, vp, &arena);
+            stage_detail::ScopedRealSpace<T> rs(p, &arena);
+            stage_detail::ScopedModeTable<T> mt(p, &arena);
+            ToroidalFftOperator<T> transform(p, *rs, mt.get(), &arena);
+            GeometryOperator<T> geometry(p, &arena);
 
-        // Transform backend selection (blueprint §8.5): for ntor=0/nzeta=1
-        // the toroidal direction is a single point, so the length-one cuFFT
-        // round trips are replaced by direct-poloidal synthesis/projection. The
-        // operator holds only ns-independent poloidal tables, but its kernels
-        // launch on `p.ns`, so one is built per stage (re-uploading the tiny
-        // tables is negligible). CUMES_FORCE_GENERIC=1 restores the generic
-        // backend for A/B comparison against the frozen trajectory. The solver
-        // drives a single `SpectralOperator<T>*` (no axisym_active branch);
-        // nullptr selects the generic ToroidalFft operator.
-        bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
-        if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
-            if (std::atoi(e) != 0) use_axisym = false;
-        std::unique_ptr<AxisymmetricOperator<T>> axisym;
-        if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
+            // Transform backend selection (blueprint §8.5): for ntor=0/nzeta=1
+            // the toroidal direction is a single point, so the length-one
+            // cuFFT round trips are replaced by direct-poloidal
+            // synthesis/projection. The operator holds only ns-independent
+            // poloidal tables, but its kernels launch on `p.ns`, so one is
+            // built per stage (re-uploading the tiny tables is negligible).
+            // CUMES_FORCE_GENERIC=1 restores the generic backend for A/B
+            // comparison against the frozen trajectory. The solver drives a
+            // single `SpectralOperator<T>*` (no axisym_active branch);
+            // nullptr selects the generic ToroidalFft operator.
+            bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
+            if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
+                if (std::atoi(e) != 0) use_axisym = false;
+            std::unique_ptr<AxisymmetricOperator<T>> axisym;
+            if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
-        SolverResult<T> result = solverRun<T>(state, p, profiles,
-                                              transform, *rs, geometry, &arena, stream,
-                                              bench, axisym.get());
-        // profiles/transform/geometry/rs/mt are RAII (scoped wrappers + the
-        // operator destructors); nothing to free manually.
+            SolverResult<T> result = solverRun<T>(state, p, profiles,
+                                                  transform, *rs, geometry,
+                                                  &arena, stream, bench,
+                                                  axisym.get());
+            // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
+            // the operator destructors); nothing to free manually.
 
-        std::printf("  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
-                    "reserved %zu bytes\n",
-                    arena.span_count(), arena.peak_bytes(),
-                    arena.peak_bytes() / (1024.0 * 1024.0),
-                    arena.total_bytes());
-        return result;
+            std::printf("  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
+                        "reserved %zu bytes\n",
+                        arena.span_count(), arena.peak_bytes(),
+                        arena.peak_bytes() / (1024.0 * 1024.0),
+                        arena.total_bytes());
+            return result;
+        });
     }
 };
 

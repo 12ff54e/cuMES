@@ -71,6 +71,8 @@ static RunReport makeReport() {
     r.build.revision = "deadbeef";
     r.build.build_type = "Release";
     r.build.scalar_type = "double";
+    r.build.precision_policy = "verify-double";
+    r.build.compile_flags = "";
     r.input.source_path = "inputs/solovev.json";
     r.runtime.gpu_name = "test-gpu";
     return r;

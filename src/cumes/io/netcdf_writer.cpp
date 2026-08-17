@@ -389,6 +389,11 @@ class NetcdfV1Writer final : public Writer {
                      ? NC_NOERR : NC_EATTMETA, "attr build_type");
         NC_CHECK(putStrAttr(ncid, "scalar_type", report.build.scalar_type) == true
                      ? NC_NOERR : NC_EATTMETA, "attr scalar_type");
+        NC_CHECK(putStrAttr(ncid, "precision_policy",
+                            report.build.precision_policy) == true
+                     ? NC_NOERR : NC_EATTMETA, "attr precision_policy");
+        NC_CHECK(putStrAttr(ncid, "compile_flags", report.build.compile_flags) == true
+                     ? NC_NOERR : NC_EATTMETA, "attr compile_flags");
         NC_CHECK(putStrAttr(ncid, "source_path", report.input.source_path) == true
                      ? NC_NOERR : NC_EATTMETA, "attr source_path");
         NC_CHECK(putStrAttr(ncid, "source_hash", report.input.source_hash) == true
@@ -588,6 +593,8 @@ class NetcdfV1Reader final : public Reader {
             report->build.scalar_type = (precision == 0) ? "double" : "float";
             if (!getStr("revision", report->build.revision) ||
                 !getStr("build_type", report->build.build_type) ||
+                !getStr("precision_policy", report->build.precision_policy) ||
+                !getStr("compile_flags", report->build.compile_flags) ||
                 !getStr("source_path", report->input.source_path) ||
                 !getStr("source_hash", report->input.source_hash) ||
                 !getStr("gpu_name", report->runtime.gpu_name) ||
