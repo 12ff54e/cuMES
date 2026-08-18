@@ -1,15 +1,16 @@
 # V1 reader resource-hardening handoff
 
-> **OPEN — final acceptance is temporarily reopened.** This document records
-> the remaining findings from the review of `overhaul` at
-> `611e8d7929431ab4579249362ba5bef1febaf096`. The exact-rank repair in
-> `102c6ec` is valid and all available-hardware gates pass, but the resource and
-> schema contracts below must be closed before the overhaul can again be called
-> finally accepted. Modern-GPU performance validation remains separately
-> **POSTPONED** and is not part of this handoff.
+> **CLOSED (2026-08-18).** Commit `de265cd` implements every bounded repair in
+> this handoff: HDF5 variable-length strings are rejected before read,
+> per-family state storage has a documented pre-allocation cap, HDF5 integer
+> objects use a signed native-int-width schema with endian conversion allowed,
+> closed-range report values are validated, and report reconstruction is
+> transactional. The expanded malformed fixtures pass in ordinary CTest and
+> under ASan/UBSan. Every available-hardware exit gate passes and both frozen
+> trajectories remain byte-identical. Final acceptance is restored; only the
+> separately POSTPONED modern-GPU performance validation remains.
 
-Status date: 2026-08-17. Review worktree: clean and synchronized with
-`origin/overhaul`.
+Status date: 2026-08-18. Implementation commit: `de265cd`.
 
 ## 1. Verified baseline
 
@@ -24,9 +25,23 @@ reviewed HEAD:
 - both legacy `.bin` final states were byte-identical to the previously
   accepted artifacts.
 
-The new malformed-rank fixtures prove that scalar, vector, and family ranks and
-extents are checked before fixed-buffer reads. The remaining work concerns
+At review time, the exact-rank fixtures already proved scalar, vector, and
+family ranks and extents before fixed-buffer reads; this handoff concerned only
 resource limits and complete schema validation, not the solver trajectory.
+
+### Closure results
+
+- `scripts/ci_gpu.sh`: 58/58 passed;
+- sanitizer preset: 90/90 passed, including the ASan/UBSan malformed reader;
+- float, no-backend, NetCDF-only, and HDF5-only: 30/30 each;
+- Solovev: `251 -> 199 -> 456`, FSQR `9.583e-17`;
+- W7-X: `1877 -> 1617 -> 2011`, FSQR `9.778e-13`;
+- both legacy `.bin` outputs are byte-identical to the frozen accepted states;
+- no numerical baseline was re-frozen.
+
+The state limit is `kMaxStateElementsPerFamily = 1 << 24`: 128 MiB per
+double family, 768 MiB for the six-family snapshot, and 896 MiB peak state
+storage in the HDF5 reader including its transpose slab.
 
 ## 2. P1 — reject HDF5 variable-length provenance strings
 

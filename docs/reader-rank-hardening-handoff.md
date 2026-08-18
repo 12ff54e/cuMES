@@ -1,9 +1,10 @@
 # V1 container reader rank-hardening handoff
 
-> **Follow-up acceptance note (review of `611e8d7`):** this exact-rank task is
-> closed, but the subsequent resource/schema audit found additional bounded
-> work. Final acceptance now depends on
+> **Follow-up closed (2026-08-18).** This exact-rank task remains closed, and
+> commit `de265cd` also closes the subsequent resource/schema audit in
 > [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md).
+> Final acceptance is restored; modern-GPU validation remains separately
+> POSTPONED.
 
 > **CLOSED (2026-08-17).** The bounded repair below is implemented in
 > `102c6ec` (readers + fixtures; docs reconciled in a follow-up commit on top):

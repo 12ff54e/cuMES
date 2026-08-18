@@ -1,11 +1,10 @@
 # cuMES verification strategy
 
-> **Current acceptance note (review of `611e8d7`):** the test inventory below
-> is green, but final acceptance is reopened for the reader resource/schema
-> work in
+> **Current acceptance note (2026-08-18):** the final reader resource/schema
+> handoff is closed by `de265cd`; see
 > [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md).
-> In particular, the existing “exact datatype” and “documented resource caps”
-> claims are not complete until that handoff closes.
+> Every available-hardware gate is green. Modern-GPU performance validation is
+> still explicitly POSTPONED.
 
 The verification tiers and gates of `docs/cuda-overhaul-blueprint.md` §10,
 extracted verbatim (sections 1–7 correspond to §10.1–§10.7), plus the current
@@ -57,16 +56,20 @@ commits:
 - `test_host_config` writes its scratch into a per-test temp directory
   (RAII), and the tracked `test_host_config_scratch_*.json` debris is
   removed.
-- the v1 NetCDF/HDF5 readers prove the EXACT rank, datatype, and extent of
-  every object before reading into a fixed or sized host buffer
-  (`docs/reader-rank-hardening-handoff.md`): checked scalar/vector/family
-  helpers, exact-rank dataspace probes before `H5Sget_simple_extent_dims`,
-  scalar-or-one-element attribute checks with bounded string widths, checked
-  dimension narrowing/byte counts with documented resource caps, and typed
-  allocation-failure conversion. `test_io_malformed_shapes` (host-only, ASan
-  twin) exercises rank 1/3 families, swapped extents, scalar-as-array
-  outcomes, rank 0/2 stage datasets, multi-element attributes, wrong
-  datatypes, and beyond-INT_MAX dimensions on both backends.
+- the v1 NetCDF/HDF5 readers prove exact rank, schema-compatible datatype, and
+  extent before reading into a fixed or sized host buffer
+  (`docs/reader-rank-hardening-handoff.md` and
+  `docs/v1-reader-resource-hardening-handoff.md`). NetCDF requires exact
+  `NC_INT`/`NC_DOUBLE`; HDF5 requires signed native-int width (endian
+  conversion allowed), binary64-compatible floating objects, and bounded
+  fixed-width strings (variable-length strings are rejected before read).
+  State families are capped at `1 << 24` elements each before allocation,
+  stage/string limits remain explicit, closed-range report fields are checked,
+  and report reconstruction is transactional. `test_io_malformed_shapes`
+  (host-only, ASan twin) covers malformed ranks/extents, multi-element
+  attributes, wrong integer width/signedness, variable-length strings,
+  below-INT_MAX resource-limit violations, beyond-INT_MAX dimensions, and
+  invalid boolean/nonnegative fields on both backends.
 
 The modern-GPU performance gate remains POSTPONED (no second GPU is
 available): the TITAN Xp numbers stay the measured baseline and no

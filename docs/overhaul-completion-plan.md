@@ -1,12 +1,15 @@
 # cuMES overhaul completion plan
 
-> **FINAL ACCEPTANCE REOPENED (2026-08-17, review of `611e8d7`).** The
-> exact-rank repair passes every available-hardware gate, but hostile-container
-> resource limits and several schema checks remain open. The bounded repair and
-> its exit criteria are in
-> [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md).
-> That handoff supersedes the “final acceptance restored” statement below until
-> it is closed. Modern-GPU validation remains separately POSTPONED.
+> **FINAL ACCEPTANCE RESTORED (2026-08-18).** Commit `de265cd` closes the final
+> hostile-container resource/schema audit recorded in
+> [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md):
+> fixed-width-only HDF5 provenance, bounded state allocation, signed
+> native-int-width HDF5 schema checks, closed-range values, transactional
+> reports, and the expanded ordinary/ASan malformed fixtures. All available
+> gates pass (verify 58/58, sanitizer 90/90, every precision/backend matrix
+> 30/30, `ci_gpu.sh`, accepted trajectories, and byte-identical legacy states).
+> Modern-GPU validation remains separately POSTPONED and is the only
+> outstanding acceptance item.
 
 > **POST-IMPLEMENTATION REVIEW (2026-08-17).** The four implementation
 > commits below are landed, but a latest-HEAD acceptance review found a small
