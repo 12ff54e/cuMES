@@ -1,5 +1,15 @@
 # cuMES overhaul completion plan
 
+> **CI AVAILABILITY CORRECTION (2026-08-18).** The permanently queued
+> self-hosted GPU job has been removed because no such runner is available.
+> Hosted CI now uses Ubuntu 22.04 and pins `Jimver/cuda-toolkit` v0.2.35 by
+> immutable commit (the nonexistent `@v0.2` reference caused every hosted job
+> to fail during setup). Hosted jobs compile every supported matrix and run
+> CPU-only plus ASan/UBSan tests. `scripts/ci_gpu.sh`, Compute Sanitizer,
+> trajectories, and GPU performance remain documented manual gates, postponed
+> until suitable hardware is available; they no longer keep Actions runs
+> queued indefinitely.
+
 > **FINAL ACCEPTANCE RESTORED (2026-08-18).** Commit `de265cd` closes the final
 > hostile-container resource/schema audit recorded in
 > [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md):
@@ -71,8 +81,9 @@
 >   or allocations), the dump machinery behind a build option, and the
 >   TITAN Xp re-measurement (docs/performance.md).
 > - Step 4 — release gate: warnings-as-errors in the verification presets,
->   compute-sanitizer initcheck, the CI workflow (hosted matrix + GPU
->   self-hosted gate), the event-DAG poison/delay tests, and the docs
+>   compute-sanitizer initcheck, the original CI workflow (hosted matrix plus
+>   a self-hosted gate, subsequently removed by the availability correction
+>   above), the event-DAG poison/delay tests, and the docs
 >   brought to measured reality (architecture/performance/verification/
 >   CLAUDE.md).
 >

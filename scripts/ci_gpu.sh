@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ci_gpu.sh — the GPU release gate for the self-hosted CI runner
+# ci_gpu.sh — manual GPU release gate (not run by hosted CI)
 # (completion plan step 4.3):
 #
 #   1. verify preset build (precise double, warnings-as-errors);
@@ -60,4 +60,3 @@ grep -q 'nan\|NaN\|inf' "$tmp/short.log" && { echo 'ci_gpu: nonfinite output in 
 [ ! -e "$tmp/cumes_state.bin" ] || { echo 'ci_gpu: unexpected cumes_state.bin fallback artifact'; exit 1; }
 
 echo 'ci_gpu: all gates passed'
-

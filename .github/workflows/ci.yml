@@ -1,18 +1,18 @@
 # ci.yml — cuMES continuous integration (completion plan step 4.3).
 #
-# Two lanes:
-#   - host-matrix (GitHub ubuntu-latest, no GPU): the build matrices that do
+# Hosted CPU-only CI. No self-hosted GPU runner is required:
+#   - host-matrix (GitHub Ubuntu 22.04, no GPU): the build matrices that do
 #     not need a device — verify (precise double, warnings-as-errors),
 #     nobackend (binary-only I/O path), netcdf-only, hdf5-only (the optional-
-#     backend matrix, completion-plan follow-up §3.3), float (mixed-float),
-#     and the ASan/UBSan host tests from the sanitizer preset. Building CUDA
-#     TUs on the hosted runner works (nvcc from the Jimver/cuda-toolkit
-#     action); only tests that never launch kernels run here.
-#   - gpu (self-hosted runner labelled [self-hosted, gpu]): the full CTest
-#     suite including the compute-sanitizer memcheck/initcheck variants, the
-#     CLI policy gate, the benchmark smoke gate, and a frozen short-trajectory
-#     sanity run. The job stays queued (not failed) when no GPU runner is
-#     attached; attach one to complete the release gate.
+#     backend matrix, completion-plan follow-up §3.3), and float
+#     (mixed-float). Building CUDA TUs on the hosted runner works (nvcc from
+#     the pinned Jimver/cuda-toolkit action); only tests that never launch
+#     kernels run.
+#   - host-asan: the ASan/UBSan host-only tests from the sanitizer preset.
+#
+# GPU/Compute-Sanitizer/trajectory gates remain manual and explicitly
+# postponed until suitable hardware is available. They are not represented by
+# a permanently queued self-hosted job.
 name: ci
 
 on:
@@ -21,7 +21,7 @@ on:
 
 jobs:
   host-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -39,12 +39,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: CUDA toolkit (build only; no GPU needed)
-        uses: Jimver/cuda-toolkit@v0.2
+        # v0.2 is not a published tag. Pin the verified v0.2.35 commit so a
+        # moving action release cannot silently change the build environment.
+        uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         with:
           cuda: '12.1.1'
           method: network
           sub-packages: '["nvcc", "cudart-dev", "cufft-dev"]'
-          linux-local-args: '["--toolkit"]'
+          log-file-suffix: '${{ matrix.preset }}.txt'
       - name: Dependencies
         run: |
           sudo apt-get update
@@ -56,19 +58,18 @@ jobs:
       - name: Build
         run: cmake --build ${{ matrix.binary-dir }} -j2
       - name: Host-only tests
-        run: ctest --test-dir ${{ matrix.binary-dir }} -R 'test_controller|test_host_config|test_host_io|test_checkpoint|test_input_json|test_io_restart_offsets' --output-on-failure
+        run: ctest --test-dir ${{ matrix.binary-dir }} -R 'test_controller|test_host_config|test_host_io|test_checkpoint|test_input_json|test_io_restart_offsets|test_io_malformed_shapes' --output-on-failure
 
   host-asan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - name: CUDA toolkit (build only)
-        uses: Jimver/cuda-toolkit@v0.2
+        uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         with:
           cuda: '12.1.1'
           method: network
           sub-packages: '["nvcc", "cudart-dev", "cufft-dev"]'
-          linux-local-args: '["--toolkit"]'
       - name: Dependencies
         run: |
           sudo apt-get update
@@ -81,11 +82,3 @@ jobs:
         run: cmake --build build-sanitize -j2
       - name: ASan/UBSan host tests
         run: ctest --test-dir build-sanitize -R 'asan_test' --output-on-failure
-
-  gpu:
-    runs-on: [self-hosted, gpu]
-    steps:
-      - uses: actions/checkout@v4
-      - name: GPU release gate
-        run: bash scripts/ci_gpu.sh
-

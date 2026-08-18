@@ -6,6 +6,13 @@
 > Every available-hardware gate is green. Modern-GPU performance validation is
 > still explicitly POSTPONED.
 
+> **Hosted-CI scope (2026-08-18):** `.github/workflows/ci.yml` deliberately has
+> no self-hosted GPU job. It compiles the CUDA project and runs CPU-only and
+> ASan/UBSan tests on GitHub-hosted Ubuntu 22.04 runners. The CUDA installer is
+> pinned to the immutable v0.2.35 action commit; the invalid `@v0.2` reference
+> was removed. GPU execution, Compute Sanitizer, trajectories, and performance
+> remain manual/postponed gates rather than permanently queued CI jobs.
+
 The verification tiers and gates of `docs/cuda-overhaul-blueprint.md` §10,
 extracted verbatim (sections 1–7 correspond to §10.1–§10.7), plus the current
 inventory of what is actually wired into the build, and the change-review
@@ -106,11 +113,11 @@ cross-architecture claim is made (see `docs/performance.md`).
   byte-identical to the frozen schema dumps, the HDF5 v0 adapter is
   layout-exact (libhdf5 embeds a per-second timestamp), and v1 containers
   round-trip the complete RunReport + restart metadata.
-- **CI**: `.github/workflows/ci.yml` — a hosted build/test matrix
-  (verify/nobackend/netcdf-only/hdf5-only/float + ASan/UBSan host tests)
-  and a self-hosted GPU job (`scripts/ci_gpu.sh`: full CTest incl.
-  sanitizer variants, CLI policy gate, benchmark smoke, and the frozen
-  short-trajectory stage-cap contract).
+- **CI**: `.github/workflows/ci.yml` — hosted Ubuntu 22.04 only, with the
+  verify/nobackend/netcdf-only/hdf5-only/float build matrix, CPU-only reader/
+  configuration/controller tests, and ASan/UBSan host tests. There is no
+  self-hosted job. `scripts/ci_gpu.sh` remains a manual full-GPU release gate
+  for future access to suitable hardware.
 - **Event-DAG audit**: `test_event_dag` pins the scheduling contracts
   (pending-event query/elapsed-time semantics, delayed-kernel event
   ordering, stream-fault surfacing); an Nsight Systems/API-trace audit
@@ -175,28 +182,34 @@ Structured telemetry is compared directly. Do not parse human `printf` output to
 
 ## 5. Sanitizers and static checks
 
-**Status (2026-08-17): the memcheck matrix was extended and CI exists.**
+**Status (2026-08-18): the memcheck matrix exists; hosted CI is CPU-only.**
 The `sanitizer` preset registers racecheck + synccheck variants of the kernel
 tests (`CUMES_ENABLE_EXTRA_SANITIZER_TOOLS`, RUN_SERIAL in CTest — racecheck
 instrumentation exhausts the GPU under parallel runs) and builds dedicated
 ASan+UBSan twins of the host-only libraries and their tests
 (`CUMES_HOST_SANITIZERS`; the ASan runtime must be first in each executable's
 library list, so the sanitized libs are `_asan` copies consumed only by
-`asan_test_*` executables — never propagated into CUDA targets). CI lives in
-`.github/workflows/ci.yml` (hosted build matrix incl. the optional-backend
-configurations + ASan/UBSan host tests; self-hosted GPU release gate), and
-`test_event_dag` pins the scheduling contracts. The Nsight Systems/API-trace
-audit and formatting/static-analysis jobs remain documented manual steps.
+`asan_test_*` executables — never propagated into CUDA targets). Hosted CI
+lives in `.github/workflows/ci.yml`: optional-backend/precision builds,
+CPU-only tests, and ASan/UBSan host tests. `test_event_dag` pins the scheduling
+contracts when GPU tests are run manually.
 
-CI jobs:
+Hosted CI jobs:
 
-- host AddressSanitizer and UndefinedBehaviorSanitizer for config, controller, and I/O;
+- build verify, float, no-backend, NetCDF-only, and HDF5-only presets;
+- run CPU-only config, controller, input, checkpoint, and container-reader tests;
+- run host AddressSanitizer and UndefinedBehaviorSanitizer tests;
+- compile project sources with warnings as errors where the preset requires it.
+
+Manual GPU gates, postponed until suitable hardware is available:
+
 - Compute Sanitizer `memcheck` and `initcheck` on all small CUDA tests;
-- Compute Sanitizer `racecheck`/`synccheck` for their supported intra-kernel shared-memory/barrier hazards; do not treat them as proof of inter-kernel global-memory ordering;
-- explicit event-DAG stress tests for streams/graphs using randomized delay kernels, versioned poison buffers, and assertions that every consumer observes the intended producer version;
-- an Nsight Systems or CUDA API-trace audit of each multi-stream graph variant and snapshot path;
-- debug launch checking with a named range on failure;
-- compiler warnings as errors for project sources, excluding vendored dependencies;
+- Compute Sanitizer `racecheck`/`synccheck` for supported intra-kernel
+  shared-memory/barrier hazards; these are not proof of inter-kernel ordering;
+- event-DAG stress tests using randomized delay kernels and poison buffers;
+- `scripts/ci_gpu.sh`, including the short-trajectory stage-cap contract;
+- Nsight Systems or CUDA API-trace audits of multi-stream/graph paths;
+- debug launch checking and the modern-GPU performance matrix.
 - formatting and a lightweight CUDA-aware static-analysis pass where supported.
 
 Fixtures must be self-contained. The historical force verifier's dependency on an absent `vmecpp_init.bin` is resolved: `test_force_verify` generates its own fixture (checked-in asset-free).
