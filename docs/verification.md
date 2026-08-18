@@ -10,7 +10,8 @@
 > no self-hosted GPU job. It compiles the CUDA project and runs CPU-only and
 > ASan/UBSan tests on GitHub-hosted Ubuntu 22.04 runners. The CUDA installer is
 > pinned to the immutable v0.2.35 action commit; the invalid `@v0.2` reference
-> was removed. GPU execution, Compute Sanitizer, trajectories, and performance
+> was removed, and `libcufft-dev` uses the action's non-CUDA package input.
+> GPU execution, Compute Sanitizer, trajectories, and performance
 > remain manual/postponed gates rather than permanently queued CI jobs.
 
 The verification tiers and gates of `docs/cuda-overhaul-blueprint.md` §10,

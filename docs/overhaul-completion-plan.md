@@ -4,7 +4,9 @@
 > self-hosted GPU job has been removed because no such runner is available.
 > Hosted CI now uses Ubuntu 22.04 and pins `Jimver/cuda-toolkit` v0.2.35 by
 > immutable commit (the nonexistent `@v0.2` reference caused every hosted job
-> to fail during setup). Hosted jobs compile every supported matrix and run
+> to fail during setup). Its package inputs also keep CUDA-prefixed packages
+> (`nvcc`, `cudart-dev`) separate from `libcufft-dev`, as required by the
+> action's network installer. Hosted jobs compile every supported matrix and run
 > CPU-only plus ASan/UBSan tests. `scripts/ci_gpu.sh`, Compute Sanitizer,
 > trajectories, and GPU performance remain documented manual gates, postponed
 > until suitable hardware is available; they no longer keep Actions runs

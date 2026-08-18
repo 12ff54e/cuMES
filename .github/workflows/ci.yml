@@ -45,7 +45,8 @@ jobs:
         with:
           cuda: '12.1.1'
           method: network
-          sub-packages: '["nvcc", "cudart-dev", "cufft-dev"]'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcufft-dev"]'
           log-file-suffix: '${{ matrix.preset }}.txt'
       - name: Dependencies
         run: |
@@ -69,7 +70,8 @@ jobs:
         with:
           cuda: '12.1.1'
           method: network
-          sub-packages: '["nvcc", "cudart-dev", "cufft-dev"]'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcufft-dev"]'
       - name: Dependencies
         run: |
           sudo apt-get update
