@@ -643,6 +643,9 @@ class NetcdfV1Reader final : public Reader {
         {
             const auto n_opt = checked_mul(ns, mnmax);
             if (!n_opt) return fail("dimension product overflows size_t");
+            if (*n_opt > cumes::io_detail::kMaxStateElementsPerFamily) {
+                return fail("state dimensions exceed the resource cap");
+            }
             const auto bytes = checked_mul(*n_opt, sizeof(double));
             if (!bytes) return fail("state byte count overflows size_t");
             n = *n_opt;
@@ -661,7 +664,9 @@ class NetcdfV1Reader final : public Reader {
             }
         }
         if (report) {
-            *report = RunReport{};
+            // Parse transactionally: a malformed late field must not leave a
+            // partially populated report visible to the caller.
+            RunReport parsed_report;
             auto getStr = [&](const char* name, std::string& out) -> bool {
                 size_t len = 0;
                 if (nc_inq_attlen(ncid, NC_GLOBAL, name, &len) != NC_NOERR) {
@@ -697,20 +702,25 @@ class NetcdfV1Reader final : public Reader {
             if (total < 0) {
                 return fail("negative total iteration count");
             }
-            report->status = static_cast<RunStatus>(status);
-            report->total_effective_iterations = total;
-            report->build.dirty = (dirty != 0);
-            report->build.scalar_type = (precision == 0) ? "double" : "float";
-            if (!getStr("revision", report->build.revision) ||
-                !getStr("build_type", report->build.build_type) ||
-                !getStr("precision_policy", report->build.precision_policy) ||
-                !getStr("compile_flags", report->build.compile_flags) ||
-                !getStr("source_path", report->input.source_path) ||
-                !getStr("source_hash", report->input.source_hash) ||
-                !getStr("gpu_name", report->runtime.gpu_name) ||
-                !getStr("driver", report->runtime.driver) ||
-                !getStr("runtime", report->runtime.runtime) ||
-                !getStr("toolkit", report->runtime.toolkit)) {
+            if (dirty != 0 && dirty != 1) {
+                return fail("invalid build_dirty scalar");
+            }
+            parsed_report.status = static_cast<RunStatus>(status);
+            parsed_report.total_effective_iterations = total;
+            parsed_report.build.dirty = (dirty != 0);
+            parsed_report.build.scalar_type =
+                (precision == 0) ? "double" : "float";
+            if (!getStr("revision", parsed_report.build.revision) ||
+                !getStr("build_type", parsed_report.build.build_type) ||
+                !getStr("precision_policy",
+                        parsed_report.build.precision_policy) ||
+                !getStr("compile_flags", parsed_report.build.compile_flags) ||
+                !getStr("source_path", parsed_report.input.source_path) ||
+                !getStr("source_hash", parsed_report.input.source_hash) ||
+                !getStr("gpu_name", parsed_report.runtime.gpu_name) ||
+                !getStr("driver", parsed_report.runtime.driver) ||
+                !getStr("runtime", parsed_report.runtime.runtime) ||
+                !getStr("toolkit", parsed_report.runtime.toolkit)) {
                 return fail("missing provenance attributes");
             }
             int nstages_dim = -1, nrestarts_dim = -1;
@@ -766,9 +776,22 @@ class NetcdfV1Reader final : public Reader {
                 }
             }
             for (size_t g = 0; g < nstages; ++g) {
+                if (stage_ns[g] <= 0) {
+                    return fail("nonpositive stage surface count");
+                }
                 if (stage_iter[g] < 0) {
                     return fail("negative stage iteration count");
                 }
+                if (stage_conv[g] != 0 && stage_conv[g] != 1) {
+                    return fail("invalid stage_converged value");
+                }
+            }
+            for (int iteration : rst_iter) {
+                if (iteration < 0) {
+                    return fail("negative restart iteration");
+                }
+            }
+            for (size_t g = 0; g < nstages; ++g) {
                 StageReport st;
                 st.ns = stage_ns[g];
                 st.effective_iterations = stage_iter[g];
@@ -782,8 +805,9 @@ class NetcdfV1Reader final : public Reader {
                 for (size_t k = begin; k < end; ++k) {
                     st.restarts.push_back(RestartEvent{rst_iter[k]});
                 }
-                report->stages.push_back(std::move(st));
+                parsed_report.stages.push_back(std::move(st));
             }
+            *report = std::move(parsed_report);
         }
         nc_close(ncid);
         return snapshot;

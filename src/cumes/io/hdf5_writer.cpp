@@ -98,6 +98,12 @@ bool getStrAttr(hid_t loc, const char* name, std::string& out) {
     H5Closer ty(H5Aget_type(aid.get()));
     if (ty.get() < 0) return false;
     if (H5Tget_class(ty.get()) != H5T_STRING) return false;
+    // Schema v1 writes bounded fixed-width strings. H5Tget_size() returns
+    // sizeof(char*) for a variable-length string, not its payload length, and
+    // H5Aread would require pointer storage plus explicit reclamation. Reject
+    // that representation before allocating or reading.
+    const htri_t is_variable = H5Tis_variable_str(ty.get());
+    if (is_variable != 0) return false;  // positive = vlen; negative = error
     const size_t width = H5Tget_size(ty.get());
     // Bounded width: the declared type size must fit the documented resource
     // cap before the destination is allocated.
@@ -533,13 +539,16 @@ class Hdf5V1Reader final : public Reader {
             if (ndims != rank) return false;
             return H5Sget_simple_extent_dims(sp.get(), dims, nullptr) == rank;
         };
-        // Integer-class check: H5Dread with H5T_NATIVE_INT performs a
-        // conversion, so the stored class must be integer to reject silently
-        // converted garbage (exact-size integer match is additionally required
-        // for the scalar attributes below).
+        // Portable schema integer: signed, native-int width (32 bits on all
+        // supported builds). Endian conversion remains intentionally allowed.
+        auto typeIsSchemaInteger = [&](hid_t ty) -> bool {
+            return ty >= 0 && H5Tget_class(ty) == H5T_INTEGER &&
+                   H5Tget_size(ty) == sizeof(int) &&
+                   H5Tget_sign(ty) == H5T_SGN_2;
+        };
         auto datasetIsInteger = [&](hid_t ds) -> bool {
             H5Closer ty(H5Dget_type(ds));
-            return ty.get() >= 0 && H5Tget_class(ty.get()) == H5T_INTEGER;
+            return typeIsSchemaInteger(ty.get());
         };
         auto datasetIsDouble = [&](hid_t ds) -> bool {
             H5Closer ty(H5Dget_type(ds));
@@ -568,10 +577,7 @@ class Hdf5V1Reader final : public Reader {
                 if (npts != 1) return false;
             }
             H5Closer ty(H5Aget_type(aid.get()));
-            if (ty.get() < 0 || H5Tget_class(ty.get()) != H5T_INTEGER) {
-                return false;
-            }
-            if (H5Tget_size(ty.get()) != sizeof(int)) return false;
+            if (!typeIsSchemaInteger(ty.get())) return false;
             return H5Aread(aid.get(), H5T_NATIVE_INT, &out) >= 0;
         };
         // 1-D integer/double vectors with exact rank, extent, and datatype.
@@ -618,6 +624,9 @@ class Hdf5V1Reader final : public Reader {
         const int mnmax = static_cast<int>(state_dims[1]);
         const auto n_opt = checked_mul((size_t)ns, (size_t)mnmax);
         if (!n_opt) return fail("dimension product overflows size_t");
+        if (*n_opt > cumes::io_detail::kMaxStateElementsPerFamily) {
+            return fail("state dimensions exceed the resource cap");
+        }
         {
             const auto bytes = checked_mul(*n_opt, sizeof(double));
             if (!bytes) return fail("state byte count overflows size_t");
@@ -669,7 +678,9 @@ class Hdf5V1Reader final : public Reader {
             }
         }
         if (report) {
-            *report = RunReport{};
+            // Parse transactionally: a malformed late field must not leave a
+            // partially populated report visible to the caller.
+            RunReport parsed_report;
             int precision = 0, status = 0, total = 0, dirty = 0;
             if (!getIntAttr("precision", precision) ||
                 !getIntAttr("status", status) ||
@@ -687,21 +698,28 @@ class Hdf5V1Reader final : public Reader {
             if (total < 0) {
                 return fail("negative total iteration count");
             }
-            report->status = static_cast<RunStatus>(status);
-            report->total_effective_iterations = total;
-            report->build.dirty = (dirty != 0);
-            report->build.scalar_type = (precision == 0) ? "double" : "float";
-            if (!getStrAttr(fid, "revision", report->build.revision) ||
-                !getStrAttr(fid, "build_type", report->build.build_type) ||
+            if (dirty != 0 && dirty != 1) {
+                return fail("invalid build_dirty scalar");
+            }
+            parsed_report.status = static_cast<RunStatus>(status);
+            parsed_report.total_effective_iterations = total;
+            parsed_report.build.dirty = (dirty != 0);
+            parsed_report.build.scalar_type =
+                (precision == 0) ? "double" : "float";
+            if (!getStrAttr(fid, "revision", parsed_report.build.revision) ||
+                !getStrAttr(fid, "build_type", parsed_report.build.build_type) ||
                 !getStrAttr(fid, "precision_policy",
-                            report->build.precision_policy) ||
-                !getStrAttr(fid, "compile_flags", report->build.compile_flags) ||
-                !getStrAttr(fid, "source_path", report->input.source_path) ||
-                !getStrAttr(fid, "source_hash", report->input.source_hash) ||
-                !getStrAttr(fid, "gpu_name", report->runtime.gpu_name) ||
-                !getStrAttr(fid, "driver", report->runtime.driver) ||
-                !getStrAttr(fid, "runtime", report->runtime.runtime) ||
-                !getStrAttr(fid, "toolkit", report->runtime.toolkit)) {
+                            parsed_report.build.precision_policy) ||
+                !getStrAttr(fid, "compile_flags",
+                            parsed_report.build.compile_flags) ||
+                !getStrAttr(fid, "source_path",
+                            parsed_report.input.source_path) ||
+                !getStrAttr(fid, "source_hash",
+                            parsed_report.input.source_hash) ||
+                !getStrAttr(fid, "gpu_name", parsed_report.runtime.gpu_name) ||
+                !getStrAttr(fid, "driver", parsed_report.runtime.driver) ||
+                !getStrAttr(fid, "runtime", parsed_report.runtime.runtime) ||
+                !getStrAttr(fid, "toolkit", parsed_report.runtime.toolkit)) {
                 return fail("missing provenance attributes");
             }
             hsize_t d_stages[1] = {0};
@@ -754,9 +772,22 @@ class Hdf5V1Reader final : public Reader {
                 }
             }
             for (size_t g = 0; g < nstages; ++g) {
+                if (stage_ns[g] <= 0) {
+                    return fail("nonpositive stage surface count");
+                }
                 if (stage_iter[g] < 0) {
                     return fail("negative stage iteration count");
                 }
+                if (stage_conv[g] != 0 && stage_conv[g] != 1) {
+                    return fail("invalid stage_converged value");
+                }
+            }
+            for (int iteration : rst_iter) {
+                if (iteration < 0) {
+                    return fail("negative restart iteration");
+                }
+            }
+            for (size_t g = 0; g < nstages; ++g) {
                 StageReport st;
                 st.ns = stage_ns[g];
                 st.effective_iterations = stage_iter[g];
@@ -770,8 +801,9 @@ class Hdf5V1Reader final : public Reader {
                 for (size_t k = begin; k < end; ++k) {
                     st.restarts.push_back(RestartEvent{rst_iter[k]});
                 }
-                report->stages.push_back(std::move(st));
+                parsed_report.stages.push_back(std::move(st));
             }
+            *report = std::move(parsed_report);
         }
         H5Fclose(fid);
         return snapshot;
