@@ -37,7 +37,7 @@ jobs:
           - preset: float
             binary-dir: build-float
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
       - name: CUDA toolkit (build only; no GPU needed)
         # v0.2 is not a published tag. Pin the verified v0.2.35 commit so a
         # moving action release cannot silently change the build environment.
@@ -64,7 +64,7 @@ jobs:
   host-asan:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
       - name: CUDA toolkit (build only)
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         with:
