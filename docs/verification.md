@@ -1,8 +1,8 @@
 # cuMES verification strategy
 
 > **Current acceptance note (2026-08-18):** the final reader resource/schema
-> handoff is closed by `de265cd`; see
-> [`v1-reader-resource-hardening-handoff.md`](v1-reader-resource-hardening-handoff.md).
+> handoff is closed by `de265cd`; see the archived
+> [v1 reader resource-hardening entry](overhaul-history.md#v1-reader-resource-hardening-handoff).
 > Every available-hardware gate is green. Modern-GPU performance validation is
 > still explicitly POSTPONED.
 
@@ -21,12 +21,14 @@ checklist (§13 of the blueprint) as the appendix.
 
 ## Current state (2026-08-17, post-overhaul follow-up closed)
 
-The overhaul completion plan (`docs/overhaul-completion-plan.md`, steps 1–4)
-is landed in four commits (see `docs/phase-11-closeout-handover.md`):
+The [completion-plan entry](overhaul-history.md#overhaul-completion-plan)
+(steps 1–4) is landed in four commits (see the
+[Phase 11 closeout entry](overhaul-history.md#phase-11-closeout-handover)):
 numerical safety predicates (48713b2), config/I-O contracts (4363e71),
 runtime/performance policy (d602d2c), and this release gate. The
 post-implementation acceptance review then found a bounded set of loose ends
-(`docs/post-overhaul-follow-up.md`); those are closed on top of the four
+(the [archived post-overhaul follow-up](overhaul-history.md#post-overhaul-follow-up));
+those are closed on top of the four
 commits:
 
 - the oriented-Jacobian reduction seeds the lane minimum from the ORIENTED
@@ -66,8 +68,9 @@ commits:
   removed.
 - the v1 NetCDF/HDF5 readers prove exact rank, schema-compatible datatype, and
   extent before reading into a fixed or sized host buffer
-  (`docs/reader-rank-hardening-handoff.md` and
-  `docs/v1-reader-resource-hardening-handoff.md`). NetCDF requires exact
+  (the [reader-rank](overhaul-history.md#reader-rank-hardening-handoff) and
+  [v1 reader-resource](overhaul-history.md#v1-reader-resource-hardening-handoff)
+  entries). NetCDF requires exact
   `NC_INT`/`NC_DOUBLE`; HDF5 requires signed native-int width (endian
   conversion allowed), binary64-compatible floating objects, and bounded
   fixed-width strings (variable-length strings are rejected before read).

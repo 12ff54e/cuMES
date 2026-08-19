@@ -962,11 +962,12 @@ the §13 change-review checklist is its appendix).
 ## 11. Migration plan
 
 **Status (2026-08-16): Phases 0–11 are COMPLETE.** The strangler-fig migration
-(`docs/strangler-fig-migration-plan.md`, steps 1–13, tracked as "Phase 11" in
-`docs/phase-*-handover.md`) finished with step 13 (legacy-struct deletion) and
+(steps 1–13, archived with the Phase 11 handovers in
+`docs/overhaul-history.md`) finished with step 13 (legacy-struct deletion) and
 the deferred `dynSharedBase()` removal — every step verified bit-identical
 against the frozen Solovev `251→199→456` / W7-X `1877→1617→2011` trajectories
-(`docs/phase-11-closeout-handover.md`). The plan below is retained as the
+([Phase 11 closeout entry](overhaul-history.md#phase-11-closeout-handover)).
+The plan below is retained as the
 historical record of how the migration was staged.
 
 The overhaul should branch from remote `631a16a`, not the older `eaba051`, so the input/output integration and first containment series are both retained. At audit time `main` is nine commits ahead of `origin/main`; preserve that exact history or rebase it deliberately before beginning structural work. The remote worktree contains an untracked `AGENTS.md`; do not accidentally add it to an overhaul commit.

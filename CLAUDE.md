@@ -344,14 +344,16 @@ maintenance reset — matching vmecpp's Evolve control block. (The old docs'
 **Status (2026-08-17): the CUDA overhaul is design-complete. Blueprint phases
 0–11 finished the strangler-fig migration (legacy kernel structs and
 `dynSharedBase()` removed, measured bit-identical); the four closure steps of
-`docs/overhaul-completion-plan.md` then landed as separately reviewable
+the [completion plan](docs/overhaul-history.md#overhaul-completion-plan) then
+landed as separately reviewable
 commits — 48713b2 numerical safety predicates, 4363e71 config/I-O contracts,
 d602d2c runtime/performance policy, and the release gate (warnings-as-errors,
 initcheck, CI, event-DAG tests, docs). Every step was verified **Class A
 byte-identical** against the frozen baselines (including the
 `--use_fast_math` removal: precise double math IS the frozen codegen), so no
 re-freeze occurred anywhere. The post-implementation acceptance review's
-loose ends (`docs/post-overhaul-follow-up.md`) are also closed: the
+loose ends (the [post-overhaul follow-up](docs/overhaul-history.md#post-overhaul-follow-up))
+are also closed: the
 oriented-Jacobian first-sample fix + production regression, validated v1
 restart offsets + corrupted fixtures, the refresh-pass terminal contract
 closed via device-side force-norm finalization (`forceNormFinalizeKernel` —
@@ -362,8 +364,9 @@ complete optional-backend preset/CI matrix, target-scoped precision flags
 codegen never had it and adding it diverges the trajectory), and the checked
 library-publication chain (`publishLibraryFile`) with fault-injection tests.
 A second adversarial review then reopened one malformed-container
-memory-safety class; it is closed as well
-(`docs/reader-rank-hardening-handoff.md`): the v1 NetCDF/HDF5 readers prove
+memory-safety class; it is closed as well (the
+[reader-rank hardening entry](docs/overhaul-history.md#reader-rank-hardening-handoff)):
+the v1 NetCDF/HDF5 readers prove
 exact rank/datatype/extent before every read into a fixed or sized buffer
 (checked scalar/vector/family helpers, exact-rank dataspace probes,
 scalar-or-one-element attributes with bounded string widths, checked

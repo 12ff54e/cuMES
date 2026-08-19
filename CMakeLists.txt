@@ -353,7 +353,7 @@ target_link_libraries(test_io_restart_offsets PRIVATE cumes_io_host cumes_io)
 cumes_apply_backend_test_defines(test_io_restart_offsets)
 cumes_enable_warnings(test_io_restart_offsets)
 
-# Malformed v1 rank/type/extent fixtures (reader-rank-hardening-handoff.md §5):
+# Malformed v1 rank/type/extent fixtures (overhaul-history.md, reader-rank entry §5):
 # host-only so the ASan/UBSan twin runs the exact source under the host
 # sanitizers.
 add_executable(test_io_malformed_shapes tests/test_io_malformed_shapes.cpp)

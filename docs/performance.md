@@ -119,7 +119,8 @@ CUDA GPU is attached to this machine, so the "one modern architecture" half of
 this policy has not been run — it is neither passed nor failed. Until suitable
 hardware is available, the TITAN Xp measurements above remain the measured
 baseline and every modern-GPU conclusion is explicitly unknown/deferred
-(`docs/post-overhaul-follow-up.md` §6). The deferred procedure is fixed: same
+(the [archived post-overhaul follow-up](overhaul-history.md#post-overhaul-follow-up),
+§6). The deferred procedure is fixed: same
 commit, precision policy, toolkit provenance, warm-up, and measurement method
 as the TITAN Xp baseline; record GPU model, compute capability, driver/toolkit,
 clocks, power/thermal state, arena/cuFFT/graph memory, setup/output time,

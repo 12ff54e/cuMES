@@ -1,5 +1,5 @@
 // test_io_malformed_shapes.cpp — v1 container rank/type/extent hardening
-// (reader-rank-hardening-handoff.md §5).
+// (overhaul-history.md, reader-rank entry §5).
 //
 // The v1 NetCDF/HDF5 readers must prove the EXACT rank, datatype, and extent
 // of every object before reading into a fixed-size or sized host buffer. A

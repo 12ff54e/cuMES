@@ -8,8 +8,8 @@ the device safety predicates, the single-snapshot I/O path, and the precision
 policies. The normative numerical contracts live in `docs/mathematics.md`;
 the layout contracts in `docs/data-layout.md`; the verification tiers/gates
 in `docs/verification.md`; the measured performance in
-`docs/performance.md`; the remaining-work plan (now executed) in
-`docs/overhaul-completion-plan.md`.
+`docs/performance.md`; and the chronological execution and closeout record in
+`docs/overhaul-history.md`.
 
 ## 1. One layer: the `cumes` operator library
 
