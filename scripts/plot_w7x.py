@@ -28,6 +28,7 @@ import struct
 import numpy as np
 from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
+from PIL import Image as PILImage
 from scipy.interpolate import RegularGridInterpolator
 
 MPOL, NTOR, NFP = 12, 12, 5
@@ -236,6 +237,21 @@ def periodic_close(A):
     return A
 
 
+def trim_white(path, pad_px=12):
+    """Crop the saved PNG to the non-white content (the 3D projection does
+    not fill the axes window, so tight bbox alone leaves wide margins)."""
+    a = np.asarray(PILImage.open(path).convert("RGB"))
+    nonwhite = ~(a > 250).all(axis=2)
+    ys, xs = np.where(nonwhite)
+    if len(ys) == 0:
+        return
+    y0 = max(ys.min() - pad_px, 0)
+    y1 = min(ys.max() + pad_px, a.shape[0])
+    x0 = max(xs.min() - pad_px, 0)
+    x1 = min(xs.max() + pad_px, a.shape[1])
+    PILImage.open(path).crop((x0, y0, x1, y1)).save(path)
+
+
 def surface_intensity(X, Y, Z, light_dir, lo=0.30):
     """Lambertian illumination from the GEOMETRIC surface normals (cross
     product of the grid tangents), rescaled to [lo, 1] so the side facing
@@ -427,7 +443,7 @@ def main():
              ("top", "top view", dict(elev=90.0, azim=-90.0))]
     for suffix, label, vw in views:
         print(f"rendering {label} ...", flush=True)
-        fig = plt.figure(figsize=(8.6, 7.8), dpi=100)
+        fig = plt.figure(figsize=(7.4, 6.2), dpi=100)
         ax = fig.add_subplot(111, projection="3d")
         for k, s in enumerate(surf_f[::-1]):  # inner surfaces first
             X, Y, Z = to_cartesian(s["r12"], s["z12"])
@@ -445,24 +461,26 @@ def main():
         for (x, y, z) in lines:
             ax.plot(x, y, z, color="#0b0b0b", linewidth=1.1, alpha=0.85, zorder=50)
         ax.plot(axx, axy, axz, color="#0b0b0b", linewidth=1.4, zorder=60)
-        lim = 7.0
+        # Tight limits hug the plasma (R 4.66-6.22, |Z| <= 0.90) so the
+        # torus fills the frame instead of floating in white space.
+        lim = 6.55
         ax.set_xlim(-lim, lim)
         ax.set_ylim(-lim, lim)
-        ax.set_zlim(-0.8, 0.8)   # true W7-X is flat: z extent ~0.65 vs R ~6.8
+        ax.set_zlim(-0.98, 0.98)
         ax.set_box_aspect((1, 1, 0.15))
         ax.set_axis_off()
         ax.view_init(**vw)
-        cbar = fig.colorbar(mappable, ax=ax, fraction=0.035, pad=0.02, aspect=44)
-        cbar.set_label("|B| (T)", fontsize=12)
-        cbar.ax.tick_params(labelsize=10)
+        cbar = fig.colorbar(mappable, ax=ax, shrink=0.55, aspect=20,
+                            pad=0.01)
+        cbar.set_label("|B| (T)", fontsize=10)
+        cbar.ax.tick_params(labelsize=9)
         fig.suptitle(
-            f"W7-X standard configuration — cuMES converged equilibrium, {label}\n"
-            "|B| on nested half-grid surfaces "
-            f"(boundary from {os.path.basename(args.input)}; magnetic axis in black)",
-            fontsize=12.5, y=0.99)
+            f"W7-X standard configuration — cuMES equilibrium ({label})",
+            fontsize=11, y=1.005)
         out_png = f"{base}_{suffix}.png"
         fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close(fig)
+        trim_white(out_png)
         print(f"saved {out_png}", flush=True)
 
 
