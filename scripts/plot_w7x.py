@@ -51,9 +51,9 @@ CURTOR = 5000.0
 
 def load_state(path):
     """Load the converged state from any solver output container
-    (docs/output-formats.md): legacy binary v0, versioned binary (v1),
-    checkpoint (CUMECKP1), NetCDF, or HDF5. Returns ns, mnmax and the six
-    mode-major families (index = mode * ns + surface)."""
+    (docs/output-formats.md): versioned binary (v1), checkpoint (CUMECKP1),
+    NetCDF, or HDF5. Returns ns, mnmax and the six mode-major families
+    (index = mode * ns + surface)."""
     fam_names = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
     with open(path, "rb") as f:
         head = f.read(16)
@@ -71,7 +71,7 @@ def load_state(path):
                     for name in fam_names}
         return ns, mnmax, fams
     if head.startswith(b"CDF"):
-        # NetCDF (v0/v1): the six families are 2-D [surface, mode] datasets.
+        # NetCDF (v1): the six families are 2-D [surface, mode] datasets.
         from scipy.io import netcdf_file
         with netcdf_file(path, "r", mmap=False) as nc:
             ns = nc.dimensions["ns"]
@@ -80,7 +80,7 @@ def load_state(path):
                     for name in fam_names}
         return ns, mnmax, fams
     if head.startswith(b"\x89HDF"):
-        # HDF5 (v0/v1): same [surface, mode] dataset layout.
+        # HDF5 (v1): same [surface, mode] dataset layout.
         import h5py
         with h5py.File(path, "r") as f5:
             fams = {}
@@ -90,13 +90,8 @@ def load_state(path):
                 ns, mnmax = dset.shape
                 fams[name] = dset.T.ravel()
         return ns, mnmax, fams
-    # Otherwise the legacy binary v0 payload (no magic).
-    with open(path, "rb") as f:
-        ns, mnmax = struct.unpack("<ii", f.read(8))
-        n = ns * mnmax
-        fams = {name: np.frombuffer(f.read(8 * n), dtype="<f8")
-                for name in fam_names}
-    return ns, mnmax, fams
+    raise SystemExit(f"error: {path} is not a cumes state container "
+                     f"(expected CUMES001/CUMECKP1/NetCDF/HDF5)")
 
 
 def mode_tables(mnmax):

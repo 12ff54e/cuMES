@@ -20,7 +20,8 @@
 # present and byte-comparable), plus the committed essentials and provenance:
 #
 #   <out>/<precision>/<config>/
-#     cumes_state.bin              final state (2 ints + 6 x ns*mnmax doubles)
+#     cumes_state.bin              final state (schema-v1 container: magic +
+#                                  version + ns + mnmax + 6 families + trailer)
 #     per_iter_residuals_cumes.bin 15-col double trajectory record (all stages)
 #     step_0_*.bin                 initial-state component snapshots
 #     dump_manifest.sha256         SHA-256 of the FULL dump/cuMES set
@@ -51,8 +52,8 @@
 #   --no-full-manifest  skip writing dump_manifest.sha256 (still stage the
 #                       essentials; the full dump set stays in the tree).
 #   --schema            also emit the NetCDF/HDF5 schema dumps into each tree
-#                       (state.nc / state.h5), freezing the on-disk schema so
-#                       the I/O-matrix goldens can be regenerated on demand.
+#                       (state.nc / state.h5), freezing the on-disk v1 schema
+#                       so the I/O-matrix goldens can be regenerated on demand.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."   # repo root
@@ -153,7 +154,8 @@ precision:     $prec
 input:         $input
 stage caps:    from $input (ns_array/niter_array/ftol_array)
 knobs:         CUMES_DUMP=1 (required for byte-compare comparability)
-output:        cumes_state.bin (binary, double on disk)
+output:        cumes_state.bin (v1 binary container; the state payload is
+               compared, the provenance trailer embeds the git revision)
 recorded:      $(date -u +%Y-%m-%dT%H:%M:%SZ)
 generated-by:  scripts/capture_baseline.sh
 EOF

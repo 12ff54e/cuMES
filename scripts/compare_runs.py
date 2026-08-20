@@ -4,7 +4,7 @@
 Given two run logs and two converged-state binaries, verifies that a new run
 reproduces the baseline run:
 
-  1. Converged state (cumes_state.bin): six spectral families
+  1. Converged state (the schema-v1 binary container): six spectral families
      (rmncc/zmnsc/lmnsc/rmnss/zmncs/lmncs), axis row (j=0) skipped, PASS at
      <= --tol relative (default 1e-8). Mirrors scripts/compare_states.py.
   2. Per-iteration residual rows parsed from the solver log
@@ -45,8 +45,16 @@ CONV_RE = re.compile(r"CONVERGED at iter (\d+)")
 
 
 def load_state(path):
+    """Read the schema-v1 binary state payload (magic + version + ns + mnmax
+    header, six mode-major families; the provenance trailer is ignored)."""
+    header = struct.Struct("<8siii")  # magic(8) version ns mnmax = 20 bytes
     with open(path, "rb") as f:
-        ns, mnmax = struct.unpack("<ii", f.read(8))
+        head = f.read(header.size)
+        if len(head) != header.size:
+            raise SystemExit(f"error: {path} is not a v1 cumes state container")
+        magic, version, ns, mnmax = header.unpack(head)
+        if magic != b"CUMES001" or not (1 <= version <= 2) or ns < 1 or mnmax < 1:
+            raise SystemExit(f"error: {path} is not a v1 cumes state container")
         n = ns * mnmax
         fams = {}
         for name in FAMS:

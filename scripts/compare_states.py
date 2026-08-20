@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Compare two cuMES converged-state binaries (cumes_state.bin format).
+"""Compare two cuMES converged-state binaries (schema-v1 binary format).
 
-Format: 2 ints (ns, mnmax) + 6 families of ns*mnmax doubles each, in the
-order rmncc, zmnsc, lmnsc, rmnss, zmncs, lmncs (mode-major [m*ns + j]).
+Format: magic "CUMES001" (8) + int32 version + 2 ints (ns, mnmax), then 6
+families of ns*mnmax doubles each, in the order rmncc, zmnsc, lmnsc, rmnss,
+zmncs, lmncs (mode-major [m*ns + j]); the provenance trailer after the state
+is ignored.
 
 Usage: compare_states.py <state_a.bin> <state_b.bin>
 Prints the max abs/rel difference per family and the per-mode max, skipping
@@ -12,11 +14,18 @@ import struct
 import sys
 
 FAMS = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
+MAGIC = b"CUMES001"
+HEADER = struct.Struct("<8siii")  # magic(8) version ns mnmax = 20 bytes
 
 
 def load(path):
     with open(path, "rb") as f:
-        ns, mnmax = struct.unpack("<ii", f.read(8))
+        head = f.read(HEADER.size)
+        if len(head) != HEADER.size:
+            raise SystemExit(f"error: {path} is not a v1 cumes state container")
+        magic, version, ns, mnmax = HEADER.unpack(head)
+        if magic != MAGIC or not (1 <= version <= 2) or ns < 1 or mnmax < 1:
+            raise SystemExit(f"error: {path} is not a v1 cumes state container")
         n = ns * mnmax
         fams = {}
         for name in FAMS:

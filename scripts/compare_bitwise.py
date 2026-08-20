@@ -15,7 +15,9 @@ that script). This tool compares two run trees produced that way:
 
 Each tree holds, per <precision>/<config>/:
 
-  cumes_state.bin              # final state (2 ints + 6 x ns*mnmax doubles)
+  cumes_state.bin              # final state (schema-v1 container: magic +
+                               # version + ns + mnmax + 6 x ns*mnmax doubles
+                               # + provenance trailer)
   per_iter_residuals_cumes.bin # 15-col double trajectory record (all stages)
   step_0_*.bin                 # deterministic initial-state snapshots
   dump_manifest.sha256         # SHA-256 of the FULL dump set (if generated)
@@ -24,7 +26,9 @@ Each tree holds, per <precision>/<config>/:
 Comparison modes:
 
   --essentials (default)
-      Byte-compares cumes_state.bin, per_iter_residuals_cumes.bin and the
+      Byte-compares the cumes_state.bin STATE PAYLOAD (the container's
+      provenance trailer embeds the git revision, so full-file bytes differ
+      across revisions by design), per_iter_residuals_cumes.bin and the
       step_0_* set. When the baseline carries a dump_manifest.sha256, the
       run's full dump/cuMES/* set is verified against those checksums. Fast;
       the per-iteration record already spans every pass of every multigrid
@@ -56,11 +60,15 @@ import os
 import struct
 import sys
 
-# Family order in the binary state file (matches output.cu outputSaveBinary).
+# Family order in the binary state file (matches the v1 container payload).
 STATE_FAMS = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
 
 # Essential artifacts that must exist in the baseline and run directories.
 ESSENTIALS = ("cumes_state.bin", "per_iter_residuals_cumes.bin")
+
+# Schema-v1 binary header: magic(8) version(4) ns(4) mnmax(4) = 20 bytes.
+STATE_HEADER = struct.Struct("<8siii")
+STATE_MAGIC = b"CUMES001"
 
 
 def _sha256(path):
@@ -84,21 +92,26 @@ def _dump_paths(tree_root):
     return paths
 
 
-def _read_state(path):
-    """Return (ns, mnmax, {family: tuple-of-doubles}) or None."""
+def _read_state_payload(path):
+    """Return (ns, mnmax, payload_bytes) of the v1 container, or None.
+
+    The payload is the 20-byte header (magic + version + ns + mnmax) plus the
+    six mode-major family byte strings. The provenance trailer after the
+    state is NOT part of the payload (it embeds the git revision, so it
+    differs across revisions by design).
+    """
     with open(path, "rb") as f:
-        head = f.read(8)
-        if len(head) != 8:
+        head = f.read(STATE_HEADER.size)
+        if len(head) != STATE_HEADER.size:
             return None
-        ns, mnmax = struct.unpack("<ii", head)
+        magic, version, ns, mnmax = STATE_HEADER.unpack(head)
+        if magic != STATE_MAGIC or not (1 <= version <= 2) or ns < 1 or mnmax < 1:
+            return None
         n = ns * mnmax
-        fams = {}
-        for name in STATE_FAMS:
-            raw = f.read(8 * n)
-            if len(raw) != 8 * n:
-                return None
-            fams[name] = struct.unpack(f"<{n}d", raw)
-    return ns, mnmax, fams
+        payload = f.read(6 * n * 8)
+        if len(payload) != 6 * n * 8:
+            return None
+    return ns, mnmax, payload
 
 
 def _parse_manifest(path):
@@ -142,24 +155,27 @@ def main():
 
     failures = 0
 
-    # ---- 1. final state (byte + semantic) ---------------------------------
+    # ---- 1. final state (payload byte + semantic) --------------------------
     bs, rs = os.path.join(b, "cumes_state.bin"), os.path.join(r, "cumes_state.bin")
     if not os.path.isfile(bs) or not os.path.isfile(rs):
         print("error: cumes_state.bin missing from baseline or run", file=sys.stderr)
         return 2
-    if _sha256(bs) != _sha256(rs):
-        _report("cumes_state.bin", False, "byte mismatch")
+    pb = _read_state_payload(bs)
+    pr = _read_state_payload(rs)
+    if pb is None or pr is None:
+        _report("cumes_state.bin", False, "not a valid v1 container")
         failures += 1
-        if args.verbose:
-            sa = _read_state(bs)
-            sb = _read_state(rs)
-            if sa and sb and (sa[0], sa[1]) == (sb[0], sb[1]):
-                ns, mnmax = sa[0], sa[1]
-                for name in STATE_FAMS:
-                    amax = 0.0
-                    for i in range(ns * mnmax):
-                        amax = max(amax, abs(sa[2][name][i] - sb[2][name][i]))
-                    print(f"      {name:6s}: max abs diff = {amax:.3e}")
+    elif pb[2] != pr[2]:
+        _report("cumes_state.bin", False, "state payload byte mismatch")
+        failures += 1
+        if args.verbose and (pb[0], pb[1]) == (pr[0], pr[1]):
+            ns, mnmax = pb[0], pb[1]
+            for c, name in enumerate(STATE_FAMS):
+                off = c * ns * mnmax * 8
+                fa = struct.unpack_from(f"<{ns*mnmax}d", pb[2], off)
+                fb = struct.unpack_from(f"<{ns*mnmax}d", pr[2], off)
+                amax = max(abs(x - y) for x, y in zip(fa, fb))
+                print(f"      {name:6s}: max abs diff = {amax:.3e}")
     else:
         _report("cumes_state.bin", True)
 

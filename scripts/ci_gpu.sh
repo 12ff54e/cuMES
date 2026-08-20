@@ -34,9 +34,8 @@ ctest --test-dir build --output-on-failure -j4
 #     documented semantics instead of contradicting them;
 #   - finite, positive final residuals (a nonfinite blow-up or a degenerate
 #     zero state must fail the gate);
-#   - no output artifacts: strict mode (the default) writes no state file for
-#     a max-iteration run, so the requested output path must not exist and no
-#     cumes_state.bin fallback may appear.
+#   - no output artifacts: a max-iteration run writes no state file, so the
+#     requested output path must not exist.
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 set +e
@@ -56,7 +55,6 @@ res_line=$(grep -oE 'final residuals fsqr=[0-9.eE+-]+ fsqz=[0-9.eE+-]+ fsql=[0-9
 echo "$res_line" | awk '{ for (i=3; i<=5; i++) { split($i, a, "="); v = a[2] + 0; if (!(v > 0) || v == v + 1) { exit 1 } } }' \
   || { echo "ci_gpu: final residuals not finite and positive: $res_line"; exit 1; }
 grep -q 'nan\|NaN\|inf' "$tmp/short.log" && { echo 'ci_gpu: nonfinite output in short trajectory'; exit 1; }
-[ ! -e "$tmp/short.bin" ] || { echo 'ci_gpu: strict mode wrote state for a max-iteration run'; exit 1; }
-[ ! -e "$tmp/cumes_state.bin" ] || { echo 'ci_gpu: unexpected cumes_state.bin fallback artifact'; exit 1; }
+[ ! -e "$tmp/short.bin" ] || { echo 'ci_gpu: max-iteration run wrote a state file'; exit 1; }
 
 echo 'ci_gpu: all gates passed'
