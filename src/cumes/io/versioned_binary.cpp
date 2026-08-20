@@ -61,9 +61,8 @@ class VersionedBinaryWriter final : public Writer {
  public:
     Status write_atomic(const EquilibriumSnapshot& snapshot,
                         const RunReport& report, const OutputSpec& spec,
-                        const ValidatedProblem& problem,
-                        const LegacyRunScalars& scalars) override {
-        (void)problem; (void)scalars;  // v1 binary records report + state only
+                        const ValidatedProblem& problem) override {
+        (void)problem;  // v1 binary records report + state only
         const std::string tmp = io_detail::tempPathFor(spec.path);
         FILE* fp = fopen(tmp.c_str(), "wb");
         if (!fp) return Status("cannot open " + tmp + " for writing");
@@ -240,20 +239,12 @@ class VersionedBinaryReader final : public Reader {
 // dispatch (including the NetCDF/HDF5 adapters) lives in the adapter library
 // (src/cumes/io/writer_dispatch.cpp in cumes_io), whose strong references to
 // the adapter factories force the linker to extract the adapter TUs.
-std::unique_ptr<Writer> make_binary_writer(OutputFormat format,
-                                           OutputSchema schema) {
-    if (format == OutputFormat::kBinary && schema == OutputSchema::kV1) {
-        return std::make_unique<VersionedBinaryWriter>();
-    }
-    return nullptr;
+std::unique_ptr<Writer> make_binary_writer() {
+    return std::make_unique<VersionedBinaryWriter>();
 }
 
-std::unique_ptr<Reader> make_binary_reader(OutputFormat format,
-                                           OutputSchema schema) {
-    if (format == OutputFormat::kBinary && schema == OutputSchema::kV1) {
-        return std::make_unique<VersionedBinaryReader>();
-    }
-    return nullptr;
+std::unique_ptr<Reader> make_binary_reader() {
+    return std::make_unique<VersionedBinaryReader>();
 }
 
 }  // namespace cumes

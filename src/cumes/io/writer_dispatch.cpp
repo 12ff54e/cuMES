@@ -17,9 +17,9 @@
 
 namespace cumes {
 
-std::unique_ptr<Writer> make_writer(OutputFormat format, OutputSchema schema) {
+std::unique_ptr<Writer> make_writer(OutputFormat format) {
     if (format == OutputFormat::kBinary) {
-        return make_binary_writer(format, schema);
+        return make_binary_writer();
     }
 #ifdef CUMES_HAVE_NETCDF
     if (format == OutputFormat::kNetCdf) {
@@ -34,9 +34,9 @@ std::unique_ptr<Writer> make_writer(OutputFormat format, OutputSchema schema) {
     return nullptr;
 }
 
-std::unique_ptr<Reader> make_reader(OutputFormat format, OutputSchema schema) {
+std::unique_ptr<Reader> make_reader(OutputFormat format) {
     if (format == OutputFormat::kBinary) {
-        return make_binary_reader(format, schema);
+        return make_binary_reader();
     }
 #ifdef CUMES_HAVE_NETCDF
     if (format == OutputFormat::kNetCdf) {

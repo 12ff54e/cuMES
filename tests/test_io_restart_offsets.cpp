@@ -27,7 +27,6 @@
 
 using cumes::EquilibriumSnapshot;
 using cumes::OutputFormat;
-using cumes::OutputSchema;
 using cumes::Reader;
 using cumes::RunReport;
 
@@ -301,7 +300,7 @@ static void testBackend(const char* name, FixtureWriter writer,
         snprintf(msg, sizeof msg, "%s: fixture written (%s)", name, label);
         CHECK(written, msg);
 
-        std::unique_ptr<Reader> reader = make_reader(fmt, OutputSchema::kV1);
+        std::unique_ptr<Reader> reader = make_reader(fmt);
         snprintf(msg, sizeof msg, "%s: reader factory exists (%s)", name, label);
         CHECK(reader != nullptr, msg);
 

@@ -21,7 +21,6 @@
 
 using cumes::EquilibriumSnapshot;
 using cumes::OutputFormat;
-using cumes::OutputSchema;
 using cumes::OutputSpec;
 using cumes::RunReport;
 using cumes::RunStatus;
@@ -78,8 +77,8 @@ static RunReport makeReport() {
     return r;
 }
 
-// A minimal valid problem + scalar pack for the writer call sites: the v1
-// writers record the problem's boundary harmonics.
+// A minimal valid problem for the writer call sites: the v1 writers record
+// the problem's boundary harmonics.
 static cumes::ValidatedProblem makeProblem() {
     cumes::ProblemSpec spec;
     spec.mpol = 2; spec.ntor = 0; spec.nfp = 1;
@@ -94,17 +93,6 @@ static cumes::ValidatedProblem makeProblem() {
         exit(1);
     }
     return std::move(vr.value());
-}
-
-static cumes::LegacyRunScalars makeScalars(const EquilibriumSnapshot& s) {
-    cumes::LegacyRunScalars r;
-    r.mpol = 2; r.ntor = 0; r.nfp = 1;
-    r.ntheta = 8; r.nzeta = 1; r.nZnT = 8;
-    r.ns = s.ns; r.mnmax = s.mnmax; r.ncurr = 0; r.max_iter = 100;
-    r.delt = 0.9; r.ftol = 1e-12; r.lamscale = 0.1;
-    r.iterations = 7; r.converged = true;
-    r.fsqr = 1e-14; r.fsqz = 2e-15; r.fsql = 3e-16;
-    return r;
 }
 
 static bool snapshotsEqual(const EquilibriumSnapshot& a,
@@ -122,13 +110,13 @@ static void testOutputSpec() {
     // host test asserts the always-true contract without linking the adapter.
     CHECK(/* output_format_available(kBinary) is always true by construction */ true,
           "output spec: binary always available");
-    auto r = cumes::resolve_output_spec("state.bin", false);
+    auto r = cumes::resolve_output_spec("state.bin");
     CHECK(r.has_value() && r.value().format == OutputFormat::kBinary,
           "output spec: .bin resolves to binary");
-    r = cumes::resolve_output_spec("state.H5", false);
+    r = cumes::resolve_output_spec("state.H5");
     CHECK(r.has_value() && r.value().format == OutputFormat::kHdf5,
           "output spec: .H5 (case-insensitive) resolves to hdf5");
-    r = cumes::resolve_output_spec("state.unknown", false);
+    r = cumes::resolve_output_spec("state.unknown");
     CHECK(!r.has_value(), "output spec: unknown suffix rejected");
 }
 
@@ -136,13 +124,12 @@ static void testV1RoundTrip() {
     EquilibriumSnapshot s = makeSnapshot(4, 2);
     OutputSpec spec;
     spec.format = OutputFormat::kBinary;
-    spec.schema = OutputSchema::kV1;
     spec.path = scratch("v1").c_str();
-    auto w = cumes::make_binary_writer(spec.format, spec.schema);
-    auto r = cumes::make_binary_reader(spec.format, spec.schema);
+    auto w = cumes::make_binary_writer();
+    auto r = cumes::make_binary_reader();
     CHECK(w != nullptr && r != nullptr, "v1: writer+reader factories");
     if (!w || !r) return;
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem(), makeScalars(s)).has_value(), "v1: write succeeds");
+    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value(), "v1: write succeeds");
     auto back = r->read(spec.path);
     CHECK(back.has_value() && snapshotsEqual(s, back.value()),
           "v1: round-trip preserves state");
@@ -176,7 +163,7 @@ static void testCorruptHeaderHugeDimensions() {
         fwrite(&mnmax, sizeof(mnmax), 1, f);
         fclose(f);
     }
-    auto r = cumes::make_binary_reader(OutputFormat::kBinary, OutputSchema::kV1);
+    auto r = cumes::make_binary_reader();
     auto got = r->read(path);
     CHECK(!got.has_value(),
           "corrupt header: huge ns*mnmax rejected as implausible (no bad_alloc/terminate)");
@@ -197,10 +184,9 @@ static void testShortFamilyRejected() {
     s.families[3].shrink_to_fit();
     OutputSpec spec;
     spec.format = OutputFormat::kBinary;
-    spec.schema = OutputSchema::kV1;
     spec.path = scratch("short");
-    auto w = cumes::make_binary_writer(spec.format, spec.schema);
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem(), makeScalars(s)).has_value() == false,
+    auto w = cumes::make_binary_writer();
+    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
           "short family: write fails cleanly (no OOB read)");
     FILE* f = fopen(spec.path.c_str(), "rb");
     CHECK(f == nullptr, "short family: no file published");
@@ -213,12 +199,11 @@ static void testV1UnknownPrecisionRejected() {
     EquilibriumSnapshot s = makeSnapshot(4, 2);
     OutputSpec spec;
     spec.format = OutputFormat::kBinary;
-    spec.schema = OutputSchema::kV1;
     spec.path = scratch("v1badprec");
-    auto w = cumes::make_binary_writer(spec.format, spec.schema);
+    auto w = cumes::make_binary_writer();
     RunReport report = makeReport();
     report.build.scalar_type = "single";
-    CHECK(!w->write_atomic(s, report, spec, makeProblem(), makeScalars(s)).has_value(),
+    CHECK(!w->write_atomic(s, report, spec, makeProblem()).has_value(),
           "v1: unknown precision tag rejected");
     FILE* f = fopen(spec.path.c_str(), "rb");
     CHECK(f == nullptr, "v1: no file published on unknown precision tag");
@@ -230,10 +215,9 @@ static void testFailureMatrix() {
     // open failure: a path in a nonexistent directory.
     OutputSpec spec;
     spec.format = OutputFormat::kBinary;
-    spec.schema = OutputSchema::kV1;
     spec.path = "no_such_dir/test_host_io_open.bin";
-    auto w = cumes::make_binary_writer(spec.format, spec.schema);
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem(), makeScalars(s)).has_value() == false,
+    auto w = cumes::make_binary_writer();
+    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
           "failure: open failure returns false");
 
     // rename failure: target is a non-empty directory (temp writes fine,
@@ -245,7 +229,7 @@ static void testFailureMatrix() {
         if (f) { fputs("x", f); fclose(f); }
     }
     spec.path = dir;  // a directory, not a file
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem(), makeScalars(s)).has_value() == false,
+    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
           "failure: rename-over-directory returns false");
     // the directory and its contents are untouched
     FILE* keep = fopen((dir + "/keep").c_str(), "r");

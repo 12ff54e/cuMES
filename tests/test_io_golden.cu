@@ -27,7 +27,6 @@
 
 using cumes::EquilibriumSnapshot;
 using cumes::OutputFormat;
-using cumes::OutputSchema;
 using cumes::OutputSpec;
 using cumes::RunReport;
 
@@ -194,21 +193,19 @@ static bool reportsEqual(const RunReport& a, const RunReport& b) {
 template <typename T>
 static void checkV1RoundTrip(const EquilibriumSnapshot& snap,
                              const cumes::ValidatedProblem& vp,
-                             const cumes::LegacyRunScalars& scalars,
                              OutputFormat fmt, const char* tag) {
     const std::string path = scratch(tag);
     OutputSpec spec;
     spec.format = fmt;
-    spec.schema = OutputSchema::kV1;
     spec.path = path;
-    auto w = cumes::make_writer(spec.format, spec.schema);
-    auto r = cumes::make_reader(spec.format, spec.schema);
+    auto w = cumes::make_writer(spec.format);
+    auto r = cumes::make_reader(spec.format);
     CHECK(w != nullptr && r != nullptr, "v1 factories");
     if (w && r) {
         RunReport report = makeIoReport();
         report.build.scalar_type =
             sizeof(T) == sizeof(double) ? "double" : "float";
-        CHECK(w->write_atomic(snap, report, spec, vp, scalars).has_value(),
+        CHECK(w->write_atomic(snap, report, spec, vp).has_value(),
               "v1 write succeeds");
         RunReport back;
         auto snap_back = r->read(path, &back);
@@ -227,7 +224,7 @@ static void runPrecision() {
     const int ns = 5, mnmax = 3;
     auto storage = makeStorage<T>(ns, mnmax);
 
-    // Minimal valid problem + scalar pack for the writer call sites.
+    // Minimal valid problem for the writer call sites.
     cumes::ProblemSpec pspec;
     pspec.mpol = 2; pspec.ntor = 0; pspec.nfp = 1;
     pspec.mass.coefficients = {1.0};
@@ -238,24 +235,15 @@ static void runPrecision() {
     auto vpres = cumes::validate(pspec, cumes::SolverOptions{});
     if (!vpres.has_value()) { fprintf(stderr, "test_io_golden: validate failed\n"); exit(1); }
     cumes::ValidatedProblem vp = std::move(vpres.value());
-    cumes::LegacyRunScalars scalars;
-    scalars.mpol = 2; scalars.ntor = 0; scalars.nfp = 1;
-    scalars.ntheta = 8; scalars.nzeta = 1; scalars.nZnT = 8;
-    scalars.ns = ns; scalars.mnmax = mnmax; scalars.ncurr = 0;
-    scalars.max_iter = 100; scalars.delt = 0.9; scalars.ftol = 1e-12;
-    scalars.lamscale = 0.1; scalars.iterations = 1; scalars.converged = false;
-    scalars.fsqr = 1.0; scalars.fsqz = 1.0; scalars.fsql = 1.0;
-
     // ---- v1 writer round-trips the bridged snapshot + provenance trailer --
     {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string v1Path = scratch("v1");
         OutputSpec spec;
         spec.format = OutputFormat::kBinary;
-        spec.schema = OutputSchema::kV1;
-        spec.path = v1Path;
-        auto w = cumes::make_writer(spec.format, spec.schema);
-        auto r = cumes::make_reader(spec.format, spec.schema);
+            spec.path = v1Path;
+        auto w = cumes::make_writer(spec.format);
+        auto r = cumes::make_reader(spec.format);
         CHECK(w != nullptr && r != nullptr, "v1: writer+reader factories");
         if (w && r) {
             // Read back WITH the report: the v2 trailer (precision-policy
@@ -265,7 +253,7 @@ static void runPrecision() {
             RunReport report = makeIoReport();
             report.build.scalar_type =
                 sizeof(T) == sizeof(double) ? "double" : "float";
-            CHECK(w->write_atomic(snap, report, spec, vp, scalars).has_value(),
+            CHECK(w->write_atomic(snap, report, spec, vp).has_value(),
                   "v1: write succeeds");
             RunReport back;
             auto snap_back = r->read(v1Path, &back);
@@ -284,7 +272,7 @@ static void runPrecision() {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string v1OldPath = scratch("v1old");
         CHECK(writeHistoricalV1(snap, v1OldPath), "v1 historical: fixture written");
-        auto r = cumes::make_reader(OutputFormat::kBinary, OutputSchema::kV1);
+        auto r = cumes::make_reader(OutputFormat::kBinary);
         CHECK(r != nullptr, "v1 historical: reader factory");
         if (r) {
             RunReport back;
@@ -308,10 +296,10 @@ static void runPrecision() {
     // v1: the complete RunReport + restart metadata round trip.
     const EquilibriumSnapshot snap2 = cumes::snapshot_from_device(storage);
 #ifdef CUMES_HAVE_NETCDF
-    checkV1RoundTrip<T>(snap2, vp, scalars, OutputFormat::kNetCdf, "v1nc");
+    checkV1RoundTrip<T>(snap2, vp, OutputFormat::kNetCdf, "v1nc");
 #endif
 #ifdef CUMES_HAVE_HDF5
-    checkV1RoundTrip<T>(snap2, vp, scalars, OutputFormat::kHdf5, "v1h5");
+    checkV1RoundTrip<T>(snap2, vp, OutputFormat::kHdf5, "v1h5");
 #endif
 
     // ---- versioned checkpoint round-trips the bridged snapshot ------------

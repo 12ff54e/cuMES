@@ -40,27 +40,18 @@ std::optional<OutputFormat> suffix_format(const std::string& path) {
 
 }  // namespace
 
-Result<OutputSpec> resolve_output_spec(const std::string& path,
-                                       bool compatibility_mode) {
+Result<OutputSpec> resolve_output_spec(const std::string& path) {
     // Pure suffix -> format dispatch; backend availability is the separate
     // output_format_available() preflight (mirrors the legacy
     // outputFormatAvailable vs outputSave split).
     const auto fmt = suffix_format(path);
     if (!fmt.has_value()) {
-        if (compatibility_mode) {
-            OutputSpec spec;
-            spec.format = OutputFormat::kBinary;
-            spec.schema = OutputSchema::kLegacyV0;
-            spec.path = "cumes_state.bin";  // legacy fallback target
-            return spec;
-        }
         return Result<OutputSpec>("'" + path +
-                                  "': unrecognized output suffix; pass "
-                                  "--output-schema or a recognized suffix");
+                                  "': unrecognized output suffix; pass a "
+                                  "recognized suffix (.bin, .nc, .h5)");
     }
     OutputSpec spec;
     spec.format = *fmt;
-    spec.schema = OutputSchema::kLegacyV0;  // caller upgrades to v1 explicitly
     spec.path = path;
     return spec;
 }

@@ -25,8 +25,8 @@ set_property(CACHE CUMES_PRECISION_POLICY PROPERTY STRINGS
 option(CUMES_USE_FLOAT "Build the cuMES CLI in single precision (float)" OFF)
 
 # Optional state-output backends. Each is compiled in only if the option is ON
-# and the library is found (see CumesDependencies.cmake); otherwise the run
-# falls back to binary cumes_state.bin.
+# and the library is found (see CumesDependencies.cmake); a known suffix whose
+# backend is not linked is rejected by the preflight at startup.
 option(CUMES_USE_NETCDF "Enable NetCDF output of the solved state (.nc)" ON)
 option(CUMES_USE_HDF5  "Enable HDF5  output of the solved state (.h5/.hdf5)" ON)
 

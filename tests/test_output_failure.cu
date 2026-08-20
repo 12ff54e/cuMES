@@ -104,19 +104,7 @@ static bool writeViaHost(cumes::SpectralStorage<T>& st, const DeviceParams<T>& p
                          cumes::OutputFormat fmt) {
     cumes::OutputSpec spec;
     spec.format = fmt;
-    spec.schema = cumes::OutputSchema::kV1;
     spec.path = path;
-    cumes::LegacyRunScalars s;
-    s.mpol = p.mpol; s.ntor = p.ntor; s.nfp = p.nfp;
-    s.ntheta = p.ntheta; s.nzeta = p.nzeta;
-    s.ns = p.ns; s.mnmax = p.mnmax; s.nZnT = p.nZnT;
-    s.ncurr = p.ncurr; s.max_iter = p.max_iter;
-    s.delt = (double)p.delt; s.ftol = (double)p.ftol;
-    s.lamscale = (double)p.lamscale;
-    s.iterations = res.iterations;
-    s.converged = res.converged;
-    s.fsqr = (double)res.fsqr; s.fsqz = (double)res.fsqz;
-    s.fsql = (double)res.fsql;
     auto snap = cumes::snapshot_from_device(st);
     cumes::RunReport rep;
     rep.input.source_path = "inputs/solovev.json";
@@ -132,9 +120,9 @@ static bool writeViaHost(cumes::SpectralStorage<T>& st, const DeviceParams<T>& p
     stage.final_residual = {(double)res.fsqr, (double)res.fsqz,
                             (double)res.fsql};
     rep.stages.push_back(stage);
-    auto w = cumes::make_writer(fmt, cumes::OutputSchema::kV1);
+    auto w = cumes::make_writer(fmt);
     if (!w) return false;
-    return w->write_atomic(snap, rep, spec, vp, s).has_value();
+    return w->write_atomic(snap, rep, spec, vp).has_value();
 }
 
 template <typename T>

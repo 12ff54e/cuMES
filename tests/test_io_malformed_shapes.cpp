@@ -29,7 +29,6 @@
 #endif
 
 using cumes::OutputFormat;
-using cumes::OutputSchema;
 using cumes::Reader;
 using cumes::RunReport;
 
@@ -532,7 +531,7 @@ static void testNetcdf(const TempDir& dir) {
         snprintf(msg, sizeof msg, "netcdf: fixture written (%s)", c.label);
         CHECK(writeNetcdfFixture(path, c.mut), msg);
         std::unique_ptr<Reader> reader =
-            make_reader(OutputFormat::kNetCdf, OutputSchema::kV1);
+            make_reader(OutputFormat::kNetCdf);
         RunReport rep;
         rep.build.revision = "sentinel";
         rep.total_effective_iterations = 12345;
@@ -599,7 +598,7 @@ static void testHdf5(const TempDir& dir) {
         snprintf(msg, sizeof msg, "hdf5: fixture written (%s)", c.label);
         CHECK(writeHdf5Fixture(path, c.mut), msg);
         std::unique_ptr<Reader> reader =
-            make_reader(OutputFormat::kHdf5, OutputSchema::kV1);
+            make_reader(OutputFormat::kHdf5);
         RunReport rep;
         rep.build.revision = "sentinel";
         rep.total_effective_iterations = 12345;

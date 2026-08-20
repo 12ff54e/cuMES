@@ -42,9 +42,7 @@ class NetcdfV1Writer final : public Writer {
  public:
     Status write_atomic(const EquilibriumSnapshot& snapshot,
                         const RunReport& report, const OutputSpec& spec,
-                        const ValidatedProblem& problem,
-                        const LegacyRunScalars& s) override {
-        (void)s;  // v1 records the RunReport, not the legacy scalar pack
+                        const ValidatedProblem& problem) override {
         const FoldedBoundary& fb = problem.boundary();
         const int mpol = problem.shape().mpol;
         const int ntorp1 = problem.shape().ntor + 1;

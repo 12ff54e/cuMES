@@ -1,26 +1,16 @@
 // writer_helpers.hpp — shared primitives for the atomic-publishing writers.
 //
-// One implementation of two protocols every on-disk state writer needs:
-//   (a) the same-directory temp path + atomic publish (temp + fsync + rename),
-//   (b) the device->host T->double family staging (the on-disk state stays
-//       double regardless of the computation scalar type T).
+// One implementation of the protocol every on-disk state writer needs: the
+// same-directory temp path + atomic publish (temp + fsync + rename), plus the
+// checked family element count and the documented reader-side resource caps.
 //
-// Consumers: the binary writer (src/output.cpp), the netCDF/HDF5 backends
-// (src/output_netcdf.cpp / src/output_hdf5.cpp), and — through
-// src/cumes/io/io_common.hpp — the checkpoint and versioned-container writers.
-// Everything here is header-only so the writers never drift apart again.
-//
-// The host-only halves (a) and familyCount need no CUDA; the device staging
-// (b) is opt-in because the pure host library cumes_io_host (checkpoint +
-// versioned containers) is compiled without CUDA include paths. The three
-// device-reading writers define CUMES_IO_DEVICE_STAGE before including this.
+// Consumers: the NetCDF/HDF5 backends (netcdf_writer.cpp / hdf5_writer.cpp)
+// and — through src/cumes/io/io_common.hpp — the versioned binary and
+// checkpoint writers. Everything here is header-only so the writers never
+// drift apart again.
 #pragma once
 
 #include "cumes/core/checked_size.hpp"
-
-#ifdef CUMES_IO_DEVICE_STAGE
-#include "cumes/runtime/cuda_status.hpp"
-#endif
 
 #include <atomic>
 #include <cerrno>
@@ -32,7 +22,6 @@
 #include <optional>
 #include <string>
 #include <unistd.h>
-#include <vector>
 
 namespace cumes {
 namespace io_detail {
@@ -154,49 +143,6 @@ inline std::optional<std::size_t> familyCount(int ns, int mnmax) {
     return checked_mul(static_cast<std::size_t>(ns),
                        static_cast<std::size_t>(mnmax));
 }
-
-#ifdef CUMES_IO_DEVICE_STAGE
-
-// Device->host family staging for the on-disk-double writers: owns (RAII) the
-// T mirror + double conversion buffers, copies `count` elements from the
-// device, and converts T -> double. A CUDA copy failure is reported through
-// `reason` and returns false — never throws — so the writer can run its own
-// fail path (close + remove temp + return false) and the atomic-publish
-// contract survives a device fault.
-template <class T>
-class FamilyStage {
- public:
-    explicit FamilyStage(std::size_t count) : buf_(count), dbuf_(count) {}
-
-    bool copy(const T* d_src, const char* tag, std::string& reason) {
-        if (!buf_.empty()) {
-            const auto bytes = checked_mul(buf_.size(), sizeof(T));
-            if (!bytes) {
-                reason = std::string(tag) + ": family byte size overflows size_t";
-                return false;
-            }
-            try {
-                check_cuda(cudaMemcpy(buf_.data(), d_src, *bytes,
-                                      cudaMemcpyDeviceToHost), tag);
-            } catch (const CumesError& e) {
-                reason = e.what();
-                return false;
-            }
-        }
-        for (std::size_t i = 0; i < buf_.size(); ++i) {
-            dbuf_[i] = static_cast<double>(buf_[i]);
-        }
-        return true;
-    }
-
-    const double* data() const { return dbuf_.data(); }
-
- private:
-    std::vector<T> buf_;
-    std::vector<double> dbuf_;
-};
-
-#endif  // CUMES_IO_DEVICE_STAGE
 
 }  // namespace io_detail
 }  // namespace cumes
