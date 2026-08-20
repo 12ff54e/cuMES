@@ -95,6 +95,17 @@ enqueued on one compute stream until a single deliberate control fence:
 The `ijacob == 25/50` maintenance reset is handled by `next_schedule()` before
 the DAG, without launching geometry or descent.
 
+**Transform implementation.** The cuFFT backend packs 12 slots per poloidal
+mode (vmecpp `kBatch`: rmkcc/rmkss + ζ-derivative slots for R, Z, λ) into
+batched 1D D2Z/Z2D transforms of length `nzeta` (batch `12·mpol·ns`) with
+direct poloidal accumulation/reduction over θ from small per-mode tables —
+structurally identical to vmecpp's `fft_toroidal.cc`. The same plans and
+scratch serve the constraint module: rCon/zCon (xmpq-weighted reconstruction)
+and the de-aliasing bandpass (full-grid sc/cs analysis → D2Z → normalized
+coefficients → Z2D synthesis), with compact sub-batch plans (2·(mpol−2)·(ns−1)
+elements for the bandpass, 4·mpol·ns for rCon/zCon). The original direct-sum
+kernels were removed after A/B validation.
+
 ## 4. Dependency rule (blueprint §5.1)
 
 The migration target is an acyclic graph. The rules already enforced in the

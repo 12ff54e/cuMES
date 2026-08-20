@@ -69,7 +69,21 @@ Z^{cs}_{m,n}&=zbs(m,-n)-zbs(m,+n).
 
 At `n=0`, `rbc` is accumulated once into `Rcc`, and `zbs` contributes to `Zsc` only for `m>0`; sine-in-zeta families vanish and `zbs(0,0)` has no basis function. Duplicate raw entries are summed deliberately. Folding validation precedes any fixed/device packing.
 
-Poloidal derivatives multiply by `m`; physical toroidal derivatives multiply by `N`, not the raw stored `n`. The existing inverse path deliberately represents
+Poloidal derivatives multiply by `m`; physical toroidal derivatives multiply by `N`, not the raw stored `n`. The inverse DFT computes derivatives analytically,
+
+\[
+\partial_\theta\cos(m\theta-n\zeta)=-m\sin(m\theta-n\zeta),\qquad
+\partial_\theta\sin(m\theta-n\zeta)=+m\cos(m\theta-n\zeta),
+\]
+
+\[
+\partial_\zeta\cos(m\theta-n\zeta)=+n\sin(m\theta-n\zeta),\qquad
+\partial_\zeta\sin(m\theta-n\zeta)=-n\cos(m\theta-n\zeta),
+\]
+
+in "index space" (not physical radians); the Jacobian and metric are consistent
+with this convention, so only the absolute scaling is affected. The existing
+inverse path deliberately represents
 
 \[
 l_v = -\partial_v\lambda.
@@ -480,6 +494,8 @@ S_{RZ}&=\sum g\_{uu}R_H^2w,\\
 S_L&=\sum(B_u^2+B_v^2)w.
 \end{aligned}
 \]
+
+`dV/ds_H` is accumulated as `signJ·Σ√g·w` (signJ = −1).
 
 Then
 
