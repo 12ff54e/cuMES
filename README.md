@@ -5,226 +5,244 @@ algorithm. All computation runs on GPU; the CPU host is a thin orchestrator.
 This is a pedagogical / scaffolding project — not production-grade, but the
 architecture and physics are real.
 
-**Status: working.** For the Solovev test case (`inputs/solovev.json`), the solver
-converges to the correct equilibrium (invariant residual < 1e-16) from the
-default initial state in **209 iterations** (vmecpp reference: 252), with no
-restarts and a constant time step. The converged equilibrium matches the
-vmecpp reference (`solovev.out.h5`) to 6–8 digits (axis R_00 = 3.990923 vs
-3.99092308).
+**Reference implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
+(CPU-based C++ VMEC solver) at tag 0.7.0. vmecpp is cuMES's correctness
+reference, **not** a bit-exactness oracle: the two agree only to loose
+numerical agreement (see [Verification](#verification)).
+
+**Status: working.** The solver reproduces its two frozen reference trajectories
+(cuMES's own audited baselines, re-derived after the CUDA overhaul):
+
+| case | multigrid stages | effective iters | final FSQR |
+| ---- | ---------------- | --------------- | ---------- |
+| Solovev (`inputs/solovev.json`) | 5 → 11 → 55 | 251 → 199 → 456 | 9.583e-17 |
+| W7-X (`inputs/w7x.json`) | 33 → 66 → 99 | 1877 → 1617 → 2011 (5505) | 9.778e-13 |
+
+## Quick start
+
+```bash
+cmake --preset verify          # double precision, both backends, -Werror
+cmake --build build -j
+./build/cuMES inputs/solovev.json out.bin    # positional: <input> <output>
+ctest --test-dir build --output-on-failure
+```
+
+**Requirements:** CUDA Toolkit ≥ 11, CMake ≥ 3.20, GPU compute capability ≥ 6.1
+(Pascal or newer). If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must
+point to g++-12 (set in `CMakeLists.txt`). Built CUDA architectures: 61
+(Pascal), 75 (Turing), 80 (Ampere), 86, 89 (Ada).
 
 ## Architecture
 
-```
-main.cu                  Entry point — init → solve → output
-   │
-   ├── inputs/           JSON input files (vmecpp indata schema)
-   ├── input_json.cu     JSON → InputParams mapping (JsonParser.h)
-   ├── input.h           InputParams bundle + boundary folding
-   ├── vmec_types.h      Shared GPU data structures (GridParams, SpectralState, …)
-   │
-   ├── profiles.cu/cuh   1D radial profiles (iota, pressure, mass) on device
-   ├── fourier.cu/cuh    cuFFT transforms (12-slot packing, batched 1D ζ-FFT)
-   ├── geometry.cu/cuh   Jacobian, covariant metric, contravariant/covariant B
-   ├── forces.cu/cuh     MHD force residuals (R, Z, λ) in real space
-   ├── constraint.cu/cuh Spectral-condensation constraint force (de-aliased)
-   ├── precon.cu/cuh     Radial tridiagonal + λ preconditioners
-   ├── solver.cu/cuh     VMEC_8_52 iteration control (damping, restarts)
-   └── output.cu/cuh     Pull results from GPU → print
-```
+The solver is a single `cumes` operator library. The strangler-fig migration is
+complete: the legacy `include/*.cuh` kernel structs are gone, and the production
+kernels live directly in operator classes that own their device buffers (RAII
+`DeviceBuffer`/`DeviceArena`) and expose typed view bundles.
 
-## Data Flow per Iteration
+- **Device operator modules** — `src/<mod>_impl.cuh` + explicit
+  `double`/`float` instantiation TUs (`src/<mod>_{double,float}.cu`): `fourier`
+  (`ToroidalFftOperator`), `geometry` (`GeometryOperator`/`MagneticFieldOperator`),
+  `forces` (`ForceOperator`), `solver` (`EquilibriumOperator`), `profiles`,
+  `precon`, `constraint`, `prolongation`, `axisymmetric`.
+- **Host-side `cumes` namespace** — `include/cumes/*` + `src/cumes/*`: config
+  validation, RAII CUDA runtime, typed non-owning views, the I/O stack, and the
+  host orchestration (`MultigridSolver`, `StageSolver`, `IterationController`).
+
+All GPU allocations happen at startup; there are zero `cudaMalloc` calls in the
+hot loop. See [`docs/architecture.md`](docs/architecture.md) for the full shape.
+
+## Data flow per iteration
 
 ```
 Spectral coefs (rmnc, zmns, lmnc)              ← degrees of freedom
          │
-         ▼  [inverse DFT — custom kernel]
+         ▼  [ToroidalFftOperator::inverse_fused — inverse DFT + rCon/zCon]
 Real-space geometry R, Z, λ + derivatives      (ns × ntheta × nzeta)
          │
-         ▼  [geometry kernel]
+         ▼  [GeometryOperator / MagneticFieldOperator]
 Half-grid: √g, g_uu, g_uv, g_vv, B^θ, B^ζ    (ns-1 × ntheta × nzeta)
          │
-         ▼  [forces kernel]
+         ▼  [ForceOperator]
 Real-space forces F_R, F_Z, F_λ                (ns × ntheta × nzeta)
          │
-         ▼  [constraint force (de-aliased) + forward DFT]
-Spectral forces                                 (6, mnmax, ns)
+         ▼  [ConstraintOperator (bandpass) + forward DFT]
+Spectral forces                                 (3, mnmax, ns)
          │
-         ▼  [precondition + descent kernel — Garabedian step]
-v = fac×(b1·v + delt·f) ,  x += delt·v
+         ▼  [ResidualOperator + Preconditioner + DescentOperator]
+v = fac×(b1·v + delt·f) ,  x += delt·v        (Garabedian accelerated descent)
 ```
+
+The whole per-iteration DAG is composed in `EquilibriumOperator::enqueue` on one
+explicit compute stream, with a single deliberate host fence per iteration for
+the convergence decision.
 
 ## Physics implemented (mirroring vmecpp)
 
-- **MHD force balance** in flux coordinates with the vmecpp m-parity
-  even/odd decomposition convention (odd real-space carries
-  `physical/max(√s, √(1/(ns-1)))`; λ carries an extra √2).
-- **Hybrid λ-force** (`forces.cu`): the two bsubv interpolations (half-grid
-  average vs `gvv/gsqrt·(lamscale·λ_θ + Φ')` with √s_H-weighted odd part)
-  blended with `radialBlending = 2·kPDamp·(1-s)`, kPDamp = 0.05 — verified
-  against the vmecpp reference output at the same state.
-- **Spectral-condensation constraint** (`constraint.cu`): bandpass-filtered
-  `(rCon − rCon0)` force with vmecpp's tcon multiplier profile.
-- **Preconditioning** (`precon.cu`): radial tridiagonal solve (LCFS row
-  excluded) + λ preconditioner from flux-surface metric averages.
-- **Iteration control** (`solver.cu`): VMEC_8_52 damping
-  (`dtau = delt·otav/2`, 10-iteration window), BAD_JACOBIAN / BAD_PROGRESS
-  restarts with state backup, convergence on the invariant residuals.
+- **MHD force balance** in flux coordinates with vmecpp's m-parity even/odd
+  decomposition; staggered half-grid metric (`√g`, covariant `g_uu/g_uv/g_vv`,
+  contravariant `B^θ`/`B^ζ`) between flux surfaces.
+- **Hybrid λ-force** blending two `bsubv` interpolations with a radial
+  `2·kPDamp·(1-s)` weight (kPDamp = 0.05).
+- **Spectral-condensation constraint** (bandpass-filtered de-aliased `rCon −
+  rCon0` force with vmecpp's `tcon` multiplier profile).
+- **Preconditioning**: radial tridiagonal solve (LCFS row excluded) + λ
+  preconditioner from flux-surface metric averages.
+- **Iteration control** (`IterationController`): Garabedian accelerated descent
+  with VMEC_8_52 damping, BAD_JACOBIAN / BAD_PROGRESS restarts, and `ijacob
+  25/50` maintenance resets.
+- **Multigrid grid sequencing** via `Prolongation` (linear-in-s on scalxc-scaled
+  odd-m coefficients, axis extrapolation, LCFS copied exactly).
 
 ## Build & Run
 
-```bash
-# in folder cuMES
-cmake -B build -G Ninja
-cmake --build build -j
-./build/cuMES                      # default input: inputs/solovev.json
-./build/cuMES inputs/w7x.json
-./build/cuMES inputs/solovev.json solovev.nc      # argv[2] selects the output
-./build/cuMES inputs/solovev.json solovev.h5
+### Precision presets
+
+| preset | policy | notes |
+| ------ | ------ | ----- |
+| `verify` (default) | verify-double | precise double, NetCDF+HDF5, `-Werror` |
+| `float` | mixed-float | float state/FFT + documented double reductions |
+| `fast` | fast-double | opt-in `--use_fast_math`, dump machinery compiled out |
+| `debug` | debug-double | precise + `-G` |
+| `sanitizer` | verify-double | compute-sanitizer memcheck/initcheck/racecheck/synccheck + ASan/UBSan host twins |
+
+The backend matrix (`nobackend`, `netcdf-only`, `hdf5-only`) rounds out the
+optional-backend presets. Every computation is `template<typename T>`; `Real`
+(`include/vmec_types.h`) is the compile-time switch (`-DCUMES_USE_FLOAT=ON`).
+
+### CLI
+
+```
+./build/cuMES [--input <path>] [--output <path>] [flags]
 ```
 
-Output path is argv[2]; the file suffix selects the format (`.nc` → NetCDF,
-`.h5`/`.hdf5` → HDF5, `.bin` → raw binary at that path). A missing argv[2] or
-an unrecognized suffix falls back to the legacy binary `cumes_state.bin` in
-the working directory (with a stderr warning). The NetCDF and HDF5 backends
-are found at configure time and each can be disabled with
-`-DCUMES_USE_NETCDF=OFF` / `-DCUMES_USE_HDF5=OFF` (default ON; a missing
-library disables the backend with a warning). Requesting a format whose
-backend is not compiled in is a hard error: cuMES prints a hint (write a
-binary format — use a `.bin` suffix or omit argv[2]) and exits without
-writing anything.
+- Positionals fill the two slots `<input> <output>`; the `--input`/`--output`
+  flags override them.
+- `--output-schema legacy-v0|v1` (default `v1` — a versioned container with full
+  provenance for binary, NetCDF and HDF5).
+- `--restart <checkpoint>` / `--restart-legacy <six-family payload>` /
+  `--checkpoint <path>` (write a v1 checkpoint after solve).
+- Strict schema-v1 behavior is the **default**: unknown input keys are errors, an
+  explicit output path is required, and unknown suffixes are rejected. The
+  `--compatibility` flag restores vmecpp-style warn-and-ignore parsing, the
+  `cumes_state.bin` default, and the unknown-suffix fallback.
 
-Input is a vmecpp-style JSON file (flat top-level keys: `mpol`, `ntor`,
-`nfp`, `ns_array`/`niter_array`/`ftol_array` (multigrid stages), `am`/`ac`/
-`ai`/`aphi` profile coefficients, `raxis_c`/`zaxis_s`, and `rbc`/`zbs`
-boundary as `{"n","m","value"}` objects). Every key is optional — missing
-keys keep the built-in defaults (vmecpp semantics); unknown keys are ignored.
-Keys for features cuMES does not implement (`lasym=true`, `lfreeb=true`,
-spline profiles) are rejected with a clear error. The two shipped configs
-match the vmecpp reference multigrid runs to loose numerical agreement (see Verification).
+A `.nc`/`.h5` suffix dispatches to the host-only NetCDF/HDF5 writers when
+compiled in (the availability preflight runs before any CUDA work). Non-fatal
+validation warnings print as `cuMES: WARNING: ...` on stderr.
 
-Requirements: CUDA Toolkit ≥ 11, CMake ≥ 3.20, GPU with compute capability ≥ 6.1
-(Pascal or newer). If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must
-point to g++-12 (set in `CMakeLists.txt`).
+### Input
 
-The reference implementation lives in `../vmecpp` (CPU-based C++ VMEC++
-solver); `../scripts/compare_step.py` compares binary dumps of the two codes.
+`inputs/*.json` follow the vmecpp indata schema (flat keys: `mpol`, `ntor`,
+`nfp`, `ns_array`/`niter_array`/`ftol_array` multigrid stages, `am`/`ac`/`ai`/
+`aphi` profile coefficients, `raxis_c`/`zaxis_s`, and `rbc`/`zbs` boundary
+harmonics). The JSON is parsed and validated host-side into a `ValidatedProblem`
+(`cumes-config-v1` normalized schema, `configs/schema-v1.json`); no solver code
+parses input.
 
 ### Precision
 
-All computation is templated on a scalar type `T`; the executable's precision
-is a compile-time choice:
-
-```bash
-cmake -B build-float -G Ninja -DCUMES_USE_FLOAT=ON   # single precision
-cmake --build build-float -j
-```
-
-- The default build is double precision (`Real = double` in `vmec_types.h`).
-- Single precision is ~1/32-rate-fp64-free on consumer GPUs, but the invariant
-  residuals stall at ~1e-7 (the float rounding floor): the `ftol_array`
-  entries (1e-16) are never reached, so float runs report NOT CONVERGED
-  unless the tolerances in the JSON input are relaxed for float experiments.
-- The on-disk state file (`cumes_state.bin`) and `vmecpp_init.bin` stay double
-  regardless of `T` — the Python comparison scripts are unaffected.
-- The debug dumps (`dump/cuMES/*.bin`) are `T`-native: only readable by
-  same-build tooling (e.g. `test_geometry_iso` is double-build-only).
-- The unit tests instantiate both double and float in every build
-  (`./build/test_fourier` runs both legs).
-
-### Output formats
-
-The solved state is written by suffix (argv[2], fallback `cumes_state.bin`):
-
-- **`.bin`** — raw binary, the legacy contract: `[int ns][int mnmax]` + 6
-  families (`rmncc zmnsc lmnsc rmnss zmncs lmncs`) of `ns*mnmax` doubles,
-  mode-major (`i = m*ns + j`). Consumed by `scripts/compare_*.py` and the
-  parent-repo plotting scripts — unchanged.
-- **`.nc`** — netCDF classic-3 (CDF-1). State variables `(ns, mnmax)` in the
-  same mode-major order, grid/convergence scalar variables, and the full
-  InputParams provenance (profile coefficients `am/ac/ai/aphi`, `raxis_c`/
-  `zaxis_s`, folded boundary `rbcc/rbss/zbsc/zbcs`, multigrid arrays), with
-  global attributes `input_file` and `precision`.
-- **`.h5`/`.hdf5`** — serial HDF5 with the same content: scalars as
-  root-group attributes, arrays as datasets.
-
-All formats write doubles regardless of the compute type `T` (float runs
-produce the same layout with `precision = "float"`).
+- The default build is double (`Real = double`); residuals reach ~1e-14.
+- Single precision (`float` preset) stalls at ~1e-7 (the float rounding floor):
+  the double-tuned stage ftols can never be met, so float builds hard-error at
+  startup unless the `ftol_array` entries are relaxed to ≥ 1e-6.
+- On-disk state files stay double regardless of `T`; dump files are `T`-native.
+- The per-pass control record (residuals, Jacobian stats, force-norm factors)
+  is double in both builds; the device norm reductions accumulate in double.
 
 ### Environment variables
 
-All knobs are off by default; plain runs write nothing extra and print no
-debug output.
-
 | Variable | Effect |
-|----------|--------|
-| `CUMES_MAX_ITER` | iteration cap (default 1000); overrides EVERY stage's cap in a multigrid run |
-| `CUMES_DELT0` | initial time step (default 0.9) |
-| `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau (experiments) |
-| `CUMES_DUMP_ITER` | which iterations the windowed dump files fire on (default 150) |
-| `CUMES_E2_START` | first iteration of the per-iteration force dumps (default 560) |
-| `CUMES_DUMP` | master switch for all dump/debug output (`=1` enables) |
-| `CUMES_LOAD_INIT` | load an initial state from `vmecpp_init.bin` (handoff protocol) |
+| -------- | ------ |
+| `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
+| `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
+| `CUMES_DELT0` | initial time step |
+| `CUMES_DUMP` | enables debug/dump output |
 
 ## Verification
 
-- **Multi-radial-grid (default, both configs)**: each stage runs with its
-  own iteration cap and ftol, seeded by the previous stage's converged state
-  via `interpolateState` (`src/refine.cu`, vmecpp's
-  `InterpolateToNextMultigridStep` semantics). Verified against vmecpp's own
-  multigrid runs:
-  - **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR
-    9.58e-17.
-  - **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505),
-    final FSQR 9.78e-13; converged states agree with the vmecpp/wout
-    reference at ~1e-5 in R/Z and ~1e-4 in the weakly-determined near-axis
-    λ. The final state is a different member of the (near-degenerate)
-    λ-gauge family than the single-grid-99 equilibrium (rmncc(0,1) differs
-    by ~2.7e-4) — vmecpp's own single-grid vs multigrid states differ by
-    the same ~2.7e-4, so this is intrinsic to the continuation, and the
-    multigrid final state is a genuine fixed point (restarting from it
-    converges at iter 1).
-- **Single-grid regression**: with `n_grids=1` the run is bit-identical to
-  the pre-multigrid code (compare_runs.py PASS; W7-X converges at iter 2953
-  effective, 2962 raw passes incl. 9 restarts, FSQR 9.924e-13).
-- **Per-iteration fidelity (W7-X, single-grid)**: invariant residuals track
-  vmecpp at ≤1e-8 relative over the entire run; the cuFFT transform backend
-  reproduces the direct-sum trajectory byte-identically in the per-iteration
-  logs; the converged state matches the wout at ≤1.5e-9 in all six families.
-- **Solovev (axisymmetric, single-grid ns=11)**: converges at iter 252
-  (default start) or iter 237 (started from vmecpp's iter-150 state via
-  `CUMES_LOAD_INIT=1`), no restarts, delt constant 0.9, final invariant
-  residual ~8e-17.
+The frozen reference trajectories are cuMES's own audited baselines and serve as
+the internal regression oracle (`scripts/compare_runs.py` +
+`scripts/compare_bitwise.py` + CTest). vmecpp is used only as an independent
+correctness reference:
 
-Note: `scripts/compare_runs.py` (two-log trajectory comparison) is only
-valid for single-grid logs — per-stage iteration counters restart at 1, so
-rows of later stages overwrite earlier ones. Use `compare_states.py` for
-final-state checks.
+- **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
+- **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505), final
+  FSQR 9.778e-13. The converged final state agrees with the vmecpp/wout
+  reference at ~1e-5 in R/Z and ~1e-4 in the weakly-determined near-axis λ.
+- **Per-iteration fidelity (W7-X, single-grid)**: invariant residuals track
+  vmecpp at ≤1e-8 over the entire run; the converged state matches the wout at
+  ≤1.5e-9 in all six families.
+- **Single-grid regression**: with `n_grids=1` (`ns_array={99}`) the run
+  converges at 2953 effective iters, FSQR 9.924e-13.
+
+See [`docs/verification.md`](docs/verification.md) for the full tier/gate
+structure (equivalence classes, sanitizers, equivalence gates, performance
+acceptance).
 
 ## Status vs VMEC++
 
 | VMEC++ feature | Status |
-|----------------|--------|
-| FFT-accelerated transforms | Implemented: cuFFT (batched 1D real FFT in the ζ direction + direct poloidal synthesis, mirroring vmecpp's FFTX structure); the constraint module's rCon/zCon and de-aliasing bandpass reuse the same plans/scratch (compact sub-batches: 2·(mpol−2)·(ns−1) and 4·mpol·ns elements instead of the full 12·mpol·ns). See `src/fourier.cu`. |
-| Performance (W7-X, TITAN Xp) | Full run 7.79 s → **4.98 s** after the 2026-08-03 pass (PCR tridiagonal solve, coalesced θ-major access, slot-split poloidal accumulation, compact constraint sub-batch FFTs, sync removal): transforms 0.43/0.39 ms/iter (inverse/forward), converged at effective iter 2953 (2962 passes) with FSQR 9.924e-13 — per-iteration residuals bit-identical to the pre-pass run, state ≤2e-10 in all six families. |
-| 3D (lthreed) equilibria | Implemented and verified against vmecpp (W7-X, mpol=ntor=12): per-iteration residuals track vmecpp at ≤1e-8 over the whole run; converges at iter 2953 effective with FSQR 9.924e-13 (vmecpp ~9.9e-13); the converged state matches the wout at ≤1.5e-9 in all six families. |
-| Multigrid grid sequencing | Implemented: per-config `ns_array`/`niter_array`/`ftol_array` stage loop (Solovev 5→11→55, W7-X 33→66→99), each stage seeded by the previous converged state via `interpolateState` (refine.cu) — linear-in-s interpolation on scalxc-scaled odd-m coefficients, exact at old grid points, LCFS pinned. A stage that exhausts its cap without meeting ftol fails the run (vmecpp semantics). See `src/refine.cu` + the Verification section. |
+| -------------- | ------ |
+| FFT-accelerated transforms | cuFFT backend (batched 1D ζ-FFT + direct poloidal), mirroring vmecpp's FFTX structure |
+| Multigrid grid sequencing | Implemented (`ns_array`/`niter_array`/`ftol_array` stage loop + `Prolongation`) |
+| De-aliased constraint force | Implemented (spectral-condensation bandpass + fused rCon/zCon) |
+| Hot restart / checkpointing | Implemented (`--checkpoint` / `--restart` / `--restart-legacy`) |
+| Adaptive time-step (Jacobian resets) | Implemented (restart/maintenance delt control, vmecpp VMEC_8_52) |
 | Free boundary / vacuum solver | Fixed boundary only |
-| Mercier stability, jxbout, full wout | Post-processing; not needed for the core loop |
-| Hot restart / checkpointing | Add later |
+| Mercier stability, jxbout, wout | Post-processing; not needed for the core loop |
+| Python interface | Not yet; C++/CUDA executable only |
 
 ## Tests
 
-```bash
-./build/test_fourier        # DFT round-trip + derivative checks
-./build/test_input_json     # JSON input mapping + error paths (inputs/*.json)
-./build/test_forces         # force-kernel diagnostic solve (inputs/solovev.json)
-./build/test_force_verify   # forces near zero on a converged vmecpp state
-                            # (needs vmecpp_init.bin; skipped otherwise)
-./build/test_geometry_iso   # W7-X geometry chain vs dump/cuMES (inputs/w7x.json)
+Standalone executables, no test framework; CPU reference mirrors GPU kernel
+logic. Run them via `ctest --test-dir build` or directly from `build/`:
+
+- **Transforms / geometry**: `test_fourier`, `test_geometry_iso`,
+  `test_geometry_ncurr`, `test_axisym_backend`, `test_constraint_tcon`,
+  `test_regression_kernels`
+- **Physics**: `test_forces`, `test_force_reference`, `test_force_verify`
+- **Numerics / solver**: `test_tridiagonal`, `test_controller`,
+  `test_accumulation`, `test_safety_predicates`, `test_operator_views`
+- **Runtime / graph**: `test_runtime`, `test_arena`, `test_event_dag`,
+  `test_cuda_graph`
+- **Config / I/O**: `test_input_json`, `test_host_config`, `test_host_io`,
+  `test_checkpoint`, `test_io_golden`, `test_io_restart_offsets`,
+  `test_io_malformed_shapes`, `test_output_failure`
+- **CLI policy shells**: `cli_policy_test.sh`, `output_publication_test.sh`
+
+Both `double` and `float` are instantiated in every build.
+
+## Directory structure
+
+```
+cuMES/
+├── CMakeLists.txt          Library split + executable/tests
+├── include/
+│   ├── vmec_types.h        `Real` alias + parity/basis convention
+│   ├── solver.cuh / output.cuh   thin app shims
+│   └── cumes/              the operator library (config, core, io, numerics,
+│                           physics, runtime, solver, state, transforms)
+├── src/
+│   ├── main.cu             Entry point: validate config → multigrid → output
+│   ├── <mod>_impl.cuh      Templated kernel bodies (one file per operator)
+│   ├── <mod>_{double,float}.cu   explicit instantiation TUs
+│   └── cumes/              Host-side C++ (config, io, core, runtime)
+├── tests/                  Standalone correctness tests + support/
+├── benchmarks/             fixed_iteration + graph_overhead harnesses
+├── scripts/                compare_runs.py / compare_states.py / compare_bitwise.py
+├── inputs/                 solovev.json, w7x.json (vmecpp indata schema)
+├── configs/                schema-v1.json (cumes-config-v1)
+└── docs/                   architecture, mathematics, verification, ADRs, history
 ```
 
-All tests load their config from the JSON files under `inputs/` (run from the
-cuMES folder).
+## Documentation
+
+- [`docs/architecture.md`](docs/architecture.md) — current architecture and build split
+- [`docs/mathematics.md`](docs/mathematics.md) — normative numerical contracts
+- [`docs/data-layout.md`](docs/data-layout.md) — storage/layout contracts
+- [`docs/verification.md`](docs/verification.md) — verification tiers and gates
+- [`docs/performance.md`](docs/performance.md) — measured performance + acceptance policy
+- [`docs/adr/`](docs/adr/) — architecture decision records
 
 ## License
 
