@@ -1,8 +1,8 @@
 # cuMES overhaul history
 
-> The overhaul is complete. This file consolidates the former phase handovers,
-> migration plans, code-review record, completion plan, and reader-hardening
-> handoffs into one chronological archive. Current operational contracts live in
+> The overhaul is complete. This file consolidates the former tuning sessions,
+> phase handovers, migration plans, code-review record, completion plan, and
+> reader-hardening handoffs into one chronological archive. Current operational contracts live in
 > `architecture.md`, `mathematics.md`, `data-layout.md`, `performance.md`, and
 > `verification.md`; when a historical statement conflicts with a later entry or
 > a current contract, the later/current document wins.
@@ -32,17 +32,22 @@ git log --follow --diff-filter=A --format='%cI %H' -- <former-path>
 ```
 
 This deliberately ignores filename dates, filesystem timestamps, and embedded
-status dates. Phase 0 is the only entry whose author and committer timestamps
+status dates. Phase 0 is the only handover entry whose author and committer timestamps
 differ materially: it was authored at 2026-08-13 01:55 +08:00 and first
-tracked at 10:14 +08:00; the latter controls its position here. Each archived
-entry is the final text of that file immediately before consolidation, so its
-later closure banners and corrections are retained. Later entries supersede
-earlier forward-looking plans without erasing the original decision record.
+tracked at 10:14 +08:00; the latter controls its position here. The handover,
+plan, and review entries retain the final text of each former file immediately
+before consolidation, including later closure banners and corrections. The two
+earlier tuning-session entries preserve their measurements, adopted/reverted
+experiments, environment caveats, and conclusions in condensed form; the
+current performance contract supersedes them. Later entries supersede earlier
+forward-looking plans without erasing the original decision record.
 
 ## Chronology
 
 | First tracked (+08:00) | Archived entry | Creation commit | Former path |
 | --- | --- | --- | --- |
+| 2026-08-03 16:42:11+08:00 | [cuMES optimization pass](#optimization-pass) | [`b4a24f7`](https://github.com/12ff54e/cuMES/commit/b4a24f7f81ab73851310e7ed5c0f5470fb6cd30a) | `docs/optimization-2026-08-03.md` |
+| 2026-08-05 15:34:26+08:00 | [cuMES profiling session — RTX 4090](#profiling-session-rtx-4090) | [`d62ae9d`](https://github.com/12ff54e/cuMES/commit/d62ae9df465e00874209ebe23b43bd8051e5cf7c) | `docs/profiling-2026-08-05.md` |
 | 2026-08-13 10:14:42+08:00 | [cuMES Phase 0 handover — overhaul/phase-0 branch](#phase-0-handover) | [`bd26857`](https://github.com/12ff54e/cuMES/commit/bd268574d258cf1889318a57b8081ce77673395a) | `docs/phase-0-handover.md` |
 | 2026-08-13 11:32:02+08:00 | [cuMES Phase 1 handover — build and library split](#phase-1-handover) | [`12bcc44`](https://github.com/12ff54e/cuMES/commit/12bcc44b337a61f5e824bed37f32d5cde738d9f1) | `docs/phase-1-handover.md` |
 | 2026-08-13 14:08:50+08:00 | [cuMES Phase 2 handover — validated host model and versioned I/O](#phase-2-handover) | [`168170a`](https://github.com/12ff54e/cuMES/commit/168170a7b7218cd62f11d687ae044c10e66860aa) | `docs/phase-2-handover.md` |
@@ -65,6 +70,98 @@ earlier forward-looking plans without erasing the original decision record.
 | 2026-08-17 23:07:42+08:00 | [Post-overhaul follow-up handoff](#post-overhaul-follow-up) | [`3a1f7b0`](https://github.com/12ff54e/cuMES/commit/3a1f7b0e14e2aeb3de966a3ec929a1b2f0e9bde6) | `docs/post-overhaul-follow-up.md` |
 | 2026-08-17 23:46:16+08:00 | [V1 container reader rank-hardening handoff](#reader-rank-hardening-handoff) | [`611e8d7`](https://github.com/12ff54e/cuMES/commit/611e8d7929431ab4579249362ba5bef1febaf096) | `docs/reader-rank-hardening-handoff.md` |
 | 2026-08-18 00:05:59+08:00 | [V1 reader resource-hardening handoff](#v1-reader-resource-hardening-handoff) | [`ac7f94e`](https://github.com/12ff54e/cuMES/commit/ac7f94ea2fb75388bf70f6dea5ad9fe1b7e17a60) | `docs/v1-reader-resource-hardening-handoff.md` |
+
+---
+
+<a id="optimization-pass"></a>
+
+## 2026-08-03 16:42:11+08:00 — cuMES optimization pass
+
+**Former path:** `docs/optimization-2026-08-03.md`
+
+**First tracked:** [`b4a24f7`](https://github.com/12ff54e/cuMES/commit/b4a24f7f81ab73851310e7ed5c0f5470fb6cd30a) at 2026-08-03T16:42:11+08:00
+
+This profile-driven pass reduced a W7-X run on a TITAN Xp (sm_61, CUDA 12.1,
+the then-current fast-math build) from 7.786 s to 4.984 s, or 2.63 to
+1.68 ms/effective iteration, while retaining the convergence point and printed
+residual trajectory. The baseline and candidate states were compared across all
+six spectral families; rounding-order changes stayed within the then-current
+tolerance gate.
+
+The pass used Nsight Systems timelines, `cuobjdump --dump-resource-usage`, and
+targeted microbenchmarks because the installed Nsight Compute no longer
+supported Pascal. The dominant original costs were a serial Thomas
+tridiagonal solve, uncoalesced inverse/forward Fourier accumulation, cuFFT,
+and the force/geometry kernels.
+
+Adopted changes were:
+
+- parallel cyclic reduction for the preconditioner solve, reducing roughly
+  600 µs to 73 µs per iteration on the measured W7-X shape;
+- theta-fast coalesced Fourier access and deterministic shuffle-tree forward
+  reduction;
+- splitting inverse accumulation into R/Z/lambda slot groups to reduce shared
+  memory per launch;
+- removing redundant per-iteration synchronizations, producing parity-combined
+  fields only for diagnostics, and removing a dead memset;
+- compact constraint cuFFT sub-batches for de-aliasing and rCon/zCon;
+- larger launch blocks and parallelized small kernels;
+- pinned asynchronous residual copies and parallel de-alias analysis.
+
+Important debugging results included the PCR row-coverage failure at larger
+`ns`, compact-FFT slot indexing and accidental spectrum clearing, and an atomic
+contention regression caused by the initial theta-dimension swap. Each was
+corrected before the final measurement. Experiments involving force/geometry
+launch bounds, a surface-major forward-reduction m-loop, and partial Thomas
+parallelization measured flat or negative and were reverted.
+
+The final recorded per-iteration budget was approximately 397 µs inverse
+accumulation, 391 µs forward reduction, 296 µs main cuFFT work, 167 µs force,
+115 µs geometry, 78/74 µs rCon/PCR, and roughly 250 µs in smaller kernels.
+These are historical measurements, not the current acceptance baseline; the
+current harness, precision policy, and performance gate are documented in
+`performance.md`.
+
+---
+
+<a id="profiling-session-rtx-4090"></a>
+
+## 2026-08-05 15:34:26+08:00 — cuMES profiling session — RTX 4090
+
+**Former path:** `docs/profiling-2026-08-05.md`
+
+**First tracked:** [`d62ae9d`](https://github.com/12ff54e/cuMES/commit/d62ae9df465e00874209ebe23b43bd8051e5cf7c) at 2026-08-05T15:34:26+08:00
+
+This follow-up session ran the then-current solver on an RTX 4090 (sm_89,
+CUDA 12.2) to obtain a modern-GPU profile. Nsight Compute hardware counters
+were unavailable because the host enforced admin-only profiling, so the
+session again used Nsight Systems, resource dumps, and microbenchmarks.
+
+The measured solver loop was about 0.534 ms/iteration and approximately 95%
+GPU-busy. The largest costs were forward reduction (110 µs), the three inverse
+accumulation launches (106 µs total), cuFFT (about 55 µs), force (41 µs),
+geometry (33 µs), and the tridiagonal/residual kernels (about 27 µs each).
+The converged result passed the historical cross-machine comparison; small
+state differences were attributed to architecture-specific cuFFT selection and
+remained below the active tolerance at that time.
+
+Every tested kernel-level change was reverted after measuring flat or negative:
+inverse-accumulation m/k splitting, constant/shared-memory basis tables,
+register-capping launch bounds for force, and the previously rejected
+surface-major forward-reduction restructuring. The durable conclusion was that
+the measured loop was near the structural traffic/latency floor of that code
+state.
+
+The host also imposed about 4.9 s of CUDA context-creation latency per process,
+dominating its 6.6 s end-to-end W7-X runtime. Isolated probes localized this to
+driver primary-context creation rather than cuFFT/cuBLAS setup or JIT caching;
+it was an environment property requiring administrator investigation, not a
+solver optimization target.
+
+This session predates the completed overhaul and therefore does not satisfy the
+current two-architecture acceptance matrix. It remains historical evidence;
+modern-GPU validation is postponed until suitable hardware can run the current
+commit and fixed harness described in `performance.md`.
 
 ---
 

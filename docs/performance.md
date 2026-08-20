@@ -1,12 +1,11 @@
 # cuMES performance
 
-Status date: 2026-08-17 (overhaul completion plan step 3.4 re-measurement).
-This documents what has been *measured* (never claimed), on which hardware,
-and the acceptance policy that governs future optimization. It supersedes the
-historical profiling notes (`optimization-2026-08-03.md`,
-`profiling-2026-08-05.md`) for decision-making; those remain as raw inputs.
+This is the current performance contract: what has been *measured* (never
+claimed), on which hardware, and the acceptance policy that governs future
+optimization. The dated tuning-session notes have been archived in
+`overhaul-history.md`; this document supersedes them for decision-making.
 
-> **2026-08-17 re-measurement note (completion plan step 3.4).** The numbers
+> **Measurement provenance.** The numbers
 > in §2 were re-measured with the overhaul's final build configuration:
 > precise double math (`CUMES_PRECISION_POLICY=verify-double`, no
 > `--use_fast_math` — its removal proved **trajectory byte-identical**, so
@@ -35,8 +34,7 @@ CTest.
 ## 2. Steady-state wall time (TITAN Xp, sm_61)
 
 Measured by the fixed-iteration harness with 300 timed passes after 50 warmup
-passes, three thermally stable repeats each (completion plan step 3.4,
-2026-08-17, `verify-double`):
+passes, three thermally stable repeats each under `verify-double`:
 
 | shape | median µs/iter | p95 µs/iter | repeats |
 | ----- | -------------: | ----------: | ------: |
@@ -77,11 +75,11 @@ build (identity); **Class B** for float, where `test_accumulation.cu` shows a
 ~20× lower summation error (4.6e1 → 2.3e0 on a 1M-term dynamic-range case). It
 does not unlock a lower float `ftol` — the float-state rounding floor dominates.
 
-### 3.2 R/Z vs λ force-kernel split — not adopted (ADR-0002, retired Phase 10)
+### 3.2 R/Z vs λ force-kernel split — not adopted (ADR-0002)
 
 The split reduced registers 108 → 82/54 but was **1.20–1.45× slower**: the
 force kernel is input-traffic-bound, so the two-kernel split doubled the
-geometry/field loads. The prototype was removed in Phase 10; the conclusion
+geometry/field loads. The prototype has been removed; the conclusion
 (§8.10's remaining radial-tile / force+projection fusion ideas trade global
 traffic for registers/shared memory and are unlikely to pay) is the durable
 result.
@@ -89,8 +87,8 @@ result.
 ### 3.3 CUDA Graph capture — integration deferred (ADR-0003)
 
 Empty-kernel microbenchmark: enqueue 1.94 µs/kernel, graph launch 6.43 µs/pass
-for 24 kernels → **~40 µs/pass upper-bound saving**. The 2026-08-17 REAL-pass
-re-measure (see §2) confirmed a ~12.8 µs/pass (≈10%) wall saving on Solovev,
+for 24 kernels → **~40 µs/pass upper-bound saving**. The real-pass
+measurement (see §2) confirmed a ~12.8 µs/pass (≈10%) wall saving on Solovev,
 with bitwise replay fidelity (`test_cuda_graph`). Production graph
 integration is still deferred: it remains a separately reviewable scheduling
 change outside the completion plan's scope, and the W7-X workload is
@@ -114,11 +112,13 @@ memory benefit justifies it. Requirements:
 - the old backend is retained until the new one passes both numerical and
   performance gates.
 
-**Modern-GPU validation status: POSTPONED (2026-08-17).** No second, modern
-CUDA GPU is attached to this machine, so the "one modern architecture" half of
-this policy has not been run — it is neither passed nor failed. Until suitable
-hardware is available, the TITAN Xp measurements above remain the measured
-baseline and every modern-GPU conclusion is explicitly unknown/deferred
+**Modern-GPU validation status: postponed.** No currently available second,
+modern CUDA GPU can run the acceptance matrix, so the "one modern
+architecture" half of this policy has not been run — it is neither passed nor
+failed. The archived RTX 4090 tuning session used an older code state and is
+useful historical evidence, but it is not a current acceptance run. Until
+suitable hardware is available, the TITAN Xp measurements above remain the
+measured baseline and every modern-GPU conclusion is explicitly unknown/deferred
 (the [archived post-overhaul follow-up](overhaul-history.md#post-overhaul-follow-up),
 §6). The deferred procedure is fixed: same
 commit, precision policy, toolkit provenance, warm-up, and measurement method
@@ -131,9 +131,9 @@ Equivalence class precedes any timing claim: Class A requires bitwise equality;
 Class B requires per-operator ULP bounds and identical controller decisions;
 Class C requires independent CPU/VMEC++ agreement and a written ADR.
 
-## 5. Retained historical inputs
+## 5. Decision records and historical inputs
 
-- `optimization-2026-08-03.md`, `profiling-2026-08-05.md` — raw session notes;
-  the TITAN Xp and RTX 4090 measurement scripts remain historical comparison
-  inputs, not acceptance goldens.
+- `overhaul-history.md` archives the TITAN Xp optimization pass and RTX
+  4090 profiling session. Their measurements are historical comparison inputs,
+  not acceptance goldens.
 - `docs/adr/0001..0003` — the decisions behind §3.

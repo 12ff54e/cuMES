@@ -1,12 +1,13 @@
 # cuMES verification strategy
 
-> **Current acceptance note (2026-08-18):** the final reader resource/schema
+> **Current acceptance note:** the final reader resource/schema
 > handoff is closed by `de265cd`; see the archived
 > [v1 reader resource-hardening entry](overhaul-history.md#v1-reader-resource-hardening-handoff).
-> Every available-hardware gate is green. Modern-GPU performance validation is
-> still explicitly POSTPONED.
+> Every hosted gate is green. GPU-only sanitizer, trajectory, and
+> cross-architecture performance validation remain manual and explicitly
+> postponed until suitable hardware is available.
 
-> **Hosted-CI scope (2026-08-18):** `.github/workflows/ci.yml` deliberately has
+> **Hosted-CI scope:** `.github/workflows/ci.yml` deliberately has
 > no self-hosted GPU job. It compiles the CUDA project and runs CPU-only and
 > ASan/UBSan tests on GitHub-hosted Ubuntu 22.04 runners. The CUDA installer is
 > pinned to the immutable v0.2.35 action commit; the invalid `@v0.2` reference
@@ -19,7 +20,7 @@ extracted verbatim (sections 1–7 correspond to §10.1–§10.7), plus the curr
 inventory of what is actually wired into the build, and the change-review
 checklist (§13 of the blueprint) as the appendix.
 
-## Current state (2026-08-17, post-overhaul follow-up closed)
+## Current state
 
 The [completion-plan entry](overhaul-history.md#overhaul-completion-plan)
 (steps 1–4) is landed in four commits (see the
@@ -186,7 +187,7 @@ Structured telemetry is compared directly. Do not parse human `printf` output to
 
 ## 5. Sanitizers and static checks
 
-**Status (2026-08-18): the memcheck matrix exists; hosted CI is CPU-only.**
+**The memcheck matrix exists; hosted CI is CPU-only.**
 The `sanitizer` preset registers racecheck + synccheck variants of the kernel
 tests (`CUMES_ENABLE_EXTRA_SANITIZER_TOOLS`, RUN_SERIAL in CTest — racecheck
 instrumentation exhausts the GPU under parallel runs) and builds dedicated

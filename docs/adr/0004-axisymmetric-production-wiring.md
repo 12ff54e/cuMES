@@ -1,18 +1,19 @@
 # ADR-0004 — axisymmetric transform backend wired into the Solovev production path
 
-Status: accepted (Phase 10 tail, blueprint §8.5)
+Status: accepted and active (blueprint §8.5)
 
 ## Context
 
-Phase 7.1 built `cumes::AxisymmetricOperator` — a direct-poloidal
+The overhaul built `cumes::AxisymmetricOperator` — a direct-poloidal
 synthesis/projection backend for `ntor=0, nzeta=1` that elides the generic
 backend's length-one cuFFT Z2D/D2Z round trips — and `test_axisym_backend`
 proved it Class B ULP-equivalent to the generic `inverseDFTFused`/`forwardDFT`/
 `constraintDealiasBandpass` on identical frozen inputs. It was left *built but
 unwired*: `solverRun` always called the generic backend, so the Solovev shape
 paid the full submission cost of ~24 launches/pass dominated by length-one
-cuFFT transforms. Phase 10's handover listed wiring it in as next step #1 and
-as the prerequisite for re-measuring the CUDA-graph benefit (ADR-0003).
+cuFFT transforms. It was initially left unwired, then promoted to the
+production Solovev path and used for the real-pass CUDA-graph measurement in
+ADR-0003.
 
 ## Decision
 
@@ -56,10 +57,9 @@ shape, above the §10.7 `max(5%, noise floor)` acceptance floor.
   `1877 → 1617 → 2011 (5505)`, `FSQR 9.778e-13`.
 - The generic backend remains selectable via `CUMES_FORCE_GENERIC=1` and is the
   differential oracle in `test_axisym_backend`.
-- This change is the prerequisite for the ADR-0003 graph re-measure: with the
-  length-one cuFFT transforms gone, Solovev's per-pass submission count drops
-  materially, narrowing the graph-capture saving bound. A re-measure is still
-  warranted before pursuing graph integration.
+- The ADR-0003 real-pass re-measurement is complete. It confirmed a modest
+  axisymmetric benefit, but production graph integration remains deferred on
+  complexity and portability grounds.
 
 ## Alternatives considered
 

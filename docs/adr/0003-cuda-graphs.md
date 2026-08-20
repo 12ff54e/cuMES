@@ -1,6 +1,6 @@
 # ADR-0003 — CUDA Graph capture for the pre-control DAG (measured, integration deferred)
 
-Status: accepted (Phase 9, blueprint §8.11)
+Status: accepted; production integration deferred (blueprint §8.11)
 
 ## Context
 
@@ -41,21 +41,17 @@ Against the fixed-iteration benchmark (same GPU):
 
 ## Decision
 
-**Defer the four-variant solver integration.** The measured savings are an
-empty-kernel upper bound and are meaningful only for the submission-bound
-axisymmetric shape. Two higher-leverage steps precede it:
+**Do not integrate CUDA Graphs into the production solver.** The
+`AxisymmetricOperator` is active and the real production DAG has been measured,
+so this is no longer a pending measurement decision. The real-pass saving is
+about 8–10% on the submission-bound axisymmetric shape and about 0.5% on W7-X,
+which does not clear the complexity and portability bar for this codebase.
 
-1. **Wire the Phase-7 `AxisymmetricOperator`** into the Solovev production path.
-   Solovev's 213 µs/iter is dominated by the generic backend's length-1 cuFFT
-   transforms; removing them changes the submission profile far more than a
-   graph would, and the graph question should be re-measured on that new shape.
-2. **Re-measure with real kernels** (not empty) once (1) lands, to confirm the
-   ~40 µs upper bound survives overlap with GPU execution.
-
-The full integration also needs a per-pass kernel-parameter update for the
-`m=1` gauge `zeroZ` scalar (a `cudaGraphExecKernelNodeSetParams` or a
-re-instantiate), plus the first-pass `update_iota_chi` special case for
-`ncurr=0`, so it is not a plain four-variant capture.
+An integration would need several graph variants, a per-pass update for the
+`m=1` gauge `zeroZ` scalar, and the first-pass `update_iota_chi` special case
+for `ncurr=0`. The tested CUDA stack also exposed fragile graph-node parameter
+introspection, pushing a robust implementation toward manual graph construction
+or variant re-instantiation.
 
 ## Consequences
 
@@ -65,10 +61,9 @@ re-instantiate), plus the first-pass `update_iota_chi` special case for
   bit-identical to Phase 8). No graph backend is wired in, so there is no
   maintenance obligation on the hot loop.
 
-## Status update (2026-08-16): re-measured with REAL kernels — still deferred
+## Real-kernel re-measurement
 
-The ADR's stated next step — "re-measure with real kernels once the
-axisymmetric wiring lands" — is now done. ADR-0004 landed the
+ADR-0004 landed the
 `AxisymmetricOperator` production wiring (28.6% median win, Solovev
 214.6 → 153.2 µs/iter), and a new harness `cumes_benchmark_graph_realpass`
 (`benchmarks/graph_realpass.cu`) captures the **real** per-iteration DAG —
@@ -116,7 +111,7 @@ Interpretation:
   struct-by-value kernel parameter also triggered an illegal memory access in
   the manual path; plain-int parameters work.
 
-Updated decision: **remain deferred.** The measured end-to-end gain (~8% on
+The decision remains **deferred**. The measured end-to-end gain (~8% on
 the one submission-bound shape, 0.5% on the GPU-bound shape) is real but does
 not clear the complexity bar for a pedagogical codebase — especially with the
 CUDA 12.1 graph-node API fragility pushing an integration toward manual graph

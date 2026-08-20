@@ -1,10 +1,17 @@
 # cuMES CUDA overhaul blueprint
 
-Status: architecture proposal updated after the first containment series  
+Status: implemented; retained as the design and migration rationale
 Legacy numerical baseline: `7bc9d04dbc36331acee7025fe6a136275ed61f5e`  
 Input/output integration baseline: remote `eaba051a24a8891da08d9c8c65ba34e99eaad85b`  
 Current audited baseline: remote `631a16a4c25dde1c94fb001070f62c4200e533c8`  
 Reference algorithm: VMEC++ 0.7.0, pinned to an exact source revision when the baseline is frozen
+
+The audit and phase descriptions below intentionally preserve the proposal's
+baseline evidence and migration sequence. They are not current implementation
+inventories. Completion is recorded in §11; the implemented architecture is
+documented authoritatively in `architecture.md`, `data-layout.md`, `mathematics.md`,
+`performance.md`, and `verification.md`; `overhaul-history.md` contains the
+dated execution record.
 
 ## 1. Executive decision
 
@@ -412,22 +419,15 @@ All CUDA ownership lives under `runtime`:
 - `PinnedBuffer<T>`: pinned host transfer/control records;
 - `Stream`: nonblocking stream RAII;
 - `Event`: timing/dependency event RAII, never an implicit synchronization;
-- `DeviceContext`: selected device, compute stream, optional auxiliary/diagnostic stream, memory pool, cuFFT plan/work-area cache, and capabilities;
+- application-scoped composition of a `Stream`, stage-local `DeviceArena`, and operator-owned cuFFT plans/work areas; no aggregate `DeviceContext` remains;
 - unified `CUDA`, `cuFFT`, and optional library status conversion to `Result`/exception at the application boundary.
 
 No physics/numerics source may call `cudaMalloc`, `cudaFree`, `cudaDeviceSynchronize`, `exit`, or use the legacy default stream. Operators receive a stream and enqueue work. Debug builds may optionally add a checked synchronization after a named range; release builds check submission without adding fences.
 
-```cpp
-class DeviceContext {
- public:
-  explicit DeviceContext(const RuntimeOptions&);
-  cudaStream_t compute_stream() const noexcept;
-  cudaStream_t auxiliary_stream() const noexcept;
-  CufftPlanCache& fft_plans() noexcept;
-  DeviceMemoryPool& memory_pool() noexcept;
-  RuntimeCapabilities capabilities() const noexcept;
-};
-```
+`cumes_cuda_runtime` is a header-only interface target that exposes these RAII
+types and central error boundaries. `main` owns one explicit nonblocking
+compute stream for the run; each stage owns its arena and operators. This
+composition replaced the blueprint's proposed aggregate `DeviceContext`.
 
 ### 6.5 State and workspace ownership
 
@@ -437,7 +437,7 @@ Lifetimes are explicit:
 
 | Lifetime            | Owned objects                                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Run                 | validated problem, device context, immutable input/provenance, output spec, telemetry sink                    |
+| Run                 | validated problem, compute stream, immutable input/provenance, output spec, telemetry sink                    |
 | Resolution          | mode/quadrature tables, trigonometric tables, transform plans, graph variants                                 |
 | Stage               | state/velocity slabs, state-only checkpoint, radial profiles, geometry/force/preconditioner workspaces, arena |
 | Iteration           | non-owning views, scalar control record, event dependencies                                                   |
@@ -961,7 +961,7 @@ the §13 change-review checklist is its appendix).
 
 ## 11. Migration plan
 
-**Status (2026-08-16): Phases 0–11 are COMPLETE.** The strangler-fig migration
+**Implementation status: Phases 0–11 are complete.** The strangler-fig migration
 (steps 1–13, archived with the Phase 11 handovers in
 `docs/overhaul-history.md`) finished with step 13 (legacy-struct deletion) and
 the deferred `dynSharedBase()` removal — every step verified bit-identical
@@ -1021,7 +1021,7 @@ Exit gate: normalized Solovev/W7-X configuration goldens pass; new and legacy ou
 
 Deliverables:
 
-- `DeviceContext`, buffer/stream/event RAII, typed views, contiguous state/velocity slabs, and a state-only checkpoint slab;
+- buffer/stream/event RAII, typed views, contiguous state/velocity slabs, and a state-only checkpoint slab (the proposed aggregate `DeviceContext` was ultimately decomposed into run- and stage-scoped owners);
 - legacy kernels wrapped behind views without changing indexing or arithmetic;
 - centralized CUDA/cuFFT error handling.
 
@@ -1115,12 +1115,13 @@ int main(int argc, char** argv) {
   if (!problem || !output) return report_error(problem, output);
 
   try {
-    DeviceContext device(problem->runtime_options());
-    MultigridSolver<double> solver(device, *problem);
-    SolveOutcome<double> outcome = solver.solve();
+    DeviceParams<double> params = init_params<double>(*problem);
+    SpectralStorage<double> seed = init_state<double>(params, *problem);
+    Stream compute_stream;
+    SolveOutcome<double> outcome = MultigridSolver<double>::run(
+        params, *problem, std::move(seed), compute_stream.get());
 
-    EquilibriumSnapshot snapshot =
-        copy_snapshot_to_host(outcome.state, device.compute_stream());
+    EquilibriumSnapshot snapshot = snapshot_from_device(outcome.state);
     auto written = output->writer().write_atomic(
         snapshot, outcome.report, output->spec());
     if (!written) return report_error(written.error());

@@ -1,9 +1,7 @@
 # cuMES architecture
 
-Status date: 2026-08-17 (overhaul completion plan steps 1–4 landed; commits
-48713b2 safety, 4363e71 config/I-O, d602d2c runtime/performance, and the
-release-gate commit). This document describes the architecture as it exists
-after the overhaul: the tested operator boundaries, the build/library split,
+This document describes the current post-overhaul architecture: the tested
+operator boundaries, the build/library split,
 the device safety predicates, the single-snapshot I/O path, and the precision
 policies. The normative numerical contracts live in `docs/mathematics.md`;
 the layout contracts in `docs/data-layout.md`; the verification tiers/gates
@@ -33,7 +31,7 @@ trajectories bit-for-bit.
   (`RadialProfileViews`, `BaseGeometryHalfViews`, `GeometryParityViews`, …).
 - **Host-side `cumes` namespace** — `include/cumes/*` + `src/cumes/*`. Validated
   config model (`ProblemSpec` → `ValidatedProblem`), RAII CUDA runtime
-  (`DeviceBuffer`, `DeviceArena`, `Stream`, `DeviceContext`), typed
+  (`DeviceBuffer`, `PinnedBuffer`, `DeviceArena`, `Stream`, `Event`), typed
   non-owning views (`SpectralView`, `RealFieldView`, the parity bundles), the
   output/IO stack, and the host orchestration (`MultigridSolver`,
   `StageSolver`, `IterationController`, …).
@@ -54,7 +52,7 @@ monolithic compile (blueprint §9):
 | `cumes_config_json` | host C++ | `validation_report`, `validated_problem`, `json_reader` |
 | `cumes_io_host` | host C++ | `output_spec`, `run_report`, `equilibrium_snapshot`, binary v0/v1, checkpoint |
 | `cumes_io` | host C++ (the legacy reference writer links cudart for D2H) | the full `make_writer` dispatch + host-only NetCDF/HDF5 adapters (the ONLY target with the backend headers and defines) |
-| `cumes_cuda_runtime` | host CUDA-runtime | centralized `check_cuda`/`check_cufft`, `DeviceBuffer`/`DeviceArena` |
+| `cumes_cuda_runtime` | header-only CUDA-runtime interface | centralized `check_cuda`/`check_cufft` and buffer/stream/event RAII; propagates only the CUDA runtime/cuFFT links |
 | `cumes_cuda_double` / `cumes_cuda_float` | device | the nine `*_double.cu` / `*_float.cu` operator TUs |
 | `cuMES` | executable | `main.cu`, links only the TU matching `Real` |
 | `cumes_benchmark_fixed_iteration`, `cumes_benchmark_graph_overhead`, `cumes_benchmark_graph_realpass` | bench | §8.1 harness, graph microbenchmark, real-pass graph measurement |
@@ -64,7 +62,7 @@ old non-templated `dynSharedBase()` shared-memory indirection removable: since
 each TU instantiates exactly one scalar type, the kernels now declare their
 dynamic shared memory directly as `extern __shared__ T[]`. The switch was
 expected to be a Class B re-freeze but measured **bit-identical** on both
-configs (2026-08-16), so the frozen trajectory baseline stands unchanged.
+reference configurations, so the frozen trajectory baseline stands unchanged.
 
 ## 3. Production per-iteration pipeline
 
@@ -111,7 +109,7 @@ build and the boundary headers:
   CUDA calls;
 - no library calls `exit()`; only `main.cu` maps `RunStatus` to an exit code.
 
-## 5. What Phase 10 and migration step 13 retired
+## 5. Retired compatibility internals
 
 Retired in Phase 10 (dead code only — both configs re-verified bit-identical):
 
@@ -137,14 +135,14 @@ bit-identical, both configs re-verified):
   `precon.cuh`, `constraint.cuh`, `refine.cuh`) are all gone; no legacy structs
   remain.
 
-Emitted after Phase 10: `configs/schema-v1.json` freezes the `cumes-config-v1`
+`configs/schema-v1.json` freezes the `cumes-config-v1`
 normalized-config schema (blueprint §6.1, `ValidatedProblem::normalize_to_json`,
 pinned by the `tests/fixtures/*.normalized.json` goldens) and, under
 `x-cumes-on-disk-contracts`, the legacy-v0 / versioned-v1 / checkpoint-v1
 binary container layouts (blueprint §6.13).
 
-Wired in after Phase 10 (see `docs/adr/0004`): `AxisymmetricOperator` (Phase
-7.1) now runs the Solovev production path — `StageSolver::run` builds it when
+`AxisymmetricOperator` now runs the Solovev production path (see
+`docs/adr/0004`): `StageSolver::run` builds it when
 `ntor=0/nzeta=1` and `solverRun` selects `enqueue_inverse`/`enqueue_rzcon`/
 `enqueue_forward`/`constraintComputeAxisym` instead of the generic cuFFT calls
 (`CUMES_FORCE_GENERIC=1` restores the generic backend). It is a Class B

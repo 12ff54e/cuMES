@@ -1,6 +1,6 @@
 # ADR-0002 — R/Z vs lambda force-kernel split (measured, not adopted)
 
-Status: accepted (Phase 9, blueprint §8.10)
+Status: accepted negative result; prototype retired (blueprint §8.10)
 
 ## Context
 
@@ -12,11 +12,11 @@ families into two kernels (each with a smaller live working set) wins wall time.
 
 ## Decision
 
-Split `forcesKernel` into `rzForcesKernel` (12 families) and
-`lambdaForcesKernel` (4 families) behind `computeForcesSplit`, copying the
-per-family arithmetic verbatim. The split is a **differential prototype**, not a
-production swap: `computeForces` (the monolith) remains the path `solverRun`
-calls.
+Keep the monolithic `forcesKernel` as the sole production path. A differential
+prototype split it into `rzForcesKernel` (12 families) and
+`lambdaForcesKernel` (4 families), copying the per-family arithmetic verbatim,
+to measure the occupancy hypothesis. The split was bit-identical but slower,
+so the prototype and its dedicated test were retired after the measurement.
 
 ## Measured result (TITAN Xp, sm_61)
 
@@ -38,14 +38,11 @@ second launch. That dominates the occupancy gain.
 
 - The monolith is retained as the production force path; **no production wiring
   was changed** (the Solovev trajectory is bit-identical to Phase 8).
-- `computeForcesSplit` + the two kernels are retained solely as the differential
-  gate that pins the monolith's behavior; they are not a selectable backend and
-  carry no maintenance obligation beyond the test. They may be deleted in
-  Phase 10 (retire compatibility internals).
-- `test_force_split` is a permanent regression: it proves monolith ≡ split
-  bitwise and records the measured penalty, so the split is not re-attempted
-  without new evidence (e.g. a memory-layout change that removes the double
-  load).
+- The split implementation and `test_force_split` are no longer in the tree.
+  `test_force_reference.cu` plus the frozen Solovev/W7-X trajectories now pin
+  the production monolith.
+- The split should not be re-attempted without new evidence, such as a layout
+  change that avoids reloading the shared geometry/field inputs.
 
 ## Alternatives considered
 
@@ -55,14 +52,3 @@ second launch. That dominates the occupancy gain.
   is unlikely to pay off and would need its own measured gate.
 - **Force-plus-projection fusion** (§8.10, high risk): avoid materializing the
   real force arrays; deferred for the same reason.
-
-## Status update (Phase 10)
-
-The split prototype was retired in Phase 10 (retire compatibility internals):
-`computeForcesSplit`, `rzForcesKernel`, `lambdaForcesKernel`, and
-`test_force_split.cu` were removed, since `computeForces` (the monolith) is the
-sole production path and is pinned by `test_force_reference.cu` (scalar CPU
-reference) plus the frozen Solovev/W7-X trajectories. The durable conclusion of
-this ADR — the force kernel is input-traffic-bound, so register-reduction
-strategies do not pay — remains, and this document is retained as the record of
-the measured negative result.

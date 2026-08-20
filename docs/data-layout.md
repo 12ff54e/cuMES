@@ -1,7 +1,7 @@
 # cuMES data layout
 
-Status date: 2026-08-16 (Phase 10). These are the storage contracts the kernels
-and the typed views enforce. They are tested by `test_fourier`, the operator
+These are the current storage contracts enforced by the kernels and typed
+views. They are tested by `test_fourier`, the operator
 view tests, and the golden I/O tests, and are normative for any migration
 (mathematics.md §1–§2).
 
@@ -32,7 +32,9 @@ offset(component, mode, surface) = component * (mnmax * ns) + mode * ns + surfac
 The order is **Rcc, Zsc, Lsc** (the `m`-parity-even "cos/cos, sin/cos,
 sin/cos" families) then **Rss, Zcs, Lcs** (the odd "sin/sin, cos/sin,
 cos/sin" families). This is the `SpectralComponent` enum order and the order of
-the six pointers in the legacy `SpectralState`.
+the six views carved from each contiguous state, velocity, residual, or
+checkpoint slab. The retired `SpectralState` pointer bundle is not part of the
+current API.
 
 The physical amplitude convention: the state stores plain physical Fourier
 amplitudes; the forward quadrature projects onto the orthonormal basis with

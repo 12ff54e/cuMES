@@ -1,6 +1,6 @@
 # ADR-0001 — double accumulation for norm reductions (mixed-float)
 
-Status: accepted (Phase 9, blueprint §8.8/§8.12)
+Status: accepted and active (blueprint §8.8/§8.12)
 
 ## Context
 
@@ -20,11 +20,19 @@ Introduce `cumes::NormAccum<T>` (`include/cumes/numerics/accumulation.hpp`):
 - `NormAccum<double>::type = double` — the verified double build is unchanged.
 
 The three kernels accumulate in `NormAccum<T>::type` (their shared-memory trees
-are widened to match) and still store the scalar into the `T` control record.
-The *terms* keep their `T` arithmetic; only the summation width changes. This is
-the minimal reading of §8.8's "accumulation type is a policy, defaulting to
-double for norms" — a full double `ControlRecord` (double invariants threaded
-through the host controller) is a separate, larger follow-up.
+are widened to match). Their *terms* keep `T` arithmetic; only the summation
+width changes. The results are stored in a double `ControlRecord` in both
+builds, so a float run does not round the control signal back to `float` before
+the host controller consumes it.
+
+The record contains 16 scalars: Jacobian statistics `[0..3]`, invariant
+residuals `[4..6]`, preconditioned residuals `[7..9]`, and force-normalization
+factors `[10..15]`. `EquilibriumOperator::d_control_` is a
+`DeviceBuffer<ControlRecord>`, its D2H mirror is
+`PinnedBuffer<ControlRecord>`, and
+`IterationController<double>` makes every convergence, damping, and restart
+decision. Descent still casts the resulting action to `T` at the kernel
+boundary, and `SolverResult<T>` remains output-facing `T`.
 
 ## Consequences
 
@@ -41,37 +49,16 @@ through the host controller) is a separate, larger follow-up.
 
 ## Alternatives considered
 
-- **Full double `ControlRecord`** (`double invariant[3]` etc. threaded through the
-  host controller): strictly better, but it changes the host/controller scalar
-  types and the `DeviceBuffer<T>`/`PinnedBuffer<T>` control path. Deferred as a
-  follow-up; the accumulation-only change captures most of the benefit cheaply.
+- **Accumulate in double but store a `T` control record**: this was the initial
+  implementation. It was superseded because it rounded the improved float
+  reductions immediately before the host used them.
 - **Always-float accumulation**: the prior default; rejected because the
   summation error is avoidable and indistinguishable from a real residual
   signal in a float build.
 
-## Status update (2026-08-16): full double `ControlRecord` landed
+## Verification of the full double control path
 
-The deferred follow-up is implemented: the per-pass control record — the 16
-scalars {Jacobian stats [0..3], invariant residuals [4..6], preconditioned
-residuals [7..9], force-norm factors [10..15]} — is now **double in both
-builds**, so the double accumulations reach the host controller unrounded:
-
-- Device stores widen: `computeResidualsKernel`, `forceNormReduceKernel`,
-  `rzNormKernel` (already accumulating in `NormAccum<T>::type` = double for
-  mixed-float) now store `double` instead of rounding to `T`;
-  `jacobianStatsKernel` stores its (T-accumulated) stats into the double
-  record unchanged. `EquilibriumOperator::d_control_` is a
-  `DeviceBuffer<double>`; the pinned D2H mirror is `PinnedBuffer<double>`.
-- Host derivation widens: `plainPerEl`, the force-norm normalization factors
-  (`finalizeForceNorms`), the invariant/preconditioned triple arithmetic, and
-  the Jacobian gate all run in double; the controller is
-  `IterationController<double>` in both builds (its `delta_t`/`fsqz_prev`
-  accessors and all decisions are double).
-- The descent physics stays `T`: the existing double `DescentAction` casts to
-  `T` at the kernel boundary exactly as before. `SolverResult<T>` stays `T`
-  (output-facing; float builds now report the float-rounded double residual).
-
-Verification:
+The active implementation was verified as follows:
 
 - **Class A for the double build** — every widened expression is an identity
   when `T = double`: Solovev `251→199→456` FSQR 9.583e-17 and W7-X
