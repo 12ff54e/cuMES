@@ -1537,11 +1537,15 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
                        it2_before, it1_before);
 #endif
             restoreState();
+#ifdef DUMP_CUMES_VERIFY
+            // Event line compiled out of release (fast) builds along with the
+            // rest of the dump machinery; the iteration table still gets a row.
             printf("  -> BAD JACOBIAN (invalid √g: min(signJ·√g)=%.3e "
                    "max|√g|=%.3e nonfinite=%.0f at jH=%d) delt=%.3e\n",
                    (double)js.min_oriented, (double)js.max_abs,
                    (double)js.nonfinite_count,
                    js.min_index / p.nZnT, (double)controller.delta_t());
+#endif
             printIterRow(controller.effective_iteration(), T(1.0), T(1.0),
                          T(1.0), controller.delta_t());
             continue;
@@ -1605,8 +1609,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
                        it2_before, it1_before);
 #endif
             restoreState();
+#ifdef DUMP_CUMES_VERIFY
+            // Event line compiled out of release (fast) builds (see above).
             printf("  -> BAD JACOBIAN (non-finite residuals) delt=%.3e\n",
                    (double)controller.delta_t());
+#endif
             printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
                          controller.delta_t());
             continue;
@@ -1622,7 +1629,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
             // don't advance it, matching vmecpp's bad_resets counter and the
             // ITER column of the table above (the raw pass count, iter+1,
             // would disagree after any restart).
+#ifdef DUMP_CUMES_VERIFY
+            // Event line compiled out of release (fast) builds (see above).
             printf("  -> CONVERGED at iter %d\n", controller.effective_iteration());
+#endif
             printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i, fsql_i,
                          controller.delta_t()); break;
         }
@@ -1678,10 +1688,15 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage, const DeviceParams
             // discarded by the control block's RestartIteration).
             restoreState();
             controller.after_descent(decision);
+#ifdef DUMP_CUMES_VERIFY
+            // The restart event lines (BAD JACOBIAN / BAD PROGRESS) are
+            // compiled out of release (fast) builds with the rest of the
+            // dump machinery (see the other event-line gates above).
             printf("  -> %s (iter2=%d) delt=%.3e\n",
                    decision.reason == cumes::RestartReason::kBadJacobian
                        ? "BAD JACOBIAN" : "BAD PROGRESS",
                    controller.effective_iteration(), (double)controller.delta_t());
+#endif
         } else {
             controller.after_descent(decision);  // advances iter2 on good passes
         }
