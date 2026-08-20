@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Render 3D figures of the converged W7-X equilibrium (cuMES state).
 
-Reads the legacy binary v0 state container (docs/output-formats.md §3),
-reconstructs real-space geometry with the solver's exact conventions
+Reads any solver state container (docs/output-formats.md): legacy binary
+v0, versioned binary (v1), checkpoint (CUMECKP1), NetCDF, or HDF5.
+Reconstructs real-space geometry with the solver's exact conventions
 (parity-split e/o arrays, odd-m scalxc regularization, staggered half-grid
 metric — src/geometry_impl.cuh), solves the ncurr=1 current constraint for
 chi' per plotted surface (ncurr1FinalizeKernel), and renders the full
 5-period torus colored by |B| with light-source shading.
 
-One PNG file per view: <out>_perspective.png and <out>_top.png. The
-magnetic axis is the converged axis extracted from the state (m=0 content
-of the innermost surface, seed_state.hpp convention: nfp-fold modulation).
+One PNG file per view: <out>_perspective.png, <out>_top.png,
+<out>_combined.png (both views side by side), and <out>_slices.png (the
+top view with a column of three RZ poloidal cross-sections: bean,
+transition, triangle). The magnetic axis is the converged axis extracted
+from the state (m=0 content of the innermost surface, seed_state.hpp
+convention: nfp-fold modulation).
 
 Two self-checks run before rendering:
   1. the state LCFS (j = ns-1) must match the input rbc/zbs boundary;
@@ -28,6 +32,7 @@ import struct
 import numpy as np
 from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
+from matplotlib.collections import LineCollection
 from PIL import Image as PILImage
 from scipy.interpolate import RegularGridInterpolator
 
@@ -45,12 +50,52 @@ CURTOR = 5000.0
 
 
 def load_state(path):
-    """Load the v0 container: ns, mnmax, six mode-major families."""
+    """Load the converged state from any solver output container
+    (docs/output-formats.md): legacy binary v0, versioned binary (v1),
+    checkpoint (CUMECKP1), NetCDF, or HDF5. Returns ns, mnmax and the six
+    mode-major families (index = mode * ns + surface)."""
+    fam_names = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
+    with open(path, "rb") as f:
+        head = f.read(16)
+    if head.startswith(b"CUMES001") or head.startswith(b"CUMECKP1"):
+        # Versioned binary: magic(8), version(4) [, precision(4) for the
+        # checkpoint], ns(4), mnmax(4), then the six families.
+        with open(path, "rb") as f:
+            f.seek(8)
+            version = struct.unpack("<i", f.read(4))[0]
+            if head.startswith(b"CUMECKP1"):
+                struct.unpack("<i", f.read(4))[0]  # precision (always double)
+            ns, mnmax = struct.unpack("<ii", f.read(8))
+            n = ns * mnmax
+            fams = {name: np.frombuffer(f.read(8 * n), dtype="<f8")
+                    for name in fam_names}
+        return ns, mnmax, fams
+    if head.startswith(b"CDF"):
+        # NetCDF (v0/v1): the six families are 2-D [surface, mode] datasets.
+        from scipy.io import netcdf_file
+        with netcdf_file(path, "r", mmap=False) as nc:
+            ns = nc.dimensions["ns"]
+            mnmax = nc.dimensions["mnmax"]
+            fams = {name: np.asarray(nc.variables[name][:], dtype="<f8").T.ravel()
+                    for name in fam_names}
+        return ns, mnmax, fams
+    if head.startswith(b"\x89HDF"):
+        # HDF5 (v0/v1): same [surface, mode] dataset layout.
+        import h5py
+        with h5py.File(path, "r") as f5:
+            fams = {}
+            ns = mnmax = None
+            for name in fam_names:
+                dset = np.asarray(f5[name][:], dtype="<f8")  # [surface, mode]
+                ns, mnmax = dset.shape
+                fams[name] = dset.T.ravel()
+        return ns, mnmax, fams
+    # Otherwise the legacy binary v0 payload (no magic).
     with open(path, "rb") as f:
         ns, mnmax = struct.unpack("<ii", f.read(8))
         n = ns * mnmax
         fams = {name: np.frombuffer(f.read(8 * n), dtype="<f8")
-                for name in ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")}
+                for name in fam_names}
     return ns, mnmax, fams
 
 
@@ -237,12 +282,15 @@ def periodic_close(A):
     return A
 
 
-def trim_white(path, pad_px=12, title_gap_px=8):
+def trim_white(path, pad_px=12, title_gap_px=8, center="title"):
     """Post-process the saved PNG: crop to the non-white content, collapse
-    the white strip between the suptitle and the figure (3-D projections
+    the white strip between the title and the figure (3-D projections
     reserve margin for rotation, so bbox_inches='tight' cannot remove it),
-    and pad the narrower side so the title ends up horizontally centered.
-    The topmost ink band is assumed to be the suptitle."""
+    and pad the narrower side so the requested anchor ends up horizontally
+    centered. center='title' centers on the topmost ink band (the title);
+    center='body' centers on the median x of the body ink below it, which
+    is robust against an asymmetric colorbar and centers the torus itself
+    (with an axes title, both coincide)."""
     img = PILImage.open(path).convert("RGB")
     a = np.asarray(img)
     nonwhite = ~(a > 250).all(axis=2)
@@ -259,9 +307,29 @@ def trim_white(path, pad_px=12, title_gap_px=8):
         0.5 * (xs.min() + xs.max())
     below = np.where(rows[t1:])[0]
     body_top = t1 + (below[0] if len(below) else 0)
-    # Title piece and body piece; merge when they already touch.
+    # Anchor = the horizontal midpoint of the body ink extent, colorbar
+    # included, so the whole figure block (torus + colorbar) is centered
+    # and both side margins balance.
+    cut = int(0.92 * a.shape[1])  # separates the title text from the colorbar
+    body_xs = xs[ys >= body_top]
+    anchor = 0.5 * (body_xs.min() + body_xs.max()) \
+        if center == "body" and len(body_xs) else title_cx
+    # The 3-D box is not centered in the axes window, so the title (placed
+    # at the window center by matplotlib) must be shifted onto the torus
+    # center in post. The shift moves the title text only; the colorbar
+    # label inside the same band stays put.
+    title_shift = 0
+    tx0 = tx1 = 0
+    if center == "body":
+        band_mask = band_xs < cut
+        if band_mask.any():
+            tx0, tx1 = band_xs[band_mask].min(), band_xs[band_mask].max()
+            title_shift = int(round(anchor - 0.5 * (tx0 + tx1)))
+    # Title piece and body piece; merge when they already touch. The body
+    # piece ends at its own ink bottom (the pre-crop image may carry the
+    # axes window's white margin below the projection).
     pieces = [(max(row_ys[0] - pad_px, 0), t1 + pad_px),
-              (max(body_top - pad_px, 0), a.shape[0])]
+              (max(body_top - pad_px, 0), min(ys.max() + pad_px, a.shape[0]))]
     merged = []
     for lo, hi in pieces:
         if merged and lo <= merged[-1][1] + 1:
@@ -275,13 +343,19 @@ def trim_white(path, pad_px=12, title_gap_px=8):
     y_cursor = 0
     for i, (lo, hi) in enumerate(merged):
         piece = img.crop((x0, lo, x1 + 1, hi))
+        if i == 0 and title_shift:
+            white = PILImage.new("RGB", (tx1 - tx0 + 1, piece.height),
+                                 (255, 255, 255))
+            piece.paste(white, (tx0 - x0, 0))
+            text = img.crop((tx0, lo, tx1 + 1, hi))
+            piece.paste(text, (tx0 - x0 + title_shift, 0))
         canvas.paste(piece, (0, y_cursor))
         y_cursor += piece.height + (title_gap_px if i < len(merged) - 1 else 0)
     w, h = canvas.size
-    # Title center inside the canvas: c = title_cx - x0. Padding the canvas
+    # Anchor center inside the canvas: c = anchor - x0. Padding the canvas
     # with L left / R right (L + c = (w + L + R - 1)/2) gives
     # L = w - 1 - 2c for L >= 0, else R = 2c - (w - 1).
-    c = title_cx - x0
+    c = anchor - x0
     shift = int(round((w - 1) - 2.0 * c))
     out = PILImage.new("RGB", (w + abs(shift), h), (255, 255, 255))
     out.paste(canvas, (max(shift, 0), 0))
@@ -517,13 +591,16 @@ def main():
                             pad=0.01)
         cbar.set_label("|B| (T)", fontsize=10)
         cbar.ax.tick_params(labelsize=9)
+        # The title is re-centered onto the torus by trim_white (the 3-D
+        # box is not centered in the axes window, so matplotlib-side
+        # placement cannot do it).
         fig.suptitle(
             f"W7-X standard configuration — cuMES equilibrium ({label})",
             fontsize=11, y=1.01)
         out_png = f"{base}_{suffix}.png"
         fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close(fig)
-        trim_white(out_png)
+        trim_white(out_png, center="body")
         print(f"saved {out_png}", flush=True)
 
     # ---- combined two-panel figure (one shared colorbar) -----------------
@@ -547,7 +624,66 @@ def main():
     out_png = f"{base}_combined.png"
     fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-    trim_white(out_png)
+    trim_white(out_png, center="body")
+    print(f"saved {out_png}", flush=True)
+
+    # ---- top view + poloidal cross-section slices -------------------------
+    # One column of three RZ-plane contours at fixed toroidal angles (the
+    # bean, the intermediate transition, and the triangle cross-sections),
+    # to the left of the top-view 3D plot.
+    print("rendering top view + RZ slices ...", flush=True)
+    zeta_cuts = [(0.0, "bean  (φ = 0°)"),
+                 (0.5 * np.pi, "transition  (φ = 18°)"),
+                 (np.pi, "triangle  (φ = 36°)")]
+    # rect reserves a clean strip for the suptitle so trim_white can
+    # separate it from the slice column without ambiguity.
+    fig = plt.figure(figsize=(7.6, 7.2), dpi=100, layout="constrained")
+    fig.get_layout_engine().set(rect=(0.0, 0.0, 1.0, 0.93))
+    gs = fig.add_gridspec(3, 2, width_ratios=[1.0, 1.7], height_ratios=[1, 1, 1])
+    axs = [fig.add_subplot(gs[i, 0]) for i in range(3)]
+    ax3d = fig.add_subplot(gs[:, 1], projection="3d")
+    draw_scene(ax3d, dict(elev=90.0, azim=-90.0))
+    r_all = np.concatenate([s["r12"].ravel() for s in surf_f])
+    z_all = np.concatenate([s["z12"].ravel() for s in surf_f])
+    Rmin, Rmax = r_all.min(), r_all.max()
+    Zmax = max(abs(z_all.min()), abs(z_all.max()))
+    for i, (zc, name) in enumerate(zeta_cuts):
+        idx = int(round(zc / (2.0 * np.pi) * nzt_r)) % nzt_r
+        ax = axs[i]
+        for k, s in enumerate(surf_f):
+            R = np.append(s["r12"][:, idx], s["r12"][0, idx])
+            Z = np.append(s["z12"][:, idx], s["z12"][0, idx])
+            B = np.append(s["bmag"][:, idx], s["bmag"][0, idx])
+            pts = np.stack([R, Z], axis=1)
+            segs = np.stack([pts[:-1], pts[1:]], axis=1)
+            lc = LineCollection(segs, cmap=cmap, norm=norm,
+                                linewidths=2.6 if k == 0 else 1.9)
+            lc.set_array(B[:-1])
+            ax.add_collection(lc)
+        Rax = sum(fams["rmncc"][nn * ns + 1] * np.cos(nn * zc)
+                  for nn in range(NTOR + 1))
+        Zax = sum(fams["zmncs"][nn * ns + 1] * np.sin(nn * zc)
+                  for nn in range(NTOR + 1))
+        ax.plot([Rax], [Zax], "o", color="#0b0b0b", markersize=3.0)
+        ax.set_xlim(Rmin - 0.05, Rmax + 0.05)
+        ax.set_ylim(-1.05 * Zmax, 1.05 * Zmax)
+        ax.set_aspect("equal")
+        ax.set_title(name, fontsize=9, pad=2)
+        ax.tick_params(labelsize=8)
+        ax.set_ylabel("Z (m)", fontsize=9)
+        if i < 2:
+            ax.set_xticklabels([])
+        else:
+            ax.set_xlabel("R (m)", fontsize=9)
+    cbar = fig.colorbar(mappable, ax=ax3d, shrink=0.6, aspect=20, pad=0.01)
+    cbar.set_label("|B| (T)", fontsize=10)
+    cbar.ax.tick_params(labelsize=9)
+    fig.suptitle("W7-X standard configuration — cuMES converged equilibrium "
+                 "(top view + poloidal cross-sections)", fontsize=11, y=1.01)
+    out_png = f"{base}_slices.png"
+    fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    trim_white(out_png, center="body")
     print(f"saved {out_png}", flush=True)
 
 
