@@ -91,7 +91,8 @@ cross-architecture claim is made (see `docs/performance.md`).
   warnings-as-errors)**: the full CTest suite — unit tests incl. the
   manufactured safety-predicate and event-DAG suites, compute-sanitizer
   memcheck AND initcheck variants of the kernel-driving tests, the CLI
-  strict-vs-compatibility policy gate, the end-to-end publication gate,
+  policy gate (strict schema + input-side `--compatibility` warn-and-ignore),
+  the end-to-end publication gate,
   and the benchmark smoke. (No test-count is embedded here: it changes
   whenever a sanitizer variant or backend fixture is added.) The frozen
   trajectory oracle: Solovev `251→199→456` FSQR 9.583e-17 and W7-X
@@ -114,10 +115,8 @@ cross-architecture claim is made (see `docs/performance.md`).
   The policy and its flags are recorded in every v1 output.
 - **Backend matrix**: verify (NetCDF+HDF5), netcdf-only, hdf5-only, and
   nobackend builds each run their suites — all four configurations exist
-  as presets and as hosted CI matrix entries; the v0 NetCDF writer is
-  byte-identical to the frozen schema dumps, the HDF5 v0 adapter is
-  layout-exact (libhdf5 embeds a per-second timestamp), and v1 containers
-  round-trip the complete RunReport + restart metadata.
+  as presets and as hosted CI matrix entries; the v1 containers round-trip
+  the complete RunReport + restart metadata in every linked backend.
 - **CI**: `.github/workflows/ci.yml` — hosted Ubuntu 22.04 only, with the
   verify/nobackend/netcdf-only/hdf5-only/float build matrix, CPU-only reader/
   configuration/controller tests, and ASan/UBSan host tests. There is no
@@ -180,8 +179,7 @@ Maintain the following tiers:
 - `smoke`: a few iterations of small axisymmetric and 3D manufactured cases;
 - `short-trajectory`: 25–100 iterations of Solovev and W7-X with component checkpoints at selected iterations;
 - `full-regression`: complete multigrid Solovev and W7-X, including prescribed current, constraint resets, and restarts;
-- `legacy-compatibility`: existing JSON fixtures and old binary reader/writer;
-- `I/O-matrix`: binary plus NetCDF/HDF5 with none/one/both optional libraries, recognized/unknown suffixes, unwritable paths, float-to-on-disk conversion, schema inspection, and restart round trip.
+- `I/O-matrix`: binary plus NetCDF/HDF5 with none/one/both optional libraries, recognized/unknown suffixes, unwritable paths, float-to-on-disk conversion, and restart round trip.
 
 Structured telemetry is compared directly. Do not parse human `printf` output to infer solver behavior.
 

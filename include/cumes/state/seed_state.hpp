@@ -120,11 +120,10 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const ValidatedProblem& 
     return storage;
 }
 
-// Restart state from a host snapshot (read_checkpoint / convert_legacy_init),
-// uploading the six families and applying the same LCFS-boundary + axis-
-// regularity patch the legacy CUMES_LOAD_INIT path did. The checkpoint stores
-// doubles regardless of T; the conversion mirrors outputSaveBinary's T->double
-// in reverse.
+// Restart state from a host snapshot (read_checkpoint), uploading the six
+// families and applying the same LCFS-boundary + axis-regularity patch the
+// legacy CUMES_LOAD_INIT path did. The checkpoint stores doubles regardless
+// of T; the upload converts double -> T.
 template <typename T>
 SpectralStorage<T> restart_state(const DeviceParams<T>& p, const ValidatedProblem& vp,
                                  const EquilibriumSnapshot& snap) {

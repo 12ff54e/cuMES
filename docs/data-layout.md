@@ -81,24 +81,3 @@ w = mscale * nscale / (nzeta * (nThetaRed - 1)) * e_k,
 
 This is a distinct typed view (`QuadraturePlan`), never an integer
 reinterpretation of the full-grid view.
-
-## 6. Legacy binary v0 contract
-
-The on-disk `cumes_state.bin` (little-endian) is
-
-```
-int32 ns
-int32 mnmax
-double rmncc[mode][surface]
-double zmnsc[mode][surface]
-double lmnsc[mode][surface]
-double rmnss[mode][surface]
-double zmncs[mode][surface]
-double lmncs[mode][surface]
-```
-
-each family `mnmax * ns` doubles, surface contiguous. The axis row (`j=0`) is
-the constant-extrapolated row, which the comparison scripts intentionally skip.
-NetCDF/HDF5 v0 maps a logical value `family[surface, mode]` to device offset
-`surface + mode * ns` — golden tests pin this against a declaration/order
-transpose.

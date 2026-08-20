@@ -153,8 +153,7 @@
     "stages": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 8,
-      "description": "Radial-grid stages with strictly increasing ns (each stage's ns greater than the previous \u2014 the grid-prolongation precondition ns_new > ns_old); at most 8 entries, the fixed capacity of the v0 provenance writers.",
+      "description": "Radial-grid stages with strictly increasing ns (each stage's ns greater than the previous \u2014 the grid-prolongation precondition ns_new > ns_old); any positive count, the v1 output records active dimensions.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -275,11 +274,6 @@
   },
   "x-cumes-on-disk-contracts": {
     "title": "frozen on-disk state containers (blueprint \u00a76.13)",
-    "legacy-binary-v0": {
-      "description": "int32 ns; int32 mnmax; then six families rmncc/zmnsc/lmnsc/rmnss/zmncs/lmncs, each mnmax*ns native little-endian doubles, surface-contiguous (index = surface + mode*ns). Trailing data is a read error.",
-      "magic": null,
-      "version": 0
-    },
     "versioned-binary-v1": {
       "description": "magic 'CUMES001' (8 bytes); int32 version = 2; int32 ns; int32 mnmax; six families (mode-major doubles, rmncc/zmnsc/lmnsc/rmnss/zmncs/lmncs); then a provenance trailer: int32 precision (0=double,1=float); int32 status; int32 total_iter; int32 nstages; strings build.revision, u8 build.dirty, build.build_type, build.precision_policy, build.compile_flags, input.source_path, input.source_hash, runtime.gpu_name, runtime.driver, runtime.runtime, runtime.toolkit (each int32-length-prefixed; no scalar_type string \u2014 the precision tag is authoritative); per-stage int32 ns/iterations, u8 converged, f64 fsqr/fsqz/fsql, int32 nrestarts + int32 restart iterations. Historical version-1 files carried a scalar_type string between build_type and source_path and no policy fields; the reader consumes and discards it.",
       "magic": "CUMES001",
@@ -290,10 +284,7 @@
       "magic": "CUMECKP1",
       "version": 1
     },
-    "legacy-init-converter": {
-      "description": "convert_legacy_init reads the legacy CUMES_LOAD_INIT / vmecpp_init.bin six-family double payload (int32 ns; int32 mnmax; six families) and validates the header against the expected (ns, mnmax) before producing a checkpoint snapshot."
-    },
-    "endianness": "little-endian; the legacy adapter must either require a little-endian host or byte-swap explicitly",
+    "endianness": "little-endian; a reader on a big-endian host must byte-swap explicitly",
     "family-order": [
       "rmncc",
       "zmnsc",

@@ -22,7 +22,7 @@
 // App-level precision switch. All modules are templated on T; this alias is
 // what main.cu (and the diagnostics) build with. Configure via
 //   cmake -B build-float -DCUMES_USE_FLOAT=ON
-// The on-disk state files (cumes_state.bin, vmecpp_init.bin) stay double
+// The on-disk state files (the v1 state container and checkpoint) stay double
 // regardless; only the GPU computation uses T.
 #ifdef CUMES_USE_FLOAT
 using Real = float;

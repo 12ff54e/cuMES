@@ -124,7 +124,7 @@ Axis and boundary rules are also part of the representation contract:
 - fixed-boundary R/Z coefficients do not move at the LCFS;
 - both lambda families remain free at the LCFS.
 
-Initially preserve the current in-place axis extrapolation for Class A compatibility. The structured target should later stage extrapolated axis values as a transform input view instead of conflating them with canonical persisted coefficients. Legacy-v0 output preserves the current axis row; schema v1 records its axis convention explicitly. That separation is a Class B/format change and must retain identical real-space axis geometry and force trajectory.
+Initially preserve the current in-place axis extrapolation for Class A compatibility. The structured target should later stage extrapolated axis values as a transform input view instead of conflating them with canonical persisted coefficients. The state file preserves the current axis row; the v1 schema records its axis convention explicitly. That separation is a Class B/format change and must retain identical real-space axis geometry and force trajectory.
 
 For odd `m`, the real-space work representation is regularized as
 

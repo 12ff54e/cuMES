@@ -116,14 +116,13 @@ optional-backend presets. Every computation is `template<typename T>`; `Real`
 
 - Positionals fill the two slots `<input> <output>`; the `--input`/`--output`
   flags override them.
-- `--output-schema legacy-v0|v1` (default `v1` — a versioned container with full
-  provenance for binary, NetCDF and HDF5).
-- `--restart <checkpoint>` / `--restart-legacy <six-family payload>` /
-  `--checkpoint <path>` (write a v1 checkpoint after solve).
-- Strict schema-v1 behavior is the **default**: unknown input keys are errors, an
-  explicit output path is required, and unknown suffixes are rejected. The
-  `--compatibility` flag restores vmecpp-style warn-and-ignore parsing, the
-  `cumes_state.bin` default, and the unknown-suffix fallback.
+- Every backend writes the schema-v1 container — a versioned state payload with
+  full provenance for binary, NetCDF and HDF5.
+- `--restart <checkpoint>` / `--checkpoint <path>` (read/write a v1 checkpoint).
+- Strict schema-v1 behavior is the **default**: unknown input keys are errors,
+  an explicit output path is required, and unknown suffixes are rejected. The
+  `--compatibility` flag restores vmecpp-style warn-and-ignore parsing for
+  unknown input keys (input-side only; the output policy stays strict).
 
 A `.nc`/`.h5` suffix dispatches to the host-only NetCDF/HDF5 writers when
 compiled in (the availability preflight runs before any CUDA work). Non-fatal
@@ -185,7 +184,7 @@ acceptance).
 | FFT-accelerated transforms | cuFFT backend (batched 1D ζ-FFT + direct poloidal), mirroring vmecpp's FFTX structure |
 | Multigrid grid sequencing | Implemented (`ns_array`/`niter_array`/`ftol_array` stage loop + `Prolongation`) |
 | De-aliased constraint force | Implemented (spectral-condensation bandpass + fused rCon/zCon) |
-| Hot restart / checkpointing | Implemented (`--checkpoint` / `--restart` / `--restart-legacy`) |
+| Hot restart / checkpointing | Implemented (`--checkpoint` / `--restart`) |
 | Adaptive time-step (Jacobian resets) | Implemented (restart/maintenance delt control, vmecpp VMEC_8_52) |
 | Free boundary / vacuum solver | Fixed boundary only |
 | Mercier stability, jxbout, wout | Post-processing; not needed for the core loop |

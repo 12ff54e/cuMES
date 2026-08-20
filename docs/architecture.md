@@ -50,8 +50,8 @@ monolithic compile (blueprint §9):
 | ------ | ---- | -------- |
 | `cumes_core` | host C++ | `result.hpp`, `checked_size.hpp`, `grid_shape`, `mode_table` |
 | `cumes_config_json` | host C++ | `validation_report`, `validated_problem`, `json_reader` |
-| `cumes_io_host` | host C++ | `output_spec`, `run_report`, `equilibrium_snapshot`, binary v0/v1, checkpoint |
-| `cumes_io` | host C++ (the legacy reference writer links cudart for D2H) | the full `make_writer` dispatch + host-only NetCDF/HDF5 adapters (the ONLY target with the backend headers and defines) |
+| `cumes_io_host` | host C++ | `output_spec`, `run_report`, `equilibrium_snapshot`, binary v1, checkpoint |
+| `cumes_io` | host C++ (`outputPrint` links cudart for D2H) | the full `make_writer` dispatch + host-only NetCDF/HDF5 adapters (the ONLY target with the backend headers and defines) |
 | `cumes_cuda_runtime` | header-only CUDA-runtime interface | centralized `check_cuda`/`check_cufft` and buffer/stream/event RAII; propagates only the CUDA runtime/cuFFT links |
 | `cumes_cuda_double` / `cumes_cuda_float` | device | the nine `*_double.cu` / `*_float.cu` operator TUs |
 | `cuMES` | executable | `main.cu`, links only the TU matching `Real` |
@@ -138,7 +138,7 @@ bit-identical, both configs re-verified):
 `configs/schema-v1.json` freezes the `cumes-config-v1`
 normalized-config schema (blueprint §6.1, `ValidatedProblem::normalize_to_json`,
 pinned by the `tests/fixtures/*.normalized.json` goldens) and, under
-`x-cumes-on-disk-contracts`, the legacy-v0 / versioned-v1 / checkpoint-v1
+`x-cumes-on-disk-contracts`, the versioned-v1 / checkpoint-v1
 binary container layouts (blueprint §6.13).
 
 `AxisymmetricOperator` now runs the Solovev production path (see

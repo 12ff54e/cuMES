@@ -32,9 +32,8 @@ inline std::optional<long long> fileSize(FILE* fp) {
 
 // Validate state dimensions and bound the per-family element count `n` against
 // the actual file size, so a corrupt or mismatched header cannot trigger a huge
-// allocation (the v0 format has no magic, so a wrong-format file decodes as
-// enormous positive dimensions). Returns false and sets `reason` on failure;
-// on success sets `n_out`.
+// allocation (a wrong-format file decodes as enormous positive dimensions).
+// Returns false and sets `reason` on failure; on success sets `n_out`.
 inline bool checkStateDimensions(FILE* fp, std::int32_t ns, std::int32_t mnmax,
                                  std::size_t& n_out, std::string& reason) {
     if (ns < 1 || mnmax < 1) {

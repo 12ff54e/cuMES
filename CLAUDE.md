@@ -24,7 +24,7 @@ cmake --preset verify          # verify-double: precise math, all backends, -Wer
 cmake --build build -j
 
 # Run main solver (default input inputs/solovev.json; an output path is
-# REQUIRED in strict mode — the default cumes_state.bin is compatibility-only)
+# REQUIRED — there is no default output file)
 ./build/cuMES inputs/solovev.json out.bin        # positional: <input> <output>
 
 # run tests (the full CTest suite, incl. compute-sanitizer memcheck AND
@@ -46,15 +46,16 @@ cmake --preset float && cmake --build build-float -j
 ```
 
 CLI: `--input <path>` / `--output <path>` (flags override the two positional
-slots; positionals fill the first free slot), `--output-schema legacy-v0|v1`
-(v1 = versioned container with full provenance for binary, NetCDF and HDF5),
-`--restart <checkpoint>`, `--restart-legacy <six-family payload>`,
+slots; positionals fill the first free slot),
+`--restart <checkpoint>`,
 `--checkpoint <path>` (write a v1 checkpoint after solve; the container
-records per-stage restart histories). Strict schema-v1 behavior is the
-DEFAULT: unknown input keys are validation errors, an explicit output path is
-required, and unknown suffixes are rejected — the named `--compatibility`
-flag restores the vmecpp-style warn-and-ignore parsing, the cumes_state.bin
-default, and the unknown-suffix fallback. A `.nc`/`.h5` suffix dispatches
+records per-stage restart histories). Every backend writes the schema-v1
+container (versioned binary/NetCDF/HDF5 with full provenance). Strict
+behavior is the DEFAULT: unknown input keys are validation errors, an
+explicit output path is required, and unknown suffixes are rejected — the
+named `--compatibility` flag restores the vmecpp-style warn-and-ignore
+parsing for unknown input keys (input-side only; the output policy stays
+strict). A `.nc`/`.h5` suffix dispatches
 to the host-only NetCDF/HDF5 writers when compiled in (the availability
 preflight runs before any CUDA work). Non-fatal validation warnings (unknown
 input keys in compatibility mode, skipped out-of-range boundary harmonics)
@@ -93,9 +94,9 @@ cuMES/
 ├── include/
 │   ├── vmec_types.h        `Real` alias + parity/basis convention comment
 │   ├── solver.cuh          SolverResult<T> + solverRun declaration (thin app shim)
-│   ├── output.cuh          outputSave/outputPrint declarations (app shim)
+│   ├── output.cuh          outputPrint declaration (app shim)
 │   ├── fft_traits.h        FftTraits<T>: cuFFT type/enum/exec dispatch
-│   ├── JsonParser.h        Legacy parser kept only for the netcdf/hdf5 v0 writers
+│   ├── JsonParser.h        The JSON engine of the input config parser (cumes_config_json)
 │   └── cumes/              The operator library (see below)
 ├── src/
 │   ├── main.cu             Entry point: validate config → multigrid stage loop → output
@@ -300,7 +301,7 @@ maintenance reset — matching vmecpp's Evolve control block. (The old docs'
 | FFT-accelerated transforms           | cuFFT backend (batched 1D ζ-FFT + direct poloidal), mirroring vmecpp's FFTX structure                                                                                                                                                                                                                                                                                                                                                                      |
 | Multigrid grid sequencing            | Implemented: per-config `ns_array`/`niter_array`/`ftol_array` stage loop (Solovev 5→11→55, W7-X 33→66→99), each stage seeded by the previous converged state via `Prolongation` — vmecpp `InterpolateToNextMultigridStep`, linear in s on scalxc-scaled odd-m coefficients, 2·x₁−x₂ axis extrapolation, odd-m zeroed at the axis, LCFS copied exactly. A stage that exhausts its cap without meeting ftol fails the run (vmecpp semantics) |
 | De-aliased constraint force          | Implemented (spectral-condensation bandpass inside `ConstraintOperator`; the fused rCon/zCon synthesis lives in `ToroidalFftOperator::inverse_fused`)                                                                                                                                                                                                                                                                                                    |
-| Hot restart / checkpointing          | Implemented (v1 checkpoint container: `--checkpoint` / `--restart`; legacy six-family payload: `--restart-legacy`)                                                                                                                                                                                                                                                                                                                                        |
+| Hot restart / checkpointing          | Implemented (v1 checkpoint container: `--checkpoint` / `--restart`)                                                                                                                                                                                                                                                                                                                                                                                     |
 | Free boundary / vacuum solver        | Fixed boundary only                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Mercier stability, jxbout, wout      | Post-processing; not needed for core loop                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Adaptive time-step (Jacobian resets) | Implemented — the restart/maintenance delt control above (vmecpp VMEC_8_52); no per-pass continuous adaptation (matches vmecpp)                                                                                                                                                                                                                                                                                                                            |
@@ -392,9 +393,8 @@ change. The frozen baselines are:**
   effective iters, FSQR 9.924e-13, state identical).
 - The per-iteration residuals track vmecpp at ≤1e-8 over the ENTIRE run, and
   the single-grid converged state matches the wout at ≤1.5e-9 in all six
-  families including the λ gauge modes. Note:
-  scripts/compare_converged_state.py must read the FULL-grid wout `lmns_full`,
-  not the half-grid `lmns`.
+  families including the λ gauge modes. Note: any comparison against the
+  wout must read the FULL-grid wout `lmns_full`, not the half-grid `lmns`.
 
 1. **Axis representation (state-file only, real-space-irrelevant).** cuMES
    constant-extrapolates the axis row from j=1 (extrapolateAxisKernel — m=1
@@ -412,7 +412,7 @@ change. The frozen baselines are:**
    `ftol_array` entries to >= 1e-6 (and note `CUMES_MAX_ITER`/`CUMES_DELT0`
    override every stage's cap when set).
 
-3. **Issue pass (2026-08-12).** The findings in `cuMES-issues.md` were
+3. **Issue pass (2026-08-12).** The issue-pass findings were
    verified and fixed: OOB reads (iotaH LCFS row, 5-vs-6 family test
    buffer), the >128-row PCR limit, the ntheta>32 de-alias drop, stale/
    unproduced combined force buffers, tcon0 propagation, gamma rejection,

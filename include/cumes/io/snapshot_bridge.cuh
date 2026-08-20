@@ -5,10 +5,8 @@
 // contiguous slab (`state_slab()`, 6*mnmax*ns T values) in exactly
 // EquilibriumSnapshot::Component order (Rcc Zsc Lsc Rss Zcs Lcs), each family
 // mode-major / surface-contiguous. So the bridge is a single D2H copy followed
-// by a per-element T -> double conversion — the same conversion
-// outputSaveBinary performs (src/output.cpp), which is what makes the two paths
-// byte-identical. The host snapshot is always double regardless of T (the
-// on-disk state container stays double).
+// by a per-element T -> double conversion. The host snapshot is always double
+// regardless of T (the on-disk state container stays double).
 #pragma once
 
 #include <cuda_runtime.h>
