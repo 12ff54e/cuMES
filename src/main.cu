@@ -18,9 +18,8 @@
 // non-.bin suffix is rejected at startup; --output-schema legacy-v0 may be
 // spelled out for those suffixes (a no-op, it matches the actual behavior).
 //
-// Restart: --restart <checkpoint> (v1 checkpoint) or --restart-legacy <init>
-// (legacy six-family vmecpp_init payload) replace the removed CUMES_LOAD_INIT
-// environment path.
+// Restart: --restart <checkpoint> (v1 checkpoint) replaces the removed
+// CUMES_LOAD_INIT environment path.
 //
 // Precision: `Real` (vmec_types.h) is the compile-time switch between double
 // and float — configure with -DCUMES_USE_FLOAT=ON.
@@ -123,9 +122,8 @@ int main(int argc, char** argv) {
     std::string inputPath = "inputs/solovev.json";
     std::string outputPath = "cumes_state.bin";
     cumes::OutputSchema schema = cumes::OutputSchema::kLegacyV0;
-    std::string restartPath;        // --restart (v1 checkpoint)
-    std::string restartLegacyPath;  // --restart-legacy (six-family payload)
-    std::string checkpointPath;     // --checkpoint (write a v1 checkpoint after solve)
+    std::string restartPath;     // --restart (v1 checkpoint)
+    std::string checkpointPath;  // --checkpoint (write a v1 checkpoint after solve)
     // Slot occupancy: a --input/--output flag pins its slot (flags override
     // positionals); each positional fills the first free slot (input, output).
     bool inputGiven = false;
@@ -164,8 +162,6 @@ int main(int argc, char** argv) {
             }
         } else if (match("restart", v)) {
             restartPath = v;
-        } else if (match("restart-legacy", v)) {
-            restartLegacyPath = v;
         } else if (match("checkpoint", v)) {
             checkpointPath = v;
         } else if (match("input", v)) {
@@ -189,11 +185,6 @@ int main(int argc, char** argv) {
             fprintf(stderr, "cuMES: unexpected extra argument '%s'\n", a.c_str());
             return EXIT_FAILURE;
         }
-    }
-    if (!restartPath.empty() && !restartLegacyPath.empty()) {
-        fprintf(stderr, "cuMES: --restart and --restart-legacy are mutually "
-                        "exclusive\n");
-        return EXIT_FAILURE;
     }
     if (!outputGiven) {
         if (!compatibility) {
@@ -300,7 +291,7 @@ int main(int argc, char** argv) {
     int total_iter = 0;
 
     try {
-        // Stage-0 seed on ns_array[0]: a checkpoint/legacy-init restart, or the
+        // Stage-0 seed on ns_array[0]: a checkpoint restart, or the
         // interpFromBoundaryAndAxis cold start.
         p.ns = static_cast<int>(spec.stages[0].radial_surfaces);
         p.max_iter = static_cast<int>(spec.stages[0].max_iterations);
@@ -321,14 +312,6 @@ int main(int argc, char** argv) {
                 return EXIT_FAILURE;
             }
             seed = cumes::restart_state<Real>(p, vp, snap);
-        } else if (!restartLegacyPath.empty()) {
-            auto ck = cumes::convert_legacy_init(restartLegacyPath,
-                static_cast<int>(spec.stages[0].radial_surfaces), p.mnmax);
-            if (!ck.has_value()) {
-                fprintf(stderr, "cuMES: %s\n", ck.error().c_str());
-                return EXIT_FAILURE;
-            }
-            seed = cumes::restart_state<Real>(p, vp, ck.value());
         } else {
             seed = cumes::init_state<Real>(p, vp);
         }

@@ -1,4 +1,4 @@
-// checkpoint.cpp — versioned checkpoint + legacy init converter.
+// checkpoint.cpp — versioned checkpoint.
 //
 // Versioned checkpoint layout (little-endian):
 //   magic     8 bytes  "CUMECKP1"
@@ -7,10 +7,6 @@
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major
-//
-// convert_legacy_init reads the legacy six-family vmecpp_init.bin payload
-// (int32 ns, int32 mnmax, then 6 families of double) — the exact CUMES_LOAD_INIT
-// format — and validates the header against the expected shape.
 #include "cumes/io/checkpoint.hpp"
 #include "io_common.hpp"
 
@@ -90,38 +86,6 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path) {
     snapshot.mnmax = mnmax;
     if (!io_detail::readStateFamilies(fp, n, snapshot)) {
         return fail("checkpoint: truncated state data");
-    }
-    fclose(fp);
-    return snapshot;
-}
-
-Result<EquilibriumSnapshot> convert_legacy_init(const std::string& path,
-                                                int expected_ns,
-                                                int expected_mnmax) {
-    FILE* fp = fopen(path.c_str(), "rb");
-    if (!fp) return Result<EquilibriumSnapshot>("cannot open " + path);
-
-    auto fail = [&](const std::string& reason) -> Result<EquilibriumSnapshot> {
-        fclose(fp);
-        return Result<EquilibriumSnapshot>(reason);
-    };
-
-    std::int32_t ns = 0, mnmax = 0;
-    if (!io_detail::read_i32(fp, ns) || !io_detail::read_i32(fp, mnmax)) {
-        return fail("legacy init: truncated header");
-    }
-    if (ns != expected_ns || mnmax != expected_mnmax) {
-        return fail("legacy init: header (ns=" + std::to_string(ns) +
-                    ", mnmax=" + std::to_string(mnmax) +
-                    ") does not match expected (ns=" + std::to_string(expected_ns) +
-                    ", mnmax=" + std::to_string(expected_mnmax) + ")");
-    }
-    const std::size_t n = static_cast<std::size_t>(ns) * static_cast<std::size_t>(mnmax);
-    EquilibriumSnapshot snapshot;
-    snapshot.ns = ns;
-    snapshot.mnmax = mnmax;
-    if (!io_detail::readStateFamilies(fp, n, snapshot)) {
-        return fail("legacy init: truncated state data");
     }
     fclose(fp);
     return snapshot;

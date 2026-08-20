@@ -1,20 +1,15 @@
 // hdf5_writer.cpp — host-only HDF5 state adapters (completion plan steps
 // 2.2/2.3). Mirrors src/cumes/io/netcdf_writer.cpp content-for-content:
 //
-//   - legacy-v0: byte/layout-exact replica of the pre-overhaul device-reading
-//     writer (src/output_hdf5.cpp, deleted): padded fixed capacities,
-//     [surface, mode] logical mapping, final-stage scalar pack, legacy
-//     provenance — written purely from the host snapshot.
-//   - v1: active dimensions + complete provenance (precision/status/total
-//     iterations, build/input/runtime strings, source hash, per-stage
-//     outcomes, full restart history, raw + folded boundary harmonics) with
-//     a round-tripping reader.
+// Schema v1 only: active dimensions + complete provenance (precision/status/
+// total iterations, build/input/runtime strings, source hash, per-stage
+// outcomes, full restart history, raw + folded boundary harmonics) with a
+// round-tripping reader.
 //
 // This TU (and only this TU) includes <hdf5.h>; it compiles under
 // CUMES_HAVE_HDF5, which is confined to the adapter library target.
 #include "cumes/io/reader.hpp"
 #include "cumes/io/writer.hpp"
-#include "cumes/io/legacy_provenance.hpp"
 #include "internal_factories.hpp"
 #include "io_common.hpp"
 #include "cumes/io/writer_helpers.hpp"
@@ -118,179 +113,6 @@ bool getStrAttr(hid_t loc, const char* name, std::string& out) {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// legacy-v0: byte/layout-exact replica of the deleted device-reading writer
-// ---------------------------------------------------------------------------
-class Hdf5V0Writer final : public Writer {
- public:
-    Status write_atomic(const EquilibriumSnapshot& snapshot,
-                        const RunReport& report, const OutputSpec& spec,
-                        const ValidatedProblem& problem,
-                        const LegacyRunScalars& s) override {
-        const LegacyInputProvenance pv =
-            LegacyInputProvenance::from_validated(problem);
-        const std::string tmp = io_detail::tempPathFor(spec.path);
-        hid_t fid = H5Fcreate(tmp.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT,
-                              H5P_DEFAULT);
-        if (fid < 0) return Status("HDF5 H5Fcreate failed for " + tmp);
-        auto fail = [&](const std::string& msg) -> Status {
-            H5Fclose(fid);
-            remove(tmp.c_str());
-            return Status("HDF5: " + msg);
-        };
-#define H5_CHECK(expr, msg_)                                                   \
-    do {                                                                       \
-        if ((expr) < 0) return fail(std::string(msg_));                        \
-    } while (0)
-
-        // ---- scalar attributes (same order as the legacy writer) ----
-        struct IntAttr { const char* name; int value; };
-        const IntAttr ints[] = {
-            {"mpol", s.mpol},       {"ntor", s.ntor},       {"nfp", s.nfp},
-            {"ntheta", s.ntheta},   {"nzeta", s.nzeta},     {"ns", s.ns},
-            {"mnmax", s.mnmax},     {"nZnT", s.nZnT},       {"ncurr", s.ncurr},
-            {"max_iter", s.max_iter}, {"n_grids", pv.n_grids},
-            {"am_n", pv.am_n},      {"ac_n", pv.ac_n},      {"ai_n", pv.ai_n},
-            {"aphi_n", pv.aphi_n},  {"raxis_n", pv.raxis_n},
-            {"rbc_n", pv.rbc_n},    {"zbs_n", pv.zbs_n},
-            {"iterations", s.iterations},
-            {"converged", s.converged ? 1 : 0},
-        };
-        for (const auto& a : ints) {
-            H5_CHECK(putAttr(fid, a.name, H5T_NATIVE_INT, &a.value),
-                     "int attr");
-        }
-        struct DblAttr { const char* name; double value; };
-        const DblAttr dbls[] = {
-            {"delt", s.delt}, {"ftol", s.ftol}, {"lamscale", s.lamscale},
-            {"phiedge", pv.phiedge}, {"pres_scale", pv.pres_scale},
-            {"adiabatic_index", pv.adiabatic_index}, {"spres_ped", pv.spres_ped},
-            {"bloat", pv.bloat}, {"curtor", pv.curtor}, {"tcon0", pv.tcon0},
-            {"fsqr", s.fsqr}, {"fsqz", s.fsqz}, {"fsql", s.fsql},
-        };
-        for (const auto& a : dbls) {
-            H5_CHECK(putAttr(fid, a.name, H5T_NATIVE_DOUBLE, &a.value),
-                     "double attr");
-        }
-        H5_CHECK(putStrAttr(fid, "input_file", report.input.source_path),
-                 "attr input_file");
-        H5_CHECK(putStrAttr(fid, "precision", report.build.scalar_type),
-                 "attr precision");
-
-        // ---- provenance arrays (fixed v0 capacities) ----
-        auto writeArray = [&](const char* name, hid_t dtype, int nd,
-                              const hsize_t* dims, const void* data) -> herr_t {
-            hid_t sp = H5Screate_simple(nd, dims, nullptr);
-            if (sp < 0) { return -1; }
-            hid_t ds = H5Dcreate2(fid, name, dtype, sp, H5P_DEFAULT,
-                                  H5P_DEFAULT, H5P_DEFAULT);
-            H5Sclose(sp);
-            if (ds < 0) { return -1; }
-            herr_t r = H5Dwrite(ds, dtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
-            H5Dclose(ds);
-            return r;
-        };
-        const hsize_t d8[1] = {LegacyInputProvenance::kMaxGrids};
-        const hsize_t d16[1] = {LegacyInputProvenance::kMaxCoeff};
-        const hsize_t d32[1] = {LegacyInputProvenance::kMaxAxis};
-        const hsize_t d16x16[2] = {LegacyInputProvenance::kMaxM,
-                                   LegacyInputProvenance::kMaxN};
-        H5_CHECK(writeArray("ns_array", H5T_NATIVE_INT, 1, d8, pv.ns_array),
-                 "write ns_array");
-        H5_CHECK(writeArray("niter_array", H5T_NATIVE_INT, 1, d8,
-                            pv.niter_array), "write niter_array");
-        H5_CHECK(writeArray("ftol_array", H5T_NATIVE_DOUBLE, 1, d8,
-                            pv.ftol_array), "write ftol_array");
-        H5_CHECK(writeArray("am", H5T_NATIVE_DOUBLE, 1, d16, pv.am), "write am");
-        H5_CHECK(writeArray("ac", H5T_NATIVE_DOUBLE, 1, d16, pv.ac), "write ac");
-        H5_CHECK(writeArray("ai", H5T_NATIVE_DOUBLE, 1, d16, pv.ai), "write ai");
-        H5_CHECK(writeArray("aphi", H5T_NATIVE_DOUBLE, 1, d16, pv.aphi),
-                 "write aphi");
-        H5_CHECK(writeArray("raxis_c", H5T_NATIVE_DOUBLE, 1, d32, pv.raxis_c),
-                 "write raxis_c");
-        H5_CHECK(writeArray("zaxis_s", H5T_NATIVE_DOUBLE, 1, d32, pv.zaxis_s),
-                 "write zaxis_s");
-        H5_CHECK(writeArray("rbcc", H5T_NATIVE_DOUBLE, 2, d16x16, &pv.rbcc[0][0]),
-                 "write rbcc");
-        H5_CHECK(writeArray("rbss", H5T_NATIVE_DOUBLE, 2, d16x16, &pv.rbss[0][0]),
-                 "write rbss");
-        H5_CHECK(writeArray("zbsc", H5T_NATIVE_DOUBLE, 2, d16x16, &pv.zbsc[0][0]),
-                 "write zbsc");
-        H5_CHECK(writeArray("zbcs", H5T_NATIVE_DOUBLE, 2, d16x16, &pv.zbcs[0][0]),
-                 "write zbcs");
-
-        // ---- state datasets (ns, mnmax), per-mode hyperslab writes ----
-        if (snapshot.ns != s.ns || snapshot.mnmax != s.mnmax) {
-            return fail("snapshot dimensions do not match the scalar pack");
-        }
-        const hsize_t state_dims[2] = {(hsize_t)s.ns, (hsize_t)s.mnmax};
-        auto writeFam = [&](EquilibriumSnapshot::Component comp,
-                            const char* name) -> Status {
-            const std::vector<double>& dbuf = snapshot.component(comp);
-            if (dbuf.size() != snapshot.family_size()) {
-                return fail(std::string(name) + ": family size mismatch");
-            }
-            hid_t sp = H5Screate_simple(2, state_dims, nullptr);
-            if (sp < 0) return fail(std::string(name) + ": H5Screate_simple");
-            hid_t ds = H5Dcreate2(fid, name, H5T_NATIVE_DOUBLE, sp, H5P_DEFAULT,
-                                  H5P_DEFAULT, H5P_DEFAULT);
-            H5Sclose(sp);
-            if (ds < 0) return fail(std::string(name) + ": H5Dcreate2");
-            hid_t fs = H5Dget_space(ds);
-            if (fs < 0) {
-                H5Dclose(ds);
-                return fail(std::string(name) + ": H5Dget_space");
-            }
-            const hsize_t mdim[1] = {(hsize_t)s.ns};
-            for (int m = 0; m < s.mnmax; ++m) {
-                hsize_t start[2] = {0, (hsize_t)m};
-                hsize_t count[2] = {(hsize_t)s.ns, 1};
-                if (H5Sselect_hyperslab(fs, H5S_SELECT_SET, start, nullptr,
-                                        count, nullptr) < 0) {
-                    H5Sclose(fs);
-                    H5Dclose(ds);
-                    return fail(std::string(name) + ": H5Sselect_hyperslab");
-                }
-                hid_t ms = H5Screate_simple(1, mdim, nullptr);
-                herr_t r = H5Dwrite(ds, H5T_NATIVE_DOUBLE, ms, fs, H5P_DEFAULT,
-                                    dbuf.data() + (size_t)m * s.ns);
-                H5Sclose(ms);
-                if (r < 0) {
-                    H5Sclose(fs);
-                    H5Dclose(ds);
-                    return fail(std::string(name) + ": H5Dwrite");
-                }
-            }
-            H5Sclose(fs);
-            H5Dclose(ds);
-            return Status();
-        };
-        Status st = writeFam(EquilibriumSnapshot::kRmncc, "rmncc");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kZmnsc, "zmnsc");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kLmnsc, "lmnsc");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kRmnss, "rmnss");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kZmncs, "zmncs");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kLmncs, "lmncs");
-        if (!st.has_value()) return st;
-
-        if (H5Fclose(fid) < 0) {
-            remove(tmp.c_str());
-            return Status("HDF5 H5Fclose failed");
-        }
-#undef H5_CHECK
-        // Durable publication (completion-plan follow-up §3): the library
-        // owns the descriptor, so publishLibraryFile reopens the completed
-        // temp, checks fsync + close, then renames + directory-fsyncs.
-        const std::string err = io_detail::publishLibraryFile(tmp, spec.path);
-        if (!err.empty()) return Status("HDF5 publish: " + err);
-        return Status();
-    }
-};
 
 // ---------------------------------------------------------------------------
 // v1: active dimensions + complete provenance + boundary harmonics
@@ -821,9 +643,6 @@ class Hdf5V1Reader final : public Reader {
 
 }  // namespace
 
-std::unique_ptr<Writer> make_hdf5_v0_writer() {
-    return std::make_unique<Hdf5V0Writer>();
-}
 std::unique_ptr<Writer> make_hdf5_v1_writer() {
     return std::make_unique<Hdf5V1Writer>();
 }

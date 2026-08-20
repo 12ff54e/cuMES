@@ -7,7 +7,7 @@
 // STRONGLY, which is what makes the static-library linker extract the adapter
 // TUs (netcdf_writer.o / hdf5_writer.o) when the backends are compiled in. The
 // host-only library keeps the binary factories (make_binary_writer /
-// make_binary_reader in legacy_binary_v0.cpp) for consumers that need no
+// make_binary_reader in versioned_binary.cpp) for consumers that need no
 // optional backends.
 #include "cumes/io/reader.hpp"
 #include "cumes/io/writer.hpp"
@@ -22,18 +22,12 @@ std::unique_ptr<Writer> make_writer(OutputFormat format, OutputSchema schema) {
         return make_binary_writer(format, schema);
     }
 #ifdef CUMES_HAVE_NETCDF
-    if (format == OutputFormat::kNetCdf && schema == OutputSchema::kLegacyV0) {
-        return make_netcdf_v0_writer();  // defined in netcdf_writer.cpp
-    }
-    if (format == OutputFormat::kNetCdf && schema == OutputSchema::kV1) {
+    if (format == OutputFormat::kNetCdf) {
         return make_netcdf_v1_writer();
     }
 #endif
 #ifdef CUMES_HAVE_HDF5
-    if (format == OutputFormat::kHdf5 && schema == OutputSchema::kLegacyV0) {
-        return make_hdf5_v0_writer();  // defined in hdf5_writer.cpp
-    }
-    if (format == OutputFormat::kHdf5 && schema == OutputSchema::kV1) {
+    if (format == OutputFormat::kHdf5) {
         return make_hdf5_v1_writer();
     }
 #endif
@@ -45,12 +39,12 @@ std::unique_ptr<Reader> make_reader(OutputFormat format, OutputSchema schema) {
         return make_binary_reader(format, schema);
     }
 #ifdef CUMES_HAVE_NETCDF
-    if (format == OutputFormat::kNetCdf && schema == OutputSchema::kV1) {
+    if (format == OutputFormat::kNetCdf) {
         return make_netcdf_v1_reader();  // defined in netcdf_writer.cpp
     }
 #endif
 #ifdef CUMES_HAVE_HDF5
-    if (format == OutputFormat::kHdf5 && schema == OutputSchema::kV1) {
+    if (format == OutputFormat::kHdf5) {
         return make_hdf5_v1_reader();  // defined in hdf5_writer.cpp
     }
 #endif

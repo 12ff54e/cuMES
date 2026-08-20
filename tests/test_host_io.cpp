@@ -1,10 +1,10 @@
-// test_host_io.cpp — host I/O: output-spec dispatch, binary v0 byte layout and
-// round-trip, versioned v1 round-trip, and the writer failure matrix.
+// test_host_io.cpp — host I/O: output-spec dispatch, versioned v1 round-trip
+// and corruption rejection, and the writer failure matrix.
 //
-// This is the Phase 2 gate for the I/O half: the legacy binary v0 container is
-// byte-exact (header + six mode-major double families), the versioned v1
-// container round-trips its state, and every writer publishes atomically and
-// fails cleanly on open/rename errors.
+// This is the Phase 2 gate for the I/O half: the versioned v1 container
+// round-trips its state (magic/version/header + six mode-major double families
+// + provenance trailer) and rejects corruption, and every writer publishes
+// atomically and fails cleanly on open/rename errors.
 #include "cumes/io/checkpoint.hpp"
 #include "cumes/io/output_spec.hpp"
 #include "cumes/io/reader.hpp"
@@ -78,9 +78,8 @@ static RunReport makeReport() {
     return r;
 }
 
-// A minimal valid problem + scalar pack for the writer call sites: the v0
-// writers reconstruct their fixed-capacity provenance from the problem, and
-// the v1 writers record its boundary harmonics.
+// A minimal valid problem + scalar pack for the writer call sites: the v1
+// writers record the problem's boundary harmonics.
 static cumes::ValidatedProblem makeProblem() {
     cumes::ProblemSpec spec;
     spec.mpol = 2; spec.ntor = 0; spec.nfp = 1;
@@ -130,65 +129,7 @@ static void testOutputSpec() {
     CHECK(r.has_value() && r.value().format == OutputFormat::kHdf5,
           "output spec: .H5 (case-insensitive) resolves to hdf5");
     r = cumes::resolve_output_spec("state.unknown", false);
-    CHECK(!r.has_value(), "output spec: unknown suffix rejected (strict)");
-    r = cumes::resolve_output_spec("state.unknown", true);
-    CHECK(r.has_value() && r.value().format == OutputFormat::kBinary,
-          "output spec: unknown suffix falls back to binary (compat)");
-}
-
-static void testBinaryByteLayout() {
-    // A tiny 2x1 snapshot; verify the exact on-disk bytes (little-endian
-    // int32 header + six mode-major double families).
-    EquilibriumSnapshot s;
-    s.ns = 2;
-    s.mnmax = 1;
-    for (int c = 0; c < 6; ++c) {
-        s.families[c] = {c * 10.0, c * 10.0 + 1.0};
-    }
-    OutputSpec spec;
-    spec.format = OutputFormat::kBinary;
-    spec.schema = OutputSchema::kLegacyV0;
-    spec.path = scratch("byte").c_str();
-    auto w = cumes::make_binary_writer(spec.format, spec.schema);
-    CHECK(w != nullptr, "binary v0: writer factory returns a writer");
-    if (!w) return;
-    auto st = w->write_atomic(s, makeReport(), spec, makeProblem(), makeScalars(s));
-    CHECK(st.has_value(), "binary v0: byte-layout write succeeds");
-
-    std::ifstream in(spec.path, std::ios::binary);
-    std::string bytes((std::istreambuf_iterator<char>(in)),
-                      std::istreambuf_iterator<char>());
-    // header: int32 ns=2, int32 mnmax=1
-    const std::int32_t ns = 2, mnmax = 1;
-    CHECK(bytes.size() == 8 + 6 * 2 * 8, "binary v0: file size == 8 + 6*2*8");
-    CHECK(std::memcmp(bytes.data(), &ns, 4) == 0 &&
-              std::memcmp(bytes.data() + 4, &mnmax, 4) == 0,
-          "binary v0: int32 header (ns, mnmax)");
-    // first family: {0.0, 1.0}
-    const double* fam0 = reinterpret_cast<const double*>(bytes.data() + 8);
-    CHECK(fam0[0] == 0.0 && fam0[1] == 1.0, "binary v0: family 0 (rmncc) bytes");
-    // family 1 (zmnsc) = {10.0, 11.0}
-    const double* fam1 = reinterpret_cast<const double*>(bytes.data() + 8 + 2 * 8);
-    CHECK(fam1[0] == 10.0 && fam1[1] == 11.0, "binary v0: family 1 (zmnsc) bytes");
-    remove(spec.path.c_str());
-}
-
-static void testBinaryRoundTrip() {
-    EquilibriumSnapshot s = makeSnapshot(5, 3);
-    OutputSpec spec;
-    spec.format = OutputFormat::kBinary;
-    spec.schema = OutputSchema::kLegacyV0;
-    spec.path = scratch("rt").c_str();
-    auto w = cumes::make_binary_writer(spec.format, spec.schema);
-    auto r = cumes::make_binary_reader(spec.format, spec.schema);
-    CHECK(w != nullptr && r != nullptr, "binary v0: writer+reader factories");
-    if (!w || !r) return;
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem(), makeScalars(s)).has_value(),
-          "binary v0: write succeeds");
-    auto back = r->read(spec.path);
-    CHECK(back.has_value() && snapshotsEqual(s, back.value()),
-          "binary v0: round-trip preserves state");
-    remove(spec.path.c_str());
+    CHECK(!r.has_value(), "output spec: unknown suffix rejected");
 }
 
 static void testV1RoundTrip() {
@@ -216,24 +157,6 @@ static void testV1RoundTrip() {
     auto bad = r->read(spec.path);
     CHECK(!bad.has_value(), "v1: bad magic rejected");
     remove(spec.path.c_str());
-}
-
-static void testReaderRejectsMismatchedFormat() {
-    // A v1 file has no v0 magic; its first 8 bytes decode as enormous positive
-    // dimensions. The v0 reader must return a dimension error, not attempt a
-    // huge allocation (std::bad_alloc / terminate).
-    EquilibriumSnapshot s = makeSnapshot(4, 2);
-    OutputSpec v1;
-    v1.format = OutputFormat::kBinary;
-    v1.schema = OutputSchema::kV1;
-    v1.path = scratch("mismatch").c_str();
-    auto v1w = cumes::make_binary_writer(v1.format, v1.schema);
-    CHECK(v1w->write_atomic(s, makeReport(), v1, makeProblem(), makeScalars(s)).has_value(),
-          "mismatch: write v1 fixture");
-    auto v0r = cumes::make_binary_reader(OutputFormat::kBinary, OutputSchema::kLegacyV0);
-    auto got = v0r->read(v1.path);
-    CHECK(!got.has_value(), "mismatch: v0 reader rejects a v1 file without crashing");
-    remove(v1.path.c_str());
 }
 
 static void testCorruptHeaderHugeDimensions() {
@@ -274,7 +197,7 @@ static void testShortFamilyRejected() {
     s.families[3].shrink_to_fit();
     OutputSpec spec;
     spec.format = OutputFormat::kBinary;
-    spec.schema = OutputSchema::kLegacyV0;
+    spec.schema = OutputSchema::kV1;
     spec.path = scratch("short");
     auto w = cumes::make_binary_writer(spec.format, spec.schema);
     CHECK(w->write_atomic(s, makeReport(), spec, makeProblem(), makeScalars(s)).has_value() == false,
@@ -307,7 +230,7 @@ static void testFailureMatrix() {
     // open failure: a path in a nonexistent directory.
     OutputSpec spec;
     spec.format = OutputFormat::kBinary;
-    spec.schema = OutputSchema::kLegacyV0;
+    spec.schema = OutputSchema::kV1;
     spec.path = "no_such_dir/test_host_io_open.bin";
     auto w = cumes::make_binary_writer(spec.format, spec.schema);
     CHECK(w->write_atomic(s, makeReport(), spec, makeProblem(), makeScalars(s)).has_value() == false,
@@ -334,10 +257,7 @@ static void testFailureMatrix() {
 
 int main() {
     testOutputSpec();
-    testBinaryByteLayout();
-    testBinaryRoundTrip();
     testV1RoundTrip();
-    testReaderRejectsMismatchedFormat();
     testCorruptHeaderHugeDimensions();
     testShortFamilyRejected();
     testV1UnknownPrecisionRejected();

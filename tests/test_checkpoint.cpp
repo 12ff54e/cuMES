@@ -1,10 +1,8 @@
-// test_checkpoint.cpp — versioned checkpoint and legacy init converter.
+// test_checkpoint.cpp — versioned checkpoint.
 //
-// Verifies the Phase 2 "versioned checkpoint reader/converter replacing
-// CUMES_LOAD_INIT" deliverable: a versioned checkpoint round-trips, a corrupt
-// magic/version/dimension is rejected, and the legacy six-family
-// vmecpp_init.bin payload converts to the same host snapshot (with header
-// mismatch rejected).
+// Verifies the Phase 2 "versioned checkpoint replacing CUMES_LOAD_INIT"
+// deliverable: a versioned checkpoint round-trips and a corrupt
+// magic/version/dimension is rejected.
 #include "cumes/io/checkpoint.hpp"
 
 #include <cstdint>
@@ -115,34 +113,10 @@ static void testCheckpointCorruptHugeDimensions() {
     remove(path.c_str());
 }
 
-static void testConvertLegacyInit() {
-    // Write a legacy six-family payload (int32 ns, int32 mnmax, 6 families).
-    EquilibriumSnapshot s = makeSnapshot(4, 2);
-    const std::string path = scratch("init");
-    FILE* f = fopen(path.c_str(), "wb");
-    const std::int32_t ns = 4, mnmax = 2;
-    fwrite(&ns, sizeof(ns), 1, f);
-    fwrite(&mnmax, sizeof(mnmax), 1, f);
-    for (int c = 0; c < 6; ++c) {
-        fwrite(s.families[c].data(), sizeof(double), s.families[c].size(), f);
-    }
-    fclose(f);
-
-    auto conv = cumes::convert_legacy_init(path, 4, 2);
-    CHECK(conv.has_value() && snapshotsEqual(s, conv.value()),
-          "legacy init: converts to the same snapshot");
-
-    // Header mismatch is rejected.
-    auto mism = cumes::convert_legacy_init(path, 5, 2);
-    CHECK(!mism.has_value(), "legacy init: ns mismatch rejected");
-    remove(path.c_str());
-}
-
 int main() {
     testCheckpointRoundTrip();
     testCheckpointRejection();
     testCheckpointCorruptHugeDimensions();
-    testConvertLegacyInit();
     if (failures == 0) {
         printf("test_checkpoint: ALL PASS\n");
         return 0;

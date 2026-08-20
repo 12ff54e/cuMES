@@ -1,4 +1,5 @@
-// versioned_binary.cpp — schema v1 binary state container (blueprint §6.13).
+// versioned_binary.cpp — the schema v1 binary state container (blueprint
+// §6.13) and the host-library binary factories.
 //
 // Layout (little-endian), version 2 (the current on-disk version):
 //   magic     8 bytes  "CUMES001"
@@ -29,7 +30,6 @@
 // trailer, so a reader stays forward-compatible with later v1.x trailers.
 #include "cumes/io/reader.hpp"
 #include "cumes/io/writer.hpp"
-#include "internal_factories.hpp"
 #include "io_common.hpp"
 
 #include <cstdio>
@@ -235,7 +235,25 @@ class VersionedBinaryReader final : public Reader {
 
 }  // namespace
 
-std::unique_ptr<Writer> make_v1_writer() { return std::make_unique<VersionedBinaryWriter>(); }
-std::unique_ptr<Reader> make_v1_reader() { return std::make_unique<VersionedBinaryReader>(); }
+// Binary-only factories (completion plan step 2.5): the host I/O library
+// needs no backend defines to answer these. The FULL make_writer/make_reader
+// dispatch (including the NetCDF/HDF5 adapters) lives in the adapter library
+// (src/cumes/io/writer_dispatch.cpp in cumes_io), whose strong references to
+// the adapter factories force the linker to extract the adapter TUs.
+std::unique_ptr<Writer> make_binary_writer(OutputFormat format,
+                                           OutputSchema schema) {
+    if (format == OutputFormat::kBinary && schema == OutputSchema::kV1) {
+        return std::make_unique<VersionedBinaryWriter>();
+    }
+    return nullptr;
+}
+
+std::unique_ptr<Reader> make_binary_reader(OutputFormat format,
+                                           OutputSchema schema) {
+    if (format == OutputFormat::kBinary && schema == OutputSchema::kV1) {
+        return std::make_unique<VersionedBinaryReader>();
+    }
+    return nullptr;
+}
 
 }  // namespace cumes

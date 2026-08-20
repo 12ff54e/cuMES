@@ -1,24 +1,17 @@
 // netcdf_writer.cpp — host-only NetCDF state adapters (completion plan steps
 // 2.2/2.3).
 //
-// Two schemas, one TU, no CUDA:
-//   - legacy-v0: byte/layout-exact replica of the pre-overhaul device-reading
-//     writer (src/output_netcdf.cpp, deleted): padded fixed capacities,
-//     [surface, mode] logical mapping, final-stage scalar pack, legacy
-//     provenance. Written purely from the host EquilibriumSnapshot +
-//     LegacyInputProvenance + LegacyRunScalars.
-//   - v1: active dimensions + complete provenance — precision/status/total
-//     iterations, build/input/runtime provenance strings, source hash,
-//     per-stage outcomes (ns/iterations/converged/residuals), the full
-//     restart history, and the raw boundary harmonics + folded boundary
-//     matrices (distinguished, as the blueprint requires). The v1 reader
-//     round-trips the state AND the complete RunReport.
+// Schema v1 only, no CUDA: active dimensions + complete provenance —
+// precision/status/total iterations, build/input/runtime provenance strings,
+// source hash, per-stage outcomes (ns/iterations/converged/residuals), the
+// full restart history, and the raw boundary harmonics + folded boundary
+// matrices (distinguished, as the blueprint requires). The reader round-trips
+// the state AND the complete RunReport.
 //
 // This TU (and only this TU) includes <netcdf.h>; it compiles under
 // CUMES_HAVE_NETCDF, which is confined to the adapter library target.
 #include "cumes/io/reader.hpp"
 #include "cumes/io/writer.hpp"
-#include "cumes/io/legacy_provenance.hpp"
 #include "internal_factories.hpp"
 #include "io_common.hpp"
 #include "cumes/io/writer_helpers.hpp"
@@ -41,226 +34,6 @@ bool putStrAttr(int ncid, const char* name, const std::string& value) {
            NC_NOERR;
 }
 
-// ---------------------------------------------------------------------------
-// legacy-v0: byte/layout-exact replica of the deleted device-reading writer
-// ---------------------------------------------------------------------------
-class NetcdfV0Writer final : public Writer {
- public:
-    Status write_atomic(const EquilibriumSnapshot& snapshot,
-                        const RunReport& report, const OutputSpec& spec,
-                        const ValidatedProblem& problem,
-                        const LegacyRunScalars& s) override {
-        const LegacyInputProvenance pv =
-            LegacyInputProvenance::from_validated(problem);
-        const std::string tmp = io_detail::tempPathFor(spec.path);
-        int ncid = -1;
-        int rc = nc_create(tmp.c_str(), NC_CLOBBER, &ncid);
-        if (rc != NC_NOERR) {
-            return Status("NetCDF nc_create failed: " +
-                          std::string(nc_strerror(rc)));
-        }
-        auto fail = [&](const std::string& msg) -> Status {
-            nc_close(ncid);
-            remove(tmp.c_str());
-            return Status("NetCDF: " + msg);
-        };
-#define NC_CHECK(rc_, msg_)                                                    \
-    do {                                                                       \
-        int _rc = (rc_);                                                       \
-        if (_rc != NC_NOERR) {                                                 \
-            return fail(std::string(msg_) + ": " + nc_strerror(_rc));          \
-        }                                                                      \
-    } while (0)
-
-        // ---- dimensions (fixed v0 capacities — the legacy layout) ----
-        int dim_ns, dim_mnmax, dim_ngrids, dim_ncoeff, dim_naxis, dim_nbm,
-            dim_nbn;
-        NC_CHECK(nc_def_dim(ncid, "ns", (size_t)s.ns, &dim_ns), "def dim ns");
-        NC_CHECK(nc_def_dim(ncid, "mnmax", (size_t)s.mnmax, &dim_mnmax),
-                 "def dim mnmax");
-        NC_CHECK(nc_def_dim(ncid, "ngrids", LegacyInputProvenance::kMaxGrids,
-                            &dim_ngrids), "def dim ngrids");
-        NC_CHECK(nc_def_dim(ncid, "ncoeff", LegacyInputProvenance::kMaxCoeff,
-                            &dim_ncoeff), "def dim ncoeff");
-        NC_CHECK(nc_def_dim(ncid, "naxis", LegacyInputProvenance::kMaxAxis,
-                            &dim_naxis), "def dim naxis");
-        NC_CHECK(nc_def_dim(ncid, "nbm", LegacyInputProvenance::kMaxM,
-                            &dim_nbm), "def dim nbm");
-        NC_CHECK(nc_def_dim(ncid, "nbn", LegacyInputProvenance::kMaxN,
-                            &dim_nbn), "def dim nbn");
-
-        // ---- state variables (ns, mnmax) ----
-        const int state_dims[2] = {dim_ns, dim_mnmax};
-        int v_rmncc, v_zmnsc, v_lmnsc, v_rmnss, v_zmncs, v_lmncs;
-        NC_CHECK(nc_def_var(ncid, "rmncc", NC_DOUBLE, 2, state_dims, &v_rmncc),
-                 "def rmncc");
-        NC_CHECK(nc_def_var(ncid, "zmnsc", NC_DOUBLE, 2, state_dims, &v_zmnsc),
-                 "def zmnsc");
-        NC_CHECK(nc_def_var(ncid, "lmnsc", NC_DOUBLE, 2, state_dims, &v_lmnsc),
-                 "def lmnsc");
-        NC_CHECK(nc_def_var(ncid, "rmnss", NC_DOUBLE, 2, state_dims, &v_rmnss),
-                 "def rmnss");
-        NC_CHECK(nc_def_var(ncid, "zmncs", NC_DOUBLE, 2, state_dims, &v_zmncs),
-                 "def zmncs");
-        NC_CHECK(nc_def_var(ncid, "lmncs", NC_DOUBLE, 2, state_dims, &v_lmncs),
-                 "def lmncs");
-
-        // ---- scalar variables (0 dims) — same order as the legacy writer ----
-        struct IntScalar { const char* name; int value; };
-        const IntScalar int_scalars[] = {
-            {"mpol", s.mpol},       {"ntor", s.ntor},       {"nfp", s.nfp},
-            {"ntheta", s.ntheta},   {"nzeta", s.nzeta},     {"ns", s.ns},
-            {"mnmax", s.mnmax},     {"nZnT", s.nZnT},       {"ncurr", s.ncurr},
-            {"max_iter", s.max_iter}, {"n_grids", pv.n_grids},
-            {"am_n", pv.am_n},      {"ac_n", pv.ac_n},      {"ai_n", pv.ai_n},
-            {"aphi_n", pv.aphi_n},  {"raxis_n", pv.raxis_n},
-            {"rbc_n", pv.rbc_n},    {"zbs_n", pv.zbs_n},
-            {"iterations", s.iterations},
-            {"converged", s.converged ? 1 : 0},
-        };
-        int v_int_scalar[sizeof(int_scalars) / sizeof(int_scalars[0])];
-        for (size_t i = 0; i < sizeof(int_scalars) / sizeof(int_scalars[0]);
-             ++i) {
-            NC_CHECK(nc_def_var(ncid, int_scalars[i].name, NC_INT, 0, nullptr,
-                                &v_int_scalar[i]), "def int scalar");
-        }
-        struct DblScalar { const char* name; double value; };
-        const DblScalar dbl_scalars[] = {
-            {"delt", s.delt}, {"ftol", s.ftol}, {"lamscale", s.lamscale},
-            {"phiedge", pv.phiedge}, {"pres_scale", pv.pres_scale},
-            {"adiabatic_index", pv.adiabatic_index}, {"spres_ped", pv.spres_ped},
-            {"bloat", pv.bloat}, {"curtor", pv.curtor}, {"tcon0", pv.tcon0},
-            {"fsqr", s.fsqr}, {"fsqz", s.fsqz}, {"fsql", s.fsql},
-        };
-        int v_dbl_scalar[sizeof(dbl_scalars) / sizeof(dbl_scalars[0])];
-        for (size_t i = 0; i < sizeof(dbl_scalars) / sizeof(dbl_scalars[0]);
-             ++i) {
-            NC_CHECK(nc_def_var(ncid, dbl_scalars[i].name, NC_DOUBLE, 0,
-                                nullptr, &v_dbl_scalar[i]), "def double scalar");
-        }
-
-        // ---- provenance arrays ----
-        int v_ns_array, v_niter_array, v_ftol_array;
-        NC_CHECK(nc_def_var(ncid, "ns_array", NC_INT, 1, &dim_ngrids,
-                            &v_ns_array), "def ns_array");
-        NC_CHECK(nc_def_var(ncid, "niter_array", NC_INT, 1, &dim_ngrids,
-                            &v_niter_array), "def niter_array");
-        NC_CHECK(nc_def_var(ncid, "ftol_array", NC_DOUBLE, 1, &dim_ngrids,
-                            &v_ftol_array), "def ftol_array");
-        int v_am, v_ac, v_ai, v_aphi;
-        NC_CHECK(nc_def_var(ncid, "am", NC_DOUBLE, 1, &dim_ncoeff, &v_am),
-                 "def am");
-        NC_CHECK(nc_def_var(ncid, "ac", NC_DOUBLE, 1, &dim_ncoeff, &v_ac),
-                 "def ac");
-        NC_CHECK(nc_def_var(ncid, "ai", NC_DOUBLE, 1, &dim_ncoeff, &v_ai),
-                 "def ai");
-        NC_CHECK(nc_def_var(ncid, "aphi", NC_DOUBLE, 1, &dim_ncoeff, &v_aphi),
-                 "def aphi");
-        int v_raxis_c, v_zaxis_s;
-        NC_CHECK(nc_def_var(ncid, "raxis_c", NC_DOUBLE, 1, &dim_naxis,
-                            &v_raxis_c), "def raxis_c");
-        NC_CHECK(nc_def_var(ncid, "zaxis_s", NC_DOUBLE, 1, &dim_naxis,
-                            &v_zaxis_s), "def zaxis_s");
-        const int bnd_dims[2] = {dim_nbm, dim_nbn};
-        int v_rbcc, v_rbss, v_zbsc, v_zbcs;
-        NC_CHECK(nc_def_var(ncid, "rbcc", NC_DOUBLE, 2, bnd_dims, &v_rbcc),
-                 "def rbcc");
-        NC_CHECK(nc_def_var(ncid, "rbss", NC_DOUBLE, 2, bnd_dims, &v_rbss),
-                 "def rbss");
-        NC_CHECK(nc_def_var(ncid, "zbsc", NC_DOUBLE, 2, bnd_dims, &v_zbsc),
-                 "def zbsc");
-        NC_CHECK(nc_def_var(ncid, "zbcs", NC_DOUBLE, 2, bnd_dims, &v_zbcs),
-                 "def zbcs");
-
-        // ---- global attributes ----
-        NC_CHECK(putStrAttr(ncid, "input_file", report.input.source_path) == true
-                     ? NC_NOERR : NC_EATTMETA, "attr input_file");
-        NC_CHECK(putStrAttr(ncid, "precision", report.build.scalar_type) == true
-                     ? NC_NOERR : NC_EATTMETA, "attr precision");
-
-        NC_CHECK(nc_enddef(ncid), "nc_enddef");
-
-        // ---- state data (per-mode hyperslabs, see layout note) ----
-        if (snapshot.ns != s.ns || snapshot.mnmax != s.mnmax) {
-            return fail("snapshot dimensions do not match the scalar pack");
-        }
-        auto writeFam = [&](EquilibriumSnapshot::Component comp, int varid,
-                            const char* tag) -> Status {
-            const std::vector<double>& dbuf = snapshot.component(comp);
-            if (dbuf.size() != snapshot.family_size()) {
-                return fail(std::string(tag) + ": family size mismatch");
-            }
-            for (int m = 0; m < s.mnmax; ++m) {
-                const size_t start[2] = {0, (size_t)m};
-                const size_t count[2] = {(size_t)s.ns, 1};
-                int rc2 = nc_put_vara_double(ncid, varid, start, count,
-                                             dbuf.data() + (size_t)m * s.ns);
-                if (rc2 != NC_NOERR) {
-                    return fail(std::string(tag) + ": " + nc_strerror(rc2));
-                }
-            }
-            return Status();
-        };
-        Status st = writeFam(EquilibriumSnapshot::kRmncc, v_rmncc, "write rmncc");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kZmnsc, v_zmnsc, "write zmnsc");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kLmnsc, v_lmnsc, "write lmnsc");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kRmnss, v_rmnss, "write rmnss");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kZmncs, v_zmncs, "write zmncs");
-        if (!st.has_value()) return st;
-        st = writeFam(EquilibriumSnapshot::kLmncs, v_lmncs, "write lmncs");
-        if (!st.has_value()) return st;
-
-        // ---- scalar data ----
-        for (size_t i = 0; i < sizeof(int_scalars) / sizeof(int_scalars[0]);
-             ++i) {
-            NC_CHECK(nc_put_var_int(ncid, v_int_scalar[i],
-                                    &int_scalars[i].value), "put int scalar");
-        }
-        for (size_t i = 0; i < sizeof(dbl_scalars) / sizeof(dbl_scalars[0]);
-             ++i) {
-            NC_CHECK(nc_put_var_double(ncid, v_dbl_scalar[i],
-                                       &dbl_scalars[i].value),
-                     "put double scalar");
-        }
-
-        // ---- provenance data (full fixed-size arrays) ----
-        NC_CHECK(nc_put_var_int(ncid, v_ns_array, pv.ns_array), "put ns_array");
-        NC_CHECK(nc_put_var_int(ncid, v_niter_array, pv.niter_array),
-                 "put niter_array");
-        NC_CHECK(nc_put_var_double(ncid, v_ftol_array, pv.ftol_array),
-                 "put ftol_array");
-        NC_CHECK(nc_put_var_double(ncid, v_am, pv.am), "put am");
-        NC_CHECK(nc_put_var_double(ncid, v_ac, pv.ac), "put ac");
-        NC_CHECK(nc_put_var_double(ncid, v_ai, pv.ai), "put ai");
-        NC_CHECK(nc_put_var_double(ncid, v_aphi, pv.aphi), "put aphi");
-        NC_CHECK(nc_put_var_double(ncid, v_raxis_c, pv.raxis_c), "put raxis_c");
-        NC_CHECK(nc_put_var_double(ncid, v_zaxis_s, pv.zaxis_s), "put zaxis_s");
-        NC_CHECK(nc_put_var_double(ncid, v_rbcc, &pv.rbcc[0][0]), "put rbcc");
-        NC_CHECK(nc_put_var_double(ncid, v_rbss, &pv.rbss[0][0]), "put rbss");
-        NC_CHECK(nc_put_var_double(ncid, v_zbsc, &pv.zbsc[0][0]), "put zbsc");
-        NC_CHECK(nc_put_var_double(ncid, v_zbcs, &pv.zbcs[0][0]), "put zbcs");
-
-        {
-            int _rc = nc_close(ncid);
-            if (_rc != NC_NOERR) {
-                remove(tmp.c_str());
-                return Status("NetCDF nc_close failed: " +
-                              std::string(nc_strerror(_rc)));
-            }
-        }
-#undef NC_CHECK
-        // Durable publication (completion-plan follow-up §3): the library
-        // owns the descriptor, so publishLibraryFile reopens the completed
-        // temp, checks fsync + close, then renames + directory-fsyncs.
-        const std::string err = io_detail::publishLibraryFile(tmp, spec.path);
-        if (!err.empty()) return Status("NetCDF publish: " + err);
-        return Status();
-    }
-};
 
 // ---------------------------------------------------------------------------
 // v1: active dimensions + complete provenance + boundary harmonics
@@ -825,9 +598,6 @@ class NetcdfV1Reader final : public Reader {
 
 }  // namespace
 
-std::unique_ptr<Writer> make_netcdf_v0_writer() {
-    return std::make_unique<NetcdfV0Writer>();
-}
 std::unique_ptr<Writer> make_netcdf_v1_writer() {
     return std::make_unique<NetcdfV1Writer>();
 }

@@ -104,7 +104,7 @@ static bool writeViaHost(cumes::SpectralStorage<T>& st, const DeviceParams<T>& p
                          cumes::OutputFormat fmt) {
     cumes::OutputSpec spec;
     spec.format = fmt;
-    spec.schema = cumes::OutputSchema::kLegacyV0;
+    spec.schema = cumes::OutputSchema::kV1;
     spec.path = path;
     cumes::LegacyRunScalars s;
     s.mpol = p.mpol; s.ntor = p.ntor; s.nfp = p.nfp;
@@ -121,7 +121,18 @@ static bool writeViaHost(cumes::SpectralStorage<T>& st, const DeviceParams<T>& p
     cumes::RunReport rep;
     rep.input.source_path = "inputs/solovev.json";
     rep.build.scalar_type = sizeof(T) == sizeof(double) ? "double" : "float";
-    auto w = cumes::make_writer(fmt, cumes::OutputSchema::kLegacyV0);
+    // One stage record, like a real run: the classic-format NetCDF writer
+    // cannot define two zero-size dimensions (nstages=0 and nrestarts=0 both
+    // map to the single unlimited dimension), and a solver run always records
+    // at least one stage.
+    cumes::StageReport stage;
+    stage.ns = p.ns;
+    stage.effective_iterations = res.iterations;
+    stage.converged = res.converged;
+    stage.final_residual = {(double)res.fsqr, (double)res.fsqz,
+                            (double)res.fsql};
+    rep.stages.push_back(stage);
+    auto w = cumes::make_writer(fmt, cumes::OutputSchema::kV1);
     if (!w) return false;
     return w->write_atomic(snap, rep, spec, vp, s).has_value();
 }
@@ -199,15 +210,20 @@ static void runAll() {
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
                                   cumes::OutputFormat::kBinary);
         CHECK(ok, "truncation: binary overwrite succeeds");
-        // Header is 2 ints = 8 bytes, then data; old 'GARBAGE' must be gone.
+        // v1 header: magic (8) + version (4) + ns (4) + mnmax (4); the old
+        // 'GARBAGE' bytes must be gone.
         FILE* fp = fopen(path, "rb");
         if (fp) {
-            int ns = 0, mnmax = 0;
-            bool hdr = fread(&ns, sizeof(int), 1, fp) == 1 &&
+            char magic[8] = {0};
+            int version = 0, ns = 0, mnmax = 0;
+            bool hdr = fread(magic, 1, 8, fp) == 8 &&
+                       fread(&version, sizeof(int), 1, fp) == 1 &&
+                       fread(&ns, sizeof(int), 1, fp) == 1 &&
                        fread(&mnmax, sizeof(int), 1, fp) == 1;
             fclose(fp);
-            CHECK(hdr && ns == b.p.ns && mnmax == b.p.mnmax,
-                  "truncation: binary header is the new run's (ns/mnmax)");
+            CHECK(hdr && memcmp(magic, "CUMES001", 8) == 0 && version == 2 &&
+                      ns == b.p.ns && mnmax == b.p.mnmax,
+                  "truncation: binary header is the new run's (magic/ns/mnmax)");
         } else {
             CHECK(false, "truncation: binary file readable");
         }

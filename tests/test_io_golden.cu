@@ -1,13 +1,10 @@
-// test_io_golden.cu — the golden byte-identity gate for the versioned writers.
+// test_io_golden.cu — the v1 writer/reader round-trip gate.
 //
-// Phase 5 handover §6.1: before main.cu swaps outputSaveBinary for the
-// versioned legacy-v0 writer, the two must be proven byte-identical, because
-// scripts/compare_bitwise.py compares the on-disk cumes_state.bin. This test is
-// that proof: the same device state is written through (a) outputSaveBinary
-// (the reference, src/output.cpp) and (b) make_writer(Binary, LegacyV0) fed by
-// snapshot_from_device (the bridge), and the two files must be byte-for-byte
-// equal. It also closes the bridge->reader loop: the v1 writer and the
-// versioned checkpoint both round-trip the bridged snapshot.
+// Closes the bridge->reader loop: the same device state is bridged through
+// snapshot_from_device and round-tripped by the v1 binary writer (including
+// the historical version-1 trailer fixture), the v1 NetCDF/HDF5 adapters
+// (state + complete RunReport + restart metadata), and the versioned
+// checkpoint.
 //
 // Runs both precisions (double is the verification config; float proves the
 // T->double conversion is identical for the single-precision build).
@@ -15,7 +12,6 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -25,14 +21,7 @@
 #include "cumes/io/reader.hpp"
 #include "cumes/io/snapshot_bridge.cuh"
 #include "cumes/io/writer.hpp"
-#ifdef CUMES_HAVE_NETCDF
-#include <netcdf.h>
-#endif
-#ifdef CUMES_HAVE_HDF5
-#include <hdf5.h>
-#endif
 #include "cumes/state/spectral_storage.hpp"
-#include "output.cuh"
 #include "vmec_types.h"
 #include "cumes_test_support.cuh"
 
@@ -77,15 +66,6 @@ static cumes::SpectralStorage<T> makeStorage(int ns, int mnmax) {
                          cudaMemcpyHostToDevice),
               "upload");
     return storage;
-}
-
-static bool readFileBytes(const std::string& path, std::string& out) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return false;
-    std::ostringstream os;
-    os << in.rdbuf();
-    out = os.str();
-    return true;
 }
 
 // Hand-write a version = 1 container with the HISTORICAL trailer layout:
@@ -240,193 +220,12 @@ static void checkV1RoundTrip(const EquilibriumSnapshot& snap,
     remove(path.c_str());
 }
 
-#ifdef CUMES_HAVE_NETCDF
-template <typename T>
-static void testNetcdfLayouts(const EquilibriumSnapshot& snap,
-                              const cumes::ValidatedProblem& vp,
-                              const cumes::LegacyRunScalars& scalars, int ns,
-                              int mnmax) {
-    // v0 documented layout.
-    {
-        const std::string path = scratch("v0nc");
-        OutputSpec spec;
-        spec.format = OutputFormat::kNetCdf;
-        spec.schema = OutputSchema::kLegacyV0;
-        spec.path = path;
-        auto w = cumes::make_writer(spec.format, spec.schema);
-        CHECK(w != nullptr, "nc v0: factory");
-        if (w) {
-            RunReport report;
-            report.input.source_path = "inputs/solovev.json";
-            report.build.scalar_type =
-                sizeof(T) == sizeof(double) ? "double" : "float";
-            CHECK(w->write_atomic(snap, report, spec, vp, scalars).has_value(),
-                  "nc v0: write");
-            int ncid = -1;
-            CHECK(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR,
-                  "nc v0: readable");
-            if (ncid >= 0) {
-                auto dimlen = [&](const char* name) -> size_t {
-                    int id = -1;
-                    size_t n = 0;
-                    if (nc_inq_dimid(ncid, name, &id) != NC_NOERR) return 0;
-                    nc_inq_dimlen(ncid, id, &n);
-                    return n;
-                };
-                CHECK(dimlen("ngrids") == 8 && dimlen("ncoeff") == 16 &&
-                          dimlen("naxis") == 32 && dimlen("nbm") == 16 &&
-                          dimlen("nbn") == 16,
-                      "nc v0: fixed capacities");
-                CHECK(dimlen("ns") == (size_t)ns &&
-                          dimlen("mnmax") == (size_t)mnmax,
-                      "nc v0: active state dims");
-                int vid = -1;
-                int iters = 0;
-                CHECK(nc_inq_varid(ncid, "iterations", &vid) == NC_NOERR &&
-                          nc_get_var_int(ncid, vid, &iters) == NC_NOERR &&
-                          iters == scalars.iterations,
-                      "nc v0: scalar value");
-                double delt = 0.0;
-                CHECK(nc_inq_varid(ncid, "delt", &vid) == NC_NOERR &&
-                          nc_get_var_double(ncid, vid, &delt) == NC_NOERR &&
-                          delt == scalars.delt,
-                      "nc v0: double scalar value");
-                CHECK(nc_inq_varid(ncid, "rmncc", &vid) == NC_NOERR,
-                      "nc v0: rmncc variable");
-                if (vid >= 0) {
-                    size_t start[2] = {0, 0};
-                    size_t count[2] = {(size_t)ns, 1};
-                    std::vector<double> col(ns);
-                    nc_get_vara_double(ncid, vid, start, count, col.data());
-                    bool same = true;
-                    for (int j = 0; j < ns; ++j) {
-                        same = same && col[j] == snap.families[0][j];
-                    }
-                    CHECK(same, "nc v0: mode-0 column matches the snapshot");
-                }
-                nc_close(ncid);
-            }
-        }
-        remove(path.c_str());
-    }
-    // v1 round trip.
-    checkV1RoundTrip<T>(snap, vp, scalars, OutputFormat::kNetCdf, "v1nc");
-}
-#endif  // CUMES_HAVE_NETCDF
-
-#ifdef CUMES_HAVE_HDF5
-template <typename T>
-static void testHdf5Layouts(const EquilibriumSnapshot& snap,
-                            const cumes::ValidatedProblem& vp,
-                            const cumes::LegacyRunScalars& scalars, int ns,
-                            int mnmax) {
-    // v0 documented layout (the byte-level contract is the layout: libhdf5
-    // embeds a per-second timestamp, so structure + values are asserted).
-    {
-        const std::string path = scratch("v0h5");
-        OutputSpec spec;
-        spec.format = OutputFormat::kHdf5;
-        spec.schema = OutputSchema::kLegacyV0;
-        spec.path = path;
-        auto w = cumes::make_writer(spec.format, spec.schema);
-        CHECK(w != nullptr, "h5 v0: factory");
-        if (w) {
-            RunReport report;
-            report.input.source_path = "inputs/solovev.json";
-            report.build.scalar_type =
-                sizeof(T) == sizeof(double) ? "double" : "float";
-            CHECK(w->write_atomic(snap, report, spec, vp, scalars).has_value(),
-                  "h5 v0: write");
-            hid_t fid = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
-            CHECK(fid >= 0, "h5 v0: readable");
-            if (fid >= 0) {
-                auto attrInt = [&](const char* name, int& out) -> bool {
-                    hid_t aid = H5Aopen(fid, name, H5P_DEFAULT);
-                    if (aid < 0) return false;
-                    const herr_t r = H5Aread(aid, H5T_NATIVE_INT, &out);
-                    H5Aclose(aid);
-                    return r >= 0;
-                };
-                auto attrDbl = [&](const char* name, double& out) -> bool {
-                    hid_t aid = H5Aopen(fid, name, H5P_DEFAULT);
-                    if (aid < 0) return false;
-                    const herr_t r = H5Aread(aid, H5T_NATIVE_DOUBLE, &out);
-                    H5Aclose(aid);
-                    return r >= 0;
-                };
-                int iters = 0;
-                double delt = 0.0;
-                CHECK(attrInt("iterations", iters) &&
-                          iters == scalars.iterations,
-                      "h5 v0: scalar value");
-                CHECK(attrDbl("delt", delt) && delt == scalars.delt,
-                      "h5 v0: double scalar value");
-                // fixed-capacity provenance arrays
-                auto arrDims = [&](const char* name, hsize_t* dims) -> bool {
-                    hid_t ds = H5Dopen2(fid, name, H5P_DEFAULT);
-                    if (ds < 0) return false;
-                    hid_t sp = H5Dget_space(ds);
-                    const bool ok =
-                        H5Sget_simple_extent_dims(sp, dims, nullptr) == 1;
-                    H5Sclose(sp);
-                    H5Dclose(ds);
-                    return ok;
-                };
-                hsize_t dims[1] = {0};
-                CHECK(arrDims("ns_array", dims) && dims[0] == 8,
-                      "h5 v0: ns_array fixed capacity");
-                CHECK(arrDims("am", dims) && dims[0] == 16,
-                      "h5 v0: am fixed capacity");
-                // state dataset dims + mode-0 column
-                hid_t ds = H5Dopen2(fid, "rmncc", H5P_DEFAULT);
-                if (ds >= 0) {
-                    hid_t sp = H5Dget_space(ds);
-                    hsize_t sdims[2] = {0, 0};
-                    H5Sget_simple_extent_dims(sp, sdims, nullptr);
-                    H5Sclose(sp);
-                    CHECK(sdims[0] == (hsize_t)ns &&
-                              sdims[1] == (hsize_t)mnmax,
-                          "h5 v0: state dataset dims");
-                    std::vector<double> col(ns);
-                    hsize_t start[2] = {0, 0};
-                    hsize_t count[2] = {(hsize_t)ns, 1};
-                    hid_t fs = H5Dget_space(ds);
-                    H5Sselect_hyperslab(fs, H5S_SELECT_SET, start, nullptr,
-                                        count, nullptr);
-                    hid_t ms = H5Screate_simple(1, count, nullptr);
-                    const herr_t rr = H5Dread(ds, H5T_NATIVE_DOUBLE, ms, fs,
-                                              H5P_DEFAULT, col.data());
-                    H5Sclose(ms);
-                    H5Sclose(fs);
-                    H5Dclose(ds);
-                    bool same = (rr >= 0);
-                    for (int j = 0; j < ns; ++j) {
-                        same = same && col[j] == snap.families[0][j];
-                    }
-                    CHECK(same, "h5 v0: mode-0 column matches the snapshot");
-                } else {
-                    CHECK(false, "h5 v0: rmncc dataset");
-                }
-                H5Fclose(fid);
-            }
-        }
-        remove(path.c_str());
-    }
-    // v1 round trip.
-    checkV1RoundTrip<T>(snap, vp, scalars, OutputFormat::kHdf5, "v1h5");
-}
-#endif  // CUMES_HAVE_HDF5
-
 template <typename T>
 static void runPrecision() {
     printf("== %s precision ==\n",
            sizeof(T) == sizeof(double) ? "double" : "float");
     const int ns = 5, mnmax = 3;
     auto storage = makeStorage<T>(ns, mnmax);
-
-    DeviceParams<T> p{};
-    p.ns = ns;
-    p.mnmax = mnmax;
 
     // Minimal valid problem + scalar pack for the writer call sites.
     cumes::ProblemSpec pspec;
@@ -446,37 +245,6 @@ static void runPrecision() {
     scalars.max_iter = 100; scalars.delt = 0.9; scalars.ftol = 1e-12;
     scalars.lamscale = 0.1; scalars.iterations = 1; scalars.converged = false;
     scalars.fsqr = 1.0; scalars.fsqz = 1.0; scalars.fsql = 1.0;
-
-    // ---- the golden gate: legacy-v0 writer == outputSaveBinary ------------
-    const std::string legacyPath = scratch("legacy");
-    const std::string v0Path = scratch("v0");
-    {
-        const bool ok = outputSaveBinary<T>(storage, p,
-                                            legacyPath.c_str());
-        CHECK(ok, "golden: outputSaveBinary (reference) writes");
-
-        const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
-        OutputSpec spec;
-        spec.format = OutputFormat::kBinary;
-        spec.schema = OutputSchema::kLegacyV0;
-        spec.path = v0Path;
-        auto w = cumes::make_writer(spec.format, spec.schema);
-        CHECK(w != nullptr, "golden: legacy-v0 writer factory");
-        if (w) {
-            RunReport report;  // v0 ignores it
-            CHECK(w->write_atomic(snap, report, spec, vp, scalars).has_value(),
-                  "golden: legacy-v0 writer writes");
-        }
-
-        std::string a, b;
-        const bool ra = readFileBytes(legacyPath, a);
-        const bool rb = readFileBytes(v0Path, b);
-        CHECK(ra && rb, "golden: both files readable");
-        if (ra && rb) {
-            CHECK(a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size()) == 0,
-                  "golden: legacy-v0 writer is byte-identical to outputSaveBinary");
-        }
-    }
 
     // ---- v1 writer round-trips the bridged snapshot + provenance trailer --
     {
@@ -537,19 +305,13 @@ static void runPrecision() {
     }
 
     // ---- NetCDF/HDF5 adapters (completion plan steps 2.2/2.3) -------------
-    // v0: the documented legacy layout — fixed capacities (ngrids=8,
-    // ncoeff=16, naxis=32, nbm=nbn=16), active state dims, scalar values, and
-    // the [surface, mode] hyperslab order. (Byte-exactness against the frozen
-    // tree is proven for NetCDF by the full-run compare_bitwise gate; HDF5
-    // embeds a library-managed per-second timestamp, so its contract is the
-    // layout, verified structurally here.)
     // v1: the complete RunReport + restart metadata round trip.
     const EquilibriumSnapshot snap2 = cumes::snapshot_from_device(storage);
 #ifdef CUMES_HAVE_NETCDF
-    testNetcdfLayouts<T>(snap2, vp, scalars, ns, mnmax);
+    checkV1RoundTrip<T>(snap2, vp, scalars, OutputFormat::kNetCdf, "v1nc");
 #endif
 #ifdef CUMES_HAVE_HDF5
-    testHdf5Layouts<T>(snap2, vp, scalars, ns, mnmax);
+    checkV1RoundTrip<T>(snap2, vp, scalars, OutputFormat::kHdf5, "v1h5");
 #endif
 
     // ---- versioned checkpoint round-trips the bridged snapshot ------------
@@ -563,13 +325,10 @@ static void runPrecision() {
               "checkpoint: round-trip preserves bridged state");
         remove(ckpt.c_str());
     }
-
-    remove(legacyPath.c_str());
-    remove(v0Path.c_str());
 }
 
 int main() {
-    printf("=== Golden writer byte-identity gate ===\n");
+    printf("=== v1 writer round-trip gate ===\n");
     runPrecision<double>();
     runPrecision<float>();
     if (failures == 0) {

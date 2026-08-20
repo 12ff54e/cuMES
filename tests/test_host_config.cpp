@@ -228,8 +228,8 @@ static void testMalformed() {
     CHECK(!vr.has_value() && !findError(vr, "strictly increasing").empty(),
           "malformed: equal consecutive ns rejected");
 
-    // 9 stages: the v0 provenance writers truncate at kMaxGrids=8, so more
-    // than 8 stages must be rejected up front (review 1.8).
+    // 9 stages: no fixed capacity cap remains (the v1 output records active
+    // dimensions), so an arbitrary strictly-increasing schedule is accepted.
     writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
                  " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
                  " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}],"
@@ -239,20 +239,7 @@ static void testMalformed() {
                  " 1e-12, 1e-12, 1e-12, 1e-12]}");
     vr = read_and_validate(scratchPath(), opts);
     printf("  9-stage: validation %s\n", vr.has_value() ? "PASSED" : "rejected");
-    CHECK(!vr.has_value() && !findError(vr, "exceed the 8-entry capacity").empty(),
-          "malformed: 9-stage schedule rejected");
-
-    // 8 strictly-increasing stages sit exactly at the capacity and stay valid.
-    writeScratch("{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
-                 " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
-                 " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}],"
-                 " \"ns_array\": [5, 11, 17, 23, 29, 35, 41, 47],"
-                 " \"niter_array\": [100, 100, 100, 100, 100, 100, 100, 100],"
-                 " \"ftol_array\": [1e-12, 1e-12, 1e-12, 1e-12, 1e-12,"
-                 " 1e-12, 1e-12, 1e-12]}");
-    vr = read_and_validate(scratchPath(), opts);
-    printf("  8-stage: validation %s\n", vr.has_value() ? "PASSED" : "rejected");
-    CHECK(vr.has_value(), "malformed: 8-stage schedule still accepted");
+    CHECK(vr.has_value(), "malformed: 9-stage schedule accepted (no capacity cap)");
 
     // Schedule length mismatch.
     writeScratch("{\"ns_array\": [5, 11], \"niter_array\": [100, 200],"

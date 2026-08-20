@@ -4,16 +4,15 @@
 // (ProblemSpec -> ValidationReport -> ValidatedProblem -> DeviceParams<T>).
 // Construction via validate() proves the invariants the solver needs:
 //   - scalar/angular/radial ranges, resolution defaults applied (even ntheta);
-//   - a non-empty, strictly increasing stage schedule of at most
-//     LegacyInputProvenance::kMaxGrids entries (the v0 provenance capacity);
+//   - a non-empty, strictly increasing stage schedule (no fixed capacity — the
+//     v1 output records active dimensions);
 //   - boundary harmonics folded into the stellarator-symmetric product basis;
 //   - the per-mode table (physical_n, mn_scale, xmpq, parity, first_surface);
 //   - precision/tolerance compatibility.
 //
 // It is host-only and owns no device pointers. The solver consumes it directly
 // (the legacy InputParams fixed-capacity bridge was deleted in migration step
-// 13.2); the fixed-capacity v0 output provenance is reconstructed separately in
-// cumes/io/legacy_provenance.hpp.
+// 13.2).
 #pragma once
 
 #include "cumes/core/grid_shape.hpp"

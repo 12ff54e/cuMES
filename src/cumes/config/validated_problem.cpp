@@ -5,12 +5,6 @@
 // Profile normalization evaluation (T_edge/C_edge — completion plan step 1).
 #include "cumes/config/profile_functions.hpp"
 
-// kMaxGrids: the fixed 8-grid capacity of the v0 provenance writers — the
-// stage schedule must fit it or stages 9+ would be silently dropped from the
-// output files (the legacy parser hard-failed this: "entries exceed the
-// 8-entry capacity").
-#include "cumes/io/legacy_provenance.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -181,16 +175,6 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     // ---- stage schedule ----
     if (spec.stages.empty()) {
         report.error("ns_array", "ns_array must contain at least one stage");
-    }
-    if (spec.stages.size() >
-        static_cast<std::size_t>(LegacyInputProvenance::kMaxGrids)) {
-        std::ostringstream os;
-        os << spec.stages.size() << " stage entries exceed the "
-           << LegacyInputProvenance::kMaxGrids
-           << "-entry capacity of the v0 output provenance "
-              "(ns_array/niter_array/ftol_array must have at most "
-           << LegacyInputProvenance::kMaxGrids << " entries)";
-        report.error("ns_array", os.str());
     }
     for (std::size_t g = 0; g < spec.stages.size(); ++g) {
         const StageRequest& st = spec.stages[g];

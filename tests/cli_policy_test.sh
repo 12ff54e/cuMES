@@ -4,10 +4,8 @@
 #
 #   - strict schema (default) rejects unknown input keys;
 #   - --compatibility warns and continues (vmecpp-style ignore);
-#   - strict requires an explicit output path;
-#   - --compatibility restores the legacy cumes_state.bin default;
-#   - strict rejects an unknown output suffix;
-#   - --compatibility restores the legacy unknown-suffix fallback.
+#   - an explicit output path is always required;
+#   - strict rejects an unknown output suffix.
 #
 # Usage: cli_policy_test.sh <path-to-cuMES>
 set -u
@@ -70,17 +68,9 @@ check "--compatibility warns and continues" 1       "WARNING: unknown input key"
 
 check "strict requires explicit output path" 1       "no output path given" ""       "$BIN" in_clean.json
 
-check "--compatibility restores the default output" 1       "writing binary cumes_state.bin" "cuMES: no output path given"       "$BIN" --compatibility in_clean.json
-[ -f cumes_state.bin ] && echo "PASS compat default output file exists" \
-    || { echo "FAIL compat default output file exists"; fail=1; }
+check "--compatibility requires explicit output path" 1       "no output path given" ""       "$BIN" --compatibility in_clean.json
 
 check "strict rejects unknown output suffix" 1       "unrecognized output suffix" ""       "$BIN" in_clean.json out.weird
-
-rm -f cumes_state.bin
-check "--compatibility restores unknown-suffix fallback" 1       "writing binary cumes_state.bin" "unrecognized output suffix; pass" \
-      "$BIN" --compatibility in_clean.json out.weird
-[ -f cumes_state.bin ] && echo "PASS compat suffix fallback wrote cumes_state.bin" \
-    || { echo "FAIL compat suffix fallback wrote cumes_state.bin"; fail=1; }
 
 if [ "$fail" -ne 0 ]; then
   echo "cli_policy_test: FAILED"

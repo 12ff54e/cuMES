@@ -114,7 +114,6 @@ set(CUMES_CONFIG_JSON_SOURCES
   src/cumes/config/json_reader.cpp)
 set(CUMES_IO_HOST_SOURCES
   src/cumes/io/output_spec.cpp
-  src/cumes/io/legacy_binary_v0.cpp
   src/cumes/io/versioned_binary.cpp
   src/cumes/io/checkpoint.cpp)
 
@@ -176,21 +175,22 @@ cumes_add_host_library(cumes_config_json FALSE ${CUMES_CONFIG_JSON_SOURCES})
 target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
 cumes_apply_host_tuning(cumes_config_json)
 
-# Versioned + legacy host I/O: output spec, run report, snapshot, binary v0
-# (byte-exact) and v1 writers/readers, and the versioned checkpoint + legacy
-# init converter. Host-only C++ (no CUDA); NetCDF/HDF5 host adapters are
-# deferred to Phase 3.
+# Versioned host I/O: output spec, run report, snapshot, the v1 binary
+# writer/reader, and the versioned checkpoint. Host-only C++ (no CUDA);
+# NetCDF/HDF5 host adapters are deferred to Phase 3.
 cumes_add_host_library(cumes_io_host FALSE ${CUMES_IO_HOST_SOURCES})
 target_link_libraries(cumes_io_host PUBLIC cumes_core)
 cumes_apply_host_tuning(cumes_io_host)
 
 # Output writers: binary dispatcher + optional NetCDF/HDF5 backends (host-only
-# C++, using only the CUDA runtime API for D2H copies — no device code).
-# The adapter library: legacy device-reading reference writers (output.cpp)
-# + the full Writer/Reader dispatch + the optional NetCDF/HDF5 host adapters
-# (added by cumes_link_output_backends below under their availability defines).
-# Links cumes_io_host for the binary factories / v1 container (completion plan
-# step 2.5: backend headers and defines stay inside this target).
+# C++, using only the CUDA runtime API for the output printout's D2H copy — no
+# device code).
+# The adapter library: the console output printout + format availability
+# preflight (output.cpp), the full Writer/Reader dispatch, and the optional
+# NetCDF/HDF5 host adapters (added by cumes_link_output_backends below under
+# their availability defines). Links cumes_io_host for the binary factories
+# (completion plan step 2.5: backend headers and defines stay inside this
+# target).
 add_library(cumes_io STATIC src/output.cpp src/cumes/io/writer_dispatch.cpp)
 target_include_directories(cumes_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_io PUBLIC CUDA::cudart CUDA::cufft cumes_io_host)
@@ -249,8 +249,8 @@ add_executable(cuMES src/main.cu)
 target_include_directories(cuMES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Link order matters: cumes_io_host BEFORE cumes_io so the adapter library
 # is scanned while the backend-factory references are still undefined — the
-# linker then extracts the strong NetCDF/HDF5 factory definitions, which win
-# over the weak null stubs in legacy_binary_v0.cpp (completion plan step 2.5).
+# linker then extracts the strong NetCDF/HDF5 factory definitions (completion
+# plan step 2.5).
 target_link_libraries(cuMES PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
 cumes_enable_warnings(cuMES)
 cumes_apply_policy_flags(cuMES)
