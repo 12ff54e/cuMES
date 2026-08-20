@@ -237,19 +237,55 @@ def periodic_close(A):
     return A
 
 
-def trim_white(path, pad_px=12):
-    """Crop the saved PNG to the non-white content (the 3D projection does
-    not fill the axes window, so tight bbox alone leaves wide margins)."""
-    a = np.asarray(PILImage.open(path).convert("RGB"))
+def trim_white(path, pad_px=12, title_gap_px=8):
+    """Post-process the saved PNG: crop to the non-white content, collapse
+    the white strip between the suptitle and the figure (3-D projections
+    reserve margin for rotation, so bbox_inches='tight' cannot remove it),
+    and pad the narrower side so the title ends up horizontally centered.
+    The topmost ink band is assumed to be the suptitle."""
+    img = PILImage.open(path).convert("RGB")
+    a = np.asarray(img)
     nonwhite = ~(a > 250).all(axis=2)
     ys, xs = np.where(nonwhite)
     if len(ys) == 0:
         return
-    y0 = max(ys.min() - pad_px, 0)
-    y1 = min(ys.max() + pad_px, a.shape[0])
+    rows = nonwhite.any(axis=1)
+    row_ys = np.where(rows)[0]
+    gap0 = np.where(~rows[row_ys[0]:])[0]
+    t1 = row_ys[0] + (gap0[0] if len(gap0) else a.shape[0] - row_ys[0])
+    band = nonwhite[row_ys[0]:t1]
+    band_xs = np.where(band)[1]
+    title_cx = 0.5 * (band_xs.min() + band_xs.max()) if len(band_xs) else \
+        0.5 * (xs.min() + xs.max())
+    below = np.where(rows[t1:])[0]
+    body_top = t1 + (below[0] if len(below) else 0)
+    # Title piece and body piece; merge when they already touch.
+    pieces = [(max(row_ys[0] - pad_px, 0), t1 + pad_px),
+              (max(body_top - pad_px, 0), a.shape[0])]
+    merged = []
+    for lo, hi in pieces:
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
     x0 = max(xs.min() - pad_px, 0)
-    x1 = min(xs.max() + pad_px, a.shape[1])
-    PILImage.open(path).crop((x0, y0, x1, y1)).save(path)
+    x1 = min(xs.max() + pad_px, a.shape[1] - 1)
+    total_h = sum(hi - lo for lo, hi in merged) + title_gap_px * (len(merged) - 1)
+    canvas = PILImage.new("RGB", (x1 + 1 - x0, total_h), (255, 255, 255))
+    y_cursor = 0
+    for i, (lo, hi) in enumerate(merged):
+        piece = img.crop((x0, lo, x1 + 1, hi))
+        canvas.paste(piece, (0, y_cursor))
+        y_cursor += piece.height + (title_gap_px if i < len(merged) - 1 else 0)
+    w, h = canvas.size
+    # Title center inside the canvas: c = title_cx - x0. Padding the canvas
+    # with L left / R right (L + c = (w + L + R - 1)/2) gives
+    # L = w - 1 - 2c for L >= 0, else R = 2c - (w - 1).
+    c = title_cx - x0
+    shift = int(round((w - 1) - 2.0 * c))
+    out = PILImage.new("RGB", (w + abs(shift), h), (255, 255, 255))
+    out.paste(canvas, (max(shift, 0), 0))
+    out.save(path)
 
 
 def surface_intensity(X, Y, Z, light_dir, lo=0.30):
@@ -438,13 +474,9 @@ def main():
     mappable = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     base = os.path.splitext(args.out)[0]
 
-    # One file per view.
-    views = [("perspective", "perspective view", dict(elev=24.0, azim=-58.0)),
-             ("top", "top view", dict(elev=90.0, azim=-90.0))]
-    for suffix, label, vw in views:
-        print(f"rendering {label} ...", flush=True)
-        fig = plt.figure(figsize=(7.4, 6.2), dpi=100)
-        ax = fig.add_subplot(111, projection="3d")
+    # One file per view, plus a combined two-panel figure.
+    def draw_scene(ax, vw):
+        """Draw surfaces + axis curve into one 3-D axis."""
         for k, s in enumerate(surf_f[::-1]):  # inner surfaces first
             X, Y, Z = to_cartesian(s["r12"], s["z12"])
             B = periodic_close(np.concatenate([s["bmag"]] * NFP, axis=1))
@@ -470,18 +502,53 @@ def main():
         ax.set_box_aspect((1, 1, 0.15))
         ax.set_axis_off()
         ax.view_init(**vw)
+
+    views = [("perspective", "perspective view", dict(elev=24.0, azim=-58.0)),
+             ("top", "top view", dict(elev=90.0, azim=-90.0))]
+    for suffix, label, vw in views:
+        print(f"rendering {label} ...", flush=True)
+        # constrained_layout: 3-D projections reserve wide margins for
+        # rotation; constrained_layout + bbox_inches='tight' mitigates them
+        # (the rest is handled by trim_white).
+        fig = plt.figure(figsize=(7.4, 5.6), dpi=100, constrained_layout=True)
+        ax = fig.add_subplot(111, projection="3d")
+        draw_scene(ax, vw)
         cbar = fig.colorbar(mappable, ax=ax, shrink=0.55, aspect=20,
                             pad=0.01)
         cbar.set_label("|B| (T)", fontsize=10)
         cbar.ax.tick_params(labelsize=9)
         fig.suptitle(
             f"W7-X standard configuration — cuMES equilibrium ({label})",
-            fontsize=11, y=1.005)
+            fontsize=11, y=1.01)
         out_png = f"{base}_{suffix}.png"
         fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close(fig)
         trim_white(out_png)
         print(f"saved {out_png}", flush=True)
+
+    # ---- combined two-panel figure (one shared colorbar) -----------------
+    print("rendering combined view ...", flush=True)
+    # rect leaves a clean strip for the suptitle so trim_white can separate
+    # it from the panel titles without ambiguity.
+    fig = plt.figure(figsize=(12.6, 4.7), dpi=100,
+                     layout="constrained")
+    fig.get_layout_engine().set(rect=(0.0, 0.0, 1.0, 0.93))
+    axes = []
+    for i, (suffix, label, vw) in enumerate(views):
+        ax = fig.add_subplot(1, 2, i + 1, projection="3d")
+        axes.append(ax)
+        draw_scene(ax, vw)
+        ax.set_title(label, fontsize=10, pad=-4)
+    cbar = fig.colorbar(mappable, ax=axes, shrink=0.6, aspect=20, pad=0.01)
+    cbar.set_label("|B| (T)", fontsize=10)
+    cbar.ax.tick_params(labelsize=9)
+    fig.suptitle("W7-X standard configuration — cuMES converged equilibrium",
+                 fontsize=11, y=1.01)
+    out_png = f"{base}_combined.png"
+    fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    trim_white(out_png)
+    print(f"saved {out_png}", flush=True)
 
 
 if __name__ == "__main__":
