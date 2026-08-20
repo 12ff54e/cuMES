@@ -12,6 +12,7 @@
 // Runs both precisions (double is the verification config; float proves the
 // T->double conversion is identical for the single-precision build).
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -85,6 +86,51 @@ static bool readFileBytes(const std::string& path, std::string& out) {
     os << in.rdbuf();
     out = os.str();
     return true;
+}
+
+// Hand-write a version = 1 container with the HISTORICAL trailer layout:
+// after build_type came a scalar_type string, where v2 carries
+// precision_policy + compile_flags instead. The reader must consume and
+// discard the historical slot so the fields after it land correctly.
+static bool writeHistoricalV1(const EquilibriumSnapshot& snap,
+                              const std::string& path) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    auto w_i32 = [&](std::int32_t v) {
+        f.write(reinterpret_cast<const char*>(&v), sizeof(v));
+    };
+    auto w_u8 = [&](std::uint8_t v) {
+        f.write(reinterpret_cast<const char*>(&v), sizeof(v));
+    };
+    auto w_str = [&](const char* s) {
+        const std::int32_t n = static_cast<std::int32_t>(std::strlen(s));
+        w_i32(n);
+        f.write(s, n);
+    };
+    const char kMagic[8] = {'C', 'U', 'M', 'E', 'S', '0', '0', '1'};
+    f.write(kMagic, 8);
+    w_i32(1);  // version (historical)
+    w_i32(snap.ns);
+    w_i32(snap.mnmax);
+    for (const auto& fam : snap.families) {
+        f.write(reinterpret_cast<const char*>(fam.data()),
+                static_cast<std::streamsize>(fam.size() * sizeof(double)));
+    }
+    w_i32(0);      // precision = double
+    w_i32(0);      // status = kConverged
+    w_i32(42);     // total_effective_iterations
+    w_i32(0);      // nstages
+    w_str("r1");   // revision
+    w_u8(0);       // dirty
+    w_str("Release");  // build_type
+    w_str("double");   // scalar_type (the historical v1 slot)
+    w_str("");     // source_path
+    w_str("");     // source_hash
+    w_str("");     // gpu_name
+    w_str("");     // driver
+    w_str("");     // runtime
+    w_str("");     // toolkit
+    return f.good();
 }
 
 static bool snapshotsEqual(const EquilibriumSnapshot& a,
@@ -432,7 +478,7 @@ static void runPrecision() {
         }
     }
 
-    // ---- v1 writer round-trips the bridged snapshot -----------------------
+    // ---- v1 writer round-trips the bridged snapshot + provenance trailer --
     {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string v1Path = scratch("v1");
@@ -444,15 +490,50 @@ static void runPrecision() {
         auto r = cumes::make_reader(spec.format, spec.schema);
         CHECK(w != nullptr && r != nullptr, "v1: writer+reader factories");
         if (w && r) {
-            RunReport report;
-            report.status = cumes::RunStatus::kConverged;
-            report.build.scalar_type = sizeof(T) == sizeof(double) ? "double" : "float";
-            CHECK(w->write_atomic(snap, report, spec, vp, scalars).has_value(), "v1: write succeeds");
-            auto back = r->read(v1Path);
-            CHECK(back.has_value() && snapshotsEqual(snap, back.value()),
+            // Read back WITH the report: the v2 trailer (precision-policy
+            // fields + stage records) must round-trip, not just the state.
+            // (The trailer sequences were once out of sync and a state-only
+            // read could not see it — see docs/output-formats.md.)
+            RunReport report = makeIoReport();
+            report.build.scalar_type =
+                sizeof(T) == sizeof(double) ? "double" : "float";
+            CHECK(w->write_atomic(snap, report, spec, vp, scalars).has_value(),
+                  "v1: write succeeds");
+            RunReport back;
+            auto snap_back = r->read(v1Path, &back);
+            CHECK(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
                   "v1: round-trip preserves bridged state");
+            CHECK(reportsEqual(report, back),
+                  "v1: round-trip preserves the provenance trailer");
         }
         remove(v1Path.c_str());
+    }
+
+    // ---- v1 historical layout (version = 1): the trailer carried a
+    // scalar_type string where v2 carries the precision-policy pair; the
+    // reader must consume and discard it so the later fields land right. --
+    {
+        const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
+        const std::string v1OldPath = scratch("v1old");
+        CHECK(writeHistoricalV1(snap, v1OldPath), "v1 historical: fixture written");
+        auto r = cumes::make_reader(OutputFormat::kBinary, OutputSchema::kV1);
+        CHECK(r != nullptr, "v1 historical: reader factory");
+        if (r) {
+            RunReport back;
+            auto snap_back = r->read(v1OldPath, &back);
+            CHECK(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
+                  "v1 historical: state round trip");
+            CHECK(back.build.scalar_type == "double" &&
+                      back.build.revision == "r1" &&
+                      back.build.build_type == "Release" &&
+                      back.build.precision_policy == "" &&
+                      back.build.compile_flags == "" &&
+                      back.input.source_path == "" &&
+                      back.total_effective_iterations == 42 &&
+                      back.stages.empty(),
+                  "v1 historical: trailer fields land correctly");
+        }
+        remove(v1OldPath.c_str());
     }
 
     // ---- NetCDF/HDF5 adapters (completion plan steps 2.2/2.3) -------------

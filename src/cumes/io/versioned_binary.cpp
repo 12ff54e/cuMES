@@ -1,8 +1,8 @@
 // versioned_binary.cpp — schema v1 binary state container (blueprint §6.13).
 //
-// Layout (little-endian):
+// Layout (little-endian), version 2 (the current on-disk version):
 //   magic     8 bytes  "CUMES001"
-//   version   int32    = 1
+//   version   int32    = 2
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major (the state payload)
@@ -11,11 +11,19 @@
 //   status    int32    (RunStatus)
 //   total_iter int32
 //   nstages   int32
-//   build     revision(str), dirty(u8), build_type(str), scalar_type(str)
+//   build     revision(str), dirty(u8), build_type(str),
+//             precision_policy(str), compile_flags(str)
 //   input     source_path(str), source_hash(str)
 //   runtime   gpu_name(str), driver(str), runtime(str), toolkit(str)
 //   stages    per stage: ns(i32), iterations(i32), converged(u8),
 //             fsqr(f64), fsqz(f64), fsql(f64), nrestarts(i32), restarts(i32...)
+//
+// All strings are int32-length-prefixed. The scalar_type string is NOT
+// serialized: the reader reconstructs it from the precision tag.
+//
+// Version 1 (historical, still readable): the trailer instead carried a
+// scalar_type string between build_type and source_path (the v1 reader
+// consumes and discards it).
 //
 // The state payload is read and validated independently of the provenance
 // trailer, so a reader stays forward-compatible with later v1.x trailers.
@@ -86,7 +94,8 @@ class VersionedBinaryWriter final : public Writer {
         ok = ok && io_detail::write_string(fp, report.build.revision) &&
              io_detail::write_u8(fp, report.build.dirty ? 1 : 0) &&
              io_detail::write_string(fp, report.build.build_type) &&
-             io_detail::write_string(fp, report.build.scalar_type) &&
+             io_detail::write_string(fp, report.build.precision_policy) &&
+             io_detail::write_string(fp, report.build.compile_flags) &&
              io_detail::write_string(fp, report.input.source_path) &&
              io_detail::write_string(fp, report.input.source_hash) &&
              io_detail::write_string(fp, report.runtime.gpu_name) &&
@@ -165,12 +174,19 @@ class VersionedBinaryReader final : public Reader {
             report->status = static_cast<RunStatus>(status);
             report->total_effective_iterations = total;
             report->build.scalar_type = (precision == 0) ? "double" : "float";
+            // The v2 trailer carries precision_policy + compile_flags after
+            // build_type; the historical v1 trailer carried a scalar_type
+            // string in that slot instead (the precision tag above is
+            // authoritative either way, so the v1 string is read and
+            // discarded).
+            std::string legacy_scalar_type;
             if (!io_detail::read_string(fp, report->build.revision) ||
                 !io_detail::read_u8(fp, dirty) ||
                 !io_detail::read_string(fp, report->build.build_type) ||
-                (has_policy_fields &&
-                 (!io_detail::read_string(fp, report->build.precision_policy) ||
-                  !io_detail::read_string(fp, report->build.compile_flags))) ||
+                (has_policy_fields
+                     ? (!io_detail::read_string(fp, report->build.precision_policy) ||
+                        !io_detail::read_string(fp, report->build.compile_flags))
+                     : !io_detail::read_string(fp, legacy_scalar_type)) ||
                 !io_detail::read_string(fp, report->input.source_path) ||
                 !io_detail::read_string(fp, report->input.source_hash) ||
                 !io_detail::read_string(fp, report->runtime.gpu_name) ||
