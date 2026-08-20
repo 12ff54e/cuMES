@@ -7,8 +7,7 @@ architecture and physics are real.
 
 **Reference implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
 (CPU-based C++ VMEC solver) at tag 0.7.0. vmecpp is cuMES's correctness
-reference, **not** a bit-exactness oracle: the two agree only to loose
-numerical agreement (see [Verification](#verification)).
+reference (see [Verification](#verification)).
 
 **Status: working.** The solver reproduces its two frozen reference trajectories
 (cuMES's own audited baselines, re-derived after the CUDA overhaul):
