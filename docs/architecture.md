@@ -14,7 +14,7 @@ in `docs/verification.md`; the measured performance in
 The strangler-fig migration is complete (migration step 13): the legacy
 `include/*.cuh` kernel structs and their free-function entry points are
 deleted, and the production kernels live directly in the `cumes` operator
-classes, which own their device buffers and reproduce the frozen VMEC
+classes, which own their device buffers and reproduce the frozen
 trajectories bit-for-bit.
 
 - **Device operator modules** — `src/*_impl.cuh` + the explicit

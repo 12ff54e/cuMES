@@ -8,6 +8,8 @@ orchestrator. This is a pedagogical / scaffolding project — not production-gra
 but the architecture is real.
 
 Reference implementation: `https://github.com/proximafusion/vmecpp` (CPU-based C++ VMEC solver) at tag 0.7.0.
+cuMES treats vmecpp as its correctness reference, **not** a bit-exactness
+oracle: it matches vmecpp only to loose numerical agreement (see Status).
 
 The codebase completed a CUDA overhaul (blueprint: `docs/cuda-overhaul-blueprint.md`,
 phases 0–11; see `docs/architecture.md` for the current shape and the
@@ -162,7 +164,7 @@ bundles; no legacy workspace structs remain.
 | **Precision via templates**        | All computation is `template<typename T>`; `Real` (vmec_types.h) + `-DCUMES_USE_FLOAT=ON` selects float, otherwise double. Double is the verified default — residuals pushed to 1e-14. Single precision stalls at ~1e-7 (float rounding floor), so float runs need a relaxed ftol. cuFFT dispatches through `FftTraits<T>` (D2Z/Z2D ↔ R2C/C2R).                                                                                                                                                                                                                                                            |
 | **Explicit instantiation split**   | Each operator's kernels live in `src/<mod>_impl.cuh` included only by its `_double.cu`/`_float.cu` TUs (one scalar type per TU, linked as `cumes_cuda_double`/`cumes_cuda_float`). This makes direct `extern __shared__ T[]` legal in the templated kernels (see Precision).                                                                                                                                                                                                                                                                                                                            |
 | **Config validation**              | The JSON input is parsed and validated host-side into a `ValidatedProblem` (`cumes-config-v1` normalized schema, `configs/schema-v1.json`); the solver consumes `ValidatedProblem` + per-stage `DeviceParams<T>` packs. No solver code parses input.                                                                                                                                                                                                                                                                                                                                                    |
-| **Class A / Class B changes**      | Class A = bit-identical to the frozen trajectory (Solovev `251→199→456` FSQR 9.583e-17, W7-X `1877→1617→2011` FSQR 9.778e-13) — the regression oracle for every change. Class B = ULP-equivalent with identical controller decisions (iteration counts + restart sequence), a deliberate re-freeze. Verify with `scripts/compare_runs.py` + CTest.                                                                                                                                                                                                                                                      |
+| **Class A / Class B changes**      | Class A = bit-identical to cuMES's own frozen trajectory (Solovev `251→199→456` FSQR 9.583e-17, W7-X `1877→1617→2011` FSQR 9.778e-13) — the internal regression oracle for every refactor, independent of any vmecpp bit-exactness target. Class B = ULP-equivalent with identical controller decisions (iteration counts + restart sequence), a deliberate re-freeze. Verify with `scripts/compare_runs.py` + CTest.                                                                                                                                                                                                                                                      |
 
 ## Fourier Transform Details
 
@@ -375,23 +377,22 @@ narrowing/byte counts with documented caps), guarded by the host-only
 re-verified Class A byte-identical against the `dc0d0c4` baseline after every
 change. The frozen baselines are:**
 
-- Solovev: 251 → 199 → 456 effective iters, final FSQR 9.583e-17 — the
-  final stage matches vmecpp's playground reference exactly (456, 9.99e-17).
+- Solovev: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
 - W7-X: 1877 → 1617 → 2011 effective iters (total 5505), final FSQR
-  9.778e-13; vmecpp multigrid runs 1877 → 1635 → 2012. The converged final
-  states agree at ~1e-5 in R/Z, ~1e-4 in the weakly-determined near-axis λ.
+  9.778e-13. The converged final states agree with the vmecpp/wout
+  reference at ~1e-5 in R/Z, ~1e-4 in the weakly-determined near-axis λ.
 - The multigrid final state is a different member of the (near-degenerate)
   λ-gauge family than the single-grid-99 run: rmncc(0,1) differs by
-  2.7e-4 vs the single-grid state/wout — and vmecpp's own single-grid vs
-  multigrid states differ by exactly the same 2.7e-4 (intrinsic to the
+  ~2.7e-4 vs the single-grid state/wout — and vmecpp's own single-grid vs
+  multigrid states differ by the same ~2.7e-4 (intrinsic to the
   continuation, not a cuMES artifact). Restarting the solver from the
   multigrid final state converges at iter 1 (it is a genuine fixed point).
 - Single-grid regression: with `n_grids=1` (ns_array={99}) the run is
   bit-identical to the pre-multigrid code (compare_runs.py PASS, 2953
   effective iters, FSQR 9.924e-13, state identical).
-- The per-iteration residuals track vmecpp at ≤1e-8 over the ENTIRE run with an
-  identical restart sequence, and the single-grid converged state matches the
-  wout at ≤1.5e-9 in all six families including the λ gauge modes. Note:
+- The per-iteration residuals track vmecpp at ≤1e-8 over the ENTIRE run, and
+  the single-grid converged state matches the wout at ≤1.5e-9 in all six
+  families including the λ gauge modes. Note:
   scripts/compare_converged_state.py must read the FULL-grid wout `lmns_full`,
   not the half-grid `lmns`.
 
