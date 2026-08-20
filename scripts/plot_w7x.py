@@ -362,6 +362,92 @@ def trim_white(path, pad_px=12, title_gap_px=8, center="title"):
     out.save(path)
 
 
+def compose_combined(path, pad_px=12, title_gap_px=8, panel_gap_px=22,
+                     cbar_gap_px=14):
+    """Post-process the combined PNG: crop each panel's ink and the
+    colorbar separately and recompose them side by side with fixed gaps,
+    then center the title over the composite. The 3-D boxes do not fill
+    their axes windows (and sit right of the window center), so no layout
+    setting can remove the inter-panel white space."""
+    img = PILImage.open(path).convert("RGB")
+    a = np.asarray(img)
+    nonwhite = ~(a > 250).all(axis=2)
+    ys, xs = np.where(nonwhite)
+    if len(ys) == 0:
+        return
+    rows = nonwhite.any(axis=1)
+    row_ys = np.where(rows)[0]
+    gap0 = np.where(~rows[row_ys[0]:])[0]
+    t1 = row_ys[0] + (gap0[0] if len(gap0) else a.shape[0] - row_ys[0])
+    band = nonwhite[row_ys[0]:t1]
+    band_xs = np.where(band)[1]
+    cut = int(0.92 * a.shape[1])
+    tx = band_xs[band_xs < cut]
+    below = np.where(rows[t1:])[0]
+    body_top = t1 + (below[0] if len(below) else 0)
+    body_bottom = ys.max()
+    # column runs over the body only
+    col = nonwhite[body_top:body_bottom + 1].any(axis=0)
+    runs = []
+    start = None
+    for i, v in enumerate(col):
+        if v and start is None:
+            start = i
+        if not v and start is not None:
+            runs.append([start, i - 1])
+            start = None
+    if start is not None:
+        runs.append([start, len(col) - 1])
+    groups = []
+    for r in runs:
+        if groups and r[0] - groups[-1][1] < 40:
+            groups[-1][1] = r[1]
+        else:
+            groups.append(r)
+    if len(groups) < 2:
+        trim_white(path, center="body")
+        return
+    cbar = groups[-1]
+    pieces = []
+    for g in groups[:-1]:
+        sub = nonwhite[body_top:body_bottom + 1, g[0]:g[1] + 1]
+        if not sub.any():
+            continue
+        gy, _ = np.where(sub)
+        lo = max(body_top + gy.min() - pad_px, body_top)
+        hi = min(body_top + gy.max() + pad_px, body_bottom)
+        pieces.append(img.crop((g[0], lo, g[1] + 1, hi + 1)))
+    csub = nonwhite[body_top:body_bottom + 1, cbar[0]:cbar[1] + 1]
+    cy, _ = np.where(csub)
+    cla = max(body_top + cy.min() - pad_px, body_top)
+    clb = min(body_top + cy.max() + pad_px, body_bottom)
+    cbar_piece = img.crop((cbar[0], cla, cbar[1] + 1, clb + 1))
+    body_w = sum(p.width for p in pieces) + panel_gap_px * (len(pieces) - 1) \
+        + cbar_gap_px + cbar_piece.width
+    body_h = max([p.height for p in pieces] + [cbar_piece.height])
+    body = PILImage.new("RGB", (body_w, body_h), (255, 255, 255))
+    x = 0
+    for p in pieces:
+        body.paste(p, (x, (body_h - p.height) // 2))
+        x += p.width + panel_gap_px
+    x -= panel_gap_px
+    body.paste(cbar_piece, (x + cbar_gap_px, (body_h - cbar_piece.height) // 2))
+    # title strip: white canvas + the title text centered over the composite
+    title_h = t1 + pad_px - max(row_ys[0] - pad_px, 0)
+    out = PILImage.new("RGB", (body_w, title_h + title_gap_px + body_h),
+                       (255, 255, 255))
+    if len(tx):
+        text = img.crop((tx.min(), max(row_ys[0] - pad_px, 0),
+                         tx.max() + 1, t1 + pad_px))
+        out.paste(text, ((body_w - text.width) // 2, 0))
+    out.paste(body, (0, title_h + title_gap_px))
+    # outer margin
+    final = PILImage.new("RGB", (out.width + 2 * pad_px, out.height + 2 * pad_px),
+                         (255, 255, 255))
+    final.paste(out, (pad_px, pad_px))
+    final.save(path)
+
+
 def surface_intensity(X, Y, Z, light_dir, lo=0.30):
     """Lambertian illumination from the GEOMETRIC surface normals (cross
     product of the grid tangents), rescaled to [lo, 1] so the side facing
@@ -624,7 +710,7 @@ def main():
     out_png = f"{base}_combined.png"
     fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-    trim_white(out_png, center="body")
+    compose_combined(out_png)
     print(f"saved {out_png}", flush=True)
 
     # ---- top view + poloidal cross-section slices -------------------------
