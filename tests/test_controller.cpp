@@ -9,7 +9,6 @@
 // byte-for-byte gate (scripts/compare_bitwise.py) separately proves the
 // refactored solver replays the frozen trajectory identically.
 #include <cmath>
-#include <cstdio>
 
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes_test.h"
@@ -23,7 +22,7 @@ static bool near(double a, double b, double eps) {
 static void check_near(double a, double b, double eps, const char* what) {
     if (!near(a, b, eps)) {
         ++failures();
-        std::printf("  FAIL: %s (got %.17g, want %.17g)\n", what, a, b);
+        std::cout << format("  FAIL: {} (got {:.17g}, want {:.17g})\n", what, a, b);
     }
 }
 
@@ -203,9 +202,9 @@ int main() {
     }
 
     if (failures()) {
-        std::printf("test_controller: %d failure(s)\n", failures());
+        std::cout << format("test_controller: {} failure(s)\n", failures());
         return 1;
     }
-    std::printf("test_controller: all checks passed\n");
+    std::cout << "test_controller: all checks passed\n";
     return 0;
 }

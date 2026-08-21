@@ -42,7 +42,6 @@
 // coeff-pack->Z2D->synthesize chain bandpasses it.  tcon comes from the real
 // preconditioner (preconCompute on the manufactured geometry) through the
 // public constraintCompute(precon_updated=true) path.
-#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <vector>
@@ -71,7 +70,7 @@ using namespace cumes::test;
 static void checkNear(double gpu, double ref, double tol,
                       const char* s, long long a, long long b, long long c) {
     if (!(fabs(gpu - ref) <= tol)) {
-        fprintf(stderr, "FAIL [%s] a=%lld b=%lld c=%lld gpu=%.15e ref=%.15e\n",
+        std::cerr << format("FAIL [{}] a={} b={} c={} gpu={:.15e} ref={:.15e}\n",
                 s, a, b, c, gpu, ref);
         ++failures();
     }
@@ -308,7 +307,7 @@ static void cpuPreconApplyRef(const std::vector<T>& ar, const std::vector<T>& dr
 template <typename T>
 static int testDealias(int ntheta) {
     int lf = failures();
-    printf("  de-alias bandpass theta coverage: ns=11 mpol=6 ntor=0 nzeta=1 ntheta=%d ... ", ntheta);
+    std::cout << format("  de-alias bandpass theta coverage: ns=11 mpol=6 ntor=0 nzeta=1 ntheta={} ... ", ntheta);
     const int ns = 11, mpol = 6, ntor = 0, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     cumes::ValidatedProblem vp = solovevInput();
@@ -405,7 +404,7 @@ static int testDealias(int ntheta) {
     
     realSpaceFree(rs);
     cumes::modeTableFree(mt);
-    printf(failures() == lf ? "PASS\n" : "FAIL\n");
+    std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
 
@@ -415,7 +414,7 @@ static int testDealias(int ntheta) {
 template <typename T>
 static int testPcr(int ns) {
     int lf = failures();
-    printf("  PCR solve row coverage: mpol=4 ntor=0 ntheta=18 nzeta=1 ns=%d ... ", ns);
+    std::cout << format("  PCR solve row coverage: mpol=4 ntor=0 ntheta=18 nzeta=1 ns={} ... ", ns);
     const int mpol = 4, ntor = 0, ntheta = 18, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     cumes::ValidatedProblem vp = solovevInput();
@@ -497,7 +496,7 @@ static int testPcr(int ns) {
 
     realSpaceFree(rs);
     cumes::modeTableFree(mt);
-    printf(failures() == lf ? "PASS\n" : "FAIL\n");
+    std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
 
@@ -518,13 +517,13 @@ static int runPcrTests() {
 }
 
 int main() {
-    printf("=== Regression: de-alias theta coverage + PCR row coverage ===\n");
+    std::cout << "=== Regression: de-alias theta coverage + PCR row coverage ===\n";
     int nf = 0;
     nf += runDealiasTests<double>();
     nf += runDealiasTests<float>();
     nf += runPcrTests<double>();
     nf += runPcrTests<float>();
     failures() = nf;
-    printf(failures() == 0 ? "ALL PASS\n" : "%d FAILURES\n", failures());
+    std::cout << (failures() == 0 ? "ALL PASS\n" : format("{} FAILURES\n", failures()));
     return summary();
 }

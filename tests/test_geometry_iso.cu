@@ -8,7 +8,6 @@
 // The coverage checks ASSERT (nonzero exit on failure) — a passing exit code
 // must mean every angular point of the surface was written.
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <vector>
@@ -106,14 +105,14 @@ int main() {
     double* h_all = new double[(p.ns - 1) * nZnT];
     cc(cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsupu.data(), (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost), "get bsupu");
     for (int k = 0; k < nZnT; ++k) if (h_all[jMid * nZnT + k] == 0.0) ++nz;
-    printf("bsupu[jMid=%d] zeros: %d/%d\n", jMid, nz, nZnT);
+    std::cout << format("bsupu[jMid={}] zeros: {}/{}\n", jMid, nz, nZnT);
     for (int i = 0; i < nks; ++i)
-        printf("  k=%d: %.6f\n", ks[i], hb[i]);
+        std::cout << format("  k={}: {:.6f}\n", ks[i], hb[i]);
     // also check the bsubu coverage
     cc(cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsubu.data(), (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost), "get bsubu");
     int nz2 = 0;
     for (int k = 0; k < nZnT; ++k) if (h_all[jMid * nZnT + k] == 0.0) ++nz2;
-    printf("bsubu[jMid=%d] zeros: %d/%d\n", jMid, nz2, nZnT);
+    std::cout << format("bsubu[jMid={}] zeros: {}/{}\n", jMid, nz2, nZnT);
     delete[] h_all;
 
     realSpaceFree(rs);
@@ -122,8 +121,8 @@ int main() {
     // Assertions: a full-coverage kernel must leave no unwritten point on an
     // interior surface (zero is not a physical bsupu/bsubu value there).
     int bad = 0;
-    if (nz != 0) { fprintf(stderr, "FAIL: bsupu coverage incomplete (%d zeros)\n", nz); bad = 1; }
-    if (nz2 != 0) { fprintf(stderr, "FAIL: bsubu coverage incomplete (%d zeros)\n", nz2); bad = 1; }
-    if (bad == 0) printf("test_geometry_iso: coverage OK\n");
+    if (nz != 0) { std::cerr << format("FAIL: bsupu coverage incomplete ({} zeros)\n", nz); bad = 1; }
+    if (nz2 != 0) { std::cerr << format("FAIL: bsubu coverage incomplete ({} zeros)\n", nz2); bad = 1; }
+    if (bad == 0) std::cout << "test_geometry_iso: coverage OK\n";
     return bad;
 }

@@ -28,14 +28,14 @@ using namespace cumes::test;
 // Unique per-process scratch file so parallel CTest runs cannot collide on
 // the same path (the old fixed name broke `ctest -j`).
 static const char* scratchPath() {
-    static char buf[64];
-    snprintf(buf, sizeof buf, "test_input_json_scratch_%d.json", (int)getpid());
-    return buf;
+    static const std::string buf =
+        format("test_input_json_scratch_{}.json", (int)getpid());
+    return buf.c_str();
 }
 
 static void writeScratch(const std::string& content) {
     FILE* fp = fopen(scratchPath(), "w");
-    if (!fp) { fprintf(stderr, "cannot write scratch file\n"); exit(1); }
+    if (!fp) { std::cerr << "cannot write scratch file\n"; exit(1); }
     fputs(content.c_str(), fp);
     fclose(fp);
 }
@@ -46,7 +46,7 @@ static cumes::ValidatedProblem load(const char* path) {
     cumes::SolverOptions opts;
     auto vr = cumes::read_and_validate(path, opts);
     if (!vr.has_value()) {
-        fprintf(stderr, "load(%s) failed validation\n", path);
+        std::cerr << format("load({}) failed validation\n", path);
         exit(1);
     }
     return std::move(vr.value());

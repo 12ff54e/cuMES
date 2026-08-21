@@ -14,7 +14,6 @@
 // gets a Compute Sanitizer memcheck variant via CUMES_ENABLE_SANITIZER_TESTS
 // — the registered sanitizer pass that catches OOB reads like the one this
 // regression pins.
-#include <cstdio>
 #include <cmath>
 #include <vector>
 
@@ -118,7 +117,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 }
 
 int main() {
-    printf("=== Geometry ncurr path regression (ns=33, the OOB size) ===\n");
+    std::cout << "=== Geometry ncurr path regression (ns=33, the OOB size) ===\n";
     // Both current models at the exact failing resolution.
     runGeometry<double>(33, 0, "ncurr=0 fixed-iota geometry finite");
     runGeometry<double>(33, 1, "ncurr=1 prescribed-current geometry finite");

@@ -6,7 +6,6 @@
 // contract, plus a device round-trip through a carved span to prove the returned
 // pointers are ordinary usable device pointers.
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 
 #include "cumes/runtime/device_arena.cuh"
@@ -20,7 +19,7 @@ __global__ void fillSpan(double* d, int n, double seed) {
 }
 
 int main() {
-    printf("=== DeviceArena ===\n");
+    std::cout << "=== DeviceArena ===\n";
 
     // ---- carve + alignment + reporting ----
     {

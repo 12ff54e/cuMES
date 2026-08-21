@@ -19,7 +19,6 @@
 // Conventions match the other tests: everything is templated on T and both
 // double and float are instantiated; the CPU reference computes in double from
 // the (possibly float) T inputs; the float leg compares at a relaxed tolerance.
-#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <vector>
@@ -35,7 +34,7 @@ using namespace cumes::test;
 static void checkNear(double gpu, double ref, double tol,
                       const char* s, int a, int b, int c) {
     if (!(fabs(gpu - ref) <= tol)) {
-        fprintf(stderr, "FAIL [%s] a=%d b=%d c=%d gpu=%.15e ref=%.15e\n",
+        std::cerr << format("FAIL [{}] a={} b={} c={} gpu={:.15e} ref={:.15e}\n",
                 s, a, b, c, gpu, ref);
         ++failures();
     }
@@ -72,7 +71,7 @@ static void cpuThomas(const double* lower, const double* diagonal,
 template <typename T>
 static int testSolve(int ns) {
     int lf = failures();
-    printf("  tridiagonal backend solve: ns=%d rhs_count=2 ... ", ns);
+    std::cout << format("  tridiagonal backend solve: ns={} rhs_count=2 ... ", ns);
     const int modes = 8;
     const int rhs_count = 2;
     const int jMax = ns - 1;
@@ -167,12 +166,12 @@ static int testSolve(int ns) {
 
     // Healthy systems must report no breakdown.
     if (th_status != 0) {
-        fprintf(stderr, "FAIL [status] Thomas reported %d breakdowns on a "
+        std::cerr << format("FAIL [status] Thomas reported {} breakdowns on a "
                         "healthy system\n", th_status);
         ++failures();
     }
     if (pc_status != 0) {
-        fprintf(stderr, "FAIL [status] PCR reported %d breakdowns on a "
+        std::cerr << format("FAIL [status] PCR reported {} breakdowns on a "
                         "healthy system\n", pc_status);
         ++failures();
     }
@@ -208,7 +207,7 @@ static int testSolve(int ns) {
 
     cudaFree(d_lower); cudaFree(d_diag); cudaFree(d_upper); cudaFree(d_rhs);
     cudaFree(d_scale); cudaFree(d_jMin); cudaFree(d_status);
-    printf(failures() == lf ? "PASS\n" : "FAIL\n");
+    std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
 
@@ -218,7 +217,7 @@ static int testSolve(int ns) {
 template <typename T>
 static int testBreakdown() {
     int lf = failures();
-    printf("  tridiagonal pivot breakdown (zero diagonal) ... ");
+    std::cout << "  tridiagonal pivot breakdown (zero diagonal) ... ";
     const int modes = 1, ns = 16, rhs_count = 1;
     const int jMax = ns - 1;
 
@@ -274,7 +273,7 @@ static int testBreakdown() {
         check_cuda(cudaMemcpy(&st, d_status, sizeof(int), cudaMemcpyDeviceToHost),
                   "status get");
         if (st == 0) {
-            fprintf(stderr, "FAIL [status] %s did not report the zero-diagonal "
+            std::cerr << format("FAIL [status] {} did not report the zero-diagonal "
                             "breakdown\n", pass == 0 ? "Thomas" : "PCR");
             ++failures();
         }
@@ -282,12 +281,12 @@ static int testBreakdown() {
 
     cudaFree(d_lower); cudaFree(d_diag); cudaFree(d_upper); cudaFree(d_rhs);
     cudaFree(d_scale); cudaFree(d_jMin); cudaFree(d_status);
-    printf(failures() == lf ? "PASS\n" : "FAIL\n");
+    std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
 
 int main() {
-    printf("=== Tridiagonal backend: CPU agreement + pivot breakdown ===\n");
+    std::cout << "=== Tridiagonal backend: CPU agreement + pivot breakdown ===\n";
     int nf = 0;
     const int nsList[] = {3, 17, 65, 99, 130, 257, 512};
     for (int ns : nsList) {
@@ -297,6 +296,6 @@ int main() {
     nf += testBreakdown<double>();
     nf += testBreakdown<float>();
     failures() = nf;
-    printf(failures() == 0 ? "ALL PASS\n" : "%d FAILURES\n", failures());
+    std::cout << (failures() == 0 ? "ALL PASS\n" : format("{} FAILURES\n", failures()));
     return summary();
 }

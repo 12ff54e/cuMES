@@ -288,20 +288,16 @@ static void testBackend(const char* name, FixtureWriter writer,
                        bool wrong_iter_extent = false) {
         const std::string path = dir.path() + "/" + label + suffix;
         const bool written = writer(path, offsets, nrestarts, wrong_iter_extent);
-        char msg[192];
-        snprintf(msg, sizeof msg, "%s: fixture written (%s)", name, label);
-        check(written, msg);
+        check(written, format("{}: fixture written ({})", name, label));
 
         std::unique_ptr<Reader> reader = make_reader(fmt);
-        snprintf(msg, sizeof msg, "%s: reader factory exists (%s)", name, label);
-        check(reader != nullptr, msg);
+        check(reader != nullptr, format("{}: reader factory exists ({})", name, label));
 
         RunReport rep;
         const auto res = reader->read(path, &rep);
         remove(path.c_str());
-        snprintf(msg, sizeof msg, "%s: %s", name, label);
         if (expect_ok) {
-            check(res.has_value(), msg);
+            check(res.has_value(), format("{}: {}", name, label));
             if (res.has_value()) {
                 bool restarts_ok = rep.stages.size() == offsets.size();
                 for (size_t g = 0; restarts_ok && g < offsets.size(); ++g) {
@@ -311,24 +307,20 @@ static void testBackend(const char* name, FixtureWriter writer,
                                            : (size_t)nrestarts;
                     restarts_ok = rep.stages[g].restarts.size() == end - begin;
                 }
-                snprintf(msg, sizeof msg,
-                         "%s: %s (restarts land in the right stages)", name,
-                         label);
-                check(restarts_ok, msg);
+                check(restarts_ok,
+                      format("{}: {} (restarts land in the right stages)", name,
+                             label));
             }
         } else if (!res.has_value()) {
             const std::string& err = res.error();
-            snprintf(msg, sizeof msg,
-                     "%s: %s failure names the restart contract", name, label);
             // The NetCDF extent case fails in the restart-history read, the
             // HDF5 one in the stage-history read — either names the contract.
             check(err.find("restart") != std::string::npos ||
                       err.find("stage") != std::string::npos,
-                  msg);
+                  format("{}: {} failure names the restart contract", name,
+                         label));
         } else {
-            snprintf(msg, sizeof msg, "%s: %s rejected with typed failure",
-                     name, label);
-            check(false, msg);
+            check(false, format("{}: {} rejected with typed failure", name, label));
         }
     };
 
@@ -352,12 +344,12 @@ int main() {
     testBackend("netcdf", writeNetcdfFixture, OutputFormat::kNetCdf, ".nc",
                 dir);
 #else
-    printf("SKIP netcdf corrupted-offset cases (backend not compiled)\n");
+    std::cout << "SKIP netcdf corrupted-offset cases (backend not compiled)\n";
 #endif
 #ifdef CUMES_HAVE_HDF5
     testBackend("hdf5", writeHdf5Fixture, OutputFormat::kHdf5, ".h5", dir);
 #else
-    printf("SKIP hdf5 corrupted-offset cases (backend not compiled)\n");
+    std::cout << "SKIP hdf5 corrupted-offset cases (backend not compiled)\n";
 #endif
 
     return summary();

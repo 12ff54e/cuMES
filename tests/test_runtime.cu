@@ -5,7 +5,6 @@
 // SpectralView (device round-trip at the component-major layout), and the
 // SpectralStorage contiguous state/velocity slabs — in particular that
 // family_ptr() reproduces the exact six-family layout the legacy code read.
-#include <cstdio>
 #include <cstdlib>
 #include <utility>
 #include <vector>
@@ -54,7 +53,7 @@ __global__ void writeSpectral(
 }
 
 int main() {
-    printf("=== runtime RAII / views / slabs ===\n");
+    std::cout << "=== runtime RAII / views / slabs ===\n";
 
     // ---- DeviceBuffer: alloc, zero, copy, move ----
     {

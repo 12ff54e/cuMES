@@ -80,7 +80,7 @@ static bool fileExists(const char* path) {
 
 static void writeGarbage(const char* path, const char* bytes, size_t n) {
     FILE* fp = fopen(path, "wb");
-    if (!fp) { fprintf(stderr, "cannot seed %s\n", path); exit(1); }
+    if (!fp) { std::cerr << format("cannot seed {}\n", path); exit(1); }
     fwrite(bytes, 1, n, fp);
     fclose(fp);
 }
@@ -118,7 +118,7 @@ static bool writeViaHost(cumes::SpectralStorage<T>& st, const DeviceParams<T>& p
 
 template <typename T>
 static void runAll() {
-    printf("== %s precision ==\n", sizeof(T) == sizeof(double) ? "double" : "float");
+    std::cout << format("== {} precision ==\n", sizeof(T) == sizeof(double) ? "double" : "float");
     TinyBundle<T> b;
 
     // ---- open failure: path in a nonexistent directory ----
@@ -161,7 +161,7 @@ static void runAll() {
         const char* dir = "test_output_target_dir.bin";
         // Remove any prior run's leftover, then make a directory as the target.
         remove(dir);
-        if (mkdir(dir, 0755) != 0) { fprintf(stderr, "cannot mkdir %s\n", dir); exit(1); }
+        if (mkdir(dir, 0755) != 0) { std::cerr << format("cannot mkdir {}\n", dir); exit(1); }
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, dir,
                                   cumes::OutputFormat::kBinary);
         check(!ok, "rename failure: target directory -> returns false");
@@ -325,7 +325,7 @@ static void runPublicationBoundaries() {
 }
 
 int main() {
-    printf("=== Output failure-injection matrix ===\n");
+    std::cout << "=== Output failure-injection matrix ===\n";
     runAll<double>();
     runAll<float>();
     runPublicationBoundaries();

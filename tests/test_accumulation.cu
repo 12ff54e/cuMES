@@ -10,7 +10,6 @@
 // crafted input has one 1e4 term (square 1e8) plus a million 0.1 terms (square
 // 1e-2): at 1e8 the float ulp is 8, so every small add vanishes in float but
 // survives in double.
-#include <cstdio>
 #include <cmath>
 #include <cstdint>
 #include <type_traits>
@@ -73,11 +72,11 @@ int main() {
     const double ferr = std::fabs((double)f_acc - ref);
     const double derr = std::fabs((double)d_acc - ref);
 
-    printf("sum-of-squares reference  = %.6f\n", ref);
-    printf("  float accumulation      = %.6f (abs err %.3e)\n",
-           (double)f_acc, ferr);
-    printf("  double accumulation     = %.6f (abs err %.3e)\n",
-           (double)d_acc, derr);
+    std::cout << format("sum-of-squares reference  = {:.6f}\n", ref);
+    std::cout << format("  float accumulation      = {:.6f} (abs err {:.3e})\n",
+                        (double)f_acc, ferr);
+    std::cout << format("  double accumulation     = {:.6f} (abs err {:.3e})\n",
+                        (double)d_acc, derr);
 
     // double accumulation must be decisively better than float accumulation on
     // this dynamic-range case, and stay within a generous relative band of the

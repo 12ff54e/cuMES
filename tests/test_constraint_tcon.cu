@@ -11,7 +11,6 @@
 // This pins the tcon0 propagation fix (cuMES-issues.md: "tcon0 was parsed
 // but ignored"): before the fix a non-unit tcon0 left the constraint force
 // unchanged (increment == 0); the regression requires exact linear scaling.
-#include <cstdio>
 #include <cmath>
 #include <vector>
 
@@ -128,7 +127,7 @@ static void testScaling() {
 }
 
 int main() {
-    printf("=== Constraint tcon0 scaling ===\n");
+    std::cout << "=== Constraint tcon0 scaling ===\n";
     testScaling<double>();
     return summary();
 }

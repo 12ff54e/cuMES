@@ -23,7 +23,6 @@
 // the gate passes again — a gate that cannot fire is a tautology in another
 // disguise. This is the registerable, fixture-free replacement for the old
 // test that loaded an absent vmecpp_init.bin.
-#include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>
@@ -518,8 +517,8 @@ int main() {
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
     SolverResult<double> res = solverRun(storage, p, profiles, transform, rs, geometry);
-    printf("solver: converged=%d iterations=%d fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
-           res.converged, res.iterations, res.fsqr, res.fsqz, res.fsql);
+    std::cout << format("solver: converged={} iterations={} fsqr={:.3e} fsqz={:.3e} fsql={:.3e}\n",
+                        int(res.converged), res.iterations, res.fsqr, res.fsqz, res.fsql);
     check(res.converged, "converged equilibrium reached");
 
     // ---- Capture the converged state (host) for the sensitivity control ----
@@ -545,11 +544,11 @@ int main() {
 
     // ---- Independent gate on the converged state ----
     ForceGate g0 = runForceGate(storage, p, profiles, rp, transform, rs, geometry);
-    printf("Converged state — production forward residuals:   FSQR = %.3e  FSQZ = %.3e  FSQL = %.3e\n",
-           g0.fsqr_prod, g0.fsqz_prod, g0.fsql_prod);
-    printf("Converged state — independent CPU residuals:      FSQR = %.3e  FSQZ = %.3e  FSQL = %.3e\n",
-           g0.fsqr_cpu, g0.fsqz_cpu, g0.fsql_cpu);
-    printf("CPU-vs-production force agreement: max |diff| = %.3e\n", g0.maxdiff);
+    std::cout << format("Converged state — production forward residuals:   FSQR = {:.3e}  FSQZ = {:.3e}  FSQL = {:.3e}\n",
+                        g0.fsqr_prod, g0.fsqz_prod, g0.fsql_prod);
+    std::cout << format("Converged state — independent CPU residuals:      FSQR = {:.3e}  FSQZ = {:.3e}  FSQL = {:.3e}\n",
+                        g0.fsqr_cpu, g0.fsqz_cpu, g0.fsql_cpu);
+    std::cout << format("CPU-vs-production force agreement: max |diff| = {:.3e}\n", g0.maxdiff);
     check(g0.maxdiff <= kAgreeThresh, "CPU force formula agrees with the production force path (1e-4)");
     check(g0.fsqr_cpu <= kFailThresh, "FSQR small for converged equilibrium (independent CPU path)");
     check(g0.fsqz_cpu <= kFailThresh, "FSQZ small for converged equilibrium (independent CPU path)");
@@ -565,8 +564,8 @@ int main() {
     for (auto& v : corrupt) v *= 1e3;
     cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), corrupt.data(), nb, cudaMemcpyHostToDevice), "corrupt zsc");
     ForceGate g1 = runForceGate(storage, p, profiles, rp, transform, rs, geometry);
-    printf("CORRUPTED state (Zsc x 1e3) — CPU residuals:      FSQR = %.3e  FSQZ = %.3e  FSQL = %.3e  maxdiff = %.3e\n",
-           g1.fsqr_cpu, g1.fsqz_cpu, g1.fsql_cpu, g1.maxdiff);
+    std::cout << format("CORRUPTED state (Zsc x 1e3) — CPU residuals:      FSQR = {:.3e}  FSQZ = {:.3e}  FSQL = {:.3e}  maxdiff = {:.3e}\n",
+                        g1.fsqr_cpu, g1.fsqz_cpu, g1.fsql_cpu, g1.maxdiff);
     check(std::max(g1.fsqr_cpu, g1.fsqz_cpu) > kFailThresh,
           "corrupted state: the independent gate FIRES (O(1) residuals)");
 
@@ -579,8 +578,8 @@ int main() {
     cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zmncs_c.data(), nb, cudaMemcpyHostToDevice), "restore zmncs");
     cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lmncs_c.data(), nb, cudaMemcpyHostToDevice), "restore lmncs");
     ForceGate g2 = runForceGate(storage, p, profiles, rp, transform, rs, geometry);
-    printf("RESTORED state — CPU residuals:                   FSQR = %.3e  FSQZ = %.3e  FSQL = %.3e\n",
-           g2.fsqr_cpu, g2.fsqz_cpu, g2.fsql_cpu);
+    std::cout << format("RESTORED state — CPU residuals:                   FSQR = {:.3e}  FSQZ = {:.3e}  FSQL = {:.3e}\n",
+                        g2.fsqr_cpu, g2.fsqz_cpu, g2.fsql_cpu);
     check(g2.fsqr_cpu <= kFailThresh && g2.fsqz_cpu <= kFailThresh && g2.fsql_cpu <= kFailThresh,
           "restored state: the independent gate passes again");
 

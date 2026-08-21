@@ -8,7 +8,6 @@
 //      cuFFT-in-graph works on the current stack (CUDA 12.1, sm_61) with the
 //      Phase-6B explicit work area. If cuFFT cannot be captured, gate 2 reports
 //      the CUDA error rather than silently skipping, so the ADR records it.
-#include <cstdio>
 #include <cmath>
 #include <vector>
 
@@ -35,7 +34,7 @@ __global__ void addKernel(const float* a, const float* b, float* c, int n) {
 
 
 int main() {
-    printf("=== CUDA Graph capture/launch correctness ===\n");
+    std::cout << "=== CUDA Graph capture/launch correctness ===\n";
 
     // ---- gate 1: three-kernel DAG, graph == stream ----
     {
@@ -113,12 +112,12 @@ int main() {
             check_cuda(cudaMemcpy(r_e_graph.data(), rs.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read graph r_e");
             const double md = max_diff(r_e_graph.data(), r_e_stream.data(), (int)nF);
             cufft_graph_ok = (md == 0.0);
-            printf("  cuFFT-in-graph: max |diff| = %.3e\n", md);
+            std::cout << format("  cuFFT-in-graph: max |diff| = {:.3e}\n", md);
         } catch (const std::exception& e) {
             err = e.what();
         }
         check(cufft_graph_ok, "cuFFT inverse transform graph == stream (bitwise)");
-        if (!cufft_graph_ok) printf("  cuFFT capture error: %s\n", err.c_str());
+        if (!cufft_graph_ok) std::cout << format("  cuFFT capture error: {}\n", err.c_str());
 
         realSpaceFree(rs);
     cumes::modeTableFree(mt);

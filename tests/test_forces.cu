@@ -9,7 +9,6 @@
 //     error leaks non-axisymmetric content into the Z channel.
 // The test returns nonzero if any assertion fails (it is a gate, not a
 // print-only diagnostic).
-#include <cstdio>
 #include <cmath>
 #include <vector>
 
@@ -32,7 +31,7 @@ int main() {
     p.nfp = 1; p.nZnT = 2048; p.mpol = 6; p.ntor = 2;
     p.ncurr = 0; p.delt = 1.0; p.ftol = 1e-14; p.max_iter = 10;
 
-    printf("=== Force Diagnostic Test ===\n");
+    std::cout << "=== Force Diagnostic Test ===\n";
 
     // Create Solovev-like initial state with independent parity coefficients
     cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
@@ -96,9 +95,9 @@ int main() {
     check_cuda(cudaMemcpy(h_z, rs.d_z_real, nbr, cudaMemcpyDeviceToHost), "z");
 
     // Print R at first theta point for all surfaces
-    printf("\nR(s,theta=0,zeta=0):\n");
+    std::cout << "\nR(s,theta=0,zeta=0):\n";
     for (int j = 0; j < p.ns; ++j) {
-        printf("  j=%2d: R=%10.6f  Z=%10.6f\n", j, h_r[j * p.nZnT], h_z[j * p.nZnT]);
+        std::cout << format("  j={}: R={:.6f}  Z={:.6f}\n", j, h_r[j * p.nZnT], h_z[j * p.nZnT]);
     }
 
     // Check forces
@@ -109,15 +108,15 @@ int main() {
     check_cuda(cudaMemcpy(h_armn_o, rs.d_armn_o, nbr, cudaMemcpyDeviceToHost), "armn_o");
     check_cuda(cudaMemcpy(h_blmn_e, rs.d_blmn_e, nbr, cudaMemcpyDeviceToHost), "blmn_e");
 
-    printf("\nForces at theta=0,zeta=0:\n");
-    printf("  j  |  armn_e      armn_o      azmn_e      blmn_e\n");
-    printf("  ---+----------------------------------------------\n");
+    std::cout << "\nForces at theta=0,zeta=0:\n";
+    std::cout << "  j  |  armn_e      armn_o      azmn_e      blmn_e\n";
+    std::cout << "  ---+----------------------------------------------\n";
     auto* h_az = new double[p.ns * p.nZnT];
     check_cuda(cudaMemcpy(h_az, rs.d_azmn_e, nbr, cudaMemcpyDeviceToHost), "az");
     for (int j = 0; j < p.ns; ++j) {
-        printf("  %2d | %11.4e %11.4e %11.4e %11.4e\n",
-               j, h_armn_e[j * p.nZnT], h_armn_o[j * p.nZnT],
-               h_az[j * p.nZnT], h_blmn_e[j * p.nZnT]);
+        std::cout << format("  {} | {:.4e} {:.4e} {:.4e} {:.4e}\n",
+                            j, h_armn_e[j * p.nZnT], h_armn_o[j * p.nZnT],
+                            h_az[j * p.nZnT], h_blmn_e[j * p.nZnT]);
     }
 
     // Check gsqrt at half-grid
@@ -127,13 +126,13 @@ int main() {
     check_cuda(cudaMemcpy(h_gs, geometry.base_geometry_views(p).gsqrt.data(), nH, cudaMemcpyDeviceToHost), "gs");
     check_cuda(cudaMemcpy(h_tau, geometry.base_geometry_views(p).tau.data(), nH, cudaMemcpyDeviceToHost), "tau");
 
-    printf("\nHalf-grid at theta=0,zeta=0:\n");
-    printf("  jH |  tau         gsqrt       r12\n");
+    std::cout << "\nHalf-grid at theta=0,zeta=0:\n";
+    std::cout << "  jH |  tau         gsqrt       r12\n";
     auto* h_r12 = new double[(p.ns-1) * p.nZnT];
     check_cuda(cudaMemcpy(h_r12, geometry.base_geometry_views(p).r12.data(), nH, cudaMemcpyDeviceToHost), "r12");
     for (int j = 0; j < p.ns - 1; ++j) {
-        printf("  %2d | %11.4e %11.4e %11.4e\n",
-               j, h_tau[j * p.nZnT], h_gs[j * p.nZnT], h_r12[j * p.nZnT]);
+        std::cout << format("  {} | {:.4e} {:.4e} {:.4e}\n",
+                            j, h_tau[j * p.nZnT], h_gs[j * p.nZnT], h_r12[j * p.nZnT]);
     }
 
     // Compute spectral forces via forward DFT
@@ -150,8 +149,8 @@ int main() {
             frcon_e, frcon_o, fzcon_e, fzcon_o);
     check_cuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost), "fspec d");
 
-    printf("\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n");
-    printf("  mode | m  n |  f_rmnc(axis) f_zmns(axis) f_lmnc(axis)\n");
+    std::cout << "\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n";
+    std::cout << "  mode | m  n |  f_rmnc(axis) f_zmns(axis) f_lmnc(axis)\n";
     for (int m = 0; m < p.mnmax; ++m) {
         // mode = m*(ntor+1)+n (the old m/ntor division mislabeled the modes)
         int mm = m / (p.ntor + 1);
@@ -159,8 +158,8 @@ int main() {
         int idx_r = 0 + m * p.ns;  // axis (j=0), mode m, comp R
         int idx_z = 0 + m * p.ns + p.mnmax * p.ns;
         int idx_l = 0 + m * p.ns + 2 * p.mnmax * p.ns;
-        printf("  %4d | %d %d | %11.4e %11.4e %11.4e\n",
-               m, mm, nn, d_fspec[idx_r], d_fspec[idx_z], d_fspec[idx_l]);
+        std::cout << format("  {} | {} {} | {:.4e} {:.4e} {:.4e}\n",
+                            m, mm, nn, d_fspec[idx_r], d_fspec[idx_z], d_fspec[idx_l]);
     }
 
     // ---- numerical assertions (the gate) ----
@@ -225,6 +224,6 @@ int main() {
     delete[] h_az; delete[] h_gs; delete[] h_tau; delete[] h_r12;
     cudaFree(d_fspec_gpu); delete[] d_fspec;
 
-    printf("\nDone.\n");
+    std::cout << "\nDone.\n";
     return summary();
 }

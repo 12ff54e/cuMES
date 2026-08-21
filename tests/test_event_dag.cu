@@ -12,7 +12,6 @@
 //      the fault also corrupts the context for further work; CTest invokes it
 //      as a separate process entry so the main test stays compute-sanitizer
 //      clean.
-#include <cstdio>
 #include <cstring>
 
 #include "cumes/runtime/cuda_status.hpp"
@@ -102,7 +101,7 @@ static void testOrderingAndDelay(bool probe_notready) {
 static int runPoison() {
     cudaStream_t s = nullptr;
     cudaError_t e = cudaStreamCreate(&s);
-    if (e != cudaSuccess) { fprintf(stderr, "poison: stream create failed\n"); return 2; }
+    if (e != cudaSuccess) { std::cerr << "poison: stream create failed\n"; return 2; }
     trapKernel<<<1, 1, 0, s>>>();
     // A device fault (trap) is ASYNCHRONOUS: the launch and the next enqueue
     // are accepted, and the fault surfaces at COMPLETION time — the
@@ -115,9 +114,9 @@ static int runPoison() {
     cudaStreamDestroy(s);
     const bool ok = (after == cudaSuccess) && (sticky == cudaSuccess) &&
                     (sync == cudaErrorLaunchFailure);
-    printf("%s stream poison: launch=%s sticky=%s sync=%s\n",
-           ok ? "PASS" : "FAIL", cudaGetErrorName(after),
-           cudaGetErrorName(sticky), cudaGetErrorName(sync));
+    std::cout << format("{} stream poison: launch={} sticky={} sync={}\n",
+                        ok ? "PASS" : "FAIL", cudaGetErrorName(after),
+                        cudaGetErrorName(sticky), cudaGetErrorName(sync));
     return ok ? 0 : 1;
 }
 

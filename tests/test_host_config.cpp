@@ -61,7 +61,7 @@ static std::string scratchPath() { return g_tmp.file("scratch.json"); }
 
 static void writeScratch(const std::string& content) {
     FILE* fp = fopen(scratchPath().c_str(), "w");
-    if (!fp) { fprintf(stderr, "cannot write scratch file\n"); exit(1); }
+    if (!fp) { std::cerr << "cannot write scratch file\n"; exit(1); }
     fputs(content.c_str(), fp);
     fclose(fp);
 }
@@ -93,15 +93,15 @@ static void emitGoldens(const char* dir) {
     for (const char* name : cases) {
         auto vr = read_and_validate(std::string("inputs/") + name + ".json", opts);
         if (!vr.has_value()) {
-            fprintf(stderr, "emit-golden: %s failed validation\n", name);
+            std::cerr << format("emit-golden: {} failed validation\n", name);
             exit(1);
         }
         const std::string out = prefix + name + ".normalized.json";
         FILE* fp = fopen(out.c_str(), "w");
-        if (!fp) { fprintf(stderr, "cannot write %s\n", out.c_str()); exit(1); }
+        if (!fp) { std::cerr << format("cannot write {}\n", out.c_str()); exit(1); }
         fputs(vr.value().normalize_to_json().c_str(), fp);
         fclose(fp);
-        printf("wrote %s\n", out.c_str());
+        std::cout << format("wrote {}\n", out.c_str());
     }
 }
 
@@ -214,7 +214,7 @@ static void testMalformed() {
                  " \"ns_array\": [11, 11, 55], \"niter_array\": [100, 100, 100],"
                  " \"ftol_array\": [1e-12, 1e-12, 1e-12]}");
     vr = read_and_validate(scratchPath(), opts);
-    printf("  equal-ns {11,11,55}: validation %s\n",
+    std::cout << format("  equal-ns {{11,11,55}}: validation {}\n",
            vr.has_value() ? "PASSED" : "rejected");
     check(!vr.has_value() && !findError(vr, "strictly increasing").empty(),
           "malformed: equal consecutive ns rejected");
@@ -229,7 +229,7 @@ static void testMalformed() {
                  " \"ftol_array\": [1e-12, 1e-12, 1e-12, 1e-12, 1e-12,"
                  " 1e-12, 1e-12, 1e-12, 1e-12]}");
     vr = read_and_validate(scratchPath(), opts);
-    printf("  9-stage: validation %s\n", vr.has_value() ? "PASSED" : "rejected");
+    std::cout << format("  9-stage: validation {}\n", vr.has_value() ? "PASSED" : "rejected");
     check(vr.has_value(), "malformed: 9-stage schedule accepted (no capacity cap)");
 
     // Schedule length mismatch.

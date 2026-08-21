@@ -13,7 +13,6 @@
 // whose FMA fusion differs from the CPU's IEEE contraction, so the double leg
 // compares at 1e-11 (a few ULPs of the ~1e0 force scale) and the float leg at
 // 1e-4 (the float rounding floor of these sums).
-#include <cstdio>
 #include <cmath>
 #include <vector>
 
@@ -284,8 +283,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     md = std::max(md, max_diff(g_blmn_e, c_blmn_e)); md = std::max(md, max_diff(g_blmn_o, c_blmn_o));
     md = std::max(md, max_diff(g_clmn_e, c_clmn_e)); md = std::max(md, max_diff(g_clmn_o, c_clmn_o));
 
-    char msg[160];
-    snprintf(msg, sizeof msg, "%s: GPU force == CPU scalar reference (max |diff| %.3e < %.1e)", label, md, tol);
+    auto msg = format("{}: GPU force == CPU scalar reference (max |diff| {:.3e} < {:.1e})", label, md, tol);
     check(md < tol, msg);
 
     realSpaceFree(rs);
@@ -293,7 +291,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
 }
 
 int main() {
-    printf("=== Force kernel: GPU vs CPU scalar reference (dual-run) ===\n");
+    std::cout << "=== Force kernel: GPU vs CPU scalar reference (dual-run) ===\n";
     runReference<double>(5, 4, 0, 18, 1, "double axisymmetric ns=5");
     runReference<double>(11, 6, 2, 18, 4, "double 3D ns=11");
     runReference<float>(5, 4, 0, 18, 1, "float axisymmetric ns=5");

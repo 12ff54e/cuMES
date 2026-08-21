@@ -10,7 +10,6 @@
 // consumer; they move here when a second consumer appears. The six-family
 // manufactured state moved here in the 2026-08-16 review pass, when its
 // consumer count reached four.
-#include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>
 
@@ -34,7 +33,7 @@ inline void check_cuda(cudaError_t e, const char* tag) {
     try {
         cumes::check_cuda(e, tag);
     } catch (const cumes::CumesError&) {
-        fprintf(stderr, "CUDA[%s]: %s\n", tag, cudaGetErrorString(e));
+        std::cerr << format("CUDA[{}]: {}\n", tag, cudaGetErrorString(e));
         exit(EXIT_FAILURE);
     }
 }
@@ -139,7 +138,7 @@ inline cumes::ValidatedProblem load_validated(
     cumes::SolverOptions opts;
     auto vr = cumes::read_and_validate(path, opts);
     if (!vr.has_value()) {
-        fprintf(stderr, "load_validated: %s failed validation\n", path);
+        std::cerr << format("load_validated: {} failed validation\n", path);
         exit(EXIT_FAILURE);
     }
     return std::move(vr.value());
@@ -152,7 +151,7 @@ inline cumes::ValidatedProblem validate_spec(cumes::ProblemSpec spec) {
     cumes::SolverOptions opts;
     auto vr = cumes::validate(std::move(spec), opts);
     if (!vr.has_value()) {
-        fprintf(stderr, "validate_spec: validation failed\n");
+        std::cerr << "validate_spec: validation failed\n";
         exit(EXIT_FAILURE);
     }
     return std::move(vr.value());

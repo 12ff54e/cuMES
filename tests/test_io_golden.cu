@@ -210,8 +210,8 @@ static void checkV1RoundTrip(const EquilibriumSnapshot& snap,
 
 template <typename T>
 static void runPrecision() {
-    printf("== %s precision ==\n",
-           sizeof(T) == sizeof(double) ? "double" : "float");
+    std::cout << format("== {} precision ==\n",
+                        sizeof(T) == sizeof(double) ? "double" : "float");
     const int ns = 5, mnmax = 3;
     auto storage = makeStorage<T>(ns, mnmax);
 
@@ -224,7 +224,7 @@ static void runPrecision() {
     pspec.zbs = {{1, 0, 0.5}};
     pspec.stages = {{(size_t)ns, 100, 1e-12}};
     auto vpres = cumes::validate(pspec, cumes::SolverOptions{});
-    if (!vpres.has_value()) { fprintf(stderr, "test_io_golden: validate failed\n"); exit(1); }
+    if (!vpres.has_value()) { std::cerr << "test_io_golden: validate failed\n"; exit(1); }
     cumes::ValidatedProblem vp = std::move(vpres.value());
     // ---- v1 writer round-trips the bridged snapshot + provenance trailer --
     {
@@ -307,7 +307,7 @@ static void runPrecision() {
 }
 
 int main() {
-    printf("=== v1 writer round-trip gate ===\n");
+    std::cout << "=== v1 writer round-trip gate ===\n";
     runPrecision<double>();
     runPrecision<float>();
     return summary();

@@ -21,7 +21,6 @@
 //
 // Both double and float instantiate every case (the predicate math itself is
 // double in both builds — ADR-0001).
-#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -91,11 +90,10 @@ static void testJacobianFinalizeRules() {
                   "rec down (jac)");
 
         const bool dev_valid = h.status.jacobian_valid != 0;
-        char buf[128];
-        snprintf(buf, sizeof buf, "jacobian finalize rule: %s (dev %s, host %s)",
-                 c.label, dev_valid ? "valid" : "invalid",
-                 host_invalid ? "invalid" : "valid");
-        check(dev_valid != host_invalid, buf);
+        check(dev_valid != host_invalid,
+              format("jacobian finalize rule: {} (dev {}, host {})", c.label,
+                     dev_valid ? "valid" : "invalid",
+                     host_invalid ? "invalid" : "valid"));
     }
 }
 
@@ -165,14 +163,12 @@ static void testInvariantPredicateRules() {
                              fsqr_i <= c.ftol && fsqz_i <= c.ftol &&
                              fsql_i <= c.ftol;
 
-        char buf[128];
-        snprintf(buf, sizeof buf,
-                 "terminal predicate: %s (dev nf=%d cv=%d, host nf=%d cv=%d)",
-                 c.label, (int)h.status.invariant_nonfinite,
-                 (int)h.status.invariant_converged, (int)host_nf, (int)host_cv);
         check((h.status.invariant_nonfinite != 0) == host_nf &&
                   (h.status.invariant_converged != 0) == host_cv,
-              buf);
+              format("terminal predicate: {} (dev nf={} cv={}, host nf={} cv={})",
+                     c.label, (int)h.status.invariant_nonfinite,
+                     (int)h.status.invariant_converged, (int)host_nf,
+                     (int)host_cv));
     }
 }
 
@@ -221,11 +217,9 @@ static void testForceNormFinalizeRules() {
         const double fL = denomL > 0.0 ? (1.0 / denomL) : 1.0;
         const double f1 = c.norms[5] > 0.0 ? (1.0 / c.norms[5]) : 1.0;
 
-        char buf[160];
-        snprintf(buf, sizeof buf, "force-norm finalize: %s", c.label);
         check(h.final_f_norm_rz == fRZ && h.final_f_norm_l == fL &&
                   h.final_f_norm1 == f1,
-              buf);
+              format("force-norm finalize: {}", c.label));
     }
 
     // Not evaluated (invalid-Jacobian refresh pass): the fields keep the

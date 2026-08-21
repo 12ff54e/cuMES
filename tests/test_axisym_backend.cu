@@ -14,7 +14,6 @@
 //   - constraint bandpass: gCon
 // The comparison is Class B (the two paths differ in summation order / the
 // length-one FFT elision), so the gate is a ULP-level tolerance, not bytes.
-#include <cstdio>
 #include <cmath>
 #include <vector>
 #include "vmec_types.h"
@@ -56,11 +55,11 @@ static void compareArrays(const char* label, const T* a, const T* b, int n,
     for (int i = 0; i < n; ++i)
         maxd = fmax(maxd, fabs((double)ha[i] - (double)hb[i]));
     if (maxd > tol) {
-        fprintf(stderr, "FAIL [%s] max abs diff = %.3e (tol %.3e)\n", label,
-                maxd, tol);
+        std::cerr << format("FAIL [{}] max abs diff = {:.3e} (tol {:.3e})\n", label,
+                            maxd, tol);
         ++failures();
     } else {
-        printf("  PASS %-22s (max abs diff %.3e)\n", label, maxd);
+        std::cout << format("  PASS {} (max abs diff {:.3e})\n", label, maxd);
     }
 }
 
@@ -142,7 +141,7 @@ static void testInverse(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
                         cumes::ToroidalFftOperator<T>& generic,
                         cumes::SpectralStorage<T>& storage,
                         cumes::AxisymmetricOperator<T>& op) {
-    printf("  inverse (18 geometry arrays) ...\n");
+    std::cout << "  inverse (18 geometry arrays) ...\n";
     const int n = p.ns * p.nZnT;
     // Generic backend.
     generic.inverse(storage.physical_const(), /*do_combine=*/false);
@@ -195,7 +194,7 @@ template <typename T>
 static void testForward(DeviceParams<T>& p, cumes::RealSpaceStorage<T>& rs,
                         cumes::ToroidalFftOperator<T>& gen, Cw<T>& cw,
                         cumes::AxisymmetricOperator<T>& op) {
-    printf("  forward (6 spectral families) ...\n");
+    std::cout << "  forward (6 spectral families) ...\n";
     const int n = p.ns * p.mnmax;
     T* d_gen = nullptr, *d_ax = nullptr;
     cc(cudaMalloc(&d_gen, (size_t)6 * n * sizeof(T)), "gen fwd");
@@ -249,7 +248,7 @@ static void testRzCon(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
                       Cw<T>& cw,
                       cumes::SpectralStorage<T>& storage,
                       cumes::AxisymmetricOperator<T>& op) {
-    printf("  constraint rzCon (rCon/zCon) ...\n");
+    std::cout << "  constraint rzCon (rCon/zCon) ...\n";
     const int n = p.ns * p.nZnT;
     // rCon/zCon reference is the fused inverse DFT (the production path); the
     // axisymmetric enqueue_rzcon is Class B ULP-equivalent to it.
@@ -282,7 +281,7 @@ template <typename T>
 static void testRzConOneNull(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
                              Cw<T>& cw, cumes::SpectralStorage<T>& storage,
                              cumes::AxisymmetricOperator<T>& op) {
-    printf("  constraint rzCon one-null (skip-one-output) ...\n");
+    std::cout << "  constraint rzCon one-null (skip-one-output) ...\n";
     const int n = p.ns * p.nZnT;
     gen.inverse_fused(storage.physical_const(), /*do_combine=*/false,
                       cw.d_rCon, cw.d_zCon);
@@ -317,8 +316,8 @@ static void testRzConOneNull(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& 
             0);
         cudaError_t e = cudaDeviceSynchronize();
         if (e != cudaSuccess) {
-            fprintf(stderr, "FAIL [%s] kernel error: %s\n", label,
-                    cudaGetErrorString(e));
+            std::cerr << format("FAIL [{}] kernel error: {}\n", label,
+                                cudaGetErrorString(e));
             ++failures();
         } else {
             compareArrays(label, ref, d_one, n, tolNear<T>());
@@ -335,7 +334,7 @@ template <typename T>
 static void testDealias(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
                         Cw<T>& cw,
                         cumes::AxisymmetricOperator<T>& op) {
-    printf("  constraint bandpass (gCon) ...\n");
+    std::cout << "  constraint bandpass (gCon) ...\n";
     const int n = p.ns * p.nZnT;
     gen.dealias_bandpass(cw.d_gConEff, cw.d_tcon, cw.d_faccon, cw.d_gCon);
     T* d_ax = nullptr;
@@ -358,18 +357,18 @@ static void testDealias(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
             maxd = fmax(maxd, fabs((double)hg[(size_t)j * p.nZnT + l] -
                                   (double)ha[(size_t)j * p.nZnT + l]));
     if (maxd > tolNear<T>()) {
-        fprintf(stderr, "FAIL [gCon] max abs diff = %.3e\n", maxd);
+        std::cerr << format("FAIL [gCon] max abs diff = {:.3e}\n", maxd);
         ++failures();
     } else {
-        printf("  PASS gCon (interior, max abs diff %.3e)\n", maxd);
+        std::cout << format("  PASS gCon (interior, max abs diff {:.3e})\n", maxd);
     }
     cudaFree(d_ax);
 }
 
 template <typename T>
 static int runTests() {
-    printf("--- %s precision ---\n",
-           sizeof(T) == sizeof(double) ? "double" : "float");
+    std::cout << format("--- {} precision ---\n",
+                        sizeof(T) == sizeof(double) ? "double" : "float");
     DeviceParams<T> p;
     p.ns = kNs; p.mnmax = kMnmax; p.ntheta = kNtheta; p.nzeta = kNzeta;
     p.nfp = kNfp; p.nZnT = kNZnT; p.mpol = kMpol; p.ntor = kNtor;
@@ -421,9 +420,9 @@ static int runTests() {
 }
 
 int main() {
-    printf("=== Axisymmetric backend differential test ===\n");
+    std::cout << "=== Axisymmetric backend differential test ===\n";
     runTests<double>();
     runTests<float>();
-    printf(failures() == 0 ? "ALL PASS\n" : "%d FAILURES\n", failures());
+    std::cout << format(failures() == 0 ? "ALL PASS\n" : "{} FAILURES\n", failures());
     return summary();
 }

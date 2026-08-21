@@ -8,7 +8,6 @@
 //   2. Exercise the concrete typed views (RealFieldView, ReducedThetaView, and
 //      the aggregate geometry/field/force bundles) with a device round-trip and
 //      layout static_asserts.
-#include <cstdio>
 #include <cstdlib>
 #include <type_traits>
 #include <vector>
@@ -54,7 +53,7 @@ __global__ void writeReduced(cumes::ReducedThetaView<double> v, int ntheta_red) 
 }
 
 int main() {
-    printf("=== operator views ===\n");
+    std::cout << "=== operator views ===\n";
 
     // ---- ReducedThetaView device round-trip ----
     {

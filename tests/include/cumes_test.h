@@ -10,6 +10,11 @@
 #include <iostream>
 #include <string_view>
 
+// cumes::test::format(...): std::format where the toolchain has it (gcc 13+),
+// an ostream-based fallback with the same {} syntax for the g++-12 CUDA host
+// pass. Every test uses it instead of printf.
+#include "cumes_test_format.h"
+
 namespace cumes::test {
 
 // The single shared failure counter (function-local static, so header-only and

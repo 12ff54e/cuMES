@@ -80,7 +80,7 @@ static cumes::ValidatedProblem makeProblem() {
     spec.stages = {{5, 100, 1e-12}};
     auto vr = cumes::validate(spec, cumes::SolverOptions{});
     if (!vr.has_value()) {
-        fprintf(stderr, "makeProblem: validation failed\n");
+        std::cerr << "makeProblem: validation failed\n";
         exit(1);
     }
     return std::move(vr.value());
