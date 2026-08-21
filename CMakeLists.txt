@@ -276,7 +276,7 @@ cumes_apply_policy_flags(cumes_benchmark_fixed_iteration)
 cumes_add_precision_provenance(cumes_benchmark_fixed_iteration)
 
 add_executable(cumes_benchmark_graph_overhead benchmarks/graph_overhead.cu)
-target_include_directories(cumes_benchmark_graph_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/tests/support)
+target_include_directories(cumes_benchmark_graph_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_benchmark_graph_overhead PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(cumes_benchmark_graph_overhead)
 

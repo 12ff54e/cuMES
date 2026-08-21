@@ -16,18 +16,9 @@
 #include <cstring>
 
 #include "cumes/runtime/cuda_status.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 // Faulting kernel: an illegal-instruction trap. It faults only its own
 // launch and leaves memory untouched, so the poison case is safe (the context
@@ -79,13 +70,13 @@ static void testOrderingAndDelay(bool probe_notready) {
     // return as its own error.
     if (probe_notready) {
         cudaError_t q = cudaEventQuery(e1);
-        CHECK(q == cudaErrorNotReady,
+        check(q == cudaErrorNotReady,
               "pending event query reports cudaErrorNotReady");
 
         // elapsedTime(e1, e0) is also not-ready while e1 is pending.
         float ms = 0.0f;
         cudaError_t el = cudaEventElapsedTime(&ms, e1, e0);
-        CHECK(el == cudaErrorNotReady,
+        check(el == cudaErrorNotReady,
               "pending event elapsed-time reports cudaErrorNotReady");
     }
 
@@ -95,11 +86,11 @@ static void testOrderingAndDelay(bool probe_notready) {
     cc(cudaEventElapsedTime(&ms, e0, e1), "elapsed e0->e1");
     // Strict ordering is the contract under test (the magnitude is wall-
     // clock dependent and unreliable under sanitizer instrumentation).
-    CHECK(ms > 0.0f, "event pair spans the delayed kernel (strict ordering)");
+    check(ms > 0.0f, "event pair spans the delayed kernel (strict ordering)");
 
     // Ordering contract: elapsed(e1, e0) is negative once both completed.
     cc(cudaEventElapsedTime(&ms, e1, e0), "elapsed e1->e0");
-    CHECK(ms < 0.0f, "reversed event pair reports negative elapsed time");
+    check(ms < 0.0f, "reversed event pair reports negative elapsed time");
 
     cc(cudaEventDestroy(e0), "destroy e0");
     cc(cudaEventDestroy(e1), "destroy e1");
@@ -137,10 +128,5 @@ int main(int argc, char** argv) {
     const bool probe_notready =
         !(argc > 1 && std::strcmp(argv[1], "--no-notready-probe") == 0);
     testOrderingAndDelay(probe_notready);
-    if (failures == 0) {
-        printf("test_event_dag: all checks passed\n");
-        return 0;
-    }
-    printf("test_event_dag: %d check(s) FAILED\n", failures);
-    return 1;
+    return summary();
 }

@@ -26,18 +26,9 @@
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/runtime/device_buffer.cuh"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 
 // Build a Solovev-like state with a few modes and run one geometry pass.
@@ -50,12 +41,12 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     p.tcon0 = T(1.0); p.lamscale = T(0.0);
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
-    // Shared manufactured state (kSolovevLinear in cumes_test_support.cuh):
+    // Shared manufactured state (kSolovevLinear in cumes_test_cuda_helper.cuh):
     // R_00=4.0, R_10=0.3s, R_20=0.2s, Rss=Rcc, Z_10 (sc+cs)=-0.5s, lambda=0.
     std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-    manufacturedState<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+    manufactured_state<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
                          p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
-    uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+    upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
 
     // ncurr=1 needs prescribed-current profiles (curtor/ac); ncurr=0 uses
     // the fixed-iota profiles from inputs/solovev.json.
@@ -77,9 +68,9 @@ static void runGeometry(int ns, int ncurr, const char* label) {
             spec.rbc = {{1, 0, 1.0}};
             spec.zbs = {{1, 0, 0.5}};
             spec.stages = {{static_cast<std::size_t>(ns), 10, 1e-14}};
-            return validateSpec(std::move(spec));
+            return validate_spec(std::move(spec));
         }
-        return loadValidated("inputs/solovev.json");
+        return load_validated("inputs/solovev.json");
     }();
 
     cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
@@ -97,13 +88,13 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     size_t nH = (size_t)(p.ns - 1) * p.nZnT;
     auto* h_chip = new T[p.ns - 1];
     auto* h_iota = new T[p.ns - 1];
-    checkCuda(cudaMemcpy(h_chip, rp.chip_H, (p.ns - 1) * sizeof(T), cudaMemcpyDeviceToHost), "chipH");
-    checkCuda(cudaMemcpy(h_iota, rp.iota_H, (p.ns - 1) * sizeof(T), cudaMemcpyDeviceToHost), "iotaH");
+    check_cuda(cudaMemcpy(h_chip, rp.chip_H, (p.ns - 1) * sizeof(T), cudaMemcpyDeviceToHost), "chipH");
+    check_cuda(cudaMemcpy(h_iota, rp.iota_H, (p.ns - 1) * sizeof(T), cudaMemcpyDeviceToHost), "iotaH");
     bool all_finite = true;
     for (int j = 0; j < p.ns - 1; ++j) {
         if (!std::isfinite((double)h_chip[j]) || !std::isfinite((double)h_iota[j])) all_finite = false;
     }
-    CHECK(all_finite, label);
+    check(all_finite, label);
     // Jacobian stats must be finite and the max nonzero. computeJacobianStats
     // is device-only (Phase 6A one-fence path) and writes DOUBLE stats in
     // both builds (ADR-0001); the stats now land in the typed ControlRecord
@@ -111,11 +102,11 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     cumes::DeviceBuffer<cumes::ControlRecord> rec(1);
     // Zero the whole record first: jacobian_stats writes only its four slots,
     // and initcheck flags a D2H copy of any byte no kernel produced.
-    checkCuda(cudaMemset(rec.data(), 0, sizeof(cumes::ControlRecord)), "rec zero");
+    check_cuda(cudaMemset(rec.data(), 0, sizeof(cumes::ControlRecord)), "rec zero");
     geometry.jacobian_stats(p, rec.data(), 0);
     cumes::ControlRecord h_rec;
-    checkCuda(cudaMemcpy(&h_rec, rec.data(), sizeof(h_rec), cudaMemcpyDeviceToHost), "rec cpy");
-    CHECK(std::isfinite(h_rec.jacobian_min_oriented) &&
+    check_cuda(cudaMemcpy(&h_rec, rec.data(), sizeof(h_rec), cudaMemcpyDeviceToHost), "rec cpy");
+    check(std::isfinite(h_rec.jacobian_min_oriented) &&
               std::isfinite(h_rec.jacobian_max_abs) &&
           h_rec.jacobian_nonfinite_count == 0.0 &&
               h_rec.jacobian_max_abs > 0.0,
@@ -137,10 +128,5 @@ int main() {
     runGeometry<double>(99, 0, "ncurr=0 ns=99 finite");
     runGeometry<double>(99, 1, "ncurr=1 ns=99 finite");
 
-    if (failures == 0) {
-        printf("test_geometry_ncurr: ALL PASS\n");
-        return 0;
-    }
-    printf("test_geometry_ncurr: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

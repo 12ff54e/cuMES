@@ -38,18 +38,9 @@
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 
 // ---------------------------------------------------------------------------
@@ -428,20 +419,15 @@ static ForceGate runForceGate(cumes::SpectralStorage<double>& storage,
               c_blmn_e, c_blmn_o, c_clmn_e, c_clmn_o);
 
     // (a) pointwise CPU-vs-production force agreement
-    auto maxDiff = [&](const std::vector<double>& a, const std::vector<double>& b) {
-        double m = 0.0;
-        for (size_t i = 0; i < nF; ++i) m = std::max(m, std::fabs(a[i] - b[i]));
-        return m;
-    };
     g.maxdiff = 0.0;
-    g.maxdiff = std::max(g.maxdiff, maxDiff(g_armn_e, c_armn_e)); g.maxdiff = std::max(g.maxdiff, maxDiff(g_armn_o, c_armn_o));
-    g.maxdiff = std::max(g.maxdiff, maxDiff(g_azmn_e, c_azmn_e)); g.maxdiff = std::max(g.maxdiff, maxDiff(g_azmn_o, c_azmn_o));
-    g.maxdiff = std::max(g.maxdiff, maxDiff(g_brmn_e, c_brmn_e)); g.maxdiff = std::max(g.maxdiff, maxDiff(g_brmn_o, c_brmn_o));
-    g.maxdiff = std::max(g.maxdiff, maxDiff(g_bzmn_e, c_bzmn_e)); g.maxdiff = std::max(g.maxdiff, maxDiff(g_bzmn_o, c_bzmn_o));
-    g.maxdiff = std::max(g.maxdiff, maxDiff(g_crmn_e, c_crmn_e)); g.maxdiff = std::max(g.maxdiff, maxDiff(g_crmn_o, c_crmn_o));
-    g.maxdiff = std::max(g.maxdiff, maxDiff(g_czmn_e, c_czmn_e)); g.maxdiff = std::max(g.maxdiff, maxDiff(g_czmn_o, c_czmn_o));
-    g.maxdiff = std::max(g.maxdiff, maxDiff(g_blmn_e, c_blmn_e)); g.maxdiff = std::max(g.maxdiff, maxDiff(g_blmn_o, c_blmn_o));
-    g.maxdiff = std::max(g.maxdiff, maxDiff(g_clmn_e, c_clmn_e)); g.maxdiff = std::max(g.maxdiff, maxDiff(g_clmn_o, c_clmn_o));
+    g.maxdiff = std::max(g.maxdiff, max_diff(g_armn_e, c_armn_e)); g.maxdiff = std::max(g.maxdiff, max_diff(g_armn_o, c_armn_o));
+    g.maxdiff = std::max(g.maxdiff, max_diff(g_azmn_e, c_azmn_e)); g.maxdiff = std::max(g.maxdiff, max_diff(g_azmn_o, c_azmn_o));
+    g.maxdiff = std::max(g.maxdiff, max_diff(g_brmn_e, c_brmn_e)); g.maxdiff = std::max(g.maxdiff, max_diff(g_brmn_o, c_brmn_o));
+    g.maxdiff = std::max(g.maxdiff, max_diff(g_bzmn_e, c_bzmn_e)); g.maxdiff = std::max(g.maxdiff, max_diff(g_bzmn_o, c_bzmn_o));
+    g.maxdiff = std::max(g.maxdiff, max_diff(g_crmn_e, c_crmn_e)); g.maxdiff = std::max(g.maxdiff, max_diff(g_crmn_o, c_crmn_o));
+    g.maxdiff = std::max(g.maxdiff, max_diff(g_czmn_e, c_czmn_e)); g.maxdiff = std::max(g.maxdiff, max_diff(g_czmn_o, c_czmn_o));
+    g.maxdiff = std::max(g.maxdiff, max_diff(g_blmn_e, c_blmn_e)); g.maxdiff = std::max(g.maxdiff, max_diff(g_blmn_o, c_blmn_o));
+    g.maxdiff = std::max(g.maxdiff, max_diff(g_clmn_e, c_clmn_e)); g.maxdiff = std::max(g.maxdiff, max_diff(g_clmn_o, c_clmn_o));
 
     // (b) independent CPU projection -> spectral residual norms
     std::vector<double> spec;
@@ -475,7 +461,7 @@ int main() {
     // ---- Initial state from vmecpp interpFromBoundaryAndAxis (same logic as
     // main.cu initState): m=0 linear in s between axis and boundary, m>0 with
     // a s^(m/2) radial envelope. Uses the folded boundary from the JSON.
-    cumes::ValidatedProblem vp = loadValidated();
+    cumes::ValidatedProblem vp = load_validated();
     const cumes::FoldedBoundary& bnd = vp.boundary();
     const cumes::ProblemSpec& spec = vp.spec();
     const int ntorp1 = p.ntor + 1;
@@ -534,7 +520,7 @@ int main() {
     SolverResult<double> res = solverRun(storage, p, profiles, transform, rs, geometry);
     printf("solver: converged=%d iterations=%d fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
            res.converged, res.iterations, res.fsqr, res.fsqz, res.fsql);
-    CHECK(res.converged, "converged equilibrium reached");
+    check(res.converged, "converged equilibrium reached");
 
     // ---- Capture the converged state (host) for the sensitivity control ----
     auto getFam = [&](cumes::SpectralComponent c) {
@@ -564,10 +550,10 @@ int main() {
     printf("Converged state — independent CPU residuals:      FSQR = %.3e  FSQZ = %.3e  FSQL = %.3e\n",
            g0.fsqr_cpu, g0.fsqz_cpu, g0.fsql_cpu);
     printf("CPU-vs-production force agreement: max |diff| = %.3e\n", g0.maxdiff);
-    CHECK(g0.maxdiff <= kAgreeThresh, "CPU force formula agrees with the production force path (1e-4)");
-    CHECK(g0.fsqr_cpu <= kFailThresh, "FSQR small for converged equilibrium (independent CPU path)");
-    CHECK(g0.fsqz_cpu <= kFailThresh, "FSQZ small for converged equilibrium (independent CPU path)");
-    CHECK(g0.fsql_cpu <= kFailThresh, "FSQL small for converged equilibrium (independent CPU path)");
+    check(g0.maxdiff <= kAgreeThresh, "CPU force formula agrees with the production force path (1e-4)");
+    check(g0.fsqr_cpu <= kFailThresh, "FSQR small for converged equilibrium (independent CPU path)");
+    check(g0.fsqz_cpu <= kFailThresh, "FSQZ small for converged equilibrium (independent CPU path)");
+    check(g0.fsql_cpu <= kFailThresh, "FSQL small for converged equilibrium (independent CPU path)");
 
     // ---- Sensitivity control: the gate must actually fire. Corrupt one
     // spectral family of the converged state (Zsc x 1e3) — the corrupted
@@ -581,7 +567,7 @@ int main() {
     ForceGate g1 = runForceGate(storage, p, profiles, rp, transform, rs, geometry);
     printf("CORRUPTED state (Zsc x 1e3) — CPU residuals:      FSQR = %.3e  FSQZ = %.3e  FSQL = %.3e  maxdiff = %.3e\n",
            g1.fsqr_cpu, g1.fsqz_cpu, g1.fsql_cpu, g1.maxdiff);
-    CHECK(std::max(g1.fsqr_cpu, g1.fsqz_cpu) > kFailThresh,
+    check(std::max(g1.fsqr_cpu, g1.fsqz_cpu) > kFailThresh,
           "corrupted state: the independent gate FIRES (O(1) residuals)");
 
     // Restore the full converged state (only Zsc was changed, but re-uploading
@@ -595,7 +581,7 @@ int main() {
     ForceGate g2 = runForceGate(storage, p, profiles, rp, transform, rs, geometry);
     printf("RESTORED state — CPU residuals:                   FSQR = %.3e  FSQZ = %.3e  FSQL = %.3e\n",
            g2.fsqr_cpu, g2.fsqz_cpu, g2.fsql_cpu);
-    CHECK(g2.fsqr_cpu <= kFailThresh && g2.fsqz_cpu <= kFailThresh && g2.fsql_cpu <= kFailThresh,
+    check(g2.fsqr_cpu <= kFailThresh && g2.fsqz_cpu <= kFailThresh && g2.fsql_cpu <= kFailThresh,
           "restored state: the independent gate passes again");
 
     // Cleanup
@@ -603,7 +589,5 @@ int main() {
     // profiles/fp/mw owned by Profiles/ToroidalFftOperator/GeometryOperator (RAII)
     cumes::modeTableFree(mt);
 
-    if (failures == 0) { printf("test_force_verify: ALL PASS\n"); return 0; }
-    printf("test_force_verify: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

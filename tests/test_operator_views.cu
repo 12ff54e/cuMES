@@ -25,7 +25,8 @@
 #include "cumes/numerics/tridiagonal_backend.hpp"
 #include "cumes/numerics/descent_operator.hpp"
 #include "cumes/numerics/prolongation.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
 // The view bundles must be trivially copyable so kernels can receive them by
 // value (a bundle is just pointers + extents).
@@ -38,16 +39,6 @@ static_assert(std::is_trivially_copyable<cumes::MagneticFieldViews<double>>::val
 static_assert(std::is_trivially_copyable<cumes::ForceParityViews<double>>::value,
               "force views trivially copyable");
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 // Write through a ReducedThetaView on device; host verifies the
 // [surface][zeta][reduced_theta] layout (reduced_theta contiguous).
@@ -82,7 +73,7 @@ int main() {
            "read");
         bool ok = true;
         for (int i = 0; i < total; ++i) ok = ok && back[i] == (double)i;
-        CHECK(ok, "ReducedThetaView writes [surface][zeta][reduced_theta]");
+        check(ok, "ReducedThetaView writes [surface][zeta][reduced_theta]");
         cudaFree(d);
     }
 
@@ -93,7 +84,7 @@ int main() {
         // Legacy index: surface*nZnT + zeta*ntheta + theta.
         const int surf = 2, zeta = 1, theta = 3;
         const int nZnT = ntheta * nzeta;
-        CHECK((surf * nZnT + zeta * ntheta + theta) ==
+        check((surf * nZnT + zeta * ntheta + theta) ==
                   (surf * v.ntheta() * v.nzeta() + zeta * v.ntheta() + theta),
               "RealFieldView surface-major layout matches legacy");
     }
@@ -104,18 +95,13 @@ int main() {
         cumes::BaseGeometryHalfViews<double> half;
         // A freshly-defaulted bundle has null member views; construction is
         // trivial and the members are independently addressable.
-        CHECK(half.gsqrt.data() == nullptr && half.guu.data() == nullptr,
+        check(half.gsqrt.data() == nullptr && half.guu.data() == nullptr,
               "default bundle has null members");
         cumes::RealFieldView<double> g(nullptr, nH, ntheta, nzeta);
         half.gsqrt = g;
-        CHECK(half.gsqrt.surfaces() == nH && half.gsqrt.nzeta() == nzeta,
+        check(half.gsqrt.surfaces() == nH && half.gsqrt.nzeta() == nzeta,
               "bundle members carry extents");
     }
 
-    if (failures == 0) {
-        printf("test_operator_views: ALL PASS\n");
-        return 0;
-    }
-    printf("test_operator_views: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

@@ -18,6 +18,8 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "cumes_test.h"
+using namespace cumes::test;
 
 using cumes::EquilibriumSnapshot;
 using cumes::OutputFormat;
@@ -25,17 +27,6 @@ using cumes::OutputSpec;
 using cumes::RunReport;
 using cumes::RunStatus;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        const std::string _m(msg);                                           \
-        if (cond) {                                                          \
-            printf("PASS %s\n", _m.c_str());                                 \
-        } else {                                                             \
-            printf("FAIL %s\n", _m.c_str());                                 \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 static std::string scratch(const char* name) {
     return std::string("test_host_io_") + name + "_" +
@@ -108,16 +99,16 @@ static void testOutputSpec() {
     // Availability preflight moved to the adapter library (completion plan
     // step 2.5); the binary format is always available by construction, so the
     // host test asserts the always-true contract without linking the adapter.
-    CHECK(/* output_format_available(kBinary) is always true by construction */ true,
+    check(/* output_format_available(kBinary) is always true by construction */ true,
           "output spec: binary always available");
     auto r = cumes::resolve_output_spec("state.bin");
-    CHECK(r.has_value() && r.value().format == OutputFormat::kBinary,
+    check(r.has_value() && r.value().format == OutputFormat::kBinary,
           "output spec: .bin resolves to binary");
     r = cumes::resolve_output_spec("state.H5");
-    CHECK(r.has_value() && r.value().format == OutputFormat::kHdf5,
+    check(r.has_value() && r.value().format == OutputFormat::kHdf5,
           "output spec: .H5 (case-insensitive) resolves to hdf5");
     r = cumes::resolve_output_spec("state.unknown");
-    CHECK(!r.has_value(), "output spec: unknown suffix rejected");
+    check(!r.has_value(), "output spec: unknown suffix rejected");
 }
 
 static void testV1RoundTrip() {
@@ -127,11 +118,11 @@ static void testV1RoundTrip() {
     spec.path = scratch("v1").c_str();
     auto w = cumes::make_binary_writer();
     auto r = cumes::make_binary_reader();
-    CHECK(w != nullptr && r != nullptr, "v1: writer+reader factories");
+    check(w != nullptr && r != nullptr, "v1: writer+reader factories");
     if (!w || !r) return;
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value(), "v1: write succeeds");
+    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value(), "v1: write succeeds");
     auto back = r->read(spec.path);
-    CHECK(back.has_value() && snapshotsEqual(s, back.value()),
+    check(back.has_value() && snapshotsEqual(s, back.value()),
           "v1: round-trip preserves state");
 
     // Corrupt the magic -> reader rejects.
@@ -142,7 +133,7 @@ static void testV1RoundTrip() {
         f.close();
     }
     auto bad = r->read(spec.path);
-    CHECK(!bad.has_value(), "v1: bad magic rejected");
+    check(!bad.has_value(), "v1: bad magic rejected");
     remove(spec.path.c_str());
 }
 
@@ -165,7 +156,7 @@ static void testCorruptHeaderHugeDimensions() {
     }
     auto r = cumes::make_binary_reader();
     auto got = r->read(path);
-    CHECK(!got.has_value(),
+    check(!got.has_value(),
           "corrupt header: huge ns*mnmax rejected as implausible (no bad_alloc/terminate)");
     remove(path.c_str());
 }
@@ -186,10 +177,10 @@ static void testShortFamilyRejected() {
     spec.format = OutputFormat::kBinary;
     spec.path = scratch("short");
     auto w = cumes::make_binary_writer();
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
+    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
           "short family: write fails cleanly (no OOB read)");
     FILE* f = fopen(spec.path.c_str(), "rb");
-    CHECK(f == nullptr, "short family: no file published");
+    check(f == nullptr, "short family: no file published");
     if (f) fclose(f);
 }
 
@@ -203,10 +194,10 @@ static void testV1UnknownPrecisionRejected() {
     auto w = cumes::make_binary_writer();
     RunReport report = makeReport();
     report.build.scalar_type = "single";
-    CHECK(!w->write_atomic(s, report, spec, makeProblem()).has_value(),
+    check(!w->write_atomic(s, report, spec, makeProblem()).has_value(),
           "v1: unknown precision tag rejected");
     FILE* f = fopen(spec.path.c_str(), "rb");
-    CHECK(f == nullptr, "v1: no file published on unknown precision tag");
+    check(f == nullptr, "v1: no file published on unknown precision tag");
     if (f) fclose(f);
 }
 
@@ -217,7 +208,7 @@ static void testFailureMatrix() {
     spec.format = OutputFormat::kBinary;
     spec.path = "no_such_dir/test_host_io_open.bin";
     auto w = cumes::make_binary_writer();
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
+    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
           "failure: open failure returns false");
 
     // rename failure: target is a non-empty directory (temp writes fine,
@@ -229,11 +220,11 @@ static void testFailureMatrix() {
         if (f) { fputs("x", f); fclose(f); }
     }
     spec.path = dir;  // a directory, not a file
-    CHECK(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
+    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
           "failure: rename-over-directory returns false");
     // the directory and its contents are untouched
     FILE* keep = fopen((dir + "/keep").c_str(), "r");
-    CHECK(keep != nullptr, "failure: target directory untouched");
+    check(keep != nullptr, "failure: target directory untouched");
     if (keep) fclose(keep);
     remove((dir + "/keep").c_str());
     rmdir(dir.c_str());
@@ -246,10 +237,5 @@ int main() {
     testShortFamilyRejected();
     testV1UnknownPrecisionRejected();
     testFailureMatrix();
-    if (failures == 0) {
-        printf("test_host_io: ALL PASS\n");
-        return 0;
-    }
-    printf("test_host_io: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

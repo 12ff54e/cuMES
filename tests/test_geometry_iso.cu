@@ -20,11 +20,12 @@
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
 
 // Manufacture a non-degenerate spectral state on the W7-X shape (the shared
-// kW7XGeneric fixture in cumes_test_support.cuh). The content is deliberately
+// kW7XGeneric fixture in cumes_test_cuda_helper.cuh). The content is deliberately
 // generic (all modes get a mild radial envelope) so no interior surface
 // collapses to zero geometry: R has a strong m=0/n=0 DC plus a few m>0 modes,
 // Z and lambda get m=1..3 content with the same s envelopes. This replaces
@@ -34,13 +35,13 @@
 template <typename T>
 static void fillState(cumes::SpectralStorage<T>& storage, const DeviceParams<T>& p) {
     std::vector<T> hcc, hss, hzsc, hzcs, hlsc, hlcs;
-    manufacturedState<T>(ManufacturedShape::kW7XGeneric, p.ns, p.mnmax,
+    manufactured_state<T>(ManufacturedShape::kW7XGeneric, p.ns, p.mnmax,
                          p.ntor, hcc, hss, hzsc, hzcs, hlsc, hlcs);
-    uploadState(storage, hcc, hss, hzsc, hzcs, hlsc, hlcs, p.ns, p.mnmax);
+    upload_state(storage, hcc, hss, hzsc, hzcs, hlsc, hlcs, p.ns, p.mnmax);
 }
 
 int main() {
-    cumes::ValidatedProblem vp = loadValidated("inputs/w7x.json");
+    cumes::ValidatedProblem vp = load_validated("inputs/w7x.json");
     const cumes::ProblemSpec& spec = vp.spec();
     DeviceParams<double> p{};
     // Full W7-X shape (the largest angular grid the solver runs), exercising

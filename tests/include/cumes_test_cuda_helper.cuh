@@ -1,9 +1,10 @@
 #pragma once
-// cumes_test_support.cuh — shared test helpers (CUDA error checking +
-// manufactured spectral states).
+// cumes_test_cuda_helper.cuh — CUDA-side shared test helpers (error checking +
+// manufactured spectral states + config loading), on top of the CUDA-free
+// harness (cumes_test.h).
 //
 // Phase 1 extracted the genuinely-shared, bit-for-bit-identical helper (the
-// `checkCuda`/`cc` CUDA error check that every kernel-driving test
+// `check_cuda`/`cc` CUDA error check that every kernel-driving test
 // duplicated). The per-operator CPU scalar references (cpuInvDFT, thomasSolve,
 // cpuDealiasBandpass, …) remain in their owning tests while they have a single
 // consumer; they move here when a second consumer appears. The six-family
@@ -15,18 +16,21 @@
 
 #include <vector>
 
+#include "cumes_test.h"
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/state/spectral_storage.hpp"
 
+namespace cumes::test {
+
 // CUDA error check: print and exit on failure. `cc` is the short form used
-// across the tests; `checkCuda` is the verbose alias. The status conversion
+// across the tests; `check_cuda` is the verbose alias. The status conversion
 // itself is delegated to cumes::check_cuda (the production throwing boundary);
 // the tests keep the exit-based UX — an uncaught CumesError would fall through
 // to std::terminate and lose the tag message — so the helper catches, prints
 // the tag, and exits.
-inline void checkCuda(cudaError_t e, const char* tag) {
+inline void check_cuda(cudaError_t e, const char* tag) {
     try {
         cumes::check_cuda(e, tag);
     } catch (const cumes::CumesError&) {
@@ -34,7 +38,7 @@ inline void checkCuda(cudaError_t e, const char* tag) {
         exit(EXIT_FAILURE);
     }
 }
-inline void cc(cudaError_t e, const char* tag) { checkCuda(e, tag); }
+inline void cc(cudaError_t e, const char* tag) { check_cuda(e, tag); }
 
 // ---------------------------------------------------------------------------
 // Manufactured six-family spectral states (host vectors, column-major
@@ -62,10 +66,10 @@ enum class ManufacturedShape {
 };
 
 template <typename T>
-inline void manufacturedState(ManufacturedShape shape, int ns, int mnmax,
-                              int ntor, std::vector<T>& cc, std::vector<T>& ss,
-                              std::vector<T>& zsc, std::vector<T>& zcs,
-                              std::vector<T>& lsc, std::vector<T>& lcs) {
+inline void manufactured_state(ManufacturedShape shape, int ns, int mnmax,
+                               int ntor, std::vector<T>& cc, std::vector<T>& ss,
+                               std::vector<T>& zsc, std::vector<T>& zcs,
+                               std::vector<T>& lsc, std::vector<T>& lcs) {
     const size_t n = (size_t)ns * mnmax;
     cc.assign(n, T(0)); ss.assign(n, T(0)); zsc.assign(n, T(0));
     zcs.assign(n, T(0)); lsc.assign(n, T(0)); lcs.assign(n, T(0));
@@ -114,10 +118,10 @@ inline void manufacturedState(ManufacturedShape shape, int ns, int mnmax,
 // Upload all six manufactured families into a SpectralStorage (the standard
 // six-family H2D upload used by every manufactured-state test).
 template <typename T>
-inline void uploadState(cumes::SpectralStorage<T>& storage, const std::vector<T>& h_cc,
-                        const std::vector<T>& h_ss, const std::vector<T>& h_zsc,
-                        const std::vector<T>& h_zcs, const std::vector<T>& h_lsc,
-                        const std::vector<T>& h_lcs, int ns, int mnmax) {
+inline void upload_state(cumes::SpectralStorage<T>& storage, const std::vector<T>& h_cc,
+                         const std::vector<T>& h_ss, const std::vector<T>& h_zsc,
+                         const std::vector<T>& h_zcs, const std::vector<T>& h_lsc,
+                         const std::vector<T>& h_lcs, int ns, int mnmax) {
     size_t nb = (size_t)ns * mnmax * sizeof(T);
     cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc.data(), nb, cudaMemcpyHostToDevice), "up cc");
     cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss.data(), nb, cudaMemcpyHostToDevice), "up ss");
@@ -128,15 +132,14 @@ inline void uploadState(cumes::SpectralStorage<T>& storage, const std::vector<T>
 }
 
 // Load a validated problem from a JSON fixture (tests run from the source dir).
-// The legacy parser used to produce an InputParams for the same fixture; this
-// returns the equivalent immutable model. Tests that call this must link
+// Returns the immutable ValidatedProblem model. Tests that call this must link
 // cumes_config_json (for cumes::read_and_validate).
-inline cumes::ValidatedProblem loadValidated(
+inline cumes::ValidatedProblem load_validated(
     const char* path = "inputs/solovev.json") {
     cumes::SolverOptions opts;
     auto vr = cumes::read_and_validate(path, opts);
     if (!vr.has_value()) {
-        fprintf(stderr, "loadValidated: %s failed validation\n", path);
+        fprintf(stderr, "load_validated: %s failed validation\n", path);
         exit(EXIT_FAILURE);
     }
     return std::move(vr.value());
@@ -145,12 +148,14 @@ inline cumes::ValidatedProblem loadValidated(
 // Validate a hand-built ProblemSpec into a ValidatedProblem (for tests that
 // tweak ncurr/curtor/profiles without a JSON fixture). Exits on validation
 // failure.
-inline cumes::ValidatedProblem validateSpec(cumes::ProblemSpec spec) {
+inline cumes::ValidatedProblem validate_spec(cumes::ProblemSpec spec) {
     cumes::SolverOptions opts;
     auto vr = cumes::validate(std::move(spec), opts);
     if (!vr.has_value()) {
-        fprintf(stderr, "validateSpec: validation failed\n");
+        fprintf(stderr, "validate_spec: validation failed\n");
         exit(EXIT_FAILURE);
     }
     return std::move(vr.value());
 }
+
+}  // namespace cumes::test

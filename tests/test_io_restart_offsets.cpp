@@ -23,6 +23,8 @@
 #endif
 #ifdef CUMES_HAVE_HDF5
 #include <hdf5.h>
+#include "cumes_test.h"
+using namespace cumes::test;
 #endif
 
 using cumes::EquilibriumSnapshot;
@@ -30,16 +32,6 @@ using cumes::OutputFormat;
 using cumes::Reader;
 using cumes::RunReport;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 // Per-test temp directory with RAII cleanup (never leaves repo-root debris;
 // completion-plan follow-up §5).
@@ -298,18 +290,18 @@ static void testBackend(const char* name, FixtureWriter writer,
         const bool written = writer(path, offsets, nrestarts, wrong_iter_extent);
         char msg[192];
         snprintf(msg, sizeof msg, "%s: fixture written (%s)", name, label);
-        CHECK(written, msg);
+        check(written, msg);
 
         std::unique_ptr<Reader> reader = make_reader(fmt);
         snprintf(msg, sizeof msg, "%s: reader factory exists (%s)", name, label);
-        CHECK(reader != nullptr, msg);
+        check(reader != nullptr, msg);
 
         RunReport rep;
         const auto res = reader->read(path, &rep);
         remove(path.c_str());
         snprintf(msg, sizeof msg, "%s: %s", name, label);
         if (expect_ok) {
-            CHECK(res.has_value(), msg);
+            check(res.has_value(), msg);
             if (res.has_value()) {
                 bool restarts_ok = rep.stages.size() == offsets.size();
                 for (size_t g = 0; restarts_ok && g < offsets.size(); ++g) {
@@ -322,7 +314,7 @@ static void testBackend(const char* name, FixtureWriter writer,
                 snprintf(msg, sizeof msg,
                          "%s: %s (restarts land in the right stages)", name,
                          label);
-                CHECK(restarts_ok, msg);
+                check(restarts_ok, msg);
             }
         } else if (!res.has_value()) {
             const std::string& err = res.error();
@@ -330,13 +322,13 @@ static void testBackend(const char* name, FixtureWriter writer,
                      "%s: %s failure names the restart contract", name, label);
             // The NetCDF extent case fails in the restart-history read, the
             // HDF5 one in the stage-history read — either names the contract.
-            CHECK(err.find("restart") != std::string::npos ||
+            check(err.find("restart") != std::string::npos ||
                       err.find("stage") != std::string::npos,
                   msg);
         } else {
             snprintf(msg, sizeof msg, "%s: %s rejected with typed failure",
                      name, label);
-            CHECK(false, msg);
+            check(false, msg);
         }
     };
 
@@ -353,7 +345,7 @@ static void testBackend(const char* name, FixtureWriter writer,
 
 int main() {
     TempDir dir;
-    CHECK(dir.ok(), "temp directory created");
+    check(dir.ok(), "temp directory created");
     if (!dir.ok()) return 1;
 
 #ifdef CUMES_HAVE_NETCDF
@@ -368,10 +360,5 @@ int main() {
     printf("SKIP hdf5 corrupted-offset cases (backend not compiled)\n");
 #endif
 
-    if (failures == 0) {
-        printf("test_io_restart_offsets: all checks passed\n");
-        return 0;
-    }
-    printf("test_io_restart_offsets: %d check(s) FAILED\n", failures);
-    return 1;
+    return summary();
 }

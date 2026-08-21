@@ -23,23 +23,14 @@
 #include "cumes/io/writer.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "vmec_types.h"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
 using cumes::EquilibriumSnapshot;
 using cumes::OutputFormat;
 using cumes::OutputSpec;
 using cumes::RunReport;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 static std::string scratch(const char* name) {
     return std::string("test_io_golden_") + name + "_" +
@@ -61,7 +52,7 @@ static cumes::SpectralStorage<T> makeStorage(int ns, int mnmax) {
                 static_cast<T>(c * 1000.0 + static_cast<double>(i) + 0.25);
         }
     }
-    checkCuda(cudaMemcpy(storage.state_slab(), host.data(), count * sizeof(T),
+    check_cuda(cudaMemcpy(storage.state_slab(), host.data(), count * sizeof(T),
                          cudaMemcpyHostToDevice),
               "upload");
     return storage;
@@ -200,18 +191,18 @@ static void checkV1RoundTrip(const EquilibriumSnapshot& snap,
     spec.path = path;
     auto w = cumes::make_writer(spec.format);
     auto r = cumes::make_reader(spec.format);
-    CHECK(w != nullptr && r != nullptr, "v1 factories");
+    check(w != nullptr && r != nullptr, "v1 factories");
     if (w && r) {
         RunReport report = makeIoReport();
         report.build.scalar_type =
             sizeof(T) == sizeof(double) ? "double" : "float";
-        CHECK(w->write_atomic(snap, report, spec, vp).has_value(),
+        check(w->write_atomic(snap, report, spec, vp).has_value(),
               "v1 write succeeds");
         RunReport back;
         auto snap_back = r->read(path, &back);
-        CHECK(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
+        check(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
               "v1 state round trip");
-        CHECK(reportsEqual(report, back),
+        check(reportsEqual(report, back),
               "v1 complete RunReport + restart metadata round trip");
     }
     remove(path.c_str());
@@ -244,7 +235,7 @@ static void runPrecision() {
             spec.path = v1Path;
         auto w = cumes::make_writer(spec.format);
         auto r = cumes::make_reader(spec.format);
-        CHECK(w != nullptr && r != nullptr, "v1: writer+reader factories");
+        check(w != nullptr && r != nullptr, "v1: writer+reader factories");
         if (w && r) {
             // Read back WITH the report: the v2 trailer (precision-policy
             // fields + stage records) must round-trip, not just the state.
@@ -253,13 +244,13 @@ static void runPrecision() {
             RunReport report = makeIoReport();
             report.build.scalar_type =
                 sizeof(T) == sizeof(double) ? "double" : "float";
-            CHECK(w->write_atomic(snap, report, spec, vp).has_value(),
+            check(w->write_atomic(snap, report, spec, vp).has_value(),
                   "v1: write succeeds");
             RunReport back;
             auto snap_back = r->read(v1Path, &back);
-            CHECK(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
+            check(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
                   "v1: round-trip preserves bridged state");
-            CHECK(reportsEqual(report, back),
+            check(reportsEqual(report, back),
                   "v1: round-trip preserves the provenance trailer");
         }
         remove(v1Path.c_str());
@@ -271,15 +262,15 @@ static void runPrecision() {
     {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string v1OldPath = scratch("v1old");
-        CHECK(writeHistoricalV1(snap, v1OldPath), "v1 historical: fixture written");
+        check(writeHistoricalV1(snap, v1OldPath), "v1 historical: fixture written");
         auto r = cumes::make_reader(OutputFormat::kBinary);
-        CHECK(r != nullptr, "v1 historical: reader factory");
+        check(r != nullptr, "v1 historical: reader factory");
         if (r) {
             RunReport back;
             auto snap_back = r->read(v1OldPath, &back);
-            CHECK(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
+            check(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
                   "v1 historical: state round trip");
-            CHECK(back.build.scalar_type == "double" &&
+            check(back.build.scalar_type == "double" &&
                       back.build.revision == "r1" &&
                       back.build.build_type == "Release" &&
                       back.build.precision_policy == "" &&
@@ -306,10 +297,10 @@ static void runPrecision() {
     {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string ckpt = scratch("ckpt");
-        CHECK(cumes::write_checkpoint(snap, ckpt).has_value(),
+        check(cumes::write_checkpoint(snap, ckpt).has_value(),
               "checkpoint: write succeeds");
         auto back = cumes::read_checkpoint(ckpt);
-        CHECK(back.has_value() && snapshotsEqual(snap, back.value()),
+        check(back.has_value() && snapshotsEqual(snap, back.value()),
               "checkpoint: round-trip preserves bridged state");
         remove(ckpt.c_str());
     }
@@ -319,10 +310,5 @@ int main() {
     printf("=== v1 writer round-trip gate ===\n");
     runPrecision<double>();
     runPrecision<float>();
-    if (failures == 0) {
-        printf("test_io_golden: ALL PASS\n");
-        return 0;
-    }
-    printf("test_io_golden: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

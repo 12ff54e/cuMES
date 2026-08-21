@@ -25,18 +25,9 @@
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 
 // One constraint-compute pass at the given tcon0; returns the post-constraint
@@ -59,11 +50,11 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
     // LCFS-extrapolated reference, making the constraint-force contribution
     // genuinely nonzero. (Deliberate — see the ManufacturedShape comment.)
     std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-    manufacturedState<T>(ManufacturedShape::kSolovevQuadM2, p.ns, p.mnmax,
+    manufactured_state<T>(ManufacturedShape::kSolovevQuadM2, p.ns, p.mnmax,
                          p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
-    uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+    upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
 
-    cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
+    cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
     cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
@@ -83,13 +74,13 @@ static void runConstraint(T tcon0, double* out_brmn_e, double* out_bzmn_e,
 
     size_t nF = (size_t)p.ns * p.nZnT;
     auto* h = new T[nF];
-    checkCuda(cudaMemcpy(h, rs.d_brmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost), "brmn_e");
+    check_cuda(cudaMemcpy(h, rs.d_brmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost), "brmn_e");
     for (size_t i = 0; i < nF; ++i) out_brmn_e[i] = (double)h[i];
-    checkCuda(cudaMemcpy(h, rs.d_bzmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost), "bzmn_e");
+    check_cuda(cudaMemcpy(h, rs.d_bzmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost), "bzmn_e");
     for (size_t i = 0; i < nF; ++i) out_bzmn_e[i] = (double)h[i];
     delete[] h;
     auto* ht = new T[p.ns];
-    checkCuda(cudaMemcpy(ht, constraint.tcon(), p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon");
+    check_cuda(cudaMemcpy(ht, constraint.tcon(), p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon");
     for (int j = 0; j < p.ns; ++j) out_tcon[j] = (double)ht[j];
     delete[] ht;
 
@@ -115,8 +106,8 @@ static void testScaling() {
         tcon_max = std::max(tcon_max, std::abs(t2[j]));
         tcon_lin = std::max(tcon_lin, std::abs(t2[j] - 2.0 * t1[j]));
     }
-    CHECK(tcon_max > 0.0, "tcon0: constraint multiplier active (nonzero tcon at tcon0=2)");
-    CHECK(tcon_lin / std::max(tcon_max, 1.0) < 1e-8, "tcon0: tcon scales linearly with tcon0");
+    check(tcon_max > 0.0, "tcon0: constraint multiplier active (nonzero tcon at tcon0=2)");
+    check(tcon_lin / std::max(tcon_max, 1.0) < 1e-8, "tcon0: tcon scales linearly with tcon0");
 
     // Force increments must be equal: F(2)-F(1) == F(1)-F(0) (linearity), and
     // the increment is nonzero (the constraint force actually moves).
@@ -131,18 +122,13 @@ static void testScaling() {
         inc_max = std::max(inc_max, std::abs(inc1z));
         inc_nonlin = std::max(inc_nonlin, std::abs(inc2z - inc1z));
     }
-    CHECK(inc_max > 0.0, "tcon0: constraint force contribution is nonzero");
-    CHECK(inc_nonlin / std::max(inc_max, 1.0) < 1e-8,
+    check(inc_max > 0.0, "tcon0: constraint force contribution is nonzero");
+    check(inc_nonlin / std::max(inc_max, 1.0) < 1e-8,
           "tcon0: force increments equal (constraint force linear in tcon0)");
 }
 
 int main() {
     printf("=== Constraint tcon0 scaling ===\n");
     testScaling<double>();
-    if (failures == 0) {
-        printf("test_constraint_tcon: ALL PASS\n");
-        return 0;
-    }
-    printf("test_constraint_tcon: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

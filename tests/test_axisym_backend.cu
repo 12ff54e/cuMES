@@ -22,12 +22,12 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
 constexpr int kNs = 5, kMpol = 6, kNtor = 0, kNtheta = 18, kNzeta = 1, kNfp = 1;
 constexpr int kMnmax = kMpol * (kNtor + 1), kNZnT = kNtheta * kNzeta;
 
-static int g_failures = 0;
 
 // Local scratch bundle replacing the deleted ConstraintWorkspace (the A/B test
 // allocates its own constraint buffers rather than borrowing the operator's).
@@ -58,7 +58,7 @@ static void compareArrays(const char* label, const T* a, const T* b, int n,
     if (maxd > tol) {
         fprintf(stderr, "FAIL [%s] max abs diff = %.3e (tol %.3e)\n", label,
                 maxd, tol);
-        ++g_failures;
+        ++failures();
     } else {
         printf("  PASS %-22s (max abs diff %.3e)\n", label, maxd);
     }
@@ -319,7 +319,7 @@ static void testRzConOneNull(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& 
         if (e != cudaSuccess) {
             fprintf(stderr, "FAIL [%s] kernel error: %s\n", label,
                     cudaGetErrorString(e));
-            ++g_failures;
+            ++failures();
         } else {
             compareArrays(label, ref, d_one, n, tolNear<T>());
         }
@@ -359,7 +359,7 @@ static void testDealias(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& gen,
                                   (double)ha[(size_t)j * p.nZnT + l]));
     if (maxd > tolNear<T>()) {
         fprintf(stderr, "FAIL [gCon] max abs diff = %.3e\n", maxd);
-        ++g_failures;
+        ++failures();
     } else {
         printf("  PASS gCon (interior, max abs diff %.3e)\n", maxd);
     }
@@ -424,6 +424,6 @@ int main() {
     printf("=== Axisymmetric backend differential test ===\n");
     runTests<double>();
     runTests<float>();
-    printf(g_failures == 0 ? "ALL PASS\n" : "%d FAILURES\n", g_failures);
-    return g_failures == 0 ? 0 : 1;
+    printf(failures() == 0 ? "ALL PASS\n" : "%d FAILURES\n", failures());
+    return summary();
 }

@@ -57,9 +57,9 @@
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/runtime/device_buffer.cuh"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
-static int g_failures = 0;
 
 
 // Absolute comparison against a precomputed tolerance (see the callers: the
@@ -73,7 +73,7 @@ static void checkNear(double gpu, double ref, double tol,
     if (!(fabs(gpu - ref) <= tol)) {
         fprintf(stderr, "FAIL [%s] a=%lld b=%lld c=%lld gpu=%.15e ref=%.15e\n",
                 s, a, b, c, gpu, ref);
-        ++g_failures;
+        ++failures();
     }
 }
 
@@ -104,7 +104,7 @@ static cumes::ValidatedProblem solovevInput() {
     spec.rbc = {{1, 0, 1.0}};
     spec.zbs = {{1, 0, 0.5}};
     spec.stages = {{11, 1000, 1e-16}};
-    return validateSpec(std::move(spec));
+    return validate_spec(std::move(spec));
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ static void fillState(std::vector<T>& cc, std::vector<T>& ss,
     }
 }
 
-// (uploadState is the shared six-family upload in cumes_test_support.cuh.)
+// (upload_state is the shared six-family upload in cumes_test_cuda_helper.cuh.)
 
 // ---------------------------------------------------------------------------
 // CPU scalar reference for the de-alias bandpass.
@@ -307,7 +307,7 @@ static void cpuPreconApplyRef(const std::vector<T>& ar, const std::vector<T>& dr
 // ---------------------------------------------------------------------------
 template <typename T>
 static int testDealias(int ntheta) {
-    int lf = g_failures;
+    int lf = failures();
     printf("  de-alias bandpass theta coverage: ns=11 mpol=6 ntor=0 nzeta=1 ntheta=%d ... ", ntheta);
     const int ns = 11, mpol = 6, ntor = 0, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
@@ -323,7 +323,7 @@ static int testDealias(int ntheta) {
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
-    uploadState(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
+    upload_state(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
@@ -339,29 +339,29 @@ static int testDealias(int ntheta) {
         for (int k = 0; k < nzeta; ++k)
             for (int it = 0; it < p.ntheta; ++it)
                 pat[jF * p.nZnT + k * p.ntheta + it] = T(daPatternValue(jF, it, p.ntheta, ns));
-    checkCuda(cudaMemcpy(constraint.rcon_view(p).data(), pat.data(), nF, cudaMemcpyHostToDevice), "rCon up");
-    checkCuda(cudaMemset(constraint.zcon_view(p).data(), 0, nF), "zCon zero");
-    checkCuda(cudaMemset(constraint.rcon0(), 0, nF), "rCon0 zero");
-    checkCuda(cudaMemset(constraint.zcon0(), 0, nF), "zCon0 zero");
+    check_cuda(cudaMemcpy(constraint.rcon_view(p).data(), pat.data(), nF, cudaMemcpyHostToDevice), "rCon up");
+    check_cuda(cudaMemset(constraint.zcon_view(p).data(), 0, nF), "zCon zero");
+    check_cuda(cudaMemset(constraint.rcon0(), 0, nF), "rCon0 zero");
+    check_cuda(cudaMemset(constraint.zcon0(), 0, nF), "zCon0 zero");
     std::vector<T> ones(ns * p.nZnT, T(1.0));
-    checkCuda(cudaMemcpy(rs.d_ru_e, ones.data(), nF, cudaMemcpyHostToDevice), "ru_e up");
-    checkCuda(cudaMemcpy(rs.d_zu_e, ones.data(), nF, cudaMemcpyHostToDevice), "zu_e up");
-    checkCuda(cudaMemset(rs.d_ru_o, 0, nF), "ru_o zero");
-    checkCuda(cudaMemset(rs.d_zu_o, 0, nF), "zu_o zero");
+    check_cuda(cudaMemcpy(rs.d_ru_e, ones.data(), nF, cudaMemcpyHostToDevice), "ru_e up");
+    check_cuda(cudaMemcpy(rs.d_zu_e, ones.data(), nF, cudaMemcpyHostToDevice), "zu_e up");
+    check_cuda(cudaMemset(rs.d_ru_o, 0, nF), "ru_o zero");
+    check_cuda(cudaMemset(rs.d_zu_o, 0, nF), "zu_o zero");
     // Deterministic addConstraint outputs (not compared, but keeps the pass clean).
-    checkCuda(cudaMemset(rs.d_brmn_e, 0, nF), "brmn_e zero");
-    checkCuda(cudaMemset(rs.d_brmn_o, 0, nF), "brmn_o zero");
-    checkCuda(cudaMemset(rs.d_bzmn_e, 0, nF), "bzmn_e zero");
-    checkCuda(cudaMemset(rs.d_bzmn_o, 0, nF), "bzmn_o zero");
+    check_cuda(cudaMemset(rs.d_brmn_e, 0, nF), "brmn_e zero");
+    check_cuda(cudaMemset(rs.d_brmn_o, 0, nF), "brmn_o zero");
+    check_cuda(cudaMemset(rs.d_bzmn_e, 0, nF), "bzmn_e zero");
+    check_cuda(cudaMemset(rs.d_bzmn_o, 0, nF), "bzmn_o zero");
 
     // tcon is refreshed from the (real) preconditioner + manufactured ru/zu;
     // the bandpass runs on the manufactured gConEff.
     constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true, &transform, nullptr, 0);
 
     std::vector<T> h_tcon(p.ns);
-    checkCuda(cudaMemcpy(h_tcon.data(), constraint.tcon(), p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
+    check_cuda(cudaMemcpy(h_tcon.data(), constraint.tcon(), p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
     std::vector<T> h_gCon(ns * p.nZnT);
-    checkCuda(cudaMemcpy(h_gCon.data(), constraint.gcon(), nF, cudaMemcpyDeviceToHost), "gCon get");
+    check_cuda(cudaMemcpy(h_gCon.data(), constraint.gcon(), nF, cudaMemcpyDeviceToHost), "gCon get");
     std::vector<double> tcon(p.ns), faccon(p.mnmax);
     for (int jF = 0; jF < p.ns; ++jF) tcon[jF] = (double)h_tcon[jF];
     for (int m = 0; m < p.mnmax; ++m) faccon[m] = (double)constraint.h_faccon()[m];
@@ -405,8 +405,8 @@ static int testDealias(int ntheta) {
     
     realSpaceFree(rs);
     cumes::modeTableFree(mt);
-    printf(g_failures == lf ? "PASS\n" : "FAIL\n");
-    return g_failures - lf;
+    printf(failures() == lf ? "PASS\n" : "FAIL\n");
+    return failures() - lf;
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +414,7 @@ static int testDealias(int ntheta) {
 // ---------------------------------------------------------------------------
 template <typename T>
 static int testPcr(int ns) {
-    int lf = g_failures;
+    int lf = failures();
     printf("  PCR solve row coverage: mpol=4 ntor=0 ntheta=18 nzeta=1 ns=%d ... ", ns);
     const int mpol = 4, ntor = 0, ntheta = 18, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
@@ -429,7 +429,7 @@ static int testPcr(int ns) {
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
-    uploadState(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
+    upload_state(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
     precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
@@ -442,14 +442,14 @@ static int testPcr(int ns) {
     std::vector<T> lam(p.mnmax * ns);
     std::vector<int> jMin(p.mnmax);
     size_t szMN = (size_t)p.mnmax * ns * sizeof(T);
-    checkCuda(cudaMemcpy(ar.data(), precon.ar(), szMN, cudaMemcpyDeviceToHost), "ar get");
-    checkCuda(cudaMemcpy(dr.data(), precon.dr(), szMN, cudaMemcpyDeviceToHost), "dr get");
-    checkCuda(cudaMemcpy(br.data(), precon.br(), szMN, cudaMemcpyDeviceToHost), "br get");
-    checkCuda(cudaMemcpy(az.data(), precon.az(), szMN, cudaMemcpyDeviceToHost), "az get");
-    checkCuda(cudaMemcpy(dz.data(), precon.dz(), szMN, cudaMemcpyDeviceToHost), "dz get");
-    checkCuda(cudaMemcpy(bz.data(), precon.bz(), szMN, cudaMemcpyDeviceToHost), "bz get");
-    checkCuda(cudaMemcpy(lam.data(), precon.lambdaPrec(), szMN, cudaMemcpyDeviceToHost), "lambdaPrec get");
-    checkCuda(cudaMemcpy(jMin.data(), precon.jmin(), p.mnmax * sizeof(int), cudaMemcpyDeviceToHost), "jMin get");
+    check_cuda(cudaMemcpy(ar.data(), precon.ar(), szMN, cudaMemcpyDeviceToHost), "ar get");
+    check_cuda(cudaMemcpy(dr.data(), precon.dr(), szMN, cudaMemcpyDeviceToHost), "dr get");
+    check_cuda(cudaMemcpy(br.data(), precon.br(), szMN, cudaMemcpyDeviceToHost), "br get");
+    check_cuda(cudaMemcpy(az.data(), precon.az(), szMN, cudaMemcpyDeviceToHost), "az get");
+    check_cuda(cudaMemcpy(dz.data(), precon.dz(), szMN, cudaMemcpyDeviceToHost), "dz get");
+    check_cuda(cudaMemcpy(bz.data(), precon.bz(), szMN, cudaMemcpyDeviceToHost), "bz get");
+    check_cuda(cudaMemcpy(lam.data(), precon.lambdaPrec(), szMN, cudaMemcpyDeviceToHost), "lambdaPrec get");
+    check_cuda(cudaMemcpy(jMin.data(), precon.jmin(), p.mnmax * sizeof(int), cudaMemcpyDeviceToHost), "jMin get");
 
     // Manufacture a smooth, non-trivial 6-family spectral force buffer.
     int stride = p.mnmax * ns;
@@ -460,15 +460,15 @@ static int testPcr(int ns) {
                 h_f[c * stride + mode * ns + j] =
                     T(sin(0.7 * c + 1.3 * mode + 0.11 * j) * (0.4 + 0.05 * c));
 
-    // (checkCuda, not cc: the local spectral vectors named cc/ss/... shadow
+    // (check_cuda, not cc: the local spectral vectors named cc/ss/... shadow
     // the cc() helper in this TU.)
     cumes::DeviceBuffer<T> d_f(6 * stride);
-    checkCuda(cudaMemcpy(d_f.data(), h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
+    check_cuda(cudaMemcpy(d_f.data(), h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
     precon.enqueue_apply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
                     d_f.data(), p.ns, p.mnmax),
                 p, nullptr, 0);
     std::vector<T> h_g(6 * stride);
-    checkCuda(cudaMemcpy(h_g.data(), d_f.data(), 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
+    check_cuda(cudaMemcpy(h_g.data(), d_f.data(), 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
 
     // CPU reference: serial Thomas on the SAME coefficients.
     std::vector<double> fRef(6 * stride);
@@ -497,8 +497,8 @@ static int testPcr(int ns) {
 
     realSpaceFree(rs);
     cumes::modeTableFree(mt);
-    printf(g_failures == lf ? "PASS\n" : "FAIL\n");
-    return g_failures - lf;
+    printf(failures() == lf ? "PASS\n" : "FAIL\n");
+    return failures() - lf;
 }
 
 template <typename T>
@@ -524,7 +524,7 @@ int main() {
     nf += runDealiasTests<float>();
     nf += runPcrTests<double>();
     nf += runPcrTests<float>();
-    g_failures = nf;
-    printf(g_failures == 0 ? "ALL PASS\n" : "%d FAILURES\n", g_failures);
-    return g_failures == 0 ? 0 : 1;
+    failures() = nf;
+    printf(failures() == 0 ? "ALL PASS\n" : "%d FAILURES\n", failures());
+    return summary();
 }

@@ -18,6 +18,8 @@
 
 #include "cumes/numerics/accumulation.hpp"
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes_test.h"
+using namespace cumes::test;
 
 // acc += A(x[i]) * A(x[i]) over a grid-stride loop + a fixed block tree, the
 // same reduction shape the solver kernels use. `A` is the accumulator type.
@@ -38,14 +40,6 @@ __global__ void sumSquaresKernel(const T* __restrict__ x, int n,
     if (tid == 0) out[0] = T(s[0]);
 }
 
-static int failures = 0;
-#define CHECK(cond, msg)                                    \
-    do {                                                    \
-        if (!(cond)) {                                      \
-            fprintf(stderr, "FAIL: %s\n", msg);             \
-            ++failures;                                     \
-        }                                                   \
-    } while (0)
 
 int main() {
     // Trait contract (the production kernels rely on these).
@@ -89,15 +83,11 @@ int main() {
     // this dynamic-range case, and stay within a generous relative band of the
     // extended-precision reference (the GPU reduction uses a different order,
     // so a ~1e-8 relative deviation from the exact sum is expected).
-    CHECK(derr < ferr, "double accumulation not better than float accumulation");
-    CHECK(derr < 1e-6 * ref, "double accumulation too far from reference");
+    check(derr < ferr, "double accumulation not better than float accumulation");
+    check(derr < 1e-6 * ref, "double accumulation too far from reference");
 
     cudaFree(d_x);
     cudaFree(d_out);
 
-    if (failures == 0) {
-        printf("test_accumulation: PASS\n");
-        return 0;
-    }
-    return 1;
+    return summary();
 }

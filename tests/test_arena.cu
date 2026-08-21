@@ -10,18 +10,9 @@
 #include <cstdlib>
 
 #include "cumes/runtime/device_arena.cuh"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 __global__ void fillSpan(double* d, int n, double seed) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -43,19 +34,19 @@ int main() {
         double* b = arena.alloc_span<double>("metric/gsqrt", 100);
         (void)pad;
 
-        CHECK(a != nullptr && b != nullptr, "alloc_span returns non-null");
-        CHECK((reinterpret_cast<std::uintptr_t>(a) % alignof(double)) == 0,
+        check(a != nullptr && b != nullptr, "alloc_span returns non-null");
+        check((reinterpret_cast<std::uintptr_t>(a) % alignof(double)) == 0,
               "double span aligned");
-        CHECK((reinterpret_cast<std::uintptr_t>(b) % alignof(double)) == 0,
+        check((reinterpret_cast<std::uintptr_t>(b) % alignof(double)) == 0,
               "span after 3-byte pad realigned");
-        CHECK(b >= a + 100, "spans do not overlap");
-        CHECK(arena.span_count() == 3, "three spans recorded");
-        CHECK(arena.total_bytes() == 4096, "total_bytes");
-        CHECK(arena.peak_bytes() == arena.used_bytes(),
+        check(b >= a + 100, "spans do not overlap");
+        check(arena.span_count() == 3, "three spans recorded");
+        check(arena.total_bytes() == 4096, "total_bytes");
+        check(arena.peak_bytes() == arena.used_bytes(),
               "linear arena peak == used");
 
         const auto& spans = arena.spans();
-        CHECK(spans[0].name == "metric/tau" && spans[0].bytes == 800,
+        check(spans[0].name == "metric/tau" && spans[0].bytes == 800,
               "span name + bytes reported");
     }
 
@@ -71,7 +62,7 @@ int main() {
         cc(cudaMemcpy(h, d, 64 * sizeof(double), cudaMemcpyDeviceToHost), "read");
         bool ok = true;
         for (int i = 0; i < 64; ++i) ok = ok && h[i] == 10.0 + (double)i;
-        CHECK(ok, "carved span usable by device kernels");
+        check(ok, "carved span usable by device kernels");
     }
 
     // ---- overflow throws CumesError ----
@@ -85,10 +76,10 @@ int main() {
         } catch (const cumes::CumesError&) {
             threw = true;
         }
-        CHECK(threw, "overflowing span throws CumesError");
+        check(threw, "overflowing span throws CumesError");
         // Exact fit is fine.
         arena.alloc_span<double>("fits", 8);  // 64 bytes exactly
-        CHECK(arena.used_bytes() == 128, "exact-fit span fills the arena");
+        check(arena.used_bytes() == 128, "exact-fit span fills the arena");
     }
 
     // ---- bad alignment rejected ----
@@ -101,7 +92,7 @@ int main() {
         } catch (const cumes::CumesError&) {
             threw = true;
         }
-        CHECK(threw, "non-power-of-two alignment rejected");
+        check(threw, "non-power-of-two alignment rejected");
     }
 
     // ---- move semantics ----
@@ -110,9 +101,9 @@ int main() {
         arena.allocate(256);
         double* p = arena.alloc_span<double>("move", 8);
         cumes::DeviceArena moved(std::move(arena));
-        CHECK(moved.data() != nullptr && moved.used_bytes() == 64,
+        check(moved.data() != nullptr && moved.used_bytes() == 64,
               "moved arena owns the store");
-        CHECK(arena.empty(), "moved-from arena is empty");
+        check(arena.empty(), "moved-from arena is empty");
         (void)p;
     }
 
@@ -121,14 +112,9 @@ int main() {
         cumes::DeviceArena arena;
         arena.allocate(64);
         double* p = arena.alloc_span<double>("empty", 0);
-        CHECK(p == nullptr && arena.used_bytes() == 0,
+        check(p == nullptr && arena.used_bytes() == 0,
               "zero-count span consumes nothing");
     }
 
-    if (failures == 0) {
-        printf("test_arena: ALL PASS\n");
-        return 0;
-    }
-    printf("test_arena: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

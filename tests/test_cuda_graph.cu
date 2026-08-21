@@ -19,18 +19,9 @@
 #include "cumes/runtime/cuda_graph.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/stream.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 __global__ void fillKernel(float* x, int n, float v) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -42,12 +33,6 @@ __global__ void addKernel(const float* a, const float* b, float* c, int n) {
     if (i < n) c[i] = a[i] + b[i];
 }
 
-template <typename T>
-static double maxDiff(const T* x, const T* y, int n) {
-    double m = 0.0;
-    for (int i = 0; i < n; ++i) m = std::max(m, std::fabs((double)x[i] - (double)y[i]));
-    return m;
-}
 
 int main() {
     printf("=== CUDA Graph capture/launch correctness ===\n");
@@ -56,8 +41,8 @@ int main() {
     {
         const int n = 1024;
         float *a = nullptr, *b = nullptr, *c = nullptr, *c_stream = nullptr;
-        checkCuda(cudaMalloc(&a, n * 4), "a"); checkCuda(cudaMalloc(&b, n * 4), "b");
-        checkCuda(cudaMalloc(&c, n * 4), "c"); checkCuda(cudaMalloc(&c_stream, n * 4), "c_stream");
+        check_cuda(cudaMalloc(&a, n * 4), "a"); check_cuda(cudaMalloc(&b, n * 4), "b");
+        check_cuda(cudaMalloc(&c, n * 4), "c"); check_cuda(cudaMalloc(&c_stream, n * 4), "c_stream");
         cumes::Stream stream;
 
         fillKernel<<<8, 128, 0, stream.get()>>>(a, n, 1.0f);
@@ -74,9 +59,9 @@ int main() {
         stream.synchronize();
 
         std::vector<float> hc(n), hc_stream(n);
-        checkCuda(cudaMemcpy(hc.data(), c, n * 4, cudaMemcpyDeviceToHost), "read c");
-        checkCuda(cudaMemcpy(hc_stream.data(), c_stream, n * 4, cudaMemcpyDeviceToHost), "read c_stream");
-        CHECK(maxDiff(hc.data(), hc_stream.data(), n) == 0.0,
+        check_cuda(cudaMemcpy(hc.data(), c, n * 4, cudaMemcpyDeviceToHost), "read c");
+        check_cuda(cudaMemcpy(hc_stream.data(), c_stream, n * 4, cudaMemcpyDeviceToHost), "read c_stream");
+        check(max_diff(hc.data(), hc_stream.data(), n) == 0.0,
               "three-kernel graph == stream (bitwise)");
 
         cudaFree(a); cudaFree(b); cudaFree(c); cudaFree(c_stream);
@@ -91,16 +76,16 @@ int main() {
         p.tcon0 = 1.0; p.lamscale = 0.0;
 
         cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
-        // Shared manufactured state (kGraphQuad in cumes_test_support.cuh):
+        // Shared manufactured state (kGraphQuad in cumes_test_cuda_helper.cuh):
         // R_00=4.0, R_10=0.3s, m>=2: 0.1s^2, Rss=Rcc. The gate compares r_e
         // only, which is built from the R slots, so uploading the remaining
         // four families as deterministic zeros (instead of leaving the device
         // slab uninitialized) is an equivalent but strictly more reproducible
         // input.
         std::vector<double> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-        manufacturedState<double>(ManufacturedShape::kGraphQuad, p.ns, p.mnmax,
+        manufactured_state<double>(ManufacturedShape::kGraphQuad, p.ns, p.mnmax,
                                   p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
-        uploadState(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+        upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
 
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
@@ -113,7 +98,7 @@ int main() {
         stream.synchronize();
         const size_t nF = (size_t)p.ns * p.nZnT;
         std::vector<double> r_e_stream(nF);
-        checkCuda(cudaMemcpy(r_e_stream.data(), rs.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read stream r_e");
+        check_cuda(cudaMemcpy(r_e_stream.data(), rs.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read stream r_e");
 
         // graph capture + replay of the same inverse transform
         bool cufft_graph_ok = false;
@@ -125,24 +110,19 @@ int main() {
             g.launch(stream.get());
             stream.synchronize();
             std::vector<double> r_e_graph(nF);
-            checkCuda(cudaMemcpy(r_e_graph.data(), rs.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read graph r_e");
-            const double md = maxDiff(r_e_graph.data(), r_e_stream.data(), (int)nF);
+            check_cuda(cudaMemcpy(r_e_graph.data(), rs.d_r_e, nF * 8, cudaMemcpyDeviceToHost), "read graph r_e");
+            const double md = max_diff(r_e_graph.data(), r_e_stream.data(), (int)nF);
             cufft_graph_ok = (md == 0.0);
             printf("  cuFFT-in-graph: max |diff| = %.3e\n", md);
         } catch (const std::exception& e) {
             err = e.what();
         }
-        CHECK(cufft_graph_ok, "cuFFT inverse transform graph == stream (bitwise)");
+        check(cufft_graph_ok, "cuFFT inverse transform graph == stream (bitwise)");
         if (!cufft_graph_ok) printf("  cuFFT capture error: %s\n", err.c_str());
 
         realSpaceFree(rs);
     cumes::modeTableFree(mt);
     }
 
-    if (failures == 0) {
-        printf("\ntest_cuda_graph: ALL PASS\n");
-        return 0;
-    }
-    printf("\ntest_cuda_graph: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

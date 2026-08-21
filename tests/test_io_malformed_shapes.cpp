@@ -26,22 +26,14 @@
 #endif
 #ifdef CUMES_HAVE_HDF5
 #include <hdf5.h>
+#include "cumes_test.h"
+using namespace cumes::test;
 #endif
 
 using cumes::OutputFormat;
 using cumes::Reader;
 using cumes::RunReport;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 // Per-test temp directory with RAII cleanup.
 class TempDir {
@@ -529,7 +521,7 @@ static void testNetcdf(const TempDir& dir) {
             dir.path() + "/" + c.label + ".nc";
         char msg[192];
         snprintf(msg, sizeof msg, "netcdf: fixture written (%s)", c.label);
-        CHECK(writeNetcdfFixture(path, c.mut), msg);
+        check(writeNetcdfFixture(path, c.mut), msg);
         std::unique_ptr<Reader> reader =
             make_reader(OutputFormat::kNetCdf);
         RunReport rep;
@@ -539,20 +531,20 @@ static void testNetcdf(const TempDir& dir) {
         remove(path.c_str());
         if (c.mut == NcMutation::kNone) {
             snprintf(msg, sizeof msg, "netcdf: %s", c.label);
-            CHECK(res.has_value(), msg);
+            check(res.has_value(), msg);
         } else {
             snprintf(msg, sizeof msg, "netcdf: %s rejected with typed failure",
                      c.label);
-            CHECK(!res.has_value(), msg);
+            check(!res.has_value(), msg);
             snprintf(msg, sizeof msg, "netcdf: %s leaves report transactional",
                      c.label);
-            CHECK(rep.build.revision == "sentinel" &&
+            check(rep.build.revision == "sentinel" &&
                       rep.total_effective_iterations == 12345,
                   msg);
             if (c.error_contains != nullptr && !res.has_value()) {
                 snprintf(msg, sizeof msg,
                          "netcdf: %s fails at expected boundary", c.label);
-                CHECK(res.error().find(c.error_contains) != std::string::npos,
+                check(res.error().find(c.error_contains) != std::string::npos,
                       msg);
             }
         }
@@ -596,7 +588,7 @@ static void testHdf5(const TempDir& dir) {
         const std::string path = dir.path() + "/" + c.label + ".h5";
         char msg[192];
         snprintf(msg, sizeof msg, "hdf5: fixture written (%s)", c.label);
-        CHECK(writeHdf5Fixture(path, c.mut), msg);
+        check(writeHdf5Fixture(path, c.mut), msg);
         std::unique_ptr<Reader> reader =
             make_reader(OutputFormat::kHdf5);
         RunReport rep;
@@ -606,20 +598,20 @@ static void testHdf5(const TempDir& dir) {
         remove(path.c_str());
         if (c.mut == H5Mutation::kNone) {
             snprintf(msg, sizeof msg, "hdf5: %s", c.label);
-            CHECK(res.has_value(), msg);
+            check(res.has_value(), msg);
         } else {
             snprintf(msg, sizeof msg, "hdf5: %s rejected with typed failure",
                      c.label);
-            CHECK(!res.has_value(), msg);
+            check(!res.has_value(), msg);
             snprintf(msg, sizeof msg, "hdf5: %s leaves report transactional",
                      c.label);
-            CHECK(rep.build.revision == "sentinel" &&
+            check(rep.build.revision == "sentinel" &&
                       rep.total_effective_iterations == 12345,
                   msg);
             if (c.error_contains != nullptr && !res.has_value()) {
                 snprintf(msg, sizeof msg,
                          "hdf5: %s fails at expected boundary", c.label);
-                CHECK(res.error().find(c.error_contains) != std::string::npos,
+                check(res.error().find(c.error_contains) != std::string::npos,
                       msg);
             }
         }
@@ -629,7 +621,7 @@ static void testHdf5(const TempDir& dir) {
 
 int main() {
     TempDir dir;
-    CHECK(dir.ok(), "temp directory created");
+    check(dir.ok(), "temp directory created");
     if (!dir.ok()) return 1;
 
 #ifdef CUMES_HAVE_NETCDF
@@ -643,10 +635,5 @@ int main() {
     printf("SKIP hdf5 malformed-shape cases (backend not compiled)\n");
 #endif
 
-    if (failures == 0) {
-        printf("test_io_malformed_shapes: all checks passed\n");
-        return 0;
-    }
-    printf("test_io_malformed_shapes: %d check(s) FAILED\n", failures);
-    return 1;
+    return summary();
 }

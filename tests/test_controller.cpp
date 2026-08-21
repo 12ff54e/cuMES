@@ -12,15 +12,9 @@
 #include <cstdio>
 
 #include "cumes/solver/iteration_controller.hpp"
+#include "cumes_test.h"
+using namespace cumes::test;
 
-static int failures = 0;
-
-static void check(bool ok, const char* what) {
-    if (!ok) {
-        ++failures;
-        std::printf("  FAIL: %s\n", what);
-    }
-}
 
 static bool near(double a, double b, double eps) {
     return std::abs(a - b) <= eps * std::max(1.0, std::abs(b));
@@ -28,7 +22,7 @@ static bool near(double a, double b, double eps) {
 
 static void check_near(double a, double b, double eps, const char* what) {
     if (!near(a, b, eps)) {
-        ++failures;
+        ++failures();
         std::printf("  FAIL: %s (got %.17g, want %.17g)\n", what, a, b);
     }
 }
@@ -208,8 +202,8 @@ int main() {
         check(ctl.refresh_preconditioner(), "cadence: (26-1)%25==0 => refresh");
     }
 
-    if (failures) {
-        std::printf("test_controller: %d failure(s)\n", failures);
+    if (failures()) {
+        std::printf("test_controller: %d failure(s)\n", failures());
         return 1;
     }
     std::printf("test_controller: all checks passed\n");

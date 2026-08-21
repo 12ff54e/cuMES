@@ -17,16 +17,16 @@
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
 constexpr int kNs=3, kMpol=3, kNtor=2, kNtheta=16, kNzeta=8, kNfp=1;
 constexpr int kMnmax=kMpol*(kNtor+1), kNZnT=kNtheta*kNzeta;
 
-static int g_failures=0;
 static void checkNear(double g,double e,double t,const char* s,int j,int k){
-    if(fabs(g-e)>t){fprintf(stderr,"FAIL [%s] j=%d k=%d got=%.15e exp=%.15e\n",s,j,k,g,e);++g_failures;}}
+    if(fabs(g-e)>t){fprintf(stderr,"FAIL [%s] j=%d k=%d got=%.15e exp=%.15e\n",s,j,k,g,e);++failures();}}
 static void checkMode(double g,double e,double t,const char* s,int j,int m){
-    if(fabs(g-e)>t){fprintf(stderr,"FAIL [%s] j=%d m=%d got=%.15e exp=%.15e\n",s,j,m,g,e);++g_failures;}}
+    if(fabs(g-e)>t){fprintf(stderr,"FAIL [%s] j=%d m=%d got=%.15e exp=%.15e\n",s,j,m,g,e);++failures();}}
 
 // Per-type comparison tolerances (float arithmetic cannot reach the double
 // reference at 1e-12; 1e-4 is ~100x the float rounding floor of these sums).
@@ -129,7 +129,7 @@ static void gpuInv(cumes::SpectralStorage<T>& storage, cumes::ToroidalFftOperato
 
 template <typename T>
 static int t_inv_constR(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
-    int lf=g_failures; printf("  test_inverseDFT_constantR ... ");
+    int lf=failures(); printf("  test_inverseDFT_constantR ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) cc_[j+0*p.ns]=T(4.0);  // R_00
     T* h_r=new T[p.ns*p.nZnT], *h_rv=new T[p.ns*p.nZnT];
@@ -153,13 +153,13 @@ static int t_inv_constR(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, c
         checkNear(h_rv[i],rv[i],tolInv<T>(),"Rv",i/p.nZnT,i%p.nZnT);
     }
     delete[] h_r; delete[] h_rv;
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 template <typename T>
 static int t_inv_theta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
-    int lf=g_failures; printf("  test_inverseDFT_thetaDerivative ... ");
+    int lf=failures(); printf("  test_inverseDFT_thetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+0;
     for(int j=0;j<p.ns;++j) cc_[j+m1*p.ns]=T(0.3);  // R_10
@@ -184,13 +184,13 @@ static int t_inv_theta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cu
         checkNear(h_ru[i],ru[i],tolInv<T>(),"Ru",i/p.nZnT,i%p.nZnT);
     }
     delete[] h_r; delete[] h_ru;
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 template <typename T>
 static int t_inv_zeta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
-    int lf=g_failures; printf("  test_inverseDFT_zetaDerivative ... ");
+    int lf=failures(); printf("  test_inverseDFT_zetaDerivative ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     int m1=1*(p.ntor+1)+1;  // R_11 (cos(θ-ζ)): folded rmncc=rmnss=0.2
     for(int j=0;j<p.ns;++j){ cc_[j+m1*p.ns]=T(0.2); ss_[j+m1*p.ns]=T(0.2); }
@@ -211,13 +211,13 @@ static int t_inv_zeta(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cum
         r.data(),z.data(),l.data(),ru.data(),zu.data(),lu.data(),rv.data(),zv.data(),lv.data());
     for(int i=0;i<p.ns*p.nZnT;++i) checkNear(h_rv[i],rv[i],tolInv<T>(),"Rv",i/p.nZnT,i%p.nZnT);
     delete[] h_rv;
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 template <typename T>
 static int t_fwd_const(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs){
-    int lf=g_failures; printf("  test_forwardDFT_constant ... ");
+    int lf=failures(); printf("  test_forwardDFT_constant ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(3.0));
     std::vector<T> fs(6*p.ns*p.mnmax,T(0));
@@ -249,13 +249,13 @@ static int t_fwd_const(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cu
     cudaFree(d_fs);
     cudaFree(frcon_e); cudaFree(frcon_o);
     cudaFree(fzcon_e); cudaFree(fzcon_o);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 template <typename T>
 static int t_fwd_sine(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs){
-    int lf=g_failures; printf("  test_forwardDFT_sine ... ");
+    int lf=failures(); printf("  test_forwardDFT_sine ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fz(p.ns*p.nZnT,T(0));
     std::vector<T> fs(6*p.ns*p.mnmax,T(0));
@@ -296,13 +296,13 @@ static int t_fwd_sine(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cum
     cudaFree(d_fs);
     cudaFree(frcon_e); cudaFree(frcon_o);
     cudaFree(fzcon_e); cudaFree(fzcon_o);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 template <typename T>
 static int t_gpuVcpu_inv(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
-    int lf=g_failures; printf("  test_gpuVcpu_inverseDFT ... ");
+    int lf=failures(); printf("  test_gpuVcpu_inverseDFT ... ");
     std::vector<T> cc_(p.ns*p.mnmax,T(0)),ss_(p.ns*p.mnmax,T(0)),zs(p.ns*p.mnmax,T(0)),zc(p.ns*p.mnmax,T(0)),ls_(p.ns*p.mnmax,T(0)),lcs(p.ns*p.mnmax,T(0));
     for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
         cc_[j+m*p.ns]=T(0.001*(m+1)*(j+1));
@@ -353,8 +353,8 @@ static int t_gpuVcpu_inv(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, 
     delete[] h_r; delete[] h_z; delete[] h_l;
     delete[] h_ru; delete[] h_zu; delete[] h_lu;
     delete[] h_rv; delete[] h_zv; delete[] h_lv;
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 // A/B cross-check: the direct-sum and cuFFT backends must agree on identical
@@ -363,7 +363,7 @@ static int t_gpuVcpu_inv(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, 
 // host with the same reduced-grid trapezoid as the kernels.
 template <typename T>
 static int t_fwd_axis(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs){
-    int lf=g_failures; printf("  test_forwardDFT_axis ... ");
+    int lf=failures(); printf("  test_forwardDFT_axis ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     std::vector<T> fr(p.ns*p.nZnT,T(0));
     for(int k=0;k<p.nZnT;++k){
@@ -427,14 +427,14 @@ static int t_fwd_axis(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cum
     cudaFree(d_fs);
     cudaFree(frcon_e); cudaFree(frcon_o);
     cudaFree(fzcon_e); cudaFree(fzcon_o);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 // LCFS branch (j=ns-1 keeps only the λ components flsc/flcs).
 template <typename T>
 static int t_fwd_lcfs(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs){
-    int lf=g_failures; printf("  test_forwardDFT_lcfs ... ");
+    int lf=failures(); printf("  test_forwardDFT_lcfs ... ");
     size_t nbr=p.ns*p.nZnT*sizeof(T);
     int jB=p.ns-1;
     std::vector<T> fr(p.ns*p.nZnT,T(0));
@@ -490,8 +490,8 @@ static int t_fwd_lcfs(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cum
     cudaFree(d_fs);
     cudaFree(frcon_e); cudaFree(frcon_o);
     cudaFree(fzcon_e); cudaFree(fzcon_o);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 // ---------------------------------------------------------------------------
@@ -510,7 +510,7 @@ static int t_fwd_lcfs(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cum
 // truncated quadrature (dropping l >= 16) measurably changes frcc(1,1).
 template <typename T>
 static int t_fwd_theta32(){
-    int lf=g_failures; printf("  test_forwardDFT_theta32 (nThetaRed>16 coverage) ... ");
+    int lf=failures(); printf("  test_forwardDFT_theta32 (nThetaRed>16 coverage) ... ");
     DeviceParams<T> p;
     p.ns=3; p.mnmax=3*(2+1); p.ntheta=32; p.nzeta=8;   // nThetaRed = 17
     p.nfp=1; p.nZnT=32*8; p.mpol=3; p.ntor=2;
@@ -567,15 +567,15 @@ static int t_fwd_theta32(){
     cudaFree(frcon_e); cudaFree(frcon_o);
     cudaFree(fzcon_e); cudaFree(fzcon_o);
     realSpaceFree(rs); cumes::modeTableFree(mt);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 // 1.2: the validated minimum mpol=2 must construct (no batch-0 de-alias
 // plans) and the de-alias bandpass (empty pass band) must zero gCon on j>=1.
 template <typename T>
 static int t_mpol2_construct(){
-    int lf=g_failures; printf("  test_mpol2_dealias_plans ... ");
+    int lf=failures(); printf("  test_mpol2_dealias_plans ... ");
     DeviceParams<T> p;
     p.ns=3; p.mnmax=2*(2+1); p.ntheta=16; p.nzeta=8;
     p.nfp=1; p.nZnT=16*8; p.mpol=2; p.ntor=2;   // validated minimum mpol
@@ -613,11 +613,11 @@ static int t_mpol2_construct(){
         threw=true;
         fprintf(stderr,"FAIL [mpol2] construction threw: %s\n",e.what());
     }
-    if(threw) ++g_failures;
-    else if(!ok) ++g_failures;
+    if(threw) ++failures();
+    else if(!ok) ++failures();
     realSpaceFree(rs); cumes::modeTableFree(mt);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 // 3.6: enqueue_inverse must write the CALLER-PASSED geometry views (not the
@@ -625,7 +625,7 @@ static int t_mpol2_construct(){
 // scratch bundle seeded with -1 (unwritten before the fix).
 template <typename T>
 static int t_enqueue_inverse_views(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs, cumes::SpectralStorage<T>& storage){
-    int lf=g_failures; printf("  test_enqueue_inverse_honors_views ... ");
+    int lf=failures(); printf("  test_enqueue_inverse_honors_views ... ");
     size_t nb=p.ns*p.mnmax, nn=p.ns*p.nZnT;
     std::vector<T> cc_(nb,T(0)),ss_(nb,T(0)),zs(nb,T(0)),zc(nb,T(0)),ls_(nb,T(0)),lcs(nb,T(0));
     for(int j=0;j<p.ns;++j) for(int m=0;m<p.mnmax;++m){
@@ -677,8 +677,8 @@ static int t_enqueue_inverse_views(DeviceParams<T>& p, cumes::ToroidalFftOperato
         for(size_t i=0;i<nn;++i)
             checkNear((double)ax[c*nn+i],(double)ref[c*nn+i],tolInv<T>(),nm[c],(int)(i/p.nZnT),(int)(i%p.nZnT));
     cudaFree(d_ax);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 // 3.6: enqueue_forward must read the CALLER-PASSED force views. rs_ holds a
@@ -687,7 +687,7 @@ static int t_enqueue_inverse_views(DeviceParams<T>& p, cumes::ToroidalFftOperato
 // rs_ and returns the nonzero reference instead).
 template <typename T>
 static int t_enqueue_forward_views(DeviceParams<T>& p, cumes::ToroidalFftOperator<T>& op, cumes::RealSpaceStorage<T>& rs){
-    int lf=g_failures; printf("  test_enqueue_forward_honors_views ... ");
+    int lf=failures(); printf("  test_enqueue_forward_honors_views ... ");
     size_t nn=p.ns*p.nZnT, nbr=nn*sizeof(T);
     std::vector<T> fr(nn,T(3.0));
     cc(cudaMemset(rs.d_armn_e,0,nbr),"ms"); cc(cudaMemcpy(rs.d_armn_e,fr.data(),nbr,cudaMemcpyHostToDevice),"armn_e");
@@ -713,10 +713,10 @@ static int t_enqueue_forward_views(DeviceParams<T>& p, cumes::ToroidalFftOperato
     int bad=0;
     for(size_t i=0;i<fs.size();++i) if(fs[i]!=T(0)) ++bad;
     if(bad>0) fprintf(stderr,"FAIL [fwdviews] %d nonzero entries (expected 0)\n",bad);
-    g_failures += (bad>0)?1:0;
+    failures() += (bad>0)?1:0;
     cudaFree(d_fs); cudaFree(d_zero);
-    printf(g_failures==lf?"PASS\n":"FAIL\n");
-    return g_failures-lf;
+    printf(failures()==lf?"PASS\n":"FAIL\n");
+    return failures()-lf;
 }
 
 // Run the whole suite for one scalar type T.
@@ -761,7 +761,7 @@ int main(){
     int nf = 0;
     nf += runTests<double>();
     nf += runTests<float>();
-    g_failures = nf;
-    printf(g_failures==0?"ALL PASS\n":"%d FAILURES\n",g_failures);
-    return g_failures==0?0:1;
+    failures() = nf;
+    printf(failures()==0?"ALL PASS\n":"%d FAILURES\n",failures());
+    return summary();
 }

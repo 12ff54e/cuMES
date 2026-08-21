@@ -11,20 +11,11 @@
 #include <fstream>
 #include <string>
 #include <unistd.h>
+#include "cumes_test.h"
+using namespace cumes::test;
 
 using cumes::EquilibriumSnapshot;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        const std::string _m(msg);                                           \
-        if (cond) {                                                          \
-            printf("PASS %s\n", _m.c_str());                                 \
-        } else {                                                             \
-            printf("FAIL %s\n", _m.c_str());                                 \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 static std::string scratch(const char* name) {
     return std::string("test_checkpoint_") + name + "_" +
@@ -57,9 +48,9 @@ static bool snapshotsEqual(const EquilibriumSnapshot& a,
 static void testCheckpointRoundTrip() {
     EquilibriumSnapshot s = makeSnapshot(5, 3);
     const std::string path = scratch("rt");
-    CHECK(cumes::write_checkpoint(s, path).has_value(), "checkpoint: write succeeds");
+    check(cumes::write_checkpoint(s, path).has_value(), "checkpoint: write succeeds");
     auto back = cumes::read_checkpoint(path);
-    CHECK(back.has_value() && snapshotsEqual(s, back.value()),
+    check(back.has_value() && snapshotsEqual(s, back.value()),
           "checkpoint: round-trip preserves state");
     remove(path.c_str());
 }
@@ -76,7 +67,7 @@ static void testCheckpointRejection() {
         f.close();
     }
     auto bad = cumes::read_checkpoint(path);
-    CHECK(!bad.has_value(), "checkpoint: bad magic rejected");
+    check(!bad.has_value(), "checkpoint: bad magic rejected");
     remove(path.c_str());
 
     // A truncated checkpoint (header only) is rejected.
@@ -85,7 +76,7 @@ static void testCheckpointRejection() {
     fwrite("CUMECKP1", 1, 8, f);
     fclose(f);
     auto trunc = cumes::read_checkpoint(tpath);
-    CHECK(!trunc.has_value(), "checkpoint: truncated header rejected");
+    check(!trunc.has_value(), "checkpoint: truncated header rejected");
     remove(tpath.c_str());
 }
 
@@ -108,7 +99,7 @@ static void testCheckpointCorruptHugeDimensions() {
         fclose(f);
     }
     auto got = cumes::read_checkpoint(path);
-    CHECK(!got.has_value(),
+    check(!got.has_value(),
           "checkpoint: huge ns*mnmax rejected as implausible (no bad_alloc/terminate)");
     remove(path.c_str());
 }
@@ -117,10 +108,5 @@ int main() {
     testCheckpointRoundTrip();
     testCheckpointRejection();
     testCheckpointCorruptHugeDimensions();
-    if (failures == 0) {
-        printf("test_checkpoint: ALL PASS\n");
-        return 0;
-    }
-    printf("test_checkpoint: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }

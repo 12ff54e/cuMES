@@ -5,11 +5,17 @@
 #
 # Every registered test runs from the project source directory (they read
 # inputs/*.json relative to the CWD) — see cmake/CumesTest.cmake.
+#
+# The shared test headers (cumes_test.h + cumes_test_cuda_helper.cuh) live in
+# tests/include; the test targets build as C++20, independent of the production
+# CUDA TUs' C++17 pin.
 
-# Header-only shared test helpers (checkCuda/cc). Tests include
-# cumes_test_support.cuh; this target only exposes its include dir.
-add_library(cumes_test_support INTERFACE)
-target_include_directories(cumes_test_support INTERFACE ${PROJECT_SOURCE_DIR}/tests/support)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CUDA_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+include_directories(${PROJECT_SOURCE_DIR}/tests/include)
 
 # Backend-availability defines for TEST targets only (completion plan step
 # 2.5: the production targets keep the defines confined to the adapter
@@ -44,7 +50,7 @@ endfunction()
 
 add_executable(test_fourier test_fourier.cu)
 target_include_directories(test_fourier PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_fourier PRIVATE cumes_test_support cumes_cuda_double cumes_cuda_float)
+target_link_libraries(test_fourier PRIVATE cumes_cuda_double cumes_cuda_float)
 cumes_enable_warnings(test_fourier)
 
 add_executable(test_input_json test_input_json.cu)
@@ -59,13 +65,13 @@ foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_event_dag)
   add_executable(${t} ${t}.cu)
   target_include_directories(${t} PRIVATE ${PROJECT_SOURCE_DIR}/include)
-  target_link_libraries(${t} PRIVATE cumes_test_support cumes_config_json cumes_cuda_double cumes_cuda_float)
+  target_link_libraries(${t} PRIVATE cumes_config_json cumes_cuda_double cumes_cuda_float)
   cumes_enable_warnings(${t})
 endforeach()
 
 add_executable(test_output_failure test_output_failure.cu)
 target_include_directories(test_output_failure PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_output_failure PRIVATE cumes_test_support cumes_config_json cumes_io_host cumes_io)
+target_link_libraries(test_output_failure PRIVATE cumes_config_json cumes_io_host cumes_io)
 cumes_enable_warnings(test_output_failure)
 
 add_executable(test_host_config test_host_config.cpp)
@@ -85,7 +91,7 @@ cumes_enable_warnings(test_checkpoint)
 
 add_executable(test_io_golden test_io_golden.cu)
 target_include_directories(test_io_golden PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_io_golden PRIVATE cumes_test_support cumes_config_json cumes_io_host cumes_io)
+target_link_libraries(test_io_golden PRIVATE cumes_config_json cumes_io_host cumes_io)
 cumes_apply_backend_test_defines(test_io_golden)
 cumes_enable_warnings(test_io_golden)
 
@@ -109,7 +115,7 @@ cumes_enable_warnings(test_io_malformed_shapes)
 
 add_executable(test_runtime test_runtime.cu)
 target_include_directories(test_runtime PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_runtime PRIVATE cumes_test_support cumes_cuda_runtime)
+target_link_libraries(test_runtime PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(test_runtime)
 
 add_executable(test_controller test_controller.cpp)
@@ -118,17 +124,17 @@ cumes_enable_warnings(test_controller)
 
 add_executable(test_arena test_arena.cu)
 target_include_directories(test_arena PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_arena PRIVATE cumes_test_support cumes_cuda_runtime)
+target_link_libraries(test_arena PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(test_arena)
 
 add_executable(test_operator_views test_operator_views.cu)
 target_include_directories(test_operator_views PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_operator_views PRIVATE cumes_test_support cumes_cuda_runtime)
+target_link_libraries(test_operator_views PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(test_operator_views)
 
 add_executable(test_accumulation test_accumulation.cu)
 target_include_directories(test_accumulation PRIVATE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(test_accumulation PRIVATE cumes_test_support cumes_cuda_runtime)
+target_link_libraries(test_accumulation PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(test_accumulation)
 
 # ---- ctest registration ----------------------------------------------------

@@ -25,18 +25,9 @@
 #include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/state/spectral_storage.hpp"
-#include "cumes_test_support.cuh"
+#include "cumes_test_cuda_helper.cuh"
+using namespace cumes::test;
 
-static int failures = 0;
-#define CHECK(cond, msg)                                                     \
-    do {                                                                     \
-        if (cond) {                                                          \
-            printf("PASS %s\n", msg);                                        \
-        } else {                                                             \
-            printf("FAIL %s\n", msg);                                        \
-            ++failures;                                                      \
-        }                                                                    \
-    } while (0)
 
 // Scalar CPU reference: mirrors forcesKernel (forces_impl.cuh) exactly, in
 // double, on host arrays. `r_e..zv_o` are the full-grid parity geometry, the
@@ -220,15 +211,15 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
             h_ss[j + mode * ns] = h_cc[j + mode * ns];
         }
     }
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nb, cudaMemcpyHostToDevice), "cc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nb, cudaMemcpyHostToDevice), "ss");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
-    checkCuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nb, cudaMemcpyHostToDevice), "cc");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nb, cudaMemcpyHostToDevice), "ss");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), h_zsc, nb, cudaMemcpyHostToDevice), "zsc");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zcs, nb, cudaMemcpyHostToDevice), "zcs");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), h_lsc, nb, cudaMemcpyHostToDevice), "lsc");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lcs, nb, cudaMemcpyHostToDevice), "lcs");
     delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs; delete[] h_lsc; delete[] h_lcs;
 
-    cumes::ValidatedProblem vp = loadValidated("inputs/solovev.json");
+    cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
     cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
@@ -240,7 +231,7 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
     cumes::ForceOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
 
     const size_t nF = (size_t)ns * p.nZnT, nH = (size_t)(ns - 1) * p.nZnT;
-    auto g = [&](const T* d, size_t n) { std::vector<T> v(n); checkCuda(cudaMemcpy(v.data(), d, n * sizeof(T), cudaMemcpyDeviceToHost), "g"); return v; };
+    auto g = [&](const T* d, size_t n) { std::vector<T> v(n); check_cuda(cudaMemcpy(v.data(), d, n * sizeof(T), cudaMemcpyDeviceToHost), "g"); return v; };
     // full-grid parity
     std::vector<T> r_e = g(rs.d_r_e, nF), r_o = g(rs.d_r_o, nF);
     std::vector<T> z_e = g(rs.d_z_e, nF), z_o = g(rs.d_z_o, nF);
@@ -283,24 +274,19 @@ static void runReference(int ns, int mpol, int ntor, int ntheta, int nzeta, cons
               c_blmn_e, c_blmn_o, c_clmn_e, c_clmn_o);
 
     const double tol = (sizeof(T) == sizeof(double)) ? 1e-8 : 1e-4;
-    auto maxDiff = [&](const std::vector<T>& a, const std::vector<T>& b) {
-        double m = 0.0;
-        for (size_t i = 0; i < nF; ++i) m = std::max(m, std::fabs((double)a[i] - (double)b[i]));
-        return m;
-    };
     double md = 0.0;
-    md = std::max(md, maxDiff(g_armn_e, c_armn_e)); md = std::max(md, maxDiff(g_armn_o, c_armn_o));
-    md = std::max(md, maxDiff(g_azmn_e, c_azmn_e)); md = std::max(md, maxDiff(g_azmn_o, c_azmn_o));
-    md = std::max(md, maxDiff(g_brmn_e, c_brmn_e)); md = std::max(md, maxDiff(g_brmn_o, c_brmn_o));
-    md = std::max(md, maxDiff(g_bzmn_e, c_bzmn_e)); md = std::max(md, maxDiff(g_bzmn_o, c_bzmn_o));
-    md = std::max(md, maxDiff(g_crmn_e, c_crmn_e)); md = std::max(md, maxDiff(g_crmn_o, c_crmn_o));
-    md = std::max(md, maxDiff(g_czmn_e, c_czmn_e)); md = std::max(md, maxDiff(g_czmn_o, c_czmn_o));
-    md = std::max(md, maxDiff(g_blmn_e, c_blmn_e)); md = std::max(md, maxDiff(g_blmn_o, c_blmn_o));
-    md = std::max(md, maxDiff(g_clmn_e, c_clmn_e)); md = std::max(md, maxDiff(g_clmn_o, c_clmn_o));
+    md = std::max(md, max_diff(g_armn_e, c_armn_e)); md = std::max(md, max_diff(g_armn_o, c_armn_o));
+    md = std::max(md, max_diff(g_azmn_e, c_azmn_e)); md = std::max(md, max_diff(g_azmn_o, c_azmn_o));
+    md = std::max(md, max_diff(g_brmn_e, c_brmn_e)); md = std::max(md, max_diff(g_brmn_o, c_brmn_o));
+    md = std::max(md, max_diff(g_bzmn_e, c_bzmn_e)); md = std::max(md, max_diff(g_bzmn_o, c_bzmn_o));
+    md = std::max(md, max_diff(g_crmn_e, c_crmn_e)); md = std::max(md, max_diff(g_crmn_o, c_crmn_o));
+    md = std::max(md, max_diff(g_czmn_e, c_czmn_e)); md = std::max(md, max_diff(g_czmn_o, c_czmn_o));
+    md = std::max(md, max_diff(g_blmn_e, c_blmn_e)); md = std::max(md, max_diff(g_blmn_o, c_blmn_o));
+    md = std::max(md, max_diff(g_clmn_e, c_clmn_e)); md = std::max(md, max_diff(g_clmn_o, c_clmn_o));
 
     char msg[160];
     snprintf(msg, sizeof msg, "%s: GPU force == CPU scalar reference (max |diff| %.3e < %.1e)", label, md, tol);
-    CHECK(md < tol, msg);
+    check(md < tol, msg);
 
     realSpaceFree(rs);
     cumes::modeTableFree(mt);
@@ -311,10 +297,5 @@ int main() {
     runReference<double>(5, 4, 0, 18, 1, "double axisymmetric ns=5");
     runReference<double>(11, 6, 2, 18, 4, "double 3D ns=11");
     runReference<float>(5, 4, 0, 18, 1, "float axisymmetric ns=5");
-    if (failures == 0) {
-        printf("test_force_reference: ALL PASS\n");
-        return 0;
-    }
-    printf("test_force_reference: %d FAILURES\n", failures);
-    return 1;
+    return summary();
 }
