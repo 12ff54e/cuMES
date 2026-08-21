@@ -4222,7 +4222,9 @@ through global `CMAKE_CUDA_FLAGS` (and host optimization through global
 Do not leak production fast math or `-G` into unrelated tests/adapters. Remove
 the sanitizer configuration's optimization-option redefinition warning.
 Preserve the existing isolation in which JSON parsing is host-only C++20 and
-CUDA operator translation units remain C++17.
+CUDA operator translation units remain C++17. (Superseded 2026-08-21: the
+project now builds C++20 for both host C++ and CUDA code — see the root
+CMakeLists.txt.)
 
 #### Step 2 exit gate
 

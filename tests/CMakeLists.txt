@@ -7,13 +7,8 @@
 # inputs/*.json relative to the CWD) — see cmake/CumesTest.cmake.
 #
 # The shared test headers (cumes_test.h + cumes_test_cuda_helper.cuh) live in
-# tests/include; the test targets build as C++20, independent of the production
-# CUDA TUs' C++17 pin.
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CUDA_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+# tests/include. The project-wide language standard is C++20 (set in the root
+# CMakeLists.txt), so nothing needs to be set here.
 
 include_directories(${PROJECT_SOURCE_DIR}/tests/include)
 
@@ -158,7 +153,6 @@ cumes_add_test(test_controller       unit;solver)
 # apply the identical include-dir/warning setup plus the sanitizer flags.
 if(CUMES_HOST_SANITIZERS)
   cumes_add_host_library(cumes_json_asan TRUE ${CUMES_JSON_SOURCES})
-  target_compile_features(cumes_json_asan PUBLIC cxx_std_20)
 
   cumes_add_host_library(cumes_core_asan TRUE ${CUMES_CORE_SOURCES})
 

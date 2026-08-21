@@ -23,15 +23,18 @@ include(CumesWarnings)
 include(CumesTest)
 include(CumesSanitizers)
 
-# ---- language standards (target-scoped — completion plan step 2.5) ---------
-# The JSON parser's C++20 requirement (JsonParser.h uses requires-clauses and
-# concepts) applies to its host target ONLY: cumes_json declares PUBLIC
-# cxx_std_20 below, which propagates to the config reader and the host tests
-# that consume it. The CUDA language mode is NOT set because of the parser:
-# the CUDA TUs compile at their own C++17 requirement, stated here explicitly
-# (nvcc's default, documented so the coupling cannot creep back).
-set(CMAKE_CUDA_STANDARD 17)
+# ---- language standards -----------------------------------------------------
+# C++20 for host C++ and CUDA TUs alike: the JSON parser's requires-clauses
+# and concepts need it, and the operator, I/O, and test code is written
+# against it. Stated explicitly here so a toolchain default can never
+# silently regress the standard; GNU extensions are off (strict -std=c++20,
+# never -std=gnu++20).
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_EXTENSIONS OFF)
 
 # ---- precision policy -> flags (completion plan step 3.1) -------------------
 # No global --use_fast_math: fast intrinsics appear only under the named
@@ -131,10 +134,8 @@ function(cumes_add_host_library name asan_twin)
 endfunction()
 
 # JsonParser implementation (header-only library, compiled once), shared by the
-# host-model reader. The C++20 requirement is scoped HERE (completion plan step
-# 2.5) and reaches consumers through the PUBLIC interface.
+# host-model reader.
 cumes_add_host_library(cumes_json FALSE ${CUMES_JSON_SOURCES})
-target_compile_features(cumes_json PUBLIC cxx_std_20)
 cumes_apply_host_tuning(cumes_json)
 
 # ---- Phase 2: validated host model (namespace cumes) -----------------------

@@ -3,8 +3,7 @@
 //
 // Included by every test: directly by the host-only .cpp tests, transitively
 // by the .cu tests via cumes_test_cuda_helper.cuh. CUDA-free (no cuda_runtime);
-// the test targets build as C++20 (see tests/CMakeLists.txt), independent of
-// the production CUDA TUs' C++17 pin.
+// the project builds as C++20 throughout (root CMakeLists.txt).
 #include <algorithm>
 #include <cmath>
 #include <cstddef>

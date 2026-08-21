@@ -37,10 +37,12 @@ cmake --preset float && cmake --build build-float -j
 # nobackend / netcdf-only / hdf5-only
 ```
 
-**Requirements:** CUDA Toolkit >= 11, CMake >= 3.20, GPU compute capability >= 6.1.
-If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must point to g++-12 (set in
-`CMakeLists.txt`). CUDA architectures: 61 (Pascal), 75 (Turing), 80 (Ampere),
-86, 89 (Ada).
+**Requirements:** CUDA Toolkit >= 11.8 (C++20 host/device support), CMake >= 3.20,
+GPU compute capability >= 6.1. The project-wide language standard is strict
+C++20 — no GNU extensions — for host C++ and CUDA TUs alike (root
+`CMakeLists.txt`). If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must
+point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
+75 (Turing), 80 (Ampere), 86, 89 (Ada).
 
 ## CLI & Environment
 

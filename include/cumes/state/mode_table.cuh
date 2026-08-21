@@ -29,7 +29,7 @@ struct DeviceModeTable {
     // the same allocations, and modeTableFree frees them unconditionally
     // (unless arena_backed) — a guaranteed double-free. Copies are deleted;
     // the modeTableCreate call sites use copy-init from a prvalue, which is
-    // guaranteed copy elision in C++17/20, so they need no change.
+    // guaranteed copy elision in C++20, so they need no change.
     DeviceModeTable(const DeviceModeTable&) = delete;
     DeviceModeTable& operator=(const DeviceModeTable&) = delete;
 
