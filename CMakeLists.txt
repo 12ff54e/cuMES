@@ -104,18 +104,18 @@ endforeach()
 # Source lists are defined once here and reused verbatim by the sanitizer
 # twins below (CUMES_HOST_SANITIZERS): adding a TU to one of these libraries
 # must not require editing a second, divergent list (blueprint §10.5).
-set(CUMES_JSON_SOURCES src/json_parser.cpp)
+set(CUMES_JSON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/json_parser.cpp)
 set(CUMES_CORE_SOURCES
-  src/cumes/core/grid_shape.cpp
-  src/cumes/core/mode_table.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/core/mode_table.cpp)
 set(CUMES_CONFIG_JSON_SOURCES
-  src/cumes/config/validation_report.cpp
-  src/cumes/config/validated_problem.cpp
-  src/cumes/config/json_reader.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/config/validation_report.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/config/validated_problem.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/config/json_reader.cpp)
 set(CUMES_IO_HOST_SOURCES
-  src/cumes/io/output_spec.cpp
-  src/cumes/io/versioned_binary.cpp
-  src/cumes/io/checkpoint.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/io/output_spec.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/io/versioned_binary.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/io/checkpoint.cpp)
 
 # Define a host-only static library from a source list, with the common
 # include-dir/warnings setup. `asan_twin` additionally applies the ASan/UBSan
@@ -123,37 +123,11 @@ set(CUMES_IO_HOST_SOURCES
 # is ON) — used by the *_asan twins below.
 function(cumes_add_host_library name asan_twin)
   add_library(${name} STATIC ${ARGN})
-  target_include_directories(${name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_include_directories(${name} PUBLIC ${PROJECT_SOURCE_DIR}/include)
   cumes_enable_warnings(${name})
   if(asan_twin)
     cumes_apply_host_sanitizers(${name})
   endif()
-endfunction()
-
-# Backend-availability defines for TEST targets only (completion plan step
-# 2.5: the production targets keep the defines confined to the adapter
-# library; a test asserting build-specific on-disk behavior gets the
-# compile-time flags, not the backend sources or headers).
-function(cumes_apply_backend_test_defines target)
-  if(CUMES_HAVE_NETCDF)
-    target_compile_definitions(${target} PRIVATE CUMES_HAVE_NETCDF)
-  endif()
-  if(CUMES_HAVE_HDF5)
-    target_compile_definitions(${target} PRIVATE CUMES_HAVE_HDF5)
-  endif()
-endfunction()
-
-# Host-only ASan test twin: links the _asan library directly (PRIVATE) so the
-# sanitized runtime stays FIRST in the link line (never propagated through
-# INTERFACE — see CumesSanitizers.cmake), then registers it under CTest label
-# `sanitizer;asan;<label>`.
-function(cumes_add_host_asan_test name source lib label)
-  add_executable(${name} ${source})
-  target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(${name} PRIVATE ${lib})
-  cumes_enable_warnings(${name})
-  cumes_apply_host_sanitizers(${name})
-  cumes_add_test(${name} "sanitizer;asan;${label}")
 endfunction()
 
 # JsonParser implementation (header-only library, compiled once), shared by the
@@ -203,11 +177,6 @@ cumes_link_output_backends(cumes_io)
 # step 2.5. The output_format_available() preflight lives in the adapter
 # library (src/output.cpp), so the host I/O library needs no backend defines
 # and no NetCDF/HDF5 headers.
-
-# Header-only shared test helpers (checkCuda/cc). Tests include
-# cumes_test_support.cuh; this target only exposes its include dir.
-add_library(cumes_test_support INTERFACE)
-target_include_directories(cumes_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tests/support)
 
 # ---- CUDA runtime RAII (host-only CUDA runtime API) ------------------------
 # DeviceBuffer/PinnedBuffer/Stream/Event and the centralized check_cuda/
@@ -293,207 +262,8 @@ endfunction()
 cumes_add_precision_provenance(cuMES)
 
 # ---- tests (standalone executables, no framework) --------------------------
-# Each test links the full device libraries (both scalar types) so every test
-# can instantiate double and float; the linker pulls in only the objects it
-# needs. Tests run from the source dir (they read inputs/*.json via CWD).
-
-add_executable(test_fourier tests/test_fourier.cu)
-target_include_directories(test_fourier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_fourier PRIVATE cumes_test_support cumes_cuda_double cumes_cuda_float)
-cumes_enable_warnings(test_fourier)
-
-add_executable(test_input_json tests/test_input_json.cu)
-target_include_directories(test_input_json PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_input_json PRIVATE cumes_config_json)
-cumes_enable_warnings(test_input_json)
-
-foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
-                   test_geometry_ncurr test_regression_kernels test_constraint_tcon
-                   test_force_reference test_axisym_backend
-                   test_tridiagonal test_cuda_graph test_safety_predicates
-                   test_event_dag)
-  add_executable(${t} tests/${t}.cu)
-  target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(${t} PRIVATE cumes_test_support cumes_config_json cumes_cuda_double cumes_cuda_float)
-  cumes_enable_warnings(${t})
-endforeach()
-
-add_executable(test_output_failure tests/test_output_failure.cu)
-target_include_directories(test_output_failure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_output_failure PRIVATE cumes_test_support cumes_config_json cumes_io_host cumes_io)
-cumes_enable_warnings(test_output_failure)
-
-add_executable(test_host_config tests/test_host_config.cpp)
-target_include_directories(test_host_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_host_config PRIVATE cumes_config_json)
-cumes_enable_warnings(test_host_config)
-
-add_executable(test_host_io tests/test_host_io.cpp)
-target_include_directories(test_host_io PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_host_io PRIVATE cumes_io_host cumes_config_json)
-cumes_enable_warnings(test_host_io)
-
-add_executable(test_checkpoint tests/test_checkpoint.cpp)
-target_include_directories(test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_checkpoint PRIVATE cumes_io_host)
-cumes_enable_warnings(test_checkpoint)
-
-add_executable(test_io_golden tests/test_io_golden.cu)
-target_include_directories(test_io_golden PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_io_golden PRIVATE cumes_test_support cumes_config_json cumes_io_host cumes_io)
-cumes_apply_backend_test_defines(test_io_golden)
-cumes_enable_warnings(test_io_golden)
-
-# Corrupted v1 restart-metadata fixtures (completion-plan follow-up §2.2):
-# host-only so the ASan/UBSan twin runs the exact source under the host
-# sanitizers.
-add_executable(test_io_restart_offsets tests/test_io_restart_offsets.cpp)
-target_include_directories(test_io_restart_offsets PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_io_restart_offsets PRIVATE cumes_io_host cumes_io)
-cumes_apply_backend_test_defines(test_io_restart_offsets)
-cumes_enable_warnings(test_io_restart_offsets)
-
-# Malformed v1 rank/type/extent fixtures (overhaul-history.md, reader-rank entry §5):
-# host-only so the ASan/UBSan twin runs the exact source under the host
-# sanitizers.
-add_executable(test_io_malformed_shapes tests/test_io_malformed_shapes.cpp)
-target_include_directories(test_io_malformed_shapes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_io_malformed_shapes PRIVATE cumes_io_host cumes_io)
-cumes_apply_backend_test_defines(test_io_malformed_shapes)
-cumes_enable_warnings(test_io_malformed_shapes)
-
-add_executable(test_runtime tests/test_runtime.cu)
-target_include_directories(test_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_runtime PRIVATE cumes_test_support cumes_cuda_runtime)
-cumes_enable_warnings(test_runtime)
-
-add_executable(test_controller tests/test_controller.cpp)
-target_include_directories(test_controller PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-cumes_enable_warnings(test_controller)
-
-add_executable(test_arena tests/test_arena.cu)
-target_include_directories(test_arena PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_arena PRIVATE cumes_test_support cumes_cuda_runtime)
-cumes_enable_warnings(test_arena)
-
-add_executable(test_operator_views tests/test_operator_views.cu)
-target_include_directories(test_operator_views PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_operator_views PRIVATE cumes_test_support cumes_cuda_runtime)
-cumes_enable_warnings(test_operator_views)
-
-add_executable(test_accumulation tests/test_accumulation.cu)
-target_include_directories(test_accumulation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_accumulation PRIVATE cumes_test_support cumes_cuda_runtime)
-cumes_enable_warnings(test_accumulation)
-
-# ---- ctest registration ----------------------------------------------------
 enable_testing()
-cumes_add_test(test_fourier          unit;fourier)
-cumes_add_test(test_input_json       unit;input)
-cumes_add_test(test_host_config      unit;config)
-cumes_add_test(test_host_io          unit;io)
-cumes_add_test(test_checkpoint       unit;io)
-cumes_add_test(test_io_golden        unit;io)
-cumes_add_test(test_io_restart_offsets unit;io)
-cumes_add_test(test_io_malformed_shapes unit;io)
-cumes_add_test(test_runtime          unit;runtime)
-cumes_add_test(test_controller       unit;solver)
-
-# ---- host sanitizer twins (blueprint §10.5; CUMES_HOST_SANITIZERS=ON) -------
-# Dedicated ASan+UBSan copies of the host-only libraries and their tests, so
-# the sanitized runtime is FIRST in each asan executable's library list and
-# never leaks into the CUDA targets (whose link order would break it). The
-# normal targets above are untouched. Source lists are shared with the normal
-# targets (CUMES_*_SOURCES above); cumes_add_host_library/cumes_add_host_asan_test
-# apply the identical include-dir/warning setup plus the sanitizer flags.
-if(CUMES_HOST_SANITIZERS)
-  cumes_add_host_library(cumes_json_asan TRUE ${CUMES_JSON_SOURCES})
-  target_compile_features(cumes_json_asan PUBLIC cxx_std_20)
-
-  cumes_add_host_library(cumes_core_asan TRUE ${CUMES_CORE_SOURCES})
-
-  cumes_add_host_library(cumes_config_json_asan TRUE ${CUMES_CONFIG_JSON_SOURCES})
-  target_link_libraries(cumes_config_json_asan PUBLIC cumes_core_asan cumes_json_asan)
-
-  cumes_add_host_library(cumes_io_host_asan TRUE ${CUMES_IO_HOST_SOURCES})
-  target_link_libraries(cumes_io_host_asan PUBLIC cumes_core_asan)
-
-  # Reader-only ASan twin of the adapter dispatch + optional backends (the
-  # device-staging output.cpp is excluded; the corrupted-fixture test needs
-  # only the host readers — completion-plan follow-up §2.2).
-  cumes_add_host_library(cumes_io_readers_asan TRUE
-                         src/cumes/io/writer_dispatch.cpp)
-  target_link_libraries(cumes_io_readers_asan PUBLIC cumes_io_host_asan)
-  cumes_link_output_backends(cumes_io_readers_asan)
-  cumes_add_host_asan_test(asan_test_io_restart_offsets
-                           tests/test_io_restart_offsets.cpp
-                           cumes_io_readers_asan io)
-  cumes_apply_backend_test_defines(asan_test_io_restart_offsets)
-  cumes_add_host_asan_test(asan_test_io_malformed_shapes
-                           tests/test_io_malformed_shapes.cpp
-                           cumes_io_readers_asan io)
-  cumes_apply_backend_test_defines(asan_test_io_malformed_shapes)
-
-  cumes_add_host_asan_test(asan_test_host_config tests/test_host_config.cpp
-                           cumes_config_json_asan config)
-  cumes_add_host_asan_test(asan_test_host_io tests/test_host_io.cpp
-                           cumes_io_host_asan io)
-  target_link_libraries(asan_test_host_io PRIVATE cumes_config_json_asan)
-  cumes_add_host_asan_test(asan_test_checkpoint tests/test_checkpoint.cpp
-                           cumes_io_host_asan io)
-  cumes_add_host_asan_test(asan_test_controller tests/test_controller.cpp
-                           cumes_core_asan solver)
-endif()
-cumes_add_test(test_arena            unit;runtime)
-cumes_add_test(test_operator_views   unit;runtime)
-cumes_add_test(test_accumulation     unit;numerics)
-cumes_add_test(test_forces           unit;forces)
-cumes_add_test(test_output_failure   unit;output)
-cumes_add_test(test_geometry_ncurr   unit;geometry)
-cumes_add_test(test_constraint_tcon  unit;constraint)
-cumes_add_test(test_regression_kernels unit;constraint;precon)
-cumes_add_test(test_safety_predicates unit;safety)
-cumes_add_test(test_event_dag unit;runtime)
-# The stream-poison case runs in its own process (the trap faults the context
-# for further work); not registered under compute-sanitizer.
-add_test(NAME event_dag_poison
-         COMMAND test_event_dag --poison)
-set_tests_properties(event_dag_poison PROPERTIES
-    LABELS "unit;runtime" TIMEOUT 60
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-cumes_add_test(test_geometry_iso     unit;geometry)
-cumes_add_test(test_force_verify     unit;forces)
-cumes_add_test(test_force_reference  unit;forces)
-cumes_add_test(test_axisym_backend   unit;fourier)
-cumes_add_test(test_tridiagonal      unit;precon)
-cumes_add_test(test_cuda_graph       unit;runtime)
-
-# Compute Sanitizer memcheck variants of the kernel-driving tests only
-# (test_input_json is host-only and compute-sanitizer refuses to profile it).
-cumes_register_sanitizer_variants(
-    test_fourier test_forces test_geometry_ncurr test_constraint_tcon
-    test_regression_kernels test_runtime test_arena test_operator_views
-    test_accumulation test_axisym_backend test_tridiagonal
-    test_cuda_graph test_safety_predicates)
-# test_event_dag registers its sanitizer variants manually: the deliberate
-# pending-event API-error probes are skipped under the sanitizers (they count
-# the intended cudaErrorNotReady return as a sanitizer error).
-if(CUMES_ENABLE_SANITIZER_TESTS AND CUMES_COMPUTE_SANITIZER)
-  add_test(NAME sanitizer_test_event_dag
-           COMMAND ${CUMES_COMPUTE_SANITIZER}
-                   --tool memcheck --error-exitcode 3
-                   $<TARGET_FILE:test_event_dag> --no-notready-probe)
-  set_tests_properties(sanitizer_test_event_dag PROPERTIES
-      LABELS "sanitizer" TIMEOUT 600 RUN_SERIAL TRUE
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-  add_test(NAME initcheck_test_event_dag
-           COMMAND ${CUMES_COMPUTE_SANITIZER}
-                   --tool initcheck --error-exitcode 3
-                   $<TARGET_FILE:test_event_dag> --no-notready-probe)
-  set_tests_properties(initcheck_test_event_dag PROPERTIES
-      LABELS "sanitizer;initcheck" TIMEOUT 600 RUN_SERIAL TRUE
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-endif()
+add_subdirectory(tests)
 
 # ---- benchmarks (not part of the default CTest unit gate) --------------------
 # The fixed-iteration harness (§8.1). Always double (verify-double is the

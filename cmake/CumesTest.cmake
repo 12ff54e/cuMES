@@ -12,5 +12,5 @@ function(cumes_add_test name)
   add_test(NAME ${name} COMMAND ${name})
   set_tests_properties(${name} PROPERTIES
       LABELS "${labels}" TIMEOUT 300
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endfunction()

@@ -33,7 +33,7 @@ function(cumes_register_sanitizer_variants)
                      --tool memcheck --error-exitcode 3 $<TARGET_FILE:${t}>)
     set_tests_properties(sanitizer_${t} PROPERTIES
         LABELS "sanitizer" TIMEOUT 600 RUN_SERIAL TRUE
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     # initcheck: uninitialized-device-memory access (completion plan step 4.2;
     # also covers the step-1 exit gate "memcheck/initcheck"). initcheck flags
     # benign reads of never-written scratch as errors on some driver versions,
@@ -44,20 +44,20 @@ function(cumes_register_sanitizer_variants)
                      --tool initcheck --error-exitcode 3 $<TARGET_FILE:${t}>)
     set_tests_properties(initcheck_${t} PROPERTIES
         LABELS "sanitizer;initcheck" TIMEOUT 600 RUN_SERIAL TRUE
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     if(CUMES_ENABLE_EXTRA_SANITIZER_TOOLS)
       add_test(NAME racecheck_${t}
                COMMAND ${CUMES_COMPUTE_SANITIZER}
                        --tool racecheck --error-exitcode 3 $<TARGET_FILE:${t}>)
       set_tests_properties(racecheck_${t} PROPERTIES
           LABELS "sanitizer;racecheck" TIMEOUT 1800 RUN_SERIAL TRUE
-          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+          WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
       add_test(NAME synccheck_${t}
                COMMAND ${CUMES_COMPUTE_SANITIZER}
                        --tool synccheck --error-exitcode 3 $<TARGET_FILE:${t}>)
       set_tests_properties(synccheck_${t} PROPERTIES
           LABELS "sanitizer;synccheck" TIMEOUT 1800 RUN_SERIAL TRUE
-          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+          WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     endif()
   endforeach()
 endfunction()
