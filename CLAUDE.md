@@ -48,7 +48,7 @@ point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
 
 - Positional `<input> <output>`; `--input`/`--output` flags override the slot
   they name. Default input: `inputs/solovev.json`; the output path is REQUIRED.
-- `--restart <checkpoint>` / `--checkpoint <path>` — read/write the v1
+- `--restart <checkpoint>` / `--checkpoint <path>` — read/write the v2
   checkpoint (`docs/output-formats.md` §4).
 - Every backend writes the schema-v1 container (versioned binary/NetCDF/HDF5
   with full provenance; a `.nc`/`.h5` suffix dispatches to the host-only
@@ -249,7 +249,7 @@ Known issues:
 | FFT-accelerated transforms | Implemented (cuFFT: batched 1D ζ-FFT + direct poloidal) |
 | Multigrid grid sequencing | Implemented (`ns_array`/`niter_array`/`ftol_array` stage loop + `Prolongation`) |
 | De-aliased constraint force | Implemented (bandpass inside `ConstraintOperator`, fused rCon/zCon in `inverse_fused`) |
-| Hot restart / checkpointing | Implemented (v1 checkpoint: `--checkpoint` / `--restart`) |
+| Hot restart / checkpointing | Implemented (v2 checkpoint: `--checkpoint` / `--restart`) |
 | Adaptive time-step (Jacobian resets) | Implemented (restart/maintenance delt control, vmecpp VMEC_8_52) |
 | Free boundary / vacuum solver | Not implemented — fixed boundary only |
 | Mercier stability, jxbout, wout | Not implemented — post-processing, not needed for the core loop |

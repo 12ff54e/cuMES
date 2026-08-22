@@ -10,10 +10,10 @@ back). The authoritative freeze lives in `configs/schema-v1.json` under
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cuMES <in> out.bin` | versioned binary (schema v1, on-disk version 2) | `CUMES001` |
+| `./build/cuMES <in> out.bin` | versioned binary (schema v1, on-disk version 3) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
-| `--checkpoint <path>` | versioned checkpoint (v1) | `CUMECKP1` |
-| `--restart <path>` (read) | versioned checkpoint (v1) | `CUMECKP1` |
+| `--checkpoint <path>` | versioned checkpoint (v2) | `CUMECKP1` |
+| `--restart <path>` (read) | versioned checkpoint (v2; v1 still read) | `CUMECKP1` |
 
 An output path is always required; an unknown suffix is an error. All writers
 publish atomically (write a temporary file in the target directory, then
@@ -51,11 +51,11 @@ Z = zmnsc·sin(mθ)cos(nζ) + zmncs·cos(mθ)sin(nζ)
 The axis row (`j = 0`) is the constant-extrapolated row, which the
 comparison scripts intentionally skip (compare_states.py).
 
-## 3. Versioned binary (schema v1, on-disk version 2)
+## 3. Versioned binary (schema v1, on-disk version 3)
 
 ```
 magic     8 bytes  "CUMES001"
-version   int32    = 2 (the current on-disk version)
+version   int32    = 3 (the current on-disk version)
 ns        int32
 mnmax     int32
 families  6 * (mnmax*ns) doubles, mode-major     ← the §2 payload
@@ -73,7 +73,21 @@ u8        build.dirty                (written between revision and build_type)
 stages    per stage: ns (int32), iterations (int32), converged (u8),
           fsqr (f64), fsqz (f64), fsql (f64), nrestarts (int32),
           then nrestarts restart iteration indices (int32 each)
+params    the embedded normalized-input record (see §5), the LAST trailer
+          element; version 3 only
 ```
+
+The embedded input record (§5) mirrors
+`ValidatedProblem::normalize_to_json()` field-for-field with the RESOLVED
+values (the angular-grid defaults already applied): `mpol, ntor, nfp,
+ntheta, nzeta, ncurr` (int32 each), `delt, phiedge, pres_scale,
+adiabatic_index, spres_ped, bloat, curtor, tcon0` (f64 each), the `schema`
+string, then the vectors `am, ac, ai, aphi, raxis_c, zaxis_s` (f64 each),
+the input stages (`nstages_in` then per stage `ns` int32, `max_iter`
+int32, `ftol` f64), the raw boundary (`rbc_m` int32, `rbc_n` int32,
+`rbc_value` f64, then `zbs_*`), and the folded boundary `rbcc, rbss, zbsc,
+zbcs` (f64 each). Every vector is an int32 element count followed by the
+payload; counts are capped at 2^20 by the reader.
 
 Notes:
 
@@ -81,36 +95,61 @@ Notes:
   terminator. The reader caps a length prefix at 2^24 before allocating.
 - **No `scalar_type` string:** the precision tag is authoritative and the
   reader reconstructs `scalar_type` from it.
-- **Historical version 1** (written by earlier builds, still readable):
-  the trailer carried a `scalar_type` string between `build_type` and
-  `source_path` and no precision-policy pair; the reader consumes and
-  discards it. (Before 2026-08-20 the writer emitted `scalar_type` while
-  the v2 reader expected the policy pair — a writer/reader sequence
-  mismatch fixed together with the v1-compat path above; the state payload
-  itself was never affected.)
+- **Historical versions 1 and 2** (written by earlier builds, still
+  readable): version 1 carried a `scalar_type` string between `build_type`
+  and `source_path` and no precision-policy pair (the reader consumes and
+  discards it); versions 1 and 2 carry no input record and the reader
+  reports a default-empty one. (Before 2026-08-20 the writer emitted
+  `scalar_type` while the v2 reader expected the policy pair — a
+  writer/reader sequence mismatch fixed together with the v1-compat path
+  above; the state payload itself was never affected.)
 - The state payload is read and validated independently of the trailer, so
   a reader can stop after the state and stays forward-compatible with
   later trailer revisions. The trailer is parsed only when the caller
   requests the `RunReport`.
 
-## 4. Versioned checkpoint v1 (`--checkpoint` / `--restart`)
+## 4. Versioned checkpoint v2 (`--checkpoint` / `--restart`)
 
 ```
 magic     8 bytes  "CUMECKP1"
-version   int32    = 1
+version   int32    = 2
 precision int32    = 0 (the checkpoint is always double on disk)
 ns        int32
 mnmax     int32
 families  6 * (mnmax*ns) doubles, mode-major     ← the §2 payload
+params    the embedded normalized-input record (§5), version 2 only
 ```
 
-No provenance trailer — the checkpoint records state only. Header
-mismatch, unsupported version/precision, or corruption is an error, never
-a silent cold start.
+No provenance trailer beyond the input record — the restart path reads the
+state only and never touches the record. Version-1 checkpoints (no record)
+remain readable. Header mismatch, unsupported version/precision, or
+corruption is an error, never a silent cold start.
 
-## 5. NetCDF / HDF5 (v1)
+## 5. The embedded input record / NetCDF-HDF5 layout (v1)
 
-Versioned containers carrying the same provenance as the binary trailer —
+The embedded input record (§3/§4 in the binary formats) is represented
+natively in NetCDF/HDF5:
+
+- scalar variables (`mpol, ntor, nfp, ntheta, nzeta, ncurr` as int,
+  `delt, phiedge, pres_scale, adiabatic_index, spres_ped, bloat, curtor,
+  tcon0` as double) — HDF5: same names as root-group attributes;
+- 1-D array variables `am, ac, ai, aphi, raxis_c, zaxis_s` (double) and
+  the input stage arrays `stage_in_ns, stage_max_iter` (int),
+  `stage_ftol` (double) — HDF5: same names as 1-D datasets;
+- the `schema` string attribute;
+- the boundary is the pre-existing native pair: `rbc_m/rbc_n/rbc_value`
+  and `zbs_m/zbs_n/zbs_value` (int/int/double over `nrbc`/`nzbs`) plus the
+  folded 2-D matrices `rbcc/rbss/zbsc/zbcs` over `[n_mpol, n_ntorp1]`.
+
+Empty profile vectors get no variable/dataset (classic NetCDF gives a
+0-length dimension unlimited semantics and allows only one); a reader
+treats an absent array as empty. Readers prove exact rank/datatype/extent
+before every read into a fixed or sized buffer (see the reader-rank
+hardening in overhaul-history.md); malformed shapes are rejected, never
+tolerated. A container without the record fields (written before the
+embedding) is read with a default-empty record.
+
+The rest of the layout is the same provenance as the binary trailer —
 scalar variables `precision`/`status`/`total_iterations`/`build_dirty`,
 string attributes `revision`, `build_type`, `precision_policy`,
 `compile_flags`, `source_path`, `source_hash`, `gpu_name`, `driver`,
@@ -119,9 +158,6 @@ string attributes `revision`, `build_type`, `precision_policy`,
 plus the restart metadata `restart_stage_offset`/`restart_iteration`. The
 state families are 2-D datasets over `[ns, mnmax]` with the logical value
 `family[surface, mode]` mapped to device offset `surface + mode * ns`.
-Readers prove exact rank/datatype/extent before every read into a fixed or
-sized buffer (see the reader-rank hardening in overhaul-history.md);
-malformed shapes are rejected, never tolerated.
 
 ## 6. Dump files (diagnostics, not a stable format)
 
@@ -146,4 +182,7 @@ The 20-byte header (magic + version + ns + mnmax) is followed directly by
 the six families; only a consumer that wants provenance needs the trailer.
 (compare_bitwise.py compares the state payload byte-wise, not the whole
 file: the trailer embeds the git revision, so full-file bytes differ
-across revisions by design.)
+across revisions by design.) `scripts/plot_w7x.py` walks the full trailer
+and parses the embedded input record, so a converged equilibrium plots
+without its input JSON (containers written before the record are rejected
+with a "re-run the solver" message).

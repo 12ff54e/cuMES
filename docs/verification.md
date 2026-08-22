@@ -116,7 +116,8 @@ cross-architecture claim is made (see `docs/performance.md`).
 - **Backend matrix**: verify (NetCDF+HDF5), netcdf-only, hdf5-only, and
   nobackend builds each run their suites — all four configurations exist
   as presets and as hosted CI matrix entries; the v1 containers round-trip
-  the complete RunReport + restart metadata in every linked backend.
+  the complete RunReport + restart metadata + the embedded normalized
+  input record in every linked backend.
 - **CI**: `.github/workflows/ci.yml` — hosted Ubuntu 22.04 only, with the
   verify/nobackend/netcdf-only/hdf5-only/float build matrix, CPU-only reader/
   configuration/controller tests, and ASan/UBSan host tests. There is no
