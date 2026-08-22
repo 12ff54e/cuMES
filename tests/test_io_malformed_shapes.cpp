@@ -26,9 +26,12 @@
 #endif
 #ifdef CUMES_HAVE_HDF5
 #include <hdf5.h>
+#endif
+
+// The harness is unconditional: main() uses check/summary/std::cout even in
+// the nobackend build (only the backend-specific sections are guarded).
 #include "cumes_test.h"
 using namespace cumes::test;
-#endif
 
 using cumes::OutputFormat;
 using cumes::Reader;
