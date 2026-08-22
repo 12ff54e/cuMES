@@ -11,7 +11,7 @@
 namespace cumes {
 
 class Reader {
- public:
+   public:
     virtual ~Reader() = default;
     // Read a state file into a host snapshot. Returns an error on a missing
     // file, truncation, trailing data, or a header/dimension mismatch.

@@ -10,15 +10,16 @@
 #include "cumes/io/reader.hpp"
 #include "cumes/io/run_report.hpp"
 #include "cumes/io/writer.hpp"
+#include "cumes_test.h"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <string>
+
 #include <sys/stat.h>
 #include <unistd.h>
-#include "cumes_test.h"
 using namespace cumes::test;
 
 using cumes::EquilibriumSnapshot;
@@ -26,7 +27,6 @@ using cumes::OutputFormat;
 using cumes::OutputSpec;
 using cumes::RunReport;
 using cumes::RunStatus;
-
 
 static std::string scratch(const char* name) {
     return std::string("test_host_io_") + name + "_" +
@@ -72,7 +72,9 @@ static RunReport makeReport() {
 // the problem's boundary harmonics.
 static cumes::ValidatedProblem makeProblem() {
     cumes::ProblemSpec spec;
-    spec.mpol = 2; spec.ntor = 0; spec.nfp = 1;
+    spec.mpol = 2;
+    spec.ntor = 0;
+    spec.nfp = 1;
     spec.mass.coefficients = {1.0};
     spec.toroidal_flux.coefficients = {1.0};
     spec.rbc = {{1, 0, 1.0}};
@@ -99,8 +101,8 @@ static void testOutputSpec() {
     // Availability preflight moved to the adapter library (completion plan
     // step 2.5); the binary format is always available by construction, so the
     // host test asserts the always-true contract without linking the adapter.
-    check(/* output_format_available(kBinary) is always true by construction */ true,
-          "output spec: binary always available");
+    check(/* output_format_available(kBinary) is always true by construction */
+          true, "output spec: binary always available");
     auto r = cumes::resolve_output_spec("state.bin");
     check(r.has_value() && r.value().format == OutputFormat::kBinary,
           "output spec: .bin resolves to binary");
@@ -120,14 +122,16 @@ static void testV1RoundTrip() {
     auto r = cumes::make_binary_reader();
     check(w != nullptr && r != nullptr, "v1: writer+reader factories");
     if (!w || !r) return;
-    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value(), "v1: write succeeds");
+    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value(),
+          "v1: write succeeds");
     auto back = r->read(spec.path);
     check(back.has_value() && snapshotsEqual(s, back.value()),
           "v1: round-trip preserves state");
 
     // Corrupt the magic -> reader rejects.
     {
-        std::fstream f(spec.path, std::ios::in | std::ios::out | std::ios::binary);
+        std::fstream f(spec.path,
+                       std::ios::in | std::ios::out | std::ios::binary);
         f.seekp(0);
         f.put('X');
         f.close();
@@ -157,7 +161,8 @@ static void testCorruptHeaderHugeDimensions() {
     auto r = cumes::make_binary_reader();
     auto got = r->read(path);
     check(!got.has_value(),
-          "corrupt header: huge ns*mnmax rejected as implausible (no bad_alloc/terminate)");
+          "corrupt header: huge ns*mnmax rejected as implausible (no "
+          "bad_alloc/terminate)");
     remove(path.c_str());
 }
 
@@ -177,7 +182,8 @@ static void testShortFamilyRejected() {
     spec.format = OutputFormat::kBinary;
     spec.path = scratch("short");
     auto w = cumes::make_binary_writer();
-    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
+    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() ==
+              false,
           "short family: write fails cleanly (no OOB read)");
     FILE* f = fopen(spec.path.c_str(), "rb");
     check(f == nullptr, "short family: no file published");
@@ -208,7 +214,8 @@ static void testFailureMatrix() {
     spec.format = OutputFormat::kBinary;
     spec.path = "no_such_dir/test_host_io_open.bin";
     auto w = cumes::make_binary_writer();
-    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
+    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() ==
+              false,
           "failure: open failure returns false");
 
     // rename failure: target is a non-empty directory (temp writes fine,
@@ -217,10 +224,14 @@ static void testFailureMatrix() {
     mkdir(dir.c_str(), 0755);
     {
         FILE* f = fopen((dir + "/keep").c_str(), "w");
-        if (f) { fputs("x", f); fclose(f); }
+        if (f) {
+            fputs("x", f);
+            fclose(f);
+        }
     }
     spec.path = dir;  // a directory, not a file
-    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() == false,
+    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() ==
+              false,
           "failure: rename-over-directory returns false");
     // the directory and its contents are untouched
     FILE* keep = fopen((dir + "/keep").c_str(), "r");

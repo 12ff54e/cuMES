@@ -8,29 +8,29 @@
 //
 // Runs both precisions (double is the verification config; float proves the
 // T->double conversion is identical for the single-precision build).
-#include <cstdio>
-#include <cstdint>
-#include <cstring>
-#include <fstream>
-#include <string>
-#include <vector>
-#include <unistd.h>
-
 #include "cumes/io/checkpoint.hpp"
 #include "cumes/io/output_spec.hpp"
 #include "cumes/io/reader.hpp"
 #include "cumes/io/snapshot_bridge.cuh"
 #include "cumes/io/writer.hpp"
 #include "cumes/state/spectral_storage.hpp"
-#include "vmec_types.h"
 #include "cumes_test_cuda_helper.cuh"
+#include "vmec_types.h"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <string>
+#include <vector>
+
+#include <unistd.h>
 using namespace cumes::test;
 
 using cumes::EquilibriumSnapshot;
 using cumes::OutputFormat;
 using cumes::OutputSpec;
 using cumes::RunReport;
-
 
 static std::string scratch(const char* name) {
     return std::string("test_io_golden_") + name + "_" +
@@ -53,8 +53,8 @@ static cumes::SpectralStorage<T> makeStorage(int ns, int mnmax) {
         }
     }
     check_cuda(cudaMemcpy(storage.state_slab(), host.data(), count * sizeof(T),
-                         cudaMemcpyHostToDevice),
-              "upload");
+                          cudaMemcpyHostToDevice),
+               "upload");
     return storage;
 }
 
@@ -86,20 +86,20 @@ static bool writeHistoricalV1(const EquilibriumSnapshot& snap,
         f.write(reinterpret_cast<const char*>(fam.data()),
                 static_cast<std::streamsize>(fam.size() * sizeof(double)));
     }
-    w_i32(0);      // precision = double
-    w_i32(0);      // status = kConverged
-    w_i32(42);     // total_effective_iterations
-    w_i32(0);      // nstages
-    w_str("r1");   // revision
-    w_u8(0);       // dirty
+    w_i32(0);          // precision = double
+    w_i32(0);          // status = kConverged
+    w_i32(42);         // total_effective_iterations
+    w_i32(0);          // nstages
+    w_str("r1");       // revision
+    w_u8(0);           // dirty
     w_str("Release");  // build_type
     w_str("double");   // scalar_type (the historical v1 slot)
-    w_str("");     // source_path
-    w_str("");     // source_hash
-    w_str("");     // gpu_name
-    w_str("");     // driver
-    w_str("");     // runtime
-    w_str("");     // toolkit
+    w_str("");         // source_path
+    w_str("");         // source_hash
+    w_str("");         // gpu_name
+    w_str("");         // driver
+    w_str("");         // runtime
+    w_str("");         // toolkit
     return f.good();
 }
 
@@ -121,11 +121,15 @@ static RunReport makeIoReport(const cumes::ValidatedProblem& vp) {
     r.status = cumes::RunStatus::kConverged;
     r.total_effective_iterations = 21;
     cumes::StageReport s1;
-    s1.ns = 5; s1.effective_iterations = 9; s1.converged = true;
+    s1.ns = 5;
+    s1.effective_iterations = 9;
+    s1.converged = true;
     s1.final_residual = {1e-10, 2e-11, 3e-12};
     s1.restarts = {cumes::RestartEvent{2}, cumes::RestartEvent{5}};
     cumes::StageReport s2;
-    s2.ns = 8; s2.effective_iterations = 12; s2.converged = true;
+    s2.ns = 8;
+    s2.effective_iterations = 12;
+    s2.converged = true;
     s2.final_residual = {4e-13, 5e-14, 6e-15};
     s2.restarts = {cumes::RestartEvent{3}};
     r.stages = {s1, s2};
@@ -178,7 +182,8 @@ static bool reportsEqual(const RunReport& a, const RunReport& b) {
             return false;
         }
         for (size_t k = 0; k < x.restarts.size(); ++k) {
-            if (x.restarts[k].iteration != y.restarts[k].iteration) return false;
+            if (x.restarts[k].iteration != y.restarts[k].iteration)
+                return false;
         }
     }
     return true;
@@ -188,7 +193,8 @@ static bool reportsEqual(const RunReport& a, const RunReport& b) {
 template <typename T>
 static void checkV1RoundTrip(const EquilibriumSnapshot& snap,
                              const cumes::ValidatedProblem& vp,
-                             OutputFormat fmt, const char* tag) {
+                             OutputFormat fmt,
+                             const char* tag) {
     const std::string path = scratch(tag);
     OutputSpec spec;
     spec.format = fmt;
@@ -221,14 +227,19 @@ static void runPrecision() {
 
     // Minimal valid problem for the writer call sites.
     cumes::ProblemSpec pspec;
-    pspec.mpol = 2; pspec.ntor = 0; pspec.nfp = 1;
+    pspec.mpol = 2;
+    pspec.ntor = 0;
+    pspec.nfp = 1;
     pspec.mass.coefficients = {1.0};
     pspec.toroidal_flux.coefficients = {1.0};
     pspec.rbc = {{1, 0, 1.0}};
     pspec.zbs = {{1, 0, 0.5}};
     pspec.stages = {{(size_t)ns, 100, 1e-12}};
     auto vpres = cumes::validate(pspec, cumes::SolverOptions{});
-    if (!vpres.has_value()) { std::cerr << "test_io_golden: validate failed\n"; exit(1); }
+    if (!vpres.has_value()) {
+        std::cerr << "test_io_golden: validate failed\n";
+        exit(1);
+    }
     cumes::ValidatedProblem vp = std::move(vpres.value());
     // ---- v1 writer round-trips the bridged snapshot + provenance trailer --
     {
@@ -236,7 +247,7 @@ static void runPrecision() {
         const std::string v1Path = scratch("v1");
         OutputSpec spec;
         spec.format = OutputFormat::kBinary;
-            spec.path = v1Path;
+        spec.path = v1Path;
         auto w = cumes::make_writer(spec.format);
         auto r = cumes::make_reader(spec.format);
         check(w != nullptr && r != nullptr, "v1: writer+reader factories");
@@ -252,7 +263,8 @@ static void runPrecision() {
                   "v1: write succeeds");
             RunReport back;
             auto snap_back = r->read(v1Path, &back);
-            check(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
+            check(snap_back.has_value() &&
+                      snapshotsEqual(snap, snap_back.value()),
                   "v1: round-trip preserves bridged state");
             check(reportsEqual(report, back),
                   "v1: round-trip preserves the provenance trailer");
@@ -266,13 +278,15 @@ static void runPrecision() {
     {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string v1OldPath = scratch("v1old");
-        check(writeHistoricalV1(snap, v1OldPath), "v1 historical: fixture written");
+        check(writeHistoricalV1(snap, v1OldPath),
+              "v1 historical: fixture written");
         auto r = cumes::make_reader(OutputFormat::kBinary);
         check(r != nullptr, "v1 historical: reader factory");
         if (r) {
             RunReport back;
             auto snap_back = r->read(v1OldPath, &back);
-            check(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
+            check(snap_back.has_value() &&
+                      snapshotsEqual(snap, snap_back.value()),
                   "v1 historical: state round trip");
             check(back.build.scalar_type == "double" &&
                       back.build.revision == "r1" &&

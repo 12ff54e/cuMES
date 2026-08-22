@@ -5,66 +5,66 @@
 // with `cudaFreeHost` on destruction.
 #pragma once
 
+#include "cumes/runtime/cuda_status.hpp"
+
 #include <cuda_runtime.h>
 
 #include <cstddef>
 #include <utility>
 
-#include "cumes/runtime/cuda_status.hpp"
-
 namespace cumes {
 
 template <class T>
 class PinnedBuffer {
- public:
-  PinnedBuffer() = default;
+   public:
+    PinnedBuffer() = default;
 
-  explicit PinnedBuffer(std::size_t count) { allocate(count); }
+    explicit PinnedBuffer(std::size_t count) { allocate(count); }
 
-  ~PinnedBuffer() { release(); }
+    ~PinnedBuffer() { release(); }
 
-  PinnedBuffer(const PinnedBuffer&) = delete;
-  PinnedBuffer& operator=(const PinnedBuffer&) = delete;
+    PinnedBuffer(const PinnedBuffer&) = delete;
+    PinnedBuffer& operator=(const PinnedBuffer&) = delete;
 
-  PinnedBuffer(PinnedBuffer&& other) noexcept
-      : data_(other.data_), count_(other.count_) {
-    other.data_ = nullptr;
-    other.count_ = 0;
-  }
-
-  PinnedBuffer& operator=(PinnedBuffer&& other) noexcept {
-    if (this != &other) {
-      release();
-      data_ = other.data_;
-      count_ = other.count_;
-      other.data_ = nullptr;
-      other.count_ = 0;
+    PinnedBuffer(PinnedBuffer&& other) noexcept
+        : data_(other.data_), count_(other.count_) {
+        other.data_ = nullptr;
+        other.count_ = 0;
     }
-    return *this;
-  }
 
-  void allocate(std::size_t count) {
-    release();
-    if (count == 0) return;
-    check_cuda(cudaMallocHost(&data_, count * sizeof(T)),
-               "PinnedBuffer::allocate");
-    count_ = count;
-  }
-
-  void release() {
-    if (data_ != nullptr) {
-      cudaFreeHost(data_);
-      data_ = nullptr;
+    PinnedBuffer& operator=(PinnedBuffer&& other) noexcept {
+        if (this != &other) {
+            release();
+            data_ = other.data_;
+            count_ = other.count_;
+            other.data_ = nullptr;
+            other.count_ = 0;
+        }
+        return *this;
     }
-    count_ = 0;
-  }
 
-  T* data() const { return data_; }
-  std::size_t size() const { return count_; }
+    void allocate(std::size_t count) {
+        release();
+        if (count == 0) return;
+        check_cuda(cudaMallocHost(&data_, count * sizeof(T)),
+                   "PinnedBuffer::allocate");
+        count_ = count;
+    }
 
- private:
-  T* data_ = nullptr;
-  std::size_t count_ = 0;
+    void release() {
+        if (data_ != nullptr) {
+            cudaFreeHost(data_);
+            data_ = nullptr;
+        }
+        count_ = 0;
+    }
+
+    T* data() const { return data_; }
+    std::size_t size() const { return count_; }
+
+   private:
+    T* data_ = nullptr;
+    std::size_t count_ = 0;
 };
 
 }  // namespace cumes

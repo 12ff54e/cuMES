@@ -18,26 +18,18 @@
 namespace cumes {
 
 std::unique_ptr<Writer> make_writer(OutputFormat format) {
-    if (format == OutputFormat::kBinary) {
-        return make_binary_writer();
-    }
+    if (format == OutputFormat::kBinary) { return make_binary_writer(); }
 #ifdef CUMES_HAVE_NETCDF
-    if (format == OutputFormat::kNetCdf) {
-        return make_netcdf_v1_writer();
-    }
+    if (format == OutputFormat::kNetCdf) { return make_netcdf_v1_writer(); }
 #endif
 #ifdef CUMES_HAVE_HDF5
-    if (format == OutputFormat::kHdf5) {
-        return make_hdf5_v1_writer();
-    }
+    if (format == OutputFormat::kHdf5) { return make_hdf5_v1_writer(); }
 #endif
     return nullptr;
 }
 
 std::unique_ptr<Reader> make_reader(OutputFormat format) {
-    if (format == OutputFormat::kBinary) {
-        return make_binary_reader();
-    }
+    if (format == OutputFormat::kBinary) { return make_binary_reader(); }
 #ifdef CUMES_HAVE_NETCDF
     if (format == OutputFormat::kNetCdf) {
         return make_netcdf_v1_reader();  // defined in netcdf_writer.cpp

@@ -16,21 +16,21 @@ namespace cumes {
 // on-disk layout stores iter2/iter1/reason as doubles), contiguous and
 // standard-layout so the column-major serializer can walk them by offset.
 struct PassRecord {
-    double invariant_fsqr = 0.0;        // fsqr_i (unpreconditioned)
-    double invariant_fsqz = 0.0;        // fsqz_i
-    double invariant_fsql = 0.0;        // fsql_i
-    double preconditioned_fsqr = 0.0;   // fsqr
-    double preconditioned_fsqz = 0.0;   // fsqz
-    double preconditioned_fsql = 0.0;   // fsql
-    double delta_t = 0.0;               // time step of the pass
-    double otav = 0.0;                  // 10-sample mean of 1/tau
-    double dtau = 0.0;                  // delt * otav / 2
-    double b1 = 0.0;                    // 1 - dtau
-    double fac = 0.0;                   // 1 / (1 + dtau)
-    double iter2 = 0.0;                 // effective iteration
-    double iter1 = 0.0;                 // restart anchor
-    double reason = 0.0;                // RestartReason as int (0/1/2)
-    double axis_r = 0.0;                // axis R at zeta=0, pre-descent
+    double invariant_fsqr = 0.0;       // fsqr_i (unpreconditioned)
+    double invariant_fsqz = 0.0;       // fsqz_i
+    double invariant_fsql = 0.0;       // fsql_i
+    double preconditioned_fsqr = 0.0;  // fsqr
+    double preconditioned_fsqz = 0.0;  // fsqz
+    double preconditioned_fsql = 0.0;  // fsql
+    double delta_t = 0.0;              // time step of the pass
+    double otav = 0.0;                 // 10-sample mean of 1/tau
+    double dtau = 0.0;                 // delt * otav / 2
+    double b1 = 0.0;                   // 1 - dtau
+    double fac = 0.0;                  // 1 / (1 + dtau)
+    double iter2 = 0.0;                // effective iteration
+    double iter1 = 0.0;                // restart anchor
+    double reason = 0.0;               // RestartReason as int (0/1/2)
+    double axis_r = 0.0;               // axis R at zeta=0, pre-descent
 
     static constexpr int kColumnCount = 15;
 };

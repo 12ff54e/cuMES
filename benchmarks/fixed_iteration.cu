@@ -22,18 +22,7 @@
 //
 // Shared harness pieces (timing helpers, the --option scanner, the config
 // loader, the operator stack) live in bench_common.cuh.
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <cstdint>
-#include <string>
-#include <vector>
-
-#include "vmec_types.h"
-#include "solver.cuh"
-
 #include "bench_common.cuh"
-
 #include "cumes/config/json_reader.hpp"
 #include "cumes/io/checkpoint.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
@@ -44,6 +33,15 @@
 #include "cumes/solver/stage_solver.hpp"
 #include "cumes/state/seed_state.hpp"
 #include "cumes/state/spectral_storage.hpp"
+#include "solver.cuh"
+#include "vmec_types.h"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
 
 using namespace bench_common;
 
@@ -76,15 +74,29 @@ int main(int argc, char** argv) {
 
     ArgParser args(argc, argv, "bench");
     for (int i = 1; i < argc; ++i) {
-        if (const char* v = args.need(i, "config")) config = v;
-        else if (const char* v = args.need(i, "restart")) restart_path = v;
-        else if (const char* v = args.need(i, "out")) out_path = v;
-        else if (const char* v = args.need(i, "warmup")) warmup = atoi(v);
-        else if (const char* v = args.need(i, "passes")) passes = atoi(v);
-        else { fprintf(stderr, "bench: unknown option '%s'\n", argv[i]); return 2; }
+        if (const char* v = args.need(i, "config"))
+            config = v;
+        else if (const char* v = args.need(i, "restart"))
+            restart_path = v;
+        else if (const char* v = args.need(i, "out"))
+            out_path = v;
+        else if (const char* v = args.need(i, "warmup"))
+            warmup = atoi(v);
+        else if (const char* v = args.need(i, "passes"))
+            passes = atoi(v);
+        else {
+            fprintf(stderr, "bench: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
     }
-    if (passes < 1) { fprintf(stderr, "bench: --passes must be >= 1\n"); return 2; }
-    if (warmup < 0) { fprintf(stderr, "bench: --warmup must be >= 0\n"); return 2; }
+    if (passes < 1) {
+        fprintf(stderr, "bench: --passes must be >= 1\n");
+        return 2;
+    }
+    if (warmup < 0) {
+        fprintf(stderr, "bench: --warmup must be >= 0\n");
+        return 2;
+    }
 
     std::string input_path = std::string("inputs/") + config + ".json";
 
@@ -104,10 +116,14 @@ int main(int argc, char** argv) {
     cumes::SpectralStorage<Real> storage;
     if (restart_path) {
         auto ck = cumes::read_checkpoint(restart_path);
-        if (!ck.has_value()) { fprintf(stderr, "bench: %s\n", ck.error().c_str()); return 2; }
+        if (!ck.has_value()) {
+            fprintf(stderr, "bench: %s\n", ck.error().c_str());
+            return 2;
+        }
         if (ck.value().ns != p.ns || ck.value().mnmax != p.mnmax) {
-            fprintf(stderr, "bench: checkpoint (ns=%d,mnmax=%d) does not match "
-                            "shape (ns=%d,mnmax=%d)\n",
+            fprintf(stderr,
+                    "bench: checkpoint (ns=%d,mnmax=%d) does not match "
+                    "shape (ns=%d,mnmax=%d)\n",
                     ck.value().ns, ck.value().mnmax, p.ns, p.mnmax);
             return 2;
         }
@@ -124,7 +140,8 @@ int main(int argc, char** argv) {
     double setup_us = 0.0, solve_wall_us = 0.0, solve_gpu_us = 0.0;
     std::size_t arena_bytes = 0;
     std::size_t cufft_work_bytes = 0;
-    SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9), {}};
+    SolverResult<Real> result{false,     0,         Real(1.0), Real(1.0),
+                              Real(1.0), Real(0.9), {}};
     cumes::EquilibriumSnapshot snap;
 
     // One arena allocation, one construction of every module, one solve
@@ -147,10 +164,9 @@ int main(int argc, char** argv) {
         cudaEventCreate(&ev1);
         cudaEventRecord(ev0, stream.get());
         double w0 = now_us();
-        result = solverRun<Real>(storage, p, stack.profiles,
-                                 stack.transform, stack.rs, stack.geometry,
-                                 &arena, stream.get(), &bench,
-                                 stack.axisym.get());
+        result = solverRun<Real>(storage, p, stack.profiles, stack.transform,
+                                 stack.rs, stack.geometry, &arena, stream.get(),
+                                 &bench, stack.axisym.get());
         double w1 = now_us();
         cudaEventRecord(ev1, stream.get());
         cudaEventSynchronize(ev1);
@@ -175,7 +191,8 @@ int main(int argc, char** argv) {
     // ---- per-pass statistics (discard warmup) ----
     std::vector<double> timed;
     if (bench.pass_wall_us.size() > static_cast<std::size_t>(warmup)) {
-        timed.assign(bench.pass_wall_us.begin() + warmup, bench.pass_wall_us.end());
+        timed.assign(bench.pass_wall_us.begin() + warmup,
+                     bench.pass_wall_us.end());
     }
     const double med = median(timed);
     const double p95us = p95(timed);
@@ -207,10 +224,14 @@ int main(int argc, char** argv) {
     json += "  " + kv("runtime", num) + ",\n";
     snprintf(num, sizeof num, "%d", CUDART_VERSION);
     json += "  " + kv("toolkit", num) + ",\n";
-    json += "  " + kv("scalar_type", q(sizeof(Real) == sizeof(double) ? "double" : "float")) + ",\n";
+    json += "  " +
+            kv("scalar_type",
+               q(sizeof(Real) == sizeof(double) ? "double" : "float")) +
+            ",\n";
     // Precision-policy provenance (completion plan step 3.1): the named
     // policy and its effective flags, from the CMake-provided defines.
-    json += "  " + kv("precision_policy", q(CUMES_PRECISION_POLICY_NAME)) + ",\n";
+    json +=
+        "  " + kv("precision_policy", q(CUMES_PRECISION_POLICY_NAME)) + ",\n";
     json += "  " + kv("precision_flags", q(CUMES_PRECISION_FLAGS)) + ",\n";
     snprintf(num, sizeof num, "%d", p.ns);
     json += "  " + kv("ns", num) + ",\n";
@@ -228,8 +249,10 @@ int main(int argc, char** argv) {
     json += "  " + kv("nzeta", num) + ",\n";
     snprintf(num, sizeof num, "%d", p.ncurr);
     json += "  " + kv("ncurr", num) + ",\n";
-    json += "  " + kv("transform_backend", q(backend_axisym ? "axisymmetric"
-                                                        : "toroidal-fft")) + ",\n";
+    json += "  " +
+            kv("transform_backend",
+               q(backend_axisym ? "axisymmetric" : "toroidal-fft")) +
+            ",\n";
     snprintf(num, sizeof num, "%zu", arena_bytes);
     json += "  " + kv("arena_bytes", num) + ",\n";
     snprintf(num, sizeof num, "%zu", cufft_work_bytes);
@@ -253,7 +276,10 @@ int main(int argc, char** argv) {
 
     if (out_path) {
         FILE* f = fopen(out_path, "w");
-        if (!f) { fprintf(stderr, "bench: cannot open --out %s\n", out_path); return 2; }
+        if (!f) {
+            fprintf(stderr, "bench: cannot open --out %s\n", out_path);
+            return 2;
+        }
         fputs(json.c_str(), f);
         fclose(f);
         printf("wrote benchmark JSON to %s\n", out_path);

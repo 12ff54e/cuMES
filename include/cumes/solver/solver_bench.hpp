@@ -1,4 +1,5 @@
-// solver_bench.hpp — opt-in fixed-iteration benchmark observer (blueprint §8.1).
+// solver_bench.hpp — opt-in fixed-iteration benchmark observer (blueprint
+// §8.1).
 //
 // The solver records one host wall-clock timestamp per *evaluated* pass at the
 // single control fence (the one per-pass host sync already on the path). This

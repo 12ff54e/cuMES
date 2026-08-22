@@ -23,12 +23,12 @@
 // refactor is Class A bitwise-equivalent (including float builds).
 #pragma once
 
+#include "cumes/io/run_report.hpp"
+#include "cumes/solver/control_record.hpp"
+
 #include <cmath>
 #include <cstdint>
 #include <vector>
-
-#include "cumes/io/run_report.hpp"
-#include "cumes/solver/control_record.hpp"
 
 namespace cumes {
 
@@ -39,11 +39,11 @@ inline constexpr int kPreconInterval = 25;
 
 template <typename T>
 class IterationController {
-  public:
+   public:
     struct Options {
-        T delta_t0 = T(0.9);     // initial time step (vmecpp delt)
-        T ftol = T(1e-16);       // stage convergence tolerance
-        T dtau_floor = T(0);     // optional 1/tau floor (0 = disabled)
+        T delta_t0 = T(0.9);  // initial time step (vmecpp delt)
+        T ftol = T(1e-16);    // stage convergence tolerance
+        T dtau_floor = T(0);  // optional 1/tau floor (0 = disabled)
     };
 
     explicit IterationController(Options o)
@@ -57,7 +57,8 @@ class IterationController {
         for (int ii = 0; ii < 10; ++ii) inv_tau_hist_[ii] = T(0.15) / delt0_;
     }
 
-    // ---- pass-invariant accessors (the solver builds the device schedule) ----
+    // ---- pass-invariant accessors (the solver builds the device schedule)
+    // ----
     int effective_iteration() const noexcept { return iter2_; }
     int restart_anchor() const noexcept { return iter1_; }
     int output_anchor() const noexcept { return log_anchor_; }
@@ -76,7 +77,9 @@ class IterationController {
         return restart_events_;
     }
     // rzConIntoVolume soft-reset: true on the first pass and after a restart.
-    bool reset_constraint_reference() const noexcept { return iter2_ == iter1_; }
+    bool reset_constraint_reference() const noexcept {
+        return iter2_ == iter1_;
+    }
     bool refresh_preconditioner() const noexcept {
         return (iter2_ - iter1_) % kPreconInterval == 0;
     }
@@ -140,9 +143,9 @@ class IterationController {
     // nonfinite (recover) or converged (stop).
     InvariantVerdict classify_invariant(const T invariant[3]) {
         fsqz_prev_ = invariant[1];
-        const bool nonfinite = !(std::isfinite(invariant[0]) &&
-                                 std::isfinite(invariant[1]) &&
-                                 std::isfinite(invariant[2]));
+        const bool nonfinite =
+            !(std::isfinite(invariant[0]) && std::isfinite(invariant[1]) &&
+              std::isfinite(invariant[2]));
         if (nonfinite) {
             delt_ *= T(0.9);
             iter1_ = iter2_;
@@ -170,7 +173,8 @@ class IterationController {
         if (iter2_ == iter1_) {
             for (int ii = 0; ii < 10; ++ii) inv_tau_hist_[ii] = T(0.15) / delt_;
         }
-        for (int ii = 0; ii < 9; ++ii) inv_tau_hist_[ii] = inv_tau_hist_[ii + 1];
+        for (int ii = 0; ii < 9; ++ii)
+            inv_tau_hist_[ii] = inv_tau_hist_[ii + 1];
         if (iter2_ > iter1_) {
             T invtau_num = T(0);
             if (fsq != T(0)) {
@@ -233,19 +237,19 @@ class IterationController {
         }
     }
 
-  private:
+   private:
     const T delt0_;
     const T ftol_;
     const T dtau_floor_;
     T delt_;
-    int iter2_ = 1;        // effective iteration (does not advance on restart)
-    int iter1_ = 1;        // latest restart anchor
-    int log_anchor_ = 0;   // output-grid anchor (reset on restart)
-    int ijacob_ = 0;       // accumulated bad-Jacobian counter
-    T res0_ = T(-1.0);     // running minimum of the preconditioned sum
-    T fsq_prev_ = T(1.0);  // previous preconditioned sum
-    T fsqz_prev_ = T(0.0); // previous invariant Z-residual
-    T inv_tau_hist_[10];   // ten-sample 1/tau history
+    int iter2_ = 1;         // effective iteration (does not advance on restart)
+    int iter1_ = 1;         // latest restart anchor
+    int log_anchor_ = 0;    // output-grid anchor (reset on restart)
+    int ijacob_ = 0;        // accumulated bad-Jacobian counter
+    T res0_ = T(-1.0);      // running minimum of the preconditioned sum
+    T fsq_prev_ = T(1.0);   // previous preconditioned sum
+    T fsqz_prev_ = T(0.0);  // previous invariant Z-residual
+    T inv_tau_hist_[10];    // ten-sample 1/tau history
     std::vector<RestartEvent> restart_events_;
 };
 

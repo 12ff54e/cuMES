@@ -14,18 +14,6 @@
 // arena.allocate as part of setup.
 #pragma once
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-
-#include <algorithm>
-#include <chrono>
-#include <cmath>
-#include <exception>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/solver_options.hpp"
 #include "cumes/physics/geometry_operator.hpp"
@@ -37,13 +25,25 @@
 #include "cumes/transforms/axisymmetric_operator.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <memory>
+#include <string>
+#include <vector>
+
 namespace bench_common {
 
 using Clock = std::chrono::steady_clock;
 
 // Wall microseconds since the steady-clock epoch (identical in all harnesses).
 inline double now_us() {
-    return std::chrono::duration<double, std::micro>(Clock::now().time_since_epoch())
+    return std::chrono::duration<double, std::micro>(
+               Clock::now().time_since_epoch())
         .count();
 }
 
@@ -70,7 +70,7 @@ inline double p95(std::vector<double> v) {
 // argv scan for the harnesses' "--name value" / "--name=value" options.
 // Diagnostics go to stderr with the caller's program prefix.
 class ArgParser {
-  public:
+   public:
     ArgParser(int argc, char** argv, const char* prog)
         : argc_(argc), argv_(argv), prog_(prog) {}
 
@@ -87,11 +87,12 @@ class ArgParser {
             return argv_[++i];
         }
         const std::string pfx = opt + "=";
-        if (std::strncmp(a, pfx.c_str(), pfx.size()) == 0) return a + pfx.size();
+        if (std::strncmp(a, pfx.c_str(), pfx.size()) == 0)
+            return a + pfx.size();
         return nullptr;
     }
 
-  private:
+   private:
     int argc_;
     char** argv_;
     const char* prog_;
@@ -108,7 +109,8 @@ inline cumes::ValidationResult load_validated(const std::string& input_path,
         if (!vr.has_value()) {
             std::fprintf(stderr, "%s: input validation failed\n", prog);
             for (const auto& issue : vr.error().issues())
-                std::fprintf(stderr, "  [%d] %s: %s\n", static_cast<int>(issue.severity),
+                std::fprintf(stderr, "  [%d] %s: %s\n",
+                             static_cast<int>(issue.severity),
                              issue.key.c_str(), issue.message.c_str());
         }
         return vr;
@@ -128,8 +130,9 @@ inline cumes::ValidationResult load_validated(const std::string& input_path,
 // moved.
 template <class T>
 class OperatorStack {
-  public:
-    OperatorStack(DeviceParams<T>& p, const cumes::ValidatedProblem& vp,
+   public:
+    OperatorStack(DeviceParams<T>& p,
+                  const cumes::ValidatedProblem& vp,
                   cumes::DeviceArena& arena)
         : profiles(p, vp, &arena),
           rs(::realSpaceCreate<T>(p, &arena)),

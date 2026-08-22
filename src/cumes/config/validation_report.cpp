@@ -4,8 +4,8 @@
 namespace cumes {
 
 void ValidationReport::error(std::string key, std::string message) {
-    issues_.push_back(ValidationIssue{Severity::kError, std::move(key),
-                                      std::move(message)});
+    issues_.push_back(
+        ValidationIssue{Severity::kError, std::move(key), std::move(message)});
 }
 
 void ValidationReport::warn(std::string key, std::string message) {

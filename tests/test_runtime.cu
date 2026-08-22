@@ -5,19 +5,19 @@
 // SpectralView (device round-trip at the component-major layout), and the
 // SpectralStorage contiguous state/velocity slabs — in particular that
 // family_ptr() reproduces the exact six-family layout the legacy code read.
-#include <cstdlib>
-#include <utility>
-#include <vector>
-
-#include "vmec_types.h"
+#include "cumes/core/tensor_view.cuh"
+#include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_buffer.cuh"
 #include "cumes/runtime/pinned_buffer.hpp"
 #include "cumes/runtime/stream.hpp"
-#include "cumes/core/tensor_view.cuh"
 #include "cumes/state/spectral_storage.hpp"
-#include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes_test_cuda_helper.cuh"
+#include "vmec_types.h"
+
+#include <cstdlib>
+#include <utility>
+#include <vector>
 using namespace cumes::test;
 
 // The two component enums must agree so the slab, the host snapshot, and the
@@ -26,21 +26,26 @@ static_assert(static_cast<int>(cumes::SpectralComponent::Rcc) ==
                   cumes::EquilibriumSnapshot::kRmncc,
               "SpectralComponent/EquilibriumSnapshot component order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Zsc) ==
-                  cumes::EquilibriumSnapshot::kZmnsc, "order");
+                  cumes::EquilibriumSnapshot::kZmnsc,
+              "order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Lsc) ==
-                  cumes::EquilibriumSnapshot::kLmnsc, "order");
+                  cumes::EquilibriumSnapshot::kLmnsc,
+              "order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Rss) ==
-                  cumes::EquilibriumSnapshot::kRmnss, "order");
+                  cumes::EquilibriumSnapshot::kRmnss,
+              "order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Zcs) ==
-                  cumes::EquilibriumSnapshot::kZmncs, "order");
+                  cumes::EquilibriumSnapshot::kZmncs,
+              "order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Lcs) ==
-                  cumes::EquilibriumSnapshot::kLmncs, "order");
-
+                  cumes::EquilibriumSnapshot::kLmncs,
+              "order");
 
 // Write through a SpectralView on device; host verifies the component-major
 // [component][mode][surface] layout.
 __global__ void writeSpectral(
-    cumes::SpectralView<double, cumes::PhysicalStateDomain> v, int mnmax) {
+    cumes::SpectralView<double, cumes::PhysicalStateDomain> v,
+    int mnmax) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int total = mnmax * v.ns();
     if (i >= total) return;
@@ -98,9 +103,7 @@ int main() {
         bool threw = false;
         try {
             s.synchronize();  // moved-from must throw, not sync stream 0
-        } catch (const cumes::CumesError&) {
-            threw = true;
-        }
+        } catch (const cumes::CumesError&) { threw = true; }
         check(threw, "synchronize() on a moved-from Stream throws");
     }
 
@@ -111,14 +114,24 @@ int main() {
         const size_t one = (size_t)ns * mnmax;
         double* slab = st.state_slab();
         double* vslab = st.velocity_slab();
-        check(st.family_ptr(cumes::SpectralComponent::Rcc) == slab + 0 * one, "family_ptr rmncc at slab+0");
-        check(st.family_ptr(cumes::SpectralComponent::Zsc) == slab + 1 * one, "family_ptr zmnsc at slab+1");
-        check(st.family_ptr(cumes::SpectralComponent::Lsc) == slab + 2 * one, "family_ptr lmnsc at slab+2");
-        check(st.family_ptr(cumes::SpectralComponent::Rss) == slab + 3 * one, "family_ptr rmnss at slab+3");
-        check(st.family_ptr(cumes::SpectralComponent::Zcs) == slab + 4 * one, "family_ptr zmncs at slab+4");
-        check(st.family_ptr(cumes::SpectralComponent::Lcs) == slab + 5 * one, "family_ptr lmncs at slab+5");
-        check(st.velocity_family_ptr(cumes::SpectralComponent::Rcc) == vslab + 0 * one, "velocity_family_ptr v_rmncc at vslab+0");
-        check(st.velocity_family_ptr(cumes::SpectralComponent::Lcs) == vslab + 5 * one, "velocity_family_ptr v_lmncs at vslab+5");
+        check(st.family_ptr(cumes::SpectralComponent::Rcc) == slab + 0 * one,
+              "family_ptr rmncc at slab+0");
+        check(st.family_ptr(cumes::SpectralComponent::Zsc) == slab + 1 * one,
+              "family_ptr zmnsc at slab+1");
+        check(st.family_ptr(cumes::SpectralComponent::Lsc) == slab + 2 * one,
+              "family_ptr lmnsc at slab+2");
+        check(st.family_ptr(cumes::SpectralComponent::Rss) == slab + 3 * one,
+              "family_ptr rmnss at slab+3");
+        check(st.family_ptr(cumes::SpectralComponent::Zcs) == slab + 4 * one,
+              "family_ptr zmncs at slab+4");
+        check(st.family_ptr(cumes::SpectralComponent::Lcs) == slab + 5 * one,
+              "family_ptr lmncs at slab+5");
+        check(st.velocity_family_ptr(cumes::SpectralComponent::Rcc) ==
+                  vslab + 0 * one,
+              "velocity_family_ptr v_rmncc at vslab+0");
+        check(st.velocity_family_ptr(cumes::SpectralComponent::Lcs) ==
+                  vslab + 5 * one,
+              "velocity_family_ptr v_lmncs at vslab+5");
         check(st.state_buffer().size() == 6 * one &&
                   st.velocity_buffer().size() == 6 * one,
               "slab holds 6 components");
@@ -139,8 +152,10 @@ int main() {
         bool ok = true;
         for (int c = 0; c < 6; ++c)
             for (int i = 0; i < total; ++i)
-                ok = ok && (h[c * (size_t)total + i] == (double)(c * total + i));
-        check(ok, "SpectralView device writes land at [component][mode][surface]");
+                ok =
+                    ok && (h[c * (size_t)total + i] == (double)(c * total + i));
+        check(ok,
+              "SpectralView device writes land at [component][mode][surface]");
     }
 
     // ---- cuda_status: error injection throws CumesError ----
@@ -148,17 +163,13 @@ int main() {
         bool threw = false;
         try {
             cumes::check_cuda(cudaErrorInvalidValue, "inject");
-        } catch (const cumes::CumesError&) {
-            threw = true;
-        }
+        } catch (const cumes::CumesError&) { threw = true; }
         check(threw, "check_cuda throws CumesError on error");
 
         threw = false;
         try {
             cumes::check_cufft(CUFFT_INVALID_PLAN, "inject");
-        } catch (const cumes::CumesError&) {
-            threw = true;
-        }
+        } catch (const cumes::CumesError&) { threw = true; }
         check(threw, "check_cufft throws CumesError on error");
     }
 

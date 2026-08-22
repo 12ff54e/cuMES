@@ -13,6 +13,7 @@
 // The restart path reads the state only and ignores the record; version-1
 // checkpoints (no record) remain readable.
 #include "cumes/io/checkpoint.hpp"
+
 #include "io_common.hpp"
 
 #include <cstdio>
@@ -73,7 +74,8 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
 
     char magic[9] = {0};
     std::int32_t version = 0, precision = 0, ns = 0, mnmax = 0;
-    if (!io_detail::read_bytes(fp, magic, 8) || !io_detail::read_i32(fp, version) ||
+    if (!io_detail::read_bytes(fp, magic, 8) ||
+        !io_detail::read_i32(fp, version) ||
         !io_detail::read_i32(fp, precision) || !io_detail::read_i32(fp, ns) ||
         !io_detail::read_i32(fp, mnmax)) {
         return fail("checkpoint: truncated header");
@@ -82,10 +84,12 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
         return fail("checkpoint: bad magic (not a cumes checkpoint)");
     }
     if (version < kMinCheckpointVersion || version > kCheckpointVersion) {
-        return fail("checkpoint: unsupported version " + std::to_string(version));
+        return fail("checkpoint: unsupported version " +
+                    std::to_string(version));
     }
     if (precision != 0) {
-        return fail("checkpoint: unsupported precision tag " + std::to_string(precision));
+        return fail("checkpoint: unsupported precision tag " +
+                    std::to_string(precision));
     }
     std::size_t n = 0;
     std::string reason;

@@ -120,7 +120,9 @@ std::string format(std::string_view fmt, const Args&... args) {
         }
         const std::string_view spec = fmt.substr(open + 1, close - open - 1);
         [&]<std::size_t... I>(std::index_sequence<I...>) {
-            (void)((idx == I ? (detail::append_arg(os, spec, std::get<I>(t)), 0) : 0), ...);
+            (void)((idx == I ? (detail::append_arg(os, spec, std::get<I>(t)), 0)
+                             : 0),
+                   ...);
         }(std::index_sequence_for<Args...>{});
         ++idx;
         pos = close + 1;

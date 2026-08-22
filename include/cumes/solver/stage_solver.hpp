@@ -14,18 +14,11 @@
 // arena's liveness/peak report is emitted after the solve.
 #pragma once
 
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include "cumes/runtime/device_arena.cuh"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/runtime/device_arena.cuh"
 #include "cumes/solver/solver_bench.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/real_space_storage.hpp"
@@ -34,6 +27,13 @@
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "fft_traits.h"
 #include "solver.cuh"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
+#include <utility>
+#include <vector>
 
 namespace cumes {
 namespace stage_detail {
@@ -47,43 +47,43 @@ namespace stage_detail {
 // per-array cudaMallocs even when a later constructor throws.
 template <typename T>
 class ScopedRealSpace {
- public:
-  ScopedRealSpace(const DeviceParams<T>& p, DeviceArena* arena)
-      : rs_(realSpaceCreate<T>(p, arena)) {}
-  ~ScopedRealSpace() { realSpaceFree(rs_); }
+   public:
+    ScopedRealSpace(const DeviceParams<T>& p, DeviceArena* arena)
+        : rs_(realSpaceCreate<T>(p, arena)) {}
+    ~ScopedRealSpace() { realSpaceFree(rs_); }
 
-  // Non-copyable, non-movable: RealSpaceStorage is a raw owning aggregate
-  // with no move semantics, so a move would leave two owners of the same
-  // pointers (double cudaFree on the non-arena path).
-  ScopedRealSpace(const ScopedRealSpace&) = delete;
-  ScopedRealSpace& operator=(const ScopedRealSpace&) = delete;
-  ScopedRealSpace(ScopedRealSpace&&) = delete;
-  ScopedRealSpace& operator=(ScopedRealSpace&&) = delete;
+    // Non-copyable, non-movable: RealSpaceStorage is a raw owning aggregate
+    // with no move semantics, so a move would leave two owners of the same
+    // pointers (double cudaFree on the non-arena path).
+    ScopedRealSpace(const ScopedRealSpace&) = delete;
+    ScopedRealSpace& operator=(const ScopedRealSpace&) = delete;
+    ScopedRealSpace(ScopedRealSpace&&) = delete;
+    ScopedRealSpace& operator=(ScopedRealSpace&&) = delete;
 
-  RealSpaceStorage<T>& get() { return rs_; }
-  RealSpaceStorage<T>* operator->() { return &rs_; }
-  RealSpaceStorage<T>& operator*() { return rs_; }
+    RealSpaceStorage<T>& get() { return rs_; }
+    RealSpaceStorage<T>* operator->() { return &rs_; }
+    RealSpaceStorage<T>& operator*() { return rs_; }
 
- private:
-  RealSpaceStorage<T> rs_;
+   private:
+    RealSpaceStorage<T> rs_;
 };
 
 template <typename T>
 class ScopedModeTable {
- public:
-  ScopedModeTable(const DeviceParams<T>& p, DeviceArena* arena)
-      : mt_(modeTableCreate<T>(p, arena)) {}
-  ~ScopedModeTable() { modeTableFree(mt_); }
+   public:
+    ScopedModeTable(const DeviceParams<T>& p, DeviceArena* arena)
+        : mt_(modeTableCreate<T>(p, arena)) {}
+    ~ScopedModeTable() { modeTableFree(mt_); }
 
-  ScopedModeTable(const ScopedModeTable&) = delete;
-  ScopedModeTable& operator=(const ScopedModeTable&) = delete;
-  ScopedModeTable(ScopedModeTable&&) = delete;
-  ScopedModeTable& operator=(ScopedModeTable&&) = delete;
+    ScopedModeTable(const ScopedModeTable&) = delete;
+    ScopedModeTable& operator=(const ScopedModeTable&) = delete;
+    ScopedModeTable(ScopedModeTable&&) = delete;
+    ScopedModeTable& operator=(ScopedModeTable&&) = delete;
 
-  DeviceModeTable& get() { return mt_; }
+    DeviceModeTable& get() { return mt_; }
 
- private:
-  DeviceModeTable mt_;
+   private:
+    DeviceModeTable mt_;
 };
 
 // Construct the exact arena-allocation sequence of one stage against `arena`
@@ -130,7 +130,8 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     bytes += (10 * ns * nZnT + ns + mnmax) * szT;
     // solver: f_spec + control + psum (6.4 — carved from the stage arena;
     // the control span is the typed ControlRecord).
-    bytes += (6 * mnmax * ns + 4 * (ns - 1)) * szT + sizeof(cumes::ControlRecord);
+    bytes +=
+        (6 * mnmax * ns + 4 * (ns - 1)) * szT + sizeof(cumes::ControlRecord);
     // Alignment slack for the ~110 subspans (each padded to alignof <= 16).
     bytes += 64 * 1024;
     return bytes;
@@ -167,8 +168,9 @@ auto run_in_stage_arena(const DeviceParams<T>& p, F&& fn)
 // `state` stays owned by the caller; profilesCreate sets p.lamscale in place.
 template <typename T>
 class StageSolver {
-  public:
-    static SolverResult<T> run(DeviceParams<T>& p, const ValidatedProblem& vp,
+   public:
+    static SolverResult<T> run(DeviceParams<T>& p,
+                               const ValidatedProblem& vp,
                                SpectralStorage<T>& state,
                                cudaStream_t stream = 0,
                                SolverBench* bench = nullptr) {
@@ -205,20 +207,20 @@ class StageSolver {
             if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
                 if (std::atoi(e) != 0) use_axisym = false;
             std::unique_ptr<AxisymmetricOperator<T>> axisym;
-            if (use_axisym) axisym = std::make_unique<AxisymmetricOperator<T>>(p);
+            if (use_axisym)
+                axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
-            SolverResult<T> result = solverRun<T>(state, p, profiles,
-                                                  transform, *rs, geometry,
-                                                  &arena, stream, bench,
-                                                  axisym.get());
+            SolverResult<T> result =
+                solverRun<T>(state, p, profiles, transform, *rs, geometry,
+                             &arena, stream, bench, axisym.get());
             // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
             // the operator destructors); nothing to free manually.
 
-            std::printf("  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
-                        "reserved %zu bytes\n",
-                        arena.span_count(), arena.peak_bytes(),
-                        arena.peak_bytes() / (1024.0 * 1024.0),
-                        arena.total_bytes());
+            std::printf(
+                "  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
+                "reserved %zu bytes\n",
+                arena.span_count(), arena.peak_bytes(),
+                arena.peak_bytes() / (1024.0 * 1024.0), arena.total_bytes());
             return result;
         });
     }

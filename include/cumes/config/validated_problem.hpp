@@ -15,13 +15,13 @@
 // 13.2).
 #pragma once
 
-#include "cumes/core/grid_shape.hpp"
-#include "cumes/core/mode_table.hpp"
-#include "cumes/core/result.hpp"
 #include "cumes/config/precision_policy.hpp"
 #include "cumes/config/problem_spec.hpp"
 #include "cumes/config/solver_options.hpp"
 #include "cumes/config/validation_report.hpp"
+#include "cumes/core/grid_shape.hpp"
+#include "cumes/core/mode_table.hpp"
+#include "cumes/core/result.hpp"
 
 #include <string>
 #include <vector>
@@ -41,7 +41,7 @@ struct FoldedBoundary {
 };
 
 class ValidatedProblem {
- public:
+   public:
     const ProblemSpec& spec() const { return spec_; }
     const SolverOptions& options() const { return options_; }
     PrecisionPolicy precision() const { return options_.precision; }
@@ -64,9 +64,10 @@ class ValidatedProblem {
     // Canonical, deterministic JSON representation (for configuration goldens).
     std::string normalize_to_json() const;
 
- private:
+   private:
     friend BasicResult<ValidatedProblem, ValidationReport> validate(
-        ProblemSpec spec, const SolverOptions& options);
+        ProblemSpec spec,
+        const SolverOptions& options);
 
     ProblemSpec spec_;
     SolverOptions options_;

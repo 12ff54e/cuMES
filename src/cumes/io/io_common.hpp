@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <optional>
 #include <string>
+
 #include <unistd.h>
 
 namespace cumes {
@@ -35,8 +36,11 @@ inline std::optional<long long> fileSize(FILE* fp) {
 // the actual file size, so a corrupt or mismatched header cannot trigger a huge
 // allocation (a wrong-format file decodes as enormous positive dimensions).
 // Returns false and sets `reason` on failure; on success sets `n_out`.
-inline bool checkStateDimensions(FILE* fp, std::int32_t ns, std::int32_t mnmax,
-                                 std::size_t& n_out, std::string& reason) {
+inline bool checkStateDimensions(FILE* fp,
+                                 std::int32_t ns,
+                                 std::int32_t mnmax,
+                                 std::size_t& n_out,
+                                 std::string& reason) {
     if (ns < 1 || mnmax < 1) {
         reason = "bad dimensions (ns=" + std::to_string(ns) +
                  ", mnmax=" + std::to_string(mnmax) + ")";
@@ -56,8 +60,7 @@ inline bool checkStateDimensions(FILE* fp, std::int32_t ns, std::int32_t mnmax,
     // allocation (std::bad_alloc -> terminate) instead of the intended
     // "dimensions implausible" error. A negative size (ftell failure) also
     // fails the bound.
-    if (!needed || !sz || *sz < 0 ||
-        static_cast<std::size_t>(*sz) < *needed) {
+    if (!needed || !sz || *sz < 0 || static_cast<std::size_t>(*sz) < *needed) {
         reason = "dimensions implausible for file size (truncated or corrupt)";
         return false;
     }
@@ -110,7 +113,8 @@ inline bool read_f64_array(FILE* fp, double* p, std::size_t n) {
     return read_bytes(fp, p, n * sizeof(double));
 }
 
-// ---- shared magic-prefixed state payload (checkpoint.cpp, versioned_binary.cpp) ----
+// ---- shared magic-prefixed state payload (checkpoint.cpp,
+// versioned_binary.cpp) ----
 
 // Write the six families of `snapshot`, each exactly family_size() doubles.
 // Returns false (before writing anything of the short family) when a family is
@@ -128,7 +132,8 @@ inline bool writeStateFamilies(FILE* fp, const EquilibriumSnapshot& snapshot) {
 // Resize each family to `n` and read it. `n` must come from a successful
 // checkStateDimensions call (the bound against the actual file size already
 // happened). Returns false on truncation.
-inline bool readStateFamilies(FILE* fp, std::size_t n,
+inline bool readStateFamilies(FILE* fp,
+                              std::size_t n,
                               EquilibriumSnapshot& snapshot) {
     for (auto& fam : snapshot.families) {
         fam.resize(n);
@@ -150,38 +155,48 @@ inline bool readStateFamilies(FILE* fp, std::size_t n,
 constexpr std::int32_t kMaxInputParamsVector = 1 << 20;  // elements per vector
 
 inline bool write_i32_vec(FILE* fp, const std::vector<int>& v) {
-    if (v.size() > static_cast<std::size_t>(kMaxInputParamsVector)) return false;
+    if (v.size() > static_cast<std::size_t>(kMaxInputParamsVector))
+        return false;
     if (!write_i32(fp, static_cast<std::int32_t>(v.size()))) return false;
     return v.empty() ||
            write_bytes(fp, v.data(), v.size() * sizeof(std::int32_t));
 }
 inline bool write_f64_vec(FILE* fp, const std::vector<double>& v) {
-    if (v.size() > static_cast<std::size_t>(kMaxInputParamsVector)) return false;
+    if (v.size() > static_cast<std::size_t>(kMaxInputParamsVector))
+        return false;
     if (!write_i32(fp, static_cast<std::int32_t>(v.size()))) return false;
-    return v.empty() ||
-           write_bytes(fp, v.data(), v.size() * sizeof(double));
+    return v.empty() || write_bytes(fp, v.data(), v.size() * sizeof(double));
 }
 inline bool read_i32_vec(FILE* fp, std::vector<int>& v, std::string& reason) {
     std::int32_t n = 0;
-    if (!read_i32(fp, n)) { reason = "truncated vector count"; return false; }
+    if (!read_i32(fp, n)) {
+        reason = "truncated vector count";
+        return false;
+    }
     if (n < 0 || n > kMaxInputParamsVector) {
         reason = "vector count out of range";
         return false;
     }
     v.resize(static_cast<std::size_t>(n));
     return n == 0 ||
-           read_bytes(fp, v.data(), static_cast<std::size_t>(n) * sizeof(std::int32_t));
+           read_bytes(fp, v.data(),
+                      static_cast<std::size_t>(n) * sizeof(std::int32_t));
 }
-inline bool read_f64_vec(FILE* fp, std::vector<double>& v, std::string& reason) {
+inline bool read_f64_vec(FILE* fp,
+                         std::vector<double>& v,
+                         std::string& reason) {
     std::int32_t n = 0;
-    if (!read_i32(fp, n)) { reason = "truncated vector count"; return false; }
+    if (!read_i32(fp, n)) {
+        reason = "truncated vector count";
+        return false;
+    }
     if (n < 0 || n > kMaxInputParamsVector) {
         reason = "vector count out of range";
         return false;
     }
     v.resize(static_cast<std::size_t>(n));
-    return n == 0 ||
-           read_bytes(fp, v.data(), static_cast<std::size_t>(n) * sizeof(double));
+    return n == 0 || read_bytes(fp, v.data(),
+                                static_cast<std::size_t>(n) * sizeof(double));
 }
 
 inline bool writeInputParams(FILE* fp, const InputParams& p) {

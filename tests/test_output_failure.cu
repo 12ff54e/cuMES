@@ -21,25 +21,24 @@
 // All backends are exercised only when compiled in (CUMES_HAVE_NETCDF /
 // CUMES_HAVE_HDF5), so the same source works in the no/one/both backend
 // build matrix.
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <string>
-#include <dirent.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
-#include "vmec_types.h"
-#include "solver.cuh"
 #include "cumes/io/output_spec.hpp"
 #include "cumes/io/run_report.hpp"
 #include "cumes/io/snapshot_bridge.cuh"
 #include "cumes/io/writer.hpp"
 #include "cumes/io/writer_helpers.hpp"
 #include "cumes_test_cuda_helper.cuh"
+#include "solver.cuh"
+#include "vmec_types.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 using namespace cumes::test;
-
-
 
 // A tiny but valid state/params bundle for the writers. The state need not be
 // physical — the writers copy whatever is there. ns=5, mnmax=2.
@@ -51,13 +50,26 @@ struct TinyBundle {
     cumes::SpectralStorage<T> st;
 
     TinyBundle() {
-        p.ns = 5; p.mnmax = 2; p.ntheta = 18; p.nzeta = 1; p.nfp = 1;
-        p.nZnT = 18; p.mpol = 2; p.ntor = 0; p.ncurr = 0;
-        p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10; p.tcon0 = T(1.0);
+        p.ns = 5;
+        p.mnmax = 2;
+        p.ntheta = 18;
+        p.nzeta = 1;
+        p.nfp = 1;
+        p.nZnT = 18;
+        p.mpol = 2;
+        p.ntor = 0;
+        p.ncurr = 0;
+        p.delt = T(0.9);
+        p.ftol = T(1e-14);
+        p.max_iter = 10;
+        p.tcon0 = T(1.0);
         p.lamscale = T(0.1);
         cumes::ProblemSpec spec;
-        spec.mpol = p.mpol; spec.ntor = p.ntor; spec.nfp = 1;
-        spec.angular.ntheta = p.ntheta; spec.angular.nzeta = p.nzeta;
+        spec.mpol = p.mpol;
+        spec.ntor = p.ntor;
+        spec.nfp = 1;
+        spec.angular.ntheta = p.ntheta;
+        spec.angular.nzeta = p.nzeta;
         spec.mass.coefficients = {1.0};
         spec.toroidal_flux.coefficients = {1.0};
         spec.rbc = {{1, 0, 1.0}};
@@ -66,7 +78,8 @@ struct TinyBundle {
                         static_cast<std::size_t>(p.max_iter),
                         static_cast<double>(p.ftol)}};
         vp = validate_spec(std::move(spec));
-        res = SolverResult<T>{false, 3, T(1e-10), T(2e-10), T(3e-10), T(0.9), {}};
+        res =
+            SolverResult<T>{false, 3, T(1e-10), T(2e-10), T(3e-10), T(0.9), {}};
         // The state/velocity slabs are allocated + zeroed by SpectralStorage
         // (RAII); the writers only read the six state families.
         st.allocate(p.ns, p.mnmax);
@@ -80,7 +93,10 @@ static bool fileExists(const char* path) {
 
 static void writeGarbage(const char* path, const char* bytes, size_t n) {
     FILE* fp = fopen(path, "wb");
-    if (!fp) { std::cerr << format("cannot seed {}\n", path); exit(1); }
+    if (!fp) {
+        std::cerr << format("cannot seed {}\n", path);
+        exit(1);
+    }
     fwrite(bytes, 1, n, fp);
     fclose(fp);
 }
@@ -89,9 +105,11 @@ static void writeGarbage(const char* path, const char* bytes, size_t n) {
 // snapshot, then dispatch through the Writer interface — the failure matrix
 // exercises the same publication protocol every backend uses.
 template <typename T>
-static bool writeViaHost(cumes::SpectralStorage<T>& st, const DeviceParams<T>& p,
+static bool writeViaHost(cumes::SpectralStorage<T>& st,
+                         const DeviceParams<T>& p,
                          const cumes::ValidatedProblem& vp,
-                         const SolverResult<T>& res, const char* path,
+                         const SolverResult<T>& res,
+                         const char* path,
                          cumes::OutputFormat fmt) {
     cumes::OutputSpec spec;
     spec.format = fmt;
@@ -118,7 +136,8 @@ static bool writeViaHost(cumes::SpectralStorage<T>& st, const DeviceParams<T>& p
 
 template <typename T>
 static void runAll() {
-    std::cout << format("== {} precision ==\n", sizeof(T) == sizeof(double) ? "double" : "float");
+    std::cout << format("== {} precision ==\n",
+                        sizeof(T) == sizeof(double) ? "double" : "float");
     TinyBundle<T> b;
 
     // ---- open failure: path in a nonexistent directory ----
@@ -151,17 +170,20 @@ static void runAll() {
     }
 #endif
 
-    // ---- atomic-rename failure: target is a directory with a valid suffix ----
-    // The dispatcher must route to the binary writer, so the target carries a
-    // .bin suffix; the target IS a directory, so the writer writes the temp
-    // fine but rename(temp, target) fails. It must return false, remove the
-    // temp, and leave the directory untouched. Note: the temp path is
-    // <target>.tmp.<pid>, which sits NEXT to the directory and writes fine.
+    // ---- atomic-rename failure: target is a directory with a valid suffix
+    // ---- The dispatcher must route to the binary writer, so the target
+    // carries a .bin suffix; the target IS a directory, so the writer writes
+    // the temp fine but rename(temp, target) fails. It must return false,
+    // remove the temp, and leave the directory untouched. Note: the temp path
+    // is <target>.tmp.<pid>, which sits NEXT to the directory and writes fine.
     {
         const char* dir = "test_output_target_dir.bin";
         // Remove any prior run's leftover, then make a directory as the target.
         remove(dir);
-        if (mkdir(dir, 0755) != 0) { std::cerr << format("cannot mkdir {}\n", dir); exit(1); }
+        if (mkdir(dir, 0755) != 0) {
+            std::cerr << format("cannot mkdir {}\n", dir);
+            exit(1);
+        }
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, dir,
                                   cumes::OutputFormat::kBinary);
         check(!ok, "rename failure: target directory -> returns false");
@@ -174,7 +196,8 @@ static void runAll() {
         if (d) {
             struct dirent* e;
             while ((e = readdir(d))) {
-                if (std::string(e->d_name).compare(0, tmp.size(), tmp) == 0) stray = true;
+                if (std::string(e->d_name).compare(0, tmp.size(), tmp) == 0)
+                    stray = true;
             }
             closedir(d);
         }
@@ -200,9 +223,10 @@ static void runAll() {
                        fread(&ns, sizeof(int), 1, fp) == 1 &&
                        fread(&mnmax, sizeof(int), 1, fp) == 1;
             fclose(fp);
-            check(hdr && memcmp(magic, "CUMES001", 8) == 0 && version == 3 &&
-                      ns == b.p.ns && mnmax == b.p.mnmax,
-                  "truncation: binary header is the new run's (magic/ns/mnmax)");
+            check(
+                hdr && memcmp(magic, "CUMES001", 8) == 0 && version == 3 &&
+                    ns == b.p.ns && mnmax == b.p.mnmax,
+                "truncation: binary header is the new run's (magic/ns/mnmax)");
         } else {
             check(false, "truncation: binary file readable");
         }
@@ -240,7 +264,8 @@ static void runAll() {
         // HDF5 signature is "\211HDF\r\n\032\n".
         FILE* fp = fopen(path, "rb");
         if (fp) {
-            const unsigned char sig[8] = {0x89, 'H', 'D', 'F', '\r', '\n', 0x1a, '\n'};
+            const unsigned char sig[8] = {0x89, 'H',  'D',  'F',
+                                          '\r', '\n', 0x1a, '\n'};
             unsigned char buf[8] = {0};
             size_t got = fread(buf, 1, 8, fp);
             fclose(fp);
@@ -301,7 +326,8 @@ static void runPublicationBoundaries() {
     // Directory-fsync boundary: checked and propagated (the old helper
     // ignored both the fsync and the close result).
     {
-        const std::string err = cumes::io_detail::fsyncDirectoryOf("/proc/self");
+        const std::string err =
+            cumes::io_detail::fsyncDirectoryOf("/proc/self");
         check(!err.empty() && err.find("fsync") != std::string::npos,
               "directory fsync failure propagates a typed reason");
     }

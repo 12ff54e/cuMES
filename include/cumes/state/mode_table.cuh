@@ -4,15 +4,16 @@
 // mode index `mode = m*(ntor+1)+n`, d_xm[mode] = m and d_xn[mode] = n. This is
 // resolution-scoped MODE METADATA — read by the transform, preconditioner, and
 // descent kernels — not transform scratch, so it does not belong inside the
-// ToroidalFftOperator (blueprint §5.1: transforms own only tables/plans/scratch). It is
-// owned by the stage (blueprint §6.5 "Resolution" lifetime) and shared by every
-// operator that needs it; the richer ModeEntry<T> host table (cumes/core/
-// mode_table.hpp) is the eventual device-side replacement.
+// ToroidalFftOperator (blueprint §5.1: transforms own only
+// tables/plans/scratch). It is owned by the stage (blueprint §6.5 "Resolution"
+// lifetime) and shared by every operator that needs it; the richer ModeEntry<T>
+// host table (cumes/core/ mode_table.hpp) is the eventual device-side
+// replacement.
 #pragma once
 
-#include <cuda_runtime.h>
-
 #include "vmec_types.h"
+
+#include <cuda_runtime.h>
 
 namespace cumes {
 
@@ -62,7 +63,8 @@ struct DeviceModeTable {
 // cudaMalloc; with an arena they are aligned named subspans of the stage
 // allocation.
 template <typename T>
-DeviceModeTable modeTableCreate(const DeviceParams<T>& p, DeviceArena* arena = nullptr);
+DeviceModeTable modeTableCreate(const DeviceParams<T>& p,
+                                DeviceArena* arena = nullptr);
 
 inline void modeTableFree(DeviceModeTable& mt) {
     if (!mt.arena_backed) {

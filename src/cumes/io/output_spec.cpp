@@ -1,24 +1,28 @@
 // output_spec.cpp — suffix -> OutputSpec dispatch and backend availability.
 #include "cumes/io/output_spec.hpp"
 
-#include <strings.h>  // strcasecmp
-
 #include <optional>
 #include <string>
+
+#include <strings.h>  // strcasecmp
 
 namespace cumes {
 
 // output_format_available() is deliberately NOT defined here: it depends on
-// the optional-backend availability defines (CUMES_HAVE_NETCDF/CUMES_HAVE_HDF5),
-// which are confined to the adapter library per completion plan step 2.5. The
-// definition lives in src/output.cpp (cumes_io); this host library stays
-// free of NetCDF/HDF5 headers and availability defines.
+// the optional-backend availability defines
+// (CUMES_HAVE_NETCDF/CUMES_HAVE_HDF5), which are confined to the adapter
+// library per completion plan step 2.5. The definition lives in src/output.cpp
+// (cumes_io); this host library stays free of NetCDF/HDF5 headers and
+// availability defines.
 
 const char* output_suffix(OutputFormat fmt) {
     switch (fmt) {
-        case OutputFormat::kBinary: return ".bin";
-        case OutputFormat::kNetCdf: return ".nc";
-        case OutputFormat::kHdf5: return ".h5";
+        case OutputFormat::kBinary:
+            return ".bin";
+        case OutputFormat::kNetCdf:
+            return ".nc";
+        case OutputFormat::kHdf5:
+            return ".h5";
     }
     return "";
 }

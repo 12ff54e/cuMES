@@ -17,7 +17,7 @@
 namespace cumes {
 
 class Writer {
- public:
+   public:
     virtual ~Writer() = default;
     // Writers consume host memory only (no CUDA calls) and publish atomically:
     // write to a same-directory temp file, flush + fsync + close, then rename

@@ -10,11 +10,9 @@
 // CUMES_HAVE_HDF5, which is confined to the adapter library target.
 #include "cumes/io/reader.hpp"
 #include "cumes/io/writer.hpp"
+#include "cumes/io/writer_helpers.hpp"
 #include "internal_factories.hpp"
 #include "io_common.hpp"
-#include "cumes/io/writer_helpers.hpp"
-
-#include <hdf5.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -23,6 +21,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <hdf5.h>
 
 namespace cumes {
 namespace {
@@ -52,7 +52,7 @@ herr_t putStrAttr(hid_t loc, const char* name, const std::string& value) {
 // dataset/dataspace/datatype/attribute is closed on every failure path.
 // H5Idec_ref closes any object class when its reference count reaches zero.
 class H5Closer {
- public:
+   public:
     explicit H5Closer(hid_t id) : id_(id) {}
     ~H5Closer() {
         if (id_ >= 0) H5Idec_ref(id_);
@@ -61,7 +61,7 @@ class H5Closer {
     H5Closer& operator=(const H5Closer&) = delete;
     hid_t get() const { return id_; }
 
- private:
+   private:
     hid_t id_;
 };
 
@@ -113,14 +113,14 @@ bool getStrAttr(hid_t loc, const char* name, std::string& out) {
     return true;
 }
 
-
 // ---------------------------------------------------------------------------
 // v1: active dimensions + complete provenance + boundary harmonics
 // ---------------------------------------------------------------------------
 class Hdf5V1Writer final : public Writer {
- public:
+   public:
     Status write_atomic(const EquilibriumSnapshot& snapshot,
-                        const RunReport& report, const OutputSpec& spec,
+                        const RunReport& report,
+                        const OutputSpec& spec,
                         const ValidatedProblem& problem) override {
         const FoldedBoundary& fb = problem.boundary();
         const int mpol = problem.shape().mpol;
@@ -133,17 +133,17 @@ class Hdf5V1Writer final : public Writer {
         const InputParams& ip = report.input_params;
 
         const std::string tmp = io_detail::tempPathFor(spec.path);
-        hid_t fid = H5Fcreate(tmp.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT,
-                              H5P_DEFAULT);
+        hid_t fid =
+            H5Fcreate(tmp.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
         if (fid < 0) return Status("HDF5 H5Fcreate failed for " + tmp);
         auto fail = [&](const std::string& msg) -> Status {
             H5Fclose(fid);
             remove(tmp.c_str());
             return Status("HDF5: " + msg);
         };
-#define H5_CHECK(expr, msg_)                                                   \
-    do {                                                                       \
-        if ((expr) < 0) return fail(std::string(msg_));                        \
+#define H5_CHECK(expr, msg_)                            \
+    do {                                                \
+        if ((expr) < 0) return fail(std::string(msg_)); \
     } while (0)
 
         auto writeArray = [&](const char* name, hid_t dtype, int nd,
@@ -165,8 +165,8 @@ class Hdf5V1Writer final : public Writer {
         const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
                                     "rmnss", "zmncs", "lmncs"};
         for (int c = 0; c < 6; ++c) {
-            const std::vector<double>& dbuf =
-                snapshot.component(static_cast<EquilibriumSnapshot::Component>(c));
+            const std::vector<double>& dbuf = snapshot.component(
+                static_cast<EquilibriumSnapshot::Component>(c));
             if (dbuf.size() != snapshot.family_size()) {
                 return fail("family size mismatch");
             }
@@ -204,7 +204,8 @@ class Hdf5V1Writer final : public Writer {
         const int dirty = report.build.dirty ? 1 : 0;
         H5_CHECK(putAttr(fid, "precision", H5T_NATIVE_INT, &precision),
                  "attr precision");
-        H5_CHECK(putAttr(fid, "status", H5T_NATIVE_INT, &status), "attr status");
+        H5_CHECK(putAttr(fid, "status", H5T_NATIVE_INT, &status),
+                 "attr status");
         H5_CHECK(putAttr(fid, "total_iterations", H5T_NATIVE_INT,
                          &report.total_effective_iterations),
                  "attr total_iterations");
@@ -216,9 +217,9 @@ class Hdf5V1Writer final : public Writer {
                  "attr build_type");
         H5_CHECK(putStrAttr(fid, "scalar_type", report.build.scalar_type),
                  "attr scalar_type");
-        H5_CHECK(putStrAttr(fid, "precision_policy",
-                            report.build.precision_policy),
-                 "attr precision_policy");
+        H5_CHECK(
+            putStrAttr(fid, "precision_policy", report.build.precision_policy),
+            "attr precision_policy");
         H5_CHECK(putStrAttr(fid, "compile_flags", report.build.compile_flags),
                  "attr compile_flags");
         H5_CHECK(putStrAttr(fid, "source_path", report.input.source_path),
@@ -248,10 +249,11 @@ class Hdf5V1Writer final : public Writer {
                  "attr delt");
         H5_CHECK(putAttr(fid, "phiedge", H5T_NATIVE_DOUBLE, &ip.phiedge),
                  "attr phiedge");
-        H5_CHECK(putAttr(fid, "pres_scale", H5T_NATIVE_DOUBLE,
-                         &ip.pres_scale), "attr pres_scale");
+        H5_CHECK(putAttr(fid, "pres_scale", H5T_NATIVE_DOUBLE, &ip.pres_scale),
+                 "attr pres_scale");
         H5_CHECK(putAttr(fid, "adiabatic_index", H5T_NATIVE_DOUBLE,
-                         &ip.adiabatic_index), "attr adiabatic_index");
+                         &ip.adiabatic_index),
+                 "attr adiabatic_index");
         H5_CHECK(putAttr(fid, "spres_ped", H5T_NATIVE_DOUBLE, &ip.spres_ped),
                  "attr spres_ped");
         H5_CHECK(putAttr(fid, "bloat", H5T_NATIVE_DOUBLE, &ip.bloat),
@@ -286,17 +288,21 @@ class Hdf5V1Writer final : public Writer {
                 stg_ftol[g] = ip.stages[g].ftol;
             }
             H5_CHECK(writeArray("stage_in_ns", H5T_NATIVE_INT, 1, d_in,
-                                stg_in_ns.data()), "write stage_in_ns");
+                                stg_in_ns.data()),
+                     "write stage_in_ns");
             H5_CHECK(writeArray("stage_max_iter", H5T_NATIVE_INT, 1, d_in,
-                                stg_max_iter.data()), "write stage_max_iter");
+                                stg_max_iter.data()),
+                     "write stage_max_iter");
             H5_CHECK(writeArray("stage_ftol", H5T_NATIVE_DOUBLE, 1, d_in,
-                                stg_ftol.data()), "write stage_ftol");
+                                stg_ftol.data()),
+                     "write stage_ftol");
         }
 
         // ---- stage history + restart arrays (active dims) ----
         std::vector<int> stage_ns(nstages), stage_iter(nstages),
             stage_conv(nstages), rst_off(nstages);
-        std::vector<double> st_fsqr(nstages), st_fsqz(nstages), st_fsql(nstages);
+        std::vector<double> st_fsqr(nstages), st_fsqz(nstages),
+            st_fsql(nstages);
         std::vector<int> rst_iter(nrestarts);
         size_t r = 0;
         for (size_t g = 0; g < nstages; ++g) {
@@ -313,19 +319,26 @@ class Hdf5V1Writer final : public Writer {
         const hsize_t d_stages[1] = {nstages};
         const hsize_t d_restarts[1] = {nrestarts};
         H5_CHECK(writeArray("stage_ns", H5T_NATIVE_INT, 1, d_stages,
-                            stage_ns.data()), "write stage_ns");
+                            stage_ns.data()),
+                 "write stage_ns");
         H5_CHECK(writeArray("stage_iterations", H5T_NATIVE_INT, 1, d_stages,
-                            stage_iter.data()), "write stage_iterations");
+                            stage_iter.data()),
+                 "write stage_iterations");
         H5_CHECK(writeArray("stage_converged", H5T_NATIVE_INT, 1, d_stages,
-                            stage_conv.data()), "write stage_converged");
+                            stage_conv.data()),
+                 "write stage_converged");
         H5_CHECK(writeArray("stage_fsqr", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsqr.data()), "write stage_fsqr");
+                            st_fsqr.data()),
+                 "write stage_fsqr");
         H5_CHECK(writeArray("stage_fsqz", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsqz.data()), "write stage_fsqz");
+                            st_fsqz.data()),
+                 "write stage_fsqz");
         H5_CHECK(writeArray("stage_fsql", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsql.data()), "write stage_fsql");
+                            st_fsql.data()),
+                 "write stage_fsql");
         H5_CHECK(writeArray("restart_stage_offset", H5T_NATIVE_INT, 1, d_stages,
-                            rst_off.data()), "write restart_stage_offset");
+                            rst_off.data()),
+                 "write restart_stage_offset");
         if (nrestarts > 0) {
             H5_CHECK(writeArray("restart_iteration", H5T_NATIVE_INT, 1,
                                 d_restarts, rst_iter.data()),
@@ -339,38 +352,48 @@ class Hdf5V1Writer final : public Writer {
         if (nrbc > 0) {
             const hsize_t d_r[1] = {nrbc};
             for (size_t i = 0; i < nrbc; ++i) {
-                hm[i] = rbc[i].m; hn[i] = rbc[i].n; hv[i] = rbc[i].value;
+                hm[i] = rbc[i].m;
+                hn[i] = rbc[i].n;
+                hv[i] = rbc[i].value;
             }
             H5_CHECK(writeArray("rbc_m", H5T_NATIVE_INT, 1, d_r, hm.data()),
                      "write rbc_m");
             H5_CHECK(writeArray("rbc_n", H5T_NATIVE_INT, 1, d_r, hn.data()),
                      "write rbc_n");
-            H5_CHECK(writeArray("rbc_value", H5T_NATIVE_DOUBLE, 1, d_r,
-                                hv.data()), "write rbc_value");
+            H5_CHECK(
+                writeArray("rbc_value", H5T_NATIVE_DOUBLE, 1, d_r, hv.data()),
+                "write rbc_value");
         }
         if (nzbs > 0) {
             const hsize_t d_z[1] = {nzbs};
             for (size_t i = 0; i < nzbs; ++i) {
-                hm[i] = zbs[i].m; hn[i] = zbs[i].n; hv[i] = zbs[i].value;
+                hm[i] = zbs[i].m;
+                hn[i] = zbs[i].n;
+                hv[i] = zbs[i].value;
             }
             H5_CHECK(writeArray("zbs_m", H5T_NATIVE_INT, 1, d_z, hm.data()),
                      "write zbs_m");
             H5_CHECK(writeArray("zbs_n", H5T_NATIVE_INT, 1, d_z, hn.data()),
                      "write zbs_n");
-            H5_CHECK(writeArray("zbs_value", H5T_NATIVE_DOUBLE, 1, d_z,
-                                hv.data()), "write zbs_value");
+            H5_CHECK(
+                writeArray("zbs_value", H5T_NATIVE_DOUBLE, 1, d_z, hv.data()),
+                "write zbs_value");
         }
 
         // ---- folded boundary matrices (active mpol x (ntor+1)) ----
         const hsize_t bnd_dims[2] = {(hsize_t)mpol, (hsize_t)ntorp1};
-        H5_CHECK(writeArray("rbcc", H5T_NATIVE_DOUBLE, 2, bnd_dims,
-                            fb.rbcc.data()), "write rbcc");
-        H5_CHECK(writeArray("rbss", H5T_NATIVE_DOUBLE, 2, bnd_dims,
-                            fb.rbss.data()), "write rbss");
-        H5_CHECK(writeArray("zbsc", H5T_NATIVE_DOUBLE, 2, bnd_dims,
-                            fb.zbsc.data()), "write zbsc");
-        H5_CHECK(writeArray("zbcs", H5T_NATIVE_DOUBLE, 2, bnd_dims,
-                            fb.zbcs.data()), "write zbcs");
+        H5_CHECK(
+            writeArray("rbcc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbcc.data()),
+            "write rbcc");
+        H5_CHECK(
+            writeArray("rbss", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbss.data()),
+            "write rbss");
+        H5_CHECK(
+            writeArray("zbsc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbsc.data()),
+            "write zbsc");
+        H5_CHECK(
+            writeArray("zbcs", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbcs.data()),
+            "write zbcs");
 
         if (H5Fclose(fid) < 0) {
             remove(tmp.c_str());
@@ -390,7 +413,7 @@ class Hdf5V1Writer final : public Writer {
 // v1 reader: round-trips the state AND the complete RunReport
 // ---------------------------------------------------------------------------
 class Hdf5V1Reader final : public Reader {
- public:
+   public:
     Result<EquilibriumSnapshot> read(const std::string& path,
                                      RunReport* report) override {
         hid_t fid = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
@@ -405,434 +428,456 @@ class Hdf5V1Reader final : public Reader {
         // errors, never exceptions across the Reader interface
         // (reader-rank-hardening handoff §4).
         try {
-        // ---- exact-rank dataspace helpers (reader-rank-hardening §3) --------
-        // H5Sget_simple_extent_ndims is queried BEFORE H5Sget_simple_extent_
-        // dims: the latter writes `rank` dimension values into the caller's
-        // buffer, so a higher-rank dataspace would overflow it.
-        auto getDimExact = [&](const char* name, int rank,
-                               hsize_t* dims) -> bool {
-            H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
-            if (ds.get() < 0) return false;
-            H5Closer sp(H5Dget_space(ds.get()));
-            if (sp.get() < 0) return false;
-            const int ndims = H5Sget_simple_extent_ndims(sp.get());
-            if (ndims != rank) return false;
-            return H5Sget_simple_extent_dims(sp.get(), dims, nullptr) == rank;
-        };
-        // Portable schema integer: signed, native-int width (32 bits on all
-        // supported builds). Endian conversion remains intentionally allowed.
-        auto typeIsSchemaInteger = [&](hid_t ty) -> bool {
-            return ty >= 0 && H5Tget_class(ty) == H5T_INTEGER &&
-                   H5Tget_size(ty) == sizeof(int) &&
-                   H5Tget_sign(ty) == H5T_SGN_2;
-        };
-        auto datasetIsInteger = [&](hid_t ds) -> bool {
-            H5Closer ty(H5Dget_type(ds));
-            return typeIsSchemaInteger(ty.get());
-        };
-        auto datasetIsDouble = [&](hid_t ds) -> bool {
-            H5Closer ty(H5Dget_type(ds));
-            return ty.get() >= 0 && H5Tget_class(ty.get()) == H5T_FLOAT &&
-                   H5Tget_size(ty.get()) == sizeof(double);
-        };
-        // Scalar-or-one-element attribute, integer type, exact 4-byte size,
-        // and a checked element count before the single-int read.
-        auto getIntAttr = [&](const char* name, int& out) -> bool {
-            H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
-            if (aid.get() < 0) return false;
-            {
-                H5Closer sp(H5Aget_space(aid.get()));
+            // ---- exact-rank dataspace helpers (reader-rank-hardening §3)
+            // -------- H5Sget_simple_extent_ndims is queried BEFORE
+            // H5Sget_simple_extent_ dims: the latter writes `rank` dimension
+            // values into the caller's buffer, so a higher-rank dataspace would
+            // overflow it.
+            auto getDimExact = [&](const char* name, int rank,
+                                   hsize_t* dims) -> bool {
+                H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+                if (ds.get() < 0) return false;
+                H5Closer sp(H5Dget_space(ds.get()));
                 if (sp.get() < 0) return false;
                 const int ndims = H5Sget_simple_extent_ndims(sp.get());
-                hssize_t npts = 1;
-                if (ndims == 1) {
-                    hsize_t ext[1] = {0};
-                    if (H5Sget_simple_extent_dims(sp.get(), ext, nullptr) < 0) {
+                if (ndims != rank) return false;
+                return H5Sget_simple_extent_dims(sp.get(), dims, nullptr) ==
+                       rank;
+            };
+            // Portable schema integer: signed, native-int width (32 bits on all
+            // supported builds). Endian conversion remains intentionally
+            // allowed.
+            auto typeIsSchemaInteger = [&](hid_t ty) -> bool {
+                return ty >= 0 && H5Tget_class(ty) == H5T_INTEGER &&
+                       H5Tget_size(ty) == sizeof(int) &&
+                       H5Tget_sign(ty) == H5T_SGN_2;
+            };
+            auto datasetIsInteger = [&](hid_t ds) -> bool {
+                H5Closer ty(H5Dget_type(ds));
+                return typeIsSchemaInteger(ty.get());
+            };
+            auto datasetIsDouble = [&](hid_t ds) -> bool {
+                H5Closer ty(H5Dget_type(ds));
+                return ty.get() >= 0 && H5Tget_class(ty.get()) == H5T_FLOAT &&
+                       H5Tget_size(ty.get()) == sizeof(double);
+            };
+            // Scalar-or-one-element attribute, integer type, exact 4-byte size,
+            // and a checked element count before the single-int read.
+            auto getIntAttr = [&](const char* name, int& out) -> bool {
+                H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
+                if (aid.get() < 0) return false;
+                {
+                    H5Closer sp(H5Aget_space(aid.get()));
+                    if (sp.get() < 0) return false;
+                    const int ndims = H5Sget_simple_extent_ndims(sp.get());
+                    hssize_t npts = 1;
+                    if (ndims == 1) {
+                        hsize_t ext[1] = {0};
+                        if (H5Sget_simple_extent_dims(sp.get(), ext, nullptr) <
+                            0) {
+                            return false;
+                        }
+                        npts = (hssize_t)ext[0];
+                    } else if (ndims != 0) {
                         return false;
                     }
-                    npts = (hssize_t)ext[0];
-                } else if (ndims != 0) {
-                    return false;
+                    if (npts != 1) return false;
                 }
-                if (npts != 1) return false;
-            }
-            H5Closer ty(H5Aget_type(aid.get()));
-            if (!typeIsSchemaInteger(ty.get())) return false;
-            return H5Aread(aid.get(), H5T_NATIVE_INT, &out) >= 0;
-        };
-        // 1-D integer/double vectors with exact rank, extent, and datatype.
-        auto getIntArr = [&](const char* name, std::vector<int>& out,
-                             size_t expect) -> bool {
-            H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
-            if (ds.get() < 0) return false;
-            hsize_t dims[1] = {0};
-            if (!getDimExact(name, 1, dims)) return false;
-            if (dims[0] != expect) return false;
-            if (!datasetIsInteger(ds.get())) return false;
-            const auto bytes = checked_mul(expect, sizeof(int));
-            if (!bytes) return false;
-            out.resize(expect);
-            return H5Dread(ds.get(), H5T_NATIVE_INT, H5S_ALL, H5S_ALL,
-                           H5P_DEFAULT, out.data()) >= 0;
-        };
-        auto getDblArr = [&](const char* name, std::vector<double>& out,
-                             size_t expect) -> bool {
-            H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
-            if (ds.get() < 0) return false;
-            hsize_t dims[1] = {0};
-            if (!getDimExact(name, 1, dims)) return false;
-            if (dims[0] != expect) return false;
-            if (!datasetIsDouble(ds.get())) return false;
-            const auto bytes = checked_mul(expect, sizeof(double));
-            if (!bytes) return false;
-            out.resize(expect);
-            return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
-                           H5P_DEFAULT, out.data()) >= 0;
-        };
-        // Scalar-or-one-element double attribute with the same dataspace
-        // hardening as getIntAttr and an exact 8-byte float type.
-        auto getDblAttr = [&](const char* name, double& out) -> bool {
-            H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
-            if (aid.get() < 0) return false;
-            {
-                H5Closer sp(H5Aget_space(aid.get()));
-                if (sp.get() < 0) return false;
-                const int ndims = H5Sget_simple_extent_ndims(sp.get());
-                hssize_t npts = 1;
-                if (ndims == 1) {
-                    hsize_t ext[1] = {0};
-                    if (H5Sget_simple_extent_dims(sp.get(), ext, nullptr) < 0) {
+                H5Closer ty(H5Aget_type(aid.get()));
+                if (!typeIsSchemaInteger(ty.get())) return false;
+                return H5Aread(aid.get(), H5T_NATIVE_INT, &out) >= 0;
+            };
+            // 1-D integer/double vectors with exact rank, extent, and datatype.
+            auto getIntArr = [&](const char* name, std::vector<int>& out,
+                                 size_t expect) -> bool {
+                H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+                if (ds.get() < 0) return false;
+                hsize_t dims[1] = {0};
+                if (!getDimExact(name, 1, dims)) return false;
+                if (dims[0] != expect) return false;
+                if (!datasetIsInteger(ds.get())) return false;
+                const auto bytes = checked_mul(expect, sizeof(int));
+                if (!bytes) return false;
+                out.resize(expect);
+                return H5Dread(ds.get(), H5T_NATIVE_INT, H5S_ALL, H5S_ALL,
+                               H5P_DEFAULT, out.data()) >= 0;
+            };
+            auto getDblArr = [&](const char* name, std::vector<double>& out,
+                                 size_t expect) -> bool {
+                H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+                if (ds.get() < 0) return false;
+                hsize_t dims[1] = {0};
+                if (!getDimExact(name, 1, dims)) return false;
+                if (dims[0] != expect) return false;
+                if (!datasetIsDouble(ds.get())) return false;
+                const auto bytes = checked_mul(expect, sizeof(double));
+                if (!bytes) return false;
+                out.resize(expect);
+                return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+                               H5P_DEFAULT, out.data()) >= 0;
+            };
+            // Scalar-or-one-element double attribute with the same dataspace
+            // hardening as getIntAttr and an exact 8-byte float type.
+            auto getDblAttr = [&](const char* name, double& out) -> bool {
+                H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
+                if (aid.get() < 0) return false;
+                {
+                    H5Closer sp(H5Aget_space(aid.get()));
+                    if (sp.get() < 0) return false;
+                    const int ndims = H5Sget_simple_extent_ndims(sp.get());
+                    hssize_t npts = 1;
+                    if (ndims == 1) {
+                        hsize_t ext[1] = {0};
+                        if (H5Sget_simple_extent_dims(sp.get(), ext, nullptr) <
+                            0) {
+                            return false;
+                        }
+                        npts = (hssize_t)ext[0];
+                    } else if (ndims != 0) {
                         return false;
                     }
-                    npts = (hssize_t)ext[0];
-                } else if (ndims != 0) {
+                    if (npts != 1) return false;
+                }
+                H5Closer ty(H5Aget_type(aid.get()));
+                if (ty.get() < 0) return false;
+                if (!(H5Tget_class(ty.get()) == H5T_FLOAT &&
+                      H5Tget_size(ty.get()) == sizeof(double))) {
                     return false;
                 }
-                if (npts != 1) return false;
-            }
-            H5Closer ty(H5Aget_type(aid.get()));
-            if (ty.get() < 0) return false;
-            if (!(H5Tget_class(ty.get()) == H5T_FLOAT &&
-                  H5Tget_size(ty.get()) == sizeof(double))) {
-                return false;
-            }
-            return H5Aread(aid.get(), H5T_NATIVE_DOUBLE, &out) >= 0;
-        };
-        // 2-D double matrix with exact rank and extents (the folded boundary
-        // datasets, stored in the writer's C order — row stride = expect1).
-        auto getDblMat = [&](const char* name, std::vector<double>& out,
-                             size_t expect0, size_t expect1) -> bool {
-            H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
-            if (ds.get() < 0) return false;
-            hsize_t dims[2] = {0, 0};
-            if (!getDimExact(name, 2, dims)) return false;
-            if (dims[0] != expect0 || dims[1] != expect1) return false;
-            if (!datasetIsDouble(ds.get())) return false;
-            const auto el = checked_mul(expect0, expect1);
-            if (!el) return false;
-            const auto bytes = checked_mul(*el, sizeof(double));
-            if (!bytes) return false;
-            out.resize(*el);
-            return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
-                           H5P_DEFAULT, out.data()) >= 0;
-        };
+                return H5Aread(aid.get(), H5T_NATIVE_DOUBLE, &out) >= 0;
+            };
+            // 2-D double matrix with exact rank and extents (the folded
+            // boundary datasets, stored in the writer's C order — row stride =
+            // expect1).
+            auto getDblMat = [&](const char* name, std::vector<double>& out,
+                                 size_t expect0, size_t expect1) -> bool {
+                H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+                if (ds.get() < 0) return false;
+                hsize_t dims[2] = {0, 0};
+                if (!getDimExact(name, 2, dims)) return false;
+                if (dims[0] != expect0 || dims[1] != expect1) return false;
+                if (!datasetIsDouble(ds.get())) return false;
+                const auto el = checked_mul(expect0, expect1);
+                if (!el) return false;
+                const auto bytes = checked_mul(*el, sizeof(double));
+                if (!bytes) return false;
+                out.resize(*el);
+                return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+                               H5P_DEFAULT, out.data()) >= 0;
+            };
 
-        hsize_t state_dims[2] = {0, 0};
-        if (!getDimExact("rmncc", 2, state_dims)) {
-            return fail("missing/malformed state dataset (rmncc)");
-        }
-        // Bounds BEFORE narrowing and allocation (handoff §4): dimensions
-        // must fit the EquilibriumSnapshot int fields.
-        if (state_dims[0] < 1 || state_dims[1] < 1 ||
-            state_dims[0] > INT_MAX || state_dims[1] > INT_MAX) {
-            return fail("bad state dimensions");
-        }
-        const int ns = static_cast<int>(state_dims[0]);
-        const int mnmax = static_cast<int>(state_dims[1]);
-        const auto n_opt = checked_mul((size_t)ns, (size_t)mnmax);
-        if (!n_opt) return fail("dimension product overflows size_t");
-        if (*n_opt > cumes::io_detail::kMaxStateElementsPerFamily) {
-            return fail("state dimensions exceed the resource cap");
-        }
-        {
-            const auto bytes = checked_mul(*n_opt, sizeof(double));
-            if (!bytes) return fail("state byte count overflows size_t");
-        }
+            hsize_t state_dims[2] = {0, 0};
+            if (!getDimExact("rmncc", 2, state_dims)) {
+                return fail("missing/malformed state dataset (rmncc)");
+            }
+            // Bounds BEFORE narrowing and allocation (handoff §4): dimensions
+            // must fit the EquilibriumSnapshot int fields.
+            if (state_dims[0] < 1 || state_dims[1] < 1 ||
+                state_dims[0] > INT_MAX || state_dims[1] > INT_MAX) {
+                return fail("bad state dimensions");
+            }
+            const int ns = static_cast<int>(state_dims[0]);
+            const int mnmax = static_cast<int>(state_dims[1]);
+            const auto n_opt = checked_mul((size_t)ns, (size_t)mnmax);
+            if (!n_opt) return fail("dimension product overflows size_t");
+            if (*n_opt > cumes::io_detail::kMaxStateElementsPerFamily) {
+                return fail("state dimensions exceed the resource cap");
+            }
+            {
+                const auto bytes = checked_mul(*n_opt, sizeof(double));
+                if (!bytes) return fail("state byte count overflows size_t");
+            }
 
-        EquilibriumSnapshot snapshot;
-        snapshot.ns = ns;
-        snapshot.mnmax = mnmax;
-        const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
-                                    "rmnss", "zmncs", "lmncs"};
-        // The file layout is [surface, mode] (C order over the (ns, mnmax)
-        // dataspace) while the snapshot is mode-major (index = m*ns + j). A
-        // whole-slab read must therefore TRANSPOSE — the exact
-        // declaration/data-order trap the blueprint pins (completion plan
-        // step 2.3). The writers use per-mode hyperslabs, which is the
-        // transpose-aware mirror image.
-        std::vector<double> tmp(*n_opt);
-        for (int c = 0; c < 6; ++c) {
-            // EVERY family must independently satisfy rank 2 + the exact
-            // [ns, mnmax] extents + a double-compatible type before the read
-            // (reader-rank-hardening §3): rmncc alone no longer vouches for
-            // the other five.
-            H5Closer ds(H5Dopen2(fid, fam_names[c], H5P_DEFAULT));
-            if (ds.get() < 0) {
-                return fail("missing state dataset (" +
-                            std::string(fam_names[c]) + ")");
-            }
-            hsize_t fam_dims[2] = {0, 0};
-            if (!getDimExact(fam_names[c], 2, fam_dims) ||
-                fam_dims[0] != state_dims[0] || fam_dims[1] != state_dims[1]) {
-                return fail("malformed state dataset (" +
-                            std::string(fam_names[c]) + ")");
-            }
-            if (!datasetIsDouble(ds.get())) {
-                return fail("malformed state dataset type (" +
-                            std::string(fam_names[c]) + ")");
-            }
-            H5Closer sp(H5Screate_simple(2, state_dims, nullptr));
-            if (sp.get() < 0) return fail("state read failed");
-            const herr_t r = H5Dread(ds.get(), H5T_NATIVE_DOUBLE, sp.get(),
-                                     H5S_ALL, H5P_DEFAULT, tmp.data());
-            if (r < 0) return fail("state read failed");
-            snapshot.families[c].resize(*n_opt);
-            for (int m = 0; m < mnmax; ++m) {
-                for (int j = 0; j < ns; ++j) {
-                    snapshot.families[c][(size_t)m * ns + j] =
-                        tmp[(size_t)j * mnmax + m];
+            EquilibriumSnapshot snapshot;
+            snapshot.ns = ns;
+            snapshot.mnmax = mnmax;
+            const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
+                                        "rmnss", "zmncs", "lmncs"};
+            // The file layout is [surface, mode] (C order over the (ns, mnmax)
+            // dataspace) while the snapshot is mode-major (index = m*ns + j). A
+            // whole-slab read must therefore TRANSPOSE — the exact
+            // declaration/data-order trap the blueprint pins (completion plan
+            // step 2.3). The writers use per-mode hyperslabs, which is the
+            // transpose-aware mirror image.
+            std::vector<double> tmp(*n_opt);
+            for (int c = 0; c < 6; ++c) {
+                // EVERY family must independently satisfy rank 2 + the exact
+                // [ns, mnmax] extents + a double-compatible type before the
+                // read (reader-rank-hardening §3): rmncc alone no longer
+                // vouches for the other five.
+                H5Closer ds(H5Dopen2(fid, fam_names[c], H5P_DEFAULT));
+                if (ds.get() < 0) {
+                    return fail("missing state dataset (" +
+                                std::string(fam_names[c]) + ")");
                 }
-            }
-        }
-        if (report) {
-            // Parse transactionally: a malformed late field must not leave a
-            // partially populated report visible to the caller.
-            RunReport parsed_report;
-            int precision = 0, status = 0, total = 0, dirty = 0;
-            if (!getIntAttr("precision", precision) ||
-                !getIntAttr("status", status) ||
-                !getIntAttr("total_iterations", total) ||
-                !getIntAttr("build_dirty", dirty)) {
-                return fail("missing run outcome attributes");
-            }
-            // Closed-range validation of the serialized scalars (handoff §4).
-            if (precision < 0 || precision > 1) {
-                return fail("invalid precision scalar");
-            }
-            if (status < 0 || status > 4) {
-                return fail("invalid run status scalar");
-            }
-            if (total < 0) {
-                return fail("negative total iteration count");
-            }
-            if (dirty != 0 && dirty != 1) {
-                return fail("invalid build_dirty scalar");
-            }
-            parsed_report.status = static_cast<RunStatus>(status);
-            parsed_report.total_effective_iterations = total;
-            parsed_report.build.dirty = (dirty != 0);
-            parsed_report.build.scalar_type =
-                (precision == 0) ? "double" : "float";
-            if (!getStrAttr(fid, "revision", parsed_report.build.revision) ||
-                !getStrAttr(fid, "build_type", parsed_report.build.build_type) ||
-                !getStrAttr(fid, "precision_policy",
-                            parsed_report.build.precision_policy) ||
-                !getStrAttr(fid, "compile_flags",
-                            parsed_report.build.compile_flags) ||
-                !getStrAttr(fid, "source_path",
-                            parsed_report.input.source_path) ||
-                !getStrAttr(fid, "source_hash",
-                            parsed_report.input.source_hash) ||
-                !getStrAttr(fid, "gpu_name", parsed_report.runtime.gpu_name) ||
-                !getStrAttr(fid, "driver", parsed_report.runtime.driver) ||
-                !getStrAttr(fid, "runtime", parsed_report.runtime.runtime) ||
-                !getStrAttr(fid, "toolkit", parsed_report.runtime.toolkit)) {
-                return fail("missing provenance attributes");
-            }
-            hsize_t d_stages[1] = {0};
-            if (!getDimExact("stage_ns", 1, d_stages)) {
-                return fail("missing/malformed stage_ns");
-            }
-            const size_t nstages = (size_t)d_stages[0];
-            // restart_iteration is OPTIONAL only in the sense of being
-            // absent: when the dataset exists it must be rank 1 (a rank-0 or
-            // rank-2 dataset is malformed and must fail, not be skipped).
-            hsize_t d_restarts[1] = {0};
-            size_t nrestarts = 0;
-            {
-                H5Closer probe(H5Dopen2(fid, "restart_iteration",
-                                        H5P_DEFAULT));
-                if (probe.get() >= 0 &&
-                    !getDimExact("restart_iteration", 1, d_restarts)) {
-                    return fail("malformed restart_iteration dataset");
+                hsize_t fam_dims[2] = {0, 0};
+                if (!getDimExact(fam_names[c], 2, fam_dims) ||
+                    fam_dims[0] != state_dims[0] ||
+                    fam_dims[1] != state_dims[1]) {
+                    return fail("malformed state dataset (" +
+                                std::string(fam_names[c]) + ")");
                 }
-                if (probe.get() >= 0) nrestarts = (size_t)d_restarts[0];
-            }
-            // Documented stage/restart resource caps (handoff §4).
-            if (nstages > cumes::io_detail::kMaxStageCount ||
-                nrestarts > cumes::io_detail::kMaxStageCount) {
-                return fail("stage/restart dimensions exceed the resource cap");
-            }
-            std::vector<int> stage_ns, stage_iter, stage_conv, rst_off;
-            std::vector<double> st_fsqr, st_fsqz, st_fsql;
-            std::vector<int> rst_iter;
-            if (!getIntArr("stage_ns", stage_ns, nstages) ||
-                !getIntArr("stage_iterations", stage_iter, nstages) ||
-                !getIntArr("stage_converged", stage_conv, nstages) ||
-                !getIntArr("restart_stage_offset", rst_off, nstages) ||
-                !getDblArr("stage_fsqr", st_fsqr, nstages) ||
-                !getDblArr("stage_fsqz", st_fsqz, nstages) ||
-                !getDblArr("stage_fsql", st_fsql, nstages) ||
-                (nrestarts > 0 &&
-                 !getIntArr("restart_iteration", rst_iter, nrestarts))) {
-                return fail("stage history read failed");
-            }
-            // Validate the offsets BEFORE they index rst_iter (completion-plan
-            // follow-up §2.2): negative, descending, oversized, or non-zero
-            // first offsets must fail cleanly instead of reading out of
-            // bounds.
-            {
-                const std::string off_err =
-                    validateRestartOffsets(rst_off, nstages, nrestarts);
-                if (!off_err.empty()) {
-                    return fail("invalid restart offsets: " + off_err);
+                if (!datasetIsDouble(ds.get())) {
+                    return fail("malformed state dataset type (" +
+                                std::string(fam_names[c]) + ")");
                 }
-            }
-            for (size_t g = 0; g < nstages; ++g) {
-                if (stage_ns[g] <= 0) {
-                    return fail("nonpositive stage surface count");
-                }
-                if (stage_iter[g] < 0) {
-                    return fail("negative stage iteration count");
-                }
-                if (stage_conv[g] != 0 && stage_conv[g] != 1) {
-                    return fail("invalid stage_converged value");
-                }
-            }
-            for (int iteration : rst_iter) {
-                if (iteration < 0) {
-                    return fail("negative restart iteration");
-                }
-            }
-            for (size_t g = 0; g < nstages; ++g) {
-                StageReport st;
-                st.ns = stage_ns[g];
-                st.effective_iterations = stage_iter[g];
-                st.converged = (stage_conv[g] != 0);
-                st.final_residual.fsqr = st_fsqr[g];
-                st.final_residual.fsqz = st_fsqz[g];
-                st.final_residual.fsql = st_fsql[g];
-                const size_t begin = (size_t)rst_off[g];
-                const size_t end = (g + 1 < nstages) ? (size_t)rst_off[g + 1]
-                                                     : nrestarts;
-                for (size_t k = begin; k < end; ++k) {
-                    st.restarts.push_back(RestartEvent{rst_iter[k]});
-                }
-                parsed_report.stages.push_back(std::move(st));
-            }
-            // ---- embedded normalized-input record ----
-            // All-or-nothing: when the mpol attribute exists the full record
-            // is required (pre-record containers keep the default-empty
-            // InputParams); every read gets the exact-rank/type/extent
-            // hardening above.
-            {
-                H5Closer aid(H5Aopen(fid, "mpol", H5P_DEFAULT));
-                if (aid.get() >= 0) {
-                    InputParams ip;
-                    if (!getIntAttr("mpol", ip.mpol) ||
-                        !getIntAttr("ntor", ip.ntor) ||
-                        !getIntAttr("nfp", ip.nfp) ||
-                        !getIntAttr("ntheta", ip.ntheta) ||
-                        !getIntAttr("nzeta", ip.nzeta) ||
-                        !getIntAttr("ncurr", ip.ncurr) ||
-                        !getDblAttr("delt", ip.delt) ||
-                        !getDblAttr("phiedge", ip.phiedge) ||
-                        !getDblAttr("pres_scale", ip.pres_scale) ||
-                        !getDblAttr("adiabatic_index", ip.adiabatic_index) ||
-                        !getDblAttr("spres_ped", ip.spres_ped) ||
-                        !getDblAttr("bloat", ip.bloat) ||
-                        !getDblAttr("curtor", ip.curtor) ||
-                        !getDblAttr("tcon0", ip.tcon0)) {
-                        return fail("malformed embedded input record");
+                H5Closer sp(H5Screate_simple(2, state_dims, nullptr));
+                if (sp.get() < 0) return fail("state read failed");
+                const herr_t r = H5Dread(ds.get(), H5T_NATIVE_DOUBLE, sp.get(),
+                                         H5S_ALL, H5P_DEFAULT, tmp.data());
+                if (r < 0) return fail("state read failed");
+                snapshot.families[c].resize(*n_opt);
+                for (int m = 0; m < mnmax; ++m) {
+                    for (int j = 0; j < ns; ++j) {
+                        snapshot.families[c][(size_t)m * ns + j] =
+                            tmp[(size_t)j * mnmax + m];
                     }
-                    {
-                        auto getVec = [&](const char* name,
-                                          std::vector<double>& out) -> bool {
-                            hsize_t dims[1] = {0};
-                            if (!getDimExact(name, 1, dims)) return false;
-                            return getDblArr(name, out, (size_t)dims[0]);
-                        };
-                        if (!getVec("am", ip.am) || !getVec("ac", ip.ac) ||
-                            !getVec("ai", ip.ai) || !getVec("aphi", ip.aphi) ||
-                            !getVec("raxis_c", ip.raxis_c) ||
-                            !getVec("zaxis_s", ip.zaxis_s)) {
+                }
+            }
+            if (report) {
+                // Parse transactionally: a malformed late field must not leave
+                // a partially populated report visible to the caller.
+                RunReport parsed_report;
+                int precision = 0, status = 0, total = 0, dirty = 0;
+                if (!getIntAttr("precision", precision) ||
+                    !getIntAttr("status", status) ||
+                    !getIntAttr("total_iterations", total) ||
+                    !getIntAttr("build_dirty", dirty)) {
+                    return fail("missing run outcome attributes");
+                }
+                // Closed-range validation of the serialized scalars (handoff
+                // §4).
+                if (precision < 0 || precision > 1) {
+                    return fail("invalid precision scalar");
+                }
+                if (status < 0 || status > 4) {
+                    return fail("invalid run status scalar");
+                }
+                if (total < 0) {
+                    return fail("negative total iteration count");
+                }
+                if (dirty != 0 && dirty != 1) {
+                    return fail("invalid build_dirty scalar");
+                }
+                parsed_report.status = static_cast<RunStatus>(status);
+                parsed_report.total_effective_iterations = total;
+                parsed_report.build.dirty = (dirty != 0);
+                parsed_report.build.scalar_type =
+                    (precision == 0) ? "double" : "float";
+                if (!getStrAttr(fid, "revision",
+                                parsed_report.build.revision) ||
+                    !getStrAttr(fid, "build_type",
+                                parsed_report.build.build_type) ||
+                    !getStrAttr(fid, "precision_policy",
+                                parsed_report.build.precision_policy) ||
+                    !getStrAttr(fid, "compile_flags",
+                                parsed_report.build.compile_flags) ||
+                    !getStrAttr(fid, "source_path",
+                                parsed_report.input.source_path) ||
+                    !getStrAttr(fid, "source_hash",
+                                parsed_report.input.source_hash) ||
+                    !getStrAttr(fid, "gpu_name",
+                                parsed_report.runtime.gpu_name) ||
+                    !getStrAttr(fid, "driver", parsed_report.runtime.driver) ||
+                    !getStrAttr(fid, "runtime",
+                                parsed_report.runtime.runtime) ||
+                    !getStrAttr(fid, "toolkit",
+                                parsed_report.runtime.toolkit)) {
+                    return fail("missing provenance attributes");
+                }
+                hsize_t d_stages[1] = {0};
+                if (!getDimExact("stage_ns", 1, d_stages)) {
+                    return fail("missing/malformed stage_ns");
+                }
+                const size_t nstages = (size_t)d_stages[0];
+                // restart_iteration is OPTIONAL only in the sense of being
+                // absent: when the dataset exists it must be rank 1 (a rank-0
+                // or rank-2 dataset is malformed and must fail, not be
+                // skipped).
+                hsize_t d_restarts[1] = {0};
+                size_t nrestarts = 0;
+                {
+                    H5Closer probe(
+                        H5Dopen2(fid, "restart_iteration", H5P_DEFAULT));
+                    if (probe.get() >= 0 &&
+                        !getDimExact("restart_iteration", 1, d_restarts)) {
+                        return fail("malformed restart_iteration dataset");
+                    }
+                    if (probe.get() >= 0) nrestarts = (size_t)d_restarts[0];
+                }
+                // Documented stage/restart resource caps (handoff §4).
+                if (nstages > cumes::io_detail::kMaxStageCount ||
+                    nrestarts > cumes::io_detail::kMaxStageCount) {
+                    return fail(
+                        "stage/restart dimensions exceed the resource cap");
+                }
+                std::vector<int> stage_ns, stage_iter, stage_conv, rst_off;
+                std::vector<double> st_fsqr, st_fsqz, st_fsql;
+                std::vector<int> rst_iter;
+                if (!getIntArr("stage_ns", stage_ns, nstages) ||
+                    !getIntArr("stage_iterations", stage_iter, nstages) ||
+                    !getIntArr("stage_converged", stage_conv, nstages) ||
+                    !getIntArr("restart_stage_offset", rst_off, nstages) ||
+                    !getDblArr("stage_fsqr", st_fsqr, nstages) ||
+                    !getDblArr("stage_fsqz", st_fsqz, nstages) ||
+                    !getDblArr("stage_fsql", st_fsql, nstages) ||
+                    (nrestarts > 0 &&
+                     !getIntArr("restart_iteration", rst_iter, nrestarts))) {
+                    return fail("stage history read failed");
+                }
+                // Validate the offsets BEFORE they index rst_iter
+                // (completion-plan follow-up §2.2): negative, descending,
+                // oversized, or non-zero first offsets must fail cleanly
+                // instead of reading out of bounds.
+                {
+                    const std::string off_err =
+                        validateRestartOffsets(rst_off, nstages, nrestarts);
+                    if (!off_err.empty()) {
+                        return fail("invalid restart offsets: " + off_err);
+                    }
+                }
+                for (size_t g = 0; g < nstages; ++g) {
+                    if (stage_ns[g] <= 0) {
+                        return fail("nonpositive stage surface count");
+                    }
+                    if (stage_iter[g] < 0) {
+                        return fail("negative stage iteration count");
+                    }
+                    if (stage_conv[g] != 0 && stage_conv[g] != 1) {
+                        return fail("invalid stage_converged value");
+                    }
+                }
+                for (int iteration : rst_iter) {
+                    if (iteration < 0) {
+                        return fail("negative restart iteration");
+                    }
+                }
+                for (size_t g = 0; g < nstages; ++g) {
+                    StageReport st;
+                    st.ns = stage_ns[g];
+                    st.effective_iterations = stage_iter[g];
+                    st.converged = (stage_conv[g] != 0);
+                    st.final_residual.fsqr = st_fsqr[g];
+                    st.final_residual.fsqz = st_fsqz[g];
+                    st.final_residual.fsql = st_fsql[g];
+                    const size_t begin = (size_t)rst_off[g];
+                    const size_t end =
+                        (g + 1 < nstages) ? (size_t)rst_off[g + 1] : nrestarts;
+                    for (size_t k = begin; k < end; ++k) {
+                        st.restarts.push_back(RestartEvent{rst_iter[k]});
+                    }
+                    parsed_report.stages.push_back(std::move(st));
+                }
+                // ---- embedded normalized-input record ----
+                // All-or-nothing: when the mpol attribute exists the full
+                // record is required (pre-record containers keep the
+                // default-empty InputParams); every read gets the
+                // exact-rank/type/extent hardening above.
+                {
+                    H5Closer aid(H5Aopen(fid, "mpol", H5P_DEFAULT));
+                    if (aid.get() >= 0) {
+                        InputParams ip;
+                        if (!getIntAttr("mpol", ip.mpol) ||
+                            !getIntAttr("ntor", ip.ntor) ||
+                            !getIntAttr("nfp", ip.nfp) ||
+                            !getIntAttr("ntheta", ip.ntheta) ||
+                            !getIntAttr("nzeta", ip.nzeta) ||
+                            !getIntAttr("ncurr", ip.ncurr) ||
+                            !getDblAttr("delt", ip.delt) ||
+                            !getDblAttr("phiedge", ip.phiedge) ||
+                            !getDblAttr("pres_scale", ip.pres_scale) ||
+                            !getDblAttr("adiabatic_index",
+                                        ip.adiabatic_index) ||
+                            !getDblAttr("spres_ped", ip.spres_ped) ||
+                            !getDblAttr("bloat", ip.bloat) ||
+                            !getDblAttr("curtor", ip.curtor) ||
+                            !getDblAttr("tcon0", ip.tcon0)) {
                             return fail("malformed embedded input record");
                         }
+                        {
+                            auto getVec =
+                                [&](const char* name,
+                                    std::vector<double>& out) -> bool {
+                                hsize_t dims[1] = {0};
+                                if (!getDimExact(name, 1, dims)) return false;
+                                return getDblArr(name, out, (size_t)dims[0]);
+                            };
+                            if (!getVec("am", ip.am) || !getVec("ac", ip.ac) ||
+                                !getVec("ai", ip.ai) ||
+                                !getVec("aphi", ip.aphi) ||
+                                !getVec("raxis_c", ip.raxis_c) ||
+                                !getVec("zaxis_s", ip.zaxis_s)) {
+                                return fail("malformed embedded input record");
+                            }
+                        }
+                        {
+                            hsize_t d_in[1] = {0};
+                            if (!getDimExact("stage_in_ns", 1, d_in)) {
+                                return fail("malformed embedded input record");
+                            }
+                            const size_t nstages_in = (size_t)d_in[0];
+                            if (nstages_in > cumes::io_detail::kMaxStageCount) {
+                                return fail(
+                                    "embedded input stage count exceeds "
+                                    "the resource cap");
+                            }
+                            std::vector<int> stg_in_ns, stg_max_iter;
+                            std::vector<double> stg_ftol;
+                            if (!getIntArr("stage_in_ns", stg_in_ns,
+                                           nstages_in) ||
+                                !getIntArr("stage_max_iter", stg_max_iter,
+                                           nstages_in) ||
+                                !getDblArr("stage_ftol", stg_ftol,
+                                           nstages_in)) {
+                                return fail("malformed embedded input record");
+                            }
+                            for (size_t g = 0; g < nstages_in; ++g) {
+                                InputStage st;
+                                st.ns = stg_in_ns[g];
+                                st.max_iter = stg_max_iter[g];
+                                st.ftol = stg_ftol[g];
+                                ip.stages.push_back(st);
+                            }
+                        }
+                        {
+                            hsize_t d_r[1] = {0}, d_z[1] = {0}, d_b[2] = {0, 0};
+                            if (!getDimExact("rbc_m", 1, d_r) ||
+                                !getDimExact("zbs_m", 1, d_z) ||
+                                !getDimExact("rbcc", 2, d_b)) {
+                                return fail("malformed embedded input record");
+                            }
+                            const size_t nrbc = (size_t)d_r[0],
+                                         nzbs = (size_t)d_z[0];
+                            if (!getIntArr("rbc_m", ip.rbc_m, nrbc) ||
+                                !getIntArr("rbc_n", ip.rbc_n, nrbc) ||
+                                !getDblArr("rbc_value", ip.rbc_value, nrbc) ||
+                                !getIntArr("zbs_m", ip.zbs_m, nzbs) ||
+                                !getIntArr("zbs_n", ip.zbs_n, nzbs) ||
+                                !getDblArr("zbs_value", ip.zbs_value, nzbs) ||
+                                !getDblMat("rbcc", ip.rbcc, (size_t)d_b[0],
+                                           (size_t)d_b[1]) ||
+                                !getDblMat("rbss", ip.rbss, (size_t)d_b[0],
+                                           (size_t)d_b[1]) ||
+                                !getDblMat("zbsc", ip.zbsc, (size_t)d_b[0],
+                                           (size_t)d_b[1]) ||
+                                !getDblMat("zbcs", ip.zbcs, (size_t)d_b[0],
+                                           (size_t)d_b[1])) {
+                                return fail("malformed embedded input record");
+                            }
+                        }
+                        // The schema tag is informational; an absent or
+                        // unreadable one keeps the default.
+                        std::string schema_tag;
+                        if (getStrAttr(fid, "schema", schema_tag)) {
+                            ip.schema = schema_tag;
+                        }
+                        parsed_report.input_params = std::move(ip);
                     }
-                    {
-                        hsize_t d_in[1] = {0};
-                        if (!getDimExact("stage_in_ns", 1, d_in)) {
-                            return fail("malformed embedded input record");
-                        }
-                        const size_t nstages_in = (size_t)d_in[0];
-                        if (nstages_in > cumes::io_detail::kMaxStageCount) {
-                            return fail("embedded input stage count exceeds "
-                                        "the resource cap");
-                        }
-                        std::vector<int> stg_in_ns, stg_max_iter;
-                        std::vector<double> stg_ftol;
-                        if (!getIntArr("stage_in_ns", stg_in_ns, nstages_in) ||
-                            !getIntArr("stage_max_iter", stg_max_iter,
-                                       nstages_in) ||
-                            !getDblArr("stage_ftol", stg_ftol, nstages_in)) {
-                            return fail("malformed embedded input record");
-                        }
-                        for (size_t g = 0; g < nstages_in; ++g) {
-                            InputStage st;
-                            st.ns = stg_in_ns[g];
-                            st.max_iter = stg_max_iter[g];
-                            st.ftol = stg_ftol[g];
-                            ip.stages.push_back(st);
-                        }
-                    }
-                    {
-                        hsize_t d_r[1] = {0}, d_z[1] = {0}, d_b[2] = {0, 0};
-                        if (!getDimExact("rbc_m", 1, d_r) ||
-                            !getDimExact("zbs_m", 1, d_z) ||
-                            !getDimExact("rbcc", 2, d_b)) {
-                            return fail("malformed embedded input record");
-                        }
-                        const size_t nrbc = (size_t)d_r[0], nzbs = (size_t)d_z[0];
-                        if (!getIntArr("rbc_m", ip.rbc_m, nrbc) ||
-                            !getIntArr("rbc_n", ip.rbc_n, nrbc) ||
-                            !getDblArr("rbc_value", ip.rbc_value, nrbc) ||
-                            !getIntArr("zbs_m", ip.zbs_m, nzbs) ||
-                            !getIntArr("zbs_n", ip.zbs_n, nzbs) ||
-                            !getDblArr("zbs_value", ip.zbs_value, nzbs) ||
-                            !getDblMat("rbcc", ip.rbcc, (size_t)d_b[0],
-                                       (size_t)d_b[1]) ||
-                            !getDblMat("rbss", ip.rbss, (size_t)d_b[0],
-                                       (size_t)d_b[1]) ||
-                            !getDblMat("zbsc", ip.zbsc, (size_t)d_b[0],
-                                       (size_t)d_b[1]) ||
-                            !getDblMat("zbcs", ip.zbcs, (size_t)d_b[0],
-                                       (size_t)d_b[1])) {
-                            return fail("malformed embedded input record");
-                        }
-                    }
-                    // The schema tag is informational; an absent or unreadable
-                    // one keeps the default.
-                    std::string schema_tag;
-                    if (getStrAttr(fid, "schema", schema_tag)) {
-                        ip.schema = schema_tag;
-                    }
-                    parsed_report.input_params = std::move(ip);
                 }
+                *report = std::move(parsed_report);
             }
-            *report = std::move(parsed_report);
-        }
-        H5Fclose(fid);
-        return snapshot;
+            H5Fclose(fid);
+            return snapshot;
         } catch (const std::bad_alloc&) {
             H5Fclose(fid);
             return Result<EquilibriumSnapshot>(

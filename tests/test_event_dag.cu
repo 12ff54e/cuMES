@@ -12,23 +12,23 @@
 //      the fault also corrupts the context for further work; CTest invokes it
 //      as a separate process entry so the main test stays compute-sanitizer
 //      clean.
-#include <cstring>
-
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes_test_cuda_helper.cuh"
-using namespace cumes::test;
 
+#include <cstring>
+using namespace cumes::test;
 
 // Faulting kernel: an illegal-instruction trap. It faults only its own
 // launch and leaves memory untouched, so the poison case is safe (the context
 // becomes unusable afterwards, which is exactly what it asserts).
-__global__ void trapKernel() { asm volatile("trap;"); }
+__global__ void trapKernel() {
+    asm volatile("trap;");
+}
 
 // Busy-wait ~60 ms of device time (clock64 loop; calibrated once on the GPU).
 __global__ void delayKernel(long long cycles) {
     long long start = clock64();
-    while (clock64() - start < cycles) {
-    }
+    while (clock64() - start < cycles) {}
 }
 
 static void testOrderingAndDelay(bool probe_notready) {
@@ -101,7 +101,10 @@ static void testOrderingAndDelay(bool probe_notready) {
 static int runPoison() {
     cudaStream_t s = nullptr;
     cudaError_t e = cudaStreamCreate(&s);
-    if (e != cudaSuccess) { std::cerr << "poison: stream create failed\n"; return 2; }
+    if (e != cudaSuccess) {
+        std::cerr << "poison: stream create failed\n";
+        return 2;
+    }
     trapKernel<<<1, 1, 0, s>>>();
     // A device fault (trap) is ASYNCHRONOUS: the launch and the next enqueue
     // are accepted, and the fault surfaces at COMPLETION time — the

@@ -10,10 +10,10 @@
 // templated on the scalar type T exactly as the legacy file-static copies.
 #pragma once
 
-#include <cmath>
-
 #include "cumes/config/device_params.hpp"
 #include "cumes/config/problem_spec.hpp"
+
+#include <cmath>
 
 namespace cumes {
 

@@ -7,20 +7,31 @@
 #pragma once
 #include <cufft.h>
 
-template <typename T> struct FftTraits;
+template <typename T>
+struct FftTraits;
 
-template <> struct FftTraits<double> {
-    using Complex = cufftDoubleComplex;                 // double2
-    static constexpr cufftType kForward = CUFFT_D2Z;    // real -> half-spectrum
-    static constexpr cufftType kInverse = CUFFT_Z2D;    // half-spectrum -> real
-    static cufftResult execForward(cufftHandle p, double* in, Complex* out) { return cufftExecD2Z(p, in, out); }
-    static cufftResult execInverse(cufftHandle p, Complex* in, double* out)  { return cufftExecZ2D(p, in, out); }
+template <>
+struct FftTraits<double> {
+    using Complex = cufftDoubleComplex;               // double2
+    static constexpr cufftType kForward = CUFFT_D2Z;  // real -> half-spectrum
+    static constexpr cufftType kInverse = CUFFT_Z2D;  // half-spectrum -> real
+    static cufftResult execForward(cufftHandle p, double* in, Complex* out) {
+        return cufftExecD2Z(p, in, out);
+    }
+    static cufftResult execInverse(cufftHandle p, Complex* in, double* out) {
+        return cufftExecZ2D(p, in, out);
+    }
 };
 
-template <> struct FftTraits<float> {
-    using Complex = cufftComplex;                       // float2
+template <>
+struct FftTraits<float> {
+    using Complex = cufftComplex;  // float2
     static constexpr cufftType kForward = CUFFT_R2C;
     static constexpr cufftType kInverse = CUFFT_C2R;
-    static cufftResult execForward(cufftHandle p, float* in, Complex* out) { return cufftExecR2C(p, in, out); }
-    static cufftResult execInverse(cufftHandle p, Complex* in, float* out) { return cufftExecC2R(p, in, out); }
+    static cufftResult execForward(cufftHandle p, float* in, Complex* out) {
+        return cufftExecR2C(p, in, out);
+    }
+    static cufftResult execInverse(cufftHandle p, Complex* in, float* out) {
+        return cufftExecC2R(p, in, out);
+    }
 };

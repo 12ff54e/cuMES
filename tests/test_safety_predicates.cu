@@ -21,18 +21,13 @@
 //
 // Both double and float instantiate every case (the predicate math itself is
 // double in both builds — ADR-0001).
-#include <cmath>
-#include <cstring>
-#include <vector>
-
-#include "vmec_types.h"
 #include "cumes/numerics/device_predicates.cuh"
+#include "cumes/numerics/preconditioner.hpp"
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
-#include "cumes/numerics/preconditioner.hpp"
 #include "cumes/solver/control_record.hpp"
 #include "cumes/solver/equilibrium_operator.hpp"
 #include "cumes/solver/iteration_controller.hpp"
@@ -40,8 +35,12 @@
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes_test_cuda_helper.cuh"
-using namespace cumes::test;
+#include "vmec_types.h"
 
+#include <cmath>
+#include <cstring>
+#include <vector>
+using namespace cumes::test;
 
 // ---------------------------------------------------------------------------
 // 1. Jacobian finalize rule == host controller rule
@@ -71,8 +70,9 @@ static void testJacobianFinalizeRules() {
         h.jacobian_max_abs = c.max_a;
         h.jacobian_nonfinite_count = c.nf;
         h.jacobian_min_index = c.idx;
-        check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
-                  "rec up (jac)");
+        check_cuda(
+            cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+            "rec up (jac)");
 
         // Host decision: the controller's own gate (fresh controller per case).
         cumes::IterationController<double> ctl(
@@ -86,8 +86,9 @@ static void testJacobianFinalizeRules() {
 
         jacobianFinalizeKernel<<<1, 1>>>(d_rec.data(), nZnT);
         cc(cudaDeviceSynchronize(), "jacobianFinalize sync");
-        check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
-                  "rec down (jac)");
+        check_cuda(
+            cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+            "rec down (jac)");
 
         const bool dev_valid = h.status.jacobian_valid != 0;
         check(dev_valid != host_invalid,
@@ -116,21 +117,90 @@ static void testInvariantPredicateRules() {
         const char* label;
     };
     const Case cases[] = {
-        {{1e-10, 2e-10, 3e-10}, 1.0, 1.0, 100.0, 1e-4, 0.0, 0.0, 1, 0,
-         false, true, "converged (cached factors, all below ftol)"},
-        {{1e-10, 2e-10, 3e-10}, 99.0, 99.0, 100.0, 1e-4, 1.0, 1.0, 1, 1,
-         false, true, "refresh pass: converged from record factors"},
-        {{1e-10, 2e-10, 3e-10}, 99.0, 99.0, 100.0, 1e-14, 1.0, 1.0, 1, 1,
-         false, false, "refresh pass: record factors above ftol: continue"},
-        {{1e-10, 2e-10, 3e-10}, 99.0, 99.0, 100.0, 1e-4, 0.0, 0.0, 0, 1,
-         false, false,
+        {{1e-10, 2e-10, 3e-10},
+         1.0,
+         1.0,
+         100.0,
+         1e-4,
+         0.0,
+         0.0,
+         1,
+         0,
+         false,
+         true,
+         "converged (cached factors, all below ftol)"},
+        {{1e-10, 2e-10, 3e-10},
+         99.0,
+         99.0,
+         100.0,
+         1e-4,
+         1.0,
+         1.0,
+         1,
+         1,
+         false,
+         true,
+         "refresh pass: converged from record factors"},
+        {{1e-10, 2e-10, 3e-10},
+         99.0,
+         99.0,
+         100.0,
+         1e-14,
+         1.0,
+         1.0,
+         1,
+         1,
+         false,
+         false,
+         "refresh pass: record factors above ftol: continue"},
+        {{1e-10, 2e-10, 3e-10},
+         99.0,
+         99.0,
+         100.0,
+         1e-4,
+         0.0,
+         0.0,
+         0,
+         1,
+         false,
+         false,
          "refresh pass with unevaluated factors: convergence skipped"},
-        {{1.0, 2.0, 3.0}, 1.0, 1.0, 100.0, 1e-4, 0.0, 0.0, 1, 0,
-         false, false, "large residuals: continue"},
-        {{1.0, NAN, 3.0}, 1.0, 1.0, 100.0, 1e-4, 0.0, 0.0, 1, 0,
-         true, false, "nonfinite invariant: recover"},
-        {{1e-10, 2e-10, 3e-10}, 0.0, 1.0, 100.0, 0.0, 0.0, 0.0, 1, 0,
-         false, true, "zero fNormRZ collapses fsqr/fsqz (converged)"},
+        {{1.0, 2.0, 3.0},
+         1.0,
+         1.0,
+         100.0,
+         1e-4,
+         0.0,
+         0.0,
+         1,
+         0,
+         false,
+         false,
+         "large residuals: continue"},
+        {{1.0, NAN, 3.0},
+         1.0,
+         1.0,
+         100.0,
+         1e-4,
+         0.0,
+         0.0,
+         1,
+         0,
+         true,
+         false,
+         "nonfinite invariant: recover"},
+        {{1e-10, 2e-10, 3e-10},
+         0.0,
+         1.0,
+         100.0,
+         0.0,
+         0.0,
+         0.0,
+         1,
+         0,
+         false,
+         true,
+         "zero fNormRZ collapses fsqr/fsqz (converged)"},
     };
 
     cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
@@ -142,13 +212,15 @@ static void testInvariantPredicateRules() {
         h.final_f_norm_rz = c.rec_f_rz;
         h.final_f_norm_l = c.rec_f_l;
         h.status.force_norms_evaluated = (unsigned)c.evaluated;
-        check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
-                  "rec up (pred)");
+        check_cuda(
+            cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+            "rec up (pred)");
         invariantPredicateKernel<<<1, 1>>>(d_rec.data(), c.f_rz, c.f_l, c.plain,
                                            c.ftol, c.use_record_factors);
         cc(cudaDeviceSynchronize(), "predicate sync");
-        check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
-                  "rec down (pred)");
+        check_cuda(
+            cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+            "rec down (pred)");
 
         // Host classification with the identical expressions and factor source.
         const double f_rz = c.use_record_factors ? c.rec_f_rz : c.f_rz;
@@ -158,17 +230,17 @@ static void testInvariantPredicateRules() {
         const double fsql_i = c.raw[2] * c.plain * f_l;
         const bool host_nf = !(std::isfinite(fsqr_i) && std::isfinite(fsqz_i) &&
                                std::isfinite(fsql_i));
-        const bool host_cv = !host_nf &&
-                             (!c.use_record_factors || c.evaluated != 0) &&
-                             fsqr_i <= c.ftol && fsqz_i <= c.ftol &&
-                             fsql_i <= c.ftol;
+        const bool host_cv =
+            !host_nf && (!c.use_record_factors || c.evaluated != 0) &&
+            fsqr_i <= c.ftol && fsqz_i <= c.ftol && fsql_i <= c.ftol;
 
-        check((h.status.invariant_nonfinite != 0) == host_nf &&
-                  (h.status.invariant_converged != 0) == host_cv,
-              format("terminal predicate: {} (dev nf={} cv={}, host nf={} cv={})",
-                     c.label, (int)h.status.invariant_nonfinite,
-                     (int)h.status.invariant_converged, (int)host_nf,
-                     (int)host_cv));
+        check(
+            (h.status.invariant_nonfinite != 0) == host_nf &&
+                (h.status.invariant_converged != 0) == host_cv,
+            format("terminal predicate: {} (dev nf={} cv={}, host nf={} cv={})",
+                   c.label, (int)h.status.invariant_nonfinite,
+                   (int)h.status.invariant_converged, (int)host_nf,
+                   (int)host_cv));
     }
 }
 
@@ -187,7 +259,9 @@ static void testForceNormFinalizeRules() {
         {{0.0, 3.0, 4.0, 5.0, 6.0, 7.0}, 0.5, 2.0, "zero sRZ -> fallback 1"},
         {{2.0, 0.0, 4.0, 5.0, 6.0, 7.0}, 0.5, 0.0, "zero sL -> fallback 1"},
         {{2.0, 3.0, 4.0, 5.0, 6.0, 0.0}, 0.5, 2.0, "zero rzNorm -> fallback 1"},
-        {{2.0, 3.0, 4.0, 5.0, 6.0, 7.0}, 0.0, 2.0,
+        {{2.0, 3.0, 4.0, 5.0, 6.0, 7.0},
+         0.0,
+         2.0,
          "zero deltaS -> NaN density -> fallback 1"},
     };
 
@@ -196,12 +270,14 @@ static void testForceNormFinalizeRules() {
         cumes::ControlRecord h = {};
         for (int i = 0; i < 6; ++i) h.force_norms[i] = c.norms[i];
         h.status.force_norms_evaluated = 1;
-        check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
-                  "rec up (fnfinalize)");
+        check_cuda(
+            cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
+            "rec up (fnfinalize)");
         forceNormFinalizeKernel<<<1, 1>>>(d_rec.data(), c.delta_s, c.lamscale);
         cc(cudaDeviceSynchronize(), "fnfinalize sync");
-        check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
-                  "rec down (fnfinalize)");
+        check_cuda(
+            cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
+            "rec down (fnfinalize)");
 
         // Host reference: the exact finalizeForceNorms expressions. Every op
         // is correctly-rounded IEEE double, so the device result must match
@@ -227,11 +303,11 @@ static void testForceNormFinalizeRules() {
     cumes::ControlRecord h = {};
     for (int i = 0; i < 6; ++i) h.force_norms[i] = 1.0;
     check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
-              "rec up (fnfinalize skip)");
+               "rec up (fnfinalize skip)");
     forceNormFinalizeKernel<<<1, 1>>>(d_rec.data(), 0.5, 2.0);
     cc(cudaDeviceSynchronize(), "fnfinalize skip sync");
     check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
-              "rec down (fnfinalize skip)");
+               "rec down (fnfinalize skip)");
     check(h.final_f_norm_rz == 0.0 && h.final_f_norm_l == 0.0 &&
               h.final_f_norm1 == 0.0,
           "force-norm finalize: not evaluated -> zero sentinel");
@@ -247,12 +323,15 @@ static void testForceNormFinalizeRules() {
 // jacobian_valid is clear. Shared by runGuardNoop and runSignFlipStats so the
 // two invalid-Jacobian scenarios test the identical operator set.
 template <typename T>
-static void enqueueGuardedConsumers(
-    const DeviceParams<T>& p, const cumes::RadialProfileViews<T>& rp,
-    cumes::RealSpaceStorage<T>& rs, cumes::ToroidalFftOperator<T>& transform,
-    cumes::GeometryOperator<T>& geometry, cumes::Preconditioner<T>& precon,
-    cumes::ConstraintOperator<T>& constraint, const cumes::DeviceModeTable& mt,
-    cumes::ControlStatus* status) {
+static void enqueueGuardedConsumers(const DeviceParams<T>& p,
+                                    const cumes::RadialProfileViews<T>& rp,
+                                    cumes::RealSpaceStorage<T>& rs,
+                                    cumes::ToroidalFftOperator<T>& transform,
+                                    cumes::GeometryOperator<T>& geometry,
+                                    cumes::Preconditioner<T>& precon,
+                                    cumes::ConstraintOperator<T>& constraint,
+                                    const cumes::DeviceModeTable& mt,
+                                    cumes::ControlStatus* status) {
     cumes::MagneticFieldOperator<T>{}.enqueue(
         rs, p, rp, geometry.base_geometry_views(p),
         geometry.magnetic_field_views(p), status, 0, true);
@@ -271,18 +350,29 @@ template <typename T>
 static void runGuardNoop(T label) {
     (void)label;
     DeviceParams<T> p;
-    p.ns = 9; p.mnmax = 4; p.ntheta = 18; p.nzeta = 2;
-    p.nfp = 1; p.nZnT = 36; p.mpol = 4; p.ntor = 0;
-    p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;
-    p.tcon0 = T(1.0); p.lamscale = T(0.0);
+    p.ns = 9;
+    p.mnmax = 4;
+    p.ntheta = 18;
+    p.nzeta = 2;
+    p.nfp = 1;
+    p.nZnT = 36;
+    p.mpol = 4;
+    p.ntor = 0;
+    p.ncurr = 0;
+    p.delt = T(0.9);
+    p.ftol = T(1e-14);
+    p.max_iter = 10;
+    p.tcon0 = T(1.0);
+    p.lamscale = T(0.0);
 
     cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
     manufactured_state<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
-                         p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
-    upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+                          p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+    upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
+                 p.mnmax);
 
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
@@ -297,8 +387,8 @@ static void runGuardNoop(T label) {
     cumes::ControlRecord h_rec = {};
     h_rec.status.jacobian_valid = 1;
 
-    const size_t nField = (size_t)(p.ns - 1) * p.nZnT;   // half-grid fields
-    const size_t nFull = (size_t)p.ns * p.nZnT;          // full-grid buffers
+    const size_t nField = (size_t)(p.ns - 1) * p.nZnT;  // half-grid fields
+    const size_t nFull = (size_t)p.ns * p.nZnT;         // full-grid buffers
 
     // One guarded pass with valid status, snapshot the written caches.
     // The fused inverse produces rCon/zCon into the constraint views (the
@@ -312,62 +402,82 @@ static void runGuardNoop(T label) {
                                    constraint, mt, &d_rec.data()->status);
         cc(cudaDeviceSynchronize(), "pass sync");
     };
-    check_cuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
-                         cudaMemcpyHostToDevice), "rec up (guard)");
+    check_cuda(
+        cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
+        "rec up (guard)");
     runPass();
 
     std::vector<T> snap_bsupu(nField), snap_iotaF(p.ns), snap_ard(2 * p.ns);
     std::vector<T> snap_rcon0(nFull), snap_brmn(nFull);
     const auto* bsupu = geometry.magnetic_field_views(p).bsupu.data();
     check_cuda(cudaMemcpy(snap_bsupu.data(), bsupu, nField * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap bsupu");
+                          cudaMemcpyDeviceToHost),
+               "snap bsupu");
     check_cuda(cudaMemcpy(snap_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap iotaF");
+                          cudaMemcpyDeviceToHost),
+               "snap iotaF");
     check_cuda(cudaMemcpy(snap_ard.data(), precon.ard(), 2 * p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap ard");
-    check_cuda(cudaMemcpy(snap_rcon0.data(), constraint.rcon0(), nFull * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap rcon0");
+                          cudaMemcpyDeviceToHost),
+               "snap ard");
+    check_cuda(cudaMemcpy(snap_rcon0.data(), constraint.rcon0(),
+                          nFull * sizeof(T), cudaMemcpyDeviceToHost),
+               "snap rcon0");
     check_cuda(cudaMemcpy(snap_brmn.data(), rs.d_brmn_e, nFull * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap brmn");
+                          cudaMemcpyDeviceToHost),
+               "snap brmn");
 
     // Invalid pass: same enqueues, guarded kernels must write NOTHING.
     h_rec.status.jacobian_valid = 0;
-    check_cuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
-                         cudaMemcpyHostToDevice), "rec up (invalid)");
+    check_cuda(
+        cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
+        "rec up (invalid)");
     runPass();
 
     std::vector<T> now_bsupu(nField), now_iotaF(p.ns), now_ard(2 * p.ns);
     std::vector<T> now_rcon0(nFull), now_brmn(nFull);
     check_cuda(cudaMemcpy(now_bsupu.data(), bsupu, nField * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now bsupu");
+                          cudaMemcpyDeviceToHost),
+               "now bsupu");
     check_cuda(cudaMemcpy(now_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now iotaF");
+                          cudaMemcpyDeviceToHost),
+               "now iotaF");
     check_cuda(cudaMemcpy(now_ard.data(), precon.ard(), 2 * p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now ard");
-    check_cuda(cudaMemcpy(now_rcon0.data(), constraint.rcon0(), nFull * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now rcon0");
+                          cudaMemcpyDeviceToHost),
+               "now ard");
+    check_cuda(cudaMemcpy(now_rcon0.data(), constraint.rcon0(),
+                          nFull * sizeof(T), cudaMemcpyDeviceToHost),
+               "now rcon0");
     check_cuda(cudaMemcpy(now_brmn.data(), rs.d_brmn_e, nFull * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now brmn");
+                          cudaMemcpyDeviceToHost),
+               "now brmn");
 
-    check(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nField * sizeof(T)) == 0,
+    check(std::memcmp(snap_bsupu.data(), now_bsupu.data(),
+                      nField * sizeof(T)) == 0,
           "invalid pass: magnetic-field buffers untouched");
-    check(std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
-          "invalid pass: iotaF/chipF profile cache untouched");
-    check(std::memcmp(snap_ard.data(), now_ard.data(), 2 * p.ns * sizeof(T)) == 0,
-          "invalid pass: preconditioner element cache untouched");
-    check(std::memcmp(snap_rcon0.data(), now_rcon0.data(), nFull * sizeof(T)) == 0,
+    check(
+        std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
+        "invalid pass: iotaF/chipF profile cache untouched");
+    check(
+        std::memcmp(snap_ard.data(), now_ard.data(), 2 * p.ns * sizeof(T)) == 0,
+        "invalid pass: preconditioner element cache untouched");
+    check(std::memcmp(snap_rcon0.data(), now_rcon0.data(), nFull * sizeof(T)) ==
+              0,
           "invalid pass: constraint reference cache untouched");
-    check(std::memcmp(snap_brmn.data(), now_brmn.data(), nFull * sizeof(T)) == 0,
-          "invalid pass: MHD force buffers untouched");
+    check(
+        std::memcmp(snap_brmn.data(), now_brmn.data(), nFull * sizeof(T)) == 0,
+        "invalid pass: MHD force buffers untouched");
 
     // Valid pass again: the guards must re-enable the real work (outputs move).
     h_rec.status.jacobian_valid = 1;
-    check_cuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
-                         cudaMemcpyHostToDevice), "rec up (valid again)");
+    check_cuda(
+        cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
+        "rec up (valid again)");
     runPass();
     check_cuda(cudaMemcpy(now_bsupu.data(), bsupu, nField * sizeof(T),
-                         cudaMemcpyDeviceToHost), "again bsupu");
-    check(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nField * sizeof(T)) == 0,
+                          cudaMemcpyDeviceToHost),
+               "again bsupu");
+    check(std::memcmp(snap_bsupu.data(), now_bsupu.data(),
+                      nField * sizeof(T)) == 0,
           "valid pass again: guarded work re-enabled");
 }
 
@@ -384,7 +494,8 @@ static void runPreconditionedGate(T label) {
     }
     cumes::DeviceBuffer<T> d_f(h_f.size());
     check_cuda(cudaMemcpy(d_f.data(), h_f.data(), h_f.size() * sizeof(T),
-                         cudaMemcpyHostToDevice), "f up");
+                          cudaMemcpyHostToDevice),
+               "f up");
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> view(
         d_f.data(), ns, mnmax);
 
@@ -394,25 +505,27 @@ static void runPreconditionedGate(T label) {
     // Terminal (converged): zero sentinel + not_evaluated.
     h.status.invariant_converged = 1;
     check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
-              "rec up (terminal)");
-    computeResidualsPreconditionedKernel<T><<<3, 256>>>(view, ns, mnmax,
-                                                        d_rec.data());
+               "rec up (terminal)");
+    computeResidualsPreconditionedKernel<T>
+        <<<3, 256>>>(view, ns, mnmax, d_rec.data());
     cc(cudaDeviceSynchronize(), "gate sync terminal");
     check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
-              "rec down (terminal)");
+               "rec down (terminal)");
     check(h.preconditioned_raw[0] == 0.0 && h.preconditioned_raw[1] == 0.0 &&
-              h.preconditioned_raw[2] == 0.0 && h.status.preconditioned_evaluated == 0,
-          "terminal pass: preconditioned residuals zero sentinel + not evaluated");
+              h.preconditioned_raw[2] == 0.0 &&
+              h.status.preconditioned_evaluated == 0,
+          "terminal pass: preconditioned residuals zero sentinel + not "
+          "evaluated");
 
     // Continuing: real reduction + evaluated bit.
     h = cumes::ControlRecord{};
     check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
-              "rec up (continue)");
-    computeResidualsPreconditionedKernel<T><<<3, 256>>>(view, ns, mnmax,
-                                                        d_rec.data());
+               "rec up (continue)");
+    computeResidualsPreconditionedKernel<T>
+        <<<3, 256>>>(view, ns, mnmax, d_rec.data());
     cc(cudaDeviceSynchronize(), "gate sync continue");
     check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
-              "rec down (continue)");
+               "rec down (continue)");
     check(h.status.preconditioned_evaluated == 1,
           "continuing pass: preconditioned residuals marked evaluated");
     // Host reference sum for group 0 (fsqr = sum frcc^2 + frss^2 over all).
@@ -441,10 +554,20 @@ template <typename T>
 static void runCollapsedDag(T label) {
     (void)label;
     DeviceParams<T> p;
-    p.ns = 9; p.mnmax = 4; p.ntheta = 18; p.nzeta = 2;
-    p.nfp = 1; p.nZnT = 36; p.mpol = 4; p.ntor = 0;
-    p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;
-    p.tcon0 = T(1.0); p.lamscale = T(0.0);
+    p.ns = 9;
+    p.mnmax = 4;
+    p.ntheta = 18;
+    p.nzeta = 2;
+    p.nfp = 1;
+    p.nZnT = 36;
+    p.mpol = 4;
+    p.ntor = 0;
+    p.ncurr = 0;
+    p.delt = T(0.9);
+    p.ftol = T(1e-14);
+    p.max_iter = 10;
+    p.tcon0 = T(1.0);
+    p.lamscale = T(0.0);
 
     cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
 
@@ -456,10 +579,11 @@ static void runCollapsedDag(T label) {
     {
         std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
         manufactured_state<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
-                             p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+                              p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
         for (auto& v : h_zsc) v = -v;
         for (auto& v : h_zcs) v = -v;
-        upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+        upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
+                     p.mnmax);
     }
 
     cumes::Profiles<T> profiles(p, vp, nullptr);
@@ -483,16 +607,18 @@ static void runCollapsedDag(T label) {
     cc(cudaDeviceSynchronize(), "valid dag sync");
     cumes::ControlRecord h_rec;
     check_cuda(cudaMemcpy(&h_rec, equilibrium.control_device(), sizeof(h_rec),
-                         cudaMemcpyDeviceToHost), "rec down (valid dag)");
+                          cudaMemcpyDeviceToHost),
+               "rec down (valid dag)");
     check(h_rec.status.jacobian_valid != 0, "valid state: jacobian_valid set");
     const size_t nField = (size_t)(p.ns - 1) * p.nZnT;
     std::vector<T> snap_iotaF(p.ns), snap_bsupu(nField);
     check_cuda(cudaMemcpy(snap_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap iotaF (dag)");
+                          cudaMemcpyDeviceToHost),
+               "snap iotaF (dag)");
     check_cuda(cudaMemcpy(snap_bsupu.data(),
-                         geometry.magnetic_field_views(p).bsupu.data(),
-                         nField * sizeof(T), cudaMemcpyDeviceToHost),
-              "snap bsupu (dag)");
+                          geometry.magnetic_field_views(p).bsupu.data(),
+                          nField * sizeof(T), cudaMemcpyDeviceToHost),
+               "snap bsupu (dag)");
 
     // Collapse the state: all-zero spectral coefficients -> sqrt(g) = 0.
     {
@@ -504,20 +630,24 @@ static void runCollapsedDag(T label) {
     equilibrium.enqueue(0, 2, schedule, 0, 1.0, 1.0);
     cc(cudaDeviceSynchronize(), "collapsed dag sync");
     check_cuda(cudaMemcpy(&h_rec, equilibrium.control_device(), sizeof(h_rec),
-                         cudaMemcpyDeviceToHost), "rec down (collapsed dag)");
+                          cudaMemcpyDeviceToHost),
+               "rec down (collapsed dag)");
     check(h_rec.status.jacobian_valid == 0,
           "collapsed state: jacobian_valid clear (device finalize)");
 
     std::vector<T> now_iotaF(p.ns), now_bsupu(nField);
     check_cuda(cudaMemcpy(now_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now iotaF (dag)");
+                          cudaMemcpyDeviceToHost),
+               "now iotaF (dag)");
     check_cuda(cudaMemcpy(now_bsupu.data(),
-                         geometry.magnetic_field_views(p).bsupu.data(),
-                         nField * sizeof(T), cudaMemcpyDeviceToHost),
-              "now bsupu (dag)");
-    check(std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
-          "collapsed pass: profile cache not mutated");
-    check(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nField * sizeof(T)) == 0,
+                          geometry.magnetic_field_views(p).bsupu.data(),
+                          nField * sizeof(T), cudaMemcpyDeviceToHost),
+               "now bsupu (dag)");
+    check(
+        std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
+        "collapsed pass: profile cache not mutated");
+    check(std::memcmp(snap_bsupu.data(), now_bsupu.data(),
+                      nField * sizeof(T)) == 0,
           "collapsed pass: field buffers not mutated");
 }
 
@@ -534,18 +664,29 @@ template <typename T>
 static void runSignFlipStats(T label) {
     (void)label;
     DeviceParams<T> p;
-    p.ns = 9; p.mnmax = 4; p.ntheta = 18; p.nzeta = 2;
-    p.nfp = 1; p.nZnT = 36; p.mpol = 4; p.ntor = 0;
-    p.ncurr = 0; p.delt = T(0.9); p.ftol = T(1e-14); p.max_iter = 10;
-    p.tcon0 = T(1.0); p.lamscale = T(0.0);
+    p.ns = 9;
+    p.mnmax = 4;
+    p.ntheta = 18;
+    p.nzeta = 2;
+    p.nfp = 1;
+    p.nZnT = 36;
+    p.mpol = 4;
+    p.ntor = 0;
+    p.ncurr = 0;
+    p.delt = T(0.9);
+    p.ftol = T(1e-14);
+    p.max_iter = 10;
+    p.tcon0 = T(1.0);
+    p.lamscale = T(0.0);
 
     cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
     manufactured_state<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
-                         p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
-    upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns, p.mnmax);
+                          p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
+    upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
+                 p.mnmax);
 
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
@@ -556,7 +697,7 @@ static void runSignFlipStats(T label) {
     cumes::Preconditioner<T> precon(p, nullptr);
     cumes::ConstraintOperator<T> constraint(p, nullptr);
 
-    const size_t nHalf = (size_t)(p.ns - 1) * p.nZnT;   // 288 half-grid entries
+    const size_t nHalf = (size_t)(p.ns - 1) * p.nZnT;  // 288 half-grid entries
     const size_t nFull = (size_t)p.ns * p.nZnT;
 
     cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
@@ -576,8 +717,9 @@ static void runSignFlipStats(T label) {
 
     // Seed the guarded caches with a VALID pass (jacobian_valid = 1), so the
     // later no-op comparison runs against real, initialized data.
-    check_cuda(cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec),
-                         cudaMemcpyHostToDevice), "rec up (seed)");
+    check_cuda(
+        cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
+        "rec up (seed)");
     enqueueGuardedConsumers<T>(p, rp, rs, transform, geometry, precon,
                                constraint, mt, &d_rec.data()->status);
     cc(cudaDeviceSynchronize(), "seed guarded sync");
@@ -591,19 +733,22 @@ static void runSignFlipStats(T label) {
     for (size_t i = 0; i < nHalf; ++i) {
         h_gsqrt[i] = -T(0.4 + 0.01 * (double)(i % 50));
     }
-    h_gsqrt[20] = T(flip);     // lane 20's FIRST sample: the only sign reversal
-    h_gsqrt[276] = -T(maxval); // lane 20's SECOND sample (20+256 < 288), above |flip|
-    check_cuda(cudaMemcpy(geometry.base_geometry_views(p).gsqrt.data(),
-                         h_gsqrt.data(), nHalf * sizeof(T),
-                         cudaMemcpyHostToDevice), "gsqrt up");
+    h_gsqrt[20] = T(flip);  // lane 20's FIRST sample: the only sign reversal
+    h_gsqrt[276] =
+        -T(maxval);  // lane 20's SECOND sample (20+256 < 288), above |flip|
+    check_cuda(
+        cudaMemcpy(geometry.base_geometry_views(p).gsqrt.data(), h_gsqrt.data(),
+                   nHalf * sizeof(T), cudaMemcpyHostToDevice),
+        "gsqrt up");
 
     // The PRODUCTION chain: GeometryOperator::jacobian_stats (the exact
     // function the DAG enqueues) followed by jacobianFinalizeKernel.
     geometry.jacobian_stats(p, d_rec.data(), 0);
     jacobianFinalizeKernel<<<1, 1>>>(d_rec.data(), p.nZnT);
     cc(cudaDeviceSynchronize(), "stats sync");
-    check_cuda(cudaMemcpy(&h_rec, d_rec.data(), sizeof(h_rec),
-                         cudaMemcpyDeviceToHost), "rec down (stats)");
+    check_cuda(
+        cudaMemcpy(&h_rec, d_rec.data(), sizeof(h_rec), cudaMemcpyDeviceToHost),
+        "rec down (stats)");
 
     check(h_rec.jacobian_min_oriented == (double)T(-flip),
           "sign flip: oriented minimum is signJ·(flipped sample)");
@@ -621,16 +766,21 @@ static void runSignFlipStats(T label) {
     std::vector<T> snap_bsupu(nHalf), snap_iotaF(p.ns), snap_ard(2 * p.ns);
     std::vector<T> snap_rcon0(nFull), snap_brmn(nFull);
     check_cuda(cudaMemcpy(snap_bsupu.data(),
-                         geometry.magnetic_field_views(p).bsupu.data(),
-                         nHalf * sizeof(T), cudaMemcpyDeviceToHost), "snap bsupu");
+                          geometry.magnetic_field_views(p).bsupu.data(),
+                          nHalf * sizeof(T), cudaMemcpyDeviceToHost),
+               "snap bsupu");
     check_cuda(cudaMemcpy(snap_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap iotaF");
+                          cudaMemcpyDeviceToHost),
+               "snap iotaF");
     check_cuda(cudaMemcpy(snap_ard.data(), precon.ard(), 2 * p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap ard");
-    check_cuda(cudaMemcpy(snap_rcon0.data(), constraint.rcon0(), nFull * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap rcon0");
+                          cudaMemcpyDeviceToHost),
+               "snap ard");
+    check_cuda(cudaMemcpy(snap_rcon0.data(), constraint.rcon0(),
+                          nFull * sizeof(T), cudaMemcpyDeviceToHost),
+               "snap rcon0");
     check_cuda(cudaMemcpy(snap_brmn.data(), rs.d_brmn_e, nFull * sizeof(T),
-                         cudaMemcpyDeviceToHost), "snap brmn");
+                          cudaMemcpyDeviceToHost),
+               "snap brmn");
 
     enqueueGuardedConsumers<T>(p, rp, rs, transform, geometry, precon,
                                constraint, mt, &d_rec.data()->status);
@@ -639,27 +789,37 @@ static void runSignFlipStats(T label) {
     std::vector<T> now_bsupu(nHalf), now_iotaF(p.ns), now_ard(2 * p.ns);
     std::vector<T> now_rcon0(nFull), now_brmn(nFull);
     check_cuda(cudaMemcpy(now_bsupu.data(),
-                         geometry.magnetic_field_views(p).bsupu.data(),
-                         nHalf * sizeof(T), cudaMemcpyDeviceToHost), "now bsupu");
+                          geometry.magnetic_field_views(p).bsupu.data(),
+                          nHalf * sizeof(T), cudaMemcpyDeviceToHost),
+               "now bsupu");
     check_cuda(cudaMemcpy(now_iotaF.data(), rp.iota_F, p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now iotaF");
+                          cudaMemcpyDeviceToHost),
+               "now iotaF");
     check_cuda(cudaMemcpy(now_ard.data(), precon.ard(), 2 * p.ns * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now ard");
-    check_cuda(cudaMemcpy(now_rcon0.data(), constraint.rcon0(), nFull * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now rcon0");
+                          cudaMemcpyDeviceToHost),
+               "now ard");
+    check_cuda(cudaMemcpy(now_rcon0.data(), constraint.rcon0(),
+                          nFull * sizeof(T), cudaMemcpyDeviceToHost),
+               "now rcon0");
     check_cuda(cudaMemcpy(now_brmn.data(), rs.d_brmn_e, nFull * sizeof(T),
-                         cudaMemcpyDeviceToHost), "now brmn");
+                          cudaMemcpyDeviceToHost),
+               "now brmn");
 
-    check(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nHalf * sizeof(T)) == 0,
+    check(std::memcmp(snap_bsupu.data(), now_bsupu.data(), nHalf * sizeof(T)) ==
+              0,
           "sign flip: magnetic-field buffers untouched");
-    check(std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
-          "sign flip: iotaF/chipF profile cache untouched");
-    check(std::memcmp(snap_ard.data(), now_ard.data(), 2 * p.ns * sizeof(T)) == 0,
-          "sign flip: preconditioner element cache untouched");
-    check(std::memcmp(snap_rcon0.data(), now_rcon0.data(), nFull * sizeof(T)) == 0,
+    check(
+        std::memcmp(snap_iotaF.data(), now_iotaF.data(), p.ns * sizeof(T)) == 0,
+        "sign flip: iotaF/chipF profile cache untouched");
+    check(
+        std::memcmp(snap_ard.data(), now_ard.data(), 2 * p.ns * sizeof(T)) == 0,
+        "sign flip: preconditioner element cache untouched");
+    check(std::memcmp(snap_rcon0.data(), now_rcon0.data(), nFull * sizeof(T)) ==
+              0,
           "sign flip: constraint reference cache untouched");
-    check(std::memcmp(snap_brmn.data(), now_brmn.data(), nFull * sizeof(T)) == 0,
-          "sign flip: MHD force buffers untouched");
+    check(
+        std::memcmp(snap_brmn.data(), now_brmn.data(), nFull * sizeof(T)) == 0,
+        "sign flip: MHD force buffers untouched");
 }
 
 int main() {

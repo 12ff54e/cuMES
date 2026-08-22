@@ -32,7 +32,9 @@ std::size_t GridShape::modes() const {
     return a.value_or(0);
 }
 
-int GridShape::ntheta_reduced() const { return ntheta / 2 + 1; }
+int GridShape::ntheta_reduced() const {
+    return ntheta / 2 + 1;
+}
 
 Status GridShape::validate() const {
     if (ns < 3) return Status("ns must be >= 3");
@@ -43,7 +45,8 @@ Status GridShape::validate() const {
         return Status("ntheta must be a positive even number");
     }
     if (nzeta < 1) return Status("nzeta must be >= 1");
-    if (modes() == 0) return Status("mode count (mpol*(ntor+1)) overflows size_t");
+    if (modes() == 0)
+        return Status("mode count (mpol*(ntor+1)) overflows size_t");
     if (full_points() == 0) {
         return Status("full-grid point count overflows size_t");
     }

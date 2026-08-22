@@ -13,8 +13,9 @@
 // ValidationReport rather than thrown one-at-a-time, and the fixed capacities
 // (8 stages, 16 coefficients, 256 boundary entries, 32 axis entries) are gone
 // — the model is dynamic.
-#include "JsonParser.h"
 #include "cumes/config/json_reader.hpp"
+
+#include "JsonParser.h"
 
 #include <climits>
 #include <cstdlib>
@@ -28,29 +29,35 @@ namespace cumes {
 namespace {
 
 const std::set<std::string> kSupportedKeys = {
-    "mpol", "ntor", "nfp", "ntheta", "nzeta", "ncurr", "delt", "phiedge",
-    "pres_scale", "adiabatic_index", "gamma", "spres_ped", "curtor", "bloat",
-    "tcon0", "am", "ac", "ai", "aphi", "raxis_c", "zaxis_s", "ns_array",
-    "niter_array", "ftol_array", "rbc", "zbs", "lasym", "lfreeb",
-    "pmass_type", "piota_type", "pcurr_type", "am_aux_s", "am_aux_f",
-    "ai_aux_s", "ai_aux_f", "ac_aux_s", "ac_aux_f", "raxis_s", "zaxis_c",
-    "rbs", "zbc",
+    "mpol",       "ntor",      "nfp",         "ntheta",     "nzeta",
+    "ncurr",      "delt",      "phiedge",     "pres_scale", "adiabatic_index",
+    "gamma",      "spres_ped", "curtor",      "bloat",      "tcon0",
+    "am",         "ac",        "ai",          "aphi",       "raxis_c",
+    "zaxis_s",    "ns_array",  "niter_array", "ftol_array", "rbc",
+    "zbs",        "lasym",     "lfreeb",      "pmass_type", "piota_type",
+    "pcurr_type", "am_aux_s",  "am_aux_f",    "ai_aux_s",   "ai_aux_f",
+    "ac_aux_s",   "ac_aux_f",  "raxis_s",     "zaxis_c",    "rbs",
+    "zbc",
 };
 const std::set<std::string> kKnownIgnoredKeys = {
-    "nstep", "niter", "ftolv", "nsurf", "tsw", "tpot", "tvac", "nvacskip",
-    "mgrid_file", "extcur", "lforbal", "lmorebdy", "lrecon", "lmove_axis",
-    "lthreed", "lpoloidal", "nthreed", "npoloidal", "nlambda", "lspectral",
-    "lcheck", "lpsplot", "lwout", "lmask", "nedge", "nskip",
+    "nstep",   "niter",      "ftolv",      "nsurf",     "tsw",     "tpot",
+    "tvac",    "nvacskip",   "mgrid_file", "extcur",    "lforbal", "lmorebdy",
+    "lrecon",  "lmove_axis", "lthreed",    "lpoloidal", "nthreed", "npoloidal",
+    "nlambda", "lspectral",  "lcheck",     "lpsplot",   "lwout",   "lmask",
+    "nedge",   "nskip",
 };
 
 // Typed getters: on a type/range error record the finding and return the
 // fallback so the mapped field keeps a valid default (validate() then reports
 // any remaining semantic issue without a misleading cascade).
-int getInt(const json::Value& v, const std::string& key, int fallback,
+int getInt(const json::Value& v,
+           const std::string& key,
+           int fallback,
            ValidationReport& report) {
     if (v.value_category() != json::ValueCategory::NumberInt) {
-        report.error(key, "'" + key + "': expected an integer, got " +
-                              json::get_value_category_name(v.value_category()));
+        report.error(key,
+                     "'" + key + "': expected an integer, got " +
+                         json::get_value_category_name(v.value_category()));
         return fallback;
     }
     const long long vv = v.as_number<long long>();
@@ -62,31 +69,40 @@ int getInt(const json::Value& v, const std::string& key, int fallback,
     return static_cast<int>(vv);
 }
 
-double getDouble(const json::Value& v, const std::string& key, double fallback,
+double getDouble(const json::Value& v,
+                 const std::string& key,
+                 double fallback,
                  ValidationReport& report) {
     if (!v.is_number()) {
-        report.error(key, "'" + key + "': expected a number, got " +
-                              json::get_value_category_name(v.value_category()));
+        report.error(key,
+                     "'" + key + "': expected a number, got " +
+                         json::get_value_category_name(v.value_category()));
         return fallback;
     }
     return v.as_number<double>();
 }
 
-bool getBool(const json::Value& v, const std::string& key, bool fallback,
+bool getBool(const json::Value& v,
+             const std::string& key,
+             bool fallback,
              ValidationReport& report) {
     if (!v.is_boolean()) {
-        report.error(key, "'" + key + "': expected a boolean, got " +
-                              json::get_value_category_name(v.value_category()));
+        report.error(key,
+                     "'" + key + "': expected a boolean, got " +
+                         json::get_value_category_name(v.value_category()));
         return fallback;
     }
     return v.as_boolean();
 }
 
-std::string getString(const json::Value& v, const std::string& key,
-                      std::string fallback, ValidationReport& report) {
+std::string getString(const json::Value& v,
+                      const std::string& key,
+                      std::string fallback,
+                      ValidationReport& report) {
     if (!v.is_string()) {
-        report.error(key, "'" + key + "': expected a string, got " +
-                              json::get_value_category_name(v.value_category()));
+        report.error(key,
+                     "'" + key + "': expected a string, got " +
+                         json::get_value_category_name(v.value_category()));
         return fallback;
     }
     return v.as_string();
@@ -94,20 +110,23 @@ std::string getString(const json::Value& v, const std::string& key,
 
 // Read an array of JSON numbers into a dynamic vector. strict_int requires
 // integer literals and range-checks the narrowing to int.
-std::vector<int> readIntArray(const json::Value& v, const std::string& key,
+std::vector<int> readIntArray(const json::Value& v,
+                              const std::string& key,
                               ValidationReport& report) {
     std::vector<int> out;
     if (!v.is_array()) {
-        report.error(key, "'" + key + "': expected an array, got " +
-                              json::get_value_category_name(v.value_category()));
+        report.error(key,
+                     "'" + key + "': expected an array, got " +
+                         json::get_value_category_name(v.value_category()));
         return out;
     }
     for (std::size_t i = 0; i < v.size(); ++i) {
         const json::Value& e = v[i];
         if (e.value_category() != json::ValueCategory::NumberInt) {
-            report.error(key, "'" + key + "[" + std::to_string(i) +
-                                  "]': expected an integer, got " +
-                                  json::get_value_category_name(e.value_category()));
+            report.error(key,
+                         "'" + key + "[" + std::to_string(i) +
+                             "]': expected an integer, got " +
+                             json::get_value_category_name(e.value_category()));
             out.push_back(0);
             continue;
         }
@@ -124,20 +143,23 @@ std::vector<int> readIntArray(const json::Value& v, const std::string& key,
     return out;
 }
 
-std::vector<double> readDoubleArray(const json::Value& v, const std::string& key,
+std::vector<double> readDoubleArray(const json::Value& v,
+                                    const std::string& key,
                                     ValidationReport& report) {
     std::vector<double> out;
     if (!v.is_array()) {
-        report.error(key, "'" + key + "': expected an array, got " +
-                              json::get_value_category_name(v.value_category()));
+        report.error(key,
+                     "'" + key + "': expected an array, got " +
+                         json::get_value_category_name(v.value_category()));
         return out;
     }
     for (std::size_t i = 0; i < v.size(); ++i) {
         const json::Value& e = v[i];
         if (!e.is_number()) {
-            report.error(key, "'" + key + "[" + std::to_string(i) +
-                                  "]': expected a number, got " +
-                                  json::get_value_category_name(e.value_category()));
+            report.error(key,
+                         "'" + key + "[" + std::to_string(i) +
+                             "]': expected a number, got " +
+                             json::get_value_category_name(e.value_category()));
             out.push_back(0.0);
             continue;
         }
@@ -149,29 +171,36 @@ std::vector<double> readDoubleArray(const json::Value& v, const std::string& key
 // Boundary coefficients: array of {"n","m","value"} objects. Out-of-range
 // modes are NOT rejected here (the dynamic model cannot index out of bounds);
 // validate() skips them with a warning, matching vmecpp ignore-and-continue.
-void readBoundary(const json::Value& v, const std::string& key,
-                  std::vector<BoundaryHarmonic>& out, ValidationReport& report) {
+void readBoundary(const json::Value& v,
+                  const std::string& key,
+                  std::vector<BoundaryHarmonic>& out,
+                  ValidationReport& report) {
     if (!v.is_array()) {
-        report.error(key, "'" + key + "': expected an array of "
-                              "{\"n\",\"m\",\"value\"} objects, got " +
-                              json::get_value_category_name(v.value_category()));
+        report.error(key,
+                     "'" + key +
+                         "': expected an array of "
+                         "{\"n\",\"m\",\"value\"} objects, got " +
+                         json::get_value_category_name(v.value_category()));
         return;
     }
     for (std::size_t i = 0; i < v.size(); ++i) {
         const json::Value& e = v[i];
         const std::string where = key + "[" + std::to_string(i) + "]";
         if (!e.is_object()) {
-            report.error(where, "'" + where + "': expected an object with "
-                                "\"n\", \"m\" and \"value\"");
+            report.error(where, "'" + where +
+                                    "': expected an object with "
+                                    "\"n\", \"m\" and \"value\"");
             continue;
         }
         if (!e.contains("m") || !e.contains("n") || !e.contains("value")) {
-            report.error(where, "'" + where + "': missing \"n\", \"m\" or \"value\"");
+            report.error(where,
+                         "'" + where + "': missing \"n\", \"m\" or \"value\"");
             continue;
         }
         const int m = getInt(e.at("m"), where + ".m", 0, report);
         const int n = getInt(e.at("n"), where + ".n", 0, report);
-        const double value = getDouble(e.at("value"), where + ".value", 0.0, report);
+        const double value =
+            getDouble(e.at("value"), where + ".value", 0.0, report);
         out.push_back(BoundaryHarmonic{m, n, value});
     }
 }
@@ -212,9 +241,12 @@ ParsedProblem read_problem_spec(const std::string& path,
     });
     ifPresent("ncurr", [&](const json::Value& v, const char* k) {
         const int nc = getInt(v, k, 0, report);
-        if (nc == 0) p.current_model = CurrentModel::kFixedIota;
-        else if (nc == 1) p.current_model = CurrentModel::kPrescribedCurrent;
-        else report.error(k, "ncurr must be 0 or 1");
+        if (nc == 0)
+            p.current_model = CurrentModel::kFixedIota;
+        else if (nc == 1)
+            p.current_model = CurrentModel::kPrescribedCurrent;
+        else
+            report.error(k, "ncurr must be 0 or 1");
     });
     ifPresent("delt", [&](const json::Value& v, const char* k) {
         p.delt = getDouble(v, k, p.delt, report);
@@ -231,9 +263,8 @@ ParsedProblem read_problem_spec(const std::string& path,
             getDouble(root.at("adiabatic_index"), "adiabatic_index",
                       p.physical.adiabatic_index, report);
     } else if (root.contains("gamma")) {
-        p.physical.adiabatic_index =
-            getDouble(root.at("gamma"), "gamma", p.physical.adiabatic_index,
-                      report);
+        p.physical.adiabatic_index = getDouble(
+            root.at("gamma"), "gamma", p.physical.adiabatic_index, report);
     }
     ifPresent("spres_ped", [&](const json::Value& v, const char* k) {
         p.physical.spres_ped = getDouble(v, k, p.physical.spres_ped, report);
@@ -259,7 +290,8 @@ ParsedProblem read_problem_spec(const std::string& path,
         p.iota.coefficients = readDoubleArray(v, k, report);
     });
     if (root.contains("aphi")) {
-        p.toroidal_flux.coefficients = readDoubleArray(root.at("aphi"), "aphi", report);
+        p.toroidal_flux.coefficients =
+            readDoubleArray(root.at("aphi"), "aphi", report);
     } else {
         // vmecpp default. push_back instead of an initializer_list
         // assignment: g++-13 -O2 -Warray-bounds (warnings-as-errors) mis-
@@ -285,19 +317,25 @@ ParsedProblem read_problem_spec(const std::string& path,
     if (hasNs || hasNiter || hasFtol) {
         if (!(hasNs && hasNiter && hasFtol)) {
             report.error("ns_array",
-                         "ns_array, niter_array and ftol_array must be provided together");
+                         "ns_array, niter_array and ftol_array must be "
+                         "provided together");
         } else {
-            const auto ns = readIntArray(root.at("ns_array"), "ns_array", report);
-            const auto niter = readIntArray(root.at("niter_array"), "niter_array", report);
-            const auto ftol = readDoubleArray(root.at("ftol_array"), "ftol_array", report);
+            const auto ns =
+                readIntArray(root.at("ns_array"), "ns_array", report);
+            const auto niter =
+                readIntArray(root.at("niter_array"), "niter_array", report);
+            const auto ftol =
+                readDoubleArray(root.at("ftol_array"), "ftol_array", report);
             if (niter.size() != ns.size()) {
-                report.error("niter_array", "niter_array length must match ns_array");
+                report.error("niter_array",
+                             "niter_array length must match ns_array");
             }
             if (ftol.size() != ns.size()) {
-                report.error("ftol_array", "ftol_array length must match ns_array");
+                report.error("ftol_array",
+                             "ftol_array length must match ns_array");
             }
-            const std::size_t ng = std::min(ns.size(),
-                                            std::min(niter.size(), ftol.size()));
+            const std::size_t ng =
+                std::min(ns.size(), std::min(niter.size(), ftol.size()));
             for (std::size_t g = 0; g < ng; ++g) {
                 // Clamp negative entries to 0 so a negative int never wraps to
                 // SIZE_MAX; validate() then rejects 0 with the legacy message.
@@ -312,23 +350,33 @@ ParsedProblem read_problem_spec(const std::string& path,
     }
 
     // ---- boundary ----
-    if (root.contains("rbc")) readBoundary(root.at("rbc"), "rbc", p.rbc, report);
-    if (root.contains("zbs")) readBoundary(root.at("zbs"), "zbs", p.zbs, report);
+    if (root.contains("rbc"))
+        readBoundary(root.at("rbc"), "rbc", p.rbc, report);
+    if (root.contains("zbs"))
+        readBoundary(root.at("zbs"), "zbs", p.zbs, report);
 
     // ---- unsupported features -> errors ----
-    if (root.contains("lasym") && getBool(root.at("lasym"), "lasym", false, report)) {
-        report.error("lasym", "lasym=true: asymmetric equilibria are not supported by cuMES");
+    if (root.contains("lasym") &&
+        getBool(root.at("lasym"), "lasym", false, report)) {
+        report.error(
+            "lasym",
+            "lasym=true: asymmetric equilibria are not supported by cuMES");
     }
-    if (root.contains("lfreeb") && getBool(root.at("lfreeb"), "lfreeb", false, report)) {
-        report.error("lfreeb", "lfreeb=true: free-boundary runs are not supported by cuMES (fixed boundary only)");
+    if (root.contains("lfreeb") &&
+        getBool(root.at("lfreeb"), "lfreeb", false, report)) {
+        report.error("lfreeb",
+                     "lfreeb=true: free-boundary runs are not supported by "
+                     "cuMES (fixed boundary only)");
     }
     const char* kProfileTypes[] = {"pmass_type", "piota_type", "pcurr_type"};
     for (const char* t : kProfileTypes) {
         if (!root.contains(t)) continue;
         const std::string v = getString(root.at(t), t, "power_series", report);
         if (v != "power_series") {
-            report.error(t, "'" + std::string(t) + "': only \"power_series\" "
-                         "profiles are supported by cuMES, got \"" + v + "\"");
+            report.error(t, "'" + std::string(t) +
+                                "': only \"power_series\" "
+                                "profiles are supported by cuMES, got \"" +
+                                v + "\"");
         }
     }
     // Unsupported-feature keys are TYPE-CHECKED before the semantic support
@@ -339,32 +387,40 @@ ParsedProblem read_problem_spec(const std::string& path,
     for (const char* k : kAuxArrays) {
         if (!root.contains(k)) continue;
         if (!root.at(k).is_array()) {
-            report.error(k, "'" + std::string(k) + "': expected an array, got " +
-                                json::get_value_category_name(root.at(k).value_category()));
+            report.error(
+                k,
+                "'" + std::string(k) + "': expected an array, got " +
+                    json::get_value_category_name(root.at(k).value_category()));
             continue;
         }
         if (root.at(k).size() > 0) {
-            report.error(k, "'" + std::string(k) + "': spline profile coefficients "
-                          "are not supported by cuMES (power series only)");
+            report.error(k,
+                         "'" + std::string(k) +
+                             "': spline profile coefficients "
+                             "are not supported by cuMES (power series only)");
         }
     }
     const char* kAsymArrays[] = {"raxis_s", "zaxis_c", "rbs", "zbc"};
     for (const char* k : kAsymArrays) {
         if (!root.contains(k)) continue;
         if (!root.at(k).is_array()) {
-            report.error(k, "'" + std::string(k) + "': expected an array, got " +
-                                json::get_value_category_name(root.at(k).value_category()));
+            report.error(
+                k,
+                "'" + std::string(k) + "': expected an array, got " +
+                    json::get_value_category_name(root.at(k).value_category()));
             continue;
         }
         if (root.at(k).size() > 0) {
-            report.error(k, "'" + std::string(k) + "': asymmetric (lasym) input is "
-                          "not supported by cuMES");
+            report.error(k, "'" + std::string(k) +
+                                "': asymmetric (lasym) input is "
+                                "not supported by cuMES");
         }
     }
 
     // ---- unknown keys (strict: error; compatibility: warn) ----
     for (const auto& [key, _val] : root.as_object()) {
-        if (kSupportedKeys.count(key) == 0 && kKnownIgnoredKeys.count(key) == 0) {
+        if (kSupportedKeys.count(key) == 0 &&
+            kKnownIgnoredKeys.count(key) == 0) {
             const std::string msg = "unknown input key '" + key + "'";
             if (options.strict_schema) {
                 report.error(key, msg);

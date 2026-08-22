@@ -28,8 +28,10 @@ FoldedBoundary fold_boundary(const ProblemSpec& spec, std::size_t modes) {
     fb.zbsc.assign(modes, 0.0);
     fb.zbcs.assign(modes, 0.0);
     const std::size_t ntorp1 = static_cast<std::size_t>(spec.ntor + 1);
-    auto idx = [&](int m, int n) { return static_cast<std::size_t>(m) * ntorp1 +
-                                          static_cast<std::size_t>(n); };
+    auto idx = [&](int m, int n) {
+        return static_cast<std::size_t>(m) * ntorp1 +
+               static_cast<std::size_t>(n);
+    };
     for (const auto& e : spec.rbc) {
         const int n = std::abs(e.n);
         fb.rbcc[idx(e.m, n)] += e.value;
@@ -61,13 +63,14 @@ void emit_double_array(std::ostringstream& os, const std::vector<double>& v) {
 }
 
 // Sorted copy of a boundary harmonic list (deterministic by (m, n) ascending).
-std::vector<BoundaryHarmonic> sorted_harmonics(const std::vector<BoundaryHarmonic>& in) {
+std::vector<BoundaryHarmonic> sorted_harmonics(
+    const std::vector<BoundaryHarmonic>& in) {
     std::vector<BoundaryHarmonic> out = in;
-    std::sort(out.begin(), out.end(), [](const BoundaryHarmonic& a,
-                                         const BoundaryHarmonic& b) {
-        if (a.m != b.m) return a.m < b.m;
-        return a.n < b.n;
-    });
+    std::sort(out.begin(), out.end(),
+              [](const BoundaryHarmonic& a, const BoundaryHarmonic& b) {
+                  if (a.m != b.m) return a.m < b.m;
+                  return a.n < b.n;
+              });
     return out;
 }
 
@@ -95,9 +98,7 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     if (spec.ntor < 0 || spec.ntor > 15) {
         report.error("ntor", "ntor must be in [0, 15]");
     }
-    if (spec.nfp < 1) {
-        report.error("nfp", "nfp must be >= 1");
-    }
+    if (spec.nfp < 1) { report.error("nfp", "nfp must be >= 1"); }
     if (!std::isfinite(spec.physical.phiedge)) {
         report.error("phiedge", "phiedge must be finite");
     } else if (spec.physical.phiedge == 0.0) {
@@ -118,9 +119,10 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     // validated values are bit-identical to the divided ones.
     const double torflux_edge = torflux<double>(spec, 1.0);
     if (!std::isfinite(torflux_edge)) {
-        report.error("aphi",
-                     "toroidal-flux profile is non-finite at the edge "
-                     "(T(1) is not finite); the edge normalization would be unusable");
+        report.error(
+            "aphi",
+            "toroidal-flux profile is non-finite at the edge "
+            "(T(1) is not finite); the edge normalization would be unusable");
     } else if (torflux_edge == 0.0) {
         report.error("aphi",
                      "toroidal-flux profile is zero at the edge (T(1) = 0); "
@@ -135,20 +137,21 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         if (!std::isfinite(curr_edge)) {
             report.error("ac",
                          "prescribed-current profile is non-finite at the edge "
-                         "(C_edge is not finite); the current normalization would be unusable");
+                         "(C_edge is not finite); the current normalization "
+                         "would be unusable");
         } else if (curr_edge == 0.0) {
-            report.error("ac",
-                         "prescribed-current profile integrates to zero at the edge "
-                         "(C_edge = 0); the current normalization would divide by zero");
+            report.error(
+                "ac",
+                "prescribed-current profile integrates to zero at the edge "
+                "(C_edge = 0); the current normalization would divide by zero");
         } else if (std::fabs(curr_edge) < 1e-30) {
-            report.error("ac",
-                         "prescribed-current profile is ill-scaled at the edge "
-                         "(|C_edge| < 1e-30); the current normalization would overflow");
+            report.error(
+                "ac",
+                "prescribed-current profile is ill-scaled at the edge "
+                "(|C_edge| < 1e-30); the current normalization would overflow");
         }
     }
-    if (spec.delt <= 0.0) {
-        report.error("delt", "delt must be positive");
-    }
+    if (spec.delt <= 0.0) { report.error("delt", "delt must be positive"); }
     if (spec.angular.ntheta < 0 || spec.angular.ntheta > 256) {
         report.error("ntheta", "ntheta must be in [0, 256] (0 = default)");
     }
@@ -181,8 +184,7 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         if (st.radial_surfaces < 3 || st.radial_surfaces > 512) {
             report.error("ns_array", "ns_array entries must be in [3, 512]");
         }
-        if (g > 0 &&
-            st.radial_surfaces <= spec.stages[g - 1].radial_surfaces) {
+        if (g > 0 && st.radial_surfaces <= spec.stages[g - 1].radial_surfaces) {
             report.error(
                 "ns_array",
                 "ns_array must be strictly increasing (monotonically "
@@ -198,9 +200,9 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         if (!tolerance_achievable(st.tolerance, options.precision)) {
             std::ostringstream os;
             os << "ftol_array entry " << std::setprecision(17) << st.tolerance
-               << " is below the " << (options.precision == PrecisionPolicy::kMixedFloat
-                                           ? "float"
-                                           : "double")
+               << " is below the "
+               << (options.precision == PrecisionPolicy::kMixedFloat ? "float"
+                                                                     : "double")
                << " floor " << tolerance_floor(options.precision)
                << "; relax the tolerance or choose a reachable policy";
             report.error("ftol_array", os.str());
@@ -214,7 +216,8 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         if (e.m < 0 || e.m >= spec.mpol || std::abs(e.n) > spec.ntor) {
             std::ostringstream os;
             os << "rbc: skipping mode m=" << e.m << " n=" << e.n
-               << " (outside 0<=m<" << spec.mpol << ", |n|<=" << spec.ntor << ")";
+               << " (outside 0<=m<" << spec.mpol << ", |n|<=" << spec.ntor
+               << ")";
             report.warn("rbc", os.str());
             continue;
         }
@@ -224,22 +227,23 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         if (e.m < 0 || e.m >= spec.mpol || std::abs(e.n) > spec.ntor) {
             std::ostringstream os;
             os << "zbs: skipping mode m=" << e.m << " n=" << e.n
-               << " (outside 0<=m<" << spec.mpol << ", |n|<=" << spec.ntor << ")";
+               << " (outside 0<=m<" << spec.mpol << ", |n|<=" << spec.ntor
+               << ")";
             report.warn("zbs", os.str());
             continue;
         }
         kept_zbs.push_back(e);
     }
     if (kept_rbc.empty()) {
-        report.error("rbc", "rbc: at least one boundary coefficient is required");
+        report.error("rbc",
+                     "rbc: at least one boundary coefficient is required");
     }
     if (kept_zbs.empty()) {
-        report.error("zbs", "zbs: at least one boundary coefficient is required");
+        report.error("zbs",
+                     "zbs: at least one boundary coefficient is required");
     }
 
-    if (report.has_errors()) {
-        return ValidationResult(report);
-    }
+    if (report.has_errors()) { return ValidationResult(report); }
 
     // ---- resolve resolution defaults (Sizes::computeDerivedSizes) ----
     int ntheta = spec.angular.ntheta;
@@ -296,7 +300,8 @@ std::string ValidatedProblem::normalize_to_json() const {
     os << "  \"ntheta\":" << s.angular.ntheta << ",\n";
     os << "  \"nzeta\":" << s.angular.nzeta << ",\n";
     os << "  \"ncurr\":"
-       << (s.current_model == CurrentModel::kPrescribedCurrent ? 1 : 0) << ",\n";
+       << (s.current_model == CurrentModel::kPrescribedCurrent ? 1 : 0)
+       << ",\n";
     os << "  \"delt\":" << json_number(s.delt) << ",\n";
     os << "  \"physical\":{\"phiedge\":" << json_number(s.physical.phiedge)
        << ",\"pres_scale\":" << json_number(s.physical.pres_scale)

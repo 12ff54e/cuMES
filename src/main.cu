@@ -19,19 +19,6 @@
 //
 // Precision: `Real` (vmec_types.h) is the compile-time switch between double
 // and float — configure with -DCUMES_USE_FLOAT=ON.
-#include <cstdio>
-#include <cstdlib>
-#include <cmath>
-#include <cstdint>
-#include <exception>
-#include <fstream>
-#include <iterator>
-#include <string>
-
-#include "vmec_types.h"
-#include "solver.cuh"
-#include "output.cuh"
-
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/precision_policy.hpp"
 #include "cumes/config/solver_options.hpp"
@@ -43,9 +30,21 @@
 #include "cumes/io/writer.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/stream.hpp"
+#include "cumes/solver/multigrid_solver.hpp"
 #include "cumes/state/seed_state.hpp"
 #include "cumes/state/spectral_storage.hpp"
-#include "cumes/solver/multigrid_solver.hpp"
+#include "output.cuh"
+#include "solver.cuh"
+#include "vmec_types.h"
+
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 // Build provenance injected at configure time (see CMakeLists.txt).
 #ifndef CUMES_GIT_REVISION
@@ -85,12 +84,14 @@ static std::string hashBytes(const std::string& bytes) {
 // context is live for the device/driver queries. sourceHash is the hash of the
 // input bytes captured at read time — the input file is NOT re-opened here
 // (a mid-solve replacement must not change the recorded provenance).
-static void fill_provenance(cumes::RunReport& report, const std::string& inputPath,
+static void fill_provenance(cumes::RunReport& report,
+                            const std::string& inputPath,
                             const std::string& sourceHash) {
     report.build.revision = CUMES_GIT_REVISION;
     report.build.dirty = (CUMES_GIT_DIRTY != 0);
     report.build.build_type = CUMES_BUILD_TYPE;
-    report.build.scalar_type = sizeof(Real) == sizeof(double) ? "double" : "float";
+    report.build.scalar_type =
+        sizeof(Real) == sizeof(double) ? "double" : "float";
     report.build.precision_policy = CUMES_PRECISION_POLICY_NAME;
     report.build.compile_flags = CUMES_PRECISION_FLAGS;
     report.input.source_path = inputPath;
@@ -117,8 +118,9 @@ int main(int argc, char** argv) {
     // ---- CLI ----------------------------------------------------------------
     std::string inputPath = "inputs/solovev.json";
     std::string outputPath;
-    std::string restartPath;     // --restart (v1 checkpoint)
-    std::string checkpointPath;  // --checkpoint (write a v1 checkpoint after solve)
+    std::string restartPath;  // --restart (v1 checkpoint)
+    std::string
+        checkpointPath;  // --checkpoint (write a v1 checkpoint after solve)
     // Slot occupancy: a --input/--output flag pins its slot (flags override
     // positionals); each positional fills the first free slot (input, output).
     bool inputGiven = false;
@@ -166,7 +168,8 @@ int main(int argc, char** argv) {
             outputPath = argv[i];
             outputGiven = true;
         } else {
-            fprintf(stderr, "cuMES: unexpected extra argument '%s'\n", a.c_str());
+            fprintf(stderr, "cuMES: unexpected extra argument '%s'\n",
+                    a.c_str());
             return EXIT_FAILURE;
         }
     }
@@ -186,8 +189,9 @@ int main(int argc, char** argv) {
     }
     const cumes::OutputSpec outSpec = resolved.value();
     if (!cumes::output_format_available(outSpec.format)) {
-        fprintf(stderr, "cuMES: output format '%s' is not available in this "
-                        "build; no output will be written\n",
+        fprintf(stderr,
+                "cuMES: output format '%s' is not available in this "
+                "build; no output will be written\n",
                 cumes::output_suffix(outSpec.format));
         return EXIT_FAILURE;
     }
@@ -207,8 +211,10 @@ int main(int argc, char** argv) {
     // not of whatever the path holds after the solve (TOCTOU — the pre-fix
     // fill_provenance re-opened and re-hashed the file post-solve).
     const std::string inputBytes = readFileBytes(inputPath);
-    const std::string sourceHash = inputBytes.empty() ? "" : hashBytes(inputBytes);
-    cumes::ValidationResult vr = cumes::ValidationResult(cumes::ValidationReport{});
+    const std::string sourceHash =
+        inputBytes.empty() ? "" : hashBytes(inputBytes);
+    cumes::ValidationResult vr =
+        cumes::ValidationResult(cumes::ValidationReport{});
     try {
         vr = cumes::read_and_validate(inputPath, opts);
     } catch (const std::exception& e) {
@@ -243,9 +249,10 @@ int main(int argc, char** argv) {
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
     printf("input: %s\n", inputPath.c_str());
-    printf("precision: %s\n", sizeof(Real) == sizeof(double) ? "double" : "float");
+    printf("precision: %s\n",
+           sizeof(Real) == sizeof(double) ? "double" : "float");
     printf("mpol=%d ntor=%d nfp=%d ntheta=%d nzeta=%d nZnT=%d ncurr=%d\n",
-           p.mpol,p.ntor,p.nfp,p.ntheta,p.nzeta,p.nZnT,p.ncurr);
+           p.mpol, p.ntor, p.nfp, p.ntheta, p.nzeta, p.nZnT, p.ncurr);
     // Multi-radial-grid stage sequence (vmecpp ns_array/niter_array/ftol_array)
     printf("grids=%d: ns", n_grids);
     for (int g = 0; g < n_grids; ++g)
@@ -259,7 +266,8 @@ int main(int argc, char** argv) {
 
     // ---- Multi-radial-grid stage loop (delegated to MultigridSolver) ----
     cumes::SpectralStorage<Real> storage;
-    SolverResult<Real> result{false, 0, Real(1.0), Real(1.0), Real(1.0), Real(0.9), {}};
+    SolverResult<Real> result{false,     0,         Real(1.0), Real(1.0),
+                              Real(1.0), Real(0.9), {}};
     int total_iter = 0;
 
     try {
@@ -278,9 +286,11 @@ int main(int argc, char** argv) {
             const auto& snap = ck.value();
             if (snap.ns != static_cast<int>(spec.stages[0].radial_surfaces) ||
                 snap.mnmax != p.mnmax) {
-                fprintf(stderr, "cuMES: restart checkpoint (ns=%d, mnmax=%d) "
-                                "does not match stage-0 grid (ns=%zu, mnmax=%d)\n",
-                        snap.ns, snap.mnmax, spec.stages[0].radial_surfaces, p.mnmax);
+                fprintf(stderr,
+                        "cuMES: restart checkpoint (ns=%d, mnmax=%d) "
+                        "does not match stage-0 grid (ns=%zu, mnmax=%d)\n",
+                        snap.ns, snap.mnmax, spec.stages[0].radial_surfaces,
+                        p.mnmax);
                 return EXIT_FAILURE;
             }
             seed = cumes::restart_state<Real>(p, vp, snap);
@@ -304,9 +314,10 @@ int main(int argc, char** argv) {
         // runs keep the lenient report-and-return path below.
         if (outcome.failed_stage >= 0) {
             int g = outcome.failed_stage;
-            fprintf(stderr, "FATAL: grid stage %d/%d (ns=%d) completed %d/%d "
-                            "iterations without meeting ftol=%.0e; final "
-                            "residuals fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
+            fprintf(stderr,
+                    "FATAL: grid stage %d/%d (ns=%d) completed %d/%d "
+                    "iterations without meeting ftol=%.0e; final "
+                    "residuals fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
                     g + 1, n_grids, p.ns, result.iterations, p.max_iter,
                     (double)p.ftol, (double)result.fsqr, (double)result.fsqz,
                     (double)result.fsql);
@@ -361,8 +372,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        outputPrint<Real>(storage, p, result.iterations,
-                          result.converged, result.fsqr, result.fsqz, result.fsql);
+        outputPrint<Real>(storage, p, result.iterations, result.converged,
+                          result.fsqr, result.fsqz, result.fsql);
         if (n_grids > 1)
             printf("multigrid: total effective iterations over %d grids = %d\n",
                    n_grids, total_iter);

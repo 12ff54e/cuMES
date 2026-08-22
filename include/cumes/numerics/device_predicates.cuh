@@ -35,12 +35,12 @@
 // reduced oriented stats and decide validity with the IDENTICAL rule the host
 // controller applies (IterationController::jacobian_invalid + kJacobianEps).
 // The bit gates every downstream 1/√g consumer, cache mutation, and force.
-static __global__ void jacobianFinalizeKernel(cumes::ControlRecord* __restrict__ rec,
-                                            int nZnT) {
+static __global__ void jacobianFinalizeKernel(
+    cumes::ControlRecord* __restrict__ rec,
+    int nZnT) {
     const double eps = cumes::kJacobianEps;
     const bool invalid =
-        rec->jacobian_nonfinite_count > 0.0 ||
-        rec->jacobian_max_abs <= 0.0 ||
+        rec->jacobian_nonfinite_count > 0.0 || rec->jacobian_max_abs <= 0.0 ||
         rec->jacobian_min_oriented <= 0.0 ||
         (rec->jacobian_min_oriented < eps * rec->jacobian_max_abs &&
          rec->jacobian_min_index >= (double)nZnT);
@@ -63,8 +63,10 @@ static __global__ void jacobianFinalizeKernel(cumes::ControlRecord* __restrict__
 // evaluated: on an invalid-Jacobian refresh pass the fields stay at the
 // deterministic zero sentinel and the predicate skips convergence
 // classification (see below).
-static __global__ void forceNormFinalizeKernel(cumes::ControlRecord* __restrict__ rec,
-                                               double delta_s, double lamscale) {
+static __global__ void forceNormFinalizeKernel(
+    cumes::ControlRecord* __restrict__ rec,
+    double delta_s,
+    double lamscale) {
     if (!rec->status.force_norms_evaluated) return;
     const double sRZ = rec->force_norms[0];
     const double sL = rec->force_norms[1];
@@ -101,27 +103,26 @@ static __global__ void forceNormFinalizeKernel(cumes::ControlRecord* __restrict_
 //     gate restores before reading these bits anyway, and the guarded
 //     preconditioner would no-op regardless.
 // Nonfinite classification is factor-independent and always runs.
-static __global__ void invariantPredicateKernel(cumes::ControlRecord* __restrict__ rec,
-                                              double f_norm_rz, double f_norm_l,
-                                              double plain_per_el, double ftol,
-                                              int use_record_factors) {
-    const double f_rz =
-        use_record_factors ? rec->final_f_norm_rz : f_norm_rz;
-    const double f_l =
-        use_record_factors ? rec->final_f_norm_l : f_norm_l;
-    const double fsqr_i =
-        rec->invariant_raw[0] * plain_per_el * f_rz * 0.25;
-    const double fsqz_i =
-        rec->invariant_raw[1] * plain_per_el * f_rz * 0.25;
+static __global__ void invariantPredicateKernel(
+    cumes::ControlRecord* __restrict__ rec,
+    double f_norm_rz,
+    double f_norm_l,
+    double plain_per_el,
+    double ftol,
+    int use_record_factors) {
+    const double f_rz = use_record_factors ? rec->final_f_norm_rz : f_norm_rz;
+    const double f_l = use_record_factors ? rec->final_f_norm_l : f_norm_l;
+    const double fsqr_i = rec->invariant_raw[0] * plain_per_el * f_rz * 0.25;
+    const double fsqz_i = rec->invariant_raw[1] * plain_per_el * f_rz * 0.25;
     const double fsql_i = rec->invariant_raw[2] * plain_per_el * f_l;
-    const bool nonfinite = !(isfinite(fsqr_i) && isfinite(fsqz_i) &&
-                             isfinite(fsql_i));
+    const bool nonfinite =
+        !(isfinite(fsqr_i) && isfinite(fsqz_i) && isfinite(fsql_i));
     const bool can_classify =
         !use_record_factors || rec->status.force_norms_evaluated != 0;
     rec->status.invariant_nonfinite = nonfinite ? 1u : 0u;
     rec->status.invariant_converged =
-        (!nonfinite && can_classify && fsqr_i <= ftol &&
-         fsqz_i <= ftol && fsql_i <= ftol)
+        (!nonfinite && can_classify && fsqr_i <= ftol && fsqz_i <= ftol &&
+         fsql_i <= ftol)
             ? 1u
             : 0u;
 }
@@ -135,24 +136,34 @@ static __global__ void invariantPredicateKernel(cumes::ControlRecord* __restrict
 template <typename T>
 __global__ void computeResidualsPreconditionedKernel(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
-    int ns, int mnmax, cumes::ControlRecord* __restrict__ rec) {
+    int ns,
+    int mnmax,
+    cumes::ControlRecord* __restrict__ rec) {
     using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
-    int comp = blockIdx.x; if (comp >= 3) return;
+    int comp = blockIdx.x;
+    if (comp >= 3) return;
     const bool terminal = rec->status.invariant_nonfinite != 0 ||
                           rec->status.invariant_converged != 0;
     if (terminal) {
         if (threadIdx.x == 0) rec->preconditioned_raw[comp] = 0.0;
         return;
     }
-    A sum = A(0); int total = mnmax * ns;
+    A sum = A(0);
+    int total = mnmax * ns;
     for (int i = threadIdx.x; i < total; i += blockDim.x) {
         int mode = i / ns, j = i % ns;
         T a = f_spec(static_cast<cumes::SpectralComponent>(comp), mode, j);
         T b = f_spec(static_cast<cumes::SpectralComponent>(comp + 3), mode, j);
         sum += a * a + b * b;
     }
-    __shared__ A s_sum[256]; int tid = threadIdx.x; s_sum[tid] = sum; __syncthreads();
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) { if (tid < s) s_sum[tid] += s_sum[tid + s]; __syncthreads(); }
+    __shared__ A s_sum[256];
+    int tid = threadIdx.x;
+    s_sum[tid] = sum;
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) s_sum[tid] += s_sum[tid + s];
+        __syncthreads();
+    }
     if (tid == 0) {
         rec->preconditioned_raw[comp] = s_sum[0] / (mnmax * ns);
         rec->status.preconditioned_evaluated = 1;  // idempotent (3 blocks)

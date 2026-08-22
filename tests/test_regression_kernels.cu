@@ -27,8 +27,8 @@
 //     no longer left at their staged values.  The regression runs
 //     ns = 3, 17, 65, 127, 129, 130, 257 and compares the preconditioned
 //     force buffer against a serial Thomas solve on the SAME assembled matrix
-//     coefficients (precon.ar()/dr/br/az/dz/bz, precon.jmin(), precon.lambdaPrec() copied
-//     to host after the real preconCompute).
+//     coefficients (precon.ar()/dr/br/az/dz/bz, precon.jmin(),
+//     precon.lambdaPrec() copied to host after the real preconCompute).
 //
 // Conventions match the other tests: everything is templated on T and both
 // double and float are instantiated; the CPU references always compute in
@@ -42,24 +42,23 @@
 // coeff-pack->Z2D->synthesize chain bandpasses it.  tcon comes from the real
 // preconditioner (preconCompute on the manufactured geometry) through the
 // public constraintCompute(precon_updated=true) path.
+#include "cumes/numerics/preconditioner.hpp"
+#include "cumes/physics/constraint_operator.hpp"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
+#include "cumes/physics/profiles.hpp"
+#include "cumes/runtime/device_buffer.cuh"
+#include "cumes/state/mode_table.cuh"
+#include "cumes/state/real_space_storage.hpp"
+#include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
+#include "cumes_test_cuda_helper.cuh"
+#include "vmec_types.h"
+
 #include <cmath>
 #include <cstdlib>
 #include <vector>
-#include "vmec_types.h"
-#include "cumes/state/real_space_storage.hpp"
-#include "cumes/state/mode_table.cuh"
-#include "cumes/state/spectral_storage.hpp"
-#include "cumes/physics/geometry_operator.hpp"
-#include "cumes/physics/magnetic_field_operator.hpp"
-#include "cumes/physics/constraint_operator.hpp"
-#include "cumes/physics/profiles.hpp"
-#include "cumes/transforms/toroidal_fft_operator.hpp"
-#include "cumes/numerics/preconditioner.hpp"
-#include "cumes/runtime/device_buffer.cuh"
-#include "cumes_test_cuda_helper.cuh"
 using namespace cumes::test;
-
-
 
 // Absolute comparison against a precomputed tolerance (see the callers: the
 // tolerances are scale-based — rel * the grid/component reference scale + an
@@ -67,11 +66,17 @@ using namespace cumes::test;
 // double, and the float result carries rounding amplified by the coefficient
 // scale; a per-point relative test would spuriously fail at genuine zero
 // crossings of the output).
-static void checkNear(double gpu, double ref, double tol,
-                      const char* s, long long a, long long b, long long c) {
+static void checkNear(double gpu,
+                      double ref,
+                      double tol,
+                      const char* s,
+                      long long a,
+                      long long b,
+                      long long c) {
     if (!(fabs(gpu - ref) <= tol)) {
-        std::cerr << format("FAIL [{}] a={} b={} c={} gpu={:.15e} ref={:.15e}\n",
-                s, a, b, c, gpu, ref);
+        std::cerr << format(
+            "FAIL [{}] a={} b={} c={} gpu={:.15e} ref={:.15e}\n", s, a, b, c,
+            gpu, ref);
         ++failures();
     }
 }
@@ -80,13 +85,26 @@ static void checkNear(double gpu, double ref, double tol,
 // DeviceParams / ValidatedProblem construction (self-contained, no JSON/files).
 // ---------------------------------------------------------------------------
 template <typename T>
-static DeviceParams<T> makeParams(int ns, int mpol, int ntor, int ntheta, int nzeta) {
+static DeviceParams<T> makeParams(int ns,
+                                  int mpol,
+                                  int ntor,
+                                  int ntheta,
+                                  int nzeta) {
     DeviceParams<T> p;
-    p.ns = ns; p.mnmax = mpol * (ntor + 1);
-    p.ntheta = ntheta; p.nzeta = nzeta; p.nfp = 1;
-    p.nZnT = ntheta * nzeta; p.mpol = mpol; p.ntor = ntor;
-    p.ncurr = 0; p.delt = T(1.0); p.ftol = T(1e-14); p.max_iter = 10;
-    p.tcon0 = T(1.0); p.lamscale = T(1.0);
+    p.ns = ns;
+    p.mnmax = mpol * (ntor + 1);
+    p.ntheta = ntheta;
+    p.nzeta = nzeta;
+    p.nfp = 1;
+    p.nZnT = ntheta * nzeta;
+    p.mpol = mpol;
+    p.ntor = ntor;
+    p.ncurr = 0;
+    p.delt = T(1.0);
+    p.ftol = T(1e-14);
+    p.max_iter = 10;
+    p.tcon0 = T(1.0);
+    p.lamscale = T(1.0);
     return p;
 }
 
@@ -94,7 +112,9 @@ static DeviceParams<T> makeParams(int ns, int mpol, int ntor, int ntheta, int nz
 // ai=[1.0]; aphi=[1.0] so the toroidal flux / phip profile is non-degenerate).
 static cumes::ValidatedProblem solovevInput() {
     cumes::ProblemSpec spec;
-    spec.mpol = 6; spec.ntor = 0; spec.nfp = 1;
+    spec.mpol = 6;
+    spec.ntor = 0;
+    spec.nfp = 1;
     spec.current_model = cumes::CurrentModel::kFixedIota;
     spec.delt = 0.9;
     spec.mass.coefficients = {0.125, -0.125};
@@ -110,22 +130,38 @@ static cumes::ValidatedProblem solovevInput() {
 // Manufactured spectral state (Solovev-like: R_00 ~ 4, some m=1/2/3 content).
 // ---------------------------------------------------------------------------
 template <typename T>
-static void fillState(std::vector<T>& cc, std::vector<T>& ss,
-                      std::vector<T>& zsc, std::vector<T>& zcs,
-                      std::vector<T>& lsc, std::vector<T>& lcs,
-                      int ns, int mnmax, int ntor) {
+static void fillState(std::vector<T>& cc,
+                      std::vector<T>& ss,
+                      std::vector<T>& zsc,
+                      std::vector<T>& zcs,
+                      std::vector<T>& lsc,
+                      std::vector<T>& lcs,
+                      int ns,
+                      int mnmax,
+                      int ntor) {
     for (int j = 0; j < ns; ++j) {
         double s = (double)j / (ns - 1.0);
         for (int mode = 0; mode < mnmax; ++mode) {
             int m = mode / (ntor + 1), n = mode % (ntor + 1);
-            if (m == 0 && n == 0)        cc[j + mode * ns] = T(4.0);
-            else if (m == 1 && n == 0)   cc[j + mode * ns] = T(0.3 * s);
-            else if (m == 2 && n == 0)   cc[j + mode * ns] = T(0.2 * s);
-            else if (m == 3 && n == 0)   cc[j + mode * ns] = T(0.1 * s);
+            if (m == 0 && n == 0)
+                cc[j + mode * ns] = T(4.0);
+            else if (m == 1 && n == 0)
+                cc[j + mode * ns] = T(0.3 * s);
+            else if (m == 2 && n == 0)
+                cc[j + mode * ns] = T(0.2 * s);
+            else if (m == 3 && n == 0)
+                cc[j + mode * ns] = T(0.1 * s);
             ss[j + mode * ns] = cc[j + mode * ns];
-            if (m == 1 && n == 0)        { zsc[j + mode * ns] = T(-0.5 * s); zcs[j + mode * ns] = T(-0.5 * s); }
-            else if (m == 2 && n == 0)   { zsc[j + mode * ns] = T(0.15 * s); zcs[j + mode * ns] = T(0.15 * s); }
-            else if (m == 3 && n == 0)   { zsc[j + mode * ns] = T(-0.05 * s); zcs[j + mode * ns] = T(-0.05 * s); }
+            if (m == 1 && n == 0) {
+                zsc[j + mode * ns] = T(-0.5 * s);
+                zcs[j + mode * ns] = T(-0.5 * s);
+            } else if (m == 2 && n == 0) {
+                zsc[j + mode * ns] = T(0.15 * s);
+                zcs[j + mode * ns] = T(0.15 * s);
+            } else if (m == 3 && n == 0) {
+                zsc[j + mode * ns] = T(-0.05 * s);
+                zcs[j + mode * ns] = T(-0.05 * s);
+            }
             lsc[j + mode * ns] = T(0.01 * (m + 1) * s);
             lcs[j + mode * ns] = T(0.01 * (m + 1) * s);
         }
@@ -137,7 +173,8 @@ static void fillState(std::vector<T>& cc, std::vector<T>& ss,
 // ---------------------------------------------------------------------------
 // CPU scalar reference for the de-alias bandpass.
 //
-// Replicates constraint.cu deAliasAnalyzeKernel -> D2Z -> deAliasCoeffPackKernel
+// Replicates constraint.cu deAliasAnalyzeKernel -> D2Z ->
+// deAliasCoeffPackKernel
 // -> Z2D -> deAliasSynthesizeKernel exactly:
 //   * analysis: UNIFORM sums of gConEff*sin(mθ) / gConEff*cos(mθ) over the
 //     FULL theta grid (per zeta plane) — the kernel does not use the reduced
@@ -153,9 +190,15 @@ static void fillState(std::vector<T>& cc, std::vector<T>& ss,
 //
 // gCon at jF == 0 is not written (the kernel skips the axis); callers compare
 // jF >= 1 only.
-static void cpuDealiasBandpass(const double* gConEff, int ns, int mpol, int ntor,
-                               int ntheta, int nzeta, int nZnT,
-                               const double* tcon, const double* faccon,
+static void cpuDealiasBandpass(const double* gConEff,
+                               int ns,
+                               int mpol,
+                               int ntor,
+                               int ntheta,
+                               int nzeta,
+                               int nZnT,
+                               const double* tcon,
+                               const double* faccon,
                                double* gCon) {
     int nz2 = nzeta / 2 + 1;
     std::vector<double> coeffSc((size_t)(mpol - 2) * (ns - 1) * nz2, 0.0);
@@ -167,14 +210,16 @@ static void cpuDealiasBandpass(const double* gConEff, int ns, int mpol, int ntor
             // Uniform full-theta projection per zeta plane.
             std::vector<double> Ssc(nzeta, 0.0), Scs(nzeta, 0.0);
             for (int k = 0; k < nzeta; ++k) {
-                const double* g = gConEff + (size_t)jF * nZnT + (size_t)k * ntheta;
+                const double* g =
+                    gConEff + (size_t)jF * nZnT + (size_t)k * ntheta;
                 double ssc = 0.0, scs = 0.0;
                 for (int it = 0; it < ntheta; ++it) {
                     double th = 2.0 * M_PI * it / ntheta;
                     ssc += g[it] * sin(m * th);
                     scs += g[it] * cos(m * th);
                 }
-                Ssc[k] = ssc; Scs[k] = scs;
+                Ssc[k] = ssc;
+                Scs[k] = scs;
             }
             double scale = tcon[jF] * faccon[m];
             for (int n = 0; n <= ntor; ++n) {
@@ -185,13 +230,16 @@ static void cpuDealiasBandpass(const double* gConEff, int ns, int mpol, int ntor
                     imFcs += -Scs[k] * sin(ang);
                 }
                 double norm = (n > 0) ? 4.0 / nZnT : 2.0 / nZnT;
-                coeffSc[(size_t)(m1 * (ns - 1) + jF1) * nz2 + n] = norm * scale * reFsc;
-                coeffCs[(size_t)(m1 * (ns - 1) + jF1) * nz2 + n] = norm * scale * (-imFcs);
+                coeffSc[(size_t)(m1 * (ns - 1) + jF1) * nz2 + n] =
+                    norm * scale * reFsc;
+                coeffCs[(size_t)(m1 * (ns - 1) + jF1) * nz2 + n] =
+                    norm * scale * (-imFcs);
             }
             // Unnormalized Z2D + poloidal synthesis.
             for (int k = 0; k < nzeta; ++k) {
                 size_t base = (size_t)(m1 * (ns - 1) + jF1) * nz2;
-                double slot0 = coeffSc[base];   // n=0 (cs n=0 is dropped: shalf=0)
+                double slot0 =
+                    coeffSc[base];  // n=0 (cs n=0 is dropped: shalf=0)
                 double slot1 = 0.0;
                 for (int n = 1; n <= ntor; ++n) {
                     double ang = 2.0 * M_PI * n * k / nzeta;
@@ -215,11 +263,10 @@ static void cpuDealiasBandpass(const double* gConEff, int ns, int mpol, int ntor
 static double daPatternValue(int jF, int it, int ntheta, int ns) {
     double sF = (ns > 1) ? (double)jF / (ns - 1.0) : 0.0;
     double th = 2.0 * M_PI * it / ntheta;
-    double v = 0.5
-        + 0.7 * sin(1.0 * th) + 0.6 * sin(2.0 * th) + 0.5 * sin(3.0 * th)
-        + 0.4 * sin(4.0 * th) + 0.3 * sin(5.0 * th) + 0.2 * sin(6.0 * th)
-        + 0.15 * sin(7.0 * th) + 0.1 * sin(8.0 * th)
-        + 0.3 * cos(2.0 * th) + 0.25 * cos(4.0 * th);
+    double v = 0.5 + 0.7 * sin(1.0 * th) + 0.6 * sin(2.0 * th) +
+               0.5 * sin(3.0 * th) + 0.4 * sin(4.0 * th) + 0.3 * sin(5.0 * th) +
+               0.2 * sin(6.0 * th) + 0.15 * sin(7.0 * th) +
+               0.1 * sin(8.0 * th) + 0.3 * cos(2.0 * th) + 0.25 * cos(4.0 * th);
     return (1.0 + 0.1 * sF) * v;
 }
 
@@ -232,8 +279,13 @@ static double daPatternValue(int jF, int it, int ntheta, int ns) {
 // OUTSIDE the solve — the PCR kernel's hasL/hasR guards impose exactly these,
 // see the boundary analysis in the test header).  Only x[j] for jMin..jMax-1
 // are written; x[jMax] and x[j<jMin] are left untouched.
-static void thomasSolve(const double* a, const double* d, const double* b,
-                        int jMin, int jMax, const double* rhs, double* x) {
+static void thomasSolve(const double* a,
+                        const double* d,
+                        const double* b,
+                        int jMin,
+                        int jMax,
+                        const double* rhs,
+                        double* x) {
     int n = jMax - jMin;
     if (n <= 0) return;
     std::vector<double> cp(n), dp(n);
@@ -254,28 +306,37 @@ static void thomasSolve(const double* a, const double* d, const double* b,
 }
 
 // CPU reference for preconApply (precon.cu tridiagSolveKernel):
-//   comps 0,3 -> R tridiagonal (ar/dr/br), comps 1,4 -> Z tridiagonal (az/dz/bz)
-//   comps 0..4 zeroed for j < jMin, comps 2,5 multiplied by lambdaPrec
-//   (all surfaces 0..ns-1, including the LCFS; comp 5 is NOT zeroed below
-//   jMin — matching the kernel).
+//   comps 0,3 -> R tridiagonal (ar/dr/br), comps 1,4 -> Z tridiagonal
+//   (az/dz/bz) comps 0..4 zeroed for j < jMin, comps 2,5 multiplied by
+//   lambdaPrec (all surfaces 0..ns-1, including the LCFS; comp 5 is NOT zeroed
+//   below jMin — matching the kernel).
 // f is the manufactured 6-family buffer [comp*mnmax*ns + mode*ns + jF],
 // modified in place (in double).
 template <typename T>
-static void cpuPreconApplyRef(const std::vector<T>& ar, const std::vector<T>& dr,
-                              const std::vector<T>& br, const std::vector<T>& az,
-                              const std::vector<T>& dz, const std::vector<T>& bz,
+static void cpuPreconApplyRef(const std::vector<T>& ar,
+                              const std::vector<T>& dr,
+                              const std::vector<T>& br,
+                              const std::vector<T>& az,
+                              const std::vector<T>& dz,
+                              const std::vector<T>& bz,
                               const std::vector<int>& jMin,
                               const std::vector<T>& lambdaPrec,
-                              int ns, int mnmax, std::vector<double>& f) {
+                              int ns,
+                              int mnmax,
+                              std::vector<double>& f) {
     int stride = mnmax * ns;
     for (int mode = 0; mode < mnmax; ++mode) {
         int jm = jMin[mode];
         int jMax = ns - 1;
-        std::vector<double> arD(ns), drD(ns), brD(ns), azD(ns), dzD(ns), bzD(ns);
+        std::vector<double> arD(ns), drD(ns), brD(ns), azD(ns), dzD(ns),
+            bzD(ns);
         for (int j = 0; j < ns; ++j) {
-            arD[j] = (double)ar[mode * ns + j]; drD[j] = (double)dr[mode * ns + j];
-            brD[j] = (double)br[mode * ns + j]; azD[j] = (double)az[mode * ns + j];
-            dzD[j] = (double)dz[mode * ns + j]; bzD[j] = (double)bz[mode * ns + j];
+            arD[j] = (double)ar[mode * ns + j];
+            drD[j] = (double)dr[mode * ns + j];
+            brD[j] = (double)br[mode * ns + j];
+            azD[j] = (double)az[mode * ns + j];
+            dzD[j] = (double)dz[mode * ns + j];
+            bzD[j] = (double)bz[mode * ns + j];
         }
         // R system (comps 0, 3); Z system (comps 1, 4).
         for (int c = 0; c < 6; ++c) {
@@ -285,13 +346,14 @@ static void cpuPreconApplyRef(const std::vector<T>& ar, const std::vector<T>& dr
             const std::vector<double>* bP = (c == 0 || c == 3) ? &brD : &bzD;
             std::vector<double> rhs(ns), x(ns, 0.0);
             for (int j = 0; j < ns; ++j) rhs[j] = f[c * stride + mode * ns + j];
-            thomasSolve(aP->data(), dP->data(), bP->data(), jm, jMax, rhs.data(), x.data());
-            for (int j = jm; j < jMax; ++j) f[c * stride + mode * ns + j] = x[j];
+            thomasSolve(aP->data(), dP->data(), bP->data(), jm, jMax,
+                        rhs.data(), x.data());
+            for (int j = jm; j < jMax; ++j)
+                f[c * stride + mode * ns + j] = x[j];
         }
         // Zero comps 0..4 below jMin (comp 5 keeps its value).
         for (int j = 0; j < jm; ++j)
-            for (int c = 0; c < 5; ++c)
-                f[c * stride + mode * ns + j] = 0.0;
+            for (int c = 0; c < 5; ++c) f[c * stride + mode * ns + j] = 0.0;
         // Lambda diagonal preconditioner on comps 2, 5 (all surfaces).
         for (int j = 0; j < ns; ++j) {
             double lp = (double)lambdaPrec[mode * ns + j];
@@ -307,11 +369,15 @@ static void cpuPreconApplyRef(const std::vector<T>& ar, const std::vector<T>& dr
 template <typename T>
 static int testDealias(int ntheta) {
     int lf = failures();
-    std::cout << format("  de-alias bandpass theta coverage: ns=11 mpol=6 ntor=0 nzeta=1 ntheta={} ... ", ntheta);
+    std::cout << format(
+        "  de-alias bandpass theta coverage: ns=11 mpol=6 ntor=0 nzeta=1 "
+        "ntheta={} ... ",
+        ntheta);
     const int ns = 11, mpol = 6, ntor = 0, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     cumes::ValidatedProblem vp = solovevInput();
-    cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
+    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
@@ -324,8 +390,13 @@ static int testDealias(int ntheta) {
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     upload_state(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
-    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
+    geometry.enqueue(rs, p, rp, 0);
+    cumes::MagneticFieldOperator<T>{}.enqueue(
+        rs, p, rp, geometry.base_geometry_views(p),
+        geometry.magnetic_field_views(p), nullptr, 0, true);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp,
+                           geometry.base_geometry_views(p),
+                           geometry.magnetic_field_views(p), nullptr, 0);
 
     // Manufacture the bandpass INPUT through the public operator.  With
     // ruFull = zuFull = 1 (ru_e = zu_e = 1, ru_o = zu_o = 0), rCon = pattern,
@@ -337,17 +408,23 @@ static int testDealias(int ntheta) {
     for (int jF = 0; jF < ns; ++jF)
         for (int k = 0; k < nzeta; ++k)
             for (int it = 0; it < p.ntheta; ++it)
-                pat[jF * p.nZnT + k * p.ntheta + it] = T(daPatternValue(jF, it, p.ntheta, ns));
-    check_cuda(cudaMemcpy(constraint.rcon_view(p).data(), pat.data(), nF, cudaMemcpyHostToDevice), "rCon up");
+                pat[jF * p.nZnT + k * p.ntheta + it] =
+                    T(daPatternValue(jF, it, p.ntheta, ns));
+    check_cuda(cudaMemcpy(constraint.rcon_view(p).data(), pat.data(), nF,
+                          cudaMemcpyHostToDevice),
+               "rCon up");
     check_cuda(cudaMemset(constraint.zcon_view(p).data(), 0, nF), "zCon zero");
     check_cuda(cudaMemset(constraint.rcon0(), 0, nF), "rCon0 zero");
     check_cuda(cudaMemset(constraint.zcon0(), 0, nF), "zCon0 zero");
     std::vector<T> ones(ns * p.nZnT, T(1.0));
-    check_cuda(cudaMemcpy(rs.d_ru_e, ones.data(), nF, cudaMemcpyHostToDevice), "ru_e up");
-    check_cuda(cudaMemcpy(rs.d_zu_e, ones.data(), nF, cudaMemcpyHostToDevice), "zu_e up");
+    check_cuda(cudaMemcpy(rs.d_ru_e, ones.data(), nF, cudaMemcpyHostToDevice),
+               "ru_e up");
+    check_cuda(cudaMemcpy(rs.d_zu_e, ones.data(), nF, cudaMemcpyHostToDevice),
+               "zu_e up");
     check_cuda(cudaMemset(rs.d_ru_o, 0, nF), "ru_o zero");
     check_cuda(cudaMemset(rs.d_zu_o, 0, nF), "zu_o zero");
-    // Deterministic addConstraint outputs (not compared, but keeps the pass clean).
+    // Deterministic addConstraint outputs (not compared, but keeps the pass
+    // clean).
     check_cuda(cudaMemset(rs.d_brmn_e, 0, nF), "brmn_e zero");
     check_cuda(cudaMemset(rs.d_brmn_o, 0, nF), "brmn_o zero");
     check_cuda(cudaMemset(rs.d_bzmn_e, 0, nF), "bzmn_e zero");
@@ -355,15 +432,21 @@ static int testDealias(int ntheta) {
 
     // tcon is refreshed from the (real) preconditioner + manufactured ru/zu;
     // the bandpass runs on the manufactured gConEff.
-    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true, &transform, nullptr, 0);
+    constraint.enqueue(p, rs, precon.ard(), precon.azd(), rp.sqrtS_F, true,
+                       &transform, nullptr, 0);
 
     std::vector<T> h_tcon(p.ns);
-    check_cuda(cudaMemcpy(h_tcon.data(), constraint.tcon(), p.ns * sizeof(T), cudaMemcpyDeviceToHost), "tcon get");
+    check_cuda(cudaMemcpy(h_tcon.data(), constraint.tcon(), p.ns * sizeof(T),
+                          cudaMemcpyDeviceToHost),
+               "tcon get");
     std::vector<T> h_gCon(ns * p.nZnT);
-    check_cuda(cudaMemcpy(h_gCon.data(), constraint.gcon(), nF, cudaMemcpyDeviceToHost), "gCon get");
+    check_cuda(cudaMemcpy(h_gCon.data(), constraint.gcon(), nF,
+                          cudaMemcpyDeviceToHost),
+               "gCon get");
     std::vector<double> tcon(p.ns), faccon(p.mnmax);
     for (int jF = 0; jF < p.ns; ++jF) tcon[jF] = (double)h_tcon[jF];
-    for (int m = 0; m < p.mnmax; ++m) faccon[m] = (double)constraint.h_faccon()[m];
+    for (int m = 0; m < p.mnmax; ++m)
+        faccon[m] = (double)constraint.h_faccon()[m];
 
     // CPU reference bandpass of the same (float-rounded) pattern, in double.
     std::vector<double> gEff(ns * p.nZnT, 0.0), gRef(ns * p.nZnT, 0.0);
@@ -384,8 +467,8 @@ static int testDealias(int ntheta) {
     // ~rel * the OUTPUT SCALE (not rel * the local value).  A dropped theta
     // sample in the analyze (the regression this guards) changes every
     // coefficient by O(1/ntheta) of its value — far above rel*scale.
-    double rel   = (sizeof(T) == sizeof(float)) ? 1e-4 : 1e-9;
-    double absF  = (sizeof(T) == sizeof(float)) ? 1e-7 : 1e-12;
+    double rel = (sizeof(T) == sizeof(float)) ? 1e-4 : 1e-9;
+    double absF = (sizeof(T) == sizeof(float)) ? 1e-7 : 1e-12;
     double scale = 0.0;
     for (int jF = 1; jF < ns; ++jF)
         for (int k = 0; k < nzeta; ++k)
@@ -398,10 +481,10 @@ static int testDealias(int ntheta) {
         for (int k = 0; k < nzeta; ++k)
             for (int l = 0; l < nCompTheta; ++l) {
                 int idx = jF * p.nZnT + k * p.ntheta + l;
-                checkNear((double)h_gCon[idx], gRef[idx], tol, "dealias", jF, k, l);
+                checkNear((double)h_gCon[idx], gRef[idx], tol, "dealias", jF, k,
+                          l);
             }
 
-    
     realSpaceFree(rs);
     cumes::modeTableFree(mt);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
@@ -414,11 +497,14 @@ static int testDealias(int ntheta) {
 template <typename T>
 static int testPcr(int ns) {
     int lf = failures();
-    std::cout << format("  PCR solve row coverage: mpol=4 ntor=0 ntheta=18 nzeta=1 ns={} ... ", ns);
+    std::cout << format(
+        "  PCR solve row coverage: mpol=4 ntor=0 ntheta=18 nzeta=1 ns={} ... ",
+        ns);
     const int mpol = 4, ntor = 0, ntheta = 18, nzeta = 1;
     DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
     cumes::ValidatedProblem vp = solovevInput();
-    cumes::Profiles<T> profiles(p, vp, nullptr); cumes::RadialProfileViews<T> rp = profiles.profile_views();
+    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
@@ -430,8 +516,13 @@ static int testPcr(int ns) {
     fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     upload_state(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<T>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
-    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
+    geometry.enqueue(rs, p, rp, 0);
+    cumes::MagneticFieldOperator<T>{}.enqueue(
+        rs, p, rp, geometry.base_geometry_views(p),
+        geometry.magnetic_field_views(p), nullptr, 0, true);
+    precon.enqueue_compute(rs, mt.d_xm, mt.d_xn, p, rp,
+                           geometry.base_geometry_views(p),
+                           geometry.magnetic_field_views(p), nullptr, 0);
 
     // Copy the assembled matrix coefficients to host: the CPU Thomas reference
     // must use the EXACT same ar/dr/br/az/dz/bz, jMin and lambdaPrec the GPU
@@ -441,14 +532,24 @@ static int testPcr(int ns) {
     std::vector<T> lam(p.mnmax * ns);
     std::vector<int> jMin(p.mnmax);
     size_t szMN = (size_t)p.mnmax * ns * sizeof(T);
-    check_cuda(cudaMemcpy(ar.data(), precon.ar(), szMN, cudaMemcpyDeviceToHost), "ar get");
-    check_cuda(cudaMemcpy(dr.data(), precon.dr(), szMN, cudaMemcpyDeviceToHost), "dr get");
-    check_cuda(cudaMemcpy(br.data(), precon.br(), szMN, cudaMemcpyDeviceToHost), "br get");
-    check_cuda(cudaMemcpy(az.data(), precon.az(), szMN, cudaMemcpyDeviceToHost), "az get");
-    check_cuda(cudaMemcpy(dz.data(), precon.dz(), szMN, cudaMemcpyDeviceToHost), "dz get");
-    check_cuda(cudaMemcpy(bz.data(), precon.bz(), szMN, cudaMemcpyDeviceToHost), "bz get");
-    check_cuda(cudaMemcpy(lam.data(), precon.lambdaPrec(), szMN, cudaMemcpyDeviceToHost), "lambdaPrec get");
-    check_cuda(cudaMemcpy(jMin.data(), precon.jmin(), p.mnmax * sizeof(int), cudaMemcpyDeviceToHost), "jMin get");
+    check_cuda(cudaMemcpy(ar.data(), precon.ar(), szMN, cudaMemcpyDeviceToHost),
+               "ar get");
+    check_cuda(cudaMemcpy(dr.data(), precon.dr(), szMN, cudaMemcpyDeviceToHost),
+               "dr get");
+    check_cuda(cudaMemcpy(br.data(), precon.br(), szMN, cudaMemcpyDeviceToHost),
+               "br get");
+    check_cuda(cudaMemcpy(az.data(), precon.az(), szMN, cudaMemcpyDeviceToHost),
+               "az get");
+    check_cuda(cudaMemcpy(dz.data(), precon.dz(), szMN, cudaMemcpyDeviceToHost),
+               "dz get");
+    check_cuda(cudaMemcpy(bz.data(), precon.bz(), szMN, cudaMemcpyDeviceToHost),
+               "bz get");
+    check_cuda(cudaMemcpy(lam.data(), precon.lambdaPrec(), szMN,
+                          cudaMemcpyDeviceToHost),
+               "lambdaPrec get");
+    check_cuda(cudaMemcpy(jMin.data(), precon.jmin(), p.mnmax * sizeof(int),
+                          cudaMemcpyDeviceToHost),
+               "jMin get");
 
     // Manufacture a smooth, non-trivial 6-family spectral force buffer.
     int stride = p.mnmax * ns;
@@ -462,12 +563,17 @@ static int testPcr(int ns) {
     // (check_cuda, not cc: the local spectral vectors named cc/ss/... shadow
     // the cc() helper in this TU.)
     cumes::DeviceBuffer<T> d_f(6 * stride);
-    check_cuda(cudaMemcpy(d_f.data(), h_f.data(), 6 * stride * sizeof(T), cudaMemcpyHostToDevice), "f up");
-    precon.enqueue_apply(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                    d_f.data(), p.ns, p.mnmax),
-                p, nullptr, 0);
+    check_cuda(cudaMemcpy(d_f.data(), h_f.data(), 6 * stride * sizeof(T),
+                          cudaMemcpyHostToDevice),
+               "f up");
+    precon.enqueue_apply(
+        cumes::SpectralView<T, cumes::DecomposedResidualDomain>(d_f.data(),
+                                                                p.ns, p.mnmax),
+        p, nullptr, 0);
     std::vector<T> h_g(6 * stride);
-    check_cuda(cudaMemcpy(h_g.data(), d_f.data(), 6 * stride * sizeof(T), cudaMemcpyDeviceToHost), "f down");
+    check_cuda(cudaMemcpy(h_g.data(), d_f.data(), 6 * stride * sizeof(T),
+                          cudaMemcpyDeviceToHost),
+               "f down");
 
     // CPU reference: serial Thomas on the SAME coefficients.
     std::vector<double> fRef(6 * stride);
@@ -480,13 +586,14 @@ static int testPcr(int ns) {
     // tolerance is 1e-2 of the component's solution scale.  A row-coverage
     // regression (rows above 128 left at their manufactured RHS values) is a
     // ~100% error per affected row — far above this tolerance.
-    double rel   = (sizeof(T) == sizeof(float)) ? 1e-2 : 1e-7;
-    double absF  = (sizeof(T) == sizeof(float)) ? 1e-8 : 1e-12;
+    double rel = (sizeof(T) == sizeof(float)) ? 1e-2 : 1e-7;
+    double absF = (sizeof(T) == sizeof(float)) ? 1e-8 : 1e-12;
     std::vector<double> scaleC(6, 0.0);
     for (int c = 0; c < 6; ++c)
         for (int mode = 0; mode < p.mnmax; ++mode)
             for (int j = 0; j < ns; ++j)
-                scaleC[c] = fmax(scaleC[c], fabs(fRef[c * stride + mode * ns + j]));
+                scaleC[c] =
+                    fmax(scaleC[c], fabs(fRef[c * stride + mode * ns + j]));
     for (int i = 0; i < 6 * stride; ++i) {
         int c = i / stride, rem = i % stride;
         int mode = rem / ns, j = rem % ns;
@@ -517,13 +624,15 @@ static int runPcrTests() {
 }
 
 int main() {
-    std::cout << "=== Regression: de-alias theta coverage + PCR row coverage ===\n";
+    std::cout
+        << "=== Regression: de-alias theta coverage + PCR row coverage ===\n";
     int nf = 0;
     nf += runDealiasTests<double>();
     nf += runDealiasTests<float>();
     nf += runPcrTests<double>();
     nf += runPcrTests<float>();
     failures() = nf;
-    std::cout << (failures() == 0 ? "ALL PASS\n" : format("{} FAILURES\n", failures()));
+    std::cout << (failures() == 0 ? "ALL PASS\n"
+                                  : format("{} FAILURES\n", failures()));
     return summary();
 }

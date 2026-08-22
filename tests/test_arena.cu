@@ -2,16 +2,16 @@
 // peak/liveness accounting, overflow and move semantics.
 //
 // The arena is a host-side primitive: it allocates one backing store and carves
-// typed spans out of it. This test verifies the carve/align/zero/report/overflow
-// contract, plus a device round-trip through a carved span to prove the returned
-// pointers are ordinary usable device pointers.
-#include <cstdint>
-#include <cstdlib>
-
+// typed spans out of it. This test verifies the
+// carve/align/zero/report/overflow contract, plus a device round-trip through a
+// carved span to prove the returned pointers are ordinary usable device
+// pointers.
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes_test_cuda_helper.cuh"
-using namespace cumes::test;
 
+#include <cstdint>
+#include <cstdlib>
+using namespace cumes::test;
 
 __global__ void fillSpan(double* d, int n, double seed) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -58,7 +58,8 @@ int main() {
         fillSpan<<<1, 64>>>(d, 64, 10.0);
         cc(cudaDeviceSynchronize(), "sync fillSpan");
         double h[64];
-        cc(cudaMemcpy(h, d, 64 * sizeof(double), cudaMemcpyDeviceToHost), "read");
+        cc(cudaMemcpy(h, d, 64 * sizeof(double), cudaMemcpyDeviceToHost),
+           "read");
         bool ok = true;
         for (int i = 0; i < 64; ++i) ok = ok && h[i] == 10.0 + (double)i;
         check(ok, "carved span usable by device kernels");
@@ -72,9 +73,7 @@ int main() {
         bool threw = false;
         try {
             arena.alloc_span<double>("overflow", 100);  // 800 > 64 remaining
-        } catch (const cumes::CumesError&) {
-            threw = true;
-        }
+        } catch (const cumes::CumesError&) { threw = true; }
         check(threw, "overflowing span throws CumesError");
         // Exact fit is fine.
         arena.alloc_span<double>("fits", 8);  // 64 bytes exactly
@@ -88,9 +87,7 @@ int main() {
         bool threw = false;
         try {
             arena.alloc_span<double>("bad-align", 4, /*align=*/3);
-        } catch (const cumes::CumesError&) {
-            threw = true;
-        }
+        } catch (const cumes::CumesError&) { threw = true; }
         check(threw, "non-power-of-two alignment rejected");
     }
 

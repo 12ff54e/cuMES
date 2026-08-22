@@ -1,6 +1,7 @@
 // prolongation_impl.cuh — template definitions for prolongation.hpp.
-// Included once per scalar type by prolongation_double.cu / prolongation_float.cu;
-// see the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+// Included once per scalar type by prolongation_double.cu /
+// prolongation_float.cu; see the explicit-instantiation split
+// (cumes_cuda_double / cumes_cuda_float).
 #pragma once
 // prolongation.cu — grid-sequencing state interpolation (multi-radial-grid).
 //
@@ -18,13 +19,12 @@
 // The stored state is physical (unscaled) on both grids, matching cuMES's
 // SpectralStorage convention (the odd-m decomposition factor appears only
 // transiently in the real-space DFT slots).
-#include <cstdio>
-#include <cmath>
-#include <string>
-
 #include "cumes/numerics/prolongation.hpp"
-
 #include "cumes/runtime/cuda_status.hpp"
+
+#include <cmath>
+#include <cstdio>
+#include <string>
 
 // vmecpp decomposeInto scalxc for odd-m: 1/max(sqrt(s), sqrt(1/(ns-1))).
 // The max() clamp makes this identical to cuMES's sqrtS_F for every j
@@ -35,13 +35,22 @@ __device__ T scalxcOf(int j, int ns, T sqrtS1) {
 }
 
 template <typename T>
-__global__ void interpolateStateKernel(
-    T* __restrict__ o_cc, T* __restrict__ o_zsc, T* __restrict__ o_lsc,
-    T* __restrict__ o_ss, T* __restrict__ o_zcs, T* __restrict__ o_lcs,
-    const T* __restrict__ i_cc, const T* __restrict__ i_zsc, const T* __restrict__ i_lsc,
-    const T* __restrict__ i_ss, const T* __restrict__ i_zcs, const T* __restrict__ i_lcs,
-    int ns_new, int ns_old, int mnmax, int ntorp1)
-{
+__global__ void interpolateStateKernel(T* __restrict__ o_cc,
+                                       T* __restrict__ o_zsc,
+                                       T* __restrict__ o_lsc,
+                                       T* __restrict__ o_ss,
+                                       T* __restrict__ o_zcs,
+                                       T* __restrict__ o_lcs,
+                                       const T* __restrict__ i_cc,
+                                       const T* __restrict__ i_zsc,
+                                       const T* __restrict__ i_lsc,
+                                       const T* __restrict__ i_ss,
+                                       const T* __restrict__ i_zcs,
+                                       const T* __restrict__ i_lcs,
+                                       int ns_new,
+                                       int ns_old,
+                                       int mnmax,
+                                       int ntorp1) {
     int i = blockIdx.x * blockDim.x + threadIdx.x, total = mnmax * ns_new;
     if (i >= total) return;
     int mode = i / ns_new, jNew = i % ns_new;
@@ -81,8 +90,8 @@ __global__ void interpolateStateKernel(
         // (scalxc = 1/max(sqrt(s), sqrtS1); scaling twice with scalxc would
         // divide by max(...)^2 and inflate the interior odd-m coefficients —
         // a 10x error near the axis, invisible at the LCFS where scalxc=1.)
-        T val = (wl * xsl + wr * xsr) *
-                (odd ? fmax(sqrt(sj), sqrtS1n) : T(1.0));
+        T val =
+            (wl * xsl + wr * xsr) * (odd ? fmax(sqrt(sj), sqrtS1n) : T(1.0));
         if (odd && jNew == 0) val = T(0.0);  // vmecpp: all odd-m zeroed at axis
         out[mode * ns_new + jNew] = val;
     }
@@ -90,8 +99,10 @@ __global__ void interpolateStateKernel(
 
 template <typename T>
 cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
-    const DeviceParams<T>& p_new, const cumes::SpectralStorage<T>& st_old,
-    const DeviceParams<T>& p_old, cudaStream_t stream) const {
+    const DeviceParams<T>& p_new,
+    const cumes::SpectralStorage<T>& st_old,
+    const DeviceParams<T>& p_old,
+    cudaStream_t stream) const {
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         // Library contract: never exit() here — the RAII device buffers, the
         // caller's --checkpoint write, and the CLI run-report mapping must
@@ -100,10 +111,10 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
         // the library error boundary so main's run-report mapping reports it.
         throw cumes::CumesError(
             "interpolateState: need ns_new > ns_old >= 3 and equal mnmax "
-            "(ns_old=" + std::to_string(p_old.ns) +
-            " ns_new=" + std::to_string(p_new.ns) + " mnmax " +
-            std::to_string(p_old.mnmax) + "/" + std::to_string(p_new.mnmax) +
-            ")");
+            "(ns_old=" +
+            std::to_string(p_old.ns) + " ns_new=" + std::to_string(p_new.ns) +
+            " mnmax " + std::to_string(p_old.mnmax) + "/" +
+            std::to_string(p_new.mnmax) + ")");
     }
 
     // New grid's contiguous slabs; the ctor zeroes both (velocities are never
@@ -132,16 +143,17 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
         st_old.family_ptr(cumes::SpectralComponent::Lsc),
         st_old.family_ptr(cumes::SpectralComponent::Rss),
         st_old.family_ptr(cumes::SpectralComponent::Zcs),
-        st_old.family_ptr(cumes::SpectralComponent::Lcs),
-        p_new.ns, p_old.ns, p_new.mnmax, p_new.ntor + 1);
+        st_old.family_ptr(cumes::SpectralComponent::Lcs), p_new.ns, p_old.ns,
+        p_new.mnmax, p_new.ntor + 1);
     cumes::check_cuda(cudaGetLastError(), "interpolateState");
     // The kernel reads the OLD (coarse) state asynchronously; the caller frees
     // that state (via move-assignment of the returned SpectralStorage) as soon
     // as this returns. Wait for the kernel so the old buffer is not released
     // while still being read.
     cumes::check_cuda(cudaStreamSynchronize(stream), "interpolateState sync");
-    printf("  interpolateState: ns=%d -> ns=%d (linear in s, scalxc-scaled odd-m)\n",
-           p_old.ns, p_new.ns);
+    printf(
+        "  interpolateState: ns=%d -> ns=%d (linear in s, scalxc-scaled "
+        "odd-m)\n",
+        p_old.ns, p_new.ns);
     return st_new;
 }
-

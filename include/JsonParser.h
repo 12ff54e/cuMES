@@ -55,7 +55,8 @@ struct Value {
    private:
     template <typename... Ts>
     void expected_cat(Ts... cats) const
-        requires(std::same_as<Ts, ValueCategory>&&...) {
+        requires(std::same_as<Ts, ValueCategory> && ...)
+    {
         if (value_cat == ValueCategory::Null) {
             throw std::runtime_error(
                 "Undefined property (value is Null; accessing a missing key "
@@ -114,8 +115,9 @@ struct Value {
     bool as_boolean() const;
 
     template <typename T>
-    T as_number()
-        const requires std::is_arithmetic_v<std::remove_reference_t<T>> {
+    T as_number() const
+        requires std::is_arithmetic_v<std::remove_reference_t<T>>
+    {
         expected_cat(ValueCategory::NumberFloat, ValueCategory::NumberInt);
         if (value_cat == ValueCategory::NumberFloat) {
             return static_cast<NumberFloat*>(ptr.get())->content;
@@ -129,15 +131,17 @@ struct Value {
     const std::string& as_string() const;
 
     template <typename T>
-    bool operator<(
-        T val) const requires std::is_arithmetic_v<std::remove_reference_t<T>> {
+    bool operator<(T val) const
+        requires std::is_arithmetic_v<std::remove_reference_t<T>>
+    {
         expected_cat(ValueCategory::NumberFloat, ValueCategory::NumberInt);
         return as_number<double>() < val;
     }
 
     template <typename T>
-    bool operator==(
-        T val) const requires std::is_arithmetic_v<std::remove_reference_t<T>> {
+    bool operator==(T val) const
+        requires std::is_arithmetic_v<std::remove_reference_t<T>>
+    {
         expected_cat(ValueCategory::NumberFloat, ValueCategory::NumberInt);
         return as_number<double>() == val;
     }
@@ -166,19 +170,25 @@ struct Value {
     } while (0)
 
     template <typename T>
-    Value& operator+=(const T& val) requires std::convertible_to<T, double> {
+    Value& operator+=(const T& val)
+        requires std::convertible_to<T, double>
+    {
         define_compond_assignment_operator(+, +=);
         return *this;
     }
     template <typename T>
-    Value& operator-=(const T& val) requires std::convertible_to<T, double> {
+    Value& operator-=(const T& val)
+        requires std::convertible_to<T, double>
+    {
         define_compond_assignment_operator(-, -=);
         return *this;
     }
 #undef define_compond_assignment_operator
 
     template <typename T>
-    decltype(auto) operator=(T val) requires std::convertible_to<T, double> {
+    decltype(auto) operator=(T val)
+        requires std::convertible_to<T, double>
+    {
         if (value_cat == ValueCategory::NumberInt) {
             if constexpr (std::is_integral_v<std::remove_reference_t<T>>) {
                 static_cast<NumberInt*>(ptr.get())->content = val;
@@ -198,8 +208,9 @@ struct Value {
     }
 
     template <typename T>
-    decltype(auto) operator=(
-        T val) requires std::convertible_to<T, std::string> {
+    decltype(auto) operator=(T val)
+        requires std::convertible_to<T, std::string>
+    {
         if (value_cat == ValueCategory::String) {
             static_cast<String*>(ptr.get())->content = val;
         } else {
@@ -250,11 +261,10 @@ struct Value {
 
     template <typename T>
     const std::vector<T>& as_typed_array() const {
-        static_assert(
-            std::is_same_v<T, std::complex<float>> ||
-                std::is_same_v<T, std::complex<double>>,
-            "as_typed_array only supports std::complex<float> and "
-            "std::complex<double>");
+        static_assert(std::is_same_v<T, std::complex<float>> ||
+                          std::is_same_v<T, std::complex<double>>,
+                      "as_typed_array only supports std::complex<float> and "
+                      "std::complex<double>");
         expected_cat(std::is_same_v<T, std::complex<float>>
                          ? ValueCategory::TypedArrayComplexFloat
                          : ValueCategory::TypedArrayComplexDouble);
@@ -263,11 +273,10 @@ struct Value {
 
     template <typename T>
     std::vector<T>& as_typed_array() {
-        static_assert(
-            std::is_same_v<T, std::complex<float>> ||
-                std::is_same_v<T, std::complex<double>>,
-            "as_typed_array only supports std::complex<float> and "
-            "std::complex<double>");
+        static_assert(std::is_same_v<T, std::complex<float>> ||
+                          std::is_same_v<T, std::complex<double>>,
+                      "as_typed_array only supports std::complex<float> and "
+                      "std::complex<double>");
         expected_cat(std::is_same_v<T, std::complex<float>>
                          ? ValueCategory::TypedArrayComplexFloat
                          : ValueCategory::TypedArrayComplexDouble);
@@ -483,7 +492,9 @@ const char* get_value_category_name(ValueCategory val_cat) {
 
 Value::Value() : value_cat{} {}
 
-Value::Value(const Value& other) : Value() { *this = other; }
+Value::Value(const Value& other) : Value() {
+    *this = other;
+}
 
 // Deep copy of every category (the old version only accepted "plain" values
 // and threw for Object/Array, which made `Value b = obj;` fail at runtime
@@ -723,21 +734,20 @@ std::string Value::dump() const {
         const auto result = std::to_chars(buf, buf + sizeof buf, part);
         oss.write(buf, result.ptr - buf);
     };
-    auto dump_typed_array =
-        [&oss, &dump_complex_part]<typename T>(
-            const std::vector<T>& typed_array) {
+    auto dump_typed_array = [&oss, &dump_complex_part]<typename T>(
+                                const std::vector<T>& typed_array) {
+        oss << '[';
+        for (std::size_t i = 0; i < typed_array.size(); ++i) {
+            const auto& val = typed_array[i];
+            if (i) { oss << ','; }
             oss << '[';
-            for (std::size_t i = 0; i < typed_array.size(); ++i) {
-                const auto& val = typed_array[i];
-                if (i) { oss << ','; }
-                oss << '[';
-                dump_complex_part(val.real());
-                oss << ',';
-                dump_complex_part(val.imag());
-                oss << ']';
-            }
+            dump_complex_part(val.real());
+            oss << ',';
+            dump_complex_part(val.imag());
             oss << ']';
-        };
+        }
+        oss << ']';
+    };
 
     switch (value_cat) {
         case ValueCategory::Null:
@@ -789,29 +799,28 @@ std::string Value::pretty_print(std::size_t indent) const {
         const auto result = std::to_chars(buf, buf + sizeof buf, part);
         oss.write(buf, result.ptr - buf);
     };
-    auto print_typed_array =
-        [&oss, indent, &dump_complex_part]<typename T>(
-            const std::vector<T>& typed_array) {
-            oss << "[\n";
-            for (std::size_t i = 0; i < typed_array.size(); ++i) {
-                const auto& val = typed_array[i];
-                if (i) { oss << ",\n"; }
-                print_space(oss, indent + 4);
-                oss << '[';
-                dump_complex_part(val.real());
-                oss << ", ";
-                dump_complex_part(val.imag());
-                oss << ']';
-            }
-            if (typed_array.empty()) {
-                oss.seekp(-1, std::ios_base::cur);
-                oss << ' ';
-            } else {
-                oss << '\n';
-                print_space(oss, indent);
-            }
+    auto print_typed_array = [&oss, indent, &dump_complex_part]<typename T>(
+                                 const std::vector<T>& typed_array) {
+        oss << "[\n";
+        for (std::size_t i = 0; i < typed_array.size(); ++i) {
+            const auto& val = typed_array[i];
+            if (i) { oss << ",\n"; }
+            print_space(oss, indent + 4);
+            oss << '[';
+            dump_complex_part(val.real());
+            oss << ", ";
+            dump_complex_part(val.imag());
             oss << ']';
-        };
+        }
+        if (typed_array.empty()) {
+            oss.seekp(-1, std::ios_base::cur);
+            oss << ' ';
+        } else {
+            oss << '\n';
+            print_space(oss, indent);
+        }
+        oss << ']';
+    };
 
     switch (value_cat) {
         case ValueCategory::Null:
@@ -867,9 +876,8 @@ std::string Value::pretty_print(std::size_t indent) const {
 Value Value::clone() const {
     switch (value_cat) {
         case ValueCategory::NumberInt:
-            return {value_cat, new NumberInt{
-                                   static_cast<NumberInt*>(ptr.get())
-                                       ->content}};
+            return {value_cat,
+                    new NumberInt{static_cast<NumberInt*>(ptr.get())->content}};
             break;
         case ValueCategory::NumberFloat:
             return {value_cat, new NumberFloat{as_number<double>()}};
@@ -930,7 +938,10 @@ void Value::dump_string(std::ostream& os, const std::string& str) {
         // a control character: the shared table or \u00XX as a fallback
         char letter = '\0';
         for (const auto& escape : string_escape_table) {
-            if (escape.decoded == ch) { letter = escape.letter; break; }
+            if (escape.decoded == ch) {
+                letter = escape.letter;
+                break;
+            }
         }
         if (letter != '\0') {
             os << '\\' << letter;
@@ -1079,16 +1090,13 @@ void JsonLexer::read_string_token() {
                         ++col;  // the backslash
                         ++col;  // the 'u'
                         const uint32_t low = read_hex4();
-                        if (low == UINT32_MAX || low < 0xDC00 ||
-                            low > 0xDFFF) {
+                        if (low == UINT32_MAX || low < 0xDC00 || low > 0xDFFF) {
                             report_lexical_error(
                                 "unpaired surrogate in string");
                         }
-                        code_point =
-                            0x10000 + ((code_point - 0xD800) << 10) +
-                            (low - 0xDC00);
-                    } else if (code_point >= 0xDC00 &&
-                               code_point <= 0xDFFF) {
+                        code_point = 0x10000 + ((code_point - 0xD800) << 10) +
+                                     (low - 0xDC00);
+                    } else if (code_point >= 0xDC00 && code_point <= 0xDFFF) {
                         report_lexical_error("unpaired surrogate in string");
                     }
                     append_utf8(buffer.content, code_point);
@@ -1176,8 +1184,8 @@ Value JsonParser::parse_value() {
     if (depth >= MAX_NESTING_DEPTH) {
         std::ostringstream oss;
         oss << lexer.get_filename() << ':' << token.row << ':' << token.col
-            << ": error: JSON nesting too deep (exceeds "
-            << MAX_NESTING_DEPTH << ')';
+            << ": error: JSON nesting too deep (exceeds " << MAX_NESTING_DEPTH
+            << ')';
         throw std::runtime_error(oss.str());
     }
     ++depth;

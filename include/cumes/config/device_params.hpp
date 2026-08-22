@@ -26,17 +26,23 @@
 // compile-time switch between double and float is `Real` (vmec_types.h).
 template <typename T>
 struct DeviceParams {
-    int ns; int mnmax; int ntheta; int nzeta;
-    int nfp; int nZnT; int mpol; int ntor;
+    int ns;
+    int mnmax;
+    int ntheta;
+    int nzeta;
+    int nfp;
+    int nZnT;
+    int mpol;
+    int ntor;
     // Runtime input knobs (host-side; the validated problem fills them).
-    int ncurr;              // 0: prescribed iota, 1: prescribed current
-    T delt = T(0.9);        // initial time step
-    T ftol = T(1e-16);      // convergence tolerance (invariant residuals)
+    int ncurr;          // 0: prescribed iota, 1: prescribed current
+    T delt = T(0.9);    // initial time step
+    T ftol = T(1e-16);  // convergence tolerance (invariant residuals)
     int max_iter = 1000;
-    T tcon0 = T(1.0);       // constraint-force multiplier (vmecpp indata
-                            // tcon0; scales the tcon profile in constraint.cu)
-    T lamscale = T(0.0);    // sqrt(deltaS * sum phipH^2), vmecpp constants_,
-                            // set by profilesCreate
+    T tcon0 = T(1.0);     // constraint-force multiplier (vmecpp indata
+                          // tcon0; scales the tcon profile in constraint.cu)
+    T lamscale = T(0.0);  // sqrt(deltaS * sum phipH^2), vmecpp constants_,
+                          // set by profilesCreate
     static constexpr int kSignJacobian = -1;
     static constexpr T kMu0 = 4.0 * M_PI * 1.0e-7;  // exact, = vmecpp MU_0
 };

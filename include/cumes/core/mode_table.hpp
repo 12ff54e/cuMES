@@ -20,7 +20,7 @@ template <class T>
 struct ModeEntry {
     int m = 0;
     int n = 0;
-    int physical_n = 0;     // n * nfp (physical toroidal mode N, blueprint §4.2)
+    int physical_n = 0;  // n * nfp (physical toroidal mode N, blueprint §4.2)
     int first_surface = 0;  // 0 for m==0, 1 for m>0 (blueprint §4.9 j_min)
     T mn_scale = T(1);      // mscale * nscale (blueprint §4.2 S_mn)
     T xmpq = T(0);          // m*(m-1) (constraint weight, blueprint §4.8)
@@ -36,7 +36,9 @@ struct ModeTable {
     // Build the full folded-mode table for a resolved shape.
     static ModeTable<T> build(const GridShape& shape);
 
-    const ModeEntry<T>& operator[](std::size_t mode) const { return entries[mode]; }
+    const ModeEntry<T>& operator[](std::size_t mode) const {
+        return entries[mode];
+    }
     std::size_t size() const { return entries.size(); }
 };
 

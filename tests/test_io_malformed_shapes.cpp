@@ -11,16 +11,17 @@
 //
 // Host-only on purpose: the ASan/UBSan twin (asan_test_io_malformed_shapes)
 // runs this exact source under the host sanitizers.
-#include <cstdio>
-#include <cstring>
-#include <string>
-#include <vector>
-#include <unistd.h>
-
 #include "cumes/io/reader.hpp"
 #include "cumes/io/run_report.hpp"
 #include "cumes/io/writer.hpp"
 #include "cumes/io/writer_helpers.hpp"
+
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include <unistd.h>
 #ifdef CUMES_HAVE_NETCDF
 #include <netcdf.h>
 #endif
@@ -37,10 +38,9 @@ using cumes::OutputFormat;
 using cumes::Reader;
 using cumes::RunReport;
 
-
 // Per-test temp directory with RAII cleanup.
 class TempDir {
- public:
+   public:
     TempDir() {
         char tmpl[] = "/tmp/cumes_io_shapes_XXXXXX";
         dir_ = mkdtemp(tmpl);
@@ -53,7 +53,7 @@ class TempDir {
     const std::string& path() const { return dir_; }
     bool ok() const { return !dir_.empty(); }
 
- private:
+   private:
     std::string dir_;
 };
 
@@ -64,19 +64,19 @@ class TempDir {
 #ifdef CUMES_HAVE_NETCDF
 enum class NcMutation {
     kNone,
-    kFamilyRank1,        // rmncc declared with rank 1
-    kFamilyRank3,        // rmncc declared with rank 3
-    kFamilySwappedDims,  // rmncc declared [mnmax, ns] instead of [ns, mnmax]
-    kScalarAsArray,      // "precision" declared as a rank-1 array of 3 ints
-    kStageRank0,         // stage_ns declared scalar
-    kStageRank2,         // stage_ns declared rank 2
-    kWrongFamilyType,    // rmncc declared NC_INT
-    kResourceCap,        // state product exceeds the practical reader cap
-    kHugeNs,             // ns dimension = 2^40 (beyond the INT_MAX bound)
-    kDirtyOutOfRange,    // build_dirty = 2
-    kStageNsNonpositive, // stage_ns contains 0
-    kStageConvOutOfRange, // stage_converged contains 2
-    kRestartNegative,    // restart_iteration contains -1
+    kFamilyRank1,          // rmncc declared with rank 1
+    kFamilyRank3,          // rmncc declared with rank 3
+    kFamilySwappedDims,    // rmncc declared [mnmax, ns] instead of [ns, mnmax]
+    kScalarAsArray,        // "precision" declared as a rank-1 array of 3 ints
+    kStageRank0,           // stage_ns declared scalar
+    kStageRank2,           // stage_ns declared rank 2
+    kWrongFamilyType,      // rmncc declared NC_INT
+    kResourceCap,          // state product exceeds the practical reader cap
+    kHugeNs,               // ns dimension = 2^40 (beyond the INT_MAX bound)
+    kDirtyOutOfRange,      // build_dirty = 2
+    kStageNsNonpositive,   // stage_ns contains 0
+    kStageConvOutOfRange,  // stage_converged contains 2
+    kRestartNegative,      // restart_iteration contains -1
 };
 
 static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
@@ -89,9 +89,9 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
         NC_NOERR) {
         return false;
     }
-#define NC_F(expr)                                                            \
-    do {                                                                      \
-        if ((expr) != NC_NOERR) return false;                                 \
+#define NC_F(expr)                            \
+    do {                                      \
+        if ((expr) != NC_NOERR) return false; \
     } while (0)
     const bool ok = [&]() -> bool {
         const size_t huge = (size_t)1 << 40;
@@ -138,8 +138,8 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
             NC_F(nc_def_var(ncid, "precision", NC_INT, 0, nullptr, &v_prec));
         }
         NC_F(nc_def_var(ncid, "status", NC_INT, 0, nullptr, &v_status));
-        NC_F(nc_def_var(ncid, "total_iterations", NC_INT, 0, nullptr,
-                        &v_total));
+        NC_F(
+            nc_def_var(ncid, "total_iterations", NC_INT, 0, nullptr, &v_total));
         NC_F(nc_def_var(ncid, "build_dirty", NC_INT, 0, nullptr, &v_dirty));
         int v_ns, v_iter, v_conv, v_fsqr, v_fsqz, v_fsql, v_off, v_riter;
         if (mut == NcMutation::kStageRank0) {
@@ -155,21 +155,19 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
         NC_F(nc_def_var(ncid, "stage_fsqr", NC_DOUBLE, 1, &d_st, &v_fsqr));
         NC_F(nc_def_var(ncid, "stage_fsqz", NC_DOUBLE, 1, &d_st, &v_fsqz));
         NC_F(nc_def_var(ncid, "stage_fsql", NC_DOUBLE, 1, &d_st, &v_fsql));
-        NC_F(nc_def_var(ncid, "restart_stage_offset", NC_INT, 1, &d_st,
-                        &v_off));
-        NC_F(nc_def_var(ncid, "restart_iteration", NC_INT, 1, &d_rs,
-                        &v_riter));
-        const char* str_attrs[][2] = {
-            {"revision", "r1"},
-            {"build_type", "Release"},
-            {"precision_policy", "verify-double"},
-            {"compile_flags", ""},
-            {"source_path", "in.json"},
-            {"source_hash", "h"},
-            {"gpu_name", "g"},
-            {"driver", "d"},
-            {"runtime", "rt"},
-            {"toolkit", "t"}};
+        NC_F(
+            nc_def_var(ncid, "restart_stage_offset", NC_INT, 1, &d_st, &v_off));
+        NC_F(nc_def_var(ncid, "restart_iteration", NC_INT, 1, &d_rs, &v_riter));
+        const char* str_attrs[][2] = {{"revision", "r1"},
+                                      {"build_type", "Release"},
+                                      {"precision_policy", "verify-double"},
+                                      {"compile_flags", ""},
+                                      {"source_path", "in.json"},
+                                      {"source_hash", "h"},
+                                      {"gpu_name", "g"},
+                                      {"driver", "d"},
+                                      {"runtime", "rt"},
+                                      {"toolkit", "t"}};
         for (const auto& a : str_attrs) {
             NC_F(nc_put_att_text(ncid, NC_GLOBAL, a[0], strlen(a[1]), a[1]));
         }
@@ -227,33 +225,34 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
 #ifdef CUMES_HAVE_HDF5
 enum class H5Mutation {
     kNone,
-    kRmnccRank1,          // rmncc with rank 1
-    kRmnccRank3,          // rmncc with rank 3
-    kFamilyExtentDiffers, // zmnsc with extent [ns, mnmax+1]
-    kStageRank0,          // stage_ns scalar
-    kStageRank2,          // stage_ns rank 2
-    kIntAttrArray,        // "precision" attribute with 3 elements
-    kStrAttrArray,        // "revision" attribute with 2 elements
-    kVariableStrAttr,     // "revision" is a scalar variable-length string
-    kWrongFamilyType,     // rmncc stored as H5T_NATIVE_INT
-    kResourceCap,         // state product exceeds the practical reader cap
-    kHugeNs,              // family extent ns = 2^40
-    kUnsignedIntAttr,     // scalar precision attribute is unsigned
-    kStageUnsigned,       // stage_ns stored as unsigned 32-bit
-    kStageU8,             // stage_ns stored as unsigned 8-bit
-    kStageI64,            // stage_ns stored as signed 64-bit
-    kDirtyOutOfRange,     // build_dirty = 2
-    kStageNsNonpositive,  // stage_ns contains 0
-    kStageConvOutOfRange, // stage_converged contains 2
-    kRestartNegative,     // restart_iteration contains -1
+    kRmnccRank1,           // rmncc with rank 1
+    kRmnccRank3,           // rmncc with rank 3
+    kFamilyExtentDiffers,  // zmnsc with extent [ns, mnmax+1]
+    kStageRank0,           // stage_ns scalar
+    kStageRank2,           // stage_ns rank 2
+    kIntAttrArray,         // "precision" attribute with 3 elements
+    kStrAttrArray,         // "revision" attribute with 2 elements
+    kVariableStrAttr,      // "revision" is a scalar variable-length string
+    kWrongFamilyType,      // rmncc stored as H5T_NATIVE_INT
+    kResourceCap,          // state product exceeds the practical reader cap
+    kHugeNs,               // family extent ns = 2^40
+    kUnsignedIntAttr,      // scalar precision attribute is unsigned
+    kStageUnsigned,        // stage_ns stored as unsigned 32-bit
+    kStageU8,              // stage_ns stored as unsigned 8-bit
+    kStageI64,             // stage_ns stored as signed 64-bit
+    kDirtyOutOfRange,      // build_dirty = 2
+    kStageNsNonpositive,   // stage_ns contains 0
+    kStageConvOutOfRange,  // stage_converged contains 2
+    kRestartNegative,      // restart_iteration contains -1
 };
 
 static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
-    hid_t fid = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t fid =
+        H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
     if (fid < 0) return false;
-#define H5_F(expr)                                                            \
-    do {                                                                      \
-        if ((expr) < 0) return false;                                         \
+#define H5_F(expr)                    \
+    do {                              \
+        if ((expr) < 0) return false; \
     } while (0)
     const bool ok = [&]() -> bool {
         auto putIntAttr = [&](const char* name, int value) -> herr_t {
@@ -267,18 +266,27 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             H5Aclose(aid);
             return r;
         };
-        auto putStrAttr = [&](const char* name, const std::string& value)
-            -> herr_t {
+        auto putStrAttr = [&](const char* name,
+                              const std::string& value) -> herr_t {
             hid_t s1 = H5Tcopy(H5T_C_S1);
             if (s1 < 0) return -1;
             herr_t r0 = H5Tset_size(s1, value.size() + 1);
-            if (r0 < 0) { H5Tclose(s1); return -1; }
+            if (r0 < 0) {
+                H5Tclose(s1);
+                return -1;
+            }
             hid_t sid = H5Screate(H5S_SCALAR);
-            if (sid < 0) { H5Tclose(s1); return -1; }
-            hid_t aid = H5Acreate2(fid, name, s1, sid, H5P_DEFAULT,
-                                   H5P_DEFAULT);
+            if (sid < 0) {
+                H5Tclose(s1);
+                return -1;
+            }
+            hid_t aid =
+                H5Acreate2(fid, name, s1, sid, H5P_DEFAULT, H5P_DEFAULT);
             H5Sclose(sid);
-            if (aid < 0) { H5Tclose(s1); return -1; }
+            if (aid < 0) {
+                H5Tclose(s1);
+                return -1;
+            }
             const herr_t r = H5Awrite(aid, s1, value.c_str());
             H5Aclose(aid);
             H5Tclose(s1);
@@ -292,8 +300,8 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
                                   H5P_DEFAULT, H5P_DEFAULT);
             H5Sclose(sp);
             if (ds < 0) return -1;
-            const herr_t r = H5Dwrite(ds, dtype, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                                      data);
+            const herr_t r =
+                H5Dwrite(ds, dtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
             H5Dclose(ds);
             return r;
         };
@@ -301,11 +309,10 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
         const hsize_t huge = (hsize_t)1 << 40;
         const hsize_t capped_ns =
             (hsize_t)cumes::io_detail::kMaxStateElementsPerFamily / 2 + 1;
-        const hsize_t ns_ext = (mut == H5Mutation::kHugeNs)
-                                   ? huge
-                                   : ((mut == H5Mutation::kResourceCap)
-                                          ? capped_ns
-                                          : 3);
+        const hsize_t ns_ext =
+            (mut == H5Mutation::kHugeNs)
+                ? huge
+                : ((mut == H5Mutation::kResourceCap) ? capped_ns : 3);
         const hsize_t state_dims[2] = {ns_ext, 2};
         const char* fams[6] = {"rmncc", "zmnsc", "lmnsc",
                                "rmnss", "zmncs", "lmncs"};
@@ -330,17 +337,15 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             // reject at the shape/bound checks before reading any value, and
             // a whole-slab write of a mutated extent would overread fambuf.
             const hssize_t npts = H5Sget_simple_extent_npoints(sp);
-            const hid_t dtype =
-                (c == 0 && mut == H5Mutation::kWrongFamilyType)
-                    ? H5T_NATIVE_INT
-                    : H5T_NATIVE_DOUBLE;
+            const hid_t dtype = (c == 0 && mut == H5Mutation::kWrongFamilyType)
+                                    ? H5T_NATIVE_INT
+                                    : H5T_NATIVE_DOUBLE;
             hid_t ds = H5Dcreate2(fid, fams[c], dtype, sp, H5P_DEFAULT,
                                   H5P_DEFAULT, H5P_DEFAULT);
             H5Sclose(sp);
             if (ds < 0) return false;
-            if (npts == 6 &&
-                H5Dwrite(ds, dtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, fambuf) <
-                    0) {
+            if (npts == 6 && H5Dwrite(ds, dtype, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                                      fambuf) < 0) {
                 H5Dclose(ds);
                 return false;
             }
@@ -383,12 +388,22 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             hid_t sp = H5Screate_simple(1, ext, nullptr);
             if (sp < 0) return false;
             hid_t s1 = H5Tcopy(H5T_C_S1);
-            if (s1 < 0) { H5Sclose(sp); return false; }
-            if (H5Tset_size(s1, 3) < 0) { H5Tclose(s1); H5Sclose(sp); return false; }
-            hid_t aid = H5Acreate2(fid, "revision", s1, sp, H5P_DEFAULT,
-                                   H5P_DEFAULT);
+            if (s1 < 0) {
+                H5Sclose(sp);
+                return false;
+            }
+            if (H5Tset_size(s1, 3) < 0) {
+                H5Tclose(s1);
+                H5Sclose(sp);
+                return false;
+            }
+            hid_t aid =
+                H5Acreate2(fid, "revision", s1, sp, H5P_DEFAULT, H5P_DEFAULT);
             H5Sclose(sp);
-            if (aid < 0) { H5Tclose(s1); return false; }
+            if (aid < 0) {
+                H5Tclose(s1);
+                return false;
+            }
             const char* two[2] = {"ab", "cd"};
             const herr_t r = H5Awrite(aid, s1, two);
             H5Aclose(aid);
@@ -402,11 +417,17 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
                 return false;
             }
             hid_t sid = H5Screate(H5S_SCALAR);
-            if (sid < 0) { H5Tclose(s1); return false; }
-            hid_t aid = H5Acreate2(fid, "revision", s1, sid, H5P_DEFAULT,
-                                   H5P_DEFAULT);
+            if (sid < 0) {
+                H5Tclose(s1);
+                return false;
+            }
+            hid_t aid =
+                H5Acreate2(fid, "revision", s1, sid, H5P_DEFAULT, H5P_DEFAULT);
             H5Sclose(sid);
-            if (aid < 0) { H5Tclose(s1); return false; }
+            if (aid < 0) {
+                H5Tclose(s1);
+                return false;
+            }
             const char* value = "r1";
             const herr_t r = H5Awrite(aid, s1, &value);
             H5Aclose(aid);
@@ -467,7 +488,8 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
         } else {
             H5_F(putArray("stage_ns", H5T_NATIVE_INT, 2, stage_ns.data()));
         }
-        H5_F(putArray("stage_iterations", H5T_NATIVE_INT, 2, stage_iter.data()));
+        H5_F(
+            putArray("stage_iterations", H5T_NATIVE_INT, 2, stage_iter.data()));
         H5_F(putArray("stage_converged", H5T_NATIVE_INT, 2, stage_conv.data()));
         H5_F(putArray("stage_fsqr", H5T_NATIVE_DOUBLE, 2, stage_res.data()));
         H5_F(putArray("stage_fsqz", H5T_NATIVE_DOUBLE, 2, stage_res.data()));
@@ -476,8 +498,7 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             const int offs[2] = {0, 1};  // valid offsets for the control case
             H5_F(putArray("restart_stage_offset", H5T_NATIVE_INT, 2, offs));
         }
-        H5_F(putArray("restart_iteration", H5T_NATIVE_INT, 1,
-                      rst_iter.data()));
+        H5_F(putArray("restart_iteration", H5T_NATIVE_INT, 1, rst_iter.data()));
         return true;
     }();
     if (!ok) {
@@ -505,8 +526,7 @@ static void testNetcdf(const TempDir& dir) {
         {NcMutation::kNone, "valid control", nullptr},
         {NcMutation::kFamilyRank1, "rmncc rank 1", nullptr},
         {NcMutation::kFamilyRank3, "rmncc rank 3", nullptr},
-        {NcMutation::kFamilySwappedDims, "rmncc swapped dimensions",
-         nullptr},
+        {NcMutation::kFamilySwappedDims, "rmncc swapped dimensions", nullptr},
         {NcMutation::kScalarAsArray, "scalar outcome as array", nullptr},
         {NcMutation::kStageRank0, "stage_ns rank 0", nullptr},
         {NcMutation::kStageRank2, "stage_ns rank 2", nullptr},
@@ -520,12 +540,10 @@ static void testNetcdf(const TempDir& dir) {
         {NcMutation::kRestartNegative, "restart iteration negative", nullptr},
     };
     for (const Case& c : cases) {
-        const std::string path =
-            dir.path() + "/" + c.label + ".nc";
+        const std::string path = dir.path() + "/" + c.label + ".nc";
         check(writeNetcdfFixture(path, c.mut),
               format("netcdf: fixture written ({})", c.label));
-        std::unique_ptr<Reader> reader =
-            make_reader(OutputFormat::kNetCdf);
+        std::unique_ptr<Reader> reader = make_reader(OutputFormat::kNetCdf);
         RunReport rep;
         rep.build.revision = "sentinel";
         rep.total_effective_iterations = 12345;
@@ -584,8 +602,7 @@ static void testHdf5(const TempDir& dir) {
         const std::string path = dir.path() + "/" + c.label + ".h5";
         check(writeHdf5Fixture(path, c.mut),
               format("hdf5: fixture written ({})", c.label));
-        std::unique_ptr<Reader> reader =
-            make_reader(OutputFormat::kHdf5);
+        std::unique_ptr<Reader> reader = make_reader(OutputFormat::kHdf5);
         RunReport rep;
         rep.build.revision = "sentinel";
         rep.total_effective_iterations = 12345;

@@ -1,4 +1,5 @@
-// cuda_graph.hpp — CUDA Graph capture/instantiate/launch RAII (blueprint §8.11).
+// cuda_graph.hpp — CUDA Graph capture/instantiate/launch RAII (blueprint
+// §8.11).
 //
 // A minimal owning wrapper over the CUDA Graph runtime API: capture a stream's
 // enqueued work into a cudaGraph_t, instantiate it into a cudaGraphExec_t, and
@@ -11,14 +12,14 @@
 // graph replays the captured work in one submission.
 #pragma once
 
-#include <cuda_runtime.h>
-
 #include "cumes/runtime/cuda_status.hpp"
+
+#include <cuda_runtime.h>
 
 namespace cumes {
 
 class CudaGraph {
-  public:
+   public:
     CudaGraph() = default;
 
     CudaGraph(const CudaGraph&) = delete;
@@ -45,12 +46,14 @@ class CudaGraph {
 
     // Begin capture on `stream`, run `enqueue` (which must only enqueue work on
     // that stream), end capture, and instantiate. Throws CumesError on any CUDA
-    // failure; a throwing `enqueue` tears down the partial capture and rethrows.
+    // failure; a throwing `enqueue` tears down the partial capture and
+    // rethrows.
     template <class Fn>
     static CudaGraph capture(cudaStream_t stream, Fn&& enqueue) {
         CudaGraph g;
-        check_cuda(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal),
-                   "CudaGraph::capture begin");
+        check_cuda(
+            cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal),
+            "CudaGraph::capture begin");
         try {
             enqueue();
         } catch (...) {
@@ -59,9 +62,11 @@ class CudaGraph {
             if (partial != nullptr) cudaGraphDestroy(partial);
             throw;
         }
-        check_cuda(cudaStreamEndCapture(stream, &g.graph_), "CudaGraph::capture end");
-        check_cuda(cudaGraphInstantiate(&g.exec_, g.graph_, nullptr, nullptr, 0),
-                   "CudaGraph::capture instantiate");
+        check_cuda(cudaStreamEndCapture(stream, &g.graph_),
+                   "CudaGraph::capture end");
+        check_cuda(
+            cudaGraphInstantiate(&g.exec_, g.graph_, nullptr, nullptr, 0),
+            "CudaGraph::capture instantiate");
         return g;
     }
 
@@ -85,7 +90,7 @@ class CudaGraph {
         }
     }
 
-  private:
+   private:
     cudaGraph_t graph_ = nullptr;
     cudaGraphExec_t exec_ = nullptr;
 };

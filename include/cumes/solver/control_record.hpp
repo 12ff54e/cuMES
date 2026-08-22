@@ -24,10 +24,10 @@ enum class RestartReason : std::uint8_t {
 // max|√g|, the nonfinite entry count, and the surface index of the minimum.
 template <typename T>
 struct JacobianStatus {
-    T min_oriented = T(0);    // min(signJ·√g); negative => sign flip
-    T max_abs = T(0);         // max |√g|
-    T nonfinite_count = T(0); // number of non-finite entries
-    int min_index = 0;        // flat index (jH*nZnT + point) of the minimum
+    T min_oriented = T(0);     // min(signJ·√g); negative => sign flip
+    T max_abs = T(0);          // max |√g|
+    T nonfinite_count = T(0);  // number of non-finite entries
+    int min_index = 0;         // flat index (jH*nZnT + point) of the minimum
 };
 
 // Result of classifying the invariant (unpreconditioned, normalized) residual
@@ -65,12 +65,12 @@ struct RestartDecision {
 // the single compute stream, and the whole record is memset at pass start so
 // no stale bit can leak across passes.
 struct ControlStatus {
-    std::uint32_t jacobian_valid = 0;        // finalize kernel: geometry usable
-    std::uint32_t invariant_nonfinite = 0;   // terminal predicate
-    std::uint32_t invariant_converged = 0;   // terminal predicate
+    std::uint32_t jacobian_valid = 0;       // finalize kernel: geometry usable
+    std::uint32_t invariant_nonfinite = 0;  // terminal predicate
+    std::uint32_t invariant_converged = 0;  // terminal predicate
     std::uint32_t preconditioned_evaluated = 0;  // set by the guarded reduction
     std::uint32_t force_norms_evaluated = 0;     // set by the guarded reduction
-    std::uint32_t reserved = 0;              // explicit tail for growth
+    std::uint32_t reserved = 0;                  // explicit tail for growth
 };
 
 // The trivially-copyable record the per-pass DAG reduces into and the host
@@ -80,11 +80,11 @@ struct ControlStatus {
 // [10..15]. One cudaMemcpyAsync of sizeof(ControlRecord) delivers the whole
 // struct; the status bits travel with the numbers they describe.
 struct ControlRecord {
-    double jacobian_min_oriented = 0.0;      // min(signJ·√g)
-    double jacobian_max_abs = 0.0;           // max |√g|
-    double jacobian_nonfinite_count = 0.0;   // non-finite entry count
-    double jacobian_min_index = 0.0;         // flat argmin index (as double)
-    double invariant_raw[3] = {0.0, 0.0, 0.0};       // ΣF²/(mnmax·ns) per group
+    double jacobian_min_oriented = 0.0;         // min(signJ·√g)
+    double jacobian_max_abs = 0.0;              // max |√g|
+    double jacobian_nonfinite_count = 0.0;      // non-finite entry count
+    double jacobian_min_index = 0.0;            // flat argmin index (as double)
+    double invariant_raw[3] = {0.0, 0.0, 0.0};  // ΣF²/(mnmax·ns) per group
     double preconditioned_raw[3] = {0.0, 0.0, 0.0};  // after the preconditioner
     double force_norms[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     // {sRZ, sL, sMag, eTherm, vol, rzNorm} (before the deltaS scaling)

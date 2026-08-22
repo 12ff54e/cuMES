@@ -44,8 +44,9 @@ struct BuildProvenance {
     std::string scalar_type;  // "double" / "float"
     // Precision-policy provenance (completion plan step 3.1): the named
     // policy and its effective flags that produced the binary.
-    std::string precision_policy;  // verify-double|fast-double|mixed-float|debug-double
-    std::string compile_flags;     // effective fast-math/device-check flags
+    std::string
+        precision_policy;  // verify-double|fast-double|mixed-float|debug-double
+    std::string compile_flags;  // effective fast-math/device-check flags
 };
 
 struct InputProvenance {
@@ -54,10 +55,10 @@ struct InputProvenance {
 };
 
 struct RuntimeProvenance {
-    std::string gpu_name;    // e.g. "NVIDIA TITAN Xp"
-    std::string driver;      // driver version
-    std::string runtime;     // CUDA runtime version
-    std::string toolkit;     // CUDA toolkit version
+    std::string gpu_name;  // e.g. "NVIDIA TITAN Xp"
+    std::string driver;    // driver version
+    std::string runtime;   // CUDA runtime version
+    std::string toolkit;   // CUDA toolkit version
 };
 
 struct RunReport {

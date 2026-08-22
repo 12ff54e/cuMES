@@ -8,40 +8,44 @@
 //   2. Exercise the concrete typed views (RealFieldView, ReducedThetaView, and
 //      the aggregate geometry/field/force bundles) with a device round-trip and
 //      layout static_asserts.
+#include "cumes/numerics/descent_operator.hpp"
+#include "cumes/numerics/preconditioner.hpp"
+#include "cumes/numerics/prolongation.hpp"
+#include "cumes/numerics/residual_operator.hpp"
+#include "cumes/numerics/tridiagonal_backend.hpp"
+#include "cumes/physics/constraint_operator.hpp"
+#include "cumes/physics/force_operator.hpp"
+#include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
+#include "cumes/physics/profiles.hpp"
+#include "cumes/state/real_fields.cuh"
+#include "cumes/transforms/spectral_operator.hpp"
+#include "cumes_test_cuda_helper.cuh"
+
 #include <cstdlib>
 #include <type_traits>
 #include <vector>
-
-#include "cumes/state/real_fields.cuh"
-#include "cumes/transforms/spectral_operator.hpp"
-#include "cumes/physics/profiles.hpp"
-#include "cumes/physics/geometry_operator.hpp"
-#include "cumes/physics/magnetic_field_operator.hpp"
-#include "cumes/physics/force_operator.hpp"
-#include "cumes/physics/constraint_operator.hpp"
-#include "cumes/numerics/residual_operator.hpp"
-#include "cumes/numerics/preconditioner.hpp"
-#include "cumes/numerics/tridiagonal_backend.hpp"
-#include "cumes/numerics/descent_operator.hpp"
-#include "cumes/numerics/prolongation.hpp"
-#include "cumes_test_cuda_helper.cuh"
 using namespace cumes::test;
 
 // The view bundles must be trivially copyable so kernels can receive them by
 // value (a bundle is just pointers + extents).
-static_assert(std::is_trivially_copyable<cumes::GeometryParityViews<double>>::value,
-              "geometry views trivially copyable");
-static_assert(std::is_trivially_copyable<cumes::BaseGeometryHalfViews<double>>::value,
-              "half views trivially copyable");
-static_assert(std::is_trivially_copyable<cumes::MagneticFieldViews<double>>::value,
-              "field views trivially copyable");
-static_assert(std::is_trivially_copyable<cumes::ForceParityViews<double>>::value,
-              "force views trivially copyable");
-
+static_assert(
+    std::is_trivially_copyable<cumes::GeometryParityViews<double>>::value,
+    "geometry views trivially copyable");
+static_assert(
+    std::is_trivially_copyable<cumes::BaseGeometryHalfViews<double>>::value,
+    "half views trivially copyable");
+static_assert(
+    std::is_trivially_copyable<cumes::MagneticFieldViews<double>>::value,
+    "field views trivially copyable");
+static_assert(
+    std::is_trivially_copyable<cumes::ForceParityViews<double>>::value,
+    "force views trivially copyable");
 
 // Write through a ReducedThetaView on device; host verifies the
 // [surface][zeta][reduced_theta] layout (reduced_theta contiguous).
-__global__ void writeReduced(cumes::ReducedThetaView<double> v, int ntheta_red) {
+__global__ void writeReduced(cumes::ReducedThetaView<double> v,
+                             int ntheta_red) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int total = v.surfaces() * ntheta_red * v.nzeta();
     if (i >= total) return;
@@ -62,13 +66,15 @@ int main() {
         std::vector<double> h(total, -1.0);
         double* d = nullptr;
         cc(cudaMalloc(&d, total * sizeof(double)), "alloc");
-        cc(cudaMemcpy(d, h.data(), total * sizeof(double), cudaMemcpyHostToDevice),
+        cc(cudaMemcpy(d, h.data(), total * sizeof(double),
+                      cudaMemcpyHostToDevice),
            "seed");
         cumes::ReducedThetaView<double> v(d, ns, nred, nzeta);
         writeReduced<<<(total + 127) / 128, 128>>>(v, nred);
         cc(cudaDeviceSynchronize(), "sync");
         std::vector<double> back(total);
-        cc(cudaMemcpy(back.data(), d, total * sizeof(double), cudaMemcpyDeviceToHost),
+        cc(cudaMemcpy(back.data(), d, total * sizeof(double),
+                      cudaMemcpyDeviceToHost),
            "read");
         bool ok = true;
         for (int i = 0; i < total; ++i) ok = ok && back[i] == (double)i;

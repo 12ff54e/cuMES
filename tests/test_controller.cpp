@@ -8,12 +8,11 @@
 // effective-iteration / restart-anchor bookkeeping. The end-to-end
 // byte-for-byte gate (scripts/compare_bitwise.py) separately proves the
 // refactored solver replays the frozen trajectory identically.
-#include <cmath>
-
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes_test.h"
-using namespace cumes::test;
 
+#include <cmath>
+using namespace cumes::test;
 
 static bool near(double a, double b, double eps) {
     return std::abs(a - b) <= eps * std::max(1.0, std::abs(b));
@@ -22,7 +21,8 @@ static bool near(double a, double b, double eps) {
 static void check_near(double a, double b, double eps, const char* what) {
     if (!near(a, b, eps)) {
         ++failures();
-        std::cout << format("  FAIL: {} (got {:.17g}, want {:.17g})\n", what, a, b);
+        std::cout << format("  FAIL: {} (got {:.17g}, want {:.17g})\n", what, a,
+                            b);
     }
 }
 
@@ -70,7 +70,8 @@ int main() {
         IterationController<double> ctl({0.9, 1e-14, 0.0});
         const double inv[3] = {0.1, 0.1, 0.1};
         const double prec[3] = {0.01, 0.01, 0.01};  // fsq = 0.03
-        check(!ctl.classify_invariant(inv).converged, "0.1 > ftol => not converged");
+        check(!ctl.classify_invariant(inv).converged,
+              "0.1 > ftol => not converged");
         auto d = ctl.decide_restart(prec, inv);
         check(d.reason == RestartReason::kNone, "anchor pass never restarts");
         check(!d.do_refresh, "anchor pass (age 0) never refreshes");
@@ -98,9 +99,11 @@ int main() {
         const double blowup[3] = {10.0, 10.0, 10.0};
         ctl.classify_invariant(inv);
         auto d = ctl.decide_restart(blowup, inv);
-        check(d.reason == RestartReason::kBadJacobian, "fsq>100*res0 => bad jacobian");
+        check(d.reason == RestartReason::kBadJacobian,
+              "fsq>100*res0 => bad jacobian");
         ctl.after_descent(d);
-        check_near(ctl.delta_t(), 0.81, 1e-15, "bad jacobian shrinks delt by 0.9");
+        check_near(ctl.delta_t(), 0.81, 1e-15,
+                   "bad jacobian shrinks delt by 0.9");
         check(ctl.effective_iteration() == 2, "restart does not advance iter2");
         check(ctl.restart_anchor() == 2, "restart re-anchors iter1=iter2");
         check(ctl.restart_events().size() == 1,
@@ -121,7 +124,7 @@ int main() {
         js.min_oriented = -1.0;  // sign-flipped sqrt(g)
         js.max_abs = 1.0;
         js.nonfinite_count = 0.0;
-        js.min_index = 4 * 5;   // interior surface
+        js.min_index = 4 * 5;  // interior surface
         check(ctl.jacobian_invalid(js, 5), "sign flip => invalid jacobian");
         check_near(ctl.delta_t(), 0.81, 1e-15, "jacobian gate shrinks delt");
         check(ctl.restart_anchor() == 2, "jacobian gate re-anchors");
@@ -139,7 +142,8 @@ int main() {
             const double prec[3] = {1e-4, 1e-4, 1e-4};  // fsq = 3e-4 == res0
             ctl.classify_invariant(inv);
             auto d = ctl.decide_restart(prec, inv);
-            check(d.reason == RestartReason::kNone, "steady good pass does not restart");
+            check(d.reason == RestartReason::kNone,
+                  "steady good pass does not restart");
             if (ctl.effective_iteration() - ctl.restart_anchor() > 10) {
                 saw_refresh = saw_refresh || d.do_refresh;
             }
@@ -153,15 +157,19 @@ int main() {
         const double prec[3] = {3e-3, 3e-3, 3e-3};
         ctl.classify_invariant(inv);
         auto d = ctl.decide_restart(prec, inv);
-        check(d.reason == RestartReason::kBadProgress, "stalled pass => bad progress");
+        check(d.reason == RestartReason::kBadProgress,
+              "stalled pass => bad progress");
         check(!d.do_refresh, "bad progress is not a refresh");
         ctl.after_descent(d);
-        check_near(ctl.delta_t(), 0.9 / 1.03, 1e-15, "bad progress divides delt by 1.03");
-        check(ctl.effective_iteration() == 56, "restart does not advance iter2");
+        check_near(ctl.delta_t(), 0.9 / 1.03, 1e-15,
+                   "bad progress divides delt by 1.03");
+        check(ctl.effective_iteration() == 56,
+              "restart does not advance iter2");
         check(ctl.restart_anchor() == 56, "restart re-anchors iter1=iter2");
-        check(ctl.restart_events().size() == 1 &&
-                  ctl.restart_events().back().iteration == 56,
-              "bad-progress restart records one event at the stalled iteration");
+        check(
+            ctl.restart_events().size() == 1 &&
+                ctl.restart_events().back().iteration == 56,
+            "bad-progress restart records one event at the stalled iteration");
     }
 
     // ---- ijacob==25/50 maintenance reset ----
@@ -174,10 +182,11 @@ int main() {
             ctl.classify_invariant(inv);
             ctl.after_descent(ctl.decide_restart(small, inv));  // good
             ctl.classify_invariant(inv);
-            ctl.after_descent(ctl.decide_restart(big, inv));     // bad
+            ctl.after_descent(ctl.decide_restart(big, inv));  // bad
         }
         check(ctl.next_schedule(), "25 bad jacobians => maintenance reset");
-        check_near(ctl.delta_t(), 0.98 * 0.9, 1e-15, "maintenance delt = 0.98*delt0");
+        check_near(ctl.delta_t(), 0.98 * 0.9, 1e-15,
+                   "maintenance delt = 0.98*delt0");
         check(ctl.restart_events().size() == 26,
               "25 bad-jacobian events + 1 maintenance reset");
         check(ctl.restart_events().front().iteration == 2 &&

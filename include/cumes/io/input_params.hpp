@@ -46,10 +46,10 @@ struct InputParams {
     double bloat = 0.0;
     double curtor = 0.0;
     double tcon0 = 0.0;
-    std::vector<double> am;      // mass/pressure power series
-    std::vector<double> ac;      // prescribed current power series
-    std::vector<double> ai;      // prescribed iota power series
-    std::vector<double> aphi;    // toroidal flux power series
+    std::vector<double> am;       // mass/pressure power series
+    std::vector<double> ac;       // prescribed current power series
+    std::vector<double> ai;       // prescribed iota power series
+    std::vector<double> aphi;     // toroidal flux power series
     std::vector<double> raxis_c;  // R axis cos coefficients (ntor+1 entries)
     std::vector<double> zaxis_s;  // Z axis sin coefficients (ntor+1 entries)
     std::vector<InputStage> stages;

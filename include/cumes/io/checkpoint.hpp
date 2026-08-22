@@ -23,7 +23,8 @@ Status write_checkpoint(const EquilibriumSnapshot& snapshot,
 // The restart path consumes the state only; when `input_params` is non-null
 // and the checkpoint carries the version-2 record, it is decoded into it
 // (left default-empty for version-1 checkpoints).
-Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
-                                            InputParams* input_params = nullptr);
+Result<EquilibriumSnapshot> read_checkpoint(
+    const std::string& path,
+    InputParams* input_params = nullptr);
 
 }  // namespace cumes

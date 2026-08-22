@@ -14,7 +14,7 @@
 namespace cumes {
 
 enum class CurrentModel : std::uint8_t {
-    kFixedIota = 0,        // ncurr = 0
+    kFixedIota = 0,         // ncurr = 0
     kPrescribedCurrent = 1  // ncurr = 1
 };
 
@@ -53,7 +53,7 @@ struct BoundaryHarmonic {
 struct StageRequest {
     std::size_t radial_surfaces = 0;  // ns
     std::size_t max_iterations = 0;
-    double tolerance = 0.0;           // ftol
+    double tolerance = 0.0;  // ftol
 };
 
 struct ProblemSpec {
@@ -64,10 +64,10 @@ struct ProblemSpec {
     CurrentModel current_model = CurrentModel::kFixedIota;
     double delt = 0.9;
 
-    ProfileSpec mass;          // am (pressure/mass power series)
-    ProfileSpec iota;          // ai (prescribed iota, fixed-iota mode)
-    ProfileSpec current;       // ac (prescribed current, ncurr=1)
-    ProfileSpec toroidal_flux; // aphi (toroidal flux; default {1.0})
+    ProfileSpec mass;           // am (pressure/mass power series)
+    ProfileSpec iota;           // ai (prescribed iota, fixed-iota mode)
+    ProfileSpec current;        // ac (prescribed current, ncurr=1)
+    ProfileSpec toroidal_flux;  // aphi (toroidal flux; default {1.0})
 
     std::vector<double> raxis_c;  // R axis cos coefficients (length ntor+1)
     std::vector<double> zaxis_s;  // Z axis sin coefficients (length ntor+1)

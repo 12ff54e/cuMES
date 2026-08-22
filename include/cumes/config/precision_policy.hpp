@@ -15,8 +15,9 @@ namespace cumes {
 enum class PrecisionPolicy : std::uint8_t {
     kVerifyDouble = 0,  // double state/geometry/FFT/reduction, precise math
     kFastDouble = 1,    // double + selected fast intrinsics (opt-in)
-    kMixedFloat = 2,    // float state/geometry/FFT, double reductions (experimental)
-    kDebugDouble = 3,   // double + precise + device checks
+    kMixedFloat =
+        2,  // float state/geometry/FFT, double reductions (experimental)
+    kDebugDouble = 3,  // double + precise + device checks
 };
 
 // The lowest tolerance a policy can meaningfully meet. Double reaches the

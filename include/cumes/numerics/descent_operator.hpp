@@ -12,9 +12,9 @@
 // (the blueprint §6.10 keeps the checkpoint as a distinct operator).
 #pragma once
 
-#include <cuda_runtime.h>
-
 #include "cumes/core/tensor_view.cuh"
+
+#include <cuda_runtime.h>
 
 namespace cumes {
 
@@ -24,22 +24,26 @@ namespace cumes {
 // exact frozen order (descent → post-descent capture → post-descent restore +
 // velocity zero).
 struct DescentAction {
-  bool perform_descent = false;
-  bool refresh_checkpoint_after_descent = false;
-  bool restore_checkpoint_after_descent = false;
-  double delta_t = 0.0;
-  double damping_b1 = 0.0;
-  double damping_fac = 0.0;
+    bool perform_descent = false;
+    bool refresh_checkpoint_after_descent = false;
+    bool restore_checkpoint_after_descent = false;
+    double delta_t = 0.0;
+    double damping_b1 = 0.0;
+    double damping_fac = 0.0;
 };
 
 template <class T>
 class DescentOperator {
- public:
-  void enqueue(SpectralView<T, PhysicalStateDomain> state,
-               SpectralView<T, DecomposedVelocityDomain> velocity,
-               SpectralView<const T, DecomposedResidualDomain> residual,
-               const int* xm, const int* xn, int ns, int mnmax,
-               const DescentAction& action, cudaStream_t stream) const;
+   public:
+    void enqueue(SpectralView<T, PhysicalStateDomain> state,
+                 SpectralView<T, DecomposedVelocityDomain> velocity,
+                 SpectralView<const T, DecomposedResidualDomain> residual,
+                 const int* xm,
+                 const int* xn,
+                 int ns,
+                 int mnmax,
+                 const DescentAction& action,
+                 cudaStream_t stream) const;
 };
 
 }  // namespace cumes

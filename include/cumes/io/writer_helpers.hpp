@@ -18,9 +18,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <optional>
 #include <string>
+
+#include <fcntl.h>
 #include <unistd.h>
 
 namespace cumes {
@@ -60,18 +61,18 @@ inline std::string fsyncDirectoryOf(const std::string& path) {
     const std::string dir =
         (slash == std::string::npos) ? std::string(".") : path.substr(0, slash);
     const int fd = open(dir.c_str(), O_RDONLY);
-    if (fd < 0) {
-        return "cannot open directory for fsync";
-    }
+    if (fd < 0) { return "cannot open directory for fsync"; }
     const bool fsync_failed = fsync(fd) != 0;
     const int fsync_errno_saved = errno;
     const bool close_failed = close(fd) != 0;
     const int close_errno_saved = errno;
     if (fsync_failed) {
-        return "directory fsync failed: " + std::string(strerror(fsync_errno_saved));
+        return "directory fsync failed: " +
+               std::string(strerror(fsync_errno_saved));
     }
     if (close_failed) {
-        return "directory close failed: " + std::string(strerror(close_errno_saved));
+        return "directory close failed: " +
+               std::string(strerror(close_errno_saved));
     }
     return "";
 }
@@ -81,7 +82,8 @@ inline std::string fsyncDirectoryOf(const std::string& path) {
 // removes the temp and returns a reason (the target `path` is left
 // untouched); a directory-fsync failure propagates as an error so the caller
 // can report the unproven durability to main.
-inline std::string renamePublish(const std::string& tmp, const std::string& path) {
+inline std::string renamePublish(const std::string& tmp,
+                                 const std::string& path) {
     if (rename(tmp.c_str(), path.c_str()) != 0) {
         remove(tmp.c_str());
         return "rename failed";
@@ -126,14 +128,27 @@ inline std::string publishLibraryFile(const std::string& tmp,
 // failure removes the temp and leaves `path` untouched; `fp` is closed exactly
 // once (a failing close is not re-closed). Returns an empty string on success,
 // or a human-readable reason.
-inline std::string publishAtomic(FILE* fp, const std::string& tmp,
+inline std::string publishAtomic(FILE* fp,
+                                 const std::string& tmp,
                                  const std::string& path) {
     bool fail = false;
     std::string reason;
-    if (fflush(fp) != 0) { reason = "fflush failed"; fail = true; }
-    if (!fail && fsync(fileno(fp)) != 0) { reason = "fsync failed"; fail = true; }
-    if (fclose(fp) != 0 && !fail) { reason = "fclose failed"; fail = true; }
-    if (fail) { remove(tmp.c_str()); return reason; }
+    if (fflush(fp) != 0) {
+        reason = "fflush failed";
+        fail = true;
+    }
+    if (!fail && fsync(fileno(fp)) != 0) {
+        reason = "fsync failed";
+        fail = true;
+    }
+    if (fclose(fp) != 0 && !fail) {
+        reason = "fclose failed";
+        fail = true;
+    }
+    if (fail) {
+        remove(tmp.c_str());
+        return reason;
+    }
     return renamePublish(tmp, path);
 }
 

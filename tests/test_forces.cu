@@ -9,27 +9,34 @@
 //     error leaks non-axisymmetric content into the Z channel.
 // The test returns nonzero if any assertion fails (it is a gate, not a
 // print-only diagnostic).
-#include <cmath>
-#include <vector>
-
-#include "vmec_types.h"
-#include "cumes/transforms/toroidal_fft_operator.hpp"
-#include "cumes/state/mode_table.cuh"
-#include "cumes/state/spectral_storage.hpp"
+#include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
-#include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/state/mode_table.cuh"
+#include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes_test_cuda_helper.cuh"
+#include "vmec_types.h"
+
+#include <cmath>
+#include <vector>
 using namespace cumes::test;
-
-
 
 int main() {
     DeviceParams<double> p;
-    p.ns = 17; p.mnmax = 6*(2+1); p.ntheta = 32; p.nzeta = 64;
-    p.nfp = 1; p.nZnT = 2048; p.mpol = 6; p.ntor = 2;
-    p.ncurr = 0; p.delt = 1.0; p.ftol = 1e-14; p.max_iter = 10;
+    p.ns = 17;
+    p.mnmax = 6 * (2 + 1);
+    p.ntheta = 32;
+    p.nzeta = 64;
+    p.nfp = 1;
+    p.nZnT = 2048;
+    p.mpol = 6;
+    p.ntor = 2;
+    p.ncurr = 0;
+    p.delt = 1.0;
+    p.ftol = 1e-14;
+    p.max_iter = 10;
 
     std::cout << "=== Force Diagnostic Test ===\n";
 
@@ -65,18 +72,35 @@ int main() {
         }
     }
 
-    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), h_cc, nbytes_state, cudaMemcpyHostToDevice), "cpy cc");
-    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss), h_ss, nbytes_state, cudaMemcpyHostToDevice), "cpy ss");
-    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc), h_zsc, nbytes_state, cudaMemcpyHostToDevice), "cpy zsc");
-    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs), h_zcs, nbytes_state, cudaMemcpyHostToDevice), "cpy zcs");
-    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc), h_lsc, nbytes_state, cudaMemcpyHostToDevice), "cpy lsc");
-    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs), h_lcs, nbytes_state, cudaMemcpyHostToDevice), "cpy lcs");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc),
+                          h_cc, nbytes_state, cudaMemcpyHostToDevice),
+               "cpy cc");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss),
+                          h_ss, nbytes_state, cudaMemcpyHostToDevice),
+               "cpy ss");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc),
+                          h_zsc, nbytes_state, cudaMemcpyHostToDevice),
+               "cpy zsc");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs),
+                          h_zcs, nbytes_state, cudaMemcpyHostToDevice),
+               "cpy zcs");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc),
+                          h_lsc, nbytes_state, cudaMemcpyHostToDevice),
+               "cpy lsc");
+    check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs),
+                          h_lcs, nbytes_state, cudaMemcpyHostToDevice),
+               "cpy lcs");
 
-    delete[] h_cc; delete[] h_ss; delete[] h_zsc; delete[] h_zcs;
-    delete[] h_lsc; delete[] h_lcs;
+    delete[] h_cc;
+    delete[] h_ss;
+    delete[] h_zsc;
+    delete[] h_zcs;
+    delete[] h_lsc;
+    delete[] h_lcs;
 
     cumes::ValidatedProblem vp = load_validated();
-    cumes::Profiles<double> profiles(p, vp, nullptr); cumes::RadialProfileViews<double> rp = profiles.profile_views();
+    cumes::Profiles<double> profiles(p, vp, nullptr);
+    cumes::RadialProfileViews<double> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
     cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
     cumes::ToroidalFftOperator<double> op(p, rs, mt);
@@ -84,8 +108,13 @@ int main() {
 
     // Run one iteration
     op.inverse(storage.physical_const(), /*do_combine=*/true);
-    geometry.enqueue(rs, p, rp, 0); cumes::MagneticFieldOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0, true);
-    cumes::ForceOperator<double>{}.enqueue(rs, p, rp, geometry.base_geometry_views(p), geometry.magnetic_field_views(p), nullptr, 0);
+    geometry.enqueue(rs, p, rp, 0);
+    cumes::MagneticFieldOperator<double>{}.enqueue(
+        rs, p, rp, geometry.base_geometry_views(p),
+        geometry.magnetic_field_views(p), nullptr, 0, true);
+    cumes::ForceOperator<double>{}.enqueue(
+        rs, p, rp, geometry.base_geometry_views(p),
+        geometry.magnetic_field_views(p), nullptr, 0);
 
     // Check combined geometry at axis (j=0) and mid (j=8)
     size_t nbr = p.ns * p.nZnT * sizeof(double);
@@ -97,42 +126,54 @@ int main() {
     // Print R at first theta point for all surfaces
     std::cout << "\nR(s,theta=0,zeta=0):\n";
     for (int j = 0; j < p.ns; ++j) {
-        std::cout << format("  j={}: R={:.6f}  Z={:.6f}\n", j, h_r[j * p.nZnT], h_z[j * p.nZnT]);
+        std::cout << format("  j={}: R={:.6f}  Z={:.6f}\n", j, h_r[j * p.nZnT],
+                            h_z[j * p.nZnT]);
     }
 
     // Check forces
     auto* h_armn_e = new double[p.ns * p.nZnT];
     auto* h_armn_o = new double[p.ns * p.nZnT];
     auto* h_blmn_e = new double[p.ns * p.nZnT];
-    check_cuda(cudaMemcpy(h_armn_e, rs.d_armn_e, nbr, cudaMemcpyDeviceToHost), "armn_e");
-    check_cuda(cudaMemcpy(h_armn_o, rs.d_armn_o, nbr, cudaMemcpyDeviceToHost), "armn_o");
-    check_cuda(cudaMemcpy(h_blmn_e, rs.d_blmn_e, nbr, cudaMemcpyDeviceToHost), "blmn_e");
+    check_cuda(cudaMemcpy(h_armn_e, rs.d_armn_e, nbr, cudaMemcpyDeviceToHost),
+               "armn_e");
+    check_cuda(cudaMemcpy(h_armn_o, rs.d_armn_o, nbr, cudaMemcpyDeviceToHost),
+               "armn_o");
+    check_cuda(cudaMemcpy(h_blmn_e, rs.d_blmn_e, nbr, cudaMemcpyDeviceToHost),
+               "blmn_e");
 
     std::cout << "\nForces at theta=0,zeta=0:\n";
     std::cout << "  j  |  armn_e      armn_o      azmn_e      blmn_e\n";
     std::cout << "  ---+----------------------------------------------\n";
     auto* h_az = new double[p.ns * p.nZnT];
-    check_cuda(cudaMemcpy(h_az, rs.d_azmn_e, nbr, cudaMemcpyDeviceToHost), "az");
+    check_cuda(cudaMemcpy(h_az, rs.d_azmn_e, nbr, cudaMemcpyDeviceToHost),
+               "az");
     for (int j = 0; j < p.ns; ++j) {
-        std::cout << format("  {} | {:.4e} {:.4e} {:.4e} {:.4e}\n",
-                            j, h_armn_e[j * p.nZnT], h_armn_o[j * p.nZnT],
+        std::cout << format("  {} | {:.4e} {:.4e} {:.4e} {:.4e}\n", j,
+                            h_armn_e[j * p.nZnT], h_armn_o[j * p.nZnT],
                             h_az[j * p.nZnT], h_blmn_e[j * p.nZnT]);
     }
 
     // Check gsqrt at half-grid
     size_t nH = (p.ns - 1) * p.nZnT * sizeof(double);
-    auto* h_gs = new double[(p.ns-1) * p.nZnT];
-    auto* h_tau = new double[(p.ns-1) * p.nZnT];
-    check_cuda(cudaMemcpy(h_gs, geometry.base_geometry_views(p).gsqrt.data(), nH, cudaMemcpyDeviceToHost), "gs");
-    check_cuda(cudaMemcpy(h_tau, geometry.base_geometry_views(p).tau.data(), nH, cudaMemcpyDeviceToHost), "tau");
+    auto* h_gs = new double[(p.ns - 1) * p.nZnT];
+    auto* h_tau = new double[(p.ns - 1) * p.nZnT];
+    check_cuda(cudaMemcpy(h_gs, geometry.base_geometry_views(p).gsqrt.data(),
+                          nH, cudaMemcpyDeviceToHost),
+               "gs");
+    check_cuda(cudaMemcpy(h_tau, geometry.base_geometry_views(p).tau.data(), nH,
+                          cudaMemcpyDeviceToHost),
+               "tau");
 
     std::cout << "\nHalf-grid at theta=0,zeta=0:\n";
     std::cout << "  jH |  tau         gsqrt       r12\n";
-    auto* h_r12 = new double[(p.ns-1) * p.nZnT];
-    check_cuda(cudaMemcpy(h_r12, geometry.base_geometry_views(p).r12.data(), nH, cudaMemcpyDeviceToHost), "r12");
+    auto* h_r12 = new double[(p.ns - 1) * p.nZnT];
+    check_cuda(cudaMemcpy(h_r12, geometry.base_geometry_views(p).r12.data(), nH,
+                          cudaMemcpyDeviceToHost),
+               "r12");
     for (int j = 0; j < p.ns - 1; ++j) {
-        std::cout << format("  {} | {:.4e} {:.4e} {:.4e}\n",
-                            j, h_tau[j * p.nZnT], h_gs[j * p.nZnT], h_r12[j * p.nZnT]);
+        std::cout << format("  {} | {:.4e} {:.4e} {:.4e}\n", j,
+                            h_tau[j * p.nZnT], h_gs[j * p.nZnT],
+                            h_r12[j * p.nZnT]);
     }
 
     // Compute spectral forces via forward DFT
@@ -140,14 +181,20 @@ int main() {
     auto* d_fspec = new double[6 * p.ns * p.mnmax];  // host
     double* d_fspec_gpu;
     check_cuda(cudaMalloc(&d_fspec_gpu, nbs), "fspec");
-    double *frcon_e, *frcon_o, *fzcon_e, *fzcon_o; cudaMalloc(&frcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(frcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    cudaMalloc(&frcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(frcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    cudaMalloc(&fzcon_e, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(fzcon_e, 0, (size_t)p.ns*p.nZnT*sizeof(double));
-    cudaMalloc(&fzcon_o, (size_t)p.ns*p.nZnT*sizeof(double)); cudaMemset(fzcon_o, 0, (size_t)p.ns*p.nZnT*sizeof(double));
+    double *frcon_e, *frcon_o, *fzcon_e, *fzcon_o;
+    cudaMalloc(&frcon_e, (size_t)p.ns * p.nZnT * sizeof(double));
+    cudaMemset(frcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double));
+    cudaMalloc(&frcon_o, (size_t)p.ns * p.nZnT * sizeof(double));
+    cudaMemset(frcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double));
+    cudaMalloc(&fzcon_e, (size_t)p.ns * p.nZnT * sizeof(double));
+    cudaMemset(fzcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double));
+    cudaMalloc(&fzcon_o, (size_t)p.ns * p.nZnT * sizeof(double));
+    cudaMemset(fzcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double));
     op.forward(cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
-                d_fspec_gpu, p.ns, p.mnmax),
-            frcon_e, frcon_o, fzcon_e, fzcon_o);
-    check_cuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost), "fspec d");
+                   d_fspec_gpu, p.ns, p.mnmax),
+               frcon_e, frcon_o, fzcon_e, fzcon_o);
+    check_cuda(cudaMemcpy(d_fspec, d_fspec_gpu, nbs, cudaMemcpyDeviceToHost),
+               "fspec d");
 
     std::cout << "\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n";
     std::cout << "  mode | m  n |  f_rmnc(axis) f_zmns(axis) f_lmnc(axis)\n";
@@ -158,8 +205,8 @@ int main() {
         int idx_r = 0 + m * p.ns;  // axis (j=0), mode m, comp R
         int idx_z = 0 + m * p.ns + p.mnmax * p.ns;
         int idx_l = 0 + m * p.ns + 2 * p.mnmax * p.ns;
-        std::cout << format("  {} | {} {} | {:.4e} {:.4e} {:.4e}\n",
-                            m, mm, nn, d_fspec[idx_r], d_fspec[idx_z], d_fspec[idx_l]);
+        std::cout << format("  {} | {} {} | {:.4e} {:.4e} {:.4e}\n", m, mm, nn,
+                            d_fspec[idx_r], d_fspec[idx_z], d_fspec[idx_l]);
     }
 
     // ---- numerical assertions (the gate) ----
@@ -169,7 +216,10 @@ int main() {
         // surface (a flipped Jacobian from a bad parity combination would
         // make it negative).
         size_t nH = (size_t)(p.ns - 1) * p.nZnT;
-        check_cuda(cudaMemcpy(h_gs, geometry.base_geometry_views(p).gsqrt.data(), nH * sizeof(double), cudaMemcpyDeviceToHost), "gs");
+        check_cuda(
+            cudaMemcpy(h_gs, geometry.base_geometry_views(p).gsqrt.data(),
+                       nH * sizeof(double), cudaMemcpyDeviceToHost),
+            "gs");
         bool geo_finite = true;
         double jmin = 1e300, jmax = 0.0;
         for (size_t i = 0; i < nH; ++i) {
@@ -178,7 +228,8 @@ int main() {
             jmax = std::max(jmax, std::abs(h_gs[i]));
         }
         check(geo_finite, "geometry gsqrt finite");
-        check(jmin > 0.0 && jmax > 0.0, "geometry gsqrt nonzero (non-degenerate)");
+        check(jmin > 0.0 && jmax > 0.0,
+              "geometry gsqrt nonzero (non-degenerate)");
         // Axisymmetric: R at theta=0 must be positive on the axis (4.0).
         check(h_r[0] > 0.0, "axis R positive");
 
@@ -216,13 +267,22 @@ int main() {
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
     realSpaceFree(rs);
     cumes::modeTableFree(mt);
-    cudaFree(frcon_e); cudaFree(frcon_o);
-    cudaFree(fzcon_e); cudaFree(fzcon_o);
+    cudaFree(frcon_e);
+    cudaFree(frcon_o);
+    cudaFree(fzcon_e);
+    cudaFree(fzcon_o);
 
-    delete[] h_r; delete[] h_z;
-    delete[] h_armn_e; delete[] h_armn_o; delete[] h_blmn_e;
-    delete[] h_az; delete[] h_gs; delete[] h_tau; delete[] h_r12;
-    cudaFree(d_fspec_gpu); delete[] d_fspec;
+    delete[] h_r;
+    delete[] h_z;
+    delete[] h_armn_e;
+    delete[] h_armn_o;
+    delete[] h_blmn_e;
+    delete[] h_az;
+    delete[] h_gs;
+    delete[] h_tau;
+    delete[] h_r12;
+    cudaFree(d_fspec_gpu);
+    delete[] d_fspec;
 
     std::cout << "\nDone.\n";
     return summary();

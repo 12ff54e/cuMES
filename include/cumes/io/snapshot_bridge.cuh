@@ -9,15 +9,15 @@
 // regardless of T (the on-disk state container stays double).
 #pragma once
 
-#include <cuda_runtime.h>
-
-#include <cstddef>
-#include <vector>
-
 #include "cumes/core/checked_size.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/state/spectral_storage.hpp"
+
+#include <cuda_runtime.h>
+
+#include <cstddef>
+#include <vector>
 
 namespace cumes {
 
@@ -31,19 +31,22 @@ EquilibriumSnapshot snapshot_from_device(const SpectralStorage<T>& storage) {
     auto one = checked_mul(static_cast<std::size_t>(storage.ns()),
                            static_cast<std::size_t>(storage.mnmax()));
     if (!one) {
-        throw CumesError("snapshot_from_device: element count overflows size_t");
+        throw CumesError(
+            "snapshot_from_device: element count overflows size_t");
     }
-    auto count = checked_mul(static_cast<std::size_t>(EquilibriumSnapshot::kCount),
-                             *one);
+    auto count = checked_mul(
+        static_cast<std::size_t>(EquilibriumSnapshot::kCount), *one);
     if (!count) {
-        throw CumesError("snapshot_from_device: element count overflows size_t");
+        throw CumesError(
+            "snapshot_from_device: element count overflows size_t");
     }
 
     std::vector<T> buf(*count);
     if (*count != 0) {
         auto bytes = checked_mul(*count, sizeof(T));
         if (!bytes) {
-            throw CumesError("snapshot_from_device: byte count overflows size_t");
+            throw CumesError(
+                "snapshot_from_device: byte count overflows size_t");
         }
         check_cuda(cudaMemcpy(buf.data(), storage.state_slab(), *bytes,
                               cudaMemcpyDeviceToHost),

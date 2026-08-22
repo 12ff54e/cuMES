@@ -15,35 +15,39 @@
 // unchanged Solovev/W7-X trajectories.
 #pragma once
 
-#include <cstdio>
-#include <cmath>
-#include <cstdint>
-
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "vmec_types.h"
 
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+
 namespace cumes {
 
-// DeviceParams<T> from ValidatedProblem. lamscale is set later by profilesCreate;
-// ns/max_iter/ftol carry stage 0 (the stage loop overwrites them per stage).
+// DeviceParams<T> from ValidatedProblem. lamscale is set later by
+// profilesCreate; ns/max_iter/ftol carry stage 0 (the stage loop overwrites
+// them per stage).
 template <typename T>
 DeviceParams<T> init_params(const ValidatedProblem& vp) {
     const ProblemSpec& s = vp.spec();
     DeviceParams<T> p;
     p.ns = static_cast<int>(s.stages.front().radial_surfaces);
-    p.mpol = s.mpol; p.ntor = s.ntor;
-    p.ntheta = s.angular.ntheta; p.nzeta = s.angular.nzeta; p.nfp = s.nfp;
+    p.mpol = s.mpol;
+    p.ntor = s.ntor;
+    p.ntheta = s.angular.ntheta;
+    p.nzeta = s.angular.nzeta;
+    p.nfp = s.nfp;
     p.nZnT = p.ntheta * p.nzeta;
-    p.mnmax = p.mpol * (p.ntor + 1);   // folded basis: mode = m*(ntor+1)+n
+    p.mnmax = p.mpol * (p.ntor + 1);  // folded basis: mode = m*(ntor+1)+n
     p.ncurr = (s.current_model == CurrentModel::kPrescribedCurrent) ? 1 : 0;
     p.delt = T(s.delt);
     p.ftol = T(s.stages.front().tolerance);
     p.max_iter = static_cast<int>(s.stages.front().max_iterations);
-    p.tcon0 = T(s.physical.tcon0);     // constraint-force multiplier
-    p.lamscale = T(0.0);               // set by profilesCreate
+    p.tcon0 = T(s.physical.tcon0);  // constraint-force multiplier
+    p.lamscale = T(0.0);            // set by profilesCreate
     return p;
 }
 
@@ -55,7 +59,8 @@ DeviceParams<T> init_params(const ValidatedProblem& vp) {
 // divides by mscale*nscale, but its mscale'd basis makes the real-space
 // reconstruction identical).
 template <typename T>
-SpectralStorage<T> init_state(const DeviceParams<T>& p, const ValidatedProblem& vp) {
+SpectralStorage<T> init_state(const DeviceParams<T>& p,
+                              const ValidatedProblem& vp) {
     const ProblemSpec& sp = vp.spec();
     const FoldedBoundary& b = vp.boundary();
     const int ntorp1 = p.ntor + 1;
@@ -66,27 +71,30 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const ValidatedProblem& 
     // One staging buffer in the exact state_slab() order
     // (Rcc Zsc Lsc Rss Zcs Lcs — spectral_storage.hpp), so the six per-family
     // H2D copies become a single upload. The host staging exists only for the
-    // double->T conversion; the layout and values are unchanged (bit-identical).
+    // double->T conversion; the layout and values are unchanged
+    // (bit-identical).
     auto* h_state = new T[6 * one]();
-    auto* h_c   = h_state + 0 * one;  // rmncc
+    auto* h_c = h_state + 0 * one;    // rmncc
     auto* h_zsc = h_state + 1 * one;  // zmnsc
     auto* h_lsc = h_state + 2 * one;  // lmnsc
-    auto* h_s   = h_state + 3 * one;  // rmnss
+    auto* h_s = h_state + 3 * one;    // rmnss
     auto* h_zcs = h_state + 4 * one;  // zmncs
     auto* h_lcs = h_state + 5 * one;  // lmncs
 
-    for(int j=0;j<p.ns;++j){
-        T sFlux = T(j)/T(p.ns-1);          // normalized flux s
-        T sqrtS  = std::sqrt(sFlux);        // sqrt(s)
-        for(int m=0;m<p.mpol;++m){
-            for(int n=0;n<p.ntor+1;++n){
-                int mn = m*(p.ntor+1)+n;
-                if(m==0){
+    for (int j = 0; j < p.ns; ++j) {
+        T sFlux = T(j) / T(p.ns - 1);  // normalized flux s
+        T sqrtS = std::sqrt(sFlux);    // sqrt(s)
+        for (int m = 0; m < p.mpol; ++m) {
+            for (int n = 0; n < p.ntor + 1; ++n) {
+                int mn = m * (p.ntor + 1) + n;
+                if (m == 0) {
                     // m=0: linear in s between axis and boundary
-                    h_c[j+mn*p.ns]   = sFlux*T(b.rbcc[0*ntorp1+n]) + (T(1.0)-sFlux)*T(sp.raxis_c[n]);
-                    h_zcs[j+mn*p.ns] = sFlux*T(b.zbcs[0*ntorp1+n]) - (T(1.0)-sFlux)*T(sp.zaxis_s[n]);
+                    h_c[j + mn * p.ns] = sFlux * T(b.rbcc[0 * ntorp1 + n]) +
+                                         (T(1.0) - sFlux) * T(sp.raxis_c[n]);
+                    h_zcs[j + mn * p.ns] = sFlux * T(b.zbcs[0 * ntorp1 + n]) -
+                                           (T(1.0) - sFlux) * T(sp.zaxis_s[n]);
                     // rmnss/zmnsc: no m=0 content; lambda: zero initially
-                } else if(m==1){
+                } else if (m == 1) {
                     // m=1: s^(1/2) radial envelope (s^(m/2)), matching
                     // vmecpp's physical state (interpFromBoundaryAndAxis).
                     // NOTE: the real-space odd-parity values then carry the
@@ -96,17 +104,17 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const ValidatedProblem& 
                     // vmecpp's decomposed real space (its real-space odd =
                     // physical/max).
                     T w = sqrtS;  // s^(1/2)
-                    h_c[j+mn*p.ns]   = w * T(b.rbcc[m*ntorp1+n]);
-                    h_s[j+mn*p.ns]   = w * T(b.rbss[m*ntorp1+n]);
-                    h_zsc[j+mn*p.ns] = w * T(b.zbsc[m*ntorp1+n]);
-                    h_zcs[j+mn*p.ns] = w * T(b.zbcs[m*ntorp1+n]);
+                    h_c[j + mn * p.ns] = w * T(b.rbcc[m * ntorp1 + n]);
+                    h_s[j + mn * p.ns] = w * T(b.rbss[m * ntorp1 + n]);
+                    h_zsc[j + mn * p.ns] = w * T(b.zbsc[m * ntorp1 + n]);
+                    h_zcs[j + mn * p.ns] = w * T(b.zbcs[m * ntorp1 + n]);
                 } else {
                     // m>=2: s^(m/2) radial envelope, vanishing at axis
                     T w = std::pow(sqrtS, m);  // s^(m/2)
-                    h_c[j+mn*p.ns]   = w * T(b.rbcc[m*ntorp1+n]);
-                    h_s[j+mn*p.ns]   = w * T(b.rbss[m*ntorp1+n]);
-                    h_zsc[j+mn*p.ns] = w * T(b.zbsc[m*ntorp1+n]);
-                    h_zcs[j+mn*p.ns] = w * T(b.zbcs[m*ntorp1+n]);
+                    h_c[j + mn * p.ns] = w * T(b.rbcc[m * ntorp1 + n]);
+                    h_s[j + mn * p.ns] = w * T(b.rbss[m * ntorp1 + n]);
+                    h_zsc[j + mn * p.ns] = w * T(b.zbsc[m * ntorp1 + n]);
+                    h_zcs[j + mn * p.ns] = w * T(b.zbcs[m * ntorp1 + n]);
                 }
                 // lmnsc/lmncs: zero initially (lambda is a free gauge)
             }
@@ -115,7 +123,8 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const ValidatedProblem& 
     printf("  initState: vmecpp interpFromBoundaryAndAxis (m>0 s^(m/2))\n");
 
     check_cuda(cudaMemcpy(storage.state_slab(), h_state, 6 * nb,
-                          cudaMemcpyHostToDevice), "init state slab");
+                          cudaMemcpyHostToDevice),
+               "init state slab");
     delete[] h_state;
     return storage;
 }
@@ -125,7 +134,8 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p, const ValidatedProblem& 
 // legacy CUMES_LOAD_INIT path did. The checkpoint stores doubles regardless
 // of T; the upload converts double -> T.
 template <typename T>
-SpectralStorage<T> restart_state(const DeviceParams<T>& p, const ValidatedProblem& vp,
+SpectralStorage<T> restart_state(const DeviceParams<T>& p,
+                                 const ValidatedProblem& vp,
                                  const EquilibriumSnapshot& snap) {
     const FoldedBoundary& b = vp.boundary();
     const int ntorp1 = p.ntor + 1;
@@ -136,19 +146,20 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p, const ValidatedProble
     // One staging buffer in the exact state_slab() order
     // (Rcc Zsc Lsc Rss Zcs Lcs — spectral_storage.hpp), so the six per-family
     // H2D copies become a single upload. The host staging exists only for the
-    // double->T conversion; the layout and values are unchanged (bit-identical).
+    // double->T conversion; the layout and values are unchanged
+    // (bit-identical).
     auto* h_state = new T[6 * one]();
-    auto* h_c   = h_state + 0 * one;  // rmncc
+    auto* h_c = h_state + 0 * one;    // rmncc
     auto* h_zsc = h_state + 1 * one;  // zmnsc
     auto* h_lsc = h_state + 2 * one;  // lmnsc
-    auto* h_s   = h_state + 3 * one;  // rmnss
+    auto* h_s = h_state + 3 * one;    // rmnss
     auto* h_zcs = h_state + 4 * one;  // zmncs
     auto* h_lcs = h_state + 5 * one;  // lmncs
     for (size_t i = 0; i < one; ++i) {
-        h_c[i]   = T(snap.families[EquilibriumSnapshot::kRmncc][i]);
+        h_c[i] = T(snap.families[EquilibriumSnapshot::kRmncc][i]);
         h_zsc[i] = T(snap.families[EquilibriumSnapshot::kZmnsc][i]);
         h_lsc[i] = T(snap.families[EquilibriumSnapshot::kLmnsc][i]);
-        h_s[i]   = T(snap.families[EquilibriumSnapshot::kRmnss][i]);
+        h_s[i] = T(snap.families[EquilibriumSnapshot::kRmnss][i]);
         h_zcs[i] = T(snap.families[EquilibriumSnapshot::kZmncs][i]);
         h_lcs[i] = T(snap.families[EquilibriumSnapshot::kLmncs][i]);
     }
@@ -179,7 +190,8 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p, const ValidatedProble
     }
 
     check_cuda(cudaMemcpy(storage.state_slab(), h_state, 6 * nb,
-                          cudaMemcpyHostToDevice), "restart state slab");
+                          cudaMemcpyHostToDevice),
+               "restart state slab");
     delete[] h_state;
     printf("  restartState: uploaded checkpoint + LCFS/axis patch\n");
     return storage;

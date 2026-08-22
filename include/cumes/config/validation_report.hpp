@@ -22,7 +22,7 @@ struct ValidationIssue {
 };
 
 class ValidationReport {
- public:
+   public:
     void error(std::string key, std::string message);
     void warn(std::string key, std::string message);
 
@@ -33,7 +33,7 @@ class ValidationReport {
     std::vector<std::string> errors() const;    // messages of severity Error
     std::vector<std::string> warnings() const;  // messages of severity Warning
 
- private:
+   private:
     std::vector<ValidationIssue> issues_;
 };
 

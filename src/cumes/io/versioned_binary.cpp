@@ -52,8 +52,9 @@ constexpr std::int32_t kVersion = 3;
 constexpr std::int32_t kMinReadVersion = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
-// Typed locally instead of a string compare against BuildProvenance::scalar_type
-// so an unknown tag is a write error rather than a silent "0=double" record.
+// Typed locally instead of a string compare against
+// BuildProvenance::scalar_type so an unknown tag is a write error rather than a
+// silent "0=double" record.
 enum class PrecisionTag : std::int32_t { kDouble = 0, kFloat = 1 };
 
 std::optional<PrecisionTag> precisionTagFor(const std::string& scalar_type) {
@@ -63,9 +64,10 @@ std::optional<PrecisionTag> precisionTagFor(const std::string& scalar_type) {
 }
 
 class VersionedBinaryWriter final : public Writer {
- public:
+   public:
     Status write_atomic(const EquilibriumSnapshot& snapshot,
-                        const RunReport& report, const OutputSpec& spec,
+                        const RunReport& report,
+                        const OutputSpec& spec,
                         const ValidatedProblem& problem) override {
         (void)problem;  // v1 binary records report + state only
         const std::string tmp = io_detail::tempPathFor(spec.path);
@@ -90,11 +92,15 @@ class VersionedBinaryWriter final : public Writer {
         }
 
         const auto precision = precisionTagFor(report.build.scalar_type);
-        if (!precision) return fail("unknown precision tag '" + report.build.scalar_type + "'");
+        if (!precision)
+            return fail("unknown precision tag '" + report.build.scalar_type +
+                        "'");
         ok = io_detail::write_i32(fp, static_cast<std::int32_t>(*precision)) &&
-             io_detail::write_i32(fp, static_cast<std::int32_t>(report.status)) &&
+             io_detail::write_i32(fp,
+                                  static_cast<std::int32_t>(report.status)) &&
              io_detail::write_i32(fp, report.total_effective_iterations) &&
-             io_detail::write_i32(fp, static_cast<std::int32_t>(report.stages.size()));
+             io_detail::write_i32(
+                 fp, static_cast<std::int32_t>(report.stages.size()));
         ok = ok && io_detail::write_string(fp, report.build.revision) &&
              io_detail::write_u8(fp, report.build.dirty ? 1 : 0) &&
              io_detail::write_string(fp, report.build.build_type) &&
@@ -113,7 +119,8 @@ class VersionedBinaryWriter final : public Writer {
                  io_detail::write_f64(fp, stage.final_residual.fsqr) &&
                  io_detail::write_f64(fp, stage.final_residual.fsqz) &&
                  io_detail::write_f64(fp, stage.final_residual.fsql) &&
-                 io_detail::write_i32(fp, static_cast<std::int32_t>(stage.restarts.size()));
+                 io_detail::write_i32(
+                     fp, static_cast<std::int32_t>(stage.restarts.size()));
             for (const auto& r : stage.restarts) {
                 ok = ok && io_detail::write_i32(fp, r.iteration);
             }
@@ -129,28 +136,32 @@ class VersionedBinaryWriter final : public Writer {
 };
 
 class VersionedBinaryReader final : public Reader {
- public:
+   public:
     Result<EquilibriumSnapshot> read(const std::string& path,
-                                    RunReport* report) override {
+                                     RunReport* report) override {
         FILE* fp = fopen(path.c_str(), "rb");
         if (!fp) return Result<EquilibriumSnapshot>("cannot open " + path);
 
-        auto fail = [&](const std::string& reason) -> Result<EquilibriumSnapshot> {
+        auto fail =
+            [&](const std::string& reason) -> Result<EquilibriumSnapshot> {
             fclose(fp);
             return Result<EquilibriumSnapshot>(reason);
         };
 
         char magic[9] = {0};
         std::int32_t version = 0, ns = 0, mnmax = 0;
-        if (!io_detail::read_bytes(fp, magic, 8) || !io_detail::read_i32(fp, version) ||
-            !io_detail::read_i32(fp, ns) || !io_detail::read_i32(fp, mnmax)) {
+        if (!io_detail::read_bytes(fp, magic, 8) ||
+            !io_detail::read_i32(fp, version) || !io_detail::read_i32(fp, ns) ||
+            !io_detail::read_i32(fp, mnmax)) {
             return fail("versioned binary: truncated header");
         }
         if (std::memcmp(magic, kMagic, 8) != 0) {
-            return fail("versioned binary: bad magic (not a cumes v1 state file)");
+            return fail(
+                "versioned binary: bad magic (not a cumes v1 state file)");
         }
         if (version < kMinReadVersion || version > kVersion) {
-            return fail("versioned binary: unsupported version " + std::to_string(version));
+            return fail("versioned binary: unsupported version " +
+                        std::to_string(version));
         }
         const bool has_policy_fields = (version >= 2);
         const bool has_input_params = (version >= 3);
@@ -191,8 +202,10 @@ class VersionedBinaryReader final : public Reader {
                 !io_detail::read_u8(fp, dirty) ||
                 !io_detail::read_string(fp, report->build.build_type) ||
                 (has_policy_fields
-                     ? (!io_detail::read_string(fp, report->build.precision_policy) ||
-                        !io_detail::read_string(fp, report->build.compile_flags))
+                     ? (!io_detail::read_string(
+                            fp, report->build.precision_policy) ||
+                        !io_detail::read_string(fp,
+                                                report->build.compile_flags))
                      : !io_detail::read_string(fp, legacy_scalar_type)) ||
                 !io_detail::read_string(fp, report->input.source_path) ||
                 !io_detail::read_string(fp, report->input.source_hash) ||

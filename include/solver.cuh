@@ -1,20 +1,26 @@
 // solver.cuh — GPU-resident fixed-point iteration with Garabedian acceleration.
 // All computation happens on device; host only orchestrates.
 #pragma once
-#include <vector>
-#include "vmec_types.h"
 #include "cumes/io/run_report.hpp"
 #include "cumes/state/spectral_storage.hpp"
+#include "vmec_types.h"
+
+#include <vector>
 
 namespace cumes {
 class DeviceArena;
 struct SolverBench;
-template <typename T> class SpectralOperator;
-template <typename T> class GeometryOperator;
-template <typename T> class ToroidalFftOperator;
-template <typename T> class Profiles;
-template <typename T> struct RealSpaceStorage;
-}
+template <typename T>
+class SpectralOperator;
+template <typename T>
+class GeometryOperator;
+template <typename T>
+class ToroidalFftOperator;
+template <typename T>
+class Profiles;
+template <typename T>
+struct RealSpaceStorage;
+}  // namespace cumes
 
 // Run the full fixed-point solve on GPU.
 // Returns: iterations used, and whether converged.
@@ -23,8 +29,8 @@ template <typename T>
 struct SolverResult {
     bool converged;
     int iterations;
-    T fsqr, fsqz, fsql;   // final force residuals
-    T delt;               // final time step
+    T fsqr, fsqz, fsql;  // final force residuals
+    T delt;              // final time step
     // Every pass that restored the checkpoint and re-anchored (maintenance
     // reset, Jacobian gate, nonfinite recovery, bad-jacobian / bad-progress),
     // in order, with the effective iteration at the event. Carried so the
@@ -39,16 +45,18 @@ struct SolverResult {
 // `transform` is the generic ToroidalFft operator — always present: the solver
 // reads its mode tables (xm()/xn(), the resolution-scoped DeviceModeTable) and
 // binds the cuFFT plans to the compute stream; the transform scratch/plans are
-// sealed behind the operator's dump-only accessors. `profiles` carries the radial
-// profiles as typed `RadialProfileViews` (the solver never reads the raw
+// sealed behind the operator's dump-only accessors. `profiles` carries the
+// radial profiles as typed `RadialProfileViews` (the solver never reads the raw
 // profile `d_*` pointers in the hot loop). `op`, when non-null, is the
 // selected transform backend the solver drives (a `SpectralOperator<T>*`); the
-// solver has no `axisym_active` branch — inverse/forward/de-alias all go through
-// `op`. When `op` is null it defaults to `&transform` (the generic backend). The
-// two backends are Class B ULP-equivalent (test_axisym_backend); selecting the
-// axisymmetric backend for ntor=0/nzeta=1 is a trajectory re-freeze.
+// solver has no `axisym_active` branch — inverse/forward/de-alias all go
+// through `op`. When `op` is null it defaults to `&transform` (the generic
+// backend). The two backends are Class B ULP-equivalent (test_axisym_backend);
+// selecting the axisymmetric backend for ntor=0/nzeta=1 is a trajectory
+// re-freeze.
 template <typename T>
-SolverResult<T> solverRun(cumes::SpectralStorage<T>& state, const DeviceParams<T>& p,
+SolverResult<T> solverRun(cumes::SpectralStorage<T>& state,
+                          const DeviceParams<T>& p,
                           const cumes::Profiles<T>& profiles,
                           cumes::ToroidalFftOperator<T>& transform,
                           cumes::RealSpaceStorage<T>& rs,

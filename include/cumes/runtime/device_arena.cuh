@@ -9,13 +9,16 @@
 // and the arena frees everything in one cudaFree when it is released.
 //
 // This is a host-side primitive: the arena is allocated and carved on the host
-// at stage setup, and its raw pointers are passed to kernels unchanged. It never
-// synchronizes and adds no device code.
+// at stage setup, and its raw pointers are passed to kernels unchanged. It
+// never synchronizes and adds no device code.
 //
 // The backing store comes from cudaMalloc (256-byte aligned on every supported
 // platform), so aligning each subspan to `align` (a power of two <= 256, the
 // default is alignof(T)) keeps every typed pointer correctly aligned.
 #pragma once
+
+#include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_buffer.cuh"
 
 #include <cuda_runtime.h>
 
@@ -23,9 +26,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "cumes/runtime/cuda_status.hpp"
-#include "cumes/runtime/device_buffer.cuh"
 
 namespace cumes {
 
@@ -35,14 +35,14 @@ namespace cumes {
 // real allocation and one construction per stage, no side-effectful
 // measuring pass.
 class ArenaOverflow : public CumesError {
- public:
+   public:
     explicit ArenaOverflow(std::size_t required, const std::string& msg)
         : CumesError(msg), required_bytes(required) {}
     std::size_t required_bytes;
 };
 
 class DeviceArena {
- public:
+   public:
     // One named subspan: where it lives and how big it is. The report groups
     // these by name so peak bytes can be attributed per category.
     struct SpanInfo {
@@ -107,7 +107,8 @@ class DeviceArena {
     // aligned to `align` bytes (default alignof(T)). Returns a non-owning `T*`
     // into the backing store. Throws CumesError if the arena is exhausted.
     template <class T>
-    T* alloc_span(const char* name, std::size_t count,
+    T* alloc_span(const char* name,
+                  std::size_t count,
                   std::size_t align = alignof(T)) {
         if (count == 0) return nullptr;
         return reinterpret_cast<T*>(carve_span(name, count * sizeof(T), align));
@@ -136,21 +137,21 @@ class DeviceArena {
     const std::vector<SpanInfo>& spans() const { return spans_; }
     bool empty() const { return total_bytes_ == 0; }
 
- protected:
+   protected:
     // Non-template carve seam: `alloc_span` forwards here, and subclasses may
     // intercept it (the stage-solver's measuring arena throws a typed
     // overflow carrying the byte requirement instead of the generic
     // CumesError). The base implementation is exactly the pre-seam logic —
     // same offsets, same span table, same exception message.
-    virtual void* carve_span(const char* name, std::size_t bytes,
+    virtual void* carve_span(const char* name,
+                             std::size_t bytes,
                              std::size_t align) {
         std::size_t off = 0;
         if (!carve_offsets(bytes, align, off)) {
             throw ArenaOverflow(
                 off + bytes,
-                std::string("DeviceArena::alloc_span: '") + name +
-                    "' of " + std::to_string(bytes) +
-                    " bytes overflows arena (used=" +
+                std::string("DeviceArena::alloc_span: '") + name + "' of " +
+                    std::to_string(bytes) + " bytes overflows arena (used=" +
                     std::to_string(used_bytes_) +
                     ", total=" + std::to_string(total_bytes_) + ")");
         }
@@ -162,16 +163,18 @@ class DeviceArena {
 
     // Validates `align` and computes the aligned offset for a `bytes` span at
     // the current used offset; returns false when it would overflow.
-    bool carve_offsets(std::size_t bytes, std::size_t align,
+    bool carve_offsets(std::size_t bytes,
+                       std::size_t align,
                        std::size_t& off) const {
         if (align == 0 || (align & (align - 1)) != 0) {
-            throw CumesError("DeviceArena: alignment must be a non-zero power of two");
+            throw CumesError(
+                "DeviceArena: alignment must be a non-zero power of two");
         }
         off = (used_bytes_ + align - 1) & ~(align - 1);
         return !(off > total_bytes_ || bytes > total_bytes_ - off);
     }
 
- private:
+   private:
     DeviceBuffer<char> storage_;
     std::vector<SpanInfo> spans_;
     std::size_t total_bytes_ = 0;
