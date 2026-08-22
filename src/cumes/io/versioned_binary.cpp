@@ -1,9 +1,9 @@
 // versioned_binary.cpp — the schema v1 binary state container (blueprint
 // §6.13) and the host-library binary factories.
 //
-// Layout (little-endian), version 2 (the current on-disk version):
+// Layout (little-endian), version 3 (the current on-disk version):
 //   magic     8 bytes  "CUMES001"
-//   version   int32    = 2
+//   version   int32    = 3
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major (the state payload)
@@ -18,13 +18,16 @@
 //   runtime   gpu_name(str), driver(str), runtime(str), toolkit(str)
 //   stages    per stage: ns(i32), iterations(i32), converged(u8),
 //             fsqr(f64), fsqz(f64), fsql(f64), nrestarts(i32), restarts(i32...)
+//   params    the embedded normalized-input record (io_common.hpp
+//             writeInputParams), the LAST trailer element; version 3 only
 //
 // All strings are int32-length-prefixed. The scalar_type string is NOT
 // serialized: the reader reconstructs it from the precision tag.
 //
 // Version 1 (historical, still readable): the trailer instead carried a
 // scalar_type string between build_type and source_path (the v1 reader
-// consumes and discards it).
+// consumes and discards it). Versions 1 and 2 carry no input record; the
+// reader reports a default-empty InputParams for them.
 //
 // The state payload is read and validated independently of the provenance
 // trailer, so a reader stays forward-compatible with later v1.x trailers.
@@ -42,8 +45,10 @@ namespace {
 
 constexpr char kMagic[9] = "CUMES001";
 // v2 adds the precision-policy provenance fields to the trailer (completion
-// plan step 3.1); v1 files are still read (the fields default empty).
-constexpr std::int32_t kVersion = 2;
+// plan step 3.1); v1 files are still read (the fields default empty). v3
+// appends the embedded normalized-input record as the last trailer element;
+// v1/v2 files are still read (the record defaults empty).
+constexpr std::int32_t kVersion = 3;
 constexpr std::int32_t kMinReadVersion = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
@@ -113,6 +118,8 @@ class VersionedBinaryWriter final : public Writer {
                 ok = ok && io_detail::write_i32(fp, r.iteration);
             }
         }
+        // The embedded normalized-input record is the LAST trailer element.
+        ok = ok && io_detail::writeInputParams(fp, report.input_params);
         if (!ok) return fail("failed to write versioned provenance trailer");
 
         const std::string err = io_detail::publishAtomic(fp, tmp, spec.path);
@@ -146,6 +153,7 @@ class VersionedBinaryReader final : public Reader {
             return fail("versioned binary: unsupported version " + std::to_string(version));
         }
         const bool has_policy_fields = (version >= 2);
+        const bool has_input_params = (version >= 3);
         std::size_t n = 0;
         std::string reason;
         if (!io_detail::checkStateDimensions(fp, ns, mnmax, n, reason)) {
@@ -225,6 +233,15 @@ class VersionedBinaryReader final : public Reader {
                     st.restarts.push_back(ev);
                 }
                 report->stages.push_back(std::move(st));
+            }
+            // The embedded normalized-input record: required for version 3,
+            // absent (default-empty) for versions 1 and 2.
+            if (has_input_params) {
+                std::string reason;
+                if (!io_detail::readInputParams(fp, report->input_params,
+                                                reason)) {
+                    return fail("versioned binary: " + reason);
+                }
             }
         }
         fclose(fp);

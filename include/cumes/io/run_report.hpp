@@ -3,6 +3,8 @@
 // layer never needs device state to write provenance.
 #pragma once
 
+#include "cumes/io/input_params.hpp"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -65,6 +67,10 @@ struct RunReport {
     BuildProvenance build;
     InputProvenance input;
     RuntimeProvenance runtime;
+    // The embedded normalized-input record (input_params.hpp). Default-empty
+    // for containers written before the record was introduced; every current
+    // writer serializes it.
+    InputParams input_params;
 };
 
 // Validate serialized per-stage restart offsets before they are used to index

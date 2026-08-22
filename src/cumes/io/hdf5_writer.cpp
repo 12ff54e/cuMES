@@ -130,6 +130,7 @@ class Hdf5V1Writer final : public Writer {
         const size_t nstages = report.stages.size();
         size_t nrestarts = 0;
         for (const auto& st : report.stages) nrestarts += st.restarts.size();
+        const InputParams& ip = report.input_params;
 
         const std::string tmp = io_detail::tempPathFor(spec.path);
         hid_t fid = H5Fcreate(tmp.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT,
@@ -232,6 +233,65 @@ class Hdf5V1Writer final : public Writer {
                  "attr runtime");
         H5_CHECK(putStrAttr(fid, "toolkit", report.runtime.toolkit),
                  "attr toolkit");
+
+        // ---- embedded normalized-input record attributes + arrays ----
+        H5_CHECK(putAttr(fid, "mpol", H5T_NATIVE_INT, &ip.mpol), "attr mpol");
+        H5_CHECK(putAttr(fid, "ntor", H5T_NATIVE_INT, &ip.ntor), "attr ntor");
+        H5_CHECK(putAttr(fid, "nfp", H5T_NATIVE_INT, &ip.nfp), "attr nfp");
+        H5_CHECK(putAttr(fid, "ntheta", H5T_NATIVE_INT, &ip.ntheta),
+                 "attr ntheta");
+        H5_CHECK(putAttr(fid, "nzeta", H5T_NATIVE_INT, &ip.nzeta),
+                 "attr nzeta");
+        H5_CHECK(putAttr(fid, "ncurr", H5T_NATIVE_INT, &ip.ncurr),
+                 "attr ncurr");
+        H5_CHECK(putAttr(fid, "delt", H5T_NATIVE_DOUBLE, &ip.delt),
+                 "attr delt");
+        H5_CHECK(putAttr(fid, "phiedge", H5T_NATIVE_DOUBLE, &ip.phiedge),
+                 "attr phiedge");
+        H5_CHECK(putAttr(fid, "pres_scale", H5T_NATIVE_DOUBLE,
+                         &ip.pres_scale), "attr pres_scale");
+        H5_CHECK(putAttr(fid, "adiabatic_index", H5T_NATIVE_DOUBLE,
+                         &ip.adiabatic_index), "attr adiabatic_index");
+        H5_CHECK(putAttr(fid, "spres_ped", H5T_NATIVE_DOUBLE, &ip.spres_ped),
+                 "attr spres_ped");
+        H5_CHECK(putAttr(fid, "bloat", H5T_NATIVE_DOUBLE, &ip.bloat),
+                 "attr bloat");
+        H5_CHECK(putAttr(fid, "curtor", H5T_NATIVE_DOUBLE, &ip.curtor),
+                 "attr curtor");
+        H5_CHECK(putAttr(fid, "tcon0", H5T_NATIVE_DOUBLE, &ip.tcon0),
+                 "attr tcon0");
+        H5_CHECK(putStrAttr(fid, "schema", ip.schema), "attr schema");
+        {
+            auto writeVec = [&](const char* name,
+                                const std::vector<double>& v) -> herr_t {
+                const hsize_t d[1] = {v.size()};
+                return writeArray(name, H5T_NATIVE_DOUBLE, 1, d,
+                                  v.empty() ? nullptr : v.data());
+            };
+            H5_CHECK(writeVec("am", ip.am), "write am");
+            H5_CHECK(writeVec("ac", ip.ac), "write ac");
+            H5_CHECK(writeVec("ai", ip.ai), "write ai");
+            H5_CHECK(writeVec("aphi", ip.aphi), "write aphi");
+            H5_CHECK(writeVec("raxis_c", ip.raxis_c), "write raxis_c");
+            H5_CHECK(writeVec("zaxis_s", ip.zaxis_s), "write zaxis_s");
+        }
+        {
+            const size_t nstages_in = ip.stages.size();
+            const hsize_t d_in[1] = {nstages_in};
+            std::vector<int> stg_in_ns(nstages_in), stg_max_iter(nstages_in);
+            std::vector<double> stg_ftol(nstages_in);
+            for (size_t g = 0; g < nstages_in; ++g) {
+                stg_in_ns[g] = ip.stages[g].ns;
+                stg_max_iter[g] = ip.stages[g].max_iter;
+                stg_ftol[g] = ip.stages[g].ftol;
+            }
+            H5_CHECK(writeArray("stage_in_ns", H5T_NATIVE_INT, 1, d_in,
+                                stg_in_ns.data()), "write stage_in_ns");
+            H5_CHECK(writeArray("stage_max_iter", H5T_NATIVE_INT, 1, d_in,
+                                stg_max_iter.data()), "write stage_max_iter");
+            H5_CHECK(writeArray("stage_ftol", H5T_NATIVE_DOUBLE, 1, d_in,
+                                stg_ftol.data()), "write stage_ftol");
+        }
 
         // ---- stage history + restart arrays (active dims) ----
         std::vector<int> stage_ns(nstages), stage_iter(nstages),
@@ -429,6 +489,53 @@ class Hdf5V1Reader final : public Reader {
             return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
                            H5P_DEFAULT, out.data()) >= 0;
         };
+        // Scalar-or-one-element double attribute with the same dataspace
+        // hardening as getIntAttr and an exact 8-byte float type.
+        auto getDblAttr = [&](const char* name, double& out) -> bool {
+            H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
+            if (aid.get() < 0) return false;
+            {
+                H5Closer sp(H5Aget_space(aid.get()));
+                if (sp.get() < 0) return false;
+                const int ndims = H5Sget_simple_extent_ndims(sp.get());
+                hssize_t npts = 1;
+                if (ndims == 1) {
+                    hsize_t ext[1] = {0};
+                    if (H5Sget_simple_extent_dims(sp.get(), ext, nullptr) < 0) {
+                        return false;
+                    }
+                    npts = (hssize_t)ext[0];
+                } else if (ndims != 0) {
+                    return false;
+                }
+                if (npts != 1) return false;
+            }
+            H5Closer ty(H5Aget_type(aid.get()));
+            if (ty.get() < 0) return false;
+            if (!(H5Tget_class(ty.get()) == H5T_FLOAT &&
+                  H5Tget_size(ty.get()) == sizeof(double))) {
+                return false;
+            }
+            return H5Aread(aid.get(), H5T_NATIVE_DOUBLE, &out) >= 0;
+        };
+        // 2-D double matrix with exact rank and extents (the folded boundary
+        // datasets, stored in the writer's C order — row stride = expect1).
+        auto getDblMat = [&](const char* name, std::vector<double>& out,
+                             size_t expect0, size_t expect1) -> bool {
+            H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+            if (ds.get() < 0) return false;
+            hsize_t dims[2] = {0, 0};
+            if (!getDimExact(name, 2, dims)) return false;
+            if (dims[0] != expect0 || dims[1] != expect1) return false;
+            if (!datasetIsDouble(ds.get())) return false;
+            const auto el = checked_mul(expect0, expect1);
+            if (!el) return false;
+            const auto bytes = checked_mul(*el, sizeof(double));
+            if (!bytes) return false;
+            out.resize(*el);
+            return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+                           H5P_DEFAULT, out.data()) >= 0;
+        };
 
         hsize_t state_dims[2] = {0, 0};
         if (!getDimExact("rmncc", 2, state_dims)) {
@@ -622,6 +729,105 @@ class Hdf5V1Reader final : public Reader {
                     st.restarts.push_back(RestartEvent{rst_iter[k]});
                 }
                 parsed_report.stages.push_back(std::move(st));
+            }
+            // ---- embedded normalized-input record ----
+            // All-or-nothing: when the mpol attribute exists the full record
+            // is required (pre-record containers keep the default-empty
+            // InputParams); every read gets the exact-rank/type/extent
+            // hardening above.
+            {
+                H5Closer aid(H5Aopen(fid, "mpol", H5P_DEFAULT));
+                if (aid.get() >= 0) {
+                    InputParams ip;
+                    if (!getIntAttr("mpol", ip.mpol) ||
+                        !getIntAttr("ntor", ip.ntor) ||
+                        !getIntAttr("nfp", ip.nfp) ||
+                        !getIntAttr("ntheta", ip.ntheta) ||
+                        !getIntAttr("nzeta", ip.nzeta) ||
+                        !getIntAttr("ncurr", ip.ncurr) ||
+                        !getDblAttr("delt", ip.delt) ||
+                        !getDblAttr("phiedge", ip.phiedge) ||
+                        !getDblAttr("pres_scale", ip.pres_scale) ||
+                        !getDblAttr("adiabatic_index", ip.adiabatic_index) ||
+                        !getDblAttr("spres_ped", ip.spres_ped) ||
+                        !getDblAttr("bloat", ip.bloat) ||
+                        !getDblAttr("curtor", ip.curtor) ||
+                        !getDblAttr("tcon0", ip.tcon0)) {
+                        return fail("malformed embedded input record");
+                    }
+                    {
+                        auto getVec = [&](const char* name,
+                                          std::vector<double>& out) -> bool {
+                            hsize_t dims[1] = {0};
+                            if (!getDimExact(name, 1, dims)) return false;
+                            return getDblArr(name, out, (size_t)dims[0]);
+                        };
+                        if (!getVec("am", ip.am) || !getVec("ac", ip.ac) ||
+                            !getVec("ai", ip.ai) || !getVec("aphi", ip.aphi) ||
+                            !getVec("raxis_c", ip.raxis_c) ||
+                            !getVec("zaxis_s", ip.zaxis_s)) {
+                            return fail("malformed embedded input record");
+                        }
+                    }
+                    {
+                        hsize_t d_in[1] = {0};
+                        if (!getDimExact("stage_in_ns", 1, d_in)) {
+                            return fail("malformed embedded input record");
+                        }
+                        const size_t nstages_in = (size_t)d_in[0];
+                        if (nstages_in > cumes::io_detail::kMaxStageCount) {
+                            return fail("embedded input stage count exceeds "
+                                        "the resource cap");
+                        }
+                        std::vector<int> stg_in_ns, stg_max_iter;
+                        std::vector<double> stg_ftol;
+                        if (!getIntArr("stage_in_ns", stg_in_ns, nstages_in) ||
+                            !getIntArr("stage_max_iter", stg_max_iter,
+                                       nstages_in) ||
+                            !getDblArr("stage_ftol", stg_ftol, nstages_in)) {
+                            return fail("malformed embedded input record");
+                        }
+                        for (size_t g = 0; g < nstages_in; ++g) {
+                            InputStage st;
+                            st.ns = stg_in_ns[g];
+                            st.max_iter = stg_max_iter[g];
+                            st.ftol = stg_ftol[g];
+                            ip.stages.push_back(st);
+                        }
+                    }
+                    {
+                        hsize_t d_r[1] = {0}, d_z[1] = {0}, d_b[2] = {0, 0};
+                        if (!getDimExact("rbc_m", 1, d_r) ||
+                            !getDimExact("zbs_m", 1, d_z) ||
+                            !getDimExact("rbcc", 2, d_b)) {
+                            return fail("malformed embedded input record");
+                        }
+                        const size_t nrbc = (size_t)d_r[0], nzbs = (size_t)d_z[0];
+                        if (!getIntArr("rbc_m", ip.rbc_m, nrbc) ||
+                            !getIntArr("rbc_n", ip.rbc_n, nrbc) ||
+                            !getDblArr("rbc_value", ip.rbc_value, nrbc) ||
+                            !getIntArr("zbs_m", ip.zbs_m, nzbs) ||
+                            !getIntArr("zbs_n", ip.zbs_n, nzbs) ||
+                            !getDblArr("zbs_value", ip.zbs_value, nzbs) ||
+                            !getDblMat("rbcc", ip.rbcc, (size_t)d_b[0],
+                                       (size_t)d_b[1]) ||
+                            !getDblMat("rbss", ip.rbss, (size_t)d_b[0],
+                                       (size_t)d_b[1]) ||
+                            !getDblMat("zbsc", ip.zbsc, (size_t)d_b[0],
+                                       (size_t)d_b[1]) ||
+                            !getDblMat("zbcs", ip.zbcs, (size_t)d_b[0],
+                                       (size_t)d_b[1])) {
+                            return fail("malformed embedded input record");
+                        }
+                    }
+                    // The schema tag is informational; an absent or unreadable
+                    // one keeps the default.
+                    std::string schema_tag;
+                    if (getStrAttr(fid, "schema", schema_tag)) {
+                        ip.schema = schema_tag;
+                    }
+                    parsed_report.input_params = std::move(ip);
+                }
             }
             *report = std::move(parsed_report);
         }

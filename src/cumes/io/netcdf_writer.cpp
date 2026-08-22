@@ -72,6 +72,7 @@ class NetcdfV1Writer final : public Writer {
         const size_t nstages = report.stages.size();
         size_t nrestarts = 0;
         for (const auto& st : report.stages) nrestarts += st.restarts.size();
+        const InputParams& ip = report.input_params;
 
         // ---- active dimensions ----
         int dim_ns, dim_mnmax, dim_nstages, dim_nrestarts, dim_nrbc, dim_nzbs,
@@ -84,9 +85,49 @@ class NetcdfV1Writer final : public Writer {
                  "def nrestarts");
         NC_CHECK(nc_def_dim(ncid, "nrbc", rbc.size(), &dim_nrbc), "def nrbc");
         NC_CHECK(nc_def_dim(ncid, "nzbs", zbs.size(), &dim_nzbs), "def nzbs");
-        NC_CHECK(nc_def_dim(ncid, "mpol", (size_t)mpol, &dim_mpol), "def mpol");
-        NC_CHECK(nc_def_dim(ncid, "ntorp1", (size_t)ntorp1, &dim_ntorp1),
-                 "def ntorp1");
+        // n_-prefixed: NetCDF classic shares ONE namespace for dimensions
+        // and variables, so the folded-boundary dims must not collide with
+        // the embedded-input scalar variable names (mpol, ntor, ...).
+        NC_CHECK(nc_def_dim(ncid, "n_mpol", (size_t)mpol, &dim_mpol),
+                 "def n_mpol");
+        NC_CHECK(nc_def_dim(ncid, "n_ntorp1", (size_t)ntorp1, &dim_ntorp1),
+                 "def n_ntorp1");
+        // ---- embedded normalized-input record dimensions ----
+        // Empty vectors get NO dimension: classic NetCDF gives a 0-length
+        // dimension unlimited semantics, and only ONE unlimited dimension may
+        // exist (a second 0-length def fails with NC_UNLIMITED size already
+        // in use). The reader treats an absent array variable as an empty
+        // vector.
+        int dim_nam = -1, dim_nac = -1, dim_nai = -1, dim_naphi = -1,
+            dim_nraxis = -1, dim_nzaxis = -1, dim_nstages_in = -1;
+        if (!ip.am.empty()) {
+            NC_CHECK(nc_def_dim(ncid, "n_am", ip.am.size(), &dim_nam),
+                     "def n_am");
+        }
+        if (!ip.ac.empty()) {
+            NC_CHECK(nc_def_dim(ncid, "n_ac", ip.ac.size(), &dim_nac),
+                     "def n_ac");
+        }
+        if (!ip.ai.empty()) {
+            NC_CHECK(nc_def_dim(ncid, "n_ai", ip.ai.size(), &dim_nai),
+                     "def n_ai");
+        }
+        if (!ip.aphi.empty()) {
+            NC_CHECK(nc_def_dim(ncid, "n_aphi", ip.aphi.size(), &dim_naphi),
+                     "def n_aphi");
+        }
+        if (!ip.raxis_c.empty()) {
+            NC_CHECK(nc_def_dim(ncid, "n_raxis", ip.raxis_c.size(),
+                                &dim_nraxis), "def n_raxis");
+        }
+        if (!ip.zaxis_s.empty()) {
+            NC_CHECK(nc_def_dim(ncid, "n_zaxis", ip.zaxis_s.size(),
+                                &dim_nzaxis), "def n_zaxis");
+        }
+        if (!ip.stages.empty()) {
+            NC_CHECK(nc_def_dim(ncid, "nstages_in", ip.stages.size(),
+                                &dim_nstages_in), "def nstages_in");
+        }
 
         // ---- state variables ----
         const int state_dims[2] = {dim_ns, dim_mnmax};
@@ -154,6 +195,76 @@ class NetcdfV1Writer final : public Writer {
         NC_CHECK(nc_def_var(ncid, "zbcs", NC_DOUBLE, 2, bnd_dims, &v_zbcs),
                  "def zbcs");
 
+        // ---- embedded normalized-input record (scalars + arrays) ----
+        int v_mpol, v_ntor, v_nfp, v_ntheta, v_nzeta, v_ncurr;
+        NC_CHECK(nc_def_var(ncid, "mpol", NC_INT, 0, nullptr, &v_mpol),
+                 "def mpol");
+        NC_CHECK(nc_def_var(ncid, "ntor", NC_INT, 0, nullptr, &v_ntor),
+                 "def ntor");
+        NC_CHECK(nc_def_var(ncid, "nfp", NC_INT, 0, nullptr, &v_nfp),
+                 "def nfp");
+        NC_CHECK(nc_def_var(ncid, "ntheta", NC_INT, 0, nullptr, &v_ntheta),
+                 "def ntheta");
+        NC_CHECK(nc_def_var(ncid, "nzeta", NC_INT, 0, nullptr, &v_nzeta),
+                 "def nzeta");
+        NC_CHECK(nc_def_var(ncid, "ncurr", NC_INT, 0, nullptr, &v_ncurr),
+                 "def ncurr");
+        int v_delt, v_phiedge, v_pres_scale, v_adiabatic_index, v_spres_ped,
+            v_bloat, v_curtor, v_tcon0;
+        NC_CHECK(nc_def_var(ncid, "delt", NC_DOUBLE, 0, nullptr, &v_delt),
+                 "def delt");
+        NC_CHECK(nc_def_var(ncid, "phiedge", NC_DOUBLE, 0, nullptr, &v_phiedge),
+                 "def phiedge");
+        NC_CHECK(nc_def_var(ncid, "pres_scale", NC_DOUBLE, 0, nullptr,
+                            &v_pres_scale), "def pres_scale");
+        NC_CHECK(nc_def_var(ncid, "adiabatic_index", NC_DOUBLE, 0, nullptr,
+                            &v_adiabatic_index), "def adiabatic_index");
+        NC_CHECK(nc_def_var(ncid, "spres_ped", NC_DOUBLE, 0, nullptr,
+                            &v_spres_ped), "def spres_ped");
+        NC_CHECK(nc_def_var(ncid, "bloat", NC_DOUBLE, 0, nullptr, &v_bloat),
+                 "def bloat");
+        NC_CHECK(nc_def_var(ncid, "curtor", NC_DOUBLE, 0, nullptr, &v_curtor),
+                 "def curtor");
+        NC_CHECK(nc_def_var(ncid, "tcon0", NC_DOUBLE, 0, nullptr, &v_tcon0),
+                 "def tcon0");
+        int v_am = -1, v_ac = -1, v_ai = -1, v_aphi = -1, v_raxis = -1,
+            v_zaxis = -1, v_stg_in_ns = -1, v_stg_max_iter = -1,
+            v_stg_ftol = -1;
+        if (!ip.am.empty()) {
+            NC_CHECK(nc_def_var(ncid, "am", NC_DOUBLE, 1, &dim_nam, &v_am),
+                     "def am");
+        }
+        if (!ip.ac.empty()) {
+            NC_CHECK(nc_def_var(ncid, "ac", NC_DOUBLE, 1, &dim_nac, &v_ac),
+                     "def ac");
+        }
+        if (!ip.ai.empty()) {
+            NC_CHECK(nc_def_var(ncid, "ai", NC_DOUBLE, 1, &dim_nai, &v_ai),
+                     "def ai");
+        }
+        if (!ip.aphi.empty()) {
+            NC_CHECK(nc_def_var(ncid, "aphi", NC_DOUBLE, 1, &dim_naphi,
+                                &v_aphi), "def aphi");
+        }
+        if (!ip.raxis_c.empty()) {
+            NC_CHECK(nc_def_var(ncid, "raxis_c", NC_DOUBLE, 1, &dim_nraxis,
+                                &v_raxis), "def raxis_c");
+        }
+        if (!ip.zaxis_s.empty()) {
+            NC_CHECK(nc_def_var(ncid, "zaxis_s", NC_DOUBLE, 1, &dim_nzaxis,
+                                &v_zaxis), "def zaxis_s");
+        }
+        if (!ip.stages.empty()) {
+            NC_CHECK(nc_def_var(ncid, "stage_in_ns", NC_INT, 1, &dim_nstages_in,
+                                &v_stg_in_ns), "def stage_in_ns");
+            NC_CHECK(nc_def_var(ncid, "stage_max_iter", NC_INT, 1,
+                                &dim_nstages_in, &v_stg_max_iter),
+                     "def stage_max_iter");
+            NC_CHECK(nc_def_var(ncid, "stage_ftol", NC_DOUBLE, 1,
+                                &dim_nstages_in, &v_stg_ftol),
+                     "def stage_ftol");
+        }
+
         // ---- provenance attributes ----
         NC_CHECK(putStrAttr(ncid, "revision", report.build.revision) == true
                      ? NC_NOERR : NC_EATTMETA, "attr revision");
@@ -178,6 +289,8 @@ class NetcdfV1Writer final : public Writer {
                      ? NC_NOERR : NC_EATTMETA, "attr runtime");
         NC_CHECK(putStrAttr(ncid, "toolkit", report.runtime.toolkit) == true
                      ? NC_NOERR : NC_EATTMETA, "attr toolkit");
+        NC_CHECK(putStrAttr(ncid, "schema", ip.schema) == true
+                     ? NC_NOERR : NC_EATTMETA, "attr schema");
 
         NC_CHECK(nc_enddef(ncid), "nc_enddef");
 
@@ -207,6 +320,60 @@ class NetcdfV1Writer final : public Writer {
                  "put total_iterations");
         const int dirty = report.build.dirty ? 1 : 0;
         NC_CHECK(nc_put_var_int(ncid, v_dirty, &dirty), "put build_dirty");
+        // ---- embedded normalized-input record data ----
+        NC_CHECK(nc_put_var_int(ncid, v_mpol, &ip.mpol), "put mpol");
+        NC_CHECK(nc_put_var_int(ncid, v_ntor, &ip.ntor), "put ntor");
+        NC_CHECK(nc_put_var_int(ncid, v_nfp, &ip.nfp), "put nfp");
+        NC_CHECK(nc_put_var_int(ncid, v_ntheta, &ip.ntheta), "put ntheta");
+        NC_CHECK(nc_put_var_int(ncid, v_nzeta, &ip.nzeta), "put nzeta");
+        NC_CHECK(nc_put_var_int(ncid, v_ncurr, &ip.ncurr), "put ncurr");
+        NC_CHECK(nc_put_var_double(ncid, v_delt, &ip.delt), "put delt");
+        NC_CHECK(nc_put_var_double(ncid, v_phiedge, &ip.phiedge), "put phiedge");
+        NC_CHECK(nc_put_var_double(ncid, v_pres_scale, &ip.pres_scale),
+                 "put pres_scale");
+        NC_CHECK(nc_put_var_double(ncid, v_adiabatic_index, &ip.adiabatic_index),
+                 "put adiabatic_index");
+        NC_CHECK(nc_put_var_double(ncid, v_spres_ped, &ip.spres_ped),
+                 "put spres_ped");
+        NC_CHECK(nc_put_var_double(ncid, v_bloat, &ip.bloat), "put bloat");
+        NC_CHECK(nc_put_var_double(ncid, v_curtor, &ip.curtor), "put curtor");
+        NC_CHECK(nc_put_var_double(ncid, v_tcon0, &ip.tcon0), "put tcon0");
+        if (!ip.am.empty()) {
+            NC_CHECK(nc_put_var_double(ncid, v_am, ip.am.data()), "put am");
+        }
+        if (!ip.ac.empty()) {
+            NC_CHECK(nc_put_var_double(ncid, v_ac, ip.ac.data()), "put ac");
+        }
+        if (!ip.ai.empty()) {
+            NC_CHECK(nc_put_var_double(ncid, v_ai, ip.ai.data()), "put ai");
+        }
+        if (!ip.aphi.empty()) {
+            NC_CHECK(nc_put_var_double(ncid, v_aphi, ip.aphi.data()), "put aphi");
+        }
+        if (!ip.raxis_c.empty()) {
+            NC_CHECK(nc_put_var_double(ncid, v_raxis, ip.raxis_c.data()),
+                     "put raxis_c");
+        }
+        if (!ip.zaxis_s.empty()) {
+            NC_CHECK(nc_put_var_double(ncid, v_zaxis, ip.zaxis_s.data()),
+                     "put zaxis_s");
+        }
+        if (!ip.stages.empty()) {
+            const size_t nstages_in = ip.stages.size();
+            std::vector<int> stg_in_ns(nstages_in), stg_max_iter(nstages_in);
+            std::vector<double> stg_ftol(nstages_in);
+            for (size_t g = 0; g < nstages_in; ++g) {
+                stg_in_ns[g] = ip.stages[g].ns;
+                stg_max_iter[g] = ip.stages[g].max_iter;
+                stg_ftol[g] = ip.stages[g].ftol;
+            }
+            NC_CHECK(nc_put_var_int(ncid, v_stg_in_ns, stg_in_ns.data()),
+                     "put stage_in_ns");
+            NC_CHECK(nc_put_var_int(ncid, v_stg_max_iter, stg_max_iter.data()),
+                     "put stage_max_iter");
+            NC_CHECK(nc_put_var_double(ncid, v_stg_ftol, stg_ftol.data()),
+                     "put stage_ftol");
+        }
         std::vector<int> stage_ns(nstages), stage_iter(nstages),
             stage_conv(nstages), rst_off(nstages);
         std::vector<double> st_fsqr(nstages), st_fsqz(nstages), st_fsql(nstages);
@@ -351,6 +518,37 @@ class NetcdfV1Reader final : public Reader {
             out.resize(expect);
             const size_t start[1] = {0}, count[1] = {expect};
             return nc_get_vara_int(ncid, vid, start, count, out.data()) ==
+                   NC_NOERR;
+        };
+        // Scalar double: rank exactly 0 + exact NC_DOUBLE, then one value.
+        auto readScalarDouble = [&](const char* name, double& out) -> bool {
+            int vid = -1, ndims = 0;
+            if (nc_inq_varid(ncid, name, &vid) != NC_NOERR) return false;
+            if (nc_inq_varndims(ncid, vid, &ndims) != NC_NOERR) return false;
+            if (ndims != 0) return false;
+            if (!varHasType(vid, NC_DOUBLE)) return false;
+            return nc_get_var_double(ncid, vid, &out) == NC_NOERR;
+        };
+        // 2-D double matrix: rank exactly 2, dimension IDs exactly
+        // [dim0, dim1], exact NC_DOUBLE, then one bounded whole-matrix read
+        // in the writer's C order (row stride = dim1 extent).
+        auto readMatrixDouble = [&](const char* name, int dim0, int dim1,
+                                    size_t n0, size_t n1,
+                                    std::vector<double>& out) -> bool {
+            int vid = -1, ndims = 0, dimids[2] = {-1, -1};
+            if (nc_inq_varid(ncid, name, &vid) != NC_NOERR) return false;
+            if (nc_inq_varndims(ncid, vid, &ndims) != NC_NOERR) return false;
+            if (ndims != 2) return false;
+            if (nc_inq_vardimid(ncid, vid, dimids) != NC_NOERR) return false;
+            if (dimids[0] != dim0 || dimids[1] != dim1) return false;
+            if (!varHasType(vid, NC_DOUBLE)) return false;
+            const auto el = checked_mul(n0, n1);
+            if (!el) return false;
+            const auto bytes = checked_mul(*el, sizeof(double));
+            if (!bytes) return false;
+            out.resize(*el);
+            const size_t start[2] = {0, 0}, count[2] = {n0, n1};
+            return nc_get_vara_double(ncid, vid, start, count, out.data()) ==
                    NC_NOERR;
         };
         auto readVectorDouble = [&](const char* name, int expect_dim,
@@ -577,6 +775,132 @@ class NetcdfV1Reader final : public Reader {
                     st.restarts.push_back(RestartEvent{rst_iter[k]});
                 }
                 parsed_report.stages.push_back(std::move(st));
+            }
+            // ---- embedded normalized-input record ----
+            // All-or-nothing: containers written before the record carry none
+            // of its fields (the record stays default-empty); when the first
+            // scalar exists, the FULL record is required and every read gets
+            // the exact-rank/type/extent hardening above.
+            {
+                int probe = -1;
+                if (nc_inq_varid(ncid, "mpol", &probe) == NC_NOERR) {
+                    InputParams ip;
+                    if (!readScalarInt("mpol", ip.mpol) ||
+                        !readScalarInt("ntor", ip.ntor) ||
+                        !readScalarInt("nfp", ip.nfp) ||
+                        !readScalarInt("ntheta", ip.ntheta) ||
+                        !readScalarInt("nzeta", ip.nzeta) ||
+                        !readScalarInt("ncurr", ip.ncurr) ||
+                        !readScalarDouble("delt", ip.delt) ||
+                        !readScalarDouble("phiedge", ip.phiedge) ||
+                        !readScalarDouble("pres_scale", ip.pres_scale) ||
+                        !readScalarDouble("adiabatic_index",
+                                          ip.adiabatic_index) ||
+                        !readScalarDouble("spres_ped", ip.spres_ped) ||
+                        !readScalarDouble("bloat", ip.bloat) ||
+                        !readScalarDouble("curtor", ip.curtor) ||
+                        !readScalarDouble("tcon0", ip.tcon0)) {
+                        return fail("malformed embedded input record");
+                    }
+                    // Arrays: an ABSENT variable means an empty vector (the
+                    // writer omits empty arrays to avoid 0-length dims); a
+                    // present one must pass the strict read.
+                    {
+                        auto readOptional = [&](const char* dname,
+                                                const char* vname,
+                                                std::vector<double>& out)
+                            -> bool {
+                            int vid = -1;
+                            if (nc_inq_varid(ncid, vname, &vid) != NC_NOERR) {
+                                return true;  // absent -> empty
+                            }
+                            int dim = -1;
+                            size_t n = 0;
+                            if (!getDim(dname, dim, n)) return false;
+                            return readVectorDouble(vname, dim, n, out);
+                        };
+                        if (!readOptional("n_am", "am", ip.am) ||
+                            !readOptional("n_ac", "ac", ip.ac) ||
+                            !readOptional("n_ai", "ai", ip.ai) ||
+                            !readOptional("n_aphi", "aphi", ip.aphi) ||
+                            !readOptional("n_raxis", "raxis_c", ip.raxis_c) ||
+                            !readOptional("n_zaxis", "zaxis_s", ip.zaxis_s)) {
+                            return fail("malformed embedded input record");
+                        }
+                    }
+                    // The input stage arrays are optional as a whole (the
+                    // writer omits them for an empty stage list).
+                    {
+                        int vid = -1;
+                        if (nc_inq_varid(ncid, "stage_in_ns", &vid) ==
+                            NC_NOERR) {
+                            int dim_nstages_in = -1;
+                            size_t nstages_in = 0;
+                            if (!getDim("nstages_in", dim_nstages_in,
+                                        nstages_in)) {
+                                return fail("malformed embedded input record");
+                            }
+                            if (nstages_in >
+                                cumes::io_detail::kMaxStageCount) {
+                                return fail("embedded input stage count "
+                                            "exceeds the resource cap");
+                            }
+                            std::vector<int> stg_in_ns(nstages_in),
+                                stg_max_iter(nstages_in);
+                            std::vector<double> stg_ftol(nstages_in);
+                            if (!readVectorInt("stage_in_ns", dim_nstages_in,
+                                               nstages_in, stg_in_ns) ||
+                                !readVectorInt("stage_max_iter",
+                                               dim_nstages_in, nstages_in,
+                                               stg_max_iter) ||
+                                !readVectorDouble("stage_ftol",
+                                                  dim_nstages_in, nstages_in,
+                                                  stg_ftol)) {
+                                return fail("malformed embedded input record");
+                            }
+                            for (size_t g = 0; g < nstages_in; ++g) {
+                                InputStage st;
+                                st.ns = stg_in_ns[g];
+                                st.max_iter = stg_max_iter[g];
+                                st.ftol = stg_ftol[g];
+                                ip.stages.push_back(st);
+                            }
+                        }
+                    }
+                    // Boundary + folded (always part of a present record).
+                    int dim_nrbc = -1, dim_nzbs = -1, dim_mpol = -1,
+                        dim_ntorp1 = -1;
+                    size_t nrbc = 0, nzbs = 0, mpol = 0, ntorp1 = 0;
+                    if (!getDim("nrbc", dim_nrbc, nrbc) ||
+                        !getDim("nzbs", dim_nzbs, nzbs) ||
+                        !getDim("n_mpol", dim_mpol, mpol) ||
+                        !getDim("n_ntorp1", dim_ntorp1, ntorp1)) {
+                        return fail("malformed embedded input record");
+                    }
+                    if (!readVectorInt("rbc_m", dim_nrbc, nrbc, ip.rbc_m) ||
+                        !readVectorInt("rbc_n", dim_nrbc, nrbc, ip.rbc_n) ||
+                        !readVectorDouble("rbc_value", dim_nrbc, nrbc,
+                                          ip.rbc_value) ||
+                        !readVectorInt("zbs_m", dim_nzbs, nzbs, ip.zbs_m) ||
+                        !readVectorInt("zbs_n", dim_nzbs, nzbs, ip.zbs_n) ||
+                        !readVectorDouble("zbs_value", dim_nzbs, nzbs,
+                                          ip.zbs_value) ||
+                        !readMatrixDouble("rbcc", dim_mpol, dim_ntorp1, mpol,
+                                          ntorp1, ip.rbcc) ||
+                        !readMatrixDouble("rbss", dim_mpol, dim_ntorp1, mpol,
+                                          ntorp1, ip.rbss) ||
+                        !readMatrixDouble("zbsc", dim_mpol, dim_ntorp1, mpol,
+                                          ntorp1, ip.zbsc) ||
+                        !readMatrixDouble("zbcs", dim_mpol, dim_ntorp1, mpol,
+                                          ntorp1, ip.zbcs)) {
+                        return fail("malformed embedded input record");
+                    }
+                    // The schema tag is informational; an absent or unreadable
+                    // one keeps the default.
+                    std::string schema_tag;
+                    if (getStr("schema", schema_tag)) ip.schema = schema_tag;
+                    parsed_report.input_params = std::move(ip);
+                }
             }
             *report = std::move(parsed_report);
         }

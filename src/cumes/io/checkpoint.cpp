@@ -2,11 +2,16 @@
 //
 // Versioned checkpoint layout (little-endian):
 //   magic     8 bytes  "CUMECKP1"
-//   version   int32    = 1
+//   version   int32    = 2
 //   precision int32    (0 = double; the checkpoint is always double on disk)
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major
+//   params    the embedded normalized-input record (io_common.hpp
+//             writeInputParams); version 2 only
+//
+// The restart path reads the state only and ignores the record; version-1
+// checkpoints (no record) remain readable.
 #include "cumes/io/checkpoint.hpp"
 #include "io_common.hpp"
 
@@ -18,11 +23,13 @@ namespace cumes {
 namespace {
 
 constexpr char kCheckpointMagic[9] = "CUMECKP1";
-constexpr std::int32_t kCheckpointVersion = 1;
+constexpr std::int32_t kCheckpointVersion = 2;
+constexpr std::int32_t kMinCheckpointVersion = 1;
 
 }  // namespace
 
 Status write_checkpoint(const EquilibriumSnapshot& snapshot,
+                        const InputParams& input_params,
                         const std::string& path) {
     const std::string tmp = io_detail::tempPathFor(path);
     FILE* fp = fopen(tmp.c_str(), "wb");
@@ -45,13 +52,17 @@ Status write_checkpoint(const EquilibriumSnapshot& snapshot,
     if (!io_detail::writeStateFamilies(fp, snapshot)) {
         return fail("failed to write checkpoint payload");
     }
+    if (!io_detail::writeInputParams(fp, input_params)) {
+        return fail("failed to write checkpoint input record");
+    }
 
     const std::string err = io_detail::publishAtomic(fp, tmp, path);
     if (!err.empty()) return Status("checkpoint publish: " + err);
     return Status();
 }
 
-Result<EquilibriumSnapshot> read_checkpoint(const std::string& path) {
+Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
+                                            InputParams* input_params) {
     FILE* fp = fopen(path.c_str(), "rb");
     if (!fp) return Result<EquilibriumSnapshot>("cannot open " + path);
 
@@ -70,7 +81,7 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path) {
     if (std::memcmp(magic, kCheckpointMagic, 8) != 0) {
         return fail("checkpoint: bad magic (not a cumes checkpoint)");
     }
-    if (version != kCheckpointVersion) {
+    if (version < kMinCheckpointVersion || version > kCheckpointVersion) {
         return fail("checkpoint: unsupported version " + std::to_string(version));
     }
     if (precision != 0) {
@@ -86,6 +97,14 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path) {
     snapshot.mnmax = mnmax;
     if (!io_detail::readStateFamilies(fp, n, snapshot)) {
         return fail("checkpoint: truncated state data");
+    }
+    // The version-2 input record rides after the families; the state read
+    // above is the whole restart contract, and a reader that does not ask
+    // for the record never touches it.
+    if (input_params && version >= 2) {
+        if (!io_detail::readInputParams(fp, *input_params, reason)) {
+            return fail("checkpoint: " + reason);
+        }
     }
     fclose(fp);
     return snapshot;

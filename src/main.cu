@@ -324,6 +324,10 @@ int main(int argc, char** argv) {
         bool output_ok = true;
         cumes::EquilibriumSnapshot snapshot =
             cumes::snapshot_from_device(storage);
+        // The embedded normalized-input record: every output container
+        // (including the checkpoint below) carries it, so consumers can
+        // reconstruct the equilibrium without the input JSON.
+        outcome.report.input_params = cumes::make_input_params(vp);
         const cumes::OutputSpec spec = outSpec;
         auto writer = cumes::make_writer(spec.format);
         if (!writer) {
@@ -343,12 +347,12 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Optional v1 restart checkpoint (blueprint §6.13): written after the
+        // Optional v2 restart checkpoint (blueprint §6.13): written after the
         // solve so a run that stops at its iteration cap can be resumed via
         // --restart.
         if (!checkpointPath.empty()) {
-            const cumes::Status status =
-                cumes::write_checkpoint(snapshot, checkpointPath);
+            const cumes::Status status = cumes::write_checkpoint(
+                snapshot, outcome.report.input_params, checkpointPath);
             if (status.has_value()) {
                 printf("Saved checkpoint to %s\n", checkpointPath.c_str());
             } else {
