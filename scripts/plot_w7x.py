@@ -1,33 +1,38 @@
 #!/usr/bin/env python3
-"""Render 3D figures of the converged W7-X equilibrium (cuMES state).
+"""Render 3D figures of a converged cuMES equilibrium.
 
 Reads any solver state container (docs/output-formats.md): versioned
-binary (v1), checkpoint (CUMECKP1), NetCDF, or HDF5. Reconstructs
-real-space geometry with the solver's exact conventions
+binary (v3), checkpoint (v2), NetCDF, or HDF5. Every container embeds the
+structured normalized-input record, so the script needs no input JSON:
+mpol/ntor/nfp, the resolved angular grid, phiedge, the am/ac/ai/aphi
+profiles, and the raw boundary (for the LCFS self-check) all come from
+the container. Containers predating the embedded record are rejected.
+
+Reconstructs real-space geometry with the solver's exact conventions
 (parity-split e/o arrays, odd-m scalxc regularization, staggered half-grid
-metric — src/geometry_impl.cuh) via batched 2-D FFT synthesis, solves the
-ncurr=1 current constraint for chi' per plotted surface
-(ncurr1FinalizeKernel), and renders the full 5-period torus colored by |B|
-with light-source shading.
+metric — src/geometry_impl.cuh) via batched 2-D FFT synthesis, evaluates
+the radial profiles exactly as profiles_impl.cuh does (ncurr=0: chi' from
+the prescribed iota; ncurr=1: the ncurr1FinalizeKernel constraint solve
+with curr evaluated at the flux coordinate), and renders the full
+nfp-period torus colored by |B| with light-source shading.
 
 One PNG file per view: <out>_perspective.png, <out>_top.png,
 <out>_combined.png (both views side by side), and <out>_slices.png (the
-top view with five RZ poloidal cross-sections in two rows: bean to
-triangle, each showing nested flux-surface contours). The 3-D figures
-plot a single flux surface (the plasma boundary). The magnetic axis is
-the converged axis extracted from the state (m=0 content of the
-innermost surface, seed_state.hpp convention: nfp-fold modulation).
+top view with six RZ poloidal cross-sections in two rows of three,
+spanning one field period, each showing nested flux-surface contours).
+The 3-D figures plot a single flux surface (the plasma boundary). The
+magnetic axis is the converged axis extracted from the state (m=0 content
+of the innermost surface, seed_state.hpp convention: nfp-fold
+modulation).
 
 Two self-checks run before rendering:
-  1. the state LCFS (j = ns-1) must match the input rbc/zbs boundary;
-  2. the edge |B| must land in the physical W7-X range.
+  1. the state LCFS (j = ns-1) must match the embedded rbc/zbs boundary;
+  2. the edge |B| range is printed for a physical plausibility review.
 
-Usage: plot_w7x.py [--state PATH] [--input PATH] [--out PATH.png]
-       [--field-lines]
+Usage: plot_w7x.py [--state PATH] [--out PATH.png] [--field-lines]
 """
 
 import argparse
-import json
 import multiprocessing
 import os
 import struct
@@ -40,67 +45,272 @@ from matplotlib.collections import LineCollection
 from PIL import Image as PILImage
 from scipy.interpolate import RegularGridInterpolator
 
-MPOL, NTOR, NFP = 12, 12, 5
-NTHETA, NZETA = 30, 36          # the solver's angular grid (2*mpol+6, input)
-NTHETA_RED = NTHETA // 2 + 1    # reduced-grid theta count (forward quadrature)
-SIGN_J = -1.0
+SIGN_J = -1.0  # DeviceParams::kSignJacobian (device_params.hpp): the
+               # solver's fixed coordinate-sign convention, not an input
 MU0 = 4.0e-7 * np.pi
 
-# W7-X profile data (inputs/w7x.json)
-PHIEDGE = -1.74
-APHI = [1.0]
-AC = [0.0, 1.0]
-CURTOR = 5000.0
+FAM_NAMES = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
+
+NO_PARAMS_ERROR = ("container predates the embedded-input record; "
+                   "re-run the solver to regenerate it")
+
+
+def _read_str(f):
+    n = struct.unpack("<i", f.read(4))[0]
+    if not 0 <= n < 1 << 24:
+        raise SystemExit("error: corrupt string length in container")
+    return f.read(n).decode()
+
+
+def _read_vec(f, fmt, cap=1 << 20):
+    n = struct.unpack("<i", f.read(4))[0]
+    if not 0 <= n <= cap:
+        raise SystemExit("error: corrupt vector count in container")
+    if n == 0:
+        return []
+    return struct.unpack(f"<{n}{fmt}", f.read(n * struct.calcsize(fmt)))
+
+
+def _read_input_record(f):
+    """The fixed-order embedded-input record (io_common.hpp write/readInput
+    Params): 6 i32 + 8 f64 scalars, schema string, six f64 vectors, the
+    input stages, the raw boundary, and four folded vectors (skipped — the
+    plotting path never uses the folded basis)."""
+    mpol, ntor, nfp, ntheta, nzeta, ncurr = struct.unpack("<6i", f.read(24))
+    (delt, phiedge, pres_scale, adiabatic_index, spres_ped, bloat, curtor,
+     tcon0) = struct.unpack("<8d", f.read(64))
+    schema = _read_str(f)
+    am = list(_read_vec(f, "d"))
+    ac = list(_read_vec(f, "d"))
+    ai = list(_read_vec(f, "d"))
+    aphi = list(_read_vec(f, "d"))
+    raxis_c = list(_read_vec(f, "d"))
+    zaxis_s = list(_read_vec(f, "d"))
+    nstages = struct.unpack("<i", f.read(4))[0]
+    if not 0 <= nstages <= 1 << 20:
+        raise SystemExit("error: corrupt stage count in container")
+    stages = []
+    for _ in range(nstages):
+        sn, smi, sft = struct.unpack("<iid", f.read(16))
+        stages.append({"ns": sn, "max_iter": smi, "ftol": sft})
+    rbc_m = list(_read_vec(f, "i"))
+    rbc_n = list(_read_vec(f, "i"))
+    rbc_v = list(_read_vec(f, "d"))
+    zbs_m = list(_read_vec(f, "i"))
+    zbs_n = list(_read_vec(f, "i"))
+    zbs_v = list(_read_vec(f, "d"))
+    if not (len(rbc_m) == len(rbc_n) == len(rbc_v) and
+            len(zbs_m) == len(zbs_n) == len(zbs_v)):
+        raise SystemExit("error: corrupt boundary vectors in container")
+    for _ in range(4):  # folded rbcc/rbss/zbsc/zbcs
+        _read_vec(f, "d")
+    return {
+        "schema": schema, "mpol": mpol, "ntor": ntor, "nfp": nfp,
+        "ntheta": ntheta, "nzeta": nzeta, "ncurr": ncurr, "delt": delt,
+        "phiedge": phiedge, "pres_scale": pres_scale,
+        "adiabatic_index": adiabatic_index, "spres_ped": spres_ped,
+        "bloat": bloat, "curtor": curtor, "tcon0": tcon0,
+        "am": am, "ac": ac, "ai": ai, "aphi": aphi,
+        "raxis_c": raxis_c, "zaxis_s": zaxis_s,
+        "stages": stages,
+        "rbc": list(zip(rbc_m, rbc_n, rbc_v)),
+        "zbs": list(zip(zbs_m, zbs_n, zbs_v)),
+    }
+
+
+def _no_params(path):
+    raise SystemExit(f"error: {path}: " + NO_PARAMS_ERROR)
 
 
 def load_state(path):
-    """Load the converged state from any solver output container
-    (docs/output-formats.md): versioned binary (v1), checkpoint (CUMECKP1),
-    NetCDF, or HDF5. Returns ns, mnmax and the six mode-major families
-    (index = mode * ns + surface)."""
-    fam_names = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
+    """Load the converged state + the embedded structured input record from
+    any solver output container (docs/output-formats.md): versioned binary
+    (v3), checkpoint (v2), NetCDF, or HDF5. Returns (ns, mnmax, fams,
+    params, name) — the six mode-major families (index = mode * ns +
+    surface), the input record as a dict mirroring InputParams, and a
+    display name (the recorded input path stem when available, else the
+    container stem). Containers without the record are rejected; there is
+    no input-JSON fallback."""
     with open(path, "rb") as f:
         head = f.read(16)
-    if head.startswith(b"CUMES001") or head.startswith(b"CUMECKP1"):
-        # Versioned binary: magic(8), version(4) [, precision(4) for the
-        # checkpoint], ns(4), mnmax(4), then the six families.
+    name = os.path.splitext(os.path.basename(path))[0]
+    if head.startswith(b"CUMES001"):
+        # Versioned binary: magic(8), version(4), ns(4), mnmax(4), the six
+        # families, then the provenance trailer (run outcome + provenance
+        # strings + stage records), and — version 3 — the input record.
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if head.startswith(b"CUMECKP1"):
-                struct.unpack("<i", f.read(4))[0]  # precision (always double)
+            if not 1 <= version <= 3:
+                raise SystemExit(f"error: unsupported container version "
+                                 f"{version} in {path}")
             ns, mnmax = struct.unpack("<ii", f.read(8))
             n = ns * mnmax
-            fams = {name: np.frombuffer(f.read(8 * n), dtype="<f8")
-                    for name in fam_names}
-        return ns, mnmax, fams
+            fams = {fam: np.frombuffer(f.read(8 * n), dtype="<f8")
+                    for fam in FAM_NAMES}
+            if version < 3:
+                _no_params(path)
+            nstages = struct.unpack("<4i", f.read(16))[3]
+            # precision, status, total_iter, nstages (the header count is
+            # the stage-record count; no second count follows the strings)
+            if not 0 <= nstages <= 1 << 20:
+                raise SystemExit("error: corrupt stage count in container")
+            _read_str(f)  # revision
+            f.read(1)     # dirty
+            _read_str(f)  # build_type
+            if version >= 2:
+                _read_str(f)  # precision_policy
+                _read_str(f)  # compile_flags
+            else:
+                _read_str(f)  # historical scalar_type slot
+            source_path = _read_str(f)
+            _read_str(f)  # source_hash
+            for _ in range(4):  # gpu_name, driver, runtime, toolkit
+                _read_str(f)
+            for _ in range(nstages):
+                f.read(8)   # ns, iterations
+                f.read(1)   # converged
+                f.read(24)  # fsqr, fsqz, fsql
+                nrst = struct.unpack("<i", f.read(4))[0]
+                f.read(4 * nrst)
+            params = _read_input_record(f)
+        if source_path:
+            name = os.path.splitext(os.path.basename(source_path))[0]
+        return ns, mnmax, fams, params, name
+    if head.startswith(b"CUMECKP1"):
+        # Checkpoint: magic(8), version(4), precision(4), ns(4), mnmax(4),
+        # the six families, then — version 2 — the input record.
+        with open(path, "rb") as f:
+            f.seek(8)
+            version = struct.unpack("<i", f.read(4))[0]
+            f.read(4)  # precision (always double)
+            ns, mnmax = struct.unpack("<ii", f.read(8))
+            n = ns * mnmax
+            fams = {fam: np.frombuffer(f.read(8 * n), dtype="<f8")
+                    for fam in FAM_NAMES}
+            if version < 2:
+                _no_params(path)
+            params = _read_input_record(f)
+        return ns, mnmax, fams, params, name
     if head.startswith(b"CDF"):
-        # NetCDF (v1): the six families are 2-D [surface, mode] datasets.
+        # NetCDF: the six families are 2-D [surface, mode] datasets; the
+        # input record is the native scalar variables + 1-D arrays.
         from scipy.io import netcdf_file
         with netcdf_file(path, "r", mmap=False) as nc:
             ns = nc.dimensions["ns"]
             mnmax = nc.dimensions["mnmax"]
-            fams = {name: np.asarray(nc.variables[name][:], dtype="<f8").T.ravel()
-                    for name in fam_names}
-        return ns, mnmax, fams
+            fams = {fam: np.asarray(nc.variables[fam][:],
+                                    dtype="<f8").T.ravel()
+                    for fam in FAM_NAMES}
+            if "mpol" not in nc.variables:
+                _no_params(path)
+
+            def scalar(var):
+                v = nc.variables[var]
+                return v.getValue() if hasattr(v, "getValue") else \
+                    np.asarray(v[:]).item()
+
+            def darray(var):
+                return list(np.asarray(nc.variables[var][:], dtype="<f8")) \
+                    if var in nc.variables else []
+
+            def iarray(var):
+                return list(np.asarray(nc.variables[var][:], dtype="<i4")) \
+                    if var in nc.variables else []
+
+            params = {
+                "schema": getattr(nc, "schema", "cumes-config-v1"),
+                "mpol": scalar("mpol"), "ntor": scalar("ntor"),
+                "nfp": scalar("nfp"), "ntheta": scalar("ntheta"),
+                "nzeta": scalar("nzeta"), "ncurr": scalar("ncurr"),
+                "delt": scalar("delt"), "phiedge": scalar("phiedge"),
+                "pres_scale": scalar("pres_scale"),
+                "adiabatic_index": scalar("adiabatic_index"),
+                "spres_ped": scalar("spres_ped"), "bloat": scalar("bloat"),
+                "curtor": scalar("curtor"), "tcon0": scalar("tcon0"),
+                "am": darray("am"), "ac": darray("ac"), "ai": darray("ai"),
+                "aphi": darray("aphi"), "raxis_c": darray("raxis_c"),
+                "zaxis_s": darray("zaxis_s"),
+                "stages": [{"ns": a, "max_iter": b, "ftol": c}
+                           for a, b, c in zip(iarray("stage_in_ns"),
+                                              iarray("stage_max_iter"),
+                                              darray("stage_ftol"))],
+                "rbc": list(zip(iarray("rbc_m"), iarray("rbc_n"),
+                                darray("rbc_value"))),
+                "zbs": list(zip(iarray("zbs_m"), iarray("zbs_n"),
+                                darray("zbs_value"))),
+            }
+            sp = getattr(nc, "source_path", "")
+            if isinstance(sp, bytes):
+                sp = sp.decode()
+            if sp:
+                name = os.path.splitext(os.path.basename(sp))[0]
+        return ns, mnmax, fams, params, name
     if head.startswith(b"\x89HDF"):
-        # HDF5 (v1): same [surface, mode] dataset layout.
+        # HDF5: same [surface, mode] dataset layout; the input record is
+        # native scalar attributes + 1-D datasets.
         import h5py
         with h5py.File(path, "r") as f5:
             fams = {}
             ns = mnmax = None
-            for name in fam_names:
-                dset = np.asarray(f5[name][:], dtype="<f8")  # [surface, mode]
+            for fam in FAM_NAMES:
+                dset = np.asarray(f5[fam][:], dtype="<f8")  # [surface, mode]
                 ns, mnmax = dset.shape
-                fams[name] = dset.T.ravel()
-        return ns, mnmax, fams
+                fams[fam] = dset.T.ravel()
+            if "mpol" not in f5.attrs:
+                _no_params(path)
+
+            def sattr(attr, default):
+                v = f5.attrs.get(attr, default)
+                return v.decode() if isinstance(v, bytes) else v
+
+            def darray(var):
+                return list(np.asarray(f5[var][:], dtype="<f8")) \
+                    if var in f5 else []
+
+            def iarray(var):
+                return list(np.asarray(f5[var][:], dtype="<i4")) \
+                    if var in f5 else []
+
+            params = {
+                "schema": sattr("schema", "cumes-config-v1"),
+                "mpol": int(f5.attrs["mpol"]),
+                "ntor": int(f5.attrs["ntor"]),
+                "nfp": int(f5.attrs["nfp"]),
+                "ntheta": int(f5.attrs["ntheta"]),
+                "nzeta": int(f5.attrs["nzeta"]),
+                "ncurr": int(f5.attrs["ncurr"]),
+                "delt": float(f5.attrs["delt"]),
+                "phiedge": float(f5.attrs["phiedge"]),
+                "pres_scale": float(f5.attrs["pres_scale"]),
+                "adiabatic_index": float(f5.attrs["adiabatic_index"]),
+                "spres_ped": float(f5.attrs["spres_ped"]),
+                "bloat": float(f5.attrs["bloat"]),
+                "curtor": float(f5.attrs["curtor"]),
+                "tcon0": float(f5.attrs["tcon0"]),
+                "am": darray("am"), "ac": darray("ac"), "ai": darray("ai"),
+                "aphi": darray("aphi"), "raxis_c": darray("raxis_c"),
+                "zaxis_s": darray("zaxis_s"),
+                "stages": [{"ns": a, "max_iter": b, "ftol": c}
+                           for a, b, c in zip(iarray("stage_in_ns"),
+                                              iarray("stage_max_iter"),
+                                              darray("stage_ftol"))],
+                "rbc": list(zip(iarray("rbc_m"), iarray("rbc_n"),
+                                darray("rbc_value"))),
+                "zbs": list(zip(iarray("zbs_m"), iarray("zbs_n"),
+                                darray("zbs_value"))),
+            }
+            if sattr("source_path", ""):
+                name = os.path.splitext(
+                    os.path.basename(sattr("source_path", "")))[0]
+        return ns, mnmax, fams, params, name
     raise SystemExit(f"error: {path} is not a cumes state container "
                      f"(expected CUMES001/CUMECKP1/NetCDF/HDF5)")
 
 
-def mode_tables(mnmax):
-    m = np.arange(mnmax) // (NTOR + 1)
-    n = np.arange(mnmax) % (NTOR + 1)
+def mode_tables(mnmax, ntor):
+    m = np.arange(mnmax) // (ntor + 1)
+    n = np.arange(mnmax) % (ntor + 1)
     return m, n
 
 
@@ -125,7 +335,7 @@ def pack_series(a, b, series, mm, nn, nth, nzt):
     return C
 
 
-def eval_state(fams, ns, j, th, zt):
+def eval_state(fams, ns, j, th, zt, ntor, nfp):
     """Stored parity arrays at full-grid surface j on a uniform full-period
     (th, zt) grid — the exact inverseDFT convention (fourier_impl.cuh),
     synthesized with a batched 2-D IFFT instead of a direct mode sum:
@@ -141,7 +351,7 @@ def eval_state(fams, ns, j, th, zt):
     tables carry the nfp factor). The λ ζ-derivative slots store -dλ/dζ
     (signV = -1).
     """
-    m, n = mode_tables(fams["rmncc"].shape[0] // ns)
+    m, n = mode_tables(fams["rmncc"].shape[0] // ns, ntor)
     nth, nzt = th.size, zt.size
     assert th.ndim == 1 and zt.ndim == 1, "eval_state takes 1-D angle axes"
     assert np.allclose(th, 2.0 * np.pi * np.arange(nth) / nth) and \
@@ -152,7 +362,7 @@ def eval_state(fams, ns, j, th, zt):
     fac = np.where(par_odd, 1.0 / maxsc, 1.0)
 
     def fam(name):
-        mode = m * (NTOR + 1) + n     # folded mode index
+        mode = m * (ntor + 1) + n     # folded mode index
         return fams[name][mode * ns + j]  # mode-major, surface j column
 
     rc, rs = fam("rmncc") * fac, fam("rmnss") * fac
@@ -169,7 +379,7 @@ def eval_state(fams, ns, j, th, zt):
     # derivative spectra: ×i·m for ∂/∂θ, ×i·n·nfp for ∂/∂ζ; the λ
     # ζ-derivative slots (indices 16, 17) are negated (signV = -1).
     dth = 1j * (np.fft.fftfreq(nth) * nth)[:, None]
-    dzt = 1j * (np.fft.fftfreq(nzt) * nzt * NFP)[None, :]
+    dzt = 1j * (np.fft.fftfreq(nzt) * nzt * nfp)[None, :]
     S = np.concatenate([C, C * dth, C * dzt], axis=0)   # (18, nth, nzt)
     S[16:] *= -1.0
     G = np.fft.ifft2(S).real * (nth * nzt)
@@ -182,13 +392,14 @@ def eval_state(fams, ns, j, th, zt):
     return out
 
 
-def half_grid(arrays, ns, jh, chip):
-    """Mirror of baseGeometryKernel + magneticFieldKernel + the per-surface
-    chi' solve for half-grid surface jh (geometry_impl.cuh). arrays = the
-    two adjacent full-grid surfaces (stored parity values). Returns the
-    half-grid geometry (r12/z12), the covariant metric, lambda derivatives,
-    and |B| (Tesla — the B^u·B_u products are invariant under the angular
-    coordinate scaling, so the kernel units are physical)."""
+def half_grid(arrays, ns, jh, chip, phip_avg, lamscale):
+    """Mirror of baseGeometryKernel + magneticFieldKernel for half-grid
+    surface jh (geometry_impl.cuh). arrays = the two adjacent full-grid
+    surfaces (stored parity values); phip_avg = 0.5·(phipF(jh)+phipF(jh+1))
+    and lamscale come from make_profiles. Returns the half-grid geometry
+    (r12/z12), the covariant metric, lambda derivatives, and |B| (Tesla —
+    the B^u·B_u products are invariant under the angular coordinate
+    scaling, so the kernel units are physical)."""
     ds = 1.0 / (ns - 1)
     s_in = np.sqrt(jh / (ns - 1))
     s_out = np.sqrt((jh + 1) / (ns - 1))
@@ -240,12 +451,10 @@ def half_grid(arrays, ns, jh, chip):
     # ---- magnetic field (magneticFieldKernel) ----
     lu_h = 0.5 * ((r["lue"] + rp["lue"]) + s_h * (r["luo"] + rp["luo"]))
     lv_h = 0.5 * ((r["lve"] + rp["lve"]) + s_h * (r["lvo"] + rp["lvo"]))
-    phip = SIGN_J * PHIEDGE / (2.0 * np.pi) / sum(APHI)   # torflux(1) = 1
-    lamscale = abs(phip) * np.sqrt((ns - 1) * ds)          # = sqrt(ds·Σ phipH²)
     inv = np.zeros_like(gsqrt)
     np.divide(1.0, gsqrt, out=inv,
               where=np.isfinite(gsqrt) & (np.abs(gsqrt) > 1e-30))
-    bsupv = (lamscale * lu_h + phip) * inv                 # phi' constant
+    bsupv = (lamscale * lu_h + phip_avg) * inv
     bsupu = lamscale * lv_h * inv + chip * inv             # chi' from the solve
     bsubu = guu * bsupu + guv * bsupv
     bsubv = guv * bsupu + gvv * bsupv
@@ -255,43 +464,117 @@ def half_grid(arrays, ns, jh, chip):
             "bsupv": bsupv, "bmag": np.sqrt(np.maximum(bsq, 0.0))}
 
 
-def solve_chip(fams, ns, jh):
-    """ncurr1FinalizeKernel: chi' = (currH - Σ(guu·B^θ_λ + guv·B^ζ)w) /
-    Σ(guu/√g·w), summed over the reduced-theta trapezoid subset with
-    dnorm3 = 1/(nzeta·(nThetaRed-1)) (the exact kernel quadrature)."""
+def make_profiles(cfg, ns):
+    """Radial profile evaluators exactly as profile_functions.hpp +
+    profiles_impl.cuh: maxToroidalFlux = signJ·phiedge/(2π·torflux(1)),
+    phipF(j) = maxTF·torfluxDeriv(Δs·j), lamscale = sqrt(Δs·Σ phipH²),
+    iota/curr Horner evaluations with the normX = min(|x·bloat|, 1) clamp,
+    and the ncurr=1 normalization Itor = signJ·μ0·curtor/(2π·C_edge). The
+    aphi=[1.0] case keeps the historic constant-φ' arithmetic bit-stable.
+    Returns a dict with phip_avg(jh), lamscale, chip_iota(jh) (ncurr=0) or
+    itor/curr_h(jh) (ncurr=1)."""
+    aphi = cfg["aphi"]
+    ds = 1.0 / (ns - 1)
+
+    def torflux(x):
+        ret = 0.0
+        for c in reversed(aphi):
+            ret = x * ret + c
+        return x * ret
+
+    def torflux_deriv(x):
+        return sum((i + 1) * c * x ** i for i, c in enumerate(aphi))
+
+    def iota_eval(x):
+        ret = 0.0
+        for c in reversed(cfg["ai"]):
+            ret = x * ret + c
+        return ret
+
+    def curr_eval(x):
+        norm = min(abs(x * cfg["bloat"]), 1.0)
+        ret = 0.0
+        for i in range(len(cfg["ac"]) - 1, -1, -1):
+            ret = norm * ret + cfg["ac"][i] / (i + 1)
+        return norm * ret
+
+    maxTF = SIGN_J * cfg["phiedge"] / (2.0 * np.pi * torflux(1.0))
+    if aphi == [1.0]:
+        # Constant φ' (torfluxDeriv ≡ 1): the historic arithmetic, kept
+        # bit-stable with the pre-generalization formula.
+        phip = maxTF
+        lamscale = abs(phip) * np.sqrt((ns - 1) * ds)
+        prof = {
+            "phip_avg": lambda jh: phip,
+            "lamscale": lamscale,
+        }
+    else:
+        phip_F = np.array([maxTF * torflux_deriv(ds * j) for j in range(ns)])
+        phip_H = 0.5 * (phip_F[:-1] + phip_F[1:])
+        lamscale = float(np.sqrt(ds * np.sum(phip_H * phip_H)))
+        prof = {
+            "phip_avg": lambda jh: 0.5 * (phip_F[jh] + phip_F[jh + 1]),
+            "lamscale": lamscale,
+        }
+    if cfg["ncurr"] == 0:
+        def chip_iota(jh):
+            sh = ds * (jh + 0.5)
+            tf = min(torflux(sh), 1.0)
+            return maxTF * iota_eval(tf) * torflux_deriv(sh)
+        prof["chip_iota"] = chip_iota
+    else:
+        c_edge = curr_eval(1.0)
+        prof["itor"] = SIGN_J * MU0 * cfg["curtor"] / (2.0 * np.pi * c_edge)
+
+        def curr_h(jh):
+            sh = ds * (jh + 0.5)
+            return prof["itor"] * curr_eval(min(torflux(sh), 1.0))
+        prof["curr_h"] = curr_h
+    return prof
+
+
+def solve_chip(fams, ns, jh, cfg, prof):
+    """chi' for half-grid surface jh. ncurr=1: ncurr1FinalizeKernel —
+    chi' = (currH − Σ(guu·B^θ_λ + guv·B^ζ)·w) / Σ(guu/√g·w), summed over the
+    reduced-theta trapezoid with dnorm3 = 1/(nzeta·(nThetaRed−1)), currH
+    evaluated at the FLUX coordinate sh (the solver's convention). ncurr=0:
+    the prescribed-iota profile χ' = maxTF·ι(tf)·torfluxDeriv(sh)
+    (profiles_impl.cuh)."""
+    if cfg["ncurr"] == 0:
+        return prof["chip_iota"](jh)
+    ntheta = cfg["ntheta"]
+    nz = cfg["nzeta"]
+    ntheta_red = ntheta // 2 + 1
     # eval_state needs a uniform full-period grid; the reduced-theta grid is
     # the first nThetaRed rows of the solver's ntheta grid, so evaluate on
     # the full grid and slice.
-    th = 2.0 * np.pi * np.arange(NTHETA) / NTHETA
-    zt = 2.0 * np.pi * np.arange(NZETA) / NZETA
-    a = [eval_state(fams, ns, j, th, zt) for j in (jh, jh + 1)]
-    a = [{k: v[:NTHETA_RED] for k, v in e.items() if k not in ("th", "zt")}
+    th = 2.0 * np.pi * np.arange(ntheta) / ntheta
+    zt = 2.0 * np.pi * np.arange(nz) / nz
+    a = [eval_state(fams, ns, j, th, zt, cfg["ntor"], cfg["nfp"])
+         for j in (jh, jh + 1)]
+    a = [{k: v[:ntheta_red] for k, v in e.items() if k not in ("th", "zt")}
          for e in a]
-    h = half_grid(a, ns, jh, 0.0)   # chip = 0: the lambda-only B^θ
-    w = np.full(NTHETA_RED, 1.0 / (NZETA * (NTHETA_RED - 1)))
+    h = half_grid(a, ns, jh, 0.0, prof["phip_avg"](jh), prof["lamscale"])
+    w = np.full(ntheta_red, 1.0 / (nz * (ntheta_red - 1)))
     w[0] *= 0.5
     w[-1] *= 0.5
     jv = np.sum(w[:, None] * (h["guu"] * h["bsupu"] + h["guv"] * h["bsupv"]))
     one_over = np.zeros_like(h["gsqrt"])
     np.divide(1.0, h["gsqrt"], out=one_over, where=np.abs(h["gsqrt"]) > 1e-30)
     avg = np.sum(w[:, None] * h["guu"] * one_over)
-    i1 = sum(AC[i] / (i + 1) for i in range(len(AC)))
-    itor = SIGN_J * MU0 * CURTOR / (2.0 * np.pi * i1)
-    s_h = np.sqrt((jh + 0.5) / (ns - 1))
-    curr = itor * sum(AC[i] * s_h ** (i + 1) / (i + 1) for i in range(len(AC)))
+    curr = prof["curr_h"](jh)
     return (curr - jv) / avg if avg != 0.0 else 0.0
 
 
-def boundary_from_input(path, th, zt):
-    """Boundary R/Z from the input rbc/zbs (signed-n VMEC convention)."""
-    with open(path) as f:
-        doc = json.load(f)
+def boundary_from_params(params, th, zt):
+    """Boundary R/Z from the embedded raw harmonics (signed-n VMEC
+    convention: cos(mθ − nζ) / sin(mθ − nζ))."""
     R = np.zeros_like(th)
     Z = np.zeros_like(th)
-    for c in doc["rbc"]:
-        R += c["value"] * np.cos(c["m"] * th - c["n"] * zt)
-    for c in doc["zbs"]:
-        Z += c["value"] * np.sin(c["m"] * th - c["n"] * zt)
+    for m, n, value in params["rbc"]:
+        R += value * np.cos(m * th - n * zt)
+    for m, n, value in params["zbs"]:
+        Z += value * np.sin(m * th - n * zt)
     return R, Z
 
 
@@ -461,21 +744,21 @@ def surface_intensity(X, Y, Z, light_dir, lo=0.55):
     return lo + (1.0 - lo) * lam
 
 
-def to_cartesian(R, Z, n_periods=NFP):
+def to_cartesian(R, Z, nfp):
     """Replicate one field period into the full torus (phi = zeta/nfp),
     closing both periodic grid directions."""
     nz = R.shape[1]
     zt = np.linspace(0.0, 2.0 * np.pi, nz, endpoint=False)
-    Rfull = np.concatenate([R] * n_periods, axis=1)
-    Zfull = np.concatenate([Z] * n_periods, axis=1)
-    phi = np.concatenate([(zt + 2.0 * np.pi * k) / NFP for k in range(n_periods)])
+    Rfull = np.concatenate([R] * nfp, axis=1)
+    Zfull = np.concatenate([Z] * nfp, axis=1)
+    phi = np.concatenate([(zt + 2.0 * np.pi * k) / nfp for k in range(nfp)])
     Rfull = periodic_close(Rfull)
     Zfull = periodic_close(Zfull)
     phi = np.append(phi, 2.0 * np.pi)
     return Rfull * np.cos(phi[None, :]), Rfull * np.sin(phi[None, :]), Zfull
 
 
-def converged_axis(fams, ns, n=240):
+def converged_axis(fams, ns, ntor, nfp, n=240):
     """The converged magnetic axis: the m=0 content of the innermost
     computed surface (j=1). The axis is theta-independent by construction
     (only m=0 modes enter), so the curve runs through the center of every
@@ -485,25 +768,26 @@ def converged_axis(fams, ns, n=240):
         Z_ax(zeta) = sum_n zmncs(0, n, j=1) sin(n zeta)
 
     with zeta the per-field-period angle, replicated nfp times around the
-    full torus (phi = zeta/nfp). The W7-X axis carries genuine nfp-fold
-    modulation (outboard at the beans, inboard at the triangles), matching
-    the seed convention in seed_state.hpp (raxis_c/zaxis_s interpolate
-    against the same folded toroidal mode n)."""
+    full torus (phi = zeta/nfp). The axis carries genuine nfp-fold
+    modulation, matching the seed convention in seed_state.hpp
+    (raxis_c/zaxis_s interpolate against the same folded toroidal
+    mode n)."""
     zt = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
     R = np.zeros_like(zt)
     Z = np.zeros_like(zt)
-    for nn in range(NTOR + 1):
+    for nn in range(ntor + 1):
         R += fams["rmncc"][nn * ns + 1] * np.cos(nn * zt)
         Z += fams["zmncs"][nn * ns + 1] * np.sin(nn * zt)
-    Rfull = np.concatenate([R] * NFP)
-    Zfull = np.concatenate([Z] * NFP)
-    phi = np.concatenate([(zt + 2.0 * np.pi * k) / NFP for k in range(NFP)])
+    Rfull = np.concatenate([R] * nfp)
+    Zfull = np.concatenate([Z] * nfp)
+    phi = np.concatenate([(zt + 2.0 * np.pi * k) / nfp for k in range(nfp)])
     X = Rfull * np.cos(phi)
     Y = Rfull * np.sin(phi)
     return np.append(X, X[0]), np.append(Y, Y[0]), np.append(Zfull, Zfull[0])
 
 
-def field_lines(edge, th, zt, seeds, zeta_span=6 * 2.0 * np.pi, n_steps=2400):
+def field_lines(edge, th, zt, seeds, nfp, zeta_span=6 * 2.0 * np.pi,
+                n_steps=2400):
     """Trace d(theta)/d(zeta) = B^theta/B^zeta on the edge half-grid surface
     (RK4, periodic in both angles), lifted onto the (r12, z12) geometry.
     `edge` is the half_grid() result on the (th, zt) solver grid."""
@@ -533,7 +817,7 @@ def field_lines(edge, th, zt, seeds, zeta_span=6 * 2.0 * np.pi, n_steps=2400):
         pts = np.stack([theta % (2 * np.pi), zeta % (2 * np.pi)], axis=1)
         r_line = rgi(pts)
         z_line = zgi(pts)
-        phi = zeta / NFP
+        phi = zeta / nfp
         lines.append((r_line * np.cos(phi), r_line * np.sin(phi), z_line))
     return lines
 
@@ -551,8 +835,8 @@ def _render_machinery(S):
 def draw_scene(ax, vw, S, cmap, norm, light_dir):
     """Draw the flux surface + axis curve into one 3-D axis."""
     for s in S["surf_3d"]:  # a single opaque surface (the plasma boundary)
-        X, Y, Z = to_cartesian(s["r12"], s["z12"])
-        B = periodic_close(np.concatenate([s["bmag"]] * NFP, axis=1))
+        X, Y, Z = to_cartesian(s["r12"], s["z12"], S["nfp"])
+        B = periodic_close(np.concatenate([s["bmag"]] * S["nfp"], axis=1))
         lam = surface_intensity(X, Y, Z, light_dir)
         hsv = mcolors.rgb_to_hsv(cmap(norm(B))[:, :, :3])
         hsv[:, :, 2] = np.clip(hsv[:, :, 2] * lam, 0.0, 1.0)
@@ -566,13 +850,13 @@ def draw_scene(ax, vw, S, cmap, norm, light_dir):
         ax.plot(x, y, z, color="#0b0b0b", linewidth=1.1, alpha=0.85, zorder=50)
     ax.plot(S["axx"], S["axy"], S["axz"], color="#0b0b0b", linewidth=1.4,
             zorder=60)
-    # Tight limits hug the plasma (R 4.66-6.22, |Z| <= 0.90) so the
-    # torus fills the frame instead of floating in white space.
-    lim = 6.55
+    # Data-derived limits hug the plasma so the torus fills the frame
+    # instead of floating in white space.
+    lim = S["lim"]
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
-    ax.set_zlim(-0.98, 0.98)
-    ax.set_box_aspect((1, 1, 0.15))
+    ax.set_zlim(-S["zlim"], S["zlim"])
+    ax.set_box_aspect(S["box_aspect"])
     ax.set_axis_off()
     ax.view_init(**vw)
 
@@ -594,8 +878,7 @@ def render_single_view(base, suffix, label, vw, S):
     # The title is re-centered onto the torus by trim_white (the 3-D
     # box is not centered in the axes window, so matplotlib-side
     # placement cannot do it).
-    fig.suptitle(f"W7-X standard configuration — cuMES equilibrium ({label})",
-                 fontsize=11, y=1.01)
+    fig.suptitle(f"{S['title']} ({label})", fontsize=11, y=1.01)
     out_png = f"{base}_{suffix}.png"
     fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -631,8 +914,7 @@ def render_combined(base, S):
     # the figure height (mplot3d leaves a margin inside the window), so
     # the strip top = 0.188 - 60px gap.
     cbar.ax.set_position([0.30, 0.106, 0.40, 0.045])
-    fig.suptitle("W7-X standard configuration — cuMES converged "
-                 "equilibrium", fontsize=11, y=0.98)
+    fig.suptitle(S["title"], fontsize=11, y=0.98)
     out_png = f"{base}_combined.png"
     fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -641,40 +923,40 @@ def render_combined(base, S):
 
 
 def render_slices(base, S):
-    """Top view + five RZ poloidal cross-sections (two rows: bean to
-    triangle), each with the nested flux-surface contour family."""
+    """Top view + six RZ poloidal cross-sections (two rows of three,
+    spanning one field period), each with the nested flux-surface contour
+    family."""
     print("rendering top view + RZ slices ...", flush=True)
     t0 = time.perf_counter()
     cmap, norm, light_dir, mappable = _render_machinery(S)
     surf_slices = S["surf_slices"]
     fams, ns, nzt_r = S["fams"], S["ns"], S["nzt_r"]
-    zeta_cuts = [(0.0, "bean  (φ = 0°)"),
-                 (0.25 * np.pi, "φ = 9°"),
-                 (0.5 * np.pi, "transition  (φ = 18°)"),
-                 (0.75 * np.pi, "φ = 27°"),
-                 (np.pi, "triangle  (φ = 36°)")]
+    nfp, ntor = S["nfp"], S["ntor"]
+    zeta_cuts = [(k * np.pi / 3.0,
+                  f"φ = {np.degrees(k * np.pi / (3.0 * nfp)):.0f}°")
+                 for k in range(6)]
     # Explicit layout: the slice block gets a bounded region that is
     # SHORTER than the 3-D panel, so the two-row slice block ends up
     # smaller than the top-view torus.
     fig = plt.figure(figsize=(10.0, 5.6), dpi=100)
     gs = fig.add_gridspec(2, 6, left=0.05, right=0.44, top=0.72,
                           bottom=0.30, hspace=0.35, wspace=0.06)
-    # Top row: three slices (2 columns each); bottom row: two slices
-    # (3 columns each), symmetric under the top row.
+    # Two rows of three slices (2 columns each).
     axs = [fig.add_subplot(gs[0, 0:2]),
            fig.add_subplot(gs[0, 2:4]),
            fig.add_subplot(gs[0, 4:6]),
-           fig.add_subplot(gs[1, 0:3]),
-           fig.add_subplot(gs[1, 3:6])]
+           fig.add_subplot(gs[1, 0:2]),
+           fig.add_subplot(gs[1, 2:4]),
+           fig.add_subplot(gs[1, 4:6])]
     # Nearly square window (matches the top-view box) so the torus fills
     # it and the gap to the slice block shrinks.
     ax3d = fig.add_axes([0.455, 0.06, 0.48, 0.86], projection="3d")
     draw_scene(ax3d, dict(elev=90.0, azim=-90.0), S, cmap, norm, light_dir)
     # Mark the toroidal positions of the cross-sections on the top view
     # with radial dashed lines (one period only).
-    lim = 6.55
+    lim = S["lim"]
     for zc, _ in zeta_cuts:
-        phi = zc / NFP
+        phi = zc / nfp
         ax3d.plot([0.0, lim * np.cos(phi)], [0.0, lim * np.sin(phi)],
                   [0.0, 0.0], color="#0b0b0b", linestyle=(0, (5, 4)),
                   linewidth=0.9, zorder=55)
@@ -696,9 +978,9 @@ def render_slices(base, S):
             lc.set_array(B[:-1])
             ax.add_collection(lc)
         Rax = sum(fams["rmncc"][nn * ns + 1] * np.cos(nn * zc)
-                  for nn in range(NTOR + 1))
+                  for nn in range(ntor + 1))
         Zax = sum(fams["zmncs"][nn * ns + 1] * np.sin(nn * zc)
-                  for nn in range(NTOR + 1))
+                  for nn in range(ntor + 1))
         ax.plot([Rax], [Zax], "o", color="#0b0b0b", markersize=2.5)
         ax.set_xlim(Rmin - 0.05, Rmax + 0.05)
         # Mild vertical headroom; the slice plots fill their cell heights
@@ -717,8 +999,8 @@ def render_slices(base, S):
     cbar = fig.colorbar(mappable, ax=ax3d, shrink=0.6, aspect=20, pad=0.01)
     cbar.set_label("|B| (T)", fontsize=10)
     cbar.ax.tick_params(labelsize=9)
-    fig.suptitle("W7-X standard configuration — cuMES converged equilibrium "
-                 "(top view + poloidal cross-sections)", fontsize=11, y=1.01)
+    fig.suptitle(f"{S['title']} (top view + poloidal cross-sections)",
+                 fontsize=11, y=1.01)
     out_png = f"{base}_slices.png"
     fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -729,45 +1011,51 @@ def render_slices(base, S):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", default="figure_data/w7x_state.bin")
-    ap.add_argument("--input", default="inputs/w7x.json")
     ap.add_argument("--out", default="figure_data/w7x_equilibrium_3d.png")
     ap.add_argument("--field-lines", action="store_true",
                     help="also trace and draw field lines on the edge surface "
                          "(off by default: the figure stays cleaner)")
     args = ap.parse_args()
 
-    ns, mnmax, fams = load_state(args.state)
-    assert (ns, mnmax) == (99, 156), f"expected the W7-X state (99, 156), got {(ns, mnmax)}"
-    print(f"loaded state: ns={ns}, mnmax={mnmax}", flush=True)
+    ns, mnmax, fams, params, name = load_state(args.state)
+    ntor, nfp = params["ntor"], params["nfp"]
+    if mnmax != params["mpol"] * (ntor + 1):
+        raise SystemExit(
+            f"error: mnmax {mnmax} != mpol*(ntor+1) "
+            f"{params['mpol']}*{ntor + 1} — corrupt embedded input record")
+    prof = make_profiles(params, ns)
+    print(f"loaded state: ns={ns}, mnmax={mnmax}, mpol={params['mpol']}, "
+          f"ntor={ntor}, nfp={nfp}, ntheta={params['ntheta']}, "
+          f"nzeta={params['nzeta']}, ncurr={params['ncurr']}, "
+          f"phiedge={params['phiedge']:g}", flush=True)
 
-    # ---- self-check 1: state LCFS vs the input boundary -----------------
-    print("self-check 1/2: state LCFS vs input rbc/zbs boundary ...", flush=True)
+    # ---- self-check 1: state LCFS vs the embedded boundary --------------
+    print("self-check 1/2: state LCFS vs embedded rbc/zbs boundary ...",
+          flush=True)
     th_ax = np.linspace(0.0, 2.0 * np.pi, 64, endpoint=False)
     zt_ax = np.linspace(0.0, 2.0 * np.pi, 48, endpoint=False)
-    b = eval_state(fams, ns, ns - 1, th_ax, zt_ax)
+    b = eval_state(fams, ns, ns - 1, th_ax, zt_ax, ntor, nfp)
     maxsc = max(np.sqrt((ns - 1) / (ns - 1)), np.sqrt(1.0 / (ns - 1)))
     R_phys = b["re"] + maxsc * b["ro"]
     Z_phys = b["ze"] + maxsc * b["zo"]
     TH_c, ZT_c = np.meshgrid(th_ax, zt_ax, indexing="ij")
-    Rb, Zb = boundary_from_input(args.input, TH_c, ZT_c)
+    Rb, Zb = boundary_from_params(params, TH_c, ZT_c)
     err = max(np.max(np.abs(R_phys - Rb)), np.max(np.abs(Z_phys - Zb)))
     print(f"  max err = {err:.3e}", flush=True)
-    assert err < 1e-8, "state LCFS does not match the input boundary"
+    assert err < 1e-8, "state LCFS does not match the embedded boundary"
 
     # ---- the plotted flux surface (plasma boundary, edge half-grid) ------
-    print("edge surface: solving chi' + half-grid geometry (jh = 97) ...",
+    print(f"edge surface: solving chi' + half-grid geometry (jh = {ns - 2}) ...",
           flush=True)
-    th = np.linspace(0.0, 2.0 * np.pi, NTHETA, endpoint=False)
-    zt = np.linspace(0.0, 2.0 * np.pi, NZETA, endpoint=False)
-    chip = solve_chip(fams, ns, ns - 2)
-    a = [eval_state(fams, ns, j, th, zt) for j in (ns - 2, ns - 1)]
-    edge = half_grid(a, ns, ns - 2, chip)
+    th = np.linspace(0.0, 2.0 * np.pi, params["ntheta"], endpoint=False)
+    zt = np.linspace(0.0, 2.0 * np.pi, params["nzeta"], endpoint=False)
+    chip = solve_chip(fams, ns, ns - 2, params, prof)
+    a = [eval_state(fams, ns, j, th, zt, ntor, nfp)
+         for j in (ns - 2, ns - 1)]
+    edge = half_grid(a, ns, ns - 2, chip, prof["phip_avg"](ns - 2),
+                     prof["lamscale"])
     print(f"  jh={ns - 2:3d}: chip={chip:+.4e}, |B| "
           f"{edge['bmag'].min():.3f}-{edge['bmag'].max():.3f} T", flush=True)
-    # W7-X standard config: B ~ 2.5 T on axis, boundary |B| modulated by the
-    # mirror field (roughly 1.9-2.9 T at this aspect ratio).
-    assert 1.5 < edge["bmag"].min() and edge["bmag"].max() < 3.5, \
-        "edge |B| outside the physical W7-X range"
 
     # ---- fine render grid (analytic reconstruction, same formulas) -------
     # One flux surface for the 3-D figures (the plasma boundary); the RZ
@@ -776,12 +1064,14 @@ def main():
     nth_r, nzt_r = 240, 120
     th_r = np.linspace(0.0, 2.0 * np.pi, nth_r, endpoint=False)
     zt_r = np.linspace(0.0, 2.0 * np.pi, nzt_r, endpoint=False)
-    jh_slices = tuple(range(ns - 2, 8, -8))   # 97, 89, ..., 17, 9 (12 contours)
+    jh_slices = tuple(range(ns - 2, 8, -8))   # the edge down to s ~ 0.1
     surf_slices = []
     for jh in jh_slices:
-        chip = solve_chip(fams, ns, jh)
-        a = [eval_state(fams, ns, j, th_r, zt_r) for j in (jh, jh + 1)]
-        surf_slices.append(half_grid(a, ns, jh, chip))
+        chip = solve_chip(fams, ns, jh, params, prof)
+        a = [eval_state(fams, ns, j, th_r, zt_r, ntor, nfp)
+             for j in (jh, jh + 1)]
+        surf_slices.append(half_grid(a, ns, jh, chip, prof["phip_avg"](jh),
+                                     prof["lamscale"]))
     surf_3d = [surf_slices[0]]               # the edge is the first contour
     b_all = np.concatenate([s["bmag"].ravel() for s in surf_slices])
     print(f"  3D: 1 flux surface, slices: {len(surf_slices)} contours, "
@@ -793,7 +1083,7 @@ def main():
         print("field lines: tracing d(theta)/d(zeta) = B^theta/B^zeta (RK4) ...",
               flush=True)
         try:
-            lines = field_lines(edge, th, zt,
+            lines = field_lines(edge, th, zt, nfp=nfp,
                                 seeds=[0.0, 2.0 * np.pi / 3, 4.0 * np.pi / 3])
             print(f"  {len(lines)} lines traced", flush=True)
         except Exception as exc:  # decorative; the figure survives without them
@@ -801,7 +1091,7 @@ def main():
             print(f"  field lines skipped: {exc}", flush=True)
 
     # ---- converged magnetic axis (m=0 content of the innermost surface) --
-    axx, axy, axz = converged_axis(fams, ns)
+    axx, axy, axz = converged_axis(fams, ns, ntor, nfp)
     print(f"magnetic axis: R {axx.min():.3f}-{axx.max():.3f}, "
           f"Z {axz.min():.3f}-{axz.max():.3f}", flush=True)
 
@@ -813,14 +1103,24 @@ def main():
     # viridis (bright yellow = large |B|, deep purple = small |B|) is mapped
     # over the actual data range; shading uses the geometric surface normals
     # (surface_intensity), never the |B| heightfield.
+    # Data-derived framing: the render window hugs the plotted surface with
+    # a small margin, so any device fills the frame.
+    r_edge = surf_3d[0]["r12"]
+    z_edge = surf_3d[0]["z12"]
+    lim = 1.06 * float(np.max(r_edge))
+    zlim = 1.10 * float(max(abs(z_edge.min()), abs(z_edge.max())))
     views = [("perspective", "perspective view", dict(elev=24.0, azim=-58.0)),
              ("top", "top view", dict(elev=90.0, azim=-90.0))]
     S = {
         "surf_3d": surf_3d, "surf_slices": surf_slices,
         "fams": fams, "ns": ns, "nzt_r": nzt_r,
+        "nfp": nfp, "ntor": ntor,
         "lines": lines, "axx": axx, "axy": axy, "axz": axz,
         "bmin": b_all.min(), "bmax": b_all.max(),
         "views": views,
+        "title": f"cuMES converged equilibrium — {name}",
+        "lim": lim, "zlim": zlim,
+        "box_aspect": (1.0, 1.0, zlim / lim),
     }
     base = os.path.splitext(args.out)[0]
     jobs = [

@@ -24,7 +24,7 @@ def load(path):
         if len(head) != HEADER.size:
             raise SystemExit(f"error: {path} is not a v1 cumes state container")
         magic, version, ns, mnmax = HEADER.unpack(head)
-        if magic != MAGIC or not (1 <= version <= 2) or ns < 1 or mnmax < 1:
+        if magic != MAGIC or not (1 <= version <= 3) or ns < 1 or mnmax < 1:
             raise SystemExit(f"error: {path} is not a v1 cumes state container")
         n = ns * mnmax
         fams = {}
