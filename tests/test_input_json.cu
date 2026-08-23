@@ -60,7 +60,7 @@ static std::string findError(const cumes::ValidationResult& vr,
                              const std::string& fragment) {
     if (vr.has_value()) return "";
     for (const auto& issue : vr.error().issues()) {
-        if (issue.severity == cumes::Severity::kError &&
+        if (issue.severity == cumes::Severity::ERROR &&
             issue.message.find(fragment) != std::string::npos) {
             return issue.message;
         }
@@ -94,7 +94,7 @@ static void testSolovev() {
     check(s.mpol == 6 && s.ntor == 0 && s.nfp == 1, "solovev: mpol/ntor/nfp");
     check(s.angular.ntheta == 18 && s.angular.nzeta == 1,
           "solovev: resolution defaults");
-    check(s.current_model == cumes::CurrentModel::kFixedIota && s.delt == 0.9 &&
+    check(s.current_model == cumes::CurrentModel::FIXED_IOTA && s.delt == 0.9 &&
               s.physical.phiedge == 1.0,
           "solovev: ncurr/delt/phiedge");
     check(s.stages.size() == 3 && s.stages[0].radial_surfaces == 5 &&
@@ -135,7 +135,7 @@ static void testW7x() {
     check(s.mpol == 12 && s.ntor == 12 && s.nfp == 5, "w7x: mpol/ntor/nfp");
     check(s.angular.ntheta == 30 && s.angular.nzeta == 36,
           "w7x: resolution defaults");
-    check(s.current_model == cumes::CurrentModel::kPrescribedCurrent &&
+    check(s.current_model == cumes::CurrentModel::PRESCRIBED_CURRENT &&
               s.delt == 1.0 && s.physical.phiedge == -1.74,
           "w7x: ncurr/delt/phiedge");
     check(s.physical.curtor == 5000.0 && s.physical.bloat == 1.0 &&
@@ -391,7 +391,7 @@ static void testNegative() {
 }
 
 // "two_power" is accepted for the mass and current profiles and lands in the
-// ProblemSpec as ProfileType::kTwoPower; an absent type stays kPowerSeries.
+// ProblemSpec as ProfileType::TWO_POWER; an absent type stays POWER_SERIES.
 static void testTwoPowerProfiles() {
     cumes::SolverOptions opts;
 
@@ -404,7 +404,7 @@ static void testTwoPowerProfiles() {
         auto vr = cumes::read_and_validate(scratchPath(), opts);
         check(
             vr.has_value() &&
-                vr.value().spec().mass.type == cumes::ProfileType::kTwoPower &&
+                vr.value().spec().mass.type == cumes::ProfileType::TWO_POWER &&
                 vr.value().spec().mass.coefficients.size() == 3,
             "pos: two_power pmass_type parsed");
     }
@@ -420,8 +420,8 @@ static void testTwoPowerProfiles() {
         check(
             vr.has_value() &&
                 vr.value().spec().current.type ==
-                    cumes::ProfileType::kTwoPower &&
-                vr.value().spec().mass.type == cumes::ProfileType::kPowerSeries,
+                    cumes::ProfileType::TWO_POWER &&
+                vr.value().spec().mass.type == cumes::ProfileType::POWER_SERIES,
             "pos: two_power pcurr_type parsed, absent types default");
     }
 

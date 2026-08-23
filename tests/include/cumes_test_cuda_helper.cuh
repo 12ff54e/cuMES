@@ -50,21 +50,21 @@ inline void cc(cudaError_t e, const char* tag) {
 enum class ManufacturedShape {
     // Solovev-like, linear radial envelopes: R_00=4.0, R_10=0.3s, R_20=0.2s,
     // Rss=Rcc, Z_10 (sc+cs)=-0.5s, lambda=0. (test_geometry_ncurr)
-    kSolovevLinear,
-    // As kSolovevLinear but R_20 uses a QUADRATIC s^2 envelope — deliberate:
+    SOLOVEV_LINEAR,
+    // As SOLOVEV_LINEAR but R_20 uses a QUADRATIC s^2 envelope — deliberate:
     // with a linear profile rCon(s) == s*rCon_LCFS exactly, so rCon - rCon0 is
     // identically zero and the constraint force vanishes no matter what tcon0
     // is (test_constraint_tcon would pass vacuously). The quadratic envelope
     // puts the interior off the LCFS-extrapolated reference, making the
     // constraint-force contribution genuinely nonzero. (test_constraint_tcon)
-    kSolovevQuadM2,
+    SOLOVEV_QUAD_M2,
     // Reduced graph fixture: R_00=4.0, R_10=0.3s, m>=2: 0.1s^2, Rss=Rcc,
     // no Z/lambda content. (test_cuda_graph)
-    kGraphQuad,
+    GRAPH_QUAD,
     // Full-mode generic W7-X-shaped content: R has a strong m=0/n=0 DC plus
     // mild m>0 modes, Z and lambda get m=1..3 content with s envelopes — no
     // interior surface collapses to zero geometry. (test_geometry_iso)
-    kW7XGeneric,
+    W7X_GENERIC,
 };
 
 template <typename T>
@@ -91,7 +91,7 @@ inline void manufactured_state(ManufacturedShape shape,
         for (int mode = 0; mode < mnmax; ++mode) {
             int m = mode / (ntor + 1), n = mode % (ntor + 1);
             switch (shape) {
-                case ManufacturedShape::kSolovevLinear:
+                case ManufacturedShape::SOLOVEV_LINEAR:
                     if (m == 0)
                         cc[j + mode * ns] = T(4.0);
                     else if (m == 1)
@@ -104,7 +104,7 @@ inline void manufactured_state(ManufacturedShape shape,
                         zcs[j + mode * ns] = T(-0.5 * s);
                     }
                     break;
-                case ManufacturedShape::kSolovevQuadM2:
+                case ManufacturedShape::SOLOVEV_QUAD_M2:
                     if (m == 0)
                         cc[j + mode * ns] = T(4.0);
                     else if (m == 1)
@@ -118,7 +118,7 @@ inline void manufactured_state(ManufacturedShape shape,
                         zcs[j + mode * ns] = T(-0.5 * s);
                     }
                     break;
-                case ManufacturedShape::kGraphQuad:
+                case ManufacturedShape::GRAPH_QUAD:
                     if (m == 0)
                         cc[j + mode * ns] = T(4.0);
                     else if (m == 1)
@@ -127,7 +127,7 @@ inline void manufactured_state(ManufacturedShape shape,
                         cc[j + mode * ns] = T(0.1 * s2);
                     ss[j + mode * ns] = cc[j + mode * ns];
                     break;
-                case ManufacturedShape::kW7XGeneric:
+                case ManufacturedShape::W7X_GENERIC:
                     if (m == 0 && n == 0) {
                         cc[j + mode * ns] = T(5.6);
                         zcs[j + mode * ns] = T(0.0);

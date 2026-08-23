@@ -28,7 +28,7 @@ namespace cumes {
 
 namespace {
 
-const std::set<std::string> kSupportedKeys = {
+const std::set<std::string> SUPPORTED_KEYS = {
     "mpol",       "ntor",      "nfp",         "ntheta",     "nzeta",
     "ncurr",      "delt",      "phiedge",     "pres_scale", "adiabatic_index",
     "gamma",      "spres_ped", "curtor",      "bloat",      "tcon0",
@@ -39,7 +39,7 @@ const std::set<std::string> kSupportedKeys = {
     "ac_aux_s",   "ac_aux_f",  "raxis_s",     "zaxis_c",    "rbs",
     "zbc",
 };
-const std::set<std::string> kKnownIgnoredKeys = {
+const std::set<std::string> KNOWN_IGNORED_KEYS = {
     "nstep",   "niter",      "ftolv",      "nsurf",     "tsw",     "tpot",
     "tvac",    "nvacskip",   "mgrid_file", "extcur",    "lforbal", "lmorebdy",
     "lrecon",  "lmove_axis", "lthreed",    "lpoloidal", "nthreed", "npoloidal",
@@ -242,9 +242,9 @@ ParsedProblem read_problem_spec(const std::string& path,
     ifPresent("ncurr", [&](const json::Value& v, const char* k) {
         const int nc = getInt(v, k, 0, report);
         if (nc == 0)
-            p.current_model = CurrentModel::kFixedIota;
+            p.current_model = CurrentModel::FIXED_IOTA;
         else if (nc == 1)
-            p.current_model = CurrentModel::kPrescribedCurrent;
+            p.current_model = CurrentModel::PRESCRIBED_CURRENT;
         else
             report.error(k, "ncurr must be 0 or 1");
     });
@@ -346,7 +346,7 @@ ParsedProblem read_problem_spec(const std::string& path,
             }
         }
     } else {
-        p.stages.push_back(kDefaultStage());
+        p.stages.push_back(default_stage());
     }
 
     // ---- boundary ----
@@ -377,9 +377,9 @@ ParsedProblem read_problem_spec(const std::string& path,
         const std::string v =
             getString(root.at(key), key, "power_series", report);
         if (v == "power_series") {
-            out = ProfileType::kPowerSeries;
+            out = ProfileType::POWER_SERIES;
         } else if (v == "two_power" && twoPowerAllowed) {
-            out = ProfileType::kTwoPower;
+            out = ProfileType::TWO_POWER;
         } else if (v == "two_power") {
             report.error(key, "'" + std::string(key) +
                                   "': \"two_power\" is not applicable to the "
@@ -399,9 +399,9 @@ ParsedProblem read_problem_spec(const std::string& path,
     // Unsupported-feature keys are TYPE-CHECKED before the semantic support
     // check, so a scalar/object of the wrong type is a hard error rather than
     // silently ignored.
-    const char* kAuxArrays[] = {"am_aux_s", "am_aux_f", "ai_aux_s",
+    const char* AUX_ARRAYS[] = {"am_aux_s", "am_aux_f", "ai_aux_s",
                                 "ai_aux_f", "ac_aux_s", "ac_aux_f"};
-    for (const char* k : kAuxArrays) {
+    for (const char* k : AUX_ARRAYS) {
         if (!root.contains(k)) continue;
         if (!root.at(k).is_array()) {
             report.error(
@@ -417,8 +417,8 @@ ParsedProblem read_problem_spec(const std::string& path,
                              "are not supported by cuMES (power series only)");
         }
     }
-    const char* kAsymArrays[] = {"raxis_s", "zaxis_c", "rbs", "zbc"};
-    for (const char* k : kAsymArrays) {
+    const char* ASYM_ARRAYS[] = {"raxis_s", "zaxis_c", "rbs", "zbc"};
+    for (const char* k : ASYM_ARRAYS) {
         if (!root.contains(k)) continue;
         if (!root.at(k).is_array()) {
             report.error(
@@ -436,8 +436,8 @@ ParsedProblem read_problem_spec(const std::string& path,
 
     // ---- unknown keys (strict: error; compatibility: warn) ----
     for (const auto& [key, _val] : root.as_object()) {
-        if (kSupportedKeys.count(key) == 0 &&
-            kKnownIgnoredKeys.count(key) == 0) {
+        if (SUPPORTED_KEYS.count(key) == 0 &&
+            KNOWN_IGNORED_KEYS.count(key) == 0) {
             const std::string msg = "unknown input key '" + key + "'";
             if (options.strict_schema) {
                 report.error(key, msg);
@@ -465,7 +465,7 @@ ValidationResult read_and_validate(const std::string& path,
         // A mapping-phase ERROR still invalidates the model — it is a type
         // error that validate() cannot see, because the field kept its default.
         for (const auto& issue : parsed.report.issues()) {
-            if (issue.severity == Severity::kWarning) {
+            if (issue.severity == Severity::WARNING) {
                 vr.value().add_warning(issue.key, issue.message);
             }
         }
@@ -478,7 +478,7 @@ ValidationResult read_and_validate(const std::string& path,
     // validate() failed: merge mapping findings into its report.
     ValidationReport combined = std::move(parsed.report);
     for (const auto& issue : vr.error().issues()) {
-        if (issue.severity == Severity::kError) {
+        if (issue.severity == Severity::ERROR) {
             combined.error(issue.key, issue.message);
         } else {
             combined.warn(issue.key, issue.message);

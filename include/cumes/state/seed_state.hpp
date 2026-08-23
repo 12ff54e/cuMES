@@ -43,7 +43,7 @@ DeviceParams<T> init_params(const ValidatedProblem& vp) {
     p.nfp = s.nfp;
     p.nZnT = p.ntheta * p.nzeta;
     p.mnmax = p.mpol * (p.ntor + 1);  // folded basis: mode = m*(ntor+1)+n
-    p.ncurr = (s.current_model == CurrentModel::kPrescribedCurrent) ? 1 : 0;
+    p.ncurr = (s.current_model == CurrentModel::PRESCRIBED_CURRENT) ? 1 : 0;
     p.delt = T(s.delt);
     p.ftol = T(s.stages.front().tolerance);
     p.max_iter = static_cast<int>(s.stages.front().max_iterations);
@@ -157,12 +157,12 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
     auto* h_zcs = h_state + 4 * one;  // zmncs
     auto* h_lcs = h_state + 5 * one;  // lmncs
     for (size_t i = 0; i < one; ++i) {
-        h_c[i] = T(snap.families[EquilibriumSnapshot::kRmncc][i]);
-        h_zsc[i] = T(snap.families[EquilibriumSnapshot::kZmnsc][i]);
-        h_lsc[i] = T(snap.families[EquilibriumSnapshot::kLmnsc][i]);
-        h_s[i] = T(snap.families[EquilibriumSnapshot::kRmnss][i]);
-        h_zcs[i] = T(snap.families[EquilibriumSnapshot::kZmncs][i]);
-        h_lcs[i] = T(snap.families[EquilibriumSnapshot::kLmncs][i]);
+        h_c[i] = T(snap.families[EquilibriumSnapshot::RMNCC][i]);
+        h_zsc[i] = T(snap.families[EquilibriumSnapshot::ZMNSC][i]);
+        h_lsc[i] = T(snap.families[EquilibriumSnapshot::LMNSC][i]);
+        h_s[i] = T(snap.families[EquilibriumSnapshot::RMNSS][i]);
+        h_zcs[i] = T(snap.families[EquilibriumSnapshot::ZMNCS][i]);
+        h_lcs[i] = T(snap.families[EquilibriumSnapshot::LMNCS][i]);
     }
 
     // vmecpp stores boundary values separately (not in the spectral state);

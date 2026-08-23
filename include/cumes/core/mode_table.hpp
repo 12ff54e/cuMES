@@ -15,7 +15,7 @@
 
 namespace cumes {
 
-enum class ModeParity : std::uint8_t { kEven, kOdd };
+enum class ModeParity : std::uint8_t { EVEN, ODD };
 
 template <class T>
 struct ModeEntry {
@@ -27,7 +27,7 @@ struct ModeEntry {
     int first_surface = 0;  // 0 for m==0, 1 for m>0 (blueprint §4.9 j_min)
     T mn_scale = T(1);      // mscale * nscale (blueprint §4.2 S_mn)
     T xmpq = T(0);          // m*(m-1) (constraint weight, blueprint §4.8)
-    ModeParity parity = ModeParity::kEven;
+    ModeParity parity = ModeParity::EVEN;
 };
 
 template <class T>

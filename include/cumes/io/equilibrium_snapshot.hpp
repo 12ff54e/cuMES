@@ -18,19 +18,19 @@ namespace cumes {
 
 struct EquilibriumSnapshot {
     enum Component : std::uint8_t {
-        kRmncc = 0,  // R: cos(mθ)cos(nζ)
-        kZmnsc = 1,  // Z: sin(mθ)cos(nζ)
-        kLmnsc = 2,  // λ: sin(mθ)cos(nζ)
-        kRmnss = 3,  // R: sin(mθ)sin(nζ)
-        kZmncs = 4,  // Z: cos(mθ)sin(nζ)
-        kLmncs = 5,  // λ: cos(mθ)sin(nζ)
-        kCount = 6,
+        RMNCC = 0,  // R: cos(mθ)cos(nζ)
+        ZMNSC = 1,  // Z: sin(mθ)cos(nζ)
+        LMNSC = 2,  // λ: sin(mθ)cos(nζ)
+        RMNSS = 3,  // R: sin(mθ)sin(nζ)
+        ZMNCS = 4,  // Z: cos(mθ)sin(nζ)
+        LMNCS = 5,  // λ: cos(mθ)sin(nζ)
+        COUNT = 6,
     };
 
     int ns = 0;
     int mnmax = 0;
     // families[c] has ns * mnmax doubles, mode-major (surface contiguous).
-    std::array<std::vector<double>, kCount> families;
+    std::array<std::vector<double>, COUNT> families;
 
     const std::vector<double>& component(Component c) const {
         return families[static_cast<int>(c)];

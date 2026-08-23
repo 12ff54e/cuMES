@@ -147,7 +147,7 @@ static void runAll() {
     {
         // The binary writer must fail at fopen before reading the state.
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, no_dir,
-                                  cumes::OutputFormat::kBinary);
+                                  cumes::OutputFormat::BINARY);
         check(!ok, "open failure: binary returns false");
         check(!fileExists(no_dir), "open failure: no partial file created");
     }
@@ -155,7 +155,7 @@ static void runAll() {
     {
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res,
                                   "no_such_dir_cumes/state.nc",
-                                  cumes::OutputFormat::kNetCdf);
+                                  cumes::OutputFormat::NETCDF);
         check(!ok, "open failure: netcdf returns false");
         check(!fileExists("no_such_dir_cumes/state.nc"),
               "open failure: netcdf no partial file");
@@ -165,7 +165,7 @@ static void runAll() {
     {
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res,
                                   "no_such_dir_cumes/state.h5",
-                                  cumes::OutputFormat::kHdf5);
+                                  cumes::OutputFormat::HDF5);
         check(!ok, "open failure: hdf5 returns false");
         check(!fileExists("no_such_dir_cumes/state.h5"),
               "open failure: hdf5 no partial file");
@@ -187,7 +187,7 @@ static void runAll() {
             exit(1);
         }
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, dir,
-                                  cumes::OutputFormat::kBinary);
+                                  cumes::OutputFormat::BINARY);
         check(!ok, "rename failure: target directory -> returns false");
         check(fileExists(dir), "rename failure: target directory untouched");
         // No stray temp file may remain next to the target.
@@ -212,7 +212,7 @@ static void runAll() {
         const char* path = "test_output_trunc.bin";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
-                                  cumes::OutputFormat::kBinary);
+                                  cumes::OutputFormat::BINARY);
         check(ok, "truncation: binary overwrite succeeds");
         // v1 header: magic (8) + version (4) + ns (4) + mnmax (4); the old
         // 'GARBAGE' bytes must be gone.
@@ -239,7 +239,7 @@ static void runAll() {
         const char* path = "test_output_trunc.nc";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
-                                  cumes::OutputFormat::kNetCdf);
+                                  cumes::OutputFormat::NETCDF);
         check(ok, "truncation: netcdf overwrite succeeds");
         // NC_CLOBBER must have replaced the garbage; the file now starts with
         // the netCDF magic "CDF".
@@ -261,7 +261,7 @@ static void runAll() {
         const char* path = "test_output_trunc.h5";
         writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
         bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
-                                  cumes::OutputFormat::kHdf5);
+                                  cumes::OutputFormat::HDF5);
         check(ok, "truncation: hdf5 overwrite succeeds");
         // HDF5 signature is "\211HDF\r\n\032\n".
         FILE* fp = fopen(path, "rb");

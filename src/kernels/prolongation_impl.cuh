@@ -7,7 +7,7 @@
 // prolongation.cu — grid-sequencing state interpolation (multi-radial-grid).
 //
 // Mirrors vmecpp's Vmec::InterpolateToNextMultigridStep (vmec.cc:1795-2042),
-// kLinear scheme: each spectral coefficient is a function of the radial
+// LINEAR scheme: each spectral coefficient is a function of the radial
 // index s = j/(ns-1), interpolated 2-point linearly in s. Odd-m modes are
 // interpolated in scalxc-decomposed space (xc = c * scalxc, scalxc =
 // 1/max(sqrt(s), sqrt(1/(ns-1)))) so the s^(m/2) near-axis behaviour is

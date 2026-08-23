@@ -33,13 +33,13 @@ struct PassRecord {
     double reason = 0.0;               // RestartReason as int (0/1/2)
     double axis_r = 0.0;               // axis R at zeta=0, pre-descent
 
-    static constexpr int kColumnCount = 15;
+    static constexpr int COLUMN_COUNT = 15;
 };
 
 // The serializer relies on the fields being exactly 15 contiguous doubles with
 // no padding; enforce that once at compile time.
 static_assert(std::is_standard_layout_v<PassRecord>);
-static_assert(sizeof(PassRecord) == PassRecord::kColumnCount * sizeof(double));
+static_assert(sizeof(PassRecord) == PassRecord::COLUMN_COUNT * sizeof(double));
 
 }  // namespace cumes
 

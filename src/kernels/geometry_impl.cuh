@@ -512,7 +512,7 @@ __global__ void computeNormPartialsKernel(
         __syncthreads();
     }
     if (tid == 0) {
-        dVdsH[jH] = DeviceParams<T>::kSignJacobian * s_G[0];
+        dVdsH[jH] = DeviceParams<T>::SIGN_JACOBIAN * s_G[0];
         psum[4 * jH + 0] = s_RZ[0];
         psum[4 * jH + 1] = s_L[0];
         psum[4 * jH + 2] = s_M[0];
@@ -590,9 +590,9 @@ __global__ void jacobianStatsKernel(
     // suppresses gminIdx < nZnT).
     // Device-safe +inf: numeric_limits<T>::infinity() is host-only constexpr
     // in nvcc; CUDART_INF_F / CUDART_INF are the device constants. Pick by T.
-    const T kInf =
+    const T INF =
         (sizeof(T) == sizeof(double)) ? T(CUDART_INF) : T(CUDART_INF_F);
-    T vmin = kInf, vmax = T(0.0), vbad = T(0.0);
+    T vmin = INF, vmax = T(0.0), vbad = T(0.0);
     int argmin = 0;
     bool seen = false;
     for (int i = threadIdx.x; i < nHalf; i += blockDim.x) {
@@ -631,7 +631,7 @@ __global__ void jacobianStatsKernel(
     __shared__ int s_arg[256];
     __shared__ char s_seen[256];
     int tid = threadIdx.x;
-    s_min[tid] = seen ? vmin : kInf;
+    s_min[tid] = seen ? vmin : INF;
     s_max[tid] = vmax;
     s_bad[tid] = vbad;
     s_arg[tid] = seen ? argmin : 0;
@@ -653,7 +653,7 @@ __global__ void jacobianStatsKernel(
     if (tid == 0) {
         // A fully-empty grid (no finite data anywhere) keeps the +inf identity;
         // the solver treats max <= 0 (or here inf) as invalid.
-        rec->jacobian_min_oriented = s_seen[0] ? s_min[0] : kInf;
+        rec->jacobian_min_oriented = s_seen[0] ? s_min[0] : INF;
         rec->jacobian_max_abs = s_max[0];
         rec->jacobian_nonfinite_count = s_bad[0];
         rec->jacobian_min_index = (double)s_arg[0];
@@ -684,7 +684,7 @@ void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p,
                                                 cudaStream_t stream) const {
     const int nHalf = (p.ns - 1) * p.nZnT;
     jacobianStatsKernel<T>
-        <<<1, 256, 0, stream>>>(d_gsqrt_, nHalf, 1, T(p.kSignJacobian), rec);
+        <<<1, 256, 0, stream>>>(d_gsqrt_, nHalf, 1, T(p.SIGN_JACOBIAN), rec);
     cumes::check_cuda(cudaGetLastError(), "jacobianStats");
 }
 

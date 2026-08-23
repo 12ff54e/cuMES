@@ -703,7 +703,7 @@ class NetcdfV1Reader final : public Reader {
             {
                 const auto n_opt = checked_mul(ns, mnmax);
                 if (!n_opt) return fail("dimension product overflows size_t");
-                if (*n_opt > cumes::io_detail::kMaxStateElementsPerFamily) {
+                if (*n_opt > cumes::io_detail::MAX_STATE_ELEMENTS_PER_FAMILY) {
                     return fail("state dimensions exceed the resource cap");
                 }
                 const auto bytes = checked_mul(*n_opt, sizeof(double));
@@ -735,7 +735,7 @@ class NetcdfV1Reader final : public Reader {
                     }
                     // Documented resource cap (handoff §4): a hostile length
                     // must fail before the host allocates it.
-                    if (len > cumes::io_detail::kMaxProvenanceStringBytes) {
+                    if (len > cumes::io_detail::MAX_PROVENANCE_STRING_BYTES) {
                         return false;
                     }
                     out.resize(len);
@@ -794,8 +794,8 @@ class NetcdfV1Reader final : public Reader {
                 }
                 // Documented stage/restart resource caps (handoff §4): a
                 // hostile dimension must fail before the host allocates it.
-                if (nstages > cumes::io_detail::kMaxStageCount ||
-                    nrestarts > cumes::io_detail::kMaxStageCount) {
+                if (nstages > cumes::io_detail::MAX_STAGE_COUNT ||
+                    nrestarts > cumes::io_detail::MAX_STAGE_COUNT) {
                     return fail(
                         "stage/restart dimensions exceed the resource cap");
                 }
@@ -941,7 +941,7 @@ class NetcdfV1Reader final : public Reader {
                                         "malformed embedded input record");
                                 }
                                 if (nstages_in >
-                                    cumes::io_detail::kMaxStageCount) {
+                                    cumes::io_detail::MAX_STAGE_COUNT) {
                                     return fail(
                                         "embedded input stage count "
                                         "exceeds the resource cap");

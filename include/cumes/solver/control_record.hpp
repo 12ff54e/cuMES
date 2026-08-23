@@ -16,9 +16,9 @@ namespace cumes {
 // part of the frozen telemetry contract: the legacy per-iteration record
 // writes `(int)reason` (0 = none, 1 = bad-Jacobian, 2 = bad-progress).
 enum class RestartReason : std::uint8_t {
-    kNone = 0,
-    kBadJacobian = 1,
-    kBadProgress = 2,
+    NONE = 0,
+    BAD_JACOBIAN = 1,
+    BAD_PROGRESS = 2,
 };
 
 // Oriented Jacobian statistics (computeJacobianStats): min(signJ·√g),
@@ -58,7 +58,7 @@ template <typename T>
 struct RestartDecision {
     using val_type = T;
 
-    RestartReason reason = RestartReason::kNone;
+    RestartReason reason = RestartReason::NONE;
     bool do_refresh = false;  // refresh the checkpoint AFTER descent
     Damping<T> damping;
 };
@@ -118,7 +118,7 @@ static_assert(std::is_trivially_copyable<ControlStatus>::value,
 // kernel and IterationController::jacobian_invalid (they must decide
 // identically: the device bit guards the DAG, the host rule owns the
 // restore/delt bookkeeping).
-inline constexpr double kJacobianEps = 1e-12;
+inline constexpr double JACOBIAN_EPS = 1e-12;
 
 }  // namespace cumes
 

@@ -20,8 +20,8 @@
 #include <vector>
 using namespace cumes::test;
 
-constexpr int kNs = 3, kMpol = 3, kNtor = 2, kNtheta = 16, kNzeta = 8, kNfp = 1;
-constexpr int kMnmax = kMpol * (kNtor + 1), kNZnT = kNtheta * kNzeta;
+constexpr int NS = 3, MPOL = 3, NTOR = 2, NTHETA = 16, NZETA = 8, NFP = 1;
+constexpr int MNMAX = MPOL * (NTOR + 1), NZNT = NTHETA * NZETA;
 
 static void checkNear(double g,
                       double e,
@@ -1157,14 +1157,14 @@ static int runTests() {
     std::cout << format("--- {} precision ---\n",
                         sizeof(T) == sizeof(double) ? "double" : "float");
     DeviceParams<T> p;
-    p.ns = kNs;
-    p.mnmax = kMnmax;
-    p.ntheta = kNtheta;
-    p.nzeta = kNzeta;
-    p.nfp = kNfp;
-    p.nZnT = kNZnT;
-    p.mpol = kMpol;
-    p.ntor = kNtor;
+    p.ns = NS;
+    p.mnmax = MNMAX;
+    p.ntheta = NTHETA;
+    p.nzeta = NZETA;
+    p.nfp = NFP;
+    p.nZnT = NZNT;
+    p.mpol = MPOL;
+    p.ntor = NTOR;
     p.ncurr = 0;
     p.delt = T(1.0);
     p.ftol = T(1e-14);

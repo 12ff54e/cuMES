@@ -77,8 +77,8 @@ static bool writeHistoricalV1(const EquilibriumSnapshot& snap,
         w_i32(n);
         f.write(s, n);
     };
-    const char kMagic[8] = {'C', 'U', 'M', 'E', 'S', '0', '0', '1'};
-    f.write(kMagic, 8);
+    const char MAGIC[8] = {'C', 'U', 'M', 'E', 'S', '0', '0', '1'};
+    f.write(MAGIC, 8);
     w_i32(1);  // version (historical)
     w_i32(snap.ns);
     w_i32(snap.mnmax);
@@ -87,7 +87,7 @@ static bool writeHistoricalV1(const EquilibriumSnapshot& snap,
                 static_cast<std::streamsize>(fam.size() * sizeof(double)));
     }
     w_i32(0);          // precision = double
-    w_i32(0);          // status = kConverged
+    w_i32(0);          // status = CONVERGED
     w_i32(42);         // total_effective_iterations
     w_i32(0);          // nstages
     w_str("r1");       // revision
@@ -138,8 +138,8 @@ static bool writeHistoricalV3(const EquilibriumSnapshot& snap,
                 reinterpret_cast<const char*>(v.data()),
                 static_cast<std::streamsize>(v.size() * sizeof(std::int32_t)));
     };
-    const char kMagic[8] = {'C', 'U', 'M', 'E', 'S', '0', '0', '1'};
-    f.write(kMagic, 8);
+    const char MAGIC[8] = {'C', 'U', 'M', 'E', 'S', '0', '0', '1'};
+    f.write(MAGIC, 8);
     w_i32(3);  // version (historical: record without profile-type strings)
     w_i32(snap.ns);
     w_i32(snap.mnmax);
@@ -148,7 +148,7 @@ static bool writeHistoricalV3(const EquilibriumSnapshot& snap,
                 static_cast<std::streamsize>(fam.size() * sizeof(double)));
     }
     w_i32(0);                // precision = double
-    w_i32(0);                // status = kConverged
+    w_i32(0);                // status = CONVERGED
     w_i32(42);               // total_effective_iterations
     w_i32(0);                // nstages
     w_str("r3");             // revision
@@ -213,7 +213,7 @@ static bool snapshotsEqual(const EquilibriumSnapshot& a,
 // the NetCDF/HDF5 round trip is exact.
 static RunReport makeIoReport(const cumes::ValidatedProblem& vp) {
     RunReport r;
-    r.status = cumes::RunStatus::kConverged;
+    r.status = cumes::RunStatus::CONVERGED;
     r.total_effective_iterations = 21;
     cumes::StageReport s1;
     s1.ns = 5;
@@ -341,7 +341,7 @@ static void runPrecision() {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string v1Path = scratch("v1");
         OutputSpec spec;
-        spec.format = OutputFormat::kBinary;
+        spec.format = OutputFormat::BINARY;
         spec.path = v1Path;
         auto w = cumes::make_writer(spec.format);
         auto r = cumes::make_reader(spec.format);
@@ -375,7 +375,7 @@ static void runPrecision() {
         const std::string v1OldPath = scratch("v1old");
         check(writeHistoricalV1(snap, v1OldPath),
               "v1 historical: fixture written");
-        auto r = cumes::make_reader(OutputFormat::kBinary);
+        auto r = cumes::make_reader(OutputFormat::BINARY);
         check(r != nullptr, "v1 historical: reader factory");
         if (r) {
             RunReport back;
@@ -405,7 +405,7 @@ static void runPrecision() {
         const std::string v3OldPath = scratch("v3old");
         check(writeHistoricalV3(snap, v3OldPath),
               "v3 historical: fixture written");
-        auto r = cumes::make_reader(OutputFormat::kBinary);
+        auto r = cumes::make_reader(OutputFormat::BINARY);
         check(r != nullptr, "v3 historical: reader factory");
         if (r) {
             RunReport back;
@@ -436,10 +436,10 @@ static void runPrecision() {
     // v1: the complete RunReport + restart metadata round trip.
     const EquilibriumSnapshot snap2 = cumes::snapshot_from_device(storage);
 #ifdef CUMES_HAVE_NETCDF
-    checkV1RoundTrip<T>(snap2, vp, OutputFormat::kNetCdf, "v1nc");
+    checkV1RoundTrip<T>(snap2, vp, OutputFormat::NETCDF, "v1nc");
 #endif
 #ifdef CUMES_HAVE_HDF5
-    checkV1RoundTrip<T>(snap2, vp, OutputFormat::kHdf5, "v1h5");
+    checkV1RoundTrip<T>(snap2, vp, OutputFormat::HDF5, "v1h5");
 #endif
 
     // ---- versioned checkpoint round-trips the bridged snapshot ------------

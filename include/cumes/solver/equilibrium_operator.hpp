@@ -149,7 +149,7 @@ class EquilibriumOperator {
 
     // Env-gated dump-window knobs (CUMES_DUMP_ITER / CUMES_E2_START / max
     // iter).
-    int kDumpIter_ = 150, kE2Start_ = 560, kMaxIterEff_ = 0;
+    int dump_iter_ = 150, e2_start_ = 560, max_iter_eff_ = 0;
 };
 
 }  // namespace cumes

@@ -692,8 +692,8 @@ int main() {
     // broken production force (or forward-transform) formula that still
     // permits convergence shows up as O(1) residuals / O(1) pointwise
     // disagreement instead of passing on the shared-kernel margin.
-    const double kFailThresh = 1e-4;
-    const double kAgreeThresh = 1e-4;
+    const double FAIL_THRESH = 1e-4;
+    const double AGREE_THRESH = 1e-4;
 
     // ---- Independent gate on the converged state ----
     ForceGate g0 =
@@ -708,13 +708,13 @@ int main() {
         g0.fsqr_cpu, g0.fsqz_cpu, g0.fsql_cpu);
     std::cout << format(
         "CPU-vs-production force agreement: max |diff| = {:.3e}\n", g0.maxdiff);
-    check(g0.maxdiff <= kAgreeThresh,
+    check(g0.maxdiff <= AGREE_THRESH,
           "CPU force formula agrees with the production force path (1e-4)");
-    check(g0.fsqr_cpu <= kFailThresh,
+    check(g0.fsqr_cpu <= FAIL_THRESH,
           "FSQR small for converged equilibrium (independent CPU path)");
-    check(g0.fsqz_cpu <= kFailThresh,
+    check(g0.fsqz_cpu <= FAIL_THRESH,
           "FSQZ small for converged equilibrium (independent CPU path)");
-    check(g0.fsql_cpu <= kFailThresh,
+    check(g0.fsql_cpu <= FAIL_THRESH,
           "FSQL small for converged equilibrium (independent CPU path)");
 
     // ---- Sensitivity control: the gate must actually fire. Corrupt one
@@ -734,7 +734,7 @@ int main() {
         "CORRUPTED state (Zsc x 1e3) — CPU residuals:      FSQR = {:.3e}  FSQZ "
         "= {:.3e}  FSQL = {:.3e}  maxdiff = {:.3e}\n",
         g1.fsqr_cpu, g1.fsqz_cpu, g1.fsql_cpu, g1.maxdiff);
-    check(std::max(g1.fsqr_cpu, g1.fsqz_cpu) > kFailThresh,
+    check(std::max(g1.fsqr_cpu, g1.fsqz_cpu) > FAIL_THRESH,
           "corrupted state: the independent gate FIRES (O(1) residuals)");
 
     // Restore the full converged state (only Zsc was changed, but re-uploading
@@ -763,8 +763,8 @@ int main() {
         "RESTORED state — CPU residuals:                   FSQR = {:.3e}  FSQZ "
         "= {:.3e}  FSQL = {:.3e}\n",
         g2.fsqr_cpu, g2.fsqz_cpu, g2.fsql_cpu);
-    check(g2.fsqr_cpu <= kFailThresh && g2.fsqz_cpu <= kFailThresh &&
-              g2.fsql_cpu <= kFailThresh,
+    check(g2.fsqr_cpu <= FAIL_THRESH && g2.fsqz_cpu <= FAIL_THRESH &&
+              g2.fsql_cpu <= FAIL_THRESH,
           "restored state: the independent gate passes again");
 
     // Cleanup

@@ -73,7 +73,7 @@ int main() {
         check(!ctl.classify_invariant(inv).converged,
               "0.1 > ftol => not converged");
         auto d = ctl.decide_restart(prec, inv);
-        check(d.reason == RestartReason::kNone, "anchor pass never restarts");
+        check(d.reason == RestartReason::NONE, "anchor pass never restarts");
         check(!d.do_refresh, "anchor pass (age 0) never refreshes");
         // First pass: history all 0.15/0.9, so otav = 0.15/0.9 and
         // dtau = 0.9 * otav / 2 = 0.075, b1 = 0.925, fac = 1/1.075.
@@ -99,7 +99,7 @@ int main() {
         const double blowup[3] = {10.0, 10.0, 10.0};
         ctl.classify_invariant(inv);
         auto d = ctl.decide_restart(blowup, inv);
-        check(d.reason == RestartReason::kBadJacobian,
+        check(d.reason == RestartReason::BAD_JACOBIAN,
               "fsq>100*res0 => bad jacobian");
         ctl.after_descent(d);
         check_near(ctl.delta_t(), 0.81, 1e-15,
@@ -142,7 +142,7 @@ int main() {
             const double prec[3] = {1e-4, 1e-4, 1e-4};  // fsq = 3e-4 == res0
             ctl.classify_invariant(inv);
             auto d = ctl.decide_restart(prec, inv);
-            check(d.reason == RestartReason::kNone,
+            check(d.reason == RestartReason::NONE,
                   "steady good pass does not restart");
             if (ctl.effective_iteration() - ctl.restart_anchor() > 10) {
                 saw_refresh = saw_refresh || d.do_refresh;
@@ -157,7 +157,7 @@ int main() {
         const double prec[3] = {3e-3, 3e-3, 3e-3};
         ctl.classify_invariant(inv);
         auto d = ctl.decide_restart(prec, inv);
-        check(d.reason == RestartReason::kBadProgress,
+        check(d.reason == RestartReason::BAD_PROGRESS,
               "stalled pass => bad progress");
         check(!d.do_refresh, "bad progress is not a refresh");
         ctl.after_descent(d);

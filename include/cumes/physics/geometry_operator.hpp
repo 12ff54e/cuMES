@@ -45,7 +45,7 @@ class GeometryOperator {
     // jacobian_* slots (DOUBLE in both builds — ADR-0001 control-record
     // follow-up). The finalize step that turns the stats into
     // status.jacobian_valid lives with the solver (jacobianFinalizeKernel in
-    // kernels/solver_impl.cuh); both use the shared kJacobianEps rule.
+    // kernels/solver_impl.cuh); both use the shared JACOBIAN_EPS rule.
     void jacobian_stats(const DeviceParams<T>& p,
                         ControlRecord* rec,
                         cudaStream_t stream) const;

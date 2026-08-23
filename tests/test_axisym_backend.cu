@@ -25,8 +25,8 @@
 #include <vector>
 using namespace cumes::test;
 
-constexpr int kNs = 5, kMpol = 6, kNtor = 0, kNtheta = 18, kNzeta = 1, kNfp = 1;
-constexpr int kMnmax = kMpol * (kNtor + 1), kNZnT = kNtheta * kNzeta;
+constexpr int NS = 5, MPOL = 6, NTOR = 0, NTHETA = 18, NZETA = 1, NFP = 1;
+constexpr int MNMAX = MPOL * (NTOR + 1), NZNT = NTHETA * NZETA;
 
 // Local scratch bundle replacing the deleted ConstraintWorkspace (the A/B test
 // allocates its own constraint buffers rather than borrowing the operator's).
@@ -445,14 +445,14 @@ static int runTests() {
     std::cout << format("--- {} precision ---\n",
                         sizeof(T) == sizeof(double) ? "double" : "float");
     DeviceParams<T> p;
-    p.ns = kNs;
-    p.mnmax = kMnmax;
-    p.ntheta = kNtheta;
-    p.nzeta = kNzeta;
-    p.nfp = kNfp;
-    p.nZnT = kNZnT;
-    p.mpol = kMpol;
-    p.ntor = kNtor;
+    p.ns = NS;
+    p.mnmax = MNMAX;
+    p.ntheta = NTHETA;
+    p.nzeta = NZETA;
+    p.nfp = NFP;
+    p.nZnT = NZNT;
+    p.mpol = MPOL;
+    p.ntor = NTOR;
     p.ncurr = 0;
     p.delt = T(1.0);
     p.ftol = T(1e-14);

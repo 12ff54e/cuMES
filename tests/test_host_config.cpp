@@ -85,7 +85,7 @@ static std::string findError(const ValidationResult& vr,
                              const std::string& fragment) {
     if (vr.has_value()) return "";
     for (const auto& issue : vr.error().issues()) {
-        if (issue.severity == Severity::kError &&
+        if (issue.severity == Severity::ERROR &&
             issue.message.find(fragment) != std::string::npos) {
             return issue.message;
         }
@@ -145,17 +145,17 @@ static void testModeTable() {
           "solovev: modes()=6");
     // mode = m*(ntor+1)+n; m=0,n=0 -> even parity, mn_scale 1, xmpq 0.
     check(table[0].m == 0 && table[0].n == 0 &&
-              table[0].parity == cumes::ModeParity::kEven &&
+              table[0].parity == cumes::ModeParity::EVEN &&
               table[0].mn_scale == 1.0 && table[0].xmpq == 0.0,
           "solovev: (0,0) entry");
     // m=1,n=0 -> odd, mn_scale sqrt(2), xmpq 0, first_surface 1.
     const auto& m1 = table[1];
-    check(m1.m == 1 && m1.n == 0 && m1.parity == cumes::ModeParity::kOdd &&
+    check(m1.m == 1 && m1.n == 0 && m1.parity == cumes::ModeParity::ODD &&
               m1.mn_scale == std::sqrt(2.0) && m1.first_surface == 1,
           "solovev: (1,0) entry");
     // m=2,n=0 -> even, mn_scale sqrt(2), xmpq 2.
     const auto& m2 = table[2];
-    check(m2.parity == cumes::ModeParity::kEven &&
+    check(m2.parity == cumes::ModeParity::EVEN &&
               m2.mn_scale == std::sqrt(2.0) && m2.xmpq == 2.0 &&
               m2.first_surface == 1,
           "solovev: (2,0) entry");
@@ -172,7 +172,7 @@ static void testModeTable() {
 
 static void testPrecisionFloor() {
     SolverOptions opts;
-    opts.precision = PrecisionPolicy::kMixedFloat;
+    opts.precision = PrecisionPolicy::MIXED_FLOAT;
     writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
@@ -463,7 +463,7 @@ static void testMalformed() {
         spec.mpol = 2;
         spec.ntor = 0;
         spec.nfp = 1;
-        spec.current_model = cumes::CurrentModel::kPrescribedCurrent;
+        spec.current_model = cumes::CurrentModel::PRESCRIBED_CURRENT;
         spec.physical.curtor = 1.0;
         spec.mass.coefficients = {1.0};
         spec.toroidal_flux.coefficients = {1.0};
@@ -523,10 +523,10 @@ static void testMalformed() {
 // polynomials of degree ≤ 19), and the axis/edge endpoints are exact for any
 // exponent: p(0) = c0·μ0·pres_scale, p(1) = 0, I(0) = 0.
 static void testTwoPowerEvaluators() {
-    const double mu0 = DeviceParams<double>::kMu0;
+    const double mu0 = DeviceParams<double>::MU_0;
 
     ProblemSpec sp;
-    sp.mass.type = cumes::ProfileType::kTwoPower;
+    sp.mass.type = cumes::ProfileType::TWO_POWER;
     sp.mass.coefficients = {1.0, 1.0, 1.0};
     sp.physical.pres_scale = 2.0;
     const double x = 0.375;
@@ -536,7 +536,7 @@ static void testTwoPowerEvaluators() {
           "two_power mass profile matches the closed form");
 
     ProblemSpec sp2;
-    sp2.mass.type = cumes::ProfileType::kTwoPower;
+    sp2.mass.type = cumes::ProfileType::TWO_POWER;
     sp2.mass.coefficients = {2.0, 3.0, 4.0};
     check(cumes::evalMassProfile<double>(sp2, 0.0) == mu0 * 2.0,
           "two_power mass at the axis is c0·μ0·pres_scale");
@@ -544,7 +544,7 @@ static void testTwoPowerEvaluators() {
           "two_power mass at the edge is zero");
 
     ProblemSpec sp3;
-    sp3.current.type = cumes::ProfileType::kTwoPower;
+    sp3.current.type = cumes::ProfileType::TWO_POWER;
     sp3.current.coefficients = {1.0, 1.0, 1.0};
     const double want_i = x - 0.5 * x * x;
     const double got_i = cumes::evalCurrProfile<double>(sp3, x);

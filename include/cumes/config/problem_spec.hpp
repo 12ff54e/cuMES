@@ -15,21 +15,21 @@
 namespace cumes {
 
 enum class CurrentModel : std::uint8_t {
-    kFixedIota = 0,         // ncurr = 0
-    kPrescribedCurrent = 1  // ncurr = 1
+    FIXED_IOTA = 0,         // ncurr = 0
+    PRESCRIBED_CURRENT = 1  // ncurr = 1
 };
 
-// The radial-profile parameterizations cuMES supports. `kTwoPower` is
+// The radial-profile parameterizations cuMES supports. `TWO_POWER` is
 // vmecpp's "two_power": f(s) = c0·(1 − s^c1)^c2, applicable to the mass
 // (pressure) and current profiles only — the iota profile stays a power
 // series (see json_reader.cpp).
-enum class ProfileType : std::uint8_t { kPowerSeries = 0, kTwoPower = 1 };
+enum class ProfileType : std::uint8_t { POWER_SERIES = 0, TWO_POWER = 1 };
 
 // One profile coefficient vector (am/ac/ai/aphi) plus its parameterization.
-// `coefficients` is the raw coefficient list; for kPowerSeries its length is
-// the polynomial order, for kTwoPower entries 0..2 are c0, c1, c2.
+// `coefficients` is the raw coefficient list; for POWER_SERIES its length is
+// the polynomial order, for TWO_POWER entries 0..2 are c0, c1, c2.
 struct ProfileSpec {
-    ProfileType type = ProfileType::kPowerSeries;
+    ProfileType type = ProfileType::POWER_SERIES;
     std::vector<double> coefficients;
 };
 
@@ -37,9 +37,9 @@ struct ProfileSpec {
 // JSON and in the embedded normalized-input record.
 inline const char* profileTypeToString(ProfileType t) {
     switch (t) {
-        case ProfileType::kPowerSeries:
+        case ProfileType::POWER_SERIES:
             return "power_series";
-        case ProfileType::kTwoPower:
+        case ProfileType::TWO_POWER:
             return "two_power";
     }
     return "power_series";
@@ -79,7 +79,7 @@ struct ProblemSpec {
     int ntor = 0;
     int nfp = 1;
     AngularResolution angular;
-    CurrentModel current_model = CurrentModel::kFixedIota;
+    CurrentModel current_model = CurrentModel::FIXED_IOTA;
     double delt = 0.9;
 
     ProfileSpec mass;           // am (pressure/mass power series)
@@ -104,7 +104,7 @@ struct ProblemSpec {
 
 // The legacy fixed-capacity defaults are reproduced here as the default single
 // stage, matching InputParams ns=11 / max_iter=1000 / ftol=1e-16.
-inline StageRequest kDefaultStage() {
+inline StageRequest default_stage() {
     return StageRequest{11, 1000, 1e-16};
 }
 

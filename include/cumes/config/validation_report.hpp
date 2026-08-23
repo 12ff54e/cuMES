@@ -14,10 +14,10 @@
 
 namespace cumes {
 
-enum class Severity : std::uint8_t { kError, kWarning };
+enum class Severity : std::uint8_t { ERROR, WARNING };
 
 struct ValidationIssue {
-    Severity severity = Severity::kError;
+    Severity severity = Severity::ERROR;
     std::string key;      // the offending input key, or empty
     std::string message;  // human-readable, matches the legacy fragments
 };

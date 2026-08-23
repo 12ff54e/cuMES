@@ -54,7 +54,7 @@ static void runConstraint(T tcon0,
     p.lamscale = T(0.0);
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
-    // Shared manufactured state — kSolovevQuadM2, whose m>=2 R content uses a
+    // Shared manufactured state — SOLOVEV_QUAD_M2, whose m>=2 R content uses a
     // QUADRATIC radial envelope (not linear s): with a linear profile
     // rCon(s) == s*rCon_LCFS exactly, so rCon - rCon0 is identically zero and
     // the constraint force vanishes no matter what tcon0 is — the test would
@@ -62,7 +62,7 @@ static void runConstraint(T tcon0,
     // LCFS-extrapolated reference, making the constraint-force contribution
     // genuinely nonzero. (Deliberate — see the ManufacturedShape comment.)
     std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-    manufactured_state<T>(ManufacturedShape::kSolovevQuadM2, p.ns, p.mnmax,
+    manufactured_state<T>(ManufacturedShape::SOLOVEV_QUAD_M2, p.ns, p.mnmax,
                           p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
     upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
                  p.mnmax);

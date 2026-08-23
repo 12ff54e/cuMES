@@ -631,7 +631,7 @@ __global__ void lambdaPrecAssembleKernel(
 //   faclam = n^2*bLambda + 2mn*sign(b)*dLambda + m^2*cLambda
 //          (n=0 here, so faclam = m^2*cLambda)
 //   lambdaPrec = pFactor / faclam * sqrt(s)^pwr
-// with pFactor = kLambdaPreconditionerDampingFactor / (4*lamscale^2),
+// with pFactor = LAMBDA_PRECONDITIONER_DAMPING_FACTOR / (4*lamscale^2),
 // lamscale = sqrt(rmsPhiP * deltaS), and
 // pwr = min(m^2 / 16^2, 8) suppressing high-m modes.
 // The m=0 (n=0) mode is skipped (stays 0), matching vmecpp — lambda_00 is
@@ -692,7 +692,7 @@ __global__ void lambdaPrecFinalizeKernel(
     T cFull = T(0.5) * (cLambda[jF + 1] + cLambda[jF]);
     T faclam = tnn * bFull + tmn * copysign(dFull, bFull) + T(m * m) * cFull;
     if (faclam == T(0.0))
-        faclam = T(-1.0e-10);  // kLambdaPreconditionerZeroGuard
+        faclam = T(-1.0e-10);  // LAMBDA_PRECONDITIONER_ZERO_GUARD
     lambdaPrec[mode * ns + jF] = pFactor / faclam * pow(sqrtS_F[jF], pwr);
 }
 
@@ -1209,8 +1209,8 @@ void cumes::Preconditioner<T>::enqueue_apply(
 // precon elements. The fzcs scale matters only when the mixed fzcs is
 // nonzero (fix_m1_gauge = false), i.e. for iter2 >= 2 before convergence.
 // Applied right before the RZ preconditioner (after the invariant residuals).
-// (Moved from kernels/solver_impl.cuh — the operator owns the PreconWorkspace these
-// elements live in.)
+// (Moved from kernels/solver_impl.cuh — the operator owns the PreconWorkspace
+// these elements live in.)
 template <typename T>
 __global__ void m1PreconScaleKernel(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,

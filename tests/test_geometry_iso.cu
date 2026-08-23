@@ -23,7 +23,7 @@
 using namespace cumes::test;
 
 // Manufacture a non-degenerate spectral state on the W7-X shape (the shared
-// kW7XGeneric fixture in cumes_test_cuda_helper.cuh). The content is
+// W7X_GENERIC fixture in cumes_test_cuda_helper.cuh). The content is
 // deliberately generic (all modes get a mild radial envelope) so no interior
 // surface collapses to zero geometry: R has a strong m=0/n=0 DC plus a few m>0
 // modes, Z and lambda get m=1..3 content with the same s envelopes. This
@@ -34,7 +34,7 @@ template <typename T>
 static void fillState(cumes::SpectralStorage<T>& storage,
                       const DeviceParams<T>& p) {
     std::vector<T> hcc, hss, hzsc, hzcs, hlsc, hlcs;
-    manufactured_state<T>(ManufacturedShape::kW7XGeneric, p.ns, p.mnmax, p.ntor,
+    manufactured_state<T>(ManufacturedShape::W7X_GENERIC, p.ns, p.mnmax, p.ntor,
                           hcc, hss, hzsc, hzcs, hlsc, hlcs);
     upload_state(storage, hcc, hss, hzsc, hzcs, hlsc, hlcs, p.ns, p.mnmax);
 }
@@ -54,7 +54,7 @@ int main() {
     p.nZnT = p.ntheta * p.nzeta;
     p.mnmax = p.mpol * (p.ntor + 1);
     p.ncurr =
-        (spec.current_model == cumes::CurrentModel::kPrescribedCurrent) ? 1 : 0;
+        (spec.current_model == cumes::CurrentModel::PRESCRIBED_CURRENT) ? 1 : 0;
     p.delt = spec.delt;
     p.ftol = spec.stages.back().tolerance;
     p.max_iter = static_cast<int>(spec.stages.back().max_iterations);

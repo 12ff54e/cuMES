@@ -369,7 +369,7 @@ static void runGuardNoop(T label) {
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-    manufactured_state<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+    manufactured_state<T>(ManufacturedShape::SOLOVEV_LINEAR, p.ns, p.mnmax,
                           p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
     upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
                  p.mnmax);
@@ -573,12 +573,12 @@ static void runCollapsedDag(T label) {
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     // Seed with the manufactured geometry so the caches are REAL first. The
-    // Z families are negated: signJ = -1, and the kSolovevLinear Z sign gives
+    // Z families are negated: signJ = -1, and the SOLOVEV_LINEAR Z sign gives
     // a Jacobian of the opposite orientation (signJ*sqrt(g) < 0 -> invalid).
     // Mirroring Z flips tau and makes the manufactured state a VALID pass.
     {
         std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-        manufactured_state<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+        manufactured_state<T>(ManufacturedShape::SOLOVEV_LINEAR, p.ns, p.mnmax,
                               p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
         for (auto& v : h_zsc) v = -v;
         for (auto& v : h_zcs) v = -v;
@@ -683,7 +683,7 @@ static void runSignFlipStats(T label) {
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-    manufactured_state<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+    manufactured_state<T>(ManufacturedShape::SOLOVEV_LINEAR, p.ns, p.mnmax,
                           p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
     upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
                  p.mnmax);

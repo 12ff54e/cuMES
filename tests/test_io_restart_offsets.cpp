@@ -368,13 +368,12 @@ int main() {
     if (!dir.ok()) return 1;
 
 #ifdef CUMES_HAVE_NETCDF
-    testBackend("netcdf", writeNetcdfFixture, OutputFormat::kNetCdf, ".nc",
-                dir);
+    testBackend("netcdf", writeNetcdfFixture, OutputFormat::NETCDF, ".nc", dir);
 #else
     std::cout << "SKIP netcdf corrupted-offset cases (backend not compiled)\n";
 #endif
 #ifdef CUMES_HAVE_HDF5
-    testBackend("hdf5", writeHdf5Fixture, OutputFormat::kHdf5, ".h5", dir);
+    testBackend("hdf5", writeHdf5Fixture, OutputFormat::HDF5, ".h5", dir);
 #else
     std::cout << "SKIP hdf5 corrupted-offset cases (backend not compiled)\n";
 #endif

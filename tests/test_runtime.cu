@@ -23,22 +23,22 @@ using namespace cumes::test;
 // The two component enums must agree so the slab, the host snapshot, and the
 // forward-DFT residual layout all share one component order.
 static_assert(static_cast<int>(cumes::SpectralComponent::Rcc) ==
-                  cumes::EquilibriumSnapshot::kRmncc,
+                  cumes::EquilibriumSnapshot::RMNCC,
               "SpectralComponent/EquilibriumSnapshot component order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Zsc) ==
-                  cumes::EquilibriumSnapshot::kZmnsc,
+                  cumes::EquilibriumSnapshot::ZMNSC,
               "order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Lsc) ==
-                  cumes::EquilibriumSnapshot::kLmnsc,
+                  cumes::EquilibriumSnapshot::LMNSC,
               "order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Rss) ==
-                  cumes::EquilibriumSnapshot::kRmnss,
+                  cumes::EquilibriumSnapshot::RMNSS,
               "order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Zcs) ==
-                  cumes::EquilibriumSnapshot::kZmncs,
+                  cumes::EquilibriumSnapshot::ZMNCS,
               "order");
 static_assert(static_cast<int>(cumes::SpectralComponent::Lcs) ==
-                  cumes::EquilibriumSnapshot::kLmncs,
+                  cumes::EquilibriumSnapshot::LMNCS,
               "order");
 
 // Write through a SpectralView on device; host verifies the component-major
@@ -51,7 +51,7 @@ __global__ void writeSpectral(
     if (i >= total) return;
     int mode = i / v.ns();
     int surf = i % v.ns();
-    for (int c = 0; c < cumes::kSpectralComponentCount; ++c) {
+    for (int c = 0; c < cumes::SPECTRAL_COMPONENT_COUNT; ++c) {
         v(static_cast<cumes::SpectralComponent>(c), mode, surf) =
             (double)(c * total + i);
     }

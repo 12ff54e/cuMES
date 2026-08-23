@@ -33,7 +33,7 @@ enum class SpectralComponent : std::uint8_t {
     Count = 6,
 };
 
-inline constexpr int kSpectralComponentCount = 6;
+inline constexpr int SPECTRAL_COMPONENT_COUNT = 6;
 
 // Mathematical-domain tags. The same six-component layout is reused for the
 // physical state, decomposed residuals, decomposed velocities, and the

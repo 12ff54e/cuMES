@@ -14,10 +14,10 @@
 
 namespace cumes {
 
-enum class OutputFormat : std::uint8_t { kBinary = 0, kNetCdf = 1, kHdf5 = 2 };
+enum class OutputFormat : std::uint8_t { BINARY = 0, NETCDF = 1, HDF5 = 2 };
 
 struct OutputSpec {
-    OutputFormat format = OutputFormat::kBinary;
+    OutputFormat format = OutputFormat::BINARY;
     std::string path;
 };
 

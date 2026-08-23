@@ -46,25 +46,25 @@
 namespace cumes {
 namespace {
 
-constexpr char kMagic[9] = "CUMES001";
+constexpr char MAGIC[9] = "CUMES001";
 // v2 adds the precision-policy provenance fields to the trailer; v1 files
 // are still read (the fields default empty). v3 appends the embedded
 // normalized-input record as the last trailer element; v1/v2 files are still
 // read (the record defaults empty). v4 appends the three profile-type
 // strings to that record; v3 files are still read (the types default to
 // "power_series").
-constexpr std::int32_t kVersion = 4;
-constexpr std::int32_t kMinReadVersion = 1;
+constexpr std::int32_t VERSION = 4;
+constexpr std::int32_t MIN_READ_VERSION = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
 // Typed locally instead of a string compare against
 // BuildProvenance::scalar_type so an unknown tag is a write error rather than a
 // silent "0=double" record.
-enum class PrecisionTag : std::int32_t { kDouble = 0, kFloat = 1 };
+enum class PrecisionTag : std::int32_t { DOUBLE = 0, FLOAT = 1 };
 
 std::optional<PrecisionTag> precisionTagFor(const std::string& scalar_type) {
-    if (scalar_type == "double") return PrecisionTag::kDouble;
-    if (scalar_type == "float") return PrecisionTag::kFloat;
+    if (scalar_type == "double") return PrecisionTag::DOUBLE;
+    if (scalar_type == "float") return PrecisionTag::FLOAT;
     return std::nullopt;
 }
 
@@ -85,8 +85,8 @@ class VersionedBinaryWriter final : public Writer {
             return Status(reason);
         };
 
-        bool ok = io_detail::write_bytes(fp, kMagic, 8) &&
-                  io_detail::write_i32(fp, kVersion) &&
+        bool ok = io_detail::write_bytes(fp, MAGIC, 8) &&
+                  io_detail::write_i32(fp, VERSION) &&
                   io_detail::write_i32(fp, snapshot.ns) &&
                   io_detail::write_i32(fp, snapshot.mnmax);
         if (!ok) return fail("failed to write versioned state payload");
@@ -160,11 +160,11 @@ class VersionedBinaryReader final : public Reader {
             !io_detail::read_i32(fp, mnmax)) {
             return fail("versioned binary: truncated header");
         }
-        if (std::memcmp(magic, kMagic, 8) != 0) {
+        if (std::memcmp(magic, MAGIC, 8) != 0) {
             return fail(
                 "versioned binary: bad magic (not a cumes v1 state file)");
         }
-        if (version < kMinReadVersion || version > kVersion) {
+        if (version < MIN_READ_VERSION || version > VERSION) {
             return fail("versioned binary: unsupported version " +
                         std::to_string(version));
         }

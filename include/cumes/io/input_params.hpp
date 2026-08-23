@@ -103,7 +103,7 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
     p.nfp = sp.nfp;
     p.ntheta = sp.angular.ntheta;
     p.nzeta = sp.angular.nzeta;
-    p.ncurr = (sp.current_model == CurrentModel::kPrescribedCurrent) ? 1 : 0;
+    p.ncurr = (sp.current_model == CurrentModel::PRESCRIBED_CURRENT) ? 1 : 0;
     p.delt = sp.delt;
     p.phiedge = sp.physical.phiedge;
     p.pres_scale = sp.physical.pres_scale;

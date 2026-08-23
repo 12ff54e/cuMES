@@ -48,10 +48,10 @@ static void runGeometry(int ns, int ncurr, const char* label) {
     p.lamscale = T(0.0);
 
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
-    // Shared manufactured state (kSolovevLinear in cumes_test_cuda_helper.cuh):
+    // Shared manufactured state (SOLOVEV_LINEAR in cumes_test_cuda_helper.cuh):
     // R_00=4.0, R_10=0.3s, R_20=0.2s, Rss=Rcc, Z_10 (sc+cs)=-0.5s, lambda=0.
     std::vector<T> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-    manufactured_state<T>(ManufacturedShape::kSolovevLinear, p.ns, p.mnmax,
+    manufactured_state<T>(ManufacturedShape::SOLOVEV_LINEAR, p.ns, p.mnmax,
                           p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs);
     upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
                  p.mnmax);
@@ -66,7 +66,7 @@ static void runGeometry(int ns, int ncurr, const char* label) {
             spec.nfp = 1;
             spec.angular.ntheta = p.ntheta;
             spec.angular.nzeta = p.nzeta;
-            spec.current_model = cumes::CurrentModel::kPrescribedCurrent;
+            spec.current_model = cumes::CurrentModel::PRESCRIBED_CURRENT;
             spec.physical.curtor = 1.0;
             spec.physical.phiedge = 1.0;
             // A well-scaled toroidal-flux profile: the edge normalization

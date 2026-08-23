@@ -50,7 +50,7 @@ using namespace bench_common;
 // final state (fast-but-wrong run) produces a different hash.
 static std::string hash_snapshot(const cumes::EquilibriumSnapshot& snap) {
     std::uint64_t h = 1469598103934665603ULL;
-    for (int c = 0; c < cumes::EquilibriumSnapshot::kCount; ++c) {
+    for (int c = 0; c < cumes::EquilibriumSnapshot::COUNT; ++c) {
         for (double v : snap.families[c]) {
             unsigned char b[8];
             std::memcpy(b, &v, 8);

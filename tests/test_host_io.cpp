@@ -50,7 +50,7 @@ static EquilibriumSnapshot makeSnapshot(int ns, int mnmax) {
 
 static RunReport makeReport() {
     RunReport r;
-    r.status = RunStatus::kConverged;
+    r.status = RunStatus::CONVERGED;
     r.total_effective_iterations = 7;
     cumes::StageReport stage;
     stage.ns = 5;
@@ -101,13 +101,13 @@ static void testOutputSpec() {
     // Availability preflight moved to the adapter library (completion plan
     // step 2.5); the binary format is always available by construction, so the
     // host test asserts the always-true contract without linking the adapter.
-    check(/* output_format_available(kBinary) is always true by construction */
+    check(/* output_format_available(BINARY) is always true by construction */
           true, "output spec: binary always available");
     auto r = cumes::resolve_output_spec("state.bin");
-    check(r.has_value() && r.value().format == OutputFormat::kBinary,
+    check(r.has_value() && r.value().format == OutputFormat::BINARY,
           "output spec: .bin resolves to binary");
     r = cumes::resolve_output_spec("state.H5");
-    check(r.has_value() && r.value().format == OutputFormat::kHdf5,
+    check(r.has_value() && r.value().format == OutputFormat::HDF5,
           "output spec: .H5 (case-insensitive) resolves to hdf5");
     r = cumes::resolve_output_spec("state.unknown");
     check(!r.has_value(), "output spec: unknown suffix rejected");
@@ -116,7 +116,7 @@ static void testOutputSpec() {
 static void testV1RoundTrip() {
     EquilibriumSnapshot s = makeSnapshot(4, 2);
     OutputSpec spec;
-    spec.format = OutputFormat::kBinary;
+    spec.format = OutputFormat::BINARY;
     spec.path = scratch("v1").c_str();
     auto w = cumes::make_binary_writer();
     auto r = cumes::make_binary_reader();
@@ -179,7 +179,7 @@ static void testShortFamilyRejected() {
     s.families[3].resize(s.family_size() - 4);
     s.families[3].shrink_to_fit();
     OutputSpec spec;
-    spec.format = OutputFormat::kBinary;
+    spec.format = OutputFormat::BINARY;
     spec.path = scratch("short");
     auto w = cumes::make_binary_writer();
     check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() ==
@@ -195,7 +195,7 @@ static void testV1UnknownPrecisionRejected() {
     // tag), not silently record 0=double as the old string compare did.
     EquilibriumSnapshot s = makeSnapshot(4, 2);
     OutputSpec spec;
-    spec.format = OutputFormat::kBinary;
+    spec.format = OutputFormat::BINARY;
     spec.path = scratch("v1badprec");
     auto w = cumes::make_binary_writer();
     RunReport report = makeReport();
@@ -211,7 +211,7 @@ static void testFailureMatrix() {
     EquilibriumSnapshot s = makeSnapshot(4, 2);
     // open failure: a path in a nonexistent directory.
     OutputSpec spec;
-    spec.format = OutputFormat::kBinary;
+    spec.format = OutputFormat::BINARY;
     spec.path = "no_such_dir/test_host_io_open.bin";
     auto w = cumes::make_binary_writer();
     check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() ==

@@ -110,13 +110,13 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     // ---- profile parameterizations ----
     // two_power is f(s) = c0·(1 − s^c1)^c2: reject fewer than three
     // coefficients up front (vmecpp would log and evaluate 0 instead).
-    if (spec.mass.type == ProfileType::kTwoPower &&
+    if (spec.mass.type == ProfileType::TWO_POWER &&
         spec.mass.coefficients.size() < 3) {
         report.error("am",
                      "am: the two_power profile needs at least 3 "
                      "coefficients (c0, c1, c2)");
     }
-    if (spec.current.type == ProfileType::kTwoPower &&
+    if (spec.current.type == ProfileType::TWO_POWER &&
         spec.current.coefficients.size() < 3) {
         report.error("ac",
                      "ac: the two_power profile needs at least 3 "
@@ -147,7 +147,7 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
                      "toroidal-flux profile is ill-scaled at the edge "
                      "(|T(1)| < 1e-30); the edge normalization would overflow");
     }
-    if (spec.current_model == CurrentModel::kPrescribedCurrent) {
+    if (spec.current_model == CurrentModel::PRESCRIBED_CURRENT) {
         const double curr_edge = evalCurrProfile<double>(spec, 1.0);
         if (!std::isfinite(curr_edge)) {
             report.error("ac",
@@ -216,7 +216,7 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
             std::ostringstream os;
             os << "ftol_array entry " << std::setprecision(17) << st.tolerance
                << " is below the "
-               << (options.precision == PrecisionPolicy::kMixedFloat ? "float"
+               << (options.precision == PrecisionPolicy::MIXED_FLOAT ? "float"
                                                                      : "double")
                << " floor " << tolerance_floor(options.precision)
                << "; relax the tolerance or choose a reachable policy";
@@ -315,7 +315,7 @@ std::string ValidatedProblem::normalize_to_json() const {
     os << "  \"ntheta\":" << s.angular.ntheta << ",\n";
     os << "  \"nzeta\":" << s.angular.nzeta << ",\n";
     os << "  \"ncurr\":"
-       << (s.current_model == CurrentModel::kPrescribedCurrent ? 1 : 0)
+       << (s.current_model == CurrentModel::PRESCRIBED_CURRENT ? 1 : 0)
        << ",\n";
     os << "  \"delt\":" << json_number(s.delt) << ",\n";
     os << "  \"physical\":{\"phiedge\":" << json_number(s.physical.phiedge)

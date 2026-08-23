@@ -115,7 +115,7 @@ static cumes::ValidatedProblem solovevInput() {
     spec.mpol = 6;
     spec.ntor = 0;
     spec.nfp = 1;
-    spec.current_model = cumes::CurrentModel::kFixedIota;
+    spec.current_model = cumes::CurrentModel::FIXED_IOTA;
     spec.delt = 0.9;
     spec.mass.coefficients = {0.125, -0.125};
     spec.iota.coefficients = {1.0};

@@ -10,12 +10,12 @@
 
 namespace cumes {
 
-enum class ScalarType : std::uint8_t { kFloat, kDouble };
+enum class ScalarType : std::uint8_t { FLOAT, DOUBLE };
 
 template <class T>
-inline constexpr ScalarType kScalarTypeOf =
-    std::is_same_v<std::remove_cv_t<T>, float> ? ScalarType::kFloat
-                                               : ScalarType::kDouble;
+inline constexpr ScalarType SCALAR_TYPE_OF =
+    std::is_same_v<std::remove_cv_t<T>, float> ? ScalarType::FLOAT
+                                               : ScalarType::DOUBLE;
 
 }  // namespace cumes
 

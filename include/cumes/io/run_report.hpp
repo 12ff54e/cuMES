@@ -13,11 +13,11 @@
 namespace cumes {
 
 enum class RunStatus : std::uint8_t {
-    kConverged = 0,
-    kNotConverged = 1,
-    kNumericalFailure = 2,
-    kValidationFailure = 3,
-    kOutputFailure = 4,
+    CONVERGED = 0,
+    NOT_CONVERGED = 1,
+    NUMERICAL_FAILURE = 2,
+    VALIDATION_FAILURE = 3,
+    OUTPUT_FAILURE = 4,
 };
 
 struct ResidualTriple {
@@ -63,7 +63,7 @@ struct RuntimeProvenance {
 };
 
 struct RunReport {
-    RunStatus status = RunStatus::kNotConverged;
+    RunStatus status = RunStatus::NOT_CONVERGED;
     int total_effective_iterations = 0;
     std::vector<StageReport> stages;
     BuildProvenance build;

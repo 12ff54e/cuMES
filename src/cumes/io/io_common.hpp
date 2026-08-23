@@ -155,18 +155,19 @@ inline bool readStateFamilies(FILE* fp,
 // lack the three profile-type strings and read back as "power_series". The
 // NetCDF/HDF5 writers map the same fields to native variables/datasets/
 // attributes instead. A corrupt count must fail before the host allocates:
-// every count is bounded by kMaxInputParamsVector.
-constexpr std::int32_t kMaxInputParamsVector = 1 << 20;  // elements per vector
+// every count is bounded by MAX_INPUT_PARAMS_VECTOR.
+constexpr std::int32_t MAX_INPUT_PARAMS_VECTOR = 1
+                                                 << 20;  // elements per vector
 
 inline bool write_i32_vec(FILE* fp, const std::vector<int>& v) {
-    if (v.size() > static_cast<std::size_t>(kMaxInputParamsVector))
+    if (v.size() > static_cast<std::size_t>(MAX_INPUT_PARAMS_VECTOR))
         return false;
     if (!write_i32(fp, static_cast<std::int32_t>(v.size()))) return false;
     return v.empty() ||
            write_bytes(fp, v.data(), v.size() * sizeof(std::int32_t));
 }
 inline bool write_f64_vec(FILE* fp, const std::vector<double>& v) {
-    if (v.size() > static_cast<std::size_t>(kMaxInputParamsVector))
+    if (v.size() > static_cast<std::size_t>(MAX_INPUT_PARAMS_VECTOR))
         return false;
     if (!write_i32(fp, static_cast<std::int32_t>(v.size()))) return false;
     return v.empty() || write_bytes(fp, v.data(), v.size() * sizeof(double));
@@ -177,7 +178,7 @@ inline bool read_i32_vec(FILE* fp, std::vector<int>& v, std::string& reason) {
         reason = "truncated vector count";
         return false;
     }
-    if (n < 0 || n > kMaxInputParamsVector) {
+    if (n < 0 || n > MAX_INPUT_PARAMS_VECTOR) {
         reason = "vector count out of range";
         return false;
     }
@@ -194,7 +195,7 @@ inline bool read_f64_vec(FILE* fp,
         reason = "truncated vector count";
         return false;
     }
-    if (n < 0 || n > kMaxInputParamsVector) {
+    if (n < 0 || n > MAX_INPUT_PARAMS_VECTOR) {
         reason = "vector count out of range";
         return false;
     }
@@ -260,7 +261,7 @@ inline bool readInputParams(FILE* fp,
         reason = "truncated input record";
         return false;
     }
-    if (nstages < 0 || nstages > kMaxInputParamsVector) {
+    if (nstages < 0 || nstages > MAX_INPUT_PARAMS_VECTOR) {
         reason = "stage count out of range";
         return false;
     }

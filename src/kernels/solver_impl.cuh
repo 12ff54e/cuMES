@@ -982,10 +982,10 @@ static void dumpStepH(int iter,
                       int iter2,
                       const DeviceParams<T>& p,
                       const T* f_spec,
-                      int kDumpIter,
-                      int kE2Start) {
+                      int DUMP_ITER,
+                      int E2_START) {
     if (!dumpEnabled()) return;
-    if (iter == 0 || iter2 == kDumpIter) {
+    if (iter == 0 || iter2 == DUMP_ITER) {
         // Dump AFTER the decomposition scaling, matching vmecpp's dump
         // of m_decomposed_f (post-decomposeInto). Keyed on iter2 so a
         // handoff/plateau comparison can use the same effective counter
@@ -996,7 +996,7 @@ static void dumpStepH(int iter,
                  iter == 0 ? 1 : iter2);
         dumpDeviceArray(fn, f_spec, n_fspec);
     }
-    if (iter2 >= kE2Start && iter2 < kE2Start + 40) {
+    if (iter2 >= E2_START && iter2 < E2_START + 40) {
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/fspec_invariant_iter_%d.bin",
                  iter2);
@@ -1009,9 +1009,9 @@ template <typename T>
 static void dumpStepFinal(int iter,
                           const DeviceParams<T>& p,
                           const T* f_spec,
-                          int kMaxIterEff) {
+                          int MAX_ITER_EFF) {
     if (!dumpEnabled()) return;
-    if (iter == kMaxIterEff - 1) {
+    if (iter == MAX_ITER_EFF - 1) {
         dumpDeviceArray("dump/cuMES/step_final_f_spec.bin", f_spec,
                         (size_t)6 * p.mnmax * p.ns);
     }
@@ -1025,11 +1025,11 @@ static void dumpStepI(int iter,
                       const DeviceParams<T>& p,
                       const T* f_spec,
                       cumes::SpectralStorage<T>& storage,
-                      int kDumpIter,
-                      int kE2Start) {
+                      int DUMP_ITER,
+                      int E2_START) {
     if (!dumpEnabled()) return;
     if (iter == 0 || iter2 == 51 ||
-        (iter2 >= kDumpIter && iter2 <= kDumpIter + 2) ||
+        (iter2 >= DUMP_ITER && iter2 <= DUMP_ITER + 2) ||
         (iter2 >= 2 && iter2 <= 4)) {
         size_t n_fspec = (size_t)6 * (size_t)p.mnmax * (size_t)p.ns;
         size_t n_spec = (size_t)p.mnmax * (size_t)p.ns;
@@ -1040,7 +1040,7 @@ static void dumpStepI(int iter,
         // State + velocities at the handoff window (pre-descent of the
         // pass, matching vmecpp's dump phase at vmec.cc). Also at the
         // iter-2..4 window (first lambda != 0 passes) for the state check.
-        if (iter2 >= kDumpIter || iter2 == 51 || (iter2 >= 2 && iter2 <= 4)) {
+        if (iter2 >= DUMP_ITER || iter2 == 51 || (iter2 >= 2 && iter2 <= 4)) {
             snprintf(fn, sizeof fn, "dump/cuMES/state_rmncc_iter_%d.bin",
                      iter2);
             dumpDeviceArray(
@@ -1091,7 +1091,7 @@ static void dumpStepI(int iter,
                 n_spec);
         }
     }
-    if (iter2 >= kE2Start && iter2 < kE2Start + 40) {
+    if (iter2 >= E2_START && iter2 < E2_START + 40) {
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/fspec_precon_iter_%d.bin", iter2);
         dumpDeviceArray(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
@@ -1211,10 +1211,10 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
     cumes::check_cuda(cudaEventCreate(&ev1_fwd_), "event create ev1_fwd");
 
     // Env-gated dump-window knobs (defaults = input values).
-    kMaxIterEff_ = p.max_iter;
-    if (const char* e = getenv("CUMES_MAX_ITER")) kMaxIterEff_ = atoi(e);
-    if (const char* e = getenv("CUMES_DUMP_ITER")) kDumpIter_ = atoi(e);
-    if (const char* e = getenv("CUMES_E2_START")) kE2Start_ = atoi(e);
+    max_iter_eff_ = p.max_iter;
+    if (const char* e = getenv("CUMES_MAX_ITER")) max_iter_eff_ = atoi(e);
+    if (const char* e = getenv("CUMES_DUMP_ITER")) dump_iter_ = atoi(e);
+    if (const char* e = getenv("CUMES_E2_START")) e2_start_ = atoi(e);
 }
 
 template <typename T>
@@ -1278,8 +1278,8 @@ void cumes::EquilibriumOperator<T>::enqueue(
     cudaEvent_t& ev1_inv = ev1_inv_;
     cudaEvent_t& ev0_fwd = ev0_fwd_;
     cudaEvent_t& ev1_fwd = ev1_fwd_;
-    const int kDumpIter = kDumpIter_, kE2Start = kE2Start_,
-              kMaxIterEff = kMaxIterEff_;
+    const int DUMP_ITER = dump_iter_, E2_START = e2_start_,
+              MAX_ITER_EFF = max_iter_eff_;
 
     // ---- device status reset (completion plan step 1.4) ----
     // Zero the WHOLE control record at pass start: the status bits then cannot
@@ -1325,7 +1325,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     // Reduced into the typed record (device-only), ordered after the base
     // geometry but before the magnetic field. The finalize kernel writes
     // status.jacobian_valid with the SAME rule the host controller applies
-    // at the fence (kJacobianEps / nZnT); every downstream cache/state
+    // at the fence (JACOBIAN_EPS / nZnT); every downstream cache/state
     // mutation and 1/√g consumer reads that bit and no-ops on an invalid
     // pass. The host gate remains authoritative for the restore/delt
     // bookkeeping — the device bit only prevents forbidden mutations.
@@ -1438,7 +1438,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     }
 
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepH<T>(iter, iter2, p, d_f_spec.data(), kDumpIter, kE2Start);
+    dumpStepH<T>(iter, iter2, p, d_f_spec.data(), DUMP_ITER, E2_START);
 #endif
 
     // ---- m1 gauge constraint (vmecpp FourierCoeffs::m1Constraint) ----
@@ -1462,7 +1462,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     // completes before the terminal predicate and the in-place
     // preconditioner, so the three never race on the residual slab.
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepFinal<T>(iter, p, d_f_spec.data(), kMaxIterEff);
+    dumpStepFinal<T>(iter, p, d_f_spec.data(), MAX_ITER_EFF);
 #endif
     cumes::ResidualOperator<T> residual_op;
     residual_op.enqueue(residual_view_const, p.ns, p.mnmax,
@@ -1498,7 +1498,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     precon.enqueue_apply(residual_view, p, &d_control.data()->status, stream);
 
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepI<T>(iter, iter2, p, d_f_spec.data(), storage, kDumpIter, kE2Start);
+    dumpStepI<T>(iter, iter2, p, d_f_spec.data(), storage, DUMP_ITER, E2_START);
 #endif
 
     // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
@@ -1546,14 +1546,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // values; set via CUMES_MAX_ITER, CUMES_DELT0, CUMES_DTAU_FLOOR) ----
     // (CUMES_DUMP_ITER / CUMES_E2_START are consumed by the
     // EquilibriumOperator.)
-    int kMaxIterEff = p.max_iter;
-    double kDelt0Eff = p.delt;  // double: atof knob, converted to T at use
-    double kDtauFloor = 0.0;
-    if (const char* e = getenv("CUMES_MAX_ITER")) kMaxIterEff = atoi(e);
-    if (const char* e = getenv("CUMES_DELT0")) kDelt0Eff = atof(e);
-    if (const char* e = getenv("CUMES_DTAU_FLOOR")) kDtauFloor = atof(e);
-    printf("knobs: max_iter=%d delt0=%.3f dtau_floor=%.3e\n", kMaxIterEff,
-           kDelt0Eff, kDtauFloor);
+    int MAX_ITER_EFF = p.max_iter;
+    double DELT0_EFF = p.delt;  // double: atof knob, converted to T at use
+    double DTAU_FLOOR = 0.0;
+    if (const char* e = getenv("CUMES_MAX_ITER")) MAX_ITER_EFF = atoi(e);
+    if (const char* e = getenv("CUMES_DELT0")) DELT0_EFF = atof(e);
+    if (const char* e = getenv("CUMES_DTAU_FLOOR")) DTAU_FLOOR = atof(e);
+    printf("knobs: max_iter=%d delt0=%.3f dtau_floor=%.3e\n", MAX_ITER_EFF,
+           DELT0_EFF, DTAU_FLOOR);
 
     // ---- vmecpp VMEC_8_52 time-step control state ----
     // iter2: effective iteration counter — does NOT advance on restart
@@ -1567,10 +1567,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // (double build: identity — Class A bitwise; float build: the double
     // accumulations reach the host decisions unrounded — Class B).
     cumes::IterationController<double> controller(
-        {kDelt0Eff, (double)p.ftol, kDtauFloor});
+        {DELT0_EFF, (double)p.ftol, DTAU_FLOOR});
 
     // vmecpp residual normalization factors (computeForceNorms), refreshed on
-    // the same cadence as the preconditioner (every kPreconInterval passes).
+    // the same cadence as the preconditioner (every PRECON_INTERVAL passes).
     double fNormRZ = 0.0, fNormL = 0.0, fNorm1 = 0.0;
 
     // Pinned mirror of the typed control record (one async D2H per pass,
@@ -1626,7 +1626,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // fsqr fsqz fsql delt otav dtau b1 fac iter2 iter1 reason rax). Observers
     // read these scalars and cannot affect the controller's decisions.
     std::vector<cumes::PassRecord> per_iter;
-    per_iter.reserve((size_t)kMaxIterEff);
+    per_iter.reserve((size_t)MAX_ITER_EFF);
     // The dump record (per_iter_residuals_cumes.bin) must stay byte-identical
     // to the frozen baseline, whose axis_r column was read POST-descent with
     // a synchronized copy. Keep that exact read for the dump-only record
@@ -1649,7 +1649,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
                           double fR, double fZ, double fL, double d, double o,
                           double dt, double b1v, double fcv, int it2, int it1) {
         if (!dumpEnabled()) return;
-        if ((int)per_iter.size() < kMaxIterEff) {
+        if ((int)per_iter.size() < MAX_ITER_EFF) {
             cumes::PassRecord r;
             r.invariant_fsqr = fRi;
             r.invariant_fsqz = fZi;
@@ -1753,11 +1753,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // the next pass's kernels, synced by that next fence).
     std::chrono::steady_clock::time_point bench_t_prev{};
     if (bench && bench->enabled) {
-        bench->pass_wall_us.reserve((size_t)kMaxIterEff);
+        bench->pass_wall_us.reserve((size_t)MAX_ITER_EFF);
         bench_t_prev = std::chrono::steady_clock::now();
     }
 
-    for (int iter = 0; iter < kMaxIterEff; ++iter) {
+    for (int iter = 0; iter < MAX_ITER_EFF; ++iter) {
         // Snapshot of the controller's effective iteration for this pass's
         // dump windows (constant until after_descent at the end of the body;
         // the post-descent output block reads the controller directly).
@@ -2025,7 +2025,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             backupState();  // POST-descent state (vmecpp RestartIteration
                             // NO_RESTART semantics — see comment above)
         }
-        if (decision.reason != cumes::RestartReason::kNone) {
+        if (decision.reason != cumes::RestartReason::NONE) {
             // Restore overwrites the just-descended state and zeroes the
             // velocities (vmecpp does the same: Evolve()'s descent is
             // discarded by the control block's RestartIteration).
@@ -2036,7 +2036,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             // compiled out of release (fast) builds with the rest of the
             // dump machinery (see the other event-line gates above).
             printf("  -> %s (iter2=%d) delt=%.3e\n",
-                   decision.reason == cumes::RestartReason::kBadJacobian
+                   decision.reason == cumes::RestartReason::BAD_JACOBIAN
                        ? "BAD JACOBIAN"
                        : "BAD PROGRESS",
                    controller.effective_iteration(),
@@ -2052,12 +2052,12 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         if ((controller.effective_iteration() - controller.output_anchor()) %
                     100 ==
                 0 ||
-            iter == kMaxIterEff - 1) {
+            iter == MAX_ITER_EFF - 1) {
             printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
                          fsql_i, controller.delta_t());
         }
 
-        if (iter == kMaxIterEff - 1) {
+        if (iter == MAX_ITER_EFF - 1) {
             res.iterations = controller.effective_iteration();
             res.fsqr = (T)fsqr_i;
             res.fsqz = (T)fsqz_i;
@@ -2074,7 +2074,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         if (fpr) {
             uint64_t n = (uint64_t)per_iter.size();
             fwrite(&n, sizeof(uint64_t), 1, fpr);
-            for (int c = 0; c < cumes::PassRecord::kColumnCount; ++c) {
+            for (int c = 0; c < cumes::PassRecord::COLUMN_COUNT; ++c) {
                 for (const cumes::PassRecord& r : per_iter) {
                     const double* base = &r.invariant_fsqr;
                     fwrite(base + c, sizeof(double), 1, fpr);

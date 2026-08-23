@@ -20,15 +20,15 @@
 // headers. The host I/O library (cumes_io_host) stays free of both.
 bool cumes::output_format_available(cumes::OutputFormat fmt) {
     switch (fmt) {
-        case cumes::OutputFormat::kBinary:
+        case cumes::OutputFormat::BINARY:
             return true;
-        case cumes::OutputFormat::kNetCdf:
+        case cumes::OutputFormat::NETCDF:
 #ifdef CUMES_HAVE_NETCDF
             return true;
 #else
             return false;
 #endif
-        case cumes::OutputFormat::kHdf5:
+        case cumes::OutputFormat::HDF5:
 #ifdef CUMES_HAVE_HDF5
             return true;
 #else

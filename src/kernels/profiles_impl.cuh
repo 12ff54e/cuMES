@@ -1,6 +1,7 @@
-// kernels/profiles_impl.cuh — template definitions for the cumes::Profiles operator.
-// Included once per scalar type by profiles_double.cu / profiles_float.cu; see
-// the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+// kernels/profiles_impl.cuh — template definitions for the cumes::Profiles
+// operator. Included once per scalar type by profiles_double.cu /
+// profiles_float.cu; see the explicit-instantiation split (cumes_cuda_double /
+// cumes_cuda_float).
 #ifndef CUMES_SRC_PROFILES_IMPL_CUH_
 #define CUMES_SRC_PROFILES_IMPL_CUH_
 // profiles.cu — evaluate radial profiles on host from the validated problem
@@ -39,7 +40,7 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
                              cumes::DeviceArena* arena) {
     const cumes::ProblemSpec& sp = vp.spec();
     const int ncurr =
-        (sp.current_model == cumes::CurrentModel::kPrescribedCurrent) ? 1 : 0;
+        (sp.current_model == cumes::CurrentModel::PRESCRIBED_CURRENT) ? 1 : 0;
     delta_s_ = T(1.0) / T(p.ns - 1);
 
     // Normalization scalars FIRST — before any device allocation. The host
@@ -50,7 +51,7 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
     // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
     // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
     T maxToroidalFlux =
-        T(DeviceParams<T>::kSignJacobian * sp.physical.phiedge) / T(2.0 * M_PI);
+        T(DeviceParams<T>::SIGN_JACOBIAN * sp.physical.phiedge) / T(2.0 * M_PI);
     T tf1 = cumes::torflux<T>(sp, T(1.0));
     if (tf1 != T(0.0)) maxToroidalFlux /= tf1;
 
@@ -68,7 +69,7 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
                 "profiles: ncurr=1 with a zero edge current integral "
                 "(ac profile integrates to 0 at s=1)");
         }
-        Itor = T(DeviceParams<T>::kSignJacobian) * DeviceParams<T>::kMu0 *
+        Itor = T(DeviceParams<T>::SIGN_JACOBIAN) * DeviceParams<T>::MU_0 *
                T(sp.physical.curtor) / (T(2.0 * M_PI) * edgeCurrent);
     }
 

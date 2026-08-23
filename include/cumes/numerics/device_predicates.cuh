@@ -6,7 +6,7 @@
 //   jacobianFinalizeKernel             reset->reduce->FINALIZE the oriented
 //                                      Jacobian validity (the rule is shared
 //                                      with IterationController::jacobian_
-//                                      invalid via cumes::kJacobianEps);
+//                                      invalid via cumes::JACOBIAN_EPS);
 //   forceNormFinalizeKernel             finalize the force-norm factors ON
 //                                      DEVICE from the refresh-pass force
 //                                      norms, before the terminal predicate
@@ -34,12 +34,12 @@
 
 // Finalize the global Jacobian status (blueprint §7 "JStat"): read the just-
 // reduced oriented stats and decide validity with the IDENTICAL rule the host
-// controller applies (IterationController::jacobian_invalid + kJacobianEps).
+// controller applies (IterationController::jacobian_invalid + JACOBIAN_EPS).
 // The bit gates every downstream 1/√g consumer, cache mutation, and force.
 static __global__ void jacobianFinalizeKernel(
     cumes::ControlRecord* __restrict__ rec,
     int nZnT) {
-    const double eps = cumes::kJacobianEps;
+    const double eps = cumes::JACOBIAN_EPS;
     const bool invalid =
         rec->jacobian_nonfinite_count > 0.0 || rec->jacobian_max_abs <= 0.0 ||
         rec->jacobian_min_oriented <= 0.0 ||

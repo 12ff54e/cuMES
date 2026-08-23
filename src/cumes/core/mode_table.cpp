@@ -21,7 +21,7 @@ ModeTable<T> ModeTable<T>::build(const GridShape& shape) {
             const T nscale = (n == 0) ? T(1) : T(std::sqrt(2.0));
             e.mn_scale = mscale * nscale;
             e.xmpq = T(m * (m - 1));
-            e.parity = (m % 2 == 0) ? ModeParity::kEven : ModeParity::kOdd;
+            e.parity = (m % 2 == 0) ? ModeParity::EVEN : ModeParity::ODD;
             table.entries.push_back(e);
         }
     }

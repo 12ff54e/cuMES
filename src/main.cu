@@ -111,7 +111,7 @@ static void fill_provenance(cumes::RunReport& report,
 }
 
 static const char* severityName(cumes::Severity s) {
-    return s == cumes::Severity::kError ? "error" : "warning";
+    return s == cumes::Severity::ERROR ? "error" : "warning";
 }
 
 int main(int argc, char** argv) {
@@ -204,7 +204,7 @@ int main(int argc, char** argv) {
     // the double-tuned stage tolerances. Declaring the mixed-float policy lets
     // validation reject impossible tolerances instead of failing every stage at
     // the end of the run.
-    opts.precision = cumes::PrecisionPolicy::kMixedFloat;
+    opts.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
 #endif
     // Capture the raw input bytes once, at read time: the v1 provenance
     // source_hash must be the hash of the bytes the solver actually consumed,
@@ -234,7 +234,7 @@ int main(int argc, char** argv) {
     // out-of-range boundary harmonic, ...). The legacy parser printed these
     // to stderr; reproduce its wording ("cuMES: WARNING: ...").
     for (const auto& issue : vp.warnings().issues()) {
-        if (issue.severity != cumes::Severity::kWarning) continue;
+        if (issue.severity != cumes::Severity::WARNING) continue;
         if (issue.message.compare(0, 17, "unknown input key") == 0) {
             fprintf(stderr, "cuMES: WARNING: unknown input key '%s' ignored\n",
                     issue.key.c_str());

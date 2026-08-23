@@ -25,9 +25,9 @@
 namespace cumes {
 namespace {
 
-constexpr char kCheckpointMagic[9] = "CUMECKP1";
-constexpr std::int32_t kCheckpointVersion = 3;
-constexpr std::int32_t kMinCheckpointVersion = 1;
+constexpr char CHECKPOINT_MAGIC[9] = "CUMECKP1";
+constexpr std::int32_t CHECKPOINT_VERSION = 3;
+constexpr std::int32_t MIN_CHECKPOINT_VERSION = 1;
 
 }  // namespace
 
@@ -44,8 +44,8 @@ Status write_checkpoint(const EquilibriumSnapshot& snapshot,
         return Status(reason);
     };
 
-    bool ok = io_detail::write_bytes(fp, kCheckpointMagic, 8) &&
-              io_detail::write_i32(fp, kCheckpointVersion) &&
+    bool ok = io_detail::write_bytes(fp, CHECKPOINT_MAGIC, 8) &&
+              io_detail::write_i32(fp, CHECKPOINT_VERSION) &&
               io_detail::write_i32(fp, 0 /* precision = double */) &&
               io_detail::write_i32(fp, snapshot.ns) &&
               io_detail::write_i32(fp, snapshot.mnmax);
@@ -82,10 +82,10 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
         !io_detail::read_i32(fp, mnmax)) {
         return fail("checkpoint: truncated header");
     }
-    if (std::memcmp(magic, kCheckpointMagic, 8) != 0) {
+    if (std::memcmp(magic, CHECKPOINT_MAGIC, 8) != 0) {
         return fail("checkpoint: bad magic (not a cumes checkpoint)");
     }
-    if (version < kMinCheckpointVersion || version > kCheckpointVersion) {
+    if (version < MIN_CHECKPOINT_VERSION || version > CHECKPOINT_VERSION) {
         return fail("checkpoint: unsupported version " +
                     std::to_string(version));
     }

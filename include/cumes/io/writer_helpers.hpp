@@ -32,14 +32,14 @@ namespace io_detail {
 // typed error before the host allocates storage proportional to its declared
 // dimensions. `ns`/`mnmax` are also bounded by INT_MAX because
 // EquilibriumSnapshot stores them as ints.
-inline constexpr std::size_t kMaxProvenanceStringBytes = 1u << 20;
-inline constexpr std::size_t kMaxStageCount = 1u << 16;
+inline constexpr std::size_t MAX_PROVENANCE_STRING_BYTES = 1u << 20;
+inline constexpr std::size_t MAX_STAGE_COUNT = 1u << 16;
 // Per-family element cap: 16,777,216 doubles = 128 MiB. The six-family
 // snapshot is therefore bounded at 768 MiB; the HDF5 reader's additional
 // transpose slab brings its bounded peak state storage to 896 MiB. This is
 // deliberately far above current equilibria while preventing sparse hostile
 // containers from requesting multi-gigabyte allocations.
-inline constexpr std::size_t kMaxStateElementsPerFamily = 1u << 24;
+inline constexpr std::size_t MAX_STATE_ELEMENTS_PER_FAMILY = 1u << 24;
 
 // A unique same-directory temp path for `path` (rename() stays on one
 // filesystem). PID alone can collide across threads writing in one process, so

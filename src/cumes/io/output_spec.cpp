@@ -17,11 +17,11 @@ namespace cumes {
 
 const char* output_suffix(OutputFormat fmt) {
     switch (fmt) {
-        case OutputFormat::kBinary:
+        case OutputFormat::BINARY:
             return ".bin";
-        case OutputFormat::kNetCdf:
+        case OutputFormat::NETCDF:
             return ".nc";
-        case OutputFormat::kHdf5:
+        case OutputFormat::HDF5:
             return ".h5";
     }
     return "";
@@ -33,11 +33,11 @@ namespace {
 std::optional<OutputFormat> suffix_format(const std::string& path) {
     const std::size_t dot = path.find_last_of('.');
     const std::string ext = (dot == std::string::npos) ? "" : path.substr(dot);
-    if (strcasecmp(ext.c_str(), ".bin") == 0) return OutputFormat::kBinary;
-    if (strcasecmp(ext.c_str(), ".nc") == 0) return OutputFormat::kNetCdf;
+    if (strcasecmp(ext.c_str(), ".bin") == 0) return OutputFormat::BINARY;
+    if (strcasecmp(ext.c_str(), ".nc") == 0) return OutputFormat::NETCDF;
     if (strcasecmp(ext.c_str(), ".h5") == 0 ||
         strcasecmp(ext.c_str(), ".hdf5") == 0) {
-        return OutputFormat::kHdf5;
+        return OutputFormat::HDF5;
     }
     return std::nullopt;
 }

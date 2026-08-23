@@ -102,7 +102,7 @@ bool getStrAttr(hid_t loc, const char* name, std::string& out) {
     const size_t width = H5Tget_size(ty.get());
     // Bounded width: the declared type size must fit the documented resource
     // cap before the destination is allocated.
-    if (width == 0 || width > cumes::io_detail::kMaxProvenanceStringBytes) {
+    if (width == 0 || width > cumes::io_detail::MAX_PROVENANCE_STRING_BYTES) {
         return false;
     }
     out.resize(width + 1, '\0');
@@ -586,7 +586,7 @@ class Hdf5V1Reader final : public Reader {
             const int mnmax = static_cast<int>(state_dims[1]);
             const auto n_opt = checked_mul((size_t)ns, (size_t)mnmax);
             if (!n_opt) return fail("dimension product overflows size_t");
-            if (*n_opt > cumes::io_detail::kMaxStateElementsPerFamily) {
+            if (*n_opt > cumes::io_detail::MAX_STATE_ELEMENTS_PER_FAMILY) {
                 return fail("state dimensions exceed the resource cap");
             }
             {
@@ -712,8 +712,8 @@ class Hdf5V1Reader final : public Reader {
                     if (probe.get() >= 0) nrestarts = (size_t)d_restarts[0];
                 }
                 // Documented stage/restart resource caps (handoff §4).
-                if (nstages > cumes::io_detail::kMaxStageCount ||
-                    nrestarts > cumes::io_detail::kMaxStageCount) {
+                if (nstages > cumes::io_detail::MAX_STAGE_COUNT ||
+                    nrestarts > cumes::io_detail::MAX_STAGE_COUNT) {
                     return fail(
                         "stage/restart dimensions exceed the resource cap");
                 }
@@ -822,7 +822,8 @@ class Hdf5V1Reader final : public Reader {
                                 return fail("malformed embedded input record");
                             }
                             const size_t nstages_in = (size_t)d_in[0];
-                            if (nstages_in > cumes::io_detail::kMaxStageCount) {
+                            if (nstages_in >
+                                cumes::io_detail::MAX_STAGE_COUNT) {
                                 return fail(
                                     "embedded input stage count exceeds "
                                     "the resource cap");

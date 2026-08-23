@@ -94,7 +94,7 @@ class MultigridSolver {
         out.total_iterations = total_iter;
         out.report.total_effective_iterations = total_iter;
         out.report.status =
-            result.converged ? RunStatus::kConverged : RunStatus::kNotConverged;
+            result.converged ? RunStatus::CONVERGED : RunStatus::NOT_CONVERGED;
         return out;
     }
 };

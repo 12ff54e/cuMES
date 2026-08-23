@@ -36,7 +36,7 @@ namespace cumes {
 // vmecpp's shouldUpdateRadialPreconditioner cadence (blueprint §4.10): the
 // radial preconditioner and residual normalization refresh every 25 passes
 // measured from the latest restart anchor.
-inline constexpr int kPreconInterval = 25;
+inline constexpr int PRECON_INTERVAL = 25;
 
 template <typename T>
 class IterationController {
@@ -84,7 +84,7 @@ class IterationController {
         return iter2_ == iter1_;
     }
     bool refresh_preconditioner() const noexcept {
-        return (iter2_ - iter1_) % kPreconInterval == 0;
+        return (iter2_ - iter1_) % PRECON_INTERVAL == 0;
     }
 
     // ---- per-fence decisions ----
@@ -201,15 +201,15 @@ class IterationController {
         if (iter2_ == iter1_ || res0_ == T(-1.0)) res0_ = fsq;
         res0_ = std::min(res0_, fsq);
 
-        RestartReason reason = RestartReason::kNone;
+        RestartReason reason = RestartReason::NONE;
         bool do_refresh = false;
         if (fsq <= res0_ && (iter2_ - iter1_) > 10) {
             do_refresh = true;
         } else if (fsq > T(100.0) * res0_ && iter2_ > iter1_) {
-            reason = RestartReason::kBadJacobian;
+            reason = RestartReason::BAD_JACOBIAN;
         } else if ((iter2_ - iter1_) > 12 && iter2_ > 50 &&
                    (invariant[0] + invariant[1]) > T(1.0e-2)) {
-            reason = RestartReason::kBadProgress;
+            reason = RestartReason::BAD_PROGRESS;
         }
 
         RestartDecision<T> d;
@@ -225,8 +225,8 @@ class IterationController {
     // Post-descent bookkeeping: apply the restart's time-step adjustment and
     // re-anchor, or advance the effective-iteration counter on a good pass.
     void after_descent(const RestartDecision<T>& d) {
-        if (d.reason != RestartReason::kNone) {
-            if (d.reason == RestartReason::kBadJacobian) {
+        if (d.reason != RestartReason::NONE) {
+            if (d.reason == RestartReason::BAD_JACOBIAN) {
                 delt_ *= T(0.9);
                 ++ijacob_;
             } else {

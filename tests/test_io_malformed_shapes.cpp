@@ -63,25 +63,25 @@ class TempDir {
 // ---------------------------------------------------------------------------
 #ifdef CUMES_HAVE_NETCDF
 enum class NcMutation {
-    kNone,
-    kFamilyRank1,          // rmncc declared with rank 1
-    kFamilyRank3,          // rmncc declared with rank 3
-    kFamilySwappedDims,    // rmncc declared [mnmax, ns] instead of [ns, mnmax]
-    kScalarAsArray,        // "precision" declared as a rank-1 array of 3 ints
-    kStageRank0,           // stage_ns declared scalar
-    kStageRank2,           // stage_ns declared rank 2
-    kWrongFamilyType,      // rmncc declared NC_INT
-    kResourceCap,          // state product exceeds the practical reader cap
-    kHugeNs,               // ns dimension = 2^40 (beyond the INT_MAX bound)
-    kDirtyOutOfRange,      // build_dirty = 2
-    kStageNsNonpositive,   // stage_ns contains 0
-    kStageConvOutOfRange,  // stage_converged contains 2
-    kRestartNegative,      // restart_iteration contains -1
+    NONE,
+    FAMILY_RANK_1,         // rmncc declared with rank 1
+    FAMILY_RANK_3,         // rmncc declared with rank 3
+    FAMILY_SWAPPED_DIMS,   // rmncc declared [mnmax, ns] instead of [ns, mnmax]
+    SCALAR_AS_ARRAY,       // "precision" declared as a rank-1 array of 3 ints
+    STAGE_RANK_0,          // stage_ns declared scalar
+    STAGE_RANK_2,          // stage_ns declared rank 2
+    WRONG_FAMILY_TYPE,     // rmncc declared NC_INT
+    RESOURCE_CAP,          // state product exceeds the practical reader cap
+    HUGE_NS,               // ns dimension = 2^40 (beyond the INT_MAX bound)
+    DIRTY_OUT_OF_RANGE,    // build_dirty = 2
+    STAGE_NS_NONPOSITIVE,  // stage_ns contains 0
+    STAGE_CONV_OUT_OF_RANGE,  // stage_converged contains 2
+    RESTART_NEGATIVE,         // restart_iteration contains -1
 };
 
 static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
     int ncid = -1;
-    // CDF-5 (NC_64BIT_DATA) is required for the kHugeNs case: the classic
+    // CDF-5 (NC_64BIT_DATA) is required for the HUGE_NS case: the classic
     // and 64-bit-offset formats cap dimension lengths at 32 bits, which can
     // never exceed INT_MAX. The reader (nc_open) accepts the format
     // transparently.
@@ -95,11 +95,11 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
     } while (0)
     const bool ok = [&]() -> bool {
         const size_t huge = (size_t)1 << 40;
-        const bool resource_case = mut == NcMutation::kResourceCap;
-        const bool dimension_only = resource_case || mut == NcMutation::kHugeNs;
+        const bool resource_case = mut == NcMutation::RESOURCE_CAP;
+        const bool dimension_only = resource_case || mut == NcMutation::HUGE_NS;
         const size_t capped_ns =
-            cumes::io_detail::kMaxStateElementsPerFamily / 2 + 1;
-        const size_t ns_len = (mut == NcMutation::kHugeNs)
+            cumes::io_detail::MAX_STATE_ELEMENTS_PER_FAMILY / 2 + 1;
+        const size_t ns_len = (mut == NcMutation::HUGE_NS)
                                   ? huge
                                   : (resource_case ? capped_ns : 3);
         int d_ns, d_mn, d_st, d_rs;
@@ -115,16 +115,16 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
         // does not reserve their prospective multi-gigabyte file size. The
         // reader must reject from dimensions before looking up a family.
         for (int c = 0; c < 6 && !dimension_only; ++c) {
-            if (c == 0 && mut == NcMutation::kFamilyRank1) {
+            if (c == 0 && mut == NcMutation::FAMILY_RANK_1) {
                 NC_F(nc_def_var(ncid, fams[c], NC_DOUBLE, 1, &d_ns, &v_fam[c]));
-            } else if (c == 0 && mut == NcMutation::kFamilyRank3) {
+            } else if (c == 0 && mut == NcMutation::FAMILY_RANK_3) {
                 const int three[3] = {d_ns, d_mn, d_st};
                 NC_F(nc_def_var(ncid, fams[c], NC_DOUBLE, 3, three, &v_fam[c]));
-            } else if (c == 0 && mut == NcMutation::kFamilySwappedDims) {
+            } else if (c == 0 && mut == NcMutation::FAMILY_SWAPPED_DIMS) {
                 const int swapped[2] = {d_mn, d_ns};
                 NC_F(nc_def_var(ncid, fams[c], NC_DOUBLE, 2, swapped,
                                 &v_fam[c]));
-            } else if (c == 0 && mut == NcMutation::kWrongFamilyType) {
+            } else if (c == 0 && mut == NcMutation::WRONG_FAMILY_TYPE) {
                 NC_F(nc_def_var(ncid, fams[c], NC_INT, 2, fam_dims, &v_fam[c]));
             } else {
                 NC_F(nc_def_var(ncid, fams[c], NC_DOUBLE, 2, fam_dims,
@@ -132,7 +132,7 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
             }
         }
         int v_prec, v_status, v_total, v_dirty;
-        if (mut == NcMutation::kScalarAsArray) {
+        if (mut == NcMutation::SCALAR_AS_ARRAY) {
             NC_F(nc_def_var(ncid, "precision", NC_INT, 1, &d_st, &v_prec));
         } else {
             NC_F(nc_def_var(ncid, "precision", NC_INT, 0, nullptr, &v_prec));
@@ -142,9 +142,9 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
             nc_def_var(ncid, "total_iterations", NC_INT, 0, nullptr, &v_total));
         NC_F(nc_def_var(ncid, "build_dirty", NC_INT, 0, nullptr, &v_dirty));
         int v_ns, v_iter, v_conv, v_fsqr, v_fsqz, v_fsql, v_off, v_riter;
-        if (mut == NcMutation::kStageRank0) {
+        if (mut == NcMutation::STAGE_RANK_0) {
             NC_F(nc_def_var(ncid, "stage_ns", NC_INT, 0, nullptr, &v_ns));
-        } else if (mut == NcMutation::kStageRank2) {
+        } else if (mut == NcMutation::STAGE_RANK_2) {
             const int two2[2] = {d_st, d_st};
             NC_F(nc_def_var(ncid, "stage_ns", NC_INT, 2, two2, &v_ns));
         } else {
@@ -180,7 +180,7 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
             }
         }
         const int zero = 0;
-        if (mut == NcMutation::kScalarAsArray) {
+        if (mut == NcMutation::SCALAR_AS_ARRAY) {
             const int three[3] = {0, 0, 0};
             NC_F(nc_put_var_int(ncid, v_prec, three));
         } else {
@@ -188,12 +188,13 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
         }
         NC_F(nc_put_var_int(ncid, v_status, &zero));
         NC_F(nc_put_var_int(ncid, v_total, &zero));
-        const int dirty = (mut == NcMutation::kDirtyOutOfRange) ? 2 : 0;
+        const int dirty = (mut == NcMutation::DIRTY_OUT_OF_RANGE) ? 2 : 0;
         NC_F(nc_put_var_int(ncid, v_dirty, &dirty));
-        if (mut != NcMutation::kStageRank0 && mut != NcMutation::kStageRank2) {
+        if (mut != NcMutation::STAGE_RANK_0 &&
+            mut != NcMutation::STAGE_RANK_2) {
             std::vector<int> stage_ns(2, 3), stage_iter(2, 1), stage_conv(2, 1);
-            if (mut == NcMutation::kStageNsNonpositive) stage_ns[0] = 0;
-            if (mut == NcMutation::kStageConvOutOfRange) stage_conv[0] = 2;
+            if (mut == NcMutation::STAGE_NS_NONPOSITIVE) stage_ns[0] = 0;
+            if (mut == NcMutation::STAGE_CONV_OUT_OF_RANGE) stage_conv[0] = 2;
             std::vector<double> stage_res(2, 0.0);
             const int offs[2] = {0, 1};  // valid offsets for the control case
             NC_F(nc_put_var_int(ncid, v_ns, stage_ns.data()));
@@ -205,7 +206,7 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
             NC_F(nc_put_var_int(ncid, v_off, offs));
         }
         const int restart_iteration =
-            (mut == NcMutation::kRestartNegative) ? -1 : 7;
+            (mut == NcMutation::RESTART_NEGATIVE) ? -1 : 7;
         NC_F(nc_put_var_int(ncid, v_riter, &restart_iteration));
         return true;
     }();
@@ -224,26 +225,26 @@ static bool writeNetcdfFixture(const std::string& path, NcMutation mut) {
 // ---------------------------------------------------------------------------
 #ifdef CUMES_HAVE_HDF5
 enum class H5Mutation {
-    kNone,
-    kRmnccRank1,           // rmncc with rank 1
-    kRmnccRank3,           // rmncc with rank 3
-    kFamilyExtentDiffers,  // zmnsc with extent [ns, mnmax+1]
-    kStageRank0,           // stage_ns scalar
-    kStageRank2,           // stage_ns rank 2
-    kIntAttrArray,         // "precision" attribute with 3 elements
-    kStrAttrArray,         // "revision" attribute with 2 elements
-    kVariableStrAttr,      // "revision" is a scalar variable-length string
-    kWrongFamilyType,      // rmncc stored as H5T_NATIVE_INT
-    kResourceCap,          // state product exceeds the practical reader cap
-    kHugeNs,               // family extent ns = 2^40
-    kUnsignedIntAttr,      // scalar precision attribute is unsigned
-    kStageUnsigned,        // stage_ns stored as unsigned 32-bit
-    kStageU8,              // stage_ns stored as unsigned 8-bit
-    kStageI64,             // stage_ns stored as signed 64-bit
-    kDirtyOutOfRange,      // build_dirty = 2
-    kStageNsNonpositive,   // stage_ns contains 0
-    kStageConvOutOfRange,  // stage_converged contains 2
-    kRestartNegative,      // restart_iteration contains -1
+    NONE,
+    RMNCC_RANK_1,             // rmncc with rank 1
+    RMNCC_RANK_3,             // rmncc with rank 3
+    FAMILY_EXTENT_DIFFERS,    // zmnsc with extent [ns, mnmax+1]
+    STAGE_RANK_0,             // stage_ns scalar
+    STAGE_RANK_2,             // stage_ns rank 2
+    INT_ATTR_ARRAY,           // "precision" attribute with 3 elements
+    STR_ATTR_ARRAY,           // "revision" attribute with 2 elements
+    VARIABLE_STR_ATTR,        // "revision" is a scalar variable-length string
+    WRONG_FAMILY_TYPE,        // rmncc stored as H5T_NATIVE_INT
+    RESOURCE_CAP,             // state product exceeds the practical reader cap
+    HUGE_NS,                  // family extent ns = 2^40
+    UNSIGNED_INT_ATTR,        // scalar precision attribute is unsigned
+    STAGE_UNSIGNED,           // stage_ns stored as unsigned 32-bit
+    STAGE_U8,                 // stage_ns stored as unsigned 8-bit
+    STAGE_I64,                // stage_ns stored as signed 64-bit
+    DIRTY_OUT_OF_RANGE,       // build_dirty = 2
+    STAGE_NS_NONPOSITIVE,     // stage_ns contains 0
+    STAGE_CONV_OUT_OF_RANGE,  // stage_converged contains 2
+    RESTART_NEGATIVE,         // restart_iteration contains -1
 };
 
 static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
@@ -308,23 +309,23 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
 
         const hsize_t huge = (hsize_t)1 << 40;
         const hsize_t capped_ns =
-            (hsize_t)cumes::io_detail::kMaxStateElementsPerFamily / 2 + 1;
+            (hsize_t)cumes::io_detail::MAX_STATE_ELEMENTS_PER_FAMILY / 2 + 1;
         const hsize_t ns_ext =
-            (mut == H5Mutation::kHugeNs)
+            (mut == H5Mutation::HUGE_NS)
                 ? huge
-                : ((mut == H5Mutation::kResourceCap) ? capped_ns : 3);
+                : ((mut == H5Mutation::RESOURCE_CAP) ? capped_ns : 3);
         const hsize_t state_dims[2] = {ns_ext, 2};
         const char* fams[6] = {"rmncc", "zmnsc", "lmnsc",
                                "rmnss", "zmncs", "lmncs"};
         const double fambuf[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
         for (int c = 0; c < 6; ++c) {
             hid_t sp = -1;
-            if (c == 0 && mut == H5Mutation::kRmnccRank1) {
+            if (c == 0 && mut == H5Mutation::RMNCC_RANK_1) {
                 sp = H5Screate_simple(1, &ns_ext, nullptr);
-            } else if (c == 0 && mut == H5Mutation::kRmnccRank3) {
+            } else if (c == 0 && mut == H5Mutation::RMNCC_RANK_3) {
                 const hsize_t three[3] = {3, 2, 2};
                 sp = H5Screate_simple(3, three, nullptr);
-            } else if (c == 1 && mut == H5Mutation::kFamilyExtentDiffers) {
+            } else if (c == 1 && mut == H5Mutation::FAMILY_EXTENT_DIFFERS) {
                 const hsize_t differs[2] = {ns_ext, 3};
                 sp = H5Screate_simple(2, differs, nullptr);
             } else {
@@ -337,7 +338,7 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             // reject at the shape/bound checks before reading any value, and
             // a whole-slab write of a mutated extent would overread fambuf.
             const hssize_t npts = H5Sget_simple_extent_npoints(sp);
-            const hid_t dtype = (c == 0 && mut == H5Mutation::kWrongFamilyType)
+            const hid_t dtype = (c == 0 && mut == H5Mutation::WRONG_FAMILY_TYPE)
                                     ? H5T_NATIVE_INT
                                     : H5T_NATIVE_DOUBLE;
             hid_t ds = H5Dcreate2(fid, fams[c], dtype, sp, H5P_DEFAULT,
@@ -351,7 +352,7 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             }
             H5Dclose(ds);
         }
-        if (mut == H5Mutation::kIntAttrArray) {
+        if (mut == H5Mutation::INT_ATTR_ARRAY) {
             // "precision" as a 3-element integer array attribute.
             const hsize_t ext[1] = {3};
             hid_t sp = H5Screate_simple(1, ext, nullptr);
@@ -364,7 +365,7 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             const herr_t r = H5Awrite(aid, H5T_NATIVE_INT, three);
             H5Aclose(aid);
             H5_F(r);
-        } else if (mut == H5Mutation::kUnsignedIntAttr) {
+        } else if (mut == H5Mutation::UNSIGNED_INT_ATTR) {
             hid_t sp = H5Screate(H5S_SCALAR);
             if (sp < 0) return false;
             hid_t aid = H5Acreate2(fid, "precision", H5T_NATIVE_UINT, sp,
@@ -381,8 +382,8 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
         H5_F(putIntAttr("status", 0));
         H5_F(putIntAttr("total_iterations", 0));
         H5_F(putIntAttr("build_dirty",
-                        mut == H5Mutation::kDirtyOutOfRange ? 2 : 0));
-        if (mut == H5Mutation::kStrAttrArray) {
+                        mut == H5Mutation::DIRTY_OUT_OF_RANGE ? 2 : 0));
+        if (mut == H5Mutation::STR_ATTR_ARRAY) {
             // "revision" as a 2-element string array attribute.
             const hsize_t ext[1] = {2};
             hid_t sp = H5Screate_simple(1, ext, nullptr);
@@ -409,7 +410,7 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             H5Aclose(aid);
             H5Tclose(s1);
             H5_F(r);
-        } else if (mut == H5Mutation::kVariableStrAttr) {
+        } else if (mut == H5Mutation::VARIABLE_STR_ATTR) {
             hid_t s1 = H5Tcopy(H5T_C_S1);
             if (s1 < 0) return false;
             if (H5Tset_size(s1, H5T_VARIABLE) < 0) {
@@ -448,10 +449,10 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
         std::vector<int> stage_ns(2, 3), stage_iter(2, 1), stage_conv(2, 1);
         std::vector<double> stage_res(2, 0.0);
         std::vector<int> rst_iter(1, 7);
-        if (mut == H5Mutation::kStageNsNonpositive) stage_ns[0] = 0;
-        if (mut == H5Mutation::kStageConvOutOfRange) stage_conv[0] = 2;
-        if (mut == H5Mutation::kRestartNegative) rst_iter[0] = -1;
-        if (mut == H5Mutation::kStageRank0) {
+        if (mut == H5Mutation::STAGE_NS_NONPOSITIVE) stage_ns[0] = 0;
+        if (mut == H5Mutation::STAGE_CONV_OUT_OF_RANGE) stage_conv[0] = 2;
+        if (mut == H5Mutation::RESTART_NEGATIVE) rst_iter[0] = -1;
+        if (mut == H5Mutation::STAGE_RANK_0) {
             hid_t sp = H5Screate(H5S_SCALAR);
             if (sp < 0) return false;
             hid_t ds = H5Dcreate2(fid, "stage_ns", H5T_NATIVE_INT, sp,
@@ -463,7 +464,7 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
                                       H5P_DEFAULT, &zero);
             H5Dclose(ds);
             H5_F(r);
-        } else if (mut == H5Mutation::kStageRank2) {
+        } else if (mut == H5Mutation::STAGE_RANK_2) {
             const hsize_t two2[2] = {2, 2};
             hid_t sp = H5Screate_simple(2, two2, nullptr);
             if (sp < 0) return false;
@@ -476,13 +477,13 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
                                       H5P_DEFAULT, four);
             H5Dclose(ds);
             H5_F(r);
-        } else if (mut == H5Mutation::kStageUnsigned) {
+        } else if (mut == H5Mutation::STAGE_UNSIGNED) {
             const unsigned int values[2] = {3, 3};
             H5_F(putArray("stage_ns", H5T_NATIVE_UINT, 2, values));
-        } else if (mut == H5Mutation::kStageU8) {
+        } else if (mut == H5Mutation::STAGE_U8) {
             const unsigned char values[2] = {3, 3};
             H5_F(putArray("stage_ns", H5T_NATIVE_UCHAR, 2, values));
-        } else if (mut == H5Mutation::kStageI64) {
+        } else if (mut == H5Mutation::STAGE_I64) {
             const long long values[2] = {3, 3};
             H5_F(putArray("stage_ns", H5T_NATIVE_LLONG, 2, values));
         } else {
@@ -523,33 +524,33 @@ static void testNetcdf(const TempDir& dir) {
         const char* error_contains;
     };
     const Case cases[] = {
-        {NcMutation::kNone, "valid control", nullptr},
-        {NcMutation::kFamilyRank1, "rmncc rank 1", nullptr},
-        {NcMutation::kFamilyRank3, "rmncc rank 3", nullptr},
-        {NcMutation::kFamilySwappedDims, "rmncc swapped dimensions", nullptr},
-        {NcMutation::kScalarAsArray, "scalar outcome as array", nullptr},
-        {NcMutation::kStageRank0, "stage_ns rank 0", nullptr},
-        {NcMutation::kStageRank2, "stage_ns rank 2", nullptr},
-        {NcMutation::kWrongFamilyType, "rmncc wrong datatype", nullptr},
-        {NcMutation::kResourceCap, "state resource cap", "resource cap"},
-        {NcMutation::kHugeNs, "ns beyond INT_MAX", "bad dimensions"},
-        {NcMutation::kDirtyOutOfRange, "build_dirty out of range", nullptr},
-        {NcMutation::kStageNsNonpositive, "stage_ns nonpositive", nullptr},
-        {NcMutation::kStageConvOutOfRange, "stage_converged out of range",
+        {NcMutation::NONE, "valid control", nullptr},
+        {NcMutation::FAMILY_RANK_1, "rmncc rank 1", nullptr},
+        {NcMutation::FAMILY_RANK_3, "rmncc rank 3", nullptr},
+        {NcMutation::FAMILY_SWAPPED_DIMS, "rmncc swapped dimensions", nullptr},
+        {NcMutation::SCALAR_AS_ARRAY, "scalar outcome as array", nullptr},
+        {NcMutation::STAGE_RANK_0, "stage_ns rank 0", nullptr},
+        {NcMutation::STAGE_RANK_2, "stage_ns rank 2", nullptr},
+        {NcMutation::WRONG_FAMILY_TYPE, "rmncc wrong datatype", nullptr},
+        {NcMutation::RESOURCE_CAP, "state resource cap", "resource cap"},
+        {NcMutation::HUGE_NS, "ns beyond INT_MAX", "bad dimensions"},
+        {NcMutation::DIRTY_OUT_OF_RANGE, "build_dirty out of range", nullptr},
+        {NcMutation::STAGE_NS_NONPOSITIVE, "stage_ns nonpositive", nullptr},
+        {NcMutation::STAGE_CONV_OUT_OF_RANGE, "stage_converged out of range",
          nullptr},
-        {NcMutation::kRestartNegative, "restart iteration negative", nullptr},
+        {NcMutation::RESTART_NEGATIVE, "restart iteration negative", nullptr},
     };
     for (const Case& c : cases) {
         const std::string path = dir.path() + "/" + c.label + ".nc";
         check(writeNetcdfFixture(path, c.mut),
               format("netcdf: fixture written ({})", c.label));
-        std::unique_ptr<Reader> reader = make_reader(OutputFormat::kNetCdf);
+        std::unique_ptr<Reader> reader = make_reader(OutputFormat::NETCDF);
         RunReport rep;
         rep.build.revision = "sentinel";
         rep.total_effective_iterations = 12345;
         const auto res = reader->read(path, &rep);
         remove(path.c_str());
-        if (c.mut == NcMutation::kNone) {
+        if (c.mut == NcMutation::NONE) {
             check(res.has_value(), format("netcdf: {}", c.label));
         } else {
             check(!res.has_value(),
@@ -574,41 +575,41 @@ static void testHdf5(const TempDir& dir) {
         const char* error_contains;
     };
     const Case cases[] = {
-        {H5Mutation::kNone, "valid control", nullptr},
-        {H5Mutation::kRmnccRank1, "rmncc rank 1", nullptr},
-        {H5Mutation::kRmnccRank3, "rmncc rank 3", nullptr},
-        {H5Mutation::kFamilyExtentDiffers, "zmnsc extent differs", nullptr},
-        {H5Mutation::kStageRank0, "stage_ns rank 0", nullptr},
-        {H5Mutation::kStageRank2, "stage_ns rank 2", nullptr},
-        {H5Mutation::kIntAttrArray, "multi-element int attribute", nullptr},
-        {H5Mutation::kStrAttrArray, "multi-element string attribute", nullptr},
-        {H5Mutation::kVariableStrAttr, "variable-length string attribute",
+        {H5Mutation::NONE, "valid control", nullptr},
+        {H5Mutation::RMNCC_RANK_1, "rmncc rank 1", nullptr},
+        {H5Mutation::RMNCC_RANK_3, "rmncc rank 3", nullptr},
+        {H5Mutation::FAMILY_EXTENT_DIFFERS, "zmnsc extent differs", nullptr},
+        {H5Mutation::STAGE_RANK_0, "stage_ns rank 0", nullptr},
+        {H5Mutation::STAGE_RANK_2, "stage_ns rank 2", nullptr},
+        {H5Mutation::INT_ATTR_ARRAY, "multi-element int attribute", nullptr},
+        {H5Mutation::STR_ATTR_ARRAY, "multi-element string attribute", nullptr},
+        {H5Mutation::VARIABLE_STR_ATTR, "variable-length string attribute",
          nullptr},
-        {H5Mutation::kWrongFamilyType, "rmncc wrong datatype", nullptr},
-        {H5Mutation::kResourceCap, "state resource cap", "resource cap"},
-        {H5Mutation::kHugeNs, "ns beyond INT_MAX", "bad state dimensions"},
-        {H5Mutation::kUnsignedIntAttr, "unsigned scalar int attribute",
+        {H5Mutation::WRONG_FAMILY_TYPE, "rmncc wrong datatype", nullptr},
+        {H5Mutation::RESOURCE_CAP, "state resource cap", "resource cap"},
+        {H5Mutation::HUGE_NS, "ns beyond INT_MAX", "bad state dimensions"},
+        {H5Mutation::UNSIGNED_INT_ATTR, "unsigned scalar int attribute",
          nullptr},
-        {H5Mutation::kStageUnsigned, "unsigned stage integer", nullptr},
-        {H5Mutation::kStageU8, "8-bit stage integer", nullptr},
-        {H5Mutation::kStageI64, "64-bit stage integer", nullptr},
-        {H5Mutation::kDirtyOutOfRange, "build_dirty out of range", nullptr},
-        {H5Mutation::kStageNsNonpositive, "stage_ns nonpositive", nullptr},
-        {H5Mutation::kStageConvOutOfRange, "stage_converged out of range",
+        {H5Mutation::STAGE_UNSIGNED, "unsigned stage integer", nullptr},
+        {H5Mutation::STAGE_U8, "8-bit stage integer", nullptr},
+        {H5Mutation::STAGE_I64, "64-bit stage integer", nullptr},
+        {H5Mutation::DIRTY_OUT_OF_RANGE, "build_dirty out of range", nullptr},
+        {H5Mutation::STAGE_NS_NONPOSITIVE, "stage_ns nonpositive", nullptr},
+        {H5Mutation::STAGE_CONV_OUT_OF_RANGE, "stage_converged out of range",
          nullptr},
-        {H5Mutation::kRestartNegative, "restart iteration negative", nullptr},
+        {H5Mutation::RESTART_NEGATIVE, "restart iteration negative", nullptr},
     };
     for (const Case& c : cases) {
         const std::string path = dir.path() + "/" + c.label + ".h5";
         check(writeHdf5Fixture(path, c.mut),
               format("hdf5: fixture written ({})", c.label));
-        std::unique_ptr<Reader> reader = make_reader(OutputFormat::kHdf5);
+        std::unique_ptr<Reader> reader = make_reader(OutputFormat::HDF5);
         RunReport rep;
         rep.build.revision = "sentinel";
         rep.total_effective_iterations = 12345;
         const auto res = reader->read(path, &rep);
         remove(path.c_str());
-        if (c.mut == H5Mutation::kNone) {
+        if (c.mut == H5Mutation::NONE) {
             check(res.has_value(), format("hdf5: {}", c.label));
         } else {
             check(!res.has_value(),

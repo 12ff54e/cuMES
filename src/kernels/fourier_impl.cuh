@@ -1,7 +1,8 @@
-// kernels/fourier_impl.cuh — template definitions for toroidal_fft_operator.hpp (and
-// the resolution/real-space scratch helpers modeTableCreate/realSpaceCreate).
-// Included once per scalar type by fourier_double.cu / fourier_float.cu; see
-// the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+// kernels/fourier_impl.cuh — template definitions for toroidal_fft_operator.hpp
+// (and the resolution/real-space scratch helpers
+// modeTableCreate/realSpaceCreate). Included once per scalar type by
+// fourier_double.cu / fourier_float.cu; see the explicit-instantiation split
+// (cumes_cuda_double / cumes_cuda_float).
 #ifndef CUMES_SRC_FOURIER_IMPL_CUH_
 #define CUMES_SRC_FOURIER_IMPL_CUH_
 // fourier.cu — DFT transforms with vmecpp m-parity convention.
@@ -185,10 +186,10 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     int batch = 12 * p.mpol * p.ns;
     int inemb = nz2, outemb = n;
     cumes::check_cufft(cufftPlanMany(&plan_z2d_, 1, &n, &inemb, 1, nz2, &outemb,
-                                     1, n, FftTraits<T>::kInverse, batch),
+                                     1, n, FftTraits<T>::INVERSE, batch),
                        "plan z2d");
     cumes::check_cufft(cufftPlanMany(&plan_d2z_, 1, &n, &outemb, 1, n, &inemb,
-                                     1, nz2, FftTraits<T>::kForward, batch),
+                                     1, nz2, FftTraits<T>::FORWARD, batch),
                        "plan d2z");
 
     // Phase 6B: disable cuFFT auto-allocation and share one max-sized work
@@ -245,10 +246,10 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
         }
         cumes::check_cufft(
             cufftPlanMany(&plan_d2z_da_, 1, &n, &n, 1, n, &nz2, 1, nz2,
-                          FftTraits<T>::kForward, batchDa),
+                          FftTraits<T>::FORWARD, batchDa),
             "plan d2z_da");
         cumes::check_cufft(cufftPlanMany(&plan_z2d_da_, 1, &n, &nz2, 1, nz2, &n,
-                                         1, n, FftTraits<T>::kInverse, batchDa),
+                                         1, n, FftTraits<T>::INVERSE, batchDa),
                            "plan z2d_da");
         size_t wda = 0, wza = 0;
         cumes::check_cufft(cufftSetAutoAllocation(plan_d2z_da_, 0),
@@ -334,8 +335,9 @@ cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
     // fourierCombineParity / inverseDFT(do_combine=true). Zero them here so a
     // diagnostic dump taken before the first combine is deterministic (the old
     // code dumped uninitialized memory, whose bytes shifted with the allocation
-    // order — see the step_A_l_real_iter_1 dump in kernels/solver_impl.cuh). Parity
-    // arrays are left as-is: inverseDFT writes them before any consumer reads.
+    // order — see the step_A_l_real_iter_1 dump in kernels/solver_impl.cuh).
+    // Parity arrays are left as-is: inverseDFT writes them before any consumer
+    // reads.
     cumes::check_cuda(cudaMemset(rs.d_r_real, 0, nbytes_real), "zero r_r");
     cumes::check_cuda(cudaMemset(rs.d_z_real, 0, nbytes_real), "zero z_r");
     cumes::check_cuda(cudaMemset(rs.d_l_real, 0, nbytes_real), "zero l_r");
@@ -829,8 +831,8 @@ void cumes::ToroidalFftOperator<T>::inverse_fused(
 // De-alias bandpass (constraint step 2, blueprint §6.8): gConEff -> gCon over
 // the bandpass modes m = 1..mpol-2, scaled by tcon/faccon. The compact cuFFT
 // round trip uses this operator's scratch + plans. The kernels moved here from
-// kernels/constraint_impl.cuh with the FourierPlan (the transform operator owns all
-// transform tables/plans/scratch).
+// kernels/constraint_impl.cuh with the FourierPlan (the transform operator owns
+// all transform tables/plans/scratch).
 // ---------------------------------------------------------------------------
 // Analysis (full-grid uniform sums, matching deAliasKernelFast's quadrature):
 //   w_sc(m,n) = Σ gConEff*sin(mθ)cos(nζ) = Re F_sc(n)

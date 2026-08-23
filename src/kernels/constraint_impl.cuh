@@ -1,6 +1,7 @@
-// kernels/constraint_impl.cuh — template definitions for constraint_operator.hpp.
-// Included once per scalar type by constraint_double.cu / constraint_float.cu;
-// see the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
+// kernels/constraint_impl.cuh — template definitions for
+// constraint_operator.hpp. Included once per scalar type by
+// constraint_double.cu / constraint_float.cu; see the explicit-instantiation
+// split (cumes_cuda_double / cumes_cuda_float).
 #ifndef CUMES_SRC_CONSTRAINT_IMPL_CUH_
 #define CUMES_SRC_CONSTRAINT_IMPL_CUH_
 // constraint.cu — spectral condensation constraint force.
@@ -169,7 +170,7 @@ __global__ void effectiveConstraintKernel(
 // LCFS-extrapolated profile, and lets it ramp in as the geometry evolves
 // away from it. Runs on the first iteration and on the reinit pass after
 // every restart (iter2 == iter1, vmecpp's "initialization/soft reset").
-// For fixed boundary the vacuum state stays kOff, so rCon0 never decays.
+// For fixed boundary the vacuum state stays OFF, so rCon0 never decays.
 // ---------------------------------------------------------------------------
 template <typename T>
 __global__ void rzConIntoVolumeKernel(

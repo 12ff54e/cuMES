@@ -26,8 +26,8 @@
 // ---- typed real-space view bundles over the workspace structs ------------
 // geometryParityViews is the shared inline definition in
 // cumes/state/real_fields.cuh (review finding 4.2 — was a byte-identical
-// mirror of kernels/geometry_impl.cuh's copy here); this TU keeps the force-bundle
-// variant.
+// mirror of kernels/geometry_impl.cuh's copy here); this TU keeps the
+// force-bundle variant.
 template <typename T>
 static cumes::ForceParityViews<T> forceParityViews(
     const cumes::RealSpaceStorage<T>& rs,
@@ -280,8 +280,8 @@ __global__ void forcesKernel(cumes::GeometryParityViews<T> full,
     // lamscale*lu + phipF (phipF = dPhi/ds < 0) before this kernel runs, so
     // the alternative carries the same normalization. The odd part uses the
     // sqrt(s_H)-weighted half-grid average, matching vmecpp exactly. The two
-    // interpolations are blended with radialBlending = 2*kPDamp*(1-s),
-    // kPDamp = 0.05.
+    // interpolations are blended with radialBlending = 2*P_DAMP*(1-s),
+    // P_DAMP = 0.05.
     T gvv_gsqrt_i = (j > 0) ? (gvv_i / gsqrt_i) : T(0.0);
     T gvv_gsqrt_o = (j < ns - 1) ? (gvv_o / gsqrt_o) : T(0.0);
     T guv_bsupu_i = (j > 0) ? (guv_i * bsupu_i) : T(0.0);

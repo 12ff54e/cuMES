@@ -4,7 +4,7 @@
 // Interpolates a converged state onto a finer radial grid: odd modes in the
 // scalxc-decomposed coordinate, old-axis 2*x1-x2 extrapolation, odd-m zeroed at
 // the new axis, LCFS copied exactly (vmecpp
-// Vmec::InterpolateToNextMultigridStep, kLinear). (Migration step 13.3: the
+// Vmec::InterpolateToNextMultigridStep, LINEAR). (Migration step 13.3: the
 // legacy interpolateState free function and the refine.cuh/refine_impl.cuh
 // module are gone — the body is Prolongation::enqueue, defined in
 // src/kernels/prolongation_impl.cuh.)

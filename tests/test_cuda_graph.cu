@@ -91,14 +91,14 @@ int main() {
         p.lamscale = 0.0;
 
         cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
-        // Shared manufactured state (kGraphQuad in cumes_test_cuda_helper.cuh):
+        // Shared manufactured state (GRAPH_QUAD in cumes_test_cuda_helper.cuh):
         // R_00=4.0, R_10=0.3s, m>=2: 0.1s^2, Rss=Rcc. The gate compares r_e
         // only, which is built from the R slots, so uploading the remaining
         // four families as deterministic zeros (instead of leaving the device
         // slab uninitialized) is an equivalent but strictly more reproducible
         // input.
         std::vector<double> h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs;
-        manufactured_state<double>(ManufacturedShape::kGraphQuad, p.ns, p.mnmax,
+        manufactured_state<double>(ManufacturedShape::GRAPH_QUAD, p.ns, p.mnmax,
                                    p.ntor, h_cc, h_ss, h_zsc, h_zcs, h_lsc,
                                    h_lcs);
         upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,

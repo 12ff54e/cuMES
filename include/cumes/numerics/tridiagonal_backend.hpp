@@ -39,10 +39,10 @@ namespace cumes {
 // floor is *reported*, never silently converted to a positive constant. The
 // status is accumulated on the device into the caller-owned int buffer passed
 // to enqueue_solve (the total count of systems that hit a sub-floor pivot);
-// kOk means no system broke down.
+// OK means no system broke down.
 enum class TridiagonalStatus : std::uint8_t {
-    kOk = 0,
-    kSingular = 1,  // at least one system hit a pivot below the floor
+    OK = 0,
+    SINGULAR = 1,  // at least one system hit a pivot below the floor
 };
 
 // Scale-aware pivot policy (blueprint §4.9). The pivot floor is relative to the

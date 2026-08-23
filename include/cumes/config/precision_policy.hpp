@@ -14,11 +14,11 @@
 namespace cumes {
 
 enum class PrecisionPolicy : std::uint8_t {
-    kVerifyDouble = 0,  // double state/geometry/FFT/reduction, precise math
-    kFastDouble = 1,    // double + selected fast intrinsics (opt-in)
-    kMixedFloat =
+    VERIFY_DOUBLE = 0,  // double state/geometry/FFT/reduction, precise math
+    FAST_DOUBLE = 1,    // double + selected fast intrinsics (opt-in)
+    MIXED_FLOAT =
         2,  // float state/geometry/FFT, double reductions (experimental)
-    kDebugDouble = 3,  // double + precise + device checks
+    DEBUG_DOUBLE = 3,  // double + precise + device checks
 };
 
 // The lowest tolerance a policy can meaningfully meet. Double reaches the
@@ -27,11 +27,11 @@ enum class PrecisionPolicy : std::uint8_t {
 // margin.
 inline double tolerance_floor(PrecisionPolicy policy) {
     switch (policy) {
-        case PrecisionPolicy::kVerifyDouble:
-        case PrecisionPolicy::kFastDouble:
-        case PrecisionPolicy::kDebugDouble:
+        case PrecisionPolicy::VERIFY_DOUBLE:
+        case PrecisionPolicy::FAST_DOUBLE:
+        case PrecisionPolicy::DEBUG_DOUBLE:
             return 1e-16;
-        case PrecisionPolicy::kMixedFloat:
+        case PrecisionPolicy::MIXED_FLOAT:
             return 1e-6;
     }
     return 1e-16;
