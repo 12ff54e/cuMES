@@ -15,6 +15,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace cumes {
 
@@ -70,7 +71,7 @@ inline std::string cufft_error_string(cufftResult result) {
 }
 
 // Throws CumesError when `err != cudaSuccess`; returns otherwise.
-inline void check_cuda(cudaError_t err, const char* tag) {
+inline void check_cuda(cudaError_t err, std::string_view tag) {
     if (err != cudaSuccess) {
         throw CumesError(std::string(tag) +
                          ": CUDA error: " + cuda_error_string(err));
@@ -78,7 +79,7 @@ inline void check_cuda(cudaError_t err, const char* tag) {
 }
 
 // Throws CumesError when `result != CUFFT_SUCCESS`; returns otherwise.
-inline void check_cufft(cufftResult result, const char* tag) {
+inline void check_cufft(cufftResult result, std::string_view tag) {
     if (result != CUFFT_SUCCESS) {
         throw CumesError(std::string(tag) +
                          ": cuFFT error: " + cufft_error_string(result));
@@ -86,7 +87,7 @@ inline void check_cufft(cufftResult result, const char* tag) {
 }
 
 // Non-throwing status form for the Result boundary.
-inline Status cuda_status(cudaError_t err, const char* tag) {
+inline Status cuda_status(cudaError_t err, std::string_view tag) {
     if (err != cudaSuccess) {
         return Status(std::string(tag) +
                       ": CUDA error: " + cuda_error_string(err));

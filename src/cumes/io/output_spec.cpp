@@ -3,6 +3,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <strings.h>  // strcasecmp
 
@@ -15,7 +16,7 @@ namespace cumes {
 // (cumes_io); this host library stays free of NetCDF/HDF5 headers and
 // availability defines.
 
-const char* output_suffix(OutputFormat fmt) {
+std::string_view output_suffix(OutputFormat fmt) {
     switch (fmt) {
         case OutputFormat::BINARY:
             return ".bin";

@@ -72,17 +72,18 @@ inline double p95(std::vector<double> v) {
 // Diagnostics go to stderr with the caller's program prefix.
 class ArgParser {
    public:
-    ArgParser(int argc, char** argv, const char* prog)
+    ArgParser(int argc, char** argv, std::string_view prog)
         : argc_(argc), argv_(argv), prog_(prog) {}
 
     // Value of option `name` at index `i` (advancing i past a space-separated
     // value), or nullptr when argv[i] names a different option.
-    const char* need(int& i, const char* name) const {
+    const char* need(int& i, std::string_view name) const {
         const char* a = argv_[i];
-        const std::string opt = std::string("--") + name;
+        const std::string opt = std::string("--") + std::string(name);
         if (std::strcmp(a, opt.c_str()) == 0) {
             if (i + 1 >= argc_) {
-                std::fprintf(stderr, "%s: --%s needs a value\n", prog_, name);
+                std::fprintf(stderr, "%s: --%s needs a value\n", prog_.data(),
+                             name.data());
                 std::exit(2);
             }
             return argv_[++i];
@@ -96,19 +97,19 @@ class ArgParser {
    private:
     int argc_;
     char** argv_;
-    const char* prog_;
+    std::string_view prog_;
 };
 
 // Parse + validate the input JSON (the CLI host model). Prints failures to
 // stderr prefixed by `prog` and returns the null (error) result; the caller
 // maps that to its own exit path.
 inline cumes::ValidationResult load_validated(const std::string& input_path,
-                                              const char* prog) {
+                                              std::string_view prog) {
     cumes::SolverOptions opts;  // default precision policy (verify-double)
     try {
         cumes::ValidationResult vr = cumes::read_and_validate(input_path, opts);
         if (!vr.has_value()) {
-            std::fprintf(stderr, "%s: input validation failed\n", prog);
+            std::fprintf(stderr, "%s: input validation failed\n", prog.data());
             for (const auto& issue : vr.error().issues())
                 std::fprintf(stderr, "  [%d] %s: %s\n",
                              static_cast<int>(issue.severity),
@@ -116,7 +117,7 @@ inline cumes::ValidationResult load_validated(const std::string& input_path,
         }
         return vr;
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "%s: %s\n", prog, e.what());
+        std::fprintf(stderr, "%s: %s\n", prog.data(), e.what());
         return cumes::ValidationResult(cumes::ValidationReport{});
     }
 }

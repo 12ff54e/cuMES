@@ -21,6 +21,7 @@
 #include "cumes_test_cuda_helper.cuh"
 #include "vmec_types.h"
 
+#include <array>
 #include <cmath>
 #include <vector>
 using namespace cumes::test;
@@ -53,7 +54,7 @@ static constexpr double tol_near() {
 
 // Compare two device arrays elementwise at an absolute tolerance.
 template <typename T>
-static void compare_arrays(const char* label,
+static void compare_arrays(std::string_view label,
                            const T* a,
                            const T* b,
                            int n,
@@ -209,9 +210,9 @@ static void test_inverse(DeviceParams<T>& p,
                         rs.d_lu_e, rs.d_r_o,  rs.d_z_o,  rs.d_l_o,  rs.d_ru_o,
                         rs.d_zu_o, rs.d_lu_o, rs.d_rv_e, rs.d_zv_e, rs.d_lv_e,
                         rs.d_rv_o, rs.d_zv_o, rs.d_lv_o};
-    const char* names[18] = {"r_e",  "z_e",  "l_e",  "ru_e", "zu_e", "lu_e",
-                             "r_o",  "z_o",  "l_o",  "ru_o", "zu_o", "lu_o",
-                             "rv_e", "zv_e", "lv_e", "rv_o", "zv_o", "lv_o"};
+    const std::array<std::string_view, 18> names = {
+        "r_e",  "z_e",  "l_e",  "ru_e", "zu_e", "lu_e", "r_o",  "z_o",  "l_o",
+        "ru_o", "zu_o", "lu_o", "rv_e", "zv_e", "lv_e", "rv_o", "zv_o", "lv_o"};
     const T* ax[18] = {
         d_ax + (size_t)0 * n,  d_ax + (size_t)1 * n,  d_ax + (size_t)2 * n,
         d_ax + (size_t)3 * n,  d_ax + (size_t)4 * n,  d_ax + (size_t)5 * n,
@@ -291,7 +292,8 @@ static void test_forward(DeviceParams<T>& p,
         cumes::RealFieldView<const T>(cw.d_fzcon_o, p.ns, p.ntheta, p.nzeta);
     op.enqueue_forward(f, cf, ax_v, 0);
 
-    const char* names[6] = {"frcc", "fzsc", "flsc", "frss", "fzcs", "flcs"};
+    const std::array<std::string_view, 6> names = {"frcc", "fzsc", "flsc",
+                                                   "frss", "fzcs", "flcs"};
     for (int c = 0; c < 6; ++c)
         compare_arrays(names[c], d_gen + (size_t)c * n, d_ax + (size_t)c * n, n,
                        tol_near<T>());
@@ -372,7 +374,8 @@ static void test_rz_con_one_null(DeviceParams<T>& p,
     g.zv_o = view(16);
     g.lv_o = view(17);
 
-    auto run_one_null = [&](const char* label, bool rcon_null, const T* ref) {
+    auto run_one_null = [&](std::string_view label, bool rcon_null,
+                            const T* ref) {
         T* d_one = nullptr;
         cc(cudaMalloc(&d_one, (size_t)n * sizeof(T)), "ax one output");
         std::vector<T> poison((size_t)n, T(123.5));
@@ -464,7 +467,7 @@ static int run_tests() {
     cumes::ToroidalFftOperator<T> gen(p, rs, mt);
     const size_t nF = (size_t)p.ns * p.nZnT;
     Cw<T> cw{};
-    auto balloc = [&](T*& d, const char* tag) {
+    auto balloc = [&](T*& d, std::string_view tag) {
         cc(cudaMalloc(&d, nF * sizeof(T)), tag);
     };
     balloc(cw.d_frcon_e, "frcon_e");

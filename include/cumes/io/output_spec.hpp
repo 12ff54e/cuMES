@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace cumes {
 
@@ -30,7 +31,7 @@ bool output_format_available(OutputFormat fmt);
 Result<OutputSpec> resolve_output_spec(const std::string& path);
 
 // The suffix (lowercased, with leading '.') implied by a format, e.g. ".bin".
-const char* output_suffix(OutputFormat fmt);
+std::string_view output_suffix(OutputFormat fmt);
 
 }  // namespace cumes
 

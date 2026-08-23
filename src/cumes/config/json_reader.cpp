@@ -51,31 +51,32 @@ const std::set<std::string> KNOWN_IGNORED_KEYS = {
 // fallback so the mapped field keeps a valid default (validate() then reports
 // any remaining semantic issue without a misleading cascade).
 int get_int(const json::Value& v,
-            const std::string& key,
+            std::string_view key,
             int fallback,
             ValidationReport& report) {
     if (v.value_category() != json::ValueCategory::NumberInt) {
-        report.error(key,
-                     "'" + key + "': expected an integer, got " +
+        report.error(std::string(key),
+                     "'" + std::string(key) + "': expected an integer, got " +
                          json::get_value_category_name(v.value_category()));
         return fallback;
     }
     const long long vv = v.as_number<long long>();
     if (vv < INT_MIN || vv > INT_MAX) {
-        report.error(key, "'" + key + "': integer value " + std::to_string(vv) +
-                              " is out of range");
+        report.error(std::string(key),
+                     "'" + std::string(key) + "': integer value " +
+                         std::to_string(vv) + " is out of range");
         return fallback;
     }
     return static_cast<int>(vv);
 }
 
 double get_double(const json::Value& v,
-                  const std::string& key,
+                  std::string_view key,
                   double fallback,
                   ValidationReport& report) {
     if (!v.is_number()) {
-        report.error(key,
-                     "'" + key + "': expected a number, got " +
+        report.error(std::string(key),
+                     "'" + std::string(key) + "': expected a number, got " +
                          json::get_value_category_name(v.value_category()));
         return fallback;
     }
@@ -83,12 +84,12 @@ double get_double(const json::Value& v,
 }
 
 bool get_bool(const json::Value& v,
-              const std::string& key,
+              std::string_view key,
               bool fallback,
               ValidationReport& report) {
     if (!v.is_boolean()) {
-        report.error(key,
-                     "'" + key + "': expected a boolean, got " +
+        report.error(std::string(key),
+                     "'" + std::string(key) + "': expected a boolean, got " +
                          json::get_value_category_name(v.value_category()));
         return fallback;
     }
@@ -96,12 +97,12 @@ bool get_bool(const json::Value& v,
 }
 
 std::string get_string(const json::Value& v,
-                       const std::string& key,
+                       std::string_view key,
                        std::string fallback,
                        ValidationReport& report) {
     if (!v.is_string()) {
-        report.error(key,
-                     "'" + key + "': expected a string, got " +
+        report.error(std::string(key),
+                     "'" + std::string(key) + "': expected a string, got " +
                          json::get_value_category_name(v.value_category()));
         return fallback;
     }
@@ -111,20 +112,20 @@ std::string get_string(const json::Value& v,
 // Read an array of JSON numbers into a dynamic vector. strict_int requires
 // integer literals and range-checks the narrowing to int.
 std::vector<int> read_int_array(const json::Value& v,
-                                const std::string& key,
+                                std::string_view key,
                                 ValidationReport& report) {
     std::vector<int> out;
     if (!v.is_array()) {
-        report.error(key,
-                     "'" + key + "': expected an array, got " +
+        report.error(std::string(key),
+                     "'" + std::string(key) + "': expected an array, got " +
                          json::get_value_category_name(v.value_category()));
         return out;
     }
     for (std::size_t i = 0; i < v.size(); ++i) {
         const json::Value& e = v[i];
         if (e.value_category() != json::ValueCategory::NumberInt) {
-            report.error(key,
-                         "'" + key + "[" + std::to_string(i) +
+            report.error(std::string(key),
+                         "'" + std::string(key) + "[" + std::to_string(i) +
                              "]': expected an integer, got " +
                              json::get_value_category_name(e.value_category()));
             out.push_back(0);
@@ -132,9 +133,10 @@ std::vector<int> read_int_array(const json::Value& v,
         }
         const long long vv = e.as_number<long long>();
         if (vv < INT_MIN || vv > INT_MAX) {
-            report.error(key, "'" + key + "[" + std::to_string(i) +
-                                  "]': integer value " + std::to_string(vv) +
-                                  " is out of range");
+            report.error(std::string(key),
+                         "'" + std::string(key) + "[" + std::to_string(i) +
+                             "]': integer value " + std::to_string(vv) +
+                             " is out of range");
             out.push_back(0);
             continue;
         }
@@ -144,20 +146,20 @@ std::vector<int> read_int_array(const json::Value& v,
 }
 
 std::vector<double> read_double_array(const json::Value& v,
-                                      const std::string& key,
+                                      std::string_view key,
                                       ValidationReport& report) {
     std::vector<double> out;
     if (!v.is_array()) {
-        report.error(key,
-                     "'" + key + "': expected an array, got " +
+        report.error(std::string(key),
+                     "'" + std::string(key) + "': expected an array, got " +
                          json::get_value_category_name(v.value_category()));
         return out;
     }
     for (std::size_t i = 0; i < v.size(); ++i) {
         const json::Value& e = v[i];
         if (!e.is_number()) {
-            report.error(key,
-                         "'" + key + "[" + std::to_string(i) +
+            report.error(std::string(key),
+                         "'" + std::string(key) + "[" + std::to_string(i) +
                              "]': expected a number, got " +
                              json::get_value_category_name(e.value_category()));
             out.push_back(0.0);
@@ -172,12 +174,12 @@ std::vector<double> read_double_array(const json::Value& v,
 // modes are NOT rejected here (the dynamic model cannot index out of bounds);
 // validate() skips them with a warning, matching vmecpp ignore-and-continue.
 void read_boundary(const json::Value& v,
-                   const std::string& key,
+                   std::string_view key,
                    std::vector<BoundaryHarmonic>& out,
                    ValidationReport& report) {
     if (!v.is_array()) {
-        report.error(key,
-                     "'" + key +
+        report.error(std::string(key),
+                     "'" + std::string(key) +
                          "': expected an array of "
                          "{\"n\",\"m\",\"value\"} objects, got " +
                          json::get_value_category_name(v.value_category()));
@@ -185,7 +187,8 @@ void read_boundary(const json::Value& v,
     }
     for (std::size_t i = 0; i < v.size(); ++i) {
         const json::Value& e = v[i];
-        const std::string where = key + "[" + std::to_string(i) + "]";
+        const std::string where =
+            std::string(key) + "[" + std::to_string(i) + "]";
         if (!e.is_object()) {
             report.error(where, "'" + where +
                                     "': expected an object with "
@@ -219,42 +222,42 @@ ParsedProblem read_problem_spec(const std::string& path,
     }
 
     // Helper: apply fn(v, key) when root has the key.
-    auto if_present = [&](const char* key, auto fn) {
-        if (root.contains(key)) fn(root.at(key), key);
+    auto if_present = [&](std::string_view key, auto fn) {
+        if (root.contains(std::string(key))) fn(root.at(std::string(key)), key);
     };
 
     // ---- scalars ----
-    if_present("mpol", [&](const json::Value& v, const char* k) {
+    if_present("mpol", [&](const json::Value& v, std::string_view k) {
         p.mpol = get_int(v, k, p.mpol, report);
     });
-    if_present("ntor", [&](const json::Value& v, const char* k) {
+    if_present("ntor", [&](const json::Value& v, std::string_view k) {
         p.ntor = get_int(v, k, p.ntor, report);
     });
-    if_present("nfp", [&](const json::Value& v, const char* k) {
+    if_present("nfp", [&](const json::Value& v, std::string_view k) {
         p.nfp = get_int(v, k, p.nfp, report);
     });
-    if_present("ntheta", [&](const json::Value& v, const char* k) {
+    if_present("ntheta", [&](const json::Value& v, std::string_view k) {
         p.angular.ntheta = get_int(v, k, p.angular.ntheta, report);
     });
-    if_present("nzeta", [&](const json::Value& v, const char* k) {
+    if_present("nzeta", [&](const json::Value& v, std::string_view k) {
         p.angular.nzeta = get_int(v, k, p.angular.nzeta, report);
     });
-    if_present("ncurr", [&](const json::Value& v, const char* k) {
+    if_present("ncurr", [&](const json::Value& v, std::string_view k) {
         const int nc = get_int(v, k, 0, report);
         if (nc == 0)
             p.current_model = CurrentModel::FIXED_IOTA;
         else if (nc == 1)
             p.current_model = CurrentModel::PRESCRIBED_CURRENT;
         else
-            report.error(k, "ncurr must be 0 or 1");
+            report.error(std::string(k), "ncurr must be 0 or 1");
     });
-    if_present("delt", [&](const json::Value& v, const char* k) {
+    if_present("delt", [&](const json::Value& v, std::string_view k) {
         p.delt = get_double(v, k, p.delt, report);
     });
-    if_present("phiedge", [&](const json::Value& v, const char* k) {
+    if_present("phiedge", [&](const json::Value& v, std::string_view k) {
         p.physical.phiedge = get_double(v, k, p.physical.phiedge, report);
     });
-    if_present("pres_scale", [&](const json::Value& v, const char* k) {
+    if_present("pres_scale", [&](const json::Value& v, std::string_view k) {
         p.physical.pres_scale = get_double(v, k, p.physical.pres_scale, report);
     });
     // "adiabatic_index" is the legacy alias for vmecpp's "gamma".
@@ -266,27 +269,27 @@ ParsedProblem read_problem_spec(const std::string& path,
         p.physical.adiabatic_index = get_double(
             root.at("gamma"), "gamma", p.physical.adiabatic_index, report);
     }
-    if_present("spres_ped", [&](const json::Value& v, const char* k) {
+    if_present("spres_ped", [&](const json::Value& v, std::string_view k) {
         p.physical.spres_ped = get_double(v, k, p.physical.spres_ped, report);
     });
-    if_present("curtor", [&](const json::Value& v, const char* k) {
+    if_present("curtor", [&](const json::Value& v, std::string_view k) {
         p.physical.curtor = get_double(v, k, p.physical.curtor, report);
     });
-    if_present("bloat", [&](const json::Value& v, const char* k) {
+    if_present("bloat", [&](const json::Value& v, std::string_view k) {
         p.physical.bloat = get_double(v, k, p.physical.bloat, report);
     });
-    if_present("tcon0", [&](const json::Value& v, const char* k) {
+    if_present("tcon0", [&](const json::Value& v, std::string_view k) {
         p.physical.tcon0 = get_double(v, k, p.physical.tcon0, report);
     });
 
     // ---- profile coefficients (power series) ----
-    if_present("am", [&](const json::Value& v, const char* k) {
+    if_present("am", [&](const json::Value& v, std::string_view k) {
         p.mass.coefficients = read_double_array(v, k, report);
     });
-    if_present("ac", [&](const json::Value& v, const char* k) {
+    if_present("ac", [&](const json::Value& v, std::string_view k) {
         p.current.coefficients = read_double_array(v, k, report);
     });
-    if_present("ai", [&](const json::Value& v, const char* k) {
+    if_present("ai", [&](const json::Value& v, std::string_view k) {
         p.iota.coefficients = read_double_array(v, k, report);
     });
     if (root.contains("aphi")) {
@@ -371,26 +374,28 @@ ParsedProblem read_problem_spec(const std::string& path,
     // "two_power" is supported for the mass (pressure) and current profiles;
     // it is NOT applicable to the iota profile (vmecpp marks it
     // allowedForIota=false), which stays a power series.
-    auto read_profile_type = [&](const char* key, ProfileType& out,
+    auto read_profile_type = [&](std::string_view key, ProfileType& out,
                                  bool twoPowerAllowed) {
-        if (!root.contains(key)) return;
+        if (!root.contains(std::string(key))) return;
         const std::string v =
-            get_string(root.at(key), key, "power_series", report);
+            get_string(root.at(std::string(key)), key, "power_series", report);
         if (v == "power_series") {
             out = ProfileType::POWER_SERIES;
         } else if (v == "two_power" && twoPowerAllowed) {
             out = ProfileType::TWO_POWER;
         } else if (v == "two_power") {
-            report.error(key, "'" + std::string(key) +
-                                  "': \"two_power\" is not applicable to the "
-                                  "iota profile (power series only)");
+            report.error(std::string(key),
+                         "'" + std::string(key) +
+                             "': \"two_power\" is not applicable to the "
+                             "iota profile (power series only)");
         } else {
-            report.error(key, "'" + std::string(key) +
-                                  "': unsupported profile "
-                                  "type \"" +
-                                  v +
-                                  "\" (supported: \"power_series\", "
-                                  "\"two_power\")");
+            report.error(std::string(key),
+                         "'" + std::string(key) +
+                             "': unsupported profile "
+                             "type \"" +
+                             v +
+                             "\" (supported: \"power_series\", "
+                             "\"two_power\")");
         }
     };
     read_profile_type("pmass_type", p.mass.type, true);
@@ -399,38 +404,39 @@ ParsedProblem read_problem_spec(const std::string& path,
     // Unsupported-feature keys are TYPE-CHECKED before the semantic support
     // check, so a scalar/object of the wrong type is a hard error rather than
     // silently ignored.
-    const char* AUX_ARRAYS[] = {"am_aux_s", "am_aux_f", "ai_aux_s",
-                                "ai_aux_f", "ac_aux_s", "ac_aux_f"};
-    for (const char* k : AUX_ARRAYS) {
-        if (!root.contains(k)) continue;
-        if (!root.at(k).is_array()) {
-            report.error(
-                k,
-                "'" + std::string(k) + "': expected an array, got " +
-                    json::get_value_category_name(root.at(k).value_category()));
+    constexpr std::array<std::string_view, 6> AUX_ARRAYS = {
+        "am_aux_s", "am_aux_f", "ai_aux_s", "ai_aux_f", "ac_aux_s", "ac_aux_f"};
+    for (std::string_view k : AUX_ARRAYS) {
+        if (!root.contains(std::string(k))) continue;
+        if (!root.at(std::string(k)).is_array()) {
+            report.error(std::string(k),
+                         "'" + std::string(k) + "': expected an array, got " +
+                             json::get_value_category_name(
+                                 root.at(std::string(k)).value_category()));
             continue;
         }
-        if (root.at(k).size() > 0) {
-            report.error(k,
+        if (root.at(std::string(k)).size() > 0) {
+            report.error(std::string(k),
                          "'" + std::string(k) +
                              "': spline profile coefficients "
                              "are not supported by cuMES (power series only)");
         }
     }
-    const char* ASYM_ARRAYS[] = {"raxis_s", "zaxis_c", "rbs", "zbc"};
-    for (const char* k : ASYM_ARRAYS) {
-        if (!root.contains(k)) continue;
-        if (!root.at(k).is_array()) {
-            report.error(
-                k,
-                "'" + std::string(k) + "': expected an array, got " +
-                    json::get_value_category_name(root.at(k).value_category()));
+    constexpr std::array<std::string_view, 4> ASYM_ARRAYS = {
+        "raxis_s", "zaxis_c", "rbs", "zbc"};
+    for (std::string_view k : ASYM_ARRAYS) {
+        if (!root.contains(std::string(k))) continue;
+        if (!root.at(std::string(k)).is_array()) {
+            report.error(std::string(k),
+                         "'" + std::string(k) + "': expected an array, got " +
+                             json::get_value_category_name(
+                                 root.at(std::string(k)).value_category()));
             continue;
         }
-        if (root.at(k).size() > 0) {
-            report.error(k, "'" + std::string(k) +
-                                "': asymmetric (lasym) input is "
-                                "not supported by cuMES");
+        if (root.at(std::string(k)).size() > 0) {
+            report.error(std::string(k), "'" + std::string(k) +
+                                             "': asymmetric (lasym) input is "
+                                             "not supported by cuMES");
         }
     }
 
@@ -440,7 +446,7 @@ ParsedProblem read_problem_spec(const std::string& path,
             KNOWN_IGNORED_KEYS.count(key) == 0) {
             const std::string msg = "unknown input key '" + key + "'";
             if (options.strict_schema) {
-                report.error(key, msg);
+                report.error(std::string(key), msg);
             } else {
                 report.warn(key, msg);
             }

@@ -110,7 +110,7 @@ static void fill_provenance(cumes::RunReport& report,
     }
 }
 
-static const char* severity_name(cumes::Severity s) {
+static std::string_view severity_name(cumes::Severity s) {
     return s == cumes::Severity::ERROR ? "error" : "warning";
 }
 
@@ -192,7 +192,7 @@ int main(int argc, char** argv) {
         fprintf(stderr,
                 "cuMES: output format '%s' is not available in this "
                 "build; no output will be written\n",
-                cumes::output_suffix(outSpec.format));
+                cumes::output_suffix(outSpec.format).data());
         return EXIT_FAILURE;
     }
 
@@ -224,8 +224,9 @@ int main(int argc, char** argv) {
     if (!vr.has_value()) {
         fprintf(stderr, "cuMES: input validation failed:\n");
         for (const auto& issue : vr.error().issues()) {
-            fprintf(stderr, "  [%s] %s: %s\n", severity_name(issue.severity),
-                    issue.key.c_str(), issue.message.c_str());
+            fprintf(stderr, "  [%s] %s: %s\n",
+                    severity_name(issue.severity).data(), issue.key.c_str(),
+                    issue.message.c_str());
         }
         return EXIT_FAILURE;
     }
@@ -343,7 +344,7 @@ int main(int argc, char** argv) {
         auto writer = cumes::make_writer(spec.format);
         if (!writer) {
             fprintf(stderr, "cuMES: no writer for suffix '%s'\n",
-                    cumes::output_suffix(spec.format));
+                    cumes::output_suffix(spec.format).data());
             output_ok = false;
         } else {
             fill_provenance(outcome.report, input_path, source_hash);
@@ -351,7 +352,8 @@ int main(int argc, char** argv) {
                 writer->write_atomic(snapshot, outcome.report, spec, vp);
             if (status.has_value()) {
                 printf("Saved %s state to %s\n",
-                       cumes::output_suffix(spec.format), spec.path.c_str());
+                       cumes::output_suffix(spec.format).data(),
+                       spec.path.c_str());
             } else {
                 fprintf(stderr, "cuMES: %s\n", status.error().c_str());
                 output_ok = false;

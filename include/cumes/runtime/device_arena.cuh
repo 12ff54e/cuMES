@@ -108,7 +108,7 @@ class DeviceArena {
     // aligned to `align` bytes (default alignof(T)). Returns a non-owning `T*`
     // into the backing store. Throws CumesError if the arena is exhausted.
     template <class T>
-    T* alloc_span(const char* name,
+    T* alloc_span(std::string_view name,
                   std::size_t count,
                   std::size_t align = alignof(T)) {
         if (count == 0) return nullptr;
@@ -144,15 +144,16 @@ class DeviceArena {
     // overflow carrying the byte requirement instead of the generic
     // CumesError). The base implementation is exactly the pre-seam logic —
     // same offsets, same span table, same exception message.
-    virtual void* carve_span(const char* name,
+    virtual void* carve_span(std::string_view name,
                              std::size_t bytes,
                              std::size_t align) {
         std::size_t off = 0;
         if (!carve_offsets(bytes, align, off)) {
             throw ArenaOverflow(
                 off + bytes,
-                std::string("DeviceArena::alloc_span: '") + name + "' of " +
-                    std::to_string(bytes) + " bytes overflows arena (used=" +
+                std::string("DeviceArena::alloc_span: '") + std::string(name) +
+                    "' of " + std::to_string(bytes) +
+                    " bytes overflows arena (used=" +
                     std::to_string(used_bytes_) +
                     ", total=" + std::to_string(total_bytes_) + ")");
         }

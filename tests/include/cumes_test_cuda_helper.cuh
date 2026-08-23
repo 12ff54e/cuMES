@@ -30,7 +30,7 @@ namespace cumes::test {
 // the tests keep the exit-based UX — an uncaught CumesError would fall through
 // to std::terminate and lose the tag message — so the helper catches, prints
 // the tag, and exits.
-inline void check_cuda(cudaError_t e, const char* tag) {
+inline void check_cuda(cudaError_t e, std::string_view tag) {
     try {
         cumes::check_cuda(e, tag);
     } catch (const cumes::CumesError&) {
@@ -38,7 +38,7 @@ inline void check_cuda(cudaError_t e, const char* tag) {
         exit(EXIT_FAILURE);
     }
 }
-inline void cc(cudaError_t e, const char* tag) {
+inline void cc(cudaError_t e, std::string_view tag) {
     check_cuda(e, tag);
 }
 
@@ -193,9 +193,9 @@ inline void upload_state(cumes::SpectralStorage<T>& storage,
 // Returns the immutable ValidatedProblem model. Tests that call this must link
 // cumes_config_json (for cumes::read_and_validate).
 inline cumes::ValidatedProblem load_validated(
-    const char* path = "inputs/solovev.json") {
+    std::string_view path = "inputs/solovev.json") {
     cumes::SolverOptions opts;
-    auto vr = cumes::read_and_validate(path, opts);
+    auto vr = cumes::read_and_validate(std::string(path), opts);
     if (!vr.has_value()) {
         std::cerr << format("load_validated: {} failed validation\n", path);
         exit(EXIT_FAILURE);

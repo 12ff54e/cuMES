@@ -51,7 +51,7 @@
 #ifdef DUMP_CUMES_VERIFY
 static bool dump_enabled();  // defined below with the dump machinery
 template <typename T>
-static void dump_device_array(const char* filename,
+static void dump_device_array(std::string_view filename,
                               const T* d_data,
                               size_t nelem);  // defined below
 #endif
@@ -585,7 +585,7 @@ static void dump_ensure_dir() {
 // T-native dump: written as sizeof(T) elements; only read back by same-build
 // tooling (e.g. tests/test_geometry_iso.cu, which is double-build-only).
 template <typename T>
-static void dump_device_array(const char* filename,
+static void dump_device_array(std::string_view filename,
                               const T* d_data,
                               size_t nelem) {
     if (!dump_enabled()) return;
@@ -595,21 +595,20 @@ static void dump_device_array(const char* filename,
     // compile- and runtime-gated observability, so the extra fence is free on
     // the production path.
     cudaDeviceSynchronize();
-    T* h_tmp = new T[nelem];
-    cudaError_t err =
-        cudaMemcpy(h_tmp, d_data, nelem * sizeof(T), cudaMemcpyDeviceToHost);
+    std::vector<T> h_tmp(nelem);
+    cudaError_t err = cudaMemcpy(h_tmp.data(), d_data, nelem * sizeof(T),
+                                 cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         fprintf(stderr, "dump_device_array cudaMemcpy failed for %s: %s\n",
-                filename, cudaGetErrorString(err));
+                filename.data(), cudaGetErrorString(err));
     }
-    FILE* fp = fopen(filename, "wb");
+    FILE* fp = fopen(std::string(filename).c_str(), "wb");
     if (fp) {
         uint64_t n = nelem;
         fwrite(&n, sizeof(uint64_t), 1, fp);
-        fwrite(h_tmp, sizeof(T), nelem, fp);
+        fwrite(h_tmp.data(), sizeof(T), nelem, fp);
         fclose(fp);
     }
-    delete[] h_tmp;
 }
 
 // ---- per-iteration dump windows (7.1) ------------------------------------
