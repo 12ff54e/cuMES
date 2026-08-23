@@ -263,6 +263,12 @@ class Hdf5V1Writer final : public Writer {
         H5_CHECK(putAttr(fid, "tcon0", H5T_NATIVE_DOUBLE, &ip.tcon0),
                  "attr tcon0");
         H5_CHECK(putStrAttr(fid, "schema", ip.schema), "attr schema");
+        H5_CHECK(putStrAttr(fid, "pmass_type", ip.pmass_type),
+                 "attr pmass_type");
+        H5_CHECK(putStrAttr(fid, "piota_type", ip.piota_type),
+                 "attr piota_type");
+        H5_CHECK(putStrAttr(fid, "pcurr_type", ip.pcurr_type),
+                 "attr pcurr_type");
         {
             auto writeVec = [&](const char* name,
                                 const std::vector<double>& v) -> herr_t {
@@ -865,11 +871,23 @@ class Hdf5V1Reader final : public Reader {
                                 return fail("malformed embedded input record");
                             }
                         }
-                        // The schema tag is informational; an absent or
-                        // unreadable one keeps the default.
+                        // The schema/profile-type tags are informational; an
+                        // absent or unreadable one keeps the default (an
+                        // older container lacks the profile types ->
+                        // "power_series").
                         std::string schema_tag;
                         if (getStrAttr(fid, "schema", schema_tag)) {
                             ip.schema = schema_tag;
+                        }
+                        std::string pmass_tag, piota_tag, pcurr_tag;
+                        if (getStrAttr(fid, "pmass_type", pmass_tag)) {
+                            ip.pmass_type = pmass_tag;
+                        }
+                        if (getStrAttr(fid, "piota_type", piota_tag)) {
+                            ip.piota_type = piota_tag;
+                        }
+                        if (getStrAttr(fid, "pcurr_type", pcurr_tag)) {
+                            ip.pcurr_type = pcurr_tag;
                         }
                         parsed_report.input_params = std::move(ip);
                     }

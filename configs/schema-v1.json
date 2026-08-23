@@ -96,12 +96,33 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "pmass_type",
+        "piota_type",
+        "pcurr_type",
         "am",
         "ac",
         "ai",
         "aphi"
       ],
       "properties": {
+        "pmass_type": {
+          "type": "string",
+          "enum": [
+            "power_series",
+            "two_power"
+          ]
+        },
+        "piota_type": {
+          "type": "string",
+          "const": "power_series"
+        },
+        "pcurr_type": {
+          "type": "string",
+          "enum": [
+            "power_series",
+            "two_power"
+          ]
+        },
         "am": {
           "type": "array",
           "items": {

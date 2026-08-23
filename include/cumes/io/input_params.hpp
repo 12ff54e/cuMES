@@ -47,6 +47,9 @@ struct InputParams {
     double bloat = 0.0;
     double curtor = 0.0;
     double tcon0 = 0.0;
+    std::string pmass_type = "power_series";
+    std::string piota_type = "power_series";
+    std::string pcurr_type = "power_series";
     std::vector<double> am;       // mass/pressure power series
     std::vector<double> ac;       // prescribed current power series
     std::vector<double> ai;       // prescribed iota power series
@@ -77,10 +80,12 @@ inline bool operator==(const InputParams& a, const InputParams& b) {
            a.pres_scale == b.pres_scale &&
            a.adiabatic_index == b.adiabatic_index &&
            a.spres_ped == b.spres_ped && a.bloat == b.bloat &&
-           a.curtor == b.curtor && a.tcon0 == b.tcon0 && a.am == b.am &&
-           a.ac == b.ac && a.ai == b.ai && a.aphi == b.aphi &&
-           a.raxis_c == b.raxis_c && a.zaxis_s == b.zaxis_s &&
-           a.stages == b.stages && a.rbc_m == b.rbc_m && a.rbc_n == b.rbc_n &&
+           a.curtor == b.curtor && a.tcon0 == b.tcon0 &&
+           a.pmass_type == b.pmass_type && a.piota_type == b.piota_type &&
+           a.pcurr_type == b.pcurr_type && a.am == b.am && a.ac == b.ac &&
+           a.ai == b.ai && a.aphi == b.aphi && a.raxis_c == b.raxis_c &&
+           a.zaxis_s == b.zaxis_s && a.stages == b.stages &&
+           a.rbc_m == b.rbc_m && a.rbc_n == b.rbc_n &&
            a.rbc_value == b.rbc_value && a.zbs_m == b.zbs_m &&
            a.zbs_n == b.zbs_n && a.zbs_value == b.zbs_value &&
            a.rbcc == b.rbcc && a.rbss == b.rbss && a.zbsc == b.zbsc &&
@@ -107,6 +112,9 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
     p.bloat = sp.physical.bloat;
     p.curtor = sp.physical.curtor;
     p.tcon0 = sp.physical.tcon0;
+    p.pmass_type = profileTypeToString(sp.mass.type);
+    p.piota_type = profileTypeToString(sp.iota.type);
+    p.pcurr_type = profileTypeToString(sp.current.type);
     p.am = sp.mass.coefficients;
     p.ac = sp.current.coefficients;
     p.ai = sp.iota.coefficients;

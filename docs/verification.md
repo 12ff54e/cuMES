@@ -228,6 +228,14 @@ Classify each change before review:
 
 Never approve a change only because the final residual is small. Compare R/Z/lambda families, axis/boundary invariants, geometry/field intermediates, restart sequence, and iteration count.
 
+Independent-solver agreement (Class C) against a vmecpp run is scripted by
+`scripts/compare_wout.py <cumes_state.bin> <vmecpp_output.h5>`: it folds the
+wout's signed-n VMEC convention into cuMES's product basis (including the
+`m=0` axis-displacement parity and the `n=0` odd-family zeros), skips the
+extrapolated axis row, and reports the max absolute/relative difference per
+family. The `wout` comparison reads the FULL-grid `lmns_full`, not the
+half-grid `lmns`.
+
 ## 7. Performance acceptance
 
 For a performance-motivated change:

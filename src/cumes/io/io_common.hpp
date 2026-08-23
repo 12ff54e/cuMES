@@ -144,12 +144,15 @@ inline bool readStateFamilies(FILE* fp,
 }
 
 // ---- the embedded normalized-input record (input_params.hpp) ----
-// Fixed order: 6*i32 (mpol..ncurr), 8*f64 (delt..tcon0), schema(str), then
-// every vector as an i32 count + payload (am, ac, ai, aphi, raxis_c,
-// zaxis_s), i32 nstages + per stage (i32 ns, i32 max_iter, f64 ftol),
-// i32 nrbc + per (i32 m, i32 n, f64 value), i32 nzbs + same, then the four
-// folded vectors (i32 count + f64 payload each). Written as the LAST element
-// of the version-3 binary trailer and the version-2 checkpoint; the
+// Fixed order: 6*i32 (mpol..ncurr), 8*f64 (delt..tcon0), schema(str), the
+// three profile-type strings (pmass_type, piota_type, pcurr_type; present in
+// version-4 binary trailers and version-3 checkpoints only), then every
+// vector as an i32 count + payload (am, ac, ai, aphi, raxis_c, zaxis_s), i32
+// nstages + per stage (i32 ns, i32 max_iter, f64 ftol), i32 nrbc + per
+// (i32 m, i32 n, f64 value), i32 nzbs + same, then the four folded vectors
+// (i32 count + f64 payload each). Written as the LAST element of the
+// version-4 binary trailer and the version-3 checkpoint; older containers
+// lack the three profile-type strings and read back as "power_series". The
 // NetCDF/HDF5 writers map the same fields to native variables/datasets/
 // attributes instead. A corrupt count must fail before the host allocates:
 // every count is bounded by kMaxInputParamsVector.
@@ -208,7 +211,9 @@ inline bool writeInputParams(FILE* fp, const InputParams& p) {
               write_f64(fp, p.pres_scale) && write_f64(fp, p.adiabatic_index) &&
               write_f64(fp, p.spres_ped) && write_f64(fp, p.bloat) &&
               write_f64(fp, p.curtor) && write_f64(fp, p.tcon0) &&
-              write_string(fp, p.schema) && write_f64_vec(fp, p.am) &&
+              write_string(fp, p.schema) && write_string(fp, p.pmass_type) &&
+              write_string(fp, p.piota_type) &&
+              write_string(fp, p.pcurr_type) && write_f64_vec(fp, p.am) &&
               write_f64_vec(fp, p.ac) && write_f64_vec(fp, p.ai) &&
               write_f64_vec(fp, p.aphi) && write_f64_vec(fp, p.raxis_c) &&
               write_f64_vec(fp, p.zaxis_s) &&
@@ -225,7 +230,13 @@ inline bool writeInputParams(FILE* fp, const InputParams& p) {
     return ok;
 }
 
-inline bool readInputParams(FILE* fp, InputParams& p, std::string& reason) {
+// `with_profile_types` selects the record layout written by the version-4
+// binary trailer / version-3 checkpoint; older containers lack the three
+// profile-type strings and keep the "power_series" defaults.
+inline bool readInputParams(FILE* fp,
+                            InputParams& p,
+                            std::string& reason,
+                            bool with_profile_types) {
     std::int32_t nstages = 0;
     if (!read_i32(fp, p.mpol) || !read_i32(fp, p.ntor) ||
         !read_i32(fp, p.nfp) || !read_i32(fp, p.ntheta) ||
@@ -234,9 +245,12 @@ inline bool readInputParams(FILE* fp, InputParams& p, std::string& reason) {
         !read_f64(fp, p.pres_scale) || !read_f64(fp, p.adiabatic_index) ||
         !read_f64(fp, p.spres_ped) || !read_f64(fp, p.bloat) ||
         !read_f64(fp, p.curtor) || !read_f64(fp, p.tcon0) ||
-        !read_string(fp, p.schema) || !read_f64_vec(fp, p.am, reason) ||
-        !read_f64_vec(fp, p.ac, reason) || !read_f64_vec(fp, p.ai, reason) ||
-        !read_f64_vec(fp, p.aphi, reason) ||
+        !read_string(fp, p.schema) ||
+        (with_profile_types &&
+         (!read_string(fp, p.pmass_type) || !read_string(fp, p.piota_type) ||
+          !read_string(fp, p.pcurr_type))) ||
+        !read_f64_vec(fp, p.am, reason) || !read_f64_vec(fp, p.ac, reason) ||
+        !read_f64_vec(fp, p.ai, reason) || !read_f64_vec(fp, p.aphi, reason) ||
         !read_f64_vec(fp, p.raxis_c, reason) ||
         !read_f64_vec(fp, p.zaxis_s, reason)) {
         if (reason.empty()) reason = "truncated input record";

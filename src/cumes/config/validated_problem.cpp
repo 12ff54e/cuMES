@@ -325,7 +325,10 @@ std::string ValidatedProblem::normalize_to_json() const {
        << ",\"bloat\":" << json_number(s.physical.bloat)
        << ",\"curtor\":" << json_number(s.physical.curtor)
        << ",\"tcon0\":" << json_number(s.physical.tcon0) << "},\n";
-    os << "  \"profiles\":{\"am\":";
+    os << "  \"profiles\":{\"pmass_type\":\""
+       << profileTypeToString(s.mass.type) << "\",\"piota_type\":\""
+       << profileTypeToString(s.iota.type) << "\",\"pcurr_type\":\""
+       << profileTypeToString(s.current.type) << "\",\"am\":";
     emit_double_array(os, s.mass.coefficients);
     os << ",\"ac\":";
     emit_double_array(os, s.current.coefficients);

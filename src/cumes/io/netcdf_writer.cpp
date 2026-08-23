@@ -344,6 +344,18 @@ class NetcdfV1Writer final : public Writer {
         NC_CHECK(putStrAttr(ncid, "schema", ip.schema) == true ? NC_NOERR
                                                                : NC_EATTMETA,
                  "attr schema");
+        NC_CHECK(putStrAttr(ncid, "pmass_type", ip.pmass_type) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr pmass_type");
+        NC_CHECK(putStrAttr(ncid, "piota_type", ip.piota_type) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr piota_type");
+        NC_CHECK(putStrAttr(ncid, "pcurr_type", ip.pcurr_type) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr pcurr_type");
 
         NC_CHECK(nc_enddef(ncid), "nc_enddef");
 
@@ -988,9 +1000,19 @@ class NetcdfV1Reader final : public Reader {
                         }
                         // The schema tag is informational; an absent or
                         // unreadable one keeps the default.
+                        // The schema/profile-type tags are informational; an
+                        // absent one keeps the default (an older container
+                        // lacks the profile types -> "power_series").
                         std::string schema_tag;
                         if (getStr("schema", schema_tag))
                             ip.schema = schema_tag;
+                        std::string pmass_tag, piota_tag, pcurr_tag;
+                        if (getStr("pmass_type", pmass_tag))
+                            ip.pmass_type = pmass_tag;
+                        if (getStr("piota_type", piota_tag))
+                            ip.piota_type = piota_tag;
+                        if (getStr("pcurr_type", pcurr_tag))
+                            ip.pcurr_type = pcurr_tag;
                         parsed_report.input_params = std::move(ip);
                     }
                 }

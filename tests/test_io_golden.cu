@@ -103,6 +103,101 @@ static bool writeHistoricalV1(const EquilibriumSnapshot& snap,
     return f.good();
 }
 
+// Hand-write a version = 3 container: the trailer carries the embedded input
+// record in the HISTORICAL layout WITHOUT the three profile-type strings
+// (version 4 appends them after the schema tag). The reader must walk the old
+// record and keep the "power_series" defaults.
+static bool writeHistoricalV3(const EquilibriumSnapshot& snap,
+                              const std::string& path) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    auto w_i32 = [&](std::int32_t v) {
+        f.write(reinterpret_cast<const char*>(&v), sizeof(v));
+    };
+    auto w_u8 = [&](std::uint8_t v) {
+        f.write(reinterpret_cast<const char*>(&v), sizeof(v));
+    };
+    auto w_f64 = [&](double v) {
+        f.write(reinterpret_cast<const char*>(&v), sizeof(v));
+    };
+    auto w_str = [&](const char* s) {
+        const std::int32_t n = static_cast<std::int32_t>(std::strlen(s));
+        w_i32(n);
+        f.write(s, n);
+    };
+    auto w_f64_vec = [&](const std::vector<double>& v) {
+        w_i32(static_cast<std::int32_t>(v.size()));
+        if (!v.empty())
+            f.write(reinterpret_cast<const char*>(v.data()),
+                    static_cast<std::streamsize>(v.size() * sizeof(double)));
+    };
+    auto w_i32_vec = [&](const std::vector<int>& v) {
+        w_i32(static_cast<std::int32_t>(v.size()));
+        if (!v.empty())
+            f.write(
+                reinterpret_cast<const char*>(v.data()),
+                static_cast<std::streamsize>(v.size() * sizeof(std::int32_t)));
+    };
+    const char kMagic[8] = {'C', 'U', 'M', 'E', 'S', '0', '0', '1'};
+    f.write(kMagic, 8);
+    w_i32(3);  // version (historical: record without profile-type strings)
+    w_i32(snap.ns);
+    w_i32(snap.mnmax);
+    for (const auto& fam : snap.families) {
+        f.write(reinterpret_cast<const char*>(fam.data()),
+                static_cast<std::streamsize>(fam.size() * sizeof(double)));
+    }
+    w_i32(0);                // precision = double
+    w_i32(0);                // status = kConverged
+    w_i32(42);               // total_effective_iterations
+    w_i32(0);                // nstages
+    w_str("r3");             // revision
+    w_u8(0);                 // dirty
+    w_str("Release");        // build_type
+    w_str("verify-double");  // precision_policy (the v2 trailer pair)
+    w_str("");               // compile_flags
+    w_str("");               // source_path
+    w_str("");               // source_hash
+    w_str("");               // gpu_name
+    w_str("");               // driver
+    w_str("");               // runtime
+    w_str("");               // toolkit
+    // Old input record: 6*i32 + 8*f64 + schema + vectors, no type strings.
+    w_i32(2);    // mpol
+    w_i32(0);    // ntor
+    w_i32(1);    // nfp
+    w_i32(2);    // ntheta
+    w_i32(1);    // nzeta
+    w_i32(0);    // ncurr
+    w_f64(0.9);  // delt
+    w_f64(1.0);  // phiedge
+    w_f64(1.0);  // pres_scale
+    w_f64(0.0);  // adiabatic_index
+    w_f64(1.0);  // spres_ped
+    w_f64(1.0);  // bloat
+    w_f64(0.0);  // curtor
+    w_f64(1.0);  // tcon0
+    w_str("cumes-config-v1");
+    w_f64_vec({1.0, 2.0});  // am (proves the old layout walks correctly)
+    w_f64_vec({});          // ac
+    w_f64_vec({});          // ai
+    w_f64_vec({1.0});       // aphi
+    w_f64_vec({});          // raxis_c
+    w_f64_vec({});          // zaxis_s
+    w_i32(0);               // nstages_in
+    w_i32_vec({});          // rbc_m
+    w_i32_vec({});          // rbc_n
+    w_f64_vec({});          // rbc_value
+    w_i32_vec({});          // zbs_m
+    w_i32_vec({});          // zbs_n
+    w_f64_vec({});          // zbs_value
+    w_f64_vec({});          // rbcc
+    w_f64_vec({});          // rbss
+    w_f64_vec({});          // zbsc
+    w_f64_vec({});          // zbcs
+    return f.good();
+}
+
 static bool snapshotsEqual(const EquilibriumSnapshot& a,
                            const EquilibriumSnapshot& b) {
     if (a.ns != b.ns || a.mnmax != b.mnmax) return false;
@@ -300,6 +395,41 @@ static void runPrecision() {
                   "v1 historical: trailer fields land correctly");
         }
         remove(v1OldPath.c_str());
+    }
+
+    // ---- v3 historical layout: the embedded record lacks the three
+    // profile-type strings (version 4 appends them); the reader must walk
+    // the old record and keep the "power_series" defaults. --
+    {
+        const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
+        const std::string v3OldPath = scratch("v3old");
+        check(writeHistoricalV3(snap, v3OldPath),
+              "v3 historical: fixture written");
+        auto r = cumes::make_reader(OutputFormat::kBinary);
+        check(r != nullptr, "v3 historical: reader factory");
+        if (r) {
+            RunReport back;
+            auto snap_back = r->read(v3OldPath, &back);
+            check(snap_back.has_value() &&
+                      snapshotsEqual(snap, snap_back.value()),
+                  "v3 historical: state round trip");
+            check(back.build.scalar_type == "double" &&
+                      back.build.revision == "r3" &&
+                      back.total_effective_iterations == 42 &&
+                      back.stages.empty(),
+                  "v3 historical: trailer fields land correctly");
+            check(back.input_params.pmass_type == "power_series" &&
+                      back.input_params.piota_type == "power_series" &&
+                      back.input_params.pcurr_type == "power_series",
+                  "v3 historical: profile types default to power_series");
+            check(back.input_params.am.size() == 2 &&
+                      back.input_params.am[0] == 1.0 &&
+                      back.input_params.am[1] == 2.0 &&
+                      back.input_params.aphi.size() == 1 &&
+                      back.input_params.aphi[0] == 1.0,
+                  "v3 historical: old record vectors land correctly");
+        }
+        remove(v3OldPath.c_str());
     }
 
     // ---- NetCDF/HDF5 adapters (completion plan steps 2.2/2.3) -------------

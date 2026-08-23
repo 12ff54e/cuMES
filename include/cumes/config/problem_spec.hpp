@@ -33,6 +33,18 @@ struct ProfileSpec {
     std::vector<double> coefficients;
 };
 
+// Canonical name of a profile parameterization, as it appears in the input
+// JSON and in the embedded normalized-input record.
+inline const char* profileTypeToString(ProfileType t) {
+    switch (t) {
+        case ProfileType::kPowerSeries:
+            return "power_series";
+        case ProfileType::kTwoPower:
+            return "two_power";
+    }
+    return "power_series";
+}
+
 struct AngularResolution {
     int ntheta = 0;  // 0 => resolution default (2*mpol+6, made even)
     int nzeta = 0;   // 0 => resolution default (1 if ntor==0 else 2*ntor+4)

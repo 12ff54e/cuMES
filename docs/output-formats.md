@@ -10,10 +10,10 @@ back). The authoritative freeze lives in `configs/schema-v1.json` under
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cumes <in> out.bin` | versioned binary (schema v1, on-disk version 3) | `CUMES001` |
+| `./build/cumes <in> out.bin` | versioned binary (schema v1, on-disk version 4) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
-| `--checkpoint <path>` | versioned checkpoint (v2) | `CUMECKP1` |
-| `--restart <path>` (read) | versioned checkpoint (v2; v1 still read) | `CUMECKP1` |
+| `--checkpoint <path>` | versioned checkpoint (v3) | `CUMECKP1` |
+| `--restart <path>` (read) | versioned checkpoint (v3; v1/v2 still read) | `CUMECKP1` |
 
 An output path is always required; an unknown suffix is an error. All writers
 publish atomically (write a temporary file in the target directory, then
@@ -51,11 +51,11 @@ Z = zmnsc·sin(mθ)cos(nζ) + zmncs·cos(mθ)sin(nζ)
 The axis row (`j = 0`) is the constant-extrapolated row, which the
 comparison scripts intentionally skip (compare_states.py).
 
-## 3. Versioned binary (schema v1, on-disk version 3)
+## 3. Versioned binary (schema v1, on-disk version 4)
 
 ```
 magic     8 bytes  "CUMES001"
-version   int32    = 3 (the current on-disk version)
+version   int32    = 4 (the current on-disk version)
 ns        int32
 mnmax     int32
 families  6 * (mnmax*ns) doubles, mode-major     ← the §2 payload
@@ -74,7 +74,7 @@ stages    per stage: ns (int32), iterations (int32), converged (u8),
           fsqr (f64), fsqz (f64), fsql (f64), nrestarts (int32),
           then nrestarts restart iteration indices (int32 each)
 params    the embedded normalized-input record (see §5), the LAST trailer
-          element; version 3 only
+          element; version 3 and up
 ```
 
 The embedded input record (§5) mirrors
@@ -82,7 +82,9 @@ The embedded input record (§5) mirrors
 values (the angular-grid defaults already applied): `mpol, ntor, nfp,
 ntheta, nzeta, ncurr` (int32 each), `delt, phiedge, pres_scale,
 adiabatic_index, spres_ped, bloat, curtor, tcon0` (f64 each), the `schema`
-string, then the vectors `am, ac, ai, aphi, raxis_c, zaxis_s` (f64 each),
+string, the `pmass_type, piota_type, pcurr_type` profile-type strings
+(version 4 only; a version-3 record is read with "power_series" defaults),
+then the vectors `am, ac, ai, aphi, raxis_c, zaxis_s` (f64 each),
 the input stages (`nstages_in` then per stage `ns` int32, `max_iter`
 int32, `ftol` f64), the raw boundary (`rbc_m` int32, `rbc_n` int32,
 `rbc_value` f64, then `zbs_*`), and the folded boundary `rbcc, rbss, zbsc,
@@ -108,22 +110,24 @@ Notes:
   later trailer revisions. The trailer is parsed only when the caller
   requests the `RunReport`.
 
-## 4. Versioned checkpoint v2 (`--checkpoint` / `--restart`)
+## 4. Versioned checkpoint v3 (`--checkpoint` / `--restart`)
 
 ```
 magic     8 bytes  "CUMECKP1"
-version   int32    = 2
+version   int32    = 3
 precision int32    = 0 (the checkpoint is always double on disk)
 ns        int32
 mnmax     int32
 families  6 * (mnmax*ns) doubles, mode-major     ← the §2 payload
-params    the embedded normalized-input record (§5), version 2 only
+params    the embedded normalized-input record (§5), version 2 and up
 ```
 
-No provenance trailer beyond the input record — the restart path reads the
-state only and never touches the record. Version-1 checkpoints (no record)
-remain readable. Header mismatch, unsupported version/precision, or
-corruption is an error, never a silent cold start.
+Version 3 appends the three profile-type strings to the input record; a
+version-2 checkpoint is read with "power_series" defaults. No provenance
+trailer beyond the input record — the restart path reads the state only
+and never touches the record. Version-1 checkpoints (no record) remain
+readable. Header mismatch, unsupported version/precision, or corruption is
+an error, never a silent cold start.
 
 ## 5. The embedded input record / NetCDF-HDF5 layout (v1)
 
@@ -136,7 +140,9 @@ natively in NetCDF/HDF5:
 - 1-D array variables `am, ac, ai, aphi, raxis_c, zaxis_s` (double) and
   the input stage arrays `stage_in_ns, stage_max_iter` (int),
   `stage_ftol` (double) — HDF5: same names as 1-D datasets;
-- the `schema` string attribute;
+- the `schema` string attribute and the `pmass_type`, `piota_type`,
+  `pcurr_type` profile-type string attributes (absent in older
+  containers -> read as "power_series");
 - the boundary is the pre-existing native pair: `rbc_m/rbc_n/rbc_value`
   and `zbs_m/zbs_n/zbs_value` (int/int/double over `nrbc`/`nzbs`) plus the
   folded 2-D matrices `rbcc/rbss/zbsc/zbcs` over `[n_mpol, n_ntorp1]`.
