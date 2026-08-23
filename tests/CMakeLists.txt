@@ -12,10 +12,10 @@
 
 include_directories(${PROJECT_SOURCE_DIR}/tests/include)
 
-# Backend-availability defines for TEST targets only (completion plan step
-# 2.5: the production targets keep the defines confined to the adapter
-# library; a test asserting build-specific on-disk behavior gets the
-# compile-time flags, not the backend sources or headers).
+# Backend-availability defines for TEST targets only: the production targets
+# keep the defines confined to the adapter library; a test asserting
+# build-specific on-disk behavior gets the compile-time flags, not the
+# backend sources or headers.
 function(cumes_apply_backend_test_defines target)
   if(CUMES_HAVE_NETCDF)
     target_compile_definitions(${target} PRIVATE CUMES_HAVE_NETCDF)
@@ -90,7 +90,7 @@ target_link_libraries(test_io_golden PRIVATE cumes_config_json cumes_io_host cum
 cumes_apply_backend_test_defines(test_io_golden)
 cumes_enable_warnings(test_io_golden)
 
-# Corrupted v1 restart-metadata fixtures (completion-plan follow-up §2.2):
+# Corrupted v1 restart-metadata fixtures:
 # host-only so the ASan/UBSan twin runs the exact source under the host
 # sanitizers.
 add_executable(test_io_restart_offsets test_io_restart_offsets.cpp)
@@ -99,7 +99,7 @@ target_link_libraries(test_io_restart_offsets PRIVATE cumes_io_host cumes_io)
 cumes_apply_backend_test_defines(test_io_restart_offsets)
 cumes_enable_warnings(test_io_restart_offsets)
 
-# Malformed v1 rank/type/extent fixtures (overhaul-history.md, reader-rank entry §5):
+# Malformed v1 rank/type/extent fixtures:
 # host-only so the ASan/UBSan twin runs the exact source under the host
 # sanitizers.
 add_executable(test_io_malformed_shapes test_io_malformed_shapes.cpp)
@@ -144,7 +144,7 @@ cumes_add_test(test_io_malformed_shapes unit;io)
 cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
 
-# ---- host sanitizer twins (blueprint §10.5; CUMES_HOST_SANITIZERS=ON) -------
+# ---- host sanitizer twins (CUMES_HOST_SANITIZERS=ON) ------------------------
 # Dedicated ASan+UBSan copies of the host-only libraries and their tests, so
 # the sanitized runtime is FIRST in each asan executable's library list and
 # never leaks into the CUDA targets (whose link order would break it). The
@@ -164,7 +164,7 @@ if(CUMES_HOST_SANITIZERS)
 
   # Reader-only ASan twin of the adapter dispatch + optional backends (the
   # device-staging output.cpp is excluded; the corrupted-fixture test needs
-  # only the host readers — completion-plan follow-up §2.2).
+  # only the host readers).
   cumes_add_host_library(cumes_io_readers_asan TRUE
                          ${PROJECT_SOURCE_DIR}/src/cumes/io/writer_dispatch.cpp)
   target_link_libraries(cumes_io_readers_asan PUBLIC cumes_io_host_asan)

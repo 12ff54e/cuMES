@@ -1,4 +1,4 @@
-# CumesSanitizers.cmake — optional sanitizer passes (blueprint §10.5).
+# CumesSanitizers.cmake — optional sanitizer passes.
 #
 # Device side (Compute Sanitizer):
 #   When CUMES_ENABLE_SANITIZER_TESTS=ON and compute-sanitizer is on PATH,
@@ -34,10 +34,9 @@ function(cumes_register_sanitizer_variants)
     set_tests_properties(sanitizer_${t} PROPERTIES
         LABELS "sanitizer" TIMEOUT 600 RUN_SERIAL TRUE
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
-    # initcheck: uninitialized-device-memory access (completion plan step 4.2;
-    # also covers the step-1 exit gate "memcheck/initcheck"). initcheck flags
-    # benign reads of never-written scratch as errors on some driver versions,
-    # so the guarded kernels MUST write (or deterministically skip) every
+    # initcheck: uninitialized-device-memory access. initcheck flags benign
+    # reads of never-written scratch as errors on some driver versions, so
+    # the guarded kernels MUST write (or deterministically skip) every
     # consumed buffer — that is exactly the invariant under test.
     add_test(NAME initcheck_${t}
              COMMAND ${CUMES_COMPUTE_SANITIZER}

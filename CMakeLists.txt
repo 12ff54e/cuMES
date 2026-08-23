@@ -36,15 +36,14 @@ set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_EXTENSIONS OFF)
 
-# ---- precision policy -> flags (completion plan step 3.1) -------------------
+# ---- precision policy -> flags --------------------------------------------
 # No global --use_fast_math: fast intrinsics appear only under the named
 # fast-double policy; the verification configuration (verify-double) is
 # precise double math. The policy and its effective flags are recorded in the
 # build provenance of every v1 output (CUMES_PRECISION_POLICY_NAME /
 # CUMES_PRECISION_FLAGS compile definitions).
 # The flag sets are LISTS (one argv token per element): target_compile_options
-# passes each element separately, unlike the old global CMAKE_CUDA_FLAGS string
-# which CMake split on whitespace.
+# passes each element separately.
 set(CUMES_FAST_MATH_FLAGS)
 set(CUMES_DEVICE_CHECK_FLAGS)
 if(CUMES_PRECISION_POLICY STREQUAL "fast-double")
@@ -66,7 +65,7 @@ if(CUMES_USE_FLOAT AND NOT CUMES_PRECISION_POLICY STREQUAL "mixed-float")
   message(FATAL_ERROR "CUMES_USE_FLOAT=ON requires CUMES_PRECISION_POLICY=mixed-float")
 endif()
 
-# Policy flags are TARGET-SCOPED (completion-plan follow-up §3.4): no global
+# Policy flags are TARGET-SCOPED: no global
 # CMAKE_CUDA_FLAGS / CMAKE_CXX_FLAGS appends. Only the solver targets (the
 # CUDA operator libraries, the CLI, and the two real-DAG benchmarks) receive
 # the named policy's device flags; the parser, config, I/O, test, and adapter
@@ -74,18 +73,17 @@ endif()
 # (Release = -O3), which also removes the sanitizer configuration's -O2/-O3
 # redefinition warning.
 function(cumes_apply_policy_flags target)
-  # DELIBERATELY no host tuning here: the frozen Class A baseline never
-  # passed CMAKE_CXX_FLAGS into nvcc's host pass (CMake does not forward it),
-  # so the solver TUs' host code must keep compiling WITHOUT -march=native.
-  # Adding it enables FMA contraction in the controller host math and
-  # diverges the trajectory bitwise (measured on the Solovev baseline).
+  # DELIBERATELY no host tuning here: the solver TUs' host code must compile
+  # WITHOUT -march=native. Adding it enables FMA contraction in the
+  # controller host math and diverges the trajectory bitwise from the
+  # Class A baseline (measured on Solovev).
   target_compile_options(${target} PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:${CUMES_FAST_MATH_FLAGS} ${CUMES_DEVICE_CHECK_FLAGS}>)
 endfunction()
 
-# Host tuning for the production HOST-only libraries (previously the global
-# CMAKE_CXX_FLAGS -march=native). Applied explicitly — never through
-# cumes_add_host_library — so the ASan twins and tests stay free of it.
+# Host tuning (-march=native) for the production HOST-only libraries.
+# Applied explicitly — never through cumes_add_host_library — so the ASan
+# twins and tests stay free of it.
 function(cumes_apply_host_tuning target)
   target_compile_options(${target} PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-march=native>)
@@ -106,7 +104,7 @@ endforeach()
 # ---- host-only library targets ---------------------------------------------
 # Source lists are defined once here and reused verbatim by the sanitizer
 # twins below (CUMES_HOST_SANITIZERS): adding a TU to one of these libraries
-# must not require editing a second, divergent list (blueprint §10.5).
+# must not require editing a second, divergent list.
 set(CUMES_JSON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/json_parser.cpp)
 set(CUMES_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
@@ -138,7 +136,7 @@ endfunction()
 cumes_add_host_library(cumes_json FALSE ${CUMES_JSON_SOURCES})
 cumes_apply_host_tuning(cumes_json)
 
-# ---- Phase 2: validated host model (namespace cumes) -----------------------
+# ---- validated host model (namespace cumes) --------------------------------
 # Core host model: result/status, checked arithmetic, grid shape, mode table.
 # Header-mostly; the two non-trivial TU implementations live in src/cumes/core.
 cumes_add_host_library(cumes_core FALSE ${CUMES_CORE_SOURCES})
@@ -151,8 +149,8 @@ target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
 cumes_apply_host_tuning(cumes_config_json)
 
 # Versioned host I/O: output spec, run report, snapshot, the v1 binary
-# writer/reader, and the versioned checkpoint. Host-only C++ (no CUDA);
-# NetCDF/HDF5 host adapters are deferred to Phase 3.
+# writer/reader, and the versioned checkpoint. Host-only C++ (no CUDA); the
+# optional NetCDF/HDF5 writers live on the cumes_io adapter library below.
 cumes_add_host_library(cumes_io_host FALSE ${CUMES_IO_HOST_SOURCES})
 target_link_libraries(cumes_io_host PUBLIC cumes_core)
 cumes_apply_host_tuning(cumes_io_host)
@@ -163,9 +161,8 @@ cumes_apply_host_tuning(cumes_io_host)
 # The adapter library: the console output printout + format availability
 # preflight (output.cpp), the full Writer/Reader dispatch, and the optional
 # NetCDF/HDF5 host adapters (added by cumes_link_output_backends below under
-# their availability defines). Links cumes_io_host for the binary factories
-# (completion plan step 2.5: backend headers and defines stay inside this
-# target).
+# their availability defines). Links cumes_io_host for the binary factories;
+# the backend headers and defines stay inside this target.
 add_library(cumes_io STATIC src/output.cpp src/cumes/io/writer_dispatch.cpp)
 target_include_directories(cumes_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_io PUBLIC CUDA::cudart CUDA::cufft cumes_io_host)
@@ -174,16 +171,16 @@ cumes_apply_host_tuning(cumes_io)
 cumes_link_output_backends(cumes_io)
 
 # The CUMES_HAVE_NETCDF/HDF5 availability defines are confined to the adapter
-# library (cumes_io, via cumes_link_output_backends above) — completion plan
-# step 2.5. The output_format_available() preflight lives in the adapter
-# library (src/output.cpp), so the host I/O library needs no backend defines
-# and no NetCDF/HDF5 headers.
+# library (cumes_io, via cumes_link_output_backends above). The
+# output_format_available() preflight lives in the adapter library
+# (src/output.cpp), so the host I/O library needs no backend defines and no
+# NetCDF/HDF5 headers.
 
 # ---- CUDA runtime RAII (host-only CUDA runtime API) ------------------------
 # DeviceBuffer/PinnedBuffer/Stream/Event and the centralized check_cuda/
-# check_cufft error boundary — header-only since the DeviceContext removal
-# (2026-08-17), so the target carries no sources and is INTERFACE (propagates
-# the include dir + cudart/cufft links). No device code.
+# check_cufft error boundary — header-only, so the target carries no sources
+# and is INTERFACE (propagates the include dir + cudart/cufft links). No
+# device code.
 add_library(cumes_cuda_runtime INTERFACE)
 target_include_directories(cumes_cuda_runtime INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_runtime INTERFACE CUDA::cudart CUDA::cufft)
@@ -219,8 +216,7 @@ add_executable(cumes src/main.cu)
 target_include_directories(cumes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Link order matters: cumes_io_host BEFORE cumes_io so the adapter library
 # is scanned while the backend-factory references are still undefined — the
-# linker then extracts the strong NetCDF/HDF5 factory definitions (completion
-# plan step 2.5).
+# linker then extracts the strong NetCDF/HDF5 factory definitions.
 target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
 cumes_enable_warnings(cumes)
 cumes_apply_policy_flags(cumes)
@@ -253,8 +249,8 @@ target_compile_definitions(cumes PRIVATE
   CUMES_GIT_DIRTY=${CUMES_GIT_DIRTY}
   CUMES_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 
-# Precision-policy provenance (completion plan step 3.1): the named policy and
-# its effective flags (space-joined) travel with the binary into every v1 output.
+# Precision-policy provenance: the named policy and its effective flags
+# (space-joined) travel with the binary into every v1 output.
 function(cumes_add_precision_provenance target)
   target_compile_definitions(${target} PRIVATE
     CUMES_PRECISION_POLICY_NAME="${CUMES_PRECISION_POLICY}"
@@ -267,7 +263,7 @@ enable_testing()
 add_subdirectory(tests)
 
 # ---- benchmarks (not part of the default CTest unit gate) --------------------
-# The fixed-iteration harness (§8.1). Always double (verify-double is the
+# The fixed-iteration harness. Always double (verify-double is the
 # benchmark reference config), regardless of CUMES_USE_FLOAT.
 add_executable(cumes_benchmark_fixed_iteration benchmarks/fixed_iteration.cu)
 target_include_directories(cumes_benchmark_fixed_iteration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -281,11 +277,11 @@ target_include_directories(cumes_benchmark_graph_overhead PRIVATE ${CMAKE_CURREN
 target_link_libraries(cumes_benchmark_graph_overhead PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(cumes_benchmark_graph_overhead)
 
-# ADR-0003 re-measure: CUDA Graph capture of the REAL per-iteration DAG
-# (builds the production operator stack and captures EquilibriumOperator::
-# enqueue; the empty-kernel overhead benchmark's upper bound is replaced by
-# real-pass submission numbers). Always double, like the fixed-iteration
-# harness (verify-double is the benchmark reference config).
+# CUDA Graph capture of the REAL per-iteration DAG (builds the production
+# operator stack and captures EquilibriumOperator::enqueue; the empty-kernel
+# overhead benchmark's upper bound is replaced by real-pass submission
+# numbers). Always double, like the fixed-iteration harness (verify-double is
+# the benchmark reference config).
 add_executable(cumes_benchmark_graph_realpass benchmarks/graph_realpass.cu)
 target_include_directories(cumes_benchmark_graph_realpass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_benchmark_graph_realpass PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
@@ -293,7 +289,7 @@ cumes_enable_warnings(cumes_benchmark_graph_realpass)
 cumes_apply_policy_flags(cumes_benchmark_graph_realpass)
 cumes_add_precision_provenance(cumes_benchmark_graph_realpass)
 
-# CLI policy gate (completion plan step 2.1): strict-vs-compatibility schema
+# CLI policy gate: strict-vs-compatibility schema
 # and output-path/suffix policy, exercised end to end against the real binary
 # with one-iteration tiny configs (validation and preflight failures exit
 # before any meaningful GPU work).
@@ -304,7 +300,7 @@ set_tests_properties(cli_policy PROPERTIES
     LABELS "unit;cli" TIMEOUT 300
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
-# End-to-end durable-publication contract (completion-plan follow-up §3): a
+# End-to-end durable-publication contract: a
 # converged run whose output cannot be published must exit nonzero and must
 # never damage an existing destination. The float build skips the converged
 # cases (its double-tuned ftols are unreachable; the protocol is
