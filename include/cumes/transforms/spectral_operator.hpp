@@ -31,6 +31,8 @@ namespace cumes {
 template <class T>
 class SpectralOperator {
    public:
+    using val_type = T;
+
     virtual ~SpectralOperator() = default;
 
     // Spectral coefficients -> parity-split real-space geometry + derivatives,

@@ -35,6 +35,8 @@ struct ConstraintState {
 template <class T>
 class ConstraintOperator {
    public:
+    using val_type = T;
+
     ConstraintOperator(const DeviceParams<T>& p, DeviceArena* arena);
     ~ConstraintOperator();
 

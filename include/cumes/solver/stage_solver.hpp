@@ -49,6 +49,8 @@ namespace stage_detail {
 template <typename T>
 class ScopedRealSpace {
    public:
+    using val_type = T;
+
     ScopedRealSpace(const DeviceParams<T>& p, DeviceArena* arena)
         : rs_(realSpaceCreate<T>(p, arena)) {}
     ~ScopedRealSpace() { realSpaceFree(rs_); }
@@ -72,6 +74,8 @@ class ScopedRealSpace {
 template <typename T>
 class ScopedModeTable {
    public:
+    using val_type = T;
+
     ScopedModeTable(const DeviceParams<T>& p, DeviceArena* arena)
         : mt_(modeTableCreate<T>(p, arena)) {}
     ~ScopedModeTable() { modeTableFree(mt_); }
@@ -170,6 +174,8 @@ auto run_in_stage_arena(const DeviceParams<T>& p, F&& fn)
 template <typename T>
 class StageSolver {
    public:
+    using val_type = T;
+
     static SolverResult<T> run(DeviceParams<T>& p,
                                const ValidatedProblem& vp,
                                SpectralStorage<T>& state,

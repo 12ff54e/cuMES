@@ -22,6 +22,8 @@ class DeviceArena;
 template <class T>
 class GeometryOperator {
    public:
+    using val_type = T;
+
     GeometryOperator(const DeviceParams<T>& p, DeviceArena* arena);
     ~GeometryOperator();
 

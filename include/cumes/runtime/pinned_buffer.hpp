@@ -18,6 +18,8 @@ namespace cumes {
 template <class T>
 class PinnedBuffer {
    public:
+    using val_type = T;
+
     PinnedBuffer() = default;
 
     explicit PinnedBuffer(std::size_t count) { allocate(count); }

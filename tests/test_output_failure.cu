@@ -44,6 +44,8 @@ using namespace cumes::test;
 // physical — the writers copy whatever is there. ns=5, mnmax=2.
 template <typename T>
 struct TinyBundle {
+    using val_type = T;
+
     DeviceParams<T> p;
     cumes::ValidatedProblem vp;
     SolverResult<T> res;

@@ -68,6 +68,8 @@ struct PivotPolicy {
 // jMin per mode; `last_surface` is the shared exclusive solve end (ns-1).
 template <class T>
 struct StridedBatchTridiagonalView {
+    using val_type = T;
+
     const T* lower = nullptr;            // [mode][surface], x[j-1] coefficient
     const T* diagonal = nullptr;         // [mode][surface], x[j] coefficient
     const T* upper = nullptr;            // [mode][surface], x[j+1] coefficient
@@ -91,6 +93,8 @@ struct BackendLimits {
 template <class T>
 class TridiagonalBackend {
    public:
+    using val_type = T;
+
     virtual ~TridiagonalBackend() = default;
     virtual BackendLimits limits() const noexcept = 0;
 
@@ -117,6 +121,8 @@ class TridiagonalBackend {
 template <class T>
 class PcrBackend : public TridiagonalBackend<T> {
    public:
+    using val_type = T;
+
     PcrBackend() = default;
     explicit PcrBackend(PivotPolicy policy) : policy_(policy) {}
     BackendLimits limits() const noexcept override;
@@ -137,6 +143,8 @@ class PcrBackend : public TridiagonalBackend<T> {
 template <class T>
 class ThomasBackend : public TridiagonalBackend<T> {
    public:
+    using val_type = T;
+
     ThomasBackend() = default;
     explicit ThomasBackend(PivotPolicy policy) : policy_(policy) {}
     BackendLimits limits() const noexcept override;

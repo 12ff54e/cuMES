@@ -24,6 +24,8 @@ namespace cumes {
 template <class T>
 class SpectralStorage {
    public:
+    using val_type = T;
+
     SpectralStorage() = default;
 
     explicit SpectralStorage(int ns, int mnmax) { allocate(ns, mnmax); }

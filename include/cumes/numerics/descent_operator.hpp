@@ -36,6 +36,8 @@ struct DescentAction {
 template <class T>
 class DescentOperator {
    public:
+    using val_type = T;
+
     void enqueue(SpectralView<T, PhysicalStateDomain> state,
                  SpectralView<T, DecomposedVelocityDomain> velocity,
                  SpectralView<const T, DecomposedResidualDomain> residual,

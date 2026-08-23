@@ -13,6 +13,7 @@ struct FftTraits;
 
 template <>
 struct FftTraits<double> {
+    using val_type = double;
     using Complex = cufftDoubleComplex;               // double2
     static constexpr cufftType kForward = CUFFT_D2Z;  // real -> half-spectrum
     static constexpr cufftType kInverse = CUFFT_Z2D;  // half-spectrum -> real
@@ -26,6 +27,7 @@ struct FftTraits<double> {
 
 template <>
 struct FftTraits<float> {
+    using val_type = float;
     using Complex = cufftComplex;  // float2
     static constexpr cufftType kForward = CUFFT_R2C;
     static constexpr cufftType kInverse = CUFFT_C2R;

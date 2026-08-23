@@ -26,6 +26,8 @@ namespace cumes {
 template <class T>
 class MagneticFieldOperator {
    public:
+    using val_type = T;
+
     // Half-grid magnetic field + total pressure + ncurr closure; update the
     // full-grid iota/chip on the first pass (ncurr=0) or every pass (ncurr=1).
     // Reads the parity-split λ derivatives from `rs`, the base geometry from

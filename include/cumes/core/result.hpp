@@ -21,6 +21,9 @@ namespace cumes {
 template <class T, class E = std::string>
 class BasicResult {
    public:
+    using val_type = T;
+    using error_type = E;
+
     // Value constructors.
     BasicResult(const T& value) : value_(value) {}
     BasicResult(T&& value) : value_(std::move(value)) {}
@@ -46,6 +49,8 @@ class BasicResult {
 template <class E>
 class BasicResult<void, E> {
    public:
+    using error_type = E;
+
     BasicResult() = default;
     BasicResult(const E& error) : error_(error) {}
     BasicResult(E&& error) : error_(std::move(error)) {}

@@ -132,6 +132,8 @@ inline cumes::ValidationResult load_validated(const std::string& input_path,
 template <class T>
 class OperatorStack {
    public:
+    using val_type = T;
+
     OperatorStack(DeviceParams<T>& p,
                   const cumes::ValidatedProblem& vp,
                   cumes::DeviceArena& arena)

@@ -41,6 +41,8 @@ inline constexpr int kPreconInterval = 25;
 template <typename T>
 class IterationController {
    public:
+    using val_type = T;
+
     struct Options {
         T delta_t0 = T(0.9);  // initial time step (vmecpp delt)
         T ftol = T(1e-16);    // stage convergence tolerance

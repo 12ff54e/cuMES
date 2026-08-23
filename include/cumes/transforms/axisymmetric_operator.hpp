@@ -31,6 +31,8 @@ namespace cumes {
 template <class T>
 class AxisymmetricOperator : public SpectralOperator<T> {
    public:
+    using val_type = T;
+
     AxisymmetricOperator() = default;
 
     // Build the poloidal tables and validate that the shape is axisymmetric

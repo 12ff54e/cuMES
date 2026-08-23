@@ -47,6 +47,8 @@ struct CheckpointDomain {};
 template <class T, class Domain>
 class SpectralView {
    public:
+    using val_type = T;
+
     __host__ __device__ SpectralView() = default;
     __host__ __device__ SpectralView(T* data, int ns, int mnmax)
         : data_(data), ns_(ns), mnmax_(mnmax) {}
@@ -77,6 +79,8 @@ class SpectralView {
 template <class T>
 class RealFieldView {
    public:
+    using val_type = T;
+
     __host__ __device__ RealFieldView() = default;
     __host__ __device__
     RealFieldView(T* data, int surfaces, int ntheta, int nzeta)

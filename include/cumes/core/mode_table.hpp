@@ -19,6 +19,8 @@ enum class ModeParity : std::uint8_t { kEven, kOdd };
 
 template <class T>
 struct ModeEntry {
+    using val_type = T;
+
     int m = 0;
     int n = 0;
     int physical_n = 0;  // n * nfp (physical toroidal mode N, blueprint §4.2)
@@ -30,6 +32,8 @@ struct ModeEntry {
 
 template <class T>
 struct ModeTable {
+    using val_type = T;
+
     GridShape shape;
     // entries[mode] with mode = m * (ntor + 1) + n.
     std::vector<ModeEntry<T>> entries;

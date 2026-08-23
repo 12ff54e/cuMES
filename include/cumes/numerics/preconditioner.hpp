@@ -22,6 +22,8 @@ namespace cumes {
 template <class T>
 class Preconditioner {
    public:
+    using val_type = T;
+
     Preconditioner(const DeviceParams<T>& p, DeviceArena* arena);
     ~Preconditioner();
 

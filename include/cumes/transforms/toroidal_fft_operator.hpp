@@ -31,6 +31,8 @@ class DeviceArena;
 template <class T>
 class ToroidalFftOperator : public SpectralOperator<T> {
    public:
+    using val_type = T;
+
     ToroidalFftOperator(const DeviceParams<T>& p,
                         RealSpaceStorage<T>& rs,
                         const DeviceModeTable& mt,

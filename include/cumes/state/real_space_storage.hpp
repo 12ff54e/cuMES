@@ -22,6 +22,8 @@ class DeviceArena;
 
 template <class T>
 struct RealSpaceStorage {
+    using val_type = T;
+
     // Parity-split geometry (full grid, inverse-DFT output).
     T* d_r_e = nullptr;
     T* d_z_e = nullptr;

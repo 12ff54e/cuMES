@@ -24,6 +24,8 @@ namespace cumes {
 template <class T>
 class ResidualOperator {
    public:
+    using val_type = T;
+
     // Reduce the decomposed residual into `sq_out` (3 elements: the fsqr/fsqz/
     // fsql group sums, ΣF²/(mnmax·ns)). One kernel, three output groups. The
     // output is DOUBLE in both builds (ADR-0001 follow-up): the kernel

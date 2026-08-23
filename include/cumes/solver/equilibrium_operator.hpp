@@ -42,6 +42,8 @@ struct EvaluationSchedule {
 template <class T>
 class EquilibriumOperator {
    public:
+    using val_type = T;
+
     EquilibriumOperator(const DeviceParams<T>& p,
                         SpectralStorage<T>& storage,
                         const Profiles<T>& profiles,

@@ -22,6 +22,8 @@ namespace cumes {
 
 template <typename T>
 struct MultigridOutcome {
+    using val_type = T;
+
     SpectralStorage<T> state;  // final (finest-stage) state
     SolverResult<T> result;    // final stage's solver result
     int total_iterations = 0;
@@ -32,6 +34,8 @@ struct MultigridOutcome {
 template <typename T>
 class MultigridSolver {
    public:
+    using val_type = T;
+
     // `p` is the base DeviceParams; its ns/max_iter/ftol are overwritten per
     // stage from the validated problem's stage schedule (exactly the legacy
     // stage loop). `seed` is the stage-0 cold-start state (already

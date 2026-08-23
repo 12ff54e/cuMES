@@ -27,6 +27,8 @@
 // compile-time switch between double and float is `Real` (vmec_types.h).
 template <typename T>
 struct DeviceParams {
+    using val_type = T;
+
     int ns;
     int mnmax;
     int ntheta;

@@ -21,6 +21,8 @@ class ValidatedProblem;
 template <class T>
 class Profiles {
    public:
+    using val_type = T;
+
     Profiles(DeviceParams<T>& p,
              const ValidatedProblem& vp,
              DeviceArena* arena);

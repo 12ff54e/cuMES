@@ -25,6 +25,8 @@ enum class RestartReason : std::uint8_t {
 // max|√g|, the nonfinite entry count, and the surface index of the minimum.
 template <typename T>
 struct JacobianStatus {
+    using val_type = T;
+
     T min_oriented = T(0);     // min(signJ·√g); negative => sign flip
     T max_abs = T(0);          // max |√g|
     T nonfinite_count = T(0);  // number of non-finite entries
@@ -43,6 +45,8 @@ struct InvariantVerdict {
 // per-iteration record reproduces byte-for-byte.
 template <typename T>
 struct Damping {
+    using val_type = T;
+
     T b1 = T(0);    // 1 - dtau
     T fac = T(0);   // 1 / (1 + dtau)
     T otav = T(0);  // 10-sample mean of 1/tau (telemetry)
@@ -52,6 +56,8 @@ struct Damping {
 // The controller's restart/refresh decision for one evaluated pass.
 template <typename T>
 struct RestartDecision {
+    using val_type = T;
+
     RestartReason reason = RestartReason::kNone;
     bool do_refresh = false;  // refresh the checkpoint AFTER descent
     Damping<T> damping;

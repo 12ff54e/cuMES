@@ -32,6 +32,8 @@ constexpr int kMnmax = kMpol * (kNtor + 1), kNZnT = kNtheta * kNzeta;
 // allocates its own constraint buffers rather than borrowing the operator's).
 template <typename T>
 struct Cw {
+    using val_type = T;
+
     T* d_frcon_e;
     T* d_frcon_o;
     T* d_fzcon_e;

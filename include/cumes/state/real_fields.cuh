@@ -35,6 +35,8 @@ struct RealSpaceStorage;
 template <class T>
 class ReducedThetaView {
    public:
+    using val_type = T;
+
     __host__ __device__ ReducedThetaView() = default;
     __host__ __device__
     ReducedThetaView(T* data, int surfaces, int ntheta_reduced, int nzeta)
@@ -71,6 +73,8 @@ class ReducedThetaView {
 // (e = even m, o = odd m). Matches the RealSpaceStorage field groups.
 template <class T>
 struct GeometryParityViews {
+    using val_type = T;
+
     RealFieldView<T> r_e, z_e, l_e;
     RealFieldView<T> ru_e, zu_e, lu_e;
     RealFieldView<T> r_o, z_o, l_o;
@@ -114,6 +118,8 @@ inline GeometryParityViews<T> geometryParityViews(const RealSpaceStorage<T>& rs,
 // Full-grid radial profile views (ns-length 1D arrays).
 template <class T>
 struct RadialProfileViews {
+    using val_type = T;
+
     T* iota_F;
     T* phip_F;
     T* chi_F;
@@ -131,6 +137,8 @@ struct RadialProfileViews {
 // and the covariant metric. All (ns-1, ntheta, nzeta).
 template <class T>
 struct BaseGeometryHalfViews {
+    using val_type = T;
+
     RealFieldView<T> r12, ru12, zu12, rs, zs, tau;
     RealFieldView<T> gsqrt, guu, guv, gvv;
 };
@@ -138,6 +146,8 @@ struct BaseGeometryHalfViews {
 // Half-grid magnetic field + total pressure (the ncurr=0/1 finalization).
 template <class T>
 struct MagneticFieldViews {
+    using val_type = T;
+
     RealFieldView<T> bsupu, bsupv;
     RealFieldView<T> bsubu, bsubv;
     RealFieldView<T> total_pressure;
@@ -147,6 +157,8 @@ struct MagneticFieldViews {
 // a/b/c families are the radial/poloidal/toroidal weak-form contributions.
 template <class T>
 struct ForceParityViews {
+    using val_type = T;
+
     RealFieldView<T> armn_e, armn_o, azmn_e, azmn_o;
     RealFieldView<T> brmn_e, brmn_o, bzmn_e, bzmn_o;
     RealFieldView<T> blmn_e, blmn_o, clmn_e, clmn_o;
@@ -161,6 +173,8 @@ struct ForceParityViews {
 // (blueprint §5.1 dependency rule: the forward operator consumes both).
 template <class T>
 struct ConstraintForceViews {
+    using val_type = T;
+
     RealFieldView<T> frcon_e, frcon_o, fzcon_e, fzcon_o;
 };
 

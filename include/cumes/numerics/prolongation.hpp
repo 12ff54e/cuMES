@@ -20,6 +20,8 @@ namespace cumes {
 template <class T>
 class Prolongation {
    public:
+    using val_type = T;
+
     // state_old (coarse) -> state_new (fine), both physical coefficients. The
     // new state's slabs are allocated here (velocities zeroed) and returned.
     //

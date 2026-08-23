@@ -28,6 +28,8 @@ struct RealSpaceStorage;
 // On exit, state contains the converged (or final) spectral coefficients.
 template <typename T>
 struct SolverResult {
+    using val_type = T;
+
     bool converged;
     int iterations;
     T fsqr, fsqz, fsql;  // final force residuals

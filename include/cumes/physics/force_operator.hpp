@@ -22,6 +22,8 @@ namespace cumes {
 template <class T>
 class ForceOperator {
    public:
+    using val_type = T;
+
     // Status-guarded (completion plan step 1.4): the kernel no-ops on an
     // invalid-Jacobian pass (status->jacobian_valid == 0), writing no force
     // buffers.
