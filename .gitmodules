@@ -1,0 +1,3 @@
+[submodule "deps/vacuum-field"]
+	path = deps/vacuum-field
+	url = git@github.com:12ff54e/vacuum-field.git

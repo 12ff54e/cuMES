@@ -84,6 +84,9 @@ record (residuals, Jacobian stats, force-norm factors) is DOUBLE in both builds
 ```
 cuMES/
 ├── CMakeLists.txt          Library split + executable/tests (architecture.md §2)
+├── deps/                   Git submodules (third-party libraries)
+│   └── vacuum-field/       Free-boundary vacuum-field library (NESTOR port;
+│                           private repo 12ff54e/vacuum-field; ADR-0005)
 ├── include/
 │   ├── vmec_types.h        `Real` alias + parity/basis convention comment
 │   ├── solver.cuh          SolverResult<T> + solverRun declaration (app shim)
@@ -246,6 +249,7 @@ Known issues:
 
 | Feature | Status |
 | ------- | ------ |
+| Free boundary / vacuum solver | In progress — `deps/vacuum-field` NESTOR port (step 1: library + golden gates; solver wiring is step 2) |
 | FFT-accelerated transforms | Implemented (cuFFT: batched 1D ζ-FFT + direct poloidal) |
 | Multigrid grid sequencing | Implemented (`ns_array`/`niter_array`/`ftol_array` stage loop + `Prolongation`) |
 | De-aliased constraint force | Implemented (bandpass inside `ConstraintOperator`, fused rCon/zCon in `inverse_fused`) |
@@ -259,7 +263,7 @@ Known issues:
 
 | Document | Contents |
 | -------- | -------- |
-| `docs/architecture.md` | operator library, build/library split, per-iteration pipeline, dependency rules |
+| `docs/architecture.md` | operator library, build/library split, per-iteration pipeline, dependency rules, free-boundary vacuum library (§5) |
 | `docs/mathematics.md` | normative numerical contracts: coordinates, Fourier representation/quadrature, geometry, fields, force, constraint, preconditioner, damping/descent, prolongation |
 | `docs/data-layout.md` | storage/layout contracts (state, real-space, quadrature) |
 | `docs/output-formats.md` | on-disk containers: v1 binary/checkpoint/NetCDF/HDF5, dump files, Python reader |
@@ -267,4 +271,4 @@ Known issues:
 | `docs/performance.md` | measured performance + acceptance policy |
 | `docs/overhaul-history.md` | phase-by-phase overhaul record and closeout handovers |
 | `docs/cuda-overhaul-blueprint.md` | the original overhaul plan |
-| `docs/adr/` | architecture decision records |
+| `docs/adr/` | architecture decision records (incl. 0005: vacuum-field submodule) |

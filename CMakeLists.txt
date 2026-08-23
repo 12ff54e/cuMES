@@ -205,6 +205,27 @@ if(CUMES_ENABLE_VERIFY_DUMP)
   target_compile_definitions(cumes_cuda_float PRIVATE DUMP_CUMES_VERIFY)
 endif()
 
+# ---- free-boundary vacuum library (deps/vacuum-field) ----------------------
+# Step 1 of the free-boundary work (see docs/adr/0005-vacuum-field-submodule.md):
+# the library is built and linked into the CLI (vfield::vfield) but not yet
+# wired into the solver — lfreeb stays a validation error. Auto-disabled when
+# the submodule is not checked out (hosted CI builds without submodules).
+option(CUMES_USE_VACUUM_FIELD
+       "Build and link the free-boundary vacuum library (deps/vacuum-field)" ON)
+if(CUMES_USE_VACUUM_FIELD AND NOT EXISTS
+   ${CMAKE_CURRENT_SOURCE_DIR}/deps/vacuum-field/CMakeLists.txt)
+  message(WARNING "cuMES: deps/vacuum-field not checked out "
+                  "(run: git submodule update --init); "
+                  "vacuum-field support disabled")
+  set(CUMES_USE_VACUUM_FIELD OFF)
+endif()
+if(CUMES_USE_VACUUM_FIELD)
+  # Propagate the scalar switch: the CLI links the matching instantiation.
+  set(VFIELD_USE_FLOAT ${CUMES_USE_FLOAT} CACHE BOOL
+      "vacuum-field scalar switch (propagated from CUMES_USE_FLOAT)" FORCE)
+  add_subdirectory(deps/vacuum-field)
+endif()
+
 # ---- CLI executable --------------------------------------------------------
 if(CUMES_USE_FLOAT)
   set(CUMES_SELECTED_CUDA cumes_cuda_float)
@@ -218,6 +239,9 @@ target_include_directories(cumes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # is scanned while the backend-factory references are still undefined — the
 # linker then extracts the strong NetCDF/HDF5 factory definitions.
 target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
+if(CUMES_USE_VACUUM_FIELD)
+  target_link_libraries(cumes PRIVATE vfield::vfield)
+endif()
 cumes_enable_warnings(cumes)
 cumes_apply_policy_flags(cumes)
 if(CUMES_USE_FLOAT)

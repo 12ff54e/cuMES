@@ -120,7 +120,28 @@ build and the boundary headers:
   CUDA calls;
 - no library calls `exit()`; only `main.cu` maps `RunStatus` to an exit code.
 
-## 5. Retired compatibility internals
+## 5. Free-boundary vacuum library (`deps/vacuum-field`)
+
+Step 1 of the free-boundary work (see `adr/0005-vacuum-field-submodule.md`).
+`deps/vacuum-field` is a standalone CUDA C++ library — the port of vmecpp's
+NESTOR vacuum-field algorithm — embedded as a git submodule. It computes the
+vacuum magnetic field on the LCFS from the boundary Fourier coefficients and
+an mgrid coil field: the magnetic scalar potential via the boundary-element
+Laplace solve, and the outputs `bSqVac` (|B|²/2, no mu0), the covariant
+components `bSubU/bSubV`, the cylindrical `B_R/B_phi/B_Z`, and the
+surface-integral scalars `bSubUVac/bSubVVac`.
+
+Dependency edge (the acyclic-graph rule): **cuMES → vfield only** — the
+library never includes cuMES headers, owns its own runtime (a trimmed
+`DeviceBuffer`/`check_cuda`), its own NetCDF mgrid reader (optional,
+`VFIELD_HAVE_NETCDF`), and its own tests (16 standalone executables, incl.
+six Fortran-golden gates at vmecpp's own tolerances, run inside cuMES ctest).
+cuMES sets `VFIELD_USE_FLOAT` from `CUMES_USE_FLOAT` and links
+`vfield::vfield` into the CLI (`CUMES_USE_VACUUM_FIELD`, default ON, auto-off
+when the submodule is absent). The solver does not call into the library yet
+(step 2 wires `lfreeb`); `lfreeb=true` remains a validation error.
+
+## 6. Retired compatibility internals
 
 Retired in Phase 10 (dead code only — both configs re-verified bit-identical):
 
