@@ -29,17 +29,21 @@
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
 
+#include <functional>
+#include <optional>
+
 // ---------------------------------------------------------------------------
 // Allocate
 // ---------------------------------------------------------------------------
 template <typename T>
-cumes::Preconditioner<T>::Preconditioner(const DeviceParams<T>& p,
-                                         cumes::DeviceArena* arena) {
+cumes::Preconditioner<T>::Preconditioner(
+    const DeviceParams<T>& p,
+    const std::optional<std::reference_wrapper<DeviceArena>>& arena) {
     int nH = p.ns - 1, nF = p.ns;
 
     auto alloc = [&](T*& dst, size_t count, const char* name) {
         if (arena)
-            dst = arena->alloc_span<T>(name, count);
+            dst = arena->get().alloc_span<T>(name, count);
         else
             cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
     };
@@ -66,7 +70,7 @@ cumes::Preconditioner<T>::Preconditioner(const DeviceParams<T>& p,
     alloc(d_dz_, p.mnmax * nF, "precon/dz");
     alloc(d_bz_, p.mnmax * nF, "precon/bz");
     if (arena)
-        d_jMin_ = arena->alloc_span<int>("precon/jMin", p.mnmax);
+        d_jMin_ = arena->get().alloc_span<int>("precon/jMin", p.mnmax);
     else
         cumes::check_cuda(cudaMalloc(&d_jMin_, p.mnmax * sizeof(int)), "jMin");
     alloc(d_lambdaPrec_, p.mnmax * nF, "precon/lambda_prec");
@@ -76,7 +80,7 @@ cumes::Preconditioner<T>::Preconditioner(const DeviceParams<T>& p,
     alloc(d_rmsPhiP_, 1, "precon/rmsPhiP");
     alloc(d_preconScale_, p.mnmax, "precon/scale");
     if (arena)
-        d_preconStatus_ = arena->alloc_span<int>("precon/status", 1);
+        d_preconStatus_ = arena->get().alloc_span<int>("precon/status", 1);
     else
         cumes::check_cuda(cudaMalloc(&d_preconStatus_, sizeof(int)),
                           "precon status");
@@ -88,7 +92,7 @@ cumes::Preconditioner<T>::Preconditioner(const DeviceParams<T>& p,
                       "dLambda zero");
     cumes::check_cuda(cudaMemset(d_cLambda_, 0, (p.ns + 1) * sizeof(T)),
                       "cLambda zero");
-    arena_backed_ = (arena != nullptr);
+    arena_backed_ = arena.has_value();
 }
 
 template <typename T>

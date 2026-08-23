@@ -534,8 +534,9 @@ class NetcdfV1Writer final : public Writer {
 // ---------------------------------------------------------------------------
 class NetcdfV1Reader final : public Reader {
    public:
-    Result<EquilibriumSnapshot> read(const std::string& path,
-                                     RunReport* report) override {
+    Result<EquilibriumSnapshot> read(
+        const std::string& path,
+        std::optional<std::reference_wrapper<RunReport>> report) override {
         int ncid = -1;
         int rc = nc_open(path.c_str(), NC_NOWRITE, &ncid);
         if (rc != NC_NOERR) {
@@ -1022,7 +1023,7 @@ class NetcdfV1Reader final : public Reader {
                         parsed_report.input_params = std::move(ip);
                     }
                 }
-                *report = std::move(parsed_report);
+                report->get() = std::move(parsed_report);
             }
             nc_close(ncid);
             return snapshot;

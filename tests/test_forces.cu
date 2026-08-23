@@ -92,12 +92,12 @@ int main() {
                "cpy lcs");
 
     cumes::ValidatedProblem vp = load_validated();
-    cumes::Profiles<double> profiles(p, vp, nullptr);
+    cumes::Profiles<double> profiles(p, vp, std::nullopt);
     cumes::RadialProfileViews<double> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::mode_table_create(p);
     cumes::RealSpaceStorage<double> rs = real_space_create(p);
     cumes::ToroidalFftOperator<double> op(p, rs, mt);
-    cumes::GeometryOperator<double> geometry(p, nullptr);
+    cumes::GeometryOperator<double> geometry(p, std::nullopt);
 
     // Run one iteration
     op.inverse(storage.physical_const(), /*do_combine=*/true);

@@ -64,12 +64,12 @@ int main() {
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
 
     fill_state(storage, p);
-    cumes::Profiles<double> profiles(p, vp, nullptr);
+    cumes::Profiles<double> profiles(p, vp, std::nullopt);
     cumes::RadialProfileViews<double> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::mode_table_create(p);
     cumes::RealSpaceStorage<double> rs = real_space_create(p);
     cumes::ToroidalFftOperator<double> op(p, rs, mt);
-    cumes::GeometryOperator<double> geometry(p, nullptr);
+    cumes::GeometryOperator<double> geometry(p, std::nullopt);
 
     // Zero the bsupu/bsubu half-grid buffers BEFORE the geometry pass: the
     // coverage gate below counts exact 0.0 entries as unwritten points, and

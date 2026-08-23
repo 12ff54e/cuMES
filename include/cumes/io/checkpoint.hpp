@@ -10,6 +10,8 @@
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/input_params.hpp"
 
+#include <functional>
+#include <optional>
 #include <string>
 
 namespace cumes {
@@ -21,12 +23,13 @@ Status write_checkpoint(const EquilibriumSnapshot& snapshot,
                         const std::string& path);
 
 // Read a versioned checkpoint, validating the magic, version, and dimensions.
-// The restart path consumes the state only; when `input_params` is non-null
+// The restart path consumes the state only; when `input_params` is engaged
 // and the checkpoint carries the version-2 record, it is decoded into it
 // (left default-empty for version-1 checkpoints).
 Result<EquilibriumSnapshot> read_checkpoint(
     const std::string& path,
-    InputParams* input_params = nullptr);
+    std::optional<std::reference_wrapper<InputParams>> input_params =
+        std::nullopt);
 
 }  // namespace cumes
 

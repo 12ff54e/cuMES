@@ -35,6 +35,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <functional>
+#include <optional>
 
 // The consuming kernels declare their dynamic shared memory directly as
 // `extern __shared__ T sh[]` — legal per TU because the explicit
@@ -49,8 +51,9 @@
 #include "cumes/runtime/device_arena.cuh"
 
 template <typename T>
-cumes::DeviceModeTable cumes::mode_table_create(const DeviceParams<T>& p,
-                                                cumes::DeviceArena* arena) {
+cumes::DeviceModeTable cumes::mode_table_create(
+    const DeviceParams<T>& p,
+    const std::optional<std::reference_wrapper<cumes::DeviceArena>>& arena) {
     cumes::DeviceModeTable mt{};
     const int mnmax = p.mnmax;
     auto *h_xm = new int[mnmax], *h_xn = new int[mnmax];
@@ -68,7 +71,7 @@ cumes::DeviceModeTable cumes::mode_table_create(const DeviceParams<T>& p,
         }
     auto allocInt = [&](int*& dst, size_t count, const char* name) {
         if (arena)
-            dst = arena->alloc_span<int>(name, count);
+            dst = arena->get().alloc_span<int>(name, count);
         else
             cumes::check_cuda(cudaMalloc(&dst, count * sizeof(int)), name);
     };
@@ -82,7 +85,7 @@ cumes::DeviceModeTable cumes::mode_table_create(const DeviceParams<T>& p,
                       "xn");
     delete[] h_xm;
     delete[] h_xn;
-    mt.arena_backed = (arena != nullptr);
+    mt.arena_backed = arena.has_value();
     return mt;
 }
 
@@ -91,7 +94,7 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     const DeviceParams<T>& p,
     cumes::RealSpaceStorage<T>& rs,
     const cumes::DeviceModeTable& mt,
-    cumes::DeviceArena* arena)
+    const std::optional<std::reference_wrapper<cumes::DeviceArena>>& arena)
     : p_(p), rs_(&rs), mt_(&mt) {
     // The mode table (d_xm/d_xn) is built by cumes::mode_table_create
     // (resolution metadata, not transform scratch); the real-space
@@ -109,10 +112,10 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
             // 16-byte vector; the real input of a D2Z is processed as double2
             // chunks). cudaMalloc's 256-byte alignment masked this in the
             // legacy path; the arena must request it explicitly.
-            d_zeta_spectra_ = arena->alloc_span<Complex>("fourier/zeta_spectra",
-                                                         n_spectra, 16);
+            d_zeta_spectra_ = arena->get().alloc_span<Complex>(
+                "fourier/zeta_spectra", n_spectra, 16);
             d_zeta_real_ =
-                arena->alloc_span<T>("fourier/zeta_real", n_zeta, 16);
+                arena->get().alloc_span<T>("fourier/zeta_real", n_zeta, 16);
         } else {
             cumes::check_cuda(
                 cudaMalloc(&d_zeta_spectra_, n_spectra * sizeof(Complex)),
@@ -123,7 +126,7 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     }
     auto amt = [&](T*& q, const char* n, size_t cnt) {
         if (arena)
-            q = arena->alloc_span<T>(n, cnt);
+            q = arena->get().alloc_span<T>(n, cnt);
         else
             cumes::check_cuda(cudaMalloc(&q, cnt * sizeof(T)), n);
     };
@@ -231,9 +234,9 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
         using Complex = typename FftTraits<T>::Complex;
         int batch_da = 2 * (p.mpol - 2) * (p.ns - 1);
         if (arena) {
-            d_zeta_real_c_ = arena->alloc_span<T>("fourier/zeta_real_c",
-                                                  (size_t)batch_da * n, 16);
-            d_zeta_spectra_c_ = arena->alloc_span<Complex>(
+            d_zeta_real_c_ = arena->get().alloc_span<T>(
+                "fourier/zeta_real_c", (size_t)batch_da * n, 16);
+            d_zeta_spectra_c_ = arena->get().alloc_span<Complex>(
                 "fourier/zeta_spectra_c", (size_t)batch_da * nz2, 16);
         } else {
             cumes::check_cuda(
@@ -270,7 +273,7 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
                                "cufft workarea z2d_da");
         }
     }  // p.mpol > 2 (nonempty de-alias pass band)
-    arena_backed_ = (arena != nullptr);
+    arena_backed_ = arena.has_value();
 }
 
 template <typename T>
@@ -299,14 +302,15 @@ cumes::ToroidalFftOperator<T>::~ToroidalFftOperator() {
 // RealSpaceStorage (stage-owned geometry/force/combined buffers)
 // ---------------------------------------------------------------------------
 template <typename T>
-cumes::RealSpaceStorage<T> real_space_create(const DeviceParams<T>& p,
-                                             cumes::DeviceArena* arena) {
+cumes::RealSpaceStorage<T> real_space_create(
+    const DeviceParams<T>& p,
+    const std::optional<std::reference_wrapper<cumes::DeviceArena>>& arena) {
     cumes::RealSpaceStorage<T> rs{};
     const int nZnT = p.nZnT;
     const size_t nbytes_real = p.ns * nZnT * sizeof(T);
     auto am = [&](T*& q, const char* n) {
         if (arena)
-            q = arena->alloc_span<T>(n, (size_t)p.ns * nZnT);
+            q = arena->get().alloc_span<T>(n, (size_t)p.ns * nZnT);
         else
             cumes::check_cuda(cudaMalloc(&q, nbytes_real), n);
     };
@@ -370,7 +374,7 @@ cumes::RealSpaceStorage<T> real_space_create(const DeviceParams<T>& p,
     am(rs.d_czmn_o, "czo");
     am(rs.d_clmn_e, "cle");
     am(rs.d_clmn_o, "clo");
-    rs.arena_backed = (arena != nullptr);
+    rs.arena_backed = arena.has_value();
     return rs;
 }
 

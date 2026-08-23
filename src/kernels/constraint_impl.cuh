@@ -27,20 +27,23 @@
 
 #include <cmath>
 #include <cstdio>
+#include <functional>
+#include <optional>
 
 // ---------------------------------------------------------------------------
 // Allocate/free
 // ---------------------------------------------------------------------------
 template <typename T>
-cumes::ConstraintOperator<T>::ConstraintOperator(const DeviceParams<T>& p,
-                                                 cumes::DeviceArena* arena) {
+cumes::ConstraintOperator<T>::ConstraintOperator(
+    const DeviceParams<T>& p,
+    const std::optional<std::reference_wrapper<DeviceArena>>& arena) {
     using Complex = typename FftTraits<T>::Complex;
     size_t nF = p.ns * p.nZnT * sizeof(T);
     size_t nFull = p.ns * p.nZnT;
 
     auto alloc = [&](T*& dst, size_t count, const char* name) {
         if (arena)
-            dst = arena->alloc_span<T>(name, count);
+            dst = arena->get().alloc_span<T>(name, count);
         else
             cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
     };
@@ -97,7 +100,7 @@ cumes::ConstraintOperator<T>::ConstraintOperator(const DeviceParams<T>& p,
     // ToroidalFftOperator (transform scratch), so the constraint owns only its
     // data fields; the bandpass is reached through the SpectralOperator
     // interface.
-    arena_backed_ = (arena != nullptr);
+    arena_backed_ = arena.has_value();
 }
 
 template <typename T>

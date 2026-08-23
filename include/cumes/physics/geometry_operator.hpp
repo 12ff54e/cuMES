@@ -15,6 +15,9 @@
 
 #include <cuda_runtime.h>
 
+#include <functional>
+#include <optional>
+
 namespace cumes {
 
 class DeviceArena;
@@ -24,7 +27,9 @@ class GeometryOperator {
    public:
     using val_type = T;
 
-    GeometryOperator(const DeviceParams<T>& p, DeviceArena* arena);
+    GeometryOperator(
+        const DeviceParams<T>& p,
+        const std::optional<std::reference_wrapper<DeviceArena>>& arena);
     ~GeometryOperator();
 
     // Non-movable: the destructor frees the owned half-grid buffers without

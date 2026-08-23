@@ -320,7 +320,7 @@ static void test_backend(const char* name,
               format("{}: reader factory exists ({})", name, label));
 
         RunReport rep;
-        const auto res = reader->read(path, &rep);
+        const auto res = reader->read(path, rep);
         remove(path.c_str());
         if (expect_ok) {
             check(res.has_value(), format("{}: {}", name, label));

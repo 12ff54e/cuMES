@@ -8,10 +8,10 @@ template SolverResult<float> solver_run<float>(
     cumes::ToroidalFftOperator<float>&,
     cumes::RealSpaceStorage<float>&,
     cumes::GeometryOperator<float>&,
-    cumes::DeviceArena*,
+    std::optional<std::reference_wrapper<cumes::DeviceArena>>,
     cudaStream_t,
-    cumes::SolverBench*,
-    cumes::SpectralOperator<float>*);
+    std::optional<std::reference_wrapper<cumes::SolverBench>>,
+    std::optional<std::reference_wrapper<cumes::SpectralOperator<float>>>);
 
 // Stateless operators (migration steps 8/10): linkable from tests.
 template class cumes::ResidualOperator<float>;

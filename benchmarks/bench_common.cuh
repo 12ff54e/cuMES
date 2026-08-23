@@ -137,11 +137,11 @@ class OperatorStack {
     OperatorStack(DeviceParams<T>& p,
                   const cumes::ValidatedProblem& vp,
                   cumes::DeviceArena& arena)
-        : profiles(p, vp, &arena),
-          rs(::real_space_create<T>(p, &arena)),
-          mt(cumes::mode_table_create<T>(p, &arena)),
-          transform(p, rs, mt, &arena),
-          geometry(p, &arena),
+        : profiles(p, vp, arena),
+          rs(::real_space_create<T>(p, arena)),
+          mt(cumes::mode_table_create<T>(p, arena)),
+          transform(p, rs, mt, arena),
+          geometry(p, arena),
           use_axisym(p.ntor == 0 && p.nzeta == 1) {
         if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
             if (std::atoi(e) != 0) use_axisym = false;

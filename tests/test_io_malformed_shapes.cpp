@@ -550,7 +550,7 @@ static void test_netcdf(const TempDir& dir) {
         RunReport rep;
         rep.build.revision = "sentinel";
         rep.total_effective_iterations = 12345;
-        const auto res = reader->read(path, &rep);
+        const auto res = reader->read(path, rep);
         remove(path.c_str());
         if (c.mut == NcMutation::NONE) {
             check(res.has_value(), format("netcdf: {}", c.label));
@@ -609,7 +609,7 @@ static void test_hdf5(const TempDir& dir) {
         RunReport rep;
         rep.build.revision = "sentinel";
         rep.total_effective_iterations = 12345;
-        const auto res = reader->read(path, &rep);
+        const auto res = reader->read(path, rep);
         remove(path.c_str());
         if (c.mut == H5Mutation::NONE) {
             check(res.has_value(), format("hdf5: {}", c.label));

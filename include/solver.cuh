@@ -6,6 +6,8 @@
 #include "cumes/state/spectral_storage.hpp"
 #include "vmec_types.h"
 
+#include <functional>
+#include <optional>
 #include <vector>
 
 namespace cumes {
@@ -41,32 +43,36 @@ struct SolverResult {
     std::vector<cumes::RestartEvent> restarts;
 };
 
-// `arena`, when non-null, backs the preconditioner/constraint workspaces the
+// `arena`, when engaged, backs the preconditioner/constraint workspaces the
 // solver allocates internally (one stage allocation instead of per-array
-// cudaMalloc). nullptr keeps the legacy per-array allocation path.
+// cudaMalloc). nullopt keeps the legacy per-array allocation path.
 //
 // `transform` is the generic ToroidalFft operator — always present: the solver
 // reads its mode tables (xm()/xn(), the resolution-scoped DeviceModeTable) and
 // binds the cuFFT plans to the compute stream; the transform scratch/plans are
 // sealed behind the operator's dump-only accessors. `profiles` carries the
 // radial profiles as typed `RadialProfileViews` (the solver never reads the raw
-// profile `d_*` pointers in the hot loop). `op`, when non-null, is the
-// selected transform backend the solver drives (a `SpectralOperator<T>*`); the
+// profile `d_*` pointers in the hot loop). `op`, when engaged, is the
+// selected transform backend the solver drives (a `SpectralOperator<T>`); the
 // solver has no `axisym_active` branch — inverse/forward/de-alias all go
-// through `op`. When `op` is null it defaults to `&transform` (the generic
+// through `op`. When `op` is nullopt it defaults to `&transform` (the generic
 // backend). The two backends are Class B ULP-equivalent (test_axisym_backend);
 // selecting the axisymmetric backend for ntor=0/nzeta=1 is a trajectory
 // re-freeze.
 template <typename T>
-SolverResult<T> solver_run(cumes::SpectralStorage<T>& state,
-                           const DeviceParams<T>& p,
-                           const cumes::Profiles<T>& profiles,
-                           cumes::ToroidalFftOperator<T>& transform,
-                           cumes::RealSpaceStorage<T>& rs,
-                           cumes::GeometryOperator<T>& geometry,
-                           cumes::DeviceArena* arena = nullptr,
-                           cudaStream_t stream = 0,
-                           cumes::SolverBench* bench = nullptr,
-                           cumes::SpectralOperator<T>* op = nullptr);
+SolverResult<T> solver_run(
+    cumes::SpectralStorage<T>& state,
+    const DeviceParams<T>& p,
+    const cumes::Profiles<T>& profiles,
+    cumes::ToroidalFftOperator<T>& transform,
+    cumes::RealSpaceStorage<T>& rs,
+    cumes::GeometryOperator<T>& geometry,
+    std::optional<std::reference_wrapper<cumes::DeviceArena>> arena =
+        std::nullopt,
+    cudaStream_t stream = 0,
+    std::optional<std::reference_wrapper<cumes::SolverBench>> bench =
+        std::nullopt,
+    std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op =
+        std::nullopt);
 
 #endif  // CUMES_INCLUDE_SOLVER_CUH_

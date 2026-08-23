@@ -17,6 +17,9 @@
 
 #include <cuda_runtime.h>
 
+#include <functional>
+#include <optional>
+
 namespace cumes {
 
 template <class T>
@@ -24,7 +27,9 @@ class Preconditioner {
    public:
     using val_type = T;
 
-    Preconditioner(const DeviceParams<T>& p, DeviceArena* arena);
+    Preconditioner(
+        const DeviceParams<T>& p,
+        const std::optional<std::reference_wrapper<DeviceArena>>& arena);
     ~Preconditioner();
 
     Preconditioner(const Preconditioner&) = delete;

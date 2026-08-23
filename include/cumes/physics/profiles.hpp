@@ -13,6 +13,9 @@
 #include "cumes/config/device_params.hpp"
 #include "cumes/state/real_fields.cuh"
 
+#include <functional>
+#include <optional>
+
 namespace cumes {
 
 class DeviceArena;
@@ -25,7 +28,7 @@ class Profiles {
 
     Profiles(DeviceParams<T>& p,
              const ValidatedProblem& vp,
-             DeviceArena* arena);
+             const std::optional<std::reference_wrapper<DeviceArena>>& arena);
     ~Profiles();
 
     // Non-movable: the destructor frees the owned radial arrays without

@@ -304,7 +304,7 @@ static void check_v1_round_trip(const EquilibriumSnapshot& snap,
         check(w->write_atomic(snap, report, spec, vp).has_value(),
               "v1 write succeeds");
         RunReport back;
-        auto snap_back = r->read(path, &back);
+        auto snap_back = r->read(path, back);
         check(snap_back.has_value() && snapshots_equal(snap, snap_back.value()),
               "v1 state round trip");
         check(reports_equal(report, back),
@@ -357,7 +357,7 @@ static void run_precision() {
             check(w->write_atomic(snap, report, spec, vp).has_value(),
                   "v1: write succeeds");
             RunReport back;
-            auto snap_back = r->read(v1Path, &back);
+            auto snap_back = r->read(v1Path, back);
             check(snap_back.has_value() &&
                       snapshots_equal(snap, snap_back.value()),
                   "v1: round-trip preserves bridged state");
@@ -379,7 +379,7 @@ static void run_precision() {
         check(r != nullptr, "v1 historical: reader factory");
         if (r) {
             RunReport back;
-            auto snap_back = r->read(v1OldPath, &back);
+            auto snap_back = r->read(v1OldPath, back);
             check(snap_back.has_value() &&
                       snapshots_equal(snap, snap_back.value()),
                   "v1 historical: state round trip");
@@ -409,7 +409,7 @@ static void run_precision() {
         check(r != nullptr, "v3 historical: reader factory");
         if (r) {
             RunReport back;
-            auto snap_back = r->read(v3OldPath, &back);
+            auto snap_back = r->read(v3OldPath, back);
             check(snap_back.has_value() &&
                       snapshots_equal(snap, snap_back.value()),
                   "v3 historical: state round trip");
@@ -450,7 +450,7 @@ static void run_precision() {
         check(cumes::write_checkpoint(snap, ip, ckpt).has_value(),
               "checkpoint: write succeeds");
         cumes::InputParams back_params;
-        auto back = cumes::read_checkpoint(ckpt, &back_params);
+        auto back = cumes::read_checkpoint(ckpt, back_params);
         check(back.has_value() && snapshots_equal(snap, back.value()),
               "checkpoint: round-trip preserves bridged state");
         check(back_params == ip,

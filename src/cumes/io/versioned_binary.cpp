@@ -142,8 +142,9 @@ class VersionedBinaryWriter final : public Writer {
 
 class VersionedBinaryReader final : public Reader {
    public:
-    Result<EquilibriumSnapshot> read(const std::string& path,
-                                     RunReport* report) override {
+    Result<EquilibriumSnapshot> read(
+        const std::string& path,
+        std::optional<std::reference_wrapper<RunReport>> report) override {
         FILE* fp = fopen(path.c_str(), "rb");
         if (!fp) return Result<EquilibriumSnapshot>("cannot open " + path);
 
@@ -193,34 +194,35 @@ class VersionedBinaryReader final : public Reader {
                 !io_detail::read_i32(fp, nstages)) {
                 return fail("versioned binary: truncated provenance trailer");
             }
-            *report = RunReport{};
-            report->status = static_cast<RunStatus>(status);
-            report->total_effective_iterations = total;
-            report->build.scalar_type = (precision == 0) ? "double" : "float";
+            report->get() = RunReport{};
+            report->get().status = static_cast<RunStatus>(status);
+            report->get().total_effective_iterations = total;
+            report->get().build.scalar_type =
+                (precision == 0) ? "double" : "float";
             // The v2 trailer carries precision_policy + compile_flags after
             // build_type; the historical v1 trailer carried a scalar_type
             // string in that slot instead (the precision tag above is
             // authoritative either way, so the v1 string is read and
             // discarded).
             std::string legacy_scalar_type;
-            if (!io_detail::read_string(fp, report->build.revision) ||
+            if (!io_detail::read_string(fp, report->get().build.revision) ||
                 !io_detail::read_u8(fp, dirty) ||
-                !io_detail::read_string(fp, report->build.build_type) ||
+                !io_detail::read_string(fp, report->get().build.build_type) ||
                 (has_policy_fields
                      ? (!io_detail::read_string(
-                            fp, report->build.precision_policy) ||
-                        !io_detail::read_string(fp,
-                                                report->build.compile_flags))
+                            fp, report->get().build.precision_policy) ||
+                        !io_detail::read_string(
+                            fp, report->get().build.compile_flags))
                      : !io_detail::read_string(fp, legacy_scalar_type)) ||
-                !io_detail::read_string(fp, report->input.source_path) ||
-                !io_detail::read_string(fp, report->input.source_hash) ||
-                !io_detail::read_string(fp, report->runtime.gpu_name) ||
-                !io_detail::read_string(fp, report->runtime.driver) ||
-                !io_detail::read_string(fp, report->runtime.runtime) ||
-                !io_detail::read_string(fp, report->runtime.toolkit)) {
+                !io_detail::read_string(fp, report->get().input.source_path) ||
+                !io_detail::read_string(fp, report->get().input.source_hash) ||
+                !io_detail::read_string(fp, report->get().runtime.gpu_name) ||
+                !io_detail::read_string(fp, report->get().runtime.driver) ||
+                !io_detail::read_string(fp, report->get().runtime.runtime) ||
+                !io_detail::read_string(fp, report->get().runtime.toolkit)) {
                 return fail("versioned binary: truncated provenance trailer");
             }
-            report->build.dirty = (dirty != 0);
+            report->get().build.dirty = (dirty != 0);
             if (nstages < 0) return fail("versioned binary: bad stage count");
             for (int g = 0; g < nstages; ++g) {
                 StageReport st;
@@ -250,15 +252,15 @@ class VersionedBinaryReader final : public Reader {
                     ev.iteration = it;
                     st.restarts.push_back(ev);
                 }
-                report->stages.push_back(std::move(st));
+                report->get().stages.push_back(std::move(st));
             }
             // The embedded normalized-input record: required for version 3,
             // absent (default-empty) for versions 1 and 2. The three
             // profile-type strings exist in version 4 records only.
             if (has_input_params) {
                 std::string reason;
-                if (!io_detail::read_input_params(fp, report->input_params,
-                                                  reason, version >= 4)) {
+                if (!io_detail::read_input_params(
+                        fp, report->get().input_params, reason, version >= 4)) {
                     return fail("versioned binary: " + reason);
                 }
             }

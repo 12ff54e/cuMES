@@ -40,6 +40,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -164,9 +166,14 @@ int main(int argc, char** argv) {
         cudaEventCreate(&ev1);
         cudaEventRecord(ev0, stream.get());
         double w0 = now_us();
-        result = solver_run<Real>(storage, p, stack.profiles, stack.transform,
-                                  stack.rs, stack.geometry, &arena,
-                                  stream.get(), &bench, stack.axisym.get());
+        result = solver_run<Real>(
+            storage, p, stack.profiles, stack.transform, stack.rs,
+            stack.geometry, arena, stream.get(), bench,
+            stack.axisym
+                ? std::optional<
+                      std::reference_wrapper<cumes::SpectralOperator<Real>>>(
+                      std::ref(*stack.axisym))
+                : std::nullopt);
         double w1 = now_us();
         cudaEventRecord(ev1, stream.get());
         cudaEventSynchronize(ev1);

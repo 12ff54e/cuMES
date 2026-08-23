@@ -20,6 +20,8 @@
 #include <cuda_runtime.h>
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 
 namespace cumes {
 
@@ -37,7 +39,9 @@ class ConstraintOperator {
    public:
     using val_type = T;
 
-    ConstraintOperator(const DeviceParams<T>& p, DeviceArena* arena);
+    ConstraintOperator(
+        const DeviceParams<T>& p,
+        const std::optional<std::reference_wrapper<DeviceArena>>& arena);
     ~ConstraintOperator();
 
     // Non-movable: the destructor frees the owned constraint buffers without

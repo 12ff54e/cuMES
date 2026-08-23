@@ -7,7 +7,9 @@
 #include "cumes/io/output_spec.hpp"
 #include "cumes/io/run_report.hpp"
 
+#include <functional>
 #include <memory>
+#include <optional>
 
 namespace cumes {
 
@@ -16,11 +18,13 @@ class Reader {
     virtual ~Reader() = default;
     // Read a state file into a host snapshot. Returns an error on a missing
     // file, truncation, trailing data, or a header/dimension mismatch.
-    // report, when non-null, additionally receives the recorded RunReport
+    // report, when engaged, additionally receives the recorded RunReport
     // (provenance + per-stage outcomes + restart history) - the schema-v1
     // round-trip contract (completion plan step 2.3).
-    virtual Result<EquilibriumSnapshot> read(const std::string& path,
-                                             RunReport* report = nullptr) = 0;
+    virtual Result<EquilibriumSnapshot> read(
+        const std::string& path,
+        std::optional<std::reference_wrapper<RunReport>> report =
+            std::nullopt) = 0;
 };
 
 // Factory. Returns nullptr for a format this build does not read. Defined in

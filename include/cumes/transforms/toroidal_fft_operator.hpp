@@ -23,6 +23,8 @@
 #include <cufft.h>
 
 #include <cstddef>
+#include <functional>
+#include <optional>
 
 namespace cumes {
 
@@ -33,10 +35,12 @@ class ToroidalFftOperator : public SpectralOperator<T> {
    public:
     using val_type = T;
 
-    ToroidalFftOperator(const DeviceParams<T>& p,
-                        RealSpaceStorage<T>& rs,
-                        const DeviceModeTable& mt,
-                        DeviceArena* arena = nullptr);
+    ToroidalFftOperator(
+        const DeviceParams<T>& p,
+        RealSpaceStorage<T>& rs,
+        const DeviceModeTable& mt,
+        const std::optional<std::reference_wrapper<DeviceArena>>& arena =
+            std::nullopt);
     ~ToroidalFftOperator() override;
 
     // Non-movable: the destructor frees the owned cuFFT plans/scratch without

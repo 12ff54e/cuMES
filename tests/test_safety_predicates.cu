@@ -375,14 +375,14 @@ static void run_guard_noop(T label) {
     upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
                  p.mnmax);
 
-    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::Profiles<T> profiles(p, vp, std::nullopt);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::mode_table_create(p);
     cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt);
-    cumes::GeometryOperator<T> geometry(p, nullptr);
-    cumes::Preconditioner<T> precon(p, nullptr);
-    cumes::ConstraintOperator<T> constraint(p, nullptr);
+    cumes::GeometryOperator<T> geometry(p, std::nullopt);
+    cumes::Preconditioner<T> precon(p, std::nullopt);
+    cumes::ConstraintOperator<T> constraint(p, std::nullopt);
 
     cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
     cumes::ControlRecord h_rec = {};
@@ -587,15 +587,16 @@ static void run_collapsed_dag(T label) {
                      p.mnmax);
     }
 
-    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::Profiles<T> profiles(p, vp, std::nullopt);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::mode_table_create(p);
     cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt);
-    cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::GeometryOperator<T> geometry(p, std::nullopt);
 
     cumes::EquilibriumOperator<T> equilibrium(p, storage, profiles, transform,
-                                              rs, geometry, nullptr, nullptr);
+                                              rs, geometry, std::nullopt,
+                                              std::nullopt);
 
     cumes::EvaluationSchedule schedule;
     schedule.update_iota_chi = true;
@@ -689,14 +690,14 @@ static void run_sign_flip_stats(T label) {
     upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
                  p.mnmax);
 
-    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::Profiles<T> profiles(p, vp, std::nullopt);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::mode_table_create(p);
     cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt);
-    cumes::GeometryOperator<T> geometry(p, nullptr);
-    cumes::Preconditioner<T> precon(p, nullptr);
-    cumes::ConstraintOperator<T> constraint(p, nullptr);
+    cumes::GeometryOperator<T> geometry(p, std::nullopt);
+    cumes::Preconditioner<T> precon(p, std::nullopt);
+    cumes::ConstraintOperator<T> constraint(p, std::nullopt);
 
     const size_t nHalf = (size_t)(p.ns - 1) * p.nZnT;  // 288 half-grid entries
     const size_t nFull = (size_t)p.ns * p.nZnT;

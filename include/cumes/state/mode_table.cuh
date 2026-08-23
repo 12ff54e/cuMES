@@ -16,6 +16,9 @@
 
 #include <cuda_runtime.h>
 
+#include <functional>
+#include <optional>
+
 namespace cumes {
 
 class DeviceArena;
@@ -60,12 +63,14 @@ struct DeviceModeTable {
 
 // Build + upload the folded-mode table (same values/layout the legacy
 // fourierCreate produced; now built by the transform module's
-// mode_table_create). With `arena == nullptr` each array is its own
+// mode_table_create). With no arena each array is its own
 // cudaMalloc; with an arena they are aligned named subspans of the stage
 // allocation.
 template <typename T>
-DeviceModeTable mode_table_create(const DeviceParams<T>& p,
-                                  DeviceArena* arena = nullptr);
+DeviceModeTable mode_table_create(
+    const DeviceParams<T>& p,
+    const std::optional<std::reference_wrapper<DeviceArena>>& arena =
+        std::nullopt);
 
 inline void mode_table_free(DeviceModeTable& mt) {
     if (!mt.arena_backed) {

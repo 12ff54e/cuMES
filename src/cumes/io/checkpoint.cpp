@@ -64,8 +64,9 @@ Status write_checkpoint(const EquilibriumSnapshot& snapshot,
     return Status();
 }
 
-Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
-                                            InputParams* input_params) {
+Result<EquilibriumSnapshot> read_checkpoint(
+    const std::string& path,
+    std::optional<std::reference_wrapper<InputParams>> input_params) {
     FILE* fp = fopen(path.c_str(), "rb");
     if (!fp) return Result<EquilibriumSnapshot>("cannot open " + path);
 
@@ -109,7 +110,7 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
     // for the record never touches it. The three profile-type strings exist
     // in version-3 checkpoints only.
     if (input_params && version >= 2) {
-        if (!io_detail::read_input_params(fp, *input_params, reason,
+        if (!io_detail::read_input_params(fp, input_params->get(), reason,
                                           version >= 3)) {
             return fail("checkpoint: " + reason);
         }

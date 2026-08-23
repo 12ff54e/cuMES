@@ -79,7 +79,7 @@ static void test_checkpoint_round_trip() {
     check(cumes::write_checkpoint(s, params, path).has_value(),
           "checkpoint: write succeeds");
     cumes::InputParams back_params;
-    auto back = cumes::read_checkpoint(path, &back_params);
+    auto back = cumes::read_checkpoint(path, back_params);
     check(back.has_value() && snapshots_equal(s, back.value()),
           "checkpoint: round-trip preserves state");
     check(back_params == params,
@@ -103,7 +103,7 @@ static void test_checkpoint_version_gate() {
     }
     {
         cumes::InputParams back_params;
-        auto back = cumes::read_checkpoint(path, &back_params);
+        auto back = cumes::read_checkpoint(path, back_params);
         check(back.has_value() && snapshots_equal(s, back.value()),
               "checkpoint: version-1 file still readable");
         check(back_params == cumes::InputParams{},

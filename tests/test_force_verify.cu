@@ -650,12 +650,12 @@ int main() {
        "cpy lmncs");
 
     // ---- Profiles / plan / workspace ----
-    cumes::Profiles<double> profiles(p, vp, nullptr);
+    cumes::Profiles<double> profiles(p, vp, std::nullopt);
     const cumes::RadialProfileViews<double> rp = profiles.profile_views();
     cumes::RealSpaceStorage<double> rs = real_space_create(p);
     cumes::DeviceModeTable mt = cumes::mode_table_create<double>(p);
-    cumes::ToroidalFftOperator<double> transform(p, rs, mt, nullptr);
-    cumes::GeometryOperator<double> geometry(p, nullptr);
+    cumes::ToroidalFftOperator<double> transform(p, rs, mt, std::nullopt);
+    cumes::GeometryOperator<double> geometry(p, std::nullopt);
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
     SolverResult<double> res =

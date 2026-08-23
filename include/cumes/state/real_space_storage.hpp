@@ -16,6 +16,9 @@
 #include "cumes/state/real_fields.cuh"
 #include "vmec_types.h"
 
+#include <functional>
+#include <optional>
+
 namespace cumes {
 
 class DeviceArena;
@@ -138,7 +141,8 @@ struct RealSpaceStorage {
 template <typename T>
 cumes::RealSpaceStorage<T> real_space_create(
     const DeviceParams<T>& p,
-    cumes::DeviceArena* arena = nullptr);
+    const std::optional<std::reference_wrapper<cumes::DeviceArena>>& arena =
+        std::nullopt);
 template <typename T>
 void real_space_free(cumes::RealSpaceStorage<T>& rs);
 

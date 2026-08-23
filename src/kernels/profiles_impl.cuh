@@ -29,6 +29,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <functional>
+#include <optional>
 
 // The power-series evaluators (torflux/torflux_deriv/eval_iota_profile/
 // eval_mass_profile/eval_curr_profile) live in the shared header above: the
@@ -36,9 +38,10 @@
 // normalizations.
 
 template <typename T>
-cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
-                             const cumes::ValidatedProblem& vp,
-                             cumes::DeviceArena* arena) {
+cumes::Profiles<T>::Profiles(
+    DeviceParams<T>& p,
+    const cumes::ValidatedProblem& vp,
+    const std::optional<std::reference_wrapper<DeviceArena>>& arena) {
     const cumes::ProblemSpec& sp = vp.spec();
     const int ncurr =
         (sp.current_model == cumes::CurrentModel::PRESCRIBED_CURRENT) ? 1 : 0;
@@ -79,7 +82,7 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
 
     auto alloc = [&](T*& dst, size_t count, const char* name) {
         if (arena)
-            dst = arena->alloc_span<T>(name, count);
+            dst = arena->get().alloc_span<T>(name, count);
         else
             cumes::check_cuda(cudaMalloc(&dst, count * sizeof(T)), name);
     };
@@ -94,7 +97,7 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
     alloc(d_sqrtS_H_, p.ns - 1, "profiles/sqrtS_H");
     alloc(d_curr_H_, p.ns - 1, "profiles/curr_H");
     alloc(d_chip_H_, p.ns - 1, "profiles/chip_H");
-    arena_backed_ = (arena != nullptr);
+    arena_backed_ = arena.has_value();
 
     auto* h = new T[p.ns];
     // ---- Full grid ----

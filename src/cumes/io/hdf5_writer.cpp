@@ -421,8 +421,9 @@ class Hdf5V1Writer final : public Writer {
 // ---------------------------------------------------------------------------
 class Hdf5V1Reader final : public Reader {
    public:
-    Result<EquilibriumSnapshot> read(const std::string& path,
-                                     RunReport* report) override {
+    Result<EquilibriumSnapshot> read(
+        const std::string& path,
+        std::optional<std::reference_wrapper<RunReport>> report) override {
         hid_t fid = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
         if (fid < 0) {
             return Result<EquilibriumSnapshot>("HDF5: cannot open " + path);
@@ -896,7 +897,7 @@ class Hdf5V1Reader final : public Reader {
                         parsed_report.input_params = std::move(ip);
                     }
                 }
-                *report = std::move(parsed_report);
+                report->get() = std::move(parsed_report);
             }
             H5Fclose(fid);
             return snapshot;

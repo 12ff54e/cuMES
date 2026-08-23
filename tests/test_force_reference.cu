@@ -310,12 +310,12 @@ static void run_reference(int ns,
                "lcs");
 
     cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
-    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::Profiles<T> profiles(p, vp, std::nullopt);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::mode_table_create(p);
     cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> op(p, rs, mt);
-    cumes::GeometryOperator<T> geometry(p, nullptr);
+    cumes::GeometryOperator<T> geometry(p, std::nullopt);
 
     op.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0);

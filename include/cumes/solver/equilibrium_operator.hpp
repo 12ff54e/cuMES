@@ -29,6 +29,9 @@
 
 #include <cuda_runtime.h>
 
+#include <functional>
+#include <optional>
+
 namespace cumes {
 
 // Per-iteration flags the controller derives before the DAG is enqueued.
@@ -44,14 +47,15 @@ class EquilibriumOperator {
    public:
     using val_type = T;
 
-    EquilibriumOperator(const DeviceParams<T>& p,
-                        SpectralStorage<T>& storage,
-                        const Profiles<T>& profiles,
-                        ToroidalFftOperator<T>& transform,
-                        RealSpaceStorage<T>& rs,
-                        GeometryOperator<T>& geometry,
-                        DeviceArena* arena,
-                        SpectralOperator<T>* op);
+    EquilibriumOperator(
+        const DeviceParams<T>& p,
+        SpectralStorage<T>& storage,
+        const Profiles<T>& profiles,
+        ToroidalFftOperator<T>& transform,
+        RealSpaceStorage<T>& rs,
+        GeometryOperator<T>& geometry,
+        const std::optional<std::reference_wrapper<DeviceArena>>& arena,
+        const std::optional<std::reference_wrapper<SpectralOperator<T>>>& op);
     ~EquilibriumOperator();
 
     EquilibriumOperator(const EquilibriumOperator&) = delete;

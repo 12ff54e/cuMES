@@ -32,7 +32,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -51,7 +53,9 @@ class ScopedRealSpace {
    public:
     using val_type = T;
 
-    ScopedRealSpace(const DeviceParams<T>& p, DeviceArena* arena)
+    ScopedRealSpace(
+        const DeviceParams<T>& p,
+        const std::optional<std::reference_wrapper<DeviceArena>>& arena)
         : rs_(real_space_create<T>(p, arena)) {}
     ~ScopedRealSpace() { real_space_free(rs_); }
 
@@ -76,7 +80,9 @@ class ScopedModeTable {
    public:
     using val_type = T;
 
-    ScopedModeTable(const DeviceParams<T>& p, DeviceArena* arena)
+    ScopedModeTable(
+        const DeviceParams<T>& p,
+        const std::optional<std::reference_wrapper<DeviceArena>>& arena)
         : mt_(mode_table_create<T>(p, arena)) {}
     ~ScopedModeTable() { mode_table_free(mt_); }
 
@@ -176,11 +182,13 @@ class StageSolver {
    public:
     using val_type = T;
 
-    static SolverResult<T> run(DeviceParams<T>& p,
-                               const ValidatedProblem& vp,
-                               SpectralStorage<T>& state,
-                               cudaStream_t stream = 0,
-                               SolverBench* bench = nullptr) {
+    static SolverResult<T> run(
+        DeviceParams<T>& p,
+        const ValidatedProblem& vp,
+        SpectralStorage<T>& state,
+        cudaStream_t stream = 0,
+        std::optional<std::reference_wrapper<SolverBench>> bench =
+            std::nullopt) {
         // One arena allocation, one construction of every module, one solve
         // (completion plan step 3.2): the modules' alloc_span calls ARE the
         // plan — there is no temporary measuring arena and nothing is
@@ -194,11 +202,11 @@ class StageSolver {
             // real-space storage and the mode table are scoped RAII (their
             // frees no-op on the arena path and cover the nullptr-arena
             // path).
-            Profiles<T> profiles(p, vp, &arena);
-            stage_detail::ScopedRealSpace<T> rs(p, &arena);
-            stage_detail::ScopedModeTable<T> mt(p, &arena);
-            ToroidalFftOperator<T> transform(p, *rs, mt.get(), &arena);
-            GeometryOperator<T> geometry(p, &arena);
+            Profiles<T> profiles(p, vp, arena);
+            stage_detail::ScopedRealSpace<T> rs(p, arena);
+            stage_detail::ScopedModeTable<T> mt(p, arena);
+            ToroidalFftOperator<T> transform(p, *rs, mt.get(), arena);
+            GeometryOperator<T> geometry(p, arena);
 
             // Transform backend selection (blueprint §8.5): for ntor=0/nzeta=1
             // the toroidal direction is a single point, so the length-one
@@ -208,8 +216,8 @@ class StageSolver {
             // built per stage (re-uploading the tiny tables is negligible).
             // CUMES_FORCE_GENERIC=1 restores the generic backend for A/B
             // comparison against the frozen trajectory. The solver drives a
-            // single `SpectralOperator<T>*` (no axisym_active branch);
-            // nullptr selects the generic ToroidalFft operator.
+            // single `SpectralOperator<T>` (no axisym_active branch);
+            // nullopt selects the generic ToroidalFft operator.
             bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
             if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
                 if (std::atoi(e) != 0) use_axisym = false;
@@ -217,9 +225,13 @@ class StageSolver {
             if (use_axisym)
                 axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
-            SolverResult<T> result =
-                solver_run<T>(state, p, profiles, transform, *rs, geometry,
-                              &arena, stream, bench, axisym.get());
+            SolverResult<T> result = solver_run<T>(
+                state, p, profiles, transform, *rs, geometry, arena, stream,
+                bench,
+                axisym ? std::optional<
+                             std::reference_wrapper<SpectralOperator<T>>>(
+                             std::ref(*axisym))
+                       : std::nullopt);
             // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
             // the operator destructors); nothing to free manually.
 

@@ -40,18 +40,22 @@
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/state/real_fields.cuh"
 
+#include <functional>
+#include <optional>
+
 // The geometry_parity_views factory (typed real-space view bundle over the
 // workspace structs) is the single shared inline definition in
 // cumes/state/real_fields.cuh (review finding 4.2 — was duplicated
 // byte-identically here and in kernels/forces_impl.cuh).
 template <typename T>
-cumes::GeometryOperator<T>::GeometryOperator(const DeviceParams<T>& p,
-                                             cumes::DeviceArena* arena) {
+cumes::GeometryOperator<T>::GeometryOperator(
+    const DeviceParams<T>& p,
+    const std::optional<std::reference_wrapper<DeviceArena>>& arena) {
     size_t nH = (p.ns - 1) * p.nZnT;
 
     auto alloc = [&](T*& dst, const char* name) {
         if (arena)
-            dst = arena->alloc_span<T>(name, nH);
+            dst = arena->get().alloc_span<T>(name, nH);
         else
             cumes::check_cuda(cudaMalloc(&dst, nH * sizeof(T)), name);
     };
@@ -70,7 +74,7 @@ cumes::GeometryOperator<T>::GeometryOperator(const DeviceParams<T>& p,
     alloc(d_bsubu_, "metric/bsubu");
     alloc(d_bsubv_, "metric/bsubv");
     alloc(d_totalPressure_, "metric/totalPressure");
-    arena_backed_ = (arena != nullptr);
+    arena_backed_ = arena.has_value();
 }
 
 template <typename T>

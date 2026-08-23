@@ -65,6 +65,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -163,10 +165,12 @@ int main(int argc, char** argv) {
 
         cumes::EquilibriumOperator<Real> equilibrium(
             p, storage, stack.profiles, stack.transform, stack.rs,
-            stack.geometry, &arena,
-            stack.use_axisym ? static_cast<cumes::SpectralOperator<Real>*>(
-                                   stack.axisym.get())
-                             : nullptr);
+            stack.geometry, arena,
+            stack.use_axisym
+                ? std::optional<
+                      std::reference_wrapper<cumes::SpectralOperator<Real>>>(
+                      std::ref(*stack.axisym))
+                : std::nullopt);
 
         // Steady-state pass schedules (iter/iter2 far from any first-pass or
         // dump-window branch; the env-gated dump machinery is off by default).

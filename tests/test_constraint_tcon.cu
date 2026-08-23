@@ -68,14 +68,14 @@ static void run_constraint(T tcon0,
                  p.mnmax);
 
     cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
-    cumes::Profiles<T> profiles(p, vp, nullptr);
+    cumes::Profiles<T> profiles(p, vp, std::nullopt);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
     cumes::DeviceModeTable mt = cumes::mode_table_create(p);
     cumes::RealSpaceStorage<T> rs = real_space_create(p);
-    cumes::GeometryOperator<T> geometry(p, nullptr);
-    cumes::ToroidalFftOperator<T> transform(p, rs, mt, nullptr);
-    cumes::Preconditioner<T> precon(p, nullptr);
-    cumes::ConstraintOperator<T> constraint(p, nullptr);
+    cumes::GeometryOperator<T> geometry(p, std::nullopt);
+    cumes::ToroidalFftOperator<T> transform(p, rs, mt, std::nullopt);
+    cumes::Preconditioner<T> precon(p, std::nullopt);
+    cumes::ConstraintOperator<T> constraint(p, std::nullopt);
 
     transform.inverse_fused(storage.physical_const(), /*do_combine=*/false,
                             constraint.rcon_view(p).data(),

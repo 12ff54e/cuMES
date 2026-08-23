@@ -44,6 +44,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
+#include <optional>
 #include <vector>
 
 #ifdef DUMP_CUMES_VERIFY
@@ -1135,11 +1137,13 @@ static void dump_step_i(int iter,
 // that pass no arena). The arena plan includes these spans (see
 // stage_solver.hpp's measure_stage_stack).
 template <typename T>
-static cumes::DeviceBuffer<T> solver_arena_buffer(cumes::DeviceArena* arena,
-                                                  const char* name,
-                                                  std::size_t count) {
+static cumes::DeviceBuffer<T> solver_arena_buffer(
+    const std::optional<std::reference_wrapper<cumes::DeviceArena>>& arena,
+    const char* name,
+    std::size_t count) {
     if (arena) {
-        return cumes::DeviceBuffer<T>(arena->alloc_span<T>(name, count), count);
+        return cumes::DeviceBuffer<T>(arena->get().alloc_span<T>(name, count),
+                                      count);
     }
     return cumes::DeviceBuffer<T>(count);
 }
@@ -1152,8 +1156,8 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
     cumes::ToroidalFftOperator<T>& transform,
     cumes::RealSpaceStorage<T>& rs,
     cumes::GeometryOperator<T>& geometry,
-    cumes::DeviceArena* arena,
-    cumes::SpectralOperator<T>* op)
+    const std::optional<std::reference_wrapper<cumes::DeviceArena>>& arena,
+    const std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>>& op)
     : p_(p),
       storage_(storage),
       profiles_(profiles),
@@ -1178,7 +1182,7 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       velocity_view_(storage.velocity()),
       residual_view_(d_f_spec_.data(), p.ns, p.mnmax),
       residual_view_const_(d_f_spec_.data(), p.ns, p.mnmax),
-      transform_op_((op != nullptr) ? op : &transform) {
+      transform_op_(op ? &op->get() : &transform) {
     // View bundles over the stage-owned real-space storage + the constraint's
     // force buffers (built once per stage; cheap pointer aggregates).
     {
@@ -1533,16 +1537,17 @@ void cumes::EquilibriumOperator<T>::enqueue(
 }
 
 template <typename T>
-SolverResult<T> solver_run(cumes::SpectralStorage<T>& storage,
-                           const DeviceParams<T>& p,
-                           const cumes::Profiles<T>& profiles,
-                           cumes::ToroidalFftOperator<T>& transform,
-                           cumes::RealSpaceStorage<T>& rs,
-                           cumes::GeometryOperator<T>& geometry,
-                           cumes::DeviceArena* arena,
-                           cudaStream_t stream,
-                           cumes::SolverBench* bench,
-                           cumes::SpectralOperator<T>* op) {
+SolverResult<T> solver_run(
+    cumes::SpectralStorage<T>& storage,
+    const DeviceParams<T>& p,
+    const cumes::Profiles<T>& profiles,
+    cumes::ToroidalFftOperator<T>& transform,
+    cumes::RealSpaceStorage<T>& rs,
+    cumes::GeometryOperator<T>& geometry,
+    std::optional<std::reference_wrapper<cumes::DeviceArena>> arena,
+    cudaStream_t stream,
+    std::optional<std::reference_wrapper<cumes::SolverBench>> bench,
+    std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op) {
     const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
 #ifndef DUMP_CUMES_VERIFY
     (void)rpv;  // only the dump-window step_0 snapshots consume it
@@ -1777,8 +1782,8 @@ SolverResult<T> solver_run(cumes::SpectralStorage<T>& storage,
     // sample spans one full evaluated pass (host decisions + descent enqueue +
     // the next pass's kernels, synced by that next fence).
     std::chrono::steady_clock::time_point bench_t_prev{};
-    if (bench && bench->enabled) {
-        bench->pass_wall_us.reserve((size_t)MAX_ITER_EFF);
+    if (bench && bench->get().enabled) {
+        bench->get().pass_wall_us.reserve((size_t)MAX_ITER_EFF);
         bench_t_prev = std::chrono::steady_clock::now();
     }
 
@@ -1840,9 +1845,9 @@ SolverResult<T> solver_run(cumes::SpectralStorage<T>& storage,
                 sizeof(T), cudaMemcpyDeviceToHost, stream),
             "cpy Rbnd mirror");
         cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
-        if (bench && bench->enabled) {
+        if (bench && bench->get().enabled) {
             auto bench_now = std::chrono::steady_clock::now();
-            bench->pass_wall_us.push_back(
+            bench->get().pass_wall_us.push_back(
                 std::chrono::duration<double, std::micro>(bench_now -
                                                           bench_t_prev)
                     .count());
