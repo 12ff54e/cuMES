@@ -101,12 +101,12 @@ static void run_geometry(int ns, int ncurr, const char* label) {
     // ncurr1_finalize_kernel produce are finite (an OOB read would surface as
     // garbage or a memcheck error, not a finite check failure).
     size_t nH = (size_t)(p.ns - 1) * p.nZnT;
-    auto* h_chip = new T[p.ns - 1];
-    auto* h_iota = new T[p.ns - 1];
-    check_cuda(cudaMemcpy(h_chip, rp.chip_H, (p.ns - 1) * sizeof(T),
+    std::vector<T> h_chip(p.ns - 1);
+    std::vector<T> h_iota(p.ns - 1);
+    check_cuda(cudaMemcpy(h_chip.data(), rp.chip_H, (p.ns - 1) * sizeof(T),
                           cudaMemcpyDeviceToHost),
                "chipH");
-    check_cuda(cudaMemcpy(h_iota, rp.iota_H, (p.ns - 1) * sizeof(T),
+    check_cuda(cudaMemcpy(h_iota.data(), rp.iota_H, (p.ns - 1) * sizeof(T),
                           cudaMemcpyDeviceToHost),
                "iotaH");
     bool all_finite = true;
@@ -136,8 +136,6 @@ static void run_geometry(int ns, int ncurr, const char* label) {
               h_rec.jacobian_max_abs > 0.0,
           "jacobian stats finite, nonzero max");
 
-    delete[] h_chip;
-    delete[] h_iota;
     real_space_free(rs);
     cumes::mode_table_free(mt);
 }

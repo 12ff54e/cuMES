@@ -86,18 +86,18 @@ int main() {
 
     // extrapolate m=1 to the axis (as the solver does each iteration)
     {
-        auto* hcc = new double[p.ns * p.mnmax];
-        cc(cudaMemcpy(hcc, storage.family_ptr(cumes::SpectralComponent::Rcc),
-                      nb, cudaMemcpyDeviceToHost),
+        std::vector<double> hcc(p.ns * p.mnmax);
+        cc(cudaMemcpy(hcc.data(),
+                      storage.family_ptr(cumes::SpectralComponent::Rcc), nb,
+                      cudaMemcpyDeviceToHost),
            "get rmncc");
         for (int n = 0; n < p.ntor + 1; ++n) {
             int mn = 1 * (p.ntor + 1) + n;
             hcc[0 + mn * p.ns] = hcc[1 + mn * p.ns];
         }
-        cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), hcc,
-                      nb, cudaMemcpyHostToDevice),
+        cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc),
+                      hcc.data(), nb, cudaMemcpyHostToDevice),
            "put rmncc");
-        delete[] hcc;
     }
 
     op.inverse(storage.physical_const(), /*do_combine=*/true);
@@ -122,8 +122,8 @@ int main() {
                       sizeof(double), cudaMemcpyDeviceToHost),
            "get bsupu probe");
     int nz = 0;
-    double* h_all = new double[(p.ns - 1) * nZnT];
-    cc(cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsupu.data(),
+    std::vector<double> h_all((p.ns - 1) * nZnT);
+    cc(cudaMemcpy(h_all.data(), geometry.magnetic_field_views(p).bsupu.data(),
                   (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost),
        "get bsupu");
     for (int k = 0; k < nZnT; ++k)
@@ -132,14 +132,13 @@ int main() {
     for (int i = 0; i < nks; ++i)
         std::cout << format("  k={}: {:.6f}\n", ks[i], hb[i]);
     // also check the bsubu coverage
-    cc(cudaMemcpy(h_all, geometry.magnetic_field_views(p).bsubu.data(),
+    cc(cudaMemcpy(h_all.data(), geometry.magnetic_field_views(p).bsubu.data(),
                   (p.ns - 1) * nZnT * sizeof(double), cudaMemcpyDeviceToHost),
        "get bsubu");
     int nz2 = 0;
     for (int k = 0; k < nZnT; ++k)
         if (h_all[jMid * nZnT + k] == 0.0) ++nz2;
     std::cout << format("bsubu[jMid={}] zeros: {}/{}\n", jMid, nz2, nZnT);
-    delete[] h_all;
 
     real_space_free(rs);
     cumes::mode_table_free(mt);

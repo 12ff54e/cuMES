@@ -241,16 +241,16 @@ static int t_inv_constR(DeviceParams<T>& p,
         zs(p.ns * p.mnmax, T(0)), zc(p.ns * p.mnmax, T(0)),
         ls_(p.ns * p.mnmax, T(0)), lcs(p.ns * p.mnmax, T(0));
     for (int j = 0; j < p.ns; ++j) cc_[j + 0 * p.ns] = T(4.0);  // R_00
-    T *h_r = new T[p.ns * p.nZnT], *h_rv = new T[p.ns * p.nZnT];
+    std::vector<T> h_r(p.ns * p.nZnT), h_rv(p.ns * p.nZnT);
     std::vector<double> r(p.ns * p.nZnT), z(p.ns * p.nZnT), l(p.ns * p.nZnT);
     std::vector<double> ru(p.ns * p.nZnT), zu(p.ns * p.nZnT), lu(p.ns * p.nZnT);
     std::vector<double> rv(p.ns * p.nZnT), zv(p.ns * p.nZnT), lv(p.ns * p.nZnT);
     gpu_inv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
             ls_.data(), lcs.data());
-    cc(cudaMemcpy(h_r, rs.d_r_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_r.data(), rs.d_r_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get r");
-    cc(cudaMemcpy(h_rv, rs.d_rv_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_rv.data(), rs.d_rv_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get rv");
     std::vector<double> hcc, hss, hsc, hcs;
@@ -270,8 +270,6 @@ static int t_inv_constR(DeviceParams<T>& p,
         check_near(h_r[i], r[i], tol_inv<T>(), "R", i / p.nZnT, i % p.nZnT);
         check_near(h_rv[i], rv[i], tol_inv<T>(), "Rv", i / p.nZnT, i % p.nZnT);
     }
-    delete[] h_r;
-    delete[] h_rv;
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -288,16 +286,16 @@ static int t_inv_theta(DeviceParams<T>& p,
         ls_(p.ns * p.mnmax, T(0)), lcs(p.ns * p.mnmax, T(0));
     int m1 = 1 * (p.ntor + 1) + 0;
     for (int j = 0; j < p.ns; ++j) cc_[j + m1 * p.ns] = T(0.3);  // R_10
-    T *h_r = new T[p.ns * p.nZnT], *h_ru = new T[p.ns * p.nZnT];
+    std::vector<T> h_r(p.ns * p.nZnT), h_ru(p.ns * p.nZnT);
     std::vector<double> r(p.ns * p.nZnT), z(p.ns * p.nZnT), l(p.ns * p.nZnT);
     std::vector<double> ru(p.ns * p.nZnT), zu(p.ns * p.nZnT), lu(p.ns * p.nZnT);
     std::vector<double> rv(p.ns * p.nZnT), zv(p.ns * p.nZnT), lv(p.ns * p.nZnT);
     gpu_inv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
             ls_.data(), lcs.data());
-    cc(cudaMemcpy(h_r, rs.d_r_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_r.data(), rs.d_r_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get r");
-    cc(cudaMemcpy(h_ru, rs.d_ru_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_ru.data(), rs.d_ru_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get ru");
     std::vector<double> hcc, hss, hsc, hcs;
@@ -317,8 +315,6 @@ static int t_inv_theta(DeviceParams<T>& p,
         check_near(h_r[i], r[i], tol_inv<T>(), "R", i / p.nZnT, i % p.nZnT);
         check_near(h_ru[i], ru[i], tol_inv<T>(), "Ru", i / p.nZnT, i % p.nZnT);
     }
-    delete[] h_r;
-    delete[] h_ru;
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -338,13 +334,13 @@ static int t_inv_zeta(DeviceParams<T>& p,
         cc_[j + m1 * p.ns] = T(0.2);
         ss_[j + m1 * p.ns] = T(0.2);
     }
-    T* h_rv = new T[p.ns * p.nZnT];
+    std::vector<T> h_rv(p.ns * p.nZnT);
     std::vector<double> r(p.ns * p.nZnT), z(p.ns * p.nZnT), l(p.ns * p.nZnT);
     std::vector<double> ru(p.ns * p.nZnT), zu(p.ns * p.nZnT), lu(p.ns * p.nZnT);
     std::vector<double> rv(p.ns * p.nZnT), zv(p.ns * p.nZnT), lv(p.ns * p.nZnT);
     gpu_inv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
             ls_.data(), lcs.data());
-    cc(cudaMemcpy(h_rv, rs.d_rv_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_rv.data(), rs.d_rv_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get rv");
     std::vector<double> hcc, hss, hsc, hcs;
@@ -362,7 +358,6 @@ static int t_inv_zeta(DeviceParams<T>& p,
                 zv.data(), lv.data());
     for (int i = 0; i < p.ns * p.nZnT; ++i)
         check_near(h_rv[i], rv[i], tol_inv<T>(), "Rv", i / p.nZnT, i % p.nZnT);
-    delete[] h_rv;
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -522,41 +517,41 @@ static int t_gpuVcpu_inv(DeviceParams<T>& p,
             ls_[j + m * p.ns] = T(0.005 * (m + 1) * (j + 1));
             lcs[j + m * p.ns] = T(0.006 * (m + 1) * (j + 1));
         }
-    T *h_r = new T[p.ns * p.nZnT], *h_z = new T[p.ns * p.nZnT];
-    T *h_l = new T[p.ns * p.nZnT], *h_ru = new T[p.ns * p.nZnT];
-    T *h_zu = new T[p.ns * p.nZnT], *h_lu = new T[p.ns * p.nZnT];
-    T *h_rv = new T[p.ns * p.nZnT], *h_zv = new T[p.ns * p.nZnT];
-    T* h_lv = new T[p.ns * p.nZnT];
+    std::vector<T> h_r(p.ns * p.nZnT), h_z(p.ns * p.nZnT);
+    std::vector<T> h_l(p.ns * p.nZnT), h_ru(p.ns * p.nZnT);
+    std::vector<T> h_zu(p.ns * p.nZnT), h_lu(p.ns * p.nZnT);
+    std::vector<T> h_rv(p.ns * p.nZnT), h_zv(p.ns * p.nZnT);
+    std::vector<T> h_lv(p.ns * p.nZnT);
     std::vector<double> r(p.ns * p.nZnT), z(p.ns * p.nZnT), l(p.ns * p.nZnT);
     std::vector<double> ru(p.ns * p.nZnT), zu(p.ns * p.nZnT), lu(p.ns * p.nZnT);
     std::vector<double> rv(p.ns * p.nZnT), zv(p.ns * p.nZnT), lv(p.ns * p.nZnT);
     gpu_inv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
             ls_.data(), lcs.data());
-    cc(cudaMemcpy(h_r, rs.d_r_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_r.data(), rs.d_r_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get r");
-    cc(cudaMemcpy(h_z, rs.d_z_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_z.data(), rs.d_z_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get z");
-    cc(cudaMemcpy(h_l, rs.d_l_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_l.data(), rs.d_l_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get l");
-    cc(cudaMemcpy(h_ru, rs.d_ru_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_ru.data(), rs.d_ru_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get ru");
-    cc(cudaMemcpy(h_zu, rs.d_zu_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_zu.data(), rs.d_zu_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get zu");
-    cc(cudaMemcpy(h_lu, rs.d_lu_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_lu.data(), rs.d_lu_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get lu");
-    cc(cudaMemcpy(h_rv, rs.d_rv_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_rv.data(), rs.d_rv_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get rv");
-    cc(cudaMemcpy(h_zv, rs.d_zv_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_zv.data(), rs.d_zv_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get zv");
-    cc(cudaMemcpy(h_lv, rs.d_lv_real, p.ns * p.nZnT * sizeof(T),
+    cc(cudaMemcpy(h_lv.data(), rs.d_lv_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get lv");
     std::vector<double> hcc, hss, hsc, hcs;
@@ -583,15 +578,6 @@ static int t_gpuVcpu_inv(DeviceParams<T>& p,
         check_near(h_zv[i], zv[i], tol_inv<T>(), "Zv", i / p.nZnT, i % p.nZnT);
         check_near(h_lv[i], lv[i], tol_inv<T>(), "Lv", i / p.nZnT, i % p.nZnT);
     }
-    delete[] h_r;
-    delete[] h_z;
-    delete[] h_l;
-    delete[] h_ru;
-    delete[] h_zu;
-    delete[] h_lu;
-    delete[] h_rv;
-    delete[] h_zv;
-    delete[] h_lv;
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }

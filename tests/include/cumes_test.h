@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <iostream>
+#include <span>
 #include <string_view>
 
 // cumes::test::format(...): std::format where the toolchain has it (gcc 13+),
@@ -49,9 +50,11 @@ double max_diff(const RangeA& a, const RangeB& b) {
     return m;
 }
 
-// Pointer + length convenience (raw device→host buffers).
+// Span convenience overload (raw device→host buffers): element-wise max
+// over the shorter span.
 template <typename T>
-double max_diff(const T* a, const T* b, std::size_t n) {
+double max_diff(std::span<const T> a, std::span<const T> b) {
+    const std::size_t n = std::min(a.size(), b.size());
     double m = 0.0;
     for (std::size_t i = 0; i < n; ++i)
         m = std::max(m, std::fabs(double(a[i]) - double(b[i])));

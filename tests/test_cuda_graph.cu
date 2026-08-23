@@ -63,7 +63,7 @@ int main() {
         check_cuda(cudaMemcpy(hc_stream.data(), c_stream, n * 4,
                               cudaMemcpyDeviceToHost),
                    "read c_stream");
-        check(max_diff(hc.data(), hc_stream.data(), n) == 0.0,
+        check(max_diff(hc, hc_stream) == 0.0,
               "three-kernel graph == stream (bitwise)");
 
         cudaFree(a);
@@ -132,8 +132,7 @@ int main() {
             check_cuda(cudaMemcpy(r_e_graph.data(), rs.d_r_e, nF * 8,
                                   cudaMemcpyDeviceToHost),
                        "read graph r_e");
-            const double md =
-                max_diff(r_e_graph.data(), r_e_stream.data(), (int)nF);
+            const double md = max_diff(r_e_graph, r_e_stream);
             cufft_graph_ok = (md == 0.0);
             std::cout << format("  cuFFT-in-graph: max |diff| = {:.3e}\n", md);
         } catch (const std::exception& e) { err = e.what(); }

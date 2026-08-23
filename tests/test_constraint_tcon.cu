@@ -96,22 +96,20 @@ static void run_constraint(T tcon0,
                        &transform, nullptr, 0);
 
     size_t nF = (size_t)p.ns * p.nZnT;
-    auto* h = new T[nF];
-    check_cuda(
-        cudaMemcpy(h, rs.d_brmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost),
-        "brmn_e");
+    std::vector<T> h(nF);
+    check_cuda(cudaMemcpy(h.data(), rs.d_brmn_e, nF * sizeof(T),
+                          cudaMemcpyDeviceToHost),
+               "brmn_e");
     for (size_t i = 0; i < nF; ++i) out_brmn_e[i] = (double)h[i];
-    check_cuda(
-        cudaMemcpy(h, rs.d_bzmn_e, nF * sizeof(T), cudaMemcpyDeviceToHost),
-        "bzmn_e");
+    check_cuda(cudaMemcpy(h.data(), rs.d_bzmn_e, nF * sizeof(T),
+                          cudaMemcpyDeviceToHost),
+               "bzmn_e");
     for (size_t i = 0; i < nF; ++i) out_bzmn_e[i] = (double)h[i];
-    delete[] h;
-    auto* ht = new T[p.ns];
-    check_cuda(cudaMemcpy(ht, constraint.tcon(), p.ns * sizeof(T),
+    std::vector<T> ht(p.ns);
+    check_cuda(cudaMemcpy(ht.data(), constraint.tcon(), p.ns * sizeof(T),
                           cudaMemcpyDeviceToHost),
                "tcon");
     for (int j = 0; j < p.ns; ++j) out_tcon[j] = (double)ht[j];
-    delete[] ht;
 
     real_space_free(rs);
     cumes::mode_table_free(mt);

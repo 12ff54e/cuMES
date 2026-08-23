@@ -13,6 +13,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 // Output-format availability preflight (completion plan step 2.5): this
 // definition lives in the ADAPTER library — the only target with the
@@ -50,56 +51,57 @@ void output_print(const cumes::SpectralStorage<T>& storage,
     // Column-major layout: index(surface=j, mode=m) = j + m * ns.
     // Use cudaMemcpy2D to read with stride ns between consecutive modes.
     int j = p.ns - 1;  // boundary surface
-    auto* h_rmnc = new T[p.mnmax];
-    auto* h_zmns = new T[p.mnmax];
-    auto* h_lmnc = new T[p.mnmax];
+    std::vector<T> h_rmnc(p.mnmax);
+    std::vector<T> h_zmns(p.mnmax);
+    std::vector<T> h_lmnc(p.mnmax);
 
     cumes::check_cuda(
-        cudaMemcpy2D(h_rmnc, sizeof(T),
+        cudaMemcpy2D(h_rmnc.data(), sizeof(T),
                      storage.family_ptr(cumes::SpectralComponent::Rcc) + j,
                      p.ns * sizeof(T), sizeof(T), p.mnmax,
                      cudaMemcpyDeviceToHost),
         "cpy rmnc out");
     cumes::check_cuda(
-        cudaMemcpy2D(h_zmns, sizeof(T),
+        cudaMemcpy2D(h_zmns.data(), sizeof(T),
                      storage.family_ptr(cumes::SpectralComponent::Zsc) + j,
                      p.ns * sizeof(T), sizeof(T), p.mnmax,
                      cudaMemcpyDeviceToHost),
         "cpy zmns out");
     cumes::check_cuda(
-        cudaMemcpy2D(h_lmnc, sizeof(T),
+        cudaMemcpy2D(h_lmnc.data(), sizeof(T),
                      storage.family_ptr(cumes::SpectralComponent::Lsc) + j,
                      p.ns * sizeof(T), sizeof(T), p.mnmax,
                      cudaMemcpyDeviceToHost),
         "cpy lmnc out");
 
     // Also read axis (j=0) coefficients
-    auto* h_rmnc_ax = new T[p.mnmax];
-    auto* h_zmns_ax = new T[p.mnmax];
-    auto* h_lmnc_ax = new T[p.mnmax];
+    std::vector<T> h_rmnc_ax(p.mnmax);
+    std::vector<T> h_zmns_ax(p.mnmax);
+    std::vector<T> h_lmnc_ax(p.mnmax);
     cumes::check_cuda(
-        cudaMemcpy2D(h_rmnc_ax, sizeof(T),
+        cudaMemcpy2D(h_rmnc_ax.data(), sizeof(T),
                      storage.family_ptr(cumes::SpectralComponent::Rcc),
                      p.ns * sizeof(T), sizeof(T), p.mnmax,
                      cudaMemcpyDeviceToHost),
         "cpy rmnc ax");
     cumes::check_cuda(
-        cudaMemcpy2D(h_zmns_ax, sizeof(T),
+        cudaMemcpy2D(h_zmns_ax.data(), sizeof(T),
                      storage.family_ptr(cumes::SpectralComponent::Zsc),
                      p.ns * sizeof(T), sizeof(T), p.mnmax,
                      cudaMemcpyDeviceToHost),
         "cpy zmns ax");
     cumes::check_cuda(
-        cudaMemcpy2D(h_lmnc_ax, sizeof(T),
+        cudaMemcpy2D(h_lmnc_ax.data(), sizeof(T),
                      storage.family_ptr(cumes::SpectralComponent::Lsc),
                      p.ns * sizeof(T), sizeof(T), p.mnmax,
                      cudaMemcpyDeviceToHost),
         "cpy lmnc ax");
 
     // Read R_00 radial profile
-    auto* h_rmnc_r = new T[p.ns];
+    std::vector<T> h_rmnc_r(p.ns);
     cumes::check_cuda(
-        cudaMemcpy(h_rmnc_r, storage.family_ptr(cumes::SpectralComponent::Rcc),
+        cudaMemcpy(h_rmnc_r.data(),
+                   storage.family_ptr(cumes::SpectralComponent::Rcc),
                    p.ns * sizeof(T), cudaMemcpyDeviceToHost),
         "cpy rmnc radial");
 
@@ -125,14 +127,6 @@ void output_print(const cumes::SpectralStorage<T>& storage,
                (double)h_rmnc_ax[mode], (double)h_rmnc[mode],
                (double)h_zmns_ax[mode], (double)h_zmns[mode]);
     }
-    delete[] h_rmnc_ax;
-    delete[] h_zmns_ax;
-    delete[] h_lmnc_ax;
-    delete[] h_rmnc_r;
-
-    delete[] h_rmnc;
-    delete[] h_zmns;
-    delete[] h_lmnc;
 }
 
 // The suffix-based dispatcher (outputSave) and its preflight

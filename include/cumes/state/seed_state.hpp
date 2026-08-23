@@ -25,6 +25,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <span>
+#include <vector>
 
 namespace cumes {
 
@@ -74,13 +76,13 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     // H2D copies become a single upload. The host staging exists only for the
     // double->T conversion; the layout and values are unchanged
     // (bit-identical).
-    auto* h_state = new T[6 * one]();
-    auto* h_c = h_state + 0 * one;    // rmncc
-    auto* h_zsc = h_state + 1 * one;  // zmnsc
-    auto* h_lsc = h_state + 2 * one;  // lmnsc
-    auto* h_s = h_state + 3 * one;    // rmnss
-    auto* h_zcs = h_state + 4 * one;  // zmncs
-    auto* h_lcs = h_state + 5 * one;  // lmncs
+    std::vector<T> h_state(6 * one);
+    std::span<T> h_c(h_state.data() + 0 * one, one);    // rmncc
+    std::span<T> h_zsc(h_state.data() + 1 * one, one);  // zmnsc
+    std::span<T> h_lsc(h_state.data() + 2 * one, one);  // lmnsc
+    std::span<T> h_s(h_state.data() + 3 * one, one);    // rmnss
+    std::span<T> h_zcs(h_state.data() + 4 * one, one);  // zmncs
+    std::span<T> h_lcs(h_state.data() + 5 * one, one);  // lmncs
 
     for (int j = 0; j < p.ns; ++j) {
         T sFlux = T(j) / T(p.ns - 1);  // normalized flux s
@@ -123,10 +125,9 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     }
     printf("  init_state: vmecpp interpFromBoundaryAndAxis (m>0 s^(m/2))\n");
 
-    check_cuda(cudaMemcpy(storage.state_slab(), h_state, 6 * nb,
+    check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(), 6 * nb,
                           cudaMemcpyHostToDevice),
                "init state slab");
-    delete[] h_state;
     return storage;
 }
 
@@ -149,13 +150,13 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
     // H2D copies become a single upload. The host staging exists only for the
     // double->T conversion; the layout and values are unchanged
     // (bit-identical).
-    auto* h_state = new T[6 * one]();
-    auto* h_c = h_state + 0 * one;    // rmncc
-    auto* h_zsc = h_state + 1 * one;  // zmnsc
-    auto* h_lsc = h_state + 2 * one;  // lmnsc
-    auto* h_s = h_state + 3 * one;    // rmnss
-    auto* h_zcs = h_state + 4 * one;  // zmncs
-    auto* h_lcs = h_state + 5 * one;  // lmncs
+    std::vector<T> h_state(6 * one);
+    std::span<T> h_c(h_state.data() + 0 * one, one);    // rmncc
+    std::span<T> h_zsc(h_state.data() + 1 * one, one);  // zmnsc
+    std::span<T> h_lsc(h_state.data() + 2 * one, one);  // lmnsc
+    std::span<T> h_s(h_state.data() + 3 * one, one);    // rmnss
+    std::span<T> h_zcs(h_state.data() + 4 * one, one);  // zmncs
+    std::span<T> h_lcs(h_state.data() + 5 * one, one);  // lmncs
     for (size_t i = 0; i < one; ++i) {
         h_c[i] = T(snap.families[EquilibriumSnapshot::RMNCC][i]);
         h_zsc[i] = T(snap.families[EquilibriumSnapshot::ZMNSC][i]);
@@ -190,10 +191,9 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
         }
     }
 
-    check_cuda(cudaMemcpy(storage.state_slab(), h_state, 6 * nb,
+    check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(), 6 * nb,
                           cudaMemcpyHostToDevice),
                "restart state slab");
-    delete[] h_state;
     printf("  restart_state: uploaded checkpoint + LCFS/axis patch\n");
     return storage;
 }

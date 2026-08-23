@@ -269,12 +269,12 @@ static void run_reference(int ns,
     // Frozen, non-degenerate Solovev-like state (same pattern as test_forces).
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
     const size_t nS = (size_t)ns * p.mnmax, nb = nS * sizeof(T);
-    auto* h_cc = new T[nS]();
-    auto* h_ss = new T[nS]();
-    auto* h_zsc = new T[nS]();
-    auto* h_zcs = new T[nS]();
-    auto* h_lsc = new T[nS]();
-    auto* h_lcs = new T[nS]();
+    std::vector<T> h_cc(nS);
+    std::vector<T> h_ss(nS);
+    std::vector<T> h_zsc(nS);
+    std::vector<T> h_zcs(nS);
+    std::vector<T> h_lsc(nS);
+    std::vector<T> h_lcs(nS);
     for (int j = 0; j < ns; ++j) {
         T s = T(j) / T(ns - 1);
         for (int mode = 0; mode < p.mnmax; ++mode) {
@@ -291,29 +291,23 @@ static void run_reference(int ns,
         }
     }
     check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc),
-                          h_cc, nb, cudaMemcpyHostToDevice),
+                          h_cc.data(), nb, cudaMemcpyHostToDevice),
                "cc");
     check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rss),
-                          h_ss, nb, cudaMemcpyHostToDevice),
+                          h_ss.data(), nb, cudaMemcpyHostToDevice),
                "ss");
     check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zsc),
-                          h_zsc, nb, cudaMemcpyHostToDevice),
+                          h_zsc.data(), nb, cudaMemcpyHostToDevice),
                "zsc");
     check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Zcs),
-                          h_zcs, nb, cudaMemcpyHostToDevice),
+                          h_zcs.data(), nb, cudaMemcpyHostToDevice),
                "zcs");
     check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lsc),
-                          h_lsc, nb, cudaMemcpyHostToDevice),
+                          h_lsc.data(), nb, cudaMemcpyHostToDevice),
                "lsc");
     check_cuda(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Lcs),
-                          h_lcs, nb, cudaMemcpyHostToDevice),
+                          h_lcs.data(), nb, cudaMemcpyHostToDevice),
                "lcs");
-    delete[] h_cc;
-    delete[] h_ss;
-    delete[] h_zsc;
-    delete[] h_zcs;
-    delete[] h_lsc;
-    delete[] h_lcs;
 
     cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
     cumes::Profiles<T> profiles(p, vp, nullptr);

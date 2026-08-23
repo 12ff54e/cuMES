@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
+#include <span>
 #include <string>
 
 #include <unistd.h>
@@ -87,8 +88,8 @@ inline bool write_string(FILE* fp, const std::string& s) {
     return write_i32(fp, static_cast<std::int32_t>(s.size())) &&
            write_bytes(fp, s.data(), s.size());
 }
-inline bool write_f64_array(FILE* fp, const double* p, std::size_t n) {
-    return write_bytes(fp, p, n * sizeof(double));
+inline bool write_f64_array(FILE* fp, std::span<const double> p) {
+    return write_bytes(fp, p.data(), p.size() * sizeof(double));
 }
 
 inline bool read_u8(FILE* fp, std::uint8_t& v) {
@@ -110,8 +111,8 @@ inline bool read_string(FILE* fp, std::string& s) {
     s.resize(static_cast<std::size_t>(n));
     return read_bytes(fp, s.data(), static_cast<std::size_t>(n));
 }
-inline bool read_f64_array(FILE* fp, double* p, std::size_t n) {
-    return read_bytes(fp, p, n * sizeof(double));
+inline bool read_f64_array(FILE* fp, std::span<double> p) {
+    return read_bytes(fp, p.data(), p.size() * sizeof(double));
 }
 
 // ---- shared magic-prefixed state payload (checkpoint.cpp,
@@ -126,7 +127,7 @@ inline bool write_state_families(FILE* fp,
     const std::size_t n = snapshot.family_size();
     for (const auto& fam : snapshot.families) {
         if (fam.size() != n) return false;
-        if (!io_detail::write_f64_array(fp, fam.data(), n)) return false;
+        if (!io_detail::write_f64_array(fp, fam)) return false;
     }
     return true;
 }
@@ -139,7 +140,7 @@ inline bool read_state_families(FILE* fp,
                                 EquilibriumSnapshot& snapshot) {
     for (auto& fam : snapshot.families) {
         fam.resize(n);
-        if (!io_detail::read_f64_array(fp, fam.data(), n)) return false;
+        if (!io_detail::read_f64_array(fp, fam)) return false;
     }
     return true;
 }
