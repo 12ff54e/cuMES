@@ -19,10 +19,15 @@ enum class CurrentModel : std::uint8_t {
     kPrescribedCurrent = 1  // ncurr = 1
 };
 
-enum class ProfileType : std::uint8_t { kPowerSeries = 0 };
+// The radial-profile parameterizations cuMES supports. `kTwoPower` is
+// vmecpp's "two_power": f(s) = c0·(1 − s^c1)^c2, applicable to the mass
+// (pressure) and current profiles only — the iota profile stays a power
+// series (see json_reader.cpp).
+enum class ProfileType : std::uint8_t { kPowerSeries = 0, kTwoPower = 1 };
 
-// One power-series coefficient vector (am/ac/ai/aphi). `coefficients` is the
-// raw polynomial list; length is the order.
+// One profile coefficient vector (am/ac/ai/aphi) plus its parameterization.
+// `coefficients` is the raw coefficient list; for kPowerSeries its length is
+// the polynomial order, for kTwoPower entries 0..2 are c0, c1, c2.
 struct ProfileSpec {
     ProfileType type = ProfileType::kPowerSeries;
     std::vector<double> coefficients;

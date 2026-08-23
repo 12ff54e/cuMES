@@ -323,7 +323,8 @@ static void testNegative() {
             !findError(vr, "asymmetric (lasym) input is not supported").empty(),
         "neg: rbs content rejected");
 
-    // Unsupported physics keys: lasym, lfreeb, non-power_series profiles.
+    // Unsupported physics keys: lasym, lfreeb, unsupported/ill-formed
+    // profile types (two_power is supported for mass and current only).
     writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
@@ -344,8 +345,29 @@ static void testNegative() {
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = cumes::read_and_validate(scratchPath(), opts);
-    check(!vr.has_value() && !findError(vr, "only \"power_series\"").empty(),
-          "neg: non-power_series profile rejected");
+    check(!vr.has_value() &&
+              !findError(vr, "unsupported profile type \"spline\"").empty(),
+          "neg: spline pmass_type rejected");
+    // "two_power" is not applicable to the iota profile.
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
+        " \"piota_type\": \"two_power\","
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    check(!vr.has_value() &&
+              !findError(vr, "\"two_power\" is not applicable").empty(),
+          "neg: two_power piota_type rejected");
+    // two_power needs its three coefficients (c0, c1, c2).
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0, 5.0],"
+        " \"pmass_type\": \"two_power\","
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    check(!vr.has_value() &&
+              !findError(vr, "two_power profile needs at least 3").empty(),
+          "neg: short two_power am rejected");
 
     // A typo'd key: strict is the DEFAULT now (completion plan step 2.1),
     // so the warn-and-continue path must opt out explicitly.
@@ -368,11 +390,61 @@ static void testNegative() {
     }
 }
 
+// "two_power" is accepted for the mass and current profiles and lands in the
+// ProblemSpec as ProfileType::kTwoPower; an absent type stays kPowerSeries.
+static void testTwoPowerProfiles() {
+    cumes::SolverOptions opts;
+
+    {
+        writeScratch(
+            "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0, 5.0, 10.0],"
+            " \"pmass_type\": \"two_power\","
+            " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+            " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+        auto vr = cumes::read_and_validate(scratchPath(), opts);
+        check(
+            vr.has_value() &&
+                vr.value().spec().mass.type == cumes::ProfileType::kTwoPower &&
+                vr.value().spec().mass.coefficients.size() == 3,
+            "pos: two_power pmass_type parsed");
+    }
+
+    {
+        writeScratch(
+            "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
+            " \"ncurr\": 1, \"ac\": [1.0, 5.0, 10.0],"
+            " \"pcurr_type\": \"two_power\","
+            " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+            " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+        auto vr = cumes::read_and_validate(scratchPath(), opts);
+        check(
+            vr.has_value() &&
+                vr.value().spec().current.type ==
+                    cumes::ProfileType::kTwoPower &&
+                vr.value().spec().mass.type == cumes::ProfileType::kPowerSeries,
+            "pos: two_power pcurr_type parsed, absent types default");
+    }
+
+    // Extra coefficients beyond (c0, c1, c2) are accepted and ignored,
+    // matching vmecpp.
+    {
+        writeScratch(
+            "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0, 5.0, 10.0, 3.0],"
+            " \"pmass_type\": \"two_power\","
+            " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+            " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+        auto vr = cumes::read_and_validate(scratchPath(), opts);
+        check(vr.has_value(),
+              "pos: two_power with extra coefficients still validates");
+    }
+}
+
 int main() {
     testSolovev();
     testW7x();
     testErrors();
     testNegative();
+    testTwoPowerProfiles();
     remove(scratchPath());
     return summary();
 }

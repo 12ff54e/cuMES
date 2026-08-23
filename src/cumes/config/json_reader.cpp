@@ -368,17 +368,34 @@ ParsedProblem read_problem_spec(const std::string& path,
                      "lfreeb=true: free-boundary runs are not supported by "
                      "cuMES (fixed boundary only)");
     }
-    const char* kProfileTypes[] = {"pmass_type", "piota_type", "pcurr_type"};
-    for (const char* t : kProfileTypes) {
-        if (!root.contains(t)) continue;
-        const std::string v = getString(root.at(t), t, "power_series", report);
-        if (v != "power_series") {
-            report.error(t, "'" + std::string(t) +
-                                "': only \"power_series\" "
-                                "profiles are supported by cuMES, got \"" +
-                                v + "\"");
+    // "two_power" is supported for the mass (pressure) and current profiles;
+    // it is NOT applicable to the iota profile (vmecpp marks it
+    // allowedForIota=false), which stays a power series.
+    auto readProfileType = [&](const char* key, ProfileType& out,
+                               bool twoPowerAllowed) {
+        if (!root.contains(key)) return;
+        const std::string v =
+            getString(root.at(key), key, "power_series", report);
+        if (v == "power_series") {
+            out = ProfileType::kPowerSeries;
+        } else if (v == "two_power" && twoPowerAllowed) {
+            out = ProfileType::kTwoPower;
+        } else if (v == "two_power") {
+            report.error(key, "'" + std::string(key) +
+                                  "': \"two_power\" is not applicable to the "
+                                  "iota profile (power series only)");
+        } else {
+            report.error(key, "'" + std::string(key) +
+                                  "': unsupported profile "
+                                  "type \"" +
+                                  v +
+                                  "\" (supported: \"power_series\", "
+                                  "\"two_power\")");
         }
-    }
+    };
+    readProfileType("pmass_type", p.mass.type, true);
+    readProfileType("piota_type", p.iota.type, false);
+    readProfileType("pcurr_type", p.current.type, true);
     // Unsupported-feature keys are TYPE-CHECKED before the semantic support
     // check, so a scalar/object of the wrong type is a hard error rather than
     // silently ignored.

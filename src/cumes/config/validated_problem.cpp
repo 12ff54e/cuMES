@@ -107,6 +107,21 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     if (!std::isfinite(spec.physical.curtor)) {
         report.error("curtor", "curtor must be finite");
     }
+    // ---- profile parameterizations ----
+    // two_power is f(s) = c0·(1 − s^c1)^c2: reject fewer than three
+    // coefficients up front (vmecpp would log and evaluate 0 instead).
+    if (spec.mass.type == ProfileType::kTwoPower &&
+        spec.mass.coefficients.size() < 3) {
+        report.error("am",
+                     "am: the two_power profile needs at least 3 "
+                     "coefficients (c0, c1, c2)");
+    }
+    if (spec.current.type == ProfileType::kTwoPower &&
+        spec.current.coefficients.size() < 3) {
+        report.error("ac",
+                     "ac: the two_power profile needs at least 3 "
+                     "coefficients (c0, c1, c2)");
+    }
     // ---- profile normalization scalars (completion plan step 1) ----
     // The device-side Profiles step divides by these two host-evaluated
     // normalization scalars: maxToroidalFlux = signJ·phiedge/(2π·T_edge) with

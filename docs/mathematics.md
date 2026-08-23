@@ -227,6 +227,27 @@ I_{tor}=\frac{\operatorname{signJ}\,\mu_0\,curtor}{2\pi C_{edge}},\qquad
 I_H(s)=I_{tor}C_H(s).
 \]
 
+When `pmass_type` / `pcurr_type` is `"two_power"` (vmecpp's `evalTwoPower`),
+the mass and current profiles replace the power series by the three-parameter
+form
+
+\[
+f_{tp}(x)=c_0\left(1-x^{c_1}\right)^{c_2},
+\]
+
+evaluated at the same bloat-clamped arguments:
+
+\[
+p(s)=\mu_0\,p_{\mathrm{scale}}\,f_{tp}(\widehat t_p),\qquad
+C_H(s)=\widehat t(s)\sum_{i=0}^{9} w_i\,f_{tp}\left(\widehat t(s)\,\xi_i\right),
+\]
+
+where \((\xi_i,w_i)\) are the 10-point Gauss-Legendre nodes and weights on
+\([0,1]\), copied verbatim from vmecpp, which integrates the I-prime current
+profile numerically (the quadrature is exact for polynomial cases). `C_edge`
+and the `I_tor` normalization are unchanged. `two_power` is not applicable to
+the iota profile.
+
 `C_edge` is intentionally independent of `T(1)`; replacing it by `C_H(1)` changes general non-unit toroidal-flux profiles.
 
 Its lambda normalization is

@@ -10,6 +10,7 @@
 // empty/mismatched/non-monotonic schedules, integer narrowing, wrong-type
 // aux/asym keys, unsupported physics, and unknown-key strict vs compatibility.
 #include "cumes/config/json_reader.hpp"
+#include "cumes/config/profile_functions.hpp"
 #include "cumes/config/validated_problem.hpp"
 #include "cumes_test.h"
 
@@ -326,14 +327,35 @@ static void testMalformed() {
             !findError(vr, "asymmetric (lasym) input is not supported").empty(),
         "malformed: rbs content rejected");
 
-    // Non-power_series profile.
+    // Unsupported profile type.
     writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"pmass_type\": \"spline\","
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = read_and_validate(scratchPath(), opts);
-    check(!vr.has_value() && !findError(vr, "only \"power_series\"").empty(),
-          "malformed: non-power_series profile rejected");
+    check(!vr.has_value() &&
+              !findError(vr, "unsupported profile type \"spline\"").empty(),
+          "malformed: spline profile rejected");
+    // "two_power" is not applicable to the iota profile.
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"piota_type\": "
+        "\"two_power\","
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = read_and_validate(scratchPath(), opts);
+    check(!vr.has_value() &&
+              !findError(vr, "\"two_power\" is not applicable").empty(),
+          "malformed: two_power piota_type rejected");
+    // two_power needs its three coefficients (c0, c1, c2).
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0, 5.0],"
+        " \"pmass_type\": \"two_power\","
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = read_and_validate(scratchPath(), opts);
+    check(!vr.has_value() &&
+              !findError(vr, "two_power profile needs at least 3").empty(),
+          "malformed: short two_power am rejected");
 
     // Unknown key: strict is the DEFAULT now (completion plan step 2.1),
     // so the compat path must opt out explicitly.
@@ -496,6 +518,42 @@ static void testMalformed() {
           "healthy prescribed-current normalization still validates");
 }
 
+// two_power evaluator checks. The closed-form linear case (c1 = c2 = 1) is
+// integrated EXACTLY by the 10-point Gauss-Legendre quadrature (exact for
+// polynomials of degree ≤ 19), and the axis/edge endpoints are exact for any
+// exponent: p(0) = c0·μ0·pres_scale, p(1) = 0, I(0) = 0.
+static void testTwoPowerEvaluators() {
+    const double mu0 = DeviceParams<double>::kMu0;
+
+    ProblemSpec sp;
+    sp.mass.type = cumes::ProfileType::kTwoPower;
+    sp.mass.coefficients = {1.0, 1.0, 1.0};
+    sp.physical.pres_scale = 2.0;
+    const double x = 0.375;
+    const double want = mu0 * 2.0 * (1.0 - x);
+    const double got = cumes::evalMassProfile<double>(sp, x);
+    check(std::fabs(got - want) <= 1e-15 * std::fabs(want),
+          "two_power mass profile matches the closed form");
+
+    ProblemSpec sp2;
+    sp2.mass.type = cumes::ProfileType::kTwoPower;
+    sp2.mass.coefficients = {2.0, 3.0, 4.0};
+    check(cumes::evalMassProfile<double>(sp2, 0.0) == mu0 * 2.0,
+          "two_power mass at the axis is c0·μ0·pres_scale");
+    check(cumes::evalMassProfile<double>(sp2, 1.0) == 0.0,
+          "two_power mass at the edge is zero");
+
+    ProblemSpec sp3;
+    sp3.current.type = cumes::ProfileType::kTwoPower;
+    sp3.current.coefficients = {1.0, 1.0, 1.0};
+    const double want_i = x - 0.5 * x * x;
+    const double got_i = cumes::evalCurrProfile<double>(sp3, x);
+    check(std::fabs(got_i - want_i) <= 1e-15 * std::fabs(want_i),
+          "two_power current profile integrates the linear case exactly");
+    check(cumes::evalCurrProfile<double>(sp3, 0.0) == 0.0,
+          "two_power current at the axis is zero");
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--emit-golden") {
         emitGoldens(argv[2]);
@@ -505,6 +563,7 @@ int main(int argc, char** argv) {
     testModeTable();
     testPrecisionFloor();
     testMalformed();
+    testTwoPowerEvaluators();
     // No explicit scratch removal: the TempDir RAII destructor cleans the
     // per-test directory even on an interrupted or failing run.
     return summary();
