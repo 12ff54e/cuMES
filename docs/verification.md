@@ -36,13 +36,13 @@ commits:
   value (`vmin = signJ·√g`, not `|√g|`), with a production-path
   first-sample sign-reversal regression (`test_safety_predicates`);
 - the v1 NetCDF/HDF5 readers validate restart offsets and array extents
-  before indexing (`validateRestartOffsets` in `run_report.hpp`; corrupted
+  before indexing (`validate_restart_offsets` in `run_report.hpp`; corrupted
   negative/descending/oversized/extent-mismatch fixtures in
   `test_io_restart_offsets`, host-only so the ASan twin runs the same
   source);
 - the refresh-pass terminal contract is CLOSED rather than narrowed: the
   force-norm factors are finalized ON DEVICE before the terminal predicate
-  (`forceNormFinalizeKernel`), so every converged/nonfinite pass — refresh
+  (`force_norm_finalize_kernel`), so every converged/nonfinite pass — refresh
   or not — no-ops preconditioning; the host consumes the same record
   fields, keeping device and host classification bit-identical;
 - `scripts/ci_gpu.sh` asserts the documented stage-cap contract (exit 1,
@@ -60,7 +60,7 @@ commits:
   baseline never had it there, and adding it enables FMA contraction that
   diverges the trajectory bitwise (measured);
 - NetCDF/HDF5 publication now runs the full checked chain
-  (`publishLibraryFile`: reopen temp → checked fsync → checked close →
+  (`publish_library_file`: reopen temp → checked fsync → checked close →
   atomic rename → checked directory fsync), with fault-injection tests
   around the reopen/fsync/write-flush/rename/directory-fsync boundaries
   plus an end-to-end `output_publication` gate on the real binary;

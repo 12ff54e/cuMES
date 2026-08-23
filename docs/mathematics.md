@@ -227,7 +227,8 @@ I_{tor}=\frac{\operatorname{signJ}\,\mu_0\,curtor}{2\pi C_{edge}},\qquad
 I_H(s)=I_{tor}C_H(s).
 \]
 
-When `pmass_type` / `pcurr_type` is `"two_power"` (vmecpp's `evalTwoPower`),
+When `pmass_type` / `pcurr_type` is `"two_power"` (vmecpp's
+`eval_two_power`),
 the mass and current profiles replace the power series by the three-parameter
 form
 

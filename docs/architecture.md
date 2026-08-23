@@ -23,7 +23,7 @@ trajectories bit-for-bit.
   transform scratch and poloidal tables), `geometry`
   (`GeometryOperator`/`MagneticFieldOperator` — the half-grid metric/field
   buffers), `forces` (`ForceOperator`), `solver` (`EquilibriumOperator` +
-  `solverRun`), `profiles` (`Profiles` — the 11 radial arrays), `precon`
+  `solver_run`), `profiles` (`Profiles` — the 11 radial arrays), `precon`
   (`Preconditioner`), `constraint` (`ConstraintOperator`), `prolongation`
   (`Prolongation` — the grid-sequencing state interpolation), and
   `axisymmetric` (`AxisymmetricOperator`). Each operator owns its raw device
@@ -36,7 +36,8 @@ trajectories bit-for-bit.
   output/IO stack, and the host orchestration (`MultigridSolver`,
   `StageSolver`, `IterationController`, …).
 
-The per-iteration DAG (`src/kernels/solver_impl.cuh::solverRun` via `EquilibriumOperator`)
+The per-iteration DAG (`src/kernels/solver_impl.cuh::solver_run` via
+`EquilibriumOperator`)
 runs on the typed-view plumbing and one explicit compute stream, driving every
 transform through the unified `SpectralOperator` interface (the generic cuFFT
 backend or the axisymmetric direct-poloidal backend).
@@ -51,7 +52,7 @@ monolithic compile (blueprint §9):
 | `cumes_core` | host C++ | `result.hpp`, `checked_size.hpp`, `grid_shape`, `mode_table` |
 | `cumes_config_json` | host C++ | `validation_report`, `validated_problem`, `json_reader` |
 | `cumes_io_host` | host C++ | `output_spec`, `run_report`, `equilibrium_snapshot`, binary v1, checkpoint |
-| `cumes_io` | host C++ (`outputPrint` links cudart for D2H) | the full `make_writer` dispatch + host-only NetCDF/HDF5 adapters (the ONLY target with the backend headers and defines) |
+| `cumes_io` | host C++ (`output_print` links cudart for D2H) | the full `make_writer` dispatch + host-only NetCDF/HDF5 adapters (the ONLY target with the backend headers and defines) |
 | `cumes_cuda_runtime` | header-only CUDA-runtime interface | centralized `check_cuda`/`check_cufft` and buffer/stream/event RAII; propagates only the CUDA runtime/cuFFT links |
 | `cumes_cuda_double` / `cumes_cuda_float` | device | the nine `*_double.cu` / `*_float.cu` operator TUs |
 | `cuMES` | executable | `main.cu`, links only the TU matching `Real` |
@@ -69,7 +70,7 @@ reference configurations, so the frozen trajectory baseline stands unchanged.
 The regular iteration (blueprint §7) remains mathematically sequential and is
 enqueued on one compute stream until a single deliberate control fence:
 
-1. `extrapolateAxisKernel` — copy the six `m=1` families + the `m=0` `Lcs`
+1. `extrapolate_axis_kernel` — copy the six `m=1` families + the `m=0` `Lcs`
    axis row from surface 1 to the axis;
 2. `ToroidalFftOperator::inverse_fused` — parity-split R/Z/λ + derivatives,
    *and* the fused `xmpq = m(m-1)`-weighted `rCon`/`zCon` (blueprint §8.4; the
@@ -81,7 +82,7 @@ enqueued on one compute stream until a single deliberate control fence:
 5. `ConstraintOperator::reset_reference` — LCFS-extrapolated reference, on
    `iter2 == iter1`;
 6. on the `(iter2-iter1) % 25 == 0` cadence, `Preconditioner::enqueue_compute` +
-   `enqueueForceNorms`;
+   `enqueue_force_norms`;
 7. `ForceOperator::enqueue` — the monolithic 16-family MHD force kernel;
 8. `ConstraintOperator::enqueue` — bandpass + add constraint force to
    `brmn`/`bzmn`;
@@ -154,7 +155,7 @@ binary container layouts (blueprint §6.13).
 
 `AxisymmetricOperator` now runs the Solovev production path (see
 `docs/adr/0004`): `StageSolver::run` builds it when
-`ntor=0/nzeta=1` and `solverRun` selects `enqueue_inverse`/`enqueue_rzcon`/
+`ntor=0/nzeta=1` and `solver_run` selects `enqueue_inverse`/`enqueue_rzcon`/
 `enqueue_forward`/`constraintComputeAxisym` instead of the generic cuFFT calls
 (`CUMES_FORCE_GENERIC=1` restores the generic backend). It is a Class B
 trajectory member (ULP-equivalent, identical iteration counts), and a ~29%

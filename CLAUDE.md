@@ -86,8 +86,8 @@ cuMES/
 ├── CMakeLists.txt          Library split + executable/tests (architecture.md §2)
 ├── include/
 │   ├── vmec_types.h        `Real` alias + parity/basis convention comment
-│   ├── solver.cuh          SolverResult<T> + solverRun declaration (app shim)
-│   ├── output.cuh          outputPrint declaration (app shim)
+│   ├── solver.cuh          SolverResult<T> + solver_run declaration (app shim)
+│   ├── output.cuh          output_print declaration (app shim)
 │   ├── fft_traits.h        FftTraits<T>: cuFFT type/enum/exec dispatch
 │   ├── JsonParser.h        The JSON engine of the input config parser (cumes_config_json)
 │   └── cumes/              The operator library (see below)
@@ -137,7 +137,7 @@ v = fac×(b1·v + delt·f) ,  x += delt·v        (Garabedian accelerated descen
 ```
 
 The per-iteration DAG is composed in `EquilibriumOperator::enqueue`
-(`src/kernels/solver_impl.cuh`); `solverRun` is a thin loop over the pure-host
+(`src/kernels/solver_impl.cuh`); `solver_run` is a thin loop over the pure-host
 `IterationController` + that DAG on one explicit compute stream, with one
 deliberate host fence per iteration. All operators own their device buffers
 (directly or via one `DeviceArena` carved per stage) and expose typed view
@@ -180,10 +180,23 @@ bundles; no legacy workspace structs remain.
 
 ### Naming
 
-- **Types:** `CamelCase` (e.g., `DeviceParams`, `ToroidalFftOperator`)
-- **Functions:** `camelCase` (e.g., `computeGeometry`)
-- **Variables:** `snake_case` (e.g., `d_rmnc`, `delta_s`, `nZnT`)
-- **Constants:** `kCamelCase` (e.g., `kSignJacobian`, `kFtol`)
+- **Types:** `PascalCase` (e.g., `DeviceParams`, `ToroidalFftOperator`)
+- **Functions:** `snake_case` (e.g., `solver_run`, `eval_two_power`)
+- **Variables:** `snake_case` (e.g., `d_rmnc`, `delta_s`, `nZnT`);
+  compact physics/Fortran-derived abbreviations are exempt and stay as-is
+  (`ns`, `mnmax`, `delt`, `dtau`, `fsqr`, `rmnc`, `nZnT`, `jF`-style index
+  names)
+- **Constants:** `CAPITAL_SNAKE_CASE` (e.g., `SIGN_JACOBIAN`, `MU_0`),
+  including scoped-enum values (`VERIFY_DOUBLE`, `NONE`, `OK`)
+- **Templated types:** every templated struct/class aliases its scalar type
+  parameter as `using val_type = T;` (first public member; secondary type
+  params get descriptive aliases like `error_type`)
+- **Host pointers:** raw pointers in host code only where absolutely
+  necessary (CUDA/C-library interop, `main(argc, argv)` plumbing,
+  `SpectralStorage::family_ptr()`/`state_slab()` device escape hatches, and
+  device-side kernel/operator members). Everything else: `std::vector`/
+  `std::span`/`std::string_view`, `std::optional<std::reference_wrapper<T>>`
+  for nullable params, `DeviceBuffer` for test-harness device allocations
 - **Device pointers:** `d_` prefix; **host pointers:** `h_` prefix
 - **Operators:** `cumes` namespace, RAII classes owning their buffers
 
@@ -234,7 +247,7 @@ reference outputs, independent of any vmecpp bit-exactness target):
 Known issues:
 
 1. **Axis representation (state-file only).** The dumped axis m>0 coefficients
-   are constant-extrapolated from j=1 (`extrapolateAxisKernel`), so they equal
+   are constant-extrapolated from j=1 (`extrapolate_axis_kernel`), so they equal
    the j=1 values (vmecpp keeps them 0). The real-space axis geometry agrees
    (1e-15) and axis coefficients do not enter the forces — this shows up only
    when diffing state files / wout axis rows.
