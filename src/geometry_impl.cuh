@@ -1,7 +1,8 @@
 // geometry_impl.cuh — template definitions for geometry.cuh.
 // Included once per scalar type by geometry_double.cu / geometry_float.cu; see
 // the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
-#pragma once
+#ifndef CUMES_SRC_GEOMETRY_IMPL_CUH_
+#define CUMES_SRC_GEOMETRY_IMPL_CUH_
 // geometry.cu — Jacobian, metric, magnetic field, and total pressure
 // on the staggered half-grid with even/odd parity decomposition.
 //
@@ -776,3 +777,5 @@ void cumes::MagneticFieldOperator<T>::enqueue(
         cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
     }
 }
+
+#endif  // CUMES_SRC_GEOMETRY_IMPL_CUH_

@@ -13,7 +13,8 @@
 // It is host-only and owns no device pointers. The solver consumes it directly
 // (the legacy InputParams fixed-capacity bridge was deleted in migration step
 // 13.2).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CONFIG_VALIDATED_PROBLEM_HPP_
+#define CUMES_INCLUDE_CUMES_CONFIG_VALIDATED_PROBLEM_HPP_
 
 #include "cumes/config/precision_policy.hpp"
 #include "cumes/config/problem_spec.hpp"
@@ -85,3 +86,5 @@ using ValidationResult = BasicResult<ValidatedProblem, ValidationReport>;
 ValidationResult validate(ProblemSpec spec, const SolverOptions& options);
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CONFIG_VALIDATED_PROBLEM_HPP_

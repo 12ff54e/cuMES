@@ -4,7 +4,8 @@
 // and a tolerance floor derived from the scalar type, so an impossible
 // tolerance (float ftol < 1e-6) is a validation error rather than a run that
 // silently stalls at the float rounding floor.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CONFIG_PRECISION_POLICY_HPP_
+#define CUMES_INCLUDE_CUMES_CONFIG_PRECISION_POLICY_HPP_
 
 #include <cmath>
 #include <cstdint>
@@ -44,3 +45,5 @@ inline bool tolerance_achievable(double ftol, PrecisionPolicy policy) {
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CONFIG_PRECISION_POLICY_HPP_

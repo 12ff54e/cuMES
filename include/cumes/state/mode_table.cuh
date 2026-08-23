@@ -9,7 +9,8 @@
 // lifetime) and shared by every operator that needs it; the richer ModeEntry<T>
 // host table (cumes/core/ mode_table.hpp) is the eventual device-side
 // replacement.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_STATE_MODE_TABLE_CUH_
+#define CUMES_INCLUDE_CUMES_STATE_MODE_TABLE_CUH_
 
 #include "vmec_types.h"
 
@@ -75,3 +76,5 @@ inline void modeTableFree(DeviceModeTable& mt) {
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_STATE_MODE_TABLE_CUH_

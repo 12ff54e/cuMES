@@ -21,7 +21,8 @@
 //
 // All arithmetic uses the scalar type T exactly as the legacy loop did, so the
 // refactor is Class A bitwise-equivalent (including float builds).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_SOLVER_ITERATION_CONTROLLER_HPP_
+#define CUMES_INCLUDE_CUMES_SOLVER_ITERATION_CONTROLLER_HPP_
 
 #include "cumes/io/run_report.hpp"
 #include "cumes/solver/control_record.hpp"
@@ -254,3 +255,5 @@ class IterationController {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_SOLVER_ITERATION_CONTROLLER_HPP_

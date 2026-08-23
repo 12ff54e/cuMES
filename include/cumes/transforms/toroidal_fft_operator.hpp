@@ -10,7 +10,8 @@
 // view bundles they are passed (the solver passes aliasing views over that
 // storage — the common case, but non-aliasing views are legal). The folded
 // mode table (xm/xn) is resolution-scoped metadata shared via DeviceModeTable.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_TRANSFORMS_TOROIDAL_FFT_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_TRANSFORMS_TOROIDAL_FFT_OPERATOR_HPP_
 
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/real_space_storage.hpp"
@@ -166,3 +167,5 @@ class ToroidalFftOperator : public SpectralOperator<T> {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_TRANSFORMS_TOROIDAL_FFT_OPERATOR_HPP_

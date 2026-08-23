@@ -2,7 +2,8 @@
 // the resolution/real-space scratch helpers modeTableCreate/realSpaceCreate).
 // Included once per scalar type by fourier_double.cu / fourier_float.cu; see
 // the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
-#pragma once
+#ifndef CUMES_SRC_FOURIER_IMPL_CUH_
+#define CUMES_SRC_FOURIER_IMPL_CUH_
 // fourier.cu — DFT transforms with vmecpp m-parity convention.
 //
 // Internal (folded, n>=0) product basis, matching vmecpp's
@@ -1480,3 +1481,5 @@ void cumes::ToroidalFftOperator<T>::enqueue_inverse_dump(
     cudaStream_t stream) {
     inverse(coeff, /*do_combine=*/false, stream);
 }
+
+#endif  // CUMES_SRC_FOURIER_IMPL_CUH_

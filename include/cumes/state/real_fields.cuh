@@ -12,7 +12,8 @@
 // raw-pointer bundles (RealSpaceStorage/the operator workspaces) at the
 // operator boundary; the layout is identical, so indexing is bit-for-bit the
 // legacy `surface*nZnT + zeta*ntheta + theta` arithmetic.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_STATE_REAL_FIELDS_CUH_
+#define CUMES_INCLUDE_CUMES_STATE_REAL_FIELDS_CUH_
 
 #include "cumes/config/device_params.hpp"
 #include "cumes/core/tensor_view.cuh"
@@ -163,3 +164,5 @@ struct ConstraintForceViews {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_STATE_REAL_FIELDS_CUH_

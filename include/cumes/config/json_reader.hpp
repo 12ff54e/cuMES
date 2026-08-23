@@ -6,7 +6,8 @@
 // errors, integer narrowing, unsupported features, and unknown keys into a
 // ValidationReport so one pass reports every finding. JSON syntax/file errors
 // still throw (there is no document to validate).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CONFIG_JSON_READER_HPP_
+#define CUMES_INCLUDE_CUMES_CONFIG_JSON_READER_HPP_
 
 #include "cumes/config/problem_spec.hpp"
 #include "cumes/config/validated_problem.hpp"
@@ -32,3 +33,5 @@ ValidationResult read_and_validate(const std::string& path,
                                    const SolverOptions& options);
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CONFIG_JSON_READER_HPP_

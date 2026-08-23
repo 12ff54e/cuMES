@@ -18,7 +18,8 @@
 // backend the axisymmetric backend is differentially tested against
 // (test_axisym_backend); this header is the typed contract the backends
 // implement.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_TRANSFORMS_SPECTRAL_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_TRANSFORMS_SPECTRAL_OPERATOR_HPP_
 
 #include "cumes/core/tensor_view.cuh"
 #include "cumes/state/real_fields.cuh"
@@ -65,3 +66,5 @@ class SpectralOperator {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_TRANSFORMS_SPECTRAL_OPERATOR_HPP_

@@ -13,7 +13,8 @@
 // the NetCDF/HDF5 writers map the fields to native scalar variables,
 // datasets, and attributes. The schema tag names the normalized-input layout
 // the record corresponds to.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_INPUT_PARAMS_HPP_
+#define CUMES_INCLUDE_CUMES_IO_INPUT_PARAMS_HPP_
 
 #include "cumes/config/validated_problem.hpp"
 
@@ -137,3 +138,5 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_INPUT_PARAMS_HPP_

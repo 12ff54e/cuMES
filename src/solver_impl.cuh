@@ -1,7 +1,8 @@
 // solver_impl.cuh — template definitions for solver.cuh.
 // Included once per scalar type by solver_double.cu / solver_float.cu; see the
 // explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
-#pragma once
+#ifndef CUMES_SRC_SOLVER_IMPL_CUH_
+#define CUMES_SRC_SOLVER_IMPL_CUH_
 // solver.cu — fixed-point iteration with Garabedian acceleration.
 // The dump/debug machinery below (DUMP_CUMES_VERIFY blocks) is compiled in
 // but RUNTIME-GATED: nothing is written and no debug output is produced
@@ -2101,3 +2102,5 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     res.restarts = controller.restart_events();
     return res;
 }
+
+#endif  // CUMES_SRC_SOLVER_IMPL_CUH_

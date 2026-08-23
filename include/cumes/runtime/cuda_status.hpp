@@ -5,7 +5,8 @@
 // application boundary catches), replacing the per-file `checkCuda`/`cc`/`ccf`
 // helpers that used to `exit(1)`. `cuda_status` is the non-throwing `Result`
 // form for code that wants to propagate status instead of throwing.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_RUNTIME_CUDA_STATUS_HPP_
+#define CUMES_INCLUDE_CUMES_RUNTIME_CUDA_STATUS_HPP_
 
 #include "cumes/core/result.hpp"
 
@@ -94,3 +95,5 @@ inline Status cuda_status(cudaError_t err, const char* tag) {
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_RUNTIME_CUDA_STATUS_HPP_

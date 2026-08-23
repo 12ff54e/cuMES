@@ -6,7 +6,8 @@
 // (the device->host copy converts T -> double). Each family is laid out
 // mode-major, surface-contiguous: index = surface + mode * ns, matching the
 // device column-major layout.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_EQUILIBRIUM_SNAPSHOT_HPP_
+#define CUMES_INCLUDE_CUMES_IO_EQUILIBRIUM_SNAPSHOT_HPP_
 
 #include <array>
 #include <cstddef>
@@ -45,3 +46,5 @@ struct EquilibriumSnapshot {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_EQUILIBRIUM_SNAPSHOT_HPP_

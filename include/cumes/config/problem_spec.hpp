@@ -5,7 +5,8 @@
 // resolution are the separate ValidatedProblem stage. The JSON reader
 // (json_reader.hpp) maps a vmecpp-style document onto this type; a caller may
 // also construct one directly.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CONFIG_PROBLEM_SPEC_HPP_
+#define CUMES_INCLUDE_CUMES_CONFIG_PROBLEM_SPEC_HPP_
 
 #include <cstddef>
 #include <cstdint>
@@ -91,3 +92,5 @@ inline StageRequest kDefaultStage() {
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CONFIG_PROBLEM_SPEC_HPP_

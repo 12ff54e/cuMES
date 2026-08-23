@@ -8,7 +8,8 @@
 // min(|bloat|, 1)) are bit-identical to the values the Profiles constructor
 // divides by. The functions are plain host/device C++ (no CUDA includes) and
 // templated on the scalar type T exactly as the legacy file-static copies.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CONFIG_PROFILE_FUNCTIONS_HPP_
+#define CUMES_INCLUDE_CUMES_CONFIG_PROFILE_FUNCTIONS_HPP_
 
 #include "cumes/config/device_params.hpp"
 #include "cumes/config/problem_spec.hpp"
@@ -73,3 +74,5 @@ inline T evalCurrProfile(const ProblemSpec& sp, T x) {
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CONFIG_PROFILE_FUNCTIONS_HPP_

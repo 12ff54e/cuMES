@@ -4,7 +4,8 @@
 // plan enums and exec functions (double -> D2Z/Z2D, float -> R2C/C2R).
 // The plan strides (inembed/idist/onembed/odist, in elements) are identical
 // across precisions — only the type enum and exec entry point change.
-#pragma once
+#ifndef CUMES_INCLUDE_FFT_TRAITS_H_
+#define CUMES_INCLUDE_FFT_TRAITS_H_
 #include <cufft.h>
 
 template <typename T>
@@ -35,3 +36,5 @@ struct FftTraits<float> {
         return cufftExecC2R(p, in, out);
     }
 };
+
+#endif  // CUMES_INCLUDE_FFT_TRAITS_H_

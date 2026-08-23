@@ -1,7 +1,8 @@
 // run_report.hpp — run outcome + full stage history and provenance
 // (blueprint §6.11, §6.13). The host-only record a solver emits so the I/O
 // layer never needs device state to write provenance.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_RUN_REPORT_HPP_
+#define CUMES_INCLUDE_CUMES_IO_RUN_REPORT_HPP_
 
 #include "cumes/io/input_params.hpp"
 
@@ -112,3 +113,5 @@ inline std::string validateRestartOffsets(const std::vector<int>& offsets,
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_RUN_REPORT_HPP_

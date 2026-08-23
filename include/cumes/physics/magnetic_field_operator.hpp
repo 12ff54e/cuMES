@@ -11,7 +11,8 @@
 // (Migration step 13.3: it reads/writes the typed BaseGeometryHalfViews /
 // MagneticFieldViews owned by the GeometryOperator, not the deleted
 // MetricWorkspace.)
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_PHYSICS_MAGNETIC_FIELD_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_PHYSICS_MAGNETIC_FIELD_OPERATOR_HPP_
 
 #include "cumes/config/device_params.hpp"
 #include "cumes/solver/control_record.hpp"
@@ -43,3 +44,5 @@ class MagneticFieldOperator {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_PHYSICS_MAGNETIC_FIELD_OPERATOR_HPP_

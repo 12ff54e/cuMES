@@ -2,7 +2,8 @@
 // Included once per scalar type by prolongation_double.cu /
 // prolongation_float.cu; see the explicit-instantiation split
 // (cumes_cuda_double / cumes_cuda_float).
-#pragma once
+#ifndef CUMES_SRC_PROLONGATION_IMPL_CUH_
+#define CUMES_SRC_PROLONGATION_IMPL_CUH_
 // prolongation.cu — grid-sequencing state interpolation (multi-radial-grid).
 //
 // Mirrors vmecpp's Vmec::InterpolateToNextMultigridStep (vmec.cc:1795-2042),
@@ -157,3 +158,5 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
         p_old.ns, p_new.ns);
     return st_new;
 }
+
+#endif  // CUMES_SRC_PROLONGATION_IMPL_CUH_

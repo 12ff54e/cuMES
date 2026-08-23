@@ -8,7 +8,8 @@
 // legacy interpolateState free function and the refine.cuh/refine_impl.cuh
 // module are gone — the body is Prolongation::enqueue, defined in
 // src/prolongation_impl.cuh.)
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_NUMERICS_PROLONGATION_HPP_
+#define CUMES_INCLUDE_CUMES_NUMERICS_PROLONGATION_HPP_
 
 #include "cumes/state/spectral_storage.hpp"
 
@@ -32,3 +33,5 @@ class Prolongation {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_NUMERICS_PROLONGATION_HPP_

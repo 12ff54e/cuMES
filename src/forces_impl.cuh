@@ -1,7 +1,8 @@
 // forces_impl.cuh — template definitions for forces.cuh.
 // Included once per scalar type by forces_double.cu / forces_float.cu; see the
 // explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
-#pragma once
+#ifndef CUMES_SRC_FORCES_IMPL_CUH_
+#define CUMES_SRC_FORCES_IMPL_CUH_
 // forces.cu — MHD force residuals in real space, with even/odd parity.
 //
 // Follows vmecpp's mhdforce_kernel.h and lambda_force_kernel.h exactly,
@@ -341,3 +342,5 @@ void cumes::ForceOperator<T>::enqueue(
         status, p.lamscale, p.ns, p.nZnT, T(1.0) / T(p.ns - 1));
     cumes::check_cuda(cudaGetLastError(), "forces kernel");
 }
+
+#endif  // CUMES_SRC_FORCES_IMPL_CUH_

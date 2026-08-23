@@ -12,7 +12,8 @@
 // OperatorStack constructs its members in place in the caller's frame — the
 // caller owns the arena separately because fixed_iteration times
 // arena.allocate as part of setup.
-#pragma once
+#ifndef CUMES_BENCHMARKS_BENCH_COMMON_CUH_
+#define CUMES_BENCHMARKS_BENCH_COMMON_CUH_
 
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/solver_options.hpp"
@@ -161,3 +162,5 @@ class OperatorStack {
 };
 
 }  // namespace bench_common
+
+#endif  // CUMES_BENCHMARKS_BENCH_COMMON_CUH_

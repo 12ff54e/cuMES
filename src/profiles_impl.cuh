@@ -1,7 +1,8 @@
 // profiles_impl.cuh — template definitions for the cumes::Profiles operator.
 // Included once per scalar type by profiles_double.cu / profiles_float.cu; see
 // the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
-#pragma once
+#ifndef CUMES_SRC_PROFILES_IMPL_CUH_
+#define CUMES_SRC_PROFILES_IMPL_CUH_
 // profiles.cu — evaluate radial profiles on host from the validated problem
 // and upload to GPU. Matches vmecpp's evalRadialProfiles (radial_profiles.cc
 // lines 1149-1220) and computeMagneticFluxes (440-455):
@@ -199,3 +200,5 @@ cumes::Profiles<T>::~Profiles() {
         cudaFree(d_chip_H_);
     }
 }
+
+#endif  // CUMES_SRC_PROFILES_IMPL_CUH_

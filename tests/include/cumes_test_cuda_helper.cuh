@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CUMES_TESTS_INCLUDE_CUMES_TEST_CUDA_HELPER_CUH_
+#define CUMES_TESTS_INCLUDE_CUMES_TEST_CUDA_HELPER_CUH_
 // cumes_test_cuda_helper.cuh — CUDA-side shared test helpers (error checking +
 // manufactured spectral states + config loading), on top of the CUDA-free
 // harness (cumes_test.h).
@@ -216,3 +217,5 @@ inline cumes::ValidatedProblem validate_spec(cumes::ProblemSpec spec) {
 }
 
 }  // namespace cumes::test
+
+#endif  // CUMES_TESTS_INCLUDE_CUMES_TEST_CUDA_HELPER_CUH_

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CUMES_TESTS_INCLUDE_CUMES_TEST_FORMAT_H_
+#define CUMES_TESTS_INCLUDE_CUMES_TEST_FORMAT_H_
 // cumes_test_format.h — std::format-compatible formatting for tests.
 //
 // std::format lives in <format>, which libstdc++ only provides from GCC 13.
@@ -133,3 +134,5 @@ std::string format(std::string_view fmt, const Args&... args) {
 }  // namespace cumes::test
 
 #endif
+
+#endif  // CUMES_TESTS_INCLUDE_CUMES_TEST_FORMAT_H_

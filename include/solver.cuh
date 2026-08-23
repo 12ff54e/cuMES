@@ -1,6 +1,7 @@
 // solver.cuh — GPU-resident fixed-point iteration with Garabedian acceleration.
 // All computation happens on device; host only orchestrates.
-#pragma once
+#ifndef CUMES_INCLUDE_SOLVER_CUH_
+#define CUMES_INCLUDE_SOLVER_CUH_
 #include "cumes/io/run_report.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "vmec_types.h"
@@ -65,3 +66,5 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& state,
                           cudaStream_t stream = 0,
                           cumes::SolverBench* bench = nullptr,
                           cumes::SpectralOperator<T>* op = nullptr);
+
+#endif  // CUMES_INCLUDE_SOLVER_CUH_

@@ -13,7 +13,8 @@
 // These are the same functions main.cu inlined before Phase 9; the move is a
 // pure code relocation (Class A — no arithmetic change), verified by the
 // unchanged Solovev/W7-X trajectories.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_STATE_SEED_STATE_HPP_
+#define CUMES_INCLUDE_CUMES_STATE_SEED_STATE_HPP_
 
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
@@ -198,3 +199,5 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_STATE_SEED_STATE_HPP_

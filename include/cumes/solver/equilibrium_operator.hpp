@@ -13,7 +13,8 @@
 // The hot-loop dump machinery is carried inside enqueue so it stays
 // interleaved at the same observation points (all legacy workspace structs are
 // gone — migration step 13).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_OPERATOR_HPP_
 
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/numerics/residual_operator.hpp"
@@ -150,3 +151,5 @@ class EquilibriumOperator {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_OPERATOR_HPP_

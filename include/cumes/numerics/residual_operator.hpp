@@ -11,7 +11,8 @@
 // caller's 3-element device `sq_out` (ΣF²/(mnmax·ns) per group); the invariant
 // vs preconditioned distinction is only the host-side scaling (fNormRZ/fNormL
 // vs fNorm1/delta_s), which stays with the solver.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_NUMERICS_RESIDUAL_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_NUMERICS_RESIDUAL_OPERATOR_HPP_
 
 #include "cumes/core/tensor_view.cuh"
 #include "cumes/solver/control_record.hpp"
@@ -48,3 +49,5 @@ class ResidualOperator {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_NUMERICS_RESIDUAL_OPERATOR_HPP_

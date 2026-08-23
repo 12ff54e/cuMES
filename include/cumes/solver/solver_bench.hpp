@@ -7,7 +7,8 @@
 // change, so enabling it is Class A (the trajectory is bitwise-unchanged). The
 // fixed-iteration harness discards the first `warmup` samples and reports
 // median/p95 over the remainder.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_SOLVER_SOLVER_BENCH_HPP_
+#define CUMES_INCLUDE_CUMES_SOLVER_SOLVER_BENCH_HPP_
 
 #include <cstddef>
 #include <vector>
@@ -26,3 +27,5 @@ struct SolverBench {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_SOLVER_SOLVER_BENCH_HPP_

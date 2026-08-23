@@ -6,7 +6,8 @@
 // array-of-doubles). Observers consume PassRecord values and can never affect
 // the controller's decisions — they see only scalars this pass already
 // produced.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_SOLVER_PASS_RECORD_HPP_
+#define CUMES_INCLUDE_CUMES_SOLVER_PASS_RECORD_HPP_
 
 #include <type_traits>
 
@@ -41,3 +42,5 @@ static_assert(std::is_standard_layout_v<PassRecord>);
 static_assert(sizeof(PassRecord) == PassRecord::kColumnCount * sizeof(double));
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_SOLVER_PASS_RECORD_HPP_

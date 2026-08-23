@@ -5,7 +5,8 @@
 // BaseGeometryHalfViews / MagneticFieldViews. (Migration step 13.3: the legacy
 // MetricWorkspace struct + metricCreate/metricFree/compute* free functions are
 // gone; the operator owns the buffers directly and launches the kernels.)
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_PHYSICS_GEOMETRY_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_PHYSICS_GEOMETRY_OPERATOR_HPP_
 
 #include "cumes/config/device_params.hpp"
 #include "cumes/solver/control_record.hpp"
@@ -79,3 +80,5 @@ class GeometryOperator {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_PHYSICS_GEOMETRY_OPERATOR_HPP_

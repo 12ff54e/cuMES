@@ -1,5 +1,6 @@
 // reader.hpp — host-memory reader interface.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_READER_HPP_
+#define CUMES_INCLUDE_CUMES_IO_READER_HPP_
 
 #include "cumes/core/result.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
@@ -31,3 +32,5 @@ std::unique_ptr<Reader> make_reader(OutputFormat format);
 std::unique_ptr<Reader> make_binary_reader();
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_READER_HPP_

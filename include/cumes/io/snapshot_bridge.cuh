@@ -7,7 +7,8 @@
 // mode-major / surface-contiguous. So the bridge is a single D2H copy followed
 // by a per-element T -> double conversion. The host snapshot is always double
 // regardless of T (the on-disk state container stays double).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_SNAPSHOT_BRIDGE_CUH_
+#define CUMES_INCLUDE_CUMES_IO_SNAPSHOT_BRIDGE_CUH_
 
 #include "cumes/core/checked_size.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
@@ -67,3 +68,5 @@ EquilibriumSnapshot snapshot_from_device(const SpectralStorage<T>& storage) {
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_SNAPSHOT_BRIDGE_CUH_

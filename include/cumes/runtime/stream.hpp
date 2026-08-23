@@ -2,7 +2,8 @@
 //
 // Owns one `cudaStream_t` created with `cudaStreamNonBlocking`. The solver's
 // hot loop runs on one such stream (Phase 6A); main.cu creates its own.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_RUNTIME_STREAM_HPP_
+#define CUMES_INCLUDE_CUMES_RUNTIME_STREAM_HPP_
 
 #include "cumes/runtime/cuda_status.hpp"
 
@@ -55,3 +56,5 @@ class Stream {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_RUNTIME_STREAM_HPP_

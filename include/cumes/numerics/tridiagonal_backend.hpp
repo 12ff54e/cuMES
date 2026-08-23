@@ -23,7 +23,8 @@
 //     (axisymmetric) fallback.
 // A tiled PCR/Thomas hybrid and a library backend are deferred to the
 // benchmark-gated §8.9 follow-up.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_NUMERICS_TRIDIAGONAL_BACKEND_HPP_
+#define CUMES_INCLUDE_CUMES_NUMERICS_TRIDIAGONAL_BACKEND_HPP_
 
 #include "cumes/solver/control_record.hpp"
 
@@ -149,3 +150,5 @@ class ThomasBackend : public TridiagonalBackend<T> {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_NUMERICS_TRIDIAGONAL_BACKEND_HPP_

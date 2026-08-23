@@ -4,7 +4,8 @@
 // typed contract. resolve_output_spec() maps a path suffix (case-insensitive)
 // to an OutputFormat; a known suffix whose backend is not linked is a preflight
 // error (before any CUDA work), and an unknown suffix is always an error.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_OUTPUT_SPEC_HPP_
+#define CUMES_INCLUDE_CUMES_IO_OUTPUT_SPEC_HPP_
 
 #include "cumes/core/result.hpp"
 
@@ -32,3 +33,5 @@ Result<OutputSpec> resolve_output_spec(const std::string& path);
 const char* output_suffix(OutputFormat fmt);
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_OUTPUT_SPEC_HPP_

@@ -1,5 +1,6 @@
 // solver_options.hpp — validation/behavior options (blueprint §6.1).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CONFIG_SOLVER_OPTIONS_HPP_
+#define CUMES_INCLUDE_CUMES_CONFIG_SOLVER_OPTIONS_HPP_
 
 #include "cumes/config/precision_policy.hpp"
 
@@ -15,3 +16,5 @@ struct SolverOptions {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CONFIG_SOLVER_OPTIONS_HPP_

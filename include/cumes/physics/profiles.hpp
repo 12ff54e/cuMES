@@ -7,7 +7,8 @@
 // arena) and exposes them as a typed RadialProfileViews bundle plus the radial
 // grid spacing. (Migration step 13.3: the legacy RadialProfiles struct +
 // profilesCreate/profilesFree are gone.)
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_PHYSICS_PROFILES_HPP_
+#define CUMES_INCLUDE_CUMES_PHYSICS_PROFILES_HPP_
 
 #include "cumes/config/device_params.hpp"
 #include "cumes/state/real_fields.cuh"
@@ -70,3 +71,5 @@ class Profiles {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_PHYSICS_PROFILES_HPP_

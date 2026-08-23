@@ -5,7 +5,8 @@
 // frees the old allocation exactly once. No allocation happens in the hot loop:
 // a DeviceBuffer is constructed once per stage and its `data()` is passed to
 // the kernels unchanged (same layout, same pointer arithmetic).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_RUNTIME_DEVICE_BUFFER_CUH_
+#define CUMES_INCLUDE_CUMES_RUNTIME_DEVICE_BUFFER_CUH_
 
 #include "cumes/runtime/cuda_status.hpp"
 
@@ -126,3 +127,5 @@ class DeviceBuffer {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_RUNTIME_DEVICE_BUFFER_CUH_

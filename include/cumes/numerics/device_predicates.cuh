@@ -25,7 +25,8 @@
 // production DAG (src/solver_impl.cuh) includes the same definitions, so the
 // tested kernels are bit-for-bit the shipped ones. All readers/writers are
 // ordered on the single compute stream — no atomics.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_NUMERICS_DEVICE_PREDICATES_CUH_
+#define CUMES_INCLUDE_CUMES_NUMERICS_DEVICE_PREDICATES_CUH_
 
 #include "cumes/core/tensor_view.cuh"
 #include "cumes/numerics/accumulation.hpp"
@@ -169,3 +170,5 @@ __global__ void computeResidualsPreconditionedKernel(
         rec->status.preconditioned_evaluated = 1;  // idempotent (3 blocks)
     }
 }
+
+#endif  // CUMES_INCLUDE_CUMES_NUMERICS_DEVICE_PREDICATES_CUH_

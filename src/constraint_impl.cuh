@@ -1,7 +1,8 @@
 // constraint_impl.cuh — template definitions for constraint_operator.hpp.
 // Included once per scalar type by constraint_double.cu / constraint_float.cu;
 // see the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
-#pragma once
+#ifndef CUMES_SRC_CONSTRAINT_IMPL_CUH_
+#define CUMES_SRC_CONSTRAINT_IMPL_CUH_
 // constraint.cu — spectral condensation constraint force.
 // Reference: vmecpp constraint_force_kernel.h and deAliasConstraintForce().
 //
@@ -460,3 +461,5 @@ void cumes::ConstraintOperator<T>::enqueue(const DeviceParams<T>& p,
         cumes::RealFieldView<T>(d_gCon_, p.ns, p.ntheta, p.nzeta), stream);
     enqueue_tail(p, rs, sqrtS_F, status, stream);
 }
+
+#endif  // CUMES_SRC_CONSTRAINT_IMPL_CUH_

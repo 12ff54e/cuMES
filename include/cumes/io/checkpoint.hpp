@@ -3,7 +3,8 @@
 // An explicit, versioned restart artifact: a self-describing checkpoint
 // (magic, version, precision, dimensions) that a reader validates before
 // accepting.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_CHECKPOINT_HPP_
+#define CUMES_INCLUDE_CUMES_IO_CHECKPOINT_HPP_
 
 #include "cumes/core/result.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
@@ -28,3 +29,5 @@ Result<EquilibriumSnapshot> read_checkpoint(
     InputParams* input_params = nullptr);
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_CHECKPOINT_HPP_

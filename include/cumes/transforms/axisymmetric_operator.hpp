@@ -15,7 +15,8 @@
 // the generic `ToroidalFftOperator` (batched 1D ζ-cuFFT + tiled direct
 // poloidal accumulation) remains the reference the axisymmetric backend is
 // differentially tested against.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_TRANSFORMS_AXISYMMETRIC_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_TRANSFORMS_AXISYMMETRIC_OPERATOR_HPP_
 
 #include "cumes/core/tensor_view.cuh"
 #include "cumes/runtime/device_buffer.cuh"
@@ -99,3 +100,5 @@ class AxisymmetricOperator : public SpectralOperator<T> {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_TRANSFORMS_AXISYMMETRIC_OPERATOR_HPP_

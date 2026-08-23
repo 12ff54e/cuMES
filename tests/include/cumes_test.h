@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CUMES_TESTS_INCLUDE_CUMES_TEST_H_
+#define CUMES_TESTS_INCLUDE_CUMES_TEST_H_
 // cumes_test.h — CUDA-free test harness (assertions, comparison, summary).
 //
 // Included by every test: directly by the host-only .cpp tests, transitively
@@ -79,3 +80,5 @@ inline int summary() {
 }
 
 }  // namespace cumes::test
+
+#endif  // CUMES_TESTS_INCLUDE_CUMES_TEST_H_

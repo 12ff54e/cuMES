@@ -10,7 +10,8 @@
 // (kSignJacobian/kMu0). The type stays in the global namespace, matching the
 // legacy placement, so the 65 kernel/operator headers that named GridParams
 // keep resolving to the same symbol after the rename.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CONFIG_DEVICE_PARAMS_HPP_
+#define CUMES_INCLUDE_CUMES_CONFIG_DEVICE_PARAMS_HPP_
 
 // Self-contained: M_PI (used by kMu0 below) is a POSIX/GNU extension, not ISO
 // C++. Host-only .cpp TUs compiled by g++ (rather than nvcc, which pre-defines
@@ -46,3 +47,5 @@ struct DeviceParams {
     static constexpr int kSignJacobian = -1;
     static constexpr T kMu0 = 4.0 * M_PI * 1.0e-7;  // exact, = vmecpp MU_0
 };
+
+#endif  // CUMES_INCLUDE_CUMES_CONFIG_DEVICE_PARAMS_HPP_

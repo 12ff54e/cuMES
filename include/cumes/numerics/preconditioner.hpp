@@ -7,7 +7,8 @@
 // systems. (Migration step 13.3: the operator OWNS the workspace buffers
 // directly — the legacy PreconWorkspace struct +
 // preconCreate/preconFree/preconCompute/preconApply are gone.)
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_NUMERICS_PRECONDITIONER_HPP_
+#define CUMES_INCLUDE_CUMES_NUMERICS_PRECONDITIONER_HPP_
 
 #include "cumes/numerics/tridiagonal_backend.hpp"
 #include "cumes/solver/control_record.hpp"
@@ -124,3 +125,5 @@ class Preconditioner {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_NUMERICS_PRECONDITIONER_HPP_

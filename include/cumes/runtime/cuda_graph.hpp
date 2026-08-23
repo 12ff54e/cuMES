@@ -10,7 +10,8 @@
 // capturing stream inside the callback. On a throwing callback the partial
 // capture is torn down so the stream is not left in capture mode. Launching a
 // graph replays the captured work in one submission.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_RUNTIME_CUDA_GRAPH_HPP_
+#define CUMES_INCLUDE_CUMES_RUNTIME_CUDA_GRAPH_HPP_
 
 #include "cumes/runtime/cuda_status.hpp"
 
@@ -96,3 +97,5 @@ class CudaGraph {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_RUNTIME_CUDA_GRAPH_HPP_

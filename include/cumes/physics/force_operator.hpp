@@ -7,7 +7,8 @@
 //
 // (Migration step 13.3: a stateless operator over typed base-geometry + field +
 // profile views — the legacy MetricWorkspace/computeForces are gone.)
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_PHYSICS_FORCE_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_PHYSICS_FORCE_OPERATOR_HPP_
 
 #include "cumes/config/device_params.hpp"
 #include "cumes/solver/control_record.hpp"
@@ -34,3 +35,5 @@ class ForceOperator {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_PHYSICS_FORCE_OPERATOR_HPP_

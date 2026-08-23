@@ -15,7 +15,8 @@
 // The toroidal derivative of λ is stored as -∂λ/∂ζ (vmecpp convention:
 // lv = -(lmksc_n*sinmu + lmkcs_n*cosmu) with sinnvn=-n*nfp*sin(nζ),
 // cosnvn=+n*nfp*cos(nζ)); bsupu = (lamscale*lv + chip')/√g.
-#pragma once
+#ifndef CUMES_INCLUDE_VMEC_TYPES_H_
+#define CUMES_INCLUDE_VMEC_TYPES_H_
 
 #include "cumes/config/device_params.hpp"  // DeviceParams<T> (the per-stage pack)
 
@@ -29,3 +30,5 @@ using Real = float;
 #else
 using Real = double;
 #endif
+
+#endif  // CUMES_INCLUDE_VMEC_TYPES_H_

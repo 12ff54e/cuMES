@@ -8,7 +8,8 @@
 // and — through src/cumes/io/io_common.hpp — the versioned binary and
 // checkpoint writers. Everything here is header-only so the writers never
 // drift apart again.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_WRITER_HELPERS_HPP_
+#define CUMES_INCLUDE_CUMES_IO_WRITER_HELPERS_HPP_
 
 #include "cumes/core/checked_size.hpp"
 
@@ -161,3 +162,5 @@ inline std::optional<std::size_t> familyCount(int ns, int mnmax) {
 
 }  // namespace io_detail
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_WRITER_HELPERS_HPP_

@@ -1,7 +1,8 @@
 // precon_impl.cuh — template definitions for precon.cuh.
 // Included once per scalar type by precon_double.cu / precon_float.cu; see the
 // explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
-#pragma once
+#ifndef CUMES_SRC_PRECON_IMPL_CUH_
+#define CUMES_SRC_PRECON_IMPL_CUH_
 // precon.cu — radial tridiagonal preconditioner for MHD force balance.
 // Computes flux-surface-averaged Hessian approximation separately for R and Z,
 // assembles tridiagonal systems per (m,n) mode, and solves via parallel cyclic
@@ -1255,3 +1256,5 @@ void cumes::Preconditioner<T>::enqueue_m1_scale(
         residual, d_ard_, d_brd_, d_azd_, d_bzd_, gate, p.ns, p.mnmax, p.ntor);
     cumes::check_cuda(cudaGetLastError(), "m1PreconScale");
 }
+
+#endif  // CUMES_SRC_PRECON_IMPL_CUH_

@@ -3,7 +3,8 @@
 // magic-prefixed state payload. The atomic-publication primitives live in the
 // installed include/cumes/io/writer_helpers.hpp (one implementation for every
 // writer); the shared state-dimension check follows.
-#pragma once
+#ifndef CUMES_SRC_CUMES_IO_IO_COMMON_HPP_
+#define CUMES_SRC_CUMES_IO_IO_COMMON_HPP_
 
 #include "cumes/core/checked_size.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
@@ -287,3 +288,5 @@ inline bool readInputParams(FILE* fp, InputParams& p, std::string& reason) {
 
 }  // namespace io_detail
 }  // namespace cumes
+
+#endif  // CUMES_SRC_CUMES_IO_IO_COMMON_HPP_

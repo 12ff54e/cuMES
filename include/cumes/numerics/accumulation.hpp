@@ -15,7 +15,8 @@
 // a wider residual value — so this is a change to the float build alone. A full
 // double ControlRecord (double invariants threaded through the host controller)
 // is a separate, larger follow-up.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_NUMERICS_ACCUMULATION_HPP_
+#define CUMES_INCLUDE_CUMES_NUMERICS_ACCUMULATION_HPP_
 
 namespace cumes {
 
@@ -30,3 +31,5 @@ struct NormAccum<float> {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_NUMERICS_ACCUMULATION_HPP_

@@ -4,7 +4,8 @@
 // write to a same-directory temp file, flush + fsync + close, then rename over
 // the target. A reader never sees a half-written file, and any failure leaves
 // the target untouched.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_IO_WRITER_HPP_
+#define CUMES_INCLUDE_CUMES_IO_WRITER_HPP_
 
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/core/result.hpp"
@@ -38,3 +39,5 @@ std::unique_ptr<Writer> make_writer(OutputFormat format);
 std::unique_ptr<Writer> make_binary_writer();
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_IO_WRITER_HPP_

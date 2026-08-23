@@ -10,7 +10,8 @@
 // It is a plain owning bundle + typed view accessors; no kernels live here.
 // Ownership lives in the stage; the transform/geometry/force/constraint
 // operators hold non-owning references.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_STATE_REAL_SPACE_STORAGE_HPP_
+#define CUMES_INCLUDE_CUMES_STATE_REAL_SPACE_STORAGE_HPP_
 
 #include "cumes/state/real_fields.cuh"
 #include "vmec_types.h"
@@ -137,3 +138,5 @@ cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
                                            cumes::DeviceArena* arena = nullptr);
 template <typename T>
 void realSpaceFree(cumes::RealSpaceStorage<T>& rs);
+
+#endif  // CUMES_INCLUDE_CUMES_STATE_REAL_SPACE_STORAGE_HPP_

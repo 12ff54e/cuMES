@@ -3,7 +3,8 @@
 // Host mirror for async D2H control records. `cudaMallocHost` page-locks the
 // span so `cudaMemcpyAsync` to/from it stays asynchronous; the buffer is freed
 // with `cudaFreeHost` on destruction.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_RUNTIME_PINNED_BUFFER_HPP_
+#define CUMES_INCLUDE_CUMES_RUNTIME_PINNED_BUFFER_HPP_
 
 #include "cumes/runtime/cuda_status.hpp"
 
@@ -68,3 +69,5 @@ class PinnedBuffer {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_RUNTIME_PINNED_BUFFER_HPP_

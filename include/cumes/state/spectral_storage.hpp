@@ -10,7 +10,8 @@
 // indexing and arithmetic unchanged (bitwise identical). The whole
 // state/velocity is one contiguous span, which turns the solver's six D2D
 // backup copies into one and its six velocity memsets into one.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_STATE_SPECTRAL_STORAGE_HPP_
+#define CUMES_INCLUDE_CUMES_STATE_SPECTRAL_STORAGE_HPP_
 
 #include "cumes/core/tensor_view.cuh"
 #include "cumes/runtime/device_buffer.cuh"
@@ -103,3 +104,5 @@ class SpectralStorage {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_STATE_SPECTRAL_STORAGE_HPP_

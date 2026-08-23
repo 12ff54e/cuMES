@@ -10,7 +10,8 @@
 // (verbatim — migration step 10). It launches the accelerated descent step; the
 // single-copy checkpoint capture/restore stays with the solver's state slab
 // (the blueprint §6.10 keeps the checkpoint as a distinct operator).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_NUMERICS_DESCENT_OPERATOR_HPP_
+#define CUMES_INCLUDE_CUMES_NUMERICS_DESCENT_OPERATOR_HPP_
 
 #include "cumes/core/tensor_view.cuh"
 
@@ -47,3 +48,5 @@ class DescentOperator {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_NUMERICS_DESCENT_OPERATOR_HPP_

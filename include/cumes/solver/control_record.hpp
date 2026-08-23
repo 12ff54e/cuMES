@@ -4,7 +4,8 @@
 // These are plain trivially-copyable structs: the solver fills them from the
 // per-fence device reductions, the controller reads them, and an observer may
 // subscribe to them without ever seeing a device pointer.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_SOLVER_CONTROL_RECORD_HPP_
+#define CUMES_INCLUDE_CUMES_SOLVER_CONTROL_RECORD_HPP_
 
 #include <cstdint>
 #include <type_traits>
@@ -114,3 +115,5 @@ static_assert(std::is_trivially_copyable<ControlStatus>::value,
 inline constexpr double kJacobianEps = 1e-12;
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_SOLVER_CONTROL_RECORD_HPP_

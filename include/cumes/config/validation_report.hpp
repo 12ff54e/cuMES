@@ -5,7 +5,8 @@
 // picture. An error makes the problem invalid; a warning preserves the parse
 // but is recorded (e.g. a skipped out-of-range boundary harmonic, or an
 // unknown-key in compatibility mode).
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CONFIG_VALIDATION_REPORT_HPP_
+#define CUMES_INCLUDE_CUMES_CONFIG_VALIDATION_REPORT_HPP_
 
 #include <cstdint>
 #include <string>
@@ -38,3 +39,5 @@ class ValidationReport {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CONFIG_VALIDATION_REPORT_HPP_

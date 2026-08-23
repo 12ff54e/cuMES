@@ -5,7 +5,8 @@
 // square roots, parity branches, and normalization rules that the legacy code
 // recomputes inline. The table is surface-agnostic (mode metadata only); the
 // folded boundary amplitudes live in ValidatedProblem::FoldedBoundary.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CORE_MODE_TABLE_HPP_
+#define CUMES_INCLUDE_CUMES_CORE_MODE_TABLE_HPP_
 
 #include "cumes/core/grid_shape.hpp"
 
@@ -43,3 +44,5 @@ struct ModeTable {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CORE_MODE_TABLE_HPP_

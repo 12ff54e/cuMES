@@ -12,7 +12,8 @@
 // ascending-m accumulation order, differing from the cuFFT path only in that
 // the length-one transform is elided — a Class B difference (the differential
 // test bounds it).
-#pragma once
+#ifndef CUMES_SRC_AXISYMMETRIC_IMPL_CUH_
+#define CUMES_SRC_AXISYMMETRIC_IMPL_CUH_
 
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
@@ -397,3 +398,5 @@ void AxisymmetricOperator<T>::enqueue_dealias(RealFieldView<const T> gConEff,
 }
 
 }  // namespace cumes
+
+#endif  // CUMES_SRC_AXISYMMETRIC_IMPL_CUH_

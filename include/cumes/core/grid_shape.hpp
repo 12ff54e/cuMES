@@ -5,7 +5,8 @@
 // operator. The extents are the RESOLVED values (resolution defaults already
 // applied by validate()), so validate() checks the resolved invariants rather
 // than re-deriving them.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CORE_GRID_SHAPE_HPP_
+#define CUMES_INCLUDE_CUMES_CORE_GRID_SHAPE_HPP_
 
 #include "cumes/core/result.hpp"
 
@@ -37,3 +38,5 @@ struct GridShape {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CORE_GRID_SHAPE_HPP_

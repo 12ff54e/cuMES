@@ -14,7 +14,8 @@
 //   real full: [surface][zeta][theta], theta contiguous
 //              (point = zeta*ntheta + theta; idx = surface*nZnT + point).
 //   real half: the same with `surfaces = ns-1`.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CORE_TENSOR_VIEW_CUH_
+#define CUMES_INCLUDE_CUMES_CORE_TENSOR_VIEW_CUH_
 
 #include <cuda_runtime.h>  // __host__/__device__ (this header is included by
                            // host-only .cpp TUs, e.g. the output writers)
@@ -103,3 +104,5 @@ class RealFieldView {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CORE_TENSOR_VIEW_CUH_

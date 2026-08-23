@@ -1,5 +1,6 @@
 // output.cuh — copy results from GPU to host and print the console summary.
-#pragma once
+#ifndef CUMES_INCLUDE_OUTPUT_CUH_
+#define CUMES_INCLUDE_OUTPUT_CUH_
 #include "solver.cuh"  // SolverResult<T>
 #include "vmec_types.h"
 // (no include cycle: nothing in the input/solver/geometry/forces chain
@@ -22,3 +23,5 @@ void outputPrint(const cumes::SpectralStorage<T>& storage,
 // EquilibriumSnapshot through the Writer interface (cumes/io/writer.hpp; the
 // NetCDF/HDF5 host adapters live in src/cumes/io/netcdf_writer.cpp /
 // hdf5_writer.cpp and include their backend headers there, and only there).
+
+#endif  // CUMES_INCLUDE_OUTPUT_CUH_

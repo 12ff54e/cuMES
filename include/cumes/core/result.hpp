@@ -9,7 +9,8 @@
 // optional slots are mutually exclusive by construction (the constructors are
 // the only way in). This is deliberately tiny — no monadic bind/and_then yet;
 // those arrive with the first consumer that needs them.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_CORE_RESULT_HPP_
+#define CUMES_INCLUDE_CUMES_CORE_RESULT_HPP_
 
 #include <optional>
 #include <string>
@@ -64,3 +65,5 @@ using Result = BasicResult<T, std::string>;
 using Status = BasicResult<void, std::string>;
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_CORE_RESULT_HPP_

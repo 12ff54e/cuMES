@@ -15,7 +15,8 @@
 // The backing store comes from cudaMalloc (256-byte aligned on every supported
 // platform), so aligning each subspan to `align` (a power of two <= 256, the
 // default is alignof(T)) keeps every typed pointer correctly aligned.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_RUNTIME_DEVICE_ARENA_CUH_
+#define CUMES_INCLUDE_CUMES_RUNTIME_DEVICE_ARENA_CUH_
 
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_buffer.cuh"
@@ -183,3 +184,5 @@ class DeviceArena {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_RUNTIME_DEVICE_ARENA_CUH_

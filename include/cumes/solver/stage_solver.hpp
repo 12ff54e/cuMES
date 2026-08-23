@@ -12,7 +12,8 @@
 // automatically — the old hand-summed arithmetic is gone except as a
 // non-authoritative seed for the measuring pass's first budget guess. The
 // arena's liveness/peak report is emitted after the solve.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_SOLVER_STAGE_SOLVER_HPP_
+#define CUMES_INCLUDE_CUMES_SOLVER_STAGE_SOLVER_HPP_
 
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/physics/constraint_operator.hpp"
@@ -227,3 +228,5 @@ class StageSolver {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_SOLVER_STAGE_SOLVER_HPP_

@@ -7,7 +7,8 @@
 // exhausts its iteration cap without meeting ftol fails the whole run. It
 // never calls exit() or writes output — the CLI maps the outcome to an exit
 // code.
-#pragma once
+#ifndef CUMES_INCLUDE_CUMES_SOLVER_MULTIGRID_SOLVER_HPP_
+#define CUMES_INCLUDE_CUMES_SOLVER_MULTIGRID_SOLVER_HPP_
 
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/run_report.hpp"
@@ -95,3 +96,5 @@ class MultigridSolver {
 };
 
 }  // namespace cumes
+
+#endif  // CUMES_INCLUDE_CUMES_SOLVER_MULTIGRID_SOLVER_HPP_
