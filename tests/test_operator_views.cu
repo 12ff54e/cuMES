@@ -64,22 +64,20 @@ int main() {
         const int ns = 5, ntheta = 8, nzeta = 3, nred = ntheta / 2 + 1;  // 5
         const int total = ns * nred * nzeta;
         std::vector<double> h(total, -1.0);
-        double* d = nullptr;
-        cc(cudaMalloc(&d, total * sizeof(double)), "alloc");
-        cc(cudaMemcpy(d, h.data(), total * sizeof(double),
+        cumes::DeviceBuffer<double> d(total);
+        cc(cudaMemcpy(d.data(), h.data(), total * sizeof(double),
                       cudaMemcpyHostToDevice),
            "seed");
-        cumes::ReducedThetaView<double> v(d, ns, nred, nzeta);
+        cumes::ReducedThetaView<double> v(d.data(), ns, nred, nzeta);
         write_reduced<<<(total + 127) / 128, 128>>>(v, nred);
         cc(cudaDeviceSynchronize(), "sync");
         std::vector<double> back(total);
-        cc(cudaMemcpy(back.data(), d, total * sizeof(double),
+        cc(cudaMemcpy(back.data(), d.data(), total * sizeof(double),
                       cudaMemcpyDeviceToHost),
            "read");
         bool ok = true;
         for (int i = 0; i < total; ++i) ok = ok && back[i] == (double)i;
         check(ok, "ReducedThetaView writes [surface][zeta][reduced_theta]");
-        cudaFree(d);
     }
 
     // ---- RealFieldView full-grid indexing vs the legacy formula ----

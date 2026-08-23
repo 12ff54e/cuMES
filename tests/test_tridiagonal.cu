@@ -111,41 +111,36 @@ static int test_solve(int ns) {
     }
 
     // Upload.
-    T *d_lower, *d_diag, *d_upper, *d_rhs, *d_scale;
-    int *d_jMin, *d_status;
-    check_cuda(cudaMalloc(&d_lower, modes * ns * sizeof(T)), "lower");
-    check_cuda(cudaMalloc(&d_diag, modes * ns * sizeof(T)), "diag");
-    check_cuda(cudaMalloc(&d_upper, modes * ns * sizeof(T)), "upper");
-    check_cuda(cudaMalloc(&d_rhs, rhs_count * modes * ns * sizeof(T)), "rhs");
-    check_cuda(cudaMalloc(&d_scale, modes * sizeof(T)), "scale");
-    check_cuda(cudaMalloc(&d_jMin, modes * sizeof(int)), "jMin");
-    check_cuda(cudaMalloc(&d_status, sizeof(int)), "status");
-    check_cuda(cudaMemcpy(d_lower, lower.data(), modes * ns * sizeof(T),
+    cumes::DeviceBuffer<T> d_lower(modes * ns), d_diag(modes * ns),
+        d_upper(modes * ns), d_rhs(rhs_count * modes * ns), d_scale(modes);
+    cumes::DeviceBuffer<int> d_jMin(modes), d_status(1);
+    check_cuda(cudaMemcpy(d_lower.data(), lower.data(), modes * ns * sizeof(T),
                           cudaMemcpyHostToDevice),
                "lower up");
-    check_cuda(cudaMemcpy(d_diag, diag.data(), modes * ns * sizeof(T),
+    check_cuda(cudaMemcpy(d_diag.data(), diag.data(), modes * ns * sizeof(T),
                           cudaMemcpyHostToDevice),
                "diag up");
-    check_cuda(cudaMemcpy(d_upper, upper.data(), modes * ns * sizeof(T),
+    check_cuda(cudaMemcpy(d_upper.data(), upper.data(), modes * ns * sizeof(T),
                           cudaMemcpyHostToDevice),
                "upper up");
-    check_cuda(cudaMemcpy(d_rhs, rhs.data(), rhs_count * modes * ns * sizeof(T),
-                          cudaMemcpyHostToDevice),
-               "rhs up");
-    check_cuda(cudaMemcpy(d_scale, scale.data(), modes * sizeof(T),
+    check_cuda(
+        cudaMemcpy(d_rhs.data(), rhs.data(), rhs_count * modes * ns * sizeof(T),
+                   cudaMemcpyHostToDevice),
+        "rhs up");
+    check_cuda(cudaMemcpy(d_scale.data(), scale.data(), modes * sizeof(T),
                           cudaMemcpyHostToDevice),
                "scale up");
-    check_cuda(cudaMemcpy(d_jMin, jMin.data(), modes * sizeof(int),
+    check_cuda(cudaMemcpy(d_jMin.data(), jMin.data(), modes * sizeof(int),
                           cudaMemcpyHostToDevice),
                "jMin up");
 
     cumes::StridedBatchTridiagonalView<T> v;
-    v.lower = d_lower;
-    v.diagonal = d_diag;
-    v.upper = d_upper;
-    v.rhs = d_rhs;
-    v.first_surface = d_jMin;
-    v.scale = d_scale;
+    v.lower = d_lower.data();
+    v.diagonal = d_diag.data();
+    v.upper = d_upper.data();
+    v.rhs = d_rhs.data();
+    v.first_surface = d_jMin.data();
+    v.scale = d_scale.data();
     v.rhs_count = rhs_count;
     v.rhs_stride = modes * ns;  // [rhs_count][mode][surface]
     v.modes = modes;
@@ -153,40 +148,41 @@ static int test_solve(int ns) {
     v.last_surface = jMax;
 
     // GPU Thomas backend.
-    check_cuda(cudaMemset(d_status, 0, sizeof(int)), "status zero");
+    d_status.zero();
     {
         cumes::ThomasBackend<T> th;
-        th.enqueue_solve(v, d_status, 0);
+        th.enqueue_solve(v, d_status.data(), 0);
     }
     check_cuda(cudaDeviceSynchronize(), "thomas sync");
     int th_status = 0;
-    check_cuda(
-        cudaMemcpy(&th_status, d_status, sizeof(int), cudaMemcpyDeviceToHost),
-        "status get th");
+    check_cuda(cudaMemcpy(&th_status, d_status.data(), sizeof(int),
+                          cudaMemcpyDeviceToHost),
+               "status get th");
     std::vector<T> th_out(rhs_count * modes * ns);
     check_cuda(
-        cudaMemcpy(th_out.data(), d_rhs, rhs_count * modes * ns * sizeof(T),
-                   cudaMemcpyDeviceToHost),
+        cudaMemcpy(th_out.data(), d_rhs.data(),
+                   rhs_count * modes * ns * sizeof(T), cudaMemcpyDeviceToHost),
         "th out");
 
     // GPU PCR backend (fresh rhs copy).
-    check_cuda(cudaMemcpy(d_rhs, rhs.data(), rhs_count * modes * ns * sizeof(T),
-                          cudaMemcpyHostToDevice),
-               "rhs reset");
-    check_cuda(cudaMemset(d_status, 0, sizeof(int)), "status zero 2");
+    check_cuda(
+        cudaMemcpy(d_rhs.data(), rhs.data(), rhs_count * modes * ns * sizeof(T),
+                   cudaMemcpyHostToDevice),
+        "rhs reset");
+    d_status.zero();
     {
         cumes::PcrBackend<T> pc;
-        pc.enqueue_solve(v, d_status, 0);
+        pc.enqueue_solve(v, d_status.data(), 0);
     }
     check_cuda(cudaDeviceSynchronize(), "pcr sync");
     int pc_status = 0;
-    check_cuda(
-        cudaMemcpy(&pc_status, d_status, sizeof(int), cudaMemcpyDeviceToHost),
-        "status get pcr");
+    check_cuda(cudaMemcpy(&pc_status, d_status.data(), sizeof(int),
+                          cudaMemcpyDeviceToHost),
+               "status get pcr");
     std::vector<T> pc_out(rhs_count * modes * ns);
     check_cuda(
-        cudaMemcpy(pc_out.data(), d_rhs, rhs_count * modes * ns * sizeof(T),
-                   cudaMemcpyDeviceToHost),
+        cudaMemcpy(pc_out.data(), d_rhs.data(),
+                   rhs_count * modes * ns * sizeof(T), cudaMemcpyDeviceToHost),
         "pc out");
 
     // Healthy systems must report no breakdown.
@@ -234,13 +230,6 @@ static int test_solve(int ns) {
         }
     }
 
-    cudaFree(d_lower);
-    cudaFree(d_diag);
-    cudaFree(d_upper);
-    cudaFree(d_rhs);
-    cudaFree(d_scale);
-    cudaFree(d_jMin);
-    cudaFree(d_status);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -265,41 +254,36 @@ static int test_breakdown() {
     }
     diag[5] = T(0);  // a genuinely singular pivot
 
-    T *d_lower, *d_diag, *d_upper, *d_rhs, *d_scale;
-    int *d_jMin, *d_status;
-    check_cuda(cudaMalloc(&d_lower, modes * ns * sizeof(T)), "lower");
-    check_cuda(cudaMalloc(&d_diag, modes * ns * sizeof(T)), "diag");
-    check_cuda(cudaMalloc(&d_upper, modes * ns * sizeof(T)), "upper");
-    check_cuda(cudaMalloc(&d_rhs, rhs_count * modes * ns * sizeof(T)), "rhs");
-    check_cuda(cudaMalloc(&d_scale, modes * sizeof(T)), "scale");
-    check_cuda(cudaMalloc(&d_jMin, modes * sizeof(int)), "jMin");
-    check_cuda(cudaMalloc(&d_status, sizeof(int)), "status");
-    check_cuda(cudaMemcpy(d_lower, lower.data(), modes * ns * sizeof(T),
+    cumes::DeviceBuffer<T> d_lower(modes * ns), d_diag(modes * ns),
+        d_upper(modes * ns), d_rhs(rhs_count * modes * ns), d_scale(modes);
+    cumes::DeviceBuffer<int> d_jMin(modes), d_status(1);
+    check_cuda(cudaMemcpy(d_lower.data(), lower.data(), modes * ns * sizeof(T),
                           cudaMemcpyHostToDevice),
                "lower up");
-    check_cuda(cudaMemcpy(d_diag, diag.data(), modes * ns * sizeof(T),
+    check_cuda(cudaMemcpy(d_diag.data(), diag.data(), modes * ns * sizeof(T),
                           cudaMemcpyHostToDevice),
                "diag up");
-    check_cuda(cudaMemcpy(d_upper, upper.data(), modes * ns * sizeof(T),
+    check_cuda(cudaMemcpy(d_upper.data(), upper.data(), modes * ns * sizeof(T),
                           cudaMemcpyHostToDevice),
                "upper up");
-    check_cuda(cudaMemcpy(d_rhs, rhs.data(), rhs_count * modes * ns * sizeof(T),
-                          cudaMemcpyHostToDevice),
-               "rhs up");
-    check_cuda(cudaMemcpy(d_scale, scale.data(), modes * sizeof(T),
+    check_cuda(
+        cudaMemcpy(d_rhs.data(), rhs.data(), rhs_count * modes * ns * sizeof(T),
+                   cudaMemcpyHostToDevice),
+        "rhs up");
+    check_cuda(cudaMemcpy(d_scale.data(), scale.data(), modes * sizeof(T),
                           cudaMemcpyHostToDevice),
                "scale up");
-    check_cuda(cudaMemcpy(d_jMin, jMin.data(), modes * sizeof(int),
+    check_cuda(cudaMemcpy(d_jMin.data(), jMin.data(), modes * sizeof(int),
                           cudaMemcpyHostToDevice),
                "jMin up");
 
     cumes::StridedBatchTridiagonalView<T> v;
-    v.lower = d_lower;
-    v.diagonal = d_diag;
-    v.upper = d_upper;
-    v.rhs = d_rhs;
-    v.first_surface = d_jMin;
-    v.scale = d_scale;
+    v.lower = d_lower.data();
+    v.diagonal = d_diag.data();
+    v.upper = d_upper.data();
+    v.rhs = d_rhs.data();
+    v.first_surface = d_jMin.data();
+    v.scale = d_scale.data();
     v.rhs_count = rhs_count;
     v.rhs_stride = modes * ns;
     v.modes = modes;
@@ -308,23 +292,23 @@ static int test_breakdown() {
 
     // Both backends must report at least one breakdown.
     for (int pass = 0; pass < 2; ++pass) {
-        check_cuda(
-            cudaMemcpy(d_rhs, rhs.data(), rhs_count * modes * ns * sizeof(T),
-                       cudaMemcpyHostToDevice),
-            "rhs reset");
-        check_cuda(cudaMemset(d_status, 0, sizeof(int)), "status zero");
+        check_cuda(cudaMemcpy(d_rhs.data(), rhs.data(),
+                              rhs_count * modes * ns * sizeof(T),
+                              cudaMemcpyHostToDevice),
+                   "rhs reset");
+        d_status.zero();
         if (pass == 0) {
             cumes::ThomasBackend<T> th;
-            th.enqueue_solve(v, d_status, 0);
+            th.enqueue_solve(v, d_status.data(), 0);
         } else {
             cumes::PcrBackend<T> pc;
-            pc.enqueue_solve(v, d_status, 0);
+            pc.enqueue_solve(v, d_status.data(), 0);
         }
         check_cuda(cudaDeviceSynchronize(), "sync");
         int st = 0;
-        check_cuda(
-            cudaMemcpy(&st, d_status, sizeof(int), cudaMemcpyDeviceToHost),
-            "status get");
+        check_cuda(cudaMemcpy(&st, d_status.data(), sizeof(int),
+                              cudaMemcpyDeviceToHost),
+                   "status get");
         if (st == 0) {
             std::cerr << format(
                 "FAIL [status] {} did not report the zero-diagonal "
@@ -334,13 +318,6 @@ static int test_breakdown() {
         }
     }
 
-    cudaFree(d_lower);
-    cudaFree(d_diag);
-    cudaFree(d_upper);
-    cudaFree(d_rhs);
-    cudaFree(d_scale);
-    cudaFree(d_jMin);
-    cudaFree(d_status);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }

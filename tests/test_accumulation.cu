@@ -12,6 +12,7 @@
 // in float but survives in double.
 #include "cumes/numerics/accumulation.hpp"
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/device_buffer.cuh"
 #include "cumes_test.h"
 
 #include <cmath>
@@ -52,22 +53,19 @@ int main() {
     for (int i = 0; i < n; ++i)
         cpu_ref += (long double)h[i] * (long double)h[i];
 
-    float* d_x = nullptr;
-    float* d_out = nullptr;
-    cumes::check_cuda(cudaMalloc(&d_x, n * sizeof(float)), "alloc x");
-    cumes::check_cuda(cudaMalloc(&d_out, sizeof(float)), "alloc out");
-    cumes::check_cuda(
-        cudaMemcpy(d_x, h.data(), n * sizeof(float), cudaMemcpyHostToDevice),
-        "cpy x");
+    cumes::DeviceBuffer<float> d_x(n), d_out(1);
+    cumes::check_cuda(cudaMemcpy(d_x.data(), h.data(), n * sizeof(float),
+                                 cudaMemcpyHostToDevice),
+                      "cpy x");
 
     float f_acc = 0.0f, d_acc = 0.0f;
-    sum_squares_kernel<float, float><<<1, 256>>>(d_x, n, d_out);
+    sum_squares_kernel<float, float><<<1, 256>>>(d_x.data(), n, d_out.data());
     cumes::check_cuda(
-        cudaMemcpy(&f_acc, d_out, sizeof(float), cudaMemcpyDeviceToHost),
+        cudaMemcpy(&f_acc, d_out.data(), sizeof(float), cudaMemcpyDeviceToHost),
         "cpy float out");
-    sum_squares_kernel<float, double><<<1, 256>>>(d_x, n, d_out);
+    sum_squares_kernel<float, double><<<1, 256>>>(d_x.data(), n, d_out.data());
     cumes::check_cuda(
-        cudaMemcpy(&d_acc, d_out, sizeof(float), cudaMemcpyDeviceToHost),
+        cudaMemcpy(&d_acc, d_out.data(), sizeof(float), cudaMemcpyDeviceToHost),
         "cpy double out");
 
     const double ref = (double)cpu_ref;
@@ -87,9 +85,6 @@ int main() {
     check(derr < ferr,
           "double accumulation not better than float accumulation");
     check(derr < 1e-6 * ref, "double accumulation too far from reference");
-
-    cudaFree(d_x);
-    cudaFree(d_out);
 
     return summary();
 }

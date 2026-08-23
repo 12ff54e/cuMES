@@ -371,18 +371,15 @@ static int t_fwd_const(DeviceParams<T>& p,
     size_t nbr = p.ns * p.nZnT * sizeof(T);
     std::vector<T> fr(p.ns * p.nZnT, T(3.0));
     std::vector<T> fs(6 * p.ns * p.mnmax, T(0));
-    T* d_fs;
-    cc(cudaMalloc(&d_fs, 6 * p.ns * p.mnmax * sizeof(T)), "fs");
-    T *frcon_e, *frcon_o, *fzcon_e, *fzcon_o;
-    size_t nfc = (size_t)p.ns * p.nZnT * sizeof(T);
-    cudaMalloc(&frcon_e, nfc);
-    cudaMemset(frcon_e, 0, nfc);
-    cudaMalloc(&frcon_o, nfc);
-    cudaMemset(frcon_o, 0, nfc);
-    cudaMalloc(&fzcon_e, nfc);
-    cudaMemset(fzcon_e, 0, nfc);
-    cudaMalloc(&fzcon_o, nfc);
-    cudaMemset(fzcon_o, 0, nfc);
+    cumes::DeviceBuffer<T> d_fs(6 * p.ns * p.mnmax);
+    cumes::DeviceBuffer<T> frcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> frcon_o((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_o((size_t)p.ns * p.nZnT);
+    frcon_e.zero();
+    frcon_o.zero();
+    fzcon_e.zero();
+    fzcon_o.zero();
     // armn_e = 3.0 on all surfaces; everything else zero.
     cc(cudaMemset(rs.d_armn_e, 0, nbr), "ms");
     cc(cudaMemcpy(rs.d_armn_e, fr.data(), nbr, cudaMemcpyHostToDevice),
@@ -403,9 +400,9 @@ static int t_fwd_const(DeviceParams<T>& p,
     cc(cudaMemset(rs.d_clmn_e, 0, nbr), "ms");
     cc(cudaMemset(rs.d_clmn_o, 0, nbr), "ms");
     op.forward(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                   d_fs, p.ns, p.mnmax),
-               frcon_e, frcon_o, fzcon_e, fzcon_o);
-    cc(cudaMemcpy(fs.data(), d_fs, 6 * p.ns * p.mnmax * sizeof(T),
+                   d_fs.data(), p.ns, p.mnmax),
+               frcon_e.data(), frcon_o.data(), fzcon_e.data(), fzcon_o.data());
+    cc(cudaMemcpy(fs.data(), d_fs.data(), 6 * p.ns * p.mnmax * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get fs");
     for (int j = 0; j < p.ns - 1; ++j) {
@@ -418,11 +415,6 @@ static int t_fwd_const(DeviceParams<T>& p,
                        tol_fwd<T>(), "fR0_ss", j, m);
         }
     }
-    cudaFree(d_fs);
-    cudaFree(frcon_e);
-    cudaFree(frcon_o);
-    cudaFree(fzcon_e);
-    cudaFree(fzcon_o);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -436,18 +428,15 @@ static int t_fwd_sine(DeviceParams<T>& p,
     size_t nbr = p.ns * p.nZnT * sizeof(T);
     std::vector<T> fz(p.ns * p.nZnT, T(0));
     std::vector<T> fs(6 * p.ns * p.mnmax, T(0));
-    T* d_fs;
-    cc(cudaMalloc(&d_fs, 6 * p.ns * p.mnmax * sizeof(T)), "fs");
-    T *frcon_e, *frcon_o, *fzcon_e, *fzcon_o;
-    size_t nfc = (size_t)p.ns * p.nZnT * sizeof(T);
-    cudaMalloc(&frcon_e, nfc);
-    cudaMemset(frcon_e, 0, nfc);
-    cudaMalloc(&frcon_o, nfc);
-    cudaMemset(frcon_o, 0, nfc);
-    cudaMalloc(&fzcon_e, nfc);
-    cudaMemset(fzcon_e, 0, nfc);
-    cudaMalloc(&fzcon_o, nfc);
-    cudaMemset(fzcon_o, 0, nfc);
+    cumes::DeviceBuffer<T> d_fs(6 * p.ns * p.mnmax);
+    cumes::DeviceBuffer<T> frcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> frcon_o((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_o((size_t)p.ns * p.nZnT);
+    frcon_e.zero();
+    frcon_o.zero();
+    fzcon_e.zero();
+    fzcon_o.zero();
     // F_Z = sin(θ)cos(ζ) on interior surfaces: picked up by fzsc of (1,1).
     // m=1 is ODD parity: the input lives in azmn_o (parity-split arrays).
     for (int j = 0; j < p.ns - 1; ++j)
@@ -474,9 +463,9 @@ static int t_fwd_sine(DeviceParams<T>& p,
     cc(cudaMemset(rs.d_clmn_e, 0, nbr), "ms");
     cc(cudaMemset(rs.d_clmn_o, 0, nbr), "ms");
     op.forward(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                   d_fs, p.ns, p.mnmax),
-               frcon_e, frcon_o, fzcon_e, fzcon_o);
-    cc(cudaMemcpy(fs.data(), d_fs, 6 * p.ns * p.mnmax * sizeof(T),
+                   d_fs.data(), p.ns, p.mnmax),
+               frcon_e.data(), frcon_o.data(), fzcon_e.data(), fzcon_o.data());
+    cc(cudaMemcpy(fs.data(), d_fs.data(), 6 * p.ns * p.mnmax * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get fs");
     int m11 = 1 * (p.ntor + 1) + 1;
@@ -489,11 +478,6 @@ static int t_fwd_sine(DeviceParams<T>& p,
         check_near((double)fs[j + m11 * p.ns + 1 * p.mnmax * p.ns], exp,
                    tol_fwd<T>(), "fZ_sc", j, m11);
     }
-    cudaFree(d_fs);
-    cudaFree(frcon_e);
-    cudaFree(frcon_o);
-    cudaFree(fzcon_e);
-    cudaFree(fzcon_o);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -622,23 +606,20 @@ static int t_fwd_axis(DeviceParams<T>& p,
     cc(cudaMemset(rs.d_czmn_e, 0, nbr), "ms");
     cc(cudaMemcpy(rs.d_czmn_e, fr.data(), nbr, cudaMemcpyHostToDevice),
        "czmn_e");
-    T* d_fs;
-    cc(cudaMalloc(&d_fs, 6 * p.ns * p.mnmax * sizeof(T)), "fs");
-    T *frcon_e, *frcon_o, *fzcon_e, *fzcon_o;
-    size_t nfc = (size_t)p.ns * p.nZnT * sizeof(T);
-    cudaMalloc(&frcon_e, nfc);
-    cudaMemset(frcon_e, 0, nfc);
-    cudaMalloc(&frcon_o, nfc);
-    cudaMemset(frcon_o, 0, nfc);
-    cudaMalloc(&fzcon_e, nfc);
-    cudaMemset(fzcon_e, 0, nfc);
-    cudaMalloc(&fzcon_o, nfc);
-    cudaMemset(fzcon_o, 0, nfc);
+    cumes::DeviceBuffer<T> d_fs(6 * p.ns * p.mnmax);
+    cumes::DeviceBuffer<T> frcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> frcon_o((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_o((size_t)p.ns * p.nZnT);
+    frcon_e.zero();
+    frcon_o.zero();
+    fzcon_e.zero();
+    fzcon_o.zero();
     op.forward(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                   d_fs, p.ns, p.mnmax),
-               frcon_e, frcon_o, fzcon_e, fzcon_o);
+                   d_fs.data(), p.ns, p.mnmax),
+               frcon_e.data(), frcon_o.data(), fzcon_e.data(), fzcon_o.data());
     std::vector<T> fs(6 * p.ns * p.mnmax);
-    cc(cudaMemcpy(fs.data(), d_fs, 6 * p.ns * p.mnmax * sizeof(T),
+    cc(cudaMemcpy(fs.data(), d_fs.data(), 6 * p.ns * p.mnmax * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get fs");
     std::vector<double> hcc, hss, hsc, hcs;
@@ -678,11 +659,6 @@ static int t_fwd_axis(DeviceParams<T>& p,
         check_mode((double)fs[0 + m * p.ns + 4 * p.mnmax * p.ns], 0.0,
                    tol_fwd<T>(), "axis_m>0_z", 0, m);
     }
-    cudaFree(d_fs);
-    cudaFree(frcon_e);
-    cudaFree(frcon_o);
-    cudaFree(fzcon_e);
-    cudaFree(fzcon_o);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -714,23 +690,20 @@ static int t_fwd_lcfs(DeviceParams<T>& p,
     cc(cudaMemset(rs.d_clmn_o, 0, nbr), "ms");
     cc(cudaMemcpy(rs.d_clmn_o, fr.data(), nbr, cudaMemcpyHostToDevice),
        "clmn_o");
-    T* d_fs;
-    cc(cudaMalloc(&d_fs, 6 * p.ns * p.mnmax * sizeof(T)), "fs");
-    T *frcon_e, *frcon_o, *fzcon_e, *fzcon_o;
-    size_t nfc = (size_t)p.ns * p.nZnT * sizeof(T);
-    cudaMalloc(&frcon_e, nfc);
-    cudaMemset(frcon_e, 0, nfc);
-    cudaMalloc(&frcon_o, nfc);
-    cudaMemset(frcon_o, 0, nfc);
-    cudaMalloc(&fzcon_e, nfc);
-    cudaMemset(fzcon_e, 0, nfc);
-    cudaMalloc(&fzcon_o, nfc);
-    cudaMemset(fzcon_o, 0, nfc);
+    cumes::DeviceBuffer<T> d_fs(6 * p.ns * p.mnmax);
+    cumes::DeviceBuffer<T> frcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> frcon_o((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_o((size_t)p.ns * p.nZnT);
+    frcon_e.zero();
+    frcon_o.zero();
+    fzcon_e.zero();
+    fzcon_o.zero();
     op.forward(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                   d_fs, p.ns, p.mnmax),
-               frcon_e, frcon_o, fzcon_e, fzcon_o);
+                   d_fs.data(), p.ns, p.mnmax),
+               frcon_e.data(), frcon_o.data(), fzcon_e.data(), fzcon_o.data());
     std::vector<T> fs(6 * p.ns * p.mnmax);
-    cc(cudaMemcpy(fs.data(), d_fs, 6 * p.ns * p.mnmax * sizeof(T),
+    cc(cudaMemcpy(fs.data(), d_fs.data(), 6 * p.ns * p.mnmax * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get fs");
     std::vector<double> hcc, hss, hsc, hcs;
@@ -768,11 +741,6 @@ static int t_fwd_lcfs(DeviceParams<T>& p,
         check_mode((double)fs[jB + mode * p.ns + c * p.mnmax * p.ns], 0.0,
                    tol_fwd<T>(), "lcfs_rz", jB, mode);
     }
-    cudaFree(d_fs);
-    cudaFree(frcon_e);
-    cudaFree(frcon_o);
-    cudaFree(fzcon_e);
-    cudaFree(fzcon_o);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -837,23 +805,20 @@ static int t_fwd_theta32() {
     cc(cudaMemset(rs.d_clmn_o, 0, nbr), "ms");
     cc(cudaMemcpy(rs.d_armn_o, fr.data(), nbr, cudaMemcpyHostToDevice),
        "armn_o");
-    T* d_fs;
-    cc(cudaMalloc(&d_fs, 6 * p.ns * p.mnmax * sizeof(T)), "fs");
-    T *frcon_e, *frcon_o, *fzcon_e, *fzcon_o;
-    size_t nfc = (size_t)p.ns * p.nZnT * sizeof(T);
-    cudaMalloc(&frcon_e, nfc);
-    cudaMemset(frcon_e, 0, nfc);
-    cudaMalloc(&frcon_o, nfc);
-    cudaMemset(frcon_o, 0, nfc);
-    cudaMalloc(&fzcon_e, nfc);
-    cudaMemset(fzcon_e, 0, nfc);
-    cudaMalloc(&fzcon_o, nfc);
-    cudaMemset(fzcon_o, 0, nfc);
+    cumes::DeviceBuffer<T> d_fs(6 * p.ns * p.mnmax);
+    cumes::DeviceBuffer<T> frcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> frcon_o((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<T> fzcon_o((size_t)p.ns * p.nZnT);
+    frcon_e.zero();
+    frcon_o.zero();
+    fzcon_e.zero();
+    fzcon_o.zero();
     op.forward(cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                   d_fs, p.ns, p.mnmax),
-               frcon_e, frcon_o, fzcon_e, fzcon_o);
+                   d_fs.data(), p.ns, p.mnmax),
+               frcon_e.data(), frcon_o.data(), fzcon_e.data(), fzcon_o.data());
     std::vector<T> fs(6 * p.ns * p.mnmax);
-    cc(cudaMemcpy(fs.data(), d_fs, 6 * p.ns * p.mnmax * sizeof(T),
+    cc(cudaMemcpy(fs.data(), d_fs.data(), 6 * p.ns * p.mnmax * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get fs");
     // CPU reference (the reduced-grid trapezoid of CLAUDE.md "Forward DFT
@@ -878,11 +843,6 @@ static int t_fwd_theta32() {
         2.0 * sumth * sumze;  // mscale*nscale = sqrt2*sqrt2 for (1,1)
     check_mode((double)fs[1 + m11 * p.ns + 0 * p.mnmax * p.ns], expect,
                tol_fwd<T>(), "theta32_frcc", 1, m11);
-    cudaFree(d_fs);
-    cudaFree(frcon_e);
-    cudaFree(frcon_o);
-    cudaFree(fzcon_e);
-    cudaFree(fzcon_o);
     real_space_free(rs);
     cumes::mode_table_free(mt);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
@@ -919,38 +879,32 @@ static int t_mpol2_construct() {
         // Empty pass band (no m in [1, mpol-2]): gCon rows j>=1 -> zero,
         // the axis row untouched (the bandpass kernels skip jF==0).
         std::vector<T> zero(p.ns * p.nZnT, T(0));
-        T *d_eff, *d_g, *d_tcon, *d_faccon;
-        cc(cudaMalloc(&d_eff, zero.size() * sizeof(T)), "eff");
-        cc(cudaMalloc(&d_g, zero.size() * sizeof(T)), "g");
-        cc(cudaMalloc(&d_tcon, p.ns * sizeof(T)), "tcon");
-        cc(cudaMalloc(&d_faccon, p.mpol * sizeof(T)), "faccon");
-        cc(cudaMemcpy(d_eff, zero.data(), zero.size() * sizeof(T),
+        cumes::DeviceBuffer<T> d_eff(zero.size()), d_g(zero.size());
+        cumes::DeviceBuffer<T> d_tcon(p.ns), d_faccon(p.mpol);
+        cc(cudaMemcpy(d_eff.data(), zero.data(), zero.size() * sizeof(T),
                       cudaMemcpyHostToDevice),
            "up eff");
         std::vector<T> tone(p.ns, T(1)), fone(p.mpol, T(1));
-        cc(cudaMemcpy(d_tcon, tone.data(), p.ns * sizeof(T),
+        cc(cudaMemcpy(d_tcon.data(), tone.data(), p.ns * sizeof(T),
                       cudaMemcpyHostToDevice),
            "up tcon");
-        cc(cudaMemcpy(d_faccon, fone.data(), p.mpol * sizeof(T),
+        cc(cudaMemcpy(d_faccon.data(), fone.data(), p.mpol * sizeof(T),
                       cudaMemcpyHostToDevice),
            "up faccon");
         std::vector<T> seed(p.ns * p.nZnT, T(7));
-        cc(cudaMemcpy(d_g, seed.data(), seed.size() * sizeof(T),
+        cc(cudaMemcpy(d_g.data(), seed.data(), seed.size() * sizeof(T),
                       cudaMemcpyHostToDevice),
            "up g");
-        op.dealias_bandpass(d_eff, d_tcon, d_faccon, d_g, 0);
+        op.dealias_bandpass(d_eff.data(), d_tcon.data(), d_faccon.data(),
+                            d_g.data(), 0);
         std::vector<T> back(p.ns * p.nZnT);
-        cc(cudaMemcpy(back.data(), d_g, back.size() * sizeof(T),
+        cc(cudaMemcpy(back.data(), d_g.data(), back.size() * sizeof(T),
                       cudaMemcpyDeviceToHost),
            "get g");
         for (int j = 1; j < p.ns && ok; ++j)
             for (int k = 0; k < p.nZnT && ok; ++k)
                 if (back[j * p.nZnT + k] != T(0)) ok = false;
         if (!ok) std::cerr << "FAIL [mpol2] gCon not zeroed on j>=1\n";
-        cudaFree(d_eff);
-        cudaFree(d_g);
-        cudaFree(d_tcon);
-        cudaFree(d_faccon);
     } catch (const std::exception& e) {
         threw = true;
         std::cerr << format("FAIL [mpol2] construction threw: {}\n", e.what());
@@ -1024,15 +978,14 @@ static int t_enqueue_inverse_views(DeviceParams<T>& p,
            "get ref");
     // Non-aliasing scratch bundle seeded with -1 (proves the views are
     // written).
-    T* d_ax = nullptr;
-    cc(cudaMalloc(&d_ax, (size_t)18 * nn * sizeof(T)), "ax geom");
+    cumes::DeviceBuffer<T> d_ax((size_t)18 * nn);
     std::vector<T> seed(18 * nn, T(-1));
-    cc(cudaMemcpy(d_ax, seed.data(), (size_t)18 * nn * sizeof(T),
+    cc(cudaMemcpy(d_ax.data(), seed.data(), (size_t)18 * nn * sizeof(T),
                   cudaMemcpyHostToDevice),
        "seed ax");
     auto view = [&](int k) {
-        return cumes::RealFieldView<T>(d_ax + (size_t)k * nn, p.ns, p.ntheta,
-                                       p.nzeta);
+        return cumes::RealFieldView<T>(d_ax.data() + (size_t)k * nn, p.ns,
+                                       p.ntheta, p.nzeta);
     };
     cumes::GeometryParityViews<T> g;
     g.r_e = view(0);
@@ -1056,7 +1009,7 @@ static int t_enqueue_inverse_views(DeviceParams<T>& p,
     op.enqueue_inverse(coeff, g, cumes::RealFieldView<T>(),
                        cumes::RealFieldView<T>(), 0);
     std::vector<T> ax(18 * nn);
-    cc(cudaMemcpy(ax.data(), d_ax, (size_t)18 * nn * sizeof(T),
+    cc(cudaMemcpy(ax.data(), d_ax.data(), (size_t)18 * nn * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get ax");
     for (int c = 0; c < 18; ++c)
@@ -1064,7 +1017,6 @@ static int t_enqueue_inverse_views(DeviceParams<T>& p,
             check_near((double)ax[c * nn + i], (double)ref[c * nn + i],
                        tol_inv<T>(), nm[c], (int)(i / p.nZnT),
                        (int)(i % p.nZnT));
-    cudaFree(d_ax);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -1084,14 +1036,13 @@ static int t_enqueue_forward_views(DeviceParams<T>& p,
     cc(cudaMemset(rs.d_armn_e, 0, nbr), "ms");
     cc(cudaMemcpy(rs.d_armn_e, fr.data(), nbr, cudaMemcpyHostToDevice),
        "armn_e");
-    T* d_fs;
-    cc(cudaMalloc(&d_fs, 6 * p.ns * p.mnmax * sizeof(T)), "fs");
+    cumes::DeviceBuffer<T> d_fs(6 * p.ns * p.mnmax);
     // Zero views over a separate buffer + zero constraint force.
-    T* d_zero = nullptr;
-    cc(cudaMalloc(&d_zero, nn * sizeof(T)), "zero");
-    cc(cudaMemset(d_zero, 0, nn * sizeof(T)), "ms zero");
+    cumes::DeviceBuffer<T> d_zero(nn);
+    d_zero.zero();
     auto view = [&](int) {
-        return cumes::RealFieldView<const T>(d_zero, p.ns, p.ntheta, p.nzeta);
+        return cumes::RealFieldView<const T>(d_zero.data(), p.ns, p.ntheta,
+                                             p.nzeta);
     };
     cumes::ForceParityViews<const T> f;
     f.armn_e = view(0);
@@ -1117,10 +1068,10 @@ static int t_enqueue_forward_views(DeviceParams<T>& p,
     cf.fzcon_o = view(16);
     op.enqueue_forward(f, cf,
                        cumes::SpectralView<T, cumes::DecomposedResidualDomain>(
-                           d_fs, p.ns, p.mnmax),
+                           d_fs.data(), p.ns, p.mnmax),
                        0);
     std::vector<T> fs(6 * p.ns * p.mnmax);
-    cc(cudaMemcpy(fs.data(), d_fs, 6 * p.ns * p.mnmax * sizeof(T),
+    cc(cudaMemcpy(fs.data(), d_fs.data(), 6 * p.ns * p.mnmax * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get fs");
     // Zero input -> zero residual (the recover kernel writes all six families
@@ -1132,8 +1083,6 @@ static int t_enqueue_forward_views(DeviceParams<T>& p,
         std::cerr << format("FAIL [fwdviews] {} nonzero entries (expected 0)\n",
                             bad);
     failures() += (bad > 0) ? 1 : 0;
-    cudaFree(d_fs);
-    cudaFree(d_zero);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }

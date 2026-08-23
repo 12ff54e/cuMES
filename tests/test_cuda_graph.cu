@@ -37,39 +37,33 @@ int main() {
     // ---- gate 1: three-kernel DAG, graph == stream ----
     {
         const int n = 1024;
-        float *a = nullptr, *b = nullptr, *c = nullptr, *c_stream = nullptr;
-        check_cuda(cudaMalloc(&a, n * 4), "a");
-        check_cuda(cudaMalloc(&b, n * 4), "b");
-        check_cuda(cudaMalloc(&c, n * 4), "c");
-        check_cuda(cudaMalloc(&c_stream, n * 4), "c_stream");
+        cumes::DeviceBuffer<float> a(n), b(n), c(n), c_stream(n);
         cumes::Stream stream;
 
-        fill_kernel<<<8, 128, 0, stream.get()>>>(a, n, 1.0f);
-        fill_kernel<<<8, 128, 0, stream.get()>>>(b, n, 2.0f);
-        add_kernel<<<8, 128, 0, stream.get()>>>(a, b, c_stream, n);
+        fill_kernel<<<8, 128, 0, stream.get()>>>(a.data(), n, 1.0f);
+        fill_kernel<<<8, 128, 0, stream.get()>>>(b.data(), n, 2.0f);
+        add_kernel<<<8, 128, 0, stream.get()>>>(a.data(), b.data(),
+                                                c_stream.data(), n);
         stream.synchronize();
 
         auto g = cumes::CudaGraph::capture(stream.get(), [&]() {
-            fill_kernel<<<8, 128, 0, stream.get()>>>(a, n, 1.0f);
-            fill_kernel<<<8, 128, 0, stream.get()>>>(b, n, 2.0f);
-            add_kernel<<<8, 128, 0, stream.get()>>>(a, b, c, n);
+            fill_kernel<<<8, 128, 0, stream.get()>>>(a.data(), n, 1.0f);
+            fill_kernel<<<8, 128, 0, stream.get()>>>(b.data(), n, 2.0f);
+            add_kernel<<<8, 128, 0, stream.get()>>>(a.data(), b.data(),
+                                                    c.data(), n);
         });
         g.launch(stream.get());
         stream.synchronize();
 
         std::vector<float> hc(n), hc_stream(n);
-        check_cuda(cudaMemcpy(hc.data(), c, n * 4, cudaMemcpyDeviceToHost),
-                   "read c");
-        check_cuda(cudaMemcpy(hc_stream.data(), c_stream, n * 4,
+        check_cuda(
+            cudaMemcpy(hc.data(), c.data(), n * 4, cudaMemcpyDeviceToHost),
+            "read c");
+        check_cuda(cudaMemcpy(hc_stream.data(), c_stream.data(), n * 4,
                               cudaMemcpyDeviceToHost),
                    "read c_stream");
         check(max_diff(hc, hc_stream) == 0.0,
               "three-kernel graph == stream (bitwise)");
-
-        cudaFree(a);
-        cudaFree(b);
-        cudaFree(c);
-        cudaFree(c_stream);
     }
 
     // ---- gate 2: cuFFT inverse transform, graph == stream ----

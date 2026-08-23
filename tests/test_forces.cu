@@ -181,23 +181,21 @@ int main() {
     // Compute spectral forces via forward DFT
     size_t nbs = 6 * p.ns * p.mnmax * sizeof(double);
     std::vector<double> d_fspec(6 * p.ns * p.mnmax);
-    double* d_fspec_gpu;
-    check_cuda(cudaMalloc(&d_fspec_gpu, nbs), "fspec");
-    double *frcon_e, *frcon_o, *fzcon_e, *fzcon_o;
-    cudaMalloc(&frcon_e, (size_t)p.ns * p.nZnT * sizeof(double));
-    cudaMemset(frcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double));
-    cudaMalloc(&frcon_o, (size_t)p.ns * p.nZnT * sizeof(double));
-    cudaMemset(frcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double));
-    cudaMalloc(&fzcon_e, (size_t)p.ns * p.nZnT * sizeof(double));
-    cudaMemset(fzcon_e, 0, (size_t)p.ns * p.nZnT * sizeof(double));
-    cudaMalloc(&fzcon_o, (size_t)p.ns * p.nZnT * sizeof(double));
-    cudaMemset(fzcon_o, 0, (size_t)p.ns * p.nZnT * sizeof(double));
+    cumes::DeviceBuffer<double> d_fspec_gpu(6 * p.ns * p.mnmax);
+    cumes::DeviceBuffer<double> frcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<double> frcon_o((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<double> fzcon_e((size_t)p.ns * p.nZnT);
+    cumes::DeviceBuffer<double> fzcon_o((size_t)p.ns * p.nZnT);
+    frcon_e.zero();
+    frcon_o.zero();
+    fzcon_e.zero();
+    fzcon_o.zero();
     op.forward(cumes::SpectralView<double, cumes::DecomposedResidualDomain>(
-                   d_fspec_gpu, p.ns, p.mnmax),
-               frcon_e, frcon_o, fzcon_e, fzcon_o);
-    check_cuda(
-        cudaMemcpy(d_fspec.data(), d_fspec_gpu, nbs, cudaMemcpyDeviceToHost),
-        "fspec d");
+                   d_fspec_gpu.data(), p.ns, p.mnmax),
+               frcon_e.data(), frcon_o.data(), fzcon_e.data(), fzcon_o.data());
+    check_cuda(cudaMemcpy(d_fspec.data(), d_fspec_gpu.data(), nbs,
+                          cudaMemcpyDeviceToHost),
+               "fspec d");
 
     std::cout << "\nSpectral forces (f_rmnc, f_zmns, f_lmnc):\n";
     std::cout << "  mode | m  n |  f_rmnc(axis) f_zmns(axis) f_lmnc(axis)\n";
@@ -270,12 +268,6 @@ int main() {
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
     real_space_free(rs);
     cumes::mode_table_free(mt);
-    cudaFree(frcon_e);
-    cudaFree(frcon_o);
-    cudaFree(fzcon_e);
-    cudaFree(fzcon_o);
-
-    cudaFree(d_fspec_gpu);
 
     std::cout << "\nDone.\n";
     return summary();
