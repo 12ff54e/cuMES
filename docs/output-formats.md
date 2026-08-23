@@ -10,7 +10,7 @@ back). The authoritative freeze lives in `configs/schema-v1.json` under
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cuMES <in> out.bin` | versioned binary (schema v1, on-disk version 3) | `CUMES001` |
+| `./build/cumes <in> out.bin` | versioned binary (schema v1, on-disk version 3) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
 | `--checkpoint <path>` | versioned checkpoint (v2) | `CUMECKP1` |
 | `--restart <path>` (read) | versioned checkpoint (v2; v1 still read) | `CUMECKP1` |

@@ -128,7 +128,7 @@ cross-architecture claim is made (see `docs/performance.md`).
   ordering, stream-fault surfacing); an Nsight Systems/API-trace audit
   remains the documented manual step before any multi-stream or CUDA Graph
   production variant:
-  `nsys profile -o trace ./build/cuMES inputs/solovev.json out.bin`.
+  `nsys profile -o trace ./build/cumes inputs/solovev.json out.bin`.
 
 
 ## 1. Reference hierarchy

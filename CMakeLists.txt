@@ -215,17 +215,17 @@ else()
   set(CUMES_SELECTED_CUDA cumes_cuda_double)
 endif()
 
-add_executable(cuMES src/main.cu)
-target_include_directories(cuMES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_executable(cumes src/main.cu)
+target_include_directories(cumes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Link order matters: cumes_io_host BEFORE cumes_io so the adapter library
 # is scanned while the backend-factory references are still undefined — the
 # linker then extracts the strong NetCDF/HDF5 factory definitions (completion
 # plan step 2.5).
-target_link_libraries(cuMES PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
-cumes_enable_warnings(cuMES)
-cumes_apply_policy_flags(cuMES)
+target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
+cumes_enable_warnings(cumes)
+cumes_apply_policy_flags(cumes)
 if(CUMES_USE_FLOAT)
-  target_compile_definitions(cuMES PRIVATE CUMES_USE_FLOAT)
+  target_compile_definitions(cumes PRIVATE CUMES_USE_FLOAT)
 endif()
 
 # ---- build provenance (recorded in the v1 output schema) --------------------
@@ -248,7 +248,7 @@ if(CUMES_GIT_STATUS STREQUAL "")
 else()
   set(CUMES_GIT_DIRTY 1)
 endif()
-target_compile_definitions(cuMES PRIVATE
+target_compile_definitions(cumes PRIVATE
   CUMES_GIT_REVISION="${CUMES_GIT_REVISION}"
   CUMES_GIT_DIRTY=${CUMES_GIT_DIRTY}
   CUMES_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
@@ -260,7 +260,7 @@ function(cumes_add_precision_provenance target)
     CUMES_PRECISION_POLICY_NAME="${CUMES_PRECISION_POLICY}"
     CUMES_PRECISION_FLAGS="${CUMES_PRECISION_FLAGS_STR}")
 endfunction()
-cumes_add_precision_provenance(cuMES)
+cumes_add_precision_provenance(cumes)
 
 # ---- tests (standalone executables, no framework) --------------------------
 enable_testing()
@@ -299,7 +299,7 @@ cumes_add_precision_provenance(cumes_benchmark_graph_realpass)
 # before any meaningful GPU work).
 add_test(NAME cli_policy
          COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_policy_test.sh
-                 $<TARGET_FILE:cuMES>)
+                 $<TARGET_FILE:cumes>)
 set_tests_properties(cli_policy PROPERTIES
     LABELS "unit;cli" TIMEOUT 300
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
@@ -312,7 +312,7 @@ set_tests_properties(cli_policy PROPERTIES
 # precisions).
 add_test(NAME output_publication
          COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/output_publication_test.sh
-                 $<TARGET_FILE:cuMES>
+                 $<TARGET_FILE:cumes>
                  ${CMAKE_CURRENT_SOURCE_DIR}/inputs/solovev.json)
 set_tests_properties(output_publication PROPERTIES
     LABELS "unit;output" TIMEOUT 600

@@ -21,7 +21,7 @@ cmake --preset verify          # verify-double: precise math, all backends, -Wer
 cmake --build build -j
 
 # an output path is REQUIRED — there is no default output file
-./build/cuMES inputs/solovev.json out.bin        # positional: <input> <output>
+./build/cumes inputs/solovev.json out.bin        # positional: <input> <output>
 
 ctest --test-dir build --output-on-failure
 

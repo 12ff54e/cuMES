@@ -22,7 +22,7 @@ reference (see [Verification](#verification)).
 ```bash
 cmake --preset verify          # double precision, both backends, -Werror
 cmake --build build -j
-./build/cuMES inputs/solovev.json out.bin    # positional: <input> <output>
+./build/cumes inputs/solovev.json out.bin    # positional: <input> <output>
 ctest --test-dir build --output-on-failure
 ```
 
@@ -111,7 +111,7 @@ optional-backend presets. Every computation is `template<typename T>`; `Real`
 ### CLI
 
 ```
-./build/cuMES [--input <path>] [--output <path>] [flags]
+./build/cumes [--input <path>] [--output <path>] [flags]
 ```
 
 - Positionals fill the two slots `<input> <output>`; the `--input`/`--output`

@@ -39,7 +39,7 @@
 #       --out <baseline-tree-root> [--configs solovev,w7x] [--no-full-manifest] \
 #       [--float-ftol <cfg>=<tol>]... [--schema]
 #
-#   --build             double-precision build dir (contains ./cuMES)
+#   --build             double-precision build dir (contains ./cumes)
 #   --float-build       optional float build dir; when given, float configs are
 #                       captured too (with ftol relaxed, since float cannot
 #                       meet the double-tuned tolerances).
@@ -91,7 +91,7 @@ done
 # Normalize the build/out paths to absolute ONCE here. The per-tree launch
 # subshells below `cd` away from the repo root, so every path used inside them
 # must already be absolute: the old "$OLDPWD/$build" concatenation mangled an
-# absolute --build into <repo-root>//<abs>/cuMES (exit 127 under set -e), and
+# absolute --build into <repo-root>//<abs>/cumes (exit 127 under set -e), and
 # a relative path would stop resolving correctly the moment the subshell moves.
 BUILD="$(cd "$BUILD" && pwd)" || { echo "error: --build dir not found: $BUILD" >&2; exit 2; }
 if [ -n "$FLOAT_BUILD" ]; then
@@ -100,7 +100,7 @@ fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
-[ -x "$BUILD/cuMES" ] || { echo "error: $BUILD/cuMES not found" >&2; exit 2; }
+[ -x "$BUILD/cumes" ] || { echo "error: $BUILD/cumes not found" >&2; exit 2; }
 
 run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
   local build="$1" prec="$2" input="$3" sub="$4"
@@ -118,7 +118,7 @@ run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
     *) input_abs="$PWD/$input_abs" ;;
   esac
   ( cd "$tree" \
-    && CUMES_DUMP=1 "$build/cuMES" "$input_abs" cumes_state.bin \
+    && CUMES_DUMP=1 "$build/cumes" "$input_abs" cumes_state.bin \
        > run.log 2>&1 )
   [ -f "$tree/cumes_state.bin" ] || { echo "error: $prec/$sub produced no state" >&2; exit 1; }
 
@@ -133,9 +133,9 @@ run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
   # suffixes so the on-disk schemas are frozen as part of the recipe. These are
   # separate files in the tree; compare_bitwise.py's --full mode includes them.
   if [ "$SCHEMA" = 1 ]; then
-    ( cd "$tree" && CUMES_DUMP=1 "$build/cuMES" "$input_abs" state.nc \
+    ( cd "$tree" && CUMES_DUMP=1 "$build/cumes" "$input_abs" state.nc \
        > run-schema-nc.log 2>&1 )
-    ( cd "$tree" && CUMES_DUMP=1 "$build/cuMES" "$input_abs" state.h5 \
+    ( cd "$tree" && CUMES_DUMP=1 "$build/cumes" "$input_abs" state.h5 \
        > run-schema-h5.log 2>&1 )
     echo "  schema: state.nc + state.h5 captured"
   fi
@@ -170,7 +170,7 @@ done
 # Float (experimental): relax the double-tuned ftol entries to a level the
 # run can actually reach (the float residual floor is problem-dependent).
 if [ -n "$FLOAT_BUILD" ]; then
-  [ -x "$FLOAT_BUILD/cuMES" ] || { echo "error: $FLOAT_BUILD/cuMES not found" >&2; exit 2; }
+  [ -x "$FLOAT_BUILD/cumes" ] || { echo "error: $FLOAT_BUILD/cumes not found" >&2; exit 2; }
   local_scratch="$OUT/float-inputs"
   mkdir -p "$local_scratch"
   for cfg in ${CONFIGS//,/ }; do
