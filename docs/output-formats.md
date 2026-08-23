@@ -40,7 +40,7 @@ mode = m * (ntor + 1) + n        (folded n >= 0 basis; mnmax = mpol * (ntor+1))
 ```
 
 The physical toroidal mode is `N = n * nfp`; the ζ grid covers one field
-period. The families reconstruct real space as (fourier_impl.cuh):
+period. The families reconstruct real space as (kernels/fourier_impl.cuh):
 
 ```
 R = rmncc·cos(mθ)cos(nζ) + rmnss·sin(mθ)sin(nζ)

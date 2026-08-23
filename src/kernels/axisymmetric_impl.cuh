@@ -1,4 +1,4 @@
-// axisymmetric_impl.cuh — template definitions for axisymmetric_operator.hpp.
+// kernels/axisymmetric_impl.cuh — template definitions for axisymmetric_operator.hpp.
 // Included once per scalar type by axisymmetric_double.cu /
 // axisymmetric_float.cu (the explicit-instantiation split, one scalar type per
 // TU).

@@ -1,4 +1,4 @@
-#include "precon_impl.cuh"
+#include "kernels/precon_impl.cuh"
 
 // Explicit instantiation for double (cumes_cuda_double).
 // Phase 8 tridiagonal backends (linkable from test_tridiagonal).

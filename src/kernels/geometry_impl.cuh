@@ -1,4 +1,4 @@
-// geometry_impl.cuh — template definitions for geometry.cuh.
+// kernels/geometry_impl.cuh — template definitions for geometry.cuh.
 // Included once per scalar type by geometry_double.cu / geometry_float.cu; see
 // the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
 #ifndef CUMES_SRC_GEOMETRY_IMPL_CUH_
@@ -43,7 +43,7 @@
 // The geometryParityViews factory (typed real-space view bundle over the
 // workspace structs) is the single shared inline definition in
 // cumes/state/real_fields.cuh (review finding 4.2 — was duplicated
-// byte-identically here and in forces_impl.cuh).
+// byte-identically here and in kernels/forces_impl.cuh).
 template <typename T>
 cumes::GeometryOperator<T>::GeometryOperator(const DeviceParams<T>& p,
                                              cumes::DeviceArena* arena) {

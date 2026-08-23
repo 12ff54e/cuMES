@@ -1,4 +1,4 @@
-// prolongation_impl.cuh — template definitions for prolongation.hpp.
+// kernels/prolongation_impl.cuh — template definitions for prolongation.hpp.
 // Included once per scalar type by prolongation_double.cu /
 // prolongation_float.cu; see the explicit-instantiation split
 // (cumes_cuda_double / cumes_cuda_float).

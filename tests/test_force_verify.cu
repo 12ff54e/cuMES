@@ -42,7 +42,8 @@ using namespace cumes::test;
 
 // ---------------------------------------------------------------------------
 // Independent CPU force reference (port of test_force_reference.cu's scalar
-// double reference, which mirrors forcesKernel in forces_impl.cuh exactly).
+// double reference, which mirrors forcesKernel in kernels/forces_impl.cuh
+// exactly).
 //
 // `r_e..lu_o` are the full-grid parity geometry, the half-grid metric/field
 // arrays are (ns-1, nZnT), profiles are sqrtS_F/sqrtS_H/phip_F, and the 16
@@ -264,9 +265,9 @@ static void cpuForces(const std::vector<T>& r_e,
 // ---------------------------------------------------------------------------
 // Independent CPU forward projection: mirrors the production forward path
 // (forwardReduceKernel + the unnormalized real D2Z + forwardRecoverKernel in
-// fourier_impl.cuh) on the host. Consumes the 16 parity-split real-space force
-// families (full grid, column-major idx = j*nZnT + k*ntheta + l) and writes
-// the six spectral families in DecomposedResidualDomain order
+// kernels/fourier_impl.cuh) on the host. Consumes the 16 parity-split
+// real-space force families (full grid, column-major idx = j*nZnT + k*ntheta +
+// l) and writes the six spectral families in DecomposedResidualDomain order
 // (Rcc, Zsc, Lsc, Rss, Zcs, Lcs; [c*ns*mnmax + mode*ns + j]) with the
 // production normalization (reduced-theta trapezoid weight with endpoint
 // halving, mscale*nscale recovery, axis/LCFS row rules). The constraint-force

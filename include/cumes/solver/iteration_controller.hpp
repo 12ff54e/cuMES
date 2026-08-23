@@ -114,18 +114,18 @@ class IterationController {
     // on the half grid — including the jH=0 axis row, which the legacy
     // relative test excluded (it compared against gmax and required
     // gminIdx >= nZnT). The stats themselves reduce the ORIENTED signJ·√g
-    // (geometry_impl.cuh jacobianStatsKernel), which |√g| cannot express at
-    // all. Trigger conditions in practice: the frozen W7-X trajectory fires
-    // this branch three times in stage 1 (min(signJ·√g) ≈ -9.9e-1 / -8.2e-1 /
-    // -1.2e-1 at interior jH — genuine sign flips of the early transient,
-    // recovered by the standard restore + delt×0.9 path; the trajectory is
-    // Class A with them). A float build or a harsh --restart guess could
-    // additionally fire it at the axis row, where √g → 0 is the expected
-    // coordinate singularity: an exact-0.0 rounding there is treated as
-    // degenerate and restored, which is the safe recovery — a flipped
+    // (kernels/geometry_impl.cuh jacobianStatsKernel), which |√g| cannot
+    // express at all. Trigger conditions in practice: the frozen W7-X
+    // trajectory fires this branch three times in stage 1 (min(signJ·√g) ≈
+    // -9.9e-1 / -8.2e-1 / -1.2e-1 at interior jH — genuine sign flips of the
+    // early transient, recovered by the standard restore + delt×0.9 path; the
+    // trajectory is Class A with them). A float build or a harsh --restart
+    // guess could additionally fire it at the axis row, where √g → 0 is the
+    // expected coordinate singularity: an exact-0.0 rounding there is treated
+    // as degenerate and restored, which is the safe recovery — a flipped
     // Jacobian left running would poison the force/constraint/preconditioner
-    // kernels' 1/√g divisions (geometry_impl.cuh documents the inv_gsqrt
-    // guards that keep the buffers finite in the interim).
+    // kernels' 1/√g divisions (kernels/geometry_impl.cuh documents the
+    // inv_gsqrt guards that keep the buffers finite in the interim).
     bool jacobian_invalid(const JacobianStatus<T>& s, int nZnT) {
         if (s.nonfinite_count > T(0) || s.max_abs <= T(0) ||
             s.min_oriented <= T(0) ||

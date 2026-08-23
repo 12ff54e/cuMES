@@ -1,4 +1,4 @@
-// solver_impl.cuh — template definitions for solver.cuh.
+// kernels/solver_impl.cuh — template definitions for solver.cuh.
 // Included once per scalar type by solver_double.cu / solver_float.cu; see the
 // explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
 #ifndef CUMES_SRC_SOLVER_IMPL_CUH_

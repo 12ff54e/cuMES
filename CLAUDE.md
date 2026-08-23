@@ -93,7 +93,7 @@ cuMES/
 │   └── cumes/              The operator library (see below)
 ├── src/
 │   ├── main.cu             Entry point: validate config → multigrid stage loop → output
-│   ├── <mod>_impl.cuh      Templated kernel bodies, one file per operator module
+│   ├── kernels/            Templated kernel bodies (<mod>_impl.cuh), one file per operator
 │   ├── <mod>_{double,float}.cu   Explicit instantiation TUs (cumes_cuda_{double,float})
 │   │                       modules: fourier geometry forces solver profiles precon
 │   │                                constraint prolongation axisymmetric
@@ -137,7 +137,7 @@ v = fac×(b1·v + delt·f) ,  x += delt·v        (Garabedian accelerated descen
 ```
 
 The per-iteration DAG is composed in `EquilibriumOperator::enqueue`
-(`src/solver_impl.cuh`); `solverRun` is a thin loop over the pure-host
+(`src/kernels/solver_impl.cuh`); `solverRun` is a thin loop over the pure-host
 `IterationController` + that DAG on one explicit compute stream, with one
 deliberate host fence per iteration. All operators own their device buffers
 (directly or via one `DeviceArena` carved per stage) and expose typed view
@@ -162,7 +162,7 @@ bundles; no legacy workspace structs remain.
   ~1e-14) or float (stalls at ~1e-7; relax ftols). cuFFT dispatches through
   `FftTraits<T>`.
 - **Explicit instantiation split** — each operator's kernels live in
-  `src/<mod>_impl.cuh`, included only by its `_double.cu`/`_float.cu` TUs (one
+  `src/kernels/<mod>_impl.cuh`, included only by its `_double.cu`/`_float.cu` TUs (one
   scalar type per TU), so kernels may declare dynamic shared memory directly
   as `extern __shared__ T[]`.
 - **Config validation** — the JSON input is parsed and validated host-side into
@@ -193,12 +193,12 @@ bundles; no legacy workspace structs remain.
 - All device allocations via RAII (`DeviceBuffer`/`DeviceArena`), error-checked
   through the centralized `cumes::check_cuda`/`check_cufft` in `cumes/runtime`
 - New device code belongs behind an operator class with typed views; kernel
-  bodies live in the module's `src/<mod>_impl.cuh`
+  bodies live in the module's `src/kernels/<mod>_impl.cuh`
 
 ### API pattern
 
 - Each operator module has a `.hpp` header (types + declarations) under
-  `include/cumes/<area>/` and kernel bodies in `src/<mod>_impl.cuh`,
+  `include/cumes/<area>/` and kernel bodies in `src/kernels/<mod>_impl.cuh`,
   explicitly instantiated by `src/<mod>_{double,float}.cu`
 - Host-side modules are plain C++ under `src/cumes/`
 

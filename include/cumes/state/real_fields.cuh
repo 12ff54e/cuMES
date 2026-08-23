@@ -80,10 +80,11 @@ struct GeometryParityViews {
 };
 
 // Shared factory for the parity-split geometry view bundle (single definition;
-// previously duplicated byte-identically in geometry_impl.cuh and
-// forces_impl.cuh — review finding 4.2). Constructed at the operator boundary;
-// the kernels then read the raw pointers back out of the bundles, keeping the
-// flat `surface*nZnT + zeta*ntheta + theta` arithmetic bit-for-bit identical.
+// previously duplicated byte-identically in kernels/geometry_impl.cuh and
+// kernels/forces_impl.cuh — review finding 4.2). Constructed at the operator
+// boundary; the kernels then read the raw pointers back out of the bundles,
+// keeping the flat `surface*nZnT + zeta*ntheta + theta` arithmetic bit-for-bit
+// identical.
 template <typename T>
 inline GeometryParityViews<T> geometryParityViews(const RealSpaceStorage<T>& rs,
                                                   const DeviceParams<T>& p) {

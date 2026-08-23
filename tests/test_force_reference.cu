@@ -27,8 +27,8 @@
 #include <vector>
 using namespace cumes::test;
 
-// Scalar CPU reference: mirrors forcesKernel (forces_impl.cuh) exactly, in
-// double, on host arrays. `r_e..zv_o` are the full-grid parity geometry, the
+// Scalar CPU reference: mirrors forcesKernel (kernels/forces_impl.cuh) exactly,
+// in double, on host arrays. `r_e..zv_o` are the full-grid parity geometry, the
 // half-grid metric/field arrays are (ns-1, nZnT), profiles are sqrtS_F/sqrtS_H/
 // phip_F, and the 16 force outputs are written to out (parity-split).
 template <typename T>

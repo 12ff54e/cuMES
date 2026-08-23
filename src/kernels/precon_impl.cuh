@@ -1,4 +1,4 @@
-// precon_impl.cuh — template definitions for precon.cuh.
+// kernels/precon_impl.cuh — template definitions for precon.cuh.
 // Included once per scalar type by precon_double.cu / precon_float.cu; see the
 // explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
 #ifndef CUMES_SRC_PRECON_IMPL_CUH_
@@ -1209,7 +1209,7 @@ void cumes::Preconditioner<T>::enqueue_apply(
 // precon elements. The fzcs scale matters only when the mixed fzcs is
 // nonzero (fix_m1_gauge = false), i.e. for iter2 >= 2 before convergence.
 // Applied right before the RZ preconditioner (after the invariant residuals).
-// (Moved from solver_impl.cuh — the operator owns the PreconWorkspace these
+// (Moved from kernels/solver_impl.cuh — the operator owns the PreconWorkspace these
 // elements live in.)
 template <typename T>
 __global__ void m1PreconScaleKernel(

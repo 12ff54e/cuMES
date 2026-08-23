@@ -47,9 +47,9 @@ static void checkNear(double gpu,
     }
 }
 
-// CPU serial Thomas solve (matches precon_impl.cuh thomasSolveKernel and
-// test_regression_kernels.cu thomasSolve): rows [jMin, jMax) with x[jMin-1]=0
-// and x[jMax]=0.
+// CPU serial Thomas solve (matches kernels/precon_impl.cuh thomasSolveKernel
+// and test_regression_kernels.cu thomasSolve): rows [jMin, jMax) with
+// x[jMin-1]=0 and x[jMax]=0.
 static void cpuThomas(const double* lower,
                       const double* diagonal,
                       const double* upper,

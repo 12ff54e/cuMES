@@ -47,7 +47,7 @@
 // Shared harness pieces (timing helpers, the --option scanner, the config
 // loader, the operator stack) live in bench_common.cuh. The per-pass control
 // copy uses the same pinned-host staging as production (PinnedBuffer<double>,
-// solver_impl.cuh) so the measured D2H stays asynchronous.
+// kernels/solver_impl.cuh) so the measured D2H stays asynchronous.
 #include "bench_common.cuh"
 #include "cumes/config/json_reader.hpp"
 #include "cumes/runtime/cuda_graph.hpp"
@@ -85,7 +85,7 @@ static double capture_variant(cumes::EquilibriumOperator<Real>& eq,
 
 // ---- per-node param update (cudaGraphExecKernelNodeSetParams) ----------
 // The m=1 gauge zeroZ scalar is the one per-pass kernel parameter the §8.11
-// integration must change (blueprint §7 step 10; solver_impl.cuh
+// integration must change (blueprint §7 step 10; kernels/solver_impl.cuh
 // m1ConstraintKernel). Measured here on a MANUALLY constructed node with the
 // same parameter shape — (16-byte view struct, int, int, int, int) — because
 // CUDA 12.1's cudaGraphKernelNodeGetParams is unusable on stream-captured
@@ -178,9 +178,9 @@ int main(int argc, char** argv) {
         zeroz_sched.zero_z_force_m1 = true;
 
         // ---- warmup: production-pattern direct passes ----
-        // Pinned staging like production (solver_impl.cuh's h_control_pin): the
-        // async D2H stays a one-hop DMA copy instead of degrading to a
-        // synchronous pageable two-hop (review finding 6.2).
+        // Pinned staging like production (kernels/solver_impl.cuh's
+        // h_control_pin): the async D2H stays a one-hop DMA copy instead of
+        // degrading to a synchronous pageable two-hop (review finding 6.2).
         cumes::PinnedBuffer<cumes::ControlRecord> h_ctl(1);
         for (int w = 0; w < warmup; ++w) {
             equilibrium.enqueue(iter, iter2, base_sched, stream.get());

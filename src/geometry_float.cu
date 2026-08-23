@@ -1,4 +1,4 @@
-#include "geometry_impl.cuh"
+#include "kernels/geometry_impl.cuh"
 
 // Explicit instantiation for float (cumes_cuda_float).
 template class cumes::GeometryOperator<float>;

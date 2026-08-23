@@ -7,7 +7,7 @@
 // Vmec::InterpolateToNextMultigridStep, kLinear). (Migration step 13.3: the
 // legacy interpolateState free function and the refine.cuh/refine_impl.cuh
 // module are gone — the body is Prolongation::enqueue, defined in
-// src/prolongation_impl.cuh.)
+// src/kernels/prolongation_impl.cuh.)
 #ifndef CUMES_INCLUDE_CUMES_NUMERICS_PROLONGATION_HPP_
 #define CUMES_INCLUDE_CUMES_NUMERICS_PROLONGATION_HPP_
 

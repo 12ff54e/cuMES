@@ -38,7 +38,7 @@ complete: the legacy `include/*.cuh` kernel structs are gone, and the production
 kernels live directly in operator classes that own their device buffers (RAII
 `DeviceBuffer`/`DeviceArena`) and expose typed view bundles.
 
-- **Device operator modules** — `src/<mod>_impl.cuh` + explicit
+- **Device operator modules** — `src/kernels/<mod>_impl.cuh` + explicit
   `double`/`float` instantiation TUs (`src/<mod>_{double,float}.cu`): `fourier`
   (`ToroidalFftOperator`), `geometry` (`GeometryOperator`/`MagneticFieldOperator`),
   `forces` (`ForceOperator`), `solver` (`EquilibriumOperator`), `profiles`,
@@ -222,7 +222,7 @@ cuMES/
 │                           physics, runtime, solver, state, transforms)
 ├── src/
 │   ├── main.cu             Entry point: validate config → multigrid → output
-│   ├── <mod>_impl.cuh      Templated kernel bodies (one file per operator)
+│   ├── kernels/            Templated kernel bodies (<mod>_impl.cuh), one file per operator
 │   ├── <mod>_{double,float}.cu   explicit instantiation TUs
 │   └── cumes/              Host-side C++ (config, io, core, runtime)
 ├── tests/                  Standalone correctness tests + support/

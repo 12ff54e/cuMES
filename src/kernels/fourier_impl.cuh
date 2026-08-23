@@ -1,4 +1,4 @@
-// fourier_impl.cuh — template definitions for toroidal_fft_operator.hpp (and
+// kernels/fourier_impl.cuh — template definitions for toroidal_fft_operator.hpp (and
 // the resolution/real-space scratch helpers modeTableCreate/realSpaceCreate).
 // Included once per scalar type by fourier_double.cu / fourier_float.cu; see
 // the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
@@ -334,7 +334,7 @@ cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
     // fourierCombineParity / inverseDFT(do_combine=true). Zero them here so a
     // diagnostic dump taken before the first combine is deterministic (the old
     // code dumped uninitialized memory, whose bytes shifted with the allocation
-    // order — see the step_A_l_real_iter_1 dump in solver_impl.cuh). Parity
+    // order — see the step_A_l_real_iter_1 dump in kernels/solver_impl.cuh). Parity
     // arrays are left as-is: inverseDFT writes them before any consumer reads.
     cumes::check_cuda(cudaMemset(rs.d_r_real, 0, nbytes_real), "zero r_r");
     cumes::check_cuda(cudaMemset(rs.d_z_real, 0, nbytes_real), "zero z_r");
@@ -829,7 +829,7 @@ void cumes::ToroidalFftOperator<T>::inverse_fused(
 // De-alias bandpass (constraint step 2, blueprint §6.8): gConEff -> gCon over
 // the bandpass modes m = 1..mpol-2, scaled by tcon/faccon. The compact cuFFT
 // round trip uses this operator's scratch + plans. The kernels moved here from
-// constraint_impl.cuh with the FourierPlan (the transform operator owns all
+// kernels/constraint_impl.cuh with the FourierPlan (the transform operator owns all
 // transform tables/plans/scratch).
 // ---------------------------------------------------------------------------
 // Analysis (full-grid uniform sums, matching deAliasKernelFast's quadrature):

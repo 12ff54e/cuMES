@@ -1,4 +1,4 @@
-// constraint_impl.cuh — template definitions for constraint_operator.hpp.
+// kernels/constraint_impl.cuh — template definitions for constraint_operator.hpp.
 // Included once per scalar type by constraint_double.cu / constraint_float.cu;
 // see the explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
 #ifndef CUMES_SRC_CONSTRAINT_IMPL_CUH_

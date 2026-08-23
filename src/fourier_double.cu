@@ -1,4 +1,4 @@
-#include "fourier_impl.cuh"
+#include "kernels/fourier_impl.cuh"
 
 // Explicit instantiation for double (cumes_cuda_double).
 template cumes::DeviceModeTable cumes::modeTableCreate<double>(

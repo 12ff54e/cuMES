@@ -1,4 +1,4 @@
-// forces_impl.cuh — template definitions for forces.cuh.
+// kernels/forces_impl.cuh — template definitions for forces.cuh.
 // Included once per scalar type by forces_double.cu / forces_float.cu; see the
 // explicit-instantiation split (cumes_cuda_double / cumes_cuda_float).
 #ifndef CUMES_SRC_FORCES_IMPL_CUH_
@@ -26,7 +26,7 @@
 // ---- typed real-space view bundles over the workspace structs ------------
 // geometryParityViews is the shared inline definition in
 // cumes/state/real_fields.cuh (review finding 4.2 — was a byte-identical
-// mirror of geometry_impl.cuh's copy here); this TU keeps the force-bundle
+// mirror of kernels/geometry_impl.cuh's copy here); this TU keeps the force-bundle
 // variant.
 template <typename T>
 static cumes::ForceParityViews<T> forceParityViews(

@@ -1,6 +1,6 @@
 // profile_functions.hpp — the radial profile power-series evaluators, shared
 // by the host-side validation (ValidatedProblem::validate) and the device
-// Profiles upload step (src/profiles_impl.cuh).
+// Profiles upload step (src/kernels/profiles_impl.cuh).
 //
 // Single source of truth: both consumers evaluate the identical Horner loops
 // over the ProblemSpec coefficient vectors, so the host-validated

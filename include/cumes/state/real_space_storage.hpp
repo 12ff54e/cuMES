@@ -131,8 +131,8 @@ struct RealSpaceStorage {
 // arrays above). With `arena == nullptr` every array is its own cudaMalloc
 // (legacy); with an arena the arrays are named subspans of one stage
 // allocation. (Declared at global scope like the old fourier.cuh — the call
-// sites are unqualified; defined in src/fourier_impl.cuh — the transform
-// module.)
+// sites are unqualified; defined in src/kernels/fourier_impl.cuh — the
+// transform module.)
 template <typename T>
 cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
                                            cumes::DeviceArena* arena = nullptr);

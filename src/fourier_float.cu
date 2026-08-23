@@ -1,4 +1,4 @@
-#include "fourier_impl.cuh"
+#include "kernels/fourier_impl.cuh"
 
 // Explicit instantiation for float (cumes_cuda_float).
 template cumes::DeviceModeTable cumes::modeTableCreate<float>(

@@ -22,9 +22,9 @@
 //
 // They live in a PUBLIC header so tests can drive them directly with
 // manufactured ControlRecords (tests/test_safety_predicates.cu); the
-// production DAG (src/solver_impl.cuh) includes the same definitions, so the
-// tested kernels are bit-for-bit the shipped ones. All readers/writers are
-// ordered on the single compute stream — no atomics.
+// production DAG (src/kernels/solver_impl.cuh) includes the same definitions,
+// so the tested kernels are bit-for-bit the shipped ones. All readers/writers
+// are ordered on the single compute stream — no atomics.
 #ifndef CUMES_INCLUDE_CUMES_NUMERICS_DEVICE_PREDICATES_CUH_
 #define CUMES_INCLUDE_CUMES_NUMERICS_DEVICE_PREDICATES_CUH_
 
@@ -54,9 +54,9 @@ static __global__ void jacobianFinalizeKernel(
 // the required normalization IS available before the device terminal
 // predicate — convergence classification is no longer structurally disabled
 // on refresh passes. The expressions below are EXACTLY the host-side
-// finalizeForceNorms rules (src/solver_impl.cuh), operator for operator:
-// fabs, *, /, max and the ternary are all correctly-rounded IEEE double
-// operations and contain no multiply-add pattern, so the device-computed
+// finalizeForceNorms rules (src/kernels/solver_impl.cuh), operator for
+// operator: fabs, *, /, max and the ternary are all correctly-rounded IEEE
+// double operations and contain no multiply-add pattern, so the device-computed
 // factors are BIT-IDENTICAL to the previous host-side computation in every
 // build. max is written as the std::max comparison form (a < b ? b : a), NOT
 // fmax — fmax returns the non-NaN operand for (NaN, finite), which would

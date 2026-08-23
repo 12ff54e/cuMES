@@ -10,8 +10,8 @@ the container. Containers predating the embedded record are rejected.
 
 Reconstructs real-space geometry with the solver's exact conventions
 (parity-split e/o arrays, odd-m scalxc regularization, staggered half-grid
-metric — src/geometry_impl.cuh) via batched 2-D FFT synthesis, evaluates
-the radial profiles exactly as profiles_impl.cuh does (ncurr=0: chi' from
+metric — src/kernels/geometry_impl.cuh) via batched 2-D FFT synthesis, evaluates
+the radial profiles exactly as kernels/profiles_impl.cuh does (ncurr=0: chi' from
 the prescribed iota; ncurr=1: the ncurr1FinalizeKernel constraint solve
 with curr evaluated at the flux coordinate), and renders the full
 nfp-period torus colored by |B| with light-source shading.
@@ -337,7 +337,7 @@ def pack_series(a, b, series, mm, nn, nth, nzt):
 
 def eval_state(fams, ns, j, th, zt, ntor, nfp):
     """Stored parity arrays at full-grid surface j on a uniform full-period
-    (th, zt) grid — the exact inverseDFT convention (fourier_impl.cuh),
+    (th, zt) grid — the exact inverseDFT convention (kernels/fourier_impl.cuh),
     synthesized with a batched 2-D IFFT instead of a direct mode sum:
 
       R = rmncc*cos(mθ)cos(nζ) + rmnss*sin(mθ)sin(nζ)
@@ -394,7 +394,7 @@ def eval_state(fams, ns, j, th, zt, ntor, nfp):
 
 def half_grid(arrays, ns, jh, chip, phip_avg, lamscale):
     """Mirror of baseGeometryKernel + magneticFieldKernel for half-grid
-    surface jh (geometry_impl.cuh). arrays = the two adjacent full-grid
+    surface jh (kernels/geometry_impl.cuh). arrays = the two adjacent full-grid
     surfaces (stored parity values); phip_avg = 0.5·(phipF(jh)+phipF(jh+1))
     and lamscale come from make_profiles. Returns the half-grid geometry
     (r12/z12), the covariant metric, lambda derivatives, and |B| (Tesla —
@@ -466,7 +466,7 @@ def half_grid(arrays, ns, jh, chip, phip_avg, lamscale):
 
 def make_profiles(cfg, ns):
     """Radial profile evaluators exactly as profile_functions.hpp +
-    profiles_impl.cuh: maxToroidalFlux = signJ·phiedge/(2π·torflux(1)),
+    kernels/profiles_impl.cuh: maxToroidalFlux = signJ·phiedge/(2π·torflux(1)),
     phipF(j) = maxTF·torfluxDeriv(Δs·j), lamscale = sqrt(Δs·Σ phipH²),
     iota/curr Horner evaluations with the normX = min(|x·bloat|, 1) clamp,
     and the ncurr=1 normalization Itor = signJ·μ0·curtor/(2π·C_edge). The
@@ -539,7 +539,7 @@ def solve_chip(fams, ns, jh, cfg, prof):
     reduced-theta trapezoid with dnorm3 = 1/(nzeta·(nThetaRed−1)), currH
     evaluated at the FLUX coordinate sh (the solver's convention). ncurr=0:
     the prescribed-iota profile χ' = maxTF·ι(tf)·torfluxDeriv(sh)
-    (profiles_impl.cuh)."""
+    (kernels/profiles_impl.cuh)."""
     if cfg["ncurr"] == 0:
         return prof["chip_iota"](jh)
     ntheta = cfg["ntheta"]

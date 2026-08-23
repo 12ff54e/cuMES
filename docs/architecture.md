@@ -17,7 +17,7 @@ deleted, and the production kernels live directly in the `cumes` operator
 classes, which own their device buffers and reproduce the frozen
 trajectories bit-for-bit.
 
-- **Device operator modules** — `src/*_impl.cuh` + the explicit
+- **Device operator modules** — `src/kernels/*_impl.cuh` + the explicit
   `double`/`float` instantiation TUs (`src/*_double.cu` / `src/*_float.cu`),
   one per operator: `fourier` (`ToroidalFftOperator` — the cuFFT plans,
   transform scratch and poloidal tables), `geometry`
@@ -36,7 +36,7 @@ trajectories bit-for-bit.
   output/IO stack, and the host orchestration (`MultigridSolver`,
   `StageSolver`, `IterationController`, …).
 
-The per-iteration DAG (`src/solver_impl.cuh::solverRun` via `EquilibriumOperator`)
+The per-iteration DAG (`src/kernels/solver_impl.cuh::solverRun` via `EquilibriumOperator`)
 runs on the typed-view plumbing and one explicit compute stream, driving every
 transform through the unified `SpectralOperator` interface (the generic cuFFT
 backend or the axisymmetric direct-poloidal backend).

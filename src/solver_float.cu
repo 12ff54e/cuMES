@@ -1,4 +1,4 @@
-#include "solver_impl.cuh"
+#include "kernels/solver_impl.cuh"
 
 // Explicit instantiation for float (cumes_cuda_float).
 template SolverResult<float> solverRun<float>(
