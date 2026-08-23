@@ -1,7 +1,7 @@
 #include "kernels/solver_impl.cuh"
 
 // Explicit instantiation for double (cumes_cuda_double).
-template SolverResult<double> solverRun<double>(
+template SolverResult<double> solver_run<double>(
     cumes::SpectralStorage<double>&,
     const DeviceParams<double>&,
     const cumes::Profiles<double>&,

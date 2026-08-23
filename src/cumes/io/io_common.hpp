@@ -24,7 +24,7 @@ namespace cumes {
 namespace io_detail {
 
 // Current file size in bytes (position-preserving), or nullopt on failure.
-inline std::optional<long long> fileSize(FILE* fp) {
+inline std::optional<long long> file_size(FILE* fp) {
     const long long pos = ftell(fp);
     if (pos < 0 || fseek(fp, 0, SEEK_END) != 0) return std::nullopt;
     const long long sz = ftell(fp);
@@ -37,11 +37,11 @@ inline std::optional<long long> fileSize(FILE* fp) {
 // the actual file size, so a corrupt or mismatched header cannot trigger a huge
 // allocation (a wrong-format file decodes as enormous positive dimensions).
 // Returns false and sets `reason` on failure; on success sets `n_out`.
-inline bool checkStateDimensions(FILE* fp,
-                                 std::int32_t ns,
-                                 std::int32_t mnmax,
-                                 std::size_t& n_out,
-                                 std::string& reason) {
+inline bool check_state_dimensions(FILE* fp,
+                                   std::int32_t ns,
+                                   std::int32_t mnmax,
+                                   std::size_t& n_out,
+                                   std::string& reason) {
     if (ns < 1 || mnmax < 1) {
         reason = "bad dimensions (ns=" + std::to_string(ns) +
                  ", mnmax=" + std::to_string(mnmax) + ")";
@@ -54,7 +54,7 @@ inline bool checkStateDimensions(FILE* fp,
         return false;
     }
     auto needed = checked_mul(*n, 6 * sizeof(double));
-    auto sz = fileSize(fp);
+    auto sz = file_size(fp);
     // Compare in size_t: the old `(long long)*needed > *sz` cast wrapped
     // negative for byte counts in [2^63, 2^64), silently passing the
     // file-size bound and letting the reader attempt a ~2e17-element
@@ -121,7 +121,8 @@ inline bool read_f64_array(FILE* fp, double* p, std::size_t n) {
 // Returns false (before writing anything of the short family) when a family is
 // not sized exactly n — a size mismatch must never fall through into an OOB
 // read from a short host vector.
-inline bool writeStateFamilies(FILE* fp, const EquilibriumSnapshot& snapshot) {
+inline bool write_state_families(FILE* fp,
+                                 const EquilibriumSnapshot& snapshot) {
     const std::size_t n = snapshot.family_size();
     for (const auto& fam : snapshot.families) {
         if (fam.size() != n) return false;
@@ -131,11 +132,11 @@ inline bool writeStateFamilies(FILE* fp, const EquilibriumSnapshot& snapshot) {
 }
 
 // Resize each family to `n` and read it. `n` must come from a successful
-// checkStateDimensions call (the bound against the actual file size already
+// check_state_dimensions call (the bound against the actual file size already
 // happened). Returns false on truncation.
-inline bool readStateFamilies(FILE* fp,
-                              std::size_t n,
-                              EquilibriumSnapshot& snapshot) {
+inline bool read_state_families(FILE* fp,
+                                std::size_t n,
+                                EquilibriumSnapshot& snapshot) {
     for (auto& fam : snapshot.families) {
         fam.resize(n);
         if (!io_detail::read_f64_array(fp, fam.data(), n)) return false;
@@ -204,7 +205,7 @@ inline bool read_f64_vec(FILE* fp,
                                 static_cast<std::size_t>(n) * sizeof(double));
 }
 
-inline bool writeInputParams(FILE* fp, const InputParams& p) {
+inline bool write_input_params(FILE* fp, const InputParams& p) {
     bool ok = write_i32(fp, p.mpol) && write_i32(fp, p.ntor) &&
               write_i32(fp, p.nfp) && write_i32(fp, p.ntheta) &&
               write_i32(fp, p.nzeta) && write_i32(fp, p.ncurr) &&
@@ -234,10 +235,10 @@ inline bool writeInputParams(FILE* fp, const InputParams& p) {
 // `with_profile_types` selects the record layout written by the version-4
 // binary trailer / version-3 checkpoint; older containers lack the three
 // profile-type strings and keep the "power_series" defaults.
-inline bool readInputParams(FILE* fp,
-                            InputParams& p,
-                            std::string& reason,
-                            bool with_profile_types) {
+inline bool read_input_params(FILE* fp,
+                              InputParams& p,
+                              std::string& reason,
+                              bool with_profile_types) {
     std::int32_t nstages = 0;
     if (!read_i32(fp, p.mpol) || !read_i32(fp, p.ntor) ||
         !read_i32(fp, p.nfp) || !read_i32(fp, p.ntheta) ||

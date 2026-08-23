@@ -43,7 +43,7 @@ static_assert(static_cast<int>(cumes::SpectralComponent::Lcs) ==
 
 // Write through a SpectralView on device; host verifies the component-major
 // [component][mode][surface] layout.
-__global__ void writeSpectral(
+__global__ void write_spectral(
     cumes::SpectralView<double, cumes::PhysicalStateDomain> v,
     int mnmax) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -143,7 +143,7 @@ int main() {
         cumes::SpectralStorage<double> st(ns, mnmax);
         auto view = st.physical();
         int total = mnmax * ns;
-        writeSpectral<<<(total + 127) / 128, 128>>>(view, mnmax);
+        write_spectral<<<(total + 127) / 128, 128>>>(view, mnmax);
         cc(cudaDeviceSynchronize(), "sync view");
         std::vector<double> h(6 * (size_t)total);
         cc(cudaMemcpy(h.data(), st.state_slab(), h.size() * sizeof(double),

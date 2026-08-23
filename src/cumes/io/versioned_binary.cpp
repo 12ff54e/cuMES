@@ -19,7 +19,7 @@
 //   stages    per stage: ns(i32), iterations(i32), converged(u8),
 //             fsqr(f64), fsqz(f64), fsql(f64), nrestarts(i32), restarts(i32...)
 //   params    the embedded normalized-input record (io_common.hpp
-//             writeInputParams), the LAST trailer element; version 3 and up
+//             write_input_params), the LAST trailer element; version 3 and up
 //
 // All strings are int32-length-prefixed. The scalar_type string is NOT
 // serialized: the reader reconstructs it from the precision tag.
@@ -62,7 +62,7 @@ constexpr std::int32_t MIN_READ_VERSION = 1;
 // silent "0=double" record.
 enum class PrecisionTag : std::int32_t { DOUBLE = 0, FLOAT = 1 };
 
-std::optional<PrecisionTag> precisionTagFor(const std::string& scalar_type) {
+std::optional<PrecisionTag> precision_tag_for(const std::string& scalar_type) {
     if (scalar_type == "double") return PrecisionTag::DOUBLE;
     if (scalar_type == "float") return PrecisionTag::FLOAT;
     return std::nullopt;
@@ -75,7 +75,7 @@ class VersionedBinaryWriter final : public Writer {
                         const OutputSpec& spec,
                         const ValidatedProblem& problem) override {
         (void)problem;  // v1 binary records report + state only
-        const std::string tmp = io_detail::tempPathFor(spec.path);
+        const std::string tmp = io_detail::temp_path_for(spec.path);
         FILE* fp = fopen(tmp.c_str(), "wb");
         if (!fp) return Status("cannot open " + tmp + " for writing");
 
@@ -90,13 +90,13 @@ class VersionedBinaryWriter final : public Writer {
                   io_detail::write_i32(fp, snapshot.ns) &&
                   io_detail::write_i32(fp, snapshot.mnmax);
         if (!ok) return fail("failed to write versioned state payload");
-        // writeStateFamilies aborts on a family-size mismatch before writing
+        // write_state_families aborts on a family-size mismatch before writing
         // (an undersized family must not fall through into an OOB read).
-        if (!io_detail::writeStateFamilies(fp, snapshot)) {
+        if (!io_detail::write_state_families(fp, snapshot)) {
             return fail("failed to write versioned state payload");
         }
 
-        const auto precision = precisionTagFor(report.build.scalar_type);
+        const auto precision = precision_tag_for(report.build.scalar_type);
         if (!precision)
             return fail("unknown precision tag '" + report.build.scalar_type +
                         "'");
@@ -131,10 +131,10 @@ class VersionedBinaryWriter final : public Writer {
             }
         }
         // The embedded normalized-input record is the LAST trailer element.
-        ok = ok && io_detail::writeInputParams(fp, report.input_params);
+        ok = ok && io_detail::write_input_params(fp, report.input_params);
         if (!ok) return fail("failed to write versioned provenance trailer");
 
-        const std::string err = io_detail::publishAtomic(fp, tmp, spec.path);
+        const std::string err = io_detail::publish_atomic(fp, tmp, spec.path);
         if (!err.empty()) return Status("versioned binary publish: " + err);
         return Status();
     }
@@ -172,13 +172,13 @@ class VersionedBinaryReader final : public Reader {
         const bool has_input_params = (version >= 3);
         std::size_t n = 0;
         std::string reason;
-        if (!io_detail::checkStateDimensions(fp, ns, mnmax, n, reason)) {
+        if (!io_detail::check_state_dimensions(fp, ns, mnmax, n, reason)) {
             return fail("versioned binary: " + reason);
         }
         EquilibriumSnapshot snapshot;
         snapshot.ns = ns;
         snapshot.mnmax = mnmax;
-        if (!io_detail::readStateFamilies(fp, n, snapshot)) {
+        if (!io_detail::read_state_families(fp, n, snapshot)) {
             return fail("versioned binary: truncated state data");
         }
         // Provenance trailer: parse into the optional RunReport (the schema-v1
@@ -257,8 +257,8 @@ class VersionedBinaryReader final : public Reader {
             // profile-type strings exist in version 4 records only.
             if (has_input_params) {
                 std::string reason;
-                if (!io_detail::readInputParams(fp, report->input_params,
-                                                reason, version >= 4)) {
+                if (!io_detail::read_input_params(fp, report->input_params,
+                                                  reason, version >= 4)) {
                     return fail("versioned binary: " + reason);
                 }
             }

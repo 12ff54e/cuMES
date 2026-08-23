@@ -136,9 +136,10 @@ struct RealSpaceStorage {
 // sites are unqualified; defined in src/kernels/fourier_impl.cuh — the
 // transform module.)
 template <typename T>
-cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
-                                           cumes::DeviceArena* arena = nullptr);
+cumes::RealSpaceStorage<T> real_space_create(
+    const DeviceParams<T>& p,
+    cumes::DeviceArena* arena = nullptr);
 template <typename T>
-void realSpaceFree(cumes::RealSpaceStorage<T>& rs);
+void real_space_free(cumes::RealSpaceStorage<T>& rs);
 
 #endif  // CUMES_INCLUDE_CUMES_STATE_REAL_SPACE_STORAGE_HPP_

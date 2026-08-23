@@ -90,8 +90,9 @@ struct GeometryParityViews {
 // keeping the flat `surface*nZnT + zeta*ntheta + theta` arithmetic bit-for-bit
 // identical.
 template <typename T>
-inline GeometryParityViews<T> geometryParityViews(const RealSpaceStorage<T>& rs,
-                                                  const DeviceParams<T>& p) {
+inline GeometryParityViews<T> geometry_parity_views(
+    const RealSpaceStorage<T>& rs,
+    const DeviceParams<T>& p) {
     auto f = [&](T* d) { return RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
     GeometryParityViews<T> v;
     v.r_e = f(rs.d_r_e);

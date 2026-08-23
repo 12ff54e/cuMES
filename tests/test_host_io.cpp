@@ -34,7 +34,7 @@ static std::string scratch(const char* name) {
 }
 
 // Deterministic snapshot: family c, index i -> value = c*1000 + i + 0.25.
-static EquilibriumSnapshot makeSnapshot(int ns, int mnmax) {
+static EquilibriumSnapshot make_snapshot(int ns, int mnmax) {
     EquilibriumSnapshot s;
     s.ns = ns;
     s.mnmax = mnmax;
@@ -48,7 +48,7 @@ static EquilibriumSnapshot makeSnapshot(int ns, int mnmax) {
     return s;
 }
 
-static RunReport makeReport() {
+static RunReport make_report() {
     RunReport r;
     r.status = RunStatus::CONVERGED;
     r.total_effective_iterations = 7;
@@ -70,7 +70,7 @@ static RunReport makeReport() {
 
 // A minimal valid problem for the writer call sites: the v1 writers record
 // the problem's boundary harmonics.
-static cumes::ValidatedProblem makeProblem() {
+static cumes::ValidatedProblem make_problem() {
     cumes::ProblemSpec spec;
     spec.mpol = 2;
     spec.ntor = 0;
@@ -82,14 +82,14 @@ static cumes::ValidatedProblem makeProblem() {
     spec.stages = {{5, 100, 1e-12}};
     auto vr = cumes::validate(spec, cumes::SolverOptions{});
     if (!vr.has_value()) {
-        std::cerr << "makeProblem: validation failed\n";
+        std::cerr << "make_problem: validation failed\n";
         exit(1);
     }
     return std::move(vr.value());
 }
 
-static bool snapshotsEqual(const EquilibriumSnapshot& a,
-                           const EquilibriumSnapshot& b) {
+static bool snapshots_equal(const EquilibriumSnapshot& a,
+                            const EquilibriumSnapshot& b) {
     if (a.ns != b.ns || a.mnmax != b.mnmax) return false;
     for (int c = 0; c < 6; ++c) {
         if (a.families[c] != b.families[c]) return false;
@@ -97,7 +97,7 @@ static bool snapshotsEqual(const EquilibriumSnapshot& a,
     return true;
 }
 
-static void testOutputSpec() {
+static void test_output_spec() {
     // Availability preflight moved to the adapter library (completion plan
     // step 2.5); the binary format is always available by construction, so the
     // host test asserts the always-true contract without linking the adapter.
@@ -113,8 +113,8 @@ static void testOutputSpec() {
     check(!r.has_value(), "output spec: unknown suffix rejected");
 }
 
-static void testV1RoundTrip() {
-    EquilibriumSnapshot s = makeSnapshot(4, 2);
+static void test_v1_round_trip() {
+    EquilibriumSnapshot s = make_snapshot(4, 2);
     OutputSpec spec;
     spec.format = OutputFormat::BINARY;
     spec.path = scratch("v1").c_str();
@@ -122,10 +122,10 @@ static void testV1RoundTrip() {
     auto r = cumes::make_binary_reader();
     check(w != nullptr && r != nullptr, "v1: writer+reader factories");
     if (!w || !r) return;
-    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value(),
+    check(w->write_atomic(s, make_report(), spec, make_problem()).has_value(),
           "v1: write succeeds");
     auto back = r->read(spec.path);
-    check(back.has_value() && snapshotsEqual(s, back.value()),
+    check(back.has_value() && snapshots_equal(s, back.value()),
           "v1: round-trip preserves state");
 
     // Corrupt the magic -> reader rejects.
@@ -141,9 +141,9 @@ static void testV1RoundTrip() {
     remove(spec.path.c_str());
 }
 
-static void testCorruptHeaderHugeDimensions() {
+static void test_corrupt_header_huge_dimensions() {
     // A corrupt v1 header with ns*mnmax*48 bytes in [2^63, 2^64) used to wrap
-    // the size_t -> long long cast in checkStateDimensions negative, pass the
+    // the size_t -> long long cast in check_state_dimensions negative, pass the
     // file-size bound, and die in fam.resize(~2e17) with an uncaught
     // std::bad_alloc (std::terminate). The reader must return the
     // "dimensions implausible" error instead.
@@ -166,13 +166,13 @@ static void testCorruptHeaderHugeDimensions() {
     remove(path.c_str());
 }
 
-static void testShortFamilyRejected() {
+static void test_short_family_rejected() {
     // A snapshot with a family not sized ns*mnmax must fail the write BEFORE
     // touching the short vector's memory. The old pattern (`ok = false;` then
     // `ok = ok && write_f64_array(...)`) only skipped the OOB read through the
-    // && short-circuit; the shared writeStateFamilies now returns early on a
+    // && short-circuit; the shared write_state_families now returns early on a
     // size mismatch, so no reordering can reintroduce the read.
-    EquilibriumSnapshot s = makeSnapshot(4, 2);
+    EquilibriumSnapshot s = make_snapshot(4, 2);
     // rmnss four elements short (32 bytes); shrink_to_fit keeps the capacity
     // exactly at the short size so any over-read crosses the allocation and is
     // visible to ASan/valgrind.
@@ -182,7 +182,7 @@ static void testShortFamilyRejected() {
     spec.format = OutputFormat::BINARY;
     spec.path = scratch("short");
     auto w = cumes::make_binary_writer();
-    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() ==
+    check(w->write_atomic(s, make_report(), spec, make_problem()).has_value() ==
               false,
           "short family: write fails cleanly (no OOB read)");
     FILE* f = fopen(spec.path.c_str(), "rb");
@@ -190,31 +190,31 @@ static void testShortFamilyRejected() {
     if (f) fclose(f);
 }
 
-static void testV1UnknownPrecisionRejected() {
+static void test_v1_unknown_precision_rejected() {
     // An unknown build scalar type must fail the v1 write (typed precision
     // tag), not silently record 0=double as the old string compare did.
-    EquilibriumSnapshot s = makeSnapshot(4, 2);
+    EquilibriumSnapshot s = make_snapshot(4, 2);
     OutputSpec spec;
     spec.format = OutputFormat::BINARY;
     spec.path = scratch("v1badprec");
     auto w = cumes::make_binary_writer();
-    RunReport report = makeReport();
+    RunReport report = make_report();
     report.build.scalar_type = "single";
-    check(!w->write_atomic(s, report, spec, makeProblem()).has_value(),
+    check(!w->write_atomic(s, report, spec, make_problem()).has_value(),
           "v1: unknown precision tag rejected");
     FILE* f = fopen(spec.path.c_str(), "rb");
     check(f == nullptr, "v1: no file published on unknown precision tag");
     if (f) fclose(f);
 }
 
-static void testFailureMatrix() {
-    EquilibriumSnapshot s = makeSnapshot(4, 2);
+static void test_failure_matrix() {
+    EquilibriumSnapshot s = make_snapshot(4, 2);
     // open failure: a path in a nonexistent directory.
     OutputSpec spec;
     spec.format = OutputFormat::BINARY;
     spec.path = "no_such_dir/test_host_io_open.bin";
     auto w = cumes::make_binary_writer();
-    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() ==
+    check(w->write_atomic(s, make_report(), spec, make_problem()).has_value() ==
               false,
           "failure: open failure returns false");
 
@@ -230,7 +230,7 @@ static void testFailureMatrix() {
         }
     }
     spec.path = dir;  // a directory, not a file
-    check(w->write_atomic(s, makeReport(), spec, makeProblem()).has_value() ==
+    check(w->write_atomic(s, make_report(), spec, make_problem()).has_value() ==
               false,
           "failure: rename-over-directory returns false");
     // the directory and its contents are untouched
@@ -242,11 +242,11 @@ static void testFailureMatrix() {
 }
 
 int main() {
-    testOutputSpec();
-    testV1RoundTrip();
-    testCorruptHeaderHugeDimensions();
-    testShortFamilyRejected();
-    testV1UnknownPrecisionRejected();
-    testFailureMatrix();
+    test_output_spec();
+    test_v1_round_trip();
+    test_corrupt_header_huge_dimensions();
+    test_short_family_rejected();
+    test_v1_unknown_precision_rejected();
+    test_failure_matrix();
     return summary();
 }

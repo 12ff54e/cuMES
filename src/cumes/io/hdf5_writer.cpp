@@ -28,7 +28,7 @@ namespace cumes {
 namespace {
 
 // Write one scalar (or fixed-size string) attribute on the root group.
-herr_t putAttr(hid_t loc, const char* name, hid_t dtype, const void* val) {
+herr_t put_attr(hid_t loc, const char* name, hid_t dtype, const void* val) {
     hid_t sid = H5Screate(H5S_SCALAR);
     if (sid < 0) { return -1; }
     hid_t aid = H5Acreate2(loc, name, dtype, sid, H5P_DEFAULT, H5P_DEFAULT);
@@ -39,11 +39,11 @@ herr_t putAttr(hid_t loc, const char* name, hid_t dtype, const void* val) {
     return r;
 }
 
-herr_t putStrAttr(hid_t loc, const char* name, const std::string& value) {
+herr_t put_str_attr(hid_t loc, const char* name, const std::string& value) {
     hid_t s1 = H5Tcopy(H5T_C_S1);
     if (s1 < 0) return -1;
     herr_t r0 = H5Tset_size(s1, value.size() + 1);
-    herr_t r1 = r0 >= 0 ? putAttr(loc, name, s1, value.c_str()) : -1;
+    herr_t r1 = r0 >= 0 ? put_attr(loc, name, s1, value.c_str()) : -1;
     H5Tclose(s1);
     return r1;
 }
@@ -70,7 +70,7 @@ class H5Closer {
 // or exactly one element BEFORE the single-width destination is sized — a
 // multi-element attribute would otherwise overflow it — and the datatype
 // must be a bounded fixed-size string.
-bool getStrAttr(hid_t loc, const char* name, std::string& out) {
+bool get_str_attr(hid_t loc, const char* name, std::string& out) {
     H5Closer aid(H5Aopen(loc, name, H5P_DEFAULT));
     if (aid.get() < 0) return false;
     // Exact dataspace element count: scalar, or a 1-D space of one point.
@@ -132,7 +132,7 @@ class Hdf5V1Writer final : public Writer {
         for (const auto& st : report.stages) nrestarts += st.restarts.size();
         const InputParams& ip = report.input_params;
 
-        const std::string tmp = io_detail::tempPathFor(spec.path);
+        const std::string tmp = io_detail::temp_path_for(spec.path);
         hid_t fid =
             H5Fcreate(tmp.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
         if (fid < 0) return Status("HDF5 H5Fcreate failed for " + tmp);
@@ -146,8 +146,9 @@ class Hdf5V1Writer final : public Writer {
         if ((expr) < 0) return fail(std::string(msg_)); \
     } while (0)
 
-        auto writeArray = [&](const char* name, hid_t dtype, int nd,
-                              const hsize_t* dims, const void* data) -> herr_t {
+        auto write_array = [&](const char* name, hid_t dtype, int nd,
+                               const hsize_t* dims,
+                               const void* data) -> herr_t {
             hid_t sp = H5Screate_simple(nd, dims, nullptr);
             if (sp < 0) { return -1; }
             hid_t ds = H5Dcreate2(fid, name, dtype, sp, H5P_DEFAULT,
@@ -202,86 +203,86 @@ class Hdf5V1Writer final : public Writer {
         const int precision = (report.build.scalar_type == "double") ? 0 : 1;
         const int status = static_cast<int>(report.status);
         const int dirty = report.build.dirty ? 1 : 0;
-        H5_CHECK(putAttr(fid, "precision", H5T_NATIVE_INT, &precision),
+        H5_CHECK(put_attr(fid, "precision", H5T_NATIVE_INT, &precision),
                  "attr precision");
-        H5_CHECK(putAttr(fid, "status", H5T_NATIVE_INT, &status),
+        H5_CHECK(put_attr(fid, "status", H5T_NATIVE_INT, &status),
                  "attr status");
-        H5_CHECK(putAttr(fid, "total_iterations", H5T_NATIVE_INT,
-                         &report.total_effective_iterations),
+        H5_CHECK(put_attr(fid, "total_iterations", H5T_NATIVE_INT,
+                          &report.total_effective_iterations),
                  "attr total_iterations");
-        H5_CHECK(putAttr(fid, "build_dirty", H5T_NATIVE_INT, &dirty),
+        H5_CHECK(put_attr(fid, "build_dirty", H5T_NATIVE_INT, &dirty),
                  "attr build_dirty");
-        H5_CHECK(putStrAttr(fid, "revision", report.build.revision),
+        H5_CHECK(put_str_attr(fid, "revision", report.build.revision),
                  "attr revision");
-        H5_CHECK(putStrAttr(fid, "build_type", report.build.build_type),
+        H5_CHECK(put_str_attr(fid, "build_type", report.build.build_type),
                  "attr build_type");
-        H5_CHECK(putStrAttr(fid, "scalar_type", report.build.scalar_type),
+        H5_CHECK(put_str_attr(fid, "scalar_type", report.build.scalar_type),
                  "attr scalar_type");
-        H5_CHECK(
-            putStrAttr(fid, "precision_policy", report.build.precision_policy),
-            "attr precision_policy");
-        H5_CHECK(putStrAttr(fid, "compile_flags", report.build.compile_flags),
+        H5_CHECK(put_str_attr(fid, "precision_policy",
+                              report.build.precision_policy),
+                 "attr precision_policy");
+        H5_CHECK(put_str_attr(fid, "compile_flags", report.build.compile_flags),
                  "attr compile_flags");
-        H5_CHECK(putStrAttr(fid, "source_path", report.input.source_path),
+        H5_CHECK(put_str_attr(fid, "source_path", report.input.source_path),
                  "attr source_path");
-        H5_CHECK(putStrAttr(fid, "source_hash", report.input.source_hash),
+        H5_CHECK(put_str_attr(fid, "source_hash", report.input.source_hash),
                  "attr source_hash");
-        H5_CHECK(putStrAttr(fid, "gpu_name", report.runtime.gpu_name),
+        H5_CHECK(put_str_attr(fid, "gpu_name", report.runtime.gpu_name),
                  "attr gpu_name");
-        H5_CHECK(putStrAttr(fid, "driver", report.runtime.driver),
+        H5_CHECK(put_str_attr(fid, "driver", report.runtime.driver),
                  "attr driver");
-        H5_CHECK(putStrAttr(fid, "runtime", report.runtime.runtime),
+        H5_CHECK(put_str_attr(fid, "runtime", report.runtime.runtime),
                  "attr runtime");
-        H5_CHECK(putStrAttr(fid, "toolkit", report.runtime.toolkit),
+        H5_CHECK(put_str_attr(fid, "toolkit", report.runtime.toolkit),
                  "attr toolkit");
 
         // ---- embedded normalized-input record attributes + arrays ----
-        H5_CHECK(putAttr(fid, "mpol", H5T_NATIVE_INT, &ip.mpol), "attr mpol");
-        H5_CHECK(putAttr(fid, "ntor", H5T_NATIVE_INT, &ip.ntor), "attr ntor");
-        H5_CHECK(putAttr(fid, "nfp", H5T_NATIVE_INT, &ip.nfp), "attr nfp");
-        H5_CHECK(putAttr(fid, "ntheta", H5T_NATIVE_INT, &ip.ntheta),
+        H5_CHECK(put_attr(fid, "mpol", H5T_NATIVE_INT, &ip.mpol), "attr mpol");
+        H5_CHECK(put_attr(fid, "ntor", H5T_NATIVE_INT, &ip.ntor), "attr ntor");
+        H5_CHECK(put_attr(fid, "nfp", H5T_NATIVE_INT, &ip.nfp), "attr nfp");
+        H5_CHECK(put_attr(fid, "ntheta", H5T_NATIVE_INT, &ip.ntheta),
                  "attr ntheta");
-        H5_CHECK(putAttr(fid, "nzeta", H5T_NATIVE_INT, &ip.nzeta),
+        H5_CHECK(put_attr(fid, "nzeta", H5T_NATIVE_INT, &ip.nzeta),
                  "attr nzeta");
-        H5_CHECK(putAttr(fid, "ncurr", H5T_NATIVE_INT, &ip.ncurr),
+        H5_CHECK(put_attr(fid, "ncurr", H5T_NATIVE_INT, &ip.ncurr),
                  "attr ncurr");
-        H5_CHECK(putAttr(fid, "delt", H5T_NATIVE_DOUBLE, &ip.delt),
+        H5_CHECK(put_attr(fid, "delt", H5T_NATIVE_DOUBLE, &ip.delt),
                  "attr delt");
-        H5_CHECK(putAttr(fid, "phiedge", H5T_NATIVE_DOUBLE, &ip.phiedge),
+        H5_CHECK(put_attr(fid, "phiedge", H5T_NATIVE_DOUBLE, &ip.phiedge),
                  "attr phiedge");
-        H5_CHECK(putAttr(fid, "pres_scale", H5T_NATIVE_DOUBLE, &ip.pres_scale),
+        H5_CHECK(put_attr(fid, "pres_scale", H5T_NATIVE_DOUBLE, &ip.pres_scale),
                  "attr pres_scale");
-        H5_CHECK(putAttr(fid, "adiabatic_index", H5T_NATIVE_DOUBLE,
-                         &ip.adiabatic_index),
+        H5_CHECK(put_attr(fid, "adiabatic_index", H5T_NATIVE_DOUBLE,
+                          &ip.adiabatic_index),
                  "attr adiabatic_index");
-        H5_CHECK(putAttr(fid, "spres_ped", H5T_NATIVE_DOUBLE, &ip.spres_ped),
+        H5_CHECK(put_attr(fid, "spres_ped", H5T_NATIVE_DOUBLE, &ip.spres_ped),
                  "attr spres_ped");
-        H5_CHECK(putAttr(fid, "bloat", H5T_NATIVE_DOUBLE, &ip.bloat),
+        H5_CHECK(put_attr(fid, "bloat", H5T_NATIVE_DOUBLE, &ip.bloat),
                  "attr bloat");
-        H5_CHECK(putAttr(fid, "curtor", H5T_NATIVE_DOUBLE, &ip.curtor),
+        H5_CHECK(put_attr(fid, "curtor", H5T_NATIVE_DOUBLE, &ip.curtor),
                  "attr curtor");
-        H5_CHECK(putAttr(fid, "tcon0", H5T_NATIVE_DOUBLE, &ip.tcon0),
+        H5_CHECK(put_attr(fid, "tcon0", H5T_NATIVE_DOUBLE, &ip.tcon0),
                  "attr tcon0");
-        H5_CHECK(putStrAttr(fid, "schema", ip.schema), "attr schema");
-        H5_CHECK(putStrAttr(fid, "pmass_type", ip.pmass_type),
+        H5_CHECK(put_str_attr(fid, "schema", ip.schema), "attr schema");
+        H5_CHECK(put_str_attr(fid, "pmass_type", ip.pmass_type),
                  "attr pmass_type");
-        H5_CHECK(putStrAttr(fid, "piota_type", ip.piota_type),
+        H5_CHECK(put_str_attr(fid, "piota_type", ip.piota_type),
                  "attr piota_type");
-        H5_CHECK(putStrAttr(fid, "pcurr_type", ip.pcurr_type),
+        H5_CHECK(put_str_attr(fid, "pcurr_type", ip.pcurr_type),
                  "attr pcurr_type");
         {
-            auto writeVec = [&](const char* name,
-                                const std::vector<double>& v) -> herr_t {
+            auto write_vec = [&](const char* name,
+                                 const std::vector<double>& v) -> herr_t {
                 const hsize_t d[1] = {v.size()};
-                return writeArray(name, H5T_NATIVE_DOUBLE, 1, d,
-                                  v.empty() ? nullptr : v.data());
+                return write_array(name, H5T_NATIVE_DOUBLE, 1, d,
+                                   v.empty() ? nullptr : v.data());
             };
-            H5_CHECK(writeVec("am", ip.am), "write am");
-            H5_CHECK(writeVec("ac", ip.ac), "write ac");
-            H5_CHECK(writeVec("ai", ip.ai), "write ai");
-            H5_CHECK(writeVec("aphi", ip.aphi), "write aphi");
-            H5_CHECK(writeVec("raxis_c", ip.raxis_c), "write raxis_c");
-            H5_CHECK(writeVec("zaxis_s", ip.zaxis_s), "write zaxis_s");
+            H5_CHECK(write_vec("am", ip.am), "write am");
+            H5_CHECK(write_vec("ac", ip.ac), "write ac");
+            H5_CHECK(write_vec("ai", ip.ai), "write ai");
+            H5_CHECK(write_vec("aphi", ip.aphi), "write aphi");
+            H5_CHECK(write_vec("raxis_c", ip.raxis_c), "write raxis_c");
+            H5_CHECK(write_vec("zaxis_s", ip.zaxis_s), "write zaxis_s");
         }
         {
             const size_t nstages_in = ip.stages.size();
@@ -293,14 +294,14 @@ class Hdf5V1Writer final : public Writer {
                 stg_max_iter[g] = ip.stages[g].max_iter;
                 stg_ftol[g] = ip.stages[g].ftol;
             }
-            H5_CHECK(writeArray("stage_in_ns", H5T_NATIVE_INT, 1, d_in,
-                                stg_in_ns.data()),
+            H5_CHECK(write_array("stage_in_ns", H5T_NATIVE_INT, 1, d_in,
+                                 stg_in_ns.data()),
                      "write stage_in_ns");
-            H5_CHECK(writeArray("stage_max_iter", H5T_NATIVE_INT, 1, d_in,
-                                stg_max_iter.data()),
+            H5_CHECK(write_array("stage_max_iter", H5T_NATIVE_INT, 1, d_in,
+                                 stg_max_iter.data()),
                      "write stage_max_iter");
-            H5_CHECK(writeArray("stage_ftol", H5T_NATIVE_DOUBLE, 1, d_in,
-                                stg_ftol.data()),
+            H5_CHECK(write_array("stage_ftol", H5T_NATIVE_DOUBLE, 1, d_in,
+                                 stg_ftol.data()),
                      "write stage_ftol");
         }
 
@@ -324,30 +325,30 @@ class Hdf5V1Writer final : public Writer {
         }
         const hsize_t d_stages[1] = {nstages};
         const hsize_t d_restarts[1] = {nrestarts};
-        H5_CHECK(writeArray("stage_ns", H5T_NATIVE_INT, 1, d_stages,
-                            stage_ns.data()),
+        H5_CHECK(write_array("stage_ns", H5T_NATIVE_INT, 1, d_stages,
+                             stage_ns.data()),
                  "write stage_ns");
-        H5_CHECK(writeArray("stage_iterations", H5T_NATIVE_INT, 1, d_stages,
-                            stage_iter.data()),
+        H5_CHECK(write_array("stage_iterations", H5T_NATIVE_INT, 1, d_stages,
+                             stage_iter.data()),
                  "write stage_iterations");
-        H5_CHECK(writeArray("stage_converged", H5T_NATIVE_INT, 1, d_stages,
-                            stage_conv.data()),
+        H5_CHECK(write_array("stage_converged", H5T_NATIVE_INT, 1, d_stages,
+                             stage_conv.data()),
                  "write stage_converged");
-        H5_CHECK(writeArray("stage_fsqr", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsqr.data()),
+        H5_CHECK(write_array("stage_fsqr", H5T_NATIVE_DOUBLE, 1, d_stages,
+                             st_fsqr.data()),
                  "write stage_fsqr");
-        H5_CHECK(writeArray("stage_fsqz", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsqz.data()),
+        H5_CHECK(write_array("stage_fsqz", H5T_NATIVE_DOUBLE, 1, d_stages,
+                             st_fsqz.data()),
                  "write stage_fsqz");
-        H5_CHECK(writeArray("stage_fsql", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsql.data()),
+        H5_CHECK(write_array("stage_fsql", H5T_NATIVE_DOUBLE, 1, d_stages,
+                             st_fsql.data()),
                  "write stage_fsql");
-        H5_CHECK(writeArray("restart_stage_offset", H5T_NATIVE_INT, 1, d_stages,
-                            rst_off.data()),
+        H5_CHECK(write_array("restart_stage_offset", H5T_NATIVE_INT, 1,
+                             d_stages, rst_off.data()),
                  "write restart_stage_offset");
         if (nrestarts > 0) {
-            H5_CHECK(writeArray("restart_iteration", H5T_NATIVE_INT, 1,
-                                d_restarts, rst_iter.data()),
+            H5_CHECK(write_array("restart_iteration", H5T_NATIVE_INT, 1,
+                                 d_restarts, rst_iter.data()),
                      "write restart_iteration");
         }
 
@@ -362,12 +363,12 @@ class Hdf5V1Writer final : public Writer {
                 hn[i] = rbc[i].n;
                 hv[i] = rbc[i].value;
             }
-            H5_CHECK(writeArray("rbc_m", H5T_NATIVE_INT, 1, d_r, hm.data()),
+            H5_CHECK(write_array("rbc_m", H5T_NATIVE_INT, 1, d_r, hm.data()),
                      "write rbc_m");
-            H5_CHECK(writeArray("rbc_n", H5T_NATIVE_INT, 1, d_r, hn.data()),
+            H5_CHECK(write_array("rbc_n", H5T_NATIVE_INT, 1, d_r, hn.data()),
                      "write rbc_n");
             H5_CHECK(
-                writeArray("rbc_value", H5T_NATIVE_DOUBLE, 1, d_r, hv.data()),
+                write_array("rbc_value", H5T_NATIVE_DOUBLE, 1, d_r, hv.data()),
                 "write rbc_value");
         }
         if (nzbs > 0) {
@@ -377,28 +378,28 @@ class Hdf5V1Writer final : public Writer {
                 hn[i] = zbs[i].n;
                 hv[i] = zbs[i].value;
             }
-            H5_CHECK(writeArray("zbs_m", H5T_NATIVE_INT, 1, d_z, hm.data()),
+            H5_CHECK(write_array("zbs_m", H5T_NATIVE_INT, 1, d_z, hm.data()),
                      "write zbs_m");
-            H5_CHECK(writeArray("zbs_n", H5T_NATIVE_INT, 1, d_z, hn.data()),
+            H5_CHECK(write_array("zbs_n", H5T_NATIVE_INT, 1, d_z, hn.data()),
                      "write zbs_n");
             H5_CHECK(
-                writeArray("zbs_value", H5T_NATIVE_DOUBLE, 1, d_z, hv.data()),
+                write_array("zbs_value", H5T_NATIVE_DOUBLE, 1, d_z, hv.data()),
                 "write zbs_value");
         }
 
         // ---- folded boundary matrices (active mpol x (ntor+1)) ----
         const hsize_t bnd_dims[2] = {(hsize_t)mpol, (hsize_t)ntorp1};
         H5_CHECK(
-            writeArray("rbcc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbcc.data()),
+            write_array("rbcc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbcc.data()),
             "write rbcc");
         H5_CHECK(
-            writeArray("rbss", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbss.data()),
+            write_array("rbss", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbss.data()),
             "write rbss");
         H5_CHECK(
-            writeArray("zbsc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbsc.data()),
+            write_array("zbsc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbsc.data()),
             "write zbsc");
         H5_CHECK(
-            writeArray("zbcs", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbcs.data()),
+            write_array("zbcs", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbcs.data()),
             "write zbcs");
 
         if (H5Fclose(fid) < 0) {
@@ -407,9 +408,9 @@ class Hdf5V1Writer final : public Writer {
         }
 #undef H5_CHECK
         // Durable publication (completion-plan follow-up §3): the library
-        // owns the descriptor, so publishLibraryFile reopens the completed
+        // owns the descriptor, so publish_library_file reopens the completed
         // temp, checks fsync + close, then renames + directory-fsyncs.
-        const std::string err = io_detail::publishLibraryFile(tmp, spec.path);
+        const std::string err = io_detail::publish_library_file(tmp, spec.path);
         if (!err.empty()) return Status("HDF5 publish: " + err);
         return Status();
     }
@@ -439,8 +440,8 @@ class Hdf5V1Reader final : public Reader {
             // H5Sget_simple_extent_ dims: the latter writes `rank` dimension
             // values into the caller's buffer, so a higher-rank dataspace would
             // overflow it.
-            auto getDimExact = [&](const char* name, int rank,
-                                   hsize_t* dims) -> bool {
+            auto get_dim_exact = [&](const char* name, int rank,
+                                     hsize_t* dims) -> bool {
                 H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
                 if (ds.get() < 0) return false;
                 H5Closer sp(H5Dget_space(ds.get()));
@@ -453,23 +454,23 @@ class Hdf5V1Reader final : public Reader {
             // Portable schema integer: signed, native-int width (32 bits on all
             // supported builds). Endian conversion remains intentionally
             // allowed.
-            auto typeIsSchemaInteger = [&](hid_t ty) -> bool {
+            auto type_is_schema_integer = [&](hid_t ty) -> bool {
                 return ty >= 0 && H5Tget_class(ty) == H5T_INTEGER &&
                        H5Tget_size(ty) == sizeof(int) &&
                        H5Tget_sign(ty) == H5T_SGN_2;
             };
-            auto datasetIsInteger = [&](hid_t ds) -> bool {
+            auto dataset_is_integer = [&](hid_t ds) -> bool {
                 H5Closer ty(H5Dget_type(ds));
-                return typeIsSchemaInteger(ty.get());
+                return type_is_schema_integer(ty.get());
             };
-            auto datasetIsDouble = [&](hid_t ds) -> bool {
+            auto dataset_is_double = [&](hid_t ds) -> bool {
                 H5Closer ty(H5Dget_type(ds));
                 return ty.get() >= 0 && H5Tget_class(ty.get()) == H5T_FLOAT &&
                        H5Tget_size(ty.get()) == sizeof(double);
             };
             // Scalar-or-one-element attribute, integer type, exact 4-byte size,
             // and a checked element count before the single-int read.
-            auto getIntAttr = [&](const char* name, int& out) -> bool {
+            auto get_int_attr = [&](const char* name, int& out) -> bool {
                 H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
                 if (aid.get() < 0) return false;
                 {
@@ -490,32 +491,32 @@ class Hdf5V1Reader final : public Reader {
                     if (npts != 1) return false;
                 }
                 H5Closer ty(H5Aget_type(aid.get()));
-                if (!typeIsSchemaInteger(ty.get())) return false;
+                if (!type_is_schema_integer(ty.get())) return false;
                 return H5Aread(aid.get(), H5T_NATIVE_INT, &out) >= 0;
             };
             // 1-D integer/double vectors with exact rank, extent, and datatype.
-            auto getIntArr = [&](const char* name, std::vector<int>& out,
-                                 size_t expect) -> bool {
+            auto get_int_arr = [&](const char* name, std::vector<int>& out,
+                                   size_t expect) -> bool {
                 H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
                 if (ds.get() < 0) return false;
                 hsize_t dims[1] = {0};
-                if (!getDimExact(name, 1, dims)) return false;
+                if (!get_dim_exact(name, 1, dims)) return false;
                 if (dims[0] != expect) return false;
-                if (!datasetIsInteger(ds.get())) return false;
+                if (!dataset_is_integer(ds.get())) return false;
                 const auto bytes = checked_mul(expect, sizeof(int));
                 if (!bytes) return false;
                 out.resize(expect);
                 return H5Dread(ds.get(), H5T_NATIVE_INT, H5S_ALL, H5S_ALL,
                                H5P_DEFAULT, out.data()) >= 0;
             };
-            auto getDblArr = [&](const char* name, std::vector<double>& out,
-                                 size_t expect) -> bool {
+            auto get_dbl_arr = [&](const char* name, std::vector<double>& out,
+                                   size_t expect) -> bool {
                 H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
                 if (ds.get() < 0) return false;
                 hsize_t dims[1] = {0};
-                if (!getDimExact(name, 1, dims)) return false;
+                if (!get_dim_exact(name, 1, dims)) return false;
                 if (dims[0] != expect) return false;
-                if (!datasetIsDouble(ds.get())) return false;
+                if (!dataset_is_double(ds.get())) return false;
                 const auto bytes = checked_mul(expect, sizeof(double));
                 if (!bytes) return false;
                 out.resize(expect);
@@ -523,8 +524,8 @@ class Hdf5V1Reader final : public Reader {
                                H5P_DEFAULT, out.data()) >= 0;
             };
             // Scalar-or-one-element double attribute with the same dataspace
-            // hardening as getIntAttr and an exact 8-byte float type.
-            auto getDblAttr = [&](const char* name, double& out) -> bool {
+            // hardening as get_int_attr and an exact 8-byte float type.
+            auto get_dbl_attr = [&](const char* name, double& out) -> bool {
                 H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
                 if (aid.get() < 0) return false;
                 {
@@ -555,14 +556,14 @@ class Hdf5V1Reader final : public Reader {
             // 2-D double matrix with exact rank and extents (the folded
             // boundary datasets, stored in the writer's C order — row stride =
             // expect1).
-            auto getDblMat = [&](const char* name, std::vector<double>& out,
-                                 size_t expect0, size_t expect1) -> bool {
+            auto get_dbl_mat = [&](const char* name, std::vector<double>& out,
+                                   size_t expect0, size_t expect1) -> bool {
                 H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
                 if (ds.get() < 0) return false;
                 hsize_t dims[2] = {0, 0};
-                if (!getDimExact(name, 2, dims)) return false;
+                if (!get_dim_exact(name, 2, dims)) return false;
                 if (dims[0] != expect0 || dims[1] != expect1) return false;
-                if (!datasetIsDouble(ds.get())) return false;
+                if (!dataset_is_double(ds.get())) return false;
                 const auto el = checked_mul(expect0, expect1);
                 if (!el) return false;
                 const auto bytes = checked_mul(*el, sizeof(double));
@@ -573,7 +574,7 @@ class Hdf5V1Reader final : public Reader {
             };
 
             hsize_t state_dims[2] = {0, 0};
-            if (!getDimExact("rmncc", 2, state_dims)) {
+            if (!get_dim_exact("rmncc", 2, state_dims)) {
                 return fail("missing/malformed state dataset (rmncc)");
             }
             // Bounds BEFORE narrowing and allocation (handoff §4): dimensions
@@ -617,13 +618,13 @@ class Hdf5V1Reader final : public Reader {
                                 std::string(fam_names[c]) + ")");
                 }
                 hsize_t fam_dims[2] = {0, 0};
-                if (!getDimExact(fam_names[c], 2, fam_dims) ||
+                if (!get_dim_exact(fam_names[c], 2, fam_dims) ||
                     fam_dims[0] != state_dims[0] ||
                     fam_dims[1] != state_dims[1]) {
                     return fail("malformed state dataset (" +
                                 std::string(fam_names[c]) + ")");
                 }
-                if (!datasetIsDouble(ds.get())) {
+                if (!dataset_is_double(ds.get())) {
                     return fail("malformed state dataset type (" +
                                 std::string(fam_names[c]) + ")");
                 }
@@ -645,10 +646,10 @@ class Hdf5V1Reader final : public Reader {
                 // a partially populated report visible to the caller.
                 RunReport parsed_report;
                 int precision = 0, status = 0, total = 0, dirty = 0;
-                if (!getIntAttr("precision", precision) ||
-                    !getIntAttr("status", status) ||
-                    !getIntAttr("total_iterations", total) ||
-                    !getIntAttr("build_dirty", dirty)) {
+                if (!get_int_attr("precision", precision) ||
+                    !get_int_attr("status", status) ||
+                    !get_int_attr("total_iterations", total) ||
+                    !get_int_attr("build_dirty", dirty)) {
                     return fail("missing run outcome attributes");
                 }
                 // Closed-range validation of the serialized scalars (handoff
@@ -670,29 +671,30 @@ class Hdf5V1Reader final : public Reader {
                 parsed_report.build.dirty = (dirty != 0);
                 parsed_report.build.scalar_type =
                     (precision == 0) ? "double" : "float";
-                if (!getStrAttr(fid, "revision",
-                                parsed_report.build.revision) ||
-                    !getStrAttr(fid, "build_type",
-                                parsed_report.build.build_type) ||
-                    !getStrAttr(fid, "precision_policy",
-                                parsed_report.build.precision_policy) ||
-                    !getStrAttr(fid, "compile_flags",
-                                parsed_report.build.compile_flags) ||
-                    !getStrAttr(fid, "source_path",
-                                parsed_report.input.source_path) ||
-                    !getStrAttr(fid, "source_hash",
-                                parsed_report.input.source_hash) ||
-                    !getStrAttr(fid, "gpu_name",
-                                parsed_report.runtime.gpu_name) ||
-                    !getStrAttr(fid, "driver", parsed_report.runtime.driver) ||
-                    !getStrAttr(fid, "runtime",
-                                parsed_report.runtime.runtime) ||
-                    !getStrAttr(fid, "toolkit",
-                                parsed_report.runtime.toolkit)) {
+                if (!get_str_attr(fid, "revision",
+                                  parsed_report.build.revision) ||
+                    !get_str_attr(fid, "build_type",
+                                  parsed_report.build.build_type) ||
+                    !get_str_attr(fid, "precision_policy",
+                                  parsed_report.build.precision_policy) ||
+                    !get_str_attr(fid, "compile_flags",
+                                  parsed_report.build.compile_flags) ||
+                    !get_str_attr(fid, "source_path",
+                                  parsed_report.input.source_path) ||
+                    !get_str_attr(fid, "source_hash",
+                                  parsed_report.input.source_hash) ||
+                    !get_str_attr(fid, "gpu_name",
+                                  parsed_report.runtime.gpu_name) ||
+                    !get_str_attr(fid, "driver",
+                                  parsed_report.runtime.driver) ||
+                    !get_str_attr(fid, "runtime",
+                                  parsed_report.runtime.runtime) ||
+                    !get_str_attr(fid, "toolkit",
+                                  parsed_report.runtime.toolkit)) {
                     return fail("missing provenance attributes");
                 }
                 hsize_t d_stages[1] = {0};
-                if (!getDimExact("stage_ns", 1, d_stages)) {
+                if (!get_dim_exact("stage_ns", 1, d_stages)) {
                     return fail("missing/malformed stage_ns");
                 }
                 const size_t nstages = (size_t)d_stages[0];
@@ -706,7 +708,7 @@ class Hdf5V1Reader final : public Reader {
                     H5Closer probe(
                         H5Dopen2(fid, "restart_iteration", H5P_DEFAULT));
                     if (probe.get() >= 0 &&
-                        !getDimExact("restart_iteration", 1, d_restarts)) {
+                        !get_dim_exact("restart_iteration", 1, d_restarts)) {
                         return fail("malformed restart_iteration dataset");
                     }
                     if (probe.get() >= 0) nrestarts = (size_t)d_restarts[0];
@@ -720,15 +722,15 @@ class Hdf5V1Reader final : public Reader {
                 std::vector<int> stage_ns, stage_iter, stage_conv, rst_off;
                 std::vector<double> st_fsqr, st_fsqz, st_fsql;
                 std::vector<int> rst_iter;
-                if (!getIntArr("stage_ns", stage_ns, nstages) ||
-                    !getIntArr("stage_iterations", stage_iter, nstages) ||
-                    !getIntArr("stage_converged", stage_conv, nstages) ||
-                    !getIntArr("restart_stage_offset", rst_off, nstages) ||
-                    !getDblArr("stage_fsqr", st_fsqr, nstages) ||
-                    !getDblArr("stage_fsqz", st_fsqz, nstages) ||
-                    !getDblArr("stage_fsql", st_fsql, nstages) ||
+                if (!get_int_arr("stage_ns", stage_ns, nstages) ||
+                    !get_int_arr("stage_iterations", stage_iter, nstages) ||
+                    !get_int_arr("stage_converged", stage_conv, nstages) ||
+                    !get_int_arr("restart_stage_offset", rst_off, nstages) ||
+                    !get_dbl_arr("stage_fsqr", st_fsqr, nstages) ||
+                    !get_dbl_arr("stage_fsqz", st_fsqz, nstages) ||
+                    !get_dbl_arr("stage_fsql", st_fsql, nstages) ||
                     (nrestarts > 0 &&
-                     !getIntArr("restart_iteration", rst_iter, nrestarts))) {
+                     !get_int_arr("restart_iteration", rst_iter, nrestarts))) {
                     return fail("stage history read failed");
                 }
                 // Validate the offsets BEFORE they index rst_iter
@@ -737,7 +739,7 @@ class Hdf5V1Reader final : public Reader {
                 // instead of reading out of bounds.
                 {
                     const std::string off_err =
-                        validateRestartOffsets(rst_off, nstages, nrestarts);
+                        validate_restart_offsets(rst_off, nstages, nrestarts);
                     if (!off_err.empty()) {
                         return fail("invalid restart offsets: " + off_err);
                     }
@@ -783,42 +785,43 @@ class Hdf5V1Reader final : public Reader {
                     H5Closer aid(H5Aopen(fid, "mpol", H5P_DEFAULT));
                     if (aid.get() >= 0) {
                         InputParams ip;
-                        if (!getIntAttr("mpol", ip.mpol) ||
-                            !getIntAttr("ntor", ip.ntor) ||
-                            !getIntAttr("nfp", ip.nfp) ||
-                            !getIntAttr("ntheta", ip.ntheta) ||
-                            !getIntAttr("nzeta", ip.nzeta) ||
-                            !getIntAttr("ncurr", ip.ncurr) ||
-                            !getDblAttr("delt", ip.delt) ||
-                            !getDblAttr("phiedge", ip.phiedge) ||
-                            !getDblAttr("pres_scale", ip.pres_scale) ||
-                            !getDblAttr("adiabatic_index",
-                                        ip.adiabatic_index) ||
-                            !getDblAttr("spres_ped", ip.spres_ped) ||
-                            !getDblAttr("bloat", ip.bloat) ||
-                            !getDblAttr("curtor", ip.curtor) ||
-                            !getDblAttr("tcon0", ip.tcon0)) {
+                        if (!get_int_attr("mpol", ip.mpol) ||
+                            !get_int_attr("ntor", ip.ntor) ||
+                            !get_int_attr("nfp", ip.nfp) ||
+                            !get_int_attr("ntheta", ip.ntheta) ||
+                            !get_int_attr("nzeta", ip.nzeta) ||
+                            !get_int_attr("ncurr", ip.ncurr) ||
+                            !get_dbl_attr("delt", ip.delt) ||
+                            !get_dbl_attr("phiedge", ip.phiedge) ||
+                            !get_dbl_attr("pres_scale", ip.pres_scale) ||
+                            !get_dbl_attr("adiabatic_index",
+                                          ip.adiabatic_index) ||
+                            !get_dbl_attr("spres_ped", ip.spres_ped) ||
+                            !get_dbl_attr("bloat", ip.bloat) ||
+                            !get_dbl_attr("curtor", ip.curtor) ||
+                            !get_dbl_attr("tcon0", ip.tcon0)) {
                             return fail("malformed embedded input record");
                         }
                         {
-                            auto getVec =
+                            auto get_vec =
                                 [&](const char* name,
                                     std::vector<double>& out) -> bool {
                                 hsize_t dims[1] = {0};
-                                if (!getDimExact(name, 1, dims)) return false;
-                                return getDblArr(name, out, (size_t)dims[0]);
+                                if (!get_dim_exact(name, 1, dims)) return false;
+                                return get_dbl_arr(name, out, (size_t)dims[0]);
                             };
-                            if (!getVec("am", ip.am) || !getVec("ac", ip.ac) ||
-                                !getVec("ai", ip.ai) ||
-                                !getVec("aphi", ip.aphi) ||
-                                !getVec("raxis_c", ip.raxis_c) ||
-                                !getVec("zaxis_s", ip.zaxis_s)) {
+                            if (!get_vec("am", ip.am) ||
+                                !get_vec("ac", ip.ac) ||
+                                !get_vec("ai", ip.ai) ||
+                                !get_vec("aphi", ip.aphi) ||
+                                !get_vec("raxis_c", ip.raxis_c) ||
+                                !get_vec("zaxis_s", ip.zaxis_s)) {
                                 return fail("malformed embedded input record");
                             }
                         }
                         {
                             hsize_t d_in[1] = {0};
-                            if (!getDimExact("stage_in_ns", 1, d_in)) {
+                            if (!get_dim_exact("stage_in_ns", 1, d_in)) {
                                 return fail("malformed embedded input record");
                             }
                             const size_t nstages_in = (size_t)d_in[0];
@@ -830,12 +833,12 @@ class Hdf5V1Reader final : public Reader {
                             }
                             std::vector<int> stg_in_ns, stg_max_iter;
                             std::vector<double> stg_ftol;
-                            if (!getIntArr("stage_in_ns", stg_in_ns,
-                                           nstages_in) ||
-                                !getIntArr("stage_max_iter", stg_max_iter,
-                                           nstages_in) ||
-                                !getDblArr("stage_ftol", stg_ftol,
-                                           nstages_in)) {
+                            if (!get_int_arr("stage_in_ns", stg_in_ns,
+                                             nstages_in) ||
+                                !get_int_arr("stage_max_iter", stg_max_iter,
+                                             nstages_in) ||
+                                !get_dbl_arr("stage_ftol", stg_ftol,
+                                             nstages_in)) {
                                 return fail("malformed embedded input record");
                             }
                             for (size_t g = 0; g < nstages_in; ++g) {
@@ -848,27 +851,27 @@ class Hdf5V1Reader final : public Reader {
                         }
                         {
                             hsize_t d_r[1] = {0}, d_z[1] = {0}, d_b[2] = {0, 0};
-                            if (!getDimExact("rbc_m", 1, d_r) ||
-                                !getDimExact("zbs_m", 1, d_z) ||
-                                !getDimExact("rbcc", 2, d_b)) {
+                            if (!get_dim_exact("rbc_m", 1, d_r) ||
+                                !get_dim_exact("zbs_m", 1, d_z) ||
+                                !get_dim_exact("rbcc", 2, d_b)) {
                                 return fail("malformed embedded input record");
                             }
                             const size_t nrbc = (size_t)d_r[0],
                                          nzbs = (size_t)d_z[0];
-                            if (!getIntArr("rbc_m", ip.rbc_m, nrbc) ||
-                                !getIntArr("rbc_n", ip.rbc_n, nrbc) ||
-                                !getDblArr("rbc_value", ip.rbc_value, nrbc) ||
-                                !getIntArr("zbs_m", ip.zbs_m, nzbs) ||
-                                !getIntArr("zbs_n", ip.zbs_n, nzbs) ||
-                                !getDblArr("zbs_value", ip.zbs_value, nzbs) ||
-                                !getDblMat("rbcc", ip.rbcc, (size_t)d_b[0],
-                                           (size_t)d_b[1]) ||
-                                !getDblMat("rbss", ip.rbss, (size_t)d_b[0],
-                                           (size_t)d_b[1]) ||
-                                !getDblMat("zbsc", ip.zbsc, (size_t)d_b[0],
-                                           (size_t)d_b[1]) ||
-                                !getDblMat("zbcs", ip.zbcs, (size_t)d_b[0],
-                                           (size_t)d_b[1])) {
+                            if (!get_int_arr("rbc_m", ip.rbc_m, nrbc) ||
+                                !get_int_arr("rbc_n", ip.rbc_n, nrbc) ||
+                                !get_dbl_arr("rbc_value", ip.rbc_value, nrbc) ||
+                                !get_int_arr("zbs_m", ip.zbs_m, nzbs) ||
+                                !get_int_arr("zbs_n", ip.zbs_n, nzbs) ||
+                                !get_dbl_arr("zbs_value", ip.zbs_value, nzbs) ||
+                                !get_dbl_mat("rbcc", ip.rbcc, (size_t)d_b[0],
+                                             (size_t)d_b[1]) ||
+                                !get_dbl_mat("rbss", ip.rbss, (size_t)d_b[0],
+                                             (size_t)d_b[1]) ||
+                                !get_dbl_mat("zbsc", ip.zbsc, (size_t)d_b[0],
+                                             (size_t)d_b[1]) ||
+                                !get_dbl_mat("zbcs", ip.zbcs, (size_t)d_b[0],
+                                             (size_t)d_b[1])) {
                                 return fail("malformed embedded input record");
                             }
                         }
@@ -877,17 +880,17 @@ class Hdf5V1Reader final : public Reader {
                         // older container lacks the profile types ->
                         // "power_series").
                         std::string schema_tag;
-                        if (getStrAttr(fid, "schema", schema_tag)) {
+                        if (get_str_attr(fid, "schema", schema_tag)) {
                             ip.schema = schema_tag;
                         }
                         std::string pmass_tag, piota_tag, pcurr_tag;
-                        if (getStrAttr(fid, "pmass_type", pmass_tag)) {
+                        if (get_str_attr(fid, "pmass_type", pmass_tag)) {
                             ip.pmass_type = pmass_tag;
                         }
-                        if (getStrAttr(fid, "piota_type", piota_tag)) {
+                        if (get_str_attr(fid, "piota_type", piota_tag)) {
                             ip.piota_type = piota_tag;
                         }
-                        if (getStrAttr(fid, "pcurr_type", pcurr_tag)) {
+                        if (get_str_attr(fid, "pcurr_type", pcurr_tag)) {
                             ip.pcurr_type = pcurr_tag;
                         }
                         parsed_report.input_params = std::move(ip);

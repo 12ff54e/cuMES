@@ -1,7 +1,7 @@
 // iteration_controller.hpp — the pure host fixed-point control state machine
 // (blueprint §6.10, §4.10).
 //
-// This class owns every host-side scalar decision the legacy solverRun() made
+// This class owns every host-side scalar decision the legacy solver_run() made
 // inline: the effective-iteration / restart-anchor counters, the residual
 // log-ratio damping history, the running-minimum reset logic, the
 // bad-Jacobian / bad-progress / maintenance-reset branches, and convergence.
@@ -116,7 +116,7 @@ class IterationController {
     // on the half grid — including the jH=0 axis row, which the legacy
     // relative test excluded (it compared against gmax and required
     // gminIdx >= nZnT). The stats themselves reduce the ORIENTED signJ·√g
-    // (kernels/geometry_impl.cuh jacobianStatsKernel), which |√g| cannot
+    // (kernels/geometry_impl.cuh jacobian_stats_kernel), which |√g| cannot
     // express at all. Trigger conditions in practice: the frozen W7-X
     // trajectory fires this branch three times in stage 1 (min(signJ·√g) ≈
     // -9.9e-1 / -8.2e-1 / -1.2e-1 at interior jH — genuine sign flips of the

@@ -9,13 +9,13 @@
 // The console printout of the converged state (status, residuals, axis +
 // boundary coefficients).
 template <typename T>
-void outputPrint(const cumes::SpectralStorage<T>& storage,
-                 const DeviceParams<T>& p,
-                 int niter,
-                 bool converged,
-                 T fsqr,
-                 T fsqz,
-                 T fsql);
+void output_print(const cumes::SpectralStorage<T>& storage,
+                  const DeviceParams<T>& p,
+                  int niter,
+                  bool converged,
+                  T fsqr,
+                  T fsqz,
+                  T fsql);
 
 // The on-disk writers are GONE from this header (completion plan steps
 // 2.1/2.2): the CLI resolves a typed OutputSpec (cumes/io/output_spec.hpp)

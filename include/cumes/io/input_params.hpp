@@ -9,7 +9,7 @@
 // already applied) and the axis is zero-padded to ntor+1.
 //
 // Serialization is per container: the versioned binary and the checkpoint
-// append a fixed-order typed record (io_common.hpp write/readInputParams);
+// append a fixed-order typed record (io_common.hpp write/read_input_params);
 // the NetCDF/HDF5 writers map the fields to native scalar variables,
 // datasets, and attributes. The schema tag names the normalized-input layout
 // the record corresponds to.
@@ -112,9 +112,9 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
     p.bloat = sp.physical.bloat;
     p.curtor = sp.physical.curtor;
     p.tcon0 = sp.physical.tcon0;
-    p.pmass_type = profileTypeToString(sp.mass.type);
-    p.piota_type = profileTypeToString(sp.iota.type);
-    p.pcurr_type = profileTypeToString(sp.current.type);
+    p.pmass_type = profile_type_to_string(sp.mass.type);
+    p.piota_type = profile_type_to_string(sp.iota.type);
+    p.pcurr_type = profile_type_to_string(sp.current.type);
     p.am = sp.mass.coefficients;
     p.ac = sp.current.coefficients;
     p.ai = sp.iota.coefficients;

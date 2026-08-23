@@ -58,15 +58,15 @@ struct SolverResult {
 // selecting the axisymmetric backend for ntor=0/nzeta=1 is a trajectory
 // re-freeze.
 template <typename T>
-SolverResult<T> solverRun(cumes::SpectralStorage<T>& state,
-                          const DeviceParams<T>& p,
-                          const cumes::Profiles<T>& profiles,
-                          cumes::ToroidalFftOperator<T>& transform,
-                          cumes::RealSpaceStorage<T>& rs,
-                          cumes::GeometryOperator<T>& geometry,
-                          cumes::DeviceArena* arena = nullptr,
-                          cudaStream_t stream = 0,
-                          cumes::SolverBench* bench = nullptr,
-                          cumes::SpectralOperator<T>* op = nullptr);
+SolverResult<T> solver_run(cumes::SpectralStorage<T>& state,
+                           const DeviceParams<T>& p,
+                           const cumes::Profiles<T>& profiles,
+                           cumes::ToroidalFftOperator<T>& transform,
+                           cumes::RealSpaceStorage<T>& rs,
+                           cumes::GeometryOperator<T>& geometry,
+                           cumes::DeviceArena* arena = nullptr,
+                           cudaStream_t stream = 0,
+                           cumes::SolverBench* bench = nullptr,
+                           cumes::SpectralOperator<T>* op = nullptr);
 
 #endif  // CUMES_INCLUDE_SOLVER_CUH_

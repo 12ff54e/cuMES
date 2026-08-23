@@ -2,9 +2,9 @@
 // (blueprint §10.1 "local scalar reference"; Phase-5 deliverable #4).
 //
 // The force kernel is the one CUDA operator without an existing CPU oracle
-// (the transforms have cpuInvDFT in test_fourier, the tridiagonal solve has the
-// Thomas reference in test_regression_kernels). This test adds the missing
-// layer: a scalar double reference that mirrors forcesKernel's weak form
+// (the transforms have cpu_inv_dft in test_fourier, the tridiagonal solve has
+// the Thomas reference in test_regression_kernels). This test adds the missing
+// layer: a scalar double reference that mirrors forces_kernel's weak form
 // (radial/poloidal/toroidal/hybrid-lambda contributions, all eight e/o force
 // families) point-by-point, and a dual-run gate that runs the GPU kernel and
 // the CPU reference on the same frozen input and compares.
@@ -27,61 +27,62 @@
 #include <vector>
 using namespace cumes::test;
 
-// Scalar CPU reference: mirrors forcesKernel (kernels/forces_impl.cuh) exactly,
-// in double, on host arrays. `r_e..zv_o` are the full-grid parity geometry, the
-// half-grid metric/field arrays are (ns-1, nZnT), profiles are sqrtS_F/sqrtS_H/
-// phip_F, and the 16 force outputs are written to out (parity-split).
+// Scalar CPU reference: mirrors forces_kernel (kernels/forces_impl.cuh)
+// exactly, in double, on host arrays. `r_e..zv_o` are the full-grid parity
+// geometry, the half-grid metric/field arrays are (ns-1, nZnT), profiles are
+// sqrtS_F/sqrtS_H/ phip_F, and the 16 force outputs are written to out
+// (parity-split).
 template <typename T>
-static void cpuForces(const std::vector<T>& r_e,
-                      const std::vector<T>& r_o,
-                      const std::vector<T>& z_o,
-                      const std::vector<T>& ru_e,
-                      const std::vector<T>& ru_o,
-                      const std::vector<T>& zu_e,
-                      const std::vector<T>& zu_o,
-                      const std::vector<T>& rv_e,
-                      const std::vector<T>& rv_o,
-                      const std::vector<T>& zv_e,
-                      const std::vector<T>& zv_o,
-                      const std::vector<T>& lu_e,
-                      const std::vector<T>& lu_o,
-                      const std::vector<T>& r12,
-                      const std::vector<T>& ru12,
-                      const std::vector<T>& zu12,
-                      const std::vector<T>& rs,
-                      const std::vector<T>& zs,
-                      const std::vector<T>& tau,
-                      const std::vector<T>& gsqrt,
-                      const std::vector<T>& guv,
-                      const std::vector<T>& gvv,
-                      const std::vector<T>& bsupu,
-                      const std::vector<T>& bsupv,
-                      const std::vector<T>& bsubu,
-                      const std::vector<T>& bsubv,
-                      const std::vector<T>& totalP,
-                      const std::vector<T>& sqrtS_F,
-                      const std::vector<T>& sqrtS_H,
-                      const std::vector<T>& phip_F,
-                      int ns,
-                      int nZnT,
-                      T lamscale,
-                      T delta_s,
-                      std::vector<T>& armn_e,
-                      std::vector<T>& armn_o,
-                      std::vector<T>& azmn_e,
-                      std::vector<T>& azmn_o,
-                      std::vector<T>& brmn_e,
-                      std::vector<T>& brmn_o,
-                      std::vector<T>& bzmn_e,
-                      std::vector<T>& bzmn_o,
-                      std::vector<T>& crmn_e,
-                      std::vector<T>& crmn_o,
-                      std::vector<T>& czmn_e,
-                      std::vector<T>& czmn_o,
-                      std::vector<T>& blmn_e,
-                      std::vector<T>& blmn_o,
-                      std::vector<T>& clmn_e,
-                      std::vector<T>& clmn_o) {
+static void cpu_forces(const std::vector<T>& r_e,
+                       const std::vector<T>& r_o,
+                       const std::vector<T>& z_o,
+                       const std::vector<T>& ru_e,
+                       const std::vector<T>& ru_o,
+                       const std::vector<T>& zu_e,
+                       const std::vector<T>& zu_o,
+                       const std::vector<T>& rv_e,
+                       const std::vector<T>& rv_o,
+                       const std::vector<T>& zv_e,
+                       const std::vector<T>& zv_o,
+                       const std::vector<T>& lu_e,
+                       const std::vector<T>& lu_o,
+                       const std::vector<T>& r12,
+                       const std::vector<T>& ru12,
+                       const std::vector<T>& zu12,
+                       const std::vector<T>& rs,
+                       const std::vector<T>& zs,
+                       const std::vector<T>& tau,
+                       const std::vector<T>& gsqrt,
+                       const std::vector<T>& guv,
+                       const std::vector<T>& gvv,
+                       const std::vector<T>& bsupu,
+                       const std::vector<T>& bsupv,
+                       const std::vector<T>& bsubu,
+                       const std::vector<T>& bsubv,
+                       const std::vector<T>& totalP,
+                       const std::vector<T>& sqrtS_F,
+                       const std::vector<T>& sqrtS_H,
+                       const std::vector<T>& phip_F,
+                       int ns,
+                       int nZnT,
+                       T lamscale,
+                       T delta_s,
+                       std::vector<T>& armn_e,
+                       std::vector<T>& armn_o,
+                       std::vector<T>& azmn_e,
+                       std::vector<T>& azmn_o,
+                       std::vector<T>& brmn_e,
+                       std::vector<T>& brmn_o,
+                       std::vector<T>& bzmn_e,
+                       std::vector<T>& bzmn_o,
+                       std::vector<T>& crmn_e,
+                       std::vector<T>& crmn_o,
+                       std::vector<T>& czmn_e,
+                       std::vector<T>& czmn_o,
+                       std::vector<T>& blmn_e,
+                       std::vector<T>& blmn_o,
+                       std::vector<T>& clmn_e,
+                       std::vector<T>& clmn_o) {
     for (int j = 0; j < ns; ++j) {
         T sF_j = sqrtS_F[j];
         T sFull = sF_j * sF_j;
@@ -243,12 +244,12 @@ static void cpuForces(const std::vector<T>& r_e,
 }
 
 template <typename T>
-static void runReference(int ns,
-                         int mpol,
-                         int ntor,
-                         int ntheta,
-                         int nzeta,
-                         const char* label) {
+static void run_reference(int ns,
+                          int mpol,
+                          int ntor,
+                          int ntheta,
+                          int nzeta,
+                          const char* label) {
     DeviceParams<T> p;
     p.ns = ns;
     p.mnmax = mpol * (ntor + 1);
@@ -317,8 +318,8 @@ static void runReference(int ns,
     cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> op(p, rs, mt);
     cumes::GeometryOperator<T> geometry(p, nullptr);
 
@@ -382,13 +383,13 @@ static void runReference(int ns,
     std::vector<T> c_brmn_e(nF), c_brmn_o(nF), c_bzmn_e(nF), c_bzmn_o(nF);
     std::vector<T> c_crmn_e(nF), c_crmn_o(nF), c_czmn_e(nF), c_czmn_o(nF);
     std::vector<T> c_blmn_e(nF), c_blmn_o(nF), c_clmn_e(nF), c_clmn_o(nF);
-    cpuForces(r_e, r_o, z_o, ru_e, ru_o, zu_e, zu_o, rv_e, rv_o, zv_e, zv_o,
-              lu_e, lu_o, r12, ru12, zu12, rs_h, zs, tau, gsqrt, guv, gvv,
-              bsupu, bsupv, bsubu, bsubv, totalP, sqrtS_F, sqrtS_H, phip_F, ns,
-              p.nZnT, p.lamscale, profiles.delta_s(), c_armn_e, c_armn_o,
-              c_azmn_e, c_azmn_o, c_brmn_e, c_brmn_o, c_bzmn_e, c_bzmn_o,
-              c_crmn_e, c_crmn_o, c_czmn_e, c_czmn_o, c_blmn_e, c_blmn_o,
-              c_clmn_e, c_clmn_o);
+    cpu_forces(r_e, r_o, z_o, ru_e, ru_o, zu_e, zu_o, rv_e, rv_o, zv_e, zv_o,
+               lu_e, lu_o, r12, ru12, zu12, rs_h, zs, tau, gsqrt, guv, gvv,
+               bsupu, bsupv, bsubu, bsubv, totalP, sqrtS_F, sqrtS_H, phip_F, ns,
+               p.nZnT, p.lamscale, profiles.delta_s(), c_armn_e, c_armn_o,
+               c_azmn_e, c_azmn_o, c_brmn_e, c_brmn_o, c_bzmn_e, c_bzmn_o,
+               c_crmn_e, c_crmn_o, c_czmn_e, c_czmn_o, c_blmn_e, c_blmn_o,
+               c_clmn_e, c_clmn_o);
 
     const double tol = (sizeof(T) == sizeof(double)) ? 1e-8 : 1e-4;
     double md = 0.0;
@@ -414,15 +415,15 @@ static void runReference(int ns,
         label, md, tol);
     check(md < tol, msg);
 
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
 }
 
 int main() {
     std::cout
         << "=== Force kernel: GPU vs CPU scalar reference (dual-run) ===\n";
-    runReference<double>(5, 4, 0, 18, 1, "double axisymmetric ns=5");
-    runReference<double>(11, 6, 2, 18, 4, "double 3D ns=11");
-    runReference<float>(5, 4, 0, 18, 1, "float axisymmetric ns=5");
+    run_reference<double>(5, 4, 0, 18, 1, "double axisymmetric ns=5");
+    run_reference<double>(11, 6, 2, 18, 4, "double 3D ns=11");
+    run_reference<float>(5, 4, 0, 18, 1, "float axisymmetric ns=5");
     return summary();
 }

@@ -8,8 +8,8 @@
 // and upload to GPU. Matches vmecpp's evalRadialProfiles (radial_profiles.cc
 // lines 1149-1220) and computeMagneticFluxes (440-455):
 //   maxToroidalFlux = signJ*phiedge/(2π) / torflux(1)
-//   phip = maxToroidalFlux * torfluxDeriv(s)
-//   torflux(x) = x*Σ aphi_i*x^i, torfluxDeriv(x) = Σ (i+1)*aphi_i*x^i
+//   phip = maxToroidalFlux * torflux_deriv(s)
+//   torflux(x) = x*Σ aphi_i*x^i, torflux_deriv(x) = Σ (i+1)*aphi_i*x^i
 //   mass = μ0*pres_scale * Σ am_i*tf^i   (tf = toroidal flux coordinate)
 //   pres = mass / dVds^gamma  (gamma = adiabatic_index; dVds placeholder
 //          for gamma != 0 — the geometry-dependent dVds is not implemented)
@@ -30,9 +30,10 @@
 #include <cmath>
 #include <cstdio>
 
-// The power-series evaluators (torflux/torfluxDeriv/evalIotaProfile/
-// evalMassProfile/evalCurrProfile) live in the shared header above: the host
-// validator and this upload step must divide by bit-identical normalizations.
+// The power-series evaluators (torflux/torflux_deriv/eval_iota_profile/
+// eval_mass_profile/eval_curr_profile) live in the shared header above: the
+// host validator and this upload step must divide by bit-identical
+// normalizations.
 
 template <typename T>
 cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
@@ -59,7 +60,7 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
     // Itor = signJ * μ0*curtor / (2π * I(1)), I(s) = ∫₀ˢ ac
     T Itor = T(0.0);
     if (ncurr == 1) {
-        T edgeCurrent = cumes::evalCurrProfile<T>(sp, T(1.0));
+        T edgeCurrent = cumes::eval_curr_profile<T>(sp, T(1.0));
         if (edgeCurrent == T(0.0)) {
             // The normalization is a division by the edge current integral:
             // a degenerate (all-zero) ac profile would make Itor infinite and
@@ -100,21 +101,21 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
     for (int j = 0; j < p.ns; ++j) {
         T s = delta_s_ * T(j);
         T tf = fmin(torflux<T>(sp, s), T(1.0));
-        h[j] = evalIotaProfile<T>(sp, tf);
+        h[j] = eval_iota_profile<T>(sp, tf);
     }
     cumes::check_cuda(cudaMemcpy(d_iota_F_, h, nF, cudaMemcpyHostToDevice),
                       "iota_F cpy");
     for (int j = 0; j < p.ns; ++j) {
         T s = delta_s_ * T(j);
-        h[j] = maxToroidalFlux * torfluxDeriv<T>(sp, s);
+        h[j] = maxToroidalFlux * torflux_deriv<T>(sp, s);
     }
     cumes::check_cuda(cudaMemcpy(d_phip_F_, h, nF, cudaMemcpyHostToDevice),
                       "phip_F cpy");
     for (int j = 0; j < p.ns; ++j) {
         T s = delta_s_ * T(j);
         T tf = fmin(torflux<T>(sp, s), T(1.0));
-        h[j] = maxToroidalFlux * evalIotaProfile<T>(sp, tf) *
-               torfluxDeriv<T>(sp, s);
+        h[j] = maxToroidalFlux * eval_iota_profile<T>(sp, tf) *
+               torflux_deriv<T>(sp, s);
     }
     cumes::check_cuda(cudaMemcpy(d_chi_F_, h, nF, cudaMemcpyHostToDevice),
                       "chi_F cpy");
@@ -126,20 +127,20 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = delta_s_ * (T(j) + T(0.5));
         T tf = fmin(torflux<T>(sp, sh), T(1.0));
-        h[j] = evalIotaProfile<T>(sp, tf);
+        h[j] = eval_iota_profile<T>(sp, tf);
     }
     cumes::check_cuda(cudaMemcpy(d_iota_H_, h, nH, cudaMemcpyHostToDevice),
                       "iota_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = delta_s_ * (T(j) + T(0.5));
         T tf = fmin(torflux<T>(sp, fmin(sh, T(sp.physical.spres_ped))), T(1.0));
-        h[j] = evalMassProfile<T>(sp, tf);  // pres = mass (gamma = 0)
+        h[j] = eval_mass_profile<T>(sp, tf);  // pres = mass (gamma = 0)
     }
     cumes::check_cuda(cudaMemcpy(d_pres_H_, h, nH, cudaMemcpyHostToDevice),
                       "pres_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = delta_s_ * (T(j) + T(0.5));
-        h[j] = maxToroidalFlux * torfluxDeriv<T>(sp, sh);
+        h[j] = maxToroidalFlux * torflux_deriv<T>(sp, sh);
     }
     cumes::check_cuda(cudaMemcpy(d_phip_H_, h, nH, cudaMemcpyHostToDevice),
                       "phip_H cpy");
@@ -148,8 +149,8 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = delta_s_ * (T(j) + T(0.5));
         T tf = fmin(torflux<T>(sp, sh), T(1.0));
-        h[j] = maxToroidalFlux * evalIotaProfile<T>(sp, tf) *
-               torfluxDeriv<T>(sp, sh);
+        h[j] = maxToroidalFlux * eval_iota_profile<T>(sp, tf) *
+               torflux_deriv<T>(sp, sh);
     }
     cumes::check_cuda(cudaMemcpy(d_chip_H_, h, nH, cudaMemcpyHostToDevice),
                       "chip_H cpy");
@@ -159,7 +160,8 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
                       "dVds_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
         T sh = delta_s_ * (T(j) + T(0.5));
-        h[j] = Itor * evalCurrProfile<T>(sp, fmin(torflux<T>(sp, sh), T(1.0)));
+        h[j] =
+            Itor * eval_curr_profile<T>(sp, fmin(torflux<T>(sp, sh), T(1.0)));
     }
     cumes::check_cuda(cudaMemcpy(d_curr_H_, h, nH, cudaMemcpyHostToDevice),
                       "curr_H cpy");
@@ -181,7 +183,7 @@ cumes::Profiles<T>::Profiles(DeviceParams<T>& p,
     delete[] h_phip;
     p.lamscale = sqrt(rmsPhiP * delta_s_);
     printf("  profiles: ns=%d phip=%.6e lamscale=%.6e maxToroidalFlux=%.6e\n",
-           p.ns, (double)(maxToroidalFlux * torfluxDeriv<T>(sp, T(0.5))),
+           p.ns, (double)(maxToroidalFlux * torflux_deriv<T>(sp, T(0.5))),
            (double)p.lamscale, (double)maxToroidalFlux);
 }
 

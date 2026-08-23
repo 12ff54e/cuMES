@@ -138,8 +138,8 @@ class OperatorStack {
                   const cumes::ValidatedProblem& vp,
                   cumes::DeviceArena& arena)
         : profiles(p, vp, &arena),
-          rs(::realSpaceCreate<T>(p, &arena)),
-          mt(cumes::modeTableCreate<T>(p, &arena)),
+          rs(::real_space_create<T>(p, &arena)),
+          mt(cumes::mode_table_create<T>(p, &arena)),
           transform(p, rs, mt, &arena),
           geometry(p, &arena),
           use_axisym(p.ntor == 0 && p.nzeta == 1) {

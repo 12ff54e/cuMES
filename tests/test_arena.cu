@@ -13,7 +13,7 @@
 #include <cstdlib>
 using namespace cumes::test;
 
-__global__ void fillSpan(double* d, int n, double seed) {
+__global__ void fill_span(double* d, int n, double seed) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) d[i] = seed + (double)i;
 }
@@ -55,8 +55,8 @@ int main() {
         arena.allocate(4096);
         double* d = arena.alloc_span<double>("state/slab", 64);
         arena.zero_span(d, 64);
-        fillSpan<<<1, 64>>>(d, 64, 10.0);
-        cc(cudaDeviceSynchronize(), "sync fillSpan");
+        fill_span<<<1, 64>>>(d, 64, 10.0);
+        cc(cudaDeviceSynchronize(), "sync fill_span");
         double h[64];
         cc(cudaMemcpy(h, d, 64 * sizeof(double), cudaMemcpyDeviceToHost),
            "read");

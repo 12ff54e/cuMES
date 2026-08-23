@@ -31,8 +31,8 @@ using namespace cumes::test;
 // (gitignored, only present after a CUMES_DUMP=1 run) — the test is now
 // self-contained and registerable.
 template <typename T>
-static void fillState(cumes::SpectralStorage<T>& storage,
-                      const DeviceParams<T>& p) {
+static void fill_state(cumes::SpectralStorage<T>& storage,
+                       const DeviceParams<T>& p) {
     std::vector<T> hcc, hss, hzsc, hzcs, hlsc, hlcs;
     manufactured_state<T>(ManufacturedShape::W7X_GENERIC, p.ns, p.mnmax, p.ntor,
                           hcc, hss, hzsc, hzcs, hlsc, hlcs);
@@ -63,11 +63,11 @@ int main() {
     cumes::SpectralStorage<double> storage(p.ns, p.mnmax);
     size_t nb = (size_t)p.ns * p.mnmax * sizeof(double);
 
-    fillState(storage, p);
+    fill_state(storage, p);
     cumes::Profiles<double> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<double> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<double> rs = real_space_create(p);
     cumes::ToroidalFftOperator<double> op(p, rs, mt);
     cumes::GeometryOperator<double> geometry(p, nullptr);
 
@@ -141,8 +141,8 @@ int main() {
     std::cout << format("bsubu[jMid={}] zeros: {}/{}\n", jMid, nz2, nZnT);
     delete[] h_all;
 
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
 
     // Assertions: a full-coverage kernel must leave no unwritten point on an
     // interior surface (zero is not a physical bsupu/bsubu value there).

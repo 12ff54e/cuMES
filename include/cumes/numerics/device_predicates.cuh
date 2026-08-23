@@ -3,20 +3,21 @@
 //
 // These kernels implement the device-side safety decisions of the DAG:
 //
-//   jacobianFinalizeKernel             reset->reduce->FINALIZE the oriented
+//   jacobian_finalize_kernel             reset->reduce->FINALIZE the oriented
 //                                      Jacobian validity (the rule is shared
 //                                      with IterationController::jacobian_
 //                                      invalid via cumes::JACOBIAN_EPS);
-//   forceNormFinalizeKernel             finalize the force-norm factors ON
+//   force_norm_finalize_kernel             finalize the force-norm factors ON
 //                                      DEVICE from the refresh-pass force
 //                                      norms, before the terminal predicate
 //                                      (completion-plan follow-up §2.3);
-//   invariantPredicateKernel           classify the invariant residual ON
+//   invariant_predicate_kernel           classify the invariant residual ON
 //                                      DEVICE before in-place preconditioning
 //                                      (nonfinite always; converged on every
 //                                      pass — refresh passes use the record's
 //                                      device-finalized factors);
-//   computeResidualsPreconditionedKernel  the terminal-guarded preconditioned
+//   compute_residuals_preconditioned_kernel  the terminal-guarded
+//   preconditioned
 //                                      reduction (zero sentinel +
 //                                      not_evaluated on terminal passes).
 //
@@ -36,7 +37,7 @@
 // reduced oriented stats and decide validity with the IDENTICAL rule the host
 // controller applies (IterationController::jacobian_invalid + JACOBIAN_EPS).
 // The bit gates every downstream 1/√g consumer, cache mutation, and force.
-static __global__ void jacobianFinalizeKernel(
+static __global__ void jacobian_finalize_kernel(
     cumes::ControlRecord* __restrict__ rec,
     int nZnT) {
     const double eps = cumes::JACOBIAN_EPS;
@@ -50,8 +51,8 @@ static __global__ void jacobianFinalizeKernel(
 
 // Finalize the force-norm factors ON DEVICE from the just-reduced partials
 // (completion-plan follow-up §2.3). Runs on preconditioner-refresh passes,
-// ordered after forceNormReduceKernel/rzNormKernel on the compute stream, so
-// the required normalization IS available before the device terminal
+// ordered after force_norm_reduce_kernel/rz_norm_kernel on the compute stream,
+// so the required normalization IS available before the device terminal
 // predicate — convergence classification is no longer structurally disabled
 // on refresh passes. The expressions below are EXACTLY the host-side
 // finalizeForceNorms rules (src/kernels/solver_impl.cuh), operator for
@@ -64,7 +65,7 @@ static __global__ void jacobianFinalizeKernel(
 // evaluated: on an invalid-Jacobian refresh pass the fields stay at the
 // deterministic zero sentinel and the predicate skips convergence
 // classification (see below).
-static __global__ void forceNormFinalizeKernel(
+static __global__ void force_norm_finalize_kernel(
     cumes::ControlRecord* __restrict__ rec,
     double delta_s,
     double lamscale) {
@@ -104,7 +105,7 @@ static __global__ void forceNormFinalizeKernel(
 //     gate restores before reading these bits anyway, and the guarded
 //     preconditioner would no-op regardless.
 // Nonfinite classification is factor-independent and always runs.
-static __global__ void invariantPredicateKernel(
+static __global__ void invariant_predicate_kernel(
     cumes::ControlRecord* __restrict__ rec,
     double f_norm_rz,
     double f_norm_l,
@@ -135,7 +136,7 @@ static __global__ void invariantPredicateKernel(
 // telemetry already records zero preconditioned residuals on terminal passes
 // (recordPass), so the on-disk contract is unchanged.
 template <typename T>
-__global__ void computeResidualsPreconditionedKernel(
+__global__ void compute_residuals_preconditioned_kernel(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
     int ns,
     int mnmax,

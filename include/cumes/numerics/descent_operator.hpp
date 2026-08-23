@@ -3,10 +3,10 @@
 //
 // Applies the ordered decision: optional descent, optional post-descent
 // checkpoint capture, then optional post-descent restore + velocity zero. The
-// legacy descentStepKernel + backupState/restoreState are the reference
+// legacy descent_step_kernel + backupState/restoreState are the reference
 // implementation; the velocity/state slabs make checkpoint capture one copy.
 //
-// Strangler-fig form: a stateless thin wrapper over descentStepKernel
+// Strangler-fig form: a stateless thin wrapper over descent_step_kernel
 // (verbatim — migration step 10). It launches the accelerated descent step; the
 // single-copy checkpoint capture/restore stays with the solver's state slab
 // (the blueprint §6.10 keeps the checkpoint as a distinct operator).

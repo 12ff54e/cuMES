@@ -44,8 +44,8 @@ static_assert(
 
 // Write through a ReducedThetaView on device; host verifies the
 // [surface][zeta][reduced_theta] layout (reduced_theta contiguous).
-__global__ void writeReduced(cumes::ReducedThetaView<double> v,
-                             int ntheta_red) {
+__global__ void write_reduced(cumes::ReducedThetaView<double> v,
+                              int ntheta_red) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int total = v.surfaces() * ntheta_red * v.nzeta();
     if (i >= total) return;
@@ -70,7 +70,7 @@ int main() {
                       cudaMemcpyHostToDevice),
            "seed");
         cumes::ReducedThetaView<double> v(d, ns, nred, nzeta);
-        writeReduced<<<(total + 127) / 128, 128>>>(v, nred);
+        write_reduced<<<(total + 127) / 128, 128>>>(v, nred);
         cc(cudaDeviceSynchronize(), "sync");
         std::vector<double> back(total);
         cc(cudaMemcpy(back.data(), d, total * sizeof(double),

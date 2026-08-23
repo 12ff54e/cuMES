@@ -8,7 +8,7 @@
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major
 //   params    the embedded normalized-input record (io_common.hpp
-//             writeInputParams); version 2 and up
+//             write_input_params); version 2 and up
 //
 // Version 3 appends the three profile-type strings to the input record;
 // version-2 checkpoints are still read (the types default to
@@ -34,7 +34,7 @@ constexpr std::int32_t MIN_CHECKPOINT_VERSION = 1;
 Status write_checkpoint(const EquilibriumSnapshot& snapshot,
                         const InputParams& input_params,
                         const std::string& path) {
-    const std::string tmp = io_detail::tempPathFor(path);
+    const std::string tmp = io_detail::temp_path_for(path);
     FILE* fp = fopen(tmp.c_str(), "wb");
     if (!fp) return Status("cannot open " + tmp + " for writing");
 
@@ -50,16 +50,16 @@ Status write_checkpoint(const EquilibriumSnapshot& snapshot,
               io_detail::write_i32(fp, snapshot.ns) &&
               io_detail::write_i32(fp, snapshot.mnmax);
     if (!ok) return fail("failed to write checkpoint payload");
-    // writeStateFamilies aborts on a family-size mismatch before writing (an
+    // write_state_families aborts on a family-size mismatch before writing (an
     // undersized family must not fall through into an OOB read).
-    if (!io_detail::writeStateFamilies(fp, snapshot)) {
+    if (!io_detail::write_state_families(fp, snapshot)) {
         return fail("failed to write checkpoint payload");
     }
-    if (!io_detail::writeInputParams(fp, input_params)) {
+    if (!io_detail::write_input_params(fp, input_params)) {
         return fail("failed to write checkpoint input record");
     }
 
-    const std::string err = io_detail::publishAtomic(fp, tmp, path);
+    const std::string err = io_detail::publish_atomic(fp, tmp, path);
     if (!err.empty()) return Status("checkpoint publish: " + err);
     return Status();
 }
@@ -95,13 +95,13 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
     }
     std::size_t n = 0;
     std::string reason;
-    if (!io_detail::checkStateDimensions(fp, ns, mnmax, n, reason)) {
+    if (!io_detail::check_state_dimensions(fp, ns, mnmax, n, reason)) {
         return fail("checkpoint: " + reason);
     }
     EquilibriumSnapshot snapshot;
     snapshot.ns = ns;
     snapshot.mnmax = mnmax;
-    if (!io_detail::readStateFamilies(fp, n, snapshot)) {
+    if (!io_detail::read_state_families(fp, n, snapshot)) {
         return fail("checkpoint: truncated state data");
     }
     // The version-2 input record rides after the families; the state read
@@ -109,8 +109,8 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
     // for the record never touches it. The three profile-type strings exist
     // in version-3 checkpoints only.
     if (input_params && version >= 2) {
-        if (!io_detail::readInputParams(fp, *input_params, reason,
-                                        version >= 3)) {
+        if (!io_detail::read_input_params(fp, *input_params, reason,
+                                          version >= 3)) {
             return fail("checkpoint: " + reason);
         }
     }

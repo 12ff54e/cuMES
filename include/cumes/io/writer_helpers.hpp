@@ -46,7 +46,7 @@ inline constexpr std::size_t MAX_STATE_ELEMENTS_PER_FAMILY = 1u << 24;
 // an atomic per-process counter is mixed in. Uniqueness is best-effort: the
 // writer still creates the file with O_EXCL semantics via fopen's "wx" mode at
 // the call sites that need it, and a collision simply fails cleanly.
-inline std::string tempPathFor(const std::string& path) {
+inline std::string temp_path_for(const std::string& path) {
     static std::atomic<unsigned long> counter{0};
     const unsigned long seq = counter.fetch_add(1, std::memory_order_relaxed);
     return path + ".tmp." + std::to_string(static_cast<long>(getpid())) + "." +
@@ -57,7 +57,7 @@ inline std::string tempPathFor(const std::string& path) {
 // CHECKED (completion-plan follow-up §3): the old helper ignored both the
 // fsync and the close result; a failed directory fsync now propagates to the
 // writer and from there to main.
-inline std::string fsyncDirectoryOf(const std::string& path) {
+inline std::string fsync_directory_of(const std::string& path) {
     const std::size_t slash = path.find_last_of('/');
     const std::string dir =
         (slash == std::string::npos) ? std::string(".") : path.substr(0, slash);
@@ -83,17 +83,17 @@ inline std::string fsyncDirectoryOf(const std::string& path) {
 // removes the temp and returns a reason (the target `path` is left
 // untouched); a directory-fsync failure propagates as an error so the caller
 // can report the unproven durability to main.
-inline std::string renamePublish(const std::string& tmp,
-                                 const std::string& path) {
+inline std::string rename_publish(const std::string& tmp,
+                                  const std::string& path) {
     if (rename(tmp.c_str(), path.c_str()) != 0) {
         remove(tmp.c_str());
         return "rename failed";
     }
-    return fsyncDirectoryOf(path);
+    return fsync_directory_of(path);
 }
 
 // Publish a temp file written and closed through a LIBRARY-managed handle
-// (NetCDF/HDF5 own their descriptors, so the FILE* path of publishAtomic
+// (NetCDF/HDF5 own their descriptors, so the FILE* path of publish_atomic
 // cannot fsync them — completion-plan follow-up §3):
 //   1. reopen the completed same-directory temp file read-only;
 //   2. check fsync on it;
@@ -102,8 +102,8 @@ inline std::string renamePublish(const std::string& tmp,
 //   5. open + fsync + checked-close the containing directory.
 // Every pre-rename failure removes the temp and leaves the destination
 // untouched.
-inline std::string publishLibraryFile(const std::string& tmp,
-                                      const std::string& path) {
+inline std::string publish_library_file(const std::string& tmp,
+                                        const std::string& path) {
     const int fd = open(tmp.c_str(), O_RDONLY);
     if (fd < 0) {
         remove(tmp.c_str());
@@ -122,16 +122,16 @@ inline std::string publishLibraryFile(const std::string& tmp,
         remove(tmp.c_str());
         return reason;
     }
-    return renamePublish(tmp, path);
+    return rename_publish(tmp, path);
 }
 
 // Flush + fsync + close `fp`, then atomically rename `tmp` over `path`. On any
 // failure removes the temp and leaves `path` untouched; `fp` is closed exactly
 // once (a failing close is not re-closed). Returns an empty string on success,
 // or a human-readable reason.
-inline std::string publishAtomic(FILE* fp,
-                                 const std::string& tmp,
-                                 const std::string& path) {
+inline std::string publish_atomic(FILE* fp,
+                                  const std::string& tmp,
+                                  const std::string& path) {
     bool fail = false;
     std::string reason;
     if (fflush(fp) != 0) {
@@ -150,12 +150,12 @@ inline std::string publishAtomic(FILE* fp,
         remove(tmp.c_str());
         return reason;
     }
-    return renamePublish(tmp, path);
+    return rename_publish(tmp, path);
 }
 
 // Checked element count for one spectral family (ns x mnmax), per the
 // checked_mul mandate (include/cumes/core/checked_size.hpp).
-inline std::optional<std::size_t> familyCount(int ns, int mnmax) {
+inline std::optional<std::size_t> family_count(int ns, int mnmax) {
     return checked_mul(static_cast<std::size_t>(ns),
                        static_cast<std::size_t>(mnmax));
 }

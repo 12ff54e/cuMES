@@ -83,7 +83,7 @@ class AxisymmetricOperator : public SpectralOperator<T> {
     // De-alias bandpass: gCon = Σ_{m=1..mpol-2} (2/nZnT)·tcon·faccon[m]·
     // (Σ_θ gConEff·sin(mθ))·sin(mθ). The axis (surface 0) is left untouched
     // (it is never consumed). `tcon`/`faccon` are the constraint's device
-    // profiles (the same arrays deAliasCoeffPackKernel reads).
+    // profiles (the same arrays de_alias_coeff_pack_kernel reads).
     void enqueue_dealias(RealFieldView<const T> gConEff,
                          const T* tcon,
                          const T* faccon,

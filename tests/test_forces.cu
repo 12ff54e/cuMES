@@ -101,8 +101,8 @@ int main() {
     cumes::ValidatedProblem vp = load_validated();
     cumes::Profiles<double> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<double> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<double> rs = real_space_create(p);
     cumes::ToroidalFftOperator<double> op(p, rs, mt);
     cumes::GeometryOperator<double> geometry(p, nullptr);
 
@@ -265,8 +265,8 @@ int main() {
     }
 
     // Cleanup (the state/velocity slabs are freed by SpectralStorage's RAII)
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
     cudaFree(frcon_e);
     cudaFree(frcon_o);
     cudaFree(fzcon_e);

@@ -35,7 +35,7 @@ struct ProfileSpec {
 
 // Canonical name of a profile parameterization, as it appears in the input
 // JSON and in the embedded normalized-input record.
-inline const char* profileTypeToString(ProfileType t) {
+inline const char* profile_type_to_string(ProfileType t) {
     switch (t) {
         case ProfileType::POWER_SERIES:
             return "power_series";

@@ -17,10 +17,10 @@ struct FftTraits<double> {
     using Complex = cufftDoubleComplex;              // double2
     static constexpr cufftType FORWARD = CUFFT_D2Z;  // real -> half-spectrum
     static constexpr cufftType INVERSE = CUFFT_Z2D;  // half-spectrum -> real
-    static cufftResult execForward(cufftHandle p, double* in, Complex* out) {
+    static cufftResult exec_forward(cufftHandle p, double* in, Complex* out) {
         return cufftExecD2Z(p, in, out);
     }
-    static cufftResult execInverse(cufftHandle p, Complex* in, double* out) {
+    static cufftResult exec_inverse(cufftHandle p, Complex* in, double* out) {
         return cufftExecZ2D(p, in, out);
     }
 };
@@ -31,10 +31,10 @@ struct FftTraits<float> {
     using Complex = cufftComplex;  // float2
     static constexpr cufftType FORWARD = CUFFT_R2C;
     static constexpr cufftType INVERSE = CUFFT_C2R;
-    static cufftResult execForward(cufftHandle p, float* in, Complex* out) {
+    static cufftResult exec_forward(cufftHandle p, float* in, Complex* out) {
         return cufftExecR2C(p, in, out);
     }
-    static cufftResult execInverse(cufftHandle p, Complex* in, float* out) {
+    static cufftResult exec_inverse(cufftHandle p, Complex* in, float* out) {
         return cufftExecC2R(p, in, out);
     }
 };

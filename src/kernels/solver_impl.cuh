@@ -6,7 +6,7 @@
 // solver.cu — fixed-point iteration with Garabedian acceleration.
 // The dump/debug machinery below (DUMP_CUMES_VERIFY blocks) is compiled in
 // but RUNTIME-GATED: nothing is written and no debug output is produced
-// unless the CUMES_DUMP=1 environment variable is set (see dumpEnabled()).
+// unless the CUMES_DUMP=1 environment variable is set (see dump_enabled()).
 //
 // All computation is templated on the scalar type T (double or float).
 // Dump files are T-native (read back by same-build tooling only); the
@@ -47,15 +47,16 @@
 #include <vector>
 
 #ifdef DUMP_CUMES_VERIFY
-static bool dumpEnabled();  // defined below with the dump machinery
+static bool dump_enabled();  // defined below with the dump machinery
 template <typename T>
-static void dumpDeviceArray(const char* filename,
-                            const T* d_data,
-                            size_t nelem);  // defined below
+static void dump_device_array(const char* filename,
+                              const T* d_data,
+                              size_t nelem);  // defined below
 #endif
 
 template <typename T>
-__global__ void rzNormKernel(  // defined below (before computeResidualsKernel)
+__global__ void
+rz_norm_kernel(  // defined below (before compute_residuals_kernel)
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
     const int* __restrict__ xm,
     const int* __restrict__ xn,
@@ -77,8 +78,8 @@ __global__ void rzNormKernel(  // defined below (before computeResidualsKernel)
 //   fNorm1 = 1/rzNorm
 // with the wInt trapezoid over the reduced poloidal grid [0, pi].
 //
-// Phase 6B splits this into a device reduction (enqueueForceNorms, writing six
-// scalars into the combined control record) and a host finalize
+// Phase 6B splits this into a device reduction (enqueue_force_norms, writing
+// six scalars into the combined control record) and a host finalize
 // (finalizeForceNorms, called after the single control fence). The old path
 // D2H-copied psum/dVds/pres and summed them sequentially behind a
 // cudaDeviceSynchronize; the device reduction removes that fence and those
@@ -87,7 +88,7 @@ __global__ void rzNormKernel(  // defined below (before computeResidualsKernel)
 // Device reduction over the half-grid surfaces of the force-norm partials:
 // out[0..4] = {sRZ, sL, sMag, eTherm, vol} (before the deltaS scaling).
 template <typename T>
-__global__ void forceNormReduceKernel(
+__global__ void force_norm_reduce_kernel(
     const T* __restrict__ psum,   // 4*(ns-1): sRZ sL sMag sG per surface
     const T* __restrict__ dVdsH,  // ns-1
     const T* __restrict__ presH,  // ns-1
@@ -146,7 +147,7 @@ __global__ void forceNormReduceKernel(
 // solver folds into the combined control record and transfers at the single
 // control fence. Called on the preconditioner-refresh cadence.
 template <typename T>
-static void enqueueForceNorms(
+static void enqueue_force_norms(
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
     const int* xm,
     const int* xn,
@@ -159,12 +160,13 @@ static void enqueueForceNorms(
     geometry.force_norm_partials(p, rpv.dVds_H, d_psum, stream);
     {
         dim3 b1(256), g1(1);
-        forceNormReduceKernel<T><<<g1, b1, 0, stream>>>(
+        force_norm_reduce_kernel<T><<<g1, b1, 0, stream>>>(
             d_psum, rpv.dVds_H, rpv.pres_H, p.ns - 1, rec);
     }
     {
         dim3 b2(256), g2(1);
-        rzNormKernel<T><<<g2, b2, 0, stream>>>(st, xm, xn, p.ns, p.mnmax, rec);
+        rz_norm_kernel<T>
+            <<<g2, b2, 0, stream>>>(st, xm, xn, p.ns, p.mnmax, rec);
     }
     cumes::check_cuda(cudaGetLastError(), "force norms");
 }
@@ -174,12 +176,12 @@ static void enqueueForceNorms(
 // the fNorm factors ACTUALLY used for the convergence decision — those are the
 // record's device-finalized final_f_norm_* fields (completion-plan follow-up
 // §2.3), consumed by the caller, not recomputed here.
-static void dumpForceNorms(const double* hc,
-                           double delta_s,
-                           int iter2,
-                           double fNormRZ,
-                           double fNormL,
-                           double fNorm1) {
+static void dump_force_norms(const double* hc,
+                             double delta_s,
+                             int iter2,
+                             double fNormRZ,
+                             double fNormL,
+                             double fNorm1) {
 #ifndef DUMP_CUMES_VERIFY
     (void)hc;
     (void)delta_s;
@@ -189,7 +191,7 @@ static void dumpForceNorms(const double* hc,
     (void)fNorm1;
 #endif
 #ifdef DUMP_CUMES_VERIFY
-    if (dumpEnabled()) {
+    if (dump_enabled()) {
         double sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3],
                vol = hc[4], h_rz = hc[5];
         double deltaS = delta_s;
@@ -229,7 +231,7 @@ static void dumpForceNorms(const double* hc,
 // extrapolateTowardsAxis(). Only m=1 has a finite value at the axis
 // for stellarator-symmetric equilibria. Mode table: mode = m*(ntor+1)+n.
 template <typename T>
-__global__ void extrapolateAxisKernel(
+__global__ void extrapolate_axis_kernel(
     cumes::SpectralView<T, cumes::PhysicalStateDomain> st,
     int ns,
     int mnmax,
@@ -272,7 +274,7 @@ __global__ void extrapolateAxisKernel(
 // residual, preconditioned-solve, and descent pipeline (m_decomposed_f).
 // max(..., sqrt(s1)) clamps the factor at the axis to the innermost
 // surface's sqrt(s), keeping it finite at s=0 (constant extrapolation,
-// the same treatment as extrapolateAxisKernel above).
+// the same treatment as extrapolate_axis_kernel above).
 //
 // IMPORTANT: only the FORCES are transformed here. The spectral state
 // (d_rmncc/...) stays in plain physical coefficients throughout — initState
@@ -284,7 +286,7 @@ __global__ void extrapolateAxisKernel(
 // plots): doing so double-scales and flattens the m=1 shift profile into
 // a linear-in-s one. Even-m modes: scalxc = 1 (no change).
 template <typename T>
-__global__ void scalxcApplyKernel(
+__global__ void scalxc_apply_kernel(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
     const T* __restrict__ sqrtS_F,
     const int* __restrict__ xm,
@@ -321,7 +323,7 @@ __global__ void scalxcApplyKernel(
 // m=1 R/Z coefficients ~1e-3 off the reference.
 // Applied to components 3 (frss) and 4 (fzcs) of the 6-component layout.
 template <typename T>
-__global__ void m1ConstraintKernel(
+__global__ void m1_constraint_kernel(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
     int ns,
     int mnmax,
@@ -355,7 +357,7 @@ __global__ void m1ConstraintKernel(
 //   rss_d^2 + zcs_d^2 = (rss_p^2 + zcs_p^2) / (2 * (ms*ns)^2)
 // (the 0.5 factor below); all other modes use the unmixed square.
 template <typename T>
-__global__ void rzNormKernel(
+__global__ void rz_norm_kernel(
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> st,
     const int* __restrict__ xm,
     const int* __restrict__ xn,
@@ -406,7 +408,7 @@ __global__ void rzNormKernel(
 //   fsqr = Σ frcc² + frss²,  fsqz = Σ fzsc² + fzcs²,  fsql = Σ flsc² + flcs²
 // (components 0..5 of f_spec: frcc fzsc flsc frss fzcs flcs).
 template <typename T>
-__global__ void computeResidualsKernel(
+__global__ void compute_residuals_kernel(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
     int ns,
     int mnmax,
@@ -434,7 +436,7 @@ __global__ void computeResidualsKernel(
 }
 
 template <typename T>
-__global__ void descentStepKernel(
+__global__ void descent_step_kernel(
     cumes::SpectralView<T, cumes::PhysicalStateDomain> x,
     cumes::SpectralView<T, cumes::DecomposedVelocityDomain> v,
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
@@ -520,7 +522,7 @@ void cumes::ResidualOperator<T>::enqueue(
     double* sq_out,
     cudaStream_t stream) const {
     dim3 b3(256), g3(3);
-    computeResidualsKernel<T>
+    compute_residuals_kernel<T>
         <<<g3, b3, 0, stream>>>(residual, ns, mnmax, sq_out);
 }
 
@@ -532,7 +534,7 @@ void cumes::ResidualOperator<T>::enqueue_preconditioned(
     cumes::ControlRecord* rec,
     cudaStream_t stream) const {
     dim3 b3(256), g3(3);
-    computeResidualsPreconditionedKernel<T>
+    compute_residuals_preconditioned_kernel<T>
         <<<g3, b3, 0, stream>>>(residual, ns, mnmax, rec);
 }
 
@@ -549,7 +551,7 @@ void cumes::DescentOperator<T>::enqueue(
     cudaStream_t stream) const {
     if (!action.perform_descent) return;
     dim3 bd(256), gd((ns * mnmax + 255) / 256);
-    descentStepKernel<T><<<gd, bd, 0, stream>>>(
+    descent_step_kernel<T><<<gd, bd, 0, stream>>>(
         state, velocity, residual, xm, xn, ns, mnmax, T(action.delta_t),
         T(action.damping_b1), T(action.damping_fac));
     cumes::check_cuda(cudaGetLastError(), "descent");
@@ -557,11 +559,11 @@ void cumes::DescentOperator<T>::enqueue(
 
 #ifdef DUMP_CUMES_VERIFY
 // Master switch for the dump/debug machinery: off unless CUMES_DUMP=1.
-// All dump output routes through dumpEnsureDir/dumpDeviceArray, which no-op
+// All dump output routes through dump_ensure_dir/dump_device_array, which no-op
 // when disabled, so default runs write nothing to dump/ and print no debug
 // noise. (The CUMES_DUMP_ITER knob below still selects WHICH iterations the
 // windowed dumps fire on; CUMES_DUMP is the master enable.)
-static bool dumpEnabled() {
+static bool dump_enabled() {
     // Read the env var once per process (the old form re-read it at every
     // one of the ~6 dump-window entry points per iteration).
     static const bool enabled = [] {
@@ -571,20 +573,20 @@ static bool dumpEnabled() {
     return enabled;
 }
 
-static void dumpEnsureDir() {
-    if (!dumpEnabled()) return;
+static void dump_ensure_dir() {
+    if (!dump_enabled()) return;
     int rc = system("mkdir -p dump/cuMES");
     if (rc != 0)
-        fprintf(stderr, "dumpEnsureDir: mkdir -p failed (rc=%d)\n", rc);
+        fprintf(stderr, "dump_ensure_dir: mkdir -p failed (rc=%d)\n", rc);
 }
 
 // T-native dump: written as sizeof(T) elements; only read back by same-build
 // tooling (e.g. tests/test_geometry_iso.cu, which is double-build-only).
 template <typename T>
-static void dumpDeviceArray(const char* filename,
-                            const T* d_data,
-                            size_t nelem) {
-    if (!dumpEnabled()) return;
+static void dump_device_array(const char* filename,
+                              const T* d_data,
+                              size_t nelem) {
+    if (!dump_enabled()) return;
     // The dump machinery reads device data on the (synchronous) default stream
     // while the hot loop produces it on the nonblocking compute stream. Sync
     // everything first so a dump never reads a stale/in-flight buffer. This is
@@ -595,7 +597,7 @@ static void dumpDeviceArray(const char* filename,
     cudaError_t err =
         cudaMemcpy(h_tmp, d_data, nelem * sizeof(T), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        fprintf(stderr, "dumpDeviceArray cudaMemcpy failed for %s: %s\n",
+        fprintf(stderr, "dump_device_array cudaMemcpy failed for %s: %s\n",
                 filename, cudaGetErrorString(err));
     }
     FILE* fp = fopen(filename, "wb");
@@ -612,21 +614,21 @@ static void dumpDeviceArray(const char* filename,
 // Extracted from EquilibriumOperator::enqueue so the DAG body reads as the
 // arithmetic pipeline it is. Each helper reproduces its observation point's
 // exact dump sequence (same files, same order, same contents) and is
-// runtime-gated by dumpEnabled(). The one stream side effect the windows
+// runtime-gated by dump_enabled(). The one stream side effect the windows
 // carry — combine_parity at iter 0 (the *_real snapshot materialization) —
-// is preserved in dumpStepA so the dump-disabled path keeps the frozen
+// is preserved in dump_step_a so the dump-disabled path keeps the frozen
 // trajectory's launch sequence bit-for-bit.
 
 // Iter-0 loop diagnostic: print + dump the LCFS real-space R right after the
 // first inverse DFT (2.1: the transform ran on the nonblocking compute
-// stream, so dumpDeviceArray's device sync is what makes the read valid).
+// stream, so dump_device_array's device sync is what makes the read valid).
 template <typename T>
-static void dumpIter0LoopDiag(int iter,
-                              const DeviceParams<T>& p,
-                              const cumes::RealSpaceStorage<T>& rs) {
-    if (iter != 0 || !dumpEnabled()) return;
-    dumpDeviceArray("dump/cuMES/debug_r_e.bin", rs.d_r_e,
-                    (size_t)p.nZnT * (size_t)p.ns);
+static void dump_iter0_loop_diag(int iter,
+                                 const DeviceParams<T>& p,
+                                 const cumes::RealSpaceStorage<T>& rs) {
+    if (iter != 0 || !dump_enabled()) return;
+    dump_device_array("dump/cuMES/debug_r_e.bin", rs.d_r_e,
+                      (size_t)p.nZnT * (size_t)p.ns);
     auto* h_test = new T[p.nZnT * p.ns];
     cumes::check_cuda(cudaMemcpy(h_test, rs.d_r_e, p.nZnT * p.ns * sizeof(T),
                                  cudaMemcpyDeviceToHost),
@@ -640,13 +642,13 @@ static void dumpIter0LoopDiag(int iter,
 // step_A window (post-inverse, pre-geometry): lambda derivatives and, at
 // iter 0, the full R/Z/λ real-space snapshot.
 template <typename T>
-static void dumpStepA(int iter,
-                      int iter2,
-                      const DeviceParams<T>& p,
-                      const cumes::RealSpaceStorage<T>& rs,
-                      cumes::ToroidalFftOperator<T>& transform,
-                      cudaStream_t stream) {
-    if (!dumpEnabled()) {
+static void dump_step_a(int iter,
+                        int iter2,
+                        const DeviceParams<T>& p,
+                        const cumes::RealSpaceStorage<T>& rs,
+                        cumes::ToroidalFftOperator<T>& transform,
+                        cudaStream_t stream) {
+    if (!dump_enabled()) {
         // combine_parity runs at iter 0 even when dumping is off — the
         // frozen launch sequence (the *_real buffers are not read by the hot
         // loop, so this is launch-order fidelity only).
@@ -660,23 +662,23 @@ static void dumpStepA(int iter,
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/step_A_lu_e_iter_%d.bin",
                  iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, rs.d_lu_e, n_real);
+        dump_device_array(fn, rs.d_lu_e, n_real);
         snprintf(fn, sizeof fn, "dump/cuMES/step_A_lu_o_iter_%d.bin",
                  iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, rs.d_lu_o, n_real);
+        dump_device_array(fn, rs.d_lu_o, n_real);
         snprintf(fn, sizeof fn, "dump/cuMES/step_A_l_real_iter_%d.bin",
                  iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, rs.d_l_real, n_real);
+        dump_device_array(fn, rs.d_l_real, n_real);
     }
     if (iter == 0 || iter2 == 2) {
         size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/step_A_lv_e_iter_%d.bin",
                  iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, rs.d_lv_e, n_real);
+        dump_device_array(fn, rs.d_lv_e, n_real);
         snprintf(fn, sizeof fn, "dump/cuMES/step_A_lv_o_iter_%d.bin",
                  iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, rs.d_lv_o, n_real);
+        dump_device_array(fn, rs.d_lv_o, n_real);
     }
     if (iter == 0) {
         size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
@@ -685,86 +687,92 @@ static void dumpStepA(int iter,
         // snapshot from the current parity arrays before dumping them.
         transform.combine_parity(stream);
         // Full R, Z, lambda (even+odd)
-        dumpDeviceArray("dump/cuMES/step_A_r_real_iter_1.bin", rs.d_r_real,
-                        n_real);
-        dumpDeviceArray("dump/cuMES/step_A_z_real_iter_1.bin", rs.d_z_real,
-                        n_real);
+        dump_device_array("dump/cuMES/step_A_r_real_iter_1.bin", rs.d_r_real,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_z_real_iter_1.bin", rs.d_z_real,
+                          n_real);
         // Even-m parity
-        dumpDeviceArray("dump/cuMES/step_A_r_e_iter_1.bin", rs.d_r_e, n_real);
-        dumpDeviceArray("dump/cuMES/step_A_z_e_iter_1.bin", rs.d_z_e, n_real);
-        dumpDeviceArray("dump/cuMES/step_A_l_e_iter_1.bin", rs.d_l_e, n_real);
+        dump_device_array("dump/cuMES/step_A_r_e_iter_1.bin", rs.d_r_e, n_real);
+        dump_device_array("dump/cuMES/step_A_z_e_iter_1.bin", rs.d_z_e, n_real);
+        dump_device_array("dump/cuMES/step_A_l_e_iter_1.bin", rs.d_l_e, n_real);
         // Odd-m parity
-        dumpDeviceArray("dump/cuMES/step_A_r_o_iter_1.bin", rs.d_r_o, n_real);
-        dumpDeviceArray("dump/cuMES/step_A_z_o_iter_1.bin", rs.d_z_o, n_real);
-        dumpDeviceArray("dump/cuMES/step_A_l_o_iter_1.bin", rs.d_l_o, n_real);
+        dump_device_array("dump/cuMES/step_A_r_o_iter_1.bin", rs.d_r_o, n_real);
+        dump_device_array("dump/cuMES/step_A_z_o_iter_1.bin", rs.d_z_o, n_real);
+        dump_device_array("dump/cuMES/step_A_l_o_iter_1.bin", rs.d_l_o, n_real);
         // Poloidal derivatives
-        dumpDeviceArray("dump/cuMES/step_A_ru_real_iter_1.bin", rs.d_ru_real,
-                        n_real);
-        dumpDeviceArray("dump/cuMES/step_A_zu_real_iter_1.bin", rs.d_zu_real,
-                        n_real);
-        dumpDeviceArray("dump/cuMES/step_A_lu_real_iter_1.bin", rs.d_lu_real,
-                        n_real);
+        dump_device_array("dump/cuMES/step_A_ru_real_iter_1.bin", rs.d_ru_real,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_zu_real_iter_1.bin", rs.d_zu_real,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_lu_real_iter_1.bin", rs.d_lu_real,
+                          n_real);
         // Toroidal derivatives
-        dumpDeviceArray("dump/cuMES/step_A_rv_real_iter_1.bin", rs.d_rv_real,
-                        n_real);
-        dumpDeviceArray("dump/cuMES/step_A_zv_real_iter_1.bin", rs.d_zv_real,
-                        n_real);
-        dumpDeviceArray("dump/cuMES/step_A_lv_real_iter_1.bin", rs.d_lv_real,
-                        n_real);
+        dump_device_array("dump/cuMES/step_A_rv_real_iter_1.bin", rs.d_rv_real,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_zv_real_iter_1.bin", rs.d_zv_real,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_lv_real_iter_1.bin", rs.d_lv_real,
+                          n_real);
         // Even-m poloidal derivatives
-        dumpDeviceArray("dump/cuMES/step_A_ru_e_iter_1.bin", rs.d_ru_e, n_real);
-        dumpDeviceArray("dump/cuMES/step_A_zu_e_iter_1.bin", rs.d_zu_e, n_real);
-        dumpDeviceArray("dump/cuMES/step_A_lu_e_iter_1.bin", rs.d_lu_e, n_real);
+        dump_device_array("dump/cuMES/step_A_ru_e_iter_1.bin", rs.d_ru_e,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_zu_e_iter_1.bin", rs.d_zu_e,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_lu_e_iter_1.bin", rs.d_lu_e,
+                          n_real);
         // Odd-m poloidal derivatives
-        dumpDeviceArray("dump/cuMES/step_A_ru_o_iter_1.bin", rs.d_ru_o, n_real);
-        dumpDeviceArray("dump/cuMES/step_A_zu_o_iter_1.bin", rs.d_zu_o, n_real);
-        dumpDeviceArray("dump/cuMES/step_A_lu_o_iter_1.bin", rs.d_lu_o, n_real);
+        dump_device_array("dump/cuMES/step_A_ru_o_iter_1.bin", rs.d_ru_o,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_zu_o_iter_1.bin", rs.d_zu_o,
+                          n_real);
+        dump_device_array("dump/cuMES/step_A_lu_o_iter_1.bin", rs.d_lu_o,
+                          n_real);
     }
 }
 
 // step_B/C/D window (post-field): metric + contravariant-B half-grid dump.
 template <typename T>
-static void dumpStepD(int iter,
-                      int iter2,
-                      const DeviceParams<T>& p,
-                      const cumes::BaseGeometryHalfViews<T>& base,
-                      const cumes::MagneticFieldViews<T>& field) {
-    if (!dumpEnabled()) return;
+static void dump_step_d(int iter,
+                        int iter2,
+                        const DeviceParams<T>& p,
+                        const cumes::BaseGeometryHalfViews<T>& base,
+                        const cumes::MagneticFieldViews<T>& field) {
+    if (!dump_enabled()) return;
     if (iter == 0 || iter2 == 2) {
         // iter 2 = first pass with lambda != 0 (E3-D bsupv check)
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/step_D_bsupu_iter_%d.bin",
                  iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, field.bsupu.data(), n_half);
+        dump_device_array(fn, field.bsupu.data(), n_half);
         snprintf(fn, sizeof fn, "dump/cuMES/step_D_bsupv_iter_%d.bin",
                  iter == 0 ? 1 : 2);
-        dumpDeviceArray(fn, field.bsupv.data(), n_half);
+        dump_device_array(fn, field.bsupv.data(), n_half);
     }
     if (iter == 0) {
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
-        dumpDeviceArray("dump/cuMES/step_B_gsqrt_iter_1.bin", base.gsqrt.data(),
-                        n_half);
-        dumpDeviceArray("dump/cuMES/step_C_guu_iter_1.bin", base.guu.data(),
-                        n_half);
-        dumpDeviceArray("dump/cuMES/step_C_guv_iter_1.bin", base.guv.data(),
-                        n_half);
-        dumpDeviceArray("dump/cuMES/step_C_gvv_iter_1.bin", base.gvv.data(),
-                        n_half);
+        dump_device_array("dump/cuMES/step_B_gsqrt_iter_1.bin",
+                          base.gsqrt.data(), n_half);
+        dump_device_array("dump/cuMES/step_C_guu_iter_1.bin", base.guu.data(),
+                          n_half);
+        dump_device_array("dump/cuMES/step_C_guv_iter_1.bin", base.guv.data(),
+                          n_half);
+        dump_device_array("dump/cuMES/step_C_gvv_iter_1.bin", base.gvv.data(),
+                          n_half);
     }
 }
 
 // step_precon window (iter 0, on the refresh pass): tridiagonal matrices,
 // jMin, intermediates, sizes.
 template <typename T>
-static void dumpStepPrecon(int iter,
-                           const DeviceParams<T>& p,
-                           const cumes::Preconditioner<T>& precon) {
-    // The extracted helper gates the whole window behind dumpEnabled();
+static void dump_step_precon(int iter,
+                             const DeviceParams<T>& p,
+                             const cumes::Preconditioner<T>& precon) {
+    // The extracted helper gates the whole window behind dump_enabled();
     // the pre-extraction body additionally ran the jMin D2H copy and the
     // jMin/sizes fopen writes unconditionally (harmless reads/failed opens
     // on the default path — no numeric effect, Class A verified).
-    if (iter != 0 || !dumpEnabled()) return;
+    if (iter != 0 || !dump_enabled()) return;
     // Dump tridiagonal preconditioner matrices for comparison
     // with vmecpp. cuMES layout: ar[mode * ns + jF] (mode-major).
     size_t n_tri = (size_t)p.mnmax * (size_t)p.ns;
@@ -773,12 +781,18 @@ static void dumpStepPrecon(int iter,
     size_t n_full_1 = (size_t)p.ns;
 
     // Tridiagonal matrix elements (mode-major: [mode, jF])
-    dumpDeviceArray("dump/cuMES/step_precon_ar_iter_1.bin", precon.ar(), n_tri);
-    dumpDeviceArray("dump/cuMES/step_precon_dr_iter_1.bin", precon.dr(), n_tri);
-    dumpDeviceArray("dump/cuMES/step_precon_br_iter_1.bin", precon.br(), n_tri);
-    dumpDeviceArray("dump/cuMES/step_precon_az_iter_1.bin", precon.az(), n_tri);
-    dumpDeviceArray("dump/cuMES/step_precon_dz_iter_1.bin", precon.dz(), n_tri);
-    dumpDeviceArray("dump/cuMES/step_precon_bz_iter_1.bin", precon.bz(), n_tri);
+    dump_device_array("dump/cuMES/step_precon_ar_iter_1.bin", precon.ar(),
+                      n_tri);
+    dump_device_array("dump/cuMES/step_precon_dr_iter_1.bin", precon.dr(),
+                      n_tri);
+    dump_device_array("dump/cuMES/step_precon_br_iter_1.bin", precon.br(),
+                      n_tri);
+    dump_device_array("dump/cuMES/step_precon_az_iter_1.bin", precon.az(),
+                      n_tri);
+    dump_device_array("dump/cuMES/step_precon_dz_iter_1.bin", precon.dz(),
+                      n_tri);
+    dump_device_array("dump/cuMES/step_precon_bz_iter_1.bin", precon.bz(),
+                      n_tri);
 
     // jMin per mode (stored as int, convert to double for dump)
     {
@@ -799,24 +813,24 @@ static void dumpStepPrecon(int iter,
     }
 
     // Intermediate arrays
-    dumpDeviceArray("dump/cuMES/step_precon_arm_iter_1.bin", precon.arm(),
-                    n_half_2);
-    dumpDeviceArray("dump/cuMES/step_precon_ard_iter_1.bin", precon.ard(),
-                    n_full_2);
-    dumpDeviceArray("dump/cuMES/step_precon_brm_iter_1.bin", precon.brm(),
-                    n_half_2);
-    dumpDeviceArray("dump/cuMES/step_precon_brd_iter_1.bin", precon.brd(),
-                    n_full_2);
-    dumpDeviceArray("dump/cuMES/step_precon_azm_iter_1.bin", precon.azm(),
-                    n_half_2);
-    dumpDeviceArray("dump/cuMES/step_precon_azd_iter_1.bin", precon.azd(),
-                    n_full_2);
-    dumpDeviceArray("dump/cuMES/step_precon_bzm_iter_1.bin", precon.bzm(),
-                    n_half_2);
-    dumpDeviceArray("dump/cuMES/step_precon_bzd_iter_1.bin", precon.bzd(),
-                    n_full_2);
-    dumpDeviceArray("dump/cuMES/step_precon_cxd_iter_1.bin", precon.cxd(),
-                    n_full_1);
+    dump_device_array("dump/cuMES/step_precon_arm_iter_1.bin", precon.arm(),
+                      n_half_2);
+    dump_device_array("dump/cuMES/step_precon_ard_iter_1.bin", precon.ard(),
+                      n_full_2);
+    dump_device_array("dump/cuMES/step_precon_brm_iter_1.bin", precon.brm(),
+                      n_half_2);
+    dump_device_array("dump/cuMES/step_precon_brd_iter_1.bin", precon.brd(),
+                      n_full_2);
+    dump_device_array("dump/cuMES/step_precon_azm_iter_1.bin", precon.azm(),
+                      n_half_2);
+    dump_device_array("dump/cuMES/step_precon_azd_iter_1.bin", precon.azd(),
+                      n_full_2);
+    dump_device_array("dump/cuMES/step_precon_bzm_iter_1.bin", precon.bzm(),
+                      n_half_2);
+    dump_device_array("dump/cuMES/step_precon_bzd_iter_1.bin", precon.bzd(),
+                      n_full_2);
+    dump_device_array("dump/cuMES/step_precon_cxd_iter_1.bin", precon.cxd(),
+                      n_full_1);
 
     // Sizes for comparison script
     double sizes_dbl[4] = {(double)p.ns, (double)(p.ns - 1), (double)p.mpol,
@@ -832,89 +846,89 @@ static void dumpStepPrecon(int iter,
 
 // step_E/F window (post-force): half-grid geometry + force outputs.
 template <typename T>
-static void dumpStepEF(int iter,
-                       int iter2,
-                       const DeviceParams<T>& p,
-                       const cumes::BaseGeometryHalfViews<T>& base,
-                       const cumes::MagneticFieldViews<T>& field,
-                       const cumes::RealSpaceStorage<T>& rs) {
-    if (!dumpEnabled()) return;
+static void dump_step_ef(int iter,
+                         int iter2,
+                         const DeviceParams<T>& p,
+                         const cumes::BaseGeometryHalfViews<T>& base,
+                         const cumes::MagneticFieldViews<T>& field,
+                         const cumes::RealSpaceStorage<T>& rs) {
+    if (!dump_enabled()) return;
     if (iter == 0 || iter2 == 2) {
         // iter 2 = first pass with lambda != 0 (E3-B blmn blending check)
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
         if (iter == 0) {
-            dumpDeviceArray("dump/cuMES/step_half_r12_iter_1.bin",
-                            base.r12.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_zu12_iter_1.bin",
-                            base.zu12.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_tau_iter_1.bin",
-                            base.tau.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_gsqrt_iter_1.bin",
-                            base.gsqrt.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_totalP_iter_1.bin",
-                            field.total_pressure.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_bsupu_iter_1.bin",
-                            field.bsupu.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_bsupv_iter_1.bin",
-                            field.bsupv.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_bsubu_iter_1.bin",
-                            field.bsubu.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_bsubv_iter_1.bin",
-                            field.bsubv.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_rs_iter_1.bin",
-                            base.rs.data(), n_half);
-            dumpDeviceArray("dump/cuMES/step_half_zs_iter_1.bin",
-                            base.zs.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_r12_iter_1.bin",
+                              base.r12.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_zu12_iter_1.bin",
+                              base.zu12.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_tau_iter_1.bin",
+                              base.tau.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_gsqrt_iter_1.bin",
+                              base.gsqrt.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_totalP_iter_1.bin",
+                              field.total_pressure.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_bsupu_iter_1.bin",
+                              field.bsupu.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_bsupv_iter_1.bin",
+                              field.bsupv.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_bsubu_iter_1.bin",
+                              field.bsubu.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_bsubv_iter_1.bin",
+                              field.bsubv.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_rs_iter_1.bin",
+                              base.rs.data(), n_half);
+            dump_device_array("dump/cuMES/step_half_zs_iter_1.bin",
+                              base.zs.data(), n_half);
         }
 
         size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
         char fn[128];
         int itag = (iter == 0) ? 1 : iter2;
         snprintf(fn, sizeof fn, "dump/cuMES/step_F_brmn_e_iter_%d.bin", itag);
-        dumpDeviceArray(fn, rs.d_brmn_e, n_real);
+        dump_device_array(fn, rs.d_brmn_e, n_real);
         snprintf(fn, sizeof fn, "dump/cuMES/step_F_brmn_o_iter_%d.bin", itag);
-        dumpDeviceArray(fn, rs.d_brmn_o, n_real);
+        dump_device_array(fn, rs.d_brmn_o, n_real);
         snprintf(fn, sizeof fn, "dump/cuMES/step_F_bzmn_e_iter_%d.bin", itag);
-        dumpDeviceArray(fn, rs.d_bzmn_e, n_real);
+        dump_device_array(fn, rs.d_bzmn_e, n_real);
         snprintf(fn, sizeof fn, "dump/cuMES/step_F_bzmn_o_iter_%d.bin", itag);
-        dumpDeviceArray(fn, rs.d_bzmn_o, n_real);
+        dump_device_array(fn, rs.d_bzmn_o, n_real);
         snprintf(fn, sizeof fn, "dump/cuMES/step_F_blmn_e_iter_%d.bin", itag);
-        dumpDeviceArray(fn, rs.d_blmn_e, n_real);
+        dump_device_array(fn, rs.d_blmn_e, n_real);
         snprintf(fn, sizeof fn, "dump/cuMES/step_F_blmn_o_iter_%d.bin", itag);
-        dumpDeviceArray(fn, rs.d_blmn_o, n_real);
+        dump_device_array(fn, rs.d_blmn_o, n_real);
         if (iter == 0) {
-            dumpDeviceArray("dump/cuMES/step_E_armn_e_iter_1.bin", rs.d_armn_e,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_armn_o_iter_1.bin", rs.d_armn_o,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_azmn_e_iter_1.bin", rs.d_azmn_e,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_azmn_o_iter_1.bin", rs.d_azmn_o,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_brmn_e_iter_1.bin", rs.d_brmn_e,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_brmn_o_iter_1.bin", rs.d_brmn_o,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_bzmn_e_iter_1.bin", rs.d_bzmn_e,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_bzmn_o_iter_1.bin", rs.d_bzmn_o,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_crmn_e_iter_1.bin", rs.d_crmn_e,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_crmn_o_iter_1.bin", rs.d_crmn_o,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_czmn_e_iter_1.bin", rs.d_czmn_e,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_czmn_o_iter_1.bin", rs.d_czmn_o,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_blmn_e_iter_1.bin", rs.d_blmn_e,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_blmn_o_iter_1.bin", rs.d_blmn_o,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_clmn_e_iter_1.bin", rs.d_clmn_e,
-                            n_real);
-            dumpDeviceArray("dump/cuMES/step_E_clmn_o_iter_1.bin", rs.d_clmn_o,
-                            n_real);
+            dump_device_array("dump/cuMES/step_E_armn_e_iter_1.bin",
+                              rs.d_armn_e, n_real);
+            dump_device_array("dump/cuMES/step_E_armn_o_iter_1.bin",
+                              rs.d_armn_o, n_real);
+            dump_device_array("dump/cuMES/step_E_azmn_e_iter_1.bin",
+                              rs.d_azmn_e, n_real);
+            dump_device_array("dump/cuMES/step_E_azmn_o_iter_1.bin",
+                              rs.d_azmn_o, n_real);
+            dump_device_array("dump/cuMES/step_E_brmn_e_iter_1.bin",
+                              rs.d_brmn_e, n_real);
+            dump_device_array("dump/cuMES/step_E_brmn_o_iter_1.bin",
+                              rs.d_brmn_o, n_real);
+            dump_device_array("dump/cuMES/step_E_bzmn_e_iter_1.bin",
+                              rs.d_bzmn_e, n_real);
+            dump_device_array("dump/cuMES/step_E_bzmn_o_iter_1.bin",
+                              rs.d_bzmn_o, n_real);
+            dump_device_array("dump/cuMES/step_E_crmn_e_iter_1.bin",
+                              rs.d_crmn_e, n_real);
+            dump_device_array("dump/cuMES/step_E_crmn_o_iter_1.bin",
+                              rs.d_crmn_o, n_real);
+            dump_device_array("dump/cuMES/step_E_czmn_e_iter_1.bin",
+                              rs.d_czmn_e, n_real);
+            dump_device_array("dump/cuMES/step_E_czmn_o_iter_1.bin",
+                              rs.d_czmn_o, n_real);
+            dump_device_array("dump/cuMES/step_E_blmn_e_iter_1.bin",
+                              rs.d_blmn_e, n_real);
+            dump_device_array("dump/cuMES/step_E_blmn_o_iter_1.bin",
+                              rs.d_blmn_o, n_real);
+            dump_device_array("dump/cuMES/step_E_clmn_e_iter_1.bin",
+                              rs.d_clmn_e, n_real);
+            dump_device_array("dump/cuMES/step_E_clmn_o_iter_1.bin",
+                              rs.d_clmn_o, n_real);
             // NOTE: no combined-force dumps — the force combine buffers
             // were removed (they were allocated/dumped but never
             // produced; the parity-split arrays above are the source of
@@ -925,66 +939,74 @@ static void dumpStepEF(int iter,
 
 // step_G/GC window (iter 0, post-constraint): constraint-chain intermediates.
 template <typename T>
-static void dumpStepG(int iter,
-                      const DeviceParams<T>& p,
-                      const cumes::RealSpaceStorage<T>& rs,
-                      cumes::SpectralStorage<T>& storage,
-                      cumes::ConstraintOperator<T>& constraint) {
-    if (iter != 0 || !dumpEnabled()) return;
+static void dump_step_g(int iter,
+                        const DeviceParams<T>& p,
+                        const cumes::RealSpaceStorage<T>& rs,
+                        cumes::SpectralStorage<T>& storage,
+                        cumes::ConstraintOperator<T>& constraint) {
+    if (iter != 0 || !dump_enabled()) return;
     size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
-    dumpDeviceArray("dump/cuMES/step_G_brmn_e_iter_1.bin", rs.d_brmn_e, n_real);
-    dumpDeviceArray("dump/cuMES/step_G_brmn_o_iter_1.bin", rs.d_brmn_o, n_real);
-    dumpDeviceArray("dump/cuMES/step_G_bzmn_e_iter_1.bin", rs.d_bzmn_e, n_real);
-    dumpDeviceArray("dump/cuMES/step_G_bzmn_o_iter_1.bin", rs.d_bzmn_o, n_real);
+    dump_device_array("dump/cuMES/step_G_brmn_e_iter_1.bin", rs.d_brmn_e,
+                      n_real);
+    dump_device_array("dump/cuMES/step_G_brmn_o_iter_1.bin", rs.d_brmn_o,
+                      n_real);
+    dump_device_array("dump/cuMES/step_G_bzmn_e_iter_1.bin", rs.d_bzmn_e,
+                      n_real);
+    dump_device_array("dump/cuMES/step_G_bzmn_o_iter_1.bin", rs.d_bzmn_o,
+                      n_real);
     // Constraint-chain intermediates (stage-by-stage vs vmecpp)
     // State as consumed by the constraint chain at iter 1 (post-descent)
     size_t n_spec2 = (size_t)p.ns * (size_t)p.mnmax;
-    dumpDeviceArray("dump/cuMES/step_GC_rmncc_iter_1.bin",
-                    storage.family_ptr(cumes::SpectralComponent::Rcc), n_spec2);
-    dumpDeviceArray("dump/cuMES/step_GC_rmnss_iter_1.bin",
-                    storage.family_ptr(cumes::SpectralComponent::Rss), n_spec2);
-    dumpDeviceArray("dump/cuMES/step_GC_zmnsc_iter_1.bin",
-                    storage.family_ptr(cumes::SpectralComponent::Zsc), n_spec2);
-    dumpDeviceArray("dump/cuMES/step_GC_zmncs_iter_1.bin",
-                    storage.family_ptr(cumes::SpectralComponent::Zcs), n_spec2);
-    dumpDeviceArray("dump/cuMES/step_GC_rCon_iter_1.bin",
-                    constraint.rcon_view(p).data(), n_real);
-    dumpDeviceArray("dump/cuMES/step_GC_zCon_iter_1.bin",
-                    constraint.zcon_view(p).data(), n_real);
-    dumpDeviceArray("dump/cuMES/step_GC_gConEff_iter_1.bin",
-                    constraint.gcon_eff(), n_real);
-    dumpDeviceArray("dump/cuMES/step_GC_gCon_iter_1.bin", constraint.gcon(),
-                    n_real);
-    dumpDeviceArray("dump/cuMES/step_GC_frcon_e_iter_1.bin",
-                    constraint.constraint_force_views(p).frcon_e.data(),
-                    n_real);
-    dumpDeviceArray("dump/cuMES/step_GC_frcon_o_iter_1.bin",
-                    constraint.constraint_force_views(p).frcon_o.data(),
-                    n_real);
-    dumpDeviceArray("dump/cuMES/step_GC_fzcon_e_iter_1.bin",
-                    constraint.constraint_force_views(p).fzcon_e.data(),
-                    n_real);
-    dumpDeviceArray("dump/cuMES/step_GC_fzcon_o_iter_1.bin",
-                    constraint.constraint_force_views(p).fzcon_o.data(),
-                    n_real);
+    dump_device_array("dump/cuMES/step_GC_rmncc_iter_1.bin",
+                      storage.family_ptr(cumes::SpectralComponent::Rcc),
+                      n_spec2);
+    dump_device_array("dump/cuMES/step_GC_rmnss_iter_1.bin",
+                      storage.family_ptr(cumes::SpectralComponent::Rss),
+                      n_spec2);
+    dump_device_array("dump/cuMES/step_GC_zmnsc_iter_1.bin",
+                      storage.family_ptr(cumes::SpectralComponent::Zsc),
+                      n_spec2);
+    dump_device_array("dump/cuMES/step_GC_zmncs_iter_1.bin",
+                      storage.family_ptr(cumes::SpectralComponent::Zcs),
+                      n_spec2);
+    dump_device_array("dump/cuMES/step_GC_rCon_iter_1.bin",
+                      constraint.rcon_view(p).data(), n_real);
+    dump_device_array("dump/cuMES/step_GC_zCon_iter_1.bin",
+                      constraint.zcon_view(p).data(), n_real);
+    dump_device_array("dump/cuMES/step_GC_gConEff_iter_1.bin",
+                      constraint.gcon_eff(), n_real);
+    dump_device_array("dump/cuMES/step_GC_gCon_iter_1.bin", constraint.gcon(),
+                      n_real);
+    dump_device_array("dump/cuMES/step_GC_frcon_e_iter_1.bin",
+                      constraint.constraint_force_views(p).frcon_e.data(),
+                      n_real);
+    dump_device_array("dump/cuMES/step_GC_frcon_o_iter_1.bin",
+                      constraint.constraint_force_views(p).frcon_o.data(),
+                      n_real);
+    dump_device_array("dump/cuMES/step_GC_fzcon_e_iter_1.bin",
+                      constraint.constraint_force_views(p).fzcon_e.data(),
+                      n_real);
+    dump_device_array("dump/cuMES/step_GC_fzcon_o_iter_1.bin",
+                      constraint.constraint_force_views(p).fzcon_o.data(),
+                      n_real);
     // tcon/faccon profiles (device arrays; h_tcon is stale -- the
     // kernel writes d_tcon directly)
-    dumpDeviceArray("dump/cuMES/step_GC_tcon_iter_1.bin", constraint.tcon(),
-                    p.ns);
-    dumpDeviceArray("dump/cuMES/step_GC_faccon_iter_1.bin", constraint.faccon(),
-                    p.mpol);
+    dump_device_array("dump/cuMES/step_GC_tcon_iter_1.bin", constraint.tcon(),
+                      p.ns);
+    dump_device_array("dump/cuMES/step_GC_faccon_iter_1.bin",
+                      constraint.faccon(), p.mpol);
 }
 
 // step_H window (post-decomposition-scaling): decomposed force slab + the
 // E2-start invariant-force window.
 template <typename T>
-static void dumpStepH(int iter,
-                      int iter2,
-                      const DeviceParams<T>& p,
-                      const T* f_spec,
-                      int DUMP_ITER,
-                      int E2_START) {
-    if (!dumpEnabled()) return;
+static void dump_step_h(int iter,
+                        int iter2,
+                        const DeviceParams<T>& p,
+                        const T* f_spec,
+                        int DUMP_ITER,
+                        int E2_START) {
+    if (!dump_enabled()) return;
     if (iter == 0 || iter2 == DUMP_ITER) {
         // Dump AFTER the decomposition scaling, matching vmecpp's dump
         // of m_decomposed_f (post-decomposeInto). Keyed on iter2 so a
@@ -994,40 +1016,40 @@ static void dumpStepH(int iter,
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/step_H_f_spec_iter_%d.bin",
                  iter == 0 ? 1 : iter2);
-        dumpDeviceArray(fn, f_spec, n_fspec);
+        dump_device_array(fn, f_spec, n_fspec);
     }
     if (iter2 >= E2_START && iter2 < E2_START + 40) {
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/fspec_invariant_iter_%d.bin",
                  iter2);
-        dumpDeviceArray(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
+        dump_device_array(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
     }
 }
 
 // Final-pass force-slab dump (post-m1-gauge, pre-invariant-residual).
 template <typename T>
-static void dumpStepFinal(int iter,
-                          const DeviceParams<T>& p,
-                          const T* f_spec,
-                          int MAX_ITER_EFF) {
-    if (!dumpEnabled()) return;
+static void dump_step_final(int iter,
+                            const DeviceParams<T>& p,
+                            const T* f_spec,
+                            int MAX_ITER_EFF) {
+    if (!dump_enabled()) return;
     if (iter == MAX_ITER_EFF - 1) {
-        dumpDeviceArray("dump/cuMES/step_final_f_spec.bin", f_spec,
-                        (size_t)6 * p.mnmax * p.ns);
+        dump_device_array("dump/cuMES/step_final_f_spec.bin", f_spec,
+                          (size_t)6 * p.mnmax * p.ns);
     }
 }
 
 // step_I window (post-preconditioner): preconditioned slab + state/velocity
 // handoff dumps + the E2-start preconditioned-force window.
 template <typename T>
-static void dumpStepI(int iter,
-                      int iter2,
-                      const DeviceParams<T>& p,
-                      const T* f_spec,
-                      cumes::SpectralStorage<T>& storage,
-                      int DUMP_ITER,
-                      int E2_START) {
-    if (!dumpEnabled()) return;
+static void dump_step_i(int iter,
+                        int iter2,
+                        const DeviceParams<T>& p,
+                        const T* f_spec,
+                        cumes::SpectralStorage<T>& storage,
+                        int DUMP_ITER,
+                        int E2_START) {
+    if (!dump_enabled()) return;
     if (iter == 0 || iter2 == 51 ||
         (iter2 >= DUMP_ITER && iter2 <= DUMP_ITER + 2) ||
         (iter2 >= 2 && iter2 <= 4)) {
@@ -1036,57 +1058,57 @@ static void dumpStepI(int iter,
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/step_I_f_spec_iter_%d.bin",
                  iter == 0 ? 1 : iter2);
-        dumpDeviceArray(fn, f_spec, n_fspec);
+        dump_device_array(fn, f_spec, n_fspec);
         // State + velocities at the handoff window (pre-descent of the
         // pass, matching vmecpp's dump phase at vmec.cc). Also at the
         // iter-2..4 window (first lambda != 0 passes) for the state check.
         if (iter2 >= DUMP_ITER || iter2 == 51 || (iter2 >= 2 && iter2 <= 4)) {
             snprintf(fn, sizeof fn, "dump/cuMES/state_rmncc_iter_%d.bin",
                      iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.family_ptr(cumes::SpectralComponent::Rcc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_zmnsc_iter_%d.bin",
                      iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.family_ptr(cumes::SpectralComponent::Zsc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_lmnsc_iter_%d.bin",
                      iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.family_ptr(cumes::SpectralComponent::Lsc), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_rmnss_iter_%d.bin",
                      iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.family_ptr(cumes::SpectralComponent::Rss), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_zmncs_iter_%d.bin",
                      iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.family_ptr(cumes::SpectralComponent::Zcs), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/state_lmncs_iter_%d.bin",
                      iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.family_ptr(cumes::SpectralComponent::Lcs), n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vrmncc_iter_%d.bin", iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.velocity_family_ptr(cumes::SpectralComponent::Rcc),
                 n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vzmnsc_iter_%d.bin", iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.velocity_family_ptr(cumes::SpectralComponent::Zsc),
                 n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vlmnsc_iter_%d.bin", iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.velocity_family_ptr(cumes::SpectralComponent::Lsc),
                 n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vrmnss_iter_%d.bin", iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.velocity_family_ptr(cumes::SpectralComponent::Rss),
                 n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vzmncs_iter_%d.bin", iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.velocity_family_ptr(cumes::SpectralComponent::Zcs),
                 n_spec);
             snprintf(fn, sizeof fn, "dump/cuMES/vel_vlmncs_iter_%d.bin", iter2);
-            dumpDeviceArray(
+            dump_device_array(
                 fn, storage.velocity_family_ptr(cumes::SpectralComponent::Lcs),
                 n_spec);
         }
@@ -1094,7 +1116,7 @@ static void dumpStepI(int iter,
     if (iter2 >= E2_START && iter2 < E2_START + 40) {
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/fspec_precon_iter_%d.bin", iter2);
-        dumpDeviceArray(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
+        dump_device_array(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
     }
 }
 #endif
@@ -1105,17 +1127,17 @@ static void dumpStepI(int iter,
 // enqueues; enqueue() runs one pass from axis extrapolation through the
 // preconditioned residual, reducing into the owned control record. The
 // host-side controller decisions (descent, checkpoint capture/restore) stay
-// with solverRun.
+// with solver_run.
 // ---------------------------------------------------------------------------
 // One of the solver's own device buffers: carved from the stage DeviceArena
 // when one is present (6.4 — one cudaMalloc backs the whole stage), else a
-// standalone allocation (the legacy per-array path used by solverRun callers
+// standalone allocation (the legacy per-array path used by solver_run callers
 // that pass no arena). The arena plan includes these spans (see
 // stage_solver.hpp's measure_stage_stack).
 template <typename T>
-static cumes::DeviceBuffer<T> solverArenaBuffer(cumes::DeviceArena* arena,
-                                                const char* name,
-                                                std::size_t count) {
+static cumes::DeviceBuffer<T> solver_arena_buffer(cumes::DeviceArena* arena,
+                                                  const char* name,
+                                                  std::size_t count) {
     if (arena) {
         return cumes::DeviceBuffer<T>(arena->alloc_span<T>(name, count), count);
     }
@@ -1143,13 +1165,14 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       base_views_(geometry.base_geometry_views(p)),
       field_views_(geometry.magnetic_field_views(p)),
       rpv_(profiles.profile_views()),
-      d_f_spec_(solverArenaBuffer<T>(arena,
-                                     "solver/f_spec",
-                                     6 * (size_t)p.ns * p.mnmax)),
-      d_control_(
-          solverArenaBuffer<cumes::ControlRecord>(arena, "solver/control", 1)),
+      d_f_spec_(solver_arena_buffer<T>(arena,
+                                       "solver/f_spec",
+                                       6 * (size_t)p.ns * p.mnmax)),
+      d_control_(solver_arena_buffer<cumes::ControlRecord>(arena,
+                                                           "solver/control",
+                                                           1)),
       d_psum_(
-          solverArenaBuffer<T>(arena, "solver/psum", 4 * (size_t)(p.ns - 1))),
+          solver_arena_buffer<T>(arena, "solver/psum", 4 * (size_t)(p.ns - 1))),
       state_view_(storage.physical()),
       state_view_const_(storage.physical_const()),
       velocity_view_(storage.velocity()),
@@ -1250,7 +1273,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     (void)iter;
     (void)iter2;
 #endif
-    // Local aliases mirror the pre-step-12 solverRun variable names so the DAG
+    // Local aliases mirror the pre-step-12 solver_run variable names so the DAG
     // body below is a verbatim move (same arithmetic, same order).
     const DeviceParams<T>& p = p_;
     cumes::SpectralStorage<T>& storage = storage_;
@@ -1294,7 +1317,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     // before inverse DFT, matching vmecpp's extrapolateTowardsAxis().
     // Must be done each iteration since the descent step updates j=1
     // but skips j=0 for m>0 (axis regularity).
-    extrapolateAxisKernel<T><<<(p.mnmax + 31) / 32, 32, 0, stream>>>(
+    extrapolate_axis_kernel<T><<<(p.mnmax + 31) / 32, 32, 0, stream>>>(
         state_view_, p.ns, p.mnmax, p.ntor + 1);
     cumes::check_cuda(cudaGetLastError(), "extrapAxis");
 
@@ -1311,10 +1334,10 @@ void cumes::EquilibriumOperator<T>::enqueue(
     cumes::check_cuda(cudaEventRecord(ev1_inv, stream), "event record ev1_inv");
 
 #ifdef DUMP_CUMES_VERIFY
-    dumpIter0LoopDiag<T>(iter, p, rs);
+    dump_iter0_loop_diag<T>(iter, p, rs);
 #endif
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepA<T>(iter, iter2, p, rs, transform, stream);
+    dump_step_a<T>(iter, iter2, p, rs, transform, stream);
 #endif
 
     // Base geometry (blueprint §6.7): staggered interpolation, Jacobian,
@@ -1331,7 +1354,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     // bookkeeping — the device bit only prevents forbidden mutations.
     geometry.jacobian_stats(p, d_control.data(), stream);
     {
-        jacobianFinalizeKernel<<<1, 1, 0, stream>>>(d_control.data(), p.nZnT);
+        jacobian_finalize_kernel<<<1, 1, 0, stream>>>(d_control.data(), p.nZnT);
         cumes::check_cuda(cudaGetLastError(), "jacobianFinalize");
     }
 
@@ -1346,7 +1369,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
                      schedule.update_iota_chi);
 
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepD<T>(iter, iter2, p, base, field);
+    dump_step_d<T>(iter, iter2, p, base, field);
 #endif
 
     // rCon/zCon were produced by the fused inverse DFT above (blueprint
@@ -1376,9 +1399,9 @@ void cumes::EquilibriumOperator<T>::enqueue(
         // vmecpp computeForceNorms (same cadence): device-side reduction
         // of the force-norm partial sums into the typed control record
         // (guarded + force_norms_evaluated set on device).
-        enqueueForceNorms(storage.physical_const(), transform.xm(),
-                          transform.xn(), p, rpv, geometry, d_psum.data(),
-                          d_control.data(), stream);
+        enqueue_force_norms(storage.physical_const(), transform.xm(),
+                            transform.xn(), p, rpv, geometry, d_psum.data(),
+                            d_control.data(), stream);
 
         // Device finalize of the force-norm factors (completion-plan
         // follow-up §2.3): on a refresh pass the normalization is now
@@ -1387,12 +1410,12 @@ void cumes::EquilibriumOperator<T>::enqueue(
         // kernel reproduces the host's finalizeForceNorms expressions
         // exactly (see device_predicates.cuh); the host consumes the same
         // record fields at the fence instead of recomputing them.
-        forceNormFinalizeKernel<<<1, 1, 0, stream>>>(
+        force_norm_finalize_kernel<<<1, 1, 0, stream>>>(
             d_control.data(), (double)profiles_.delta_s(), (double)p_.lamscale);
         cumes::check_cuda(cudaGetLastError(), "forceNormFinalize");
 
 #ifdef DUMP_CUMES_VERIFY
-        dumpStepPrecon<T>(iter, p, precon);
+        dump_step_precon<T>(iter, p, precon);
 #endif
     }
 
@@ -1403,7 +1426,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
                      stream);
 
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepEF<T>(iter, iter2, p, base, field, rs);
+    dump_step_ef<T>(iter, iter2, p, base, field, rs);
 #endif
 
     // Add spectral condensation constraint force to brmn/bzmn.
@@ -1417,7 +1440,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
                        stream);
 
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepG<T>(iter, p, rs, storage, constraint);
+    dump_step_g<T>(iter, p, rs, storage, constraint);
 #endif
 
     cumes::check_cuda(cudaEventRecord(ev0_fwd, stream), "event record ev0_fwd");
@@ -1431,14 +1454,14 @@ void cumes::EquilibriumOperator<T>::enqueue(
     // force is present at the LCFS (free gauge, evolved by descent).
     {
         dim3 bs(256), gs((p.ns * p.mnmax + 255) / 256);
-        scalxcApplyKernel<T><<<gs, bs, 0, stream>>>(
+        scalxc_apply_kernel<T><<<gs, bs, 0, stream>>>(
             residual_view, rpv.sqrtS_F, transform.xm(), p.ns, p.mnmax,
             std::sqrt(T(1.0) / T(p.ns - 1)));
         cumes::check_cuda(cudaGetLastError(), "scalxc");
     }
 
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepH<T>(iter, iter2, p, d_f_spec.data(), DUMP_ITER, E2_START);
+    dump_step_h<T>(iter, iter2, p, d_f_spec.data(), DUMP_ITER, E2_START);
 #endif
 
     // ---- m1 gauge constraint (vmecpp FourierCoeffs::m1Constraint) ----
@@ -1452,8 +1475,8 @@ void cumes::EquilibriumOperator<T>::enqueue(
     {
         dim3 b1(256), g1((p.ns + 255) / 256);
         int zeroZ = schedule.zero_z_force_m1;
-        m1ConstraintKernel<T><<<g1, b1, 0, stream>>>(residual_view, p.ns,
-                                                     p.mnmax, p.ntor, zeroZ);
+        m1_constraint_kernel<T><<<g1, b1, 0, stream>>>(residual_view, p.ns,
+                                                       p.mnmax, p.ntor, zeroZ);
         cumes::check_cuda(cudaGetLastError(), "m1Constraint");
     }
 
@@ -1462,7 +1485,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     // completes before the terminal predicate and the in-place
     // preconditioner, so the three never race on the residual slab.
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepFinal<T>(iter, p, d_f_spec.data(), MAX_ITER_EFF);
+    dump_step_final<T>(iter, p, d_f_spec.data(), MAX_ITER_EFF);
 #endif
     cumes::ResidualOperator<T> residual_op;
     residual_op.enqueue(residual_view_const, p.ns, p.mnmax,
@@ -1473,14 +1496,14 @@ void cumes::EquilibriumOperator<T>::enqueue(
     // preconditioning: nonfinite always; converged on every pass
     // (completion-plan follow-up §2.3). On a refresh pass the factors were
     // finalized ON DEVICE from THIS pass's force norms by
-    // forceNormFinalizeKernel above, so the predicate reads them from the
+    // force_norm_finalize_kernel above, so the predicate reads them from the
     // record (use_record_factors=1); on other passes it uses the host's
     // cached factors by value. The host consumes the same record fields at
     // the fence, so the device bits and the host decision share bit-identical
     // inputs. The preconditioner and the preconditioned reduction read the
     // bits and no-op on terminal passes, marking their fields not_evaluated.
     {
-        invariantPredicateKernel<<<1, 1, 0, stream>>>(
+        invariant_predicate_kernel<<<1, 1, 0, stream>>>(
             d_control.data(), f_norm_rz, f_norm_l,
             (double)p.mnmax * (double)p.ns, (double)p.ftol,
             schedule.refresh_preconditioner ? 1 : 0);
@@ -1498,7 +1521,8 @@ void cumes::EquilibriumOperator<T>::enqueue(
     precon.enqueue_apply(residual_view, p, &d_control.data()->status, stream);
 
 #ifdef DUMP_CUMES_VERIFY
-    dumpStepI<T>(iter, iter2, p, d_f_spec.data(), storage, DUMP_ITER, E2_START);
+    dump_step_i<T>(iter, iter2, p, d_f_spec.data(), storage, DUMP_ITER,
+                   E2_START);
 #endif
 
     // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
@@ -1509,16 +1533,16 @@ void cumes::EquilibriumOperator<T>::enqueue(
 }
 
 template <typename T>
-SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
-                          const DeviceParams<T>& p,
-                          const cumes::Profiles<T>& profiles,
-                          cumes::ToroidalFftOperator<T>& transform,
-                          cumes::RealSpaceStorage<T>& rs,
-                          cumes::GeometryOperator<T>& geometry,
-                          cumes::DeviceArena* arena,
-                          cudaStream_t stream,
-                          cumes::SolverBench* bench,
-                          cumes::SpectralOperator<T>* op) {
+SolverResult<T> solver_run(cumes::SpectralStorage<T>& storage,
+                           const DeviceParams<T>& p,
+                           const cumes::Profiles<T>& profiles,
+                           cumes::ToroidalFftOperator<T>& transform,
+                           cumes::RealSpaceStorage<T>& rs,
+                           cumes::GeometryOperator<T>& geometry,
+                           cumes::DeviceArena* arena,
+                           cudaStream_t stream,
+                           cumes::SolverBench* bench,
+                           cumes::SpectralOperator<T>* op) {
     const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
 #ifndef DUMP_CUMES_VERIFY
     (void)rpv;  // only the dump-window step_0 snapshots consume it
@@ -1527,7 +1551,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
     // workspaces, views, residual/control buffers and the interleaved dump
-    // machinery. solverRun below is a thin loop over the controller + this
+    // machinery. solver_run below is a thin loop over the controller + this
     // operator (migration step 12).
     cumes::EquilibriumOperator<T> equilibrium(p, storage, profiles, transform,
                                               rs, geometry, arena, op);
@@ -1645,10 +1669,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         for (int n = 0; n <= p.ntor; ++n) h += h_ax[n];
         return h;
     };
-    auto recordPass = [&](int reason, double fRi, double fZi, double fLi,
-                          double fR, double fZ, double fL, double d, double o,
-                          double dt, double b1v, double fcv, int it2, int it1) {
-        if (!dumpEnabled()) return;
+    auto record_pass = [&](int reason, double fRi, double fZi, double fLi,
+                           double fR, double fZ, double fL, double d, double o,
+                           double dt, double b1v, double fcv, int it2,
+                           int it1) {
+        if (!dump_enabled()) return;
         if ((int)per_iter.size() < MAX_ITER_EFF) {
             cumes::PassRecord r;
             r.invariant_fsqr = fRi;
@@ -1676,7 +1701,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // do_combine=false: the diagnostic reads only the parity arrays; the
     // combined *_real buffers are materialized on demand (fourierCombineParity)
     // at the dump site, never read stale.
-    if (dumpEnabled()) {
+    if (dump_enabled()) {
         transform.enqueue_inverse_dump(storage.physical_const(), stream);
         cudaDeviceSynchronize();  // dump-only read of compute-stream data
         auto* h_re = new T[p.nZnT * p.ns];
@@ -1720,30 +1745,30 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
 
 #ifdef DUMP_CUMES_VERIFY
     {
-        dumpEnsureDir();
+        dump_ensure_dir();
         size_t n_spec = (size_t)p.ns * (size_t)p.mnmax;
-        dumpDeviceArray("dump/cuMES/step_0_rmncc.bin",
-                        storage.family_ptr(cumes::SpectralComponent::Rcc),
-                        n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_zmnsc.bin",
-                        storage.family_ptr(cumes::SpectralComponent::Zsc),
-                        n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_lmnsc.bin",
-                        storage.family_ptr(cumes::SpectralComponent::Lsc),
-                        n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_rmnss.bin",
-                        storage.family_ptr(cumes::SpectralComponent::Rss),
-                        n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_zmncs.bin",
-                        storage.family_ptr(cumes::SpectralComponent::Zcs),
-                        n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_lmncs.bin",
-                        storage.family_ptr(cumes::SpectralComponent::Lcs),
-                        n_spec);
-        dumpDeviceArray("dump/cuMES/step_0_currH.bin", rpv.curr_H, p.ns - 1);
-        dumpDeviceArray("dump/cuMES/step_0_chipH.bin", rpv.chip_H, p.ns - 1);
-        dumpDeviceArray("dump/cuMES/step_0_iotaH.bin", rpv.iota_H, p.ns - 1);
-        dumpDeviceArray("dump/cuMES/step_0_iotaF.bin", rpv.iota_F, p.ns);
+        dump_device_array("dump/cuMES/step_0_rmncc.bin",
+                          storage.family_ptr(cumes::SpectralComponent::Rcc),
+                          n_spec);
+        dump_device_array("dump/cuMES/step_0_zmnsc.bin",
+                          storage.family_ptr(cumes::SpectralComponent::Zsc),
+                          n_spec);
+        dump_device_array("dump/cuMES/step_0_lmnsc.bin",
+                          storage.family_ptr(cumes::SpectralComponent::Lsc),
+                          n_spec);
+        dump_device_array("dump/cuMES/step_0_rmnss.bin",
+                          storage.family_ptr(cumes::SpectralComponent::Rss),
+                          n_spec);
+        dump_device_array("dump/cuMES/step_0_zmncs.bin",
+                          storage.family_ptr(cumes::SpectralComponent::Zcs),
+                          n_spec);
+        dump_device_array("dump/cuMES/step_0_lmncs.bin",
+                          storage.family_ptr(cumes::SpectralComponent::Lcs),
+                          n_spec);
+        dump_device_array("dump/cuMES/step_0_currH.bin", rpv.curr_H, p.ns - 1);
+        dump_device_array("dump/cuMES/step_0_chipH.bin", rpv.chip_H, p.ns - 1);
+        dump_device_array("dump/cuMES/step_0_iotaH.bin", rpv.iota_H, p.ns - 1);
+        dump_device_array("dump/cuMES/step_0_iotaF.bin", rpv.iota_F, p.ns);
     }
 #endif
 
@@ -1852,7 +1877,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         // Device/host rule consistency (dump-only observability): the finalize
         // kernel and the controller must decide identically, or the guards
         // would suppress work the controller later consumes.
-        if (dumpEnabled() &&
+        if (dump_enabled() &&
             ((rec.status.jacobian_valid != 0) == host_jac_invalid)) {
             fprintf(stderr,
                     "cuMES: WARNING: device jacobian status (%s) disagrees "
@@ -1864,8 +1889,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
 #endif
         if (host_jac_invalid) {
 #ifdef DUMP_CUMES_VERIFY
-            recordPass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0, it2_before,
-                       it1_before);
+            record_pass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
+                        it2_before, it1_before);
 #endif
             restoreState();
 #ifdef DUMP_CUMES_VERIFY
@@ -1884,7 +1909,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         }
 
         // On a refresh pass, consume the DEVICE-finalized force-norm factors
-        // (completion-plan follow-up §2.3): forceNormFinalizeKernel computed
+        // (completion-plan follow-up §2.3): force_norm_finalize_kernel computed
         // them from THIS pass's force norms before the terminal predicate, so
         // the host decision and the device converged bit share bit-identical
         // inputs — no recomputation, no disagreement window. On non-refresh
@@ -1893,8 +1918,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             fNormRZ = rec.final_f_norm_rz;
             fNormL = rec.final_f_norm_l;
             fNorm1 = rec.final_f_norm1;
-            dumpForceNorms(rec.force_norms, (double)profiles.delta_s(), iter2,
-                           fNormRZ, fNormL, fNorm1);
+            dump_force_norms(rec.force_norms, (double)profiles.delta_s(), iter2,
+                             fNormRZ, fNormL, fNorm1);
         }
 
         // ---- Invariant residuals (vmecpp evalFResInvar) ----
@@ -1916,7 +1941,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         // passes both consume the record's device-finalized factors
         // (completion-plan follow-up §2.3), on other passes the host's cached
         // factors travel by value into the predicate.
-        if (dumpEnabled()) {
+        if (dump_enabled()) {
             const bool dev_nf = rec.status.invariant_nonfinite != 0;
             const bool dev_cv = rec.status.invariant_converged != 0;
             const bool nf_ok = dev_nf == verdict.nonfinite;
@@ -1939,8 +1964,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             // vmecpp hard-fails on non-finite residuals (status BAD_JACOBIAN);
             // we recover instead: restore the last good state and shrink delt.
 #ifdef DUMP_CUMES_VERIFY
-            recordPass(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0, 0, 0,
-                       0, it2_before, it1_before);
+            record_pass(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0, 0,
+                        0, 0, it2_before, it1_before);
 #endif
             restoreState();
 #ifdef DUMP_CUMES_VERIFY
@@ -1954,9 +1979,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         }
         if (verdict.converged) {
 #ifdef DUMP_CUMES_VERIFY
-            recordPass(0, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, controller.delta_t(),
-                       0, 0, 0, 0, controller.effective_iteration(),
-                       controller.restart_anchor());
+            record_pass(0, fsqr_i, fsqz_i, fsql_i, 0, 0, 0,
+                        controller.delta_t(), 0, 0, 0, 0,
+                        controller.effective_iteration(),
+                        controller.restart_anchor());
 #endif
             res.converged = true;
             res.iterations = controller.effective_iteration();
@@ -1995,11 +2021,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             controller.decide_restart(prec_triple, inv_triple);
 
 #ifdef DUMP_CUMES_VERIFY
-        recordPass((int)decision.reason, fsqr_i, fsqz_i, fsql_i, fsqr, fsqz,
-                   fsql, controller.delta_t(), decision.damping.otav,
-                   decision.damping.dtau, decision.damping.b1,
-                   decision.damping.fac, controller.effective_iteration(),
-                   controller.restart_anchor());
+        record_pass((int)decision.reason, fsqr_i, fsqz_i, fsql_i, fsqr, fsqz,
+                    fsql, controller.delta_t(), decision.damping.otav,
+                    decision.damping.dtau, decision.damping.b1,
+                    decision.damping.fac, controller.effective_iteration(),
+                    controller.restart_anchor());
 #endif
 
         // ---- Descent step (Garabedian second-order Richardson) ----------
@@ -2067,7 +2093,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     }
 
 #ifdef DUMP_CUMES_VERIFY
-    if (dumpEnabled()) {
+    if (dump_enabled()) {
         // Per-pass record, column-major: 15 blocks of per_iter.size() doubles
         // (byte-identical to the legacy array-of-doubles layout).
         FILE* fpr = fopen("dump/cuMES/per_iter_residuals_cumes.bin", "wb");

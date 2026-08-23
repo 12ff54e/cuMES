@@ -88,12 +88,12 @@ struct TinyBundle {
     }
 };
 
-static bool fileExists(const char* path) {
+static bool file_exists(const char* path) {
     struct stat st;
     return stat(path, &st) == 0;
 }
 
-static void writeGarbage(const char* path, const char* bytes, size_t n) {
+static void write_garbage(const char* path, const char* bytes, size_t n) {
     FILE* fp = fopen(path, "wb");
     if (!fp) {
         std::cerr << format("cannot seed {}\n", path);
@@ -107,12 +107,12 @@ static void writeGarbage(const char* path, const char* bytes, size_t n) {
 // snapshot, then dispatch through the Writer interface — the failure matrix
 // exercises the same publication protocol every backend uses.
 template <typename T>
-static bool writeViaHost(cumes::SpectralStorage<T>& st,
-                         const DeviceParams<T>& p,
-                         const cumes::ValidatedProblem& vp,
-                         const SolverResult<T>& res,
-                         const char* path,
-                         cumes::OutputFormat fmt) {
+static bool write_via_host(cumes::SpectralStorage<T>& st,
+                           const DeviceParams<T>& p,
+                           const cumes::ValidatedProblem& vp,
+                           const SolverResult<T>& res,
+                           const char* path,
+                           cumes::OutputFormat fmt) {
     cumes::OutputSpec spec;
     spec.format = fmt;
     spec.path = path;
@@ -137,7 +137,7 @@ static bool writeViaHost(cumes::SpectralStorage<T>& st,
 }
 
 template <typename T>
-static void runAll() {
+static void run_all() {
     std::cout << format("== {} precision ==\n",
                         sizeof(T) == sizeof(double) ? "double" : "float");
     TinyBundle<T> b;
@@ -146,28 +146,28 @@ static void runAll() {
     const char* no_dir = "no_such_dir_cumes/state.bin";
     {
         // The binary writer must fail at fopen before reading the state.
-        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, no_dir,
-                                  cumes::OutputFormat::BINARY);
+        bool ok = write_via_host<T>(b.st, b.p, b.vp, b.res, no_dir,
+                                    cumes::OutputFormat::BINARY);
         check(!ok, "open failure: binary returns false");
-        check(!fileExists(no_dir), "open failure: no partial file created");
+        check(!file_exists(no_dir), "open failure: no partial file created");
     }
 #ifdef CUMES_HAVE_NETCDF
     {
-        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res,
-                                  "no_such_dir_cumes/state.nc",
-                                  cumes::OutputFormat::NETCDF);
+        bool ok = write_via_host<T>(b.st, b.p, b.vp, b.res,
+                                    "no_such_dir_cumes/state.nc",
+                                    cumes::OutputFormat::NETCDF);
         check(!ok, "open failure: netcdf returns false");
-        check(!fileExists("no_such_dir_cumes/state.nc"),
+        check(!file_exists("no_such_dir_cumes/state.nc"),
               "open failure: netcdf no partial file");
     }
 #endif
 #ifdef CUMES_HAVE_HDF5
     {
-        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res,
-                                  "no_such_dir_cumes/state.h5",
-                                  cumes::OutputFormat::HDF5);
+        bool ok = write_via_host<T>(b.st, b.p, b.vp, b.res,
+                                    "no_such_dir_cumes/state.h5",
+                                    cumes::OutputFormat::HDF5);
         check(!ok, "open failure: hdf5 returns false");
-        check(!fileExists("no_such_dir_cumes/state.h5"),
+        check(!file_exists("no_such_dir_cumes/state.h5"),
               "open failure: hdf5 no partial file");
     }
 #endif
@@ -186,10 +186,10 @@ static void runAll() {
             std::cerr << format("cannot mkdir {}\n", dir);
             exit(1);
         }
-        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, dir,
-                                  cumes::OutputFormat::BINARY);
+        bool ok = write_via_host<T>(b.st, b.p, b.vp, b.res, dir,
+                                    cumes::OutputFormat::BINARY);
         check(!ok, "rename failure: target directory -> returns false");
-        check(fileExists(dir), "rename failure: target directory untouched");
+        check(file_exists(dir), "rename failure: target directory untouched");
         // No stray temp file may remain next to the target.
         std::string tmp = std::string(dir) + ".tmp.";
         bool stray = false;
@@ -210,9 +210,9 @@ static void runAll() {
     // ---- truncation: a pre-existing file is clobbered, old bytes gone ----
     {
         const char* path = "test_output_trunc.bin";
-        writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
-                                  cumes::OutputFormat::BINARY);
+        write_garbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
+        bool ok = write_via_host<T>(b.st, b.p, b.vp, b.res, path,
+                                    cumes::OutputFormat::BINARY);
         check(ok, "truncation: binary overwrite succeeds");
         // v1 header: magic (8) + version (4) + ns (4) + mnmax (4); the old
         // 'GARBAGE' bytes must be gone.
@@ -237,9 +237,9 @@ static void runAll() {
 #ifdef CUMES_HAVE_NETCDF
     {
         const char* path = "test_output_trunc.nc";
-        writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
-                                  cumes::OutputFormat::NETCDF);
+        write_garbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
+        bool ok = write_via_host<T>(b.st, b.p, b.vp, b.res, path,
+                                    cumes::OutputFormat::NETCDF);
         check(ok, "truncation: netcdf overwrite succeeds");
         // NC_CLOBBER must have replaced the garbage; the file now starts with
         // the netCDF magic "CDF".
@@ -259,9 +259,9 @@ static void runAll() {
 #ifdef CUMES_HAVE_HDF5
     {
         const char* path = "test_output_trunc.h5";
-        writeGarbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
-        bool ok = writeViaHost<T>(b.st, b.p, b.vp, b.res, path,
-                                  cumes::OutputFormat::HDF5);
+        write_garbage(path, "GARBAGE-GARBAGE-GARBAGE-GARBAGE", 32);
+        bool ok = write_via_host<T>(b.st, b.p, b.vp, b.res, path,
+                                    cumes::OutputFormat::HDF5);
         check(ok, "truncation: hdf5 overwrite succeeds");
         // HDF5 signature is "\211HDF\r\n\032\n".
         FILE* fp = fopen(path, "rb");
@@ -283,26 +283,26 @@ static void runAll() {
 
 // ---------------------------------------------------------------------------
 // Library-managed publication boundaries (completion-plan follow-up §3): the
-// checked reopen/fsync/close/rename/directory-fsync chain publishLibraryFile
+// checked reopen/fsync/close/rename/directory-fsync chain publish_library_file
 // implements for the NetCDF/HDF5 writers. Injected failures():
 //
 //   reopen  -> a missing temp fails before any rename;
 //   fsync   -> /proc files reject fsync with EINVAL (a real, deterministic
 //              fault on Linux; no fault-injection hook is needed);
 //   rename  -> the target is a directory (covered end to end above too);
-//   dir-fsync -> fsyncDirectoryOf on /proc propagates the EINVAL instead of
+//   dir-fsync -> fsync_directory_of on /proc propagates the EINVAL instead of
 //              ignoring it (the old helper ignored fsync AND close errors);
 //
 // close failures() cannot be injected portably without interposition; the
 // checked close-after-fsync is the same three-line pattern as the fsync
 // check and is exercised by the same code path here.
-static void runPublicationBoundaries() {
+static void run_publication_boundaries() {
     // Reopen boundary: the temp must exist and be readable.
     const char* dest1 = "test_output_pub_dest1.bin";
     remove(dest1);
-    writeGarbage(dest1, "OLD-DESTINATION", 15);
+    write_garbage(dest1, "OLD-DESTINATION", 15);
     {
-        const std::string err = cumes::io_detail::publishLibraryFile(
+        const std::string err = cumes::io_detail::publish_library_file(
             "test_output_pub_missing.tmp.x", dest1);
         check(!err.empty() && err.find("reopen") != std::string::npos,
               "library publish: missing temp fails at the reopen boundary");
@@ -317,11 +317,11 @@ static void runPublicationBoundaries() {
 
     // fsync boundary: open succeeds, fsync fails (EINVAL on procfs).
     {
-        const std::string err = cumes::io_detail::publishLibraryFile(
+        const std::string err = cumes::io_detail::publish_library_file(
             "/proc/self/stat", "test_output_pub_dest2.bin");
         check(!err.empty() && err.find("fsync") != std::string::npos,
               "library publish: fsync failure propagates a typed reason");
-        check(!fileExists("test_output_pub_dest2.bin"),
+        check(!file_exists("test_output_pub_dest2.bin"),
               "library publish: no destination after fsync failure");
     }
 
@@ -329,24 +329,24 @@ static void runPublicationBoundaries() {
     // ignored both the fsync and the close result).
     {
         const std::string err =
-            cumes::io_detail::fsyncDirectoryOf("/proc/self");
+            cumes::io_detail::fsync_directory_of("/proc/self");
         check(!err.empty() && err.find("fsync") != std::string::npos,
               "directory fsync failure propagates a typed reason");
     }
 
     // Write/fflush boundary of the FILE* protocol: buffered writes to
-    // /dev/full succeed until flush, where fflush fails — publishAtomic must
+    // /dev/full succeed until flush, where fflush fails — publish_atomic must
     // report it and remove nothing but its temp.
     {
         FILE* fp = fopen("/dev/full", "wb");
         check(fp != nullptr, "write fault: /dev/full opens");
         if (fp) {
             (void)fwrite("x", 1, 1, fp);  // buffered; fails at flush time
-            const std::string err = cumes::io_detail::publishAtomic(
+            const std::string err = cumes::io_detail::publish_atomic(
                 fp, "/dev/full.tmp.x", "test_output_pub_dest3.bin");
             check(!err.empty() && err.find("fflush") != std::string::npos,
                   "write fault: fflush failure propagates a typed reason");
-            check(!fileExists("test_output_pub_dest3.bin"),
+            check(!file_exists("test_output_pub_dest3.bin"),
                   "write fault: no destination after flush failure");
         }
     }
@@ -354,8 +354,8 @@ static void runPublicationBoundaries() {
 
 int main() {
     std::cout << "=== Output failure-injection matrix ===\n";
-    runAll<double>();
-    runAll<float>();
-    runPublicationBoundaries();
+    run_all<double>();
+    run_all<float>();
+    run_publication_boundaries();
     return summary();
 }

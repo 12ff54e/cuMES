@@ -118,7 +118,7 @@ class ToroidalFftOperator : public SpectralOperator<T> {
     // ---- dump-only accessors (observability, not the hot loop) -------------
     // The solver's DUMP_CUMES_VERIFY diagnostics materialize the parity-split
     // geometry and the combined (e+o) buffers without naming the transform
-    // internals. Both are gated on dumpEnabled() at the call site.
+    // internals. Both are gated on dump_enabled() at the call site.
     void enqueue_inverse_dump(SpectralView<const T, PhysicalStateDomain> coeff,
                               cudaStream_t stream);
 

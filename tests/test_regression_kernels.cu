@@ -3,7 +3,7 @@
 // Two fixes from the 2026-08-12 issue pass are regression-tested here against
 // CPU scalar references:
 //
-//  1. De-alias bandpass theta coverage (constraint.cu deAliasAnalyzeKernel).
+//  1. De-alias bandpass theta coverage (constraint.cu de_alias_analyze_kernel).
 //     The analyze kernel sums gConEff over the FULL theta grid in 32-point
 //     groups (for (int it0 = 4*t; it0 < ntheta; it0 += 32)), so grids with
 //     ntheta > 32 are fully summed instead of silently dropping the tail.
@@ -28,7 +28,7 @@
 //     ns = 3, 17, 65, 127, 129, 130, 257 and compares the preconditioned
 //     force buffer against a serial Thomas solve on the SAME assembled matrix
 //     coefficients (precon.ar()/dr/br/az/dz/bz, precon.jmin(),
-//     precon.lambdaPrec() copied to host after the real preconCompute).
+//     precon.lambda_prec() copied to host after the real preconCompute).
 //
 // Conventions match the other tests: everything is templated on T and both
 // double and float are instantiated; the CPU references always compute in
@@ -37,7 +37,7 @@
 //
 // The bandpass test drives the PUBLIC operator: it manufactures the
 // effective-constraint-force inputs (rCon/zCon/rCon0/zCon0 + ruFull/zuFull)
-// so that constraintCompute's effectiveConstraintKernel produces the desired
+// so that constraintCompute's effective_constraint_kernel produces the desired
 // deterministic gConEff = pattern exactly, then the built-in analyze->D2Z->
 // coeff-pack->Z2D->synthesize chain bandpasses it.  tcon comes from the real
 // preconditioner (preconCompute on the manufactured geometry) through the
@@ -66,13 +66,13 @@ using namespace cumes::test;
 // double, and the float result carries rounding amplified by the coefficient
 // scale; a per-point relative test would spuriously fail at genuine zero
 // crossings of the output).
-static void checkNear(double gpu,
-                      double ref,
-                      double tol,
-                      const char* s,
-                      long long a,
-                      long long b,
-                      long long c) {
+static void check_near(double gpu,
+                       double ref,
+                       double tol,
+                       const char* s,
+                       long long a,
+                       long long b,
+                       long long c) {
     if (!(fabs(gpu - ref) <= tol)) {
         std::cerr << format(
             "FAIL [{}] a={} b={} c={} gpu={:.15e} ref={:.15e}\n", s, a, b, c,
@@ -85,11 +85,11 @@ static void checkNear(double gpu,
 // DeviceParams / ValidatedProblem construction (self-contained, no JSON/files).
 // ---------------------------------------------------------------------------
 template <typename T>
-static DeviceParams<T> makeParams(int ns,
-                                  int mpol,
-                                  int ntor,
-                                  int ntheta,
-                                  int nzeta) {
+static DeviceParams<T> make_params(int ns,
+                                   int mpol,
+                                   int ntor,
+                                   int ntheta,
+                                   int nzeta) {
     DeviceParams<T> p;
     p.ns = ns;
     p.mnmax = mpol * (ntor + 1);
@@ -110,7 +110,7 @@ static DeviceParams<T> makeParams(int ns,
 
 // Solovev-like profiles (matches inputs/solovev.json: am=[0.125,-0.125],
 // ai=[1.0]; aphi=[1.0] so the toroidal flux / phip profile is non-degenerate).
-static cumes::ValidatedProblem solovevInput() {
+static cumes::ValidatedProblem solovev_input() {
     cumes::ProblemSpec spec;
     spec.mpol = 6;
     spec.ntor = 0;
@@ -130,15 +130,15 @@ static cumes::ValidatedProblem solovevInput() {
 // Manufactured spectral state (Solovev-like: R_00 ~ 4, some m=1/2/3 content).
 // ---------------------------------------------------------------------------
 template <typename T>
-static void fillState(std::vector<T>& cc,
-                      std::vector<T>& ss,
-                      std::vector<T>& zsc,
-                      std::vector<T>& zcs,
-                      std::vector<T>& lsc,
-                      std::vector<T>& lcs,
-                      int ns,
-                      int mnmax,
-                      int ntor) {
+static void fill_state(std::vector<T>& cc,
+                       std::vector<T>& ss,
+                       std::vector<T>& zsc,
+                       std::vector<T>& zcs,
+                       std::vector<T>& lsc,
+                       std::vector<T>& lcs,
+                       int ns,
+                       int mnmax,
+                       int ntor) {
     for (int j = 0; j < ns; ++j) {
         double s = (double)j / (ns - 1.0);
         for (int mode = 0; mode < mnmax; ++mode) {
@@ -173,9 +173,9 @@ static void fillState(std::vector<T>& cc,
 // ---------------------------------------------------------------------------
 // CPU scalar reference for the de-alias bandpass.
 //
-// Replicates constraint.cu deAliasAnalyzeKernel -> D2Z ->
-// deAliasCoeffPackKernel
-// -> Z2D -> deAliasSynthesizeKernel exactly:
+// Replicates constraint.cu de_alias_analyze_kernel -> D2Z ->
+// de_alias_coeff_pack_kernel
+// -> Z2D -> de_alias_synthesize_kernel exactly:
 //   * analysis: UNIFORM sums of gConEff*sin(mθ) / gConEff*cos(mθ) over the
 //     FULL theta grid (per zeta plane) — the kernel does not use the reduced
 //     [0,pi] trapezoid here, it sums all ntheta points in 32-point groups.
@@ -185,21 +185,21 @@ static void fillState(std::vector<T>& cc,
 //     the sc channel keeps Re F_sc, the cs channel keeps -Im F_cs, and the
 //     Z2D synthesis expands the real spectrum as X[0]+2ΣRe cos − 2ΣIm sin
 //     (cuFFT is unnormalized), which is why the packed bins carry half the
-//     coefficient (the 0.5 in deAliasCoeffPackKernel cancels the 2×).
+//     coefficient (the 0.5 in de_alias_coeff_pack_kernel cancels the 2×).
 //   * synthesis: gCon[jF][k][l] = Σ_m slot0*sin(mθ_l) + slot1*cos(mθ_l).
 //
 // gCon at jF == 0 is not written (the kernel skips the axis); callers compare
 // jF >= 1 only.
-static void cpuDealiasBandpass(const double* gConEff,
-                               int ns,
-                               int mpol,
-                               int ntor,
-                               int ntheta,
-                               int nzeta,
-                               int nZnT,
-                               const double* tcon,
-                               const double* faccon,
-                               double* gCon) {
+static void cpu_dealias_bandpass(const double* gConEff,
+                                 int ns,
+                                 int mpol,
+                                 int ntor,
+                                 int ntheta,
+                                 int nzeta,
+                                 int nZnT,
+                                 const double* tcon,
+                                 const double* faccon,
+                                 double* gCon) {
     int nz2 = nzeta / 2 + 1;
     std::vector<double> coeffSc((size_t)(mpol - 2) * (ns - 1) * nz2, 0.0);
     std::vector<double> coeffCs((size_t)(mpol - 2) * (ns - 1) * nz2, 0.0);
@@ -260,7 +260,7 @@ static void cpuDealiasBandpass(const double* gConEff,
 // surface factor.  The bandpass keeps sin(m=1..4) (scaled by tcon*faccon),
 // drops m=0, m=5..8, and (for n=0) drops the entire cos channel — so the
 // expected output is analytically known and every mode is exercised.
-static double daPatternValue(int jF, int it, int ntheta, int ns) {
+static double da_pattern_value(int jF, int it, int ntheta, int ns) {
     double sF = (ns > 1) ? (double)jF / (ns - 1.0) : 0.0;
     double th = 2.0 * M_PI * it / ntheta;
     double v = 0.5 + 0.7 * sin(1.0 * th) + 0.6 * sin(2.0 * th) +
@@ -279,13 +279,13 @@ static double daPatternValue(int jF, int it, int ntheta, int ns) {
 // OUTSIDE the solve — the PCR kernel's hasL/hasR guards impose exactly these,
 // see the boundary analysis in the test header).  Only x[j] for jMin..jMax-1
 // are written; x[jMax] and x[j<jMin] are left untouched.
-static void thomasSolve(const double* a,
-                        const double* d,
-                        const double* b,
-                        int jMin,
-                        int jMax,
-                        const double* rhs,
-                        double* x) {
+static void thomas_solve(const double* a,
+                         const double* d,
+                         const double* b,
+                         int jMin,
+                         int jMax,
+                         const double* rhs,
+                         double* x) {
     int n = jMax - jMin;
     if (n <= 0) return;
     std::vector<double> cp(n), dp(n);
@@ -308,22 +308,22 @@ static void thomasSolve(const double* a,
 // CPU reference for preconApply (precon.cu tridiagSolveKernel):
 //   comps 0,3 -> R tridiagonal (ar/dr/br), comps 1,4 -> Z tridiagonal
 //   (az/dz/bz) comps 0..4 zeroed for j < jMin, comps 2,5 multiplied by
-//   lambdaPrec (all surfaces 0..ns-1, including the LCFS; comp 5 is NOT zeroed
+//   lambda_prec (all surfaces 0..ns-1, including the LCFS; comp 5 is NOT zeroed
 //   below jMin — matching the kernel).
 // f is the manufactured 6-family buffer [comp*mnmax*ns + mode*ns + jF],
 // modified in place (in double).
 template <typename T>
-static void cpuPreconApplyRef(const std::vector<T>& ar,
-                              const std::vector<T>& dr,
-                              const std::vector<T>& br,
-                              const std::vector<T>& az,
-                              const std::vector<T>& dz,
-                              const std::vector<T>& bz,
-                              const std::vector<int>& jMin,
-                              const std::vector<T>& lambdaPrec,
-                              int ns,
-                              int mnmax,
-                              std::vector<double>& f) {
+static void cpu_precon_apply_ref(const std::vector<T>& ar,
+                                 const std::vector<T>& dr,
+                                 const std::vector<T>& br,
+                                 const std::vector<T>& az,
+                                 const std::vector<T>& dz,
+                                 const std::vector<T>& bz,
+                                 const std::vector<int>& jMin,
+                                 const std::vector<T>& lambda_prec,
+                                 int ns,
+                                 int mnmax,
+                                 std::vector<double>& f) {
     int stride = mnmax * ns;
     for (int mode = 0; mode < mnmax; ++mode) {
         int jm = jMin[mode];
@@ -346,8 +346,8 @@ static void cpuPreconApplyRef(const std::vector<T>& ar,
             const std::vector<double>* bP = (c == 0 || c == 3) ? &brD : &bzD;
             std::vector<double> rhs(ns), x(ns, 0.0);
             for (int j = 0; j < ns; ++j) rhs[j] = f[c * stride + mode * ns + j];
-            thomasSolve(aP->data(), dP->data(), bP->data(), jm, jMax,
-                        rhs.data(), x.data());
+            thomas_solve(aP->data(), dP->data(), bP->data(), jm, jMax,
+                         rhs.data(), x.data());
             for (int j = jm; j < jMax; ++j)
                 f[c * stride + mode * ns + j] = x[j];
         }
@@ -356,7 +356,7 @@ static void cpuPreconApplyRef(const std::vector<T>& ar,
             for (int c = 0; c < 5; ++c) f[c * stride + mode * ns + j] = 0.0;
         // Lambda diagonal preconditioner on comps 2, 5 (all surfaces).
         for (int j = 0; j < ns; ++j) {
-            double lp = (double)lambdaPrec[mode * ns + j];
+            double lp = (double)lambda_prec[mode * ns + j];
             f[2 * stride + mode * ns + j] *= lp;
             f[5 * stride + mode * ns + j] *= lp;
         }
@@ -367,19 +367,19 @@ static void cpuPreconApplyRef(const std::vector<T>& ar,
 // De-alias bandpass theta-coverage scenario (one ntheta value).
 // ---------------------------------------------------------------------------
 template <typename T>
-static int testDealias(int ntheta) {
+static int test_dealias(int ntheta) {
     int lf = failures();
     std::cout << format(
         "  de-alias bandpass theta coverage: ns=11 mpol=6 ntor=0 nzeta=1 "
         "ntheta={} ... ",
         ntheta);
     const int ns = 11, mpol = 6, ntor = 0, nzeta = 1;
-    DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
-    cumes::ValidatedProblem vp = solovevInput();
+    DeviceParams<T> p = make_params<T>(ns, mpol, ntor, ntheta, nzeta);
+    cumes::ValidatedProblem vp = solovev_input();
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
@@ -387,7 +387,7 @@ static int testDealias(int ntheta) {
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
-    fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
+    fill_state(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     upload_state(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0);
@@ -400,7 +400,7 @@ static int testDealias(int ntheta) {
 
     // Manufacture the bandpass INPUT through the public operator.  With
     // ruFull = zuFull = 1 (ru_e = zu_e = 1, ru_o = zu_o = 0), rCon = pattern,
-    // zCon = rCon0 = zCon0 = 0, the effectiveConstraintKernel computes
+    // zCon = rCon0 = zCon0 = 0, the effective_constraint_kernel computes
     //   gConEff = (rCon - rCon0)*ruFull + (zCon - zCon0)*zuFull = pattern
     // exactly, and the built-in bandpass chain filters it.
     size_t nF = (size_t)ns * p.nZnT * sizeof(T);
@@ -409,7 +409,7 @@ static int testDealias(int ntheta) {
         for (int k = 0; k < nzeta; ++k)
             for (int it = 0; it < p.ntheta; ++it)
                 pat[jF * p.nZnT + k * p.ntheta + it] =
-                    T(daPatternValue(jF, it, p.ntheta, ns));
+                    T(da_pattern_value(jF, it, p.ntheta, ns));
     check_cuda(cudaMemcpy(constraint.rcon_view(p).data(), pat.data(), nF,
                           cudaMemcpyHostToDevice),
                "rCon up");
@@ -451,8 +451,8 @@ static int testDealias(int ntheta) {
     // CPU reference bandpass of the same (float-rounded) pattern, in double.
     std::vector<double> gEff(ns * p.nZnT, 0.0), gRef(ns * p.nZnT, 0.0);
     for (int i = 0; i < ns * p.nZnT; ++i) gEff[i] = (double)pat[i];
-    cpuDealiasBandpass(gEff.data(), ns, mpol, ntor, p.ntheta, nzeta, p.nZnT,
-                       tcon.data(), faccon.data(), gRef.data());
+    cpu_dealias_bandpass(gEff.data(), ns, mpol, ntor, p.ntheta, nzeta, p.nZnT,
+                         tcon.data(), faccon.data(), gRef.data());
 
     // The synthesize kernel's theta thread split is 2*(ntheta/2): for odd
     // ntheta the last theta point is not written by the kernel.  All the
@@ -481,12 +481,12 @@ static int testDealias(int ntheta) {
         for (int k = 0; k < nzeta; ++k)
             for (int l = 0; l < nCompTheta; ++l) {
                 int idx = jF * p.nZnT + k * p.ntheta + l;
-                checkNear((double)h_gCon[idx], gRef[idx], tol, "dealias", jF, k,
-                          l);
+                check_near((double)h_gCon[idx], gRef[idx], tol, "dealias", jF,
+                           k, l);
             }
 
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -495,25 +495,25 @@ static int testDealias(int ntheta) {
 // PCR solve row-coverage scenario (one ns value).
 // ---------------------------------------------------------------------------
 template <typename T>
-static int testPcr(int ns) {
+static int test_pcr(int ns) {
     int lf = failures();
     std::cout << format(
         "  PCR solve row coverage: mpol=4 ntor=0 ntheta=18 nzeta=1 ns={} ... ",
         ns);
     const int mpol = 4, ntor = 0, ntheta = 18, nzeta = 1;
-    DeviceParams<T> p = makeParams<T>(ns, mpol, ntor, ntheta, nzeta);
-    cumes::ValidatedProblem vp = solovevInput();
+    DeviceParams<T> p = make_params<T>(ns, mpol, ntor, ntheta, nzeta);
+    cumes::ValidatedProblem vp = solovev_input();
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
     cumes::SpectralStorage<T> storage(ns, p.mnmax);
     std::vector<T> cc(ns * p.mnmax), ss(ns * p.mnmax), zsc(ns * p.mnmax);
     std::vector<T> zcs(ns * p.mnmax), lsc(ns * p.mnmax), lcs(ns * p.mnmax);
-    fillState(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
+    fill_state(cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax, ntor);
     upload_state(storage, cc, ss, zsc, zcs, lsc, lcs, ns, p.mnmax);
     transform.inverse(storage.physical_const(), /*do_combine=*/true);
     geometry.enqueue(rs, p, rp, 0);
@@ -525,7 +525,7 @@ static int testPcr(int ns) {
                            geometry.magnetic_field_views(p), nullptr, 0);
 
     // Copy the assembled matrix coefficients to host: the CPU Thomas reference
-    // must use the EXACT same ar/dr/br/az/dz/bz, jMin and lambdaPrec the GPU
+    // must use the EXACT same ar/dr/br/az/dz/bz, jMin and lambda_prec the GPU
     // PCR kernel solves with.
     std::vector<T> ar(p.mnmax * ns), dr(p.mnmax * ns), br(p.mnmax * ns);
     std::vector<T> az(p.mnmax * ns), dz(p.mnmax * ns), bz(p.mnmax * ns);
@@ -544,9 +544,9 @@ static int testPcr(int ns) {
                "dz get");
     check_cuda(cudaMemcpy(bz.data(), precon.bz(), szMN, cudaMemcpyDeviceToHost),
                "bz get");
-    check_cuda(cudaMemcpy(lam.data(), precon.lambdaPrec(), szMN,
+    check_cuda(cudaMemcpy(lam.data(), precon.lambda_prec(), szMN,
                           cudaMemcpyDeviceToHost),
-               "lambdaPrec get");
+               "lambda_prec get");
     check_cuda(cudaMemcpy(jMin.data(), precon.jmin(), p.mnmax * sizeof(int),
                           cudaMemcpyDeviceToHost),
                "jMin get");
@@ -578,7 +578,7 @@ static int testPcr(int ns) {
     // CPU reference: serial Thomas on the SAME coefficients.
     std::vector<double> fRef(6 * stride);
     for (int i = 0; i < 6 * stride; ++i) fRef[i] = (double)h_f[i];
-    cpuPreconApplyRef(ar, dr, br, az, dz, bz, jMin, lam, ns, p.mnmax, fRef);
+    cpu_precon_apply_ref(ar, dr, br, az, dz, bz, jMin, lam, ns, p.mnmax, fRef);
 
     // Per-component scale tolerance.  The PCR and the serial Thomas are
     // different algorithms; the preconditioner conditioning amplifies float
@@ -598,28 +598,28 @@ static int testPcr(int ns) {
         int c = i / stride, rem = i % stride;
         int mode = rem / ns, j = rem % ns;
         double tol = rel * scaleC[c] + absF;
-        checkNear((double)h_g[i], fRef[i], tol, "pcr", c, mode, j);
+        check_near((double)h_g[i], fRef[i], tol, "pcr", c, mode, j);
     }
 
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
 
 template <typename T>
-static int runDealiasTests() {
+static int run_dealias_tests() {
     int nf = 0;
     const int nthetaList[] = {30, 32, 34, 40};
-    for (int nt : nthetaList) nf += testDealias<T>(nt);
+    for (int nt : nthetaList) nf += test_dealias<T>(nt);
     return nf;
 }
 
 template <typename T>
-static int runPcrTests() {
+static int run_pcr_tests() {
     int nf = 0;
     const int nsList[] = {3, 17, 65, 127, 129, 130, 257};
-    for (int ns : nsList) nf += testPcr<T>(ns);
+    for (int ns : nsList) nf += test_pcr<T>(ns);
     return nf;
 }
 
@@ -627,10 +627,10 @@ int main() {
     std::cout
         << "=== Regression: de-alias theta coverage + PCR row coverage ===\n";
     int nf = 0;
-    nf += runDealiasTests<double>();
-    nf += runDealiasTests<float>();
-    nf += runPcrTests<double>();
-    nf += runPcrTests<float>();
+    nf += run_dealias_tests<double>();
+    nf += run_dealias_tests<float>();
+    nf += run_pcr_tests<double>();
+    nf += run_pcr_tests<float>();
     failures() = nf;
     std::cout << (failures() == 0 ? "ALL PASS\n"
                                   : format("{} FAILURES\n", failures()));

@@ -50,10 +50,10 @@ const std::set<std::string> KNOWN_IGNORED_KEYS = {
 // Typed getters: on a type/range error record the finding and return the
 // fallback so the mapped field keeps a valid default (validate() then reports
 // any remaining semantic issue without a misleading cascade).
-int getInt(const json::Value& v,
-           const std::string& key,
-           int fallback,
-           ValidationReport& report) {
+int get_int(const json::Value& v,
+            const std::string& key,
+            int fallback,
+            ValidationReport& report) {
     if (v.value_category() != json::ValueCategory::NumberInt) {
         report.error(key,
                      "'" + key + "': expected an integer, got " +
@@ -69,10 +69,10 @@ int getInt(const json::Value& v,
     return static_cast<int>(vv);
 }
 
-double getDouble(const json::Value& v,
-                 const std::string& key,
-                 double fallback,
-                 ValidationReport& report) {
+double get_double(const json::Value& v,
+                  const std::string& key,
+                  double fallback,
+                  ValidationReport& report) {
     if (!v.is_number()) {
         report.error(key,
                      "'" + key + "': expected a number, got " +
@@ -82,10 +82,10 @@ double getDouble(const json::Value& v,
     return v.as_number<double>();
 }
 
-bool getBool(const json::Value& v,
-             const std::string& key,
-             bool fallback,
-             ValidationReport& report) {
+bool get_bool(const json::Value& v,
+              const std::string& key,
+              bool fallback,
+              ValidationReport& report) {
     if (!v.is_boolean()) {
         report.error(key,
                      "'" + key + "': expected a boolean, got " +
@@ -95,10 +95,10 @@ bool getBool(const json::Value& v,
     return v.as_boolean();
 }
 
-std::string getString(const json::Value& v,
-                      const std::string& key,
-                      std::string fallback,
-                      ValidationReport& report) {
+std::string get_string(const json::Value& v,
+                       const std::string& key,
+                       std::string fallback,
+                       ValidationReport& report) {
     if (!v.is_string()) {
         report.error(key,
                      "'" + key + "': expected a string, got " +
@@ -110,9 +110,9 @@ std::string getString(const json::Value& v,
 
 // Read an array of JSON numbers into a dynamic vector. strict_int requires
 // integer literals and range-checks the narrowing to int.
-std::vector<int> readIntArray(const json::Value& v,
-                              const std::string& key,
-                              ValidationReport& report) {
+std::vector<int> read_int_array(const json::Value& v,
+                                const std::string& key,
+                                ValidationReport& report) {
     std::vector<int> out;
     if (!v.is_array()) {
         report.error(key,
@@ -143,9 +143,9 @@ std::vector<int> readIntArray(const json::Value& v,
     return out;
 }
 
-std::vector<double> readDoubleArray(const json::Value& v,
-                                    const std::string& key,
-                                    ValidationReport& report) {
+std::vector<double> read_double_array(const json::Value& v,
+                                      const std::string& key,
+                                      ValidationReport& report) {
     std::vector<double> out;
     if (!v.is_array()) {
         report.error(key,
@@ -171,10 +171,10 @@ std::vector<double> readDoubleArray(const json::Value& v,
 // Boundary coefficients: array of {"n","m","value"} objects. Out-of-range
 // modes are NOT rejected here (the dynamic model cannot index out of bounds);
 // validate() skips them with a warning, matching vmecpp ignore-and-continue.
-void readBoundary(const json::Value& v,
-                  const std::string& key,
-                  std::vector<BoundaryHarmonic>& out,
-                  ValidationReport& report) {
+void read_boundary(const json::Value& v,
+                   const std::string& key,
+                   std::vector<BoundaryHarmonic>& out,
+                   ValidationReport& report) {
     if (!v.is_array()) {
         report.error(key,
                      "'" + key +
@@ -197,10 +197,10 @@ void readBoundary(const json::Value& v,
                          "'" + where + "': missing \"n\", \"m\" or \"value\"");
             continue;
         }
-        const int m = getInt(e.at("m"), where + ".m", 0, report);
-        const int n = getInt(e.at("n"), where + ".n", 0, report);
+        const int m = get_int(e.at("m"), where + ".m", 0, report);
+        const int n = get_int(e.at("n"), where + ".n", 0, report);
         const double value =
-            getDouble(e.at("value"), where + ".value", 0.0, report);
+            get_double(e.at("value"), where + ".value", 0.0, report);
         out.push_back(BoundaryHarmonic{m, n, value});
     }
 }
@@ -219,28 +219,28 @@ ParsedProblem read_problem_spec(const std::string& path,
     }
 
     // Helper: apply fn(v, key) when root has the key.
-    auto ifPresent = [&](const char* key, auto fn) {
+    auto if_present = [&](const char* key, auto fn) {
         if (root.contains(key)) fn(root.at(key), key);
     };
 
     // ---- scalars ----
-    ifPresent("mpol", [&](const json::Value& v, const char* k) {
-        p.mpol = getInt(v, k, p.mpol, report);
+    if_present("mpol", [&](const json::Value& v, const char* k) {
+        p.mpol = get_int(v, k, p.mpol, report);
     });
-    ifPresent("ntor", [&](const json::Value& v, const char* k) {
-        p.ntor = getInt(v, k, p.ntor, report);
+    if_present("ntor", [&](const json::Value& v, const char* k) {
+        p.ntor = get_int(v, k, p.ntor, report);
     });
-    ifPresent("nfp", [&](const json::Value& v, const char* k) {
-        p.nfp = getInt(v, k, p.nfp, report);
+    if_present("nfp", [&](const json::Value& v, const char* k) {
+        p.nfp = get_int(v, k, p.nfp, report);
     });
-    ifPresent("ntheta", [&](const json::Value& v, const char* k) {
-        p.angular.ntheta = getInt(v, k, p.angular.ntheta, report);
+    if_present("ntheta", [&](const json::Value& v, const char* k) {
+        p.angular.ntheta = get_int(v, k, p.angular.ntheta, report);
     });
-    ifPresent("nzeta", [&](const json::Value& v, const char* k) {
-        p.angular.nzeta = getInt(v, k, p.angular.nzeta, report);
+    if_present("nzeta", [&](const json::Value& v, const char* k) {
+        p.angular.nzeta = get_int(v, k, p.angular.nzeta, report);
     });
-    ifPresent("ncurr", [&](const json::Value& v, const char* k) {
-        const int nc = getInt(v, k, 0, report);
+    if_present("ncurr", [&](const json::Value& v, const char* k) {
+        const int nc = get_int(v, k, 0, report);
         if (nc == 0)
             p.current_model = CurrentModel::FIXED_IOTA;
         else if (nc == 1)
@@ -248,50 +248,50 @@ ParsedProblem read_problem_spec(const std::string& path,
         else
             report.error(k, "ncurr must be 0 or 1");
     });
-    ifPresent("delt", [&](const json::Value& v, const char* k) {
-        p.delt = getDouble(v, k, p.delt, report);
+    if_present("delt", [&](const json::Value& v, const char* k) {
+        p.delt = get_double(v, k, p.delt, report);
     });
-    ifPresent("phiedge", [&](const json::Value& v, const char* k) {
-        p.physical.phiedge = getDouble(v, k, p.physical.phiedge, report);
+    if_present("phiedge", [&](const json::Value& v, const char* k) {
+        p.physical.phiedge = get_double(v, k, p.physical.phiedge, report);
     });
-    ifPresent("pres_scale", [&](const json::Value& v, const char* k) {
-        p.physical.pres_scale = getDouble(v, k, p.physical.pres_scale, report);
+    if_present("pres_scale", [&](const json::Value& v, const char* k) {
+        p.physical.pres_scale = get_double(v, k, p.physical.pres_scale, report);
     });
     // "adiabatic_index" is the legacy alias for vmecpp's "gamma".
     if (root.contains("adiabatic_index")) {
         p.physical.adiabatic_index =
-            getDouble(root.at("adiabatic_index"), "adiabatic_index",
-                      p.physical.adiabatic_index, report);
+            get_double(root.at("adiabatic_index"), "adiabatic_index",
+                       p.physical.adiabatic_index, report);
     } else if (root.contains("gamma")) {
-        p.physical.adiabatic_index = getDouble(
+        p.physical.adiabatic_index = get_double(
             root.at("gamma"), "gamma", p.physical.adiabatic_index, report);
     }
-    ifPresent("spres_ped", [&](const json::Value& v, const char* k) {
-        p.physical.spres_ped = getDouble(v, k, p.physical.spres_ped, report);
+    if_present("spres_ped", [&](const json::Value& v, const char* k) {
+        p.physical.spres_ped = get_double(v, k, p.physical.spres_ped, report);
     });
-    ifPresent("curtor", [&](const json::Value& v, const char* k) {
-        p.physical.curtor = getDouble(v, k, p.physical.curtor, report);
+    if_present("curtor", [&](const json::Value& v, const char* k) {
+        p.physical.curtor = get_double(v, k, p.physical.curtor, report);
     });
-    ifPresent("bloat", [&](const json::Value& v, const char* k) {
-        p.physical.bloat = getDouble(v, k, p.physical.bloat, report);
+    if_present("bloat", [&](const json::Value& v, const char* k) {
+        p.physical.bloat = get_double(v, k, p.physical.bloat, report);
     });
-    ifPresent("tcon0", [&](const json::Value& v, const char* k) {
-        p.physical.tcon0 = getDouble(v, k, p.physical.tcon0, report);
+    if_present("tcon0", [&](const json::Value& v, const char* k) {
+        p.physical.tcon0 = get_double(v, k, p.physical.tcon0, report);
     });
 
     // ---- profile coefficients (power series) ----
-    ifPresent("am", [&](const json::Value& v, const char* k) {
-        p.mass.coefficients = readDoubleArray(v, k, report);
+    if_present("am", [&](const json::Value& v, const char* k) {
+        p.mass.coefficients = read_double_array(v, k, report);
     });
-    ifPresent("ac", [&](const json::Value& v, const char* k) {
-        p.current.coefficients = readDoubleArray(v, k, report);
+    if_present("ac", [&](const json::Value& v, const char* k) {
+        p.current.coefficients = read_double_array(v, k, report);
     });
-    ifPresent("ai", [&](const json::Value& v, const char* k) {
-        p.iota.coefficients = readDoubleArray(v, k, report);
+    if_present("ai", [&](const json::Value& v, const char* k) {
+        p.iota.coefficients = read_double_array(v, k, report);
     });
     if (root.contains("aphi")) {
         p.toroidal_flux.coefficients =
-            readDoubleArray(root.at("aphi"), "aphi", report);
+            read_double_array(root.at("aphi"), "aphi", report);
     } else {
         // vmecpp default. push_back instead of an initializer_list
         // assignment: g++-13 -O2 -Warray-bounds (warnings-as-errors) mis-
@@ -303,11 +303,11 @@ ParsedProblem read_problem_spec(const std::string& path,
     // ---- magnetic axis ----
     if (root.contains("raxis_c")) {
         p.has_raxis_c = true;
-        p.raxis_c = readDoubleArray(root.at("raxis_c"), "raxis_c", report);
+        p.raxis_c = read_double_array(root.at("raxis_c"), "raxis_c", report);
     }
     if (root.contains("zaxis_s")) {
         p.has_zaxis_s = true;
-        p.zaxis_s = readDoubleArray(root.at("zaxis_s"), "zaxis_s", report);
+        p.zaxis_s = read_double_array(root.at("zaxis_s"), "zaxis_s", report);
     }
 
     // ---- multi-radial-grid sequence (all-or-none) ----
@@ -321,11 +321,11 @@ ParsedProblem read_problem_spec(const std::string& path,
                          "provided together");
         } else {
             const auto ns =
-                readIntArray(root.at("ns_array"), "ns_array", report);
+                read_int_array(root.at("ns_array"), "ns_array", report);
             const auto niter =
-                readIntArray(root.at("niter_array"), "niter_array", report);
+                read_int_array(root.at("niter_array"), "niter_array", report);
             const auto ftol =
-                readDoubleArray(root.at("ftol_array"), "ftol_array", report);
+                read_double_array(root.at("ftol_array"), "ftol_array", report);
             if (niter.size() != ns.size()) {
                 report.error("niter_array",
                              "niter_array length must match ns_array");
@@ -351,19 +351,19 @@ ParsedProblem read_problem_spec(const std::string& path,
 
     // ---- boundary ----
     if (root.contains("rbc"))
-        readBoundary(root.at("rbc"), "rbc", p.rbc, report);
+        read_boundary(root.at("rbc"), "rbc", p.rbc, report);
     if (root.contains("zbs"))
-        readBoundary(root.at("zbs"), "zbs", p.zbs, report);
+        read_boundary(root.at("zbs"), "zbs", p.zbs, report);
 
     // ---- unsupported features -> errors ----
     if (root.contains("lasym") &&
-        getBool(root.at("lasym"), "lasym", false, report)) {
+        get_bool(root.at("lasym"), "lasym", false, report)) {
         report.error(
             "lasym",
             "lasym=true: asymmetric equilibria are not supported by cuMES");
     }
     if (root.contains("lfreeb") &&
-        getBool(root.at("lfreeb"), "lfreeb", false, report)) {
+        get_bool(root.at("lfreeb"), "lfreeb", false, report)) {
         report.error("lfreeb",
                      "lfreeb=true: free-boundary runs are not supported by "
                      "cuMES (fixed boundary only)");
@@ -371,11 +371,11 @@ ParsedProblem read_problem_spec(const std::string& path,
     // "two_power" is supported for the mass (pressure) and current profiles;
     // it is NOT applicable to the iota profile (vmecpp marks it
     // allowedForIota=false), which stays a power series.
-    auto readProfileType = [&](const char* key, ProfileType& out,
-                               bool twoPowerAllowed) {
+    auto read_profile_type = [&](const char* key, ProfileType& out,
+                                 bool twoPowerAllowed) {
         if (!root.contains(key)) return;
         const std::string v =
-            getString(root.at(key), key, "power_series", report);
+            get_string(root.at(key), key, "power_series", report);
         if (v == "power_series") {
             out = ProfileType::POWER_SERIES;
         } else if (v == "two_power" && twoPowerAllowed) {
@@ -393,9 +393,9 @@ ParsedProblem read_problem_spec(const std::string& path,
                                   "\"two_power\")");
         }
     };
-    readProfileType("pmass_type", p.mass.type, true);
-    readProfileType("piota_type", p.iota.type, false);
-    readProfileType("pcurr_type", p.current.type, true);
+    read_profile_type("pmass_type", p.mass.type, true);
+    read_profile_type("piota_type", p.iota.type, false);
+    read_profile_type("pcurr_type", p.current.type, true);
     // Unsupported-feature keys are TYPE-CHECKED before the semantic support
     // check, so a scalar/object of the wrong type is a hard error rather than
     // silently ignored.

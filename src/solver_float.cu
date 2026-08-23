@@ -1,7 +1,7 @@
 #include "kernels/solver_impl.cuh"
 
 // Explicit instantiation for float (cumes_cuda_float).
-template SolverResult<float> solverRun<float>(
+template SolverResult<float> solver_run<float>(
     cumes::SpectralStorage<float>&,
     const DeviceParams<float>&,
     const cumes::Profiles<float>&,

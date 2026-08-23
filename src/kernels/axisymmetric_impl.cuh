@@ -1,7 +1,7 @@
-// kernels/axisymmetric_impl.cuh — template definitions for axisymmetric_operator.hpp.
-// Included once per scalar type by axisymmetric_double.cu /
-// axisymmetric_float.cu (the explicit-instantiation split, one scalar type per
-// TU).
+// kernels/axisymmetric_impl.cuh — template definitions for
+// axisymmetric_operator.hpp. Included once per scalar type by
+// axisymmetric_double.cu / axisymmetric_float.cu (the explicit-instantiation
+// split, one scalar type per TU).
 //
 // The axisymmetric backend replaces the cuFFT length-one Z2D/D2Z round trip
 // with direct poloidal synthesis/projection. For ntor=0, nzeta=1 every folded
@@ -28,35 +28,35 @@ namespace axisym_detail {
 // One thread per (surface j, theta l). Sums the poloidal basis over m in
 // ascending order. Odd-m contributions are divided by maxsc (vmecpp scalxc
 // odd decomposition); the e/o accumulators match the generic
-// inverseAccumulateKernel's m%2 split exactly.
+// inverse_accumulate_kernel's m%2 split exactly.
 template <class T>
-__global__ void inverseKernel(SpectralView<const T, PhysicalStateDomain> coeff,
-                              int ns,
-                              int mpol,
-                              int ntheta,
-                              int nZnT,
-                              const T* __restrict__ cos_th,
-                              const T* __restrict__ sin_th,
-                              const T* __restrict__ mcos_th,
-                              const T* __restrict__ msin_th,
-                              T* __restrict__ r_e,
-                              T* __restrict__ z_e,
-                              T* __restrict__ l_e,
-                              T* __restrict__ ru_e,
-                              T* __restrict__ zu_e,
-                              T* __restrict__ lu_e,
-                              T* __restrict__ r_o,
-                              T* __restrict__ z_o,
-                              T* __restrict__ l_o,
-                              T* __restrict__ ru_o,
-                              T* __restrict__ zu_o,
-                              T* __restrict__ lu_o,
-                              T* __restrict__ rv_e,
-                              T* __restrict__ zv_e,
-                              T* __restrict__ lv_e,
-                              T* __restrict__ rv_o,
-                              T* __restrict__ zv_o,
-                              T* __restrict__ lv_o) {
+__global__ void inverse_kernel(SpectralView<const T, PhysicalStateDomain> coeff,
+                               int ns,
+                               int mpol,
+                               int ntheta,
+                               int nZnT,
+                               const T* __restrict__ cos_th,
+                               const T* __restrict__ sin_th,
+                               const T* __restrict__ mcos_th,
+                               const T* __restrict__ msin_th,
+                               T* __restrict__ r_e,
+                               T* __restrict__ z_e,
+                               T* __restrict__ l_e,
+                               T* __restrict__ ru_e,
+                               T* __restrict__ zu_e,
+                               T* __restrict__ lu_e,
+                               T* __restrict__ r_o,
+                               T* __restrict__ z_o,
+                               T* __restrict__ l_o,
+                               T* __restrict__ ru_o,
+                               T* __restrict__ zu_o,
+                               T* __restrict__ lu_o,
+                               T* __restrict__ rv_e,
+                               T* __restrict__ zv_e,
+                               T* __restrict__ lv_e,
+                               T* __restrict__ rv_o,
+                               T* __restrict__ zv_o,
+                               T* __restrict__ lv_o) {
     const int j = blockIdx.x;
     const int l = blockIdx.y * blockDim.x + threadIdx.x;
     if (l >= ntheta) return;
@@ -118,11 +118,11 @@ __global__ void inverseKernel(SpectralView<const T, PhysicalStateDomain> coeff,
 
 // --- forward -------------------------------------------------------------
 // One thread per (surface j, mode m). Serial reduced-θ trapezoid sum; the
-// weight is folded into the table reads exactly as forwardReduceKernel does
+// weight is folded into the table reads exactly as forward_reduce_kernel does
 // (cosm = w·cos(mθ), msin = w·(-m)·sin(mθ), …). The sin(nζ) families are zero
 // (no n=0 basis function); crmn/czmn/clmn carry nf=0 weights and drop out.
 template <class T>
-__global__ void forwardKernel(
+__global__ void forward_kernel(
     const T* __restrict__ armn_e,
     const T* __restrict__ armn_o,
     const T* __restrict__ azmn_e,
@@ -207,15 +207,15 @@ __global__ void forwardKernel(
 // real-space field (no parity split, no scalxc), matching the fused inverse
 // DFT's rCon/zCon accumulation on the n=0 compact pack (slots 0/2 survive).
 template <class T>
-__global__ void rzconKernel(SpectralView<const T, PhysicalStateDomain> coeff,
-                            int ns,
-                            int mpol,
-                            int ntheta,
-                            int nZnT,
-                            const T* __restrict__ cos_th,
-                            const T* __restrict__ sin_th,
-                            T* __restrict__ rCon,
-                            T* __restrict__ zCon) {
+__global__ void rzcon_kernel(SpectralView<const T, PhysicalStateDomain> coeff,
+                             int ns,
+                             int mpol,
+                             int ntheta,
+                             int nZnT,
+                             const T* __restrict__ cos_th,
+                             const T* __restrict__ sin_th,
+                             T* __restrict__ rCon,
+                             T* __restrict__ zCon) {
     const int j = blockIdx.x;
     const int l = blockIdx.y * blockDim.x + threadIdx.x;
     if (l >= ntheta) return;
@@ -241,15 +241,15 @@ __global__ void rzconKernel(SpectralView<const T, PhysicalStateDomain> coeff,
 // rebuilds gCon = Σ (2/nZnT)·tcon·faccon[m]·(Σ_θ gConEff·sin(mθ))·sin(mθ) over
 // m = 1..mpol-2. The axis (surface 0) is skipped (never consumed downstream).
 template <class T>
-__global__ void dealiasKernel(const T* __restrict__ gConEff,
-                              const T* __restrict__ tcon,
-                              const T* __restrict__ faccon,
-                              const T* __restrict__ sin_th,
-                              int ns,
-                              int mpol,
-                              int ntheta,
-                              int nZnT,
-                              T* __restrict__ gCon) {
+__global__ void dealias_kernel(const T* __restrict__ gConEff,
+                               const T* __restrict__ tcon,
+                               const T* __restrict__ faccon,
+                               const T* __restrict__ sin_th,
+                               int ns,
+                               int mpol,
+                               int ntheta,
+                               int nZnT,
+                               T* __restrict__ gCon) {
     const int jF = blockIdx.x;
     const int l = blockIdx.y * blockDim.x + threadIdx.x;
     if (jF == 0 || l >= ntheta) return;
@@ -333,7 +333,7 @@ void AxisymmetricOperator<T>::enqueue_inverse(
     const int ntheta = p_.ntheta, nZnT = p_.nZnT;
     const int blk = 32;  // bounded block (theta point lanes)
     const dim3 grid(p_.ns, (ntheta + blk - 1) / blk);
-    axisym_detail::inverseKernel<T><<<grid, blk, 0, stream>>>(
+    axisym_detail::inverse_kernel<T><<<grid, blk, 0, stream>>>(
         coefficients, p_.ns, p_.mpol, ntheta, nZnT, cos_th_.data(),
         sin_th_.data(), mcos_th_.data(), msin_th_.data(), g.r_e.data(),
         g.z_e.data(), g.l_e.data(), g.ru_e.data(), g.zu_e.data(), g.lu_e.data(),
@@ -357,7 +357,7 @@ void AxisymmetricOperator<T>::enqueue_forward(
     cudaStream_t stream) {
     const int nThetaRed = p_.ntheta / 2 + 1;
     const dim3 grid(p_.ns, p_.mpol);  // one thread per (surface, mode)
-    axisym_detail::forwardKernel<T><<<grid, 1, 0, stream>>>(
+    axisym_detail::forward_kernel<T><<<grid, 1, 0, stream>>>(
         f.armn_e.data(), f.armn_o.data(), f.azmn_e.data(), f.azmn_o.data(),
         f.brmn_e.data(), f.brmn_o.data(), f.bzmn_e.data(), f.bzmn_o.data(),
         f.blmn_e.data(), f.blmn_o.data(), cf.frcon_e.data(), cf.frcon_o.data(),
@@ -376,7 +376,7 @@ void AxisymmetricOperator<T>::enqueue_rzcon(
     const int ntheta = p_.ntheta;
     const int blk = 32;
     const dim3 grid(p_.ns, (ntheta + blk - 1) / blk);
-    axisym_detail::rzconKernel<T><<<grid, blk, 0, stream>>>(
+    axisym_detail::rzcon_kernel<T><<<grid, blk, 0, stream>>>(
         coefficients, p_.ns, p_.mpol, ntheta, p_.nZnT, cos_th_.data(),
         sin_th_.data(), rCon.data(), zCon.data());
     check_cuda(cudaGetLastError(), "axisym rzcon");
@@ -391,7 +391,7 @@ void AxisymmetricOperator<T>::enqueue_dealias(RealFieldView<const T> gConEff,
     const int ntheta = p_.ntheta;
     const int blk = 32;
     const dim3 grid(p_.ns, (ntheta + blk - 1) / blk);
-    axisym_detail::dealiasKernel<T><<<grid, blk, 0, stream>>>(
+    axisym_detail::dealias_kernel<T><<<grid, blk, 0, stream>>>(
         gConEff.data(), tcon, faccon, sin_th_.data(), p_.ns, p_.mpol, ntheta,
         p_.nZnT, gCon.data());
     check_cuda(cudaGetLastError(), "axisym dealias");

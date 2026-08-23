@@ -82,9 +82,9 @@ struct RunReport {
 // offsets read out of bounds (or attributed restarts to the wrong stage).
 // `offsets` must already have nstages entries. Returns an empty string when
 // valid, or a human-readable reason.
-inline std::string validateRestartOffsets(const std::vector<int>& offsets,
-                                          std::size_t nstages,
-                                          std::size_t nrestarts) {
+inline std::string validate_restart_offsets(const std::vector<int>& offsets,
+                                            std::size_t nstages,
+                                            std::size_t nrestarts) {
     if (offsets.size() != nstages) {
         return "restart_stage_offset length " + std::to_string(offsets.size()) +
                " != nstages " + std::to_string(nstages);

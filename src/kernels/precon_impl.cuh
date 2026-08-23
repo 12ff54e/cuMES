@@ -69,7 +69,7 @@ cumes::Preconditioner<T>::Preconditioner(const DeviceParams<T>& p,
         d_jMin_ = arena->alloc_span<int>("precon/jMin", p.mnmax);
     else
         cumes::check_cuda(cudaMalloc(&d_jMin_, p.mnmax * sizeof(int)), "jMin");
-    alloc(d_lambdaPrec_, p.mnmax * nF, "precon/lambdaPrec");
+    alloc(d_lambdaPrec_, p.mnmax * nF, "precon/lambda_prec");
     alloc(d_bLambda_, p.ns + 1, "precon/bLambda");
     alloc(d_dLambda_, p.ns + 1, "precon/dLambda");
     alloc(d_cLambda_, p.ns + 1, "precon/cLambda");
@@ -136,7 +136,7 @@ cumes::Preconditioner<T>::~Preconditioner() {
 // For Z: xs=rs, xu12=ru12, xu_e/o=ru_e/o
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void preconComputeKernel(
+__global__ void precon_compute_kernel(
     // Geometry shared by both R and Z precons
     const T* __restrict__ r12,
     const T* __restrict__ tau,
@@ -291,7 +291,7 @@ __global__ void preconComputeKernel(
 // One block handles all half-grid surfaces.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void preconAssembleKernel(
+__global__ void precon_assemble_kernel(
     const T* __restrict__ ax_R,
     const T* __restrict__ ax_Z,
     const T* __restrict__ bx_R,
@@ -359,7 +359,7 @@ __global__ void preconAssembleKernel(
 // One thread per full-grid surface.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void preconDiagKernel(
+__global__ void precon_diag_kernel(
     const T* __restrict__ ax_R,
     const T* __restrict__ ax_Z,
     const T* __restrict__ bx_R,
@@ -457,7 +457,7 @@ __global__ void preconDiagKernel(
 //   br[jF] : sub-diagonal on half-grid at jF-1 (inner for forces at jF)
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void tridiagAssemblyKernel(
+__global__ void tridiag_assembly_kernel(
     const T* __restrict__ arm,
     const T* __restrict__ brm,
     const T* __restrict__ azm,
@@ -545,7 +545,7 @@ __global__ void tridiagAssemblyKernel(
 // One block per half-grid surface; shifted layout: half-grid jH -> index jH+1.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void lambdaPrecAssembleKernel(
+__global__ void lambda_prec_assemble_kernel(
     const T* __restrict__ guu,
     const T* __restrict__ guv,
     const T* __restrict__ gvv,
@@ -630,7 +630,7 @@ __global__ void lambdaPrecAssembleKernel(
 // Port of vmecpp's lambdaPreconditioner assembly:
 //   faclam = n^2*bLambda + 2mn*sign(b)*dLambda + m^2*cLambda
 //          (n=0 here, so faclam = m^2*cLambda)
-//   lambdaPrec = pFactor / faclam * sqrt(s)^pwr
+//   lambda_prec = pFactor / faclam * sqrt(s)^pwr
 // with pFactor = LAMBDA_PRECONDITIONER_DAMPING_FACTOR / (4*lamscale^2),
 // lamscale = sqrt(rmsPhiP * deltaS), and
 // pwr = min(m^2 / 16^2, 8) suppressing high-m modes.
@@ -641,7 +641,7 @@ __global__ void lambdaPrecAssembleKernel(
 // One block per mode.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void lambdaPrecFinalizeKernel(
+__global__ void lambda_prec_finalize_kernel(
     const T* __restrict__ bLambda,
     const T* __restrict__ dLambda,
     const T* __restrict__ cLambda,
@@ -653,7 +653,7 @@ __global__ void lambdaPrecFinalizeKernel(
     int mnmax,
     T delta_s,
     int nfp,
-    T* __restrict__ lambdaPrec,
+    T* __restrict__ lambda_prec,
     const cumes::ControlStatus* __restrict__ status) {
     // One thread per (mode, jF) element — the original ran one thread per
     // mode with a serial ns loop (<<<mnmax, 1>>>). Per-element arithmetic
@@ -679,11 +679,11 @@ __global__ void lambdaPrecFinalizeKernel(
     T tmn = T(2.0) * T(m * n) * T(nfp);
 
     if (jF == 0) {
-        lambdaPrec[mode * ns] = T(0.0);
+        lambda_prec[mode * ns] = T(0.0);
         return;
     }
     if (m == 0 && n == 0) {
-        lambdaPrec[mode * ns + jF] = T(0.0);
+        lambda_prec[mode * ns + jF] = T(0.0);
         return;
     }  // gauge mode
 
@@ -693,7 +693,7 @@ __global__ void lambdaPrecFinalizeKernel(
     T faclam = tnn * bFull + tmn * copysign(dFull, bFull) + T(m * m) * cFull;
     if (faclam == T(0.0))
         faclam = T(-1.0e-10);  // LAMBDA_PRECONDITIONER_ZERO_GUARD
-    lambdaPrec[mode * ns + jF] = pFactor / faclam * pow(sqrtS_F[jF], pwr);
+    lambda_prec[mode * ns + jF] = pFactor / faclam * pow(sqrtS_F[jF], pwr);
 }
 
 // ---------------------------------------------------------------------------
@@ -705,7 +705,7 @@ __global__ void lambdaPrecFinalizeKernel(
 // pass.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void preconScaleKernel(
+__global__ void precon_scale_kernel(
     const T* __restrict__ ar,
     const T* __restrict__ dr,
     const T* __restrict__ br,
@@ -758,19 +758,20 @@ __global__ void preconScaleKernel(
 // FMA contraction is preserved).
 // ---------------------------------------------------------------------------
 template <typename T, int rhs_count>
-__global__ void pcrSolveKernel(const T* __restrict__ lower,
-                               const T* __restrict__ diagonal,
-                               const T* __restrict__ upper,
-                               T* __restrict__ rhs,
-                               const int* __restrict__ first_surface,
-                               const T* __restrict__ scale,
-                               T pivot_floor_rel,
-                               int modes,
-                               int ns,
-                               int last_surface,
-                               size_t rhs_stride,
-                               int* __restrict__ status,
-                               const cumes::ControlStatus* __restrict__ gate) {
+__global__ void pcr_solve_kernel(
+    const T* __restrict__ lower,
+    const T* __restrict__ diagonal,
+    const T* __restrict__ upper,
+    T* __restrict__ rhs,
+    const int* __restrict__ first_surface,
+    const T* __restrict__ scale,
+    T pivot_floor_rel,
+    int modes,
+    int ns,
+    int last_surface,
+    size_t rhs_stride,
+    int* __restrict__ status,
+    const cumes::ControlStatus* __restrict__ gate) {
     int mode = blockIdx.x;
     if (mode >= modes) return;
     // Terminal gate (completion plan step 1.4): on a nonfinite/converged
@@ -898,7 +899,7 @@ __global__ void pcrSolveKernel(const T* __restrict__ lower,
 // order).
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void thomasSolveKernel(
+__global__ void thomas_solve_kernel(
     const T* __restrict__ lower,
     const T* __restrict__ diagonal,
     const T* __restrict__ upper,
@@ -915,7 +916,7 @@ __global__ void thomasSolveKernel(
     const cumes::ControlStatus* __restrict__ gate) {
     int mode = blockIdx.x;
     if (mode >= modes) return;
-    // Terminal gate (completion plan step 1.4): see pcrSolveKernel.
+    // Terminal gate (completion plan step 1.4): see pcr_solve_kernel.
     if (gate &&
         (gate->invariant_nonfinite != 0 || gate->invariant_converged != 0))
         return;
@@ -974,9 +975,9 @@ __global__ void thomasSolveKernel(
 // grid-stride over surfaces.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void preconBoundaryKernel(
+__global__ void precon_boundary_kernel(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
-    const T* __restrict__ lambdaPrec,
+    const T* __restrict__ lambda_prec,
     const int* __restrict__ jMin,
     const cumes::ControlStatus* __restrict__ gate,
     int ns,
@@ -997,7 +998,7 @@ __global__ void preconBoundaryKernel(
         f(cumes::SpectralComponent::Zcs, mode, j) = T(0.0);
     }
     for (int j = tid; j < ns; j += blockDim.x) {
-        T lp = lambdaPrec[mode * ns + j];
+        T lp = lambda_prec[mode * ns + j];
         f(cumes::SpectralComponent::Lsc, mode, j) *= lp;
         f(cumes::SpectralComponent::Lcs, mode, j) *= lp;
     }
@@ -1022,7 +1023,7 @@ void cumes::Preconditioner<T>::enqueue_compute(
 
     // Step 1: Compute ax, bx, cx on half-grid (the 15-accumulator reduction is
     // now a warp-shuffle + fixed cross-warp combine, so no dynamic shared mem).
-    preconComputeKernel<T><<<nH, threads, 0, stream>>>(
+    precon_compute_kernel<T><<<nH, threads, 0, stream>>>(
         base.r12.data(), base.tau.data(), field.total_pressure.data(),
         field.bsupv.data(), base.gsqrt.data(), rpv.sqrtS_H, base.zs.data(),
         base.zu12.data(), rs.d_zu_e, rs.d_zu_o, rs.d_z_o, base.rs.data(),
@@ -1032,7 +1033,7 @@ void cumes::Preconditioner<T>::enqueue_compute(
 
     // Step 2a: Assemble off-diagonal terms + sm/sp on half-grid
     int gridH = (nH + 255) / 256;
-    preconAssembleKernel<T><<<gridH, 256, 0, stream>>>(
+    precon_assemble_kernel<T><<<gridH, 256, 0, stream>>>(
         d_ax_R_, d_ax_Z_, d_bx_R_, d_bx_Z_, d_cx_, rpv.sqrtS_H, rpv.sqrtS_F,
         p.ns, d_arm_, d_brm_, d_azm_, d_bzm_, d_ard_, d_brd_, d_azd_, d_bzd_,
         d_cxd_, d_sm_, d_sp_, status);
@@ -1040,7 +1041,7 @@ void cumes::Preconditioner<T>::enqueue_compute(
 
     // Step 2b: Average half-grid diagonals to full-grid
     int gridF = (nF + 255) / 256;
-    preconDiagKernel<T><<<gridF, 256, 0, stream>>>(
+    precon_diag_kernel<T><<<gridF, 256, 0, stream>>>(
         d_ax_R_, d_ax_Z_, d_bx_R_, d_bx_Z_, d_cx_, d_sm_, d_sp_, p.ns, d_ard_,
         d_brd_, d_azd_, d_bzd_, d_cxd_, status);
     cumes::check_cuda(cudaGetLastError(), "preconDiag");
@@ -1048,7 +1049,7 @@ void cumes::Preconditioner<T>::enqueue_compute(
     // Step 3: Assemble tridiagonal matrices per (m,n) mode
     int total = p.mnmax * nF;
     int gridMN = (total + 255) / 256;
-    tridiagAssemblyKernel<T><<<gridMN, 256, 0, stream>>>(
+    tridiag_assembly_kernel<T><<<gridMN, 256, 0, stream>>>(
         d_arm_, d_brm_, d_azm_, d_bzm_, d_ard_, d_brd_, d_azd_, d_bzd_, d_cxd_,
         xm, xn, p.ns, p.mnmax, p.nfp, d_ar_, d_dr_, d_br_, d_az_, d_dz_, d_bz_,
         d_jMin_, status);
@@ -1056,7 +1057,7 @@ void cumes::Preconditioner<T>::enqueue_compute(
 
     // Step 3b: per-mode coefficient scale for the scale-aware pivot floor
     // (blueprint §4.9). Computed once per refresh, read by the solve kernels.
-    preconScaleKernel<T>
+    precon_scale_kernel<T>
         <<<p.mnmax, 256, 0, stream>>>(d_ar_, d_dr_, d_br_, d_az_, d_dz_, d_bz_,
                                       status, p.ns, p.mnmax, d_preconScale_);
     cumes::check_cuda(cudaGetLastError(), "preconScale");
@@ -1065,12 +1066,12 @@ void cumes::Preconditioner<T>::enqueue_compute(
     {
         cumes::check_cuda(cudaMemsetAsync(d_rmsPhiP_, 0, sizeof(T), stream),
                           "rmsPhiP zero");
-        lambdaPrecAssembleKernel<T><<<nH, threads, 0, stream>>>(
+        lambda_prec_assemble_kernel<T><<<nH, threads, 0, stream>>>(
             base.guu.data(), base.guv.data(), base.gvv.data(),
             base.gsqrt.data(), rpv.phip_H, p.ns, p.nZnT, p.ntheta, p.nzeta,
             d_bLambda_, d_dLambda_, d_cLambda_, d_rmsPhiP_, status);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecAssemble");
-        lambdaPrecFinalizeKernel<T>
+        lambda_prec_finalize_kernel<T>
             <<<dim3(p.mnmax, (p.ns + 127) / 128), 128, 0, stream>>>(
                 d_bLambda_, d_dLambda_, d_cLambda_, rpv.sqrtS_F, d_rmsPhiP_, xm,
                 xn, p.ns, p.mnmax, T(1.0) / T(p.ns - 1), p.nfp, d_lambdaPrec_,
@@ -1087,13 +1088,13 @@ void cumes::Preconditioner<T>::enqueue_compute(
 // count so the RHS loop stays fully unrolled (bitwise parity with the legacy
 // tridiagSolveKernel's `#pragma unroll`).
 template <typename T, int R>
-static void launchPcr(const cumes::StridedBatchTridiagonalView<T>& m,
-                      T pivot_floor_rel,
-                      int* status,
-                      cudaStream_t stream,
-                      const cumes::ControlStatus* gate) {
+static void launch_pcr(const cumes::StridedBatchTridiagonalView<T>& m,
+                       T pivot_floor_rel,
+                       int* status,
+                       cudaStream_t stream,
+                       const cumes::ControlStatus* gate) {
     size_t smem = (size_t)(6 + 2 * R) * m.surfaces * sizeof(T);
-    pcrSolveKernel<T, R><<<m.modes, 128, smem, stream>>>(
+    pcr_solve_kernel<T, R><<<m.modes, 128, smem, stream>>>(
         m.lower, m.diagonal, m.upper, m.rhs, m.first_surface, m.scale,
         pivot_floor_rel, m.modes, m.surfaces, m.last_surface, m.rhs_stride,
         status, gate);
@@ -1121,9 +1122,9 @@ void cumes::PcrBackend<T>::enqueue_solve(
     // pivot_floor_rel = kappa * epsilon_T (the caller owns the per-mode scale).
     T pivot_floor_rel = T(policy_.kappa) * T(std::numeric_limits<T>::epsilon());
     if (m.rhs_count == 1) {
-        launchPcr<T, 1>(m, pivot_floor_rel, status, stream, gate);
+        launch_pcr<T, 1>(m, pivot_floor_rel, status, stream, gate);
     } else if (m.rhs_count == 2) {
-        launchPcr<T, 2>(m, pivot_floor_rel, status, stream, gate);
+        launch_pcr<T, 2>(m, pivot_floor_rel, status, stream, gate);
     } else {
         throw cumes::CumesError("PcrBackend: rhs_count must be 1 or 2");
     }
@@ -1146,11 +1147,11 @@ void cumes::ThomasBackend<T>::enqueue_solve(
     T pivot_floor_rel = T(policy_.kappa) * T(std::numeric_limits<T>::epsilon());
     // One mode per block, one thread per block; O(ns) shared for cp + dp.
     size_t smem = (size_t)(1 + m.rhs_count) * m.surfaces * sizeof(T);
-    thomasSolveKernel<T><<<m.modes, 1, smem, stream>>>(
+    thomas_solve_kernel<T><<<m.modes, 1, smem, stream>>>(
         m.lower, m.diagonal, m.upper, m.rhs, m.first_surface, m.scale,
         pivot_floor_rel, m.modes, m.surfaces, m.last_surface, m.rhs_count,
         m.rhs_stride, status, gate);
-    cumes::check_cuda(cudaGetLastError(), "thomasSolve");
+    cumes::check_cuda(cudaGetLastError(), "thomas_solve");
 }
 
 template <typename T>
@@ -1199,7 +1200,7 @@ void cumes::Preconditioner<T>::enqueue_apply(
 
     // Boundary + lambda-diagonal finishing (the tail of the legacy kernel).
     // Terminal-guarded like the solves.
-    preconBoundaryKernel<T><<<p.mnmax, 128, 0, stream>>>(
+    precon_boundary_kernel<T><<<p.mnmax, 128, 0, stream>>>(
         f, d_lambdaPrec_, d_jMin_, gate, p.ns, p.mnmax);
     cumes::check_cuda(cudaGetLastError(), "preconBoundary");
 }
@@ -1212,7 +1213,7 @@ void cumes::Preconditioner<T>::enqueue_apply(
 // (Moved from kernels/solver_impl.cuh — the operator owns the PreconWorkspace
 // these elements live in.)
 template <typename T>
-__global__ void m1PreconScaleKernel(
+__global__ void m1_precon_scale_kernel(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec,
     const T* __restrict__ ard,
     const T* __restrict__ brd,
@@ -1252,7 +1253,7 @@ void cumes::Preconditioner<T>::enqueue_m1_scale(
     const cumes::ControlStatus* gate,
     cudaStream_t stream) const {
     dim3 b1(256), g1((p.ns + 255) / 256);
-    m1PreconScaleKernel<T><<<g1, b1, 0, stream>>>(
+    m1_precon_scale_kernel<T><<<g1, b1, 0, stream>>>(
         residual, d_ard_, d_brd_, d_azd_, d_bzd_, gate, p.ns, p.mnmax, p.ntor);
     cumes::check_cuda(cudaGetLastError(), "m1PreconScale");
 }

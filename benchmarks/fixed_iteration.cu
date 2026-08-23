@@ -164,9 +164,9 @@ int main(int argc, char** argv) {
         cudaEventCreate(&ev1);
         cudaEventRecord(ev0, stream.get());
         double w0 = now_us();
-        result = solverRun<Real>(storage, p, stack.profiles, stack.transform,
-                                 stack.rs, stack.geometry, &arena, stream.get(),
-                                 &bench, stack.axisym.get());
+        result = solver_run<Real>(storage, p, stack.profiles, stack.transform,
+                                  stack.rs, stack.geometry, &arena,
+                                  stream.get(), &bench, stack.axisym.get());
         double w1 = now_us();
         cudaEventRecord(ev1, stream.get());
         cudaEventSynchronize(ev1);

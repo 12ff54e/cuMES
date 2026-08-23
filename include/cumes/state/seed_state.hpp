@@ -121,7 +121,7 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
             }
         }
     }
-    printf("  initState: vmecpp interpFromBoundaryAndAxis (m>0 s^(m/2))\n");
+    printf("  init_state: vmecpp interpFromBoundaryAndAxis (m>0 s^(m/2))\n");
 
     check_cuda(cudaMemcpy(storage.state_slab(), h_state, 6 * nb,
                           cudaMemcpyHostToDevice),
@@ -194,7 +194,7 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
                           cudaMemcpyHostToDevice),
                "restart state slab");
     delete[] h_state;
-    printf("  restartState: uploaded checkpoint + LCFS/axis patch\n");
+    printf("  restart_state: uploaded checkpoint + LCFS/axis patch\n");
     return storage;
 }
 

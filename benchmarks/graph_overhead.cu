@@ -30,7 +30,7 @@
 
 using namespace bench_common;
 
-__global__ void emptyKernel() {}
+__global__ void empty_kernel() {}
 
 int main(int argc, char** argv) {
     int k = 24;      // kernels per "pass"
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
         double t0 = now_us();
         auto g = cumes::CudaGraph::capture(stream.get(), [&]() {
             for (int i = 0; i < k; ++i)
-                emptyKernel<<<1, 32, 0, stream.get()>>>();
+                empty_kernel<<<1, 32, 0, stream.get()>>>();
         });
         capture_us = now_us() - t0;
     }
@@ -64,13 +64,13 @@ int main(int argc, char** argv) {
     std::vector<double> enqueue_us;
     for (int r = 0; r < reps; ++r) {
         double t0 = now_us();
-        for (int i = 0; i < k; ++i) emptyKernel<<<1, 32, 0, stream.get()>>>();
+        for (int i = 0; i < k; ++i) empty_kernel<<<1, 32, 0, stream.get()>>>();
         enqueue_us.push_back(now_us() - t0);
     }
 
     // ---- launch one graph per pass, host wall time (no sync) ----
     auto g = cumes::CudaGraph::capture(stream.get(), [&]() {
-        for (int i = 0; i < k; ++i) emptyKernel<<<1, 32, 0, stream.get()>>>();
+        for (int i = 0; i < k; ++i) empty_kernel<<<1, 32, 0, stream.get()>>>();
     });
     std::vector<double> launch_us;
     for (int r = 0; r < reps; ++r) {

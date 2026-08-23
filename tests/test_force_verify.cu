@@ -6,12 +6,12 @@
 // layers:
 //
 //   (a) force-formula agreement: a scalar host port of the force kernel
-//       (cpuForces below, mirrors forcesKernel's weak form point-by-point) is
+//       (cpu_forces below, mirrors forces_kernel's weak form point-by-point) is
 //       run on the solver-converged real-space state and compared against the
 //       production ForceOperator output — max |diff| must be below 1e-4;
 //   (b) force balance: the CPU forces are projected to spectral space by an
 //       independent host implementation of the production forward path
-//       (cpuForwardProject below — reduced-theta trapezoid + unnormalized D2Z
+//       (cpu_forward_project below — reduced-theta trapezoid + unnormalized D2Z
 //       + mscale*nscale recovery) and the fsqr/fsqz/fsql norms must be below
 //       1e-4 for the converged state.
 //
@@ -42,7 +42,7 @@ using namespace cumes::test;
 
 // ---------------------------------------------------------------------------
 // Independent CPU force reference (port of test_force_reference.cu's scalar
-// double reference, which mirrors forcesKernel in kernels/forces_impl.cuh
+// double reference, which mirrors forces_kernel in kernels/forces_impl.cuh
 // exactly).
 //
 // `r_e..lu_o` are the full-grid parity geometry, the half-grid metric/field
@@ -52,56 +52,56 @@ using namespace cumes::test;
 // at 1e-4 (far above the ~1e-11 FMA-fusion difference of the ~1e0 force
 // scale).
 template <typename T>
-static void cpuForces(const std::vector<T>& r_e,
-                      const std::vector<T>& r_o,
-                      const std::vector<T>& z_o,
-                      const std::vector<T>& ru_e,
-                      const std::vector<T>& ru_o,
-                      const std::vector<T>& zu_e,
-                      const std::vector<T>& zu_o,
-                      const std::vector<T>& rv_e,
-                      const std::vector<T>& rv_o,
-                      const std::vector<T>& zv_e,
-                      const std::vector<T>& zv_o,
-                      const std::vector<T>& lu_e,
-                      const std::vector<T>& lu_o,
-                      const std::vector<T>& r12,
-                      const std::vector<T>& ru12,
-                      const std::vector<T>& zu12,
-                      const std::vector<T>& rs,
-                      const std::vector<T>& zs,
-                      const std::vector<T>& tau,
-                      const std::vector<T>& gsqrt,
-                      const std::vector<T>& guv,
-                      const std::vector<T>& gvv,
-                      const std::vector<T>& bsupu,
-                      const std::vector<T>& bsupv,
-                      const std::vector<T>& bsubu,
-                      const std::vector<T>& bsubv,
-                      const std::vector<T>& totalP,
-                      const std::vector<T>& sqrtS_F,
-                      const std::vector<T>& sqrtS_H,
-                      const std::vector<T>& phip_F,
-                      int ns,
-                      int nZnT,
-                      T lamscale,
-                      T delta_s,
-                      std::vector<T>& armn_e,
-                      std::vector<T>& armn_o,
-                      std::vector<T>& azmn_e,
-                      std::vector<T>& azmn_o,
-                      std::vector<T>& brmn_e,
-                      std::vector<T>& brmn_o,
-                      std::vector<T>& bzmn_e,
-                      std::vector<T>& bzmn_o,
-                      std::vector<T>& crmn_e,
-                      std::vector<T>& crmn_o,
-                      std::vector<T>& czmn_e,
-                      std::vector<T>& czmn_o,
-                      std::vector<T>& blmn_e,
-                      std::vector<T>& blmn_o,
-                      std::vector<T>& clmn_e,
-                      std::vector<T>& clmn_o) {
+static void cpu_forces(const std::vector<T>& r_e,
+                       const std::vector<T>& r_o,
+                       const std::vector<T>& z_o,
+                       const std::vector<T>& ru_e,
+                       const std::vector<T>& ru_o,
+                       const std::vector<T>& zu_e,
+                       const std::vector<T>& zu_o,
+                       const std::vector<T>& rv_e,
+                       const std::vector<T>& rv_o,
+                       const std::vector<T>& zv_e,
+                       const std::vector<T>& zv_o,
+                       const std::vector<T>& lu_e,
+                       const std::vector<T>& lu_o,
+                       const std::vector<T>& r12,
+                       const std::vector<T>& ru12,
+                       const std::vector<T>& zu12,
+                       const std::vector<T>& rs,
+                       const std::vector<T>& zs,
+                       const std::vector<T>& tau,
+                       const std::vector<T>& gsqrt,
+                       const std::vector<T>& guv,
+                       const std::vector<T>& gvv,
+                       const std::vector<T>& bsupu,
+                       const std::vector<T>& bsupv,
+                       const std::vector<T>& bsubu,
+                       const std::vector<T>& bsubv,
+                       const std::vector<T>& totalP,
+                       const std::vector<T>& sqrtS_F,
+                       const std::vector<T>& sqrtS_H,
+                       const std::vector<T>& phip_F,
+                       int ns,
+                       int nZnT,
+                       T lamscale,
+                       T delta_s,
+                       std::vector<T>& armn_e,
+                       std::vector<T>& armn_o,
+                       std::vector<T>& azmn_e,
+                       std::vector<T>& azmn_o,
+                       std::vector<T>& brmn_e,
+                       std::vector<T>& brmn_o,
+                       std::vector<T>& bzmn_e,
+                       std::vector<T>& bzmn_o,
+                       std::vector<T>& crmn_e,
+                       std::vector<T>& crmn_o,
+                       std::vector<T>& czmn_e,
+                       std::vector<T>& czmn_o,
+                       std::vector<T>& blmn_e,
+                       std::vector<T>& blmn_o,
+                       std::vector<T>& clmn_e,
+                       std::vector<T>& clmn_o) {
     for (int j = 0; j < ns; ++j) {
         T sF_j = sqrtS_F[j];
         T sFull = sF_j * sF_j;
@@ -264,8 +264,8 @@ static void cpuForces(const std::vector<T>& r_e,
 
 // ---------------------------------------------------------------------------
 // Independent CPU forward projection: mirrors the production forward path
-// (forwardReduceKernel + the unnormalized real D2Z + forwardRecoverKernel in
-// kernels/fourier_impl.cuh) on the host. Consumes the 16 parity-split
+// (forward_reduce_kernel + the unnormalized real D2Z + forward_recover_kernel
+// in kernels/fourier_impl.cuh) on the host. Consumes the 16 parity-split
 // real-space force families (full grid, column-major idx = j*nZnT + k*ntheta +
 // l) and writes the six spectral families in DecomposedResidualDomain order
 // (Rcc, Zsc, Lsc, Rss, Zcs, Lcs; [c*ns*mnmax + mode*ns + j]) with the
@@ -273,30 +273,30 @@ static void cpuForces(const std::vector<T>& r_e,
 // halving, mscale*nscale recovery, axis/LCFS row rules). The constraint-force
 // inputs (frcon/fzcon) are zero in this test — matching the zeroed buffers
 // the production forward below is run with.
-static void cpuForwardProject(const std::vector<double>& armn_e,
-                              const std::vector<double>& armn_o,
-                              const std::vector<double>& azmn_e,
-                              const std::vector<double>& azmn_o,
-                              const std::vector<double>& brmn_e,
-                              const std::vector<double>& brmn_o,
-                              const std::vector<double>& bzmn_e,
-                              const std::vector<double>& bzmn_o,
-                              const std::vector<double>& crmn_e,
-                              const std::vector<double>& crmn_o,
-                              const std::vector<double>& czmn_e,
-                              const std::vector<double>& czmn_o,
-                              const std::vector<double>& blmn_e,
-                              const std::vector<double>& blmn_o,
-                              const std::vector<double>& clmn_e,
-                              const std::vector<double>& clmn_o,
-                              int ns,
-                              int mpol,
-                              int ntor,
-                              int nfp,
-                              int ntheta,
-                              int nzeta,
-                              int nZnT,
-                              std::vector<double>& spec) {
+static void cpu_forward_project(const std::vector<double>& armn_e,
+                                const std::vector<double>& armn_o,
+                                const std::vector<double>& azmn_e,
+                                const std::vector<double>& azmn_o,
+                                const std::vector<double>& brmn_e,
+                                const std::vector<double>& brmn_o,
+                                const std::vector<double>& bzmn_e,
+                                const std::vector<double>& bzmn_o,
+                                const std::vector<double>& crmn_e,
+                                const std::vector<double>& crmn_o,
+                                const std::vector<double>& czmn_e,
+                                const std::vector<double>& czmn_o,
+                                const std::vector<double>& blmn_e,
+                                const std::vector<double>& blmn_o,
+                                const std::vector<double>& clmn_e,
+                                const std::vector<double>& clmn_o,
+                                int ns,
+                                int mpol,
+                                int ntor,
+                                int nfp,
+                                int ntheta,
+                                int nzeta,
+                                int nZnT,
+                                std::vector<double>& spec) {
     const int mnmax = mpol * (ntor + 1);
     const int nThetaRed = ntheta / 2 + 1;
     const double intNorm = 1.0 / ((double)nzeta * (nThetaRed - 1));
@@ -312,7 +312,7 @@ static void cpuForwardProject(const std::vector<double>& armn_e,
         const std::vector<double>& blmn = mEven ? blmn_e : blmn_o;
         const std::vector<double>& clmn = mEven ? clmn_e : clmn_o;
         for (int j = 0; j < ns; ++j) {
-            // The 12 slot signals (forwardReduceKernel's shuffle output).
+            // The 12 slot signals (forward_reduce_kernel's shuffle output).
             std::vector<double> vs[12];
             for (int s = 0; s < 12; ++s) vs[s].assign(nzeta, 0.0);
             for (int k = 0; k < nzeta; ++k) {
@@ -406,13 +406,13 @@ struct ForceGate {
     double maxdiff;  // max |CPU - production| over the 16 force families
 };
 
-static ForceGate runForceGate(cumes::SpectralStorage<double>& storage,
-                              const DeviceParams<double>& p,
-                              cumes::Profiles<double>& profiles,
-                              const cumes::RadialProfileViews<double>& rp,
-                              cumes::ToroidalFftOperator<double>& transform,
-                              cumes::RealSpaceStorage<double>& rs,
-                              cumes::GeometryOperator<double>& geometry) {
+static ForceGate run_force_gate(cumes::SpectralStorage<double>& storage,
+                                const DeviceParams<double>& p,
+                                cumes::Profiles<double>& profiles,
+                                const cumes::RadialProfileViews<double>& rp,
+                                cumes::ToroidalFftOperator<double>& transform,
+                                cumes::RealSpaceStorage<double>& rs,
+                                cumes::GeometryOperator<double>& geometry) {
     ForceGate g{};
     const size_t nF = (size_t)p.ns * p.nZnT;
     const size_t nH = (size_t)(p.ns - 1) * p.nZnT;
@@ -518,13 +518,13 @@ static ForceGate runForceGate(cumes::SpectralStorage<double>& storage,
     std::vector<double> c_brmn_e(nF), c_brmn_o(nF), c_bzmn_e(nF), c_bzmn_o(nF);
     std::vector<double> c_crmn_e(nF), c_crmn_o(nF), c_czmn_e(nF), c_czmn_o(nF);
     std::vector<double> c_blmn_e(nF), c_blmn_o(nF), c_clmn_e(nF), c_clmn_o(nF);
-    cpuForces(r_e, r_o, z_o, ru_e, ru_o, zu_e, zu_o, rv_e, rv_o, zv_e, zv_o,
-              lu_e, lu_o, r12, ru12, zu12, rs_h, zs_h, tau, gsqrt, guv, gvv,
-              bsupu, bsupv, bsubu, bsubv, totalP, sqrtS_F, sqrtS_H, phip_F,
-              p.ns, p.nZnT, p.lamscale, profiles.delta_s(), c_armn_e, c_armn_o,
-              c_azmn_e, c_azmn_o, c_brmn_e, c_brmn_o, c_bzmn_e, c_bzmn_o,
-              c_crmn_e, c_crmn_o, c_czmn_e, c_czmn_o, c_blmn_e, c_blmn_o,
-              c_clmn_e, c_clmn_o);
+    cpu_forces(r_e, r_o, z_o, ru_e, ru_o, zu_e, zu_o, rv_e, rv_o, zv_e, zv_o,
+               lu_e, lu_o, r12, ru12, zu12, rs_h, zs_h, tau, gsqrt, guv, gvv,
+               bsupu, bsupv, bsubu, bsubv, totalP, sqrtS_F, sqrtS_H, phip_F,
+               p.ns, p.nZnT, p.lamscale, profiles.delta_s(), c_armn_e, c_armn_o,
+               c_azmn_e, c_azmn_o, c_brmn_e, c_brmn_o, c_bzmn_e, c_bzmn_o,
+               c_crmn_e, c_crmn_o, c_czmn_e, c_czmn_o, c_blmn_e, c_blmn_o,
+               c_clmn_e, c_clmn_o);
 
     // (a) pointwise CPU-vs-production force agreement
     g.maxdiff = 0.0;
@@ -547,11 +547,11 @@ static ForceGate runForceGate(cumes::SpectralStorage<double>& storage,
 
     // (b) independent CPU projection -> spectral residual norms
     std::vector<double> spec;
-    cpuForwardProject(c_armn_e, c_armn_o, c_azmn_e, c_azmn_o, c_brmn_e,
-                      c_brmn_o, c_bzmn_e, c_bzmn_o, c_crmn_e, c_crmn_o,
-                      c_czmn_e, c_czmn_o, c_blmn_e, c_blmn_o, c_clmn_e,
-                      c_clmn_o, p.ns, p.mpol, p.ntor, p.nfp, p.ntheta, p.nzeta,
-                      p.nZnT, spec);
+    cpu_forward_project(c_armn_e, c_armn_o, c_azmn_e, c_azmn_o, c_brmn_e,
+                        c_brmn_o, c_bzmn_e, c_bzmn_o, c_crmn_e, c_crmn_o,
+                        c_czmn_e, c_czmn_o, c_blmn_e, c_blmn_o, c_clmn_e,
+                        c_clmn_o, p.ns, p.mpol, p.ntor, p.nfp, p.ntheta,
+                        p.nzeta, p.nZnT, spec);
     for (int c = 0; c < 6; ++c) {
         double sum = 0;
         for (size_t i = 0; i < (size_t)p.ns * p.mnmax; ++i)
@@ -658,14 +658,14 @@ int main() {
     // ---- Profiles / plan / workspace ----
     cumes::Profiles<double> profiles(p, vp, nullptr);
     const cumes::RadialProfileViews<double> rp = profiles.profile_views();
-    cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
-    cumes::DeviceModeTable mt = cumes::modeTableCreate<double>(p);
+    cumes::RealSpaceStorage<double> rs = real_space_create(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create<double>(p);
     cumes::ToroidalFftOperator<double> transform(p, rs, mt, nullptr);
     cumes::GeometryOperator<double> geometry(p, nullptr);
 
     // ---- Converge: the solver drives the MHD residual to ftol ----
     SolverResult<double> res =
-        solverRun(storage, p, profiles, transform, rs, geometry);
+        solver_run(storage, p, profiles, transform, rs, geometry);
     std::cout << format(
         "solver: converged={} iterations={} fsqr={:.3e} fsqz={:.3e} "
         "fsql={:.3e}\n",
@@ -673,19 +673,19 @@ int main() {
     check(res.converged, "converged equilibrium reached");
 
     // ---- Capture the converged state (host) for the sensitivity control ----
-    auto getFam = [&](cumes::SpectralComponent c) {
+    auto get_fam = [&](cumes::SpectralComponent c) {
         std::vector<double> v((size_t)ns * p.mnmax);
         cc(cudaMemcpy(v.data(), storage.family_ptr(c), nb,
                       cudaMemcpyDeviceToHost),
            "get family");
         return v;
     };
-    std::vector<double> h_rmncc_c = getFam(cumes::SpectralComponent::Rcc);
-    std::vector<double> h_zmnsc_c = getFam(cumes::SpectralComponent::Zsc);
-    std::vector<double> h_lmnsc_c = getFam(cumes::SpectralComponent::Lsc);
-    std::vector<double> h_rmnss_c = getFam(cumes::SpectralComponent::Rss);
-    std::vector<double> h_zmncs_c = getFam(cumes::SpectralComponent::Zcs);
-    std::vector<double> h_lmncs_c = getFam(cumes::SpectralComponent::Lcs);
+    std::vector<double> h_rmncc_c = get_fam(cumes::SpectralComponent::Rcc);
+    std::vector<double> h_zmnsc_c = get_fam(cumes::SpectralComponent::Zsc);
+    std::vector<double> h_lmnsc_c = get_fam(cumes::SpectralComponent::Lsc);
+    std::vector<double> h_rmnss_c = get_fam(cumes::SpectralComponent::Rss);
+    std::vector<double> h_zmncs_c = get_fam(cumes::SpectralComponent::Zcs);
+    std::vector<double> h_lmncs_c = get_fam(cumes::SpectralComponent::Lcs);
 
     // The whole point: a converged equilibrium must sit near a force balance.
     // The balance CHECKs below are computed by the INDEPENDENT CPU path, so a
@@ -697,7 +697,7 @@ int main() {
 
     // ---- Independent gate on the converged state ----
     ForceGate g0 =
-        runForceGate(storage, p, profiles, rp, transform, rs, geometry);
+        run_force_gate(storage, p, profiles, rp, transform, rs, geometry);
     std::cout << format(
         "Converged state — production forward residuals:   FSQR = {:.3e}  FSQZ "
         "= {:.3e}  FSQL = {:.3e}\n",
@@ -729,7 +729,7 @@ int main() {
                   corrupt.data(), nb, cudaMemcpyHostToDevice),
        "corrupt zsc");
     ForceGate g1 =
-        runForceGate(storage, p, profiles, rp, transform, rs, geometry);
+        run_force_gate(storage, p, profiles, rp, transform, rs, geometry);
     std::cout << format(
         "CORRUPTED state (Zsc x 1e3) — CPU residuals:      FSQR = {:.3e}  FSQZ "
         "= {:.3e}  FSQL = {:.3e}  maxdiff = {:.3e}\n",
@@ -758,7 +758,7 @@ int main() {
                   h_lmncs_c.data(), nb, cudaMemcpyHostToDevice),
        "restore lmncs");
     ForceGate g2 =
-        runForceGate(storage, p, profiles, rp, transform, rs, geometry);
+        run_force_gate(storage, p, profiles, rp, transform, rs, geometry);
     std::cout << format(
         "RESTORED state — CPU residuals:                   FSQR = {:.3e}  FSQZ "
         "= {:.3e}  FSQL = {:.3e}\n",
@@ -768,10 +768,10 @@ int main() {
           "restored state: the independent gate passes again");
 
     // Cleanup
-    realSpaceFree(rs);
+    real_space_free(rs);
     // profiles/fp/mw owned by Profiles/ToroidalFftOperator/GeometryOperator
     // (RAII)
-    cumes::modeTableFree(mt);
+    cumes::mode_table_free(mt);
 
     return summary();
 }

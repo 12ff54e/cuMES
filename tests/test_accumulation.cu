@@ -1,8 +1,8 @@
 // test_accumulation.cu — differential test for the mixed-float
 // double-accumulation norm policy (blueprint §8.8, §8.12).
 //
-// The solver's control-feeding reductions (computeResidualsKernel,
-// rzNormKernel, forceNormReduceKernel) accumulate in NormAccum<T>::type —
+// The solver's control-feeding reductions (compute_residuals_kernel,
+// rz_norm_kernel, force_norm_reduce_kernel) accumulate in NormAccum<T>::type —
 // double for float state, double for double state. This test pins that trait
 // contract and demonstrates the numerical benefit: summing a large array of
 // squares whose terms span a wide dynamic range in float accumulation silently
@@ -23,9 +23,9 @@ using namespace cumes::test;
 // acc += A(x[i]) * A(x[i]) over a grid-stride loop + a fixed block tree, the
 // same reduction shape the solver kernels use. `A` is the accumulator type.
 template <typename T, typename A>
-__global__ void sumSquaresKernel(const T* __restrict__ x,
-                                 int n,
-                                 T* __restrict__ out) {
+__global__ void sum_squares_kernel(const T* __restrict__ x,
+                                   int n,
+                                   T* __restrict__ out) {
     A acc = A(0);
     for (int i = threadIdx.x; i < n; i += blockDim.x) acc += A(x[i]) * A(x[i]);
     __shared__ A s[256];
@@ -61,11 +61,11 @@ int main() {
         "cpy x");
 
     float f_acc = 0.0f, d_acc = 0.0f;
-    sumSquaresKernel<float, float><<<1, 256>>>(d_x, n, d_out);
+    sum_squares_kernel<float, float><<<1, 256>>>(d_x, n, d_out);
     cumes::check_cuda(
         cudaMemcpy(&f_acc, d_out, sizeof(float), cudaMemcpyDeviceToHost),
         "cpy float out");
-    sumSquaresKernel<float, double><<<1, 256>>>(d_x, n, d_out);
+    sum_squares_kernel<float, double><<<1, 256>>>(d_x, n, d_out);
     cumes::check_cuda(
         cudaMemcpy(&d_acc, d_out, sizeof(float), cudaMemcpyDeviceToHost),
         "cpy double out");

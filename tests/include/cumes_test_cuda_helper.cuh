@@ -6,11 +6,11 @@
 //
 // Phase 1 extracted the genuinely-shared, bit-for-bit-identical helper (the
 // `check_cuda`/`cc` CUDA error check that every kernel-driving test
-// duplicated). The per-operator CPU scalar references (cpuInvDFT, thomasSolve,
-// cpuDealiasBandpass, …) remain in their owning tests while they have a single
-// consumer; they move here when a second consumer appears. The six-family
-// manufactured state moved here in the 2026-08-16 review pass, when its
-// consumer count reached four.
+// duplicated). The per-operator CPU scalar references (cpu_inv_dft,
+// thomas_solve, cpu_dealias_bandpass, …) remain in their owning tests while
+// they have a single consumer; they move here when a second consumer appears.
+// The six-family manufactured state moved here in the 2026-08-16 review pass,
+// when its consumer count reached four.
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/runtime/cuda_status.hpp"

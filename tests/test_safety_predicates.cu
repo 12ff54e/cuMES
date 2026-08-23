@@ -4,17 +4,17 @@
 // Asserts, on the shipped kernels (public include/cumes/numerics/
 // device_predicates.cuh) and the guarded operators:
 //
-//   1. jacobianFinalizeKernel decides validity with the IDENTICAL rule as
+//   1. jacobian_finalize_kernel decides validity with the IDENTICAL rule as
 //      IterationController::jacobian_invalid — manufactured healthy,
 //      collapsed, inverted, nonfinite, empty-grid, axis-row and interior
 //      relative cases;
-//   2. invariantPredicateKernel classifies nonfinite / converged /
+//   2. invariant_predicate_kernel classifies nonfinite / converged /
 //      continue exactly like the host's normalized-triple expressions,
 //      including the refresh-pass structural disable;
 //   3. the guarded operators (magnetic field, constraint reference + tcon,
 //      preconditioner element cache, MHD force) write NOTHING when
 //      status->jacobian_valid is clear, and run normally when it is set;
-//   4. computeResidualsPreconditionedKernel stores the zero sentinel +
+//   4. compute_residuals_preconditioned_kernel stores the zero sentinel +
 //      not_evaluated on terminal passes and real values + evaluated otherwise;
 //   5. an end-to-end collapsed-state EquilibriumOperator::enqueue reports
 //      jacobian_valid == 0 and performs no forbidden cache mutation.
@@ -45,7 +45,7 @@ using namespace cumes::test;
 // ---------------------------------------------------------------------------
 // 1. Jacobian finalize rule == host controller rule
 // ---------------------------------------------------------------------------
-static void testJacobianFinalizeRules() {
+static void test_jacobian_finalize_rules() {
     const int nZnT = 18;
     // {min_oriented, max_abs, nonfinite, min_index} + expected host decision.
     struct Case {
@@ -84,7 +84,7 @@ static void testJacobianFinalizeRules() {
         js.min_index = (int)c.idx;
         const bool host_invalid = ctl.jacobian_invalid(js, nZnT);
 
-        jacobianFinalizeKernel<<<1, 1>>>(d_rec.data(), nZnT);
+        jacobian_finalize_kernel<<<1, 1>>>(d_rec.data(), nZnT);
         cc(cudaDeviceSynchronize(), "jacobianFinalize sync");
         check_cuda(
             cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
@@ -106,7 +106,7 @@ static void testJacobianFinalizeRules() {
 // 1 = the record's device-finalized final_f_norm_* fields (refresh passes).
 // The host consumes the same record fields on refresh passes, so the device
 // bits and the host verdict must agree bit-for-bit on EVERY pass.
-static void testInvariantPredicateRules() {
+static void test_invariant_predicate_rules() {
     struct Case {
         double raw[3];
         double f_rz, f_l, plain, ftol;
@@ -215,8 +215,8 @@ static void testInvariantPredicateRules() {
         check_cuda(
             cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
             "rec up (pred)");
-        invariantPredicateKernel<<<1, 1>>>(d_rec.data(), c.f_rz, c.f_l, c.plain,
-                                           c.ftol, c.use_record_factors);
+        invariant_predicate_kernel<<<1, 1>>>(
+            d_rec.data(), c.f_rz, c.f_l, c.plain, c.ftol, c.use_record_factors);
         cc(cudaDeviceSynchronize(), "predicate sync");
         check_cuda(
             cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
@@ -247,7 +247,7 @@ static void testInvariantPredicateRules() {
 // ---------------------------------------------------------------------------
 // 2b. Device force-norm finalize == the host's finalizeForceNorms expressions
 // ---------------------------------------------------------------------------
-static void testForceNormFinalizeRules() {
+static void test_force_norm_finalize_rules() {
     struct Case {
         double norms[6];
         double delta_s, lamscale;
@@ -273,7 +273,8 @@ static void testForceNormFinalizeRules() {
         check_cuda(
             cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
             "rec up (fnfinalize)");
-        forceNormFinalizeKernel<<<1, 1>>>(d_rec.data(), c.delta_s, c.lamscale);
+        force_norm_finalize_kernel<<<1, 1>>>(d_rec.data(), c.delta_s,
+                                             c.lamscale);
         cc(cudaDeviceSynchronize(), "fnfinalize sync");
         check_cuda(
             cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
@@ -304,7 +305,7 @@ static void testForceNormFinalizeRules() {
     for (int i = 0; i < 6; ++i) h.force_norms[i] = 1.0;
     check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
                "rec up (fnfinalize skip)");
-    forceNormFinalizeKernel<<<1, 1>>>(d_rec.data(), 0.5, 2.0);
+    force_norm_finalize_kernel<<<1, 1>>>(d_rec.data(), 0.5, 2.0);
     cc(cudaDeviceSynchronize(), "fnfinalize skip sync");
     check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
                "rec down (fnfinalize skip)");
@@ -320,18 +321,18 @@ static void testForceNormFinalizeRules() {
 // The shared guarded-consumer battery (magnetic field + iotaF/chipF cache,
 // constraint reference, preconditioner element cache, MHD force, constraint
 // force). Every consumer reads `status` and must write NOTHING when
-// jacobian_valid is clear. Shared by runGuardNoop and runSignFlipStats so the
-// two invalid-Jacobian scenarios test the identical operator set.
+// jacobian_valid is clear. Shared by run_guard_noop and run_sign_flip_stats so
+// the two invalid-Jacobian scenarios test the identical operator set.
 template <typename T>
-static void enqueueGuardedConsumers(const DeviceParams<T>& p,
-                                    const cumes::RadialProfileViews<T>& rp,
-                                    cumes::RealSpaceStorage<T>& rs,
-                                    cumes::ToroidalFftOperator<T>& transform,
-                                    cumes::GeometryOperator<T>& geometry,
-                                    cumes::Preconditioner<T>& precon,
-                                    cumes::ConstraintOperator<T>& constraint,
-                                    const cumes::DeviceModeTable& mt,
-                                    cumes::ControlStatus* status) {
+static void enqueue_guarded_consumers(const DeviceParams<T>& p,
+                                      const cumes::RadialProfileViews<T>& rp,
+                                      cumes::RealSpaceStorage<T>& rs,
+                                      cumes::ToroidalFftOperator<T>& transform,
+                                      cumes::GeometryOperator<T>& geometry,
+                                      cumes::Preconditioner<T>& precon,
+                                      cumes::ConstraintOperator<T>& constraint,
+                                      const cumes::DeviceModeTable& mt,
+                                      cumes::ControlStatus* status) {
     cumes::MagneticFieldOperator<T>{}.enqueue(
         rs, p, rp, geometry.base_geometry_views(p),
         geometry.magnetic_field_views(p), status, 0, true);
@@ -347,7 +348,7 @@ static void enqueueGuardedConsumers(const DeviceParams<T>& p,
 }
 
 template <typename T>
-static void runGuardNoop(T label) {
+static void run_guard_noop(T label) {
     (void)label;
     DeviceParams<T> p;
     p.ns = 9;
@@ -376,8 +377,8 @@ static void runGuardNoop(T label) {
 
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt);
     cumes::GeometryOperator<T> geometry(p, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
@@ -393,19 +394,19 @@ static void runGuardNoop(T label) {
     // One guarded pass with valid status, snapshot the written caches.
     // The fused inverse produces rCon/zCon into the constraint views (the
     // same production path — a plain inverse would leave them uninitialized).
-    auto runPass = [&]() {
+    auto run_pass = [&]() {
         transform.inverse_fused(storage.physical_const(), /*do_combine=*/false,
                                 constraint.rcon_view(p).data(),
                                 constraint.zcon_view(p).data());
         geometry.enqueue(rs, p, rp, 0);
-        enqueueGuardedConsumers<T>(p, rp, rs, transform, geometry, precon,
-                                   constraint, mt, &d_rec.data()->status);
+        enqueue_guarded_consumers<T>(p, rp, rs, transform, geometry, precon,
+                                     constraint, mt, &d_rec.data()->status);
         cc(cudaDeviceSynchronize(), "pass sync");
     };
     check_cuda(
         cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
         "rec up (guard)");
-    runPass();
+    run_pass();
 
     std::vector<T> snap_bsupu(nField), snap_iotaF(p.ns), snap_ard(2 * p.ns);
     std::vector<T> snap_rcon0(nFull), snap_brmn(nFull);
@@ -431,7 +432,7 @@ static void runGuardNoop(T label) {
     check_cuda(
         cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
         "rec up (invalid)");
-    runPass();
+    run_pass();
 
     std::vector<T> now_bsupu(nField), now_iotaF(p.ns), now_ard(2 * p.ns);
     std::vector<T> now_rcon0(nFull), now_brmn(nFull);
@@ -472,7 +473,7 @@ static void runGuardNoop(T label) {
     check_cuda(
         cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
         "rec up (valid again)");
-    runPass();
+    run_pass();
     check_cuda(cudaMemcpy(now_bsupu.data(), bsupu, nField * sizeof(T),
                           cudaMemcpyDeviceToHost),
                "again bsupu");
@@ -485,7 +486,7 @@ static void runGuardNoop(T label) {
 // 4. Preconditioned-reduction terminal gate
 // ---------------------------------------------------------------------------
 template <typename T>
-static void runPreconditionedGate(T label) {
+static void run_preconditioned_gate(T label) {
     (void)label;
     const int ns = 8, mnmax = 4;
     std::vector<T> h_f(6 * mnmax * ns);
@@ -506,7 +507,7 @@ static void runPreconditionedGate(T label) {
     h.status.invariant_converged = 1;
     check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
                "rec up (terminal)");
-    computeResidualsPreconditionedKernel<T>
+    compute_residuals_preconditioned_kernel<T>
         <<<3, 256>>>(view, ns, mnmax, d_rec.data());
     cc(cudaDeviceSynchronize(), "gate sync terminal");
     check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
@@ -521,7 +522,7 @@ static void runPreconditionedGate(T label) {
     h = cumes::ControlRecord{};
     check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
                "rec up (continue)");
-    computeResidualsPreconditionedKernel<T>
+    compute_residuals_preconditioned_kernel<T>
         <<<3, 256>>>(view, ns, mnmax, d_rec.data());
     cc(cudaDeviceSynchronize(), "gate sync continue");
     check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
@@ -551,7 +552,7 @@ static void runPreconditionedGate(T label) {
 // 5. End-to-end collapsed state through EquilibriumOperator::enqueue
 // ---------------------------------------------------------------------------
 template <typename T>
-static void runCollapsedDag(T label) {
+static void run_collapsed_dag(T label) {
     (void)label;
     DeviceParams<T> p;
     p.ns = 9;
@@ -588,8 +589,8 @@ static void runCollapsedDag(T label) {
 
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt);
     cumes::GeometryOperator<T> geometry(p, nullptr);
 
@@ -653,15 +654,15 @@ static void runCollapsedDag(T label) {
 
 // ---------------------------------------------------------------------------
 // 6. Production-path first-sample sign reversal (completion-plan follow-up
-//    §2.1): jacobianStatsKernel + jacobianFinalizeKernel over a manufactured
-//    half-grid whose ONLY sign reversal is the FIRST sample of reduction
-//    lane 20. Before the vmin-init fix that lane seeded the minimum from
-//    fabs(g), hiding the flip behind the healthy samples; the oriented
+//    §2.1): jacobian_stats_kernel + jacobian_finalize_kernel over a
+//    manufactured half-grid whose ONLY sign reversal is the FIRST sample of
+//    reduction lane 20. Before the vmin-init fix that lane seeded the minimum
+//    from fabs(g), hiding the flip behind the healthy samples; the oriented
 //    minimum must now be the flipped value and the finalize kernel must
 //    report invalid, with every guarded consumer writing nothing.
 // ---------------------------------------------------------------------------
 template <typename T>
-static void runSignFlipStats(T label) {
+static void run_sign_flip_stats(T label) {
     (void)label;
     DeviceParams<T> p;
     p.ns = 9;
@@ -690,8 +691,8 @@ static void runSignFlipStats(T label) {
 
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt);
     cumes::GeometryOperator<T> geometry(p, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
@@ -720,8 +721,8 @@ static void runSignFlipStats(T label) {
     check_cuda(
         cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
         "rec up (seed)");
-    enqueueGuardedConsumers<T>(p, rp, rs, transform, geometry, precon,
-                               constraint, mt, &d_rec.data()->status);
+    enqueue_guarded_consumers<T>(p, rp, rs, transform, geometry, precon,
+                                 constraint, mt, &d_rec.data()->status);
     cc(cudaDeviceSynchronize(), "seed guarded sync");
 
     // signJ = -1 and a valid run has sqrt(g) < 0 everywhere, so the
@@ -742,9 +743,9 @@ static void runSignFlipStats(T label) {
         "gsqrt up");
 
     // The PRODUCTION chain: GeometryOperator::jacobian_stats (the exact
-    // function the DAG enqueues) followed by jacobianFinalizeKernel.
+    // function the DAG enqueues) followed by jacobian_finalize_kernel.
     geometry.jacobian_stats(p, d_rec.data(), 0);
-    jacobianFinalizeKernel<<<1, 1>>>(d_rec.data(), p.nZnT);
+    jacobian_finalize_kernel<<<1, 1>>>(d_rec.data(), p.nZnT);
     cc(cudaDeviceSynchronize(), "stats sync");
     check_cuda(
         cudaMemcpy(&h_rec, d_rec.data(), sizeof(h_rec), cudaMemcpyDeviceToHost),
@@ -759,7 +760,7 @@ static void runSignFlipStats(T label) {
     check(h_rec.jacobian_min_index == 20.0,
           "sign flip: argmin index is the flip");
     check(h_rec.status.jacobian_valid == 0,
-          "sign flip: jacobianFinalizeKernel reports invalid");
+          "sign flip: jacobian_finalize_kernel reports invalid");
 
     // The guarded consumers with the just-finalized (invalid) status: every
     // output/cache sentinel must stay byte-unchanged.
@@ -782,8 +783,8 @@ static void runSignFlipStats(T label) {
                           cudaMemcpyDeviceToHost),
                "snap brmn");
 
-    enqueueGuardedConsumers<T>(p, rp, rs, transform, geometry, precon,
-                               constraint, mt, &d_rec.data()->status);
+    enqueue_guarded_consumers<T>(p, rp, rs, transform, geometry, precon,
+                                 constraint, mt, &d_rec.data()->status);
     cc(cudaDeviceSynchronize(), "guarded sync");
 
     std::vector<T> now_bsupu(nHalf), now_iotaF(p.ns), now_ard(2 * p.ns);
@@ -823,17 +824,17 @@ static void runSignFlipStats(T label) {
 }
 
 int main() {
-    testJacobianFinalizeRules();
-    testInvariantPredicateRules();
-    testForceNormFinalizeRules();
-    runGuardNoop(double(0));
-    runGuardNoop(float(0));
-    runSignFlipStats(double(0));
-    runSignFlipStats(float(0));
-    runPreconditionedGate(double(0));
-    runPreconditionedGate(float(0));
-    runCollapsedDag(double(0));
-    runCollapsedDag(float(0));
+    test_jacobian_finalize_rules();
+    test_invariant_predicate_rules();
+    test_force_norm_finalize_rules();
+    run_guard_noop(double(0));
+    run_guard_noop(float(0));
+    run_sign_flip_stats(double(0));
+    run_sign_flip_stats(float(0));
+    run_preconditioned_gate(double(0));
+    run_preconditioned_gate(float(0));
+    run_collapsed_dag(double(0));
+    run_collapsed_dag(float(0));
 
     return summary();
 }

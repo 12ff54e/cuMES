@@ -58,7 +58,7 @@
 #endif
 
 // Read a whole file into a string ("" on open failure).
-static std::string readFileBytes(const std::string& path) {
+static std::string read_file_bytes(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return "";
     return std::string(std::istreambuf_iterator<char>(in),
@@ -68,7 +68,7 @@ static std::string readFileBytes(const std::string& path) {
 // FNV-1a 64-bit hash of raw bytes, hex-encoded. Cheap input provenance for the
 // v1 schema; not a cryptographic digest. Identical algorithm to the removed
 // hashFile(), so recorded source_hash values are unchanged for unchanged files.
-static std::string hashBytes(const std::string& bytes) {
+static std::string hash_bytes(const std::string& bytes) {
     std::uint64_t h = 1469598103934665603ULL;  // FNV-1a offset basis
     for (unsigned char c : bytes) {
         h ^= c;
@@ -81,12 +81,12 @@ static std::string hashBytes(const std::string& bytes) {
 
 // Fill the build/input/runtime provenance of `report` (consumed by the v1
 // writers). Called after the solve so a CUDA
-// context is live for the device/driver queries. sourceHash is the hash of the
+// context is live for the device/driver queries. source_hash is the hash of the
 // input bytes captured at read time — the input file is NOT re-opened here
 // (a mid-solve replacement must not change the recorded provenance).
 static void fill_provenance(cumes::RunReport& report,
-                            const std::string& inputPath,
-                            const std::string& sourceHash) {
+                            const std::string& input_path,
+                            const std::string& source_hash) {
     report.build.revision = CUMES_GIT_REVISION;
     report.build.dirty = (CUMES_GIT_DIRTY != 0);
     report.build.build_type = CUMES_BUILD_TYPE;
@@ -94,8 +94,8 @@ static void fill_provenance(cumes::RunReport& report,
         sizeof(Real) == sizeof(double) ? "double" : "float";
     report.build.precision_policy = CUMES_PRECISION_POLICY_NAME;
     report.build.compile_flags = CUMES_PRECISION_FLAGS;
-    report.input.source_path = inputPath;
-    report.input.source_hash = sourceHash;
+    report.input.source_path = input_path;
+    report.input.source_hash = source_hash;
 
     int driver = 0, runtime = 0;
     cudaDriverGetVersion(&driver);
@@ -110,21 +110,21 @@ static void fill_provenance(cumes::RunReport& report,
     }
 }
 
-static const char* severityName(cumes::Severity s) {
+static const char* severity_name(cumes::Severity s) {
     return s == cumes::Severity::ERROR ? "error" : "warning";
 }
 
 int main(int argc, char** argv) {
     // ---- CLI ----------------------------------------------------------------
-    std::string inputPath = "inputs/solovev.json";
-    std::string outputPath;
-    std::string restartPath;  // --restart (v1 checkpoint)
+    std::string input_path = "inputs/solovev.json";
+    std::string output_path;
+    std::string restart_path;  // --restart (v1 checkpoint)
     std::string
-        checkpointPath;  // --checkpoint (write a v1 checkpoint after solve)
+        checkpoint_path;  // --checkpoint (write a v1 checkpoint after solve)
     // Slot occupancy: a --input/--output flag pins its slot (flags override
     // positionals); each positional fills the first free slot (input, output).
-    bool inputGiven = false;
-    bool outputGiven = false;
+    bool input_given = false;
+    bool output_given = false;
     // --compatibility (completion plan step 2.1): vmecpp-style warn-and-ignore
     // for unknown input keys. Strict schema-v1 input parsing is the default;
     // the output policy (explicit path, known suffix) is always strict.
@@ -147,33 +147,33 @@ int main(int argc, char** argv) {
         };
         std::string v;
         if (match("restart", v)) {
-            restartPath = v;
+            restart_path = v;
         } else if (match("checkpoint", v)) {
-            checkpointPath = v;
+            checkpoint_path = v;
         } else if (match("input", v)) {
-            inputPath = v;
-            inputGiven = true;
+            input_path = v;
+            input_given = true;
         } else if (match("output", v)) {
-            outputPath = v;
-            outputGiven = true;
+            output_path = v;
+            output_given = true;
         } else if (a == "--compatibility") {
             compatibility = true;
         } else if (!a.empty() && a[0] == '-') {
             fprintf(stderr, "cuMES: unknown option '%s'\n", a.c_str());
             return EXIT_FAILURE;
-        } else if (!inputGiven) {
-            inputPath = argv[i];
-            inputGiven = true;
-        } else if (!outputGiven) {
-            outputPath = argv[i];
-            outputGiven = true;
+        } else if (!input_given) {
+            input_path = argv[i];
+            input_given = true;
+        } else if (!output_given) {
+            output_path = argv[i];
+            output_given = true;
         } else {
             fprintf(stderr, "cuMES: unexpected extra argument '%s'\n",
                     a.c_str());
             return EXIT_FAILURE;
         }
     }
-    if (!outputGiven) {
+    if (!output_given) {
         fprintf(stderr, "cuMES: no output path given; pass --output <path>\n");
         return EXIT_FAILURE;
     }
@@ -182,7 +182,7 @@ int main(int argc, char** argv) {
     // A requested-but-unlinked format (e.g. .nc on a binary-only build) and an
     // unknown suffix are rejected HERE, before the CUDA context is created and
     // before any grid stage runs.
-    auto resolved = cumes::resolve_output_spec(outputPath);
+    auto resolved = cumes::resolve_output_spec(output_path);
     if (!resolved.has_value()) {
         fprintf(stderr, "cuMES: %s\n", resolved.error().c_str());
         return EXIT_FAILURE;
@@ -210,13 +210,13 @@ int main(int argc, char** argv) {
     // source_hash must be the hash of the bytes the solver actually consumed,
     // not of whatever the path holds after the solve (TOCTOU — the pre-fix
     // fill_provenance re-opened and re-hashed the file post-solve).
-    const std::string inputBytes = readFileBytes(inputPath);
-    const std::string sourceHash =
-        inputBytes.empty() ? "" : hashBytes(inputBytes);
+    const std::string inputBytes = read_file_bytes(input_path);
+    const std::string source_hash =
+        inputBytes.empty() ? "" : hash_bytes(inputBytes);
     cumes::ValidationResult vr =
         cumes::ValidationResult(cumes::ValidationReport{});
     try {
-        vr = cumes::read_and_validate(inputPath, opts);
+        vr = cumes::read_and_validate(input_path, opts);
     } catch (const std::exception& e) {
         fprintf(stderr, "cuMES: error loading input file: %s\n", e.what());
         return EXIT_FAILURE;
@@ -224,7 +224,7 @@ int main(int argc, char** argv) {
     if (!vr.has_value()) {
         fprintf(stderr, "cuMES: input validation failed:\n");
         for (const auto& issue : vr.error().issues()) {
-            fprintf(stderr, "  [%s] %s: %s\n", severityName(issue.severity),
+            fprintf(stderr, "  [%s] %s: %s\n", severity_name(issue.severity),
                     issue.key.c_str(), issue.message.c_str());
         }
         return EXIT_FAILURE;
@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
     DeviceParams<Real> p = cumes::init_params<Real>(vp);
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
-    printf("input: %s\n", inputPath.c_str());
+    printf("input: %s\n", input_path.c_str());
     printf("precision: %s\n",
            sizeof(Real) == sizeof(double) ? "double" : "float");
     printf("mpol=%d ntor=%d nfp=%d ntheta=%d nzeta=%d nZnT=%d ncurr=%d\n",
@@ -277,8 +277,8 @@ int main(int argc, char** argv) {
         p.max_iter = static_cast<int>(spec.stages[0].max_iterations);
         p.ftol = Real(spec.stages[0].tolerance);
         cumes::SpectralStorage<Real> seed;
-        if (!restartPath.empty()) {
-            auto ck = cumes::read_checkpoint(restartPath);
+        if (!restart_path.empty()) {
+            auto ck = cumes::read_checkpoint(restart_path);
             if (!ck.has_value()) {
                 fprintf(stderr, "cuMES: %s\n", ck.error().c_str());
                 return EXIT_FAILURE;
@@ -346,7 +346,7 @@ int main(int argc, char** argv) {
                     cumes::output_suffix(spec.format));
             output_ok = false;
         } else {
-            fill_provenance(outcome.report, inputPath, sourceHash);
+            fill_provenance(outcome.report, input_path, source_hash);
             const cumes::Status status =
                 writer->write_atomic(snapshot, outcome.report, spec, vp);
             if (status.has_value()) {
@@ -361,26 +361,26 @@ int main(int argc, char** argv) {
         // Optional v2 restart checkpoint (blueprint §6.13): written after the
         // solve so a run that stops at its iteration cap can be resumed via
         // --restart.
-        if (!checkpointPath.empty()) {
+        if (!checkpoint_path.empty()) {
             const cumes::Status status = cumes::write_checkpoint(
-                snapshot, outcome.report.input_params, checkpointPath);
+                snapshot, outcome.report.input_params, checkpoint_path);
             if (status.has_value()) {
-                printf("Saved checkpoint to %s\n", checkpointPath.c_str());
+                printf("Saved checkpoint to %s\n", checkpoint_path.c_str());
             } else {
                 fprintf(stderr, "cuMES: %s\n", status.error().c_str());
                 output_ok = false;
             }
         }
 
-        outputPrint<Real>(storage, p, result.iterations, result.converged,
-                          result.fsqr, result.fsqz, result.fsql);
+        output_print<Real>(storage, p, result.iterations, result.converged,
+                           result.fsqr, result.fsqz, result.fsql);
         if (n_grids > 1)
             printf("multigrid: total effective iterations over %d grids = %d\n",
                    n_grids, total_iter);
         printf("\nDone.\n");
         if (!output_ok) {
             fprintf(stderr, "cuMES: FAILED to write output state (%s)\n",
-                    outputPath.c_str());
+                    output_path.c_str());
             return EXIT_FAILURE;
         }
         return result.converged ? 0 : 1;

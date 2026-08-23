@@ -44,7 +44,7 @@ class GeometryOperator {
     // Oriented-Jacobian statistics into the typed control record's four
     // jacobian_* slots (DOUBLE in both builds — ADR-0001 control-record
     // follow-up). The finalize step that turns the stats into
-    // status.jacobian_valid lives with the solver (jacobianFinalizeKernel in
+    // status.jacobian_valid lives with the solver (jacobian_finalize_kernel in
     // kernels/solver_impl.cuh); both use the shared JACOBIAN_EPS rule.
     void jacobian_stats(const DeviceParams<T>& p,
                         ControlRecord* rec,

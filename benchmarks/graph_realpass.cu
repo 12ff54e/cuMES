@@ -16,7 +16,7 @@
 //   2. submission-only host wall per pass (enqueue vs graph launch) — the
 //      quantity the empty-kernel bound approximated;
 //   3. production-pattern wall per pass — DAG + control-record D2H copy + one
-//      cudaStreamSynchronize, exactly the per-pass host pattern solverRun
+//      cudaStreamSynchronize, exactly the per-pass host pattern solver_run
 //      runs (the fence is NOT removed by graphs; the end-to-end saving is
 //      the difference between direct and graph here);
 //   4. capture + instantiate cost per variant (base pass / precon-refresh
@@ -86,7 +86,7 @@ static double capture_variant(cumes::EquilibriumOperator<Real>& eq,
 // ---- per-node param update (cudaGraphExecKernelNodeSetParams) ----------
 // The m=1 gauge zeroZ scalar is the one per-pass kernel parameter the §8.11
 // integration must change (blueprint §7 step 10; kernels/solver_impl.cuh
-// m1ConstraintKernel). Measured here on a MANUALLY constructed node with the
+// m1_constraint_kernel). Measured here on a MANUALLY constructed node with the
 // same parameter shape — (16-byte view struct, int, int, int, int) — because
 // CUDA 12.1's cudaGraphKernelNodeGetParams is unusable on stream-captured
 // graphs: minimal repros return success but neither copy the parameter
@@ -94,11 +94,11 @@ static double capture_variant(cumes::EquilibriumOperator<Real>& eq,
 // scan crashed on garbage entries the driver wrote). An integration must
 // therefore either keep its own node/param layout (manual construction) or
 // re-instantiate per variant — measured below as capture+instantiate cost.
-__global__ void updateTargetKernel(int ns,
-                                   int mnmax,
-                                   int ntor,
-                                   int zeroZ,
-                                   int* out) {
+__global__ void update_target_kernel(int ns,
+                                     int mnmax,
+                                     int ntor,
+                                     int zeroZ,
+                                     int* out) {
     if (threadIdx.x == 0) out[0] = ns + mnmax + ntor + zeroZ;
 }
 
@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
             cudaGraphExec_t mexc = nullptr;
             cudaGraphCreate(&mg, 0);
             cudaKernelNodeParams mkp{};
-            mkp.func = reinterpret_cast<void*>(updateTargetKernel);
+            mkp.func = reinterpret_cast<void*>(update_target_kernel);
             mkp.gridDim = dim3{1, 1, 1};
             mkp.blockDim = dim3{32, 1, 1};
             mkp.sharedMemBytes = 0;

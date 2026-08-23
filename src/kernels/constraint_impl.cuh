@@ -61,7 +61,7 @@ cumes::ConstraintOperator<T>::ConstraintOperator(const DeviceParams<T>& p,
     cumes::check_cuda(cudaMemset(d_zCon0_, 0, nF), "zCon0 zero");
 
     // tcon profile (device). Zero-init: deAliasKernelFast reads tcon on
-    // iteration 0 before computeTconKernel writes it — with zeros the
+    // iteration 0 before compute_tcon_kernel writes it — with zeros the
     // constraint force is inactive on the first iteration (deterministic,
     // matches vmecpp where the constraint has no prior tcon either).
     alloc(d_tcon_, p.ns, "constraint/tcon");
@@ -127,7 +127,7 @@ cumes::ConstraintOperator<T>::~ConstraintOperator() {
 // are set by constraintResetRzCon0 (vmecpp rzConIntoVolume).
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void effectiveConstraintKernel(
+__global__ void effective_constraint_kernel(
     const T* __restrict__ rCon,
     const T* __restrict__ zCon,
     const T* __restrict__ ru_e,
@@ -173,7 +173,7 @@ __global__ void effectiveConstraintKernel(
 // For fixed boundary the vacuum state stays OFF, so rCon0 never decays.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void rzConIntoVolumeKernel(
+__global__ void rz_con_into_volume_kernel(
     const T* __restrict__ rCon,
     const T* __restrict__ zCon,
     const T* __restrict__ sqrtS_F,
@@ -206,7 +206,7 @@ __global__ void rzConIntoVolumeKernel(
 // bzmn_o += (zCon - zCon0) * gCon * sqrtSF
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void addConstraintKernel(
+__global__ void add_constraint_kernel(
     const T* __restrict__ rCon,
     const T* __restrict__ zCon,
     const T* __restrict__ rCon0,
@@ -272,7 +272,7 @@ __global__ void addConstraintKernel(
 // weights, matching vmecpp's wInt from sizes.cc.
 // ---------------------------------------------------------------------------
 template <typename T>
-__global__ void computeTconKernel(
+__global__ void compute_tcon_kernel(
     const T* __restrict__ ru_e,
     const T* __restrict__ ru_o,
     const T* __restrict__ zu_e,
@@ -338,7 +338,7 @@ __global__ void computeTconKernel(
 // vmecpp: tcon at the LCFS is halved ("maybe related to boundary only having
 // MHD force contributions from the inside"). One thread.
 template <typename T>
-__global__ void tconLcfsHalfKernel(
+__global__ void tcon_lcfs_half_kernel(
     const cumes::ControlStatus* __restrict__ status,
     T* __restrict__ tcon,
     int ns) {
@@ -361,7 +361,7 @@ void cumes::ConstraintOperator<T>::reset_reference(
     cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
-    rzConIntoVolumeKernel<T><<<grid, block, 0, stream>>>(
+    rz_con_into_volume_kernel<T><<<grid, block, 0, stream>>>(
         d_rCon_, d_zCon_, d_sqrtS_F, status, p.ns, p.nZnT, d_rCon0_, d_zCon0_);
     cumes::check_cuda(cudaGetLastError(), "rzConIntoVolume");
 }
@@ -399,17 +399,17 @@ void cumes::ConstraintOperator<T>::enqueue_head(
             T(1.0 * (1.0 + p.ns * (1.0 / 60.0 + p.ns / (200.0 * 120.0))) /
               16.0);
         int gridF = (p.ns + 255) / 256;
-        computeTconKernel<T><<<gridF, 256, 0, stream>>>(
+        compute_tcon_kernel<T><<<gridF, 256, 0, stream>>>(
             rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o, d_sqrtS_F, ard, azd,
             status, p.ns, p.nZnT, p.ntheta, p.nzeta, T(1.0) / T(p.ns - 1.0),
             tcon_multiplier, d_tcon_);
         cumes::check_cuda(cudaGetLastError(), "tcon");
-        tconLcfsHalfKernel<T><<<1, 1, 0, stream>>>(status, d_tcon_, p.ns);
+        tcon_lcfs_half_kernel<T><<<1, 1, 0, stream>>>(status, d_tcon_, p.ns);
         cumes::check_cuda(cudaGetLastError(), "tcon lcfs");
     }
 
     // Step 1: Effective constraint force
-    effectiveConstraintKernel<T><<<grid, block, 0, stream>>>(
+    effective_constraint_kernel<T><<<grid, block, 0, stream>>>(
         d_rCon_, d_zCon_, rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o, d_sqrtS_F,
         d_rCon0_, d_zCon0_, status, p.ns, p.nZnT, d_gConEff_);
     cumes::check_cuda(cudaGetLastError(), "gConEff");
@@ -425,7 +425,7 @@ void cumes::ConstraintOperator<T>::enqueue_tail(
     cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
-    addConstraintKernel<T><<<grid, block, 0, stream>>>(
+    add_constraint_kernel<T><<<grid, block, 0, stream>>>(
         d_rCon_, d_zCon_, d_rCon0_, d_zCon0_, d_gCon_, d_sqrtS_F, rs.d_ru_e,
         rs.d_ru_o, rs.d_zu_e, rs.d_zu_o, status, p.ns, p.nZnT, rs.d_brmn_e,
         rs.d_brmn_o, rs.d_bzmn_e, rs.d_bzmn_o, d_frcon_e_, d_frcon_o_,

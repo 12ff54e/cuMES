@@ -21,12 +21,12 @@
 #include <vector>
 using namespace cumes::test;
 
-__global__ void fillKernel(float* x, int n, float v) {
+__global__ void fill_kernel(float* x, int n, float v) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) x[i] = v;
 }
 
-__global__ void addKernel(const float* a, const float* b, float* c, int n) {
+__global__ void add_kernel(const float* a, const float* b, float* c, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) c[i] = a[i] + b[i];
 }
@@ -44,15 +44,15 @@ int main() {
         check_cuda(cudaMalloc(&c_stream, n * 4), "c_stream");
         cumes::Stream stream;
 
-        fillKernel<<<8, 128, 0, stream.get()>>>(a, n, 1.0f);
-        fillKernel<<<8, 128, 0, stream.get()>>>(b, n, 2.0f);
-        addKernel<<<8, 128, 0, stream.get()>>>(a, b, c_stream, n);
+        fill_kernel<<<8, 128, 0, stream.get()>>>(a, n, 1.0f);
+        fill_kernel<<<8, 128, 0, stream.get()>>>(b, n, 2.0f);
+        add_kernel<<<8, 128, 0, stream.get()>>>(a, b, c_stream, n);
         stream.synchronize();
 
         auto g = cumes::CudaGraph::capture(stream.get(), [&]() {
-            fillKernel<<<8, 128, 0, stream.get()>>>(a, n, 1.0f);
-            fillKernel<<<8, 128, 0, stream.get()>>>(b, n, 2.0f);
-            addKernel<<<8, 128, 0, stream.get()>>>(a, b, c, n);
+            fill_kernel<<<8, 128, 0, stream.get()>>>(a, n, 1.0f);
+            fill_kernel<<<8, 128, 0, stream.get()>>>(b, n, 2.0f);
+            add_kernel<<<8, 128, 0, stream.get()>>>(a, b, c, n);
         });
         g.launch(stream.get());
         stream.synchronize();
@@ -104,8 +104,8 @@ int main() {
         upload_state(storage, h_cc, h_ss, h_zsc, h_zcs, h_lsc, h_lcs, p.ns,
                      p.mnmax);
 
-        cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-        cumes::RealSpaceStorage<double> rs = realSpaceCreate(p);
+        cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+        cumes::RealSpaceStorage<double> rs = real_space_create(p);
         cumes::ToroidalFftOperator<double> op(p, rs, mt);
         cumes::Stream stream;
         op.bind_stream(stream.get());
@@ -142,8 +142,8 @@ int main() {
         if (!cufft_graph_ok)
             std::cout << format("  cuFFT capture error: {}\n", err.c_str());
 
-        realSpaceFree(rs);
-        cumes::modeTableFree(mt);
+        real_space_free(rs);
+        cumes::mode_table_free(mt);
     }
 
     return summary();

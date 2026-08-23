@@ -39,13 +39,13 @@ bool cumes::output_format_available(cumes::OutputFormat fmt) {
 }
 
 template <typename T>
-void outputPrint(const cumes::SpectralStorage<T>& storage,
-                 const DeviceParams<T>& p,
-                 int niter,
-                 bool converged,
-                 T fsqr,
-                 T fsqz,
-                 T fsql) {
+void output_print(const cumes::SpectralStorage<T>& storage,
+                  const DeviceParams<T>& p,
+                  int niter,
+                  bool converged,
+                  T fsqr,
+                  T fsqz,
+                  T fsql) {
     // Pull boundary-surface spectral coefficients back to host for inspection.
     // Column-major layout: index(surface=j, mode=m) = j + m * ns.
     // Use cudaMemcpy2D to read with stride ns between consecutive modes.
@@ -140,20 +140,20 @@ void outputPrint(const cumes::SpectralStorage<T>& storage,
 // resolves a typed OutputSpec up front (resolve_output_spec +
 // cumes::output_format_available, defined here in the adapter library), and
 // every backend consumes the single host EquilibriumSnapshot through the
-// Writer interface. outputPrint remains as the console printout.
+// Writer interface. output_print remains as the console printout.
 
 // ---- Explicit instantiation (double + float) ----------------------------
-template void outputPrint<double>(const cumes::SpectralStorage<double>&,
-                                  const DeviceParams<double>&,
+template void output_print<double>(const cumes::SpectralStorage<double>&,
+                                   const DeviceParams<double>&,
+                                   int,
+                                   bool,
+                                   double,
+                                   double,
+                                   double);
+template void output_print<float>(const cumes::SpectralStorage<float>&,
+                                  const DeviceParams<float>&,
                                   int,
                                   bool,
-                                  double,
-                                  double,
-                                  double);
-template void outputPrint<float>(const cumes::SpectralStorage<float>&,
-                                 const DeviceParams<float>&,
-                                 int,
-                                 bool,
-                                 float,
-                                 float,
-                                 float);
+                                  float,
+                                  float,
+                                  float);

@@ -32,13 +32,13 @@ using namespace cumes::test;
 // and the PCR elimination order differs from Thomas, so a per-point relative
 // test spuriously fails at genuine zero crossings. rel * solution-scale +
 // floor.
-static void checkNear(double gpu,
-                      double ref,
-                      double tol,
-                      const char* s,
-                      int a,
-                      int b,
-                      int c) {
+static void check_near(double gpu,
+                       double ref,
+                       double tol,
+                       const char* s,
+                       int a,
+                       int b,
+                       int c) {
     if (!(fabs(gpu - ref) <= tol)) {
         std::cerr << format(
             "FAIL [{}] a={} b={} c={} gpu={:.15e} ref={:.15e}\n", s, a, b, c,
@@ -47,16 +47,16 @@ static void checkNear(double gpu,
     }
 }
 
-// CPU serial Thomas solve (matches kernels/precon_impl.cuh thomasSolveKernel
-// and test_regression_kernels.cu thomasSolve): rows [jMin, jMax) with
+// CPU serial Thomas solve (matches kernels/precon_impl.cuh thomas_solve_kernel
+// and test_regression_kernels.cu thomas_solve): rows [jMin, jMax) with
 // x[jMin-1]=0 and x[jMax]=0.
-static void cpuThomas(const double* lower,
-                      const double* diagonal,
-                      const double* upper,
-                      int jMin,
-                      int jMax,
-                      const double* rhs,
-                      double* x) {
+static void cpu_thomas(const double* lower,
+                       const double* diagonal,
+                       const double* upper,
+                       int jMin,
+                       int jMax,
+                       const double* rhs,
+                       double* x) {
     int n = jMax - jMin;
     if (n <= 0) return;
     std::vector<double> cp(n), dp(n);
@@ -80,7 +80,7 @@ static void cpuThomas(const double* lower,
 // Healthy-solve scenario (one ns value): CPU Thomas vs GPU Thomas vs GPU PCR.
 // ---------------------------------------------------------------------------
 template <typename T>
-static int testSolve(int ns) {
+static int test_solve(int ns) {
     int lf = failures();
     std::cout << format("  tridiagonal backend solve: ns={} rhs_count=2 ... ",
                         ns);
@@ -219,17 +219,17 @@ static int testSolve(int ns) {
             std::vector<double> rh(ns), x(ns, 0.0);
             for (int j = 0; j < ns; ++j)
                 rh[j] = (double)rhs[c * modes * ns + mode * ns + j];
-            cpuThomas(lo.data(), dg.data(), up.data(), jMin[mode], jMax,
-                      rh.data(), x.data());
+            cpu_thomas(lo.data(), dg.data(), up.data(), jMin[mode], jMax,
+                       rh.data(), x.data());
             double scale_c = 0.0;
             for (int j = jMin[mode]; j < jMax; ++j)
                 scale_c = fmax(scale_c, fabs(x[j]));
             double tol = rel * scale_c + absF;
             for (int j = jMin[mode]; j < jMax; ++j) {
-                checkNear((double)th_out[c * modes * ns + mode * ns + j], x[j],
-                          tol, "thomas", c, mode, j);
-                checkNear((double)pc_out[c * modes * ns + mode * ns + j], x[j],
-                          tol, "pcr", c, mode, j);
+                check_near((double)th_out[c * modes * ns + mode * ns + j], x[j],
+                           tol, "thomas", c, mode, j);
+                check_near((double)pc_out[c * modes * ns + mode * ns + j], x[j],
+                           tol, "pcr", c, mode, j);
             }
         }
     }
@@ -249,7 +249,7 @@ static int testSolve(int ns) {
 // Breakdown scenario: a system with a zero diagonal must report status > 0.
 // ---------------------------------------------------------------------------
 template <typename T>
-static int testBreakdown() {
+static int test_breakdown() {
     int lf = failures();
     std::cout << "  tridiagonal pivot breakdown (zero diagonal) ... ";
     const int modes = 1, ns = 16, rhs_count = 1;
@@ -351,11 +351,11 @@ int main() {
     int nf = 0;
     const int nsList[] = {3, 17, 65, 99, 130, 257, 512};
     for (int ns : nsList) {
-        nf += testSolve<double>(ns);
-        nf += testSolve<float>(ns);
+        nf += test_solve<double>(ns);
+        nf += test_solve<float>(ns);
     }
-    nf += testBreakdown<double>();
-    nf += testBreakdown<float>();
+    nf += test_breakdown<double>();
+    nf += test_breakdown<float>();
     failures() = nf;
     std::cout << (failures() == 0 ? "ALL PASS\n"
                                   : format("{} FAILURES\n", failures()));

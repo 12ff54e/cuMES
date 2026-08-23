@@ -19,9 +19,9 @@
 namespace cumes {
 
 // Horner evaluation of a power series; with integrate=true gives the
-// integral ∫₀ˣ Σ c_i t^i dt = x·Σ c_i·x^i/(i+1) (vmecpp evalPowerSeries).
+// integral ∫₀ˣ Σ c_i t^i dt = x·Σ c_i·x^i/(i+1) (vmecpp eval_power_series).
 template <typename T>
-inline T evalPowerSeries(const double* c, int n, T x, bool integrate) {
+inline T eval_power_series(const double* c, int n, T x, bool integrate) {
     T ret = T(0.0);
     for (int i = n - 1; i >= 0; --i) {
         if (integrate) {
@@ -35,14 +35,14 @@ inline T evalPowerSeries(const double* c, int n, T x, bool integrate) {
 }
 
 // vmecpp's "two_power" profile: f(x) = c[0]·(1 − x^c[1])^c[2] (radial_profiles
-// evalTwoPower). With integrate=true the same form is integrated from 0 to x
+// eval_two_power). With integrate=true the same form is integrated from 0 to x
 // with the 10-point Gauss-Legendre quadrature vmecpp uses (the current
 // profile is specified as I-prime and must be integrated); the node/weight
 // table is copied verbatim so the host-validated edge integral C_edge and
 // the value the Profiles upload step divides by are bit-identical to vmecpp's
 // double evaluation (same constants, same left-to-right arithmetic order).
 template <typename T>
-inline T evalTwoPower(const double* c, int n, T x, bool integrate) {
+inline T eval_two_power(const double* c, int n, T x, bool integrate) {
     if (n < 3) return T(0.0);  // validation rejects this case up front
     constexpr double GLX[10] = {0.01304673574141414, 0.06746831665550774,
                                 0.1602952158504878,  0.2833023029353764,
@@ -68,11 +68,11 @@ inline T evalTwoPower(const double* c, int n, T x, bool integrate) {
 template <typename T>
 inline T torflux(const ProblemSpec& sp, T x) {
     const auto& c = sp.toroidal_flux.coefficients;
-    return x * evalPowerSeries<T>(c.data(), (int)c.size(), x, false);
+    return x * eval_power_series<T>(c.data(), (int)c.size(), x, false);
 }
 
 template <typename T>
-inline T torfluxDeriv(const ProblemSpec& sp, T x) {
+inline T torflux_deriv(const ProblemSpec& sp, T x) {
     T ret = T(0.0);
     const auto& c = sp.toroidal_flux.coefficients;
     for (int i = 0; i < (int)c.size(); ++i) {
@@ -82,31 +82,31 @@ inline T torfluxDeriv(const ProblemSpec& sp, T x) {
 }
 
 template <typename T>
-inline T evalIotaProfile(const ProblemSpec& sp, T x) {
+inline T eval_iota_profile(const ProblemSpec& sp, T x) {
     const auto& c = sp.iota.coefficients;
-    return evalPowerSeries<T>(c.data(), (int)c.size(), x, false);
+    return eval_power_series<T>(c.data(), (int)c.size(), x, false);
 }
 
 template <typename T>
-inline T evalMassProfile(const ProblemSpec& sp, T x) {
+inline T eval_mass_profile(const ProblemSpec& sp, T x) {
     T normX = fmin(fabs(x * T(sp.physical.bloat)), T(1.0));
     const auto& prof = sp.mass;
     const auto& c = prof.coefficients;
     T p = (prof.type == ProfileType::TWO_POWER)
-              ? evalTwoPower<T>(c.data(), (int)c.size(), normX, false)
-              : evalPowerSeries<T>(c.data(), (int)c.size(), normX, false);
+              ? eval_two_power<T>(c.data(), (int)c.size(), normX, false)
+              : eval_power_series<T>(c.data(), (int)c.size(), normX, false);
     return p * (DeviceParams<T>::MU_0 * T(sp.physical.pres_scale));
 }
 
 template <typename T>
-inline T evalCurrProfile(const ProblemSpec& sp, T x) {
+inline T eval_curr_profile(const ProblemSpec& sp, T x) {
     T normX = fmin(fabs(x * T(sp.physical.bloat)), T(1.0));
     const auto& prof = sp.current;
     const auto& c = prof.coefficients;
     if (prof.type == ProfileType::TWO_POWER) {
-        return evalTwoPower<T>(c.data(), (int)c.size(), normX, true);
+        return eval_two_power<T>(c.data(), (int)c.size(), normX, true);
     }
-    return evalPowerSeries<T>(c.data(), (int)c.size(), normX, true);
+    return eval_power_series<T>(c.data(), (int)c.size(), normX, true);
 }
 
 }  // namespace cumes

@@ -130,7 +130,7 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     // edge integral, independent of T(1). A non-finite, zero, or ill-scaled
     // value here would poison every downstream quantity, so both are rejected
     // BEFORE any CUDA context or stage construction. The evaluation is the
-    // shared cumes::torflux/evalCurrProfile used by the upload step, so the
+    // shared cumes::torflux/eval_curr_profile used by the upload step, so the
     // validated values are bit-identical to the divided ones.
     const double torflux_edge = torflux<double>(spec, 1.0);
     if (!std::isfinite(torflux_edge)) {
@@ -148,7 +148,7 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
                      "(|T(1)| < 1e-30); the edge normalization would overflow");
     }
     if (spec.current_model == CurrentModel::PRESCRIBED_CURRENT) {
-        const double curr_edge = evalCurrProfile<double>(spec, 1.0);
+        const double curr_edge = eval_curr_profile<double>(spec, 1.0);
         if (!std::isfinite(curr_edge)) {
             report.error("ac",
                          "prescribed-current profile is non-finite at the edge "
@@ -326,9 +326,9 @@ std::string ValidatedProblem::normalize_to_json() const {
        << ",\"curtor\":" << json_number(s.physical.curtor)
        << ",\"tcon0\":" << json_number(s.physical.tcon0) << "},\n";
     os << "  \"profiles\":{\"pmass_type\":\""
-       << profileTypeToString(s.mass.type) << "\",\"piota_type\":\""
-       << profileTypeToString(s.iota.type) << "\",\"pcurr_type\":\""
-       << profileTypeToString(s.current.type) << "\",\"am\":";
+       << profile_type_to_string(s.mass.type) << "\",\"piota_type\":\""
+       << profile_type_to_string(s.iota.type) << "\",\"pcurr_type\":\""
+       << profile_type_to_string(s.current.type) << "\",\"am\":";
     emit_double_array(os, s.mass.coefficients);
     os << ",\"ac\":";
     emit_double_array(os, s.current.coefficients);

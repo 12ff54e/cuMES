@@ -21,17 +21,17 @@ using namespace cumes::test;
 // Faulting kernel: an illegal-instruction trap. It faults only its own
 // launch and leaves memory untouched, so the poison case is safe (the context
 // becomes unusable afterwards, which is exactly what it asserts).
-__global__ void trapKernel() {
+__global__ void trap_kernel() {
     asm volatile("trap;");
 }
 
 // Busy-wait ~60 ms of device time (clock64 loop; calibrated once on the GPU).
-__global__ void delayKernel(long long cycles) {
+__global__ void delay_kernel(long long cycles) {
     long long start = clock64();
     while (clock64() - start < cycles) {}
 }
 
-static void testOrderingAndDelay(bool probe_notready) {
+static void test_ordering_and_delay(bool probe_notready) {
     cudaStream_t s = nullptr;
     cc(cudaStreamCreate(&s), "stream create");
     cudaEvent_t e0 = nullptr, e1 = nullptr;
@@ -45,7 +45,7 @@ static void testOrderingAndDelay(bool probe_notready) {
     cc(cudaEventCreate(&c0), "event c0");
     cc(cudaEventCreate(&c1), "event c1");
     cc(cudaEventRecord(c0, s), "record c0");
-    delayKernel<<<g, b, 0, s>>>(1000000);
+    delay_kernel<<<g, b, 0, s>>>(1000000);
     cc(cudaEventRecord(c1, s), "record c1");
     cc(cudaEventSynchronize(c1), "sync c1");
     float cal = 0.0f;
@@ -59,7 +59,7 @@ static void testOrderingAndDelay(bool probe_notready) {
 
     // 1. e0 before the delay, e1 after: e1 completes only after the delay.
     cc(cudaEventRecord(e0, s), "record e0");
-    delayKernel<<<g, b, 0, s>>>(cycles);
+    delay_kernel<<<g, b, 0, s>>>(cycles);
     cc(cudaEventRecord(e1, s), "record e1");
 
     // While the delay runs, querying e1 must report not-ready (never a
@@ -98,20 +98,20 @@ static void testOrderingAndDelay(bool probe_notready) {
 
 // Poison case: a trapping kernel faults ONLY its own block/context; the
 // stream carries the sticky error to every later enqueue and to the sync.
-static int runPoison() {
+static int run_poison() {
     cudaStream_t s = nullptr;
     cudaError_t e = cudaStreamCreate(&s);
     if (e != cudaSuccess) {
         std::cerr << "poison: stream create failed\n";
         return 2;
     }
-    trapKernel<<<1, 1, 0, s>>>();
+    trap_kernel<<<1, 1, 0, s>>>();
     // A device fault (trap) is ASYNCHRONOUS: the launch and the next enqueue
     // are accepted, and the fault surfaces at COMPLETION time — the
     // cudaStreamSynchronize must report it (never a silent success, which is
     // the contract the per-iteration DAG depends on).
     cudaError_t after = cudaGetLastError();
-    trapKernel<<<1, 1, 0, s>>>();
+    trap_kernel<<<1, 1, 0, s>>>();
     cudaError_t sticky = cudaGetLastError();
     cudaError_t sync = cudaStreamSynchronize(s);
     cudaStreamDestroy(s);
@@ -125,10 +125,10 @@ static int runPoison() {
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--poison") == 0) {
-        return runPoison();
+        return run_poison();
     }
     const bool probe_notready =
         !(argc > 1 && std::strcmp(argv[1], "--no-notready-probe") == 0);
-    testOrderingAndDelay(probe_notready);
+    test_ordering_and_delay(probe_notready);
     return summary();
 }

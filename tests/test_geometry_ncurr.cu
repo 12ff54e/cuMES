@@ -1,13 +1,13 @@
 // test_geometry_ncurr.cu — ncurr=0/ncurr=1 geometry-path regression.
 //
-// The containment series fixed a half-grid OOB: updateIotaChipFKernel read
+// The containment series fixed a half-grid OOB: update_iota_chip_f_kernel read
 // one element beyond the (ns-1)-sized half-grid allocation at the LCFS row
 // for ns=33 (the W7-X first stage). This test drives the same kernels at
 // ns=33 in BOTH current models:
 //
-//   ncurr=0 (fixed iota):  geometryKernel -> updateIotaChipFKernel
-//   ncurr=1 (fixed curr):  geometryKernel -> ncurr1FinalizeKernel ->
-//                          updateIotaChipFKernel
+//   ncurr=0 (fixed iota):  geometryKernel -> update_iota_chip_f_kernel
+//   ncurr=1 (fixed curr):  geometryKernel -> ncurr1_finalize_kernel ->
+//                          update_iota_chip_f_kernel
 //
 // and asserts the half-grid outputs are finite and the Jacobian stats are
 // sensible. It is a kernel-driving test (launches CUDA kernels), so it also
@@ -30,7 +30,7 @@ using namespace cumes::test;
 
 // Build a Solovev-like state with a few modes and run one geometry pass.
 template <typename T>
-static void runGeometry(int ns, int ncurr, const char* label) {
+static void run_geometry(int ns, int ncurr, const char* label) {
     DeviceParams<T> p;
     p.ns = ns;
     p.mnmax = 4;
@@ -86,8 +86,8 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> op(p, rs, mt);
     cumes::GeometryOperator<T> geometry(p, nullptr);
 
@@ -97,8 +97,8 @@ static void runGeometry(int ns, int ncurr, const char* label) {
         rs, p, rp, geometry.base_geometry_views(p),
         geometry.magnetic_field_views(p), nullptr, 0, true);
 
-    // Assert the half-grid outputs that updateIotaChipFKernel /
-    // ncurr1FinalizeKernel produce are finite (an OOB read would surface as
+    // Assert the half-grid outputs that update_iota_chip_f_kernel /
+    // ncurr1_finalize_kernel produce are finite (an OOB read would surface as
     // garbage or a memcheck error, not a finite check failure).
     size_t nH = (size_t)(p.ns - 1) * p.nZnT;
     auto* h_chip = new T[p.ns - 1];
@@ -138,21 +138,21 @@ static void runGeometry(int ns, int ncurr, const char* label) {
 
     delete[] h_chip;
     delete[] h_iota;
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
 }
 
 int main() {
     std::cout
         << "=== Geometry ncurr path regression (ns=33, the OOB size) ===\n";
     // Both current models at the exact failing resolution.
-    runGeometry<double>(33, 0, "ncurr=0 fixed-iota geometry finite");
-    runGeometry<double>(33, 1, "ncurr=1 prescribed-current geometry finite");
+    run_geometry<double>(33, 0, "ncurr=0 fixed-iota geometry finite");
+    run_geometry<double>(33, 1, "ncurr=1 prescribed-current geometry finite");
     // Also the smallest valid grid and a mid size, both current models.
-    runGeometry<double>(5, 0, "ncurr=0 ns=5 finite");
-    runGeometry<double>(5, 1, "ncurr=1 ns=5 finite");
-    runGeometry<double>(99, 0, "ncurr=0 ns=99 finite");
-    runGeometry<double>(99, 1, "ncurr=1 ns=99 finite");
+    run_geometry<double>(5, 0, "ncurr=0 ns=5 finite");
+    run_geometry<double>(5, 1, "ncurr=1 ns=5 finite");
+    run_geometry<double>(99, 0, "ncurr=0 ns=99 finite");
+    run_geometry<double>(99, 1, "ncurr=1 ns=99 finite");
 
     return summary();
 }

@@ -2,11 +2,12 @@
 // (blueprint §6.9).
 //
 // Reduces the six spectral-force families to the invariant (FSQR/FSQZ/FSQL) and
-// preconditioned (FSQR1/FSQZ1/FSQL1) triples. The legacy computeResidualsKernel
+// preconditioned (FSQR1/FSQZ1/FSQL1) triples. The legacy
+// compute_residuals_kernel
 // + host scaling are the reference implementation; the device-only
 // ControlRecord with double accumulation (§6.9) is a later refactor.
 //
-// Strangler-fig form: a stateless thin wrapper over computeResidualsKernel
+// Strangler-fig form: a stateless thin wrapper over compute_residuals_kernel
 // (verbatim — migration step 8). It reduces the decomposed residual into the
 // caller's 3-element device `sq_out` (ΣF²/(mnmax·ns) per group); the invariant
 // vs preconditioned distinction is only the host-side scaling (fNormRZ/fNormL

@@ -31,32 +31,32 @@
 // The max() clamp makes this identical to cuMES's sqrtS_F for every j
 // (profiles.cu stores sqrt(s + 1e-12); the clamped max is the same value).
 template <typename T>
-__device__ T scalxcOf(int j, int ns, T sqrtS1) {
+__device__ T scalxc_of(int j, int ns, T sqrtS1) {
     return T(1.0) / fmax(sqrt(T(j) / T(ns - 1)), sqrtS1);
 }
 
 template <typename T>
-__global__ void interpolateStateKernel(T* __restrict__ o_cc,
-                                       T* __restrict__ o_zsc,
-                                       T* __restrict__ o_lsc,
-                                       T* __restrict__ o_ss,
-                                       T* __restrict__ o_zcs,
-                                       T* __restrict__ o_lcs,
-                                       const T* __restrict__ i_cc,
-                                       const T* __restrict__ i_zsc,
-                                       const T* __restrict__ i_lsc,
-                                       const T* __restrict__ i_ss,
-                                       const T* __restrict__ i_zcs,
-                                       const T* __restrict__ i_lcs,
-                                       int ns_new,
-                                       int ns_old,
-                                       int mnmax,
-                                       int ntorp1) {
+__global__ void interpolate_state_kernel(T* __restrict__ o_cc,
+                                         T* __restrict__ o_zsc,
+                                         T* __restrict__ o_lsc,
+                                         T* __restrict__ o_ss,
+                                         T* __restrict__ o_zcs,
+                                         T* __restrict__ o_lcs,
+                                         const T* __restrict__ i_cc,
+                                         const T* __restrict__ i_zsc,
+                                         const T* __restrict__ i_lsc,
+                                         const T* __restrict__ i_ss,
+                                         const T* __restrict__ i_zcs,
+                                         const T* __restrict__ i_lcs,
+                                         int ns_new,
+                                         int ns_old,
+                                         int mnmax,
+                                         int ntorp1) {
     int i = blockIdx.x * blockDim.x + threadIdx.x, total = mnmax * ns_new;
     if (i >= total) return;
     int mode = i / ns_new, jNew = i % ns_new;
     // Parity on the POLOIDAL m (vmecpp), not the mode index (n odd flips
-    // the mode-index parity) — same test as scalxcApplyKernel.
+    // the mode-index parity) — same test as scalxc_apply_kernel.
     int m = mode / ntorp1;
     bool odd = (m % 2 == 1);
 
@@ -80,7 +80,7 @@ __global__ void interpolateStateKernel(T* __restrict__ o_cc,
         // (phys * scalxc; even-m scalxc = 1).
         auto xs = [&](int j) -> T {
             T v = in[mode * ns_old + j];
-            return odd ? v * scalxcOf(j, ns_old, sqrtS1o) : v;
+            return odd ? v * scalxc_of(j, ns_old, sqrtS1o) : v;
         };
         // vmecpp extrapolates the odd-m axis to 2*x[1] - x[2] (decomposed),
         // for ALL odd m — it feeds the first interior rows (js1 == 0, e.g.
@@ -132,7 +132,7 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     // Full-sync once per grid stage (never in the hot loop): this is a
     // stage-boundary point, so the cost is one fence per stage, not per pass.
     cumes::check_cuda(cudaDeviceSynchronize(), "interpolateState pre-sync");
-    interpolateStateKernel<T><<<gd, bd, 0, stream>>>(
+    interpolate_state_kernel<T><<<gd, bd, 0, stream>>>(
         st_new.family_ptr(cumes::SpectralComponent::Rcc),
         st_new.family_ptr(cumes::SpectralComponent::Zsc),
         st_new.family_ptr(cumes::SpectralComponent::Lsc),

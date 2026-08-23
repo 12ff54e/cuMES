@@ -41,7 +41,7 @@ static std::string scratch(const char* name) {
 // (0.25 is exactly representable in both float and double, so the T->double
 // conversion is lossless in both precisions).
 template <typename T>
-static cumes::SpectralStorage<T> makeStorage(int ns, int mnmax) {
+static cumes::SpectralStorage<T> make_storage(int ns, int mnmax) {
     cumes::SpectralStorage<T> storage(ns, mnmax);
     const std::size_t one = static_cast<std::size_t>(ns) * mnmax;
     const std::size_t count = 6 * one;
@@ -62,8 +62,8 @@ static cumes::SpectralStorage<T> makeStorage(int ns, int mnmax) {
 // after build_type came a scalar_type string, where v2 carries
 // precision_policy + compile_flags instead. The reader must consume and
 // discard the historical slot so the fields after it land correctly.
-static bool writeHistoricalV1(const EquilibriumSnapshot& snap,
-                              const std::string& path) {
+static bool write_historical_v1(const EquilibriumSnapshot& snap,
+                                const std::string& path) {
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
     auto w_i32 = [&](std::int32_t v) {
@@ -107,8 +107,8 @@ static bool writeHistoricalV1(const EquilibriumSnapshot& snap,
 // record in the HISTORICAL layout WITHOUT the three profile-type strings
 // (version 4 appends them after the schema tag). The reader must walk the old
 // record and keep the "power_series" defaults.
-static bool writeHistoricalV3(const EquilibriumSnapshot& snap,
-                              const std::string& path) {
+static bool write_historical_v3(const EquilibriumSnapshot& snap,
+                                const std::string& path) {
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
     auto w_i32 = [&](std::int32_t v) {
@@ -198,8 +198,8 @@ static bool writeHistoricalV3(const EquilibriumSnapshot& snap,
     return f.good();
 }
 
-static bool snapshotsEqual(const EquilibriumSnapshot& a,
-                           const EquilibriumSnapshot& b) {
+static bool snapshots_equal(const EquilibriumSnapshot& a,
+                            const EquilibriumSnapshot& b) {
     if (a.ns != b.ns || a.mnmax != b.mnmax) return false;
     for (int c = 0; c < 6; ++c) {
         if (a.families[c] != b.families[c]) return false;
@@ -211,7 +211,7 @@ static bool snapshotsEqual(const EquilibriumSnapshot& a,
 // (completion plan step 2.3). The embedded input record derives from the
 // same validated problem the writers use for the native boundary fields, so
 // the NetCDF/HDF5 round trip is exact.
-static RunReport makeIoReport(const cumes::ValidatedProblem& vp) {
+static RunReport make_io_report(const cumes::ValidatedProblem& vp) {
     RunReport r;
     r.status = cumes::RunStatus::CONVERGED;
     r.total_effective_iterations = 21;
@@ -244,7 +244,7 @@ static RunReport makeIoReport(const cumes::ValidatedProblem& vp) {
     return r;
 }
 
-static bool reportsEqual(const RunReport& a, const RunReport& b) {
+static bool reports_equal(const RunReport& a, const RunReport& b) {
     if (a.status != b.status ||
         a.total_effective_iterations != b.total_effective_iterations) {
         return false;
@@ -286,10 +286,10 @@ static bool reportsEqual(const RunReport& a, const RunReport& b) {
 
 // v1 round trip shared by both backends: state + complete RunReport.
 template <typename T>
-static void checkV1RoundTrip(const EquilibriumSnapshot& snap,
-                             const cumes::ValidatedProblem& vp,
-                             OutputFormat fmt,
-                             const char* tag) {
+static void check_v1_round_trip(const EquilibriumSnapshot& snap,
+                                const cumes::ValidatedProblem& vp,
+                                OutputFormat fmt,
+                                const char* tag) {
     const std::string path = scratch(tag);
     OutputSpec spec;
     spec.format = fmt;
@@ -298,27 +298,27 @@ static void checkV1RoundTrip(const EquilibriumSnapshot& snap,
     auto r = cumes::make_reader(spec.format);
     check(w != nullptr && r != nullptr, "v1 factories");
     if (w && r) {
-        RunReport report = makeIoReport(vp);
+        RunReport report = make_io_report(vp);
         report.build.scalar_type =
             sizeof(T) == sizeof(double) ? "double" : "float";
         check(w->write_atomic(snap, report, spec, vp).has_value(),
               "v1 write succeeds");
         RunReport back;
         auto snap_back = r->read(path, &back);
-        check(snap_back.has_value() && snapshotsEqual(snap, snap_back.value()),
+        check(snap_back.has_value() && snapshots_equal(snap, snap_back.value()),
               "v1 state round trip");
-        check(reportsEqual(report, back),
+        check(reports_equal(report, back),
               "v1 complete RunReport + restart metadata round trip");
     }
     remove(path.c_str());
 }
 
 template <typename T>
-static void runPrecision() {
+static void run_precision() {
     std::cout << format("== {} precision ==\n",
                         sizeof(T) == sizeof(double) ? "double" : "float");
     const int ns = 5, mnmax = 3;
-    auto storage = makeStorage<T>(ns, mnmax);
+    auto storage = make_storage<T>(ns, mnmax);
 
     // Minimal valid problem for the writer call sites.
     cumes::ProblemSpec pspec;
@@ -351,7 +351,7 @@ static void runPrecision() {
             // fields + stage records) must round-trip, not just the state.
             // (The trailer sequences were once out of sync and a state-only
             // read could not see it — see docs/output-formats.md.)
-            RunReport report = makeIoReport(vp);
+            RunReport report = make_io_report(vp);
             report.build.scalar_type =
                 sizeof(T) == sizeof(double) ? "double" : "float";
             check(w->write_atomic(snap, report, spec, vp).has_value(),
@@ -359,9 +359,9 @@ static void runPrecision() {
             RunReport back;
             auto snap_back = r->read(v1Path, &back);
             check(snap_back.has_value() &&
-                      snapshotsEqual(snap, snap_back.value()),
+                      snapshots_equal(snap, snap_back.value()),
                   "v1: round-trip preserves bridged state");
-            check(reportsEqual(report, back),
+            check(reports_equal(report, back),
                   "v1: round-trip preserves the provenance trailer");
         }
         remove(v1Path.c_str());
@@ -373,7 +373,7 @@ static void runPrecision() {
     {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string v1OldPath = scratch("v1old");
-        check(writeHistoricalV1(snap, v1OldPath),
+        check(write_historical_v1(snap, v1OldPath),
               "v1 historical: fixture written");
         auto r = cumes::make_reader(OutputFormat::BINARY);
         check(r != nullptr, "v1 historical: reader factory");
@@ -381,7 +381,7 @@ static void runPrecision() {
             RunReport back;
             auto snap_back = r->read(v1OldPath, &back);
             check(snap_back.has_value() &&
-                      snapshotsEqual(snap, snap_back.value()),
+                      snapshots_equal(snap, snap_back.value()),
                   "v1 historical: state round trip");
             check(back.build.scalar_type == "double" &&
                       back.build.revision == "r1" &&
@@ -403,7 +403,7 @@ static void runPrecision() {
     {
         const EquilibriumSnapshot snap = cumes::snapshot_from_device(storage);
         const std::string v3OldPath = scratch("v3old");
-        check(writeHistoricalV3(snap, v3OldPath),
+        check(write_historical_v3(snap, v3OldPath),
               "v3 historical: fixture written");
         auto r = cumes::make_reader(OutputFormat::BINARY);
         check(r != nullptr, "v3 historical: reader factory");
@@ -411,7 +411,7 @@ static void runPrecision() {
             RunReport back;
             auto snap_back = r->read(v3OldPath, &back);
             check(snap_back.has_value() &&
-                      snapshotsEqual(snap, snap_back.value()),
+                      snapshots_equal(snap, snap_back.value()),
                   "v3 historical: state round trip");
             check(back.build.scalar_type == "double" &&
                       back.build.revision == "r3" &&
@@ -436,10 +436,10 @@ static void runPrecision() {
     // v1: the complete RunReport + restart metadata round trip.
     const EquilibriumSnapshot snap2 = cumes::snapshot_from_device(storage);
 #ifdef CUMES_HAVE_NETCDF
-    checkV1RoundTrip<T>(snap2, vp, OutputFormat::NETCDF, "v1nc");
+    check_v1_round_trip<T>(snap2, vp, OutputFormat::NETCDF, "v1nc");
 #endif
 #ifdef CUMES_HAVE_HDF5
-    checkV1RoundTrip<T>(snap2, vp, OutputFormat::HDF5, "v1h5");
+    check_v1_round_trip<T>(snap2, vp, OutputFormat::HDF5, "v1h5");
 #endif
 
     // ---- versioned checkpoint round-trips the bridged snapshot ------------
@@ -451,7 +451,7 @@ static void runPrecision() {
               "checkpoint: write succeeds");
         cumes::InputParams back_params;
         auto back = cumes::read_checkpoint(ckpt, &back_params);
-        check(back.has_value() && snapshotsEqual(snap, back.value()),
+        check(back.has_value() && snapshots_equal(snap, back.value()),
               "checkpoint: round-trip preserves bridged state");
         check(back_params == ip,
               "checkpoint: round-trip preserves the input record");
@@ -461,7 +461,7 @@ static void runPrecision() {
 
 int main() {
     std::cout << "=== v1 writer round-trip gate ===\n";
-    runPrecision<double>();
-    runPrecision<float>();
+    run_precision<double>();
+    run_precision<float>();
     return summary();
 }

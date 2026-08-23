@@ -40,8 +40,8 @@ namespace cumes {
 namespace stage_detail {
 
 // ---- RAII wrappers for the two free-function stage resources (8.3) -------
-// realSpaceCreate/Free and modeTableCreate/Free are plain function pairs; the
-// wrappers restore the "xCreate/xFree replaced by RAII classes" convention
+// real_space_create/Free and mode_table_create/Free are plain function pairs;
+// the wrappers restore the "xCreate/xFree replaced by RAII classes" convention
 // without restructuring the (sibling-owned) state headers. The wrapped frees
 // keep their arena-backed no-op semantics: on the always-arena stage path the
 // arena owns the memory, and on a nullptr-arena path the destructor frees the
@@ -52,8 +52,8 @@ class ScopedRealSpace {
     using val_type = T;
 
     ScopedRealSpace(const DeviceParams<T>& p, DeviceArena* arena)
-        : rs_(realSpaceCreate<T>(p, arena)) {}
-    ~ScopedRealSpace() { realSpaceFree(rs_); }
+        : rs_(real_space_create<T>(p, arena)) {}
+    ~ScopedRealSpace() { real_space_free(rs_); }
 
     // Non-copyable, non-movable: RealSpaceStorage is a raw owning aggregate
     // with no move semantics, so a move would leave two owners of the same
@@ -77,8 +77,8 @@ class ScopedModeTable {
     using val_type = T;
 
     ScopedModeTable(const DeviceParams<T>& p, DeviceArena* arena)
-        : mt_(modeTableCreate<T>(p, arena)) {}
-    ~ScopedModeTable() { modeTableFree(mt_); }
+        : mt_(mode_table_create<T>(p, arena)) {}
+    ~ScopedModeTable() { mode_table_free(mt_); }
 
     ScopedModeTable(const ScopedModeTable&) = delete;
     ScopedModeTable& operator=(const ScopedModeTable&) = delete;
@@ -108,7 +108,7 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     const std::size_t ns = p.ns, nH = ns - 1, nZnT = p.nZnT, mnmax = p.mnmax;
     const std::size_t szT = sizeof(T), szI = sizeof(int), szC = sizeof(Complex);
     const int nz2 = p.nzeta / 2 + 1;
-    const std::size_t batchDa = (std::size_t)2 * (p.mpol - 2) * (ns - 1);
+    const std::size_t batch_da = (std::size_t)2 * (p.mpol - 2) * (ns - 1);
 
     std::size_t bytes = 0;
     // profiles: 4 full-grid + 7 half-grid radial arrays.
@@ -124,8 +124,8 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     bytes += 12 * p.mpol * ns * p.nzeta * szT;  // d_zeta_real
     bytes += 4 * p.mpol * p.ntheta * szT;       // cos/sin/mcos/msin_th
     bytes += (p.ntheta / 2 + 1) * szT;          // fwd_w
-    bytes += batchDa * p.nzeta * szT;           // d_zeta_real_c (de-alias)
-    bytes += batchDa * nz2 * szC;               // d_zeta_spectra_c (de-alias)
+    bytes += batch_da * p.nzeta * szT;          // d_zeta_real_c (de-alias)
+    bytes += batch_da * nz2 * szC;              // d_zeta_spectra_c (de-alias)
     // preconditioner: 25*nH + 9*ns + 7*mnmax*ns + 3*(ns+1) + 1 T-elements,
     // plus the mnmax int jMin table.
     bytes += (25 * nH + 9 * ns + 7 * mnmax * ns + 3 * (ns + 1) + 1) * szT;
@@ -147,7 +147,7 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
 // loop exists only so an underestimating seed budget still succeeds — on the
 // normal path the constructors run exactly once against exactly one
 // allocation, and no temporary measuring arena exists. `fn(arena)` performs
-// the full stage body (module construction + solverRun + arena reporting);
+// the full stage body (module construction + solver_run + arena reporting);
 // an ArenaOverflow aborts the attempt, the scope exits destroy the partial
 // modules, and the budget grows to the reported requirement.
 template <typename T, typename F>
@@ -218,8 +218,8 @@ class StageSolver {
                 axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
             SolverResult<T> result =
-                solverRun<T>(state, p, profiles, transform, *rs, geometry,
-                             &arena, stream, bench, axisym.get());
+                solver_run<T>(state, p, profiles, transform, *rs, geometry,
+                              &arena, stream, bench, axisym.get());
             // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
             // the operator destructors); nothing to free manually.
 

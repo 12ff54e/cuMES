@@ -23,24 +23,24 @@ using namespace cumes::test;
 constexpr int NS = 3, MPOL = 3, NTOR = 2, NTHETA = 16, NZETA = 8, NFP = 1;
 constexpr int MNMAX = MPOL * (NTOR + 1), NZNT = NTHETA * NZETA;
 
-static void checkNear(double g,
-                      double e,
-                      double t,
-                      const char* s,
-                      int j,
-                      int k) {
+static void check_near(double g,
+                       double e,
+                       double t,
+                       const char* s,
+                       int j,
+                       int k) {
     if (fabs(g - e) > t) {
         std::cerr << format("FAIL [{}] j={} k={} got={:.15e} exp={:.15e}\n", s,
                             j, k, g, e);
         ++failures();
     }
 }
-static void checkMode(double g,
-                      double e,
-                      double t,
-                      const char* s,
-                      int j,
-                      int m) {
+static void check_mode(double g,
+                       double e,
+                       double t,
+                       const char* s,
+                       int j,
+                       int m) {
     if (fabs(g - e) > t) {
         std::cerr << format("FAIL [{}] j={} m={} got={:.15e} exp={:.15e}\n", s,
                             j, m, g, e);
@@ -51,15 +51,15 @@ static void checkMode(double g,
 // Per-type comparison tolerances (float arithmetic cannot reach the double
 // reference at 1e-12; 1e-4 is ~100x the float rounding floor of these sums).
 template <typename T>
-static constexpr double tolInv() {
+static constexpr double tol_inv() {
     return sizeof(T) == sizeof(float) ? 1e-4 : 1e-12;
 }
 template <typename T>
-static constexpr double tolFwd() {
+static constexpr double tol_fwd() {
     return sizeof(T) == sizeof(float) ? 1e-4 : 1e-13;
 }
 template <typename T>
-static constexpr double tolAxis() {
+static constexpr double tol_axis() {
     return sizeof(T) == sizeof(float) ? 1e-4 : 1e-10;
 }
 
@@ -67,13 +67,13 @@ static constexpr double tolAxis() {
 // Computed in double: the CPU reference always evaluates in double from the
 // (possibly float) T inputs.
 template <typename T>
-static void hostBasis(const DeviceParams<T>& p,
-                      std::vector<double>& hcc,
-                      std::vector<double>& hss,
-                      std::vector<double>& hsc,
-                      std::vector<double>& hcs,
-                      std::vector<int>& hxm,
-                      std::vector<int>& hxn) {
+static void host_basis(const DeviceParams<T>& p,
+                       std::vector<double>& hcc,
+                       std::vector<double>& hss,
+                       std::vector<double>& hsc,
+                       std::vector<double>& hcs,
+                       std::vector<int>& hxm,
+                       std::vector<int>& hxn) {
     hcc.assign(p.nZnT * p.mnmax, 0);
     hss.assign(p.nZnT * p.mnmax, 0);
     hsc.assign(p.nZnT * p.mnmax, 0);
@@ -105,30 +105,30 @@ static void hostBasis(const DeviceParams<T>& p,
 }
 
 // CPU: parity inverse DFT matching inverseDFTKernel (always in double).
-static void cpuInvDFT(const double* cc_,
-                      const double* ss_,
-                      const double* zsc_,
-                      const double* zcs_,
-                      const double* lsc_,
-                      const double* lcs_,
-                      const double* pcc,
-                      const double* pss,
-                      const double* psc,
-                      const double* pcs,
-                      const int* xm,
-                      const int* xn,
-                      int ns,
-                      int mnmax,
-                      int nZnT,
-                      double* r,
-                      double* z,
-                      double* l,
-                      double* ru,
-                      double* zu,
-                      double* lu,
-                      double* rv,
-                      double* zv,
-                      double* lv) {
+static void cpu_inv_dft(const double* cc_,
+                        const double* ss_,
+                        const double* zsc_,
+                        const double* zcs_,
+                        const double* lsc_,
+                        const double* lcs_,
+                        const double* pcc,
+                        const double* pss,
+                        const double* psc,
+                        const double* pcs,
+                        const int* xm,
+                        const int* xn,
+                        int ns,
+                        int mnmax,
+                        int nZnT,
+                        double* r,
+                        double* z,
+                        double* l,
+                        double* ru,
+                        double* zu,
+                        double* lu,
+                        double* rv,
+                        double* zv,
+                        double* lv) {
     for (int j = 0; j < ns; ++j)
         for (int k = 0; k < nZnT; ++k) {
             double re = 0, ro = 0, ze = 0, zo = 0, le = 0, lo = 0, rue = 0,
@@ -193,15 +193,15 @@ static void cpuInvDFT(const double* cc_,
 }
 
 template <typename T>
-static void gpuInv(cumes::SpectralStorage<T>& storage,
-                   cumes::ToroidalFftOperator<T>& op,
-                   const DeviceParams<T>& p,
-                   const T* cc_,
-                   const T* ss_,
-                   const T* zsc_,
-                   const T* zcs_,
-                   const T* lsc_,
-                   const T* lcs_) {
+static void gpu_inv(cumes::SpectralStorage<T>& storage,
+                    cumes::ToroidalFftOperator<T>& op,
+                    const DeviceParams<T>& p,
+                    const T* cc_,
+                    const T* ss_,
+                    const T* zsc_,
+                    const T* zcs_,
+                    const T* lsc_,
+                    const T* lcs_) {
     size_t nb = p.ns * p.mnmax * sizeof(T);
     cc(cudaMemcpy(storage.family_ptr(cumes::SpectralComponent::Rcc), cc_, nb,
                   cudaMemcpyHostToDevice),
@@ -245,8 +245,8 @@ static int t_inv_constR(DeviceParams<T>& p,
     std::vector<double> r(p.ns * p.nZnT), z(p.ns * p.nZnT), l(p.ns * p.nZnT);
     std::vector<double> ru(p.ns * p.nZnT), zu(p.ns * p.nZnT), lu(p.ns * p.nZnT);
     std::vector<double> rv(p.ns * p.nZnT), zv(p.ns * p.nZnT), lv(p.ns * p.nZnT);
-    gpuInv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
-           ls_.data(), lcs.data());
+    gpu_inv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
+            ls_.data(), lcs.data());
     cc(cudaMemcpy(h_r, rs.d_r_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get r");
@@ -255,20 +255,20 @@ static int t_inv_constR(DeviceParams<T>& p,
        "get rv");
     std::vector<double> hcc, hss, hsc, hcs;
     std::vector<int> hxm, hxn;
-    hostBasis(p, hcc, hss, hsc, hcs, hxm, hxn);
+    host_basis(p, hcc, hss, hsc, hcs, hxm, hxn);
     std::vector<double> cc_d(cc_.begin(), cc_.end()),
         ss_d(ss_.begin(), ss_.end());
     std::vector<double> zs_d(zs.begin(), zs.end()), zc_d(zc.begin(), zc.end());
     std::vector<double> ls_d(ls_.begin(), ls_.end()),
         lcs_d(lcs.begin(), lcs.end());
-    cpuInvDFT(cc_d.data(), ss_d.data(), zs_d.data(), zc_d.data(), ls_d.data(),
-              lcs_d.data(), hcc.data(), hss.data(), hsc.data(), hcs.data(),
-              hxm.data(), hxn.data(), p.ns, p.mnmax, p.nZnT, r.data(), z.data(),
-              l.data(), ru.data(), zu.data(), lu.data(), rv.data(), zv.data(),
-              lv.data());
+    cpu_inv_dft(cc_d.data(), ss_d.data(), zs_d.data(), zc_d.data(), ls_d.data(),
+                lcs_d.data(), hcc.data(), hss.data(), hsc.data(), hcs.data(),
+                hxm.data(), hxn.data(), p.ns, p.mnmax, p.nZnT, r.data(),
+                z.data(), l.data(), ru.data(), zu.data(), lu.data(), rv.data(),
+                zv.data(), lv.data());
     for (int i = 0; i < p.ns * p.nZnT; ++i) {
-        checkNear(h_r[i], r[i], tolInv<T>(), "R", i / p.nZnT, i % p.nZnT);
-        checkNear(h_rv[i], rv[i], tolInv<T>(), "Rv", i / p.nZnT, i % p.nZnT);
+        check_near(h_r[i], r[i], tol_inv<T>(), "R", i / p.nZnT, i % p.nZnT);
+        check_near(h_rv[i], rv[i], tol_inv<T>(), "Rv", i / p.nZnT, i % p.nZnT);
     }
     delete[] h_r;
     delete[] h_rv;
@@ -292,8 +292,8 @@ static int t_inv_theta(DeviceParams<T>& p,
     std::vector<double> r(p.ns * p.nZnT), z(p.ns * p.nZnT), l(p.ns * p.nZnT);
     std::vector<double> ru(p.ns * p.nZnT), zu(p.ns * p.nZnT), lu(p.ns * p.nZnT);
     std::vector<double> rv(p.ns * p.nZnT), zv(p.ns * p.nZnT), lv(p.ns * p.nZnT);
-    gpuInv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
-           ls_.data(), lcs.data());
+    gpu_inv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
+            ls_.data(), lcs.data());
     cc(cudaMemcpy(h_r, rs.d_r_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get r");
@@ -302,20 +302,20 @@ static int t_inv_theta(DeviceParams<T>& p,
        "get ru");
     std::vector<double> hcc, hss, hsc, hcs;
     std::vector<int> hxm, hxn;
-    hostBasis(p, hcc, hss, hsc, hcs, hxm, hxn);
+    host_basis(p, hcc, hss, hsc, hcs, hxm, hxn);
     std::vector<double> cc_d(cc_.begin(), cc_.end()),
         ss_d(ss_.begin(), ss_.end());
     std::vector<double> zs_d(zs.begin(), zs.end()), zc_d(zc.begin(), zc.end());
     std::vector<double> ls_d(ls_.begin(), ls_.end()),
         lcs_d(lcs.begin(), lcs.end());
-    cpuInvDFT(cc_d.data(), ss_d.data(), zs_d.data(), zc_d.data(), ls_d.data(),
-              lcs_d.data(), hcc.data(), hss.data(), hsc.data(), hcs.data(),
-              hxm.data(), hxn.data(), p.ns, p.mnmax, p.nZnT, r.data(), z.data(),
-              l.data(), ru.data(), zu.data(), lu.data(), rv.data(), zv.data(),
-              lv.data());
+    cpu_inv_dft(cc_d.data(), ss_d.data(), zs_d.data(), zc_d.data(), ls_d.data(),
+                lcs_d.data(), hcc.data(), hss.data(), hsc.data(), hcs.data(),
+                hxm.data(), hxn.data(), p.ns, p.mnmax, p.nZnT, r.data(),
+                z.data(), l.data(), ru.data(), zu.data(), lu.data(), rv.data(),
+                zv.data(), lv.data());
     for (int i = 0; i < p.ns * p.nZnT; ++i) {
-        checkNear(h_r[i], r[i], tolInv<T>(), "R", i / p.nZnT, i % p.nZnT);
-        checkNear(h_ru[i], ru[i], tolInv<T>(), "Ru", i / p.nZnT, i % p.nZnT);
+        check_near(h_r[i], r[i], tol_inv<T>(), "R", i / p.nZnT, i % p.nZnT);
+        check_near(h_ru[i], ru[i], tol_inv<T>(), "Ru", i / p.nZnT, i % p.nZnT);
     }
     delete[] h_r;
     delete[] h_ru;
@@ -342,26 +342,26 @@ static int t_inv_zeta(DeviceParams<T>& p,
     std::vector<double> r(p.ns * p.nZnT), z(p.ns * p.nZnT), l(p.ns * p.nZnT);
     std::vector<double> ru(p.ns * p.nZnT), zu(p.ns * p.nZnT), lu(p.ns * p.nZnT);
     std::vector<double> rv(p.ns * p.nZnT), zv(p.ns * p.nZnT), lv(p.ns * p.nZnT);
-    gpuInv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
-           ls_.data(), lcs.data());
+    gpu_inv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
+            ls_.data(), lcs.data());
     cc(cudaMemcpy(h_rv, rs.d_rv_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get rv");
     std::vector<double> hcc, hss, hsc, hcs;
     std::vector<int> hxm, hxn;
-    hostBasis(p, hcc, hss, hsc, hcs, hxm, hxn);
+    host_basis(p, hcc, hss, hsc, hcs, hxm, hxn);
     std::vector<double> cc_d(cc_.begin(), cc_.end()),
         ss_d(ss_.begin(), ss_.end());
     std::vector<double> zs_d(zs.begin(), zs.end()), zc_d(zc.begin(), zc.end());
     std::vector<double> ls_d(ls_.begin(), ls_.end()),
         lcs_d(lcs.begin(), lcs.end());
-    cpuInvDFT(cc_d.data(), ss_d.data(), zs_d.data(), zc_d.data(), ls_d.data(),
-              lcs_d.data(), hcc.data(), hss.data(), hsc.data(), hcs.data(),
-              hxm.data(), hxn.data(), p.ns, p.mnmax, p.nZnT, r.data(), z.data(),
-              l.data(), ru.data(), zu.data(), lu.data(), rv.data(), zv.data(),
-              lv.data());
+    cpu_inv_dft(cc_d.data(), ss_d.data(), zs_d.data(), zc_d.data(), ls_d.data(),
+                lcs_d.data(), hcc.data(), hss.data(), hsc.data(), hcs.data(),
+                hxm.data(), hxn.data(), p.ns, p.mnmax, p.nZnT, r.data(),
+                z.data(), l.data(), ru.data(), zu.data(), lu.data(), rv.data(),
+                zv.data(), lv.data());
     for (int i = 0; i < p.ns * p.nZnT; ++i)
-        checkNear(h_rv[i], rv[i], tolInv<T>(), "Rv", i / p.nZnT, i % p.nZnT);
+        check_near(h_rv[i], rv[i], tol_inv<T>(), "Rv", i / p.nZnT, i % p.nZnT);
     delete[] h_rv;
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
@@ -414,13 +414,13 @@ static int t_fwd_const(DeviceParams<T>& p,
                   cudaMemcpyDeviceToHost),
        "get fs");
     for (int j = 0; j < p.ns - 1; ++j) {
-        checkNear((double)fs[j + 0 * p.mnmax * p.ns], 3.0, tolFwd<T>(), "fR_cc",
-                  j, 0);
+        check_near((double)fs[j + 0 * p.mnmax * p.ns], 3.0, tol_fwd<T>(),
+                   "fR_cc", j, 0);
         for (int m = 1; m < p.mnmax; ++m) {
-            checkMode((double)fs[j + m * p.ns + 0 * p.mnmax * p.ns], 0.0,
-                      tolFwd<T>(), "fR0", j, m);
-            checkMode((double)fs[j + m * p.ns + 3 * p.mnmax * p.ns], 0.0,
-                      tolFwd<T>(), "fR0_ss", j, m);
+            check_mode((double)fs[j + m * p.ns + 0 * p.mnmax * p.ns], 0.0,
+                       tol_fwd<T>(), "fR0", j, m);
+            check_mode((double)fs[j + m * p.ns + 3 * p.mnmax * p.ns], 0.0,
+                       tol_fwd<T>(), "fR0_ss", j, m);
         }
     }
     cudaFree(d_fs);
@@ -491,8 +491,8 @@ static int t_fwd_sine(DeviceParams<T>& p,
     // The axis (j=0) is m=0 only (vmecpp dft_ForcesToFourier mmax=1).
     for (int j = 0; j < p.ns - 1; ++j) {
         double exp = (j == 0) ? 0.0 : 0.5;
-        checkNear((double)fs[j + m11 * p.ns + 1 * p.mnmax * p.ns], exp,
-                  tolFwd<T>(), "fZ_sc", j, m11);
+        check_near((double)fs[j + m11 * p.ns + 1 * p.mnmax * p.ns], exp,
+                   tol_fwd<T>(), "fZ_sc", j, m11);
     }
     cudaFree(d_fs);
     cudaFree(frcon_e);
@@ -530,8 +530,8 @@ static int t_gpuVcpu_inv(DeviceParams<T>& p,
     std::vector<double> r(p.ns * p.nZnT), z(p.ns * p.nZnT), l(p.ns * p.nZnT);
     std::vector<double> ru(p.ns * p.nZnT), zu(p.ns * p.nZnT), lu(p.ns * p.nZnT);
     std::vector<double> rv(p.ns * p.nZnT), zv(p.ns * p.nZnT), lv(p.ns * p.nZnT);
-    gpuInv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
-           ls_.data(), lcs.data());
+    gpu_inv(storage, op, p, cc_.data(), ss_.data(), zs.data(), zc.data(),
+            ls_.data(), lcs.data());
     cc(cudaMemcpy(h_r, rs.d_r_real, p.ns * p.nZnT * sizeof(T),
                   cudaMemcpyDeviceToHost),
        "get r");
@@ -561,27 +561,27 @@ static int t_gpuVcpu_inv(DeviceParams<T>& p,
        "get lv");
     std::vector<double> hcc, hss, hsc, hcs;
     std::vector<int> hxm, hxn;
-    hostBasis(p, hcc, hss, hsc, hcs, hxm, hxn);
+    host_basis(p, hcc, hss, hsc, hcs, hxm, hxn);
     std::vector<double> cc_d(cc_.begin(), cc_.end()),
         ss_d(ss_.begin(), ss_.end());
     std::vector<double> zs_d(zs.begin(), zs.end()), zc_d(zc.begin(), zc.end());
     std::vector<double> ls_d(ls_.begin(), ls_.end()),
         lcs_d(lcs.begin(), lcs.end());
-    cpuInvDFT(cc_d.data(), ss_d.data(), zs_d.data(), zc_d.data(), ls_d.data(),
-              lcs_d.data(), hcc.data(), hss.data(), hsc.data(), hcs.data(),
-              hxm.data(), hxn.data(), p.ns, p.mnmax, p.nZnT, r.data(), z.data(),
-              l.data(), ru.data(), zu.data(), lu.data(), rv.data(), zv.data(),
-              lv.data());
+    cpu_inv_dft(cc_d.data(), ss_d.data(), zs_d.data(), zc_d.data(), ls_d.data(),
+                lcs_d.data(), hcc.data(), hss.data(), hsc.data(), hcs.data(),
+                hxm.data(), hxn.data(), p.ns, p.mnmax, p.nZnT, r.data(),
+                z.data(), l.data(), ru.data(), zu.data(), lu.data(), rv.data(),
+                zv.data(), lv.data());
     for (int i = 0; i < p.ns * p.nZnT; ++i) {
-        checkNear(h_r[i], r[i], tolInv<T>(), "R", i / p.nZnT, i % p.nZnT);
-        checkNear(h_z[i], z[i], tolInv<T>(), "Z", i / p.nZnT, i % p.nZnT);
-        checkNear(h_l[i], l[i], tolInv<T>(), "L", i / p.nZnT, i % p.nZnT);
-        checkNear(h_ru[i], ru[i], tolInv<T>(), "Ru", i / p.nZnT, i % p.nZnT);
-        checkNear(h_zu[i], zu[i], tolInv<T>(), "Zu", i / p.nZnT, i % p.nZnT);
-        checkNear(h_lu[i], lu[i], tolInv<T>(), "Lu", i / p.nZnT, i % p.nZnT);
-        checkNear(h_rv[i], rv[i], tolInv<T>(), "Rv", i / p.nZnT, i % p.nZnT);
-        checkNear(h_zv[i], zv[i], tolInv<T>(), "Zv", i / p.nZnT, i % p.nZnT);
-        checkNear(h_lv[i], lv[i], tolInv<T>(), "Lv", i / p.nZnT, i % p.nZnT);
+        check_near(h_r[i], r[i], tol_inv<T>(), "R", i / p.nZnT, i % p.nZnT);
+        check_near(h_z[i], z[i], tol_inv<T>(), "Z", i / p.nZnT, i % p.nZnT);
+        check_near(h_l[i], l[i], tol_inv<T>(), "L", i / p.nZnT, i % p.nZnT);
+        check_near(h_ru[i], ru[i], tol_inv<T>(), "Ru", i / p.nZnT, i % p.nZnT);
+        check_near(h_zu[i], zu[i], tol_inv<T>(), "Zu", i / p.nZnT, i % p.nZnT);
+        check_near(h_lu[i], lu[i], tol_inv<T>(), "Lu", i / p.nZnT, i % p.nZnT);
+        check_near(h_rv[i], rv[i], tol_inv<T>(), "Rv", i / p.nZnT, i % p.nZnT);
+        check_near(h_zv[i], zv[i], tol_inv<T>(), "Zv", i / p.nZnT, i % p.nZnT);
+        check_near(h_lv[i], lv[i], tol_inv<T>(), "Lv", i / p.nZnT, i % p.nZnT);
     }
     delete[] h_r;
     delete[] h_z;
@@ -657,7 +657,7 @@ static int t_fwd_axis(DeviceParams<T>& p,
        "get fs");
     std::vector<double> hcc, hss, hsc, hcs;
     std::vector<int> hxm, hxn;
-    hostBasis(p, hcc, hss, hsc, hcs, hxm, hxn);
+    host_basis(p, hcc, hss, hsc, hcs, hxm, hxn);
     // Host expectation for mode (0,1) at the axis (nfp=1 -> n_ibp=1).
     int mode = 0 * (p.ntor + 1) + 1;
     int nThetaRed = p.ntheta / 2 + 1;
@@ -680,17 +680,17 @@ static int t_fwd_axis(DeviceParams<T>& p,
     const double sq2 = sqrt(2.0);  // nscale for n=1; mscale=1 for m=0
     frcc *= sq2;
     fzcs *= sq2;
-    checkMode((double)fs[0 * p.ns + mode * p.ns + 0 * p.mnmax * p.ns], frcc,
-              tolAxis<T>(), "axis_frcc", 0, mode);
-    checkMode((double)fs[0 * p.ns + mode * p.ns + 4 * p.mnmax * p.ns], fzcs,
-              tolAxis<T>(), "axis_fzcs", 0, mode);
+    check_mode((double)fs[0 * p.ns + mode * p.ns + 0 * p.mnmax * p.ns], frcc,
+               tol_axis<T>(), "axis_frcc", 0, mode);
+    check_mode((double)fs[0 * p.ns + mode * p.ns + 4 * p.mnmax * p.ns], fzcs,
+               tol_axis<T>(), "axis_fzcs", 0, mode);
     // Poloidal m>0 at the axis must stay zero (mode index >= ntor+1; the
     // (0,n) modes ARE computed at the axis).
     for (int m = p.ntor + 1; m < p.mnmax; ++m) {
-        checkMode((double)fs[0 + m * p.ns + 0 * p.mnmax * p.ns], 0.0,
-                  tolFwd<T>(), "axis_m>0", 0, m);
-        checkMode((double)fs[0 + m * p.ns + 4 * p.mnmax * p.ns], 0.0,
-                  tolFwd<T>(), "axis_m>0_z", 0, m);
+        check_mode((double)fs[0 + m * p.ns + 0 * p.mnmax * p.ns], 0.0,
+                   tol_fwd<T>(), "axis_m>0", 0, m);
+        check_mode((double)fs[0 + m * p.ns + 4 * p.mnmax * p.ns], 0.0,
+                   tol_fwd<T>(), "axis_m>0_z", 0, m);
     }
     cudaFree(d_fs);
     cudaFree(frcon_e);
@@ -749,7 +749,7 @@ static int t_fwd_lcfs(DeviceParams<T>& p,
        "get fs");
     std::vector<double> hcc, hss, hsc, hcs;
     std::vector<int> hxm, hxn;
-    hostBasis(p, hcc, hss, hsc, hcs, hxm, hxn);
+    host_basis(p, hcc, hss, hsc, hcs, hxm, hxn);
     int mode = 1 * (p.ntor + 1) + 1;  // (m,n)=(1,1)
     int nThetaRed = p.ntheta / 2 + 1;
     double intNorm = 1.0 / ((double)p.nzeta * (nThetaRed - 1));
@@ -772,15 +772,15 @@ static int t_fwd_lcfs(DeviceParams<T>& p,
     const double sq2 = sqrt(2.0);  // mscale=nscale=√2 for (1,1)
     flsc *= 2.0;
     flcs *= 2.0;
-    checkMode((double)fs[jB + mode * p.ns + 2 * p.mnmax * p.ns], flsc,
-              tolAxis<T>(), "lcfs_flsc", jB, mode);
-    checkMode((double)fs[jB + mode * p.ns + 5 * p.mnmax * p.ns], flcs,
-              tolAxis<T>(), "lcfs_flcs", jB, mode);
+    check_mode((double)fs[jB + mode * p.ns + 2 * p.mnmax * p.ns], flsc,
+               tol_axis<T>(), "lcfs_flsc", jB, mode);
+    check_mode((double)fs[jB + mode * p.ns + 5 * p.mnmax * p.ns], flcs,
+               tol_axis<T>(), "lcfs_flcs", jB, mode);
     // R/Z components at the LCFS stay zero.
     for (int c = 0; c < 6; ++c) {
         if (c == 2 || c == 5) continue;
-        checkMode((double)fs[jB + mode * p.ns + c * p.mnmax * p.ns], 0.0,
-                  tolFwd<T>(), "lcfs_rz", jB, mode);
+        check_mode((double)fs[jB + mode * p.ns + c * p.mnmax * p.ns], 0.0,
+                   tol_fwd<T>(), "lcfs_rz", jB, mode);
     }
     cudaFree(d_fs);
     cudaFree(frcon_e);
@@ -793,7 +793,7 @@ static int t_fwd_lcfs(DeviceParams<T>& p,
 
 // ---------------------------------------------------------------------------
 // Regression tests added 2026-08-17 for the code-review findings:
-//   1.1 forwardReduceKernel dropped reduced-theta points beyond lane 15
+//   1.1 forward_reduce_kernel dropped reduced-theta points beyond lane 15
 //       (fixed 16-lane block) -> t_fwd_theta32 below (nThetaRed = 17).
 //   1.2 mpol=2 made the de-alias plan batch 2*(mpol-2)*(ns-1) zero ->
 //       cufftPlanMany(batch=0) threw at construction -> t_mpol2_construct.
@@ -823,8 +823,8 @@ static int t_fwd_theta32() {
     p.ftol = T(1e-14);
     p.max_iter = 10;
     p.lamscale = T(1.0);
-    cumes::DeviceModeTable mt = cumes::modeTableCreate<T>(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create<T>(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::ToroidalFftOperator<T> op(p, rs, mt);
     size_t nbr = (size_t)p.ns * p.nZnT * sizeof(T);
     std::vector<T> fr(p.ns * p.nZnT, T(0));
@@ -890,15 +890,15 @@ static int t_fwd_theta32() {
     }
     double expect =
         2.0 * sumth * sumze;  // mscale*nscale = sqrt2*sqrt2 for (1,1)
-    checkMode((double)fs[1 + m11 * p.ns + 0 * p.mnmax * p.ns], expect,
-              tolFwd<T>(), "theta32_frcc", 1, m11);
+    check_mode((double)fs[1 + m11 * p.ns + 0 * p.mnmax * p.ns], expect,
+               tol_fwd<T>(), "theta32_frcc", 1, m11);
     cudaFree(d_fs);
     cudaFree(frcon_e);
     cudaFree(frcon_o);
     cudaFree(fzcon_e);
     cudaFree(fzcon_o);
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -923,8 +923,8 @@ static int t_mpol2_construct() {
     p.ftol = T(1e-14);
     p.max_iter = 10;
     p.lamscale = T(1.0);
-    cumes::DeviceModeTable mt = cumes::modeTableCreate<T>(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create<T>(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     bool threw = false, ok = true;
     try {
         cumes::ToroidalFftOperator<T> op(p, rs, mt);
@@ -973,8 +973,8 @@ static int t_mpol2_construct() {
         ++failures();
     else if (!ok)
         ++failures();
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
 }
@@ -1075,8 +1075,9 @@ static int t_enqueue_inverse_views(DeviceParams<T>& p,
        "get ax");
     for (int c = 0; c < 18; ++c)
         for (size_t i = 0; i < nn; ++i)
-            checkNear((double)ax[c * nn + i], (double)ref[c * nn + i],
-                      tolInv<T>(), nm[c], (int)(i / p.nZnT), (int)(i % p.nZnT));
+            check_near((double)ax[c * nn + i], (double)ref[c * nn + i],
+                       tol_inv<T>(), nm[c], (int)(i / p.nZnT),
+                       (int)(i % p.nZnT));
     cudaFree(d_ax);
     std::cout << (failures() == lf ? "PASS\n" : "FAIL\n");
     return failures() - lf;
@@ -1153,7 +1154,7 @@ static int t_enqueue_forward_views(DeviceParams<T>& p,
 
 // Run the whole suite for one scalar type T.
 template <typename T>
-static int runTests() {
+static int run_tests() {
     std::cout << format("--- {} precision ---\n",
                         sizeof(T) == sizeof(double) ? "double" : "float");
     DeviceParams<T> p;
@@ -1171,8 +1172,8 @@ static int runTests() {
     p.max_iter = 10;
     p.lamscale = T(1.0);
 
-    cumes::DeviceModeTable mt = cumes::modeTableCreate<T>(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create<T>(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::SpectralStorage<T> storage(p.ns, p.mnmax);
     cumes::ToroidalFftOperator<T> op(p, rs, mt);
 
@@ -1193,8 +1194,8 @@ static int runTests() {
     nf += t_enqueue_inverse_views(p, op, rs, storage);
     nf += t_enqueue_forward_views(p, op, rs);
 
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
 
     return nf;
 }
@@ -1202,8 +1203,8 @@ static int runTests() {
 int main() {
     std::cout << "=== Fourier Transform Tests (folded n>=0 basis) ===\n";
     int nf = 0;
-    nf += runTests<double>();
-    nf += runTests<float>();
+    nf += run_tests<double>();
+    nf += run_tests<float>();
     failures() = nf;
     std::cout << (failures() == 0 ? "ALL PASS\n"
                                   : format("{} FAILURES\n", failures()));

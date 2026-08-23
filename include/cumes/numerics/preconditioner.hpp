@@ -90,7 +90,7 @@ class Preconditioner {
     const T* brd() const { return d_brd_; }
     const T* bzd() const { return d_bzd_; }
     const T* cxd() const { return d_cxd_; }
-    const T* lambdaPrec() const { return d_lambdaPrec_; }
+    const T* lambda_prec() const { return d_lambdaPrec_; }
 
    private:
     T* d_ax_R_ = nullptr;

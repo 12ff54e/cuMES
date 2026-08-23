@@ -28,17 +28,17 @@ struct DeviceModeTable {
     DeviceModeTable() = default;
 
     // Raw owning pointers: an implicit copy would leave two tables holding
-    // the same allocations, and modeTableFree frees them unconditionally
+    // the same allocations, and mode_table_free frees them unconditionally
     // (unless arena_backed) — a guaranteed double-free. Copies are deleted;
-    // the modeTableCreate call sites use copy-init from a prvalue, which is
+    // the mode_table_create call sites use copy-init from a prvalue, which is
     // guaranteed copy elision in C++20, so they need no change.
     DeviceModeTable(const DeviceModeTable&) = delete;
     DeviceModeTable& operator=(const DeviceModeTable&) = delete;
 
-    // The move ctor exists so `return mt;` in modeTableCreate keeps working
+    // The move ctor exists so `return mt;` in mode_table_create keeps working
     // (a deleted copy ctor would otherwise suppress the implicit move). It
     // nulls the source, keeping a moved-from table inert and safe to pass
-    // to modeTableFree.
+    // to mode_table_free.
     DeviceModeTable(DeviceModeTable&& o) noexcept
         : d_xm(o.d_xm), d_xn(o.d_xn), arena_backed(o.arena_backed) {
         o.d_xm = nullptr;
@@ -60,14 +60,14 @@ struct DeviceModeTable {
 
 // Build + upload the folded-mode table (same values/layout the legacy
 // fourierCreate produced; now built by the transform module's
-// modeTableCreate). With `arena == nullptr` each array is its own
+// mode_table_create). With `arena == nullptr` each array is its own
 // cudaMalloc; with an arena they are aligned named subspans of the stage
 // allocation.
 template <typename T>
-DeviceModeTable modeTableCreate(const DeviceParams<T>& p,
-                                DeviceArena* arena = nullptr);
+DeviceModeTable mode_table_create(const DeviceParams<T>& p,
+                                  DeviceArena* arena = nullptr);
 
-inline void modeTableFree(DeviceModeTable& mt) {
+inline void mode_table_free(DeviceModeTable& mt) {
     if (!mt.arena_backed) {
         cudaFree(mt.d_xm);
         cudaFree(mt.d_xn);

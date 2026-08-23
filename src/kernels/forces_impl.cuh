@@ -24,12 +24,12 @@
 #include <cstdio>
 
 // ---- typed real-space view bundles over the workspace structs ------------
-// geometryParityViews is the shared inline definition in
+// geometry_parity_views is the shared inline definition in
 // cumes/state/real_fields.cuh (review finding 4.2 — was a byte-identical
 // mirror of kernels/geometry_impl.cuh's copy here); this TU keeps the
 // force-bundle variant.
 template <typename T>
-static cumes::ForceParityViews<T> forceParityViews(
+static cumes::ForceParityViews<T> force_parity_views(
     const cumes::RealSpaceStorage<T>& rs,
     const DeviceParams<T>& p) {
     auto f = [&](T* d) {
@@ -57,16 +57,16 @@ static cumes::ForceParityViews<T> forceParityViews(
 
 // One thread per (theta,zeta) point on one full-grid surface.
 template <typename T>
-__global__ void forcesKernel(cumes::GeometryParityViews<T> full,
-                             cumes::BaseGeometryHalfViews<T> base,
-                             cumes::MagneticFieldViews<T> field,
-                             cumes::RadialProfileViews<T> radial,
-                             cumes::ForceParityViews<T> force,
-                             const cumes::ControlStatus* __restrict__ status,
-                             T lamscale,
-                             int ns,
-                             int nZnT,
-                             T delta_s) {
+__global__ void forces_kernel(cumes::GeometryParityViews<T> full,
+                              cumes::BaseGeometryHalfViews<T> base,
+                              cumes::MagneticFieldViews<T> field,
+                              cumes::RadialProfileViews<T> radial,
+                              cumes::ForceParityViews<T> force,
+                              const cumes::ControlStatus* __restrict__ status,
+                              T lamscale,
+                              int ns,
+                              int nZnT,
+                              T delta_s) {
     // Status guard (completion plan step 1.4): no force buffers are written
     // on an invalid-Jacobian pass (the host gate restores before anything
     // consumes them).
@@ -337,9 +337,10 @@ void cumes::ForceOperator<T>::enqueue(
     cudaStream_t stream) const {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns);
-    forcesKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), base, field, rpv, forceParityViews(rs, p),
-        status, p.lamscale, p.ns, p.nZnT, T(1.0) / T(p.ns - 1));
+    forces_kernel<T><<<grid, block, 0, stream>>>(
+        geometry_parity_views(rs, p), base, field, rpv,
+        force_parity_views(rs, p), status, p.lamscale, p.ns, p.nZnT,
+        T(1.0) / T(p.ns - 1));
     cumes::check_cuda(cudaGetLastError(), "forces kernel");
 }
 

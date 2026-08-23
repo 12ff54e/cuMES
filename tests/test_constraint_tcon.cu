@@ -1,7 +1,7 @@
 // test_constraint_tcon.cu — non-unit tcon0 constraint-force scaling.
 //
 // The constraint force is linear in the tcon profile, and tcon is linear in
-// the parsed tcon0 multiplier (computeTconKernel: tcon[jF] = tcon_base *
+// the parsed tcon0 multiplier (compute_tcon_kernel: tcon[jF] = tcon_base *
 // tcon_multiplier * ..., with tcon_multiplier = tcon0 * (constant); the
 // de-alias coeff pack scales by tcon[jF]*faccon[m]; the add kernel adds
 // dr*gc to the forces). So running the operator at tcon0 = 0, 1, 2 and
@@ -30,13 +30,13 @@ using namespace cumes::test;
 // One constraint-compute pass at the given tcon0; returns the post-constraint
 // even force families (brmn_e, bzmn_e) and the tcon profile (host).
 template <typename T>
-static void runConstraint(T tcon0,
-                          double* out_brmn_e,
-                          double* out_bzmn_e,
-                          double* out_tcon,
-                          int ns,
-                          int mnmax,
-                          int nZnT) {
+static void run_constraint(T tcon0,
+                           double* out_brmn_e,
+                           double* out_bzmn_e,
+                           double* out_tcon,
+                           int ns,
+                           int mnmax,
+                           int nZnT) {
     DeviceParams<T> p;
     p.ns = ns;
     p.mnmax = mnmax;
@@ -70,8 +70,8 @@ static void runConstraint(T tcon0,
     cumes::ValidatedProblem vp = load_validated("inputs/solovev.json");
     cumes::Profiles<T> profiles(p, vp, nullptr);
     cumes::RadialProfileViews<T> rp = profiles.profile_views();
-    cumes::DeviceModeTable mt = cumes::modeTableCreate(p);
-    cumes::RealSpaceStorage<T> rs = realSpaceCreate(p);
+    cumes::DeviceModeTable mt = cumes::mode_table_create(p);
+    cumes::RealSpaceStorage<T> rs = real_space_create(p);
     cumes::GeometryOperator<T> geometry(p, nullptr);
     cumes::ToroidalFftOperator<T> transform(p, rs, mt, nullptr);
     cumes::Preconditioner<T> precon(p, nullptr);
@@ -113,24 +113,24 @@ static void runConstraint(T tcon0,
     for (int j = 0; j < p.ns; ++j) out_tcon[j] = (double)ht[j];
     delete[] ht;
 
-    realSpaceFree(rs);
-    cumes::modeTableFree(mt);
+    real_space_free(rs);
+    cumes::mode_table_free(mt);
 }
 
 template <typename T>
-static void testScaling() {
+static void test_scaling() {
     const int ns = 11, mnmax = 4, nZnT = 18;
     const size_t nF = (size_t)ns * nZnT;
     std::vector<double> f0e(nF), f1e(nF), f2e(nF);
     std::vector<double> f0z(nF), f1z(nF), f2z(nF);
     std::vector<double> t0(ns), t1(ns), t2(ns);
 
-    runConstraint<T>(T(0.0), f0e.data(), f0z.data(), t0.data(), ns, mnmax,
-                     nZnT);
-    runConstraint<T>(T(1.0), f1e.data(), f1z.data(), t1.data(), ns, mnmax,
-                     nZnT);
-    runConstraint<T>(T(2.0), f2e.data(), f2z.data(), t2.data(), ns, mnmax,
-                     nZnT);
+    run_constraint<T>(T(0.0), f0e.data(), f0z.data(), t0.data(), ns, mnmax,
+                      nZnT);
+    run_constraint<T>(T(1.0), f1e.data(), f1z.data(), t1.data(), ns, mnmax,
+                      nZnT);
+    run_constraint<T>(T(2.0), f2e.data(), f2z.data(), t2.data(), ns, mnmax,
+                      nZnT);
 
     // tcon is linear in tcon0: tcon(2) == 2*tcon(1), and nonzero somewhere.
     double tcon_max = 0.0, tcon_lin = 0.0;
@@ -163,6 +163,6 @@ static void testScaling() {
 
 int main() {
     std::cout << "=== Constraint tcon0 scaling ===\n";
-    testScaling<double>();
+    test_scaling<double>();
     return summary();
 }

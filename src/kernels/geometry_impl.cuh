@@ -40,7 +40,7 @@
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/state/real_fields.cuh"
 
-// The geometryParityViews factory (typed real-space view bundle over the
+// The geometry_parity_views factory (typed real-space view bundle over the
 // workspace structs) is the single shared inline definition in
 // cumes/state/real_fields.cuh (review finding 4.2 — was duplicated
 // byte-identically here and in kernels/forces_impl.cuh).
@@ -99,15 +99,15 @@ cumes::GeometryOperator<T>::~GeometryOperator() {
 // the staggered half-grid interpolation, the Jacobian (tau, √g), and the
 // covariant metric g_uu/g_uv/g_vv — NO 1/√g division and NO magnetic field.
 // The field (B^θ/B^ζ, B_θ/B_ζ, total pressure) is the separate
-// magneticFieldKernel below, ordered after this kernel (and, in the solver,
+// magnetic_field_kernel below, ordered after this kernel (and, in the solver,
 // after the Jacobian-status chain) on the same stream.
 template <typename T>
-__global__ void baseGeometryKernel(cumes::GeometryParityViews<T> full,
-                                   cumes::RadialProfileViews<T> radial,
-                                   cumes::BaseGeometryHalfViews<T> half,
-                                   int ns,
-                                   int nZnT,
-                                   T delta_s) {
+__global__ void base_geometry_kernel(cumes::GeometryParityViews<T> full,
+                                     cumes::RadialProfileViews<T> radial,
+                                     cumes::BaseGeometryHalfViews<T> half,
+                                     int ns,
+                                     int nZnT,
+                                     T delta_s) {
     // Full-grid geometry, even/odd parity (R/Z only — λ enters the field
     // kernel)
     const T* r_e = full.r_e.data();
@@ -241,9 +241,9 @@ __global__ void baseGeometryKernel(cumes::GeometryParityViews<T> full,
 // Φ' averages, then forms the contravariant B^θ/B^ζ with the 1/√g division and
 // (ncurr=0) the covariant B_θ/B_ζ + total pressure. For ncurr=1 the λ-only part
 // of bsupu/bsupv is produced here and the current-constraint solve happens in
-// ncurr1FinalizeKernel (it needs surface integrals of the λ-only field).
+// ncurr1_finalize_kernel (it needs surface integrals of the λ-only field).
 template <typename T>
-__global__ void magneticFieldKernel(
+__global__ void magnetic_field_kernel(
     cumes::GeometryParityViews<T> full,
     cumes::RadialProfileViews<T> radial,
     cumes::BaseGeometryHalfViews<T> half,
@@ -258,7 +258,7 @@ __global__ void magneticFieldKernel(
     // the finite-buffer backstop on VALID passes).
     if (status != nullptr && status->jacobian_valid == 0) return;
     // λ full-grid derivatives (the R/Z geometry is consumed by
-    // baseGeometryKernel)
+    // base_geometry_kernel)
     const T* lu_e = full.lu_e.data();
     const T* lu_o = full.lu_o.data();
     const T* lv_e = full.lv_e.data();
@@ -351,7 +351,7 @@ __global__ void magneticFieldKernel(
 // The surface sums are fold-invariant: cuMES's uniform full-grid weights
 // give the same ratios as vmecpp's reduced-grid trapezoid (wInt).
 template <typename T>
-__global__ void ncurr1FinalizeKernel(
+__global__ void ncurr1_finalize_kernel(
     const T* __restrict__ guu,
     const T* __restrict__ guv,
     const T* __restrict__ gsqrt,
@@ -459,7 +459,7 @@ __global__ void ncurr1FinalizeKernel(
 // assembles the totals, energies, volume and the fNormRZ/fNormL factors,
 // matching vmecpp ideal_mhd_model.cc computeForceNorms.
 template <typename T>
-__global__ void computeNormPartialsKernel(
+__global__ void compute_norm_partials_kernel(
     const T* __restrict__ gsqrt,
     const T* __restrict__ guu,
     const T* __restrict__ r12,
@@ -526,7 +526,7 @@ __global__ void computeNormPartialsKernel(
 // iotaF[ns-1] = 1.5*iotaH[ns-2] - 0.5*iotaH[ns-3]    (LCFS extrapolation)
 // chipF likewise (the axis chipF keeps its initial value, matching vmecpp).
 template <typename T>
-__global__ void updateIotaChipFKernel(
+__global__ void update_iota_chip_f_kernel(
     const T* __restrict__ iotaH,
     const T* __restrict__ chipH,
     const cumes::ControlStatus* __restrict__ status,
@@ -566,12 +566,12 @@ __global__ void updateIotaChipFKernel(
 // through the BAD_JACOBIAN restore path BEFORE the forces/constraint/
 // preconditioner kernels consume the geometry — so a collapsed surface can
 // never silently poison the iteration with infinities (see the inv_gsqrt
-// guards in geometryKernel/ncurr1FinalizeKernel).
+// guards in geometryKernel/ncurr1_finalize_kernel).
 // NOTE on the axis: √g -> 0 at the innermost half-grid is EXPECTED (the
 // magnetic axis is a coordinate singularity), so the solver's threshold must
-// be relative to the run's own scale (see solverRun), not an absolute zero.
+// be relative to the run's own scale (see solver_run), not an absolute zero.
 template <typename T>
-__global__ void jacobianStatsKernel(
+__global__ void jacobian_stats_kernel(
     const T* __restrict__ gsqrt,
     int nHalf,
     int stride,
@@ -672,8 +672,8 @@ void cumes::GeometryOperator<T>::enqueue(
     cudaStream_t stream) {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
-    baseGeometryKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), rpv, base_geometry_views(p), p.ns, p.nZnT,
+    base_geometry_kernel<T><<<grid, block, 0, stream>>>(
+        geometry_parity_views(rs, p), rpv, base_geometry_views(p), p.ns, p.nZnT,
         T(1.0) / T(p.ns - 1));
     cumes::check_cuda(cudaGetLastError(), "base geometry kernel");
 }
@@ -683,7 +683,7 @@ void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p,
                                                 cumes::ControlRecord* rec,
                                                 cudaStream_t stream) const {
     const int nHalf = (p.ns - 1) * p.nZnT;
-    jacobianStatsKernel<T>
+    jacobian_stats_kernel<T>
         <<<1, 256, 0, stream>>>(d_gsqrt_, nHalf, 1, T(p.SIGN_JACOBIAN), rec);
     cumes::check_cuda(cudaGetLastError(), "jacobianStats");
 }
@@ -696,7 +696,7 @@ void cumes::GeometryOperator<T>::force_norm_partials(
     cudaStream_t stream) const {
     dim3 block(256), grid(p.ns - 1);
     size_t shmem = 4 * block.x * sizeof(T);
-    computeNormPartialsKernel<T><<<grid, block, shmem, stream>>>(
+    compute_norm_partials_kernel<T><<<grid, block, shmem, stream>>>(
         d_gsqrt_, d_guu_, d_r12_, d_bsupu_, d_bsupv_, d_bsubu_, d_bsubv_,
         p.ntheta, p.nzeta, p.ns, dVdsH, psum);
     cumes::check_cuda(cudaGetLastError(), "norm partials");
@@ -753,15 +753,15 @@ void cumes::MagneticFieldOperator<T>::enqueue(
     bool update_iota_chi) const {
     dim3 block(128);
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
-    magneticFieldKernel<T><<<grid, block, 0, stream>>>(
-        geometryParityViews(rs, p), rpv, base, field, status, p.lamscale,
+    magnetic_field_kernel<T><<<grid, block, 0, stream>>>(
+        geometry_parity_views(rs, p), rpv, base, field, status, p.lamscale,
         p.ncurr, p.ns, p.nZnT);
     cumes::check_cuda(cudaGetLastError(), "magnetic field kernel");
 
     if (p.ncurr == 1) {
         dim3 fb(256), fg(p.ns - 1);
         size_t shmem = 2 * 256 * sizeof(T);
-        ncurr1FinalizeKernel<T><<<fg, fb, shmem, stream>>>(
+        ncurr1_finalize_kernel<T><<<fg, fb, shmem, stream>>>(
             base.guu.data(), base.guv.data(), base.gsqrt.data(),
             base.gvv.data(), field.bsupu.data(), field.bsupv.data(), rpv.curr_H,
             rpv.phip_H, rpv.pres_H, rpv.sqrtS_H, status, p.ns, p.nZnT, p.ntheta,
@@ -772,7 +772,7 @@ void cumes::MagneticFieldOperator<T>::enqueue(
 
     if (update_iota_chi) {
         dim3 ib(256), ig((p.ns + 255) / 256);
-        updateIotaChipFKernel<T><<<ig, ib, 0, stream>>>(
+        update_iota_chip_f_kernel<T><<<ig, ib, 0, stream>>>(
             rpv.iota_H, rpv.chip_H, status, p.ns, rpv.iota_F, rpv.chi_F);
         cumes::check_cuda(cudaGetLastError(), "iotaChipF kernel");
     }

@@ -5,7 +5,7 @@
 // derivatives, produces B^θ/B^ζ, B_θ/B_ζ and the total pressure on the half
 // grid with the 1/√g division. The ncurr=0 (fixed iota) and ncurr=1
 // (prescribed current) flows are separate policy paths; the legacy
-// geometryKernel/ncurr1FinalizeKernel are the reference implementation (the
+// geometryKernel/ncurr1_finalize_kernel are the reference implementation (the
 // field was fused into the base geometry kernel until Phase 11 step 5).
 //
 // (Migration step 13.3: it reads/writes the typed BaseGeometryHalfViews /
