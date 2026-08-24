@@ -89,11 +89,30 @@ function(cumes_apply_host_tuning target)
     $<$<COMPILE_LANGUAGE:CXX>:-march=native>)
 endfunction()
 
+# ---- free-boundary vacuum library (deps/vacuum-field) ----------------------
+# See docs/adr/0005-vacuum-field-submodule.md. Auto-disabled when the submodule
+# is not checked out (hosted CI builds without submodules); the module list
+# below picks the real free_boundary module or the stub accordingly.
+option(CUMES_USE_VACUUM_FIELD
+       "Build and link the free-boundary vacuum library (deps/vacuum-field)" ON)
+if(CUMES_USE_VACUUM_FIELD AND NOT EXISTS
+   ${CMAKE_CURRENT_SOURCE_DIR}/deps/vacuum-field/CMakeLists.txt)
+  message(WARNING "cuMES: deps/vacuum-field not checked out "
+                  "(run: git submodule update --init); "
+                  "vacuum-field support disabled")
+  set(CUMES_USE_VACUUM_FIELD OFF)
+endif()
+
 # ---- device modules --------------------------------------------------------
-# Eight templated operator modules, each split into a *_double.cu and a
+# The templated operator modules, each split into a *_double.cu and a
 # *_float.cu explicit-instantiation TU (one scalar type per TU). The CLI links
 # only the TU matching `Real`; the tests link both (they instantiate both).
 set(CUMES_CUDA_MODULES fourier geometry forces solver profiles precon constraint prolongation axisymmetric)
+if(CUMES_USE_VACUUM_FIELD)
+  list(APPEND CUMES_CUDA_MODULES free_boundary)
+else()
+  list(APPEND CUMES_CUDA_MODULES free_boundary_stub)
+endif()
 set(CUMES_CUDA_DOUBLE_SOURCES "")
 set(CUMES_CUDA_FLOAT_SOURCES "")
 foreach(mod IN LISTS CUMES_CUDA_MODULES)
@@ -206,24 +225,17 @@ if(CUMES_ENABLE_VERIFY_DUMP)
 endif()
 
 # ---- free-boundary vacuum library (deps/vacuum-field) ----------------------
-# Step 1 of the free-boundary work (see docs/adr/0005-vacuum-field-submodule.md):
-# the library is built and linked into the CLI (vfield::vfield) but not yet
-# wired into the solver — lfreeb stays a validation error. Auto-disabled when
-# the submodule is not checked out (hosted CI builds without submodules).
-option(CUMES_USE_VACUUM_FIELD
-       "Build and link the free-boundary vacuum library (deps/vacuum-field)" ON)
-if(CUMES_USE_VACUUM_FIELD AND NOT EXISTS
-   ${CMAKE_CURRENT_SOURCE_DIR}/deps/vacuum-field/CMakeLists.txt)
-  message(WARNING "cuMES: deps/vacuum-field not checked out "
-                  "(run: git submodule update --init); "
-                  "vacuum-field support disabled")
-  set(CUMES_USE_VACUUM_FIELD OFF)
-endif()
+# The library target vfield::vfield exists only when the submodule is present;
+# the free_boundary module TUs include its headers, so the operator libraries
+# link it (PUBLIC — tests linking both operator libraries get it transitively).
 if(CUMES_USE_VACUUM_FIELD)
-  # Propagate the scalar switch: the CLI links the matching instantiation.
+  # Propagate the scalar switch: each scalar library picks the matching
+  # instantiation.
   set(VFIELD_USE_FLOAT ${CUMES_USE_FLOAT} CACHE BOOL
       "vacuum-field scalar switch (propagated from CUMES_USE_FLOAT)" FORCE)
   add_subdirectory(deps/vacuum-field)
+  target_link_libraries(cumes_cuda_double PUBLIC vfield::vfield)
+  target_link_libraries(cumes_cuda_float PUBLIC vfield::vfield)
 endif()
 
 # ---- CLI executable --------------------------------------------------------
