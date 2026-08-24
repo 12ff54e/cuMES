@@ -92,14 +92,13 @@ inline void dump_force_norms(const double* hc,
 #endif
 #ifdef DUMP_CUMES_VERIFY
     if (dump_enabled()) {
-        double sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3],
+        double s_rz = hc[0], s_l = hc[1], s_mag = hc[2], e_therm = hc[3],
                vol = hc[4], h_rz = hc[5];
-        double deltaS = delta_s;
-        double eMag =
-            fabs(sMag) * deltaS;  // vmecpp: fabs(localMagneticEnergy)*deltaS
-        eTherm *= deltaS;
-        vol *= deltaS;
-        double energyDensity = std::max(eMag, eTherm) / vol;
+        double e_mag =
+            fabs(s_mag) * delta_s;  // vmecpp: fabs(localMagneticEnergy)*deltaS
+        e_therm *= delta_s;
+        vol *= delta_s;
+        double energy_density = std::max(e_mag, e_therm) / vol;
         // Same format as vmecpp's dump/vmecpp/force_norms_iter_<iter2>.txt
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/force_norms_iter_%d.txt", iter2);
@@ -116,8 +115,8 @@ inline void dump_force_norms(const double* hc,
                     "fNormRZ %.17e\n"
                     "fNormL %.17e\n"
                     "fNorm1 %.17e\n",
-                    (double)eMag, (double)eTherm, (double)vol,
-                    (double)energyDensity, (double)sRZ, (double)sL,
+                    (double)e_mag, (double)e_therm, (double)vol,
+                    (double)energy_density, (double)s_rz, (double)s_l,
                     (double)h_rz, (double)f_norm_rz, (double)f_norm_l,
                     (double)f_norm1);
             fclose(fp2);
@@ -167,9 +166,9 @@ void dump_iter0_loop_diag(int iter,
     check_cuda(cudaMemcpy(h_test, rs.d_r_e, p.nZnT * p.ns * sizeof(T),
                           cudaMemcpyDeviceToHost),
                "loop test");
-    int jB = p.ns - 1;
+    int j_b = p.ns - 1;
     printf("  [loop diag] LCFS theta=0: r_e=%.4f (expect ~3.93)\n",
-           (double)h_test[0 + jB * p.nZnT]);
+           (double)h_test[0 + j_b * p.nZnT]);
     delete[] h_test;
 }
 
@@ -330,20 +329,20 @@ void dump_step_precon(int iter,
 
     // jMin per mode (stored as int, convert to double for dump)
     {
-        int* h_jMin = new int[p.mnmax];
-        cudaMemcpy(h_jMin, precon.jmin(), p.mnmax * sizeof(int),
+        int* h_jmin = new int[p.mnmax];
+        cudaMemcpy(h_jmin, precon.jmin(), p.mnmax * sizeof(int),
                    cudaMemcpyDeviceToHost);
-        double* h_jMin_dbl = new double[p.mnmax];
-        for (int i = 0; i < p.mnmax; ++i) h_jMin_dbl[i] = (double)h_jMin[i];
-        FILE* fj = fopen("dump/cuMES/precon_jMin_iter_1.bin", "wb");
+        double* h_jmin_dbl = new double[p.mnmax];
+        for (int i = 0; i < p.mnmax; ++i) h_jmin_dbl[i] = (double)h_jmin[i];
+        FILE* fj = fopen("dump/cuMES/precon_jmin_iter_1.bin", "wb");
         if (fj) {
             uint64_t n = p.mnmax;
             fwrite(&n, sizeof(uint64_t), 1, fj);
-            fwrite(h_jMin_dbl, sizeof(double), p.mnmax, fj);
+            fwrite(h_jmin_dbl, sizeof(double), p.mnmax, fj);
             fclose(fj);
         }
-        delete[] h_jMin;
-        delete[] h_jMin_dbl;
+        delete[] h_jmin;
+        delete[] h_jmin_dbl;
     }
 
     // Intermediate arrays
@@ -674,9 +673,9 @@ void dump_inverse_diag(ToroidalFftOperator<T>& transform,
                "diag ro");
     // Check surface j=ns-1 (LCFS): r_e should be rbc[0]*cos(0)=3.999, r_o
     // should be sum of odd m
-    int jB = p.ns - 1;
-    double re_lcfs = h_re[0 + jB * p.nZnT];  // theta=0
-    double ro_lcfs = h_ro[0 + jB * p.nZnT];
+    int j_b = p.ns - 1;
+    double re_lcfs = h_re[0 + j_b * p.nZnT];  // theta=0
+    double ro_lcfs = h_ro[0 + j_b * p.nZnT];
     printf(
         "  [diag] LCFS theta=0: r_e=%.4f r_o=%.4f r_total=%.4f (expect "
         "~3.93 + ~1.03 = ~4.96)\n",

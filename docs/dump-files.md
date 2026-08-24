@@ -48,7 +48,7 @@ nelem × sizeof(T) elements     (device-major layout: point + surface*nZnT
                                for real space, surface + mode*ns for spectral)
 ```
 
-**B. Host scalar/row arrays** (`precon_jMin_iter_1.bin`,
+**B. Host scalar/row arrays** (`precon_jmin_iter_1.bin`,
 `precon_sizes_iter_1.bin` — written by `dump_step_precon` directly):
 
 ```
@@ -82,7 +82,7 @@ Every windowed file is named
   the old vmecpp step letters (A–I, GC, `step_0`, `step_half`, `step_precon`,
   `step_final`).
 - `<array>` — the buffer's established identifier (`rmncc`, `lu_e`, `bsupu`,
-  `jMin`, …), unchanged.
+  `jmin`, …), unchanged.
 - `<tag>` — `1` for the first pass, and the effective iteration (`iter2`)
   afterwards, mirroring vmecpp's 1-based dump naming. Per-stage one-shots
   (`init_*`, `final_fspec.bin`) carry no tag.
@@ -154,12 +154,12 @@ transform with `do_combine=false`).
 
 ### 4.5 precon (iter 0, on the preconditioner refresh pass)
 
-`dump_step_precon`. Layout A except `jMin`/`sizes` (layout B).
+`dump_step_precon`. Layout A except `jmin`/`sizes` (layout B).
 
 | File | Contents |
 | --- | --- |
 | `precon_ar_iter_1.bin`, `precon_dr_iter_1.bin`, `precon_br_iter_1.bin`, `precon_az_iter_1.bin`, `precon_dz_iter_1.bin`, `precon_bz_iter_1.bin` | tridiagonal elements, mode-major (`n_spec`) |
-| `precon_jMin_iter_1.bin` | the per-mode jMin as doubles (`mnmax`) |
+| `precon_jmin_iter_1.bin` | the per-mode jMin as doubles (`mnmax`) |
 | `precon_arm_iter_1.bin`, `precon_ard_iter_1.bin`, `precon_brm_iter_1.bin`, `precon_brd_iter_1.bin`, `precon_azm_iter_1.bin`, `precon_azd_iter_1.bin`, `precon_bzm_iter_1.bin`, `precon_bzd_iter_1.bin` | odd/even-diagonal intermediates |
 | `precon_cxd_iter_1.bin` | λ-channel diagonal (`ns`) |
 | `precon_sizes_iter_1.bin` | `{ns, ns-1, mpol, 1.0}` (layout B) |
