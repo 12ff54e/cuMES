@@ -29,22 +29,23 @@ namespace cumes {
 namespace {
 
 const std::set<std::string> kSupportedKeys = {
-    "mpol",       "ntor",      "nfp",         "ntheta",     "nzeta",
-    "ncurr",      "delt",      "phiedge",     "pres_scale", "adiabatic_index",
-    "gamma",      "spres_ped", "curtor",      "bloat",      "tcon0",
-    "am",         "ac",        "ai",          "aphi",       "raxis_c",
-    "zaxis_s",    "ns_array",  "niter_array", "ftol_array", "rbc",
-    "zbs",        "lasym",     "lfreeb",      "pmass_type", "piota_type",
-    "pcurr_type", "am_aux_s",  "am_aux_f",    "ai_aux_s",   "ai_aux_f",
-    "ac_aux_s",   "ac_aux_f",  "raxis_s",     "zaxis_c",    "rbs",
-    "zbc",
+    "mpol",       "ntor",       "nfp",         "ntheta",     "nzeta",
+    "ncurr",      "delt",       "phiedge",     "pres_scale", "adiabatic_index",
+    "gamma",      "spres_ped",  "curtor",      "bloat",      "tcon0",
+    "am",         "ac",         "ai",          "aphi",       "raxis_c",
+    "zaxis_s",    "ns_array",   "niter_array", "ftol_array", "rbc",
+    "zbs",        "lasym",      "lfreeb",      "pmass_type", "piota_type",
+    "pcurr_type", "am_aux_s",   "am_aux_f",    "ai_aux_s",   "ai_aux_f",
+    "ac_aux_s",   "ac_aux_f",   "raxis_s",     "zaxis_c",    "rbs",
+    "zbc",        "mgrid_file", "extcur",      "nvacskip",
 };
 const std::set<std::string> kKnownIgnoredKeys = {
-    "nstep",   "niter",      "ftolv",      "nsurf",     "tsw",     "tpot",
-    "tvac",    "nvacskip",   "mgrid_file", "extcur",    "lforbal", "lmorebdy",
-    "lrecon",  "lmove_axis", "lthreed",    "lpoloidal", "nthreed", "npoloidal",
-    "nlambda", "lspectral",  "lcheck",     "lpsplot",   "lwout",   "lmask",
-    "nedge",   "nskip",
+    "nstep",     "niter",   "ftolv",      "nsurf",
+    "tsw",       "tpot",    "tvac",       "lforbal",
+    "lmorebdy",  "lrecon",  "lmove_axis", "lthreed",
+    "lpoloidal", "nthreed", "npoloidal",  "nlambda",
+    "lspectral", "lcheck",  "lpsplot",    "lwout",
+    "lmask",     "nedge",   "nskip",      "free_boundary_method",
 };
 
 // Typed getters: on a type/range error record the finding and return the
@@ -279,6 +280,22 @@ ParsedProblem read_problem_spec(const std::string& path,
         p.physical.tcon0 = getDouble(v, k, p.physical.tcon0, report);
     });
 
+    // ---- free boundary ----
+    ifPresent("lfreeb", [&](const json::Value& v, const char* k) {
+        p.free_boundary.lfreeb = getBool(v, k, p.free_boundary.lfreeb, report);
+    });
+    ifPresent("mgrid_file", [&](const json::Value& v, const char* k) {
+        p.free_boundary.mgrid_file =
+            getString(v, k, p.free_boundary.mgrid_file, report);
+    });
+    ifPresent("extcur", [&](const json::Value& v, const char* k) {
+        p.free_boundary.extcur = readDoubleArray(v, k, report);
+    });
+    ifPresent("nvacskip", [&](const json::Value& v, const char* k) {
+        p.free_boundary.nvacskip =
+            getInt(v, k, p.free_boundary.nvacskip, report);
+    });
+
     // ---- profile coefficients (power series) ----
     ifPresent("am", [&](const json::Value& v, const char* k) {
         p.mass.coefficients = readDoubleArray(v, k, report);
@@ -361,12 +378,6 @@ ParsedProblem read_problem_spec(const std::string& path,
         report.error(
             "lasym",
             "lasym=true: asymmetric equilibria are not supported by cuMES");
-    }
-    if (root.contains("lfreeb") &&
-        getBool(root.at("lfreeb"), "lfreeb", false, report)) {
-        report.error("lfreeb",
-                     "lfreeb=true: free-boundary runs are not supported by "
-                     "cuMES (fixed boundary only)");
     }
     const char* kProfileTypes[] = {"pmass_type", "piota_type", "pcurr_type"};
     for (const char* t : kProfileTypes) {

@@ -71,7 +71,7 @@ struct TinyBundle {
         spec.angular.ntheta = p.ntheta;
         spec.angular.nzeta = p.nzeta;
         spec.mass.coefficients = {1.0};
-        spec.toroidal_flux.coefficients = {1.0};
+        spec.toroidal_flux.coefficients.assign(1, 1.0);
         spec.rbc = {{1, 0, 1.0}};
         spec.zbs = {{1, 0, 0.5}};
         spec.stages = {{static_cast<std::size_t>(p.ns),

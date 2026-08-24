@@ -118,8 +118,8 @@ static cumes::ValidatedProblem solovevInput() {
     spec.current_model = cumes::CurrentModel::kFixedIota;
     spec.delt = 0.9;
     spec.mass.coefficients = {0.125, -0.125};
-    spec.iota.coefficients = {1.0};
-    spec.toroidal_flux.coefficients = {1.0};
+    spec.iota.coefficients.assign(1, 1.0);
+    spec.toroidal_flux.coefficients.assign(1, 1.0);
     spec.rbc = {{1, 0, 1.0}};
     spec.zbs = {{1, 0, 0.5}};
     spec.stages = {{11, 1000, 1e-16}};

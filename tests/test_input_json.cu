@@ -323,7 +323,8 @@ static void testNegative() {
             !findError(vr, "asymmetric (lasym) input is not supported").empty(),
         "neg: rbs content rejected");
 
-    // Unsupported physics keys: lasym, lfreeb, non-power_series profiles.
+    // Unsupported physics keys: lasym, non-power_series profiles. lfreeb is
+    // now SUPPORTED, but requires mgrid_file/extcur.
     writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
@@ -336,8 +337,34 @@ static void testNegative() {
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = cumes::read_and_validate(scratchPath(), opts);
-    check(!vr.has_value() && !findError(vr, "free-boundary").empty(),
-          "neg: lfreeb=true rejected");
+    check(!vr.has_value() &&
+              !findError(vr, "lfreeb=true requires an mgrid_file").empty(),
+          "neg: lfreeb=true without mgrid_file rejected");
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
+        " \"mgrid_file\": \"mgrid.nc\","
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    check(!vr.has_value() &&
+              !findError(vr, "lfreeb=true requires a non-empty extcur").empty(),
+          "neg: lfreeb=true without extcur rejected");
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"nvacskip\": 0,"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    check(!vr.has_value() && !findError(vr, "nvacskip needs to be > 0").empty(),
+          "neg: nvacskip=0 rejected");
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
+        " \"mgrid_file\": \"mgrid.nc\", \"extcur\": [1.0],"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    check(vr.has_value() && vr.value().spec().free_boundary.lfreeb &&
+              vr.value().spec().free_boundary.extcur.size() == 1,
+          "pos: valid lfreeb input accepted");
     writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
         " \"pmass_type\": \"spline\","

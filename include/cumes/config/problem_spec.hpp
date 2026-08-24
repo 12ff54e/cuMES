@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace cumes {
@@ -56,6 +57,15 @@ struct StageRequest {
     double tolerance = 0.0;  // ftol
 };
 
+// Free-boundary run parameters (vmecpp indata keys lfreeb / mgrid_file /
+// extcur / nvacskip). Parsed for every input; only exercised when lfreeb.
+struct FreeBoundarySpec {
+    bool lfreeb = false;
+    std::string mgrid_file;      // MAKEGRID-format coil field
+    std::vector<double> extcur;  // coil currents (A)
+    int nvacskip = 1;            // vacuum full-update cadence (>= 1)
+};
+
 struct ProblemSpec {
     int mpol = 6;
     int ntor = 0;
@@ -82,6 +92,7 @@ struct ProblemSpec {
     std::vector<StageRequest> stages;  // default: a single {11, 1000, 1e-16}
 
     PhysicalScalars physical;
+    FreeBoundarySpec free_boundary;
 };
 
 // The legacy fixed-capacity defaults are reproduced here as the default single

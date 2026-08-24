@@ -62,6 +62,41 @@ void emit_double_array(std::ostringstream& os, const std::vector<double>& v) {
     os << ']';
 }
 
+// Minimal JSON string escape (quote, backslash, control chars).
+std::string json_escape_string(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) {
+        switch (c) {
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x",
+                                  static_cast<unsigned char>(c));
+                    out += buf;
+                } else {
+                    out += c;
+                }
+        }
+    }
+    return out;
+}
+
 // Sorted copy of a boundary harmonic list (deterministic by (m, n) ascending).
 std::vector<BoundaryHarmonic> sorted_harmonics(
     const std::vector<BoundaryHarmonic>& in) {
@@ -162,6 +197,26 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         report.error("adiabatic_index",
                      "adiabatic_index (gamma) must be 0: the gamma != 0 model "
                      "(pres = mass/dVds^gamma) is not implemented by cuMES");
+    }
+
+    // ---- free boundary (parsed for every input; only exercised when lfreeb)
+    // ----
+    if (spec.free_boundary.nvacskip < 1) {
+        report.error("nvacskip",
+                     "input variable nvacskip needs to be > 0 (vacuum "
+                     "full-update cadence)");
+    }
+    if (spec.free_boundary.lfreeb) {
+        if (spec.free_boundary.mgrid_file.empty()) {
+            report.error("mgrid_file",
+                         "lfreeb=true requires an mgrid_file (MAKEGRID coil "
+                         "field); the fixed-field path is not exposed");
+        }
+        if (spec.free_boundary.extcur.empty()) {
+            report.error("extcur",
+                         "lfreeb=true requires a non-empty extcur (coil "
+                         "currents in A)");
+        }
     }
 
     // ---- axis: a provided axis vector must match ntor+1 (an absent key is
@@ -310,6 +365,12 @@ std::string ValidatedProblem::normalize_to_json() const {
        << ",\"bloat\":" << json_number(s.physical.bloat)
        << ",\"curtor\":" << json_number(s.physical.curtor)
        << ",\"tcon0\":" << json_number(s.physical.tcon0) << "},\n";
+    os << "  \"free_boundary\":{\"lfreeb\":"
+       << (s.free_boundary.lfreeb ? "true" : "false")
+       << ",\"nvacskip\":" << s.free_boundary.nvacskip << ",\"mgrid_file\":\""
+       << json_escape_string(s.free_boundary.mgrid_file) << "\",\"extcur\":";
+    emit_double_array(os, s.free_boundary.extcur);
+    os << "},\n";
     os << "  \"profiles\":{\"am\":";
     emit_double_array(os, s.mass.coefficients);
     os << ",\"ac\":";

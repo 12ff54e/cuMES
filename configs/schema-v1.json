@@ -15,6 +15,7 @@
     "ncurr",
     "delt",
     "physical",
+    "free_boundary",
     "profiles",
     "axis",
     "stages",
@@ -89,6 +90,34 @@
         },
         "tcon0": {
           "type": "number"
+        }
+      }
+    },
+    "free_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lfreeb",
+        "nvacskip",
+        "mgrid_file",
+        "extcur"
+      ],
+      "properties": {
+        "lfreeb": {
+          "type": "boolean"
+        },
+        "nvacskip": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mgrid_file": {
+          "type": "string"
+        },
+        "extcur": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
         }
       }
     },
