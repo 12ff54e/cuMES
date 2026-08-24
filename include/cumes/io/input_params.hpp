@@ -46,6 +46,10 @@ struct InputParams {
     double bloat = 0.0;
     double curtor = 0.0;
     double tcon0 = 0.0;
+    bool lfreeb = false;          // free-boundary run
+    int nvacskip = 1;             // vacuum full-update cadence
+    std::string mgrid_file;       // MAKEGRID coil field path
+    std::vector<double> extcur;   // coil currents (A)
     std::vector<double> am;       // mass/pressure power series
     std::vector<double> ac;       // prescribed current power series
     std::vector<double> ai;       // prescribed iota power series
@@ -76,10 +80,12 @@ inline bool operator==(const InputParams& a, const InputParams& b) {
            a.pres_scale == b.pres_scale &&
            a.adiabatic_index == b.adiabatic_index &&
            a.spres_ped == b.spres_ped && a.bloat == b.bloat &&
-           a.curtor == b.curtor && a.tcon0 == b.tcon0 && a.am == b.am &&
-           a.ac == b.ac && a.ai == b.ai && a.aphi == b.aphi &&
-           a.raxis_c == b.raxis_c && a.zaxis_s == b.zaxis_s &&
-           a.stages == b.stages && a.rbc_m == b.rbc_m && a.rbc_n == b.rbc_n &&
+           a.curtor == b.curtor && a.tcon0 == b.tcon0 && a.lfreeb == b.lfreeb &&
+           a.nvacskip == b.nvacskip && a.mgrid_file == b.mgrid_file &&
+           a.extcur == b.extcur && a.am == b.am && a.ac == b.ac &&
+           a.ai == b.ai && a.aphi == b.aphi && a.raxis_c == b.raxis_c &&
+           a.zaxis_s == b.zaxis_s && a.stages == b.stages &&
+           a.rbc_m == b.rbc_m && a.rbc_n == b.rbc_n &&
            a.rbc_value == b.rbc_value && a.zbs_m == b.zbs_m &&
            a.zbs_n == b.zbs_n && a.zbs_value == b.zbs_value &&
            a.rbcc == b.rbcc && a.rbss == b.rbss && a.zbsc == b.zbsc &&
@@ -106,6 +112,10 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
     p.bloat = sp.physical.bloat;
     p.curtor = sp.physical.curtor;
     p.tcon0 = sp.physical.tcon0;
+    p.lfreeb = sp.free_boundary.lfreeb;
+    p.nvacskip = sp.free_boundary.nvacskip;
+    p.mgrid_file = sp.free_boundary.mgrid_file;
+    p.extcur = sp.free_boundary.extcur;
     p.am = sp.mass.coefficients;
     p.ac = sp.current.coefficients;
     p.ai = sp.iota.coefficients;

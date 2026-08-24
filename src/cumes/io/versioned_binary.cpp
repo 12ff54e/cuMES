@@ -1,9 +1,9 @@
 // versioned_binary.cpp — the schema v1 binary state container (blueprint
 // §6.13) and the host-library binary factories.
 //
-// Layout (little-endian), version 3 (the current on-disk version):
+// Layout (little-endian), version 4 (the current on-disk version):
 //   magic     8 bytes  "CUMES001"
-//   version   int32    = 3
+//   version   int32    = 4
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major (the state payload)
@@ -19,7 +19,9 @@
 //   stages    per stage: ns(i32), iterations(i32), converged(u8),
 //             fsqr(f64), fsqz(f64), fsql(f64), nrestarts(i32), restarts(i32...)
 //   params    the embedded normalized-input record (io_common.hpp
-//             writeInputParams), the LAST trailer element; version 3 only
+//             writeInputParams), the LAST trailer element; version 3+; the
+//             v4 record appends the free-boundary extension (lfreeb,
+//             nvacskip, mgrid_file, extcur)
 //
 // All strings are int32-length-prefixed. The scalar_type string is NOT
 // serialized: the reader reconstructs it from the precision tag.
@@ -27,7 +29,8 @@
 // Version 1 (historical, still readable): the trailer instead carried a
 // scalar_type string between build_type and source_path (the v1 reader
 // consumes and discards it). Versions 1 and 2 carry no input record; the
-// reader reports a default-empty InputParams for them.
+// reader reports a default-empty InputParams for them. Version 3 records
+// lack the free-boundary extension (those fields default empty).
 //
 // The state payload is read and validated independently of the provenance
 // trailer, so a reader stays forward-compatible with later v1.x trailers.
@@ -47,8 +50,10 @@ constexpr char kMagic[9] = "CUMES001";
 // v2 adds the precision-policy provenance fields to the trailer (completion
 // plan step 3.1); v1 files are still read (the fields default empty). v3
 // appends the embedded normalized-input record as the last trailer element;
-// v1/v2 files are still read (the record defaults empty).
-constexpr std::int32_t kVersion = 3;
+// v1/v2 files are still read (the record defaults empty). v4 appends the
+// free-boundary extension to that record; v3 files are still read (the
+// extension fields default empty).
+constexpr std::int32_t kVersion = 4;
 constexpr std::int32_t kMinReadVersion = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
@@ -247,12 +252,13 @@ class VersionedBinaryReader final : public Reader {
                 }
                 report->stages.push_back(std::move(st));
             }
-            // The embedded normalized-input record: required for version 3,
-            // absent (default-empty) for versions 1 and 2.
+            // The embedded normalized-input record: required for version 3+,
+            // absent (default-empty) for versions 1 and 2. Version 3 records
+            // predate the free-boundary extension.
             if (has_input_params) {
                 std::string reason;
                 if (!io_detail::readInputParams(fp, report->input_params,
-                                                reason)) {
+                                                reason, version)) {
                     return fail("versioned binary: " + reason);
                 }
             }

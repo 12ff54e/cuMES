@@ -101,10 +101,16 @@ class NetcdfV1Writer final : public Writer {
         // in use). The reader treats an absent array variable as an empty
         // vector.
         int dim_nam = -1, dim_nac = -1, dim_nai = -1, dim_naphi = -1,
-            dim_nraxis = -1, dim_nzaxis = -1, dim_nstages_in = -1;
+            dim_nraxis = -1, dim_nzaxis = -1, dim_nstages_in = -1,
+            dim_nextcur = -1;
         if (!ip.am.empty()) {
             NC_CHECK(nc_def_dim(ncid, "n_am", ip.am.size(), &dim_nam),
                      "def n_am");
+        }
+        if (!ip.extcur.empty()) {
+            NC_CHECK(
+                nc_def_dim(ncid, "n_extcur", ip.extcur.size(), &dim_nextcur),
+                "def n_extcur");
         }
         if (!ip.ac.empty()) {
             NC_CHECK(nc_def_dim(ncid, "n_ac", ip.ac.size(), &dim_nac),
@@ -249,9 +255,14 @@ class NetcdfV1Writer final : public Writer {
                  "def curtor");
         NC_CHECK(nc_def_var(ncid, "tcon0", NC_DOUBLE, 0, nullptr, &v_tcon0),
                  "def tcon0");
+        int v_lfreeb, v_nvacskip;
+        NC_CHECK(nc_def_var(ncid, "lfreeb", NC_INT, 0, nullptr, &v_lfreeb),
+                 "def lfreeb");
+        NC_CHECK(nc_def_var(ncid, "nvacskip", NC_INT, 0, nullptr, &v_nvacskip),
+                 "def nvacskip");
         int v_am = -1, v_ac = -1, v_ai = -1, v_aphi = -1, v_raxis = -1,
             v_zaxis = -1, v_stg_in_ns = -1, v_stg_max_iter = -1,
-            v_stg_ftol = -1;
+            v_stg_ftol = -1, v_extcur = -1;
         if (!ip.am.empty()) {
             NC_CHECK(nc_def_var(ncid, "am", NC_DOUBLE, 1, &dim_nam, &v_am),
                      "def am");
@@ -278,6 +289,11 @@ class NetcdfV1Writer final : public Writer {
             NC_CHECK(nc_def_var(ncid, "zaxis_s", NC_DOUBLE, 1, &dim_nzaxis,
                                 &v_zaxis),
                      "def zaxis_s");
+        }
+        if (!ip.extcur.empty()) {
+            NC_CHECK(nc_def_var(ncid, "extcur", NC_DOUBLE, 1, &dim_nextcur,
+                                &v_extcur),
+                     "def extcur");
         }
         if (!ip.stages.empty()) {
             NC_CHECK(nc_def_var(ncid, "stage_in_ns", NC_INT, 1, &dim_nstages_in,
@@ -315,6 +331,10 @@ class NetcdfV1Writer final : public Writer {
                      ? NC_NOERR
                      : NC_EATTMETA,
                  "attr compile_flags");
+        NC_CHECK(putStrAttr(ncid, "mgrid_file", ip.mgrid_file) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr mgrid_file");
         NC_CHECK(
             putStrAttr(ncid, "source_path", report.input.source_path) == true
                 ? NC_NOERR
@@ -396,6 +416,16 @@ class NetcdfV1Writer final : public Writer {
         NC_CHECK(nc_put_var_double(ncid, v_bloat, &ip.bloat), "put bloat");
         NC_CHECK(nc_put_var_double(ncid, v_curtor, &ip.curtor), "put curtor");
         NC_CHECK(nc_put_var_double(ncid, v_tcon0, &ip.tcon0), "put tcon0");
+        {
+            int lfreeb_i = ip.lfreeb ? 1 : 0;
+            NC_CHECK(nc_put_var_int(ncid, v_lfreeb, &lfreeb_i), "put lfreeb");
+        }
+        NC_CHECK(nc_put_var_int(ncid, v_nvacskip, &ip.nvacskip),
+                 "put nvacskip");
+        if (!ip.extcur.empty()) {
+            NC_CHECK(nc_put_var_double(ncid, v_extcur, ip.extcur.data()),
+                     "put extcur");
+        }
         if (!ip.am.empty()) {
             NC_CHECK(nc_put_var_double(ncid, v_am, ip.am.data()), "put am");
         }
@@ -887,6 +917,29 @@ class NetcdfV1Reader final : public Reader {
                             !readScalarDouble("tcon0", ip.tcon0)) {
                             return fail("malformed embedded input record");
                         }
+                        // Free-boundary extension: OPTIONAL (containers
+                        // written before the extension lack the fields; they
+                        // default). A PRESENT variable must pass the strict
+                        // read.
+                        {
+                            int vid = -1;
+                            if (nc_inq_varid(ncid, "lfreeb", &vid) ==
+                                NC_NOERR) {
+                                int lfreeb_i = 0;
+                                if (!readScalarInt("lfreeb", lfreeb_i)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                                ip.lfreeb = (lfreeb_i != 0);
+                            }
+                            if (nc_inq_varid(ncid, "nvacskip", &vid) ==
+                                NC_NOERR) {
+                                if (!readScalarInt("nvacskip", ip.nvacskip)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                            }
+                        }
                         // Arrays: an ABSENT variable means an empty vector (the
                         // writer omits empty arrays to avoid 0-length dims); a
                         // present one must pass the strict read.
@@ -911,9 +964,14 @@ class NetcdfV1Reader final : public Reader {
                                 !readOptional("n_raxis", "raxis_c",
                                               ip.raxis_c) ||
                                 !readOptional("n_zaxis", "zaxis_s",
-                                              ip.zaxis_s)) {
+                                              ip.zaxis_s) ||
+                                !readOptional("n_extcur", "extcur",
+                                              ip.extcur)) {
                                 return fail("malformed embedded input record");
                             }
+                            // mgrid_file is a global attribute; absent stays
+                            // empty (pre-extension containers).
+                            getStr("mgrid_file", ip.mgrid_file);
                         }
                         // The input stage arrays are optional as a whole (the
                         // writer omits them for an empty stage list).

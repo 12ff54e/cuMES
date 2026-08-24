@@ -220,11 +220,19 @@ inline bool writeInputParams(FILE* fp, const InputParams& p) {
          write_f64_vec(fp, p.rbc_value) && write_i32_vec(fp, p.zbs_m) &&
          write_i32_vec(fp, p.zbs_n) && write_f64_vec(fp, p.zbs_value) &&
          write_f64_vec(fp, p.rbcc) && write_f64_vec(fp, p.rbss) &&
-         write_f64_vec(fp, p.zbsc) && write_f64_vec(fp, p.zbcs);
+         write_f64_vec(fp, p.zbsc) && write_f64_vec(fp, p.zbcs) &&
+         // Free-boundary record extension (container version 4).
+         write_i32(fp, p.lfreeb ? 1 : 0) && write_i32(fp, p.nvacskip) &&
+         write_string(fp, p.mgrid_file) && write_f64_vec(fp, p.extcur);
     return ok;
 }
 
-inline bool readInputParams(FILE* fp, InputParams& p, std::string& reason) {
+// `record_version` is the container version that embeds the record: versions
+// < 4 predate the free-boundary extension and leave those fields defaulted.
+inline bool readInputParams(FILE* fp,
+                            InputParams& p,
+                            std::string& reason,
+                            std::int32_t record_version = 4) {
     std::int32_t nstages = 0;
     if (!read_i32(fp, p.mpol) || !read_i32(fp, p.ntor) ||
         !read_i32(fp, p.nfp) || !read_i32(fp, p.ntheta) ||
@@ -281,6 +289,16 @@ inline bool readInputParams(FILE* fp, InputParams& p, std::string& reason) {
         p.rbcc.size() != p.zbcs.size()) {
         reason = "boundary vector lengths disagree";
         return false;
+    }
+    if (record_version >= 4) {
+        std::int32_t lfreeb = 0;
+        if (!read_i32(fp, lfreeb) || !read_i32(fp, p.nvacskip) ||
+            !read_string(fp, p.mgrid_file) ||
+            !read_f64_vec(fp, p.extcur, reason)) {
+            if (reason.empty()) reason = "truncated input record";
+            return false;
+        }
+        p.lfreeb = (lfreeb != 0);
     }
     return true;
 }

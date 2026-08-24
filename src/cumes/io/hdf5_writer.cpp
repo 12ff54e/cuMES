@@ -262,6 +262,15 @@ class Hdf5V1Writer final : public Writer {
                  "attr curtor");
         H5_CHECK(putAttr(fid, "tcon0", H5T_NATIVE_DOUBLE, &ip.tcon0),
                  "attr tcon0");
+        {
+            int lfreeb_i = ip.lfreeb ? 1 : 0;
+            H5_CHECK(putAttr(fid, "lfreeb", H5T_NATIVE_INT, &lfreeb_i),
+                     "attr lfreeb");
+        }
+        H5_CHECK(putAttr(fid, "nvacskip", H5T_NATIVE_INT, &ip.nvacskip),
+                 "attr nvacskip");
+        H5_CHECK(putStrAttr(fid, "mgrid_file", ip.mgrid_file),
+                 "attr mgrid_file");
         H5_CHECK(putStrAttr(fid, "schema", ip.schema), "attr schema");
         {
             auto writeVec = [&](const char* name,
@@ -271,6 +280,7 @@ class Hdf5V1Writer final : public Writer {
                                   v.empty() ? nullptr : v.data());
             };
             H5_CHECK(writeVec("am", ip.am), "write am");
+            H5_CHECK(writeVec("extcur", ip.extcur), "write extcur");
             H5_CHECK(writeVec("ac", ip.ac), "write ac");
             H5_CHECK(writeVec("ai", ip.ai), "write ai");
             H5_CHECK(writeVec("aphi", ip.aphi), "write aphi");
@@ -794,6 +804,32 @@ class Hdf5V1Reader final : public Reader {
                             !getDblAttr("tcon0", ip.tcon0)) {
                             return fail("malformed embedded input record");
                         }
+                        // Free-boundary extension: OPTIONAL (containers
+                        // written before the extension lack the fields; they
+                        // default). A PRESENT attribute must pass the strict
+                        // read.
+                        {
+                            H5Closer aid(H5Aopen(fid, "lfreeb", H5P_DEFAULT));
+                            if (aid.get() >= 0) {
+                                int lfreeb_i = 0;
+                                if (!getIntAttr("lfreeb", lfreeb_i)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                                ip.lfreeb = (lfreeb_i != 0);
+                            }
+                            H5Closer bid(H5Aopen(fid, "nvacskip", H5P_DEFAULT));
+                            if (bid.get() >= 0 &&
+                                !getIntAttr("nvacskip", ip.nvacskip)) {
+                                return fail("malformed embedded input record");
+                            }
+                            H5Closer cid(
+                                H5Aopen(fid, "mgrid_file", H5P_DEFAULT));
+                            if (cid.get() >= 0 &&
+                                !getStrAttr(fid, "mgrid_file", ip.mgrid_file)) {
+                                return fail("malformed embedded input record");
+                            }
+                        }
                         {
                             auto getVec =
                                 [&](const char* name,
@@ -808,6 +844,17 @@ class Hdf5V1Reader final : public Reader {
                                 !getVec("raxis_c", ip.raxis_c) ||
                                 !getVec("zaxis_s", ip.zaxis_s)) {
                                 return fail("malformed embedded input record");
+                            }
+                            // extcur: absent stays empty (pre-extension
+                            // containers); present must pass the strict read.
+                            {
+                                hsize_t d_ex[1] = {0};
+                                if (getDimExact("extcur", 1, d_ex) &&
+                                    !getDblArr("extcur", ip.extcur,
+                                               (size_t)d_ex[0])) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
                             }
                         }
                         {

@@ -2,13 +2,14 @@
 //
 // Versioned checkpoint layout (little-endian):
 //   magic     8 bytes  "CUMECKP1"
-//   version   int32    = 2
+//   version   int32    = 3
 //   precision int32    (0 = double; the checkpoint is always double on disk)
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major
 //   params    the embedded normalized-input record (io_common.hpp
-//             writeInputParams); version 2 only
+//             writeInputParams); version 2+; the v3 record appends the
+//             free-boundary extension (lfreeb, nvacskip, mgrid_file, extcur)
 //
 // The restart path reads the state only and ignores the record; version-1
 // checkpoints (no record) remain readable.
@@ -24,7 +25,7 @@ namespace cumes {
 namespace {
 
 constexpr char kCheckpointMagic[9] = "CUMECKP1";
-constexpr std::int32_t kCheckpointVersion = 2;
+constexpr std::int32_t kCheckpointVersion = 3;
 constexpr std::int32_t kMinCheckpointVersion = 1;
 
 }  // namespace
@@ -102,11 +103,12 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
     if (!io_detail::readStateFamilies(fp, n, snapshot)) {
         return fail("checkpoint: truncated state data");
     }
-    // The version-2 input record rides after the families; the state read
+    // The version-2+ input record rides after the families; the state read
     // above is the whole restart contract, and a reader that does not ask
-    // for the record never touches it.
+    // for the record never touches it. Version-2 records predate the
+    // free-boundary extension.
     if (input_params && version >= 2) {
-        if (!io_detail::readInputParams(fp, *input_params, reason)) {
+        if (!io_detail::readInputParams(fp, *input_params, reason, version)) {
             return fail("checkpoint: " + reason);
         }
     }
