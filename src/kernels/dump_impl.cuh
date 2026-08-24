@@ -161,7 +161,7 @@ void dump_iter0_loop_diag(int iter,
                           const DeviceParams<T>& p,
                           const RealSpaceStorage<T>& rs) {
     if (iter != 0 || !dump_enabled()) return;
-    dump_device_array("dump/cuMES/debug_r_e.bin", rs.d_r_e,
+    dump_device_array("dump/cuMES/iter0_diag_r_e.bin", rs.d_r_e,
                       (size_t)p.nZnT * (size_t)p.ns);
     auto* h_test = new T[p.nZnT * p.ns];
     check_cuda(cudaMemcpy(h_test, rs.d_r_e, p.nZnT * p.ns * sizeof(T),
@@ -173,7 +173,7 @@ void dump_iter0_loop_diag(int iter,
     delete[] h_test;
 }
 
-// step_A window (post-inverse, pre-geometry): lambda derivatives and, at
+// postinverse window (post-inverse, pre-geometry): lambda derivatives and, at
 // iter 0, the full R/Z/λ real-space snapshot.
 template <typename T>
 void dump_step_a(int iter,
@@ -194,23 +194,23 @@ void dump_step_a(int iter,
         // lambda derivatives for the basis-convention check.
         size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
         char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_lu_e_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/postinverse_lu_e_iter_%d.bin",
                  iter == 0 ? 1 : 2);
         dump_device_array(fn, rs.d_lu_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_lu_o_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/postinverse_lu_o_iter_%d.bin",
                  iter == 0 ? 1 : 2);
         dump_device_array(fn, rs.d_lu_o, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_l_real_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/postinverse_l_real_iter_%d.bin",
                  iter == 0 ? 1 : 2);
         dump_device_array(fn, rs.d_l_real, n_real);
     }
     if (iter == 0 || iter2 == 2) {
         size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
         char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_lv_e_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/postinverse_lv_e_iter_%d.bin",
                  iter == 0 ? 1 : 2);
         dump_device_array(fn, rs.d_lv_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_lv_o_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/postinverse_lv_o_iter_%d.bin",
                  iter == 0 ? 1 : 2);
         dump_device_array(fn, rs.d_lv_o, n_real);
     }
@@ -221,50 +221,56 @@ void dump_step_a(int iter,
         // snapshot from the current parity arrays before dumping them.
         transform.combine_parity(stream);
         // Full R, Z, lambda (even+odd)
-        dump_device_array("dump/cuMES/step_A_r_real_iter_1.bin", rs.d_r_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_z_real_iter_1.bin", rs.d_z_real,
-                          n_real);
+        dump_device_array("dump/cuMES/postinverse_r_real_iter_1.bin",
+                          rs.d_r_real, n_real);
+        dump_device_array("dump/cuMES/postinverse_z_real_iter_1.bin",
+                          rs.d_z_real, n_real);
         // Even-m parity
-        dump_device_array("dump/cuMES/step_A_r_e_iter_1.bin", rs.d_r_e, n_real);
-        dump_device_array("dump/cuMES/step_A_z_e_iter_1.bin", rs.d_z_e, n_real);
-        dump_device_array("dump/cuMES/step_A_l_e_iter_1.bin", rs.d_l_e, n_real);
+        dump_device_array("dump/cuMES/postinverse_r_e_iter_1.bin", rs.d_r_e,
+                          n_real);
+        dump_device_array("dump/cuMES/postinverse_z_e_iter_1.bin", rs.d_z_e,
+                          n_real);
+        dump_device_array("dump/cuMES/postinverse_l_e_iter_1.bin", rs.d_l_e,
+                          n_real);
         // Odd-m parity
-        dump_device_array("dump/cuMES/step_A_r_o_iter_1.bin", rs.d_r_o, n_real);
-        dump_device_array("dump/cuMES/step_A_z_o_iter_1.bin", rs.d_z_o, n_real);
-        dump_device_array("dump/cuMES/step_A_l_o_iter_1.bin", rs.d_l_o, n_real);
+        dump_device_array("dump/cuMES/postinverse_r_o_iter_1.bin", rs.d_r_o,
+                          n_real);
+        dump_device_array("dump/cuMES/postinverse_z_o_iter_1.bin", rs.d_z_o,
+                          n_real);
+        dump_device_array("dump/cuMES/postinverse_l_o_iter_1.bin", rs.d_l_o,
+                          n_real);
         // Poloidal derivatives
-        dump_device_array("dump/cuMES/step_A_ru_real_iter_1.bin", rs.d_ru_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_zu_real_iter_1.bin", rs.d_zu_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_lu_real_iter_1.bin", rs.d_lu_real,
-                          n_real);
+        dump_device_array("dump/cuMES/postinverse_ru_real_iter_1.bin",
+                          rs.d_ru_real, n_real);
+        dump_device_array("dump/cuMES/postinverse_zu_real_iter_1.bin",
+                          rs.d_zu_real, n_real);
+        dump_device_array("dump/cuMES/postinverse_lu_real_iter_1.bin",
+                          rs.d_lu_real, n_real);
         // Toroidal derivatives
-        dump_device_array("dump/cuMES/step_A_rv_real_iter_1.bin", rs.d_rv_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_zv_real_iter_1.bin", rs.d_zv_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_lv_real_iter_1.bin", rs.d_lv_real,
-                          n_real);
+        dump_device_array("dump/cuMES/postinverse_rv_real_iter_1.bin",
+                          rs.d_rv_real, n_real);
+        dump_device_array("dump/cuMES/postinverse_zv_real_iter_1.bin",
+                          rs.d_zv_real, n_real);
+        dump_device_array("dump/cuMES/postinverse_lv_real_iter_1.bin",
+                          rs.d_lv_real, n_real);
         // Even-m poloidal derivatives
-        dump_device_array("dump/cuMES/step_A_ru_e_iter_1.bin", rs.d_ru_e,
+        dump_device_array("dump/cuMES/postinverse_ru_e_iter_1.bin", rs.d_ru_e,
                           n_real);
-        dump_device_array("dump/cuMES/step_A_zu_e_iter_1.bin", rs.d_zu_e,
+        dump_device_array("dump/cuMES/postinverse_zu_e_iter_1.bin", rs.d_zu_e,
                           n_real);
-        dump_device_array("dump/cuMES/step_A_lu_e_iter_1.bin", rs.d_lu_e,
+        dump_device_array("dump/cuMES/postinverse_lu_e_iter_1.bin", rs.d_lu_e,
                           n_real);
         // Odd-m poloidal derivatives
-        dump_device_array("dump/cuMES/step_A_ru_o_iter_1.bin", rs.d_ru_o,
+        dump_device_array("dump/cuMES/postinverse_ru_o_iter_1.bin", rs.d_ru_o,
                           n_real);
-        dump_device_array("dump/cuMES/step_A_zu_o_iter_1.bin", rs.d_zu_o,
+        dump_device_array("dump/cuMES/postinverse_zu_o_iter_1.bin", rs.d_zu_o,
                           n_real);
-        dump_device_array("dump/cuMES/step_A_lu_o_iter_1.bin", rs.d_lu_o,
+        dump_device_array("dump/cuMES/postinverse_lu_o_iter_1.bin", rs.d_lu_o,
                           n_real);
     }
 }
 
-// step_B/C/D window (post-field): metric + contravariant-B half-grid dump.
+// metric/bcontra window (post-field): metric + contravariant-B half-grid dump.
 template <typename T>
 void dump_step_d(int iter,
                  int iter2,
@@ -276,27 +282,27 @@ void dump_step_d(int iter,
         // iter 2 = first pass with lambda != 0 (E3-D bsupv check)
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
         char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_D_bsupu_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/bcontra_bsupu_iter_%d.bin",
                  iter == 0 ? 1 : 2);
         dump_device_array(fn, field.bsupu.data(), n_half);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_D_bsupv_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/bcontra_bsupv_iter_%d.bin",
                  iter == 0 ? 1 : 2);
         dump_device_array(fn, field.bsupv.data(), n_half);
     }
     if (iter == 0) {
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
-        dump_device_array("dump/cuMES/step_B_gsqrt_iter_1.bin",
+        dump_device_array("dump/cuMES/metric_gsqrt_iter_1.bin",
                           base.gsqrt.data(), n_half);
-        dump_device_array("dump/cuMES/step_C_guu_iter_1.bin", base.guu.data(),
+        dump_device_array("dump/cuMES/metric_guu_iter_1.bin", base.guu.data(),
                           n_half);
-        dump_device_array("dump/cuMES/step_C_guv_iter_1.bin", base.guv.data(),
+        dump_device_array("dump/cuMES/metric_guv_iter_1.bin", base.guv.data(),
                           n_half);
-        dump_device_array("dump/cuMES/step_C_gvv_iter_1.bin", base.gvv.data(),
+        dump_device_array("dump/cuMES/metric_gvv_iter_1.bin", base.gvv.data(),
                           n_half);
     }
 }
 
-// step_precon window (iter 0, on the refresh pass): tridiagonal matrices,
+// precon window (iter 0, on the refresh pass): tridiagonal matrices,
 // jMin, intermediates, sizes.
 template <typename T>
 void dump_step_precon(int iter,
@@ -315,18 +321,12 @@ void dump_step_precon(int iter,
     size_t n_full_1 = (size_t)p.ns;
 
     // Tridiagonal matrix elements (mode-major: [mode, jF])
-    dump_device_array("dump/cuMES/step_precon_ar_iter_1.bin", precon.ar(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_dr_iter_1.bin", precon.dr(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_br_iter_1.bin", precon.br(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_az_iter_1.bin", precon.az(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_dz_iter_1.bin", precon.dz(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_bz_iter_1.bin", precon.bz(),
-                      n_tri);
+    dump_device_array("dump/cuMES/precon_ar_iter_1.bin", precon.ar(), n_tri);
+    dump_device_array("dump/cuMES/precon_dr_iter_1.bin", precon.dr(), n_tri);
+    dump_device_array("dump/cuMES/precon_br_iter_1.bin", precon.br(), n_tri);
+    dump_device_array("dump/cuMES/precon_az_iter_1.bin", precon.az(), n_tri);
+    dump_device_array("dump/cuMES/precon_dz_iter_1.bin", precon.dz(), n_tri);
+    dump_device_array("dump/cuMES/precon_bz_iter_1.bin", precon.bz(), n_tri);
 
     // jMin per mode (stored as int, convert to double for dump)
     {
@@ -335,7 +335,7 @@ void dump_step_precon(int iter,
                    cudaMemcpyDeviceToHost);
         double* h_jMin_dbl = new double[p.mnmax];
         for (int i = 0; i < p.mnmax; ++i) h_jMin_dbl[i] = (double)h_jMin[i];
-        FILE* fj = fopen("dump/cuMES/step_precon_jMin_iter_1.bin", "wb");
+        FILE* fj = fopen("dump/cuMES/precon_jMin_iter_1.bin", "wb");
         if (fj) {
             uint64_t n = p.mnmax;
             fwrite(&n, sizeof(uint64_t), 1, fj);
@@ -347,29 +347,29 @@ void dump_step_precon(int iter,
     }
 
     // Intermediate arrays
-    dump_device_array("dump/cuMES/step_precon_arm_iter_1.bin", precon.arm(),
+    dump_device_array("dump/cuMES/precon_arm_iter_1.bin", precon.arm(),
                       n_half_2);
-    dump_device_array("dump/cuMES/step_precon_ard_iter_1.bin", precon.ard(),
+    dump_device_array("dump/cuMES/precon_ard_iter_1.bin", precon.ard(),
                       n_full_2);
-    dump_device_array("dump/cuMES/step_precon_brm_iter_1.bin", precon.brm(),
+    dump_device_array("dump/cuMES/precon_brm_iter_1.bin", precon.brm(),
                       n_half_2);
-    dump_device_array("dump/cuMES/step_precon_brd_iter_1.bin", precon.brd(),
+    dump_device_array("dump/cuMES/precon_brd_iter_1.bin", precon.brd(),
                       n_full_2);
-    dump_device_array("dump/cuMES/step_precon_azm_iter_1.bin", precon.azm(),
+    dump_device_array("dump/cuMES/precon_azm_iter_1.bin", precon.azm(),
                       n_half_2);
-    dump_device_array("dump/cuMES/step_precon_azd_iter_1.bin", precon.azd(),
+    dump_device_array("dump/cuMES/precon_azd_iter_1.bin", precon.azd(),
                       n_full_2);
-    dump_device_array("dump/cuMES/step_precon_bzm_iter_1.bin", precon.bzm(),
+    dump_device_array("dump/cuMES/precon_bzm_iter_1.bin", precon.bzm(),
                       n_half_2);
-    dump_device_array("dump/cuMES/step_precon_bzd_iter_1.bin", precon.bzd(),
+    dump_device_array("dump/cuMES/precon_bzd_iter_1.bin", precon.bzd(),
                       n_full_2);
-    dump_device_array("dump/cuMES/step_precon_cxd_iter_1.bin", precon.cxd(),
+    dump_device_array("dump/cuMES/precon_cxd_iter_1.bin", precon.cxd(),
                       n_full_1);
 
     // Sizes for comparison script
     double sizes_dbl[4] = {(double)p.ns, (double)(p.ns - 1), (double)p.mpol,
                            1.0};
-    FILE* fs = fopen("dump/cuMES/step_precon_sizes_iter_1.bin", "wb");
+    FILE* fs = fopen("dump/cuMES/precon_sizes_iter_1.bin", "wb");
     if (fs) {
         uint64_t n = 4;
         fwrite(&n, sizeof(uint64_t), 1, fs);
@@ -378,7 +378,8 @@ void dump_step_precon(int iter,
     }
 }
 
-// step_E/F window (post-force): half-grid geometry + force outputs.
+// forceterm/force + halfgrid window (post-force): half-grid geometry + force
+// outputs.
 template <typename T>
 void dump_step_ef(int iter,
                   int iter2,
@@ -391,77 +392,77 @@ void dump_step_ef(int iter,
         // iter 2 = first pass with lambda != 0 (E3-B blmn blending check)
         size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
         if (iter == 0) {
-            dump_device_array("dump/cuMES/step_half_r12_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_r12_iter_1.bin",
                               base.r12.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_zu12_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_zu12_iter_1.bin",
                               base.zu12.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_tau_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_tau_iter_1.bin",
                               base.tau.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_gsqrt_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_gsqrt_iter_1.bin",
                               base.gsqrt.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_totalP_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_totalP_iter_1.bin",
                               field.total_pressure.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_bsupu_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_bsupu_iter_1.bin",
                               field.bsupu.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_bsupv_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_bsupv_iter_1.bin",
                               field.bsupv.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_bsubu_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_bsubu_iter_1.bin",
                               field.bsubu.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_bsubv_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_bsubv_iter_1.bin",
                               field.bsubv.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_rs_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_rs_iter_1.bin",
                               base.rs.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_zs_iter_1.bin",
+            dump_device_array("dump/cuMES/halfgrid_zs_iter_1.bin",
                               base.zs.data(), n_half);
         }
 
         size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
         char fn[128];
         int itag = (iter == 0) ? 1 : iter2;
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_brmn_e_iter_%d.bin", itag);
+        snprintf(fn, sizeof fn, "dump/cuMES/force_brmn_e_iter_%d.bin", itag);
         dump_device_array(fn, rs.d_brmn_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_brmn_o_iter_%d.bin", itag);
+        snprintf(fn, sizeof fn, "dump/cuMES/force_brmn_o_iter_%d.bin", itag);
         dump_device_array(fn, rs.d_brmn_o, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_bzmn_e_iter_%d.bin", itag);
+        snprintf(fn, sizeof fn, "dump/cuMES/force_bzmn_e_iter_%d.bin", itag);
         dump_device_array(fn, rs.d_bzmn_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_bzmn_o_iter_%d.bin", itag);
+        snprintf(fn, sizeof fn, "dump/cuMES/force_bzmn_o_iter_%d.bin", itag);
         dump_device_array(fn, rs.d_bzmn_o, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_blmn_e_iter_%d.bin", itag);
+        snprintf(fn, sizeof fn, "dump/cuMES/force_blmn_e_iter_%d.bin", itag);
         dump_device_array(fn, rs.d_blmn_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_blmn_o_iter_%d.bin", itag);
+        snprintf(fn, sizeof fn, "dump/cuMES/force_blmn_o_iter_%d.bin", itag);
         dump_device_array(fn, rs.d_blmn_o, n_real);
         if (iter == 0) {
-            dump_device_array("dump/cuMES/step_E_armn_e_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_armn_e_iter_1.bin",
                               rs.d_armn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_armn_o_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_armn_o_iter_1.bin",
                               rs.d_armn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_azmn_e_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_azmn_e_iter_1.bin",
                               rs.d_azmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_azmn_o_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_azmn_o_iter_1.bin",
                               rs.d_azmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_brmn_e_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_brmn_e_iter_1.bin",
                               rs.d_brmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_brmn_o_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_brmn_o_iter_1.bin",
                               rs.d_brmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_bzmn_e_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_bzmn_e_iter_1.bin",
                               rs.d_bzmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_bzmn_o_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_bzmn_o_iter_1.bin",
                               rs.d_bzmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_crmn_e_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_crmn_e_iter_1.bin",
                               rs.d_crmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_crmn_o_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_crmn_o_iter_1.bin",
                               rs.d_crmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_czmn_e_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_czmn_e_iter_1.bin",
                               rs.d_czmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_czmn_o_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_czmn_o_iter_1.bin",
                               rs.d_czmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_blmn_e_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_blmn_e_iter_1.bin",
                               rs.d_blmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_blmn_o_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_blmn_o_iter_1.bin",
                               rs.d_blmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_clmn_e_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_clmn_e_iter_1.bin",
                               rs.d_clmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_clmn_o_iter_1.bin",
+            dump_device_array("dump/cuMES/forceterm_clmn_o_iter_1.bin",
                               rs.d_clmn_o, n_real);
             // NOTE: no combined-force dumps — the force combine buffers
             // were removed (they were allocated/dumped but never
@@ -471,7 +472,8 @@ void dump_step_ef(int iter,
     }
 }
 
-// step_G/GC window (iter 0, post-constraint): constraint-chain intermediates.
+// constraint window (iter 0, post-constraint): the augmented force + the
+// constraint-chain intermediates.
 template <typename T>
 void dump_step_g(int iter,
                  const DeviceParams<T>& p,
@@ -480,54 +482,54 @@ void dump_step_g(int iter,
                  ConstraintOperator<T>& constraint) {
     if (iter != 0 || !dump_enabled()) return;
     size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
-    dump_device_array("dump/cuMES/step_G_brmn_e_iter_1.bin", rs.d_brmn_e,
+    dump_device_array("dump/cuMES/constraint_brmn_e_iter_1.bin", rs.d_brmn_e,
                       n_real);
-    dump_device_array("dump/cuMES/step_G_brmn_o_iter_1.bin", rs.d_brmn_o,
+    dump_device_array("dump/cuMES/constraint_brmn_o_iter_1.bin", rs.d_brmn_o,
                       n_real);
-    dump_device_array("dump/cuMES/step_G_bzmn_e_iter_1.bin", rs.d_bzmn_e,
+    dump_device_array("dump/cuMES/constraint_bzmn_e_iter_1.bin", rs.d_bzmn_e,
                       n_real);
-    dump_device_array("dump/cuMES/step_G_bzmn_o_iter_1.bin", rs.d_bzmn_o,
+    dump_device_array("dump/cuMES/constraint_bzmn_o_iter_1.bin", rs.d_bzmn_o,
                       n_real);
     // Constraint-chain intermediates (stage-by-stage vs vmecpp)
     // State as consumed by the constraint chain at iter 1 (post-descent)
     size_t n_spec2 = (size_t)p.ns * (size_t)p.mnmax;
-    dump_device_array("dump/cuMES/step_GC_rmncc_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_rmncc_iter_1.bin",
                       storage.family_ptr(SpectralComponent::Rcc), n_spec2);
-    dump_device_array("dump/cuMES/step_GC_rmnss_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_rmnss_iter_1.bin",
                       storage.family_ptr(SpectralComponent::Rss), n_spec2);
-    dump_device_array("dump/cuMES/step_GC_zmnsc_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_zmnsc_iter_1.bin",
                       storage.family_ptr(SpectralComponent::Zsc), n_spec2);
-    dump_device_array("dump/cuMES/step_GC_zmncs_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_zmncs_iter_1.bin",
                       storage.family_ptr(SpectralComponent::Zcs), n_spec2);
-    dump_device_array("dump/cuMES/step_GC_rCon_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_rCon_iter_1.bin",
                       constraint.rcon_view(p).data(), n_real);
-    dump_device_array("dump/cuMES/step_GC_zCon_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_zCon_iter_1.bin",
                       constraint.zcon_view(p).data(), n_real);
-    dump_device_array("dump/cuMES/step_GC_gConEff_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_gConEff_iter_1.bin",
                       constraint.gcon_eff(), n_real);
-    dump_device_array("dump/cuMES/step_GC_gCon_iter_1.bin", constraint.gcon(),
-                      n_real);
-    dump_device_array("dump/cuMES/step_GC_frcon_e_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_gCon_iter_1.bin",
+                      constraint.gcon(), n_real);
+    dump_device_array("dump/cuMES/constraint_frcon_e_iter_1.bin",
                       constraint.constraint_force_views(p).frcon_e.data(),
                       n_real);
-    dump_device_array("dump/cuMES/step_GC_frcon_o_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_frcon_o_iter_1.bin",
                       constraint.constraint_force_views(p).frcon_o.data(),
                       n_real);
-    dump_device_array("dump/cuMES/step_GC_fzcon_e_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_fzcon_e_iter_1.bin",
                       constraint.constraint_force_views(p).fzcon_e.data(),
                       n_real);
-    dump_device_array("dump/cuMES/step_GC_fzcon_o_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_fzcon_o_iter_1.bin",
                       constraint.constraint_force_views(p).fzcon_o.data(),
                       n_real);
     // tcon/faccon profiles (device arrays; h_tcon is stale -- the
     // kernel writes d_tcon directly)
-    dump_device_array("dump/cuMES/step_GC_tcon_iter_1.bin", constraint.tcon(),
-                      p.ns);
-    dump_device_array("dump/cuMES/step_GC_faccon_iter_1.bin",
+    dump_device_array("dump/cuMES/constraint_tcon_iter_1.bin",
+                      constraint.tcon(), p.ns);
+    dump_device_array("dump/cuMES/constraint_faccon_iter_1.bin",
                       constraint.faccon(), p.mpol);
 }
 
-// step_H window (post-decomposition-scaling): decomposed force slab + the
+// scaled window (post-decomposition-scaling): decomposed force slab + the
 // E2-start invariant-force window.
 template <typename T>
 void dump_step_h(int iter,
@@ -543,7 +545,7 @@ void dump_step_h(int iter,
         // as vmecpp's dump blocks.
         size_t n_fspec = (size_t)6 * (size_t)p.mnmax * (size_t)p.ns;
         char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_H_f_spec_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/scaled_f_spec_iter_%d.bin",
                  iter == 0 ? 1 : iter2);
         dump_device_array(fn, f_spec, n_fspec);
     }
@@ -555,18 +557,19 @@ void dump_step_h(int iter,
     }
 }
 
-// Final-pass force-slab dump (post-m1-gauge, pre-invariant-residual).
+// final window (post-m1-gauge, pre-invariant-residual): final-pass force-slab
+// dump.
 template <typename T>
 void dump_step_final(int iter, const DeviceParams<T>& p, const T* f_spec) {
     if (!dump_enabled()) return;
     if (iter == dump_max_iter(p.max_iter) - 1) {
-        dump_device_array("dump/cuMES/step_final_f_spec.bin", f_spec,
+        dump_device_array("dump/cuMES/final_f_spec.bin", f_spec,
                           (size_t)6 * p.mnmax * p.ns);
     }
 }
 
-// step_I window (post-preconditioner): preconditioned slab + state/velocity
-// handoff dumps + the E2-start preconditioned-force window.
+// preconditioned window (post-preconditioner): preconditioned slab +
+// state/velocity handoff dumps + the E2-start preconditioned-force window.
 template <typename T>
 void dump_step_i(int iter,
                  int iter2,
@@ -581,7 +584,7 @@ void dump_step_i(int iter,
         size_t n_fspec = (size_t)6 * (size_t)p.mnmax * (size_t)p.ns;
         size_t n_spec = (size_t)p.mnmax * (size_t)p.ns;
         char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_I_f_spec_iter_%d.bin",
+        snprintf(fn, sizeof fn, "dump/cuMES/preconditioned_f_spec_iter_%d.bin",
                  iter == 0 ? 1 : iter2);
         dump_device_array(fn, f_spec, n_fspec);
         // State + velocities at the handoff window (pre-descent of the
@@ -697,22 +700,22 @@ void dump_step_0(const DeviceParams<T>& p,
     const RadialProfileViews<T> rpv = profiles.profile_views();
     dump_ensure_dir();
     size_t n_spec = (size_t)p.ns * (size_t)p.mnmax;
-    dump_device_array("dump/cuMES/step_0_rmncc.bin",
+    dump_device_array("dump/cuMES/init_rmncc.bin",
                       storage.family_ptr(SpectralComponent::Rcc), n_spec);
-    dump_device_array("dump/cuMES/step_0_zmnsc.bin",
+    dump_device_array("dump/cuMES/init_zmnsc.bin",
                       storage.family_ptr(SpectralComponent::Zsc), n_spec);
-    dump_device_array("dump/cuMES/step_0_lmnsc.bin",
+    dump_device_array("dump/cuMES/init_lmnsc.bin",
                       storage.family_ptr(SpectralComponent::Lsc), n_spec);
-    dump_device_array("dump/cuMES/step_0_rmnss.bin",
+    dump_device_array("dump/cuMES/init_rmnss.bin",
                       storage.family_ptr(SpectralComponent::Rss), n_spec);
-    dump_device_array("dump/cuMES/step_0_zmncs.bin",
+    dump_device_array("dump/cuMES/init_zmncs.bin",
                       storage.family_ptr(SpectralComponent::Zcs), n_spec);
-    dump_device_array("dump/cuMES/step_0_lmncs.bin",
+    dump_device_array("dump/cuMES/init_lmncs.bin",
                       storage.family_ptr(SpectralComponent::Lcs), n_spec);
-    dump_device_array("dump/cuMES/step_0_currH.bin", rpv.curr_H, p.ns - 1);
-    dump_device_array("dump/cuMES/step_0_chipH.bin", rpv.chip_H, p.ns - 1);
-    dump_device_array("dump/cuMES/step_0_iotaH.bin", rpv.iota_H, p.ns - 1);
-    dump_device_array("dump/cuMES/step_0_iotaF.bin", rpv.iota_F, p.ns);
+    dump_device_array("dump/cuMES/init_currH.bin", rpv.curr_H, p.ns - 1);
+    dump_device_array("dump/cuMES/init_chipH.bin", rpv.chip_H, p.ns - 1);
+    dump_device_array("dump/cuMES/init_iotaH.bin", rpv.iota_H, p.ns - 1);
+    dump_device_array("dump/cuMES/init_iotaF.bin", rpv.iota_F, p.ns);
 #else
     (void)p;
     (void)storage;

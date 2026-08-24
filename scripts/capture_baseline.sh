@@ -23,12 +23,14 @@
 #     cumes_state.bin              final state (schema-v1 container: magic +
 #                                  version + ns + mnmax + 6 families + trailer)
 #     per_iter_residuals_cumes.bin 15-col double trajectory record (all stages)
-#     step_0_*.bin                 initial-state component snapshots
+#     init_*.bin                   initial-state component snapshots
 #     dump_manifest.sha256         SHA-256 of the FULL dump/cuMES set
 #     PROVENANCE.txt               revision, build, knobs that produced the tree
 #     run.log                      full solver stdout
-#     dump/cuMES/                  the full run dump set (step_A..I, fspec,
-#                                  state, vel, force_norms — ~150M for W7-X)
+#     dump/cuMES/                  the full run dump set (postinverse,
+#                                  metric, force, constraint, scaled,
+#                                  preconditioned, fspec, state, vel,
+#                                  force_norms — ~150M for W7-X)
 #
 # The whole tree is regenerable and lives under a gitignored scratch dir; the
 # only committed artifacts are this script and scripts/compare_bitwise.py.
@@ -125,7 +127,7 @@ run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
   # Essentials: per-iteration trajectory record + initial-state snapshots are
   # already in dump/cuMES; copy them to the tree top level for quick access.
   cp "$tree/dump/cuMES/per_iter_residuals_cumes.bin" "$tree/per_iter_residuals_cumes.bin"
-  for f in "$tree"/dump/cuMES/step_0_*.bin; do
+  for f in "$tree"/dump/cuMES/init_*.bin; do
     [ -e "$f" ] && cp "$f" "$tree/"
   done
 

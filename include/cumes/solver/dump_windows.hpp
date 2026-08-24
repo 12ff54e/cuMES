@@ -3,7 +3,7 @@
 //
 // The per-iteration dump windows reproduce vmecpp's dump/vmecpp sequence at
 // each observation point of the equilibrium DAG; the solver_run helpers write
-// the step-0 snapshots, the per-pass telemetry record
+// the init-window snapshots, the per-pass telemetry record
 // (dump/cuMES/per_iter_residuals_cumes.bin), and the dump-only
 // device/host-consistency diagnostics. The definitions live in
 // kernels/dump_impl.cuh (included once per scalar type by the solver TUs).
@@ -84,7 +84,7 @@ void dump_iter0_loop_diag(int iter,
                           const DeviceParams<T>& p,
                           const RealSpaceStorage<T>& rs);
 
-// step_A window (post-inverse, pre-geometry): lambda derivatives and, at
+// postinverse window (post-inverse, pre-geometry): lambda derivatives and, at
 // iter 0, the full R/Z/λ real-space snapshot.
 template <typename T>
 void dump_step_a(int iter,
@@ -94,7 +94,7 @@ void dump_step_a(int iter,
                  ToroidalFftOperator<T>& transform,
                  cudaStream_t stream);
 
-// step_B/C/D window (post-field): metric + contravariant-B half-grid dump.
+// metric/bcontra window (post-field): metric + contravariant-B half-grid dump.
 template <typename T>
 void dump_step_d(int iter,
                  int iter2,
@@ -102,14 +102,15 @@ void dump_step_d(int iter,
                  const BaseGeometryHalfViews<T>& base,
                  const MagneticFieldViews<T>& field);
 
-// step_precon window (iter 0, on the refresh pass): tridiagonal matrices,
+// precon window (iter 0, on the refresh pass): tridiagonal matrices,
 // jMin, intermediates, sizes.
 template <typename T>
 void dump_step_precon(int iter,
                       const DeviceParams<T>& p,
                       const Preconditioner<T>& precon);
 
-// step_E/F window (post-force): half-grid geometry + force outputs.
+// forceterm/force + halfgrid window (post-force): half-grid geometry +
+// force outputs.
 template <typename T>
 void dump_step_ef(int iter,
                   int iter2,
@@ -118,7 +119,8 @@ void dump_step_ef(int iter,
                   const MagneticFieldViews<T>& field,
                   const RealSpaceStorage<T>& rs);
 
-// step_G/GC window (iter 0, post-constraint): constraint-chain intermediates.
+// constraint window (iter 0, post-constraint): the augmented force +
+// the constraint-chain intermediates.
 template <typename T>
 void dump_step_g(int iter,
                  const DeviceParams<T>& p,
@@ -126,7 +128,7 @@ void dump_step_g(int iter,
                  SpectralStorage<T>& storage,
                  ConstraintOperator<T>& constraint);
 
-// step_H window (post-decomposition-scaling): decomposed force slab + the
+// scaled window (post-decomposition-scaling): decomposed force slab + the
 // E2-start invariant-force window.
 template <typename T>
 void dump_step_h(int iter,
@@ -134,12 +136,13 @@ void dump_step_h(int iter,
                  const DeviceParams<T>& p,
                  const T* f_spec);
 
-// Final-pass force-slab dump (post-m1-gauge, pre-invariant-residual).
+// final window (post-m1-gauge, pre-invariant-residual): final-pass
+// force-slab dump.
 template <typename T>
 void dump_step_final(int iter, const DeviceParams<T>& p, const T* f_spec);
 
-// step_I window (post-preconditioner): preconditioned slab + state/velocity
-// handoff dumps + the E2-start preconditioned-force window.
+// preconditioned window (post-preconditioner): preconditioned slab +
+// state/velocity handoff dumps + the E2-start preconditioned-force window.
 template <typename T>
 void dump_step_i(int iter,
                  int iter2,
@@ -158,8 +161,8 @@ void dump_inverse_diag(ToroidalFftOperator<T>& transform,
                        const DeviceParams<T>& p,
                        cudaStream_t stream);
 
-// Pre-loop step-0 snapshots of the spectral state and the initial profiles.
-// Self-gating no-op in production-style builds.
+// Pre-loop init-window snapshots of the spectral state and the initial
+// profiles. Self-gating no-op in production-style builds.
 template <typename T>
 void dump_step_0(const DeviceParams<T>& p,
                  SpectralStorage<T>& storage,

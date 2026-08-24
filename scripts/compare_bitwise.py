@@ -19,7 +19,7 @@ Each tree holds, per <precision>/<config>/:
                                # version + ns + mnmax + 6 x ns*mnmax doubles
                                # + provenance trailer)
   per_iter_residuals_cumes.bin # 15-col double trajectory record (all stages)
-  step_0_*.bin                 # deterministic initial-state snapshots
+  init_*.bin                   # deterministic initial-state snapshots
   dump_manifest.sha256         # SHA-256 of the FULL dump set (if generated)
   PROVENANCE.txt               # revision/build/knobs that produced the tree
 
@@ -29,7 +29,7 @@ Comparison modes:
       Byte-compares the cumes_state.bin STATE PAYLOAD (the container's
       provenance trailer embeds the git revision, so full-file bytes differ
       across revisions by design), per_iter_residuals_cumes.bin and the
-      step_0_* set. When the baseline carries a dump_manifest.sha256, the
+      init_* set. When the baseline carries a dump_manifest.sha256, the
       run's full dump/cuMES/* set is verified against those checksums. Fast;
       the per-iteration record already spans every pass of every multigrid
       stage, so a byte-identical trajectory + final state is a strong
@@ -37,7 +37,8 @@ Comparison modes:
 
   --full
       Byte-compares EVERY file in dump/cuMES/* (sorted) between the two
-      trees, including the large step_A..I / fspec / state / vel component
+      trees, including the large postinverse..preconditioned / fspec /
+      state / vel component
       snapshots. Use when both trees kept the full dump set.
 
 Both modes require the runs to use the SAME environment knobs as each other
@@ -193,11 +194,11 @@ def main():
         else:
             _report(f, True)
 
-    # ---- 3. step_0_* initial-state snapshots -------------------------------
-    b_steps = sorted(n for n in os.listdir(b) if n.startswith("step_0_"))
-    r_steps = sorted(n for n in os.listdir(r) if n.startswith("step_0_"))
+    # ---- 3. init_* initial-state snapshots ---------------------------------
+    b_steps = sorted(n for n in os.listdir(b) if n.startswith("init_"))
+    r_steps = sorted(n for n in os.listdir(r) if n.startswith("init_"))
     if b_steps != r_steps:
-        _report("step_0 set", False,
+        _report("init set", False,
                 f"name sets differ: baseline {b_steps} vs run {r_steps}")
         failures += 1
     else:
@@ -208,7 +209,7 @@ def main():
             elif args.verbose:
                 _report(name, True)
         if not failures:
-            _report(f"step_0 set ({len(b_steps)} files)", True)
+            _report(f"init set ({len(b_steps)} files)", True)
 
     # ---- 4. full dump-set manifest verification ----------------------------
     b_manifest = os.path.join(b, "dump_manifest.sha256")

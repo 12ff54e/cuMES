@@ -27,7 +27,7 @@ using namespace cumes::test;
 // deliberately generic (all modes get a mild radial envelope) so no interior
 // surface collapses to zero geometry: R has a strong m=0/n=0 DC plus a few m>0
 // modes, Z and lambda get m=1..3 content with the same s envelopes. This
-// replaces the previous external dump/cuMES/step_0_*.bin dependency
+// replaces the previous external dump/cuMES/init_*.bin dependency
 // (gitignored, only present after a CUMES_DUMP=1 run) — the test is now
 // self-contained and registerable.
 template <typename T>
