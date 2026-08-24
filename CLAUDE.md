@@ -275,7 +275,8 @@ Known issues:
 | `docs/architecture.md` | operator library, build/library split, per-iteration pipeline, dependency rules |
 | `docs/mathematics.md` | normative numerical contracts: coordinates, Fourier representation/quadrature, geometry, fields, force, constraint, preconditioner, damping/descent, prolongation |
 | `docs/data-layout.md` | storage/layout contracts (state, real-space, quadrature) |
-| `docs/output-formats.md` | on-disk containers: v1 binary/checkpoint/NetCDF/HDF5, dump files, Python reader |
+| `docs/output-formats.md` | on-disk containers: v1 binary/checkpoint/NetCDF/HDF5, Python reader |
+| `docs/dump-files.md` | the `CUMES_DUMP` diagnostics: file manifest, formats, naming scheme |
 | `docs/verification.md` | verification tiers/gates, equivalence classes (Class A/B/C), review checklist |
 | `docs/performance.md` | measured performance + acceptance policy |
 | `docs/overhaul-history.md` | phase-by-phase overhaul record and closeout handovers |

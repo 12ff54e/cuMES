@@ -100,7 +100,7 @@ cross-architecture claim is made (see `docs/performance.md`).
   (`scripts/compare_bitwise.py` over the full dump manifests). The
   follow-up closure above was re-verified Class A byte-identical against
   the frozen `dc0d0c4` baseline (both configs: trajectory record, final
-  state, step-0 snapshots, and full dump manifests). Note: the blueprint's
+  state, init snapshots, and full dump manifests — see docs/dump-files.md). Note: the blueprint's
   pre-overhaul `FSQZ=4.273e-18` is stale — the axisymmetric backend's
   algorithm update moved the frozen value to `4.274e-18`, which is what
   the baseline itself records.

@@ -1,7 +1,8 @@
 # cuMES on-disk output formats
 
 Human-readable description of every container the solver writes (and reads
-back). The authoritative freeze lives in `configs/schema-v1.json` under
+back). The `CUMES_DUMP`-gated diagnostic files are documented separately in
+`docs/dump-files.md`. The authoritative freeze lives in `configs/schema-v1.json` under
 `x-cumes-on-disk-contracts` (blueprint §6.13); the implementations are
 `src/cumes/io/` (`versioned_binary.cpp`, `checkpoint.cpp`,
 `netcdf_writer.cpp`, `hdf5_writer.cpp`). All formats are little-endian.
@@ -165,15 +166,7 @@ plus the restart metadata `restart_stage_offset`/`restart_iteration`. The
 state families are 2-D datasets over `[ns, mnmax]` with the logical value
 `family[surface, mode]` mapped to device offset `surface + mode * ns`.
 
-## 6. Dump files (diagnostics, not a stable format)
-
-`CUMES_DUMP`-gated per-step files (`step_*_rmncc.bin` etc. and the
-`step_A_*` real-space arrays) are development diagnostics with no
-stability contract; scripts that consume them (compare_bitwise.py) are
-paired with the same dump producer. Everything stable is the containers
-above.
-
-## 7. Reading the state in Python
+## 6. Reading the state in Python
 
 `scripts/compare_states.py` is the reference reader for the versioned
 binary payload:
