@@ -4,9 +4,10 @@
 #ifndef CUMES_SRC_SOLVER_IMPL_CUH_
 #define CUMES_SRC_SOLVER_IMPL_CUH_
 // solver.cu — fixed-point iteration with Garabedian acceleration.
-// The dump/debug machinery below (DUMP_CUMES_VERIFY blocks) is compiled in
-// but RUNTIME-GATED: nothing is written and no debug output is produced
-// unless the CUMES_DUMP=1 environment variable is set (see dump_enabled()).
+// The dump/debug machinery (DUMP_CUMES_VERIFY) lives in dump_impl.cuh:
+// compiled in but RUNTIME-GATED — nothing is written and no debug output is
+// produced unless the CUMES_DUMP=1 environment variable is set (see
+// dump_enabled()).
 //
 // All computation is templated on the scalar type T (double or float).
 // Dump files are T-native (read back by same-build tooling only); the
@@ -36,6 +37,7 @@
 #include "cumes/solver/solver_bench.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
+#include "dump_impl.cuh"
 #include "solver.cuh"
 
 #include <algorithm>
@@ -47,14 +49,6 @@
 #include <functional>
 #include <optional>
 #include <vector>
-
-#ifdef DUMP_CUMES_VERIFY
-static bool dump_enabled();  // defined below with the dump machinery
-template <typename T>
-static void dump_device_array(std::string_view filename,
-                              const T* d_data,
-                              size_t nelem);  // defined below
-#endif
 
 template <typename T>
 __global__ void
@@ -171,61 +165,6 @@ static void enqueue_force_norms(
             <<<g2, b2, 0, stream>>>(st, xm, xn, p.ns, p.mnmax, rec);
     }
     cumes::check_cuda(cudaGetLastError(), "force norms");
-}
-
-// Refresh-pass force-norm dump (dump-only telemetry). The six device scalars
-// hc[0..5] = {sRZ, sL, sMag, eTherm, vol, rzNorm} are printed together with
-// the fNorm factors ACTUALLY used for the convergence decision — those are the
-// record's device-finalized final_f_norm_* fields (completion-plan follow-up
-// §2.3), consumed by the caller, not recomputed here.
-static void dump_force_norms(const double* hc,
-                             double delta_s,
-                             int iter2,
-                             double fNormRZ,
-                             double fNormL,
-                             double fNorm1) {
-#ifndef DUMP_CUMES_VERIFY
-    (void)hc;
-    (void)delta_s;
-    (void)iter2;
-    (void)fNormRZ;
-    (void)fNormL;
-    (void)fNorm1;
-#endif
-#ifdef DUMP_CUMES_VERIFY
-    if (dump_enabled()) {
-        double sRZ = hc[0], sL = hc[1], sMag = hc[2], eTherm = hc[3],
-               vol = hc[4], h_rz = hc[5];
-        double deltaS = delta_s;
-        double eMag =
-            fabs(sMag) * deltaS;  // vmecpp: fabs(localMagneticEnergy)*deltaS
-        eTherm *= deltaS;
-        vol *= deltaS;
-        double energyDensity = std::max(eMag, eTherm) / vol;
-        // Same format as vmecpp's dump/vmecpp/force_norms_iter_<iter2>.txt
-        char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/force_norms_iter_%d.txt", iter2);
-        FILE* fp2 = fopen(fn, "w");
-        if (fp2) {
-            fprintf(fp2,
-                    "magneticEnergy %.17e\n"
-                    "thermalEnergy %.17e\n"
-                    "plasmaVolume %.17e\n"
-                    "energyDensity %.17e\n"
-                    "forceNormSumRZ %.17e\n"
-                    "forceNormSumL %.17e\n"
-                    "rzNorm %.17e\n"
-                    "fNormRZ %.17e\n"
-                    "fNormL %.17e\n"
-                    "fNorm1 %.17e\n",
-                    (double)eMag, (double)eTherm, (double)vol,
-                    (double)energyDensity, (double)sRZ, (double)sL,
-                    (double)h_rz, (double)fNormRZ, (double)fNormL,
-                    (double)fNorm1);
-            fclose(fp2);
-        }
-    }
-#endif
 }
 
 // extrapolateTowardsAxis: copy m=1 coefficients from first interior
@@ -559,569 +498,6 @@ void cumes::DescentOperator<T>::enqueue(
     cumes::check_cuda(cudaGetLastError(), "descent");
 }
 
-#ifdef DUMP_CUMES_VERIFY
-// Master switch for the dump/debug machinery: off unless CUMES_DUMP=1.
-// All dump output routes through dump_ensure_dir/dump_device_array, which no-op
-// when disabled, so default runs write nothing to dump/ and print no debug
-// noise. (The CUMES_DUMP_ITER knob below still selects WHICH iterations the
-// windowed dumps fire on; CUMES_DUMP is the master enable.)
-static bool dump_enabled() {
-    // Read the env var once per process (the old form re-read it at every
-    // one of the ~6 dump-window entry points per iteration).
-    static const bool enabled = [] {
-        const char* e = getenv("CUMES_DUMP");
-        return e != nullptr && atoi(e) != 0;
-    }();
-    return enabled;
-}
-
-static void dump_ensure_dir() {
-    if (!dump_enabled()) return;
-    int rc = system("mkdir -p dump/cuMES");
-    if (rc != 0)
-        fprintf(stderr, "dump_ensure_dir: mkdir -p failed (rc=%d)\n", rc);
-}
-
-// T-native dump: written as sizeof(T) elements; only read back by same-build
-// tooling (e.g. tests/test_geometry_iso.cu, which is double-build-only).
-template <typename T>
-static void dump_device_array(std::string_view filename,
-                              const T* d_data,
-                              size_t nelem) {
-    if (!dump_enabled()) return;
-    // The dump machinery reads device data on the (synchronous) default stream
-    // while the hot loop produces it on the nonblocking compute stream. Sync
-    // everything first so a dump never reads a stale/in-flight buffer. This is
-    // compile- and runtime-gated observability, so the extra fence is free on
-    // the production path.
-    cudaDeviceSynchronize();
-    std::vector<T> h_tmp(nelem);
-    cudaError_t err = cudaMemcpy(h_tmp.data(), d_data, nelem * sizeof(T),
-                                 cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "dump_device_array cudaMemcpy failed for %s: %s\n",
-                filename.data(), cudaGetErrorString(err));
-    }
-    FILE* fp = fopen(std::string(filename).c_str(), "wb");
-    if (fp) {
-        uint64_t n = nelem;
-        fwrite(&n, sizeof(uint64_t), 1, fp);
-        fwrite(h_tmp.data(), sizeof(T), nelem, fp);
-        fclose(fp);
-    }
-}
-
-// ---- per-iteration dump windows (7.1) ------------------------------------
-// Extracted from EquilibriumOperator::enqueue so the DAG body reads as the
-// arithmetic pipeline it is. Each helper reproduces its observation point's
-// exact dump sequence (same files, same order, same contents) and is
-// runtime-gated by dump_enabled(). The one stream side effect the windows
-// carry — combine_parity at iter 0 (the *_real snapshot materialization) —
-// is preserved in dump_step_a so the dump-disabled path keeps the frozen
-// trajectory's launch sequence bit-for-bit.
-
-// Iter-0 loop diagnostic: print + dump the LCFS real-space R right after the
-// first inverse DFT (2.1: the transform ran on the nonblocking compute
-// stream, so dump_device_array's device sync is what makes the read valid).
-template <typename T>
-static void dump_iter0_loop_diag(int iter,
-                                 const DeviceParams<T>& p,
-                                 const cumes::RealSpaceStorage<T>& rs) {
-    if (iter != 0 || !dump_enabled()) return;
-    dump_device_array("dump/cuMES/debug_r_e.bin", rs.d_r_e,
-                      (size_t)p.nZnT * (size_t)p.ns);
-    auto* h_test = new T[p.nZnT * p.ns];
-    cumes::check_cuda(cudaMemcpy(h_test, rs.d_r_e, p.nZnT * p.ns * sizeof(T),
-                                 cudaMemcpyDeviceToHost),
-                      "loop test");
-    int jB = p.ns - 1;
-    printf("  [loop diag] LCFS theta=0: r_e=%.4f (expect ~3.93)\n",
-           (double)h_test[0 + jB * p.nZnT]);
-    delete[] h_test;
-}
-
-// step_A window (post-inverse, pre-geometry): lambda derivatives and, at
-// iter 0, the full R/Z/λ real-space snapshot.
-template <typename T>
-static void dump_step_a(int iter,
-                        int iter2,
-                        const DeviceParams<T>& p,
-                        const cumes::RealSpaceStorage<T>& rs,
-                        cumes::ToroidalFftOperator<T>& transform,
-                        cudaStream_t stream) {
-    if (!dump_enabled()) {
-        // combine_parity runs at iter 0 even when dumping is off — the
-        // frozen launch sequence (the *_real buffers are not read by the hot
-        // loop, so this is launch-order fidelity only).
-        if (iter == 0) transform.combine_parity(stream);
-        return;
-    }
-    if (iter == 0 || iter2 == 2) {
-        // iter 2 = first pass with lambda != 0: dump the real-space
-        // lambda derivatives for the basis-convention check.
-        size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
-        char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_lu_e_iter_%d.bin",
-                 iter == 0 ? 1 : 2);
-        dump_device_array(fn, rs.d_lu_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_lu_o_iter_%d.bin",
-                 iter == 0 ? 1 : 2);
-        dump_device_array(fn, rs.d_lu_o, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_l_real_iter_%d.bin",
-                 iter == 0 ? 1 : 2);
-        dump_device_array(fn, rs.d_l_real, n_real);
-    }
-    if (iter == 0 || iter2 == 2) {
-        size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
-        char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_lv_e_iter_%d.bin",
-                 iter == 0 ? 1 : 2);
-        dump_device_array(fn, rs.d_lv_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_A_lv_o_iter_%d.bin",
-                 iter == 0 ? 1 : 2);
-        dump_device_array(fn, rs.d_lv_o, n_real);
-    }
-    if (iter == 0) {
-        size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
-        // The combined *_real arrays are NOT refreshed by the hot loop
-        // (inverseDFT runs with do_combine=false); materialize a fresh
-        // snapshot from the current parity arrays before dumping them.
-        transform.combine_parity(stream);
-        // Full R, Z, lambda (even+odd)
-        dump_device_array("dump/cuMES/step_A_r_real_iter_1.bin", rs.d_r_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_z_real_iter_1.bin", rs.d_z_real,
-                          n_real);
-        // Even-m parity
-        dump_device_array("dump/cuMES/step_A_r_e_iter_1.bin", rs.d_r_e, n_real);
-        dump_device_array("dump/cuMES/step_A_z_e_iter_1.bin", rs.d_z_e, n_real);
-        dump_device_array("dump/cuMES/step_A_l_e_iter_1.bin", rs.d_l_e, n_real);
-        // Odd-m parity
-        dump_device_array("dump/cuMES/step_A_r_o_iter_1.bin", rs.d_r_o, n_real);
-        dump_device_array("dump/cuMES/step_A_z_o_iter_1.bin", rs.d_z_o, n_real);
-        dump_device_array("dump/cuMES/step_A_l_o_iter_1.bin", rs.d_l_o, n_real);
-        // Poloidal derivatives
-        dump_device_array("dump/cuMES/step_A_ru_real_iter_1.bin", rs.d_ru_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_zu_real_iter_1.bin", rs.d_zu_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_lu_real_iter_1.bin", rs.d_lu_real,
-                          n_real);
-        // Toroidal derivatives
-        dump_device_array("dump/cuMES/step_A_rv_real_iter_1.bin", rs.d_rv_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_zv_real_iter_1.bin", rs.d_zv_real,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_lv_real_iter_1.bin", rs.d_lv_real,
-                          n_real);
-        // Even-m poloidal derivatives
-        dump_device_array("dump/cuMES/step_A_ru_e_iter_1.bin", rs.d_ru_e,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_zu_e_iter_1.bin", rs.d_zu_e,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_lu_e_iter_1.bin", rs.d_lu_e,
-                          n_real);
-        // Odd-m poloidal derivatives
-        dump_device_array("dump/cuMES/step_A_ru_o_iter_1.bin", rs.d_ru_o,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_zu_o_iter_1.bin", rs.d_zu_o,
-                          n_real);
-        dump_device_array("dump/cuMES/step_A_lu_o_iter_1.bin", rs.d_lu_o,
-                          n_real);
-    }
-}
-
-// step_B/C/D window (post-field): metric + contravariant-B half-grid dump.
-template <typename T>
-static void dump_step_d(int iter,
-                        int iter2,
-                        const DeviceParams<T>& p,
-                        const cumes::BaseGeometryHalfViews<T>& base,
-                        const cumes::MagneticFieldViews<T>& field) {
-    if (!dump_enabled()) return;
-    if (iter == 0 || iter2 == 2) {
-        // iter 2 = first pass with lambda != 0 (E3-D bsupv check)
-        size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
-        char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_D_bsupu_iter_%d.bin",
-                 iter == 0 ? 1 : 2);
-        dump_device_array(fn, field.bsupu.data(), n_half);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_D_bsupv_iter_%d.bin",
-                 iter == 0 ? 1 : 2);
-        dump_device_array(fn, field.bsupv.data(), n_half);
-    }
-    if (iter == 0) {
-        size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
-        dump_device_array("dump/cuMES/step_B_gsqrt_iter_1.bin",
-                          base.gsqrt.data(), n_half);
-        dump_device_array("dump/cuMES/step_C_guu_iter_1.bin", base.guu.data(),
-                          n_half);
-        dump_device_array("dump/cuMES/step_C_guv_iter_1.bin", base.guv.data(),
-                          n_half);
-        dump_device_array("dump/cuMES/step_C_gvv_iter_1.bin", base.gvv.data(),
-                          n_half);
-    }
-}
-
-// step_precon window (iter 0, on the refresh pass): tridiagonal matrices,
-// jMin, intermediates, sizes.
-template <typename T>
-static void dump_step_precon(int iter,
-                             const DeviceParams<T>& p,
-                             const cumes::Preconditioner<T>& precon) {
-    // The extracted helper gates the whole window behind dump_enabled();
-    // the pre-extraction body additionally ran the jMin D2H copy and the
-    // jMin/sizes fopen writes unconditionally (harmless reads/failed opens
-    // on the default path — no numeric effect, Class A verified).
-    if (iter != 0 || !dump_enabled()) return;
-    // Dump tridiagonal preconditioner matrices for comparison
-    // with vmecpp. cuMES layout: ar[mode * ns + jF] (mode-major).
-    size_t n_tri = (size_t)p.mnmax * (size_t)p.ns;
-    size_t n_half_2 = (size_t)2 * (size_t)(p.ns - 1);
-    size_t n_full_2 = (size_t)2 * (size_t)p.ns;
-    size_t n_full_1 = (size_t)p.ns;
-
-    // Tridiagonal matrix elements (mode-major: [mode, jF])
-    dump_device_array("dump/cuMES/step_precon_ar_iter_1.bin", precon.ar(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_dr_iter_1.bin", precon.dr(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_br_iter_1.bin", precon.br(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_az_iter_1.bin", precon.az(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_dz_iter_1.bin", precon.dz(),
-                      n_tri);
-    dump_device_array("dump/cuMES/step_precon_bz_iter_1.bin", precon.bz(),
-                      n_tri);
-
-    // jMin per mode (stored as int, convert to double for dump)
-    {
-        int* h_jMin = new int[p.mnmax];
-        cudaMemcpy(h_jMin, precon.jmin(), p.mnmax * sizeof(int),
-                   cudaMemcpyDeviceToHost);
-        double* h_jMin_dbl = new double[p.mnmax];
-        for (int i = 0; i < p.mnmax; ++i) h_jMin_dbl[i] = (double)h_jMin[i];
-        FILE* fj = fopen("dump/cuMES/step_precon_jMin_iter_1.bin", "wb");
-        if (fj) {
-            uint64_t n = p.mnmax;
-            fwrite(&n, sizeof(uint64_t), 1, fj);
-            fwrite(h_jMin_dbl, sizeof(double), p.mnmax, fj);
-            fclose(fj);
-        }
-        delete[] h_jMin;
-        delete[] h_jMin_dbl;
-    }
-
-    // Intermediate arrays
-    dump_device_array("dump/cuMES/step_precon_arm_iter_1.bin", precon.arm(),
-                      n_half_2);
-    dump_device_array("dump/cuMES/step_precon_ard_iter_1.bin", precon.ard(),
-                      n_full_2);
-    dump_device_array("dump/cuMES/step_precon_brm_iter_1.bin", precon.brm(),
-                      n_half_2);
-    dump_device_array("dump/cuMES/step_precon_brd_iter_1.bin", precon.brd(),
-                      n_full_2);
-    dump_device_array("dump/cuMES/step_precon_azm_iter_1.bin", precon.azm(),
-                      n_half_2);
-    dump_device_array("dump/cuMES/step_precon_azd_iter_1.bin", precon.azd(),
-                      n_full_2);
-    dump_device_array("dump/cuMES/step_precon_bzm_iter_1.bin", precon.bzm(),
-                      n_half_2);
-    dump_device_array("dump/cuMES/step_precon_bzd_iter_1.bin", precon.bzd(),
-                      n_full_2);
-    dump_device_array("dump/cuMES/step_precon_cxd_iter_1.bin", precon.cxd(),
-                      n_full_1);
-
-    // Sizes for comparison script
-    double sizes_dbl[4] = {(double)p.ns, (double)(p.ns - 1), (double)p.mpol,
-                           1.0};
-    FILE* fs = fopen("dump/cuMES/step_precon_sizes_iter_1.bin", "wb");
-    if (fs) {
-        uint64_t n = 4;
-        fwrite(&n, sizeof(uint64_t), 1, fs);
-        fwrite(sizes_dbl, sizeof(double), 4, fs);
-        fclose(fs);
-    }
-}
-
-// step_E/F window (post-force): half-grid geometry + force outputs.
-template <typename T>
-static void dump_step_ef(int iter,
-                         int iter2,
-                         const DeviceParams<T>& p,
-                         const cumes::BaseGeometryHalfViews<T>& base,
-                         const cumes::MagneticFieldViews<T>& field,
-                         const cumes::RealSpaceStorage<T>& rs) {
-    if (!dump_enabled()) return;
-    if (iter == 0 || iter2 == 2) {
-        // iter 2 = first pass with lambda != 0 (E3-B blmn blending check)
-        size_t n_half = (size_t)(p.ns - 1) * (size_t)p.nZnT;
-        if (iter == 0) {
-            dump_device_array("dump/cuMES/step_half_r12_iter_1.bin",
-                              base.r12.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_zu12_iter_1.bin",
-                              base.zu12.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_tau_iter_1.bin",
-                              base.tau.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_gsqrt_iter_1.bin",
-                              base.gsqrt.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_totalP_iter_1.bin",
-                              field.total_pressure.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_bsupu_iter_1.bin",
-                              field.bsupu.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_bsupv_iter_1.bin",
-                              field.bsupv.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_bsubu_iter_1.bin",
-                              field.bsubu.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_bsubv_iter_1.bin",
-                              field.bsubv.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_rs_iter_1.bin",
-                              base.rs.data(), n_half);
-            dump_device_array("dump/cuMES/step_half_zs_iter_1.bin",
-                              base.zs.data(), n_half);
-        }
-
-        size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
-        char fn[128];
-        int itag = (iter == 0) ? 1 : iter2;
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_brmn_e_iter_%d.bin", itag);
-        dump_device_array(fn, rs.d_brmn_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_brmn_o_iter_%d.bin", itag);
-        dump_device_array(fn, rs.d_brmn_o, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_bzmn_e_iter_%d.bin", itag);
-        dump_device_array(fn, rs.d_bzmn_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_bzmn_o_iter_%d.bin", itag);
-        dump_device_array(fn, rs.d_bzmn_o, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_blmn_e_iter_%d.bin", itag);
-        dump_device_array(fn, rs.d_blmn_e, n_real);
-        snprintf(fn, sizeof fn, "dump/cuMES/step_F_blmn_o_iter_%d.bin", itag);
-        dump_device_array(fn, rs.d_blmn_o, n_real);
-        if (iter == 0) {
-            dump_device_array("dump/cuMES/step_E_armn_e_iter_1.bin",
-                              rs.d_armn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_armn_o_iter_1.bin",
-                              rs.d_armn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_azmn_e_iter_1.bin",
-                              rs.d_azmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_azmn_o_iter_1.bin",
-                              rs.d_azmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_brmn_e_iter_1.bin",
-                              rs.d_brmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_brmn_o_iter_1.bin",
-                              rs.d_brmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_bzmn_e_iter_1.bin",
-                              rs.d_bzmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_bzmn_o_iter_1.bin",
-                              rs.d_bzmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_crmn_e_iter_1.bin",
-                              rs.d_crmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_crmn_o_iter_1.bin",
-                              rs.d_crmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_czmn_e_iter_1.bin",
-                              rs.d_czmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_czmn_o_iter_1.bin",
-                              rs.d_czmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_blmn_e_iter_1.bin",
-                              rs.d_blmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_blmn_o_iter_1.bin",
-                              rs.d_blmn_o, n_real);
-            dump_device_array("dump/cuMES/step_E_clmn_e_iter_1.bin",
-                              rs.d_clmn_e, n_real);
-            dump_device_array("dump/cuMES/step_E_clmn_o_iter_1.bin",
-                              rs.d_clmn_o, n_real);
-            // NOTE: no combined-force dumps — the force combine buffers
-            // were removed (they were allocated/dumped but never
-            // produced; the parity-split arrays above are the source of
-            // truth).
-        }
-    }
-}
-
-// step_G/GC window (iter 0, post-constraint): constraint-chain intermediates.
-template <typename T>
-static void dump_step_g(int iter,
-                        const DeviceParams<T>& p,
-                        const cumes::RealSpaceStorage<T>& rs,
-                        cumes::SpectralStorage<T>& storage,
-                        cumes::ConstraintOperator<T>& constraint) {
-    if (iter != 0 || !dump_enabled()) return;
-    size_t n_real = (size_t)p.ns * (size_t)p.nZnT;
-    dump_device_array("dump/cuMES/step_G_brmn_e_iter_1.bin", rs.d_brmn_e,
-                      n_real);
-    dump_device_array("dump/cuMES/step_G_brmn_o_iter_1.bin", rs.d_brmn_o,
-                      n_real);
-    dump_device_array("dump/cuMES/step_G_bzmn_e_iter_1.bin", rs.d_bzmn_e,
-                      n_real);
-    dump_device_array("dump/cuMES/step_G_bzmn_o_iter_1.bin", rs.d_bzmn_o,
-                      n_real);
-    // Constraint-chain intermediates (stage-by-stage vs vmecpp)
-    // State as consumed by the constraint chain at iter 1 (post-descent)
-    size_t n_spec2 = (size_t)p.ns * (size_t)p.mnmax;
-    dump_device_array("dump/cuMES/step_GC_rmncc_iter_1.bin",
-                      storage.family_ptr(cumes::SpectralComponent::Rcc),
-                      n_spec2);
-    dump_device_array("dump/cuMES/step_GC_rmnss_iter_1.bin",
-                      storage.family_ptr(cumes::SpectralComponent::Rss),
-                      n_spec2);
-    dump_device_array("dump/cuMES/step_GC_zmnsc_iter_1.bin",
-                      storage.family_ptr(cumes::SpectralComponent::Zsc),
-                      n_spec2);
-    dump_device_array("dump/cuMES/step_GC_zmncs_iter_1.bin",
-                      storage.family_ptr(cumes::SpectralComponent::Zcs),
-                      n_spec2);
-    dump_device_array("dump/cuMES/step_GC_rCon_iter_1.bin",
-                      constraint.rcon_view(p).data(), n_real);
-    dump_device_array("dump/cuMES/step_GC_zCon_iter_1.bin",
-                      constraint.zcon_view(p).data(), n_real);
-    dump_device_array("dump/cuMES/step_GC_gConEff_iter_1.bin",
-                      constraint.gcon_eff(), n_real);
-    dump_device_array("dump/cuMES/step_GC_gCon_iter_1.bin", constraint.gcon(),
-                      n_real);
-    dump_device_array("dump/cuMES/step_GC_frcon_e_iter_1.bin",
-                      constraint.constraint_force_views(p).frcon_e.data(),
-                      n_real);
-    dump_device_array("dump/cuMES/step_GC_frcon_o_iter_1.bin",
-                      constraint.constraint_force_views(p).frcon_o.data(),
-                      n_real);
-    dump_device_array("dump/cuMES/step_GC_fzcon_e_iter_1.bin",
-                      constraint.constraint_force_views(p).fzcon_e.data(),
-                      n_real);
-    dump_device_array("dump/cuMES/step_GC_fzcon_o_iter_1.bin",
-                      constraint.constraint_force_views(p).fzcon_o.data(),
-                      n_real);
-    // tcon/faccon profiles (device arrays; h_tcon is stale -- the
-    // kernel writes d_tcon directly)
-    dump_device_array("dump/cuMES/step_GC_tcon_iter_1.bin", constraint.tcon(),
-                      p.ns);
-    dump_device_array("dump/cuMES/step_GC_faccon_iter_1.bin",
-                      constraint.faccon(), p.mpol);
-}
-
-// step_H window (post-decomposition-scaling): decomposed force slab + the
-// E2-start invariant-force window.
-template <typename T>
-static void dump_step_h(int iter,
-                        int iter2,
-                        const DeviceParams<T>& p,
-                        const T* f_spec,
-                        int DUMP_ITER,
-                        int E2_START) {
-    if (!dump_enabled()) return;
-    if (iter == 0 || iter2 == DUMP_ITER) {
-        // Dump AFTER the decomposition scaling, matching vmecpp's dump
-        // of m_decomposed_f (post-decomposeInto). Keyed on iter2 so a
-        // handoff/plateau comparison can use the same effective counter
-        // as vmecpp's dump blocks.
-        size_t n_fspec = (size_t)6 * (size_t)p.mnmax * (size_t)p.ns;
-        char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_H_f_spec_iter_%d.bin",
-                 iter == 0 ? 1 : iter2);
-        dump_device_array(fn, f_spec, n_fspec);
-    }
-    if (iter2 >= E2_START && iter2 < E2_START + 40) {
-        char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/fspec_invariant_iter_%d.bin",
-                 iter2);
-        dump_device_array(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
-    }
-}
-
-// Final-pass force-slab dump (post-m1-gauge, pre-invariant-residual).
-template <typename T>
-static void dump_step_final(int iter,
-                            const DeviceParams<T>& p,
-                            const T* f_spec,
-                            int MAX_ITER_EFF) {
-    if (!dump_enabled()) return;
-    if (iter == MAX_ITER_EFF - 1) {
-        dump_device_array("dump/cuMES/step_final_f_spec.bin", f_spec,
-                          (size_t)6 * p.mnmax * p.ns);
-    }
-}
-
-// step_I window (post-preconditioner): preconditioned slab + state/velocity
-// handoff dumps + the E2-start preconditioned-force window.
-template <typename T>
-static void dump_step_i(int iter,
-                        int iter2,
-                        const DeviceParams<T>& p,
-                        const T* f_spec,
-                        cumes::SpectralStorage<T>& storage,
-                        int DUMP_ITER,
-                        int E2_START) {
-    if (!dump_enabled()) return;
-    if (iter == 0 || iter2 == 51 ||
-        (iter2 >= DUMP_ITER && iter2 <= DUMP_ITER + 2) ||
-        (iter2 >= 2 && iter2 <= 4)) {
-        size_t n_fspec = (size_t)6 * (size_t)p.mnmax * (size_t)p.ns;
-        size_t n_spec = (size_t)p.mnmax * (size_t)p.ns;
-        char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/step_I_f_spec_iter_%d.bin",
-                 iter == 0 ? 1 : iter2);
-        dump_device_array(fn, f_spec, n_fspec);
-        // State + velocities at the handoff window (pre-descent of the
-        // pass, matching vmecpp's dump phase at vmec.cc). Also at the
-        // iter-2..4 window (first lambda != 0 passes) for the state check.
-        if (iter2 >= DUMP_ITER || iter2 == 51 || (iter2 >= 2 && iter2 <= 4)) {
-            snprintf(fn, sizeof fn, "dump/cuMES/state_rmncc_iter_%d.bin",
-                     iter2);
-            dump_device_array(
-                fn, storage.family_ptr(cumes::SpectralComponent::Rcc), n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/state_zmnsc_iter_%d.bin",
-                     iter2);
-            dump_device_array(
-                fn, storage.family_ptr(cumes::SpectralComponent::Zsc), n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/state_lmnsc_iter_%d.bin",
-                     iter2);
-            dump_device_array(
-                fn, storage.family_ptr(cumes::SpectralComponent::Lsc), n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/state_rmnss_iter_%d.bin",
-                     iter2);
-            dump_device_array(
-                fn, storage.family_ptr(cumes::SpectralComponent::Rss), n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/state_zmncs_iter_%d.bin",
-                     iter2);
-            dump_device_array(
-                fn, storage.family_ptr(cumes::SpectralComponent::Zcs), n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/state_lmncs_iter_%d.bin",
-                     iter2);
-            dump_device_array(
-                fn, storage.family_ptr(cumes::SpectralComponent::Lcs), n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/vel_vrmncc_iter_%d.bin", iter2);
-            dump_device_array(
-                fn, storage.velocity_family_ptr(cumes::SpectralComponent::Rcc),
-                n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/vel_vzmnsc_iter_%d.bin", iter2);
-            dump_device_array(
-                fn, storage.velocity_family_ptr(cumes::SpectralComponent::Zsc),
-                n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/vel_vlmnsc_iter_%d.bin", iter2);
-            dump_device_array(
-                fn, storage.velocity_family_ptr(cumes::SpectralComponent::Lsc),
-                n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/vel_vrmnss_iter_%d.bin", iter2);
-            dump_device_array(
-                fn, storage.velocity_family_ptr(cumes::SpectralComponent::Rss),
-                n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/vel_vzmncs_iter_%d.bin", iter2);
-            dump_device_array(
-                fn, storage.velocity_family_ptr(cumes::SpectralComponent::Zcs),
-                n_spec);
-            snprintf(fn, sizeof fn, "dump/cuMES/vel_vlmncs_iter_%d.bin", iter2);
-            dump_device_array(
-                fn, storage.velocity_family_ptr(cumes::SpectralComponent::Lcs),
-                n_spec);
-        }
-    }
-    if (iter2 >= E2_START && iter2 < E2_START + 40) {
-        char fn[128];
-        snprintf(fn, sizeof fn, "dump/cuMES/fspec_precon_iter_%d.bin", iter2);
-        dump_device_array(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
-    }
-}
-#endif
-
 // ---------------------------------------------------------------------------
 // EquilibriumOperator (blueprint §6.11/§7): composes the per-iteration device
 // DAG. The constructor builds the operator/workspace/views/buffers the DAG
@@ -1235,12 +611,6 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
     cumes::check_cuda(cudaEventCreate(&ev1_inv_), "event create ev1_inv");
     cumes::check_cuda(cudaEventCreate(&ev0_fwd_), "event create ev0_fwd");
     cumes::check_cuda(cudaEventCreate(&ev1_fwd_), "event create ev1_fwd");
-
-    // Env-gated dump-window knobs (defaults = input values).
-    max_iter_eff_ = p.max_iter;
-    if (const char* e = getenv("CUMES_MAX_ITER")) max_iter_eff_ = atoi(e);
-    if (const char* e = getenv("CUMES_DUMP_ITER")) dump_iter_ = atoi(e);
-    if (const char* e = getenv("CUMES_E2_START")) e2_start_ = atoi(e);
 }
 
 template <typename T>
@@ -1304,8 +674,6 @@ void cumes::EquilibriumOperator<T>::enqueue(
     cudaEvent_t& ev1_inv = ev1_inv_;
     cudaEvent_t& ev0_fwd = ev0_fwd_;
     cudaEvent_t& ev1_fwd = ev1_fwd_;
-    const int DUMP_ITER = dump_iter_, E2_START = e2_start_,
-              MAX_ITER_EFF = max_iter_eff_;
 
     // ---- device status reset (completion plan step 1.4) ----
     // Zero the WHOLE control record at pass start: the status bits then cannot
@@ -1337,10 +705,10 @@ void cumes::EquilibriumOperator<T>::enqueue(
     cumes::check_cuda(cudaEventRecord(ev1_inv, stream), "event record ev1_inv");
 
 #ifdef DUMP_CUMES_VERIFY
-    dump_iter0_loop_diag<T>(iter, p, rs);
+    cumes::dump_iter0_loop_diag<T>(iter, p, rs);
 #endif
 #ifdef DUMP_CUMES_VERIFY
-    dump_step_a<T>(iter, iter2, p, rs, transform, stream);
+    cumes::dump_step_a<T>(iter, iter2, p, rs, transform, stream);
 #endif
 
     // Base geometry (blueprint §6.7): staggered interpolation, Jacobian,
@@ -1372,7 +740,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
                      schedule.update_iota_chi);
 
 #ifdef DUMP_CUMES_VERIFY
-    dump_step_d<T>(iter, iter2, p, base, field);
+    cumes::dump_step_d<T>(iter, iter2, p, base, field);
 #endif
 
     // rCon/zCon were produced by the fused inverse DFT above (blueprint
@@ -1418,7 +786,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
         cumes::check_cuda(cudaGetLastError(), "forceNormFinalize");
 
 #ifdef DUMP_CUMES_VERIFY
-        dump_step_precon<T>(iter, p, precon);
+        cumes::dump_step_precon<T>(iter, p, precon);
 #endif
     }
 
@@ -1429,7 +797,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
                      stream);
 
 #ifdef DUMP_CUMES_VERIFY
-    dump_step_ef<T>(iter, iter2, p, base, field, rs);
+    cumes::dump_step_ef<T>(iter, iter2, p, base, field, rs);
 #endif
 
     // Add spectral condensation constraint force to brmn/bzmn.
@@ -1443,7 +811,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
                        stream);
 
 #ifdef DUMP_CUMES_VERIFY
-    dump_step_g<T>(iter, p, rs, storage, constraint);
+    cumes::dump_step_g<T>(iter, p, rs, storage, constraint);
 #endif
 
     cumes::check_cuda(cudaEventRecord(ev0_fwd, stream), "event record ev0_fwd");
@@ -1464,7 +832,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     }
 
 #ifdef DUMP_CUMES_VERIFY
-    dump_step_h<T>(iter, iter2, p, d_f_spec.data(), DUMP_ITER, E2_START);
+    cumes::dump_step_h<T>(iter, iter2, p, d_f_spec.data());
 #endif
 
     // ---- m1 gauge constraint (vmecpp FourierCoeffs::m1Constraint) ----
@@ -1488,7 +856,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     // completes before the terminal predicate and the in-place
     // preconditioner, so the three never race on the residual slab.
 #ifdef DUMP_CUMES_VERIFY
-    dump_step_final<T>(iter, p, d_f_spec.data(), MAX_ITER_EFF);
+    cumes::dump_step_final<T>(iter, p, d_f_spec.data());
 #endif
     cumes::ResidualOperator<T> residual_op;
     residual_op.enqueue(residual_view_const, p.ns, p.mnmax,
@@ -1524,8 +892,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
     precon.enqueue_apply(residual_view, p, &d_control.data()->status, stream);
 
 #ifdef DUMP_CUMES_VERIFY
-    dump_step_i<T>(iter, iter2, p, d_f_spec.data(), storage, DUMP_ITER,
-                   E2_START);
+    cumes::dump_step_i<T>(iter, iter2, p, d_f_spec.data(), storage);
 #endif
 
     // ---- Preconditioned residuals (vmecpp fsqr1/fsqz1/fsql1) ----
@@ -1547,10 +914,6 @@ SolverResult<T> solver_run(
     cudaStream_t stream,
     std::optional<std::reference_wrapper<cumes::SolverBench>> bench,
     std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op) {
-    const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
-#ifndef DUMP_CUMES_VERIFY
-    (void)rpv;  // only the dump-window step_0 snapshots consume it
-#endif
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt, {}};
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
@@ -1572,8 +935,8 @@ SolverResult<T> solver_run(
 
     // ---- env-gated knobs for convergence experiments (defaults = input
     // values; set via CUMES_MAX_ITER, CUMES_DELT0, CUMES_DTAU_FLOOR) ----
-    // (CUMES_DUMP_ITER / CUMES_E2_START are consumed by the
-    // EquilibriumOperator.)
+    // (CUMES_DUMP_ITER / CUMES_E2_START are consumed by the dump windows in
+    // dump_impl.cuh.)
     int MAX_ITER_EFF = p.max_iter;
     double DELT0_EFF = p.delt;  // double: atof knob, converted to T at use
     double DTAU_FLOOR = 0.0;
@@ -1647,88 +1010,16 @@ SolverResult<T> solver_run(
         return h;
     };
 
-#ifdef DUMP_CUMES_VERIFY
     // Per-pass record for convergence analysis (mirrors vmecpp's
     // per_iter_residuals.bin + control scalars). Typed PassRecord; the field
     // order is the frozen 15-column on-disk contract (fsqr_i fsqz_i fsql_i
     // fsqr fsqz fsql delt otav dtau b1 fac iter2 iter1 reason rax). Observers
-    // read these scalars and cannot affect the controller's decisions.
-    std::vector<cumes::PassRecord> per_iter;
-    per_iter.reserve((size_t)MAX_ITER_EFF);
-    // The dump record (per_iter_residuals_cumes.bin) must stay byte-identical
-    // to the frozen baseline, whose axis_r column was read POST-descent with
-    // a synchronized copy. Keep that exact read for the dump-only record
-    // (dump mode already performs device-wide dumps; the extra sync costs
-    // nothing there and is compiled out of production).
-    auto axisRAtZeta0Sync = [&]() {
-        cudaStreamSynchronize(stream);
-        std::vector<T> h_ax(static_cast<std::size_t>(p.ntor) + 1);
-        cumes::check_cuda(
-            cudaMemcpy2D(h_ax.data(), sizeof(T),
-                         storage.family_ptr(cumes::SpectralComponent::Rcc),
-                         (size_t)p.ns * sizeof(T), sizeof(T), p.ntor + 1,
-                         cudaMemcpyDeviceToHost),
-            "cpy Rax");
-        T h = T(0.0);
-        for (int n = 0; n <= p.ntor; ++n) h += h_ax[n];
-        return h;
-    };
-    auto record_pass = [&](int reason, double fRi, double fZi, double fLi,
-                           double fR, double fZ, double fL, double d, double o,
-                           double dt, double b1v, double fcv, int it2,
-                           int it1) {
-        if (!dump_enabled()) return;
-        if ((int)per_iter.size() < MAX_ITER_EFF) {
-            cumes::PassRecord r;
-            r.invariant_fsqr = fRi;
-            r.invariant_fsqz = fZi;
-            r.invariant_fsql = fLi;
-            r.preconditioned_fsqr = fR;
-            r.preconditioned_fsqz = fZ;
-            r.preconditioned_fsql = fL;
-            r.delta_t = d;
-            r.otav = o;
-            r.dtau = dt;
-            r.b1 = b1v;
-            r.fac = fcv;
-            r.iter2 = (double)it2;
-            r.iter1 = (double)it1;
-            r.reason = (double)reason;
-            r.axis_r = (double)axisRAtZeta0Sync();
-            per_iter.push_back(r);
-        }
-    };
-#endif
+    // read these scalars and cannot affect the controller's decisions. The
+    // recorder is a self-gating no-op outside the dump machinery.
+    cumes::PerIterRecorder<T> recorder(p, storage, stream, MAX_ITER_EFF);
 
-#ifdef DUMP_CUMES_VERIFY
     // Diagnostic: test inverse DFT at specified surface (CUMES_DUMP=1 only).
-    // do_combine=false: the diagnostic reads only the parity arrays; the
-    // combined *_real buffers are materialized on demand (fourierCombineParity)
-    // at the dump site, never read stale.
-    if (dump_enabled()) {
-        transform.enqueue_inverse_dump(storage.physical_const(), stream);
-        cudaDeviceSynchronize();  // dump-only read of compute-stream data
-        auto* h_re = new T[p.nZnT * p.ns];
-        auto* h_ro = new T[p.nZnT * p.ns];
-        cumes::check_cuda(cudaMemcpy(h_re, rs.d_r_e, p.nZnT * p.ns * sizeof(T),
-                                     cudaMemcpyDeviceToHost),
-                          "diag re");
-        cumes::check_cuda(cudaMemcpy(h_ro, rs.d_r_o, p.nZnT * p.ns * sizeof(T),
-                                     cudaMemcpyDeviceToHost),
-                          "diag ro");
-        // Check surface j=ns-1 (LCFS): r_e should be rbc[0]*cos(0)=3.999, r_o
-        // should be sum of odd m
-        int jB = p.ns - 1;
-        double re_lcfs = h_re[0 + jB * p.nZnT];  // theta=0
-        double ro_lcfs = h_ro[0 + jB * p.nZnT];
-        printf(
-            "  [diag] LCFS theta=0: r_e=%.4f r_o=%.4f r_total=%.4f (expect "
-            "~3.93 + ~1.03 = ~4.96)\n",
-            re_lcfs, ro_lcfs, re_lcfs + ro_lcfs);
-        delete[] h_re;
-        delete[] h_ro;
-    }
-#endif  // DUMP_CUMES_VERIFY
+    cumes::dump_inverse_diag<T>(transform, storage, rs, p, stream);
 
     printf("\n ITER |    FSQR        FSQZ        FSQL    |   DELT\n");
     printf("------+------------------------------------+----------\n");
@@ -1747,34 +1038,9 @@ SolverResult<T> solver_run(
                (double)h_rmncc_bnd);
     };
 
-#ifdef DUMP_CUMES_VERIFY
-    {
-        dump_ensure_dir();
-        size_t n_spec = (size_t)p.ns * (size_t)p.mnmax;
-        dump_device_array("dump/cuMES/step_0_rmncc.bin",
-                          storage.family_ptr(cumes::SpectralComponent::Rcc),
-                          n_spec);
-        dump_device_array("dump/cuMES/step_0_zmnsc.bin",
-                          storage.family_ptr(cumes::SpectralComponent::Zsc),
-                          n_spec);
-        dump_device_array("dump/cuMES/step_0_lmnsc.bin",
-                          storage.family_ptr(cumes::SpectralComponent::Lsc),
-                          n_spec);
-        dump_device_array("dump/cuMES/step_0_rmnss.bin",
-                          storage.family_ptr(cumes::SpectralComponent::Rss),
-                          n_spec);
-        dump_device_array("dump/cuMES/step_0_zmncs.bin",
-                          storage.family_ptr(cumes::SpectralComponent::Zcs),
-                          n_spec);
-        dump_device_array("dump/cuMES/step_0_lmncs.bin",
-                          storage.family_ptr(cumes::SpectralComponent::Lcs),
-                          n_spec);
-        dump_device_array("dump/cuMES/step_0_currH.bin", rpv.curr_H, p.ns - 1);
-        dump_device_array("dump/cuMES/step_0_chipH.bin", rpv.chip_H, p.ns - 1);
-        dump_device_array("dump/cuMES/step_0_iotaH.bin", rpv.iota_H, p.ns - 1);
-        dump_device_array("dump/cuMES/step_0_iotaF.bin", rpv.iota_F, p.ns);
-    }
-#endif
+    // Pre-loop step-0 snapshots of the spectral state and the initial
+    // profiles (dump machinery, self-gating).
+    cumes::dump_step_0<T>(p, storage, profiles);
 
     // Opt-in benchmark observer: wall-clock the hot loop at the single control
     // fence (see solver_bench.hpp). bench_t_prev is reset at each fence so each
@@ -1877,36 +1143,17 @@ SolverResult<T> solver_run(
         const int it2_before = controller.effective_iteration();
         const int it1_before = controller.restart_anchor();
         const bool host_jac_invalid = controller.jacobian_invalid(js, p.nZnT);
-#ifdef DUMP_CUMES_VERIFY
-        // Device/host rule consistency (dump-only observability): the finalize
-        // kernel and the controller must decide identically, or the guards
-        // would suppress work the controller later consumes.
-        if (dump_enabled() &&
-            ((rec.status.jacobian_valid != 0) == host_jac_invalid)) {
-            fprintf(stderr,
-                    "cuMES: WARNING: device jacobian status (%s) disagrees "
-                    "with the host gate (%s) at pass %d\n",
-                    rec.status.jacobian_valid ? "valid" : "invalid",
-                    host_jac_invalid ? "invalid" : "valid",
-                    controller.effective_iteration());
-        }
-#endif
+        cumes::dump_check_jacobian_consistency(
+            rec.status.jacobian_valid != 0, host_jac_invalid,
+            controller.effective_iteration());
         if (host_jac_invalid) {
-#ifdef DUMP_CUMES_VERIFY
-            record_pass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
-                        it2_before, it1_before);
-#endif
+            recorder.record(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
+                            it2_before, it1_before);
             restoreState();
-#ifdef DUMP_CUMES_VERIFY
-            // Event line compiled out of release (fast) builds along with the
-            // rest of the dump machinery; the iteration table still gets a row.
-            printf(
-                "  -> BAD JACOBIAN (invalid √g: min(signJ·√g)=%.3e "
-                "max|√g|=%.3e nonfinite=%.0f at jH=%d) delt=%.3e\n",
+            cumes::dump_event_bad_jacobian(
                 (double)js.min_oriented, (double)js.max_abs,
                 (double)js.nonfinite_count, js.min_index / p.nZnT,
                 (double)controller.delta_t());
-#endif
             printIterRow(controller.effective_iteration(), T(1.0), T(1.0),
                          T(1.0), controller.delta_t());
             continue;
@@ -1922,8 +1169,8 @@ SolverResult<T> solver_run(
             fNormRZ = rec.final_f_norm_rz;
             fNormL = rec.final_f_norm_l;
             fNorm1 = rec.final_f_norm1;
-            dump_force_norms(rec.force_norms, (double)profiles.delta_s(), iter2,
-                             fNormRZ, fNormL, fNorm1);
+            cumes::dump_force_norms(rec.force_norms, (double)profiles.delta_s(),
+                                    iter2, fNormRZ, fNormL, fNorm1);
         }
 
         // ---- Invariant residuals (vmecpp evalFResInvar) ----
@@ -1939,55 +1186,26 @@ SolverResult<T> solver_run(
         // condition, then reports nonfinite (recover) or converged (stop).
         cumes::InvariantVerdict verdict =
             controller.classify_invariant(inv_triple);
-#ifdef DUMP_CUMES_VERIFY
-        // Device/host terminal-predicate consistency (dump-only): the device
-        // bits and the host verdict must now agree on EVERY pass — on refresh
-        // passes both consume the record's device-finalized factors
-        // (completion-plan follow-up §2.3), on other passes the host's cached
-        // factors travel by value into the predicate.
-        if (dump_enabled()) {
-            const bool dev_nf = rec.status.invariant_nonfinite != 0;
-            const bool dev_cv = rec.status.invariant_converged != 0;
-            const bool nf_ok = dev_nf == verdict.nonfinite;
-            const bool cv_ok = dev_cv == verdict.converged;
-            const bool ev_ok = verdict.nonfinite || verdict.converged ||
-                               rec.status.preconditioned_evaluated != 0;
-            if (!nf_ok || !cv_ok || !ev_ok) {
-                fprintf(stderr,
-                        "cuMES: WARNING: device predicates (nf=%d cv=%d "
-                        "prec_eval=%d) disagree with host (%d %d) at pass %d\n",
-                        (int)rec.status.invariant_nonfinite,
-                        (int)rec.status.invariant_converged,
-                        (int)rec.status.preconditioned_evaluated,
-                        (int)verdict.nonfinite, (int)verdict.converged,
-                        controller.effective_iteration());
-            }
-        }
-#endif
+        cumes::dump_check_predicate_consistency(
+            rec.status.invariant_nonfinite, rec.status.invariant_converged,
+            rec.status.preconditioned_evaluated, verdict.nonfinite,
+            verdict.converged, controller.effective_iteration());
         if (verdict.nonfinite) {
             // vmecpp hard-fails on non-finite residuals (status BAD_JACOBIAN);
             // we recover instead: restore the last good state and shrink delt.
-#ifdef DUMP_CUMES_VERIFY
-            record_pass(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0, 0,
-                        0, 0, it2_before, it1_before);
-#endif
+            recorder.record(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0,
+                            0, 0, 0, it2_before, it1_before);
             restoreState();
-#ifdef DUMP_CUMES_VERIFY
-            // Event line compiled out of release (fast) builds (see above).
-            printf("  -> BAD JACOBIAN (non-finite residuals) delt=%.3e\n",
-                   (double)controller.delta_t());
-#endif
+            cumes::dump_event_nonfinite((double)controller.delta_t());
             printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
                          fsql_i, controller.delta_t());
             continue;
         }
         if (verdict.converged) {
-#ifdef DUMP_CUMES_VERIFY
-            record_pass(0, fsqr_i, fsqz_i, fsql_i, 0, 0, 0,
-                        controller.delta_t(), 0, 0, 0, 0,
-                        controller.effective_iteration(),
-                        controller.restart_anchor());
-#endif
+            recorder.record(0, fsqr_i, fsqz_i, fsql_i, 0, 0, 0,
+                            controller.delta_t(), 0, 0, 0, 0,
+                            controller.effective_iteration(),
+                            controller.restart_anchor());
             res.converged = true;
             res.iterations = controller.effective_iteration();
             res.fsqr = (T)fsqr_i;
@@ -1998,11 +1216,7 @@ SolverResult<T> solver_run(
             // don't advance it, matching vmecpp's bad_resets counter and the
             // ITER column of the table above (the raw pass count, iter+1,
             // would disagree after any restart).
-#ifdef DUMP_CUMES_VERIFY
-            // Event line compiled out of release (fast) builds (see above).
-            printf("  -> CONVERGED at iter %d\n",
-                   controller.effective_iteration());
-#endif
+            cumes::dump_event_converged(controller.effective_iteration());
             printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
                          fsql_i, controller.delta_t());
             break;
@@ -2024,13 +1238,11 @@ SolverResult<T> solver_run(
         cumes::RestartDecision<double> decision =
             controller.decide_restart(prec_triple, inv_triple);
 
-#ifdef DUMP_CUMES_VERIFY
-        record_pass((int)decision.reason, fsqr_i, fsqz_i, fsql_i, fsqr, fsqz,
-                    fsql, controller.delta_t(), decision.damping.otav,
-                    decision.damping.dtau, decision.damping.b1,
-                    decision.damping.fac, controller.effective_iteration(),
-                    controller.restart_anchor());
-#endif
+        recorder.record((int)decision.reason, fsqr_i, fsqz_i, fsql_i, fsqr,
+                        fsqz, fsql, controller.delta_t(), decision.damping.otav,
+                        decision.damping.dtau, decision.damping.b1,
+                        decision.damping.fac, controller.effective_iteration(),
+                        controller.restart_anchor());
 
         // ---- Descent step (Garabedian second-order Richardson) ----------
         // Runs BEFORE the time-step control, matching vmecpp's pass order:
@@ -2061,17 +1273,9 @@ SolverResult<T> solver_run(
             // discarded by the control block's RestartIteration).
             restoreState();
             controller.after_descent(decision);
-#ifdef DUMP_CUMES_VERIFY
-            // The restart event lines (BAD JACOBIAN / BAD PROGRESS) are
-            // compiled out of release (fast) builds with the rest of the
-            // dump machinery (see the other event-line gates above).
-            printf("  -> %s (iter2=%d) delt=%.3e\n",
-                   decision.reason == cumes::RestartReason::BAD_JACOBIAN
-                       ? "BAD JACOBIAN"
-                       : "BAD PROGRESS",
-                   controller.effective_iteration(),
-                   (double)controller.delta_t());
-#endif
+            cumes::dump_event_restart(
+                decision.reason == cumes::RestartReason::BAD_JACOBIAN,
+                controller.effective_iteration(), (double)controller.delta_t());
         } else {
             controller.after_descent(
                 decision);  // advances iter2 on good passes
@@ -2096,24 +1300,9 @@ SolverResult<T> solver_run(
         }
     }
 
-#ifdef DUMP_CUMES_VERIFY
-    if (dump_enabled()) {
-        // Per-pass record, column-major: 15 blocks of per_iter.size() doubles
-        // (byte-identical to the legacy array-of-doubles layout).
-        FILE* fpr = fopen("dump/cuMES/per_iter_residuals_cumes.bin", "wb");
-        if (fpr) {
-            uint64_t n = (uint64_t)per_iter.size();
-            fwrite(&n, sizeof(uint64_t), 1, fpr);
-            for (int c = 0; c < cumes::PassRecord::COLUMN_COUNT; ++c) {
-                for (const cumes::PassRecord& r : per_iter) {
-                    const double* base = &r.invariant_fsqr;
-                    fwrite(base + c, sizeof(double), 1, fpr);
-                }
-            }
-            fclose(fpr);
-        }
-    }
-#endif
+    // Per-pass record (dump/cuMES/per_iter_residuals_cumes.bin) — dump
+    // machinery, self-gating.
+    recorder.write_file();
 
     // Drain the compute stream before destroying the stage's cuFFT plans (the
     // last descent/backup enqueue may still be in flight when the loop exits).

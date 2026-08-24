@@ -10,9 +10,10 @@
 // ordered host-side decisions (descent, post-descent checkpoint
 // capture/restore) stay with the solver/controller (blueprint §6.10/§6.11).
 //
-// The hot-loop dump machinery is carried inside enqueue so it stays
-// interleaved at the same observation points (all legacy workspace structs are
-// gone — migration step 13).
+// The hot-loop dump windows (dump_windows.hpp) fire inside enqueue at the
+// same observation points as the legacy machinery; the windows themselves
+// live with the dump module, not the operator (all legacy workspace structs
+// are gone — migration step 13).
 #ifndef CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_OPERATOR_HPP_
 #define CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_OPERATOR_HPP_
 
@@ -150,10 +151,6 @@ class EquilibriumOperator {
     // Transform-timing event pairs (recorded in enqueue, read at the fence).
     cudaEvent_t ev0_inv_{}, ev1_inv_{}, ev0_fwd_{}, ev1_fwd_{};
     float t_inv_ms_ = 0.0f, t_fwd_ms_ = 0.0f;
-
-    // Env-gated dump-window knobs (CUMES_DUMP_ITER / CUMES_E2_START / max
-    // iter).
-    int dump_iter_ = 150, e2_start_ = 560, max_iter_eff_ = 0;
 };
 
 }  // namespace cumes
