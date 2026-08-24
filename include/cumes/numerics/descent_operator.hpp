@@ -27,6 +27,7 @@ struct DescentAction {
     bool perform_descent = false;
     bool refresh_checkpoint_after_descent = false;
     bool restore_checkpoint_after_descent = false;
+    bool move_lcfs = false;  // free boundary: the R/Z LCFS row evolves too
     double delta_t = 0.0;
     double damping_b1 = 0.0;
     double damping_fac = 0.0;

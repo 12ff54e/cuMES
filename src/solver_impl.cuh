@@ -443,7 +443,8 @@ __global__ void descentStepKernel(
     int mnmax,
     T delt,
     T b1,
-    T fac) {
+    T fac,
+    int j_max) {
     using cumes::SpectralComponent;
     int i = blockIdx.x * blockDim.x + threadIdx.x, total = mnmax * ns;
     if (i >= total) return;
@@ -463,10 +464,12 @@ __global__ void descentStepKernel(
     T nfac = (xn[m] == 0) ? T(1.0) : std::sqrt(T(2.0));
     T f = mfac * nfac;
 
-    // R/Z components (0,1,3,4): LCFS is fixed — the force was zeroed by
-    // fixBoundaryKernel and the coefficient must not move. Lambda (comps
-    // 2,5) is free on all surfaces including the LCFS, matching vmecpp.
-    if (j < ns - 1) {
+    // R/Z components (0,1,3,4): the LCFS is fixed in fixed-boundary runs —
+    // the force was zeroed by the forward DFT and the coefficient must not
+    // move; free-boundary passes j_max = ns and the boundary evolves.
+    // Lambda (comps 2,5) is free on all surfaces including the LCFS,
+    // matching vmecpp.
+    if (j < j_max) {
         T vr = v(SpectralComponent::Rcc, m, j);
         vr = fac * (b1 * vr + delt * f_spec(SpectralComponent::Rcc, m, j));
         v(SpectralComponent::Rcc, m, j) = vr;
@@ -550,7 +553,8 @@ void cumes::DescentOperator<T>::enqueue(
     dim3 bd(256), gd((ns * mnmax + 255) / 256);
     descentStepKernel<T><<<gd, bd, 0, stream>>>(
         state, velocity, residual, xm, xn, ns, mnmax, T(action.delta_t),
-        T(action.damping_b1), T(action.damping_fac));
+        T(action.damping_b1), T(action.damping_fac),
+        action.move_lcfs ? ns : ns - 1);
     cumes::check_cuda(cudaGetLastError(), "descent");
 }
 
@@ -1130,7 +1134,8 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
     cumes::RealSpaceStorage<T>& rs,
     cumes::GeometryOperator<T>& geometry,
     cumes::DeviceArena* arena,
-    cumes::SpectralOperator<T>* op)
+    cumes::SpectralOperator<T>* op,
+    cumes::FreeBoundaryOperator<T>* vac)
     : p_(p),
       storage_(storage),
       profiles_(profiles),
@@ -1154,7 +1159,18 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       velocity_view_(storage.velocity()),
       residual_view_(d_f_spec_.data(), p.ns, p.mnmax),
       residual_view_const_(d_f_spec_.data(), p.ns, p.mnmax),
-      transform_op_((op != nullptr) ? op : &transform) {
+      transform_op_((op != nullptr) ? op : &transform),
+      vac_(vac),
+      d_buco_bvco_(solverArenaBuffer<T>(arena,
+                                        "solver/buco_bvco",
+                                        2 * (size_t)(p.ns - 1))),
+      d_repack_(
+          solverArenaBuffer<T>(arena,
+                               "solver/lcfs_repack",
+                               4 * (size_t)p.mpol * (size_t)(p.ntor + 1))),
+      d_axis_(solverArenaBuffer<T>(arena, "solver/axis", 2 * (size_t)p.nzeta)),
+      d_rbsq_(solverArenaBuffer<T>(arena, "solver/rbsq", (size_t)p.nZnT)),
+      d_delbsq_(solverArenaBuffer<T>(arena, "solver/delbsq", 1)) {
     // View bundles over the stage-owned real-space storage + the constraint's
     // force buffers (built once per stage; cheap pointer aggregates).
     {
@@ -1243,12 +1259,29 @@ void cumes::EquilibriumOperator<T>::enqueue(
     cudaStream_t stream,
     double f_norm_rz,
     double f_norm_l) {
+    // Fixed-boundary composition: prefix + suffix back-to-back reproduce the
+    // historical single enqueue launch-for-launch (the free-boundary path
+    // calls the two halves separately with the host vacuum update between).
+    enqueue_prefix(iter, iter2, schedule, stream, f_norm_rz, f_norm_l);
+    enqueue_suffix(iter, iter2, schedule, stream, f_norm_rz, f_norm_l);
+}
+
+template <typename T>
+void cumes::EquilibriumOperator<T>::enqueue_prefix(
+    int iter,
+    int iter2,
+    const cumes::EvaluationSchedule& schedule,
+    cudaStream_t stream,
+    double f_norm_rz,
+    double f_norm_l) {
 #ifndef DUMP_CUMES_VERIFY
     // iter/iter2 feed only the dump windows; with the dump machinery
     // compiled out they are unused (completion plan step 4.1 warning-clean).
     (void)iter;
     (void)iter2;
 #endif
+    (void)f_norm_rz;  // consumed by the suffix's terminal predicate
+    (void)f_norm_l;
     // Local aliases mirror the pre-step-12 solverRun variable names so the DAG
     // body below is a verbatim move (same arithmetic, same order).
     const DeviceParams<T>& p = p_;
@@ -1348,6 +1381,65 @@ void cumes::EquilibriumOperator<T>::enqueue(
     dumpStepD<T>(iter, iter2, p, base, field);
 #endif
 
+    // Free-boundary bridge (vmecpp HandOverBoundaryGeometry /
+    // HandOverMagneticAxis + the buco/bvco surface averages of
+    // radialForceBalance): the vacuum block consumes THIS pass's LCFS state,
+    // axis real-space geometry, and half-grid B field.
+    if (schedule.run_vacuum_block) {
+        vac_->enqueue_surface_averages(field.bsubu.data(), field.bsubv.data(),
+                                       d_buco_bvco_.data(), p.ns, p.ntheta,
+                                       p.nzeta, stream);
+        vac_->enqueue_lcfs_repack(
+            storage.family_ptr(cumes::SpectralComponent::Rcc),
+            storage.family_ptr(cumes::SpectralComponent::Rss),
+            storage.family_ptr(cumes::SpectralComponent::Zsc),
+            storage.family_ptr(cumes::SpectralComponent::Zcs), d_repack_.data(),
+            p.ns, p.mnmax, p.mpol, p.ntor, stream);
+        vac_->enqueue_axis_extract(geom_views.r_e.data(), geom_views.z_e.data(),
+                                   d_axis_.data(), p.ntheta, p.nzeta, stream);
+    }
+}
+
+template <typename T>
+void cumes::EquilibriumOperator<T>::enqueue_suffix(
+    int iter,
+    int iter2,
+    const cumes::EvaluationSchedule& schedule,
+    cudaStream_t stream,
+    double f_norm_rz,
+    double f_norm_l) {
+    // Local aliases mirror the pre-split enqueue (same arithmetic, same
+    // order — the suffix re-binds the aliases the prefix used).
+    const DeviceParams<T>& p = p_;
+    cumes::SpectralStorage<T>& storage = storage_;
+    const cumes::Profiles<T>& profiles = profiles_;
+    cumes::ToroidalFftOperator<T>& transform = transform_;
+    cumes::RealSpaceStorage<T>& rs = rs_;
+    cumes::GeometryOperator<T>& geometry = geometry_;
+    cumes::Preconditioner<T>& precon = precon_;
+    cumes::ConstraintOperator<T>& constraint = constraint_;
+    cumes::BaseGeometryHalfViews<T>& base = base_views_;
+    cumes::MagneticFieldViews<T>& field = field_views_;
+    const cumes::RadialProfileViews<T>& rpv = rpv_;
+    cumes::DeviceBuffer<T>& d_f_spec = d_f_spec_;
+    cumes::DeviceBuffer<cumes::ControlRecord>& d_control = d_control_;
+    cumes::DeviceBuffer<T>& d_psum = d_psum_;
+    cumes::SpectralOperator<T>* transform_op = transform_op_;
+    cumes::GeometryParityViews<T>& geom_views = geom_views_;
+    cumes::ForceParityViews<const T>& force_views = force_views_;
+    cumes::ConstraintForceViews<const T>& conforce_views = conforce_views_;
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain>& residual_view =
+        residual_view_;
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain>&
+        residual_view_const = residual_view_const_;
+    cudaEvent_t& ev0_fwd = ev0_fwd_;
+    cudaEvent_t& ev1_fwd = ev1_fwd_;
+    const int kDumpIter = kDumpIter_, kE2Start = kE2Start_,
+              kMaxIterEff = kMaxIterEff_;
+    (void)d_f_spec;    // consumed by the dump windows only
+    (void)storage;     // consumed by the dump windows only
+    (void)geom_views;  // consumed by the prefix's axis extract
+
     // rCon/zCon were produced by the fused inverse DFT above (blueprint
     // §8.4). Reset the constraint-force reference (rCon0/zCon0) to the
     // LCFS-extrapolated profile on the first iteration and after every
@@ -1370,7 +1462,8 @@ void cumes::EquilibriumOperator<T>::enqueue(
     const bool precon_updated = schedule.refresh_preconditioner;
     if (precon_updated) {
         precon.enqueue_compute(rs, transform.xm(), transform.xn(), p, rpv, base,
-                               field, &d_control.data()->status, stream);
+                               field, &d_control.data()->status, stream,
+                               vac_ != nullptr);
 
         // vmecpp computeForceNorms (same cadence): device-side reduction
         // of the force-norm partial sums into the typed control record
@@ -1405,6 +1498,29 @@ void cumes::EquilibriumOperator<T>::enqueue(
     dumpStepEF<T>(iter, iter2, p, base, field, rs);
 #endif
 
+    // Vacuum edge force (vmecpp assembleTotalForces): rBSq from the vacuum
+    // magnetic pressure (reduced-grid mirror + edge pressure) and the
+    // LCFS-row force increment, gated on the vacuum state.
+    if (schedule.apply_vacuum_edge_force) {
+        cumes::check_cuda(
+            cudaMemsetAsync(d_delbsq_.data(), 0, sizeof(T), stream),
+            "delbsq reset");
+        vac_->enqueue_rbsq(rs.d_r_e, rs.d_r_o, field.total_pressure.data(),
+                           d_rbsq_.data(), d_delbsq_.data(), p.ns, p.ntheta,
+                           p.nzeta, p.nZnT, T(profiles.delta_s()), stream);
+        vac_->enqueue_edge_force(rs.d_armn_e, rs.d_armn_o, rs.d_azmn_e,
+                                 rs.d_azmn_o, rs.d_zu_e, rs.d_zu_o, rs.d_ru_e,
+                                 rs.d_ru_o, d_rbsq_.data(), p.ns, p.ntheta,
+                                 p.nzeta, stream);
+    }
+    // rCon0/zCon0 decay on vacuum-active passes (vmecpp ideal_mhd_model.cc
+    // :651-661), before the constraint force consumes the reference.
+    if (schedule.decay_rcon0_zcon0) {
+        vac_->enqueue_rcon_decay(constraint.rcon_view(p).data(),
+                                 constraint.zcon_view(p).data(), p.ns, p.ntheta,
+                                 p.nzeta, stream);
+    }
+
     // Add spectral condensation constraint force to brmn/bzmn.
     // Uses the current-iteration tcon (refreshed above when the
     // preconditioner was updated), matching vmecpp. The de-alias bandpass
@@ -1421,7 +1537,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
 
     cumes::check_cuda(cudaEventRecord(ev0_fwd, stream), "event record ev0_fwd");
     transform_op->enqueue_forward(force_views, conforce_views, residual_view,
-                                  stream);
+                                  stream, schedule.apply_vacuum_edge_force);
     cumes::check_cuda(cudaEventRecord(ev1_fwd, stream), "event record ev1_fwd");
 
     // Apply the odd-m decomposition scaling (vmecpp decomposeInto).
@@ -1493,8 +1609,11 @@ void cumes::EquilibriumOperator<T>::enqueue(
                             stream);
 
     // Apply the radial tridiagonal + lambda preconditioners to the
-    // (decomposed) spectral forces. Terminal-guarded.
-    precon.enqueue_apply(residual_view, p, &d_control.data()->status, stream);
+    // (decomposed) spectral forces. Terminal-guarded. The boundary row
+    // joins the solve only when the vacuum edge force is active (vmecpp
+    // applyRZPreconditioner's jMax gate).
+    precon.enqueue_apply(residual_view, p, &d_control.data()->status, stream,
+                         schedule.apply_vacuum_edge_force);
 
 #ifdef DUMP_CUMES_VERIFY
     dumpStepI<T>(iter, iter2, p, d_f_spec.data(), storage, kDumpIter, kE2Start);
@@ -1517,7 +1636,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
                           cumes::DeviceArena* arena,
                           cudaStream_t stream,
                           cumes::SolverBench* bench,
-                          cumes::SpectralOperator<T>* op) {
+                          cumes::SpectralOperator<T>* op,
+                          cumes::FreeBoundaryOperator<T>* vac) {
     const cumes::RadialProfileViews<T> rpv = profiles.profile_views();
 #ifndef DUMP_CUMES_VERIFY
     (void)rpv;  // only the dump-window step_0 snapshots consume it
@@ -1529,7 +1649,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // machinery. solverRun below is a thin loop over the controller + this
     // operator (migration step 12).
     cumes::EquilibriumOperator<T> equilibrium(p, storage, profiles, transform,
-                                              rs, geometry, arena, op);
+                                              rs, geometry, arena, op, vac);
 
     // Stateless descent operator (the DAG's field/force/residual operators live
     // inside the EquilibriumOperator; descent stays with the solver).
@@ -1571,6 +1691,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // vmecpp residual normalization factors (computeForceNorms), refreshed on
     // the same cadence as the preconditioner (every kPreconInterval passes).
     double fNormRZ = 0.0, fNormL = 0.0, fNorm1 = 0.0;
+
+    // The previous pass's invariant residuals: the vacuum state machine's
+    // ramp/nvacskip extension reads fsqr+fsqz (vmecpp m_fc_.fsqr/fsqz at the
+    // free-boundary block). 1.0 keeps the first pass's gate safely open
+    // (the block does not run at iter2==1 anyway).
+    double prev_fsqr = 1.0, prev_fsqz = 1.0;
+    // Host copies of the buco/bvco surface averages for the vacuum update.
+    std::vector<double> h_buco_bvco(2 * (size_t)(p.ns - 1), 0.0);
 
     // Pinned mirror of the typed control record (one async D2H per pass,
     // delivered by the single control fence — completion plan step 1.3).
@@ -1775,17 +1903,66 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             continue;
         }
 
+        // Free-boundary host state machine (vmecpp ideal_mhd_model.cc
+        // :605-646): the top-of-block advance computes the block gate,
+        // ivacskip, the ramp (full update while not yet ACTIVE), the
+        // adaptive nvacskip extension, and the rCon0/zCon0 decay flag from
+        // the PREVIOUS pass's invariant residuals.
+        if (vac != nullptr) {
+            vac->advance(iter2, controller.restart_anchor(), prev_fsqr,
+                         prev_fsqz);
+        }
+
         // Extrapolate
         // Build the per-iteration schedule from the controller's pure host
         // decisions, then enqueue the device DAG (blueprint §6.11/§7).
         cumes::EvaluationSchedule schedule;
         schedule.update_iota_chi = (p.ncurr == 1) || (iter == 0);
         schedule.reset_constraint_reference =
-            controller.reset_constraint_reference();
+            controller.reset_constraint_reference() &&
+            // vmecpp rzConIntoVolume gate: the reference reset runs only
+            // while the vacuum pressure is OFF or just ramping up.
+            (vac == nullptr ||
+             (vac->state() != cumes::VacuumState::INITIALIZED &&
+              vac->state() != cumes::VacuumState::ACTIVE));
         schedule.refresh_preconditioner = controller.refresh_preconditioner();
         schedule.zero_z_force_m1 = (controller.effective_iteration() < 2) ||
                                    (controller.fsqz_prev() < 1.0e-6);
-        equilibrium.enqueue(iter, iter2, schedule, stream, fNormRZ, fNormL);
+        schedule.run_vacuum_block = (vac != nullptr) && vac->run_vacuum_block();
+        schedule.decay_rcon0_zcon0 =
+            (vac != nullptr) && vac->decay_rcon0_zcon0();
+        // apply_vacuum_edge_force is set below by the HOST vacuum update
+        // (it depends on the post-update state); the fixed path and the
+        // block-inactive passes keep it false.
+        schedule.apply_vacuum_edge_force = false;
+
+        if (vac == nullptr || !schedule.run_vacuum_block) {
+            equilibrium.enqueue(iter, iter2, schedule, stream, fNormRZ, fNormL);
+        } else {
+            // Free-boundary passes: prefix -> vacuum fence -> HOST vacuum
+            // update -> suffix. The vfield solver runs on the legacy
+            // default stream with synchronous copies, so the compute stream
+            // must be drained first (its kernels produced the LCFS state,
+            // the repack, and the buco/bvco averages).
+            equilibrium.enqueue_prefix(iter, iter2, schedule, stream, fNormRZ,
+                                       fNormL);
+            cumes::check_cuda(cudaStreamSynchronize(stream), "vacuum fence");
+            cumes::check_cuda(
+                cudaMemcpy(h_buco_bvco.data(), equilibrium.buco_bvco_device(),
+                           2 * (size_t)(p.ns - 1) * sizeof(T),
+                           cudaMemcpyDeviceToHost),
+                "cpy buco/bvco");
+            // The host update runs the vacuum solve (its own device work on
+            // the legacy stream), promotes the state, checks the rBtor/
+            // cTor consistency, and arms the soft-restart/edge-force gates.
+            vac->run_host_update(
+                h_buco_bvco.data(), h_buco_bvco.data() + (p.ns - 1),
+                equilibrium.repack_device(), equilibrium.axis_device(),
+                equilibrium.axis_device() + p.nzeta, stream);
+            schedule.apply_vacuum_edge_force = vac->apply_edge_force();
+            equilibrium.enqueue_suffix(iter, iter2, schedule, stream, fNormRZ,
+                                       fNormL);
+        }
 
         // ---- ONE combined control fence (Phase 6A) ----
         // Jacobian stats + invariant + preconditioned residuals are one device
@@ -1814,6 +1991,15 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
                 sizeof(T), cudaMemcpyDeviceToHost, stream),
             "cpy Rbnd mirror");
         cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
+        if (vac != nullptr) {
+            // delBSq surface-mean diagnostic (log only): the suffix's rBSq
+            // kernel reduced it; read it at the same fence.
+            T h_delbsq = T(0);
+            cumes::check_cuda(cudaMemcpy(&h_delbsq, equilibrium.delbsq_device(),
+                                         sizeof(T), cudaMemcpyDeviceToHost),
+                              "cpy delbsq");
+            vac->set_delbsq(h_delbsq);
+        }
         if (bench && bench->enabled) {
             auto bench_now = std::chrono::steady_clock::now();
             bench->pass_wall_us.push_back(
@@ -1896,6 +2082,18 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
                            fNormRZ, fNormL, fNorm1);
         }
 
+        // Vacuum-activation soft restart (vmecpp UpdateForwardModel ->
+        // RestartIteration): restore the pass-start state, zero the
+        // velocities, and re-anchor WITHOUT shrinking delt (the x0.9 hits a
+        // local delt0 copy in vmecpp). The pass still classifies, descends,
+        // and advances iter2 — the restart only resets the anchor, so
+        // decide_restart re-initializes the 1/tau history exactly as
+        // vmecpp's Evolve does after a restart.
+        if (vac != nullptr && vac->soft_restart_requested()) {
+            restoreState();
+            controller.vacuum_soft_restart();
+        }
+
         // ---- Invariant residuals (vmecpp evalFResInvar) ----
         // fsqr = fResInvar[0]·fNormRZ·0.25 (same for fsqz), fsql =
         // fResInvar[2]·fNormL. The kernel returns ΣF²/(mnmax·ns); undo first.
@@ -1903,6 +2101,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         double fsqz_i = rec.invariant_raw[1] * plain_per_el * fNormRZ * 0.25;
         double fsql_i = rec.invariant_raw[2] * plain_per_el * fNormL;
         const double inv_triple[3] = {fsqr_i, fsqz_i, fsql_i};
+        // Hand the residuals to the vacuum state machine for the NEXT pass
+        // (vmecpp's free-boundary block reads the current m_fc_.fsqr/fsqz).
+        prev_fsqr = fsqr_i;
+        prev_fsqz = fsqz_i;
 
         // ---- Stopping criterion (vmecpp Evolve) ----
         // classify_invariant records fsqz_prev for the next pass's gauge
@@ -2013,6 +2215,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         // (2791 vs 2953 iters; converged lambda gauge modes 1.4e-2 off).
         cumes::DescentAction dact;
         dact.perform_descent = true;
+        dact.move_lcfs = (vac != nullptr);  // free boundary: the LCFS R/Z row
+                                            // evolves (vmecpp jMaxRZ = ns)
         dact.delta_t = controller.delta_t();
         dact.damping_b1 = decision.damping.b1;
         dact.damping_fac = decision.damping.fac;

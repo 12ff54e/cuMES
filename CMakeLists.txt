@@ -234,8 +234,8 @@ if(CUMES_USE_VACUUM_FIELD)
   set(VFIELD_USE_FLOAT ${CUMES_USE_FLOAT} CACHE BOOL
       "vacuum-field scalar switch (propagated from CUMES_USE_FLOAT)" FORCE)
   add_subdirectory(deps/vacuum-field)
-  target_link_libraries(cumes_cuda_double PUBLIC vfield::vfield)
-  target_link_libraries(cumes_cuda_float PUBLIC vfield::vfield)
+  target_link_libraries(cumes_cuda_double PUBLIC vfield_cuda_double)
+  target_link_libraries(cumes_cuda_float PUBLIC vfield_cuda_float)
 endif()
 
 # ---- CLI executable --------------------------------------------------------

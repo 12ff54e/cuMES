@@ -166,7 +166,8 @@ int main(int argc, char** argv) {
             stack.geometry, &arena,
             stack.use_axisym ? static_cast<cumes::SpectralOperator<Real>*>(
                                    stack.axisym.get())
-                             : nullptr);
+                             : nullptr,
+            nullptr);
 
         // Steady-state pass schedules (iter/iter2 far from any first-pass or
         // dump-window branch; the env-gated dump machinery is off by default).

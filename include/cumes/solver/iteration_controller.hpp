@@ -219,6 +219,19 @@ class IterationController {
         return d;
     }
 
+    // vmecpp vacuum-activation soft restart (RestartIteration via
+    // UpdateForwardModel): the caller restores the state and zeroes the
+    // velocities; here: ++ijacob, re-anchor, record the event. NO delt
+    // change (vmecpp applies the x0.9 to a LOCAL delt0 copy, not the
+    // maintained one) and the pass still classifies/descends and advances
+    // iter2 — distinct from jacobian_invalid, which shrinks delt.
+    void vacuum_soft_restart() {
+        ++ijacob_;
+        iter1_ = iter2_;
+        log_anchor_ = iter2_;
+        restart_events_.push_back(RestartEvent{iter2_});
+    }
+
     // Post-descent bookkeeping: apply the restart's time-step adjustment and
     // re-anchor, or advance the effective-iteration counter on a good pass.
     void after_descent(const RestartDecision<T>& d) {

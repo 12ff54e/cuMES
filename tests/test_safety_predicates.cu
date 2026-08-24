@@ -594,7 +594,8 @@ static void runCollapsedDag(T label) {
     cumes::GeometryOperator<T> geometry(p, nullptr);
 
     cumes::EquilibriumOperator<T> equilibrium(p, storage, profiles, transform,
-                                              rs, geometry, nullptr, nullptr);
+                                              rs, geometry, nullptr, nullptr,
+                                              nullptr);
 
     cumes::EvaluationSchedule schedule;
     schedule.update_iota_chi = true;

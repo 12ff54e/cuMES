@@ -146,6 +146,7 @@ __global__ void forwardKernel(
     int ntheta,
     int nThetaRed,
     int nZnT,
+    int include_lcfs,
     SpectralView<T, DecomposedResidualDomain> f_spec) {
     const int j = blockIdx.x;
     const int m = blockIdx.y;
@@ -183,7 +184,7 @@ __global__ void forwardKernel(
         f_spec(SpectralComponent::Rss, m, j) = T(0);
         f_spec(SpectralComponent::Zcs, m, j) = T(0);
         f_spec(SpectralComponent::Lcs, m, j) = T(0);
-    } else if (j == ns - 1) {
+    } else if (j == ns - 1 && !include_lcfs) {
         // LCFS: λ only (R/Z are fixed-boundary).
         f_spec(SpectralComponent::Rcc, m, j) = T(0);
         f_spec(SpectralComponent::Zsc, m, j) = T(0);
@@ -353,7 +354,8 @@ void AxisymmetricOperator<T>::enqueue_forward(
     ForceParityViews<const T> f,
     ConstraintForceViews<const T> cf,
     SpectralView<T, DecomposedResidualDomain> residual,
-    cudaStream_t stream) {
+    cudaStream_t stream,
+    bool include_lcfs) {
     const int nThetaRed = p_.ntheta / 2 + 1;
     const dim3 grid(p_.ns, p_.mpol);  // one thread per (surface, mode)
     axisym_detail::forwardKernel<T><<<grid, 1, 0, stream>>>(
@@ -362,7 +364,7 @@ void AxisymmetricOperator<T>::enqueue_forward(
         f.blmn_e.data(), f.blmn_o.data(), cf.frcon_e.data(), cf.frcon_o.data(),
         cf.fzcon_e.data(), cf.fzcon_o.data(), cos_th_.data(), sin_th_.data(),
         mcos_th_.data(), msin_th_.data(), fwd_w_.data(), p_.ns, p_.mpol,
-        p_.ntheta, nThetaRed, p_.nZnT, residual);
+        p_.ntheta, nThetaRed, p_.nZnT, include_lcfs ? 1 : 0, residual);
     check_cuda(cudaGetLastError(), "axisym forward");
 }
 

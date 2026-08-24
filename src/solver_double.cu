@@ -11,7 +11,8 @@ template SolverResult<double> solverRun<double>(
     cumes::DeviceArena*,
     cudaStream_t,
     cumes::SolverBench*,
-    cumes::SpectralOperator<double>*);
+    cumes::SpectralOperator<double>*,
+    cumes::FreeBoundaryOperator<double>*);
 
 // Stateless operators (migration steps 8/10): linkable from tests.
 template class cumes::ResidualOperator<double>;

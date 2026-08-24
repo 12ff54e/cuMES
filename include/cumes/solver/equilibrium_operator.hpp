@@ -19,6 +19,7 @@
 #include "cumes/numerics/residual_operator.hpp"
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/force_operator.hpp"
+#include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
@@ -36,6 +37,15 @@ struct EvaluationSchedule {
     bool reset_constraint_reference = false;  // iter2 == iter1
     bool refresh_preconditioner = false;      // (iter2 - iter1) % 25 == 0
     bool zero_z_force_m1 = false;             // iter2 < 2 || fsqz_prev < 1e-6
+    // Free-boundary (all false in fixed-boundary runs — the DAG is then
+    // launch-for-launch identical to the frozen baseline):
+    bool run_vacuum_block = false;         // the block gate (iter2 > 1 ||
+                                           // vacuum INITIALIZED)
+    bool decay_rcon0_zcon0 = false;        // state != OFF on vacuum passes
+    bool apply_vacuum_edge_force = false;  // state in {INITIALIZED, ACTIVE}
+                                           // AFTER the host update; also gates
+                                           // the forward-DFT LCFS row and the
+                                           // preconditioner boundary row
 };
 
 template <class T>
@@ -48,7 +58,8 @@ class EquilibriumOperator {
                         RealSpaceStorage<T>& rs,
                         GeometryOperator<T>& geometry,
                         DeviceArena* arena,
-                        SpectralOperator<T>* op);
+                        SpectralOperator<T>* op,
+                        FreeBoundaryOperator<T>* vac);
     ~EquilibriumOperator();
 
     EquilibriumOperator(const EquilibriumOperator&) = delete;
@@ -65,12 +76,39 @@ class EquilibriumOperator {
     // classifies convergence from those — the host consumes the same record
     // fields at the fence (completion-plan follow-up §2.3). The defaults keep
     // the benchmark harnesses (which drive enqueue directly) compilable.
+    //
+    // The free-boundary split: enqueue_prefix runs through the magnetic
+    // field (+ the vacuum bridge kernels when schedule.run_vacuum_block);
+    // the caller then fences the compute stream, runs the HOST vacuum
+    // update (vac->run_host_update), sets schedule.apply_vacuum_edge_force
+    // from vac->apply_edge_force(), and calls enqueue_suffix. Fixed-boundary
+    // runs (vac == nullptr) may call enqueue() — prefix + suffix
+    // back-to-back, launch-for-launch identical to the frozen baseline.
     void enqueue(int iter,
                  int iter2,
                  const EvaluationSchedule& schedule,
                  cudaStream_t stream,
                  double f_norm_rz = 1.0,
                  double f_norm_l = 1.0);
+    void enqueue_prefix(int iter,
+                        int iter2,
+                        const EvaluationSchedule& schedule,
+                        cudaStream_t stream,
+                        double f_norm_rz,
+                        double f_norm_l);
+    void enqueue_suffix(int iter,
+                        int iter2,
+                        const EvaluationSchedule& schedule,
+                        cudaStream_t stream,
+                        double f_norm_rz,
+                        double f_norm_l);
+
+    // The stage-owned free-boundary workspaces (consumed by the host vacuum
+    // update and the delBSq read at the control fence).
+    T* buco_bvco_device() { return d_buco_bvco_.data(); }
+    T* repack_device() { return d_repack_.data(); }
+    T* axis_device() { return d_axis_.data(); }
+    T* delbsq_device() { return d_delbsq_.data(); }
 
     // The reduced control record: Jacobian stats + status, invariant /
     // preconditioned raw sums, force-norm partials (completion plan step 1.3).
@@ -136,9 +174,18 @@ class EquilibriumOperator {
     SpectralView<const T, DecomposedResidualDomain> residual_view_const_;
 
     SpectralOperator<T>* transform_op_ = nullptr;
+    FreeBoundaryOperator<T>* vac_ = nullptr;
     GeometryParityViews<T> geom_views_;
     ForceParityViews<const T> force_views_;
     ConstraintForceViews<const T> conforce_views_;
+
+    // Stage-owned free-boundary workspaces (arena-carved; sized for the
+    // stage's grid). Fixed-boundary stages waste a few KB of arena space.
+    DeviceBuffer<T> d_buco_bvco_;  // [2*(ns-1)] interleaved surface averages
+    DeviceBuffer<T> d_repack_;     // [4 * mpol*(ntor+1)] n-major LCFS
+    DeviceBuffer<T> d_axis_;       // [2*nzeta] r_axis/z_axis
+    DeviceBuffer<T> d_rbsq_;       // [nZnT]
+    DeviceBuffer<T> d_delbsq_;     // [1] surface-mean diagnostic
 
     // Transform-timing event pairs (recorded in enqueue, read at the fence).
     cudaEvent_t ev0_inv_{}, ev1_inv_{}, ev0_fwd_{}, ev1_fwd_{};

@@ -367,6 +367,7 @@ __global__ void preconDiagKernel(
     const T* __restrict__ sm,
     const T* __restrict__ sp,
     int ns,
+    int lfreeb,
     T* __restrict__ ard,
     T* __restrict__ brd,
     T* __restrict__ azd,
@@ -433,9 +434,11 @@ __global__ void preconDiagKernel(
         bzd[jF_odd] = bx_Z[jHi * 3 + 1] * sm[jHi] * sm[jHi];
     }
 
-    // Edge pedestal for boundary stability
+    // Edge pedestal for boundary stability (FIXED-boundary runs only: the
+    // free-boundary path applies vmecpp's per-m pedestal on the assembled
+    // dr/dz instead, in tridiagAssemblyKernel).
     const T edge_pedestal = T(0.05);
-    if (jF == ns - 1) {
+    if (jF == ns - 1 && !lfreeb) {
         ard[jF_even] *= T(1.0) + edge_pedestal;
         ard[jF_odd] *= T(1.0) + edge_pedestal;
         brd[jF_even] *= T(1.0) + edge_pedestal;
@@ -471,6 +474,8 @@ __global__ void tridiagAssemblyKernel(
     int ns,
     int mnmax,
     int nfp,
+    int lfreeb,
+    T mult_fact,
     T* __restrict__ ar,
     T* __restrict__ dr,
     T* __restrict__ br,
@@ -509,6 +514,16 @@ __global__ void tridiagAssemblyKernel(
     int jF_par = jF * 2 + parity;
     dr[idx] = -(ard[jF_par] + brd[jF_par] * m2 + cxd[jF] * n2);
     dz[idx] = -(azd[jF_par] + bzd[jF_par] * m2 + cxd[jF] * n2);
+
+    // Free-boundary edge pedestal (vmecpp assembleRZPreconditioner): the
+    // LCFS diagonal of dr/dz only — x(1+0.05) for m=0,1, x(1+0.1) for m>=2 —
+    // plus the z00 edge stabilization dz *= (1-multFact)/(1+0.05).
+    if (lfreeb && jF == ns - 1) {
+        const T pedestal = (mm <= 1) ? T(0.05) : T(0.1);
+        dr[idx] *= T(1.0) + pedestal;
+        dz[idx] *= T(1.0) + pedestal;
+        if (mm == 0 && nn == 0) { dz[idx] *= (T(1.0) - mult_fact) / T(1.05); }
+    }
 
     // Sub-diagonal: half-grid at jF-1 (inner of forces surface jF)
     if (jF > 0) {
@@ -1015,7 +1030,8 @@ void cumes::Preconditioner<T>::enqueue_compute(
     const cumes::BaseGeometryHalfViews<T>& base,
     const cumes::MagneticFieldViews<T>& field,
     const cumes::ControlStatus* status,
-    cudaStream_t stream) {
+    cudaStream_t stream,
+    bool lfreeb) {
     int nH = p.ns - 1, nF = p.ns;
     int threads = 256;
 
@@ -1040,17 +1056,19 @@ void cumes::Preconditioner<T>::enqueue_compute(
     // Step 2b: Average half-grid diagonals to full-grid
     int gridF = (nF + 255) / 256;
     preconDiagKernel<T><<<gridF, 256, 0, stream>>>(
-        d_ax_R_, d_ax_Z_, d_bx_R_, d_bx_Z_, d_cx_, d_sm_, d_sp_, p.ns, d_ard_,
-        d_brd_, d_azd_, d_bzd_, d_cxd_, status);
+        d_ax_R_, d_ax_Z_, d_bx_R_, d_bx_Z_, d_cx_, d_sm_, d_sp_, p.ns,
+        lfreeb ? 1 : 0, d_ard_, d_brd_, d_azd_, d_bzd_, d_cxd_, status);
     cumes::check_cuda(cudaGetLastError(), "preconDiag");
 
     // Step 3: Assemble tridiagonal matrices per (m,n) mode
     int total = p.mnmax * nF;
     int gridMN = (total + 255) / 256;
+    // vmecpp's z00 edge-stabilization factor: min(0.25, 0.25*deltaS*15).
+    const T mult_fact = T(std::min(0.25, 0.25 * (1.0 / (p.ns - 1)) * 15.0));
     tridiagAssemblyKernel<T><<<gridMN, 256, 0, stream>>>(
         d_arm_, d_brm_, d_azm_, d_bzm_, d_ard_, d_brd_, d_azd_, d_bzd_, d_cxd_,
-        xm, xn, p.ns, p.mnmax, p.nfp, d_ar_, d_dr_, d_br_, d_az_, d_dz_, d_bz_,
-        d_jMin_, status);
+        xm, xn, p.ns, p.mnmax, p.nfp, lfreeb ? 1 : 0, mult_fact, d_ar_, d_dr_,
+        d_br_, d_az_, d_dz_, d_bz_, d_jMin_, status);
     cumes::check_cuda(cudaGetLastError(), "tridiagAssembly");
 
     // Step 3b: per-mode coefficient scale for the scale-aware pivot floor
@@ -1157,7 +1175,8 @@ void cumes::Preconditioner<T>::enqueue_apply(
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f,
     const DeviceParams<T>& p,
     const cumes::ControlStatus* gate,
-    cudaStream_t stream) const {
+    cudaStream_t stream,
+    bool include_lcfs) const {
     // Phase 8: route the tridiagonal solve through the backend-neutral
     // PcrBackend (the extracted production PCR, bit-identical to the legacy
     // tridiagSolveKernel). The R and Z systems each carry two RHS spectral
@@ -1174,7 +1193,7 @@ void cumes::Preconditioner<T>::enqueue_apply(
     rv.rhs_stride = 3 * comp_stride;  // comp 0 -> comp 3
     rv.modes = p.mnmax;
     rv.surfaces = p.ns;
-    rv.last_surface = p.ns - 1;
+    rv.last_surface = include_lcfs ? p.ns : p.ns - 1;
 
     zv.lower = d_bz_;
     zv.diagonal = d_dz_;
@@ -1186,7 +1205,7 @@ void cumes::Preconditioner<T>::enqueue_apply(
     zv.rhs_stride = 3 * comp_stride;  // comp 1 -> comp 4
     zv.modes = p.mnmax;
     zv.surfaces = p.ns;
-    zv.last_surface = p.ns - 1;
+    zv.last_surface = include_lcfs ? p.ns : p.ns - 1;
 
     // Reset the breakdown accumulator once, then accumulate across both solves.
     cumes::check_cuda(cudaMemsetAsync(d_preconStatus_, 0, sizeof(int), stream),

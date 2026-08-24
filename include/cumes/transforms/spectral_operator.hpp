@@ -51,7 +51,8 @@ class SpectralOperator {
         ForceParityViews<const T> real_force,
         ConstraintForceViews<const T> constraint_force,
         SpectralView<T, DecomposedResidualDomain> residual,
-        cudaStream_t stream) = 0;
+        cudaStream_t stream,
+        bool include_lcfs = false) = 0;
 
     // De-alias bandpass (constraint step 2, blueprint §6.8): gConEff -> gCon
     // over the bandpass modes m = 1..mpol-2, scaled by tcon/faccon. The generic
