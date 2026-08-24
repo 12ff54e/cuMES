@@ -127,9 +127,9 @@ Step 1 of the free-boundary work (see `adr/0005-vacuum-field-submodule.md`).
 NESTOR vacuum-field algorithm — embedded as a git submodule. It computes the
 vacuum magnetic field on the LCFS from the boundary Fourier coefficients and
 an mgrid coil field: the magnetic scalar potential via the boundary-element
-Laplace solve, and the outputs `bSqVac` (|B|²/2, no mu0), the covariant
-components `bSubU/bSubV`, the cylindrical `B_R/B_phi/B_Z`, and the
-surface-integral scalars `bSubUVac/bSubVVac`.
+Laplace solve, and the outputs `b_sq_vac` (|B|²/2, no mu0), the covariant
+components `b_sub_u/b_sub_v`, the cylindrical `B_R/B_phi/B_Z`, and the
+surface-integral scalars `b_sub_u_vac/b_sub_v_vac`.
 
 Dependency edge (the acyclic-graph rule): **cuMES → vfield only** — the
 library never includes cuMES headers, owns its own runtime (a trimmed
