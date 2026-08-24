@@ -112,13 +112,13 @@ static void testCheckpointVersionGate() {
     {
         std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
         f.seekp(8);
-        const std::int32_t v3 = 3;
-        f.write(reinterpret_cast<const char*>(&v3), sizeof(v3));
+        const std::int32_t v4 = 4;
+        f.write(reinterpret_cast<const char*>(&v4), sizeof(v4));
         f.close();
     }
     {
         auto bad = cumes::read_checkpoint(path);
-        check(!bad.has_value(), "checkpoint: version 3 rejected");
+        check(!bad.has_value(), "checkpoint: version 4 rejected");
     }
     remove(path.c_str());
 }
