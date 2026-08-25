@@ -2,11 +2,11 @@
 """Render 3D figures of a converged cuMES equilibrium.
 
 Reads any solver state container (docs/output-formats.md): versioned
-binary (v3), checkpoint (v2), NetCDF, or HDF5. Every container embeds the
+binary (v4), checkpoint (v3), NetCDF, or HDF5. Every container embeds the
 structured normalized-input record, so the script needs no input JSON:
 mpol/ntor/nfp, the resolved angular grid, phiedge, the am/ac/ai/aphi
-profiles, and the raw boundary (for the LCFS self-check) all come from
-the container. Containers predating the embedded record are rejected.
+profiles, and the raw initial boundary all come from the container.
+Containers predating the embedded record are rejected.
 
 Reconstructs real-space geometry with the solver's exact conventions
 (parity-split e/o arrays, odd-m scalxc regularization, staggered half-grid
@@ -26,7 +26,8 @@ of the innermost surface, seed_state.hpp convention: nfp-fold
 modulation).
 
 Two self-checks run before rendering:
-  1. the state LCFS (j = ns-1) must match the embedded rbc/zbs boundary;
+  1. for fixed boundary, the state LCFS (j = ns-1) must match the embedded
+     rbc/zbs boundary; for free boundary, its displacement is reported;
   2. the edge |B| range is printed for a physical plausibility review.
 
 Usage: plot_w7x.py [--state PATH] [--out PATH.png] [--field-lines]
@@ -71,11 +72,11 @@ def _read_vec(f, fmt, cap=1 << 20):
     return struct.unpack(f"<{n}{fmt}", f.read(n * struct.calcsize(fmt)))
 
 
-def _read_input_record(f):
+def _read_input_record(f, has_free_boundary_extension=False):
     """The fixed-order embedded-input record (io_common.hpp write/readInput
     Params): 6 i32 + 8 f64 scalars, schema string, six f64 vectors, the
-    input stages, the raw boundary, and four folded vectors (skipped — the
-    plotting path never uses the folded basis)."""
+    input stages, the raw boundary, four folded vectors (skipped), and the
+    optional free-boundary extension added to binary v4 / checkpoint v3."""
     mpol, ntor, nfp, ntheta, nzeta, ncurr = struct.unpack("<6i", f.read(24))
     (delt, phiedge, pres_scale, adiabatic_index, spres_ped, bloat, curtor,
      tcon0) = struct.unpack("<8d", f.read(64))
@@ -104,6 +105,13 @@ def _read_input_record(f):
         raise SystemExit("error: corrupt boundary vectors in container")
     for _ in range(4):  # folded rbcc/rbss/zbsc/zbcs
         _read_vec(f, "d")
+    lfreeb, nvacskip, mgrid_file, extcur = False, 1, "", []
+    if has_free_boundary_extension:
+        lfreeb_i, nvacskip = struct.unpack("<2i", f.read(8))
+        lfreeb = bool(lfreeb_i)
+        mgrid_file = _read_str(f)
+        extcur = list(_read_vec(f, "d"))
+
     return {
         "schema": schema, "mpol": mpol, "ntor": ntor, "nfp": nfp,
         "ntheta": ntheta, "nzeta": nzeta, "ncurr": ncurr, "delt": delt,
@@ -115,6 +123,8 @@ def _read_input_record(f):
         "stages": stages,
         "rbc": list(zip(rbc_m, rbc_n, rbc_v)),
         "zbs": list(zip(zbs_m, zbs_n, zbs_v)),
+        "lfreeb": lfreeb, "nvacskip": nvacskip,
+        "mgrid_file": mgrid_file, "extcur": extcur,
     }
 
 
@@ -125,7 +135,7 @@ def _no_params(path):
 def load_state(path):
     """Load the converged state + the embedded structured input record from
     any solver output container (docs/output-formats.md): versioned binary
-    (v3), checkpoint (v2), NetCDF, or HDF5. Returns (ns, mnmax, fams,
+    (v4), checkpoint (v3), NetCDF, or HDF5. Returns (ns, mnmax, fams,
     params, name) — the six mode-major families (index = mode * ns +
     surface), the input record as a dict mirroring InputParams, and a
     display name (the recorded input path stem when available, else the
@@ -137,11 +147,12 @@ def load_state(path):
     if head.startswith(b"CUMES001"):
         # Versioned binary: magic(8), version(4), ns(4), mnmax(4), the six
         # families, then the provenance trailer (run outcome + provenance
-        # strings + stage records), and — version 3 — the input record.
+        # strings + stage records), then the v3 input record; v4 appends the
+        # free-boundary fields to that record.
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if not 1 <= version <= 3:
+            if not 1 <= version <= 4:
                 raise SystemExit(f"error: unsupported container version "
                                  f"{version} in {path}")
             ns, mnmax = struct.unpack("<ii", f.read(8))
@@ -173,16 +184,20 @@ def load_state(path):
                 f.read(24)  # fsqr, fsqz, fsql
                 nrst = struct.unpack("<i", f.read(4))[0]
                 f.read(4 * nrst)
-            params = _read_input_record(f)
+            params = _read_input_record(f, version >= 4)
         if source_path:
             name = os.path.splitext(os.path.basename(source_path))[0]
         return ns, mnmax, fams, params, name
     if head.startswith(b"CUMECKP1"):
-        # Checkpoint: magic(8), version(4), precision(4), ns(4), mnmax(4),
-        # the six families, then — version 2 — the input record.
+        # Checkpoint: magic(8), version field(4), precision(4), ns(4), mnmax(4),
+        # the six families, then the v2 input record; v3 appends the
+        # free-boundary fields to that record.
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
+            if not 1 <= version <= 3:
+                raise SystemExit(f"error: unsupported checkpoint version "
+                                 f"{version} in {path}")
             f.read(4)  # precision (always double)
             ns, mnmax = struct.unpack("<ii", f.read(8))
             n = ns * mnmax
@@ -190,7 +205,7 @@ def load_state(path):
                     for fam in FAM_NAMES}
             if version < 2:
                 _no_params(path)
-            params = _read_input_record(f)
+            params = _read_input_record(f, version >= 3)
         return ns, mnmax, fams, params, name
     if head.startswith(b"CDF"):
         # NetCDF: the six families are 2-D [surface, mode] datasets; the
@@ -210,6 +225,10 @@ def load_state(path):
                 return v.getValue() if hasattr(v, "getValue") else \
                     np.asarray(v[:]).item()
 
+            def sattr(attr, default):
+                v = getattr(nc, attr, default)
+                return v.decode() if isinstance(v, bytes) else v
+
             def darray(var):
                 return list(np.asarray(nc.variables[var][:], dtype="<f8")) \
                     if var in nc.variables else []
@@ -219,7 +238,7 @@ def load_state(path):
                     if var in nc.variables else []
 
             params = {
-                "schema": getattr(nc, "schema", "cumes-config-v1"),
+                "schema": sattr("schema", "cumes-config-v1"),
                 "mpol": scalar("mpol"), "ntor": scalar("ntor"),
                 "nfp": scalar("nfp"), "ntheta": scalar("ntheta"),
                 "nzeta": scalar("nzeta"), "ncurr": scalar("ncurr"),
@@ -239,6 +258,12 @@ def load_state(path):
                                 darray("rbc_value"))),
                 "zbs": list(zip(iarray("zbs_m"), iarray("zbs_n"),
                                 darray("zbs_value"))),
+                "lfreeb": bool(scalar("lfreeb"))
+                    if "lfreeb" in nc.variables else False,
+                "nvacskip": int(scalar("nvacskip"))
+                    if "nvacskip" in nc.variables else 1,
+                "mgrid_file": sattr("mgrid_file", ""),
+                "extcur": darray("extcur"),
             }
             sp = getattr(nc, "source_path", "")
             if isinstance(sp, bytes):
@@ -299,6 +324,10 @@ def load_state(path):
                                 darray("rbc_value"))),
                 "zbs": list(zip(iarray("zbs_m"), iarray("zbs_n"),
                                 darray("zbs_value"))),
+                "lfreeb": bool(int(f5.attrs.get("lfreeb", 0))),
+                "nvacskip": int(f5.attrs.get("nvacskip", 1)),
+                "mgrid_file": sattr("mgrid_file", ""),
+                "extcur": darray("extcur"),
             }
             if sattr("source_path", ""):
                 name = os.path.splitext(
@@ -1027,10 +1056,11 @@ def main():
     print(f"loaded state: ns={ns}, mnmax={mnmax}, mpol={params['mpol']}, "
           f"ntor={ntor}, nfp={nfp}, ntheta={params['ntheta']}, "
           f"nzeta={params['nzeta']}, ncurr={params['ncurr']}, "
-          f"phiedge={params['phiedge']:g}", flush=True)
+          f"phiedge={params['phiedge']:g}, lfreeb={params['lfreeb']}",
+          flush=True)
 
-    # ---- self-check 1: state LCFS vs the embedded boundary --------------
-    print("self-check 1/2: state LCFS vs embedded rbc/zbs boundary ...",
+    # ---- self-check 1: state LCFS vs the embedded initial boundary ------
+    print("self-check 1/2: state LCFS vs embedded initial rbc/zbs boundary ...",
           flush=True)
     th_ax = np.linspace(0.0, 2.0 * np.pi, 64, endpoint=False)
     zt_ax = np.linspace(0.0, 2.0 * np.pi, 48, endpoint=False)
@@ -1041,8 +1071,14 @@ def main():
     TH_c, ZT_c = np.meshgrid(th_ax, zt_ax, indexing="ij")
     Rb, Zb = boundary_from_params(params, TH_c, ZT_c)
     err = max(np.max(np.abs(R_phys - Rb)), np.max(np.abs(Z_phys - Zb)))
-    print(f"  max err = {err:.3e}", flush=True)
-    assert err < 1e-8, "state LCFS does not match the embedded boundary"
+    if not np.isfinite(err):
+        raise SystemExit("error: non-finite LCFS boundary reconstruction")
+    if params["lfreeb"]:
+        print(f"  initial-to-converged max displacement = {err:.3e} "
+              "(expected for free boundary)", flush=True)
+    else:
+        print(f"  max err = {err:.3e}", flush=True)
+        assert err < 1e-8, "state LCFS does not match the embedded boundary"
 
     # ---- the plotted flux surface (plasma boundary, edge half-grid) ------
     print(f"edge surface: solving chi' + half-grid geometry (jh = {ns - 2}) ...",
