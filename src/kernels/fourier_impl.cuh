@@ -1252,6 +1252,7 @@ __global__ void forward_recover_kernel(
     int mnmax,
     int nfp,
     int nz2,
+    int include_lcfs,
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> f_spec) {
     using Complex = typename FftTraits<T>::Complex;
     int t = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1283,7 +1284,7 @@ __global__ void forward_recover_kernel(
         f_spec(cumes::SpectralComponent::Lcs, mode, j) = T(0);
         return;
     }
-    if (j == ns - 1) {  // LCFS: λ only (R/Z are fixed-boundary)
+    if (j == ns - 1 && !include_lcfs) {
         f_spec(cumes::SpectralComponent::Rcc, mode, j) = T(0);
         f_spec(cumes::SpectralComponent::Zsc, mode, j) = T(0);
         f_spec(cumes::SpectralComponent::Lsc, mode, j) =
@@ -1358,7 +1359,8 @@ static void forward_pipeline(
     const T* d_fwd_w,
     T* d_zeta_real,
     typename FftTraits<T>::Complex* d_zeta_spectra,
-    cufftHandle plan_d2z) {
+    cufftHandle plan_d2z,
+    bool include_lcfs) {
     // The recover kernel writes all six families (explicit axis/LCFS zeros), so
     // no pre-zero of the residual slab is needed (Phase 6A removes the memset).
     // ζ-tiled reduce (see forward_reduce_kernel): block (16 lanes, k_tile),
@@ -1382,7 +1384,7 @@ static void forward_pipeline(
     int total = p.ns * p.mnmax;
     forward_recover_kernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
         d_zeta_spectra, xm, xn, p.ns, p.mpol, p.mnmax, p.nfp, p.nzeta / 2 + 1,
-        f_spec);
+        include_lcfs ? 1 : 0, f_spec);
     cumes::check_cuda(cudaGetLastError(), "fwd cuFFT");
 }
 
@@ -1401,7 +1403,7 @@ void cumes::ToroidalFftOperator<T>::forward_impl(
     forward_pipeline<T>(f_spec, force_views_of(*rs_, p), frcon_e, frcon_o,
                         fzcon_e, fzcon_o, stream, p, mt_->d_xm, mt_->d_xn,
                         d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, d_fwd_w_,
-                        d_zeta_real_, d_zeta_spectra_, plan_d2z_);
+                        d_zeta_real_, d_zeta_spectra_, plan_d2z_, false);
 }
 
 template <typename T>
@@ -1444,19 +1446,20 @@ void cumes::ToroidalFftOperator<T>::enqueue_forward(
     cumes::ForceParityViews<const T> real_force,
     cumes::ConstraintForceViews<const T> constraint_force,
     cumes::SpectralView<T, cumes::DecomposedResidualDomain> residual,
-    cudaStream_t stream) {
+    cudaStream_t stream,
+    bool include_lcfs) {
     // Honor the caller-passed force views (the SpectralOperator contract, as
     // the axisymmetric backend does — review finding 3.6). The solver passes
     // views aliasing *rs_ (same arrays), so the hot loop is unchanged; the
     // constraint force is read from the constraint_force views (the
     // constraint owns those buffers).
     const DeviceParams<T>& p = p_;
-    forward_pipeline<T>(residual, real_force, constraint_force.frcon_e.data(),
-                        constraint_force.frcon_o.data(),
-                        constraint_force.fzcon_e.data(),
-                        constraint_force.fzcon_o.data(), stream, p, mt_->d_xm,
-                        mt_->d_xn, d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_,
-                        d_fwd_w_, d_zeta_real_, d_zeta_spectra_, plan_d2z_);
+    forward_pipeline<T>(
+        residual, real_force, constraint_force.frcon_e.data(),
+        constraint_force.frcon_o.data(), constraint_force.fzcon_e.data(),
+        constraint_force.fzcon_o.data(), stream, p, mt_->d_xm, mt_->d_xn,
+        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, d_fwd_w_, d_zeta_real_,
+        d_zeta_spectra_, plan_d2z_, include_lcfs);
 }
 
 template <typename T>

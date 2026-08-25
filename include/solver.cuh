@@ -23,6 +23,8 @@ template <typename T>
 class Profiles;
 template <typename T>
 struct RealSpaceStorage;
+template <typename T>
+class FreeBoundaryOperator;
 }  // namespace cumes
 
 // Run the full fixed-point solve on GPU.
@@ -73,6 +75,8 @@ SolverResult<T> solver_run(
     std::optional<std::reference_wrapper<cumes::SolverBench>> bench =
         std::nullopt,
     std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op =
-        std::nullopt);
+        std::nullopt,
+    std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<T>>>
+        vacuum = std::nullopt);
 
 #endif  // CUMES_INCLUDE_SOLVER_CUH_

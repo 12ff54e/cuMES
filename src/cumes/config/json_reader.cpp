@@ -29,22 +29,61 @@ namespace cumes {
 namespace {
 
 const std::set<std::string> SUPPORTED_KEYS = {
-    "mpol",       "ntor",      "nfp",         "ntheta",     "nzeta",
-    "ncurr",      "delt",      "phiedge",     "pres_scale", "adiabatic_index",
-    "gamma",      "spres_ped", "curtor",      "bloat",      "tcon0",
-    "am",         "ac",        "ai",          "aphi",       "raxis_c",
-    "zaxis_s",    "ns_array",  "niter_array", "ftol_array", "rbc",
-    "zbs",        "lasym",     "lfreeb",      "pmass_type", "piota_type",
-    "pcurr_type", "am_aux_s",  "am_aux_f",    "ai_aux_s",   "ai_aux_f",
-    "ac_aux_s",   "ac_aux_f",  "raxis_s",     "zaxis_c",    "rbs",
+    "mpol",
+    "ntor",
+    "nfp",
+    "ntheta",
+    "nzeta",
+    "ncurr",
+    "delt",
+    "phiedge",
+    "pres_scale",
+    "adiabatic_index",
+    "gamma",
+    "spres_ped",
+    "curtor",
+    "bloat",
+    "tcon0",
+    "am",
+    "ac",
+    "ai",
+    "aphi",
+    "raxis_c",
+    "zaxis_s",
+    "ns_array",
+    "niter_array",
+    "ftol_array",
+    "rbc",
+    "zbs",
+    "lasym",
+    "lfreeb",
+    "pmass_type",
+    "piota_type",
+    "pcurr_type",
+    "am_aux_s",
+    "am_aux_f",
+    "ai_aux_s",
+    "ai_aux_f",
+    "ac_aux_s",
+    "ac_aux_f",
+    "raxis_s",
+    "zaxis_c",
+    "rbs",
     "zbc",
+    "mgrid_file",
+    "coils_file",
+    "makegrid_parameters_file",
+    "makegrid_paramters",
+    "extcur",
+    "nvacskip",
 };
 const std::set<std::string> KNOWN_IGNORED_KEYS = {
-    "nstep",   "niter",      "ftolv",      "nsurf",     "tsw",     "tpot",
-    "tvac",    "nvacskip",   "mgrid_file", "extcur",    "lforbal", "lmorebdy",
-    "lrecon",  "lmove_axis", "lthreed",    "lpoloidal", "nthreed", "npoloidal",
-    "nlambda", "lspectral",  "lcheck",     "lpsplot",   "lwout",   "lmask",
-    "nedge",   "nskip",
+    "nstep",     "niter",   "ftolv",      "nsurf",
+    "tsw",       "tpot",    "tvac",       "lforbal",
+    "lmorebdy",  "lrecon",  "lmove_axis", "lthreed",
+    "lpoloidal", "nthreed", "npoloidal",  "nlambda",
+    "lspectral", "lcheck",  "lpsplot",    "lwout",
+    "lmask",     "nedge",   "nskip",      "free_boundary_method",
 };
 
 // Typed getters: on a type/range error record the finding and return the
@@ -208,6 +247,99 @@ void read_boundary(const json::Value& v,
     }
 }
 
+MakegridParametersSpec read_makegrid_parameters(const json::Value& value,
+                                                std::string_view key,
+                                                ValidationReport& report) {
+    MakegridParametersSpec parameters;
+    if (!value.is_object()) {
+        report.error(std::string(key),
+                     "'" + std::string(key) + "': expected an object, got " +
+                         json::get_value_category_name(value.value_category()));
+        return parameters;
+    }
+
+    const std::set<std::string> required = {
+        "normalize_by_currents",   "assume_stellarator_symmetry",
+        "number_of_field_periods", "r_grid_minimum",
+        "r_grid_maximum",          "number_of_r_grid_points",
+        "z_grid_minimum",          "z_grid_maximum",
+        "number_of_z_grid_points", "number_of_phi_grid_points",
+    };
+    for (const std::string& field : required) {
+        if (!value.contains(field)) {
+            report.error(std::string(key) + "." + field,
+                         "'" + std::string(key) +
+                             "': missing required field '" + field + "'");
+        }
+    }
+    for (const auto& [field, unused] : value.as_object()) {
+        static_cast<void>(unused);
+        if (required.count(field) == 0) {
+            report.error(
+                std::string(key) + "." + field,
+                "'" + std::string(key) + "': unknown field '" + field + "'");
+        }
+    }
+
+    auto if_present = [&](std::string_view field, auto fn) {
+        const std::string field_name(field);
+        if (value.contains(field_name)) {
+            fn(value.at(field_name), std::string(key) + "." + field_name);
+        }
+    };
+    if_present("normalize_by_currents",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.normalize_by_currents = get_bool(
+                       v, where, parameters.normalize_by_currents, report);
+               });
+    if_present("assume_stellarator_symmetry", [&](const json::Value& v,
+                                                  std::string_view where) {
+        parameters.assume_stellarator_symmetry =
+            get_bool(v, where, parameters.assume_stellarator_symmetry, report);
+    });
+    if_present("number_of_field_periods",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.number_of_field_periods = get_int(
+                       v, where, parameters.number_of_field_periods, report);
+               });
+    if_present("r_grid_minimum",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.r_grid_minimum =
+                       get_double(v, where, parameters.r_grid_minimum, report);
+               });
+    if_present("r_grid_maximum",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.r_grid_maximum =
+                       get_double(v, where, parameters.r_grid_maximum, report);
+               });
+    if_present("number_of_r_grid_points",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.number_of_r_grid_points = get_int(
+                       v, where, parameters.number_of_r_grid_points, report);
+               });
+    if_present("z_grid_minimum",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.z_grid_minimum =
+                       get_double(v, where, parameters.z_grid_minimum, report);
+               });
+    if_present("z_grid_maximum",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.z_grid_maximum =
+                       get_double(v, where, parameters.z_grid_maximum, report);
+               });
+    if_present("number_of_z_grid_points",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.number_of_z_grid_points = get_int(
+                       v, where, parameters.number_of_z_grid_points, report);
+               });
+    if_present("number_of_phi_grid_points",
+               [&](const json::Value& v, std::string_view where) {
+                   parameters.number_of_phi_grid_points = get_int(
+                       v, where, parameters.number_of_phi_grid_points, report);
+               });
+    return parameters;
+}
+
 }  // namespace
 
 ParsedProblem read_problem_spec(const std::string& path,
@@ -282,6 +414,42 @@ ParsedProblem read_problem_spec(const std::string& path,
         p.physical.tcon0 = get_double(v, k, p.physical.tcon0, report);
     });
 
+    // ---- free boundary ----
+    if_present("lfreeb", [&](const json::Value& v, std::string_view k) {
+        p.free_boundary.lfreeb = get_bool(v, k, p.free_boundary.lfreeb, report);
+    });
+    if_present("mgrid_file", [&](const json::Value& v, std::string_view k) {
+        p.free_boundary.mgrid_file =
+            get_string(v, k, p.free_boundary.mgrid_file, report);
+    });
+    if_present("coils_file", [&](const json::Value& v, std::string_view k) {
+        p.free_boundary.coils_file =
+            get_string(v, k, p.free_boundary.coils_file, report);
+    });
+    if_present("makegrid_parameters_file",
+               [&](const json::Value& v, std::string_view k) {
+                   p.free_boundary.makegrid_parameters_file = get_string(
+                       v, k, p.free_boundary.makegrid_parameters_file, report);
+               });
+    if_present("makegrid_paramters",
+               [&](const json::Value& v, std::string_view k) {
+                   p.free_boundary.embedded_makegrid_parameters =
+                       read_makegrid_parameters(v, k, report);
+               });
+    if (root.contains("makegrid_parameters_file") &&
+        root.contains("makegrid_paramters")) {
+        report.warn("makegrid_paramters",
+                    "both makegrid_parameters_file and makegrid_paramters "
+                    "are present; using embedded makegrid_paramters");
+    }
+    if_present("extcur", [&](const json::Value& v, std::string_view k) {
+        p.free_boundary.extcur = read_double_array(v, k, report);
+    });
+    if_present("nvacskip", [&](const json::Value& v, std::string_view k) {
+        p.free_boundary.nvacskip =
+            get_int(v, k, p.free_boundary.nvacskip, report);
+    });
+
     // ---- profile coefficients (power series) ----
     if_present("am", [&](const json::Value& v, std::string_view k) {
         p.mass.coefficients = read_double_array(v, k, report);
@@ -314,11 +482,11 @@ ParsedProblem read_problem_spec(const std::string& path,
     }
 
     // ---- multi-radial-grid sequence (all-or-none) ----
-    const bool hasNs = root.contains("ns_array");
-    const bool hasNiter = root.contains("niter_array");
-    const bool hasFtol = root.contains("ftol_array");
-    if (hasNs || hasNiter || hasFtol) {
-        if (!(hasNs && hasNiter && hasFtol)) {
+    const bool has_ns = root.contains("ns_array");
+    const bool has_niter = root.contains("niter_array");
+    const bool has_ftol = root.contains("ftol_array");
+    if (has_ns || has_niter || has_ftol) {
+        if (!(has_ns && has_niter && has_ftol)) {
             report.error("ns_array",
                          "ns_array, niter_array and ftol_array must be "
                          "provided together");
@@ -365,23 +533,17 @@ ParsedProblem read_problem_spec(const std::string& path,
             "lasym",
             "lasym=true: asymmetric equilibria are not supported by cuMES");
     }
-    if (root.contains("lfreeb") &&
-        get_bool(root.at("lfreeb"), "lfreeb", false, report)) {
-        report.error("lfreeb",
-                     "lfreeb=true: free-boundary runs are not supported by "
-                     "cuMES (fixed boundary only)");
-    }
     // "two_power" is supported for the mass (pressure) and current profiles;
     // it is NOT applicable to the iota profile (vmecpp marks it
     // allowedForIota=false), which stays a power series.
     auto read_profile_type = [&](std::string_view key, ProfileType& out,
-                                 bool twoPowerAllowed) {
+                                 bool two_power_allowed) {
         if (!root.contains(std::string(key))) return;
         const std::string v =
             get_string(root.at(std::string(key)), key, "power_series", report);
         if (v == "power_series") {
             out = ProfileType::POWER_SERIES;
-        } else if (v == "two_power" && twoPowerAllowed) {
+        } else if (v == "two_power" && two_power_allowed) {
             out = ProfileType::TWO_POWER;
         } else if (v == "two_power") {
             report.error(std::string(key),

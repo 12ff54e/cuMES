@@ -126,6 +126,9 @@ Real-space geometry R, Z, λ + derivatives      (ns × ntheta × nzeta)
          ▼  [GeometryOperator / MagneticFieldOperator]
 Half-grid: √g, g_uu, g_uv, g_vv, B^θ, B^ζ    (ns-1 × ntheta × nzeta)
          │
+         ▼  [FreeBoundaryOperator when lfreeb: device bridge + host NESTOR]
+Vacuum LCFS field / pressure jump               (fixed-boundary path bypasses)
+         │
          ▼  [ForceOperator]
 Real-space forces F_R, F_Z, F_λ                (ns × ntheta × nzeta)
          │
@@ -136,12 +139,15 @@ Spectral forces                                 (3, mnmax, ns)
 v = fac×(b1·v + delt·f) ,  x += delt·v        (Garabedian accelerated descent)
 ```
 
-The per-iteration DAG is composed in `EquilibriumOperator::enqueue`
-(`src/kernels/solver_impl.cuh`); `solver_run` is a thin loop over the pure-host
-`IterationController` + that DAG on one explicit compute stream, with one
-deliberate host fence per iteration. All operators own their device buffers
-(directly or via one `DeviceArena` carved per stage) and expose typed view
-bundles; no legacy workspace structs remain.
+The per-iteration DAG is composed in `EquilibriumOperator::enqueue`; the
+free-boundary path uses its `enqueue_prefix`/`enqueue_suffix` split around the
+host NESTOR update (`src/kernels/solver_impl.cuh`). Fixed-boundary execution
+retains one deliberate host fence per iteration; a scheduled vacuum block adds
+the fence needed to hand LCFS data to the host solver. The persistent vacuum
+solver and its OFF → INITIALIZING → INITIALIZED → ACTIVE state survive
+multigrid stages. All operators own their device buffers (directly or via one
+`DeviceArena` carved per stage) and expose typed view bundles; no legacy
+workspace structs remain.
 
 ## Key Design Decisions
 
@@ -154,6 +160,12 @@ bundles; no legacy workspace structs remain.
 - **Staggered half-grid** — dynamic variables on full grid (flux surfaces);
   metric elements on half grid (between surfaces). Prevents checkerboard
   instability. Matches VMEC convention.
+- **Free-boundary coupling** — a persistent `FreeBoundaryOperator` wraps the
+  CUDA NESTOR solver in `deps/vacuum-field`, schedules full/partial vacuum
+  updates with `nvacskip`, applies the LCFS vacuum-pressure force and the
+  free-boundary preconditioner pedestal, and performs the vmecpp-compatible
+  activation soft restart. Vacuum state and response data persist across
+  multigrid refinement; checkpoint restarts enter as hot vacuum starts.
 - **All GPU allocations at startup** — scratch arrays allocated once, reused
   every iteration. Zero `cudaMalloc` calls in the hot loop.
 - **Host checks convergence** — residual reduction runs on GPU; the scalar
@@ -264,7 +276,7 @@ Known issues:
 | De-aliased constraint force | Implemented (bandpass inside `ConstraintOperator`, fused rCon/zCon in `inverse_fused`) |
 | Hot restart / checkpointing | Implemented (v2 checkpoint: `--checkpoint` / `--restart`) |
 | Adaptive time-step (Jacobian resets) | Implemented (restart/maintenance delt control, vmecpp VMEC_8_52) |
-| Free boundary / vacuum solver | Not implemented — fixed boundary only |
+| Free boundary / vacuum solver | Implemented: NESTOR vacuum field, LCFS edge force/preconditioner, activation state machine, multigrid persistence, and hot restart; double Solovev qualified, general 3-D/float qualification pending |
 | Mercier stability, jxbout, wout | Not implemented — post-processing, not needed for the core loop |
 | Python interface | Not implemented — C++/CUDA executable only |
 

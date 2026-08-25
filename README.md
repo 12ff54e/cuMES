@@ -26,6 +26,19 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+`deps/vacuum-field` is optional. A fixed-boundary-only build neither configures
+nor links it:
+
+```bash
+cmake --preset fixed-only
+cmake --build build-fixed-only -j
+```
+
+The equivalent cache switch is `-DCUMES_USE_VACUUM_FIELD=OFF`. When enabled
+(the default), a missing submodule is detected and support is disabled with a
+CMake warning. A fixed-only executable rejects `lfreeb=true` during input
+validation with instructions for enabling the dependency.
+
 **Requirements:** CUDA Toolkit ≥ 11, CMake ≥ 3.20, GPU compute capability ≥ 6.1
 (Pascal or newer). If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must
 point to g++-12 (set in `CMakeLists.txt`). Built CUDA architectures: 61
@@ -60,6 +73,9 @@ Real-space geometry R, Z, λ + derivatives      (ns × ntheta × nzeta)
          │
          ▼  [GeometryOperator / MagneticFieldOperator]
 Half-grid: √g, g_uu, g_uv, g_vv, B^θ, B^ζ    (ns-1 × ntheta × nzeta)
+         │
+         ▼  [FreeBoundaryOperator when lfreeb: CUDA NESTOR]
+Vacuum LCFS field / pressure jump               (fixed-boundary path bypasses)
          │
          ▼  [ForceOperator]
 Real-space forces F_R, F_Z, F_λ                (ns × ntheta × nzeta)
@@ -118,7 +134,8 @@ optional-backend presets. Every computation is `template<typename T>`; `Real`
   flags override them.
 - Every backend writes the schema-v1 container — a versioned state payload with
   full provenance for binary, NetCDF and HDF5.
-- `--restart <checkpoint>` / `--checkpoint <path>` (read/write a v1 checkpoint).
+- `--restart <checkpoint>` / `--checkpoint <path>` (read/write a v6 checkpoint;
+  v1–v5 remain readable).
 - Strict schema-v1 behavior is the **default**: unknown input keys are errors,
   an explicit output path is required, and unknown suffixes are rejected. The
   `--compatibility` flag restores vmecpp-style warn-and-ignore parsing for
@@ -136,6 +153,15 @@ validation warnings print as `cuMES: WARNING: ...` on stderr.
 harmonics). The JSON is parsed and validated host-side into a `ValidatedProblem`
 (`cumes-config-v1` normalized schema, `configs/schema-v1.json`); no solver code
 parses input.
+
+Free-boundary input accepts either a precomputed `mgrid_file`, or `coils_file`
+together with Makegrid parameters. The parameters may be supplied by
+`makegrid_parameters_file`, or embedded as the complete parameter object under
+the intentionally spelled key `makegrid_paramters`. If both parameter keys are
+present, cuMES warns and uses the embedded object. These paths construct the
+response table once in memory before iteration; `extcur` remains in Amperes.
+See `inputs/free_bdy/solovev_free_bdy_coils.json` and
+`inputs/free_bdy/solovev_free_bdy_embedded.json`.
 
 ### Precision
 
@@ -186,7 +212,7 @@ acceptance).
 | De-aliased constraint force | Implemented (spectral-condensation bandpass + fused rCon/zCon) |
 | Hot restart / checkpointing | Implemented (`--checkpoint` / `--restart`) |
 | Adaptive time-step (Jacobian resets) | Implemented (restart/maintenance delt control, vmecpp VMEC_8_52) |
-| Free boundary / vacuum solver | Fixed boundary only |
+| Free boundary / vacuum solver | Implemented: NESTOR with file-backed or in-memory Makegrid coil fields |
 | Mercier stability, jxbout, wout | Post-processing; not needed for the core loop |
 | Python interface | Not yet; C++/CUDA executable only |
 

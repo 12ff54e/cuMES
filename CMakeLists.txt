@@ -89,11 +89,35 @@ function(cumes_apply_host_tuning target)
     $<$<COMPILE_LANGUAGE:CXX>:-march=native>)
 endfunction()
 
+# ---- free-boundary vacuum library (deps/vacuum-field) ----------------------
+# See docs/adr/0005-vacuum-field-submodule.md. Auto-disabled when the submodule
+# is not checked out (hosted CI builds without submodules); the module list
+# below picks the real free_boundary module or the stub accordingly.
+option(CUMES_USE_VACUUM_FIELD
+       "Enable free-boundary support via optional deps/vacuum-field" ON)
+if(CUMES_USE_VACUUM_FIELD AND NOT EXISTS
+   ${CMAKE_CURRENT_SOURCE_DIR}/deps/vacuum-field/CMakeLists.txt)
+  message(WARNING "cuMES: deps/vacuum-field not checked out "
+                  "(run: git submodule update --init); "
+                  "vacuum-field support disabled")
+  set(CUMES_USE_VACUUM_FIELD OFF)
+endif()
+if(CUMES_USE_VACUUM_FIELD)
+  message(STATUS "cuMES: optional vacuum-field support enabled")
+else()
+  message(STATUS "cuMES: optional vacuum-field support disabled (fixed boundary only)")
+endif()
+
 # ---- device modules --------------------------------------------------------
-# Eight templated operator modules, each split into a *_double.cu and a
+# The templated operator modules, each split into a *_double.cu and a
 # *_float.cu explicit-instantiation TU (one scalar type per TU). The CLI links
 # only the TU matching `Real`; the tests link both (they instantiate both).
 set(CUMES_CUDA_MODULES fourier geometry forces solver profiles precon constraint prolongation axisymmetric)
+if(CUMES_USE_VACUUM_FIELD)
+  list(APPEND CUMES_CUDA_MODULES free_boundary)
+else()
+  list(APPEND CUMES_CUDA_MODULES free_boundary_stub)
+endif()
 set(CUMES_CUDA_DOUBLE_SOURCES "")
 set(CUMES_CUDA_FLOAT_SOURCES "")
 foreach(mod IN LISTS CUMES_CUDA_MODULES)
@@ -146,6 +170,10 @@ cumes_apply_host_tuning(cumes_core)
 # legacy InputParams bridge, and the normalization emitter. Host-only C++.
 cumes_add_host_library(cumes_config_json FALSE ${CUMES_CONFIG_JSON_SOURCES})
 target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
+if(NOT CUMES_USE_VACUUM_FIELD)
+  target_compile_definitions(cumes_config_json
+    PUBLIC CUMES_VACUUM_FIELD_DISABLED)
+endif()
 cumes_apply_host_tuning(cumes_config_json)
 
 # Versioned host I/O: output spec, run report, snapshot, the v1 binary
@@ -205,6 +233,24 @@ if(CUMES_ENABLE_VERIFY_DUMP)
   target_compile_definitions(cumes_cuda_float PRIVATE DUMP_CUMES_VERIFY)
 endif()
 
+# ---- free-boundary vacuum library (deps/vacuum-field) ----------------------
+# The library target vfield::vfield exists only when the submodule is present;
+# the free_boundary module TUs include its headers, so the operator libraries
+# link it (PUBLIC — tests linking both operator libraries get it transitively).
+if(CUMES_USE_VACUUM_FIELD)
+  # Propagate the scalar switch: each scalar library picks the matching
+  # instantiation.
+  set(VFIELD_USE_FLOAT ${CUMES_USE_FLOAT} CACHE BOOL
+      "vacuum-field scalar switch (propagated from CUMES_USE_FLOAT)" FORCE)
+  set(VFIELD_BUILD_MAKEGRID ON CACHE BOOL
+      "build vacuum-field Makegrid support for cuMES" FORCE)
+  add_subdirectory(deps/vacuum-field)
+  target_link_libraries(cumes_cuda_double PUBLIC
+    vfield_cuda_double vfield::makegrid)
+  target_link_libraries(cumes_cuda_float PUBLIC
+    vfield_cuda_float vfield::makegrid)
+endif()
+
 # ---- CLI executable --------------------------------------------------------
 if(CUMES_USE_FLOAT)
   set(CUMES_SELECTED_CUDA cumes_cuda_float)
@@ -218,6 +264,9 @@ target_include_directories(cumes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # is scanned while the backend-factory references are still undefined — the
 # linker then extracts the strong NetCDF/HDF5 factory definitions.
 target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
+if(CUMES_USE_VACUUM_FIELD)
+  target_link_libraries(cumes PRIVATE vfield::vfield)
+endif()
 cumes_enable_warnings(cumes)
 cumes_apply_policy_flags(cumes)
 if(CUMES_USE_FLOAT)

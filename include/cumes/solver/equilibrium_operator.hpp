@@ -21,6 +21,7 @@
 #include "cumes/numerics/residual_operator.hpp"
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/force_operator.hpp"
+#include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
@@ -41,6 +42,10 @@ struct EvaluationSchedule {
     bool reset_constraint_reference = false;  // iter2 == iter1
     bool refresh_preconditioner = false;      // (iter2 - iter1) % 25 == 0
     bool zero_z_force_m1 = false;             // iter2 < 2 || fsqz_prev < 1e-6
+    bool include_edge_rz_invariant = true;
+    bool run_vacuum_block = false;
+    bool decay_rcon0_zcon0 = false;
+    bool apply_vacuum_edge_force = false;
 };
 
 template <class T>
@@ -56,7 +61,9 @@ class EquilibriumOperator {
         RealSpaceStorage<T>& rs,
         GeometryOperator<T>& geometry,
         const std::optional<std::reference_wrapper<DeviceArena>>& arena,
-        const std::optional<std::reference_wrapper<SpectralOperator<T>>>& op);
+        const std::optional<std::reference_wrapper<SpectralOperator<T>>>& op,
+        const std::optional<std::reference_wrapper<FreeBoundaryOperator<T>>>&
+            vacuum = std::nullopt);
     ~EquilibriumOperator();
 
     EquilibriumOperator(const EquilibriumOperator&) = delete;
@@ -79,6 +86,25 @@ class EquilibriumOperator {
                  cudaStream_t stream,
                  double f_norm_rz = 1.0,
                  double f_norm_l = 1.0);
+    void enqueue_prefix(int iter,
+                        int iter2,
+                        const EvaluationSchedule& schedule,
+                        cudaStream_t stream,
+                        double f_norm_rz,
+                        double f_norm_l);
+    void enqueue_suffix(int iter,
+                        int iter2,
+                        const EvaluationSchedule& schedule,
+                        cudaStream_t stream,
+                        double f_norm_rz,
+                        double f_norm_l);
+
+    T* buco_bvco_device() { return d_buco_bvco_.data(); }
+    T* repack_device() { return d_repack_.data(); }
+    T* axis_device() { return d_axis_.data(); }
+    T* delbsq_device() { return d_delbsq_.data(); }
+    T* rbsq_device() { return d_rbsq_.data(); }
+    Preconditioner<T>* preconditioner() { return &precon_; }
 
     // The reduced control record: Jacobian stats + status, invariant /
     // preconditioned raw sums, force-norm partials (completion plan step 1.3).
@@ -144,9 +170,16 @@ class EquilibriumOperator {
     SpectralView<const T, DecomposedResidualDomain> residual_view_const_;
 
     SpectralOperator<T>* transform_op_ = nullptr;
+    FreeBoundaryOperator<T>* vacuum_ = nullptr;
     GeometryParityViews<T> geom_views_;
     ForceParityViews<const T> force_views_;
     ConstraintForceViews<const T> conforce_views_;
+
+    DeviceBuffer<T> d_buco_bvco_;
+    DeviceBuffer<T> d_repack_;
+    DeviceBuffer<T> d_axis_;
+    DeviceBuffer<T> d_rbsq_;
+    DeviceBuffer<T> d_delbsq_;
 
     // Transform-timing event pairs (recorded in enqueue, read at the fence).
     cudaEvent_t ev0_inv_{}, ev1_inv_{}, ev0_fwd_{}, ev1_fwd_{};

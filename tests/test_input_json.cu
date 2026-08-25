@@ -324,8 +324,8 @@ static void test_negative() {
                    .empty(),
           "neg: rbs content rejected");
 
-    // Unsupported physics keys: lasym, lfreeb, unsupported/ill-formed
-    // profile types (two_power is supported for mass and current only).
+    // Unsupported physics keys: lasym and unsupported/ill-formed profile
+    // types. Free-boundary input is supported when its source is complete.
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
@@ -338,8 +338,78 @@ static void test_negative() {
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = cumes::read_and_validate(scratch_path(), opts);
-    check(!vr.has_value() && !find_error(vr, "free-boundary").empty(),
-          "neg: lfreeb=true rejected");
+    check(!vr.has_value() &&
+              !find_error(vr, "lfreeb=true requires either mgrid_file").empty(),
+          "neg: free boundary without external-field source rejected");
+    write_scratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
+        " \"mgrid_file\": \"mgrid.nc\","
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratch_path(), opts);
+    check(
+        !vr.has_value() &&
+            !find_error(vr, "lfreeb=true requires a non-empty extcur").empty(),
+        "neg: free boundary without extcur rejected");
+    write_scratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
+        " \"mgrid_file\": \"mgrid.nc\", \"extcur\": [1.0],"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratch_path(), opts);
+#ifdef CUMES_VACUUM_FIELD_DISABLED
+    check(!vr.has_value() &&
+              !find_error(vr, "requires optional vacuum-field support").empty(),
+          "neg: free boundary rejected without optional dependency");
+#else
+    check(vr.has_value() && vr.value().spec().free_boundary.lfreeb,
+          "pos: free boundary with mgrid accepted");
+#endif
+
+    const char* embedded_makegrid =
+        "\"normalize_by_currents\":false,"
+        "\"assume_stellarator_symmetry\":false,"
+        "\"number_of_field_periods\":1,"
+        "\"r_grid_minimum\":2.0,\"r_grid_maximum\":6.0,"
+        "\"number_of_r_grid_points\":123,"
+        "\"z_grid_minimum\":-2.0,\"z_grid_maximum\":2.0,"
+        "\"number_of_z_grid_points\":101,"
+        "\"number_of_phi_grid_points\":1";
+    write_scratch(
+        std::string("{\"mpol\":2,\"ntor\":0,\"nfp\":1,\"am\":[1.0],") +
+        "\"lfreeb\":true,\"coils_file\":\"coils.test\"," +
+        "\"makegrid_parameters_file\":\"ignored.json\"," +
+        "\"makegrid_paramters\":{" + embedded_makegrid + "}," +
+        "\"extcur\":[1.0]," + "\"rbc\":[{\"n\":0,\"m\":1,\"value\":1.0}]," +
+        "\"zbs\":[{\"n\":0,\"m\":1,\"value\":0.5}]}");
+    vr = cumes::read_and_validate(scratch_path(), opts);
+#ifndef CUMES_VACUUM_FIELD_DISABLED
+    bool precedence_warned = false;
+    if (vr.has_value()) {
+        for (const auto& issue : vr.value().warnings().issues()) {
+            if (issue.message.find("using embedded makegrid_paramters") !=
+                std::string::npos) {
+                precedence_warned = true;
+            }
+        }
+    }
+    check(vr.has_value() && precedence_warned &&
+              vr.value()
+                      .spec()
+                      .free_boundary.embedded_makegrid_parameters
+                      ->number_of_r_grid_points == 123,
+          "pos: embedded Makegrid overrides file with warning");
+#endif
+    write_scratch(
+        "{\"mpol\":2,\"ntor\":0,\"am\":[1.0],\"lfreeb\":true,"
+        "\"coils_file\":\"coils.test\","
+        "\"makegrid_paramters\":{\"normalize_by_currents\":false},"
+        "\"extcur\":[1.0],"
+        "\"rbc\":[{\"n\":0,\"m\":1,\"value\":1.0}],"
+        "\"zbs\":[{\"n\":0,\"m\":1,\"value\":0.5}]}");
+    vr = cumes::read_and_validate(scratch_path(), opts);
+    check(!vr.has_value() && !find_error(vr, "missing required field").empty(),
+          "neg: incomplete embedded Makegrid parameters rejected");
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
         " \"pmass_type\": \"spline\","

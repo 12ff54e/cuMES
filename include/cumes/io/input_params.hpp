@@ -18,6 +18,7 @@
 
 #include "cumes/config/validated_problem.hpp"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,13 @@ struct InputParams {
     std::string pmass_type = "power_series";
     std::string piota_type = "power_series";
     std::string pcurr_type = "power_series";
+    bool lfreeb = false;
+    int nvacskip = 1;
+    std::string mgrid_file;
+    std::string coils_file;
+    std::string makegrid_parameters_file;
+    std::optional<MakegridParametersSpec> embedded_makegrid_parameters;
+    std::vector<double> extcur;
     std::vector<double> am;       // mass/pressure power series
     std::vector<double> ac;       // prescribed current power series
     std::vector<double> ai;       // prescribed iota power series
@@ -82,7 +90,12 @@ inline bool operator==(const InputParams& a, const InputParams& b) {
            a.spres_ped == b.spres_ped && a.bloat == b.bloat &&
            a.curtor == b.curtor && a.tcon0 == b.tcon0 &&
            a.pmass_type == b.pmass_type && a.piota_type == b.piota_type &&
-           a.pcurr_type == b.pcurr_type && a.am == b.am && a.ac == b.ac &&
+           a.pcurr_type == b.pcurr_type && a.lfreeb == b.lfreeb &&
+           a.nvacskip == b.nvacskip && a.mgrid_file == b.mgrid_file &&
+           a.coils_file == b.coils_file &&
+           a.makegrid_parameters_file == b.makegrid_parameters_file &&
+           a.embedded_makegrid_parameters == b.embedded_makegrid_parameters &&
+           a.extcur == b.extcur && a.am == b.am && a.ac == b.ac &&
            a.ai == b.ai && a.aphi == b.aphi && a.raxis_c == b.raxis_c &&
            a.zaxis_s == b.zaxis_s && a.stages == b.stages &&
            a.rbc_m == b.rbc_m && a.rbc_n == b.rbc_n &&
@@ -115,6 +128,14 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
     p.pmass_type = profile_type_to_string(sp.mass.type);
     p.piota_type = profile_type_to_string(sp.iota.type);
     p.pcurr_type = profile_type_to_string(sp.current.type);
+    p.lfreeb = sp.free_boundary.lfreeb;
+    p.nvacskip = sp.free_boundary.nvacskip;
+    p.mgrid_file = sp.free_boundary.mgrid_file;
+    p.coils_file = sp.free_boundary.coils_file;
+    p.makegrid_parameters_file = sp.free_boundary.makegrid_parameters_file;
+    p.embedded_makegrid_parameters =
+        sp.free_boundary.embedded_makegrid_parameters;
+    p.extcur = sp.free_boundary.extcur;
     p.am = sp.mass.coefficients;
     p.ac = sp.current.coefficients;
     p.ai = sp.iota.coefficients;

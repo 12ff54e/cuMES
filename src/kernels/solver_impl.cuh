@@ -353,6 +353,7 @@ __global__ void compute_residuals_kernel(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
     int ns,
     int mnmax,
+    bool include_edge_rz,
     double* __restrict__ sq_out) {
     using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
     int comp = blockIdx.x;
@@ -361,6 +362,7 @@ __global__ void compute_residuals_kernel(
     int total = mnmax * ns;
     for (int i = threadIdx.x; i < total; i += blockDim.x) {
         int mode = i / ns, j = i % ns;
+        if (comp < 2 && !include_edge_rz && j == ns - 1) continue;
         T a = f_spec(static_cast<cumes::SpectralComponent>(comp), mode, j);
         T b = f_spec(static_cast<cumes::SpectralComponent>(comp + 3), mode, j);
         sum += a * a + b * b;
@@ -387,7 +389,8 @@ __global__ void descent_step_kernel(
     int mnmax,
     T delt,
     T b1,
-    T fac) {
+    T fac,
+    int j_max) {
     using cumes::SpectralComponent;
     int i = blockIdx.x * blockDim.x + threadIdx.x, total = mnmax * ns;
     if (i >= total) return;
@@ -410,7 +413,7 @@ __global__ void descent_step_kernel(
     // R/Z components (0,1,3,4): LCFS is fixed — the force was zeroed by
     // fixBoundaryKernel and the coefficient must not move. Lambda (comps
     // 2,5) is free on all surfaces including the LCFS, matching vmecpp.
-    if (j < ns - 1) {
+    if (j < j_max) {
         T vr = v(SpectralComponent::Rcc, m, j);
         vr = fac * (b1 * vr + delt * f_spec(SpectralComponent::Rcc, m, j));
         v(SpectralComponent::Rcc, m, j) = vr;
@@ -460,11 +463,12 @@ void cumes::ResidualOperator<T>::enqueue(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> residual,
     int ns,
     int mnmax,
+    bool include_edge_rz,
     double* sq_out,
     cudaStream_t stream) const {
     dim3 b3(256), g3(3);
     compute_residuals_kernel<T>
-        <<<g3, b3, 0, stream>>>(residual, ns, mnmax, sq_out);
+        <<<g3, b3, 0, stream>>>(residual, ns, mnmax, include_edge_rz, sq_out);
 }
 
 template <typename T>
@@ -494,7 +498,8 @@ void cumes::DescentOperator<T>::enqueue(
     dim3 bd(256), gd((ns * mnmax + 255) / 256);
     descent_step_kernel<T><<<gd, bd, 0, stream>>>(
         state, velocity, residual, xm, xn, ns, mnmax, T(action.delta_t),
-        T(action.damping_b1), T(action.damping_fac));
+        T(action.damping_b1), T(action.damping_fac),
+        action.move_lcfs ? ns : ns - 1);
     cumes::check_cuda(cudaGetLastError(), "descent");
 }
 
@@ -532,7 +537,9 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
     cumes::RealSpaceStorage<T>& rs,
     cumes::GeometryOperator<T>& geometry,
     const std::optional<std::reference_wrapper<cumes::DeviceArena>>& arena,
-    const std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>>& op)
+    const std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>>& op,
+    const std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<T>>>&
+        vacuum)
     : p_(p),
       storage_(storage),
       profiles_(profiles),
@@ -557,7 +564,24 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       velocity_view_(storage.velocity()),
       residual_view_(d_f_spec_.data(), p.ns, p.mnmax),
       residual_view_const_(d_f_spec_.data(), p.ns, p.mnmax),
-      transform_op_(op ? &op->get() : &transform) {
+      transform_op_(op ? &op->get() : &transform),
+      vacuum_(vacuum ? &vacuum->get() : nullptr),
+      d_buco_bvco_(
+          solver_arena_buffer<T>(arena,
+                                 "solver/buco_bvco",
+                                 2 * static_cast<std::size_t>(p.ns - 1))),
+      d_repack_(
+          solver_arena_buffer<T>(arena,
+                                 "solver/lcfs_repack",
+                                 4 * static_cast<std::size_t>(p.mpol) *
+                                     static_cast<std::size_t>(p.ntor + 1))),
+      d_axis_(solver_arena_buffer<T>(arena,
+                                     "solver/axis",
+                                     2 * static_cast<std::size_t>(p.nzeta))),
+      d_rbsq_(solver_arena_buffer<T>(arena,
+                                     "solver/rbsq",
+                                     static_cast<std::size_t>(p.nZnT))),
+      d_delbsq_(solver_arena_buffer<T>(arena, "solver/delbsq", 1)) {
     // View bundles over the stage-owned real-space storage + the constraint's
     // force buffers (built once per stage; cheap pointer aggregates).
     {
@@ -640,40 +664,42 @@ void cumes::EquilibriumOperator<T>::enqueue(
     cudaStream_t stream,
     double f_norm_rz,
     double f_norm_l) {
+    enqueue_prefix(iter, iter2, schedule, stream, f_norm_rz, f_norm_l);
+    enqueue_suffix(iter, iter2, schedule, stream, f_norm_rz, f_norm_l);
+}
+
+template <typename T>
+void cumes::EquilibriumOperator<T>::enqueue_prefix(
+    int iter,
+    int iter2,
+    const cumes::EvaluationSchedule& schedule,
+    cudaStream_t stream,
+    double f_norm_rz,
+    double f_norm_l) {
 #ifndef DUMP_CUMES_VERIFY
     // iter/iter2 feed only the dump windows; with the dump machinery
     // compiled out they are unused (completion plan step 4.1 warning-clean).
     (void)iter;
     (void)iter2;
 #endif
+    static_cast<void>(f_norm_rz);
+    static_cast<void>(f_norm_l);
     // Local aliases mirror the pre-step-12 solver_run variable names so the DAG
     // body below is a verbatim move (same arithmetic, same order).
     const DeviceParams<T>& p = p_;
     cumes::SpectralStorage<T>& storage = storage_;
-    const cumes::Profiles<T>& profiles = profiles_;
     cumes::ToroidalFftOperator<T>& transform = transform_;
     cumes::RealSpaceStorage<T>& rs = rs_;
     cumes::GeometryOperator<T>& geometry = geometry_;
-    cumes::Preconditioner<T>& precon = precon_;
     cumes::ConstraintOperator<T>& constraint = constraint_;
     cumes::BaseGeometryHalfViews<T>& base = base_views_;
     cumes::MagneticFieldViews<T>& field = field_views_;
     const cumes::RadialProfileViews<T>& rpv = rpv_;
-    cumes::DeviceBuffer<T>& d_f_spec = d_f_spec_;
     cumes::DeviceBuffer<cumes::ControlRecord>& d_control = d_control_;
-    cumes::DeviceBuffer<T>& d_psum = d_psum_;
     cumes::SpectralOperator<T>* transform_op = transform_op_;
     cumes::GeometryParityViews<T>& geom_views = geom_views_;
-    cumes::ForceParityViews<const T>& force_views = force_views_;
-    cumes::ConstraintForceViews<const T>& conforce_views = conforce_views_;
-    cumes::SpectralView<T, cumes::DecomposedResidualDomain>& residual_view =
-        residual_view_;
-    cumes::SpectralView<const T, cumes::DecomposedResidualDomain>&
-        residual_view_const = residual_view_const_;
     cudaEvent_t& ev0_inv = ev0_inv_;
     cudaEvent_t& ev1_inv = ev1_inv_;
-    cudaEvent_t& ev0_fwd = ev0_fwd_;
-    cudaEvent_t& ev1_fwd = ev1_fwd_;
 
     // ---- device status reset (completion plan step 1.4) ----
     // Zero the WHOLE control record at pass start: the status bits then cannot
@@ -743,6 +769,54 @@ void cumes::EquilibriumOperator<T>::enqueue(
     cumes::dump_step_d<T>(iter, iter2, p, base, field);
 #endif
 
+    if (schedule.run_vacuum_block) {
+        vacuum_->enqueue_surface_averages(
+            field.bsubu.data(), field.bsubv.data(), d_buco_bvco_.data(), p.ns,
+            p.ntheta, p.nzeta, stream);
+        vacuum_->enqueue_lcfs_repack(
+            storage.family_ptr(cumes::SpectralComponent::Rcc),
+            storage.family_ptr(cumes::SpectralComponent::Rss),
+            storage.family_ptr(cumes::SpectralComponent::Zsc),
+            storage.family_ptr(cumes::SpectralComponent::Zcs), d_repack_.data(),
+            p.ns, p.mnmax, p.mpol, p.ntor, stream);
+        vacuum_->enqueue_axis_extract(geom_views.r_e.data(),
+                                      geom_views.z_e.data(), d_axis_.data(),
+                                      p.ntheta, p.nzeta, stream);
+    }
+}
+
+template <typename T>
+void cumes::EquilibriumOperator<T>::enqueue_suffix(
+    int iter,
+    int iter2,
+    const cumes::EvaluationSchedule& schedule,
+    cudaStream_t stream,
+    double f_norm_rz,
+    double f_norm_l) {
+    const DeviceParams<T>& p = p_;
+    cumes::SpectralStorage<T>& storage = storage_;
+    const cumes::Profiles<T>& profiles = profiles_;
+    cumes::ToroidalFftOperator<T>& transform = transform_;
+    cumes::RealSpaceStorage<T>& rs = rs_;
+    cumes::GeometryOperator<T>& geometry = geometry_;
+    cumes::Preconditioner<T>& precon = precon_;
+    cumes::ConstraintOperator<T>& constraint = constraint_;
+    cumes::BaseGeometryHalfViews<T>& base = base_views_;
+    cumes::MagneticFieldViews<T>& field = field_views_;
+    const cumes::RadialProfileViews<T>& rpv = rpv_;
+    cumes::DeviceBuffer<T>& d_f_spec = d_f_spec_;
+    cumes::DeviceBuffer<cumes::ControlRecord>& d_control = d_control_;
+    cumes::DeviceBuffer<T>& d_psum = d_psum_;
+    cumes::SpectralOperator<T>* transform_op = transform_op_;
+    cumes::ForceParityViews<const T>& force_views = force_views_;
+    cumes::ConstraintForceViews<const T>& conforce_views = conforce_views_;
+    cumes::SpectralView<T, cumes::DecomposedResidualDomain>& residual_view =
+        residual_view_;
+    cumes::SpectralView<const T, cumes::DecomposedResidualDomain>&
+        residual_view_const = residual_view_const_;
+    cudaEvent_t& ev0_fwd = ev0_fwd_;
+    cudaEvent_t& ev1_fwd = ev1_fwd_;
+
     // rCon/zCon were produced by the fused inverse DFT above (blueprint
     // §8.4). Reset the constraint-force reference (rCon0/zCon0) to the
     // LCFS-extrapolated profile on the first iteration and after every
@@ -765,7 +839,8 @@ void cumes::EquilibriumOperator<T>::enqueue(
     const bool precon_updated = schedule.refresh_preconditioner;
     if (precon_updated) {
         precon.enqueue_compute(rs, transform.xm(), transform.xn(), p, rpv, base,
-                               field, &d_control.data()->status, stream);
+                               field, &d_control.data()->status, stream,
+                               vacuum_ != nullptr);
 
         // vmecpp computeForceNorms (same cadence): device-side reduction
         // of the force-norm partial sums into the typed control record
@@ -800,6 +875,23 @@ void cumes::EquilibriumOperator<T>::enqueue(
     cumes::dump_step_ef<T>(iter, iter2, p, base, field, rs);
 #endif
 
+    if (schedule.apply_vacuum_edge_force) {
+        cumes::check_cuda(
+            cudaMemsetAsync(d_delbsq_.data(), 0, sizeof(T), stream),
+            "delbsq reset");
+        vacuum_->enqueue_rbsq(rs.d_r_e, rs.d_r_o, field.total_pressure.data(),
+                              d_rbsq_.data(), d_delbsq_.data(), p.ns, p.ntheta,
+                              p.nzeta, p.nZnT, T(profiles.delta_s()), stream);
+        vacuum_->enqueue_edge_force(rs.d_armn_e, rs.d_armn_o, rs.d_azmn_e,
+                                    rs.d_azmn_o, rs.d_zu_e, rs.d_zu_o,
+                                    rs.d_ru_e, rs.d_ru_o, d_rbsq_.data(), p.ns,
+                                    p.ntheta, p.nzeta, stream);
+    }
+    if (schedule.decay_rcon0_zcon0) {
+        vacuum_->enqueue_rcon_decay(constraint.rcon0(), constraint.zcon0(),
+                                    p.ns, p.ntheta, p.nzeta, stream);
+    }
+
     // Add spectral condensation constraint force to brmn/bzmn.
     // Uses the current-iteration tcon (refreshed above when the
     // preconditioner was updated), matching vmecpp. The de-alias bandpass
@@ -816,7 +908,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
 
     cumes::check_cuda(cudaEventRecord(ev0_fwd, stream), "event record ev0_fwd");
     transform_op->enqueue_forward(force_views, conforce_views, residual_view,
-                                  stream);
+                                  stream, schedule.apply_vacuum_edge_force);
     cumes::check_cuda(cudaEventRecord(ev1_fwd, stream), "event record ev1_fwd");
 
     // Apply the odd-m decomposition scaling (vmecpp decomposeInto).
@@ -860,6 +952,7 @@ void cumes::EquilibriumOperator<T>::enqueue(
 #endif
     cumes::ResidualOperator<T> residual_op;
     residual_op.enqueue(residual_view_const, p.ns, p.mnmax,
+                        schedule.include_edge_rz_invariant,
                         d_control.data()->invariant_raw, stream);
 
     // ---- Device terminal predicate (blueprint §6.9/§7 "Terminal") ----
@@ -889,7 +982,8 @@ void cumes::EquilibriumOperator<T>::enqueue(
 
     // Apply the radial tridiagonal + lambda preconditioners to the
     // (decomposed) spectral forces. Terminal-guarded.
-    precon.enqueue_apply(residual_view, p, &d_control.data()->status, stream);
+    precon.enqueue_apply(residual_view, p, &d_control.data()->status, stream,
+                         schedule.apply_vacuum_edge_force);
 
 #ifdef DUMP_CUMES_VERIFY
     cumes::dump_step_i<T>(iter, iter2, p, d_f_spec.data(), storage);
@@ -913,7 +1007,9 @@ SolverResult<T> solver_run(
     std::optional<std::reference_wrapper<cumes::DeviceArena>> arena,
     cudaStream_t stream,
     std::optional<std::reference_wrapper<cumes::SolverBench>> bench,
-    std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op) {
+    std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op,
+    std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<T>>>
+        vacuum) {
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt, {}};
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
@@ -921,7 +1017,7 @@ SolverResult<T> solver_run(
     // machinery. solver_run below is a thin loop over the controller + this
     // operator (migration step 12).
     cumes::EquilibriumOperator<T> equilibrium(p, storage, profiles, transform,
-                                              rs, geometry, arena, op);
+                                              rs, geometry, arena, op, vacuum);
 
     // Stateless descent operator (the DAG's field/force/residual operators live
     // inside the EquilibriumOperator; descent stays with the solver).
@@ -974,6 +1070,10 @@ SolverResult<T> solver_run(
     // reads pure host memory and never adds a device/stream-wide fence or a
     // per-print allocation.
     cumes::PinnedBuffer<T> h_axis_pin(static_cast<std::size_t>(p.ntor) + 2);
+    cumes::PinnedBuffer<T> h_buco_bvco(
+        vacuum ? 2 * static_cast<std::size_t>(p.ns - 1) : 0);
+    double previous_fsqr = 1.0;
+    double previous_fsqz = 1.0;
 
     // State rollback: one contiguous state-only checkpoint slab (6*mnmax*ns),
     // replacing the six separate d_bk_* arrays. The slab order matches the six
@@ -981,18 +1081,18 @@ SolverResult<T> solver_run(
     cumes::DeviceBuffer<T> checkpoint(6 * (size_t)p.ns * p.mnmax);
 
     // Helper: copy current spectral state to backup (one device-to-device copy)
-    auto backupState = [&]() {
+    auto backup_state = [&]() {
         checkpoint.copy_from_async(storage.state_buffer(), stream);
     };
 
     // Helper: restore spectral state from backup + zero velocities
-    auto restoreState = [&]() {
+    auto restore_state = [&]() {
         storage.state_buffer().copy_from_async(checkpoint, stream);
         storage.velocity_buffer().zero_async(stream);
     };
 
     // Take initial backup
-    backupState();
+    backup_state();
 
     // Radial location of the magnetic axis at zeta=0, matching vmecpp's r00
     // (Printout: geometric_offset.r_00 = r1_e[0] — the real-space even-m R
@@ -1004,7 +1104,7 @@ SolverResult<T> solver_run(
     // memory — no sync, no allocation). The displayed value lags the post-
     // descent state by one descent (the mirror is copied at the pass's
     // control fence); controller decisions never consume it.
-    auto axisRAtZeta0 = [&]() {
+    auto axis_r_at_zeta_0 = [&]() {
         T h = T(0.0);
         for (int n = 0; n <= p.ntor; ++n) h += h_axis_pin.data()[n];
         return h;
@@ -1026,13 +1126,13 @@ SolverResult<T> solver_run(
 
     // One table row: effective iteration, invariant residuals, delt, and the
     // axis / boundary R_00 (same columns as vmecpp's iteration printout).
-    auto printIterRow = [&](int it2, double fsqr_v, double fsqz_v,
-                            double fsql_v, double delt_v) {
+    auto print_iter_row = [&](int it2, double fsqr_v, double fsqz_v,
+                              double fsql_v, double delt_v) {
         printf("%5d | %11.3e %11.3e %11.3e | %8.2e", it2, (double)fsqr_v,
                (double)fsqz_v, (double)fsql_v, (double)delt_v);
         // Both values come from the pinned telemetry mirror (completion
         // plan step 3.3) — no per-print device copy or synchronization.
-        T h_rmncc_axis = axisRAtZeta0();
+        T h_rmncc_axis = axis_r_at_zeta_0();
         T h_rmncc_bnd = h_axis_pin.data()[p.ntor + 1];
         printf(" | Rax=%.4f Rbnd=%.4f\n", (double)h_rmncc_axis,
                (double)h_rmncc_bnd);
@@ -1061,14 +1161,20 @@ SolverResult<T> solver_run(
         // time step to 0.98/0.96 of the INITIAL delt (vmec.cc, "HAVING A
         // CONVERGENCE PROBLEM: RESETTING DELT"). The controller's
         // next_schedule() performs the ++ijacob / delt reset / re-anchor; the
-        // restoreState() below mirrors vmecpp's RestartIteration(BAD_JACOBIAN).
+        // restore_state() below mirrors vmecpp's
+        // RestartIteration(BAD_JACOBIAN).
         if (controller.next_schedule()) {
-            restoreState();
+            restore_state();
             printf(
                 "  -> CONVERGENCE PROBLEM: RESETTING DELT to %.3e "
                 "(ijacob=%d)\n",
                 (double)controller.delta_t(), controller.bad_jacobian_count());
             continue;
+        }
+
+        if (vacuum) {
+            vacuum->get().advance(iter2, controller.restart_anchor(),
+                                  previous_fsqr, previous_fsqz);
         }
 
         // Extrapolate
@@ -1077,11 +1183,47 @@ SolverResult<T> solver_run(
         cumes::EvaluationSchedule schedule;
         schedule.update_iota_chi = (p.ncurr == 1) || (iter == 0);
         schedule.reset_constraint_reference =
-            controller.reset_constraint_reference();
+            controller.reset_constraint_reference() &&
+            (!vacuum ||
+             (vacuum->get().state() != cumes::VacuumState::INITIALIZED &&
+              vacuum->get().state() != cumes::VacuumState::ACTIVE));
         schedule.refresh_preconditioner = controller.refresh_preconditioner();
         schedule.zero_z_force_m1 = (controller.effective_iteration() < 2) ||
                                    (controller.fsqz_prev() < 1.0e-6);
-        equilibrium.enqueue(iter, iter2, schedule, stream, fNormRZ, fNormL);
+        schedule.run_vacuum_block = vacuum && vacuum->get().run_vacuum_block();
+        if (vacuum) {
+            const bool almost_converged =
+                (previous_fsqr + previous_fsqz) < 1.0e-6;
+            const bool hot_restart =
+                iter2 == 1 &&
+                vacuum->get().state() == cumes::VacuumState::INITIALIZED;
+            schedule.include_edge_rz_invariant =
+                (iter2 - controller.restart_anchor()) < 50 &&
+                (almost_converged || hot_restart);
+        }
+        schedule.decay_rcon0_zcon0 =
+            vacuum && vacuum->get().decay_rcon0_zcon0();
+        schedule.apply_vacuum_edge_force = false;
+
+        if (!vacuum || !schedule.run_vacuum_block) {
+            equilibrium.enqueue(iter, iter2, schedule, stream, fNormRZ, fNormL);
+        } else {
+            equilibrium.enqueue_prefix(iter, iter2, schedule, stream, fNormRZ,
+                                       fNormL);
+            cumes::check_cuda(cudaStreamSynchronize(stream), "vacuum fence");
+            cumes::check_cuda(
+                cudaMemcpy(h_buco_bvco.data(), equilibrium.buco_bvco_device(),
+                           2 * static_cast<std::size_t>(p.ns - 1) * sizeof(T),
+                           cudaMemcpyDeviceToHost),
+                "copy buco/bvco");
+            vacuum->get().run_host_update(
+                p.ns, h_buco_bvco.data(), h_buco_bvco.data() + (p.ns - 1),
+                equilibrium.repack_device(), equilibrium.axis_device(),
+                equilibrium.axis_device() + p.nzeta, stream);
+            schedule.apply_vacuum_edge_force = vacuum->get().apply_edge_force();
+            equilibrium.enqueue_suffix(iter, iter2, schedule, stream, fNormRZ,
+                                       fNormL);
+        }
 
         // ---- ONE combined control fence (Phase 6A) ----
         // Jacobian stats + invariant + preconditioned residuals are one device
@@ -1110,6 +1252,13 @@ SolverResult<T> solver_run(
                 sizeof(T), cudaMemcpyDeviceToHost, stream),
             "cpy Rbnd mirror");
         cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
+        if (vacuum) {
+            T delbsq = T(0);
+            cumes::check_cuda(cudaMemcpy(&delbsq, equilibrium.delbsq_device(),
+                                         sizeof(T), cudaMemcpyDeviceToHost),
+                              "copy delbsq");
+            vacuum->get().set_delbsq(delbsq);
+        }
         if (bench && bench->get().enabled) {
             auto bench_now = std::chrono::steady_clock::now();
             bench->get().pass_wall_us.push_back(
@@ -1149,13 +1298,13 @@ SolverResult<T> solver_run(
         if (host_jac_invalid) {
             recorder.record(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
                             it2_before, it1_before);
-            restoreState();
+            restore_state();
             cumes::dump_event_bad_jacobian(
                 (double)js.min_oriented, (double)js.max_abs,
                 (double)js.nonfinite_count, js.min_index / p.nZnT,
                 (double)controller.delta_t());
-            printIterRow(controller.effective_iteration(), T(1.0), T(1.0),
-                         T(1.0), controller.delta_t());
+            print_iter_row(controller.effective_iteration(), T(1.0), T(1.0),
+                           T(1.0), controller.delta_t());
             continue;
         }
 
@@ -1173,6 +1322,11 @@ SolverResult<T> solver_run(
                                     iter2, fNormRZ, fNormL, fNorm1);
         }
 
+        if (vacuum && vacuum->get().soft_restart_requested()) {
+            restore_state();
+            controller.vacuum_soft_restart();
+        }
+
         // ---- Invariant residuals (vmecpp evalFResInvar) ----
         // fsqr = fResInvar[0]·fNormRZ·0.25 (same for fsqz), fsql =
         // fResInvar[2]·fNormL. The kernel returns ΣF²/(mnmax·ns); undo first.
@@ -1180,6 +1334,8 @@ SolverResult<T> solver_run(
         double fsqz_i = rec.invariant_raw[1] * plain_per_el * fNormRZ * 0.25;
         double fsql_i = rec.invariant_raw[2] * plain_per_el * fNormL;
         const double inv_triple[3] = {fsqr_i, fsqz_i, fsql_i};
+        previous_fsqr = fsqr_i;
+        previous_fsqz = fsqz_i;
 
         // ---- Stopping criterion (vmecpp Evolve) ----
         // classify_invariant records fsqz_prev for the next pass's gauge
@@ -1195,10 +1351,10 @@ SolverResult<T> solver_run(
             // we recover instead: restore the last good state and shrink delt.
             recorder.record(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0,
                             0, 0, 0, it2_before, it1_before);
-            restoreState();
+            restore_state();
             cumes::dump_event_nonfinite((double)controller.delta_t());
-            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
-                         fsql_i, controller.delta_t());
+            print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
+                           fsql_i, controller.delta_t());
             continue;
         }
         if (verdict.converged) {
@@ -1217,8 +1373,8 @@ SolverResult<T> solver_run(
             // ITER column of the table above (the raw pass count, iter+1,
             // would disagree after any restart).
             cumes::dump_event_converged(controller.effective_iteration());
-            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
-                         fsql_i, controller.delta_t());
+            print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
+                           fsql_i, controller.delta_t());
             break;
         }
 
@@ -1256,6 +1412,7 @@ SolverResult<T> solver_run(
         // (2791 vs 2953 iters; converged lambda gauge modes 1.4e-2 off).
         cumes::DescentAction dact;
         dact.perform_descent = true;
+        dact.move_lcfs = vacuum.has_value();
         dact.delta_t = controller.delta_t();
         dact.damping_b1 = decision.damping.b1;
         dact.damping_fac = decision.damping.fac;
@@ -1264,14 +1421,14 @@ SolverResult<T> solver_run(
                            equilibrium.xn(), p.ns, p.mnmax, dact, stream);
 
         if (decision.do_refresh) {
-            backupState();  // POST-descent state (vmecpp RestartIteration
-                            // NO_RESTART semantics — see comment above)
+            backup_state();  // POST-descent state (vmecpp RestartIteration
+                             // NO_RESTART semantics — see comment above)
         }
         if (decision.reason != cumes::RestartReason::NONE) {
             // Restore overwrites the just-descended state and zeroes the
             // velocities (vmecpp does the same: Evolve()'s descent is
             // discarded by the control block's RestartIteration).
-            restoreState();
+            restore_state();
             controller.after_descent(decision);
             cumes::dump_event_restart(
                 decision.reason == cumes::RestartReason::BAD_JACOBIAN,
@@ -1281,14 +1438,16 @@ SolverResult<T> solver_run(
                 decision);  // advances iter2 on good passes
         }
 
+        if (vacuum) vacuum->get().on_iteration_end();
+
         // ---- Output (every 100 effective iters on the restart-anchored
         // grid, plus the final pass of a max-iteration run) ----
         if ((controller.effective_iteration() - controller.output_anchor()) %
                     100 ==
                 0 ||
             iter == MAX_ITER_EFF - 1) {
-            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
-                         fsql_i, controller.delta_t());
+            print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
+                           fsql_i, controller.delta_t());
         }
 
         if (iter == MAX_ITER_EFF - 1) {

@@ -11,10 +11,10 @@ back). The `CUMES_DUMP`-gated diagnostic files are documented separately in
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cumes <in> out.bin` | versioned binary (schema v1, on-disk version 4) | `CUMES001` |
+| `./build/cumes <in> out.bin` | versioned binary (schema v1, on-disk version 7) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
-| `--checkpoint <path>` | versioned checkpoint (v3) | `CUMECKP1` |
-| `--restart <path>` (read) | versioned checkpoint (v3; v1/v2 still read) | `CUMECKP1` |
+| `--checkpoint <path>` | versioned checkpoint (v6) | `CUMECKP1` |
+| `--restart <path>` (read) | versioned checkpoint (v6; v1–v5 still read) | `CUMECKP1` |
 
 An output path is always required; an unknown suffix is an error. All writers
 publish atomically (write a temporary file in the target directory, then
@@ -52,11 +52,11 @@ Z = zmnsc·sin(mθ)cos(nζ) + zmncs·cos(mθ)sin(nζ)
 The axis row (`j = 0`) is the constant-extrapolated row, which the
 comparison scripts intentionally skip (compare_states.py).
 
-## 3. Versioned binary (schema v1, on-disk version 4)
+## 3. Versioned binary (schema v1, on-disk version 7)
 
 ```
 magic     8 bytes  "CUMES001"
-version   int32    = 4 (the current on-disk version)
+version   int32    = 7 (the current on-disk version)
 ns        int32
 mnmax     int32
 families  6 * (mnmax*ns) doubles, mode-major     ← the §2 payload
@@ -83,14 +83,15 @@ The embedded input record (§5) mirrors
 values (the angular-grid defaults already applied): `mpol, ntor, nfp,
 ntheta, nzeta, ncurr` (int32 each), `delt, phiedge, pres_scale,
 adiabatic_index, spres_ped, bloat, curtor, tcon0` (f64 each), the `schema`
-string, the `pmass_type, piota_type, pcurr_type` profile-type strings
-(version 4 only; a version-3 record is read with "power_series" defaults),
+string, the `pmass_type, piota_type, pcurr_type` profile-type strings,
 then the vectors `am, ac, ai, aphi, raxis_c, zaxis_s` (f64 each),
 the input stages (`nstages_in` then per stage `ns` int32, `max_iter`
 int32, `ftol` f64), the raw boundary (`rbc_m` int32, `rbc_n` int32,
 `rbc_value` f64, then `zbs_*`), and the folded boundary `rbcc, rbss, zbsc,
-zbcs` (f64 each). Every vector is an int32 element count followed by the
-payload; counts are capped at 2^20 by the reader.
+zbcs` (f64 each), followed by `lfreeb`, `nvacskip`, `mgrid_file`, `extcur`,
+`coils_file`, `makegrid_parameters_file`, and the optional embedded
+`makegrid_paramters` object. Every vector is an int32 element count followed
+by the payload; counts are capped at 2^20 by the reader.
 
 Notes:
 
@@ -105,17 +106,20 @@ Notes:
   reports a default-empty one. (Before 2026-08-20 the writer emitted
   `scalar_type` while the v2 reader expected the policy pair — a
   writer/reader sequence mismatch fixed together with the v1-compat path
-  above; the state payload itself was never affected.)
+  above; the state payload itself was never affected.) Version 3 added the
+  input record, version 4 added profile-type strings, versions 5 and 6 are
+  the free-boundary lineage, and version 7 combines the profile-type and
+  complete free-boundary extensions.
 - The state payload is read and validated independently of the trailer, so
   a reader can stop after the state and stays forward-compatible with
   later trailer revisions. The trailer is parsed only when the caller
   requests the `RunReport`.
 
-## 4. Versioned checkpoint v3 (`--checkpoint` / `--restart`)
+## 4. Versioned checkpoint v6 (`--checkpoint` / `--restart`)
 
 ```
 magic     8 bytes  "CUMECKP1"
-version   int32    = 3
+version   int32    = 6
 precision int32    = 0 (the checkpoint is always double on disk)
 ns        int32
 mnmax     int32
@@ -123,27 +127,31 @@ families  6 * (mnmax*ns) doubles, mode-major     ← the §2 payload
 params    the embedded normalized-input record (§5), version 2 and up
 ```
 
-Version 3 appends the three profile-type strings to the input record; a
-version-2 checkpoint is read with "power_series" defaults. No provenance
-trailer beyond the input record — the restart path reads the state only
-and never touches the record. Version-1 checkpoints (no record) remain
-readable. Header mismatch, unsupported version/precision, or corruption is
-an error, never a silent cold start.
+Version 2 added the input record, version 3 added the profile-type strings,
+versions 4 and 5 are the free-boundary lineage, and version 6 combines the
+profile-type and complete free-boundary extensions. There is no provenance
+trailer beyond the input record—the restart path reads the state only and
+never touches the record. Version-1 checkpoints (no record) remain readable.
+Header mismatch, unsupported version/precision, or corruption is an error,
+never a silent cold start.
 
 ## 5. The embedded input record / NetCDF-HDF5 layout (v1)
 
 The embedded input record (§3/§4 in the binary formats) is represented
 natively in NetCDF/HDF5:
 
-- scalar variables (`mpol, ntor, nfp, ntheta, nzeta, ncurr` as int,
+- scalar variables (`mpol, ntor, nfp, ntheta, nzeta, ncurr, lfreeb,
+  nvacskip` as int,
   `delt, phiedge, pres_scale, adiabatic_index, spres_ped, bloat, curtor,
   tcon0` as double) — HDF5: same names as root-group attributes;
-- 1-D array variables `am, ac, ai, aphi, raxis_c, zaxis_s` (double) and
+- 1-D array variables `am, ac, ai, aphi, raxis_c, zaxis_s, extcur` (double) and
   the input stage arrays `stage_in_ns, stage_max_iter` (int),
   `stage_ftol` (double) — HDF5: same names as 1-D datasets;
-- the `schema` string attribute and the `pmass_type`, `piota_type`,
+- the `schema`, `mgrid_file`, `coils_file`, and
+  `makegrid_parameters_file` string attributes and the `pmass_type`, `piota_type`,
   `pcurr_type` profile-type string attributes (absent in older
-  containers -> read as "power_series");
+  containers -> read as "power_series"); embedded Makegrid fields use
+  `makegrid_parameters_present` plus scalar `makegrid_*` attributes;
 - the boundary is the pre-existing native pair: `rbc_m/rbc_n/rbc_value`
   and `zbs_m/zbs_n/zbs_value` (int/int/double over `nrbc`/`nzbs`) plus the
   folded 2-D matrices `rbcc/rbss/zbsc/zbcs` over `[n_mpol, n_ntorp1]`.

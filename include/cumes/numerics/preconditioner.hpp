@@ -54,7 +54,8 @@ class Preconditioner {
                          const BaseGeometryHalfViews<T>& base,
                          const MagneticFieldViews<T>& field,
                          const ControlStatus* status,
-                         cudaStream_t stream);
+                         cudaStream_t stream,
+                         bool lfreeb = false);
 
     // Apply the preconditioner in place to the decomposed residual.
     // Terminal-guarded (completion plan step 1.4): the tridiagonal solves and
@@ -63,7 +64,8 @@ class Preconditioner {
     void enqueue_apply(SpectralView<T, DecomposedResidualDomain> residual,
                        const DeviceParams<T>& p,
                        const ControlStatus* gate,
-                       cudaStream_t stream) const;
+                       cudaStream_t stream,
+                       bool include_lcfs = false) const;
 
     // vmecpp applyM1Preconditioner: scale the m=1 frss/fzcs pair by the
     // odd-parity diagonal elements (ard/brd/azd/bzd) before the RZ solve. Runs

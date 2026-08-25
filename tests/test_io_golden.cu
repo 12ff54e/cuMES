@@ -241,6 +241,8 @@ static RunReport make_io_report(const cumes::ValidatedProblem& vp) {
     r.runtime.runtime = "12010";
     r.runtime.toolkit = "12.1";
     r.input_params = cumes::make_input_params(vp);
+    r.input_params.embedded_makegrid_parameters = cumes::MakegridParametersSpec{
+        false, false, 1, 2.0, 6.0, 201, -2.0, 2.0, 201, 1};
     return r;
 }
 

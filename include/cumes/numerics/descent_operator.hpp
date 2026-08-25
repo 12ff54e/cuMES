@@ -3,7 +3,7 @@
 //
 // Applies the ordered decision: optional descent, optional post-descent
 // checkpoint capture, then optional post-descent restore + velocity zero. The
-// legacy descent_step_kernel + backupState/restoreState are the reference
+// legacy descent_step_kernel + backup_state/restore_state are the reference
 // implementation; the velocity/state slabs make checkpoint capture one copy.
 //
 // Strangler-fig form: a stateless thin wrapper over descent_step_kernel
@@ -28,6 +28,7 @@ struct DescentAction {
     bool perform_descent = false;
     bool refresh_checkpoint_after_descent = false;
     bool restore_checkpoint_after_descent = false;
+    bool move_lcfs = false;  // free boundary: the R/Z LCFS row evolves too
     double delta_t = 0.0;
     double damping_b1 = 0.0;
     double damping_fac = 0.0;

@@ -206,6 +206,35 @@ inline bool read_f64_vec(FILE* fp,
                                 static_cast<std::size_t>(n) * sizeof(double));
 }
 
+inline bool write_makegrid_parameters(FILE* fp,
+                                      const MakegridParametersSpec& p) {
+    return write_i32(fp, p.normalize_by_currents ? 1 : 0) &&
+           write_i32(fp, p.assume_stellarator_symmetry ? 1 : 0) &&
+           write_i32(fp, p.number_of_field_periods) &&
+           write_f64(fp, p.r_grid_minimum) && write_f64(fp, p.r_grid_maximum) &&
+           write_i32(fp, p.number_of_r_grid_points) &&
+           write_f64(fp, p.z_grid_minimum) && write_f64(fp, p.z_grid_maximum) &&
+           write_i32(fp, p.number_of_z_grid_points) &&
+           write_i32(fp, p.number_of_phi_grid_points);
+}
+
+inline bool read_makegrid_parameters(FILE* fp, MakegridParametersSpec& p) {
+    std::int32_t normalize = 0;
+    std::int32_t symmetry = 0;
+    if (!read_i32(fp, normalize) || !read_i32(fp, symmetry) ||
+        !read_i32(fp, p.number_of_field_periods) ||
+        !read_f64(fp, p.r_grid_minimum) || !read_f64(fp, p.r_grid_maximum) ||
+        !read_i32(fp, p.number_of_r_grid_points) ||
+        !read_f64(fp, p.z_grid_minimum) || !read_f64(fp, p.z_grid_maximum) ||
+        !read_i32(fp, p.number_of_z_grid_points) ||
+        !read_i32(fp, p.number_of_phi_grid_points)) {
+        return false;
+    }
+    p.normalize_by_currents = (normalize != 0);
+    p.assume_stellarator_symmetry = (symmetry != 0);
+    return true;
+}
+
 inline bool write_input_params(FILE* fp, const InputParams& p) {
     bool ok = write_i32(fp, p.mpol) && write_i32(fp, p.ntor) &&
               write_i32(fp, p.nfp) && write_i32(fp, p.ntheta) &&
@@ -229,7 +258,15 @@ inline bool write_input_params(FILE* fp, const InputParams& p) {
          write_f64_vec(fp, p.rbc_value) && write_i32_vec(fp, p.zbs_m) &&
          write_i32_vec(fp, p.zbs_n) && write_f64_vec(fp, p.zbs_value) &&
          write_f64_vec(fp, p.rbcc) && write_f64_vec(fp, p.rbss) &&
-         write_f64_vec(fp, p.zbsc) && write_f64_vec(fp, p.zbcs);
+         write_f64_vec(fp, p.zbsc) && write_f64_vec(fp, p.zbcs) &&
+         write_i32(fp, p.lfreeb ? 1 : 0) && write_i32(fp, p.nvacskip) &&
+         write_string(fp, p.mgrid_file) && write_f64_vec(fp, p.extcur) &&
+         write_string(fp, p.coils_file) &&
+         write_string(fp, p.makegrid_parameters_file) &&
+         write_i32(fp, p.embedded_makegrid_parameters.has_value() ? 1 : 0);
+    if (ok && p.embedded_makegrid_parameters.has_value()) {
+        ok = write_makegrid_parameters(fp, *p.embedded_makegrid_parameters);
+    }
     return ok;
 }
 
@@ -239,7 +276,8 @@ inline bool write_input_params(FILE* fp, const InputParams& p) {
 inline bool read_input_params(FILE* fp,
                               InputParams& p,
                               std::string& reason,
-                              bool with_profile_types) {
+                              bool with_profile_types,
+                              int free_boundary_extension = 0) {
     std::int32_t nstages = 0;
     if (!read_i32(fp, p.mpol) || !read_i32(fp, p.ntor) ||
         !read_i32(fp, p.nfp) || !read_i32(fp, p.ntheta) ||
@@ -299,6 +337,38 @@ inline bool read_input_params(FILE* fp,
         p.rbcc.size() != p.zbcs.size()) {
         reason = "boundary vector lengths disagree";
         return false;
+    }
+    if (free_boundary_extension >= 1) {
+        std::int32_t lfreeb = 0;
+        if (!read_i32(fp, lfreeb) || !read_i32(fp, p.nvacskip) ||
+            !read_string(fp, p.mgrid_file) ||
+            !read_f64_vec(fp, p.extcur, reason)) {
+            if (reason.empty()) reason = "truncated input record";
+            return false;
+        }
+        p.lfreeb = (lfreeb != 0);
+    }
+    if (free_boundary_extension >= 2) {
+        if (!read_string(fp, p.coils_file) ||
+            !read_string(fp, p.makegrid_parameters_file)) {
+            reason = "truncated input record";
+            return false;
+        }
+    }
+    if (free_boundary_extension >= 3) {
+        std::int32_t has_embedded = 0;
+        if (!read_i32(fp, has_embedded)) {
+            reason = "truncated input record";
+            return false;
+        }
+        if (has_embedded != 0) {
+            MakegridParametersSpec parameters;
+            if (!read_makegrid_parameters(fp, parameters)) {
+                reason = "truncated embedded Makegrid parameters";
+                return false;
+            }
+            p.embedded_makegrid_parameters = parameters;
+        }
     }
     return true;
 }

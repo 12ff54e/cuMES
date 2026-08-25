@@ -57,7 +57,7 @@ foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
                    test_tridiagonal test_cuda_graph test_safety_predicates
-                   test_event_dag)
+                   test_event_dag test_free_boundary_seed)
   add_executable(${t} ${t}.cu)
   target_include_directories(${t} PRIVATE ${PROJECT_SOURCE_DIR}/include)
   target_link_libraries(${t} PRIVATE cumes_config_json cumes_cuda_double cumes_cuda_float)
@@ -158,6 +158,10 @@ if(CUMES_HOST_SANITIZERS)
 
   cumes_add_host_library(cumes_config_json_asan TRUE ${CUMES_CONFIG_JSON_SOURCES})
   target_link_libraries(cumes_config_json_asan PUBLIC cumes_core_asan cumes_json_asan)
+  if(NOT CUMES_USE_VACUUM_FIELD)
+    target_compile_definitions(cumes_config_json_asan
+      PUBLIC CUMES_VACUUM_FIELD_DISABLED)
+  endif()
 
   cumes_add_host_library(cumes_io_host_asan TRUE ${CUMES_IO_HOST_SOURCES})
   target_link_libraries(cumes_io_host_asan PUBLIC cumes_core_asan)

@@ -2,7 +2,7 @@
 //
 // Versioned checkpoint layout (little-endian):
 //   magic     8 bytes  "CUMECKP1"
-//   version   int32    = 3
+//   version   int32    = 6
 //   precision int32    (0 = double; the checkpoint is always double on disk)
 //   ns        int32
 //   mnmax     int32
@@ -12,8 +12,9 @@
 //
 // Version 3 appends the three profile-type strings to the input record;
 // version-2 checkpoints are still read (the types default to
-// "power_series"). The restart path reads the state only and ignores the
-// record; version-1 checkpoints (no record) remain readable.
+// "power_series"). Free-boundary versions 4/5 add inline-Makegrid provenance;
+// version 6 combines both extensions. The restart path reads the state only and
+// ignores the record; version-1 checkpoints (no record) remain readable.
 #include "cumes/io/checkpoint.hpp"
 
 #include "io_common.hpp"
@@ -26,7 +27,7 @@ namespace cumes {
 namespace {
 
 constexpr char CHECKPOINT_MAGIC[9] = "CUMECKP1";
-constexpr std::int32_t CHECKPOINT_VERSION = 3;
+constexpr std::int32_t CHECKPOINT_VERSION = 6;
 constexpr std::int32_t MIN_CHECKPOINT_VERSION = 1;
 
 }  // namespace
@@ -110,8 +111,13 @@ Result<EquilibriumSnapshot> read_checkpoint(
     // for the record never touches it. The three profile-type strings exist
     // in version-3 checkpoints only.
     if (input_params && version >= 2) {
+        const bool has_profile_types = version == 3 || version >= 6;
+        const int free_boundary_extension = version >= 6   ? 3
+                                            : version >= 4 ? version - 2
+                                                           : 0;
         if (!io_detail::read_input_params(fp, input_params->get(), reason,
-                                          version >= 3)) {
+                                          has_profile_types,
+                                          free_boundary_extension)) {
             return fail("checkpoint: " + reason);
         }
     }

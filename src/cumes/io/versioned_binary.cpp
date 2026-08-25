@@ -1,9 +1,9 @@
 // versioned_binary.cpp — the schema v1 binary state container (blueprint
 // §6.13) and the host-library binary factories.
 //
-// Layout (little-endian), version 4 (the current on-disk version):
+// Layout (little-endian), version 7 (the current on-disk version):
 //   magic     8 bytes  "CUMES001"
-//   version   int32    = 3
+//   version   int32    = 7
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major (the state payload)
@@ -30,7 +30,8 @@
 // reader reports a default-empty InputParams for them. Version 3 carries the
 // input record WITHOUT the three profile-type strings; version 4 appends
 // pmass_type/piota_type/pcurr_type after the schema tag (the reader keeps
-// the "power_series" defaults for version-3 records).
+// the "power_series" defaults for version-3 records). Free-boundary versions
+// 5 and 6 add inline-Makegrid provenance; version 7 combines both extensions.
 //
 // The state payload is read and validated independently of the provenance
 // trailer, so a reader stays forward-compatible with later v1.x trailers.
@@ -52,8 +53,9 @@ constexpr char MAGIC[9] = "CUMES001";
 // normalized-input record as the last trailer element; v1/v2 files are still
 // read (the record defaults empty). v4 appends the three profile-type
 // strings to that record; v3 files are still read (the types default to
-// "power_series").
-constexpr std::int32_t VERSION = 4;
+// "power_series"). Versions 5/6 are the free-boundary lineage; version 7
+// combines the profile and free-boundary extensions.
+constexpr std::int32_t VERSION = 7;
 constexpr std::int32_t MIN_READ_VERSION = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
@@ -259,8 +261,13 @@ class VersionedBinaryReader final : public Reader {
             // profile-type strings exist in version 4 records only.
             if (has_input_params) {
                 std::string reason;
+                const bool has_profile_types = version == 4 || version >= 7;
+                const int free_boundary_extension = version >= 7   ? 3
+                                                    : version >= 5 ? version - 3
+                                                                   : 0;
                 if (!io_detail::read_input_params(
-                        fp, report->get().input_params, reason, version >= 4)) {
+                        fp, report->get().input_params, reason,
+                        has_profile_types, free_boundary_extension)) {
                     return fail("versioned binary: " + reason);
                 }
             }

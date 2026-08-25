@@ -111,7 +111,8 @@ class ToroidalFftOperator : public SpectralOperator<T> {
     void enqueue_forward(ForceParityViews<const T> real_force,
                          ConstraintForceViews<const T> constraint_force,
                          SpectralView<T, DecomposedResidualDomain> residual,
-                         cudaStream_t stream) override;
+                         cudaStream_t stream,
+                         bool include_lcfs = false) override;
 
     void enqueue_dealias(RealFieldView<const T> gConEff,
                          const T* tcon,

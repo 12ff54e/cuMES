@@ -112,13 +112,14 @@ static void test_checkpoint_version_gate() {
     {
         std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
         f.seekp(8);
-        const std::int32_t v4 = 4;
-        f.write(reinterpret_cast<const char*>(&v4), sizeof(v4));
+        const std::int32_t unsupported_version = 7;
+        f.write(reinterpret_cast<const char*>(&unsupported_version),
+                sizeof(unsupported_version));
         f.close();
     }
     {
         auto bad = cumes::read_checkpoint(path);
-        check(!bad.has_value(), "checkpoint: version 4 rejected");
+        check(!bad.has_value(), "checkpoint: unsupported version rejected");
     }
     remove(path.c_str());
 }

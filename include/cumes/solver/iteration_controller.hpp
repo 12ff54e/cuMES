@@ -222,6 +222,27 @@ class IterationController {
         return d;
     }
 
+    // vmecpp vacuum-activation soft restart (RestartIteration via
+    // UpdateForwardModel): the caller zeroes the velocities (the spectral
+    // state is already the pre-pass state — vmecpp's every-pass backup);
+    // here: ++ijacob, record the event, and RE-ANCHOR. NO delt change
+    // (vmecpp applies the x0.9 to a LOCAL delt0 copy). The re-anchor
+    // mirrors RestartIteration's own `iter1_ = iter2_` (it runs inside
+    // UpdateForwardModel BEFORE Evolve's damping/control section, so the
+    // `iter2_ == iter1_` gates there DO see the new anchor): it
+    // reinitializes the 1/tau history, rebaselines res0_ to the
+    // edge-force-inflated residual, and disables the fsq-growth
+    // (BAD_JACOBIAN) check for the activation pass — without it the
+    // pass's huge fsq jump (the new edge-force term) trips
+    // `fsq > 100*res0 && iter2 > iter1` and the descent is discarded.
+    // The pass still descends and advances iter2.
+    void vacuum_soft_restart() {
+        ++ijacob_;
+        iter1_ = iter2_;
+        log_anchor_ = iter2_;
+        restart_events_.push_back(RestartEvent{iter2_});
+    }
+
     // Post-descent bookkeeping: apply the restart's time-step adjustment and
     // re-anchor, or advance the effective-iteration counter on a good pass.
     void after_descent(const RestartDecision<T>& d) {

@@ -263,6 +263,58 @@ class Hdf5V1Writer final : public Writer {
                  "attr curtor");
         H5_CHECK(put_attr(fid, "tcon0", H5T_NATIVE_DOUBLE, &ip.tcon0),
                  "attr tcon0");
+        const int lfreeb = ip.lfreeb ? 1 : 0;
+        H5_CHECK(put_attr(fid, "lfreeb", H5T_NATIVE_INT, &lfreeb),
+                 "attr lfreeb");
+        H5_CHECK(put_attr(fid, "nvacskip", H5T_NATIVE_INT, &ip.nvacskip),
+                 "attr nvacskip");
+        H5_CHECK(put_str_attr(fid, "mgrid_file", ip.mgrid_file),
+                 "attr mgrid_file");
+        H5_CHECK(put_str_attr(fid, "coils_file", ip.coils_file),
+                 "attr coils_file");
+        H5_CHECK(put_str_attr(fid, "makegrid_parameters_file",
+                              ip.makegrid_parameters_file),
+                 "attr makegrid_parameters_file");
+        const int makegrid_present =
+            ip.embedded_makegrid_parameters.has_value() ? 1 : 0;
+        H5_CHECK(put_attr(fid, "makegrid_paramters_present", H5T_NATIVE_INT,
+                          &makegrid_present),
+                 "attr makegrid_paramters_present");
+        const MakegridParametersSpec makegrid =
+            ip.embedded_makegrid_parameters.value_or(MakegridParametersSpec{});
+        const int makegrid_normalize = makegrid.normalize_by_currents ? 1 : 0;
+        const int makegrid_symmetry =
+            makegrid.assume_stellarator_symmetry ? 1 : 0;
+        H5_CHECK(put_attr(fid, "makegrid_normalize_by_currents", H5T_NATIVE_INT,
+                          &makegrid_normalize),
+                 "attr makegrid_normalize_by_currents");
+        H5_CHECK(put_attr(fid, "makegrid_assume_stellarator_symmetry",
+                          H5T_NATIVE_INT, &makegrid_symmetry),
+                 "attr makegrid_assume_stellarator_symmetry");
+        H5_CHECK(put_attr(fid, "makegrid_number_of_field_periods",
+                          H5T_NATIVE_INT, &makegrid.number_of_field_periods),
+                 "attr makegrid_number_of_field_periods");
+        H5_CHECK(put_attr(fid, "makegrid_r_grid_minimum", H5T_NATIVE_DOUBLE,
+                          &makegrid.r_grid_minimum),
+                 "attr makegrid_r_grid_minimum");
+        H5_CHECK(put_attr(fid, "makegrid_r_grid_maximum", H5T_NATIVE_DOUBLE,
+                          &makegrid.r_grid_maximum),
+                 "attr makegrid_r_grid_maximum");
+        H5_CHECK(put_attr(fid, "makegrid_number_of_r_grid_points",
+                          H5T_NATIVE_INT, &makegrid.number_of_r_grid_points),
+                 "attr makegrid_number_of_r_grid_points");
+        H5_CHECK(put_attr(fid, "makegrid_z_grid_minimum", H5T_NATIVE_DOUBLE,
+                          &makegrid.z_grid_minimum),
+                 "attr makegrid_z_grid_minimum");
+        H5_CHECK(put_attr(fid, "makegrid_z_grid_maximum", H5T_NATIVE_DOUBLE,
+                          &makegrid.z_grid_maximum),
+                 "attr makegrid_z_grid_maximum");
+        H5_CHECK(put_attr(fid, "makegrid_number_of_z_grid_points",
+                          H5T_NATIVE_INT, &makegrid.number_of_z_grid_points),
+                 "attr makegrid_number_of_z_grid_points");
+        H5_CHECK(put_attr(fid, "makegrid_number_of_phi_grid_points",
+                          H5T_NATIVE_INT, &makegrid.number_of_phi_grid_points),
+                 "attr makegrid_number_of_phi_grid_points");
         H5_CHECK(put_str_attr(fid, "schema", ip.schema), "attr schema");
         H5_CHECK(put_str_attr(fid, "pmass_type", ip.pmass_type),
                  "attr pmass_type");
@@ -278,6 +330,7 @@ class Hdf5V1Writer final : public Writer {
                                    v.empty() ? nullptr : v.data());
             };
             H5_CHECK(write_vec("am", ip.am), "write am");
+            H5_CHECK(write_vec("extcur", ip.extcur), "write extcur");
             H5_CHECK(write_vec("ac", ip.ac), "write ac");
             H5_CHECK(write_vec("ai", ip.ai), "write ai");
             H5_CHECK(write_vec("aphi", ip.aphi), "write aphi");
@@ -804,6 +857,89 @@ class Hdf5V1Reader final : public Reader {
                             return fail("malformed embedded input record");
                         }
                         {
+                            H5Closer lfreeb_attr(
+                                H5Aopen(fid, "lfreeb", H5P_DEFAULT));
+                            if (lfreeb_attr.get() >= 0) {
+                                int lfreeb = 0;
+                                if (!get_int_attr("lfreeb", lfreeb)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                                ip.lfreeb = lfreeb != 0;
+                            }
+                            H5Closer nvacskip_attr(
+                                H5Aopen(fid, "nvacskip", H5P_DEFAULT));
+                            if (nvacskip_attr.get() >= 0 &&
+                                !get_int_attr("nvacskip", ip.nvacskip)) {
+                                return fail("malformed embedded input record");
+                            }
+                            get_str_attr(fid, "mgrid_file", ip.mgrid_file);
+                            get_str_attr(fid, "coils_file", ip.coils_file);
+                            get_str_attr(fid, "makegrid_parameters_file",
+                                         ip.makegrid_parameters_file);
+                            H5Closer present_attr(
+                                H5Aopen(fid, "makegrid_paramters_present",
+                                        H5P_DEFAULT));
+                            if (present_attr.get() >= 0) {
+                                int present = 0;
+                                if (!get_int_attr("makegrid_paramters_present",
+                                                  present)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                                if (present != 0) {
+                                    MakegridParametersSpec parameters;
+                                    int normalize = 0;
+                                    int symmetry = 0;
+                                    if (!get_int_attr(
+                                            "makegrid_normalize_by_currents",
+                                            normalize) ||
+                                        !get_int_attr(
+                                            "makegrid_assume_stellarator_"
+                                            "symmetry",
+                                            symmetry) ||
+                                        !get_int_attr(
+                                            "makegrid_number_of_field_periods",
+                                            parameters
+                                                .number_of_field_periods) ||
+                                        !get_dbl_attr(
+                                            "makegrid_r_grid_minimum",
+                                            parameters.r_grid_minimum) ||
+                                        !get_dbl_attr(
+                                            "makegrid_r_grid_maximum",
+                                            parameters.r_grid_maximum) ||
+                                        !get_int_attr(
+                                            "makegrid_number_of_r_grid_points",
+                                            parameters
+                                                .number_of_r_grid_points) ||
+                                        !get_dbl_attr(
+                                            "makegrid_z_grid_minimum",
+                                            parameters.z_grid_minimum) ||
+                                        !get_dbl_attr(
+                                            "makegrid_z_grid_maximum",
+                                            parameters.z_grid_maximum) ||
+                                        !get_int_attr(
+                                            "makegrid_number_of_z_grid_points",
+                                            parameters
+                                                .number_of_z_grid_points) ||
+                                        !get_int_attr(
+                                            "makegrid_number_of_phi_grid_"
+                                            "points",
+                                            parameters
+                                                .number_of_phi_grid_points)) {
+                                        return fail(
+                                            "malformed embedded input record");
+                                    }
+                                    parameters.normalize_by_currents =
+                                        normalize != 0;
+                                    parameters.assume_stellarator_symmetry =
+                                        symmetry != 0;
+                                    ip.embedded_makegrid_parameters =
+                                        parameters;
+                                }
+                            }
+                        }
+                        {
                             auto get_vec =
                                 [&](const char* name,
                                     std::vector<double>& out) -> bool {
@@ -817,6 +953,10 @@ class Hdf5V1Reader final : public Reader {
                                 !get_vec("aphi", ip.aphi) ||
                                 !get_vec("raxis_c", ip.raxis_c) ||
                                 !get_vec("zaxis_s", ip.zaxis_s)) {
+                                return fail("malformed embedded input record");
+                            }
+                            if (H5Lexists(fid, "extcur", H5P_DEFAULT) > 0 &&
+                                !get_vec("extcur", ip.extcur)) {
                                 return fail("malformed embedded input record");
                             }
                         }

@@ -187,12 +187,12 @@ int main(int argc, char** argv) {
         fprintf(stderr, "cuMES: %s\n", resolved.error().c_str());
         return EXIT_FAILURE;
     }
-    const cumes::OutputSpec outSpec = resolved.value();
-    if (!cumes::output_format_available(outSpec.format)) {
+    const cumes::OutputSpec output_spec = resolved.value();
+    if (!cumes::output_format_available(output_spec.format)) {
         fprintf(stderr,
                 "cuMES: output format '%s' is not available in this "
                 "build; no output will be written\n",
-                cumes::output_suffix(outSpec.format).data());
+                cumes::output_suffix(output_spec.format).data());
         return EXIT_FAILURE;
     }
 
@@ -304,8 +304,9 @@ int main(int argc, char** argv) {
         // solve, and every hot-loop kernel / cuFFT transform / D2H transfer is
         // enqueued on this stream (Phase 6A explicit-stream scheduling).
         cumes::Stream compute_stream;
-        auto outcome = cumes::MultigridSolver<Real>::run(p, vp, std::move(seed),
-                                                         compute_stream.get());
+        auto outcome = cumes::MultigridSolver<Real>::run(
+            p, vp, std::move(seed), compute_stream.get(),
+            /*hot_start=*/!restart_path.empty());
         storage = std::move(outcome.state);
         result = outcome.result;
         total_iter = outcome.total_iterations;
@@ -340,7 +341,7 @@ int main(int argc, char** argv) {
         // (including the checkpoint below) carries it, so consumers can
         // reconstruct the equilibrium without the input JSON.
         outcome.report.input_params = cumes::make_input_params(vp);
-        const cumes::OutputSpec spec = outSpec;
+        const cumes::OutputSpec spec = output_spec;
         auto writer = cumes::make_writer(spec.format);
         if (!writer) {
             fprintf(stderr, "cuMES: no writer for suffix '%s'\n",

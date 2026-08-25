@@ -170,15 +170,21 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
     // cuMES embeds the boundary in the spectral coefficients at j=ns-1. Patch
     // the LCFS values to match the folded boundary; also zero m>0 modes at the
     // magnetic axis (j=0) — vmecpp does this via extrapolateTowardsAxis().
+    // FREE-BOUNDARY hot restarts keep the snapshot's LCFS row (the boundary is
+    // a degree of freedom — re-imposing the input boundary would silently
+    // kick the equilibrium, vmecpp fourier_geometry.cc's same comment).
     {
         int jB = p.ns - 1;  // LCFS index
+        const bool patch_lcfs = !vp.spec().free_boundary.lfreeb;
         for (int m = 0; m < p.mpol; ++m) {
             for (int n = 0; n < p.ntor + 1; ++n) {
                 int mn = m * (p.ntor + 1) + n;
-                h_c[jB + mn * p.ns] = T(b.rbcc[m * ntorp1 + n]);
-                h_s[jB + mn * p.ns] = T(b.rbss[m * ntorp1 + n]);
-                h_zsc[jB + mn * p.ns] = T(b.zbsc[m * ntorp1 + n]);
-                h_zcs[jB + mn * p.ns] = T(b.zbcs[m * ntorp1 + n]);
+                if (patch_lcfs) {
+                    h_c[jB + mn * p.ns] = T(b.rbcc[m * ntorp1 + n]);
+                    h_s[jB + mn * p.ns] = T(b.rbss[m * ntorp1 + n]);
+                    h_zsc[jB + mn * p.ns] = T(b.zbsc[m * ntorp1 + n]);
+                    h_zcs[jB + mn * p.ns] = T(b.zbcs[m * ntorp1 + n]);
+                }
                 if (m > 0) {
                     h_c[0 + mn * p.ns] = T(0.0);
                     h_s[0 + mn * p.ns] = T(0.0);

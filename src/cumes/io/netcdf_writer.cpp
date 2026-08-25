@@ -101,10 +101,16 @@ class NetcdfV1Writer final : public Writer {
         // in use). The reader treats an absent array variable as an empty
         // vector.
         int dim_nam = -1, dim_nac = -1, dim_nai = -1, dim_naphi = -1,
-            dim_nraxis = -1, dim_nzaxis = -1, dim_nstages_in = -1;
+            dim_nraxis = -1, dim_nzaxis = -1, dim_nstages_in = -1,
+            dim_nextcur = -1;
         if (!ip.am.empty()) {
             NC_CHECK(nc_def_dim(ncid, "n_am", ip.am.size(), &dim_nam),
                      "def n_am");
+        }
+        if (!ip.extcur.empty()) {
+            NC_CHECK(
+                nc_def_dim(ncid, "n_extcur", ip.extcur.size(), &dim_nextcur),
+                "def n_extcur");
         }
         if (!ip.ac.empty()) {
             NC_CHECK(nc_def_dim(ncid, "n_ac", ip.ac.size(), &dim_nac),
@@ -249,9 +255,49 @@ class NetcdfV1Writer final : public Writer {
                  "def curtor");
         NC_CHECK(nc_def_var(ncid, "tcon0", NC_DOUBLE, 0, nullptr, &v_tcon0),
                  "def tcon0");
+        int v_lfreeb, v_nvacskip, v_makegrid_paramters_present;
+        NC_CHECK(nc_def_var(ncid, "lfreeb", NC_INT, 0, nullptr, &v_lfreeb),
+                 "def lfreeb");
+        NC_CHECK(nc_def_var(ncid, "nvacskip", NC_INT, 0, nullptr, &v_nvacskip),
+                 "def nvacskip");
+        NC_CHECK(nc_def_var(ncid, "makegrid_paramters_present", NC_INT, 0,
+                            nullptr, &v_makegrid_paramters_present),
+                 "def makegrid_paramters_present");
+        int v_mg_normalize, v_mg_symmetry, v_mg_nfp, v_mg_num_r, v_mg_num_z,
+            v_mg_num_phi, v_mg_min_r, v_mg_max_r, v_mg_min_z, v_mg_max_z;
+        NC_CHECK(nc_def_var(ncid, "makegrid_normalize_by_currents", NC_INT, 0,
+                            nullptr, &v_mg_normalize),
+                 "def makegrid_normalize_by_currents");
+        NC_CHECK(nc_def_var(ncid, "makegrid_assume_stellarator_symmetry",
+                            NC_INT, 0, nullptr, &v_mg_symmetry),
+                 "def makegrid_assume_stellarator_symmetry");
+        NC_CHECK(nc_def_var(ncid, "makegrid_number_of_field_periods", NC_INT, 0,
+                            nullptr, &v_mg_nfp),
+                 "def makegrid_number_of_field_periods");
+        NC_CHECK(nc_def_var(ncid, "makegrid_r_grid_minimum", NC_DOUBLE, 0,
+                            nullptr, &v_mg_min_r),
+                 "def makegrid_r_grid_minimum");
+        NC_CHECK(nc_def_var(ncid, "makegrid_r_grid_maximum", NC_DOUBLE, 0,
+                            nullptr, &v_mg_max_r),
+                 "def makegrid_r_grid_maximum");
+        NC_CHECK(nc_def_var(ncid, "makegrid_number_of_r_grid_points", NC_INT, 0,
+                            nullptr, &v_mg_num_r),
+                 "def makegrid_number_of_r_grid_points");
+        NC_CHECK(nc_def_var(ncid, "makegrid_z_grid_minimum", NC_DOUBLE, 0,
+                            nullptr, &v_mg_min_z),
+                 "def makegrid_z_grid_minimum");
+        NC_CHECK(nc_def_var(ncid, "makegrid_z_grid_maximum", NC_DOUBLE, 0,
+                            nullptr, &v_mg_max_z),
+                 "def makegrid_z_grid_maximum");
+        NC_CHECK(nc_def_var(ncid, "makegrid_number_of_z_grid_points", NC_INT, 0,
+                            nullptr, &v_mg_num_z),
+                 "def makegrid_number_of_z_grid_points");
+        NC_CHECK(nc_def_var(ncid, "makegrid_number_of_phi_grid_points", NC_INT,
+                            0, nullptr, &v_mg_num_phi),
+                 "def makegrid_number_of_phi_grid_points");
         int v_am = -1, v_ac = -1, v_ai = -1, v_aphi = -1, v_raxis = -1,
             v_zaxis = -1, v_stg_in_ns = -1, v_stg_max_iter = -1,
-            v_stg_ftol = -1;
+            v_stg_ftol = -1, v_extcur = -1;
         if (!ip.am.empty()) {
             NC_CHECK(nc_def_var(ncid, "am", NC_DOUBLE, 1, &dim_nam, &v_am),
                      "def am");
@@ -278,6 +324,11 @@ class NetcdfV1Writer final : public Writer {
             NC_CHECK(nc_def_var(ncid, "zaxis_s", NC_DOUBLE, 1, &dim_nzaxis,
                                 &v_zaxis),
                      "def zaxis_s");
+        }
+        if (!ip.extcur.empty()) {
+            NC_CHECK(nc_def_var(ncid, "extcur", NC_DOUBLE, 1, &dim_nextcur,
+                                &v_extcur),
+                     "def extcur");
         }
         if (!ip.stages.empty()) {
             NC_CHECK(nc_def_var(ncid, "stage_in_ns", NC_INT, 1, &dim_nstages_in,
@@ -316,6 +367,19 @@ class NetcdfV1Writer final : public Writer {
                      ? NC_NOERR
                      : NC_EATTMETA,
                  "attr compile_flags");
+        NC_CHECK(put_str_attr(ncid, "mgrid_file", ip.mgrid_file) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr mgrid_file");
+        NC_CHECK(put_str_attr(ncid, "coils_file", ip.coils_file) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr coils_file");
+        NC_CHECK(put_str_attr(ncid, "makegrid_parameters_file",
+                              ip.makegrid_parameters_file) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr makegrid_parameters_file");
         NC_CHECK(
             put_str_attr(ncid, "source_path", report.input.source_path) == true
                 ? NC_NOERR
@@ -409,6 +473,48 @@ class NetcdfV1Writer final : public Writer {
         NC_CHECK(nc_put_var_double(ncid, v_bloat, &ip.bloat), "put bloat");
         NC_CHECK(nc_put_var_double(ncid, v_curtor, &ip.curtor), "put curtor");
         NC_CHECK(nc_put_var_double(ncid, v_tcon0, &ip.tcon0), "put tcon0");
+        const int lfreeb = ip.lfreeb ? 1 : 0;
+        NC_CHECK(nc_put_var_int(ncid, v_lfreeb, &lfreeb), "put lfreeb");
+        NC_CHECK(nc_put_var_int(ncid, v_nvacskip, &ip.nvacskip),
+                 "put nvacskip");
+        const int makegrid_present =
+            ip.embedded_makegrid_parameters.has_value() ? 1 : 0;
+        NC_CHECK(nc_put_var_int(ncid, v_makegrid_paramters_present,
+                                &makegrid_present),
+                 "put makegrid_paramters_present");
+        const MakegridParametersSpec makegrid =
+            ip.embedded_makegrid_parameters.value_or(MakegridParametersSpec{});
+        const int makegrid_normalize = makegrid.normalize_by_currents ? 1 : 0;
+        const int makegrid_symmetry =
+            makegrid.assume_stellarator_symmetry ? 1 : 0;
+        NC_CHECK(nc_put_var_int(ncid, v_mg_normalize, &makegrid_normalize),
+                 "put makegrid_normalize_by_currents");
+        NC_CHECK(nc_put_var_int(ncid, v_mg_symmetry, &makegrid_symmetry),
+                 "put makegrid_assume_stellarator_symmetry");
+        NC_CHECK(
+            nc_put_var_int(ncid, v_mg_nfp, &makegrid.number_of_field_periods),
+            "put makegrid_number_of_field_periods");
+        NC_CHECK(nc_put_var_double(ncid, v_mg_min_r, &makegrid.r_grid_minimum),
+                 "put makegrid_r_grid_minimum");
+        NC_CHECK(nc_put_var_double(ncid, v_mg_max_r, &makegrid.r_grid_maximum),
+                 "put makegrid_r_grid_maximum");
+        NC_CHECK(
+            nc_put_var_int(ncid, v_mg_num_r, &makegrid.number_of_r_grid_points),
+            "put makegrid_number_of_r_grid_points");
+        NC_CHECK(nc_put_var_double(ncid, v_mg_min_z, &makegrid.z_grid_minimum),
+                 "put makegrid_z_grid_minimum");
+        NC_CHECK(nc_put_var_double(ncid, v_mg_max_z, &makegrid.z_grid_maximum),
+                 "put makegrid_z_grid_maximum");
+        NC_CHECK(
+            nc_put_var_int(ncid, v_mg_num_z, &makegrid.number_of_z_grid_points),
+            "put makegrid_number_of_z_grid_points");
+        NC_CHECK(nc_put_var_int(ncid, v_mg_num_phi,
+                                &makegrid.number_of_phi_grid_points),
+                 "put makegrid_number_of_phi_grid_points");
+        if (!ip.extcur.empty()) {
+            NC_CHECK(nc_put_var_double(ncid, v_extcur, ip.extcur.data()),
+                     "put extcur");
+        }
         if (!ip.am.empty()) {
             NC_CHECK(nc_put_var_double(ncid, v_am, ip.am.data()), "put am");
         }
@@ -902,6 +1008,87 @@ class NetcdfV1Reader final : public Reader {
                             !read_scalar_double("tcon0", ip.tcon0)) {
                             return fail("malformed embedded input record");
                         }
+                        {
+                            int variable_id = -1;
+                            if (nc_inq_varid(ncid, "lfreeb", &variable_id) ==
+                                NC_NOERR) {
+                                int lfreeb = 0;
+                                if (!read_scalar_int("lfreeb", lfreeb)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                                ip.lfreeb = (lfreeb != 0);
+                            }
+                            if (nc_inq_varid(ncid, "nvacskip", &variable_id) ==
+                                    NC_NOERR &&
+                                !read_scalar_int("nvacskip", ip.nvacskip)) {
+                                return fail("malformed embedded input record");
+                            }
+                            get_str("mgrid_file", ip.mgrid_file);
+                            get_str("coils_file", ip.coils_file);
+                            get_str("makegrid_parameters_file",
+                                    ip.makegrid_parameters_file);
+                            if (nc_inq_varid(ncid, "makegrid_paramters_present",
+                                             &variable_id) == NC_NOERR) {
+                                int present = 0;
+                                if (!read_scalar_int(
+                                        "makegrid_paramters_present",
+                                        present)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                                if (present != 0) {
+                                    MakegridParametersSpec parameters;
+                                    int normalize = 0;
+                                    int symmetry = 0;
+                                    if (!read_scalar_int(
+                                            "makegrid_normalize_by_currents",
+                                            normalize) ||
+                                        !read_scalar_int(
+                                            "makegrid_assume_stellarator_"
+                                            "symmetry",
+                                            symmetry) ||
+                                        !read_scalar_int(
+                                            "makegrid_number_of_field_periods",
+                                            parameters
+                                                .number_of_field_periods) ||
+                                        !read_scalar_double(
+                                            "makegrid_r_grid_minimum",
+                                            parameters.r_grid_minimum) ||
+                                        !read_scalar_double(
+                                            "makegrid_r_grid_maximum",
+                                            parameters.r_grid_maximum) ||
+                                        !read_scalar_int(
+                                            "makegrid_number_of_r_grid_points",
+                                            parameters
+                                                .number_of_r_grid_points) ||
+                                        !read_scalar_double(
+                                            "makegrid_z_grid_minimum",
+                                            parameters.z_grid_minimum) ||
+                                        !read_scalar_double(
+                                            "makegrid_z_grid_maximum",
+                                            parameters.z_grid_maximum) ||
+                                        !read_scalar_int(
+                                            "makegrid_number_of_z_grid_points",
+                                            parameters
+                                                .number_of_z_grid_points) ||
+                                        !read_scalar_int(
+                                            "makegrid_number_of_phi_grid_"
+                                            "points",
+                                            parameters
+                                                .number_of_phi_grid_points)) {
+                                        return fail(
+                                            "malformed embedded input record");
+                                    }
+                                    parameters.normalize_by_currents =
+                                        normalize != 0;
+                                    parameters.assume_stellarator_symmetry =
+                                        symmetry != 0;
+                                    ip.embedded_makegrid_parameters =
+                                        parameters;
+                                }
+                            }
+                        }
                         // Arrays: an ABSENT variable means an empty vector (the
                         // writer omits empty arrays to avoid 0-length dims); a
                         // present one must pass the strict read.
@@ -926,7 +1113,9 @@ class NetcdfV1Reader final : public Reader {
                                 !read_optional("n_raxis", "raxis_c",
                                                ip.raxis_c) ||
                                 !read_optional("n_zaxis", "zaxis_s",
-                                               ip.zaxis_s)) {
+                                               ip.zaxis_s) ||
+                                !read_optional("n_extcur", "extcur",
+                                               ip.extcur)) {
                                 return fail("malformed embedded input record");
                             }
                         }
