@@ -255,11 +255,46 @@ class NetcdfV1Writer final : public Writer {
                  "def curtor");
         NC_CHECK(nc_def_var(ncid, "tcon0", NC_DOUBLE, 0, nullptr, &v_tcon0),
                  "def tcon0");
-        int v_lfreeb, v_nvacskip;
+        int v_lfreeb, v_nvacskip, v_makegrid_paramters_present;
         NC_CHECK(nc_def_var(ncid, "lfreeb", NC_INT, 0, nullptr, &v_lfreeb),
                  "def lfreeb");
         NC_CHECK(nc_def_var(ncid, "nvacskip", NC_INT, 0, nullptr, &v_nvacskip),
                  "def nvacskip");
+        NC_CHECK(nc_def_var(ncid, "makegrid_paramters_present", NC_INT, 0,
+                            nullptr, &v_makegrid_paramters_present),
+                 "def makegrid_paramters_present");
+        int v_mg_normalize, v_mg_symmetry, v_mg_nfp, v_mg_num_r, v_mg_num_z,
+            v_mg_num_phi, v_mg_min_r, v_mg_max_r, v_mg_min_z, v_mg_max_z;
+        NC_CHECK(nc_def_var(ncid, "makegrid_normalize_by_currents", NC_INT, 0,
+                            nullptr, &v_mg_normalize),
+                 "def makegrid_normalize_by_currents");
+        NC_CHECK(nc_def_var(ncid, "makegrid_assume_stellarator_symmetry",
+                            NC_INT, 0, nullptr, &v_mg_symmetry),
+                 "def makegrid_assume_stellarator_symmetry");
+        NC_CHECK(nc_def_var(ncid, "makegrid_number_of_field_periods", NC_INT, 0,
+                            nullptr, &v_mg_nfp),
+                 "def makegrid_number_of_field_periods");
+        NC_CHECK(nc_def_var(ncid, "makegrid_r_grid_minimum", NC_DOUBLE, 0,
+                            nullptr, &v_mg_min_r),
+                 "def makegrid_r_grid_minimum");
+        NC_CHECK(nc_def_var(ncid, "makegrid_r_grid_maximum", NC_DOUBLE, 0,
+                            nullptr, &v_mg_max_r),
+                 "def makegrid_r_grid_maximum");
+        NC_CHECK(nc_def_var(ncid, "makegrid_number_of_r_grid_points", NC_INT, 0,
+                            nullptr, &v_mg_num_r),
+                 "def makegrid_number_of_r_grid_points");
+        NC_CHECK(nc_def_var(ncid, "makegrid_z_grid_minimum", NC_DOUBLE, 0,
+                            nullptr, &v_mg_min_z),
+                 "def makegrid_z_grid_minimum");
+        NC_CHECK(nc_def_var(ncid, "makegrid_z_grid_maximum", NC_DOUBLE, 0,
+                            nullptr, &v_mg_max_z),
+                 "def makegrid_z_grid_maximum");
+        NC_CHECK(nc_def_var(ncid, "makegrid_number_of_z_grid_points", NC_INT, 0,
+                            nullptr, &v_mg_num_z),
+                 "def makegrid_number_of_z_grid_points");
+        NC_CHECK(nc_def_var(ncid, "makegrid_number_of_phi_grid_points", NC_INT,
+                            0, nullptr, &v_mg_num_phi),
+                 "def makegrid_number_of_phi_grid_points");
         int v_am = -1, v_ac = -1, v_ai = -1, v_aphi = -1, v_raxis = -1,
             v_zaxis = -1, v_stg_in_ns = -1, v_stg_max_iter = -1,
             v_stg_ftol = -1, v_extcur = -1;
@@ -431,6 +466,40 @@ class NetcdfV1Writer final : public Writer {
         }
         NC_CHECK(nc_put_var_int(ncid, v_nvacskip, &ip.nvacskip),
                  "put nvacskip");
+        const int makegrid_present =
+            ip.embedded_makegrid_parameters.has_value() ? 1 : 0;
+        NC_CHECK(nc_put_var_int(ncid, v_makegrid_paramters_present,
+                                &makegrid_present),
+                 "put makegrid_paramters_present");
+        const MakegridParametersSpec makegrid =
+            ip.embedded_makegrid_parameters.value_or(MakegridParametersSpec{});
+        const int makegrid_normalize = makegrid.normalize_by_currents ? 1 : 0;
+        const int makegrid_symmetry =
+            makegrid.assume_stellarator_symmetry ? 1 : 0;
+        NC_CHECK(nc_put_var_int(ncid, v_mg_normalize, &makegrid_normalize),
+                 "put makegrid_normalize_by_currents");
+        NC_CHECK(nc_put_var_int(ncid, v_mg_symmetry, &makegrid_symmetry),
+                 "put makegrid_assume_stellarator_symmetry");
+        NC_CHECK(
+            nc_put_var_int(ncid, v_mg_nfp, &makegrid.number_of_field_periods),
+            "put makegrid_number_of_field_periods");
+        NC_CHECK(nc_put_var_double(ncid, v_mg_min_r, &makegrid.r_grid_minimum),
+                 "put makegrid_r_grid_minimum");
+        NC_CHECK(nc_put_var_double(ncid, v_mg_max_r, &makegrid.r_grid_maximum),
+                 "put makegrid_r_grid_maximum");
+        NC_CHECK(
+            nc_put_var_int(ncid, v_mg_num_r, &makegrid.number_of_r_grid_points),
+            "put makegrid_number_of_r_grid_points");
+        NC_CHECK(nc_put_var_double(ncid, v_mg_min_z, &makegrid.z_grid_minimum),
+                 "put makegrid_z_grid_minimum");
+        NC_CHECK(nc_put_var_double(ncid, v_mg_max_z, &makegrid.z_grid_maximum),
+                 "put makegrid_z_grid_maximum");
+        NC_CHECK(
+            nc_put_var_int(ncid, v_mg_num_z, &makegrid.number_of_z_grid_points),
+            "put makegrid_number_of_z_grid_points");
+        NC_CHECK(nc_put_var_int(ncid, v_mg_num_phi,
+                                &makegrid.number_of_phi_grid_points),
+                 "put makegrid_number_of_phi_grid_points");
         if (!ip.extcur.empty()) {
             NC_CHECK(nc_put_var_double(ncid, v_extcur, ip.extcur.data()),
                      "put extcur");
@@ -984,6 +1053,65 @@ class NetcdfV1Reader final : public Reader {
                             getStr("coils_file", ip.coils_file);
                             getStr("makegrid_parameters_file",
                                    ip.makegrid_parameters_file);
+                            int makegrid_present = 0;
+                            int makegrid_varid = -1;
+                            if (nc_inq_varid(ncid, "makegrid_paramters_present",
+                                             &makegrid_varid) == NC_NOERR) {
+                                if (!readScalarInt("makegrid_paramters_present",
+                                                   makegrid_present)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                                if (makegrid_present != 0) {
+                                    MakegridParametersSpec parameters;
+                                    int normalize = 0;
+                                    int symmetry = 0;
+                                    if (!readScalarInt(
+                                            "makegrid_normalize_by_currents",
+                                            normalize) ||
+                                        !readScalarInt("makegrid_assume_"
+                                                       "stellarator_symmetry",
+                                                       symmetry) ||
+                                        !readScalarInt(
+                                            "makegrid_number_of_field_periods",
+                                            parameters
+                                                .number_of_field_periods) ||
+                                        !readScalarDouble(
+                                            "makegrid_r_grid_minimum",
+                                            parameters.r_grid_minimum) ||
+                                        !readScalarDouble(
+                                            "makegrid_r_grid_maximum",
+                                            parameters.r_grid_maximum) ||
+                                        !readScalarInt(
+                                            "makegrid_number_of_r_grid_points",
+                                            parameters
+                                                .number_of_r_grid_points) ||
+                                        !readScalarDouble(
+                                            "makegrid_z_grid_minimum",
+                                            parameters.z_grid_minimum) ||
+                                        !readScalarDouble(
+                                            "makegrid_z_grid_maximum",
+                                            parameters.z_grid_maximum) ||
+                                        !readScalarInt(
+                                            "makegrid_number_of_z_grid_points",
+                                            parameters
+                                                .number_of_z_grid_points) ||
+                                        !readScalarInt(
+                                            "makegrid_number_of_phi_grid_"
+                                            "points",
+                                            parameters
+                                                .number_of_phi_grid_points)) {
+                                        return fail(
+                                            "malformed embedded input record");
+                                    }
+                                    parameters.normalize_by_currents =
+                                        (normalize != 0);
+                                    parameters.assume_stellarator_symmetry =
+                                        (symmetry != 0);
+                                    ip.embedded_makegrid_parameters =
+                                        parameters;
+                                }
+                            }
                         }
                         // The input stage arrays are optional as a whole (the
                         // writer omits them for an empty stage list).

@@ -1,9 +1,9 @@
 // versioned_binary.cpp — the schema v1 binary state container (blueprint
 // §6.13) and the host-library binary factories.
 //
-// Layout (little-endian), version 5 (the current on-disk version):
+// Layout (little-endian), version 6 (the current on-disk version):
 //   magic     8 bytes  "CUMES001"
-//   version   int32    = 5
+//   version   int32    = 6
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major (the state payload)
@@ -22,7 +22,8 @@
 //             writeInputParams), the LAST trailer element; version 3+; the
 //             v4 record appends the free-boundary extension (lfreeb,
 //             nvacskip, mgrid_file, extcur); v5 appends coils_file and
-//             makegrid_parameters_file
+//             makegrid_parameters_file; v6 appends embedded
+//             makegrid_paramters
 //
 // All strings are int32-length-prefixed. The scalar_type string is NOT
 // serialized: the reader reconstructs it from the precision tag.
@@ -33,6 +34,7 @@
 // reader reports a default-empty InputParams for them. Version 3 records
 // lack the free-boundary extension (those fields default empty). Version 4
 // records lack the inline-Makegrid source paths (those also default empty).
+// Version 5 records lack embedded Makegrid parameters.
 //
 // The state payload is read and validated independently of the provenance
 // trailer, so a reader stays forward-compatible with later v1.x trailers.
@@ -54,8 +56,9 @@ constexpr char kMagic[9] = "CUMES001";
 // appends the embedded normalized-input record as the last trailer element;
 // v1/v2 files are still read (the record defaults empty). v4 appends the
 // free-boundary extension to that record; v3 files are still read (the
-// extension fields default empty). v5 appends the inline-Makegrid source paths.
-constexpr std::int32_t kVersion = 5;
+// extension fields default empty). v5 appends the inline-Makegrid source paths;
+// v6 appends embedded Makegrid parameters.
+constexpr std::int32_t kVersion = 6;
 constexpr std::int32_t kMinReadVersion = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).

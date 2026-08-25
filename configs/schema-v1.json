@@ -102,6 +102,7 @@
         "mgrid_file",
         "coils_file",
         "makegrid_parameters_file",
+        "makegrid_paramters",
         "extcur"
       ],
       "properties": {
@@ -120,6 +121,37 @@
         },
         "makegrid_parameters_file": {
           "type": "string"
+        },
+        "makegrid_paramters": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "normalize_by_currents",
+            "assume_stellarator_symmetry",
+            "number_of_field_periods",
+            "r_grid_minimum",
+            "r_grid_maximum",
+            "number_of_r_grid_points",
+            "z_grid_minimum",
+            "z_grid_maximum",
+            "number_of_z_grid_points",
+            "number_of_phi_grid_points"
+          ],
+          "properties": {
+            "normalize_by_currents": { "type": "boolean" },
+            "assume_stellarator_symmetry": { "type": "boolean" },
+            "number_of_field_periods": { "type": "integer", "minimum": 1 },
+            "r_grid_minimum": { "type": "number" },
+            "r_grid_maximum": { "type": "number" },
+            "number_of_r_grid_points": { "type": "integer", "minimum": 2 },
+            "z_grid_minimum": { "type": "number" },
+            "z_grid_maximum": { "type": "number" },
+            "number_of_z_grid_points": { "type": "integer", "minimum": 2 },
+            "number_of_phi_grid_points": { "type": "integer", "minimum": 1 }
+          }
         },
         "extcur": {
           "type": "array",
@@ -312,14 +344,14 @@
   "x-cumes-on-disk-contracts": {
     "title": "frozen on-disk state containers (blueprint \u00a76.13)",
     "versioned-binary-v1": {
-      "description": "magic 'CUMES001' (8 bytes); int32 version = 5; int32 ns; int32 mnmax; six families (mode-major doubles, rmncc/zmnsc/lmnsc/rmnss/zmncs/lmncs); then a provenance trailer: int32 precision (0=double,1=float); int32 status; int32 total_iter; int32 nstages; strings build.revision, u8 build.dirty, build.build_type, build.precision_policy, build.compile_flags, input.source_path, input.source_hash, runtime.gpu_name, runtime.driver, runtime.runtime, runtime.toolkit (each int32-length-prefixed; no scalar_type string \u2014 the precision tag is authoritative); per-stage int32 ns/iterations, u8 converged, f64 fsqr/fsqz/fsql, int32 nrestarts + int32 restart iterations; finally the embedded normalized-input record as the LAST trailer element (version 3+): int32 mpol/ntor/nfp/ntheta/nzeta/ncurr, f64 delt/phiedge/pres_scale/adiabatic_index/spres_ped/bloat/curtor/tcon0, schema string, then int32-counted vectors am/ac/ai/aphi/raxis_c/zaxis_s (f64), the input stages (int32 nstages_in, per stage int32 ns/max_iter + f64 ftol), the raw boundary rbc_m/rbc_n/rbc_value and zbs_m/zbs_n/zbs_value (int32/int32/f64), and the folded rbcc/rbss/zbsc/zbcs (f64), followed in version 4 by lfreeb/nvacskip/mgrid_file/extcur and in version 5 by coils_file/makegrid_parameters_file; counts capped at 2^20. Historical version-1 files carried a scalar_type string between build_type and source_path and no policy fields; the reader consumes and discards it. Versions 1-2 carry no input record (the reader reports a default-empty one); older records default later fields to empty.",
+      "description": "magic 'CUMES001' (8 bytes); int32 version = 6; int32 ns; int32 mnmax; six families (mode-major doubles, rmncc/zmnsc/lmnsc/rmnss/zmncs/lmncs); then a provenance trailer: int32 precision (0=double,1=float); int32 status; int32 total_iter; int32 nstages; strings build.revision, u8 build.dirty, build.build_type, build.precision_policy, build.compile_flags, input.source_path, input.source_hash, runtime.gpu_name, runtime.driver, runtime.runtime, runtime.toolkit (each int32-length-prefixed; no scalar_type string \u2014 the precision tag is authoritative); per-stage int32 ns/iterations, u8 converged, f64 fsqr/fsqz/fsql, int32 nrestarts + int32 restart iterations; finally the embedded normalized-input record as the LAST trailer element (version 3+): int32 mpol/ntor/nfp/ntheta/nzeta/ncurr, f64 delt/phiedge/pres_scale/adiabatic_index/spres_ped/bloat/curtor/tcon0, schema string, then int32-counted vectors am/ac/ai/aphi/raxis_c/zaxis_s (f64), the input stages (int32 nstages_in, per stage int32 ns/max_iter + f64 ftol), the raw boundary rbc_m/rbc_n/rbc_value and zbs_m/zbs_n/zbs_value (int32/int32/f64), and the folded rbcc/rbss/zbsc/zbcs (f64), followed in version 4 by lfreeb/nvacskip/mgrid_file/extcur, in version 5 by coils_file/makegrid_parameters_file, and in version 6 by optional embedded makegrid_paramters; counts capped at 2^20. Historical version-1 files carried a scalar_type string between build_type and source_path and no policy fields; the reader consumes and discards it. Versions 1-2 carry no input record (the reader reports a default-empty one); older records default later fields to empty.",
       "magic": "CUMES001",
-      "version": 5
+      "version": 6
     },
     "versioned-checkpoint-v1": {
-      "description": "magic 'CUMECKP1' (8 bytes); int32 version = 4; int32 precision = 0 (always double on disk); int32 ns; int32 mnmax; six families (mode-major doubles); version 2 appends the embedded normalized-input record, version 3 adds free-boundary fields, and version 4 adds inline-Makegrid source paths (the restart path reads the state only; older checkpoints remain readable). Header mismatch or corrupt input is an error, never a silent cold start.",
+      "description": "magic 'CUMECKP1' (8 bytes); int32 version = 5; int32 precision = 0 (always double on disk); int32 ns; int32 mnmax; six families (mode-major doubles); version 2 appends the embedded normalized-input record, version 3 adds free-boundary fields, version 4 adds inline-Makegrid source paths, and version 5 adds optional embedded makegrid_paramters (the restart path reads the state only; older checkpoints remain readable). Header mismatch or corrupt input is an error, never a silent cold start.",
       "magic": "CUMECKP1",
-      "version": 4
+      "version": 5
     },
     "endianness": "little-endian; a reader on a big-endian host must byte-swap explicitly",
     "family-order": [

@@ -393,6 +393,84 @@ static void testNegative() {
 #endif
 
     writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"nfp\": 1, \"am\": [1.0],"
+        " \"lfreeb\": true, \"coils_file\": \"coils.test\","
+        " \"makegrid_paramters\": {"
+        "   \"normalize_by_currents\": false,"
+        "   \"assume_stellarator_symmetry\": false,"
+        "   \"number_of_field_periods\": 1,"
+        "   \"r_grid_minimum\": 2.0, \"r_grid_maximum\": 6.0,"
+        "   \"number_of_r_grid_points\": 201,"
+        "   \"z_grid_minimum\": -2.0, \"z_grid_maximum\": 2.0,"
+        "   \"number_of_z_grid_points\": 201,"
+        "   \"number_of_phi_grid_points\": 1},"
+        " \"extcur\": [1.0], \"nvacskip\": 1,"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+#ifdef CUMES_VACUUM_FIELD_DISABLED
+    check(!vr.has_value() &&
+              !findError(vr, "requires optional vacuum-field support").empty(),
+          "neg: embedded Makegrid rejected when dependency is disabled");
+#else
+    check(vr.has_value() &&
+              vr.value()
+                  .spec()
+                  .free_boundary.embedded_makegrid_parameters.has_value() &&
+              vr.value()
+                      .spec()
+                      .free_boundary.embedded_makegrid_parameters
+                      ->number_of_r_grid_points == 201,
+          "pos: embedded Makegrid parameters accepted");
+#endif
+
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"nfp\": 1, \"am\": [1.0],"
+        " \"lfreeb\": true, \"coils_file\": \"coils.test\","
+        " \"makegrid_parameters_file\": \"ignored.json\","
+        " \"makegrid_paramters\": {"
+        "   \"normalize_by_currents\": false,"
+        "   \"assume_stellarator_symmetry\": false,"
+        "   \"number_of_field_periods\": 1,"
+        "   \"r_grid_minimum\": 2.0, \"r_grid_maximum\": 6.0,"
+        "   \"number_of_r_grid_points\": 123,"
+        "   \"z_grid_minimum\": -2.0, \"z_grid_maximum\": 2.0,"
+        "   \"number_of_z_grid_points\": 101,"
+        "   \"number_of_phi_grid_points\": 1},"
+        " \"extcur\": [1.0],"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+#ifndef CUMES_VACUUM_FIELD_DISABLED
+    bool precedence_warned = false;
+    if (vr.has_value()) {
+        for (const auto& issue : vr.value().warnings().issues()) {
+            if (issue.message.find("using embedded makegrid_paramters") !=
+                std::string::npos) {
+                precedence_warned = true;
+            }
+        }
+    }
+    check(vr.has_value() && precedence_warned &&
+              vr.value()
+                      .spec()
+                      .free_boundary.embedded_makegrid_parameters
+                      ->number_of_r_grid_points == 123,
+          "pos: embedded Makegrid parameters override file with warning");
+#endif
+
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"nfp\": 1, \"am\": [1.0],"
+        " \"lfreeb\": true, \"coils_file\": \"coils.test\","
+        " \"makegrid_paramters\": {\"normalize_by_currents\": false},"
+        " \"extcur\": [1.0],"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    check(!vr.has_value() && !findError(vr, "missing required field").empty(),
+          "neg: incomplete embedded Makegrid parameters rejected");
+
+    writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
         " \"mgrid_file\": \"mgrid.nc\", \"coils_file\": \"coils.test\","
         " \"makegrid_parameters_file\": \"makegrid.json\","

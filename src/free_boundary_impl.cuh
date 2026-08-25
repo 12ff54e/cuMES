@@ -243,9 +243,34 @@ struct FreeBoundaryOperator<T>::Impl {
               if (!params.mgrid_file.empty()) {
                   vp.mgrid_file = params.mgrid_file;
               } else {
-                  vfield::MakegridParameters makegrid_parameters =
-                      vfield::load_makegrid_parameters(
+                  vfield::MakegridParameters makegrid_parameters;
+                  if (params.embedded_makegrid_parameters.has_value()) {
+                      const MakegridParametersSpec& embedded =
+                          *params.embedded_makegrid_parameters;
+                      makegrid_parameters.normalize_by_currents =
+                          embedded.normalize_by_currents;
+                      makegrid_parameters.assume_stellarator_symmetry =
+                          embedded.assume_stellarator_symmetry;
+                      makegrid_parameters.number_of_field_periods =
+                          embedded.number_of_field_periods;
+                      makegrid_parameters.r_grid_minimum =
+                          embedded.r_grid_minimum;
+                      makegrid_parameters.r_grid_maximum =
+                          embedded.r_grid_maximum;
+                      makegrid_parameters.number_of_r_grid_points =
+                          embedded.number_of_r_grid_points;
+                      makegrid_parameters.z_grid_minimum =
+                          embedded.z_grid_minimum;
+                      makegrid_parameters.z_grid_maximum =
+                          embedded.z_grid_maximum;
+                      makegrid_parameters.number_of_z_grid_points =
+                          embedded.number_of_z_grid_points;
+                      makegrid_parameters.number_of_phi_grid_points =
+                          embedded.number_of_phi_grid_points;
+                  } else {
+                      makegrid_parameters = vfield::load_makegrid_parameters(
                           params.makegrid_parameters_file);
+                  }
                   if (makegrid_parameters.number_of_field_periods != p.nfp) {
                       throw cumes::CumesError(
                           "inline Makegrid number_of_field_periods must match "

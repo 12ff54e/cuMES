@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,35 @@ struct StageRequest {
     double tolerance = 0.0;  // ftol
 };
 
+// Embedded form of a MAKEGRID parameter JSON file. The input key intentionally
+// follows the requested spelling `makegrid_paramters`.
+struct MakegridParametersSpec {
+    bool normalize_by_currents = false;
+    bool assume_stellarator_symmetry = false;
+    int number_of_field_periods = 0;
+    double r_grid_minimum = 0.0;
+    double r_grid_maximum = 0.0;
+    int number_of_r_grid_points = 0;
+    double z_grid_minimum = 0.0;
+    double z_grid_maximum = 0.0;
+    int number_of_z_grid_points = 0;
+    int number_of_phi_grid_points = 0;
+};
+
+inline bool operator==(const MakegridParametersSpec& a,
+                       const MakegridParametersSpec& b) {
+    return a.normalize_by_currents == b.normalize_by_currents &&
+           a.assume_stellarator_symmetry == b.assume_stellarator_symmetry &&
+           a.number_of_field_periods == b.number_of_field_periods &&
+           a.r_grid_minimum == b.r_grid_minimum &&
+           a.r_grid_maximum == b.r_grid_maximum &&
+           a.number_of_r_grid_points == b.number_of_r_grid_points &&
+           a.z_grid_minimum == b.z_grid_minimum &&
+           a.z_grid_maximum == b.z_grid_maximum &&
+           a.number_of_z_grid_points == b.number_of_z_grid_points &&
+           a.number_of_phi_grid_points == b.number_of_phi_grid_points;
+}
+
 // Free-boundary run parameters (vmecpp indata keys plus cuMES's inline
 // Makegrid source paths). Parsed for every input; only exercised when lfreeb.
 struct FreeBoundarySpec {
@@ -66,6 +96,7 @@ struct FreeBoundarySpec {
     // from these two files at run construction.
     std::string coils_file;
     std::string makegrid_parameters_file;
+    std::optional<MakegridParametersSpec> embedded_makegrid_parameters;
     std::vector<double> extcur;  // coil currents (A)
     int nvacskip = 1;            // vacuum full-update cadence (>= 1)
 };

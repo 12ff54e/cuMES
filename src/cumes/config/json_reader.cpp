@@ -29,29 +29,53 @@ namespace cumes {
 namespace {
 
 const std::set<std::string> kSupportedKeys = {
-    "mpol",        "ntor",
-    "nfp",         "ntheta",
-    "nzeta",       "ncurr",
-    "delt",        "phiedge",
-    "pres_scale",  "adiabatic_index",
-    "gamma",       "spres_ped",
-    "curtor",      "bloat",
-    "tcon0",       "am",
-    "ac",          "ai",
-    "aphi",        "raxis_c",
-    "zaxis_s",     "ns_array",
-    "niter_array", "ftol_array",
-    "rbc",         "zbs",
-    "lasym",       "lfreeb",
-    "pmass_type",  "piota_type",
-    "pcurr_type",  "am_aux_s",
-    "am_aux_f",    "ai_aux_s",
-    "ai_aux_f",    "ac_aux_s",
-    "ac_aux_f",    "raxis_s",
-    "zaxis_c",     "rbs",
-    "zbc",         "mgrid_file",
-    "coils_file",  "makegrid_parameters_file",
-    "extcur",      "nvacskip",
+    "mpol",
+    "ntor",
+    "nfp",
+    "ntheta",
+    "nzeta",
+    "ncurr",
+    "delt",
+    "phiedge",
+    "pres_scale",
+    "adiabatic_index",
+    "gamma",
+    "spres_ped",
+    "curtor",
+    "bloat",
+    "tcon0",
+    "am",
+    "ac",
+    "ai",
+    "aphi",
+    "raxis_c",
+    "zaxis_s",
+    "ns_array",
+    "niter_array",
+    "ftol_array",
+    "rbc",
+    "zbs",
+    "lasym",
+    "lfreeb",
+    "pmass_type",
+    "piota_type",
+    "pcurr_type",
+    "am_aux_s",
+    "am_aux_f",
+    "ai_aux_s",
+    "ai_aux_f",
+    "ac_aux_s",
+    "ac_aux_f",
+    "raxis_s",
+    "zaxis_c",
+    "rbs",
+    "zbc",
+    "mgrid_file",
+    "coils_file",
+    "makegrid_parameters_file",
+    "makegrid_paramters",
+    "extcur",
+    "nvacskip",
 };
 const std::set<std::string> kKnownIgnoredKeys = {
     "nstep",     "niter",   "ftolv",      "nsurf",
@@ -220,6 +244,94 @@ void readBoundary(const json::Value& v,
     }
 }
 
+MakegridParametersSpec readMakegridParameters(const json::Value& value,
+                                              const std::string& key,
+                                              ValidationReport& report) {
+    MakegridParametersSpec parameters;
+    if (!value.is_object()) {
+        report.error(key,
+                     "'" + key + "': expected an object, got " +
+                         json::get_value_category_name(value.value_category()));
+        return parameters;
+    }
+
+    const std::set<std::string> required = {
+        "normalize_by_currents",   "assume_stellarator_symmetry",
+        "number_of_field_periods", "r_grid_minimum",
+        "r_grid_maximum",          "number_of_r_grid_points",
+        "z_grid_minimum",          "z_grid_maximum",
+        "number_of_z_grid_points", "number_of_phi_grid_points",
+    };
+    for (const std::string& field : required) {
+        if (!value.contains(field)) {
+            report.error(
+                key + "." + field,
+                "'" + key + "': missing required field '" + field + "'");
+        }
+    }
+    for (const auto& [field, _] : value.as_object()) {
+        if (required.count(field) == 0) {
+            report.error(key + "." + field,
+                         "'" + key + "': unknown field '" + field + "'");
+        }
+    }
+
+    auto ifPresent = [&](const char* field, auto fn) {
+        if (value.contains(field)) fn(value.at(field), key + "." + field);
+    };
+    ifPresent("normalize_by_currents",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.normalize_by_currents = getBool(
+                      v, where, parameters.normalize_by_currents, report);
+              });
+    ifPresent("assume_stellarator_symmetry",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.assume_stellarator_symmetry = getBool(
+                      v, where, parameters.assume_stellarator_symmetry, report);
+              });
+    ifPresent("number_of_field_periods",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.number_of_field_periods = getInt(
+                      v, where, parameters.number_of_field_periods, report);
+              });
+    ifPresent("r_grid_minimum",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.r_grid_minimum =
+                      getDouble(v, where, parameters.r_grid_minimum, report);
+              });
+    ifPresent("r_grid_maximum",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.r_grid_maximum =
+                      getDouble(v, where, parameters.r_grid_maximum, report);
+              });
+    ifPresent("number_of_r_grid_points",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.number_of_r_grid_points = getInt(
+                      v, where, parameters.number_of_r_grid_points, report);
+              });
+    ifPresent("z_grid_minimum",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.z_grid_minimum =
+                      getDouble(v, where, parameters.z_grid_minimum, report);
+              });
+    ifPresent("z_grid_maximum",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.z_grid_maximum =
+                      getDouble(v, where, parameters.z_grid_maximum, report);
+              });
+    ifPresent("number_of_z_grid_points",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.number_of_z_grid_points = getInt(
+                      v, where, parameters.number_of_z_grid_points, report);
+              });
+    ifPresent("number_of_phi_grid_points",
+              [&](const json::Value& v, const std::string& where) {
+                  parameters.number_of_phi_grid_points = getInt(
+                      v, where, parameters.number_of_phi_grid_points, report);
+              });
+    return parameters;
+}
+
 }  // namespace
 
 ParsedProblem read_problem_spec(const std::string& path,
@@ -311,6 +423,16 @@ ParsedProblem read_problem_spec(const std::string& path,
                   p.free_boundary.makegrid_parameters_file = getString(
                       v, k, p.free_boundary.makegrid_parameters_file, report);
               });
+    ifPresent("makegrid_paramters", [&](const json::Value& v, const char* k) {
+        p.free_boundary.embedded_makegrid_parameters =
+            readMakegridParameters(v, k, report);
+    });
+    if (root.contains("makegrid_parameters_file") &&
+        root.contains("makegrid_paramters")) {
+        report.warn("makegrid_paramters",
+                    "both makegrid_parameters_file and makegrid_paramters "
+                    "are present; using embedded makegrid_paramters");
+    }
     ifPresent("extcur", [&](const json::Value& v, const char* k) {
         p.free_boundary.extcur = readDoubleArray(v, k, report);
     });

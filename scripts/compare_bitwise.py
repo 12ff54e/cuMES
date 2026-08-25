@@ -105,7 +105,7 @@ def _read_state_payload(path):
         if len(head) != STATE_HEADER.size:
             return None
         magic, version, ns, mnmax = STATE_HEADER.unpack(head)
-        if magic != STATE_MAGIC or not (1 <= version <= 5) or ns < 1 or mnmax < 1:
+        if magic != STATE_MAGIC or not (1 <= version <= 6) or ns < 1 or mnmax < 1:
             return None
         n = ns * mnmax
         payload = f.read(6 * n * 8)

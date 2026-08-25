@@ -199,6 +199,34 @@ inline bool read_f64_vec(FILE* fp,
                                 static_cast<std::size_t>(n) * sizeof(double));
 }
 
+inline bool writeMakegridParameters(FILE* fp, const MakegridParametersSpec& p) {
+    return write_i32(fp, p.normalize_by_currents ? 1 : 0) &&
+           write_i32(fp, p.assume_stellarator_symmetry ? 1 : 0) &&
+           write_i32(fp, p.number_of_field_periods) &&
+           write_f64(fp, p.r_grid_minimum) && write_f64(fp, p.r_grid_maximum) &&
+           write_i32(fp, p.number_of_r_grid_points) &&
+           write_f64(fp, p.z_grid_minimum) && write_f64(fp, p.z_grid_maximum) &&
+           write_i32(fp, p.number_of_z_grid_points) &&
+           write_i32(fp, p.number_of_phi_grid_points);
+}
+
+inline bool readMakegridParameters(FILE* fp, MakegridParametersSpec& p) {
+    std::int32_t normalize = 0;
+    std::int32_t symmetry = 0;
+    if (!read_i32(fp, normalize) || !read_i32(fp, symmetry) ||
+        !read_i32(fp, p.number_of_field_periods) ||
+        !read_f64(fp, p.r_grid_minimum) || !read_f64(fp, p.r_grid_maximum) ||
+        !read_i32(fp, p.number_of_r_grid_points) ||
+        !read_f64(fp, p.z_grid_minimum) || !read_f64(fp, p.z_grid_maximum) ||
+        !read_i32(fp, p.number_of_z_grid_points) ||
+        !read_i32(fp, p.number_of_phi_grid_points)) {
+        return false;
+    }
+    p.normalize_by_currents = (normalize != 0);
+    p.assume_stellarator_symmetry = (symmetry != 0);
+    return true;
+}
+
 inline bool writeInputParams(FILE* fp, const InputParams& p) {
     bool ok = write_i32(fp, p.mpol) && write_i32(fp, p.ntor) &&
               write_i32(fp, p.nfp) && write_i32(fp, p.ntheta) &&
@@ -227,16 +255,22 @@ inline bool writeInputParams(FILE* fp, const InputParams& p) {
          // Inline-Makegrid source extension (container version 5).
          write_string(fp, p.coils_file) &&
          write_string(fp, p.makegrid_parameters_file);
+    ok =
+        ok && write_i32(fp, p.embedded_makegrid_parameters.has_value() ? 1 : 0);
+    if (ok && p.embedded_makegrid_parameters.has_value()) {
+        ok = writeMakegridParameters(fp, *p.embedded_makegrid_parameters);
+    }
     return ok;
 }
 
 // `record_version` is the container version that embeds the record: versions
 // < 4 predate the free-boundary extension; versions < 5 predate inline
-// Makegrid source provenance. Missing fields retain their defaults.
+// Makegrid source provenance; versions < 6 predate embedded parameters.
+// Missing fields retain their defaults.
 inline bool readInputParams(FILE* fp,
                             InputParams& p,
                             std::string& reason,
-                            std::int32_t record_version = 5) {
+                            std::int32_t record_version = 6) {
     std::int32_t nstages = 0;
     if (!read_i32(fp, p.mpol) || !read_i32(fp, p.ntor) ||
         !read_i32(fp, p.nfp) || !read_i32(fp, p.ntheta) ||
@@ -309,6 +343,21 @@ inline bool readInputParams(FILE* fp,
             !read_string(fp, p.makegrid_parameters_file)) {
             reason = "truncated input record";
             return false;
+        }
+    }
+    if (record_version >= 6) {
+        std::int32_t has_embedded = 0;
+        if (!read_i32(fp, has_embedded)) {
+            reason = "truncated input record";
+            return false;
+        }
+        if (has_embedded != 0) {
+            MakegridParametersSpec parameters;
+            if (!readMakegridParameters(fp, parameters)) {
+                reason = "truncated embedded Makegrid parameters";
+                return false;
+            }
+            p.embedded_makegrid_parameters = parameters;
         }
     }
     return true;

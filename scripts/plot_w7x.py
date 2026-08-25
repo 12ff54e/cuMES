@@ -2,7 +2,7 @@
 """Render 3D figures of a converged cuMES equilibrium.
 
 Reads any solver state container (docs/output-formats.md): versioned
-binary (v5), checkpoint (v4), NetCDF, or HDF5. Every container embeds the
+binary (v6), checkpoint (v5), NetCDF, or HDF5. Every container embeds the
 structured normalized-input record, so the script needs no input JSON:
 mpol/ntor/nfp, the resolved angular grid, phiedge, the am/ac/ai/aphi
 profiles, and the raw initial boundary all come from the container.
@@ -73,12 +73,14 @@ def _read_vec(f, fmt, cap=1 << 20):
 
 
 def _read_input_record(f, has_free_boundary_extension=False,
-                       has_inline_makegrid_extension=False):
+                       has_inline_makegrid_extension=False,
+                       has_embedded_makegrid_extension=False):
     """The fixed-order embedded-input record (io_common.hpp write/readInput
     Params): 6 i32 + 8 f64 scalars, schema string, six f64 vectors, the
     input stages, the raw boundary, four folded vectors (skipped), and the
     optional free-boundary extension added to binary v4 / checkpoint v3,
-    followed by inline-Makegrid paths in binary v5 / checkpoint v4."""
+    followed by inline-Makegrid paths in binary v5 / checkpoint v4 and
+    optional embedded parameters in binary v6 / checkpoint v5."""
     mpol, ntor, nfp, ntheta, nzeta, ncurr = struct.unpack("<6i", f.read(24))
     (delt, phiedge, pres_scale, adiabatic_index, spres_ped, bloat, curtor,
      tcon0) = struct.unpack("<8d", f.read(64))
@@ -117,6 +119,25 @@ def _read_input_record(f, has_free_boundary_extension=False,
     if has_inline_makegrid_extension:
         coils_file = _read_str(f)
         makegrid_parameters_file = _read_str(f)
+    makegrid_paramters = None
+    if has_embedded_makegrid_extension:
+        present = struct.unpack("<i", f.read(4))[0]
+        if present:
+            normalize, symmetry, nfp_mg = struct.unpack("<3i", f.read(12))
+            r_min, r_max = struct.unpack("<2d", f.read(16))
+            nr = struct.unpack("<i", f.read(4))[0]
+            z_min, z_max = struct.unpack("<2d", f.read(16))
+            nz, nphi = struct.unpack("<2i", f.read(8))
+            makegrid_paramters = {
+                "normalize_by_currents": bool(normalize),
+                "assume_stellarator_symmetry": bool(symmetry),
+                "number_of_field_periods": nfp_mg,
+                "r_grid_minimum": r_min, "r_grid_maximum": r_max,
+                "number_of_r_grid_points": nr,
+                "z_grid_minimum": z_min, "z_grid_maximum": z_max,
+                "number_of_z_grid_points": nz,
+                "number_of_phi_grid_points": nphi,
+            }
 
     return {
         "schema": schema, "mpol": mpol, "ntor": ntor, "nfp": nfp,
@@ -132,6 +153,7 @@ def _read_input_record(f, has_free_boundary_extension=False,
         "lfreeb": lfreeb, "nvacskip": nvacskip,
         "mgrid_file": mgrid_file, "coils_file": coils_file,
         "makegrid_parameters_file": makegrid_parameters_file,
+        "makegrid_paramters": makegrid_paramters,
         "extcur": extcur,
     }
 
@@ -143,7 +165,7 @@ def _no_params(path):
 def load_state(path):
     """Load the converged state + the embedded structured input record from
     any solver output container (docs/output-formats.md): versioned binary
-    (v5), checkpoint (v4), NetCDF, or HDF5. Returns (ns, mnmax, fams,
+    (v6), checkpoint (v5), NetCDF, or HDF5. Returns (ns, mnmax, fams,
     params, name) — the six mode-major families (index = mode * ns +
     surface), the input record as a dict mirroring InputParams, and a
     display name (the recorded input path stem when available, else the
@@ -156,11 +178,12 @@ def load_state(path):
         # Versioned binary: magic(8), version(4), ns(4), mnmax(4), the six
         # families, then the provenance trailer (run outcome + provenance
         # strings + stage records), then the v3 input record; v4 appends the
-        # free-boundary fields and v5 the inline-Makegrid paths.
+        # free-boundary fields, v5 the inline-Makegrid paths, and v6 the
+        # optional embedded Makegrid parameters.
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if not 1 <= version <= 5:
+            if not 1 <= version <= 6:
                 raise SystemExit(f"error: unsupported container version "
                                  f"{version} in {path}")
             ns, mnmax = struct.unpack("<ii", f.read(8))
@@ -192,18 +215,20 @@ def load_state(path):
                 f.read(24)  # fsqr, fsqz, fsql
                 nrst = struct.unpack("<i", f.read(4))[0]
                 f.read(4 * nrst)
-            params = _read_input_record(f, version >= 4, version >= 5)
+            params = _read_input_record(f, version >= 4, version >= 5,
+                                        version >= 6)
         if source_path:
             name = os.path.splitext(os.path.basename(source_path))[0]
         return ns, mnmax, fams, params, name
     if head.startswith(b"CUMECKP1"):
         # Checkpoint: magic(8), version field(4), precision(4), ns(4), mnmax(4),
         # the six families, then the v2 input record; v3 appends the
-        # free-boundary fields and v4 the inline-Makegrid paths.
+        # free-boundary fields, v4 the inline-Makegrid paths, and v5 the
+        # optional embedded Makegrid parameters.
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if not 1 <= version <= 4:
+            if not 1 <= version <= 5:
                 raise SystemExit(f"error: unsupported checkpoint version "
                                  f"{version} in {path}")
             f.read(4)  # precision (always double)
@@ -213,7 +238,8 @@ def load_state(path):
                     for fam in FAM_NAMES}
             if version < 2:
                 _no_params(path)
-            params = _read_input_record(f, version >= 3, version >= 4)
+            params = _read_input_record(f, version >= 3, version >= 4,
+                                        version >= 5)
         return ns, mnmax, fams, params, name
     if head.startswith(b"CDF"):
         # NetCDF: the six families are 2-D [surface, mode] datasets; the
@@ -245,6 +271,32 @@ def load_state(path):
                 return list(np.asarray(nc.variables[var][:], dtype="<i4")) \
                     if var in nc.variables else []
 
+            makegrid_paramters = None
+            if "makegrid_paramters_present" in nc.variables and \
+                    scalar("makegrid_paramters_present"):
+                makegrid_paramters = {
+                    "normalize_by_currents":
+                        bool(scalar("makegrid_normalize_by_currents")),
+                    "assume_stellarator_symmetry": bool(scalar(
+                        "makegrid_assume_stellarator_symmetry")),
+                    "number_of_field_periods": int(scalar(
+                        "makegrid_number_of_field_periods")),
+                    "r_grid_minimum": float(scalar(
+                        "makegrid_r_grid_minimum")),
+                    "r_grid_maximum": float(scalar(
+                        "makegrid_r_grid_maximum")),
+                    "number_of_r_grid_points": int(scalar(
+                        "makegrid_number_of_r_grid_points")),
+                    "z_grid_minimum": float(scalar(
+                        "makegrid_z_grid_minimum")),
+                    "z_grid_maximum": float(scalar(
+                        "makegrid_z_grid_maximum")),
+                    "number_of_z_grid_points": int(scalar(
+                        "makegrid_number_of_z_grid_points")),
+                    "number_of_phi_grid_points": int(scalar(
+                        "makegrid_number_of_phi_grid_points")),
+                }
+
             params = {
                 "schema": sattr("schema", "cumes-config-v1"),
                 "mpol": scalar("mpol"), "ntor": scalar("ntor"),
@@ -274,6 +326,7 @@ def load_state(path):
                 "coils_file": sattr("coils_file", ""),
                 "makegrid_parameters_file":
                     sattr("makegrid_parameters_file", ""),
+                "makegrid_paramters": makegrid_paramters,
                 "extcur": darray("extcur"),
             }
             sp = getattr(nc, "source_path", "")
@@ -308,6 +361,31 @@ def load_state(path):
                 return list(np.asarray(f5[var][:], dtype="<i4")) \
                     if var in f5 else []
 
+            makegrid_paramters = None
+            if int(f5.attrs.get("makegrid_paramters_present", 0)):
+                makegrid_paramters = {
+                    "normalize_by_currents": bool(int(f5.attrs[
+                        "makegrid_normalize_by_currents"])),
+                    "assume_stellarator_symmetry": bool(int(f5.attrs[
+                        "makegrid_assume_stellarator_symmetry"])),
+                    "number_of_field_periods": int(f5.attrs[
+                        "makegrid_number_of_field_periods"]),
+                    "r_grid_minimum": float(f5.attrs[
+                        "makegrid_r_grid_minimum"]),
+                    "r_grid_maximum": float(f5.attrs[
+                        "makegrid_r_grid_maximum"]),
+                    "number_of_r_grid_points": int(f5.attrs[
+                        "makegrid_number_of_r_grid_points"]),
+                    "z_grid_minimum": float(f5.attrs[
+                        "makegrid_z_grid_minimum"]),
+                    "z_grid_maximum": float(f5.attrs[
+                        "makegrid_z_grid_maximum"]),
+                    "number_of_z_grid_points": int(f5.attrs[
+                        "makegrid_number_of_z_grid_points"]),
+                    "number_of_phi_grid_points": int(f5.attrs[
+                        "makegrid_number_of_phi_grid_points"]),
+                }
+
             params = {
                 "schema": sattr("schema", "cumes-config-v1"),
                 "mpol": int(f5.attrs["mpol"]),
@@ -341,6 +419,7 @@ def load_state(path):
                 "coils_file": sattr("coils_file", ""),
                 "makegrid_parameters_file":
                     sattr("makegrid_parameters_file", ""),
+                "makegrid_paramters": makegrid_paramters,
                 "extcur": darray("extcur"),
             }
             if sattr("source_path", ""):

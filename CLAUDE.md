@@ -58,24 +58,28 @@ supported dependency-free configuration explicitly.
 
 - Positional `<input> <output>`; `--input`/`--output` flags override the slot
   they name. Default input: `inputs/solovev.json`; the output path is REQUIRED.
-- `--restart <checkpoint>` / `--checkpoint <path>` — read/write the v4
+- `--restart <checkpoint>` / `--checkpoint <path>` — read/write the v5
   checkpoint (`docs/output-formats.md` §4).
-- Every backend writes the schema-v1 container (binary v5/NetCDF/HDF5
+- Every backend writes the schema-v1 container (binary v6/NetCDF/HDF5
   with full provenance; a `.nc`/`.h5` suffix dispatches to the host-only
   NetCDF/HDF5 writers when compiled in). Formats: `docs/output-formats.md`.
 - A free-boundary input sets `lfreeb=true`, a non-empty `extcur` coil-current
   vector, and `nvacskip >= 1`. The external field is either a readable
-  MAKEGRID `mgrid_file`, or `coils_file` plus `makegrid_parameters_file`; the
-  latter generates an in-memory response table once at run construction.
+  MAKEGRID `mgrid_file`, or `coils_file` plus `makegrid_parameters_file` or the
+  complete embedded `makegrid_paramters` object. If both parameter keys are
+  present, warn and use the embedded object. The latter forms generate an
+  in-memory response table once at run construction.
   Examples are `inputs/free_bdy/solovev_free_bdy.json` and
-  `inputs/free_bdy/solovev_free_bdy_coils.json`. Their `rbc`/`zbs` harmonics
+  `inputs/free_bdy/solovev_free_bdy_coils.json`, and
+  `inputs/free_bdy/solovev_free_bdy_embedded.json`. Their `rbc`/`zbs` harmonics
   seed the initial LCFS; they do not constrain the converged LCFS.
 - Free-boundary angular grids must have even `ntheta >= 2*mpol+6` and
   `nzeta >= 2*ntor+4`; the axisymmetric `ntor=0` path may use `nzeta=1`.
   Leaving `ntheta=0` lets validation resolve the supported default.
-- Binary v5, checkpoint v4, NetCDF, and HDF5 persist `lfreeb`, `nvacskip`,
-  `mgrid_file`, `coils_file`, `makegrid_parameters_file`, and `extcur`; older
-  containers default missing source fields to empty.
+- Binary v6, checkpoint v5, NetCDF, and HDF5 persist `lfreeb`, `nvacskip`,
+  `mgrid_file`, `coils_file`, `makegrid_parameters_file`, the optional embedded
+  `makegrid_paramters`, and `extcur`; older containers default missing source
+  fields to empty.
 - Strict behavior is the DEFAULT: unknown input keys are validation errors and
   unknown suffixes are rejected. `--compatibility` restores vmecpp-style
   warn-and-ignore for unknown input keys (input-side only; the output policy
@@ -296,7 +300,7 @@ Known issues:
 | FFT-accelerated transforms | Implemented (cuFFT: batched 1D ζ-FFT + direct poloidal) |
 | Multigrid grid sequencing | Implemented (`ns_array`/`niter_array`/`ftol_array` stage loop + `Prolongation`) |
 | De-aliased constraint force | Implemented (bandpass inside `ConstraintOperator`, fused rCon/zCon in `inverse_fused`) |
-| Hot restart / checkpointing | Implemented (v4 checkpoint: `--checkpoint` / `--restart`; free-boundary restarts are hot vacuum starts) |
+| Hot restart / checkpointing | Implemented (v5 checkpoint: `--checkpoint` / `--restart`; free-boundary restarts are hot vacuum starts) |
 | Adaptive time-step (Jacobian resets) | Implemented (restart/maintenance delt control, vmecpp VMEC_8_52) |
 | Mercier stability, jxbout, wout | Not implemented — post-processing, not needed for the core loop |
 | Python interface | Not implemented — C++/CUDA executable only |
@@ -308,7 +312,7 @@ Known issues:
 | `docs/architecture.md` | operator library, build/library split, per-iteration pipeline, dependency rules, free-boundary vacuum library (§5) |
 | `docs/mathematics.md` | normative numerical contracts: coordinates, Fourier representation/quadrature, geometry, fields, force, constraint, preconditioner, damping/descent, prolongation |
 | `docs/data-layout.md` | storage/layout contracts (state, real-space, quadrature) |
-| `docs/output-formats.md` | on-disk containers: binary v5, checkpoint v4, NetCDF/HDF5, dump files, Python reader |
+| `docs/output-formats.md` | on-disk containers: binary v6, checkpoint v5, NetCDF/HDF5, dump files, Python reader |
 | `docs/verification.md` | verification tiers/gates, equivalence classes (Class A/B/C), review checklist |
 | `docs/performance.md` | measured performance + acceptance policy |
 | `docs/overhaul-history.md` | phase-by-phase overhaul record and closeout handovers |

@@ -217,21 +217,68 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         const bool has_coils = !spec.free_boundary.coils_file.empty();
         const bool has_makegrid_parameters =
             !spec.free_boundary.makegrid_parameters_file.empty();
-        if (has_mgrid && (has_coils || has_makegrid_parameters)) {
+        const bool has_embedded_parameters =
+            spec.free_boundary.embedded_makegrid_parameters.has_value();
+        if (has_mgrid &&
+            (has_coils || has_makegrid_parameters || has_embedded_parameters)) {
             report.error(
                 "mgrid_file",
                 "free-boundary external field must use either mgrid_file or "
-                "coils_file plus makegrid_parameters_file, not both");
-        } else if (!has_mgrid && !(has_coils && has_makegrid_parameters)) {
+                "coils_file plus Makegrid parameters, not both");
+        } else if (!has_mgrid && !(has_coils && (has_makegrid_parameters ||
+                                                 has_embedded_parameters))) {
             report.error(
                 "mgrid_file",
-                "lfreeb=true requires either mgrid_file or both coils_file "
-                "and makegrid_parameters_file");
+                "lfreeb=true requires either mgrid_file or coils_file with "
+                "makegrid_parameters_file or makegrid_paramters");
         }
         if (spec.free_boundary.extcur.empty()) {
             report.error("extcur",
                          "lfreeb=true requires a non-empty extcur (coil "
                          "currents in A)");
+        }
+        if (has_embedded_parameters) {
+            const MakegridParametersSpec& parameters =
+                *spec.free_boundary.embedded_makegrid_parameters;
+            if (parameters.normalize_by_currents) {
+                report.error(
+                    "makegrid_paramters.normalize_by_currents",
+                    "normalize_by_currents must be false: cuMES applies "
+                    "extcur when assembling the external field");
+            }
+            if (parameters.number_of_field_periods != spec.nfp) {
+                report.error(
+                    "makegrid_paramters.number_of_field_periods",
+                    "number_of_field_periods must equal the equilibrium nfp");
+            }
+            if (!(parameters.r_grid_maximum > parameters.r_grid_minimum)) {
+                report.error("makegrid_paramters.r_grid_maximum",
+                             "r_grid_maximum must be greater than "
+                             "r_grid_minimum");
+            }
+            if (parameters.number_of_r_grid_points < 2) {
+                report.error("makegrid_paramters.number_of_r_grid_points",
+                             "number_of_r_grid_points must be at least 2");
+            }
+            if (!(parameters.z_grid_maximum > parameters.z_grid_minimum)) {
+                report.error("makegrid_paramters.z_grid_maximum",
+                             "z_grid_maximum must be greater than "
+                             "z_grid_minimum");
+            }
+            if (parameters.number_of_z_grid_points < 2) {
+                report.error("makegrid_paramters.number_of_z_grid_points",
+                             "number_of_z_grid_points must be at least 2");
+            }
+            if (parameters.number_of_phi_grid_points < 1) {
+                report.error("makegrid_paramters.number_of_phi_grid_points",
+                             "number_of_phi_grid_points must be at least 1");
+            }
+            if (parameters.assume_stellarator_symmetry &&
+                parameters.number_of_phi_grid_points % 2 != 0) {
+                report.error("makegrid_paramters.number_of_phi_grid_points",
+                             "number_of_phi_grid_points must be even when "
+                             "assume_stellarator_symmetry is true");
+            }
         }
     }
 
@@ -389,7 +436,30 @@ std::string ValidatedProblem::normalize_to_json() const {
        << json_escape_string(s.free_boundary.coils_file)
        << "\",\"makegrid_parameters_file\":\""
        << json_escape_string(s.free_boundary.makegrid_parameters_file)
-       << "\",\"extcur\":";
+       << "\",\"makegrid_paramters\":";
+    if (s.free_boundary.embedded_makegrid_parameters.has_value()) {
+        const MakegridParametersSpec& parameters =
+            *s.free_boundary.embedded_makegrid_parameters;
+        os << "{\"normalize_by_currents\":"
+           << (parameters.normalize_by_currents ? "true" : "false")
+           << ",\"assume_stellarator_symmetry\":"
+           << (parameters.assume_stellarator_symmetry ? "true" : "false")
+           << ",\"number_of_field_periods\":"
+           << parameters.number_of_field_periods
+           << ",\"r_grid_minimum\":" << json_number(parameters.r_grid_minimum)
+           << ",\"r_grid_maximum\":" << json_number(parameters.r_grid_maximum)
+           << ",\"number_of_r_grid_points\":"
+           << parameters.number_of_r_grid_points
+           << ",\"z_grid_minimum\":" << json_number(parameters.z_grid_minimum)
+           << ",\"z_grid_maximum\":" << json_number(parameters.z_grid_maximum)
+           << ",\"number_of_z_grid_points\":"
+           << parameters.number_of_z_grid_points
+           << ",\"number_of_phi_grid_points\":"
+           << parameters.number_of_phi_grid_points << '}';
+    } else {
+        os << "null";
+    }
+    os << ",\"extcur\":";
     emit_double_array(os, s.free_boundary.extcur);
     os << "},\n";
     os << "  \"profiles\":{\"am\":";

@@ -10,10 +10,10 @@ back). The authoritative freeze lives in `configs/schema-v1.json` under
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cumes <in> out.bin` | versioned binary (schema v1, on-disk version 5) | `CUMES001` |
+| `./build/cumes <in> out.bin` | versioned binary (schema v1, on-disk version 6) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
-| `--checkpoint <path>` | versioned checkpoint (v4) | `CUMECKP1` |
-| `--restart <path>` (read) | versioned checkpoint (v4; v1-v3 still read) | `CUMECKP1` |
+| `--checkpoint <path>` | versioned checkpoint (v5) | `CUMECKP1` |
+| `--restart <path>` (read) | versioned checkpoint (v5; v1-v4 still read) | `CUMECKP1` |
 
 An output path is always required; an unknown suffix is an error. All writers
 publish atomically (write a temporary file in the target directory, then
@@ -51,11 +51,11 @@ Z = zmnsc·sin(mθ)cos(nζ) + zmncs·cos(mθ)sin(nζ)
 The axis row (`j = 0`) is the constant-extrapolated row, which the
 comparison scripts intentionally skip (compare_states.py).
 
-## 3. Versioned binary (schema v1, on-disk version 5)
+## 3. Versioned binary (schema v1, on-disk version 6)
 
 ```
 magic     8 bytes  "CUMES001"
-version   int32    = 5 (the current on-disk version)
+version   int32    = 6 (the current on-disk version)
 ns        int32
 mnmax     int32
 families  6 * (mnmax*ns) doubles, mode-major     ← the §2 payload
@@ -87,9 +87,12 @@ the input stages (`nstages_in` then per stage `ns` int32, `max_iter`
 int32, `ftol` f64), the raw boundary (`rbc_m` int32, `rbc_n` int32,
 `rbc_value` f64, then `zbs_*`), and the folded boundary `rbcc, rbss, zbsc,
 zbcs` (f64 each), followed by the free-boundary fields `lfreeb`, `nvacskip`,
-`mgrid_file`, `extcur`, `coils_file`, and `makegrid_parameters_file`. Every
-vector is an int32 element count followed by the payload; counts are capped at
-2^20 by the reader.
+`mgrid_file`, `extcur`, `coils_file`, `makegrid_parameters_file`, and the
+optional embedded `makegrid_paramters` record. Its presence flag is followed
+by the two booleans as int32, `number_of_field_periods`, the R/Z grid bounds and
+counts, and `number_of_phi_grid_points`, in schema order. Every vector is an
+int32 element count followed by the payload; counts are capped at 2^20 by the
+reader.
 
 Notes:
 
@@ -97,11 +100,12 @@ Notes:
   terminator. The reader caps a length prefix at 2^24 before allocating.
 - **No `scalar_type` string:** the precision tag is authoritative and the
   reader reconstructs `scalar_type` from it.
-- **Historical versions 1-4** remain readable: version 1 carried a
+- **Historical versions 1-5** remain readable: version 1 carried a
   `scalar_type` string between `build_type` and `source_path` and no
   precision-policy pair (the reader consumes and discards it); versions 1 and
-  2 carry no input record, version 3 lacks free-boundary fields, and version 4
-  lacks the inline-Makegrid source paths. Missing fields retain their defaults.
+  2 carry no input record, version 3 lacks free-boundary fields, version 4
+  lacks the inline-Makegrid source paths, and version 5 lacks embedded Makegrid
+  parameters. Missing fields retain their defaults.
   (Before 2026-08-20 the writer emitted
   `scalar_type` while the v2 reader expected the policy pair — a
   writer/reader sequence mismatch fixed together with the v1-compat path
@@ -111,11 +115,11 @@ Notes:
   later trailer revisions. The trailer is parsed only when the caller
   requests the `RunReport`.
 
-## 4. Versioned checkpoint v4 (`--checkpoint` / `--restart`)
+## 4. Versioned checkpoint v5 (`--checkpoint` / `--restart`)
 
 ```
 magic     8 bytes  "CUMECKP1"
-version   int32    = 4
+version   int32    = 5
 precision int32    = 0 (the checkpoint is always double on disk)
 ns        int32
 mnmax     int32
@@ -125,10 +129,10 @@ params    the embedded normalized-input record (§5), version 2+
 
 No provenance trailer beyond the input record — the restart path reads the
 state only and never touches the record. Version 2 carries the base record,
-version 3 adds free-boundary fields, and version 4 adds inline-Makegrid source
-paths. Version-1 checkpoints (no record) remain readable. Header mismatch,
-unsupported version/precision, or corruption is an error, never a silent cold
-start.
+version 3 adds free-boundary fields, version 4 adds inline-Makegrid source
+paths, and version 5 adds optional embedded Makegrid parameters. Version-1
+checkpoints (no record) remain readable. Header mismatch, unsupported
+version/precision, or corruption is an error, never a silent cold start.
 
 ## 5. The embedded input record / NetCDF-HDF5 layout (v1)
 
@@ -143,6 +147,9 @@ natively in NetCDF/HDF5:
   `stage_ftol` (double) — HDF5: same names as 1-D datasets;
 - the `schema`, `mgrid_file`, `coils_file`, and
   `makegrid_parameters_file` string attributes;
+- `makegrid_paramters_present` plus the ten embedded parameter values, exposed
+  as scalar variables named `makegrid_<field>` in NetCDF and root attributes
+  with those same names in HDF5;
 - the boundary is the pre-existing native pair: `rbc_m/rbc_n/rbc_value`
   and `zbs_m/zbs_n/zbs_value` (int/int/double over `nrbc`/`nzbs`) plus the
   folded 2-D matrices `rbcc/rbss/zbsc/zbcs` over `[n_mpol, n_ntorp1]`.

@@ -62,6 +62,8 @@ class MultigridSolver {
             hp.coils_file = vp.spec().free_boundary.coils_file;
             hp.makegrid_parameters_file =
                 vp.spec().free_boundary.makegrid_parameters_file;
+            hp.embedded_makegrid_parameters =
+                vp.spec().free_boundary.embedded_makegrid_parameters;
             hp.extcur = vp.spec().free_boundary.extcur;
             hp.nvacskip = vp.spec().free_boundary.nvacskip;
             hp.hot_start = hot_start;

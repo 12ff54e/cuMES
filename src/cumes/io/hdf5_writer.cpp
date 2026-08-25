@@ -276,6 +276,46 @@ class Hdf5V1Writer final : public Writer {
         H5_CHECK(putStrAttr(fid, "makegrid_parameters_file",
                             ip.makegrid_parameters_file),
                  "attr makegrid_parameters_file");
+        const int makegrid_present =
+            ip.embedded_makegrid_parameters.has_value() ? 1 : 0;
+        H5_CHECK(putAttr(fid, "makegrid_paramters_present", H5T_NATIVE_INT,
+                         &makegrid_present),
+                 "attr makegrid_paramters_present");
+        const MakegridParametersSpec makegrid =
+            ip.embedded_makegrid_parameters.value_or(MakegridParametersSpec{});
+        const int makegrid_normalize = makegrid.normalize_by_currents ? 1 : 0;
+        const int makegrid_symmetry =
+            makegrid.assume_stellarator_symmetry ? 1 : 0;
+        H5_CHECK(putAttr(fid, "makegrid_normalize_by_currents", H5T_NATIVE_INT,
+                         &makegrid_normalize),
+                 "attr makegrid_normalize_by_currents");
+        H5_CHECK(putAttr(fid, "makegrid_assume_stellarator_symmetry",
+                         H5T_NATIVE_INT, &makegrid_symmetry),
+                 "attr makegrid_assume_stellarator_symmetry");
+        H5_CHECK(putAttr(fid, "makegrid_number_of_field_periods",
+                         H5T_NATIVE_INT, &makegrid.number_of_field_periods),
+                 "attr makegrid_number_of_field_periods");
+        H5_CHECK(putAttr(fid, "makegrid_r_grid_minimum", H5T_NATIVE_DOUBLE,
+                         &makegrid.r_grid_minimum),
+                 "attr makegrid_r_grid_minimum");
+        H5_CHECK(putAttr(fid, "makegrid_r_grid_maximum", H5T_NATIVE_DOUBLE,
+                         &makegrid.r_grid_maximum),
+                 "attr makegrid_r_grid_maximum");
+        H5_CHECK(putAttr(fid, "makegrid_number_of_r_grid_points",
+                         H5T_NATIVE_INT, &makegrid.number_of_r_grid_points),
+                 "attr makegrid_number_of_r_grid_points");
+        H5_CHECK(putAttr(fid, "makegrid_z_grid_minimum", H5T_NATIVE_DOUBLE,
+                         &makegrid.z_grid_minimum),
+                 "attr makegrid_z_grid_minimum");
+        H5_CHECK(putAttr(fid, "makegrid_z_grid_maximum", H5T_NATIVE_DOUBLE,
+                         &makegrid.z_grid_maximum),
+                 "attr makegrid_z_grid_maximum");
+        H5_CHECK(putAttr(fid, "makegrid_number_of_z_grid_points",
+                         H5T_NATIVE_INT, &makegrid.number_of_z_grid_points),
+                 "attr makegrid_number_of_z_grid_points");
+        H5_CHECK(putAttr(fid, "makegrid_number_of_phi_grid_points",
+                         H5T_NATIVE_INT, &makegrid.number_of_phi_grid_points),
+                 "attr makegrid_number_of_phi_grid_points");
         H5_CHECK(putStrAttr(fid, "schema", ip.schema), "attr schema");
         {
             auto writeVec = [&](const char* name,
@@ -846,6 +886,66 @@ class Hdf5V1Reader final : public Reader {
                                 !getStrAttr(fid, "makegrid_parameters_file",
                                             ip.makegrid_parameters_file)) {
                                 return fail("malformed embedded input record");
+                            }
+                            H5Closer fid_present(
+                                H5Aopen(fid, "makegrid_paramters_present",
+                                        H5P_DEFAULT));
+                            if (fid_present.get() >= 0) {
+                                int makegrid_present = 0;
+                                if (!getIntAttr("makegrid_paramters_present",
+                                                makegrid_present)) {
+                                    return fail(
+                                        "malformed embedded input record");
+                                }
+                                if (makegrid_present != 0) {
+                                    MakegridParametersSpec parameters;
+                                    int normalize = 0;
+                                    int symmetry = 0;
+                                    if (!getIntAttr(
+                                            "makegrid_normalize_by_currents",
+                                            normalize) ||
+                                        !getIntAttr("makegrid_assume_"
+                                                    "stellarator_symmetry",
+                                                    symmetry) ||
+                                        !getIntAttr(
+                                            "makegrid_number_of_field_periods",
+                                            parameters
+                                                .number_of_field_periods) ||
+                                        !getDblAttr(
+                                            "makegrid_r_grid_minimum",
+                                            parameters.r_grid_minimum) ||
+                                        !getDblAttr(
+                                            "makegrid_r_grid_maximum",
+                                            parameters.r_grid_maximum) ||
+                                        !getIntAttr(
+                                            "makegrid_number_of_r_grid_points",
+                                            parameters
+                                                .number_of_r_grid_points) ||
+                                        !getDblAttr(
+                                            "makegrid_z_grid_minimum",
+                                            parameters.z_grid_minimum) ||
+                                        !getDblAttr(
+                                            "makegrid_z_grid_maximum",
+                                            parameters.z_grid_maximum) ||
+                                        !getIntAttr(
+                                            "makegrid_number_of_z_grid_points",
+                                            parameters
+                                                .number_of_z_grid_points) ||
+                                        !getIntAttr(
+                                            "makegrid_number_of_phi_grid_"
+                                            "points",
+                                            parameters
+                                                .number_of_phi_grid_points)) {
+                                        return fail(
+                                            "malformed embedded input record");
+                                    }
+                                    parameters.normalize_by_currents =
+                                        (normalize != 0);
+                                    parameters.assume_stellarator_symmetry =
+                                        (symmetry != 0);
+                                    ip.embedded_makegrid_parameters =
+                                        parameters;
+                                }
                             }
                         }
                         {

@@ -134,8 +134,8 @@ optional-backend presets. Every computation is `template<typename T>`; `Real`
   flags override them.
 - Every backend writes the schema-v1 container — a versioned state payload with
   full provenance for binary, NetCDF and HDF5.
-- `--restart <checkpoint>` / `--checkpoint <path>` (read/write a v4 checkpoint;
-  v1–v3 remain readable).
+- `--restart <checkpoint>` / `--checkpoint <path>` (read/write a v5 checkpoint;
+  v1–v4 remain readable).
 - Strict schema-v1 behavior is the **default**: unknown input keys are errors,
   an explicit output path is required, and unknown suffixes are rejected. The
   `--compatibility` flag restores vmecpp-style warn-and-ignore parsing for
@@ -154,11 +154,14 @@ harmonics). The JSON is parsed and validated host-side into a `ValidatedProblem`
 (`cumes-config-v1` normalized schema, `configs/schema-v1.json`); no solver code
 parses input.
 
-Free-boundary input accepts either a precomputed `mgrid_file`, or
-`coils_file` together with `makegrid_parameters_file`. The latter path uses
-the Makegrid implementation in `deps/vacuum-field` to construct the response
-table once in memory before iteration; `extcur` remains in Amperes. See
-`inputs/free_bdy/solovev_free_bdy_coils.json`.
+Free-boundary input accepts either a precomputed `mgrid_file`, or `coils_file`
+together with Makegrid parameters. The parameters may be supplied by
+`makegrid_parameters_file`, or embedded as the complete parameter object under
+the intentionally spelled key `makegrid_paramters`. If both parameter keys are
+present, cuMES warns and uses the embedded object. These paths construct the
+response table once in memory before iteration; `extcur` remains in Amperes.
+See `inputs/free_bdy/solovev_free_bdy_coils.json` and
+`inputs/free_bdy/solovev_free_bdy_embedded.json`.
 
 ### Precision
 
