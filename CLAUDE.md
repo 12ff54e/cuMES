@@ -23,6 +23,9 @@ cmake --build build -j
 # an output path is REQUIRED — there is no default output file
 ./build/cumes inputs/solovev.json out.bin        # positional: <input> <output>
 
+# free-boundary Solovev (requires the checked-out vacuum-field submodule)
+./build/cumes inputs/free_bdy/solovev_free_bdy.json free_bdy.bin
+
 ctest --test-dir build --output-on-failure
 
 # sanitizer preset: compute-sanitizer memcheck/initcheck/racecheck/synccheck
@@ -44,15 +47,30 @@ C++20 — no GNU extensions — for host C++ and CUDA TUs alike (root
 point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
 75 (Turing), 80 (Ampere), 86, 89 (Ada).
 
+Free-boundary support is built by default with `CUMES_USE_VACUUM_FIELD=ON`.
+If `deps/vacuum-field` is not checked out, CMake warns and builds the stub
+operator: fixed-boundary runs remain available, but `lfreeb=true` fails with an
+explicit configuration error. Run `git submodule update --init --recursive`
+before configuring a vacuum build.
+
 ## CLI & Environment
 
 - Positional `<input> <output>`; `--input`/`--output` flags override the slot
   they name. Default input: `inputs/solovev.json`; the output path is REQUIRED.
-- `--restart <checkpoint>` / `--checkpoint <path>` — read/write the v2
+- `--restart <checkpoint>` / `--checkpoint <path>` — read/write the v3
   checkpoint (`docs/output-formats.md` §4).
-- Every backend writes the schema-v1 container (versioned binary/NetCDF/HDF5
+- Every backend writes the schema-v1 container (binary v4/NetCDF/HDF5
   with full provenance; a `.nc`/`.h5` suffix dispatches to the host-only
   NetCDF/HDF5 writers when compiled in). Formats: `docs/output-formats.md`.
+- A free-boundary input sets `lfreeb=true` and supplies a readable MAKEGRID
+  `mgrid_file`, a non-empty `extcur` coil-current vector, and `nvacskip >= 1`.
+  The example is `inputs/free_bdy/solovev_free_bdy.json`. Its `rbc`/`zbs`
+  harmonics seed the initial LCFS; they do not constrain the converged LCFS.
+- Free-boundary angular grids must have even `ntheta >= 2*mpol+6` and
+  `nzeta >= 2*ntor+4`; the axisymmetric `ntor=0` path may use `nzeta=1`.
+  Leaving `ntheta=0` lets validation resolve the supported default.
+- Binary v4, checkpoint v3, NetCDF, and HDF5 persist `lfreeb`, `nvacskip`,
+  `mgrid_file`, and `extcur`; older containers default to fixed boundary.
 - Strict behavior is the DEFAULT: unknown input keys are validation errors and
   unknown suffixes are rejected. `--compatibility` restores vmecpp-style
   warn-and-ignore for unknown input keys (input-side only; the output policy
@@ -99,13 +117,13 @@ cuMES/
 │   ├── <mod>_impl.cuh      Templated kernel bodies, one file per operator module
 │   ├── <mod>_{double,float}.cu   Explicit instantiation TUs (cumes_cuda_{double,float})
 │   │                       modules: fourier geometry forces solver profiles precon
-│   │                                constraint prolongation axisymmetric
+│   │                                constraint prolongation axisymmetric free_boundary
 │   ├── cumes/              Host-side C++ (config, io, core, runtime)
 │   └── output*.cpp         Binary/NetCDF/HDF5 writers + format dispatcher
 ├── tests/                  Standalone correctness tests (no framework) + support/
 ├── benchmarks/             fixed_iteration + graph_overhead harnesses
 ├── scripts/                compare_runs.py / compare_states.py / compare_bitwise.py
-├── inputs/                 solovev.json, w7x.json (vmecpp indata schema)
+├── inputs/                 fixed-boundary inputs + free_bdy/ reference case
 └── docs/                   See the documentation map below
 ```
 
@@ -114,7 +132,7 @@ cuMES/
 versioned containers), `runtime` (DeviceBuffer/DeviceArena/Stream), `state`
 (spectral/real-space storages, typed views), `transforms` (SpectralOperator +
 ToroidalFftOperator + AxisymmetricOperator), `physics`
-(Geometry/MagneticField/Force/Constraint/Profiles), `numerics`
+(Geometry/MagneticField/Force/Constraint/Profiles/FreeBoundary), `numerics`
 (Residual/Descent/Prolongation/Preconditioner + tridiagonal backends), `solver`
 (EquilibriumOperator, IterationController, StageSolver, MultigridSolver).
 
@@ -129,6 +147,9 @@ Real-space geometry R, Z, λ + derivatives      (ns × ntheta × nzeta)
          ▼  [GeometryOperator / MagneticFieldOperator]
 Half-grid: √g, g_uu, g_uv, g_vv, B^θ, B^ζ    (ns-1 × ntheta × nzeta)
          │
+         ▼  [FreeBoundaryOperator when lfreeb: device bridge + host NESTOR]
+Vacuum LCFS field / pressure jump               (fixed-boundary path bypasses)
+         │
          ▼  [ForceOperator]
 Real-space forces F_R, F_Z, F_λ                (ns × ntheta × nzeta)
          │
@@ -139,12 +160,14 @@ Spectral forces                                 (3, mnmax, ns)
 v = fac×(b1·v + delt·f) ,  x += delt·v        (Garabedian accelerated descent)
 ```
 
-The per-iteration DAG is composed in `EquilibriumOperator::enqueue`
-(`src/solver_impl.cuh`); `solverRun` is a thin loop over the pure-host
-`IterationController` + that DAG on one explicit compute stream, with one
-deliberate host fence per iteration. All operators own their device buffers
-(directly or via one `DeviceArena` carved per stage) and expose typed view
-bundles; no legacy workspace structs remain.
+The per-iteration DAG is composed in `EquilibriumOperator::enqueue`; the
+free-boundary path uses its `enqueue_prefix`/`enqueue_suffix` split around the
+host NESTOR update (`src/solver_impl.cuh`). Fixed-boundary execution retains one
+deliberate host fence per iteration; a scheduled vacuum block adds the fence
+needed to hand LCFS data to the host solver. The persistent vacuum solver and
+its OFF → INITIALIZING → INITIALIZED → ACTIVE state survive multigrid stages.
+All operators own their device buffers (directly or via one `DeviceArena` carved
+per stage) and expose typed view bundles; no legacy workspace structs remain.
 
 ## Key Design Decisions
 
@@ -157,6 +180,12 @@ bundles; no legacy workspace structs remain.
 - **Staggered half-grid** — dynamic variables on full grid (flux surfaces);
   metric elements on half grid (between surfaces). Prevents checkerboard
   instability. Matches VMEC convention.
+- **Free-boundary coupling** — a persistent `FreeBoundaryOperator` wraps the
+  CUDA NESTOR solver in `deps/vacuum-field`, schedules full/partial vacuum
+  updates with `nvacskip`, applies the LCFS vacuum-pressure force and the
+  free-boundary preconditioner pedestal, and performs the vmecpp-compatible
+  activation soft restart. Vacuum state and response data persist across
+  multigrid refinement; checkpoint restarts enter as hot vacuum starts.
 - **All GPU allocations at startup** — scratch arrays allocated once, reused
   every iteration. Zero `cudaMalloc` calls in the hot loop.
 - **Host checks convergence** — residual reduction runs on GPU; the scalar
@@ -233,6 +262,12 @@ reference outputs, independent of any vmecpp bit-exactness target):
   λ-gauge family than the single-grid run (~2.7e-4 in rmncc(0,1)) — intrinsic
   to the continuation, not a cuMES artifact. Restarting from the multigrid
   final state converges at iter 1 (a genuine fixed point).
+- Free-boundary Solovev (`inputs/free_bdy/solovev_free_bdy.json`) converges on
+  the 16 → 32 grid schedule in 417 → 630 effective iterations (1047 total),
+  with final FSQR/FSQZ/FSQL = 9.742e-15 / 8.808e-16 / 4.935e-16. The final
+  vacuum diagnostics are `delBSq=1.379e-6` and
+  `bSubUVac=-1.186090e-1`; targeted bridge/constraint dumps were compared
+  against vmecpp, and `test_free_boundary_seed` gates unclamped-LCFS behavior.
 
 Known issues:
 
@@ -244,18 +279,20 @@ Known issues:
 2. **Float builds reject impossible tolerances.** Float stalls at ~1e-7, so
    double-tuned stage ftols (1e-16/1e-12) can never be met — relax
    `ftol_array` entries to >= 1e-6 for float experiments.
+3. **Free-boundary qualification is currently narrow.** The double-precision,
+   axisymmetric Solovev case has an end-to-end convergence/reference gate;
+   general 3-D/W7-X and float free-boundary runs are not yet qualified.
 
 ## Scope (vs VMEC++)
 
 | Feature | Status |
 | ------- | ------ |
-| Free boundary / vacuum solver | In progress — `deps/vacuum-field` NESTOR port (step 1: library + golden gates; solver wiring is step 2) |
+| Free boundary / vacuum solver | Implemented: NESTOR vacuum field, LCFS edge force/preconditioner, activation state machine, multigrid persistence, and hot restart; double Solovev qualified, general 3-D/float qualification pending |
 | FFT-accelerated transforms | Implemented (cuFFT: batched 1D ζ-FFT + direct poloidal) |
 | Multigrid grid sequencing | Implemented (`ns_array`/`niter_array`/`ftol_array` stage loop + `Prolongation`) |
 | De-aliased constraint force | Implemented (bandpass inside `ConstraintOperator`, fused rCon/zCon in `inverse_fused`) |
-| Hot restart / checkpointing | Implemented (v2 checkpoint: `--checkpoint` / `--restart`) |
+| Hot restart / checkpointing | Implemented (v3 checkpoint: `--checkpoint` / `--restart`; free-boundary restarts are hot vacuum starts) |
 | Adaptive time-step (Jacobian resets) | Implemented (restart/maintenance delt control, vmecpp VMEC_8_52) |
-| Free boundary / vacuum solver | Not implemented — fixed boundary only |
 | Mercier stability, jxbout, wout | Not implemented — post-processing, not needed for the core loop |
 | Python interface | Not implemented — C++/CUDA executable only |
 
@@ -266,7 +303,7 @@ Known issues:
 | `docs/architecture.md` | operator library, build/library split, per-iteration pipeline, dependency rules, free-boundary vacuum library (§5) |
 | `docs/mathematics.md` | normative numerical contracts: coordinates, Fourier representation/quadrature, geometry, fields, force, constraint, preconditioner, damping/descent, prolongation |
 | `docs/data-layout.md` | storage/layout contracts (state, real-space, quadrature) |
-| `docs/output-formats.md` | on-disk containers: v1 binary/checkpoint/NetCDF/HDF5, dump files, Python reader |
+| `docs/output-formats.md` | on-disk containers: binary v4, checkpoint v3, NetCDF/HDF5, dump files, Python reader |
 | `docs/verification.md` | verification tiers/gates, equivalence classes (Class A/B/C), review checklist |
 | `docs/performance.md` | measured performance + acceptance policy |
 | `docs/overhaul-history.md` | phase-by-phase overhaul record and closeout handovers |
