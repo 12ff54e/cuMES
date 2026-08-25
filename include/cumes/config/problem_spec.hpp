@@ -57,11 +57,15 @@ struct StageRequest {
     double tolerance = 0.0;  // ftol
 };
 
-// Free-boundary run parameters (vmecpp indata keys lfreeb / mgrid_file /
-// extcur / nvacskip). Parsed for every input; only exercised when lfreeb.
+// Free-boundary run parameters (vmecpp indata keys plus cuMES's inline
+// Makegrid source paths). Parsed for every input; only exercised when lfreeb.
 struct FreeBoundarySpec {
     bool lfreeb = false;
-    std::string mgrid_file;      // MAKEGRID-format coil field
+    std::string mgrid_file;  // precomputed MAKEGRID-format coil field
+    // In-memory alternative: vacuum-field builds the response table directly
+    // from these two files at run construction.
+    std::string coils_file;
+    std::string makegrid_parameters_file;
     std::vector<double> extcur;  // coil currents (A)
     int nvacskip = 1;            // vacuum full-update cadence (>= 1)
 };

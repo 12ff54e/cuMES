@@ -335,6 +335,15 @@ class NetcdfV1Writer final : public Writer {
                      ? NC_NOERR
                      : NC_EATTMETA,
                  "attr mgrid_file");
+        NC_CHECK(putStrAttr(ncid, "coils_file", ip.coils_file) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr coils_file");
+        NC_CHECK(putStrAttr(ncid, "makegrid_parameters_file",
+                            ip.makegrid_parameters_file) == true
+                     ? NC_NOERR
+                     : NC_EATTMETA,
+                 "attr makegrid_parameters_file");
         NC_CHECK(
             putStrAttr(ncid, "source_path", report.input.source_path) == true
                 ? NC_NOERR
@@ -969,9 +978,12 @@ class NetcdfV1Reader final : public Reader {
                                               ip.extcur)) {
                                 return fail("malformed embedded input record");
                             }
-                            // mgrid_file is a global attribute; absent stays
-                            // empty (pre-extension containers).
+                            // Source paths are global attributes; absent ones
+                            // stay empty for older containers.
                             getStr("mgrid_file", ip.mgrid_file);
+                            getStr("coils_file", ip.coils_file);
+                            getStr("makegrid_parameters_file",
+                                   ip.makegrid_parameters_file);
                         }
                         // The input stage arrays are optional as a whole (the
                         // writer omits them for an empty stage list).

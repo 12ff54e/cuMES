@@ -158,6 +158,10 @@ if(CUMES_HOST_SANITIZERS)
 
   cumes_add_host_library(cumes_config_json_asan TRUE ${CUMES_CONFIG_JSON_SOURCES})
   target_link_libraries(cumes_config_json_asan PUBLIC cumes_core_asan cumes_json_asan)
+  if(NOT CUMES_USE_VACUUM_FIELD)
+    target_compile_definitions(cumes_config_json_asan
+      PUBLIC CUMES_VACUUM_FIELD_DISABLED)
+  endif()
 
   cumes_add_host_library(cumes_io_host_asan TRUE ${CUMES_IO_HOST_SOURCES})
   target_link_libraries(cumes_io_host_asan PUBLIC cumes_core_asan)

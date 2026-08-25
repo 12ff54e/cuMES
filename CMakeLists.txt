@@ -94,13 +94,18 @@ endfunction()
 # is not checked out (hosted CI builds without submodules); the module list
 # below picks the real free_boundary module or the stub accordingly.
 option(CUMES_USE_VACUUM_FIELD
-       "Build and link the free-boundary vacuum library (deps/vacuum-field)" ON)
+       "Enable free-boundary support via optional deps/vacuum-field" ON)
 if(CUMES_USE_VACUUM_FIELD AND NOT EXISTS
    ${CMAKE_CURRENT_SOURCE_DIR}/deps/vacuum-field/CMakeLists.txt)
   message(WARNING "cuMES: deps/vacuum-field not checked out "
                   "(run: git submodule update --init); "
                   "vacuum-field support disabled")
   set(CUMES_USE_VACUUM_FIELD OFF)
+endif()
+if(CUMES_USE_VACUUM_FIELD)
+  message(STATUS "cuMES: optional vacuum-field support enabled")
+else()
+  message(STATUS "cuMES: optional vacuum-field support disabled (fixed boundary only)")
 endif()
 
 # ---- device modules --------------------------------------------------------
@@ -165,6 +170,10 @@ cumes_apply_host_tuning(cumes_core)
 # legacy InputParams bridge, and the normalization emitter. Host-only C++.
 cumes_add_host_library(cumes_config_json FALSE ${CUMES_CONFIG_JSON_SOURCES})
 target_link_libraries(cumes_config_json PUBLIC cumes_core cumes_json)
+if(NOT CUMES_USE_VACUUM_FIELD)
+  target_compile_definitions(cumes_config_json
+    PUBLIC CUMES_VACUUM_FIELD_DISABLED)
+endif()
 cumes_apply_host_tuning(cumes_config_json)
 
 # Versioned host I/O: output spec, run report, snapshot, the v1 binary
@@ -233,9 +242,13 @@ if(CUMES_USE_VACUUM_FIELD)
   # instantiation.
   set(VFIELD_USE_FLOAT ${CUMES_USE_FLOAT} CACHE BOOL
       "vacuum-field scalar switch (propagated from CUMES_USE_FLOAT)" FORCE)
+  set(VFIELD_BUILD_MAKEGRID ON CACHE BOOL
+      "build vacuum-field Makegrid support for cuMES" FORCE)
   add_subdirectory(deps/vacuum-field)
-  target_link_libraries(cumes_cuda_double PUBLIC vfield_cuda_double)
-  target_link_libraries(cumes_cuda_float PUBLIC vfield_cuda_float)
+  target_link_libraries(cumes_cuda_double PUBLIC
+    vfield_cuda_double vfield::makegrid)
+  target_link_libraries(cumes_cuda_float PUBLIC
+    vfield_cuda_float vfield::makegrid)
 endif()
 
 # ---- CLI executable --------------------------------------------------------

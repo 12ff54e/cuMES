@@ -2,14 +2,15 @@
 //
 // Versioned checkpoint layout (little-endian):
 //   magic     8 bytes  "CUMECKP1"
-//   version   int32    = 3
+//   version   int32    = 4
 //   precision int32    (0 = double; the checkpoint is always double on disk)
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major
 //   params    the embedded normalized-input record (io_common.hpp
 //             writeInputParams); version 2+; the v3 record appends the
-//             free-boundary extension (lfreeb, nvacskip, mgrid_file, extcur)
+//             free-boundary extension (lfreeb, nvacskip, mgrid_file, extcur);
+//             v4 appends coils_file and makegrid_parameters_file
 //
 // The restart path reads the state only and ignores the record; version-1
 // checkpoints (no record) remain readable.
@@ -25,7 +26,7 @@ namespace cumes {
 namespace {
 
 constexpr char kCheckpointMagic[9] = "CUMECKP1";
-constexpr std::int32_t kCheckpointVersion = 3;
+constexpr std::int32_t kCheckpointVersion = 4;
 constexpr std::int32_t kMinCheckpointVersion = 1;
 
 }  // namespace
@@ -108,7 +109,11 @@ Result<EquilibriumSnapshot> read_checkpoint(const std::string& path,
     // for the record never touches it. Version-2 records predate the
     // free-boundary extension.
     if (input_params && version >= 2) {
-        if (!io_detail::readInputParams(fp, *input_params, reason, version)) {
+        // Checkpoint record versions trail the state-container record versions
+        // by one: checkpoint v2 introduced the base record, v3 added the
+        // free-boundary fields, and v4 added inline-Makegrid source paths.
+        if (!io_detail::readInputParams(fp, *input_params, reason,
+                                        version + 1)) {
             return fail("checkpoint: " + reason);
         }
     }

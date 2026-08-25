@@ -8,7 +8,7 @@
   "ncurr":0,
   "delt":0.90000000000000002,
   "physical":{"phiedge":1,"pres_scale":1,"adiabatic_index":0,"spres_ped":1,"bloat":1,"curtor":0,"tcon0":1},
-  "free_boundary":{"lfreeb":false,"nvacskip":1,"mgrid_file":"","extcur":[]},
+  "free_boundary":{"lfreeb":false,"nvacskip":1,"mgrid_file":"","coils_file":"","makegrid_parameters_file":"","extcur":[]},
   "profiles":{"am":[0.125,-0.125],"ac":[],"ai":[1],"aphi":[1]},
   "axis":{"raxis_c":[4],"zaxis_s":[0]},
   "stages":[{"ns":5,"max_iter":1000,"ftol":9.9999999999999998e-17},{"ns":11,"max_iter":2000,"ftol":9.9999999999999998e-17},{"ns":55,"max_iter":2000,"ftol":9.9999999999999998e-17}],

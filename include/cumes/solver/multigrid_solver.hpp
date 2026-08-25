@@ -59,6 +59,9 @@ class MultigridSolver {
         if (vp.spec().free_boundary.lfreeb) {
             typename FreeBoundaryOperator<T>::HostParams hp;
             hp.mgrid_file = vp.spec().free_boundary.mgrid_file;
+            hp.coils_file = vp.spec().free_boundary.coils_file;
+            hp.makegrid_parameters_file =
+                vp.spec().free_boundary.makegrid_parameters_file;
             hp.extcur = vp.spec().free_boundary.extcur;
             hp.nvacskip = vp.spec().free_boundary.nvacskip;
             hp.hot_start = hot_start;

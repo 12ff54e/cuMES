@@ -122,24 +122,32 @@ build and the boundary headers:
 
 ## 5. Free-boundary vacuum library (`deps/vacuum-field`)
 
-Step 1 of the free-boundary work (see `adr/0005-vacuum-field-submodule.md`).
 `deps/vacuum-field` is a standalone CUDA C++ library — the port of vmecpp's
-NESTOR vacuum-field algorithm — embedded as a git submodule. It computes the
-vacuum magnetic field on the LCFS from the boundary Fourier coefficients and
-an mgrid coil field: the magnetic scalar potential via the boundary-element
-Laplace solve, and the outputs `b_sq_vac` (|B|²/2, no mu0), the covariant
-components `b_sub_u/b_sub_v`, the cylindrical `B_R/B_phi/B_Z`, and the
-surface-integral scalars `b_sub_u_vac/b_sub_v_vac`.
+NESTOR vacuum-field algorithm — embedded as a git submodule (see
+`adr/0005-vacuum-field-submodule.md`). It computes the vacuum magnetic field
+on the LCFS from the boundary Fourier coefficients and an external-coil field:
+the magnetic scalar potential via the boundary-element Laplace solve, and the
+outputs `b_sq_vac` (|B|²/2, no mu0), the covariant components
+`b_sub_u/b_sub_v`, the cylindrical `B_R/B_phi/B_Z`, and the surface-integral
+scalars `b_sub_u_vac/b_sub_v_vac`.
+
+The external-coil field can come from a MAKEGRID NetCDF file or from an
+in-memory `MgridProvider::ResponseTable`. The optional host-only
+`vfield::makegrid` component parses coils-dot geometry and grid-parameter JSON
+and builds that table directly. cuMES constructs the table once when a
+free-boundary run starts, then the existing CUDA interpolation and NESTOR
+update path consumes it without a temporary file (see
+`adr/0006-inline-makegrid.md`).
 
 Dependency edge (the acyclic-graph rule): **cuMES → vfield only** — the
 library never includes cuMES headers, owns its own runtime (a trimmed
-`DeviceBuffer`/`check_cuda`), its own NetCDF mgrid reader (optional,
-`VFIELD_HAVE_NETCDF`), and its own tests (16 standalone executables, incl.
-six Fortran-golden gates at vmecpp's own tolerances, run inside cuMES ctest).
-cuMES sets `VFIELD_USE_FLOAT` from `CUMES_USE_FLOAT` and links
-`vfield::vfield` into the CLI (`CUMES_USE_VACUUM_FIELD`, default ON, auto-off
-when the submodule is absent). The solver does not call into the library yet
-(step 2 wires `lfreeb`); `lfreeb=true` remains a validation error.
+`DeviceBuffer`/`check_cuda`), its optional NetCDF reader/writer
+(`VFIELD_HAVE_NETCDF`), and its standalone tests. cuMES sets
+`VFIELD_USE_FLOAT` from `CUMES_USE_FLOAT` and links the selected
+`vfield::vfield` CUDA target plus `vfield::makegrid`
+(`CUMES_USE_VACUUM_FIELD`, default ON, auto-off when the submodule is absent).
+`FreeBoundaryOperator` owns the integration seam and applies the resulting
+vacuum pressure and covariant field terms according to `nvacskip`.
 
 ## 6. Retired compatibility internals
 

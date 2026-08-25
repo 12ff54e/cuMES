@@ -41,15 +41,17 @@ class FreeBoundaryOperator {
     using val_type = T;
 
     struct HostParams {
-        std::string mgrid_file;      // MAKEGRID-format coil field
-        std::vector<double> extcur;  // coil currents (A)
-        int nvacskip = 1;            // vacuum full-update cadence
-        bool hot_start = false;      // restart from a checkpoint: state starts
-                                     // INITIALIZED (vmecpp hot-restart rule)
+        std::string mgrid_file;  // precomputed MAKEGRID-format coil field
+        std::string coils_file;  // inline Makegrid coil geometry
+        std::string makegrid_parameters_file;  // inline Makegrid grid JSON
+        std::vector<double> extcur;            // coil currents (A)
+        int nvacskip = 1;                      // vacuum full-update cadence
+        bool hot_start = false;  // restart from a checkpoint: state starts
+                                 // INITIALIZED (vmecpp hot-restart rule)
     };
 
-    // Loads the mgrid and builds the persistent vacuum solver. Throws
-    // CumesError on an unreadable/invalid mgrid or an angular resolution the
+    // Loads or generates the response table and builds the persistent vacuum
+    // solver. Throws CumesError on invalid input or an angular resolution the
     // vacuum solver would raise above the configured grid.
     FreeBoundaryOperator(const HostParams& params, const DeviceParams<T>& p);
     ~FreeBoundaryOperator();

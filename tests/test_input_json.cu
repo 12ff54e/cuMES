@@ -324,7 +324,7 @@ static void testNegative() {
         "neg: rbs content rejected");
 
     // Unsupported physics keys: lasym, non-power_series profiles. lfreeb is
-    // now SUPPORTED, but requires mgrid_file/extcur.
+    // now SUPPORTED, but requires one external-field source and extcur.
     writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
@@ -338,8 +338,8 @@ static void testNegative() {
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = cumes::read_and_validate(scratchPath(), opts);
     check(!vr.has_value() &&
-              !findError(vr, "lfreeb=true requires an mgrid_file").empty(),
-          "neg: lfreeb=true without mgrid_file rejected");
+              !findError(vr, "lfreeb=true requires either mgrid_file").empty(),
+          "neg: lfreeb=true without external field rejected");
     writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
         " \"mgrid_file\": \"mgrid.nc\","
@@ -362,9 +362,47 @@ static void testNegative() {
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = cumes::read_and_validate(scratchPath(), opts);
+#ifdef CUMES_VACUUM_FIELD_DISABLED
+    check(!vr.has_value() &&
+              !findError(vr, "requires optional vacuum-field support").empty(),
+          "neg: lfreeb rejected when optional dependency is disabled");
+#else
     check(vr.has_value() && vr.value().spec().free_boundary.lfreeb &&
               vr.value().spec().free_boundary.extcur.size() == 1,
           "pos: valid lfreeb input accepted");
+#endif
+
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
+        " \"coils_file\": \"coils.test\","
+        " \"makegrid_parameters_file\": \"makegrid.json\","
+        " \"extcur\": [1.0], \"nvacskip\": 1,"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+#ifdef CUMES_VACUUM_FIELD_DISABLED
+    check(!vr.has_value() &&
+              !findError(vr, "requires optional vacuum-field support").empty(),
+          "neg: inline Makegrid rejected when optional dependency is disabled");
+#else
+    check(vr.has_value() &&
+              vr.value().spec().free_boundary.coils_file == "coils.test" &&
+              vr.value().spec().free_boundary.makegrid_parameters_file ==
+                  "makegrid.json",
+          "pos: inline Makegrid free-boundary input accepted");
+#endif
+
+    writeScratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
+        " \"mgrid_file\": \"mgrid.nc\", \"coils_file\": \"coils.test\","
+        " \"makegrid_parameters_file\": \"makegrid.json\","
+        " \"extcur\": [1.0],"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
+    vr = cumes::read_and_validate(scratchPath(), opts);
+    check(
+        !vr.has_value() && !findError(vr, "must use either mgrid_file").empty(),
+        "neg: simultaneous mgrid and coils sources rejected");
     writeScratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
         " \"pmass_type\": \"spline\","

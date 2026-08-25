@@ -14,7 +14,7 @@
 // Output: every backend writes the schema-v1 container (binary/NetCDF/HDF5
 // through the Writer interface, dispatched by the output suffix).
 //
-// Restart: --restart <checkpoint> (v1 checkpoint) replaces the removed
+// Restart: --restart <checkpoint> (versioned checkpoint) replaces the removed
 // CUMES_LOAD_INIT environment path.
 //
 // Precision: `Real` (vmec_types.h) is the compile-time switch between double
@@ -118,9 +118,9 @@ int main(int argc, char** argv) {
     // ---- CLI ----------------------------------------------------------------
     std::string inputPath = "inputs/solovev.json";
     std::string outputPath;
-    std::string restartPath;  // --restart (v1 checkpoint)
+    std::string restartPath;  // --restart (versioned checkpoint)
     std::string
-        checkpointPath;  // --checkpoint (write a v1 checkpoint after solve)
+        checkpointPath;  // --checkpoint (write a checkpoint after solve)
     // Slot occupancy: a --input/--output flag pins its slot (flags override
     // positionals); each positional fills the first free slot (input, output).
     bool inputGiven = false;
@@ -362,9 +362,9 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Optional v2 restart checkpoint (blueprint §6.13): written after the
-        // solve so a run that stops at its iteration cap can be resumed via
-        // --restart.
+        // Optional versioned restart checkpoint (blueprint §6.13): written
+        // after the solve so a run that stops at its iteration cap can be
+        // resumed via --restart.
         if (!checkpointPath.empty()) {
             const cumes::Status status = cumes::write_checkpoint(
                 snapshot, outcome.report.input_params, checkpointPath);

@@ -56,6 +56,11 @@ static cumes::InputParams makeParams() {
     p.ncurr = 0;
     p.delt = 0.9;
     p.phiedge = 1.0;
+    p.lfreeb = true;
+    p.nvacskip = 3;
+    p.coils_file = "coils.test";
+    p.makegrid_parameters_file = "makegrid.test.json";
+    p.extcur = {12.0};
     p.am = {1.0};
     p.aphi = {1.0};
     p.rbc_m = {1, 0};
@@ -112,13 +117,13 @@ static void testCheckpointVersionGate() {
     {
         std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
         f.seekp(8);
-        const std::int32_t v4 = 4;
-        f.write(reinterpret_cast<const char*>(&v4), sizeof(v4));
+        const std::int32_t v5 = 5;
+        f.write(reinterpret_cast<const char*>(&v5), sizeof(v5));
         f.close();
     }
     {
         auto bad = cumes::read_checkpoint(path);
-        check(!bad.has_value(), "checkpoint: version 4 rejected");
+        check(!bad.has_value(), "checkpoint: version 5 rejected");
     }
     remove(path.c_str());
 }

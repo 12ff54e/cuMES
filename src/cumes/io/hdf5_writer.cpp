@@ -271,6 +271,11 @@ class Hdf5V1Writer final : public Writer {
                  "attr nvacskip");
         H5_CHECK(putStrAttr(fid, "mgrid_file", ip.mgrid_file),
                  "attr mgrid_file");
+        H5_CHECK(putStrAttr(fid, "coils_file", ip.coils_file),
+                 "attr coils_file");
+        H5_CHECK(putStrAttr(fid, "makegrid_parameters_file",
+                            ip.makegrid_parameters_file),
+                 "attr makegrid_parameters_file");
         H5_CHECK(putStrAttr(fid, "schema", ip.schema), "attr schema");
         {
             auto writeVec = [&](const char* name,
@@ -827,6 +832,19 @@ class Hdf5V1Reader final : public Reader {
                                 H5Aopen(fid, "mgrid_file", H5P_DEFAULT));
                             if (cid.get() >= 0 &&
                                 !getStrAttr(fid, "mgrid_file", ip.mgrid_file)) {
+                                return fail("malformed embedded input record");
+                            }
+                            H5Closer did(
+                                H5Aopen(fid, "coils_file", H5P_DEFAULT));
+                            if (did.get() >= 0 &&
+                                !getStrAttr(fid, "coils_file", ip.coils_file)) {
+                                return fail("malformed embedded input record");
+                            }
+                            H5Closer eid(H5Aopen(
+                                fid, "makegrid_parameters_file", H5P_DEFAULT));
+                            if (eid.get() >= 0 &&
+                                !getStrAttr(fid, "makegrid_parameters_file",
+                                            ip.makegrid_parameters_file)) {
                                 return fail("malformed embedded input record");
                             }
                         }

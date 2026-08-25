@@ -223,16 +223,20 @@ inline bool writeInputParams(FILE* fp, const InputParams& p) {
          write_f64_vec(fp, p.zbsc) && write_f64_vec(fp, p.zbcs) &&
          // Free-boundary record extension (container version 4).
          write_i32(fp, p.lfreeb ? 1 : 0) && write_i32(fp, p.nvacskip) &&
-         write_string(fp, p.mgrid_file) && write_f64_vec(fp, p.extcur);
+         write_string(fp, p.mgrid_file) && write_f64_vec(fp, p.extcur) &&
+         // Inline-Makegrid source extension (container version 5).
+         write_string(fp, p.coils_file) &&
+         write_string(fp, p.makegrid_parameters_file);
     return ok;
 }
 
 // `record_version` is the container version that embeds the record: versions
-// < 4 predate the free-boundary extension and leave those fields defaulted.
+// < 4 predate the free-boundary extension; versions < 5 predate inline
+// Makegrid source provenance. Missing fields retain their defaults.
 inline bool readInputParams(FILE* fp,
                             InputParams& p,
                             std::string& reason,
-                            std::int32_t record_version = 4) {
+                            std::int32_t record_version = 5) {
     std::int32_t nstages = 0;
     if (!read_i32(fp, p.mpol) || !read_i32(fp, p.ntor) ||
         !read_i32(fp, p.nfp) || !read_i32(fp, p.ntheta) ||
@@ -299,6 +303,13 @@ inline bool readInputParams(FILE* fp,
             return false;
         }
         p.lfreeb = (lfreeb != 0);
+    }
+    if (record_version >= 5) {
+        if (!read_string(fp, p.coils_file) ||
+            !read_string(fp, p.makegrid_parameters_file)) {
+            reason = "truncated input record";
+            return false;
+        }
     }
     return true;
 }

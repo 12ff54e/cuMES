@@ -29,6 +29,7 @@
 #include "cumes/runtime/cuda_status.hpp"
 #include "vfield/common/sizes.hpp"
 #include "vfield/free_boundary/vacuum_field_solver.hpp"
+#include "vfield/makegrid/makegrid.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -238,8 +239,30 @@ struct FreeBoundaryOperator<T>::Impl {
           sizes(false, p.nfp, p.mpol, p.ntor, p.ntheta, p.nzeta),
           solver([&]() {
               typename vfield::VacuumFieldSolver<T>::Params vp(sizes);
-              vp.mgrid_file = params.mgrid_file;
               vp.coil_currents = params.extcur;
+              if (!params.mgrid_file.empty()) {
+                  vp.mgrid_file = params.mgrid_file;
+              } else {
+                  vfield::MakegridParameters makegrid_parameters =
+                      vfield::load_makegrid_parameters(
+                          params.makegrid_parameters_file);
+                  if (makegrid_parameters.number_of_field_periods != p.nfp) {
+                      throw cumes::CumesError(
+                          "inline Makegrid number_of_field_periods must match "
+                          "the equilibrium nfp");
+                  }
+                  if (makegrid_parameters.normalize_by_currents) {
+                      throw cumes::CumesError(
+                          "inline Makegrid requires "
+                          "normalize_by_currents=false so extcur remains "
+                          "expressed in Amperes");
+                  }
+                  const vfield::CoilConfiguration coils =
+                      vfield::load_coil_configuration(params.coils_file);
+                  vp.response_table =
+                      vfield::compute_magnetic_field_response_table(
+                          makegrid_parameters, coils);
+              }
               return vp;
           }()) {
         // The vacuum solver raises the angular resolution to its Nyquist
@@ -363,8 +386,11 @@ void launch_rcon_decay(T* rcon0,
 // ---------------------------------------------------------------------------
 template <class T>
 FreeBoundaryOperator<T>::FreeBoundaryOperator(const HostParams& params,
-                                              const DeviceParams<T>& p)
-    : impl_(std::make_unique<Impl>(params, p)) {}
+                                              const DeviceParams<T>& p) try
+    : impl_(std::make_unique<Impl>(params, p)) {
+} catch (const CumesError&) { throw; } catch (const std::exception& error) {
+    throw CumesError(std::string("free-boundary setup: ") + error.what());
+}
 
 template <class T>
 FreeBoundaryOperator<T>::~FreeBoundaryOperator() = default;

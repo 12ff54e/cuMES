@@ -29,15 +29,29 @@ namespace cumes {
 namespace {
 
 const std::set<std::string> kSupportedKeys = {
-    "mpol",       "ntor",       "nfp",         "ntheta",     "nzeta",
-    "ncurr",      "delt",       "phiedge",     "pres_scale", "adiabatic_index",
-    "gamma",      "spres_ped",  "curtor",      "bloat",      "tcon0",
-    "am",         "ac",         "ai",          "aphi",       "raxis_c",
-    "zaxis_s",    "ns_array",   "niter_array", "ftol_array", "rbc",
-    "zbs",        "lasym",      "lfreeb",      "pmass_type", "piota_type",
-    "pcurr_type", "am_aux_s",   "am_aux_f",    "ai_aux_s",   "ai_aux_f",
-    "ac_aux_s",   "ac_aux_f",   "raxis_s",     "zaxis_c",    "rbs",
-    "zbc",        "mgrid_file", "extcur",      "nvacskip",
+    "mpol",        "ntor",
+    "nfp",         "ntheta",
+    "nzeta",       "ncurr",
+    "delt",        "phiedge",
+    "pres_scale",  "adiabatic_index",
+    "gamma",       "spres_ped",
+    "curtor",      "bloat",
+    "tcon0",       "am",
+    "ac",          "ai",
+    "aphi",        "raxis_c",
+    "zaxis_s",     "ns_array",
+    "niter_array", "ftol_array",
+    "rbc",         "zbs",
+    "lasym",       "lfreeb",
+    "pmass_type",  "piota_type",
+    "pcurr_type",  "am_aux_s",
+    "am_aux_f",    "ai_aux_s",
+    "ai_aux_f",    "ac_aux_s",
+    "ac_aux_f",    "raxis_s",
+    "zaxis_c",     "rbs",
+    "zbc",         "mgrid_file",
+    "coils_file",  "makegrid_parameters_file",
+    "extcur",      "nvacskip",
 };
 const std::set<std::string> kKnownIgnoredKeys = {
     "nstep",     "niter",   "ftolv",      "nsurf",
@@ -288,6 +302,15 @@ ParsedProblem read_problem_spec(const std::string& path,
         p.free_boundary.mgrid_file =
             getString(v, k, p.free_boundary.mgrid_file, report);
     });
+    ifPresent("coils_file", [&](const json::Value& v, const char* k) {
+        p.free_boundary.coils_file =
+            getString(v, k, p.free_boundary.coils_file, report);
+    });
+    ifPresent("makegrid_parameters_file",
+              [&](const json::Value& v, const char* k) {
+                  p.free_boundary.makegrid_parameters_file = getString(
+                      v, k, p.free_boundary.makegrid_parameters_file, report);
+              });
     ifPresent("extcur", [&](const json::Value& v, const char* k) {
         p.free_boundary.extcur = readDoubleArray(v, k, report);
     });

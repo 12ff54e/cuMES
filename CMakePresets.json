@@ -88,6 +88,18 @@
       }
     },
     {
+      "name": "fixed-only",
+      "displayName": "Fixed-only — no optional vacuum-field dependency",
+      "description": "Builds fixed-boundary cuMES without configuring or linking deps/vacuum-field.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-fixed-only",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_USE_FLOAT": "OFF",
+        "CUMES_USE_VACUUM_FIELD": "OFF"
+      }
+    },
+    {
       "name": "netcdf-only",
       "displayName": "NetCDF-only \u2014 binary + NetCDF output (CI matrix entry)",
       "description": "Builds with NetCDF but without HDF5 so the single-backend adapter path is exercised (completion-plan follow-up §3.3).",
@@ -150,6 +162,10 @@
     {
       "name": "nobackend",
       "configurePreset": "nobackend"
+    },
+    {
+      "name": "fixed-only",
+      "configurePreset": "fixed-only"
     },
     {
       "name": "netcdf-only",

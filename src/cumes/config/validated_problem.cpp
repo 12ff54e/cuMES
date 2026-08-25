@@ -207,10 +207,26 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
                      "full-update cadence)");
     }
     if (spec.free_boundary.lfreeb) {
-        if (spec.free_boundary.mgrid_file.empty()) {
-            report.error("mgrid_file",
-                         "lfreeb=true requires an mgrid_file (MAKEGRID coil "
-                         "field); the fixed-field path is not exposed");
+#ifdef CUMES_VACUUM_FIELD_DISABLED
+        report.error(
+            "lfreeb",
+            "lfreeb=true requires optional vacuum-field support; reconfigure "
+            "with CUMES_USE_VACUUM_FIELD=ON and check out the submodule");
+#endif
+        const bool has_mgrid = !spec.free_boundary.mgrid_file.empty();
+        const bool has_coils = !spec.free_boundary.coils_file.empty();
+        const bool has_makegrid_parameters =
+            !spec.free_boundary.makegrid_parameters_file.empty();
+        if (has_mgrid && (has_coils || has_makegrid_parameters)) {
+            report.error(
+                "mgrid_file",
+                "free-boundary external field must use either mgrid_file or "
+                "coils_file plus makegrid_parameters_file, not both");
+        } else if (!has_mgrid && !(has_coils && has_makegrid_parameters)) {
+            report.error(
+                "mgrid_file",
+                "lfreeb=true requires either mgrid_file or both coils_file "
+                "and makegrid_parameters_file");
         }
         if (spec.free_boundary.extcur.empty()) {
             report.error("extcur",
@@ -368,7 +384,12 @@ std::string ValidatedProblem::normalize_to_json() const {
     os << "  \"free_boundary\":{\"lfreeb\":"
        << (s.free_boundary.lfreeb ? "true" : "false")
        << ",\"nvacskip\":" << s.free_boundary.nvacskip << ",\"mgrid_file\":\""
-       << json_escape_string(s.free_boundary.mgrid_file) << "\",\"extcur\":";
+       << json_escape_string(s.free_boundary.mgrid_file)
+       << "\",\"coils_file\":\""
+       << json_escape_string(s.free_boundary.coils_file)
+       << "\",\"makegrid_parameters_file\":\""
+       << json_escape_string(s.free_boundary.makegrid_parameters_file)
+       << "\",\"extcur\":";
     emit_double_array(os, s.free_boundary.extcur);
     os << "},\n";
     os << "  \"profiles\":{\"am\":";
