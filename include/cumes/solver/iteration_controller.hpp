@@ -220,11 +220,19 @@ class IterationController {
     }
 
     // vmecpp vacuum-activation soft restart (RestartIteration via
-    // UpdateForwardModel): the caller restores the state and zeroes the
-    // velocities; here: ++ijacob, re-anchor, record the event. NO delt
-    // change (vmecpp applies the x0.9 to a LOCAL delt0 copy, not the
-    // maintained one) and the pass still classifies/descends and advances
-    // iter2 — distinct from jacobian_invalid, which shrinks delt.
+    // UpdateForwardModel): the caller zeroes the velocities (the spectral
+    // state is already the pre-pass state — vmecpp's every-pass backup);
+    // here: ++ijacob, record the event, and RE-ANCHOR. NO delt change
+    // (vmecpp applies the x0.9 to a LOCAL delt0 copy). The re-anchor
+    // mirrors RestartIteration's own `iter1_ = iter2_` (it runs inside
+    // UpdateForwardModel BEFORE Evolve's damping/control section, so the
+    // `iter2_ == iter1_` gates there DO see the new anchor): it
+    // reinitializes the 1/tau history, rebaselines res0_ to the
+    // edge-force-inflated residual, and disables the fsq-growth
+    // (BAD_JACOBIAN) check for the activation pass — without it the
+    // pass's huge fsq jump (the new edge-force term) trips
+    // `fsq > 100*res0 && iter2 > iter1` and the descent is discarded.
+    // The pass still descends and advances iter2.
     void vacuum_soft_restart() {
         ++ijacob_;
         iter1_ = iter2_;

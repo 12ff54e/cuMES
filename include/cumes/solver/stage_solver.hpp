@@ -14,10 +14,13 @@
 // arena's liveness/peak report is emitted after the solve.
 #pragma once
 
+#include "cumes/config/profile_functions.hpp"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/physics/constraint_operator.hpp"
+#include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/solver/solver_bench.hpp"
 #include "cumes/state/mode_table.cuh"
@@ -173,7 +176,8 @@ class StageSolver {
                                const ValidatedProblem& vp,
                                SpectralStorage<T>& state,
                                cudaStream_t stream = 0,
-                               SolverBench* bench = nullptr) {
+                               SolverBench* bench = nullptr,
+                               FreeBoundaryOperator<T>* vac = nullptr) {
         // One arena allocation, one construction of every module, one solve
         // (completion plan step 3.2): the modules' alloc_span calls ARE the
         // plan — there is no temporary measuring arena and nothing is
@@ -210,9 +214,34 @@ class StageSolver {
             if (use_axisym)
                 axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
+            // Per-stage edge pressure (vmecpp edgePressure,
+            // ideal_mhd_model.cc :781-790): the s=1 mass-profile value,
+            // obtained by rescaling the last half-grid pressure presH[ns-2]
+            // by the ratio mass(1)/mass((ns-1.5)/(ns-1)). presH[ns-2] comes
+            // from the stage's device Profiles (one scalar D2H — the arena
+            // is alive here).
+            if (vac != nullptr) {
+                const cumes::RadialProfileViews<T> rpv =
+                    profiles.profile_views();
+                T pres_last = T(0);
+                cumes::check_cuda(
+                    cudaMemcpy(&pres_last, rpv.pres_H + (p.ns - 2), sizeof(T),
+                               cudaMemcpyDeviceToHost),
+                    "cpy presH[ns-2]");
+                const double mass_edge =
+                    cumes::evalMassProfile<double>(vp.spec(), 1.0);
+                double edge_pressure = cumes::evalMassProfile<double>(
+                    vp.spec(), (p.ns - 1.5) / (p.ns - 1.0));
+                if (edge_pressure != 0.0) {
+                    edge_pressure =
+                        mass_edge / edge_pressure * (double)pres_last;
+                }
+                vac->set_edge_pressure(T(edge_pressure));
+            }
+
             SolverResult<T> result =
                 solverRun<T>(state, p, profiles, transform, *rs, geometry,
-                             &arena, stream, bench, axisym.get());
+                             &arena, stream, bench, axisym.get(), vac);
             // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
             // the operator destructors); nothing to free manually.
 

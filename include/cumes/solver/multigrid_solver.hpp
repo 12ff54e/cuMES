@@ -12,9 +12,11 @@
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/run_report.hpp"
 #include "cumes/numerics/prolongation.hpp"
+#include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/solver/stage_solver.hpp"
 
 #include <cstdio>
+#include <memory>
 #include <utility>
 
 namespace cumes {
@@ -38,7 +40,8 @@ class MultigridSolver {
     static MultigridOutcome<T> run(DeviceParams<T>& p,
                                    const ValidatedProblem& vp,
                                    SpectralStorage<T> seed,
-                                   cudaStream_t stream = 0) {
+                                   cudaStream_t stream = 0,
+                                   bool hot_start = false) {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
         DeviceParams<T> p_prev;
@@ -46,6 +49,21 @@ class MultigridSolver {
         int total_iter = 0;
         const auto& stages = vp.spec().stages;
         const int n_grids = static_cast<int>(stages.size());
+
+        // Free-boundary operator: constructed ONCE per run (vmecpp's
+        // persistent vacuum solvers — the accumulated response matrix and the
+        // LU factors survive the multigrid transitions; nothing is
+        // serialized to checkpoints). Only ns varies per stage; the operator
+        // receives the per-stage edge pressure and ns at update time.
+        std::unique_ptr<FreeBoundaryOperator<T>> vac;
+        if (vp.spec().free_boundary.lfreeb) {
+            typename FreeBoundaryOperator<T>::HostParams hp;
+            hp.mgrid_file = vp.spec().free_boundary.mgrid_file;
+            hp.extcur = vp.spec().free_boundary.extcur;
+            hp.nvacskip = vp.spec().free_boundary.nvacskip;
+            hp.hot_start = hot_start;
+            vac = std::make_unique<FreeBoundaryOperator<T>>(hp, p);
+        }
 
         for (int g = 0; g < n_grids; ++g) {
             p_prev = p;  // previous stage's params
@@ -61,8 +79,27 @@ class MultigridSolver {
                 // on the same compute stream (ordered before the next stage).
                 storage = cumes::Prolongation<T>{}.enqueue(p, storage, p_prev,
                                                            stream);
+                // vmecpp vmec.cc :536-539: the converged coarse-stage vacuum
+                // state stays valid; re-mark INITIALIZED so the new stage's
+                // first pass runs the vacuum block.
+                if (vac) vac->on_stage_transition(p_prev.ns, p.ns);
             }
-            result = StageSolver<T>::run(p, vp, storage, stream);
+            result =
+                StageSolver<T>::run(p, vp, storage, stream, nullptr, vac.get());
+            if (vac) {
+                const cumes::VacuumState before = vac->state();
+                vac->on_stage_end();
+                if (before == cumes::VacuumState::INITIALIZED) {
+                    std::printf(
+                        "  VACUUM PRESSURE TURNED ON AT %d ITERATIONS\n",
+                        result.iterations);
+                }
+                std::printf(
+                    "  VACUUM: rBtor=%.6e cTor=%.6e bSubUVac=%.6e "
+                    "bSubVVac=%.6e delBSq=%.3e\n",
+                    vac->rbtor(), vac->ctor(), vac->bsubu_vac(),
+                    vac->bsubv_vac(), vac->delbsq_mean());
+            }
 
             StageReport sr;
             sr.ns = p.ns;

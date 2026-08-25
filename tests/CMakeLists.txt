@@ -57,7 +57,7 @@ foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
                    test_tridiagonal test_cuda_graph test_safety_predicates
-                   test_event_dag)
+                   test_event_dag test_free_boundary_seed)
   add_executable(${t} ${t}.cu)
   target_include_directories(${t} PRIVATE ${PROJECT_SOURCE_DIR}/include)
   target_link_libraries(${t} PRIVATE cumes_config_json cumes_cuda_double cumes_cuda_float)

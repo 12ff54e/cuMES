@@ -303,8 +303,12 @@ int main(int argc, char** argv) {
         // solve, and every hot-loop kernel / cuFFT transform / D2H transfer is
         // enqueued on this stream (Phase 6A explicit-stream scheduling).
         cumes::Stream compute_stream;
-        auto outcome = cumes::MultigridSolver<Real>::run(p, vp, std::move(seed),
-                                                         compute_stream.get());
+        // A checkpoint restart is a free-boundary HOT restart (vmecpp: the
+        // vacuum state starts INITIALIZED so the first pass runs the vacuum
+        // block).
+        auto outcome = cumes::MultigridSolver<Real>::run(
+            p, vp, std::move(seed), compute_stream.get(),
+            /*hot_start=*/!restartPath.empty());
         storage = std::move(outcome.state);
         result = outcome.result;
         total_iter = outcome.total_iterations;

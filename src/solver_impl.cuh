@@ -409,6 +409,7 @@ __global__ void computeResidualsKernel(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
     int ns,
     int mnmax,
+    bool include_edge_rz,
     double* __restrict__ sq_out) {
     using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
     int comp = blockIdx.x;
@@ -417,6 +418,7 @@ __global__ void computeResidualsKernel(
     int total = mnmax * ns;
     for (int i = threadIdx.x; i < total; i += blockDim.x) {
         int mode = i / ns, j = i % ns;
+        if (comp < 2 && !include_edge_rz && j == ns - 1) continue;
         T a = f_spec(static_cast<cumes::SpectralComponent>(comp), mode, j);
         T b = f_spec(static_cast<cumes::SpectralComponent>(comp + 3), mode, j);
         sum += a * a + b * b;
@@ -519,11 +521,12 @@ void cumes::ResidualOperator<T>::enqueue(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> residual,
     int ns,
     int mnmax,
+    bool include_edge_rz,
     double* sq_out,
     cudaStream_t stream) const {
     dim3 b3(256), g3(3);
     computeResidualsKernel<T>
-        <<<g3, b3, 0, stream>>>(residual, ns, mnmax, sq_out);
+        <<<g3, b3, 0, stream>>>(residual, ns, mnmax, include_edge_rz, sq_out);
 }
 
 template <typename T>
@@ -1516,9 +1519,8 @@ void cumes::EquilibriumOperator<T>::enqueue_suffix(
     // rCon0/zCon0 decay on vacuum-active passes (vmecpp ideal_mhd_model.cc
     // :651-661), before the constraint force consumes the reference.
     if (schedule.decay_rcon0_zcon0) {
-        vac_->enqueue_rcon_decay(constraint.rcon_view(p).data(),
-                                 constraint.zcon_view(p).data(), p.ns, p.ntheta,
-                                 p.nzeta, stream);
+        vac_->enqueue_rcon_decay(constraint.rcon0(), constraint.zcon0(), p.ns,
+                                 p.ntheta, p.nzeta, stream);
     }
 
     // Add spectral condensation constraint force to brmn/bzmn.
@@ -1581,6 +1583,7 @@ void cumes::EquilibriumOperator<T>::enqueue_suffix(
 #endif
     cumes::ResidualOperator<T> residual_op;
     residual_op.enqueue(residual_view_const, p.ns, p.mnmax,
+                        schedule.include_edge_rz_invariant,
                         d_control.data()->invariant_raw, stream);
 
     // ---- Device terminal predicate (blueprint §6.9/§7 "Terminal") ----
@@ -1929,6 +1932,17 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         schedule.zero_z_force_m1 = (controller.effective_iteration() < 2) ||
                                    (controller.fsqz_prev() < 1.0e-6);
         schedule.run_vacuum_block = (vac != nullptr) && vac->run_vacuum_block();
+        // VMEC normally excludes the free-boundary LCFS R/Z force from the
+        // invariant norm. Its compatibility gate includes it only briefly
+        // near convergence (or on the first pass of a hot restart).
+        if (vac != nullptr) {
+            const bool almost_converged = (prev_fsqr + prev_fsqz) < 1.0e-6;
+            const bool hot_restart =
+                iter2 == 1 && vac->state() == cumes::VacuumState::INITIALIZED;
+            schedule.include_edge_rz_invariant =
+                (iter2 - controller.restart_anchor()) < 50 &&
+                (almost_converged || hot_restart);
+        }
         schedule.decay_rcon0_zcon0 =
             (vac != nullptr) && vac->decay_rcon0_zcon0();
         // apply_vacuum_edge_force is set below by the HOST vacuum update
@@ -1956,7 +1970,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             // the legacy stream), promotes the state, checks the rBtor/
             // cTor consistency, and arms the soft-restart/edge-force gates.
             vac->run_host_update(
-                h_buco_bvco.data(), h_buco_bvco.data() + (p.ns - 1),
+                p.ns, h_buco_bvco.data(), h_buco_bvco.data() + (p.ns - 1),
                 equilibrium.repack_device(), equilibrium.axis_device(),
                 equilibrium.axis_device() + p.nzeta, stream);
             schedule.apply_vacuum_edge_force = vac->apply_edge_force();
@@ -2083,14 +2097,21 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         }
 
         // Vacuum-activation soft restart (vmecpp UpdateForwardModel ->
-        // RestartIteration): restore the pass-start state, zero the
-        // velocities, and re-anchor WITHOUT shrinking delt (the x0.9 hits a
-        // local delt0 copy in vmecpp). The pass still classifies, descends,
-        // and advances iter2 — the restart only resets the anchor, so
-        // decide_restart re-initializes the 1/tau history exactly as
-        // vmecpp's Evolve does after a restart.
+        // RestartIteration): vmecpp restores the state to the RUNNING-MINIMUM
+        // BACKUP (the physical_x_backup_ refreshed on do_refresh passes — the
+        // initial state before the first refresh) and zeroes the velocities;
+        // the controller re-anchors and counts the event (see
+        // vacuum_soft_restart). NO delt shrink: vmecpp applies the x0.9 to a
+        // local delt0 copy, not the maintained one. The pass still classifies,
+        // descends, and advances iter2; the re-anchored decide_restart
+        // re-initializes the 1/tau history and rebaselines res0 exactly as
+        // vmecpp's Evolve does after the restart. The checkpoint slab IS
+        // vmecpp's backup (same refresh cadence), so the restore is NOT a
+        // no-op — verified against the explore-branch stage-1 trajectory,
+        // where the pass-3 state equals the initial state bit-for-bit.
         if (vac != nullptr && vac->soft_restart_requested()) {
-            restoreState();
+            restoreState();  // backup state + zero velocities (vmecpp
+                             // RestartIteration BAD_JACOBIAN branch)
             controller.vacuum_soft_restart();
         }
 
@@ -2249,6 +2270,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             controller.after_descent(
                 decision);  // advances iter2 on good passes
         }
+
+        // INITIALIZED is the single activation pass, not a stage-long state.
+        // vmecpp promotes it at this exact loop-bottom point, after restart
+        // control and before the next force iteration.
+        if (vac != nullptr) vac->on_iteration_end();
 
         // ---- Output (every 100 effective iters on the restart-anchored
         // grid, plus the final pass of a max-iteration run) ----

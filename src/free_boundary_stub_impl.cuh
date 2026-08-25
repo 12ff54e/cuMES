@@ -53,7 +53,8 @@ void FreeBoundaryOperator<T>::advance(int /*iter2*/,
                                       double /*fsqz*/) {}
 
 template <class T>
-void FreeBoundaryOperator<T>::run_host_update(const double* /*buco_h*/,
+void FreeBoundaryOperator<T>::run_host_update(int /*ns*/,
+                                              const double* /*buco_h*/,
                                               const double* /*bvco_h*/,
                                               const T* /*d_lcfs_repacked*/,
                                               const T* /*d_r_axis*/,
@@ -102,6 +103,9 @@ double FreeBoundaryOperator<T>::delbsq_mean() const {
 
 template <class T>
 void FreeBoundaryOperator<T>::set_delbsq(T /*value*/) {}
+
+template <class T>
+void FreeBoundaryOperator<T>::on_iteration_end() {}
 
 template <class T>
 void FreeBoundaryOperator<T>::on_stage_transition(int /*ns_old*/,

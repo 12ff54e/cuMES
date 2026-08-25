@@ -37,6 +37,8 @@ struct EvaluationSchedule {
     bool reset_constraint_reference = false;  // iter2 == iter1
     bool refresh_preconditioner = false;      // (iter2 - iter1) % 25 == 0
     bool zero_z_force_m1 = false;             // iter2 < 2 || fsqz_prev < 1e-6
+    bool include_edge_rz_invariant = true;    // vmecpp's <50/almost-converged
+                                              // compatibility gate
     // Free-boundary (all false in fixed-boundary runs — the DAG is then
     // launch-for-launch identical to the frozen baseline):
     bool run_vacuum_block = false;         // the block gate (iter2 > 1 ||
@@ -109,6 +111,8 @@ class EquilibriumOperator {
     T* repack_device() { return d_repack_.data(); }
     T* axis_device() { return d_axis_.data(); }
     T* delbsq_device() { return d_delbsq_.data(); }
+    T* rbsq_device() { return d_rbsq_.data(); }
+    Preconditioner<T>* preconditioner() { return &precon_; }
 
     // The reduced control record: Jacobian stats + status, invariant /
     // preconditioned raw sums, force-norm partials (completion plan step 1.3).

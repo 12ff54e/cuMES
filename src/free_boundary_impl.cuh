@@ -10,9 +10,9 @@
 //                      bsubu/bsubv with vmecpp's trapezoid weights wInt[l] =
 //                      1/(nZeta*(nThetaReduced-1)) halved at the endpoints,
 //                      l-major/k-minor ascending (vmecpp's kl loop order)
-//   lcfs repack      : the four spectral families at j=ns-1 divided by
-//                      mscale*nscale (vmecpp's decomposed representation) and
-//                      transposed to the n-major NESTOR layout
+//   lcfs repack      : the four spectral families at j=ns-1, divided by the
+//                      state-space mscale*nscale normalization and transposed
+//                      to the n-major NESTOR layout
 //   axis extract     : r_axis[k] = R(j=0, l=0, k), z_axis[k] = Z(j=0, l=0, k)
 //   rbsq             : outsideEdgePressure = b_sq_vac (reduced, l-major) +
 //                      edgePressure; rBSq = outside * R_full / deltaS, plus
@@ -74,12 +74,17 @@ __global__ void surface_averages_kernel(const T* __restrict__ bsubu,
             bvco += bsubv[idx] * wl;
         }
     }
-    out[2 * jh] = buco;
-    out[2 * jh + 1] = bvco;
+    // Two CONTIGUOUS [ns-1] halves (the caller D2Hs the buffer and passes
+    // data() and data()+ns-1 as the two host arrays; the interleaved write
+    // this replaced scrambled the halves and poisoned rBtor/cTor).
+    out[jh] = buco;
+    out[(ns - 1) + jh] = bvco;
 }
 
 // One thread per (m, n) of the n-major NESTOR layout: the LCFS row of the
-// four families, divided by mscale*nscale and transposed.
+// four families, transposed. The cuMES state carries vmecpp's orthonormal
+// mscale*nscale factors, while NESTOR's boundary arrays use the unscaled
+// Fourier coefficients, so remove those factors at the handover.
 template <class T>
 __global__ void lcfs_repack_kernel(const T* __restrict__ rcc,
                                    const T* __restrict__ rss,
@@ -194,7 +199,6 @@ __global__ void rcon_decay_kernel(T* __restrict__ rcon0,
 // ---------------------------------------------------------------------------
 template <class T>
 struct FreeBoundaryOperator<T>::Impl {
-    int ns;
     int ntheta;
     int nzeta;
     int nZnT;
@@ -210,6 +214,13 @@ struct FreeBoundaryOperator<T>::Impl {
     bool decay = false;
     bool soft_restart = false;
     bool edge_gate = false;
+    // True once a full update has produced a factorization. The first
+    // vacuum pass is FORCED to a full update: a partial update before any
+    // full one would solve with uninitialized pivots (the library now
+    // throws instead of reading pivots[-1], but the run should never get
+    // there — vmecpp avoids the corner because its ramp gate fires before
+    // the residuals are small enough to matter).
+    bool has_factors = false;
     T edge_pressure = T(0);
     double rbtor = 0.0;
     double ctor = 0.0;
@@ -219,8 +230,7 @@ struct FreeBoundaryOperator<T>::Impl {
 
     Impl(const typename FreeBoundaryOperator<T>::HostParams& params,
          const DeviceParams<T>& p)
-        : ns(p.ns),
-          ntheta(p.ntheta),
+        : ntheta(p.ntheta),
           nzeta(p.nzeta),
           nZnT(p.nZnT),
           mpol(p.mpol),
@@ -394,6 +404,7 @@ void FreeBoundaryOperator<T>::advance(int iter2,
             static_cast<VacuumState>(static_cast<int>(impl_->state) + 1);
     }
     impl_->full_update = (impl_->ivacskip == 0);
+    if (!impl_->has_factors) impl_->full_update = true;
     if (impl_->full_update) {
         const int new_nvacskip =
             static_cast<int>(1.0 / std::max(0.1, 1.0e11 * (fsqr + fsqz)));
@@ -403,7 +414,8 @@ void FreeBoundaryOperator<T>::advance(int iter2,
 }
 
 template <class T>
-void FreeBoundaryOperator<T>::run_host_update(const double* buco_h,
+void FreeBoundaryOperator<T>::run_host_update(int ns,
+                                              const double* buco_h,
                                               const double* bvco_h,
                                               const T* d_lcfs_repacked,
                                               const T* d_r_axis,
@@ -411,7 +423,7 @@ void FreeBoundaryOperator<T>::run_host_update(const double* buco_h,
                                               cudaStream_t /*stream*/) {
     // vmecpp :534-549: rBtor/cTor from the two outermost half-grid surface
     // averages (host scalars, D2H'd by the caller after the vacuum fence).
-    const int nh = impl_->ns - 1;
+    const int nh = ns - 1;
     const double buco_last = buco_h[nh - 1];
     const double buco_prev = buco_h[nh - 2];
     const double bvco_last = bvco_h[nh - 1];
@@ -437,6 +449,7 @@ void FreeBoundaryOperator<T>::run_host_update(const double* buco_h,
                          impl_->full_update);
     impl_->bsubu_vac = static_cast<double>(bsubu);
     impl_->bsubv_vac = static_cast<double>(bsubv);
+    if (impl_->full_update) impl_->has_factors = true;
 
     // Bottom promotion (vmecpp :735-737): two steps in the first vacuum pass.
     if (impl_->state == VacuumState::INITIALIZING) {
@@ -444,15 +457,23 @@ void FreeBoundaryOperator<T>::run_host_update(const double* buco_h,
     }
 
     // Consistency checks (vmecpp :755-768) — hard errors here (cuMES has no
-    // best-effort output mode; documented deviation).
+    // best-effort output mode; documented deviation). The values ride along
+    // in the message for diagnosis.
     if (impl_->rbtor * impl_->bsubv_vac < 0.0) {
         throw cumes::CumesError(
             "rBtor and bSubVVac must have the same sign - maybe flip the "
-            "sign of phiedge or the sign of the coil currents");
+            "sign of phiedge or the sign of the coil currents "
+            "(rBtor=" +
+            std::to_string(impl_->rbtor) +
+            ", bSubVVac=" + std::to_string(impl_->bsubv_vac) + ")");
     }
     if (std::fabs((impl_->ctor - impl_->bsubu_vac) / impl_->rbtor) > 0.01) {
         throw cumes::CumesError(
-            "VAC-VMEC I_TOR MISMATCH : BOUNDARY MAY ENCLOSE EXT. COIL");
+            "VAC-VMEC I_TOR MISMATCH : BOUNDARY MAY ENCLOSE EXT. COIL "
+            "(cTor=" +
+            std::to_string(impl_->ctor) +
+            ", bSubUVac=" + std::to_string(impl_->bsubu_vac) +
+            ", rBtor=" + std::to_string(impl_->rbtor) + ")");
     }
 
     // Soft restart on the first vacuum-active pass (vmecpp :770-779); the
@@ -508,6 +529,17 @@ void FreeBoundaryOperator<T>::set_delbsq(T value) {
 }
 
 template <class T>
+void FreeBoundaryOperator<T>::on_iteration_end() {
+    // vmecpp promotes INITIALIZED at the bottom of the same force iteration
+    // that consumed the vacuum-activation soft restart. Leaving promotion to
+    // the multigrid stage end repeats that restart on every intervening pass.
+    if (impl_->state == VacuumState::INITIALIZED) {
+        impl_->state = VacuumState::ACTIVE;
+        impl_->soft_restart = false;
+    }
+}
+
+template <class T>
 void FreeBoundaryOperator<T>::on_stage_transition(int ns_old, int ns_new) {
     // vmecpp vmec.cc :536-539: the converged coarse-stage vacuum state stays
     // valid; re-mark INITIALIZED so the new stage's first pass runs the
@@ -519,9 +551,7 @@ void FreeBoundaryOperator<T>::on_stage_transition(int ns_old, int ns_new) {
 
 template <class T>
 void FreeBoundaryOperator<T>::on_stage_end() {
-    if (impl_->state == VacuumState::INITIALIZED) {
-        impl_->state = VacuumState::ACTIVE;
-    }
+    on_iteration_end();
 }
 
 template <class T>
@@ -599,11 +629,8 @@ void FreeBoundaryOperator<T>::enqueue_edge_force(T* d_armn_e,
                                                  int ntheta,
                                                  int nzeta,
                                                  cudaStream_t stream) const {
-    (void)ntheta;
-    (void)nzeta;
     launch_edge_force<T>(d_armn_e, d_armn_o, d_azmn_e, d_azmn_o, d_zu_e, d_zu_o,
-                         d_ru_e, d_ru_o, d_rbsq, ns, ns * ntheta * nzeta,
-                         stream);
+                         d_ru_e, d_ru_o, d_rbsq, ns, ntheta * nzeta, stream);
 }
 
 template <class T>

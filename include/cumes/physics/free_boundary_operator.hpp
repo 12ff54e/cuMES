@@ -69,9 +69,11 @@ class FreeBoundaryOperator {
     // Mid-DAG host update (after the caller synchronized the compute stream):
     // the vfield solve on the current LCFS/axis state, the bottom promotion,
     // the rBtor/bSubVVac and cTor/bSubUVac consistency checks (CumesError on
-    // failure), and the soft-restart flag. buco_h/bvco_h are the pinned host
-    // copies of the surface-average kernels' output ([2*(ns-1)] interleaved).
-    void run_host_update(const double* buco_h,
+    // failure), and the soft-restart flag. `ns` is the CURRENT stage's
+    // surface count (the operator persists across stages); buco_h/bvco_h are
+    // the host copies of the surface-average kernels' output ([ns-1] each).
+    void run_host_update(int ns,
+                         const double* buco_h,
                          const double* bvco_h,
                          const T* d_lcfs_repacked,
                          const T* d_r_axis,
@@ -94,9 +96,11 @@ class FreeBoundaryOperator {
     // caller at the control fence; diagnostic only).
     void set_delbsq(T value);
 
-    // Multigrid hooks: active -> initialized on a stage transition (the new
-    // stage's first pass runs the vacuum block); initialized -> active at
-    // stage end ("VACUUM PRESSURE TURNED ON").
+    // Iteration/stage hooks: INITIALIZED is a one-pass state. Promote it to
+    // ACTIVE after the activation pass, matching vmecpp's loop-bottom state
+    // transition. A finer stage re-marks ACTIVE as INITIALIZED so its first
+    // pass repeats the handover/restart sequence.
+    void on_iteration_end();
     void on_stage_transition(int ns_old, int ns_new);
     void on_stage_end();
     // Per-stage edge-pressure constant (vmecpp edgePressure; precomputed by

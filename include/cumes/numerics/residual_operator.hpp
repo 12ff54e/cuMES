@@ -31,6 +31,7 @@ class ResidualOperator {
     void enqueue(SpectralView<const T, DecomposedResidualDomain> residual,
                  int ns,
                  int mnmax,
+                 bool include_edge_rz,
                  double* sq_out,
                  cudaStream_t stream) const;
 
