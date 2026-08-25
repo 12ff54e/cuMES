@@ -1720,18 +1720,18 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     cumes::DeviceBuffer<T> checkpoint(6 * (size_t)p.ns * p.mnmax);
 
     // Helper: copy current spectral state to backup (one device-to-device copy)
-    auto backupState = [&]() {
+    auto backup_state = [&]() {
         checkpoint.copy_from_async(storage.state_buffer(), stream);
     };
 
     // Helper: restore spectral state from backup + zero velocities
-    auto restoreState = [&]() {
+    auto restore_state = [&]() {
         storage.state_buffer().copy_from_async(checkpoint, stream);
         storage.velocity_buffer().zero_async(stream);
     };
 
     // Take initial backup
-    backupState();
+    backup_state();
 
     // Radial location of the magnetic axis at zeta=0, matching vmecpp's r00
     // (Printout: geometric_offset.r_00 = r1_e[0] — the real-space even-m R
@@ -1743,7 +1743,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // memory — no sync, no allocation). The displayed value lags the post-
     // descent state by one descent (the mirror is copied at the pass's
     // control fence); controller decisions never consume it.
-    auto axisRAtZeta0 = [&]() {
+    auto axis_r_at_zeta0 = [&]() {
         T h = T(0.0);
         for (int n = 0; n <= p.ntor; ++n) h += h_axis_pin.data()[n];
         return h;
@@ -1762,7 +1762,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
     // a synchronized copy. Keep that exact read for the dump-only record
     // (dump mode already performs device-wide dumps; the extra sync costs
     // nothing there and is compiled out of production).
-    auto axisRAtZeta0Sync = [&]() {
+    auto axis_r_at_zeta0_sync = [&]() {
         cudaStreamSynchronize(stream);
         std::vector<T> h_ax(static_cast<std::size_t>(p.ntor) + 1);
         cumes::check_cuda(
@@ -1775,9 +1775,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         for (int n = 0; n <= p.ntor; ++n) h += h_ax[n];
         return h;
     };
-    auto recordPass = [&](int reason, double fRi, double fZi, double fLi,
-                          double fR, double fZ, double fL, double d, double o,
-                          double dt, double b1v, double fcv, int it2, int it1) {
+    auto record_pass = [&](int reason, double fRi, double fZi, double fLi,
+                           double fR, double fZ, double fL, double d, double o,
+                           double dt, double b1v, double fcv, int it2,
+                           int it1) {
         if (!dumpEnabled()) return;
         if ((int)per_iter.size() < kMaxIterEff) {
             cumes::PassRecord r;
@@ -1795,7 +1796,7 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             r.iter2 = (double)it2;
             r.iter1 = (double)it1;
             r.reason = (double)reason;
-            r.axis_r = (double)axisRAtZeta0Sync();
+            r.axis_r = (double)axis_r_at_zeta0_sync();
             per_iter.push_back(r);
         }
     };
@@ -1836,13 +1837,13 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
 
     // One table row: effective iteration, invariant residuals, delt, and the
     // axis / boundary R_00 (same columns as vmecpp's iteration printout).
-    auto printIterRow = [&](int it2, double fsqr_v, double fsqz_v,
-                            double fsql_v, double delt_v) {
+    auto print_iter_row = [&](int it2, double fsqr_v, double fsqz_v,
+                              double fsql_v, double delt_v) {
         printf("%5d | %11.3e %11.3e %11.3e | %8.2e", it2, (double)fsqr_v,
                (double)fsqz_v, (double)fsql_v, (double)delt_v);
         // Both values come from the pinned telemetry mirror (completion
         // plan step 3.3) — no per-print device copy or synchronization.
-        T h_rmncc_axis = axisRAtZeta0();
+        T h_rmncc_axis = axis_r_at_zeta0();
         T h_rmncc_bnd = h_axis_pin.data()[p.ntor + 1];
         printf(" | Rax=%.4f Rbnd=%.4f\n", (double)h_rmncc_axis,
                (double)h_rmncc_bnd);
@@ -1896,9 +1897,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         // time step to 0.98/0.96 of the INITIAL delt (vmec.cc, "HAVING A
         // CONVERGENCE PROBLEM: RESETTING DELT"). The controller's
         // next_schedule() performs the ++ijacob / delt reset / re-anchor; the
-        // restoreState() below mirrors vmecpp's RestartIteration(BAD_JACOBIAN).
+        // restore_state() below mirrors vmecpp's
+        // RestartIteration(BAD_JACOBIAN).
         if (controller.next_schedule()) {
-            restoreState();
+            restore_state();
             printf(
                 "  -> CONVERGENCE PROBLEM: RESETTING DELT to %.3e "
                 "(ijacob=%d)\n",
@@ -2063,10 +2065,10 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
 #endif
         if (host_jac_invalid) {
 #ifdef DUMP_CUMES_VERIFY
-            recordPass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0, it2_before,
-                       it1_before);
+            record_pass(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
+                        it2_before, it1_before);
 #endif
-            restoreState();
+            restore_state();
 #ifdef DUMP_CUMES_VERIFY
             // Event line compiled out of release (fast) builds along with the
             // rest of the dump machinery; the iteration table still gets a row.
@@ -2077,8 +2079,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
                 (double)js.nonfinite_count, js.min_index / p.nZnT,
                 (double)controller.delta_t());
 #endif
-            printIterRow(controller.effective_iteration(), T(1.0), T(1.0),
-                         T(1.0), controller.delta_t());
+            print_iter_row(controller.effective_iteration(), T(1.0), T(1.0),
+                           T(1.0), controller.delta_t());
             continue;
         }
 
@@ -2110,8 +2112,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
         // no-op — verified against the explore-branch stage-1 trajectory,
         // where the pass-3 state equals the initial state bit-for-bit.
         if (vac != nullptr && vac->soft_restart_requested()) {
-            restoreState();  // backup state + zero velocities (vmecpp
-                             // RestartIteration BAD_JACOBIAN branch)
+            restore_state();  // backup state + zero velocities (vmecpp
+                              // RestartIteration BAD_JACOBIAN branch)
             controller.vacuum_soft_restart();
         }
 
@@ -2161,24 +2163,25 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             // vmecpp hard-fails on non-finite residuals (status BAD_JACOBIAN);
             // we recover instead: restore the last good state and shrink delt.
 #ifdef DUMP_CUMES_VERIFY
-            recordPass(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0, 0, 0,
-                       0, it2_before, it1_before);
+            record_pass(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0, 0,
+                        0, 0, it2_before, it1_before);
 #endif
-            restoreState();
+            restore_state();
 #ifdef DUMP_CUMES_VERIFY
             // Event line compiled out of release (fast) builds (see above).
             printf("  -> BAD JACOBIAN (non-finite residuals) delt=%.3e\n",
                    (double)controller.delta_t());
 #endif
-            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
-                         fsql_i, controller.delta_t());
+            print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
+                           fsql_i, controller.delta_t());
             continue;
         }
         if (verdict.converged) {
 #ifdef DUMP_CUMES_VERIFY
-            recordPass(0, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, controller.delta_t(),
-                       0, 0, 0, 0, controller.effective_iteration(),
-                       controller.restart_anchor());
+            record_pass(0, fsqr_i, fsqz_i, fsql_i, 0, 0, 0,
+                        controller.delta_t(), 0, 0, 0, 0,
+                        controller.effective_iteration(),
+                        controller.restart_anchor());
 #endif
             res.converged = true;
             res.iterations = controller.effective_iteration();
@@ -2195,8 +2198,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             printf("  -> CONVERGED at iter %d\n",
                    controller.effective_iteration());
 #endif
-            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
-                         fsql_i, controller.delta_t());
+            print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
+                           fsql_i, controller.delta_t());
             break;
         }
 
@@ -2217,11 +2220,11 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
             controller.decide_restart(prec_triple, inv_triple);
 
 #ifdef DUMP_CUMES_VERIFY
-        recordPass((int)decision.reason, fsqr_i, fsqz_i, fsql_i, fsqr, fsqz,
-                   fsql, controller.delta_t(), decision.damping.otav,
-                   decision.damping.dtau, decision.damping.b1,
-                   decision.damping.fac, controller.effective_iteration(),
-                   controller.restart_anchor());
+        record_pass((int)decision.reason, fsqr_i, fsqz_i, fsql_i, fsqr, fsqz,
+                    fsql, controller.delta_t(), decision.damping.otav,
+                    decision.damping.dtau, decision.damping.b1,
+                    decision.damping.fac, controller.effective_iteration(),
+                    controller.restart_anchor());
 #endif
 
         // ---- Descent step (Garabedian second-order Richardson) ----------
@@ -2246,14 +2249,14 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
                            equilibrium.xn(), p.ns, p.mnmax, dact, stream);
 
         if (decision.do_refresh) {
-            backupState();  // POST-descent state (vmecpp RestartIteration
-                            // NO_RESTART semantics — see comment above)
+            backup_state();  // POST-descent state (vmecpp RestartIteration
+                             // NO_RESTART semantics — see comment above)
         }
         if (decision.reason != cumes::RestartReason::kNone) {
             // Restore overwrites the just-descended state and zeroes the
             // velocities (vmecpp does the same: Evolve()'s descent is
             // discarded by the control block's RestartIteration).
-            restoreState();
+            restore_state();
             controller.after_descent(decision);
 #ifdef DUMP_CUMES_VERIFY
             // The restart event lines (BAD JACOBIAN / BAD PROGRESS) are
@@ -2282,8 +2285,8 @@ SolverResult<T> solverRun(cumes::SpectralStorage<T>& storage,
                     100 ==
                 0 ||
             iter == kMaxIterEff - 1) {
-            printIterRow(controller.effective_iteration(), fsqr_i, fsqz_i,
-                         fsql_i, controller.delta_t());
+            print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
+                           fsql_i, controller.delta_t());
         }
 
         if (iter == kMaxIterEff - 1) {

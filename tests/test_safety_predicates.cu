@@ -393,7 +393,7 @@ static void runGuardNoop(T label) {
     // One guarded pass with valid status, snapshot the written caches.
     // The fused inverse produces rCon/zCon into the constraint views (the
     // same production path — a plain inverse would leave them uninitialized).
-    auto runPass = [&]() {
+    auto run_pass = [&]() {
         transform.inverse_fused(storage.physical_const(), /*do_combine=*/false,
                                 constraint.rcon_view(p).data(),
                                 constraint.zcon_view(p).data());
@@ -405,7 +405,7 @@ static void runGuardNoop(T label) {
     check_cuda(
         cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
         "rec up (guard)");
-    runPass();
+    run_pass();
 
     std::vector<T> snap_bsupu(nField), snap_iotaF(p.ns), snap_ard(2 * p.ns);
     std::vector<T> snap_rcon0(nFull), snap_brmn(nFull);
@@ -431,7 +431,7 @@ static void runGuardNoop(T label) {
     check_cuda(
         cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
         "rec up (invalid)");
-    runPass();
+    run_pass();
 
     std::vector<T> now_bsupu(nField), now_iotaF(p.ns), now_ard(2 * p.ns);
     std::vector<T> now_rcon0(nFull), now_brmn(nFull);
@@ -472,7 +472,7 @@ static void runGuardNoop(T label) {
     check_cuda(
         cudaMemcpy(d_rec.data(), &h_rec, sizeof(h_rec), cudaMemcpyHostToDevice),
         "rec up (valid again)");
-    runPass();
+    run_pass();
     check_cuda(cudaMemcpy(now_bsupu.data(), bsupu, nField * sizeof(T),
                           cudaMemcpyDeviceToHost),
                "again bsupu");

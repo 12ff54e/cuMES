@@ -64,14 +64,14 @@ cumes::DeviceModeTable cumes::modeTableCreate(const DeviceParams<T>& p,
             h_xm[mode] = m;
             h_xn[mode] = n;
         }
-    auto allocInt = [&](int*& dst, size_t count, const char* name) {
+    auto alloc_int = [&](int*& dst, size_t count, const char* name) {
         if (arena)
             dst = arena->alloc_span<int>(name, count);
         else
             cumes::check_cuda(cudaMalloc(&dst, count * sizeof(int)), name);
     };
-    allocInt(mt.d_xm, mnmax, "mode_table/xm");
-    allocInt(mt.d_xn, mnmax, "mode_table/xn");
+    alloc_int(mt.d_xm, mnmax, "mode_table/xm");
+    alloc_int(mt.d_xn, mnmax, "mode_table/xn");
     cumes::check_cuda(cudaMemcpy(mt.d_xm, h_xm, (size_t)mnmax * sizeof(int),
                                  cudaMemcpyHostToDevice),
                       "xm");
@@ -374,50 +374,50 @@ cumes::RealSpaceStorage<T> realSpaceCreate(const DeviceParams<T>& p,
 template <typename T>
 void realSpaceFree(cumes::RealSpaceStorage<T>& rs) {
     if (!rs.arena_backed) {
-        auto cuFree = [](T* p) { cudaFree(p); };
-        cuFree(rs.d_r_e);
-        cuFree(rs.d_z_e);
-        cuFree(rs.d_l_e);
-        cuFree(rs.d_ru_e);
-        cuFree(rs.d_zu_e);
-        cuFree(rs.d_lu_e);
-        cuFree(rs.d_r_o);
-        cuFree(rs.d_z_o);
-        cuFree(rs.d_l_o);
-        cuFree(rs.d_ru_o);
-        cuFree(rs.d_zu_o);
-        cuFree(rs.d_lu_o);
-        cuFree(rs.d_r_real);
-        cuFree(rs.d_z_real);
-        cuFree(rs.d_l_real);
-        cuFree(rs.d_ru_real);
-        cuFree(rs.d_zu_real);
-        cuFree(rs.d_lu_real);
-        cuFree(rs.d_rv_real);
-        cuFree(rs.d_zv_real);
-        cuFree(rs.d_lv_real);
-        cuFree(rs.d_rv_e);
-        cuFree(rs.d_rv_o);
-        cuFree(rs.d_zv_e);
-        cuFree(rs.d_zv_o);
-        cuFree(rs.d_lv_e);
-        cuFree(rs.d_lv_o);
-        cuFree(rs.d_armn_e);
-        cuFree(rs.d_armn_o);
-        cuFree(rs.d_azmn_e);
-        cuFree(rs.d_azmn_o);
-        cuFree(rs.d_brmn_e);
-        cuFree(rs.d_brmn_o);
-        cuFree(rs.d_bzmn_e);
-        cuFree(rs.d_bzmn_o);
-        cuFree(rs.d_blmn_e);
-        cuFree(rs.d_blmn_o);
-        cuFree(rs.d_crmn_e);
-        cuFree(rs.d_crmn_o);
-        cuFree(rs.d_czmn_e);
-        cuFree(rs.d_czmn_o);
-        cuFree(rs.d_clmn_e);
-        cuFree(rs.d_clmn_o);
+        auto cu_free = [](T* p) { cudaFree(p); };
+        cu_free(rs.d_r_e);
+        cu_free(rs.d_z_e);
+        cu_free(rs.d_l_e);
+        cu_free(rs.d_ru_e);
+        cu_free(rs.d_zu_e);
+        cu_free(rs.d_lu_e);
+        cu_free(rs.d_r_o);
+        cu_free(rs.d_z_o);
+        cu_free(rs.d_l_o);
+        cu_free(rs.d_ru_o);
+        cu_free(rs.d_zu_o);
+        cu_free(rs.d_lu_o);
+        cu_free(rs.d_r_real);
+        cu_free(rs.d_z_real);
+        cu_free(rs.d_l_real);
+        cu_free(rs.d_ru_real);
+        cu_free(rs.d_zu_real);
+        cu_free(rs.d_lu_real);
+        cu_free(rs.d_rv_real);
+        cu_free(rs.d_zv_real);
+        cu_free(rs.d_lv_real);
+        cu_free(rs.d_rv_e);
+        cu_free(rs.d_rv_o);
+        cu_free(rs.d_zv_e);
+        cu_free(rs.d_zv_o);
+        cu_free(rs.d_lv_e);
+        cu_free(rs.d_lv_o);
+        cu_free(rs.d_armn_e);
+        cu_free(rs.d_armn_o);
+        cu_free(rs.d_azmn_e);
+        cu_free(rs.d_azmn_o);
+        cu_free(rs.d_brmn_e);
+        cu_free(rs.d_brmn_o);
+        cu_free(rs.d_bzmn_e);
+        cu_free(rs.d_bzmn_o);
+        cu_free(rs.d_blmn_e);
+        cu_free(rs.d_blmn_o);
+        cu_free(rs.d_crmn_e);
+        cu_free(rs.d_crmn_o);
+        cu_free(rs.d_czmn_e);
+        cu_free(rs.d_czmn_o);
+        cu_free(rs.d_clmn_e);
+        cu_free(rs.d_clmn_o);
     }
     rs = cumes::RealSpaceStorage<T>{};
 }

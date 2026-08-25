@@ -276,59 +276,59 @@ MakegridParametersSpec readMakegridParameters(const json::Value& value,
         }
     }
 
-    auto ifPresent = [&](const char* field, auto fn) {
+    auto if_present = [&](const char* field, auto fn) {
         if (value.contains(field)) fn(value.at(field), key + "." + field);
     };
-    ifPresent("normalize_by_currents",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.normalize_by_currents = getBool(
-                      v, where, parameters.normalize_by_currents, report);
-              });
-    ifPresent("assume_stellarator_symmetry",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.assume_stellarator_symmetry = getBool(
-                      v, where, parameters.assume_stellarator_symmetry, report);
-              });
-    ifPresent("number_of_field_periods",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.number_of_field_periods = getInt(
-                      v, where, parameters.number_of_field_periods, report);
-              });
-    ifPresent("r_grid_minimum",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.r_grid_minimum =
-                      getDouble(v, where, parameters.r_grid_minimum, report);
-              });
-    ifPresent("r_grid_maximum",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.r_grid_maximum =
-                      getDouble(v, where, parameters.r_grid_maximum, report);
-              });
-    ifPresent("number_of_r_grid_points",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.number_of_r_grid_points = getInt(
-                      v, where, parameters.number_of_r_grid_points, report);
-              });
-    ifPresent("z_grid_minimum",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.z_grid_minimum =
-                      getDouble(v, where, parameters.z_grid_minimum, report);
-              });
-    ifPresent("z_grid_maximum",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.z_grid_maximum =
-                      getDouble(v, where, parameters.z_grid_maximum, report);
-              });
-    ifPresent("number_of_z_grid_points",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.number_of_z_grid_points = getInt(
-                      v, where, parameters.number_of_z_grid_points, report);
-              });
-    ifPresent("number_of_phi_grid_points",
-              [&](const json::Value& v, const std::string& where) {
-                  parameters.number_of_phi_grid_points = getInt(
-                      v, where, parameters.number_of_phi_grid_points, report);
-              });
+    if_present("normalize_by_currents",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.normalize_by_currents = getBool(
+                       v, where, parameters.normalize_by_currents, report);
+               });
+    if_present("assume_stellarator_symmetry", [&](const json::Value& v,
+                                                  const std::string& where) {
+        parameters.assume_stellarator_symmetry =
+            getBool(v, where, parameters.assume_stellarator_symmetry, report);
+    });
+    if_present("number_of_field_periods",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.number_of_field_periods = getInt(
+                       v, where, parameters.number_of_field_periods, report);
+               });
+    if_present("r_grid_minimum",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.r_grid_minimum =
+                       getDouble(v, where, parameters.r_grid_minimum, report);
+               });
+    if_present("r_grid_maximum",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.r_grid_maximum =
+                       getDouble(v, where, parameters.r_grid_maximum, report);
+               });
+    if_present("number_of_r_grid_points",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.number_of_r_grid_points = getInt(
+                       v, where, parameters.number_of_r_grid_points, report);
+               });
+    if_present("z_grid_minimum",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.z_grid_minimum =
+                       getDouble(v, where, parameters.z_grid_minimum, report);
+               });
+    if_present("z_grid_maximum",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.z_grid_maximum =
+                       getDouble(v, where, parameters.z_grid_maximum, report);
+               });
+    if_present("number_of_z_grid_points",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.number_of_z_grid_points = getInt(
+                       v, where, parameters.number_of_z_grid_points, report);
+               });
+    if_present("number_of_phi_grid_points",
+               [&](const json::Value& v, const std::string& where) {
+                   parameters.number_of_phi_grid_points = getInt(
+                       v, where, parameters.number_of_phi_grid_points, report);
+               });
     return parameters;
 }
 
@@ -346,27 +346,27 @@ ParsedProblem read_problem_spec(const std::string& path,
     }
 
     // Helper: apply fn(v, key) when root has the key.
-    auto ifPresent = [&](const char* key, auto fn) {
+    auto if_present = [&](const char* key, auto fn) {
         if (root.contains(key)) fn(root.at(key), key);
     };
 
     // ---- scalars ----
-    ifPresent("mpol", [&](const json::Value& v, const char* k) {
+    if_present("mpol", [&](const json::Value& v, const char* k) {
         p.mpol = getInt(v, k, p.mpol, report);
     });
-    ifPresent("ntor", [&](const json::Value& v, const char* k) {
+    if_present("ntor", [&](const json::Value& v, const char* k) {
         p.ntor = getInt(v, k, p.ntor, report);
     });
-    ifPresent("nfp", [&](const json::Value& v, const char* k) {
+    if_present("nfp", [&](const json::Value& v, const char* k) {
         p.nfp = getInt(v, k, p.nfp, report);
     });
-    ifPresent("ntheta", [&](const json::Value& v, const char* k) {
+    if_present("ntheta", [&](const json::Value& v, const char* k) {
         p.angular.ntheta = getInt(v, k, p.angular.ntheta, report);
     });
-    ifPresent("nzeta", [&](const json::Value& v, const char* k) {
+    if_present("nzeta", [&](const json::Value& v, const char* k) {
         p.angular.nzeta = getInt(v, k, p.angular.nzeta, report);
     });
-    ifPresent("ncurr", [&](const json::Value& v, const char* k) {
+    if_present("ncurr", [&](const json::Value& v, const char* k) {
         const int nc = getInt(v, k, 0, report);
         if (nc == 0)
             p.current_model = CurrentModel::kFixedIota;
@@ -375,13 +375,13 @@ ParsedProblem read_problem_spec(const std::string& path,
         else
             report.error(k, "ncurr must be 0 or 1");
     });
-    ifPresent("delt", [&](const json::Value& v, const char* k) {
+    if_present("delt", [&](const json::Value& v, const char* k) {
         p.delt = getDouble(v, k, p.delt, report);
     });
-    ifPresent("phiedge", [&](const json::Value& v, const char* k) {
+    if_present("phiedge", [&](const json::Value& v, const char* k) {
         p.physical.phiedge = getDouble(v, k, p.physical.phiedge, report);
     });
-    ifPresent("pres_scale", [&](const json::Value& v, const char* k) {
+    if_present("pres_scale", [&](const json::Value& v, const char* k) {
         p.physical.pres_scale = getDouble(v, k, p.physical.pres_scale, report);
     });
     // "adiabatic_index" is the legacy alias for vmecpp's "gamma".
@@ -393,37 +393,37 @@ ParsedProblem read_problem_spec(const std::string& path,
         p.physical.adiabatic_index = getDouble(
             root.at("gamma"), "gamma", p.physical.adiabatic_index, report);
     }
-    ifPresent("spres_ped", [&](const json::Value& v, const char* k) {
+    if_present("spres_ped", [&](const json::Value& v, const char* k) {
         p.physical.spres_ped = getDouble(v, k, p.physical.spres_ped, report);
     });
-    ifPresent("curtor", [&](const json::Value& v, const char* k) {
+    if_present("curtor", [&](const json::Value& v, const char* k) {
         p.physical.curtor = getDouble(v, k, p.physical.curtor, report);
     });
-    ifPresent("bloat", [&](const json::Value& v, const char* k) {
+    if_present("bloat", [&](const json::Value& v, const char* k) {
         p.physical.bloat = getDouble(v, k, p.physical.bloat, report);
     });
-    ifPresent("tcon0", [&](const json::Value& v, const char* k) {
+    if_present("tcon0", [&](const json::Value& v, const char* k) {
         p.physical.tcon0 = getDouble(v, k, p.physical.tcon0, report);
     });
 
     // ---- free boundary ----
-    ifPresent("lfreeb", [&](const json::Value& v, const char* k) {
+    if_present("lfreeb", [&](const json::Value& v, const char* k) {
         p.free_boundary.lfreeb = getBool(v, k, p.free_boundary.lfreeb, report);
     });
-    ifPresent("mgrid_file", [&](const json::Value& v, const char* k) {
+    if_present("mgrid_file", [&](const json::Value& v, const char* k) {
         p.free_boundary.mgrid_file =
             getString(v, k, p.free_boundary.mgrid_file, report);
     });
-    ifPresent("coils_file", [&](const json::Value& v, const char* k) {
+    if_present("coils_file", [&](const json::Value& v, const char* k) {
         p.free_boundary.coils_file =
             getString(v, k, p.free_boundary.coils_file, report);
     });
-    ifPresent("makegrid_parameters_file",
-              [&](const json::Value& v, const char* k) {
-                  p.free_boundary.makegrid_parameters_file = getString(
-                      v, k, p.free_boundary.makegrid_parameters_file, report);
-              });
-    ifPresent("makegrid_paramters", [&](const json::Value& v, const char* k) {
+    if_present("makegrid_parameters_file",
+               [&](const json::Value& v, const char* k) {
+                   p.free_boundary.makegrid_parameters_file = getString(
+                       v, k, p.free_boundary.makegrid_parameters_file, report);
+               });
+    if_present("makegrid_paramters", [&](const json::Value& v, const char* k) {
         p.free_boundary.embedded_makegrid_parameters =
             readMakegridParameters(v, k, report);
     });
@@ -433,22 +433,22 @@ ParsedProblem read_problem_spec(const std::string& path,
                     "both makegrid_parameters_file and makegrid_paramters "
                     "are present; using embedded makegrid_paramters");
     }
-    ifPresent("extcur", [&](const json::Value& v, const char* k) {
+    if_present("extcur", [&](const json::Value& v, const char* k) {
         p.free_boundary.extcur = readDoubleArray(v, k, report);
     });
-    ifPresent("nvacskip", [&](const json::Value& v, const char* k) {
+    if_present("nvacskip", [&](const json::Value& v, const char* k) {
         p.free_boundary.nvacskip =
             getInt(v, k, p.free_boundary.nvacskip, report);
     });
 
     // ---- profile coefficients (power series) ----
-    ifPresent("am", [&](const json::Value& v, const char* k) {
+    if_present("am", [&](const json::Value& v, const char* k) {
         p.mass.coefficients = readDoubleArray(v, k, report);
     });
-    ifPresent("ac", [&](const json::Value& v, const char* k) {
+    if_present("ac", [&](const json::Value& v, const char* k) {
         p.current.coefficients = readDoubleArray(v, k, report);
     });
-    ifPresent("ai", [&](const json::Value& v, const char* k) {
+    if_present("ai", [&](const json::Value& v, const char* k) {
         p.iota.coefficients = readDoubleArray(v, k, report);
     });
     if (root.contains("aphi")) {

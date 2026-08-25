@@ -672,19 +672,19 @@ int main() {
     check(res.converged, "converged equilibrium reached");
 
     // ---- Capture the converged state (host) for the sensitivity control ----
-    auto getFam = [&](cumes::SpectralComponent c) {
+    auto get_family = [&](cumes::SpectralComponent c) {
         std::vector<double> v((size_t)ns * p.mnmax);
         cc(cudaMemcpy(v.data(), storage.family_ptr(c), nb,
                       cudaMemcpyDeviceToHost),
            "get family");
         return v;
     };
-    std::vector<double> h_rmncc_c = getFam(cumes::SpectralComponent::Rcc);
-    std::vector<double> h_zmnsc_c = getFam(cumes::SpectralComponent::Zsc);
-    std::vector<double> h_lmnsc_c = getFam(cumes::SpectralComponent::Lsc);
-    std::vector<double> h_rmnss_c = getFam(cumes::SpectralComponent::Rss);
-    std::vector<double> h_zmncs_c = getFam(cumes::SpectralComponent::Zcs);
-    std::vector<double> h_lmncs_c = getFam(cumes::SpectralComponent::Lcs);
+    std::vector<double> h_rmncc_c = get_family(cumes::SpectralComponent::Rcc);
+    std::vector<double> h_zmnsc_c = get_family(cumes::SpectralComponent::Zsc);
+    std::vector<double> h_lmnsc_c = get_family(cumes::SpectralComponent::Lsc);
+    std::vector<double> h_rmnss_c = get_family(cumes::SpectralComponent::Rss);
+    std::vector<double> h_zmncs_c = get_family(cumes::SpectralComponent::Zcs);
+    std::vector<double> h_lmncs_c = get_family(cumes::SpectralComponent::Lcs);
 
     // The whole point: a converged equilibrium must sit near a force balance.
     // The balance CHECKs below are computed by the INDEPENDENT CPU path, so a

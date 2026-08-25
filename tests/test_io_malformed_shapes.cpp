@@ -255,7 +255,7 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
         if ((expr) < 0) return false; \
     } while (0)
     const bool ok = [&]() -> bool {
-        auto putIntAttr = [&](const char* name, int value) -> herr_t {
+        auto put_int_attr = [&](const char* name, int value) -> herr_t {
             hid_t sid = H5Screate(H5S_SCALAR);
             if (sid < 0) return -1;
             hid_t aid = H5Acreate2(fid, name, H5T_NATIVE_INT, sid, H5P_DEFAULT,
@@ -266,8 +266,8 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             H5Aclose(aid);
             return r;
         };
-        auto putStrAttr = [&](const char* name,
-                              const std::string& value) -> herr_t {
+        auto put_str_attr = [&](const char* name,
+                                const std::string& value) -> herr_t {
             hid_t s1 = H5Tcopy(H5T_C_S1);
             if (s1 < 0) return -1;
             herr_t r0 = H5Tset_size(s1, value.size() + 1);
@@ -292,8 +292,8 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             H5Tclose(s1);
             return r;
         };
-        auto putArray = [&](const char* name, hid_t dtype, hsize_t len,
-                            const void* data) -> herr_t {
+        auto put_array = [&](const char* name, hid_t dtype, hsize_t len,
+                             const void* data) -> herr_t {
             hid_t sp = H5Screate_simple(1, &len, nullptr);
             if (sp < 0) return -1;
             hid_t ds = H5Dcreate2(fid, name, dtype, sp, H5P_DEFAULT,
@@ -376,12 +376,12 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             H5Aclose(aid);
             H5_F(r);
         } else {
-            H5_F(putIntAttr("precision", 0));
+            H5_F(put_int_attr("precision", 0));
         }
-        H5_F(putIntAttr("status", 0));
-        H5_F(putIntAttr("total_iterations", 0));
-        H5_F(putIntAttr("build_dirty",
-                        mut == H5Mutation::kDirtyOutOfRange ? 2 : 0));
+        H5_F(put_int_attr("status", 0));
+        H5_F(put_int_attr("total_iterations", 0));
+        H5_F(put_int_attr("build_dirty",
+                          mut == H5Mutation::kDirtyOutOfRange ? 2 : 0));
         if (mut == H5Mutation::kStrAttrArray) {
             // "revision" as a 2-element string array attribute.
             const hsize_t ext[1] = {2};
@@ -434,17 +434,17 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             H5Tclose(s1);
             H5_F(r);
         } else {
-            H5_F(putStrAttr("revision", "r1"));
+            H5_F(put_str_attr("revision", "r1"));
         }
-        H5_F(putStrAttr("build_type", "Release"));
-        H5_F(putStrAttr("precision_policy", "verify-double"));
-        H5_F(putStrAttr("compile_flags", ""));
-        H5_F(putStrAttr("source_path", "in.json"));
-        H5_F(putStrAttr("source_hash", "h"));
-        H5_F(putStrAttr("gpu_name", "g"));
-        H5_F(putStrAttr("driver", "d"));
-        H5_F(putStrAttr("runtime", "rt"));
-        H5_F(putStrAttr("toolkit", "t"));
+        H5_F(put_str_attr("build_type", "Release"));
+        H5_F(put_str_attr("precision_policy", "verify-double"));
+        H5_F(put_str_attr("compile_flags", ""));
+        H5_F(put_str_attr("source_path", "in.json"));
+        H5_F(put_str_attr("source_hash", "h"));
+        H5_F(put_str_attr("gpu_name", "g"));
+        H5_F(put_str_attr("driver", "d"));
+        H5_F(put_str_attr("runtime", "rt"));
+        H5_F(put_str_attr("toolkit", "t"));
         std::vector<int> stage_ns(2, 3), stage_iter(2, 1), stage_conv(2, 1);
         std::vector<double> stage_res(2, 0.0);
         std::vector<int> rst_iter(1, 7);
@@ -478,27 +478,29 @@ static bool writeHdf5Fixture(const std::string& path, H5Mutation mut) {
             H5_F(r);
         } else if (mut == H5Mutation::kStageUnsigned) {
             const unsigned int values[2] = {3, 3};
-            H5_F(putArray("stage_ns", H5T_NATIVE_UINT, 2, values));
+            H5_F(put_array("stage_ns", H5T_NATIVE_UINT, 2, values));
         } else if (mut == H5Mutation::kStageU8) {
             const unsigned char values[2] = {3, 3};
-            H5_F(putArray("stage_ns", H5T_NATIVE_UCHAR, 2, values));
+            H5_F(put_array("stage_ns", H5T_NATIVE_UCHAR, 2, values));
         } else if (mut == H5Mutation::kStageI64) {
             const long long values[2] = {3, 3};
-            H5_F(putArray("stage_ns", H5T_NATIVE_LLONG, 2, values));
+            H5_F(put_array("stage_ns", H5T_NATIVE_LLONG, 2, values));
         } else {
-            H5_F(putArray("stage_ns", H5T_NATIVE_INT, 2, stage_ns.data()));
+            H5_F(put_array("stage_ns", H5T_NATIVE_INT, 2, stage_ns.data()));
         }
+        H5_F(put_array("stage_iterations", H5T_NATIVE_INT, 2,
+                       stage_iter.data()));
         H5_F(
-            putArray("stage_iterations", H5T_NATIVE_INT, 2, stage_iter.data()));
-        H5_F(putArray("stage_converged", H5T_NATIVE_INT, 2, stage_conv.data()));
-        H5_F(putArray("stage_fsqr", H5T_NATIVE_DOUBLE, 2, stage_res.data()));
-        H5_F(putArray("stage_fsqz", H5T_NATIVE_DOUBLE, 2, stage_res.data()));
-        H5_F(putArray("stage_fsql", H5T_NATIVE_DOUBLE, 2, stage_res.data()));
+            put_array("stage_converged", H5T_NATIVE_INT, 2, stage_conv.data()));
+        H5_F(put_array("stage_fsqr", H5T_NATIVE_DOUBLE, 2, stage_res.data()));
+        H5_F(put_array("stage_fsqz", H5T_NATIVE_DOUBLE, 2, stage_res.data()));
+        H5_F(put_array("stage_fsql", H5T_NATIVE_DOUBLE, 2, stage_res.data()));
         {
             const int offs[2] = {0, 1};  // valid offsets for the control case
-            H5_F(putArray("restart_stage_offset", H5T_NATIVE_INT, 2, offs));
+            H5_F(put_array("restart_stage_offset", H5T_NATIVE_INT, 2, offs));
         }
-        H5_F(putArray("restart_iteration", H5T_NATIVE_INT, 1, rst_iter.data()));
+        H5_F(
+            put_array("restart_iteration", H5T_NATIVE_INT, 1, rst_iter.data()));
         return true;
     }();
     if (!ok) {

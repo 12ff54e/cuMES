@@ -177,7 +177,7 @@ static bool writeHdf5Fixture(const std::string& path,
         if ((expr) < 0) return false; \
     } while (0)
     const bool ok = [&]() -> bool {
-        auto putIntAttr = [&](const char* name, int value) -> herr_t {
+        auto put_int_attr = [&](const char* name, int value) -> herr_t {
             hid_t sid = H5Screate(H5S_SCALAR);
             if (sid < 0) return -1;
             hid_t aid = H5Acreate2(fid, name, H5T_NATIVE_INT, sid, H5P_DEFAULT,
@@ -188,8 +188,8 @@ static bool writeHdf5Fixture(const std::string& path,
             H5Aclose(aid);
             return r;
         };
-        auto putStrAttr = [&](const char* name,
-                              const std::string& value) -> herr_t {
+        auto put_str_attr = [&](const char* name,
+                                const std::string& value) -> herr_t {
             hid_t s1 = H5Tcopy(H5T_C_S1);
             if (s1 < 0) return -1;
             herr_t r0 = H5Tset_size(s1, value.size() + 1);
@@ -214,8 +214,8 @@ static bool writeHdf5Fixture(const std::string& path,
             H5Tclose(s1);
             return r;
         };
-        auto putArray = [&](const char* name, hid_t dtype, hsize_t len,
-                            const void* data) -> herr_t {
+        auto put_array = [&](const char* name, hid_t dtype, hsize_t len,
+                             const void* data) -> herr_t {
             hid_t sp = H5Screate_simple(1, &len, nullptr);
             if (sp < 0) return -1;
             hid_t ds = H5Dcreate2(fid, name, dtype, sp, H5P_DEFAULT,
@@ -246,20 +246,20 @@ static bool writeHdf5Fixture(const std::string& path,
             }
             H5Dclose(ds);
         }
-        H5_F(putIntAttr("precision", 0));
-        H5_F(putIntAttr("status", 0));
-        H5_F(putIntAttr("total_iterations", 0));
-        H5_F(putIntAttr("build_dirty", 0));
-        H5_F(putStrAttr("revision", "r1"));
-        H5_F(putStrAttr("build_type", "Release"));
-        H5_F(putStrAttr("precision_policy", "verify-double"));
-        H5_F(putStrAttr("compile_flags", ""));
-        H5_F(putStrAttr("source_path", "in.json"));
-        H5_F(putStrAttr("source_hash", "h"));
-        H5_F(putStrAttr("gpu_name", "g"));
-        H5_F(putStrAttr("driver", "d"));
-        H5_F(putStrAttr("runtime", "rt"));
-        H5_F(putStrAttr("toolkit", "t"));
+        H5_F(put_int_attr("precision", 0));
+        H5_F(put_int_attr("status", 0));
+        H5_F(put_int_attr("total_iterations", 0));
+        H5_F(put_int_attr("build_dirty", 0));
+        H5_F(put_str_attr("revision", "r1"));
+        H5_F(put_str_attr("build_type", "Release"));
+        H5_F(put_str_attr("precision_policy", "verify-double"));
+        H5_F(put_str_attr("compile_flags", ""));
+        H5_F(put_str_attr("source_path", "in.json"));
+        H5_F(put_str_attr("source_hash", "h"));
+        H5_F(put_str_attr("gpu_name", "g"));
+        H5_F(put_str_attr("driver", "d"));
+        H5_F(put_str_attr("runtime", "rt"));
+        H5_F(put_str_attr("toolkit", "t"));
         std::vector<int> stage_ns((size_t)nstages, 3);
         // Wrong-extent case: unlike NetCDF (which stores nrestarts as a named
         // dimension), the HDF5 reader derives the stage/restart extents FROM
@@ -270,22 +270,22 @@ static bool writeHdf5Fixture(const std::string& path,
         std::vector<int> stage_conv((size_t)nstages, 1);
         std::vector<double> stage_res((size_t)nstages, 0.0);
         std::vector<int> rst_iter((size_t)nrestarts, 7);
-        H5_F(putArray("stage_ns", H5T_NATIVE_INT, (hsize_t)nstages,
-                      stage_ns.data()));
-        H5_F(putArray("stage_iterations", H5T_NATIVE_INT,
-                      (hsize_t)stage_iter.size(), stage_iter.data()));
-        H5_F(putArray("stage_converged", H5T_NATIVE_INT, (hsize_t)nstages,
-                      stage_conv.data()));
-        H5_F(putArray("stage_fsqr", H5T_NATIVE_DOUBLE, (hsize_t)nstages,
-                      stage_res.data()));
-        H5_F(putArray("stage_fsqz", H5T_NATIVE_DOUBLE, (hsize_t)nstages,
-                      stage_res.data()));
-        H5_F(putArray("stage_fsql", H5T_NATIVE_DOUBLE, (hsize_t)nstages,
-                      stage_res.data()));
-        H5_F(putArray("restart_stage_offset", H5T_NATIVE_INT, (hsize_t)nstages,
-                      rst_off.data()));
-        H5_F(putArray("restart_iteration", H5T_NATIVE_INT, (hsize_t)nrestarts,
-                      rst_iter.data()));
+        H5_F(put_array("stage_ns", H5T_NATIVE_INT, (hsize_t)nstages,
+                       stage_ns.data()));
+        H5_F(put_array("stage_iterations", H5T_NATIVE_INT,
+                       (hsize_t)stage_iter.size(), stage_iter.data()));
+        H5_F(put_array("stage_converged", H5T_NATIVE_INT, (hsize_t)nstages,
+                       stage_conv.data()));
+        H5_F(put_array("stage_fsqr", H5T_NATIVE_DOUBLE, (hsize_t)nstages,
+                       stage_res.data()));
+        H5_F(put_array("stage_fsqz", H5T_NATIVE_DOUBLE, (hsize_t)nstages,
+                       stage_res.data()));
+        H5_F(put_array("stage_fsql", H5T_NATIVE_DOUBLE, (hsize_t)nstages,
+                       stage_res.data()));
+        H5_F(put_array("restart_stage_offset", H5T_NATIVE_INT, (hsize_t)nstages,
+                       rst_off.data()));
+        H5_F(put_array("restart_iteration", H5T_NATIVE_INT, (hsize_t)nrestarts,
+                       rst_iter.data()));
         return true;
     }();
     if (!ok) {
@@ -307,9 +307,9 @@ static void testBackend(const char* name,
                         OutputFormat fmt,
                         const std::string& suffix,
                         const TempDir& dir) {
-    auto runCase = [&](const char* label, const std::vector<int>& offsets,
-                       int nrestarts, bool expect_ok,
-                       bool wrong_iter_extent = false) {
+    auto run_case = [&](const char* label, const std::vector<int>& offsets,
+                        int nrestarts, bool expect_ok,
+                        bool wrong_iter_extent = false) {
         const std::string path = dir.path() + "/" + label + suffix;
         const bool written =
             writer(path, offsets, nrestarts, wrong_iter_extent);
@@ -352,13 +352,13 @@ static void testBackend(const char* name,
     };
 
     // Valid: two stages share three restarts via offsets {0, 2}.
-    runCase("valid", {0, 2}, 3, /*expect_ok=*/true);
+    run_case("valid", {0, 2}, 3, /*expect_ok=*/true);
     // Corrupted shapes (completion-plan follow-up §2.2).
-    runCase("negative", {0, -1}, 2, false);
-    runCase("descending", {0, 2, 1}, 3, false);
-    runCase("oversized", {0, 5}, 3, false);
-    runCase("nonzero_first", {1, 2}, 2, false);
-    runCase("extent_mismatch", {0, 1}, 1, false, /*wrong_iter_extent=*/true);
+    run_case("negative", {0, -1}, 2, false);
+    run_case("descending", {0, 2, 1}, 3, false);
+    run_case("oversized", {0, 5}, 3, false);
+    run_case("nonzero_first", {1, 2}, 2, false);
+    run_case("extent_mismatch", {0, 1}, 1, false, /*wrong_iter_extent=*/true);
 }
 #endif  // CUMES_HAVE_NETCDF || CUMES_HAVE_HDF5
 

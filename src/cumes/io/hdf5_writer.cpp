@@ -146,8 +146,9 @@ class Hdf5V1Writer final : public Writer {
         if ((expr) < 0) return fail(std::string(msg_)); \
     } while (0)
 
-        auto writeArray = [&](const char* name, hid_t dtype, int nd,
-                              const hsize_t* dims, const void* data) -> herr_t {
+        auto write_array = [&](const char* name, hid_t dtype, int nd,
+                               const hsize_t* dims,
+                               const void* data) -> herr_t {
             hid_t sp = H5Screate_simple(nd, dims, nullptr);
             if (sp < 0) { return -1; }
             hid_t ds = H5Dcreate2(fid, name, dtype, sp, H5P_DEFAULT,
@@ -318,19 +319,19 @@ class Hdf5V1Writer final : public Writer {
                  "attr makegrid_number_of_phi_grid_points");
         H5_CHECK(putStrAttr(fid, "schema", ip.schema), "attr schema");
         {
-            auto writeVec = [&](const char* name,
-                                const std::vector<double>& v) -> herr_t {
+            auto write_vec = [&](const char* name,
+                                 const std::vector<double>& v) -> herr_t {
                 const hsize_t d[1] = {v.size()};
-                return writeArray(name, H5T_NATIVE_DOUBLE, 1, d,
-                                  v.empty() ? nullptr : v.data());
+                return write_array(name, H5T_NATIVE_DOUBLE, 1, d,
+                                   v.empty() ? nullptr : v.data());
             };
-            H5_CHECK(writeVec("am", ip.am), "write am");
-            H5_CHECK(writeVec("extcur", ip.extcur), "write extcur");
-            H5_CHECK(writeVec("ac", ip.ac), "write ac");
-            H5_CHECK(writeVec("ai", ip.ai), "write ai");
-            H5_CHECK(writeVec("aphi", ip.aphi), "write aphi");
-            H5_CHECK(writeVec("raxis_c", ip.raxis_c), "write raxis_c");
-            H5_CHECK(writeVec("zaxis_s", ip.zaxis_s), "write zaxis_s");
+            H5_CHECK(write_vec("am", ip.am), "write am");
+            H5_CHECK(write_vec("extcur", ip.extcur), "write extcur");
+            H5_CHECK(write_vec("ac", ip.ac), "write ac");
+            H5_CHECK(write_vec("ai", ip.ai), "write ai");
+            H5_CHECK(write_vec("aphi", ip.aphi), "write aphi");
+            H5_CHECK(write_vec("raxis_c", ip.raxis_c), "write raxis_c");
+            H5_CHECK(write_vec("zaxis_s", ip.zaxis_s), "write zaxis_s");
         }
         {
             const size_t nstages_in = ip.stages.size();
@@ -342,14 +343,14 @@ class Hdf5V1Writer final : public Writer {
                 stg_max_iter[g] = ip.stages[g].max_iter;
                 stg_ftol[g] = ip.stages[g].ftol;
             }
-            H5_CHECK(writeArray("stage_in_ns", H5T_NATIVE_INT, 1, d_in,
-                                stg_in_ns.data()),
+            H5_CHECK(write_array("stage_in_ns", H5T_NATIVE_INT, 1, d_in,
+                                 stg_in_ns.data()),
                      "write stage_in_ns");
-            H5_CHECK(writeArray("stage_max_iter", H5T_NATIVE_INT, 1, d_in,
-                                stg_max_iter.data()),
+            H5_CHECK(write_array("stage_max_iter", H5T_NATIVE_INT, 1, d_in,
+                                 stg_max_iter.data()),
                      "write stage_max_iter");
-            H5_CHECK(writeArray("stage_ftol", H5T_NATIVE_DOUBLE, 1, d_in,
-                                stg_ftol.data()),
+            H5_CHECK(write_array("stage_ftol", H5T_NATIVE_DOUBLE, 1, d_in,
+                                 stg_ftol.data()),
                      "write stage_ftol");
         }
 
@@ -373,30 +374,30 @@ class Hdf5V1Writer final : public Writer {
         }
         const hsize_t d_stages[1] = {nstages};
         const hsize_t d_restarts[1] = {nrestarts};
-        H5_CHECK(writeArray("stage_ns", H5T_NATIVE_INT, 1, d_stages,
-                            stage_ns.data()),
+        H5_CHECK(write_array("stage_ns", H5T_NATIVE_INT, 1, d_stages,
+                             stage_ns.data()),
                  "write stage_ns");
-        H5_CHECK(writeArray("stage_iterations", H5T_NATIVE_INT, 1, d_stages,
-                            stage_iter.data()),
+        H5_CHECK(write_array("stage_iterations", H5T_NATIVE_INT, 1, d_stages,
+                             stage_iter.data()),
                  "write stage_iterations");
-        H5_CHECK(writeArray("stage_converged", H5T_NATIVE_INT, 1, d_stages,
-                            stage_conv.data()),
+        H5_CHECK(write_array("stage_converged", H5T_NATIVE_INT, 1, d_stages,
+                             stage_conv.data()),
                  "write stage_converged");
-        H5_CHECK(writeArray("stage_fsqr", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsqr.data()),
+        H5_CHECK(write_array("stage_fsqr", H5T_NATIVE_DOUBLE, 1, d_stages,
+                             st_fsqr.data()),
                  "write stage_fsqr");
-        H5_CHECK(writeArray("stage_fsqz", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsqz.data()),
+        H5_CHECK(write_array("stage_fsqz", H5T_NATIVE_DOUBLE, 1, d_stages,
+                             st_fsqz.data()),
                  "write stage_fsqz");
-        H5_CHECK(writeArray("stage_fsql", H5T_NATIVE_DOUBLE, 1, d_stages,
-                            st_fsql.data()),
+        H5_CHECK(write_array("stage_fsql", H5T_NATIVE_DOUBLE, 1, d_stages,
+                             st_fsql.data()),
                  "write stage_fsql");
-        H5_CHECK(writeArray("restart_stage_offset", H5T_NATIVE_INT, 1, d_stages,
-                            rst_off.data()),
+        H5_CHECK(write_array("restart_stage_offset", H5T_NATIVE_INT, 1,
+                             d_stages, rst_off.data()),
                  "write restart_stage_offset");
         if (nrestarts > 0) {
-            H5_CHECK(writeArray("restart_iteration", H5T_NATIVE_INT, 1,
-                                d_restarts, rst_iter.data()),
+            H5_CHECK(write_array("restart_iteration", H5T_NATIVE_INT, 1,
+                                 d_restarts, rst_iter.data()),
                      "write restart_iteration");
         }
 
@@ -411,12 +412,12 @@ class Hdf5V1Writer final : public Writer {
                 hn[i] = rbc[i].n;
                 hv[i] = rbc[i].value;
             }
-            H5_CHECK(writeArray("rbc_m", H5T_NATIVE_INT, 1, d_r, hm.data()),
+            H5_CHECK(write_array("rbc_m", H5T_NATIVE_INT, 1, d_r, hm.data()),
                      "write rbc_m");
-            H5_CHECK(writeArray("rbc_n", H5T_NATIVE_INT, 1, d_r, hn.data()),
+            H5_CHECK(write_array("rbc_n", H5T_NATIVE_INT, 1, d_r, hn.data()),
                      "write rbc_n");
             H5_CHECK(
-                writeArray("rbc_value", H5T_NATIVE_DOUBLE, 1, d_r, hv.data()),
+                write_array("rbc_value", H5T_NATIVE_DOUBLE, 1, d_r, hv.data()),
                 "write rbc_value");
         }
         if (nzbs > 0) {
@@ -426,28 +427,28 @@ class Hdf5V1Writer final : public Writer {
                 hn[i] = zbs[i].n;
                 hv[i] = zbs[i].value;
             }
-            H5_CHECK(writeArray("zbs_m", H5T_NATIVE_INT, 1, d_z, hm.data()),
+            H5_CHECK(write_array("zbs_m", H5T_NATIVE_INT, 1, d_z, hm.data()),
                      "write zbs_m");
-            H5_CHECK(writeArray("zbs_n", H5T_NATIVE_INT, 1, d_z, hn.data()),
+            H5_CHECK(write_array("zbs_n", H5T_NATIVE_INT, 1, d_z, hn.data()),
                      "write zbs_n");
             H5_CHECK(
-                writeArray("zbs_value", H5T_NATIVE_DOUBLE, 1, d_z, hv.data()),
+                write_array("zbs_value", H5T_NATIVE_DOUBLE, 1, d_z, hv.data()),
                 "write zbs_value");
         }
 
         // ---- folded boundary matrices (active mpol x (ntor+1)) ----
         const hsize_t bnd_dims[2] = {(hsize_t)mpol, (hsize_t)ntorp1};
         H5_CHECK(
-            writeArray("rbcc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbcc.data()),
+            write_array("rbcc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbcc.data()),
             "write rbcc");
         H5_CHECK(
-            writeArray("rbss", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbss.data()),
+            write_array("rbss", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.rbss.data()),
             "write rbss");
         H5_CHECK(
-            writeArray("zbsc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbsc.data()),
+            write_array("zbsc", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbsc.data()),
             "write zbsc");
         H5_CHECK(
-            writeArray("zbcs", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbcs.data()),
+            write_array("zbcs", H5T_NATIVE_DOUBLE, 2, bnd_dims, fb.zbcs.data()),
             "write zbcs");
 
         if (H5Fclose(fid) < 0) {
@@ -488,8 +489,8 @@ class Hdf5V1Reader final : public Reader {
             // H5Sget_simple_extent_ dims: the latter writes `rank` dimension
             // values into the caller's buffer, so a higher-rank dataspace would
             // overflow it.
-            auto getDimExact = [&](const char* name, int rank,
-                                   hsize_t* dims) -> bool {
+            auto get_dim_exact = [&](const char* name, int rank,
+                                     hsize_t* dims) -> bool {
                 H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
                 if (ds.get() < 0) return false;
                 H5Closer sp(H5Dget_space(ds.get()));
@@ -502,23 +503,23 @@ class Hdf5V1Reader final : public Reader {
             // Portable schema integer: signed, native-int width (32 bits on all
             // supported builds). Endian conversion remains intentionally
             // allowed.
-            auto typeIsSchemaInteger = [&](hid_t ty) -> bool {
+            auto type_is_schema_integer = [&](hid_t ty) -> bool {
                 return ty >= 0 && H5Tget_class(ty) == H5T_INTEGER &&
                        H5Tget_size(ty) == sizeof(int) &&
                        H5Tget_sign(ty) == H5T_SGN_2;
             };
-            auto datasetIsInteger = [&](hid_t ds) -> bool {
+            auto dataset_is_integer = [&](hid_t ds) -> bool {
                 H5Closer ty(H5Dget_type(ds));
-                return typeIsSchemaInteger(ty.get());
+                return type_is_schema_integer(ty.get());
             };
-            auto datasetIsDouble = [&](hid_t ds) -> bool {
+            auto dataset_is_double = [&](hid_t ds) -> bool {
                 H5Closer ty(H5Dget_type(ds));
                 return ty.get() >= 0 && H5Tget_class(ty.get()) == H5T_FLOAT &&
                        H5Tget_size(ty.get()) == sizeof(double);
             };
             // Scalar-or-one-element attribute, integer type, exact 4-byte size,
             // and a checked element count before the single-int read.
-            auto getIntAttr = [&](const char* name, int& out) -> bool {
+            auto get_int_attr = [&](const char* name, int& out) -> bool {
                 H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
                 if (aid.get() < 0) return false;
                 {
@@ -539,32 +540,33 @@ class Hdf5V1Reader final : public Reader {
                     if (npts != 1) return false;
                 }
                 H5Closer ty(H5Aget_type(aid.get()));
-                if (!typeIsSchemaInteger(ty.get())) return false;
+                if (!type_is_schema_integer(ty.get())) return false;
                 return H5Aread(aid.get(), H5T_NATIVE_INT, &out) >= 0;
             };
             // 1-D integer/double vectors with exact rank, extent, and datatype.
-            auto getIntArr = [&](const char* name, std::vector<int>& out,
-                                 size_t expect) -> bool {
+            auto get_int_array = [&](const char* name, std::vector<int>& out,
+                                     size_t expect) -> bool {
                 H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
                 if (ds.get() < 0) return false;
                 hsize_t dims[1] = {0};
-                if (!getDimExact(name, 1, dims)) return false;
+                if (!get_dim_exact(name, 1, dims)) return false;
                 if (dims[0] != expect) return false;
-                if (!datasetIsInteger(ds.get())) return false;
+                if (!dataset_is_integer(ds.get())) return false;
                 const auto bytes = checked_mul(expect, sizeof(int));
                 if (!bytes) return false;
                 out.resize(expect);
                 return H5Dread(ds.get(), H5T_NATIVE_INT, H5S_ALL, H5S_ALL,
                                H5P_DEFAULT, out.data()) >= 0;
             };
-            auto getDblArr = [&](const char* name, std::vector<double>& out,
-                                 size_t expect) -> bool {
+            auto get_double_array = [&](const char* name,
+                                        std::vector<double>& out,
+                                        size_t expect) -> bool {
                 H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
                 if (ds.get() < 0) return false;
                 hsize_t dims[1] = {0};
-                if (!getDimExact(name, 1, dims)) return false;
+                if (!get_dim_exact(name, 1, dims)) return false;
                 if (dims[0] != expect) return false;
-                if (!datasetIsDouble(ds.get())) return false;
+                if (!dataset_is_double(ds.get())) return false;
                 const auto bytes = checked_mul(expect, sizeof(double));
                 if (!bytes) return false;
                 out.resize(expect);
@@ -572,8 +574,8 @@ class Hdf5V1Reader final : public Reader {
                                H5P_DEFAULT, out.data()) >= 0;
             };
             // Scalar-or-one-element double attribute with the same dataspace
-            // hardening as getIntAttr and an exact 8-byte float type.
-            auto getDblAttr = [&](const char* name, double& out) -> bool {
+            // hardening as get_int_attr and an exact 8-byte float type.
+            auto get_double_attr = [&](const char* name, double& out) -> bool {
                 H5Closer aid(H5Aopen(fid, name, H5P_DEFAULT));
                 if (aid.get() < 0) return false;
                 {
@@ -604,14 +606,15 @@ class Hdf5V1Reader final : public Reader {
             // 2-D double matrix with exact rank and extents (the folded
             // boundary datasets, stored in the writer's C order — row stride =
             // expect1).
-            auto getDblMat = [&](const char* name, std::vector<double>& out,
-                                 size_t expect0, size_t expect1) -> bool {
+            auto get_double_matrix =
+                [&](const char* name, std::vector<double>& out, size_t expect0,
+                    size_t expect1) -> bool {
                 H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
                 if (ds.get() < 0) return false;
                 hsize_t dims[2] = {0, 0};
-                if (!getDimExact(name, 2, dims)) return false;
+                if (!get_dim_exact(name, 2, dims)) return false;
                 if (dims[0] != expect0 || dims[1] != expect1) return false;
-                if (!datasetIsDouble(ds.get())) return false;
+                if (!dataset_is_double(ds.get())) return false;
                 const auto el = checked_mul(expect0, expect1);
                 if (!el) return false;
                 const auto bytes = checked_mul(*el, sizeof(double));
@@ -622,7 +625,7 @@ class Hdf5V1Reader final : public Reader {
             };
 
             hsize_t state_dims[2] = {0, 0};
-            if (!getDimExact("rmncc", 2, state_dims)) {
+            if (!get_dim_exact("rmncc", 2, state_dims)) {
                 return fail("missing/malformed state dataset (rmncc)");
             }
             // Bounds BEFORE narrowing and allocation (handoff §4): dimensions
@@ -666,13 +669,13 @@ class Hdf5V1Reader final : public Reader {
                                 std::string(fam_names[c]) + ")");
                 }
                 hsize_t fam_dims[2] = {0, 0};
-                if (!getDimExact(fam_names[c], 2, fam_dims) ||
+                if (!get_dim_exact(fam_names[c], 2, fam_dims) ||
                     fam_dims[0] != state_dims[0] ||
                     fam_dims[1] != state_dims[1]) {
                     return fail("malformed state dataset (" +
                                 std::string(fam_names[c]) + ")");
                 }
-                if (!datasetIsDouble(ds.get())) {
+                if (!dataset_is_double(ds.get())) {
                     return fail("malformed state dataset type (" +
                                 std::string(fam_names[c]) + ")");
                 }
@@ -694,10 +697,10 @@ class Hdf5V1Reader final : public Reader {
                 // a partially populated report visible to the caller.
                 RunReport parsed_report;
                 int precision = 0, status = 0, total = 0, dirty = 0;
-                if (!getIntAttr("precision", precision) ||
-                    !getIntAttr("status", status) ||
-                    !getIntAttr("total_iterations", total) ||
-                    !getIntAttr("build_dirty", dirty)) {
+                if (!get_int_attr("precision", precision) ||
+                    !get_int_attr("status", status) ||
+                    !get_int_attr("total_iterations", total) ||
+                    !get_int_attr("build_dirty", dirty)) {
                     return fail("missing run outcome attributes");
                 }
                 // Closed-range validation of the serialized scalars (handoff
@@ -741,7 +744,7 @@ class Hdf5V1Reader final : public Reader {
                     return fail("missing provenance attributes");
                 }
                 hsize_t d_stages[1] = {0};
-                if (!getDimExact("stage_ns", 1, d_stages)) {
+                if (!get_dim_exact("stage_ns", 1, d_stages)) {
                     return fail("missing/malformed stage_ns");
                 }
                 const size_t nstages = (size_t)d_stages[0];
@@ -755,7 +758,7 @@ class Hdf5V1Reader final : public Reader {
                     H5Closer probe(
                         H5Dopen2(fid, "restart_iteration", H5P_DEFAULT));
                     if (probe.get() >= 0 &&
-                        !getDimExact("restart_iteration", 1, d_restarts)) {
+                        !get_dim_exact("restart_iteration", 1, d_restarts)) {
                         return fail("malformed restart_iteration dataset");
                     }
                     if (probe.get() >= 0) nrestarts = (size_t)d_restarts[0];
@@ -769,15 +772,15 @@ class Hdf5V1Reader final : public Reader {
                 std::vector<int> stage_ns, stage_iter, stage_conv, rst_off;
                 std::vector<double> st_fsqr, st_fsqz, st_fsql;
                 std::vector<int> rst_iter;
-                if (!getIntArr("stage_ns", stage_ns, nstages) ||
-                    !getIntArr("stage_iterations", stage_iter, nstages) ||
-                    !getIntArr("stage_converged", stage_conv, nstages) ||
-                    !getIntArr("restart_stage_offset", rst_off, nstages) ||
-                    !getDblArr("stage_fsqr", st_fsqr, nstages) ||
-                    !getDblArr("stage_fsqz", st_fsqz, nstages) ||
-                    !getDblArr("stage_fsql", st_fsql, nstages) ||
-                    (nrestarts > 0 &&
-                     !getIntArr("restart_iteration", rst_iter, nrestarts))) {
+                if (!get_int_array("stage_ns", stage_ns, nstages) ||
+                    !get_int_array("stage_iterations", stage_iter, nstages) ||
+                    !get_int_array("stage_converged", stage_conv, nstages) ||
+                    !get_int_array("restart_stage_offset", rst_off, nstages) ||
+                    !get_double_array("stage_fsqr", st_fsqr, nstages) ||
+                    !get_double_array("stage_fsqz", st_fsqz, nstages) ||
+                    !get_double_array("stage_fsql", st_fsql, nstages) ||
+                    (nrestarts > 0 && !get_int_array("restart_iteration",
+                                                     rst_iter, nrestarts))) {
                     return fail("stage history read failed");
                 }
                 // Validate the offsets BEFORE they index rst_iter
@@ -832,21 +835,21 @@ class Hdf5V1Reader final : public Reader {
                     H5Closer aid(H5Aopen(fid, "mpol", H5P_DEFAULT));
                     if (aid.get() >= 0) {
                         InputParams ip;
-                        if (!getIntAttr("mpol", ip.mpol) ||
-                            !getIntAttr("ntor", ip.ntor) ||
-                            !getIntAttr("nfp", ip.nfp) ||
-                            !getIntAttr("ntheta", ip.ntheta) ||
-                            !getIntAttr("nzeta", ip.nzeta) ||
-                            !getIntAttr("ncurr", ip.ncurr) ||
-                            !getDblAttr("delt", ip.delt) ||
-                            !getDblAttr("phiedge", ip.phiedge) ||
-                            !getDblAttr("pres_scale", ip.pres_scale) ||
-                            !getDblAttr("adiabatic_index",
-                                        ip.adiabatic_index) ||
-                            !getDblAttr("spres_ped", ip.spres_ped) ||
-                            !getDblAttr("bloat", ip.bloat) ||
-                            !getDblAttr("curtor", ip.curtor) ||
-                            !getDblAttr("tcon0", ip.tcon0)) {
+                        if (!get_int_attr("mpol", ip.mpol) ||
+                            !get_int_attr("ntor", ip.ntor) ||
+                            !get_int_attr("nfp", ip.nfp) ||
+                            !get_int_attr("ntheta", ip.ntheta) ||
+                            !get_int_attr("nzeta", ip.nzeta) ||
+                            !get_int_attr("ncurr", ip.ncurr) ||
+                            !get_double_attr("delt", ip.delt) ||
+                            !get_double_attr("phiedge", ip.phiedge) ||
+                            !get_double_attr("pres_scale", ip.pres_scale) ||
+                            !get_double_attr("adiabatic_index",
+                                             ip.adiabatic_index) ||
+                            !get_double_attr("spres_ped", ip.spres_ped) ||
+                            !get_double_attr("bloat", ip.bloat) ||
+                            !get_double_attr("curtor", ip.curtor) ||
+                            !get_double_attr("tcon0", ip.tcon0)) {
                             return fail("malformed embedded input record");
                         }
                         // Free-boundary extension: OPTIONAL (containers
@@ -857,7 +860,7 @@ class Hdf5V1Reader final : public Reader {
                             H5Closer aid(H5Aopen(fid, "lfreeb", H5P_DEFAULT));
                             if (aid.get() >= 0) {
                                 int lfreeb_i = 0;
-                                if (!getIntAttr("lfreeb", lfreeb_i)) {
+                                if (!get_int_attr("lfreeb", lfreeb_i)) {
                                     return fail(
                                         "malformed embedded input record");
                                 }
@@ -865,7 +868,7 @@ class Hdf5V1Reader final : public Reader {
                             }
                             H5Closer bid(H5Aopen(fid, "nvacskip", H5P_DEFAULT));
                             if (bid.get() >= 0 &&
-                                !getIntAttr("nvacskip", ip.nvacskip)) {
+                                !get_int_attr("nvacskip", ip.nvacskip)) {
                                 return fail("malformed embedded input record");
                             }
                             H5Closer cid(
@@ -892,8 +895,8 @@ class Hdf5V1Reader final : public Reader {
                                         H5P_DEFAULT));
                             if (fid_present.get() >= 0) {
                                 int makegrid_present = 0;
-                                if (!getIntAttr("makegrid_paramters_present",
-                                                makegrid_present)) {
+                                if (!get_int_attr("makegrid_paramters_present",
+                                                  makegrid_present)) {
                                     return fail(
                                         "malformed embedded input record");
                                 }
@@ -901,37 +904,37 @@ class Hdf5V1Reader final : public Reader {
                                     MakegridParametersSpec parameters;
                                     int normalize = 0;
                                     int symmetry = 0;
-                                    if (!getIntAttr(
+                                    if (!get_int_attr(
                                             "makegrid_normalize_by_currents",
                                             normalize) ||
-                                        !getIntAttr("makegrid_assume_"
-                                                    "stellarator_symmetry",
-                                                    symmetry) ||
-                                        !getIntAttr(
+                                        !get_int_attr("makegrid_assume_"
+                                                      "stellarator_symmetry",
+                                                      symmetry) ||
+                                        !get_int_attr(
                                             "makegrid_number_of_field_periods",
                                             parameters
                                                 .number_of_field_periods) ||
-                                        !getDblAttr(
+                                        !get_double_attr(
                                             "makegrid_r_grid_minimum",
                                             parameters.r_grid_minimum) ||
-                                        !getDblAttr(
+                                        !get_double_attr(
                                             "makegrid_r_grid_maximum",
                                             parameters.r_grid_maximum) ||
-                                        !getIntAttr(
+                                        !get_int_attr(
                                             "makegrid_number_of_r_grid_points",
                                             parameters
                                                 .number_of_r_grid_points) ||
-                                        !getDblAttr(
+                                        !get_double_attr(
                                             "makegrid_z_grid_minimum",
                                             parameters.z_grid_minimum) ||
-                                        !getDblAttr(
+                                        !get_double_attr(
                                             "makegrid_z_grid_maximum",
                                             parameters.z_grid_maximum) ||
-                                        !getIntAttr(
+                                        !get_int_attr(
                                             "makegrid_number_of_z_grid_points",
                                             parameters
                                                 .number_of_z_grid_points) ||
-                                        !getIntAttr(
+                                        !get_int_attr(
                                             "makegrid_number_of_phi_grid_"
                                             "points",
                                             parameters
@@ -949,27 +952,29 @@ class Hdf5V1Reader final : public Reader {
                             }
                         }
                         {
-                            auto getVec =
+                            auto get_vector =
                                 [&](const char* name,
                                     std::vector<double>& out) -> bool {
                                 hsize_t dims[1] = {0};
-                                if (!getDimExact(name, 1, dims)) return false;
-                                return getDblArr(name, out, (size_t)dims[0]);
+                                if (!get_dim_exact(name, 1, dims)) return false;
+                                return get_double_array(name, out,
+                                                        (size_t)dims[0]);
                             };
-                            if (!getVec("am", ip.am) || !getVec("ac", ip.ac) ||
-                                !getVec("ai", ip.ai) ||
-                                !getVec("aphi", ip.aphi) ||
-                                !getVec("raxis_c", ip.raxis_c) ||
-                                !getVec("zaxis_s", ip.zaxis_s)) {
+                            if (!get_vector("am", ip.am) ||
+                                !get_vector("ac", ip.ac) ||
+                                !get_vector("ai", ip.ai) ||
+                                !get_vector("aphi", ip.aphi) ||
+                                !get_vector("raxis_c", ip.raxis_c) ||
+                                !get_vector("zaxis_s", ip.zaxis_s)) {
                                 return fail("malformed embedded input record");
                             }
                             // extcur: absent stays empty (pre-extension
                             // containers); present must pass the strict read.
                             {
                                 hsize_t d_ex[1] = {0};
-                                if (getDimExact("extcur", 1, d_ex) &&
-                                    !getDblArr("extcur", ip.extcur,
-                                               (size_t)d_ex[0])) {
+                                if (get_dim_exact("extcur", 1, d_ex) &&
+                                    !get_double_array("extcur", ip.extcur,
+                                                      (size_t)d_ex[0])) {
                                     return fail(
                                         "malformed embedded input record");
                                 }
@@ -977,7 +982,7 @@ class Hdf5V1Reader final : public Reader {
                         }
                         {
                             hsize_t d_in[1] = {0};
-                            if (!getDimExact("stage_in_ns", 1, d_in)) {
+                            if (!get_dim_exact("stage_in_ns", 1, d_in)) {
                                 return fail("malformed embedded input record");
                             }
                             const size_t nstages_in = (size_t)d_in[0];
@@ -988,12 +993,12 @@ class Hdf5V1Reader final : public Reader {
                             }
                             std::vector<int> stg_in_ns, stg_max_iter;
                             std::vector<double> stg_ftol;
-                            if (!getIntArr("stage_in_ns", stg_in_ns,
-                                           nstages_in) ||
-                                !getIntArr("stage_max_iter", stg_max_iter,
-                                           nstages_in) ||
-                                !getDblArr("stage_ftol", stg_ftol,
-                                           nstages_in)) {
+                            if (!get_int_array("stage_in_ns", stg_in_ns,
+                                               nstages_in) ||
+                                !get_int_array("stage_max_iter", stg_max_iter,
+                                               nstages_in) ||
+                                !get_double_array("stage_ftol", stg_ftol,
+                                                  nstages_in)) {
                                 return fail("malformed embedded input record");
                             }
                             for (size_t g = 0; g < nstages_in; ++g) {
@@ -1006,27 +1011,33 @@ class Hdf5V1Reader final : public Reader {
                         }
                         {
                             hsize_t d_r[1] = {0}, d_z[1] = {0}, d_b[2] = {0, 0};
-                            if (!getDimExact("rbc_m", 1, d_r) ||
-                                !getDimExact("zbs_m", 1, d_z) ||
-                                !getDimExact("rbcc", 2, d_b)) {
+                            if (!get_dim_exact("rbc_m", 1, d_r) ||
+                                !get_dim_exact("zbs_m", 1, d_z) ||
+                                !get_dim_exact("rbcc", 2, d_b)) {
                                 return fail("malformed embedded input record");
                             }
                             const size_t nrbc = (size_t)d_r[0],
                                          nzbs = (size_t)d_z[0];
-                            if (!getIntArr("rbc_m", ip.rbc_m, nrbc) ||
-                                !getIntArr("rbc_n", ip.rbc_n, nrbc) ||
-                                !getDblArr("rbc_value", ip.rbc_value, nrbc) ||
-                                !getIntArr("zbs_m", ip.zbs_m, nzbs) ||
-                                !getIntArr("zbs_n", ip.zbs_n, nzbs) ||
-                                !getDblArr("zbs_value", ip.zbs_value, nzbs) ||
-                                !getDblMat("rbcc", ip.rbcc, (size_t)d_b[0],
-                                           (size_t)d_b[1]) ||
-                                !getDblMat("rbss", ip.rbss, (size_t)d_b[0],
-                                           (size_t)d_b[1]) ||
-                                !getDblMat("zbsc", ip.zbsc, (size_t)d_b[0],
-                                           (size_t)d_b[1]) ||
-                                !getDblMat("zbcs", ip.zbcs, (size_t)d_b[0],
-                                           (size_t)d_b[1])) {
+                            if (!get_int_array("rbc_m", ip.rbc_m, nrbc) ||
+                                !get_int_array("rbc_n", ip.rbc_n, nrbc) ||
+                                !get_double_array("rbc_value", ip.rbc_value,
+                                                  nrbc) ||
+                                !get_int_array("zbs_m", ip.zbs_m, nzbs) ||
+                                !get_int_array("zbs_n", ip.zbs_n, nzbs) ||
+                                !get_double_array("zbs_value", ip.zbs_value,
+                                                  nzbs) ||
+                                !get_double_matrix("rbcc", ip.rbcc,
+                                                   (size_t)d_b[0],
+                                                   (size_t)d_b[1]) ||
+                                !get_double_matrix("rbss", ip.rbss,
+                                                   (size_t)d_b[0],
+                                                   (size_t)d_b[1]) ||
+                                !get_double_matrix("zbsc", ip.zbsc,
+                                                   (size_t)d_b[0],
+                                                   (size_t)d_b[1]) ||
+                                !get_double_matrix("zbcs", ip.zbcs,
+                                                   (size_t)d_b[0],
+                                                   (size_t)d_b[1])) {
                                 return fail("malformed embedded input record");
                             }
                         }
