@@ -226,7 +226,7 @@ static void run_all() {
                        fread(&mnmax, sizeof(int), 1, fp) == 1;
             fclose(fp);
             check(
-                hdr && memcmp(magic, "CUMES001", 8) == 0 && version == 4 &&
+                hdr && memcmp(magic, "CUMES001", 8) == 0 && version == 7 &&
                     ns == b.p.ns && mnmax == b.p.mnmax,
                 "truncation: binary header is the new run's (magic/ns/mnmax)");
         } else {
