@@ -1,15 +1,11 @@
 // main.cu — entry point: parse/validate → init → solve → output.
 //
-// CLI: cuMES [<input> <output>] [options]. The input is a vmecpp-indata JSON
-// file. Positional <input>/<output> and the --input <path>/--output <path>
-// flags fill the same two slots; each positional fills the first free slot
-// (input, then output), and a --input/--output flag overrides the positional
-// value for its slot (so `cuMES --input x.json y.bin` writes y.bin, and
-// `cuMES a.json b.json --input x.json` reads x.json, discarding a.json).
-// Without an input, inputs/solovev.json is used; an output path is REQUIRED
-// (no default). Config is parsed + validated by the Phase 2 host model
-// (read_and_validate, see cumes/config/*.hpp) into an immutable
-// ValidatedProblem the solver consumes directly.
+// CLI: cuMES [OPTION]... INPUT_FILE. The mandatory positional input is a
+// vmecpp-indata JSON file. Output, restart, checkpoint, and compatibility are
+// options; output defaults to $PWD/cumes-output.bin. Config is parsed +
+// validated by the Phase 2 host model (read_and_validate, see
+// cumes/config/*.hpp) into an immutable ValidatedProblem the solver consumes
+// directly.
 //
 // Output: every backend writes the schema-v1 container (binary/NetCDF/HDF5
 // through the Writer interface, dispatched by the output suffix).
@@ -19,6 +15,7 @@
 //
 // Precision: `Real` (vmec_types.h) is the compile-time switch between double
 // and float — configure with -DCUMES_USE_FLOAT=ON.
+#include "clap.h"
 #include "cumes/config/json_reader.hpp"
 #include "cumes/config/precision_policy.hpp"
 #include "cumes/config/solver_options.hpp"
@@ -37,11 +34,13 @@
 #include "solver.cuh"
 #include "vmec_types.h"
 
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -116,67 +115,46 @@ static std::string_view severity_name(cumes::Severity s) {
 
 int main(int argc, char** argv) {
     // ---- CLI ----------------------------------------------------------------
-    std::string input_path = "inputs/solovev.json";
-    std::string output_path;
-    std::string restart_path;  // --restart (v1 checkpoint)
-    std::string
-        checkpoint_path;  // --checkpoint (write a v1 checkpoint after solve)
-    // Slot occupancy: a --input/--output flag pins its slot (flags override
-    // positionals); each positional fills the first free slot (input, output).
-    bool input_given = false;
-    bool output_given = false;
-    // --compatibility (completion plan step 2.1): vmecpp-style warn-and-ignore
-    // for unknown input keys. Strict schema-v1 input parsing is the default;
-    // the output policy (explicit path, known suffix) is always strict.
-    bool compatibility = false;
+    struct CliInput {
+        std::string input_path;
+        std::string output_path;
+        std::string restart_path;
+        std::string checkpoint_path;
+        bool compatibility;
+    };
 
-    for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        auto match = [&](const char* name, std::string& out) -> bool {
-            const std::string prefix = std::string("--") + name;
-            if (a == prefix) {
-                if (i + 1 >= argc) return false;
-                out = argv[++i];
-                return true;
-            }
-            if (a.compare(0, prefix.size() + 1, prefix + "=") == 0) {
-                out = a.substr(prefix.size() + 1);
-                return true;
-            }
-            return false;
-        };
-        std::string v;
-        if (match("restart", v)) {
-            restart_path = v;
-        } else if (match("checkpoint", v)) {
-            checkpoint_path = v;
-        } else if (match("input", v)) {
-            input_path = v;
-            input_given = true;
-        } else if (match("output", v)) {
-            output_path = v;
-            output_given = true;
-        } else if (a == "--compatibility") {
-            compatibility = true;
-        } else if (!a.empty() && a[0] == '-') {
-            fprintf(stderr, "cuMES: unknown option '%s'\n", a.c_str());
-            return EXIT_FAILURE;
-        } else if (!input_given) {
-            input_path = argv[i];
-            input_given = true;
-        } else if (!output_given) {
-            output_path = argv[i];
-            output_given = true;
-        } else {
-            fprintf(stderr, "cuMES: unexpected extra argument '%s'\n",
-                    a.c_str());
-            return EXIT_FAILURE;
-        }
+    CLAP_BEGIN(CliInput)
+    CLAP_ADD_USAGE("[OPTION]... INPUT_FILE")
+    CLAP_ADD_DESCRIPTION("Solve a magnetic equilibrium on a CUDA GPU.")
+    CLAP_REGISTER_ARG(input_path)
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        output_path, "--output", "-o",
+        "write the result to PATH (default: $PWD/cumes-output.bin)")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(restart_path, "--restart", "-r",
+                                          "initialize from checkpoint PATH")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        checkpoint_path, "--checkpoint", "-c",
+        "write a restart checkpoint to PATH after solving")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        compatibility, "--compatibility",
+        "warn and ignore unknown input keys instead of rejecting them")
+    CLAP_END(CliInput)
+
+    CliInput cli{};
+    cli.output_path =
+        (std::filesystem::current_path() / "cumes-output.bin").string();
+    try {
+        CLAP<CliInput>::parse_input(cli, argc, argv);
+    } catch (const std::exception& e) {
+        std::cerr << e.what();
+        return EINVAL;
     }
-    if (!output_given) {
-        fprintf(stderr, "cuMES: no output path given; pass --output <path>\n");
-        return EXIT_FAILURE;
-    }
+
+    const std::string& input_path = cli.input_path;
+    const std::string& output_path = cli.output_path;
+    const std::string& restart_path = cli.restart_path;
+    const std::string& checkpoint_path = cli.checkpoint_path;
+    const bool compatibility = cli.compatibility;
 
     // ---- output preflight (before any CUDA work) ----------------------------
     // A requested-but-unlinked format (e.g. .nc on a binary-only build) and an

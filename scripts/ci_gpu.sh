@@ -39,7 +39,7 @@ ctest --test-dir build --output-on-failure -j4
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 set +e
-CUMES_MAX_ITER=20 ./build/cumes inputs/solovev.json "$tmp/short.bin" > "$tmp/short.log" 2>&1
+CUMES_MAX_ITER=20 ./build/cumes inputs/solovev.json --output "$tmp/short.bin" > "$tmp/short.log" 2>&1
 rc=$?
 set -e
 [ "$rc" -eq 1 ] || { echo "ci_gpu: short trajectory expected exit 1 (stage cap), got $rc"; exit 1; }

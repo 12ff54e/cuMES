@@ -120,7 +120,7 @@ run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
     *) input_abs="$PWD/$input_abs" ;;
   esac
   ( cd "$tree" \
-    && CUMES_DUMP=1 "$build/cumes" "$input_abs" cumes_state.bin \
+    && CUMES_DUMP=1 "$build/cumes" "$input_abs" --output cumes_state.bin \
        > run.log 2>&1 )
   [ -f "$tree/cumes_state.bin" ] || { echo "error: $prec/$sub produced no state" >&2; exit 1; }
 
@@ -135,9 +135,9 @@ run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
   # suffixes so the on-disk schemas are frozen as part of the recipe. These are
   # separate files in the tree; compare_bitwise.py's --full mode includes them.
   if [ "$SCHEMA" = 1 ]; then
-    ( cd "$tree" && CUMES_DUMP=1 "$build/cumes" "$input_abs" state.nc \
+    ( cd "$tree" && CUMES_DUMP=1 "$build/cumes" "$input_abs" --output state.nc \
        > run-schema-nc.log 2>&1 )
-    ( cd "$tree" && CUMES_DUMP=1 "$build/cumes" "$input_abs" state.h5 \
+    ( cd "$tree" && CUMES_DUMP=1 "$build/cumes" "$input_abs" --output state.h5 \
        > run-schema-h5.log 2>&1 )
     echo "  schema: state.nc + state.h5 captured"
   fi

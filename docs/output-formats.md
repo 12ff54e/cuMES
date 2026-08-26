@@ -11,15 +11,15 @@ back). The `CUMES_DUMP`-gated diagnostic files are documented separately in
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cumes <in> out.bin` | versioned binary (schema v1, on-disk version 7) | `CUMES001` |
+| `./build/cumes <in> --output out.bin` | versioned binary (schema v1, on-disk version 7) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
 | `--checkpoint <path>` | versioned checkpoint (v6) | `CUMECKP1` |
 | `--restart <path>` (read) | versioned checkpoint (v6; v1–v5 still read) | `CUMECKP1` |
 
-An output path is always required; an unknown suffix is an error. All writers
-publish atomically (write a temporary file in the target directory, then
-rename over the destination; a failed write removes the temporary and leaves
-the destination untouched).
+The output path defaults to `$PWD/cumes-output.bin`; an unknown suffix is an
+error. All writers publish atomically (write a temporary file in the target
+directory, then rename over the destination; a failed write removes the
+temporary and leaves the destination untouched).
 
 ## 2. The shared state payload
 

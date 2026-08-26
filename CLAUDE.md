@@ -20,8 +20,8 @@ The codebase is post-CUDA-overhaul (blueprint:
 cmake --preset verify          # verify-double: precise math, all backends, -Werror
 cmake --build build -j
 
-# an output path is REQUIRED — there is no default output file
-./build/cumes inputs/solovev.json out.bin        # positional: <input> <output>
+# INPUT_FILE is positional; output defaults to $PWD/cumes-output.bin
+./build/cumes inputs/solovev.json --output out.bin
 
 ctest --test-dir build --output-on-failure
 
@@ -46,9 +46,10 @@ point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
 
 ## CLI & Environment
 
-- Positional `<input> <output>`; `--input`/`--output` flags override the slot
-  they name. Default input: `inputs/solovev.json`; the output path is REQUIRED.
-- `--restart <checkpoint>` / `--checkpoint <path>` — read/write the v2
+- Positional `INPUT_FILE` is mandatory. `--output <path>` / `-o <path>`
+  overrides the default `$PWD/cumes-output.bin`.
+- `--restart <checkpoint>` / `-r <checkpoint>` and `--checkpoint <path>` /
+  `-c <path>` — read/write the v2
   checkpoint (`docs/output-formats.md` §4).
 - Every backend writes the schema-v1 container (versioned binary/NetCDF/HDF5
   with full provenance; a `.nc`/`.h5` suffix dispatches to the host-only

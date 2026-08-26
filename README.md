@@ -22,7 +22,7 @@ reference (see [Verification](#verification)).
 ```bash
 cmake --preset verify          # double precision, both backends, -Werror
 cmake --build build -j
-./build/cumes inputs/solovev.json out.bin    # positional: <input> <output>
+./build/cumes inputs/solovev.json --output out.bin
 ctest --test-dir build --output-on-failure
 ```
 
@@ -130,19 +130,20 @@ optional-backend presets. Every computation is `template<typename T>`; `Real`
 ### CLI
 
 ```
-./build/cumes [--input <path>] [--output <path>] [flags]
+./build/cumes [OPTION]... INPUT_FILE
 ```
 
-- Positionals fill the two slots `<input> <output>`; the `--input`/`--output`
-  flags override them.
+- `INPUT_FILE` is mandatory and positional.
+- `--output <path>` / `-o <path>` selects the result path; without it, cuMES
+  writes `$PWD/cumes-output.bin`.
 - Every backend writes the schema-v1 container — a versioned state payload with
   full provenance for binary, NetCDF and HDF5.
-- `--restart <checkpoint>` / `--checkpoint <path>` (read/write a v6 checkpoint;
-  v1–v5 remain readable).
+- `--restart <checkpoint>` / `-r <checkpoint>` and `--checkpoint <path>` /
+  `-c <path>` read/write a v6 checkpoint; v1–v5 remain readable.
 - Strict schema-v1 behavior is the **default**: unknown input keys are errors,
-  an explicit output path is required, and unknown suffixes are rejected. The
-  `--compatibility` flag restores vmecpp-style warn-and-ignore parsing for
-  unknown input keys (input-side only; the output policy stays strict).
+  and unknown output suffixes are rejected. The `--compatibility` flag restores
+  vmecpp-style warn-and-ignore parsing for unknown input keys (input-side only;
+  the output suffix policy stays strict).
 
 A `.nc`/`.h5` suffix dispatches to the host-only NetCDF/HDF5 writers when
 compiled in (the availability preflight runs before any CUDA work). Non-fatal

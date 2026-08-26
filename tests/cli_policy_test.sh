@@ -4,7 +4,8 @@
 #
 #   - strict schema (default) rejects unknown input keys;
 #   - --compatibility warns and continues (vmecpp-style ignore);
-#   - an explicit output path is always required;
+#   - input is a mandatory positional argument;
+#   - output is an option and defaults to $PWD/cumes-output.bin;
 #   - strict rejects an unknown output suffix.
 #
 # Usage: cli_policy_test.sh <path-to-cuMES>
@@ -62,15 +63,23 @@ check() { # name want_exit want_grep want_absent -- cmd...
   fi
 }
 
-check "strict default rejects unknown key" 1       "unknown input key 'n_theta'" "WARNING: unknown input key"       "$BIN" in_unknown.json out.bin
+check "strict default rejects unknown key" 1       "unknown input key 'n_theta'" "WARNING: unknown input key"       "$BIN" in_unknown.json --output out.bin
 
-check "--compatibility warns and continues" 1       "WARNING: unknown input key" "input validation failed"       "$BIN" --compatibility in_unknown.json out.bin
+check "--compatibility warns and continues" 1       "WARNING: unknown input key" "input validation failed"       "$BIN" --compatibility in_unknown.json --output out.bin
 
-check "strict requires explicit output path" 1       "no output path given" ""       "$BIN" in_clean.json
+check "input is mandatory" 22       "too few arguments" ""       "$BIN"
 
-check "--compatibility requires explicit output path" 1       "no output path given" ""       "$BIN" --compatibility in_clean.json
+check "output defaults under PWD" 1       "cumes-output.bin" ""       "$BIN" in_clean.json
+if [ ! -f cumes-output.bin ]; then
+  echo "FAIL default output file exists"
+  fail=1
+else
+  echo "PASS default output file exists"
+fi
 
-check "strict rejects unknown output suffix" 1       "unrecognized output suffix" ""       "$BIN" in_clean.json out.weird
+check "output is not positional" 22       "too many arguments" ""       "$BIN" in_clean.json out.bin
+
+check "strict rejects unknown output suffix" 1       "unrecognized output suffix" ""       "$BIN" in_clean.json --output out.weird
 
 if [ "$fail" -ne 0 ]; then
   echo "cli_policy_test: FAILED"

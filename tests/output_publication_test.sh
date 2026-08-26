@@ -30,7 +30,7 @@ cat > probe.json <<'EOF'
  "zbs": [{"n": 0, "m": 1, "value": 0.5}],
  "ns_array": [5], "niter_array": [1], "ftol_array": [1e-6]}
 EOF
-if "$BIN" probe.json probe.bin 2>&1 | grep -q 'precision: float'; then
+if "$BIN" probe.json --output probe.bin 2>&1 | grep -q 'precision: float'; then
   echo "SKIP end-to-end converged publication cases (float build)"
   exit 0
 fi
@@ -50,7 +50,7 @@ check() { # name cond
 # leave the directory (and no stray temp) behind.
 mkdir -p target.bin
 set +e
-"$BIN" "$INPUT" target.bin > case1.log 2>&1
+"$BIN" "$INPUT" --output target.bin > case1.log 2>&1
 rc1=$?
 set -e
 check "publication failure exits nonzero" "$([ "$rc1" -ne 0 ] && echo 0 || echo 1)"
@@ -66,7 +66,7 @@ printf 'PRECIOUS-BYTES-42
 cp ro/state.bin ro/state.bin.expected
 chmod 555 ro
 set +e
-"$BIN" "$INPUT" ro/state.bin > case2.log 2>&1
+"$BIN" "$INPUT" --output ro/state.bin > case2.log 2>&1
 rc2=$?
 set -e
 chmod 755 ro
