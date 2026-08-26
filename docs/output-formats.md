@@ -90,7 +90,7 @@ int32, `ftol` f64), the raw boundary (`rbc_m` int32, `rbc_n` int32,
 `rbc_value` f64, then `zbs_*`), and the folded boundary `rbcc, rbss, zbsc,
 zbcs` (f64 each), followed by `lfreeb`, `nvacskip`, `mgrid_file`, `extcur`,
 `coils_file`, `makegrid_parameters_file`, and the optional embedded
-`makegrid_paramters` object. Every vector is an int32 element count followed
+`makegrid_parameters` object. Every vector is an int32 element count followed
 by the payload; counts are capped at 2^20 by the reader.
 
 Notes:

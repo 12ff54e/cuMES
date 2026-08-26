@@ -27,7 +27,7 @@ cuMES free-boundary input accepts exactly one external-field source:
 
 - `mgrid_file`; or
 - `coils_file` together with either `makegrid_parameters_file` or the complete
-  embedded parameter object `makegrid_paramters`.
+  embedded parameter object `makegrid_parameters`.
 
 When both parameter keys are present, cuMES emits a warning and the embedded
 object takes precedence. This makes a free-boundary input self-contained while

@@ -379,7 +379,7 @@ static void test_negative() {
         std::string("{\"mpol\":2,\"ntor\":0,\"nfp\":1,\"am\":[1.0],") +
         "\"lfreeb\":true,\"coils_file\":\"coils.test\"," +
         "\"makegrid_parameters_file\":\"ignored.json\"," +
-        "\"makegrid_paramters\":{" + embedded_makegrid + "}," +
+        "\"makegrid_parameters\":{" + embedded_makegrid + "}," +
         "\"extcur\":[1.0]," + "\"rbc\":[{\"n\":0,\"m\":1,\"value\":1.0}]," +
         "\"zbs\":[{\"n\":0,\"m\":1,\"value\":0.5}]}");
     vr = cumes::read_and_validate(scratch_path(), opts);
@@ -387,7 +387,7 @@ static void test_negative() {
     bool precedence_warned = false;
     if (vr.has_value()) {
         for (const auto& issue : vr.value().warnings().issues()) {
-            if (issue.message.find("using embedded makegrid_paramters") !=
+            if (issue.message.find("using embedded makegrid_parameters") !=
                 std::string::npos) {
                 precedence_warned = true;
             }
@@ -403,13 +403,22 @@ static void test_negative() {
     write_scratch(
         "{\"mpol\":2,\"ntor\":0,\"am\":[1.0],\"lfreeb\":true,"
         "\"coils_file\":\"coils.test\","
-        "\"makegrid_paramters\":{\"normalize_by_currents\":false},"
+        "\"makegrid_parameters\":{\"normalize_by_currents\":false},"
         "\"extcur\":[1.0],"
         "\"rbc\":[{\"n\":0,\"m\":1,\"value\":1.0}],"
         "\"zbs\":[{\"n\":0,\"m\":1,\"value\":0.5}]}");
     vr = cumes::read_and_validate(scratch_path(), opts);
     check(!vr.has_value() && !find_error(vr, "missing required field").empty(),
           "neg: incomplete embedded Makegrid parameters rejected");
+    write_scratch(
+        "{\"mpol\":2,\"ntor\":0,\"am\":[1.0],"
+        "\"makegrid_paramters\":{},"
+        "\"rbc\":[{\"n\":0,\"m\":1,\"value\":1.0}],"
+        "\"zbs\":[{\"n\":0,\"m\":1,\"value\":0.5}]}");
+    vr = cumes::read_and_validate(scratch_path(), opts);
+    check(!vr.has_value() &&
+              !find_error(vr, "unknown input key 'makegrid_paramters'").empty(),
+          "neg: misspelled Makegrid key is not accepted");
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0],"
         " \"pmass_type\": \"spline\","

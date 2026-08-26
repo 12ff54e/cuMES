@@ -8,7 +8,7 @@
   "ncurr":1,
   "delt":1,
   "physical":{"phiedge":-1.74,"pres_scale":1,"adiabatic_index":0,"spres_ped":1,"bloat":1,"curtor":5000,"tcon0":1},
-  "free_boundary":{"lfreeb":false,"nvacskip":6,"mgrid_file":"mgrid_w7x_nv36_hires.nc","coils_file":"","makegrid_parameters_file":"","makegrid_paramters":null,"extcur":[13000,13260,14040,12090,10959,0,0]},
+  "free_boundary":{"lfreeb":false,"nvacskip":6,"mgrid_file":"mgrid_w7x_nv36_hires.nc","coils_file":"","makegrid_parameters_file":"","makegrid_parameters":null,"extcur":[13000,13260,14040,12090,10959,0,0]},
   "profiles":{"pmass_type":"power_series","piota_type":"power_series","pcurr_type":"power_series","am":[166000,-166000],"ac":[0,1],"ai":[],"aphi":[1]},
   "axis":{"raxis_c":[5.6342999999999996,0.35209000000000001,0,0,0,0,0,0,0,0,0,0,0],"zaxis_s":[0,-0.29577999999999999,0,0,0,0,0,0,0,0,0,0,0]},
   "stages":[{"ns":33,"max_iter":3000,"ftol":9.9999999999999998e-13},{"ns":66,"max_iter":4000,"ftol":9.9999999999999998e-13},{"ns":99,"max_iter":5000,"ftol":9.9999999999999998e-13}],

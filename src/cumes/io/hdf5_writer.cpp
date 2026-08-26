@@ -277,9 +277,9 @@ class Hdf5V1Writer final : public Writer {
                  "attr makegrid_parameters_file");
         const int makegrid_present =
             ip.embedded_makegrid_parameters.has_value() ? 1 : 0;
-        H5_CHECK(put_attr(fid, "makegrid_paramters_present", H5T_NATIVE_INT,
+        H5_CHECK(put_attr(fid, "makegrid_parameters_present", H5T_NATIVE_INT,
                           &makegrid_present),
-                 "attr makegrid_paramters_present");
+                 "attr makegrid_parameters_present");
         const MakegridParametersSpec makegrid =
             ip.embedded_makegrid_parameters.value_or(MakegridParametersSpec{});
         const int makegrid_normalize = makegrid.normalize_by_currents ? 1 : 0;
@@ -878,11 +878,11 @@ class Hdf5V1Reader final : public Reader {
                             get_str_attr(fid, "makegrid_parameters_file",
                                          ip.makegrid_parameters_file);
                             H5Closer present_attr(
-                                H5Aopen(fid, "makegrid_paramters_present",
+                                H5Aopen(fid, "makegrid_parameters_present",
                                         H5P_DEFAULT));
                             if (present_attr.get() >= 0) {
                                 int present = 0;
-                                if (!get_int_attr("makegrid_paramters_present",
+                                if (!get_int_attr("makegrid_parameters_present",
                                                   present)) {
                                     return fail(
                                         "malformed embedded input record");

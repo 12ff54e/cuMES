@@ -23,7 +23,7 @@
   "ai": [0.49, -0.3],
   "lfreeb": true,
   "coils_file": "deps/vacuum-field/tests/data/coils.solovev",
-  "makegrid_paramters": {
+  "makegrid_parameters": {
     "normalize_by_currents": false,
     "assume_stellarator_symmetry": false,
     "number_of_field_periods": 1,

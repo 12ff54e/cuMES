@@ -157,9 +157,9 @@ parses input.
 Free-boundary input accepts either a precomputed `mgrid_file`, or `coils_file`
 together with Makegrid parameters. The parameters may be supplied by
 `makegrid_parameters_file`, or embedded as the complete parameter object under
-the intentionally spelled key `makegrid_paramters`. If both parameter keys are
-present, cuMES warns and uses the embedded object. These paths construct the
-response table once in memory before iteration; `extcur` remains in Amperes.
+the key `makegrid_parameters`. If both parameter keys are present, cuMES warns
+and uses the embedded object. These paths construct the response table once in
+memory before iteration; `extcur` remains in Amperes.
 See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 `inputs/free_bdy/solovev_free_bdy_embedded.json`.
 

@@ -73,7 +73,7 @@ const std::set<std::string> SUPPORTED_KEYS = {
     "mgrid_file",
     "coils_file",
     "makegrid_parameters_file",
-    "makegrid_paramters",
+    "makegrid_parameters",
     "extcur",
     "nvacskip",
 };
@@ -431,16 +431,17 @@ ParsedProblem read_problem_spec(const std::string& path,
                    p.free_boundary.makegrid_parameters_file = get_string(
                        v, k, p.free_boundary.makegrid_parameters_file, report);
                });
-    if_present("makegrid_paramters",
+    const bool has_makegrid_parameters = root.contains("makegrid_parameters");
+    if_present("makegrid_parameters",
                [&](const json::Value& v, std::string_view k) {
                    p.free_boundary.embedded_makegrid_parameters =
                        read_makegrid_parameters(v, k, report);
                });
-    if (root.contains("makegrid_parameters_file") &&
-        root.contains("makegrid_paramters")) {
-        report.warn("makegrid_paramters",
-                    "both makegrid_parameters_file and makegrid_paramters "
-                    "are present; using embedded makegrid_paramters");
+    if (root.contains("makegrid_parameters_file") && has_makegrid_parameters) {
+        report.warn("makegrid_parameters",
+                    "both makegrid_parameters_file and embedded "
+                    "makegrid_parameters are present; using embedded "
+                    "makegrid_parameters");
     }
     if_present("extcur", [&](const json::Value& v, std::string_view k) {
         p.free_boundary.extcur = read_double_array(v, k, report);

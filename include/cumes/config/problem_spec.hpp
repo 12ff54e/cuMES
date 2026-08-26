@@ -76,8 +76,7 @@ struct StageRequest {
     double tolerance = 0.0;  // ftol
 };
 
-// Embedded form of a MAKEGRID parameter JSON file. The input key intentionally
-// follows the requested spelling `makegrid_paramters`.
+// Embedded form of a MAKEGRID parameter JSON file (`makegrid_parameters`).
 struct MakegridParametersSpec {
     bool normalize_by_currents = false;
     bool assume_stellarator_symmetry = false;

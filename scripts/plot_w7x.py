@@ -127,7 +127,7 @@ def _read_input_record(f, has_profile_types=False,
     if has_inline_makegrid_extension:
         coils_file = _read_str(f)
         makegrid_parameters_file = _read_str(f)
-    makegrid_paramters = None
+    makegrid_parameters = None
     if has_embedded_makegrid_extension:
         present = struct.unpack("<i", f.read(4))[0]
         if present:
@@ -136,7 +136,7 @@ def _read_input_record(f, has_profile_types=False,
             nr = struct.unpack("<i", f.read(4))[0]
             z_min, z_max = struct.unpack("<2d", f.read(16))
             nz, nphi = struct.unpack("<2i", f.read(8))
-            makegrid_paramters = {
+            makegrid_parameters = {
                 "normalize_by_currents": bool(normalize),
                 "assume_stellarator_symmetry": bool(symmetry),
                 "number_of_field_periods": nfp_mg,
@@ -163,7 +163,7 @@ def _read_input_record(f, has_profile_types=False,
         "lfreeb": lfreeb, "nvacskip": nvacskip,
         "mgrid_file": mgrid_file, "coils_file": coils_file,
         "makegrid_parameters_file": makegrid_parameters_file,
-        "makegrid_paramters": makegrid_paramters,
+        "makegrid_parameters": makegrid_parameters,
         "extcur": extcur,
     }
 
@@ -282,10 +282,10 @@ def load_state(path):
                 return list(np.asarray(nc.variables[var][:], dtype="<i4")) \
                     if var in nc.variables else []
 
-            makegrid_paramters = None
-            if "makegrid_paramters_present" in nc.variables and \
-                    scalar("makegrid_paramters_present"):
-                makegrid_paramters = {
+            makegrid_parameters = None
+            if "makegrid_parameters_present" in nc.variables and \
+                    scalar("makegrid_parameters_present"):
+                makegrid_parameters = {
                     "normalize_by_currents":
                         bool(scalar("makegrid_normalize_by_currents")),
                     "assume_stellarator_symmetry": bool(scalar(
@@ -337,7 +337,7 @@ def load_state(path):
                 "coils_file": sattr("coils_file", ""),
                 "makegrid_parameters_file":
                     sattr("makegrid_parameters_file", ""),
-                "makegrid_paramters": makegrid_paramters,
+                "makegrid_parameters": makegrid_parameters,
                 "extcur": darray("extcur"),
             }
             sp = getattr(nc, "source_path", "")
@@ -372,9 +372,9 @@ def load_state(path):
                 return list(np.asarray(f5[var][:], dtype="<i4")) \
                     if var in f5 else []
 
-            makegrid_paramters = None
-            if int(f5.attrs.get("makegrid_paramters_present", 0)):
-                makegrid_paramters = {
+            makegrid_parameters = None
+            if int(f5.attrs.get("makegrid_parameters_present", 0)):
+                makegrid_parameters = {
                     "normalize_by_currents": bool(int(f5.attrs[
                         "makegrid_normalize_by_currents"])),
                     "assume_stellarator_symmetry": bool(int(f5.attrs[
@@ -430,7 +430,7 @@ def load_state(path):
                 "coils_file": sattr("coils_file", ""),
                 "makegrid_parameters_file":
                     sattr("makegrid_parameters_file", ""),
-                "makegrid_paramters": makegrid_paramters,
+                "makegrid_parameters": makegrid_parameters,
                 "extcur": darray("extcur"),
             }
             if sattr("source_path", ""):

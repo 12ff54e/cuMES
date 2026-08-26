@@ -255,14 +255,14 @@ class NetcdfV1Writer final : public Writer {
                  "def curtor");
         NC_CHECK(nc_def_var(ncid, "tcon0", NC_DOUBLE, 0, nullptr, &v_tcon0),
                  "def tcon0");
-        int v_lfreeb, v_nvacskip, v_makegrid_paramters_present;
+        int v_lfreeb, v_nvacskip, v_makegrid_parameters_present;
         NC_CHECK(nc_def_var(ncid, "lfreeb", NC_INT, 0, nullptr, &v_lfreeb),
                  "def lfreeb");
         NC_CHECK(nc_def_var(ncid, "nvacskip", NC_INT, 0, nullptr, &v_nvacskip),
                  "def nvacskip");
-        NC_CHECK(nc_def_var(ncid, "makegrid_paramters_present", NC_INT, 0,
-                            nullptr, &v_makegrid_paramters_present),
-                 "def makegrid_paramters_present");
+        NC_CHECK(nc_def_var(ncid, "makegrid_parameters_present", NC_INT, 0,
+                            nullptr, &v_makegrid_parameters_present),
+                 "def makegrid_parameters_present");
         int v_mg_normalize, v_mg_symmetry, v_mg_nfp, v_mg_num_r, v_mg_num_z,
             v_mg_num_phi, v_mg_min_r, v_mg_max_r, v_mg_min_z, v_mg_max_z;
         NC_CHECK(nc_def_var(ncid, "makegrid_normalize_by_currents", NC_INT, 0,
@@ -479,9 +479,9 @@ class NetcdfV1Writer final : public Writer {
                  "put nvacskip");
         const int makegrid_present =
             ip.embedded_makegrid_parameters.has_value() ? 1 : 0;
-        NC_CHECK(nc_put_var_int(ncid, v_makegrid_paramters_present,
+        NC_CHECK(nc_put_var_int(ncid, v_makegrid_parameters_present,
                                 &makegrid_present),
-                 "put makegrid_paramters_present");
+                 "put makegrid_parameters_present");
         const MakegridParametersSpec makegrid =
             ip.embedded_makegrid_parameters.value_or(MakegridParametersSpec{});
         const int makegrid_normalize = makegrid.normalize_by_currents ? 1 : 0;
@@ -1028,11 +1028,12 @@ class NetcdfV1Reader final : public Reader {
                             get_str("coils_file", ip.coils_file);
                             get_str("makegrid_parameters_file",
                                     ip.makegrid_parameters_file);
-                            if (nc_inq_varid(ncid, "makegrid_paramters_present",
+                            if (nc_inq_varid(ncid,
+                                             "makegrid_parameters_present",
                                              &variable_id) == NC_NOERR) {
                                 int present = 0;
                                 if (!read_scalar_int(
-                                        "makegrid_paramters_present",
+                                        "makegrid_parameters_present",
                                         present)) {
                                     return fail(
                                         "malformed embedded input record");
