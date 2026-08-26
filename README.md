@@ -42,7 +42,10 @@ validation with instructions for enabling the dependency.
 **Requirements:** CUDA Toolkit ≥ 11, CMake ≥ 3.20, GPU compute capability ≥ 6.1
 (Pascal or newer). If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must
 point to g++-12 (set in `CMakeLists.txt`). Built CUDA architectures: 61
-(Pascal), 75 (Turing), 80 (Ampere), 86, 89 (Ada).
+(Pascal), 75 (Turing), 80 (Ampere), 86, 89 (Ada). NetCDF and HDF5 are optional:
+a plain `cmake -B build` detects them and continues with unavailable backends
+disabled. Without NetCDF, binary output and in-memory MAKEGRID free-boundary
+calculations remain available.
 
 ## Architecture
 

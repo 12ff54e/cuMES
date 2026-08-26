@@ -239,9 +239,14 @@ endif()
 # link it (PUBLIC — tests linking both operator libraries get it transitively).
 if(CUMES_USE_VACUUM_FIELD)
   # Propagate the scalar switch: each scalar library picks the matching
-  # instantiation.
+  # instantiation. Unless explicitly overridden, propagate the top-level
+  # NetCDF availability too: this avoids a duplicate dependency probe/warning
+  # and keeps a plain `cmake -B build` usable when NetCDF is absent.
   set(VFIELD_USE_FLOAT ${CUMES_USE_FLOAT} CACHE BOOL
       "vacuum-field scalar switch (propagated from CUMES_USE_FLOAT)" FORCE)
+  if(NOT DEFINED VFIELD_USE_NETCDF)
+    set(VFIELD_USE_NETCDF ${CUMES_HAVE_NETCDF})
+  endif()
   set(VFIELD_BUILD_MAKEGRID ON CACHE BOOL
       "build vacuum-field Makegrid support for cuMES" FORCE)
   add_subdirectory(deps/vacuum-field)

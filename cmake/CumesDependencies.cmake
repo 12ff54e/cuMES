@@ -31,8 +31,7 @@ if(CUMES_USE_NETCDF)
     set(CUMES_HAVE_NETCDF TRUE)
     message(STATUS "cuMES: NetCDF output enabled (netCDF ${netCDF_VERSION})")
   else()
-    message(WARNING "cuMES: NetCDF not found - .nc output disabled "
-                    "(install libnetcdf-dev or pass -DCUMES_USE_NETCDF=OFF)")
+    message(STATUS "cuMES: NetCDF not found; continuing without NetCDF support")
   endif()
 endif()
 
