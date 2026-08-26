@@ -46,8 +46,7 @@ if(CUMES_USE_HDF5)
     set(CUMES_HAVE_HDF5 TRUE)
     message(STATUS "cuMES: HDF5 output enabled (HDF5 ${HDF5_VERSION})")
   else()
-    message(WARNING "cuMES: HDF5 not found - .h5 output disabled "
-                    "(install libhdf5-dev or pass -DCUMES_USE_HDF5=OFF)")
+    message(STATUS "cuMES: HDF5 not found; continuing without HDF5 support")
   endif()
 endif()
 
