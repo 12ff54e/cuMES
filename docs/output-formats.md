@@ -189,7 +189,7 @@ The 20-byte header (magic + version + ns + mnmax) is followed directly by
 the six families; only a consumer that wants provenance needs the trailer.
 (compare_bitwise.py compares the state payload byte-wise, not the whole
 file: the trailer embeds the git revision, so full-file bytes differ
-across revisions by design.) `scripts/plot_w7x.py` walks the full trailer
+across revisions by design.) `scripts/plot_equilibrium.py` walks the full trailer
 and parses the embedded input record, so a converged equilibrium plots
 without its input JSON (containers written before the record are rejected
 with a "re-run the solver" message).

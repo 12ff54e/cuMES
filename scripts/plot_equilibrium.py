@@ -30,7 +30,7 @@ Two self-checks run before rendering:
      rbc/zbs boundary; for free boundary, its displacement is reported;
   2. the edge |B| range is printed for a physical plausibility review.
 
-Usage: plot_w7x.py [--state PATH] [--out PATH.png] [--field-lines]
+Usage: plot_equilibrium.py [--state PATH] [--out PATH.png] [--field-lines]
 """
 
 import argparse
@@ -1144,7 +1144,7 @@ def render_slices(base, S):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", default="figure_data/w7x_state.bin")
-    ap.add_argument("--out", default="figure_data/w7x_equilibrium_3d.png")
+    ap.add_argument("--out", default="figure_data/equilibrium.png")
     ap.add_argument("--field-lines", action="store_true",
                     help="also trace and draw field lines on the edge surface "
                          "(off by default: the figure stays cleaner)")
