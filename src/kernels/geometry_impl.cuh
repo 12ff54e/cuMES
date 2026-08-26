@@ -74,6 +74,26 @@ cumes::GeometryOperator<T>::GeometryOperator(
     alloc(d_bsubu_, "metric/bsubu");
     alloc(d_bsubv_, "metric/bsubv");
     alloc(d_totalPressure_, "metric/totalPressure");
+    jacobian_blocks_ = std::min<int>(128, (static_cast<int>(nH) + 255) / 256);
+    auto alloc_jacobian_t = [&](T*& dst, const char* name) {
+        if (arena)
+            dst = arena->get().alloc_span<T>(name, jacobian_blocks_);
+        else
+            cumes::check_cuda(cudaMalloc(&dst, jacobian_blocks_ * sizeof(T)),
+                              name);
+    };
+    auto alloc_jacobian_i = [&](int*& dst, const char* name) {
+        if (arena)
+            dst = arena->get().alloc_span<int>(name, jacobian_blocks_);
+        else
+            cumes::check_cuda(cudaMalloc(&dst, jacobian_blocks_ * sizeof(int)),
+                              name);
+    };
+    alloc_jacobian_t(d_jacobian_min_, "metric/jacobian_min");
+    alloc_jacobian_t(d_jacobian_max_, "metric/jacobian_max");
+    alloc_jacobian_t(d_jacobian_bad_, "metric/jacobian_bad");
+    alloc_jacobian_i(d_jacobian_arg_, "metric/jacobian_arg");
+    alloc_jacobian_i(d_jacobian_seen_, "metric/jacobian_seen");
     arena_backed_ = arena.has_value();
 }
 
@@ -95,6 +115,11 @@ cumes::GeometryOperator<T>::~GeometryOperator() {
         cudaFree(d_bsubu_);
         cudaFree(d_bsubv_);
         cudaFree(d_totalPressure_);
+        cudaFree(d_jacobian_min_);
+        cudaFree(d_jacobian_max_);
+        cudaFree(d_jacobian_bad_);
+        cudaFree(d_jacobian_arg_);
+        cudaFree(d_jacobian_seen_);
     }
 }
 
@@ -560,7 +585,7 @@ __global__ void update_iota_chip_f_kernel(
 // ---- Jacobian validity stats (vmecpp's bad-jacobian detection) -----------
 // Reduces over the half-grid: the ORIENTED minimum signJ·√g (signJ = ±1, the
 // sign convention of the coordinates), the max |√g|, the non-finite count,
-// and the index of the min element (jH*stride + point, for the error
+// and the linear index of the min element (for the error
 // message). Tracking signJ·√g rather than fabs(√g) makes a genuine Jacobian
 // SIGN FLIP (an interior collapse, √g crossing zero) fail the validity test
 // directly — |√g| would keep the value positive and hide the flip. On a valid
@@ -575,21 +600,40 @@ __global__ void update_iota_chip_f_kernel(
 // magnetic axis is a coordinate singularity), so the solver's threshold must
 // be relative to the run's own scale (see solver_run), not an absolute zero.
 template <typename T>
-__global__ void jacobian_stats_kernel(
-    const T* __restrict__ gsqrt,
-    int nHalf,
-    int stride,
-    T signJ,
-    cumes::ControlRecord* __restrict__ rec)  // jacobian_min_oriented /
-                                             // jacobian_max_abs /
-                                             // jacobian_nonfinite_count /
-                                             // jacobian_min_index
-{
+__device__ __forceinline__ void jacobian_stats_combine(T other_min,
+                                                       T other_max,
+                                                       T other_bad,
+                                                       int other_arg,
+                                                       int other_seen,
+                                                       T& vmin,
+                                                       T& vmax,
+                                                       T& vbad,
+                                                       int& argmin,
+                                                       int& seen) {
+    if (other_seen && (!seen || other_min < vmin ||
+                       (other_min == vmin && other_arg < argmin))) {
+        vmin = other_min;
+        argmin = other_arg;
+        seen = 1;
+    }
+    vmax = fmax(vmax, other_max);
+    vbad += other_bad;
+}
+
+template <typename T>
+__global__ void jacobian_stats_partials_kernel(const T* __restrict__ gsqrt,
+                                               int nHalf,
+                                               T signJ,
+                                               T* __restrict__ partial_min,
+                                               T* __restrict__ partial_max,
+                                               T* __restrict__ partial_bad,
+                                               int* __restrict__ partial_arg,
+                                               int* __restrict__ partial_seen) {
     // Reduction identities: min starts at +inf (NOT 0) and max at 0, and a
     // lane that saw no finite data contributes the identity via a `seen` flag
     // rather than a zero that could win the minimum. The old code initialized
-    // vmin=0 and relied on `first`; on grids where nHalf*stride < blockDim
-    // (e.g. (ns-1)*nZnT < 256), idle lanes kept vmin=0 and could win the tree
+    // vmin=0 and relied on `first`; on grids where nHalf < blockDim, idle
+    // lanes kept vmin=0 and could win the tree
     // minimum, poisoning the reported gmin (masked only because the solver
     // suppresses gminIdx < nZnT).
     // Device-safe +inf: numeric_limits<T>::infinity() is host-only constexpr
@@ -598,69 +642,96 @@ __global__ void jacobian_stats_kernel(
         (sizeof(T) == sizeof(double)) ? T(CUDART_INF) : T(CUDART_INF_F);
     T vmin = INF, vmax = T(0.0), vbad = T(0.0);
     int argmin = 0;
-    bool seen = false;
-    for (int i = threadIdx.x; i < nHalf; i += blockDim.x) {
-        for (int s = 0; s < stride; ++s) {
-            T g = gsqrt[i + s * nHalf];
-            if (!std::isfinite(g)) {
-                vbad += T(1.0);
-                continue;
-            }
-            T a = fabs(g);     // scale statistic
-            T ov = signJ * g;  // ORIENTED value: = |g| when √g keeps
-                               // the expected sign, negative on a flip
-            // vmax tracks max |√g| in EVERY branch: a sign-flipped element
-            // (ov = -a < vmin) still contributes its magnitude |g| = a to the
-            // BAD-JACOBIAN diagnostic (review finding 2.2).
-            // vmin is initialized from the ORIENTED value (completion-plan
-            // follow-up §2.1): a lane whose FIRST sample is sign-flipped must
-            // seed the minimum with ov = -a, not a — initializing from a hid
-            // the flip whenever later samples in the lane were positive, and
-            // the finalize kernel then reported a VALID pass.
-            if (!seen) {
-                vmin = ov;
-                vmax = a;
-                argmin = i + s * nHalf;
-                seen = true;
-            } else if (ov < vmin) {
-                vmin = ov;
-                argmin = i + s * nHalf;
-                vmax = fmax(vmax, a);
-            } else {
-                vmax = fmax(vmax, a);
-            }
+    int seen = 0;
+    int global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int grid_stride = blockDim.x * gridDim.x;
+    for (int i = global_tid; i < nHalf; i += grid_stride) {
+        T g = gsqrt[i];
+        if (!std::isfinite(g)) {
+            vbad += T(1.0);
+            continue;
         }
+        T a = fabs(g);     // scale statistic
+        T ov = signJ * g;  // ORIENTED value: = |g| when sqrt(g) keeps
+                           // the expected sign, negative on a flip
+        if (!seen || ov < vmin || (ov == vmin && i < argmin)) {
+            vmin = ov;
+            argmin = i;
+            seen = 1;
+        }
+        vmax = fmax(vmax, a);
     }
     __shared__ T s_min[256], s_max[256], s_bad[256];
     __shared__ int s_arg[256];
-    __shared__ char s_seen[256];
+    __shared__ int s_seen[256];
     int tid = threadIdx.x;
     s_min[tid] = seen ? vmin : INF;
     s_max[tid] = vmax;
     s_bad[tid] = vbad;
     s_arg[tid] = seen ? argmin : 0;
-    s_seen[tid] = seen ? 1 : 0;
+    s_seen[tid] = seen;
     __syncthreads();
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
-            if (s_seen[tid + s] &&
-                (!s_seen[tid] || s_min[tid + s] < s_min[tid])) {
-                s_min[tid] = s_min[tid + s];
-                s_arg[tid] = s_arg[tid + s];
-                s_seen[tid] = 1;
-            }
-            s_max[tid] = fmax(s_max[tid], s_max[tid + s]);
-            s_bad[tid] += s_bad[tid + s];
+            jacobian_stats_combine(s_min[tid + s], s_max[tid + s],
+                                   s_bad[tid + s], s_arg[tid + s],
+                                   s_seen[tid + s], s_min[tid], s_max[tid],
+                                   s_bad[tid], s_arg[tid], s_seen[tid]);
         }
         __syncthreads();
     }
     if (tid == 0) {
-        // A fully-empty grid (no finite data anywhere) keeps the +inf identity;
-        // the solver treats max <= 0 (or here inf) as invalid.
+        partial_min[blockIdx.x] = s_min[0];
+        partial_max[blockIdx.x] = s_max[0];
+        partial_bad[blockIdx.x] = s_bad[0];
+        partial_arg[blockIdx.x] = s_arg[0];
+        partial_seen[blockIdx.x] = s_seen[0];
+    }
+}
+
+template <typename T>
+__global__ void jacobian_stats_finalize_kernel(
+    const T* __restrict__ partial_min,
+    const T* __restrict__ partial_max,
+    const T* __restrict__ partial_bad,
+    const int* __restrict__ partial_arg,
+    const int* __restrict__ partial_seen,
+    int nPartials,
+    cumes::ControlRecord* __restrict__ rec) {
+    const T INF =
+        (sizeof(T) == sizeof(double)) ? T(CUDART_INF) : T(CUDART_INF_F);
+    int tid = threadIdx.x;
+    T vmin = INF, vmax = T(0), vbad = T(0);
+    int argmin = 0, seen = 0;
+    if (tid < nPartials) {
+        vmin = partial_min[tid];
+        vmax = partial_max[tid];
+        vbad = partial_bad[tid];
+        argmin = partial_arg[tid];
+        seen = partial_seen[tid];
+    }
+    __shared__ T s_min[256], s_max[256], s_bad[256];
+    __shared__ int s_arg[256], s_seen[256];
+    s_min[tid] = vmin;
+    s_max[tid] = vmax;
+    s_bad[tid] = vbad;
+    s_arg[tid] = argmin;
+    s_seen[tid] = seen;
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            jacobian_stats_combine(s_min[tid + s], s_max[tid + s],
+                                   s_bad[tid + s], s_arg[tid + s],
+                                   s_seen[tid + s], s_min[tid], s_max[tid],
+                                   s_bad[tid], s_arg[tid], s_seen[tid]);
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
         rec->jacobian_min_oriented = s_seen[0] ? s_min[0] : INF;
         rec->jacobian_max_abs = s_max[0];
         rec->jacobian_nonfinite_count = s_bad[0];
-        rec->jacobian_min_index = (double)s_arg[0];
+        rec->jacobian_min_index = static_cast<double>(s_arg[0]);
     }
 }
 
@@ -687,8 +758,12 @@ void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p,
                                                 cumes::ControlRecord* rec,
                                                 cudaStream_t stream) const {
     const int nHalf = (p.ns - 1) * p.nZnT;
-    jacobian_stats_kernel<T>
-        <<<1, 256, 0, stream>>>(d_gsqrt_, nHalf, 1, T(p.SIGN_JACOBIAN), rec);
+    jacobian_stats_partials_kernel<T><<<jacobian_blocks_, 256, 0, stream>>>(
+        d_gsqrt_, nHalf, T(p.SIGN_JACOBIAN), d_jacobian_min_, d_jacobian_max_,
+        d_jacobian_bad_, d_jacobian_arg_, d_jacobian_seen_);
+    jacobian_stats_finalize_kernel<T><<<1, 256, 0, stream>>>(
+        d_jacobian_min_, d_jacobian_max_, d_jacobian_bad_, d_jacobian_arg_,
+        d_jacobian_seen_, jacobian_blocks_, rec);
     cumes::check_cuda(cudaGetLastError(), "jacobianStats");
 }
 

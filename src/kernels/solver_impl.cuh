@@ -27,6 +27,7 @@
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/runtime/cuda_graph.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
 #include "cumes/runtime/device_buffer.cuh"
@@ -41,6 +42,7 @@
 #include "solver.cuh"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -1152,6 +1154,36 @@ SolverResult<T> solver_run(
         bench_t_prev = std::chrono::steady_clock::now();
     }
 
+    // Fixed-boundary passes are captured lazily by schedule shape. Graphs
+    // remove the host launch gaps measured by graph_realpass while leaving
+    // the single control-record fence and controller ordering unchanged.
+    // Refresh-pass graphs read normalization factors from this pass's device
+    // record and remain valid for the stage. Non-refresh graphs embed the
+    // host-cached factors as kernel arguments, so they are discarded whenever
+    // a refresh publishes new factors. Free-boundary passes retain the direct
+    // path because their host vacuum update splits the device DAG in two. The
+    // legacy default stream is also direct: CUDA does not permit it to be the
+    // root of a stream capture (production stages use an explicit stream).
+    const char* disable_cuda_graphs = getenv("CUMES_DISABLE_CUDA_GRAPHS");
+    const bool cuda_graphs_disabled =
+        disable_cuda_graphs != nullptr && atoi(disable_cuda_graphs) != 0;
+    const bool use_cuda_graphs = stream != nullptr && !vacuum &&
+                                 !cumes::dump_enabled() &&
+                                 !cuda_graphs_disabled;
+    std::array<cumes::CudaGraph, 128> refresh_graphs;
+    std::array<cumes::CudaGraph, 128> norm_graphs;
+    auto schedule_key = [](const cumes::EvaluationSchedule& s) {
+        unsigned key = 0;
+        key |= s.update_iota_chi ? 1u << 0 : 0;
+        key |= s.reset_constraint_reference ? 1u << 1 : 0;
+        key |= s.refresh_preconditioner ? 1u << 2 : 0;
+        key |= s.zero_z_force_m1 ? 1u << 3 : 0;
+        key |= s.include_edge_rz_invariant ? 1u << 4 : 0;
+        key |= s.decay_rcon0_zcon0 ? 1u << 5 : 0;
+        key |= s.apply_vacuum_edge_force ? 1u << 6 : 0;
+        return key;
+    };
+
     for (int iter = 0; iter < MAX_ITER_EFF; ++iter) {
         // Snapshot of the controller's effective iteration for this pass's
         // dump windows (constant until after_descent at the end of the body;
@@ -1205,7 +1237,18 @@ SolverResult<T> solver_run(
             vacuum && vacuum->get().decay_rcon0_zcon0();
         schedule.apply_vacuum_edge_force = false;
 
-        if (!vacuum || !schedule.run_vacuum_block) {
+        if (use_cuda_graphs) {
+            const unsigned key = schedule_key(schedule);
+            auto& cache =
+                schedule.refresh_preconditioner ? refresh_graphs : norm_graphs;
+            if (cache[key].empty()) {
+                cache[key] = cumes::CudaGraph::capture(stream, [&]() {
+                    equilibrium.enqueue(iter, iter2, schedule, stream, fNormRZ,
+                                        fNormL);
+                });
+            }
+            cache[key].launch(stream);
+        } else if (!vacuum || !schedule.run_vacuum_block) {
             equilibrium.enqueue(iter, iter2, schedule, stream, fNormRZ, fNormL);
         } else {
             equilibrium.enqueue_prefix(iter, iter2, schedule, stream, fNormRZ,
@@ -1270,7 +1313,12 @@ SolverResult<T> solver_run(
         const cumes::ControlRecord& rec = *h_control_pin.data();
         // Sample the transform-timing events at this fence (both transforms
         // preceded it on the same stream).
-        equilibrium.sample_transform_timing();
+        // CUDA event timestamp queries for events recorded inside a captured
+        // graph return cudaErrorInvalidValue on the tested CUDA 12.9 stack.
+        // Transform timing is diagnostic-only; the fixed-iteration benchmark
+        // and Nsight provide graph-path timing without poisoning the runtime's
+        // last-error slot before the descent launch.
+        if (!use_cuda_graphs) equilibrium.sample_transform_timing();
 
         const double plain_per_el = (double)p.mnmax * (double)p.ns;
 
@@ -1318,6 +1366,9 @@ SolverResult<T> solver_run(
             fNormRZ = rec.final_f_norm_rz;
             fNormL = rec.final_f_norm_l;
             fNorm1 = rec.final_f_norm1;
+            if (use_cuda_graphs) {
+                for (auto& graph : norm_graphs) graph.reset();
+            }
             cumes::dump_force_norms(rec.force_norms, (double)profiles.delta_s(),
                                     iter2, fNormRZ, fNormL, fNorm1);
         }
@@ -1468,13 +1519,17 @@ SolverResult<T> solver_run(
     cumes::check_cuda(cudaStreamSynchronize(stream), "solver end sync");
     // precon/constraint/equilibrium are RAII (their destructors free the
     // arena-backed workspaces and the transform-timing events); nothing else.
-    float t_inv_ms = 0.0f, t_fwd_ms = 0.0f;
-    equilibrium.transform_timing_ms(t_inv_ms, t_fwd_ms);
-    printf(
-        "transform timing: inverseDFT total %.1f ms (%.3f ms/iter), "
-        "forwardDFT total %.1f ms (%.3f ms/iter)\n",
-        t_inv_ms, t_inv_ms / (res.iterations > 0 ? res.iterations : 1),
-        t_fwd_ms, t_fwd_ms / (res.iterations > 0 ? res.iterations : 1));
+    if (use_cuda_graphs) {
+        printf("transform timing: unavailable during CUDA Graph replay\n");
+    } else {
+        float t_inv_ms = 0.0f, t_fwd_ms = 0.0f;
+        equilibrium.transform_timing_ms(t_inv_ms, t_fwd_ms);
+        printf(
+            "transform timing: inverseDFT total %.1f ms (%.3f ms/iter), "
+            "forwardDFT total %.1f ms (%.3f ms/iter)\n",
+            t_inv_ms, t_inv_ms / (res.iterations > 0 ? res.iterations : 1),
+            t_fwd_ms, t_fwd_ms / (res.iterations > 0 ? res.iterations : 1));
+    }
     // Restart history for the stage report (v1 container): every pass that
     // restored state and re-anchored, with the effective iteration.
     res.restarts = controller.restart_events();

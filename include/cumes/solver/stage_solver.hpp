@@ -122,8 +122,12 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     std::size_t bytes = 0;
     // profiles: 4 full-grid + 7 half-grid radial arrays.
     bytes += (4 * ns + 7 * nH) * szT;
-    // metric: 15 half-grid (ns-1, nZnT) arrays.
+    // metric: 15 half-grid (ns-1, nZnT) arrays plus Jacobian-reduction
+    // partials (three T and two int values per block, capped at 128 blocks).
     bytes += 15 * nH * nZnT * szT;
+    const std::size_t jacobian_blocks =
+        std::min<std::size_t>(128, (nH * nZnT + 255) / 256);
+    bytes += jacobian_blocks * (3 * szT + 2 * szI);
     // mode table: 2 int arrays (d_xm/d_xn, resolution-scoped — blueprint §6.2).
     bytes += 2 * mnmax * szI;
     // fourier: 43 real arrays, zeta scratch (main + compact de-alias), 5

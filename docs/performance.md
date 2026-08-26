@@ -14,9 +14,9 @@ optimization. The dated tuning-session notes have been archived in
 > measuring pass), and the fence-delivered axis/boundary telemetry (the
 > production path has exactly one deliberate control fence per pass and no
 > per-print synchronization or allocation). Setup and iteration time are
-> reported separately. Only Pascal numbers are reported here: no modern GPU
-> was attached to this session, so the two-architecture comparison remains
-> an open measurement on the RTX-class target.
+> reported separately. The frozen Pascal baseline is kept below, followed by
+> the 2026 RTX 4090 optimization measurement; these are different code states
+> and are not used as a cross-GPU comparison.
 
 ## 1. Measurement harness (§8.1)
 
@@ -52,8 +52,31 @@ CUDA Graph re-measurement on the REAL pass DAG (ADR-0003 follow-up,
 63.9 µs/pass vs graph launch 9.8 µs/pass (54.2 µs saved), production-pattern
 wall 124.0 vs 111.3 µs/pass (12.8 µs ≈ 10% saved), GPU time 125.3 vs
 112.9 µs. The real-pass bound is therefore confirmed beneficial on the
-submission-bound Solovev workload; production graph integration remains a
-separate decision (see §3.3).
+submission-bound Solovev workload; the later production decision is recorded
+in §3.3.
+
+### 2.1 RTX 4090 optimization measurement (CUDA 12.9, 2026-08-26)
+
+The profiling build used precise double math, NetCDF/HDF5/vacuum disabled, GPU
+2, 50 warm-up passes and 300 timed fixed iterations. After a 1000-pass preheat,
+six graph-on/graph-off pairs with alternating execution order were used for the
+production graph comparison. Medians of the six per-run medians were:
+
+| shape | direct stream | production graph | graph wall reduction |
+| ----- | ------------: | ---------------: | -------------------: |
+| Solovev `ns=55` | 117.14 µs/iter | 82.33 µs/iter | 29.7% |
+| W7-X `ns=99` | 562.10 µs/iter | 534.53 µs/iter | 4.9% |
+
+Relative to the pre-optimization fixed-iteration baselines from the same RTX
+session, the final W7-X latency fell from 660.81 to 534.53 µs/iter (19.1%, or
+1.236x throughput), and Solovev fell from 115.59 to 82.33 µs/iter (28.8%, or
+1.404x throughput). The final-state hashes are identical with graphs enabled
+and disabled: W7-X `ce46a7cbe693601a`, Solovev `3c09fd3260b003a8`.
+
+The retained kernel changes are a parallel two-stage Jacobian-statistics
+reduction (W7-X kernel time 104.7 to 7.2 µs) and a full-theta inverse-transform
+mapping. Register-capping and split forward-reduction prototypes were removed
+because they did not clear the 5% acceptance threshold.
 
 Historical hotspot profiles (different sessions; not cross-GPU ratios — see the
 blueprint §2) put the W7-X iteration work in the transform accumulation/reduction
@@ -84,16 +107,17 @@ geometry/field loads. The prototype has been removed; the conclusion
 traffic for registers/shared memory and are unlikely to pay) is the durable
 result.
 
-### 3.3 CUDA Graph capture — integration deferred (ADR-0003)
+### 3.3 CUDA Graph capture — adopted for fixed boundary (ADR-0003)
 
 Empty-kernel microbenchmark: enqueue 1.94 µs/kernel, graph launch 6.43 µs/pass
 for 24 kernels → **~40 µs/pass upper-bound saving**. The real-pass
 measurement (see §2) confirmed a ~12.8 µs/pass (≈10%) wall saving on Solovev,
-with bitwise replay fidelity (`test_cuda_graph`). Production graph
-integration is still deferred: it remains a separately reviewable scheduling
-change outside the completion plan's scope, and the W7-X workload is
-GPU-bound where the submission saving is proportionally small. `CudaGraph`
-+ `test_cuda_graph` are retained as the measurement primitive.
+with bitwise replay fidelity (`test_cuda_graph`). Modern re-measurement then
+showed a 29.7% wall reduction on Solovev and a 4.9% reduction on W7-X. The graph
+change therefore clears the adoption threshold on one primary shape while
+remaining a non-regressing improvement on the other. Fixed-boundary schedules
+are captured lazily and cached by shape. Free-boundary and verification-dump
+paths remain direct; `CUMES_DISABLE_CUDA_GRAPHS=1` is the diagnostic opt-out.
 
 ## 4. Acceptance policy (verification.md §7)
 
@@ -112,15 +136,10 @@ memory benefit justifies it. Requirements:
 - the old backend is retained until the new one passes both numerical and
   performance gates.
 
-**Modern-GPU validation status: postponed.** No currently available second,
-modern CUDA GPU can run the acceptance matrix, so the "one modern
-architecture" half of this policy has not been run — it is neither passed nor
-failed. The archived RTX 4090 tuning session used an older code state and is
-useful historical evidence, but it is not a current acceptance run. Until
-suitable hardware is available, the TITAN Xp measurements above remain the
-measured baseline and every modern-GPU conclusion is explicitly unknown/deferred
-(the [archived post-overhaul follow-up](overhaul-history.md#post-overhaul-follow-up),
-§6). The deferred procedure is fixed: same
+**Modern-GPU validation status:** the 2026 RTX 4090 tuning run validates the
+retained optimizations on the modern target and includes bitwise final-state
+gates. A same-code-state Pascal re-run is still outstanding, so the complete
+two-architecture acceptance matrix remains open. That run must use the same
 commit, precision policy, toolkit provenance, warm-up, and measurement method
 as the TITAN Xp baseline; record GPU model, compute capability, driver/toolkit,
 clocks, power/thermal state, arena/cuFFT/graph memory, setup/output time,

@@ -83,6 +83,12 @@ class GeometryOperator {
     T* d_bsubu_ = nullptr;
     T* d_bsubv_ = nullptr;
     T* d_totalPressure_ = nullptr;
+    T* d_jacobian_min_ = nullptr;
+    T* d_jacobian_max_ = nullptr;
+    T* d_jacobian_bad_ = nullptr;
+    int* d_jacobian_arg_ = nullptr;
+    int* d_jacobian_seen_ = nullptr;
+    int jacobian_blocks_ = 0;
     bool arena_backed_ = false;
 };
 

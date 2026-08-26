@@ -554,7 +554,7 @@ __global__ void inverse_accumulate_kernel(const T* __restrict__ zeta_real,
                                           T* __restrict__ rCon,
                                           T* __restrict__ zCon) {
     // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
-    // Thread mapping: l1 = threadIdx.x (fastest), k = threadIdx.y — the
+    // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
     // coalesce; the m-loop shared reads (sm[.. + k]) become broadcasts.
     // The ζ direction is TILED (blockIdx.y selects the k-tile, k_tile-wide):
@@ -569,7 +569,7 @@ __global__ void inverse_accumulate_kernel(const T* __restrict__ zeta_real,
     int j = blockIdx.x;
     int k0 = blockIdx.y * k_tile;
     int k = threadIdx.y + k0;
-    int l1 = threadIdx.x;
+    int l = threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
     extern __shared__ T sh[];  // [4][mpol][k_tile]
     for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < 4 * mpol * k_tile;
@@ -590,53 +590,49 @@ __global__ void inverse_accumulate_kernel(const T* __restrict__ zeta_real,
     bool isR = (slot0 == 0);
     T signV = (slot0 == 8) ? T(-1.0) : T(1.0);
     size_t mstride = (size_t)mpol * k_tile;
-#pragma unroll
-    for (int pass = 0; pass < 2; ++pass) {
-        int l = l1 + pass * (ntheta / 2);
-        T v0e = T(0), v1e = T(0), v2e = T(0);
-        T v0o = T(0), v1o = T(0), v2o = T(0);
-        T rcon = T(0), zcon = T(0);
-        for (int m = 0; m < mpol; ++m) {
-            const T* sm = sh + m * k_tile;
-            T c0 = sm[0 * mstride + k - k0], c1 = sm[1 * mstride + k - k0];
-            T c2 = sm[2 * mstride + k - k0], c3 = sm[3 * mstride + k - k0];
-            T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
-            T mcos = mcos_th[m * ntheta + l], msin = msin_th[m * ntheta + l];
-            T fac = (m % 2 == 1) ? facO : T(1.0);
-            T t0 = isR ? cosm : sinm, t1 = isR ? sinm : cosm;
-            T u0 = isR ? msin : mcos, u1 = isR ? mcos : msin;
-            T v0 = fac * (c0 * t0 + c1 * t1);
-            T v1 = fac * (c0 * u0 + c1 * u1);
-            T v2 = signV * fac * (c2 * t0 + c3 * t1);
-            if constexpr (FuseRzCon) {
-                // rCon from the R slots (c0=Rcc cos, c1=Rss sin), zCon from
-                // the Z slots (c0=Zsc sin, c1=Zcs cos) — no fac/maxsc, the
-                // full-field reconstruction.
-                T xmpq = T(m) * T(m - 1);
-                rcon += xmpq * (c0 * cosm + c1 * sinm);
-                zcon += xmpq * (c0 * sinm + c1 * cosm);
-            }
-            if (m % 2 == 1) {
-                v0o += v0;
-                v1o += v1;
-                v2o += v2;
-            } else {
-                v0e += v0;
-                v1e += v1;
-                v2e += v2;
-            }
-        }
-        int idx = j * nZnT + k * ntheta + l;
-        e0[idx] = v0e;
-        e1[idx] = v1e;
-        e2[idx] = v2e;
-        o0[idx] = v0o;
-        o1[idx] = v1o;
-        o2[idx] = v2o;
+    T v0e = T(0), v1e = T(0), v2e = T(0);
+    T v0o = T(0), v1o = T(0), v2o = T(0);
+    T rcon = T(0), zcon = T(0);
+    for (int m = 0; m < mpol; ++m) {
+        const T* sm = sh + m * k_tile;
+        T c0 = sm[0 * mstride + k - k0], c1 = sm[1 * mstride + k - k0];
+        T c2 = sm[2 * mstride + k - k0], c3 = sm[3 * mstride + k - k0];
+        T cosm = cos_th[m * ntheta + l], sinm = sin_th[m * ntheta + l];
+        T mcos = mcos_th[m * ntheta + l], msin = msin_th[m * ntheta + l];
+        T fac = (m % 2 == 1) ? facO : T(1.0);
+        T t0 = isR ? cosm : sinm, t1 = isR ? sinm : cosm;
+        T u0 = isR ? msin : mcos, u1 = isR ? mcos : msin;
+        T v0 = fac * (c0 * t0 + c1 * t1);
+        T v1 = fac * (c0 * u0 + c1 * u1);
+        T v2 = signV * fac * (c2 * t0 + c3 * t1);
         if constexpr (FuseRzCon) {
-            if (rCon != nullptr) rCon[idx] = rcon;  // R-slot launch only
-            if (zCon != nullptr) zCon[idx] = zcon;  // Z-slot launch only
+            // rCon from the R slots (c0=Rcc cos, c1=Rss sin), zCon from
+            // the Z slots (c0=Zsc sin, c1=Zcs cos) — no fac/maxsc, the
+            // full-field reconstruction.
+            T xmpq = T(m) * T(m - 1);
+            rcon += xmpq * (c0 * cosm + c1 * sinm);
+            zcon += xmpq * (c0 * sinm + c1 * cosm);
         }
+        if (m % 2 == 1) {
+            v0o += v0;
+            v1o += v1;
+            v2o += v2;
+        } else {
+            v0e += v0;
+            v1e += v1;
+            v2e += v2;
+        }
+    }
+    int idx = j * nZnT + k * ntheta + l;
+    e0[idx] = v0e;
+    e1[idx] = v1e;
+    e2[idx] = v2e;
+    o0[idx] = v0o;
+    o1[idx] = v1o;
+    o2[idx] = v2o;
+    if constexpr (FuseRzCon) {
+        if (rCon != nullptr) rCon[idx] = rcon;  // R-slot launch only
+        if (zCon != nullptr) zCon[idx] = zcon;  // Z-slot launch only
     }
 }
 
@@ -687,9 +683,9 @@ __global__ void combine_parity_kernel(const T* __restrict__ r_e,
 }
 
 // ζ-tile width for the accumulate/reduce kernels: the block no longer embeds
-// the full ntheta/2 × nzeta product (unbounded blocks for larger grids).
+// the full ntheta × nzeta product (unbounded blocks for larger grids).
 // blockDim.y = k_tile, capped so blockDim.x*blockDim.y <= 1024 (and near 512
-// for occupancy); ntheta is input-capped at 256, so blockDim.x <= 128.
+// for occupancy); ntheta is input-capped at 256.
 static int compute_k_tile(int blk_x, int nzeta) {
     int kt = (blk_x >= 1024) ? 1 : std::min(16, 1024 / blk_x);
     return std::min(kt, nzeta);
@@ -736,11 +732,11 @@ static void inverse_pipeline(
     cumes::check_cufft(
         FftTraits<T>::exec_inverse(plan_z2d, d_zeta_spectra, d_zeta_real),
         "inv z2d");
-    // ζ-tiled accumulate (see inverse_accumulate_kernel): block (ntheta/2,
-    // k_tile), one grid row per (surface, k-tile).
-    int k_tile = compute_k_tile(p.ntheta / 2, p.nzeta);
+    // ζ-tiled accumulate (see inverse_accumulate_kernel): one thread per theta
+    // point in a block (ntheta, k_tile), one grid row per (surface, k-tile).
+    int k_tile = compute_k_tile(p.ntheta, p.nzeta);
     int n_k_tiles = (p.nzeta + k_tile - 1) / k_tile;
-    dim3 blk(p.ntheta / 2, k_tile);
+    dim3 blk(p.ntheta, k_tile);
     dim3 grd(p.ns, n_k_tiles);
     size_t inv_smem = 4 * p.mpol * k_tile * sizeof(T);
     // R slots 0-3 -> r/ru/rv (and fused rCon), Z slots 4-7 -> z/zu/zv (and

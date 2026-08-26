@@ -3,8 +3,9 @@
 //
 // A minimal owning wrapper over the CUDA Graph runtime API: capture a stream's
 // enqueued work into a cudaGraph_t, instantiate it into a cudaGraphExec_t, and
-// launch the executable. It is the Phase-9 measurement primitive for the
-// "graphs reduce submission overhead" question — not (yet) a solver backend.
+// launch the executable. The fixed-boundary solver uses it to cache pass DAGs
+// by schedule shape; the graph benchmarks also use it as their measurement and
+// bitwise-correctness primitive.
 //
 // Capture is stream-scoped and thread-local; the caller enqueues the DAG on the
 // capturing stream inside the callback. On a throwing callback the partial

@@ -1,6 +1,6 @@
-# ADR-0003 — CUDA Graph capture for the pre-control DAG (measured, integration deferred)
+# ADR-0003 — CUDA Graph capture for the pre-control DAG
 
-Status: accepted; production integration deferred (blueprint §8.11)
+Status: accepted; integrated for fixed-boundary passes (2026-08-26 update)
 
 ## Context
 
@@ -39,7 +39,7 @@ Against the fixed-iteration benchmark (same GPU):
 | Solovev ns=55 | 213 µs | ~19% (submission-bound) |
 | W7-X ns=99 | 2108 µs | ~1.9% (GPU-bound) |
 
-## Decision
+## Original decision (TITAN Xp)
 
 **Do not integrate CUDA Graphs into the production solver.** The
 `AxisymmetricOperator` is active and the real production DAG has been measured,
@@ -53,7 +53,7 @@ for `ncurr=0`. The tested CUDA stack also exposed fragile graph-node parameter
 introspection, pushing a robust implementation toward manual graph construction
 or variant re-instantiation.
 
-## Consequences
+## Original consequences
 
 - `CudaGraph` + `test_cuda_graph` + `cumes_benchmark_graph_overhead` are kept as
   the measurement primitive and the cuFFT-in-graph correctness gate.
@@ -111,12 +111,34 @@ Interpretation:
   struct-by-value kernel parameter also triggered an illegal memory access in
   the manual path; plain-int parameters work.
 
-The decision remains **deferred**. The measured end-to-end gain (~8% on
-the one submission-bound shape, 0.5% on the GPU-bound shape) is real but does
-not clear the complexity bar for a pedagogical codebase — especially with the
-CUDA 12.1 graph-node API fragility pushing an integration toward manual graph
-construction of the whole DAG. `CudaGraph`, `test_cuda_graph`,
-`cumes_benchmark_graph_overhead`, and now `cumes_benchmark_graph_realpass`
-remain as the measurement/correctness primitives; the question should be
-re-opened only if the shape mix changes (e.g. a much smaller submission-bound
-production shape) or a newer CUDA stack fixes the node APIs.
+That decision was correct for the measured Pascal stack, but is superseded for
+fixed-boundary execution by the modern-GPU result below.
+
+## 2026-08-26 decision update (RTX 4090, CUDA 12.9)
+
+The production solver now lazily captures the complete fixed-boundary
+`EquilibriumOperator::enqueue` DAG and caches one executable per schedule
+shape. Refresh and non-refresh variants are separate; non-refresh variants are
+discarded after new host normalization factors are published. This avoids
+fragile graph-node introspection and parameter mutation entirely.
+
+Six order-alternated fixed-iteration pairs on GPU 2, after a 1000-pass preheat,
+gave these medians of per-run medians:
+
+| shape | direct stream | production graph | wall reduction |
+| ----- | ------------: | ---------------: | -------------: |
+| Solovev `ns=55` | 117.14 µs/iter | 82.33 µs/iter | 29.7% |
+| W7-X `ns=99` | 562.10 µs/iter | 534.53 µs/iter | 4.9% |
+
+Both graph and direct paths produced identical final-state hashes (Solovev
+`3c09fd3260b003a8`, W7-X `ce46a7cbe693601a`). Free-boundary and verification-
+dump execution remain on direct streams because host work splits or observes
+the DAG. Set `CUMES_DISABLE_CUDA_GRAPHS=1` to select the direct fixed-boundary
+path for diagnosis or comparison. The graph change clears the adoption gate on
+Solovev and is a 4.9% non-regressing improvement on W7-X; the combined retained
+W7-X optimization clears the gate independently.
+
+CUDA event timestamps recorded inside a captured graph cannot be queried
+reliably on the tested CUDA 12.9 stack. The solver therefore reports transform
+timing as unavailable during graph replay; fixed-iteration wall timing and
+Nsight remain the supported graph-path measurements.
