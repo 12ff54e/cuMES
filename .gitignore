@@ -8,6 +8,13 @@ build-*/
 cumes_state.bin
 dump/
 
+# Generated measurements and visualizations
+benchmark-results/
+figure_data/
+profiles/
+*.ncu-rep
+*.nsys-rep
+
 # Per-change verification scratch (baselines live in perf_base/)
 perf_check/
 perf_refactor_pre/

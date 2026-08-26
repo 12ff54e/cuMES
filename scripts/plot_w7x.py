@@ -1150,6 +1150,9 @@ def main():
                          "(off by default: the figure stays cleaner)")
     args = ap.parse_args()
 
+    output_dir = os.path.dirname(os.path.abspath(args.out))
+    os.makedirs(output_dir, exist_ok=True)
+
     ns, mnmax, fams, params, name = load_state(args.state)
     ntor, nfp = params["ntor"], params["nfp"]
     if mnmax != params["mpol"] * (ntor + 1):
