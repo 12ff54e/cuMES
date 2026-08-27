@@ -1,12 +1,14 @@
 // versioned_binary.cpp — the schema v1 binary state container (blueprint
 // §6.13) and the host-library binary factories.
 //
-// Layout (little-endian), version 7 (the current on-disk version):
+// Layout (little-endian), version 8 (the current on-disk version):
 //   magic     8 bytes  "CUMES001"
-//   version   int32    = 7
+//   version   int32    = 8
 //   ns        int32
 //   mnmax     int32
 //   families  6 * (mnmax*ns) doubles, mode-major (the state payload)
+//   fields    ntheta(i32), nzeta(i32), then 7 half-grid and 6 full-grid
+//             real-space double arrays (version 8; 0,0 means absent)
 //   ---- provenance trailer (after the state, so a reader can stop early) ----
 //   precision int32    (0=double, 1=float; records the computation type)
 //   status    int32    (RunStatus)
@@ -31,7 +33,8 @@
 // input record WITHOUT the three profile-type strings; version 4 appends
 // pmass_type/piota_type/pcurr_type after the schema tag (the reader keeps
 // the "power_series" defaults for version-3 records). Free-boundary versions
-// 5 and 6 add inline-Makegrid provenance; version 7 combines both extensions.
+// 5 and 6 add inline-Makegrid provenance; version 7 combines both extensions;
+// version 8 inserts the scientific fields after the stable state payload.
 //
 // The state payload is read and validated independently of the provenance
 // trailer, so a reader stays forward-compatible with later v1.x trailers.
@@ -54,8 +57,9 @@ constexpr char MAGIC[9] = "CUMES001";
 // read (the record defaults empty). v4 appends the three profile-type
 // strings to that record; v3 files are still read (the types default to
 // "power_series"). Versions 5/6 are the free-boundary lineage; version 7
-// combines the profile and free-boundary extensions.
-constexpr std::int32_t VERSION = 7;
+// combines the profile and free-boundary extensions. Version 8 inserts the
+// scientific fields after the stable spectral state payload.
+constexpr std::int32_t VERSION = 8;
 constexpr std::int32_t MIN_READ_VERSION = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
@@ -96,6 +100,9 @@ class VersionedBinaryWriter final : public Writer {
         // (an undersized family must not fall through into an OOB read).
         if (!io_detail::write_state_families(fp, snapshot)) {
             return fail("failed to write versioned state payload");
+        }
+        if (!io_detail::write_derived_fields(fp, snapshot)) {
+            return fail("failed to write derived field payload");
         }
 
         const auto precision = precision_tag_for(report.build.scalar_type);
@@ -183,6 +190,10 @@ class VersionedBinaryReader final : public Reader {
         snapshot.mnmax = mnmax;
         if (!io_detail::read_state_families(fp, n, snapshot)) {
             return fail("versioned binary: truncated state data");
+        }
+        if (version >= 8 &&
+            !io_detail::read_derived_fields(fp, snapshot, reason)) {
+            return fail("versioned binary: " + reason);
         }
         // Provenance trailer: parse into the optional RunReport (the schema-v1
         // round-trip contract, completion plan step 2.3). A truncated trailer

@@ -4,7 +4,7 @@
 Given two run logs and two converged-state binaries, verifies that a new run
 reproduces the baseline run:
 
-  1. Converged state (the schema-v1 binary container, on-disk versions 1-7,
+  1. Converged state (the schema-v1 binary container, on-disk versions 1-8,
      or the legacy raw baseline dump): six spectral families
      (rmncc/zmnsc/lmnsc/rmnss/zmncs/lmncs), axis row (j=0) skipped, PASS at
      <= --tol relative (default 1e-8). Mirrors scripts/compare_states.py.
@@ -48,7 +48,7 @@ CONV_RE = re.compile(r"CONVERGED at iter (\d+)")
 def load_state(path):
     """Read the schema-v1 binary state payload: six mode-major families.
 
-    Accepts on-disk container versions 1-7 (magic "CUMES001" + version +
+    Accepts on-disk container versions 1-8 (magic "CUMES001" + version +
     ns + mnmax header; the provenance trailer is ignored), plus the legacy
     pre-container raw dump the frozen baselines were captured in (int32 ns +
     int32 mnmax + the same six families, no magic, exactly sized).
@@ -68,7 +68,7 @@ def load_state(path):
     header = struct.Struct("<8siii")  # magic(8) version ns mnmax = 20 bytes
     if len(data) >= header.size:
         magic, version, ns, mnmax = header.unpack_from(data)
-        if magic == b"CUMES001" and 1 <= version <= 7 and ns >= 1 and mnmax >= 1:
+        if magic == b"CUMES001" and 1 <= version <= 8 and ns >= 1 and mnmax >= 1:
             try:
                 return ns, mnmax, families(header.size, ns, mnmax)
             except struct.error:

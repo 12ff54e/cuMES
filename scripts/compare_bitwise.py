@@ -106,9 +106,9 @@ def _read_state_payload(path):
         if len(head) != STATE_HEADER.size:
             return None
         magic, version, ns, mnmax = STATE_HEADER.unpack(head)
-        # The state payload layout is identical across versions 1..7 (the
-        # provenance trailer changes); accept them all and compare payloads.
-        if magic != STATE_MAGIC or not (1 <= version <= 7) or ns < 1 or mnmax < 1:
+        # The spectral payload layout is identical across versions 1..8; the
+        # derived-field block and provenance trailer follow it.
+        if magic != STATE_MAGIC or not (1 <= version <= 8) or ns < 1 or mnmax < 1:
             return None
         n = ns * mnmax
         payload = f.read(6 * n * 8)

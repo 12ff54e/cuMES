@@ -145,6 +145,87 @@ inline bool read_state_families(FILE* fp,
     return true;
 }
 
+// ---- schema-v8 real-space scientific fields ------------------------------
+
+inline bool write_derived_fields(FILE* fp,
+                                 const EquilibriumSnapshot& snapshot) {
+    // Empty derived fields remain supported for library-level synthetic
+    // snapshots and old test fixtures. The CLI always supplies a complete
+    // final field snapshot; (0,0) is the explicit absent marker.
+    if (!snapshot.has_derived_fields()) {
+        return write_i32(fp, 0) && write_i32(fp, 0);
+    }
+    if (!write_i32(fp, snapshot.ntheta) || !write_i32(fp, snapshot.nzeta))
+        return false;
+    for (const auto& field : snapshot.half_fields)
+        if (!write_f64_array(fp, field)) return false;
+    for (const auto& field : snapshot.full_fields)
+        if (!write_f64_array(fp, field)) return false;
+    return true;
+}
+
+inline bool read_derived_fields(FILE* fp,
+                                EquilibriumSnapshot& snapshot,
+                                std::string& reason) {
+    std::int32_t ntheta = 0, nzeta = 0;
+    if (!read_i32(fp, ntheta) || !read_i32(fp, nzeta)) {
+        reason = "truncated derived-field dimensions";
+        return false;
+    }
+    if (ntheta == 0 && nzeta == 0) return true;
+    if (ntheta < 1 || nzeta < 1 || snapshot.ns < 2) {
+        reason = "bad derived-field dimensions";
+        return false;
+    }
+    const auto points = checked_mul(static_cast<std::size_t>(ntheta),
+                                    static_cast<std::size_t>(nzeta));
+    const auto half =
+        points ? checked_mul(static_cast<std::size_t>(snapshot.ns - 1), *points)
+               : std::nullopt;
+    const auto full =
+        points ? checked_mul(static_cast<std::size_t>(snapshot.ns), *points)
+               : std::nullopt;
+    if (!points || !half || !full || *half > MAX_REAL_FIELD_ELEMENTS ||
+        *full > MAX_REAL_FIELD_ELEMENTS) {
+        reason = "derived-field dimensions exceed resource cap";
+        return false;
+    }
+    const auto half_total = checked_mul(
+        *half, static_cast<std::size_t>(EquilibriumSnapshot::HALF_FIELD_COUNT));
+    const auto full_total = checked_mul(
+        *full, static_cast<std::size_t>(EquilibriumSnapshot::FULL_FIELD_COUNT));
+    const auto total = half_total && full_total
+                           ? checked_add(*half_total, *full_total)
+                           : std::nullopt;
+    const auto bytes =
+        total ? checked_mul(*total, sizeof(double)) : std::nullopt;
+    const long long pos = ftell(fp);
+    const auto size = file_size(fp);
+    if (!bytes || pos < 0 || !size || *size < pos ||
+        static_cast<unsigned long long>(*size - pos) < *bytes) {
+        reason = "derived-field payload is truncated or corrupt";
+        return false;
+    }
+
+    snapshot.ntheta = ntheta;
+    snapshot.nzeta = nzeta;
+    for (auto& field : snapshot.half_fields) {
+        field.resize(*half);
+        if (!read_f64_array(fp, field)) {
+            reason = "truncated half-grid field";
+            return false;
+        }
+    }
+    for (auto& field : snapshot.full_fields) {
+        field.resize(*full);
+        if (!read_f64_array(fp, field)) {
+            reason = "truncated full-grid field";
+            return false;
+        }
+    }
+    return true;
+}
+
 // ---- the embedded normalized-input record (input_params.hpp) ----
 // Fixed order: 6*i32 (mpol..ncurr), 8*f64 (delt..tcon0), schema(str), the
 // three profile-type strings (pmass_type, piota_type, pcurr_type; present in

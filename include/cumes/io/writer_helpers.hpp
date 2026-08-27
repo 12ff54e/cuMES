@@ -40,6 +40,10 @@ inline constexpr std::size_t MAX_STAGE_COUNT = 1u << 16;
 // deliberately far above current equilibria while preventing sparse hostile
 // containers from requesting multi-gigabyte allocations.
 inline constexpr std::size_t MAX_STATE_ELEMENTS_PER_FAMILY = 1u << 24;
+// Per real-space field cap. There are seven half-grid and six full-grid
+// fields; applying the same cap to each keeps malformed scientific-output
+// dimensions bounded before allocation.
+inline constexpr std::size_t MAX_REAL_FIELD_ELEMENTS = 1u << 24;
 
 // A unique same-directory temp path for `path` (rename() stays on one
 // filesystem). PID alone can collide across threads writing in one process, so

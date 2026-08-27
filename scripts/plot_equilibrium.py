@@ -2,7 +2,7 @@
 """Render 3D figures of a converged cuMES equilibrium.
 
 Reads any solver state container (docs/output-formats.md): versioned
-binary (v7), checkpoint (v6), NetCDF, or HDF5. Every container embeds the
+binary (v8), checkpoint (v6), NetCDF, or HDF5. Every container embeds the
 structured normalized-input record, so the script needs no input JSON:
 mpol/ntor/nfp, the resolved angular grid, phiedge, the am/ac/ai/aphi
 profiles, and the raw initial boundary all come from the container.
@@ -175,7 +175,7 @@ def _no_params(path):
 def load_state(path):
     """Load the converged state + the embedded structured input record from
     any solver output container (docs/output-formats.md): versioned binary
-    (v7), checkpoint (v6), NetCDF, or HDF5. Returns (ns, mnmax, fams,
+    (v8), checkpoint (v6), NetCDF, or HDF5. Returns (ns, mnmax, fams,
     params, name) — the six mode-major families (index = mode * ns +
     surface), the input record as a dict mirroring InputParams, and a
     display name (the recorded input path stem when available, else the
@@ -187,18 +187,32 @@ def load_state(path):
     if head.startswith(b"CUMES001"):
         # Versioned binary: magic(8), version(4), ns(4), mnmax(4), the six
         # families, then the provenance trailer (run outcome + provenance
-        # strings + stage records), then the v3 input record. Version 7 is the
-        # combined profile-type and free-boundary layout.
+        # strings + stage records), then the v3 input record. Version 8 adds a
+        # real-space derived-field block between the families and trailer.
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if not 1 <= version <= 7:
+            if not 1 <= version <= 8:
                 raise SystemExit(f"error: unsupported container version "
                                  f"{version} in {path}")
             ns, mnmax = struct.unpack("<ii", f.read(8))
             n = ns * mnmax
             fams = {fam: np.frombuffer(f.read(8 * n), dtype="<f8")
                     for fam in FAM_NAMES}
+            if version >= 8:
+                ntheta_fields, nzeta_fields = struct.unpack("<2i", f.read(8))
+                if ntheta_fields < 0 or nzeta_fields < 0:
+                    raise SystemExit("error: corrupt derived-field dimensions "
+                                     f"in {path}")
+                if bool(ntheta_fields) != bool(nzeta_fields):
+                    raise SystemExit("error: incomplete derived-field dimensions "
+                                     f"in {path}")
+                if ntheta_fields:
+                    points = ntheta_fields * nzeta_fields
+                    field_values = (7 * (ns - 1) + 6 * ns) * points
+                    if len(f.read(8 * field_values)) != 8 * field_values:
+                        raise SystemExit("error: truncated derived-field block "
+                                         f"in {path}")
             if version < 3:
                 _no_params(path)
             nstages = struct.unpack("<4i", f.read(16))[3]

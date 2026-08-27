@@ -45,6 +45,22 @@ static EquilibriumSnapshot make_snapshot(int ns, int mnmax) {
             s.families[c][i] = c * 1000.0 + static_cast<double>(i) + 0.25;
         }
     }
+    s.ntheta = 3;
+    s.nzeta = 2;
+    for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT; ++c) {
+        s.half_fields[c].resize(s.half_field_size());
+        for (std::size_t i = 0; i < s.half_fields[c].size(); ++i) {
+            s.half_fields[c][i] =
+                10000.0 + c * 1000.0 + static_cast<double>(i) + 0.125;
+        }
+    }
+    for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT; ++c) {
+        s.full_fields[c].resize(s.full_field_size());
+        for (std::size_t i = 0; i < s.full_fields[c].size(); ++i) {
+            s.full_fields[c][i] =
+                20000.0 + c * 1000.0 + static_cast<double>(i) + 0.375;
+        }
+    }
     return s;
 }
 
@@ -90,9 +106,17 @@ static cumes::ValidatedProblem make_problem() {
 
 static bool snapshots_equal(const EquilibriumSnapshot& a,
                             const EquilibriumSnapshot& b) {
-    if (a.ns != b.ns || a.mnmax != b.mnmax) return false;
+    if (a.ns != b.ns || a.mnmax != b.mnmax || a.ntheta != b.ntheta ||
+        a.nzeta != b.nzeta)
+        return false;
     for (int c = 0; c < 6; ++c) {
         if (a.families[c] != b.families[c]) return false;
+    }
+    for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT; ++c) {
+        if (a.half_fields[c] != b.half_fields[c]) return false;
+    }
+    for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT; ++c) {
+        if (a.full_fields[c] != b.full_fields[c]) return false;
     }
     return true;
 }
