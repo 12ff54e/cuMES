@@ -96,13 +96,18 @@ class MultigridSolver {
                 // first pass runs the vacuum block.
                 if (vac) vac->on_stage_transition(p_prev.ns, p.ns);
             }
+            // Only the finest stage can be published. Capturing coarse-grid
+            // fields would both waste device-to-host transfers and leave a
+            // snapshot whose radial extent conflicts with the next stage.
+            EquilibriumSnapshot* output_snapshot =
+                (g + 1 == n_grids) ? &out.snapshot : nullptr;
             result = StageSolver<T>::run(
                 p, vp, storage, stream, std::nullopt,
                 vac ? std::optional<
                           std::reference_wrapper<FreeBoundaryOperator<T>>>(
                           std::ref(*vac))
                     : std::nullopt,
-                &out.snapshot);
+                output_snapshot);
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();
