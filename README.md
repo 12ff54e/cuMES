@@ -159,7 +159,9 @@ harmonics). The JSON is parsed and validated host-side into a `ValidatedProblem`
 parses input.
 
 Free-boundary input accepts either a precomputed `mgrid_file`, or `coils_file`
-together with Makegrid parameters. The parameters may be supplied by
+together with Makegrid parameters. `coils_file` may use legacy MAKEGRID
+coils-dot geometry or strict `cumes-coils-v1` JSON, documented in
+`deps/vacuum-field/docs/coil-formats.md`. The parameters may be supplied by
 `makegrid_parameters_file`, or embedded as the complete parameter object under
 the key `makegrid_parameters`. If both parameter keys are present, cuMES warns
 and uses the embedded object. These paths construct the response table once in

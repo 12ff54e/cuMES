@@ -33,14 +33,15 @@ Two self-checks run before rendering:
 For free-boundary states, ``--coils [PATH]`` adds the MAKEGRID filament
 geometry to every 3-D view as bronze tubes.  PATH can be omitted when the
 state embeds ``coils_file``; states made from a precomputed MGRID table need
-an explicit coils-dot path.  ``--coil-radius METERS`` overrides the small
-data-scaled default tube radius.
+an explicit coils-dot or ``cumes-coils-v1`` JSON path.  ``--coil-radius
+METERS`` overrides the small data-scaled default tube radius.
 
 Usage: plot_equilibrium.py [--state PATH] [--out PATH.png] [--field-lines]
                            [--coils [PATH]] [--coil-radius METERS]
 """
 
 import argparse
+import json
 import multiprocessing
 import os
 import struct
@@ -916,11 +917,108 @@ def to_cartesian(R, Z, nfp):
     return Rfull * np.cos(phi[None, :]), Rfull * np.sin(phi[None, :]), Zfull
 
 
+def _circular_filament(radius, center_z, circular_points):
+    phi = np.linspace(0.0, 2.0 * np.pi, circular_points, endpoint=False)
+    return np.column_stack(
+        [radius * np.cos(phi), radius * np.sin(phi),
+         np.full_like(phi, center_z)])
+
+
+def _load_json_coil_filaments(path, circular_points):
+    try:
+        with open(path, "r", encoding="utf-8") as stream:
+            document = json.load(stream)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"error: could not read coils file {path}: {exc}") \
+            from exc
+
+    if not isinstance(document, dict) or \
+            document.get("schema") != "cumes-coils-v1":
+        raise SystemExit(
+            f"error: {path}: expected schema 'cumes-coils-v1'")
+    periods = document.get("field_periods")
+    if isinstance(periods, bool) or not isinstance(periods, int) or periods < 1:
+        raise SystemExit(f"error: {path}: field_periods must be positive")
+    circuits = document.get("circuits")
+    if not isinstance(circuits, list) or not circuits:
+        raise SystemExit(f"error: {path}: circuits must be a nonempty array")
+    if any(not isinstance(circuit, dict) for circuit in circuits):
+        raise SystemExit(f"error: {path}: each circuit must be an object")
+    indices = [circuit.get("current_index") for circuit in circuits]
+    if any(isinstance(index, bool) or not isinstance(index, int)
+           for index in indices):
+        raise SystemExit(
+            f"error: {path}: every current_index must be an integer")
+    circuits = sorted(circuits, key=lambda circuit: circuit.get(
+        "current_index", -1))
+    indices = [circuit.get("current_index") for circuit in circuits]
+    if indices != list(range(len(circuits))):
+        raise SystemExit(
+            f"error: {path}: current_index values must be contiguous from zero")
+
+    filaments = []
+    for circuit in circuits:
+        circuit_filaments = circuit.get("filaments")
+        if not isinstance(circuit_filaments, list) or not circuit_filaments:
+            raise SystemExit(
+                f"error: {path}: every circuit needs a nonempty filaments array")
+        for filament_data in circuit_filaments:
+            if not isinstance(filament_data, dict):
+                raise SystemExit(
+                    f"error: {path}: each filament must be an object")
+            winding = filament_data.get("winding_number")
+            if isinstance(winding, bool) or not isinstance(winding, (int, float)) \
+                    or not np.isfinite(winding) or winding == 0.0:
+                raise SystemExit(
+                    f"error: {path}: winding_number must be finite and nonzero")
+            filament_type = filament_data.get("type")
+            if filament_type == "polygon":
+                try:
+                    vertices = np.asarray(filament_data.get("vertices"),
+                                          dtype=float)
+                except (TypeError, ValueError) as exc:
+                    raise SystemExit(
+                        f"error: {path}: polygon vertices must be numeric") \
+                        from exc
+                if vertices.ndim != 2 or vertices.shape[0] < 3 or \
+                        vertices.shape[1] != 3 or not np.isfinite(vertices).all():
+                    raise SystemExit(
+                        f"error: {path}: polygon vertices must be a finite Nx3 "
+                        "array with N >= 3")
+                if np.array_equal(vertices[0], vertices[-1]):
+                    raise SystemExit(
+                        f"error: {path}: JSON polygon closure is implicit; do "
+                        "not repeat the first vertex")
+                filaments.append(np.vstack([vertices, vertices[0]]))
+            elif filament_type == "axisymmetric_circle":
+                radius = filament_data.get("radius")
+                center_z = filament_data.get("center_z")
+                if isinstance(radius, bool) or \
+                        not isinstance(radius, (int, float)) or \
+                        not np.isfinite(radius) or radius <= 0.0:
+                    raise SystemExit(
+                        f"error: {path}: circle radius must be finite and positive")
+                if isinstance(center_z, bool) or \
+                        not isinstance(center_z, (int, float)) or \
+                        not np.isfinite(center_z):
+                    raise SystemExit(
+                        f"error: {path}: circle center_z must be finite")
+                filaments.append(_circular_filament(
+                    radius, center_z, circular_points))
+            else:
+                raise SystemExit(
+                    f"error: {path}: unsupported filament type {filament_type!r}")
+    return periods, filaments
+
+
 def load_coil_filaments(path, circular_points=160):
     """Read the polygon and axis-aligned circular filaments accepted by
-    MAKEGRID coils-dot files.  Coordinates in these files are already
+    MAKEGRID coils-dot and cumes-coils-v1 JSON files.  Coordinates are
     Cartesian (x, y, z); circuit currents affect the field but not the
     geometry rendered here."""
+    if os.path.splitext(path)[1].lower() == ".json":
+        return _load_json_coil_filaments(path, circular_points)
+
     filaments = []
     vertices = []
     periods = None
@@ -985,11 +1083,8 @@ def load_coil_filaments(path, circular_points=160):
                         raise SystemExit(
                             f"error: {path}:{line_number}: circular filament "
                             "radius must be positive")
-                    phi = np.linspace(0.0, 2.0 * np.pi, circular_points,
-                                      endpoint=False)
-                    filament = np.column_stack(
-                        [radius * np.cos(phi), radius * np.sin(phi),
-                         np.full_like(phi, center_z)])
+                    filament = _circular_filament(
+                        radius, center_z, circular_points)
                 else:
                     filament = np.asarray(vertices, dtype=float)
                 filaments.append(filament)
@@ -1009,9 +1104,10 @@ def load_coil_filaments(path, circular_points=160):
 
 
 def resolve_coils_path(requested, params):
-    """Resolve an explicit or embedded coils-dot path.  Relative paths are
-    first interpreted exactly as the solver does (from the current working
-    directory), then relative to the recorded input file when available."""
+    """Resolve an explicit or embedded coil-configuration path. Relative
+    paths are first interpreted exactly as the solver does (from the current
+    working directory), then relative to the recorded input file when
+    available."""
     path = requested or params.get("coils_file", "")
     if not path:
         raise SystemExit(
