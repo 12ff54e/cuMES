@@ -23,7 +23,8 @@
 namespace cumes {
 
 template <class T>
-EquilibriumSnapshot snapshot_from_device(const SpectralStorage<T>& storage) {
+void populate_snapshot_state_from_device(const SpectralStorage<T>& storage,
+                                         EquilibriumSnapshot& snap) {
     // Element counts go through checked_mul per the checked_size.hpp mandate
     // (no bare a * b). The storage comes from a validated problem, so an
     // overflow here is unreachable in-tree; report it like a CUDA failure
@@ -54,7 +55,9 @@ EquilibriumSnapshot snapshot_from_device(const SpectralStorage<T>& storage) {
                    "snapshot_from_device");
     }
 
-    EquilibriumSnapshot snap;
+    if (snap.ns != 0 && snap.ns != storage.ns()) {
+        throw CumesError("snapshot_from_device: radial dimension mismatch");
+    }
     snap.ns = storage.ns();
     snap.mnmax = storage.mnmax();
     for (int c = 0; c < EquilibriumSnapshot::COUNT; ++c) {
@@ -64,6 +67,12 @@ EquilibriumSnapshot snapshot_from_device(const SpectralStorage<T>& storage) {
             snap.families[c][i] = static_cast<double>(src[i]);
         }
     }
+}
+
+template <class T>
+EquilibriumSnapshot snapshot_from_device(const SpectralStorage<T>& storage) {
+    EquilibriumSnapshot snap;
+    populate_snapshot_state_from_device(storage, snap);
     return snap;
 }
 

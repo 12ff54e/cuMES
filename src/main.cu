@@ -313,8 +313,8 @@ int main(int argc, char** argv) {
         // Writer interface — no backend reads device state or performs its own
         // D2H copies.
         bool output_ok = true;
-        cumes::EquilibriumSnapshot snapshot =
-            cumes::snapshot_from_device(storage);
+        cumes::EquilibriumSnapshot snapshot = std::move(outcome.snapshot);
+        cumes::populate_snapshot_state_from_device(storage, snapshot);
         // The embedded normalized-input record: every output container
         // (including the checkpoint below) carries it, so consumers can
         // reconstruct the equilibrium without the input JSON.

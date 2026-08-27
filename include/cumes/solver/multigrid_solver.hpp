@@ -11,6 +11,7 @@
 #define CUMES_INCLUDE_CUMES_SOLVER_MULTIGRID_SOLVER_HPP_
 
 #include "cumes/config/validated_problem.hpp"
+#include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/run_report.hpp"
 #include "cumes/numerics/prolongation.hpp"
 #include "cumes/physics/free_boundary_operator.hpp"
@@ -30,7 +31,8 @@ struct MultigridOutcome {
     SolverResult<T> result;    // final stage's solver result
     int total_iterations = 0;
     RunReport report;
-    int failed_stage = -1;  // stage index that failed the run, or -1
+    EquilibriumSnapshot snapshot;  // final derived fields; state filled by CLI
+    int failed_stage = -1;         // stage index that failed the run, or -1
 };
 
 template <typename T>
@@ -99,7 +101,8 @@ class MultigridSolver {
                 vac ? std::optional<
                           std::reference_wrapper<FreeBoundaryOperator<T>>>(
                           std::ref(*vac))
-                    : std::nullopt);
+                    : std::nullopt,
+                &out.snapshot);
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();

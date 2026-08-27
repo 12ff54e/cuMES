@@ -16,10 +16,12 @@
 #define CUMES_INCLUDE_CUMES_SOLVER_STAGE_SOLVER_HPP_
 
 #include "cumes/config/profile_functions.hpp"
+#include "cumes/io/derived_fields_bridge.cuh"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
+#include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
@@ -196,7 +198,8 @@ class StageSolver {
         cudaStream_t stream = 0,
         std::optional<std::reference_wrapper<SolverBench>> bench = std::nullopt,
         std::optional<std::reference_wrapper<FreeBoundaryOperator<T>>> vacuum =
-            std::nullopt) {
+            std::nullopt,
+        EquilibriumSnapshot* output_snapshot = nullptr) {
         // One arena allocation, one construction of every module, one solve
         // (completion plan step 3.2): the modules' alloc_span calls ARE the
         // plan — there is no temporary measuring arena and nothing is
@@ -260,6 +263,27 @@ class StageSolver {
                              std::ref(*axisym))
                        : std::nullopt,
                 vacuum);
+
+            if (output_snapshot != nullptr) {
+                // The converged exit already has matching fields, but a run
+                // that reaches max_iter has performed one final descent after
+                // its last evaluated geometry. Re-evaluate the inexpensive
+                // transform/geometry/field prefix unconditionally so every
+                // published field belongs to the exact spectral state in the
+                // same file. This happens after solver timing and cannot alter
+                // controller decisions or the state.
+                transform.inverse(state.physical_const(), false, stream);
+                geometry.enqueue(*rs, p, profiles.profile_views(), stream);
+                MagneticFieldOperator<T>{}.enqueue(
+                    *rs, p, profiles.profile_views(),
+                    geometry.base_geometry_views(p),
+                    geometry.magnetic_field_views(p), nullptr, stream, true);
+                check_cuda(cudaStreamSynchronize(stream),
+                           "output field evaluation");
+                const Status status = capture_derived_fields(
+                    p, profiles, *rs, geometry, *output_snapshot);
+                if (!status) throw CumesError(status.error());
+            }
             // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
             // the operator destructors); nothing to free manually.
 
