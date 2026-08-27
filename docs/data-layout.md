@@ -60,6 +60,13 @@ values carry `1/scalxc` so the product is the stored value.
 Half-grid arrays (`√g`, metric, `B`, `P_tot`) are `[half_surface][zeta][theta]`
 with `ns-1` surfaces (`half_points = (ns-1) * nZnT`).
 
+Scientific output preserves this native half-grid layout for `sqrtg` and all
+covariant/contravariant `B` components. Current density is exported on the
+full grid: its naturally half-grid radial component is `sqrtg`-weighted onto
+integer surfaces, while its angular components come from half-to-full radial
+curl differences. The binary, NetCDF, and HDF5 field names and endpoint rules
+are specified in `output-formats.md`.
+
 ## 4. Force residuals (parity-split, point contiguous)
 
 The 16 force arrays `armn/azmn/brmn/bzmn/crmn/czmn/blmn/clmn` × `e/o` are full

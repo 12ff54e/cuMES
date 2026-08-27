@@ -11,7 +11,7 @@ back). The `CUMES_DUMP`-gated diagnostic files are documented separately in
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cumes <in> --output out.bin` | versioned binary (schema v1, on-disk version 7) | `CUMES001` |
+| `./build/cumes <in> --output out.bin` | versioned binary (schema v1, on-disk version 8) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
 | `--checkpoint <path>` | versioned checkpoint (v6) | `CUMECKP1` |
 | `--restart <path>` (read) | versioned checkpoint (v6; v1–v5 still read) | `CUMECKP1` |
@@ -52,14 +52,69 @@ Z = zmnsc·sin(mθ)cos(nζ) + zmncs·cos(mθ)sin(nζ)
 The axis row (`j = 0`) is the constant-extrapolated row, which the
 comparison scripts intentionally skip (compare_states.py).
 
-## 3. Versioned binary (schema v1, on-disk version 7)
+### Scientific result fields
+
+Solver outputs (but not restart checkpoints) also carry the final real-space
+magnetic field, current density, and coordinate Jacobian. The point ordering
+is theta-fast:
+
+```
+point(theta, zeta, surface) = theta + ntheta * (zeta + nzeta * surface)
+```
+
+The seven half-grid arrays have shape `[ns-1, nzeta, ntheta]`:
+
+```
+sqrtg, bsups, bsupu, bsupv, bsubs, bsubu, bsubv
+```
+
+They are respectively `sqrt(g)`, the contravariant components
+`(B^s, B^theta, B^zeta)`, and the covariant components
+`(B_s, B_theta, B_zeta)`. `B^s` is stored explicitly as zero. The remaining
+magnetic arrays and `sqrtg` are the solver's final native half-grid values;
+`B_s` is obtained by lowering the index with the final metric.
+
+The six full-grid arrays have shape `[ns, nzeta, ntheta]`:
+
+```
+jsups, jsupu, jsupv, jsubs, jsubu, jsubv
+```
+
+They are `(J^s, J^theta, J^zeta)` and `(J_s, J_theta, J_zeta)`. cuMES derives
+them after the last solver iteration from `J = curl(B)/mu0`. In flux
+coordinates, the interior stencil is
+
+```
+J^s     = (d_theta B_zeta - d_zeta B_theta) / (mu0 sqrtg)
+J^theta = (d_zeta B_s - d_s B_zeta) / (mu0 sqrtg)
+J^zeta  = (d_s B_theta - d_theta B_s) / (mu0 sqrtg)
+```
+
+Angular derivatives use the periodic Fourier-collocation derivative on the
+output grid; `d_zeta` includes the `nfp` factor because the stored grid spans
+one field period. Radial derivatives are centered half-to-full differences.
+`J^s`, naturally half-grid, is interpolated conservatively with `sqrtg`
+weights to the full grid. All six current arrays use linear endpoint
+extrapolation, then the covariant components are obtained with the full-grid
+cylindrical metric.
+
+This post-processing runs after convergence and cannot change the iteration
+trajectory. `test_derived_fields` verifies the angular derivative, radial
+staggering, `nfp` scaling, metric lowering, and component values against a
+manufactured field using only project code. `test_io_golden` verifies exact
+round trips through binary, NetCDF, and HDF5.
+
+## 3. Versioned binary (schema v1, on-disk version 8)
 
 ```
 magic     8 bytes  "CUMES001"
-version   int32    = 7 (the current on-disk version)
+version   int32    = 8 (the current on-disk version)
 ns        int32
 mnmax     int32
 families  6 * (mnmax*ns) doubles, mode-major     ← the §2 payload
+fields    ntheta (int32), nzeta (int32), then the seven half-grid and
+          six full-grid arrays above as f64 in their listed order;
+          (0, 0) is an explicit absent marker for library-only snapshots
 ---- provenance trailer ----
 precision int32    0 = double, 1 = float (the computation type)
 status    int32    RunStatus (0 converged, 1 not converged, 2 numerical
@@ -109,7 +164,8 @@ Notes:
   above; the state payload itself was never affected.) Version 3 added the
   input record, version 4 added profile-type strings, versions 5 and 6 are
   the free-boundary lineage, and version 7 combines the profile-type and
-  complete free-boundary extensions.
+  complete free-boundary extensions. Version 8 added the scientific-result
+  field block between the stable spectral payload and provenance trailer.
 - The state payload is read and validated independently of the trailer, so
   a reader can stop after the state and stays forward-compatible with
   later trailer revisions. The trailer is parsed only when the caller
@@ -139,6 +195,11 @@ never a silent cold start.
 
 The embedded input record (§3/§4 in the binary formats) is represented
 natively in NetCDF/HDF5:
+
+- the scientific result variables listed in §2 use native 3-D double
+  datasets with dimensions `[ns_half, n_zeta, n_theta]` or
+  `[ns, n_zeta, n_theta]`; older files without any of these variables remain
+  readable, while a partial field set is rejected;
 
 - scalar variables (`mpol, ntor, nfp, ntheta, nzeta, ncurr, lfreeb,
   nvacskip` as int,

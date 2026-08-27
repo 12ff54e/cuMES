@@ -79,7 +79,7 @@ def _read_input_record(f, has_profile_types=False,
     """The fixed-order embedded-input record (io_common.hpp write/readInput
     Params): 6 i32 + 8 f64 scalars, schema string, six f64 vectors, the
     input stages, the raw boundary, four folded vectors (skipped), and the
-    optional free-boundary extension. The combined binary-v7/checkpoint-v6
+    optional free-boundary extension. The combined binary-v8/checkpoint-v6
     layout also carries profile types, inline-Makegrid paths, and optional
     embedded parameters."""
     mpol, ntor, nfp, ntheta, nzeta, ncurr = struct.unpack("<6i", f.read(24))
