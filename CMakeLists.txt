@@ -138,6 +138,7 @@ set(CUMES_CONFIG_JSON_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/config/validated_problem.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/config/json_reader.cpp)
 set(CUMES_IO_HOST_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/io/derived_fields.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/io/output_spec.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/io/versioned_binary.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/cumes/io/checkpoint.cpp)

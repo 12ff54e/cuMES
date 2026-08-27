@@ -79,6 +79,11 @@ target_include_directories(test_host_io PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_host_io PRIVATE cumes_io_host cumes_config_json)
 cumes_enable_warnings(test_host_io)
 
+add_executable(test_derived_fields test_derived_fields.cpp)
+target_include_directories(test_derived_fields PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_derived_fields PRIVATE cumes_io_host)
+cumes_enable_warnings(test_derived_fields)
+
 add_executable(test_checkpoint test_checkpoint.cpp)
 target_include_directories(test_checkpoint PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_checkpoint PRIVATE cumes_io_host)
@@ -137,6 +142,7 @@ cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
 cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
+cumes_add_test(test_derived_fields   unit;io;physics)
 cumes_add_test(test_checkpoint       unit;io)
 cumes_add_test(test_io_golden        unit;io)
 cumes_add_test(test_io_restart_offsets unit;io)
@@ -187,6 +193,8 @@ if(CUMES_HOST_SANITIZERS)
   cumes_add_host_asan_test(asan_test_host_io test_host_io.cpp
                            cumes_io_host_asan io)
   target_link_libraries(asan_test_host_io PRIVATE cumes_config_json_asan)
+  cumes_add_host_asan_test(asan_test_derived_fields test_derived_fields.cpp
+                           cumes_io_host_asan io)
   cumes_add_host_asan_test(asan_test_checkpoint test_checkpoint.cpp
                            cumes_io_host_asan io)
   cumes_add_host_asan_test(asan_test_controller test_controller.cpp
