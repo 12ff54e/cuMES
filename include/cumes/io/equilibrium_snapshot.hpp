@@ -101,6 +101,15 @@ struct EquilibriumSnapshot {
             if (field.size() != full_size) return false;
         return true;
     }
+
+    bool has_any_derived_fields() const {
+        if (ntheta != 0 || nzeta != 0) return true;
+        for (const auto& field : half_fields)
+            if (!field.empty()) return true;
+        for (const auto& field : full_fields)
+            if (!field.empty()) return true;
+        return false;
+    }
 };
 
 }  // namespace cumes

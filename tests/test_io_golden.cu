@@ -200,11 +200,38 @@ static bool write_historical_v3(const EquilibriumSnapshot& snap,
 
 static bool snapshots_equal(const EquilibriumSnapshot& a,
                             const EquilibriumSnapshot& b) {
-    if (a.ns != b.ns || a.mnmax != b.mnmax) return false;
+    if (a.ns != b.ns || a.mnmax != b.mnmax || a.ntheta != b.ntheta ||
+        a.nzeta != b.nzeta)
+        return false;
     for (int c = 0; c < 6; ++c) {
         if (a.families[c] != b.families[c]) return false;
     }
+    for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT; ++c) {
+        if (a.half_fields[c] != b.half_fields[c]) return false;
+    }
+    for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT; ++c) {
+        if (a.full_fields[c] != b.full_fields[c]) return false;
+    }
     return true;
+}
+
+static void add_derived_fields(EquilibriumSnapshot& snapshot) {
+    snapshot.ntheta = 3;
+    snapshot.nzeta = 2;
+    for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT; ++c) {
+        snapshot.half_fields[c].resize(snapshot.half_field_size());
+        for (std::size_t i = 0; i < snapshot.half_fields[c].size(); ++i) {
+            snapshot.half_fields[c][i] =
+                10000.0 + c * 1000.0 + static_cast<double>(i) + 0.125;
+        }
+    }
+    for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT; ++c) {
+        snapshot.full_fields[c].resize(snapshot.full_field_size());
+        for (std::size_t i = 0; i < snapshot.full_fields[c].size(); ++i) {
+            snapshot.full_fields[c][i] =
+                20000.0 + c * 1000.0 + static_cast<double>(i) + 0.375;
+        }
+    }
 }
 
 // A rich report exercising every field the v1 containers must round-trip
@@ -436,7 +463,8 @@ static void run_precision() {
 
     // ---- NetCDF/HDF5 adapters (completion plan steps 2.2/2.3) -------------
     // v1: the complete RunReport + restart metadata round trip.
-    const EquilibriumSnapshot snap2 = cumes::snapshot_from_device(storage);
+    EquilibriumSnapshot snap2 = cumes::snapshot_from_device(storage);
+    add_derived_fields(snap2);
 #ifdef CUMES_HAVE_NETCDF
     check_v1_round_trip<T>(snap2, vp, OutputFormat::NETCDF, "v1nc");
 #endif

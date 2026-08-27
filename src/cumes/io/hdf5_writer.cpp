@@ -27,6 +27,11 @@
 namespace cumes {
 namespace {
 
+constexpr const char* HALF_FIELD_NAMES[EquilibriumSnapshot::HALF_FIELD_COUNT] =
+    {"sqrtg", "bsups", "bsupu", "bsupv", "bsubs", "bsubu", "bsubv"};
+constexpr const char* FULL_FIELD_NAMES[EquilibriumSnapshot::FULL_FIELD_COUNT] =
+    {"jsups", "jsupu", "jsupv", "jsubs", "jsubu", "jsubv"};
+
 // Write one scalar (or fixed-size string) attribute on the root group.
 herr_t put_attr(hid_t loc, const char* name, hid_t dtype, const void* val) {
     hid_t sid = H5Screate(H5S_SCALAR);
@@ -122,6 +127,10 @@ class Hdf5V1Writer final : public Writer {
                         const RunReport& report,
                         const OutputSpec& spec,
                         const ValidatedProblem& problem) override {
+        if (snapshot.has_any_derived_fields() &&
+            !snapshot.has_derived_fields()) {
+            return Status("HDF5: incomplete derived-field snapshot");
+        }
         const FoldedBoundary& fb = problem.boundary();
         const int mpol = problem.shape().mpol;
         const int ntorp1 = problem.shape().ntor + 1;
@@ -197,6 +206,26 @@ class Hdf5V1Writer final : public Writer {
             }
             H5Sclose(fs);
             H5Dclose(ds);
+        }
+        if (snapshot.has_derived_fields()) {
+            const hsize_t half_dims[3] = {
+                static_cast<hsize_t>(snapshot.ns - 1),
+                static_cast<hsize_t>(snapshot.nzeta),
+                static_cast<hsize_t>(snapshot.ntheta)};
+            const hsize_t full_dims[3] = {
+                static_cast<hsize_t>(snapshot.ns),
+                static_cast<hsize_t>(snapshot.nzeta),
+                static_cast<hsize_t>(snapshot.ntheta)};
+            for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT; ++c) {
+                H5_CHECK(write_array(HALF_FIELD_NAMES[c], H5T_NATIVE_DOUBLE, 3,
+                                     half_dims, snapshot.half_fields[c].data()),
+                         "write half-grid field");
+            }
+            for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT; ++c) {
+                H5_CHECK(write_array(FULL_FIELD_NAMES[c], H5T_NATIVE_DOUBLE, 3,
+                                     full_dims, snapshot.full_fields[c].data()),
+                         "write full-grid field");
+            }
         }
 
         // ---- run outcome + provenance attributes ----
@@ -626,6 +655,26 @@ class Hdf5V1Reader final : public Reader {
                 return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
                                H5P_DEFAULT, out.data()) >= 0;
             };
+            auto get_dbl_field = [&](const char* name, const hsize_t* expected,
+                                     std::vector<double>& out) -> bool {
+                H5Closer ds(H5Dopen2(fid, name, H5P_DEFAULT));
+                if (ds.get() < 0) return false;
+                hsize_t dims[3] = {0, 0, 0};
+                if (!get_dim_exact(name, 3, dims)) return false;
+                for (int d = 0; d < 3; ++d)
+                    if (dims[d] != expected[d]) return false;
+                if (!dataset_is_double(ds.get())) return false;
+                const auto plane = checked_mul(static_cast<size_t>(dims[1]),
+                                               static_cast<size_t>(dims[2]));
+                const auto count =
+                    plane ? checked_mul(static_cast<size_t>(dims[0]), *plane)
+                          : std::nullopt;
+                if (!count || *count > io_detail::MAX_REAL_FIELD_ELEMENTS)
+                    return false;
+                out.resize(*count);
+                return H5Dread(ds.get(), H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+                               H5P_DEFAULT, out.data()) >= 0;
+            };
 
             hsize_t state_dims[2] = {0, 0};
             if (!get_dim_exact("rmncc", 2, state_dims)) {
@@ -692,6 +741,55 @@ class Hdf5V1Reader final : public Reader {
                     for (int j = 0; j < ns; ++j) {
                         snapshot.families[c][(size_t)m * ns + j] =
                             tmp[(size_t)j * mnmax + m];
+                    }
+                }
+            }
+            int present_fields = 0;
+            for (const char* name : HALF_FIELD_NAMES) {
+                const htri_t present = H5Lexists(fid, name, H5P_DEFAULT);
+                if (present < 0) return fail("cannot inspect field datasets");
+                present_fields += present > 0 ? 1 : 0;
+            }
+            for (const char* name : FULL_FIELD_NAMES) {
+                const htri_t present = H5Lexists(fid, name, H5P_DEFAULT);
+                if (present < 0) return fail("cannot inspect field datasets");
+                present_fields += present > 0 ? 1 : 0;
+            }
+            if (present_fields != 0) {
+                constexpr int EXPECTED_FIELDS =
+                    static_cast<int>(EquilibriumSnapshot::HALF_FIELD_COUNT) +
+                    static_cast<int>(EquilibriumSnapshot::FULL_FIELD_COUNT);
+                if (present_fields != EXPECTED_FIELDS) {
+                    return fail("incomplete derived-field datasets");
+                }
+                hsize_t half_dims[3] = {0, 0, 0};
+                hsize_t full_dims[3] = {0, 0, 0};
+                if (!get_dim_exact(HALF_FIELD_NAMES[0], 3, half_dims) ||
+                    !get_dim_exact(FULL_FIELD_NAMES[0], 3, full_dims) ||
+                    half_dims[0] != static_cast<hsize_t>(ns - 1) ||
+                    full_dims[0] != static_cast<hsize_t>(ns) ||
+                    half_dims[1] != full_dims[1] ||
+                    half_dims[2] != full_dims[2] || half_dims[1] < 1 ||
+                    half_dims[2] < 1 || half_dims[1] > INT_MAX ||
+                    half_dims[2] > INT_MAX) {
+                    return fail("malformed derived-field dimensions");
+                }
+                snapshot.nzeta = static_cast<int>(half_dims[1]);
+                snapshot.ntheta = static_cast<int>(half_dims[2]);
+                for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT;
+                     ++c) {
+                    if (!get_dbl_field(HALF_FIELD_NAMES[c], half_dims,
+                                       snapshot.half_fields[c])) {
+                        return fail("malformed half-grid field dataset (" +
+                                    std::string(HALF_FIELD_NAMES[c]) + ")");
+                    }
+                }
+                for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT;
+                     ++c) {
+                    if (!get_dbl_field(FULL_FIELD_NAMES[c], full_dims,
+                                       snapshot.full_fields[c])) {
+                        return fail("malformed full-grid field dataset (" +
+                                    std::string(FULL_FIELD_NAMES[c]) + ")");
                     }
                 }
             }

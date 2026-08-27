@@ -29,6 +29,11 @@
 namespace cumes {
 namespace {
 
+constexpr const char* HALF_FIELD_NAMES[EquilibriumSnapshot::HALF_FIELD_COUNT] =
+    {"sqrtg", "bsups", "bsupu", "bsupv", "bsubs", "bsubu", "bsubv"};
+constexpr const char* FULL_FIELD_NAMES[EquilibriumSnapshot::FULL_FIELD_COUNT] =
+    {"jsups", "jsupu", "jsupv", "jsubs", "jsubu", "jsubv"};
+
 bool put_str_attr(int ncid, const char* name, const std::string& value) {
     return nc_put_att_text(ncid, NC_GLOBAL, name, value.size(),
                            value.c_str()) == NC_NOERR;
@@ -43,6 +48,10 @@ class NetcdfV1Writer final : public Writer {
                         const RunReport& report,
                         const OutputSpec& spec,
                         const ValidatedProblem& problem) override {
+        if (snapshot.has_any_derived_fields() &&
+            !snapshot.has_derived_fields()) {
+            return Status("NetCDF: incomplete derived-field snapshot");
+        }
         const FoldedBoundary& fb = problem.boundary();
         const int mpol = problem.shape().mpol;
         const int ntorp1 = problem.shape().ntor + 1;
@@ -94,6 +103,18 @@ class NetcdfV1Writer final : public Writer {
                  "def n_mpol");
         NC_CHECK(nc_def_dim(ncid, "n_ntorp1", (size_t)ntorp1, &dim_ntorp1),
                  "def n_ntorp1");
+        int dim_ns_half = -1, dim_n_theta = -1, dim_n_zeta = -1;
+        if (snapshot.has_derived_fields()) {
+            NC_CHECK(nc_def_dim(ncid, "ns_half", (size_t)(snapshot.ns - 1),
+                                &dim_ns_half),
+                     "def ns_half");
+            NC_CHECK(nc_def_dim(ncid, "n_theta", (size_t)snapshot.ntheta,
+                                &dim_n_theta),
+                     "def n_theta");
+            NC_CHECK(
+                nc_def_dim(ncid, "n_zeta", (size_t)snapshot.nzeta, &dim_n_zeta),
+                "def n_zeta");
+        }
         // ---- embedded normalized-input record dimensions ----
         // Empty vectors get NO dimension: classic NetCDF gives a 0-length
         // dimension unlimited semantics, and only ONE unlimited dimension may
@@ -149,6 +170,22 @@ class NetcdfV1Writer final : public Writer {
             NC_CHECK(nc_def_var(ncid, fam_names[c], NC_DOUBLE, 2, state_dims,
                                 &v_fam[c]),
                      "def family");
+        }
+        int v_half[EquilibriumSnapshot::HALF_FIELD_COUNT] = {};
+        int v_full[EquilibriumSnapshot::FULL_FIELD_COUNT] = {};
+        if (snapshot.has_derived_fields()) {
+            const int half_dims[3] = {dim_ns_half, dim_n_zeta, dim_n_theta};
+            const int full_dims[3] = {dim_ns, dim_n_zeta, dim_n_theta};
+            for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT; ++c) {
+                NC_CHECK(nc_def_var(ncid, HALF_FIELD_NAMES[c], NC_DOUBLE, 3,
+                                    half_dims, &v_half[c]),
+                         "def half-grid field");
+            }
+            for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT; ++c) {
+                NC_CHECK(nc_def_var(ncid, FULL_FIELD_NAMES[c], NC_DOUBLE, 3,
+                                    full_dims, &v_full[c]),
+                         "def full-grid field");
+            }
         }
 
         // ---- run outcome + stage history ----
@@ -441,6 +478,18 @@ class NetcdfV1Writer final : public Writer {
                     return fail("write family: " +
                                 std::string(nc_strerror(rc2)));
                 }
+            }
+        }
+        if (snapshot.has_derived_fields()) {
+            for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT; ++c) {
+                NC_CHECK(nc_put_var_double(ncid, v_half[c],
+                                           snapshot.half_fields[c].data()),
+                         "put half-grid field");
+            }
+            for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT; ++c) {
+                NC_CHECK(nc_put_var_double(ncid, v_full[c],
+                                           snapshot.full_fields[c].data()),
+                         "put full-grid field");
             }
         }
         const int precision = (report.build.scalar_type == "double") ? 0 : 1;
@@ -746,6 +795,36 @@ class NetcdfV1Reader final : public Reader {
                 return nc_get_vara_double(ncid, vid, start, count,
                                           out.data()) == NC_NOERR;
             };
+            auto read_field_double = [&](const char* name, const int* dims,
+                                         const size_t* extents,
+                                         std::vector<double>& out) -> bool {
+                int vid = -1, ndims = 0, actual_dims[3] = {-1, -1, -1};
+                if (nc_inq_varid(ncid, name, &vid) != NC_NOERR) return false;
+                if (nc_inq_varndims(ncid, vid, &ndims) != NC_NOERR ||
+                    ndims != 3) {
+                    return false;
+                }
+                if (nc_inq_vardimid(ncid, vid, actual_dims) != NC_NOERR)
+                    return false;
+                for (int d = 0; d < 3; ++d) {
+                    if (actual_dims[d] != dims[d]) return false;
+                    size_t extent = 0;
+                    if (nc_inq_dimlen(ncid, dims[d], &extent) != NC_NOERR ||
+                        extent != extents[d]) {
+                        return false;
+                    }
+                }
+                if (!var_has_type(vid, NC_DOUBLE)) return false;
+                const auto plane = checked_mul(extents[1], extents[2]);
+                const auto count =
+                    plane ? checked_mul(extents[0], *plane) : std::nullopt;
+                if (!count || *count > io_detail::MAX_REAL_FIELD_ELEMENTS)
+                    return false;
+                out.resize(*count);
+                const size_t start[3] = {0, 0, 0};
+                return nc_get_vara_double(ncid, vid, start, extents,
+                                          out.data()) == NC_NOERR;
+            };
             auto read_vector_double = [&](const char* name, int expect_dim,
                                           size_t expect,
                                           std::vector<double>& out) -> bool {
@@ -830,6 +909,58 @@ class NetcdfV1Reader final : public Reader {
                                        snapshot.mnmax, snapshot.families[c])) {
                     return fail("state read failed (missing/malformed " +
                                 std::string(fam_names[c]) + ")");
+                }
+            }
+            int present_fields = 0;
+            for (const char* name : HALF_FIELD_NAMES) {
+                int vid = -1;
+                present_fields +=
+                    nc_inq_varid(ncid, name, &vid) == NC_NOERR ? 1 : 0;
+            }
+            for (const char* name : FULL_FIELD_NAMES) {
+                int vid = -1;
+                present_fields +=
+                    nc_inq_varid(ncid, name, &vid) == NC_NOERR ? 1 : 0;
+            }
+            if (present_fields != 0) {
+                constexpr int EXPECTED_FIELDS =
+                    static_cast<int>(EquilibriumSnapshot::HALF_FIELD_COUNT) +
+                    static_cast<int>(EquilibriumSnapshot::FULL_FIELD_COUNT);
+                if (present_fields != EXPECTED_FIELDS) {
+                    return fail("incomplete derived-field datasets");
+                }
+                int ns_half_dim = -1, theta_dim = -1, zeta_dim = -1;
+                size_t ns_half = 0, ntheta = 0, nzeta = 0;
+                if (!get_dim("ns_half", ns_half_dim, ns_half) ||
+                    !get_dim("n_theta", theta_dim, ntheta) ||
+                    !get_dim("n_zeta", zeta_dim, nzeta) || ns_half != ns - 1 ||
+                    ntheta < 1 || nzeta < 1 || ntheta > INT_MAX ||
+                    nzeta > INT_MAX) {
+                    return fail("malformed derived-field dimensions");
+                }
+                const int half_dims[3] = {ns_half_dim, zeta_dim, theta_dim};
+                const int full_dims[3] = {ns_dim, zeta_dim, theta_dim};
+                const size_t half_extents[3] = {ns_half, nzeta, ntheta};
+                const size_t full_extents[3] = {ns, nzeta, ntheta};
+                snapshot.ntheta = static_cast<int>(ntheta);
+                snapshot.nzeta = static_cast<int>(nzeta);
+                for (int c = 0; c < EquilibriumSnapshot::HALF_FIELD_COUNT;
+                     ++c) {
+                    if (!read_field_double(HALF_FIELD_NAMES[c], half_dims,
+                                           half_extents,
+                                           snapshot.half_fields[c])) {
+                        return fail("malformed half-grid field dataset (" +
+                                    std::string(HALF_FIELD_NAMES[c]) + ")");
+                    }
+                }
+                for (int c = 0; c < EquilibriumSnapshot::FULL_FIELD_COUNT;
+                     ++c) {
+                    if (!read_field_double(FULL_FIELD_NAMES[c], full_dims,
+                                           full_extents,
+                                           snapshot.full_fields[c])) {
+                        return fail("malformed full-grid field dataset (" +
+                                    std::string(FULL_FIELD_NAMES[c]) + ")");
+                    }
                 }
             }
             if (report) {

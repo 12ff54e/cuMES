@@ -152,9 +152,10 @@ inline bool write_derived_fields(FILE* fp,
     // Empty derived fields remain supported for library-level synthetic
     // snapshots and old test fixtures. The CLI always supplies a complete
     // final field snapshot; (0,0) is the explicit absent marker.
-    if (!snapshot.has_derived_fields()) {
+    if (!snapshot.has_any_derived_fields()) {
         return write_i32(fp, 0) && write_i32(fp, 0);
     }
+    if (!snapshot.has_derived_fields()) return false;
     if (!write_i32(fp, snapshot.ntheta) || !write_i32(fp, snapshot.nzeta))
         return false;
     for (const auto& field : snapshot.half_fields)
