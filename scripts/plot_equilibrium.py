@@ -51,6 +51,7 @@ import numpy as np
 from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from PIL import Image as PILImage
 from scipy.interpolate import RegularGridInterpolator
 
@@ -1247,8 +1248,47 @@ def _render_machinery(S):
     return cmap, norm, light_dir, mappable
 
 
+def mesh_quads(X, Y, Z):
+    """Convert a structured surface mesh into uniformly shaped quads."""
+    points = np.stack([X, Y, Z], axis=-1)
+    return np.stack(
+        [points[:-1, :-1], points[1:, :-1],
+         points[1:, 1:], points[:-1, 1:]], axis=2).reshape(-1, 4, 3)
+
+
+def quad_face_colors(vertex_colors):
+    """Average structured RGBA vertex colors onto the corresponding quads."""
+    return (vertex_colors[:-1, :-1] + vertex_colors[1:, :-1] +
+            vertex_colors[1:, 1:] + vertex_colors[:-1, 1:]).reshape(
+                -1, 4) * 0.25
+
+
+def shade_quads(quads, color, light_dir):
+    """Apply Matplotlib-compatible diffuse shading to uniformly colored
+    quads before they enter the shared depth-sorted collection."""
+    normals = np.cross(quads[:, 0] - quads[:, 1],
+                       quads[:, 1] - quads[:, 2])
+    magnitudes = np.linalg.norm(normals, axis=1)
+    shade = np.zeros(len(quads), dtype=float)
+    valid = magnitudes > 0.0
+    shade[valid] = normals[valid] @ light_dir / magnitudes[valid]
+    # Axes3D._shade_colors maps a [-1, 1] dot product onto [0.3, 1].
+    intensity = 0.65 + 0.35 * np.clip(shade, -1.0, 1.0)
+    rgba = np.tile(mcolors.to_rgba(color), (len(quads), 1))
+    rgba[:, :3] *= intensity[:, None]
+    return rgba
+
+
 def draw_scene(ax, vw, S, cmap, norm, light_dir):
-    """Draw the flux surface, optional coil tubes, and axis curve."""
+    """Draw plasma and coils as one globally face-sorted collection.
+
+    Matplotlib has no depth buffer: separate Poly3DCollection objects receive
+    one painter-order depth each. Combining every plasma and coil face lets
+    its internal polygon sorter interleave the two geometries by view depth.
+    """
+    geometry = []
+    colors = []
+    antialiased = []
     for s in S["surf_3d"]:  # a single opaque surface (the plasma boundary)
         X, Y, Z = to_cartesian(s["r12"], s["z12"], S["nfp"])
         B = periodic_close(np.concatenate([s["bmag"]] * S["nfp"], axis=1))
@@ -1257,14 +1297,24 @@ def draw_scene(ax, vw, S, cmap, norm, light_dir):
         hsv[:, :, 2] = np.clip(hsv[:, :, 2] * lam, 0.0, 1.0)
         face = np.concatenate(
             [mcolors.hsv_to_rgb(hsv), np.ones(hsv.shape[:2] + (1,))], axis=2)
-        ax.plot_surface(X, Y, Z, facecolors=face,
-                        rstride=1, cstride=2,
-                        linewidth=0, antialiased=False,
-                        alpha=1.0, shade=False)
+        # Match the former plot_surface cstride=2 while keeping uniform quads.
+        plasma_quads = mesh_quads(X[:, ::2], Y[:, ::2], Z[:, ::2])
+        geometry.append(plasma_quads)
+        colors.append(quad_face_colors(face[:, ::2]))
+        antialiased.append(np.zeros(len(plasma_quads), dtype=bool))
     for filament in S["coils"]:
         X, Y, Z = tube_mesh(filament, S["coil_radius"])
-        ax.plot_surface(X, Y, Z, color=BRONZE, rstride=1, cstride=1,
-                        linewidth=0, antialiased=True, alpha=1.0, shade=True)
+        coil_quads = mesh_quads(X, Y, Z)
+        geometry.append(coil_quads)
+        colors.append(shade_quads(coil_quads, BRONZE, light_dir))
+        antialiased.append(np.ones(len(coil_quads), dtype=bool))
+    if geometry:
+        surfaces = Poly3DCollection(
+            np.concatenate(geometry),
+            facecolors=np.concatenate(colors), edgecolors="none",
+            linewidths=0.0, antialiaseds=np.concatenate(antialiased),
+            zsort="average")
+        ax.add_collection3d(surfaces)
     for (x, y, z) in S["lines"]:
         ax.plot(x, y, z, color="#0b0b0b", linewidth=1.1, alpha=0.85, zorder=50)
     ax.plot(S["axx"], S["axy"], S["axz"], color="#0b0b0b", linewidth=1.4,
