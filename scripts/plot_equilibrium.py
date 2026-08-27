@@ -30,7 +30,14 @@ Two self-checks run before rendering:
      rbc/zbs boundary; for free boundary, its displacement is reported;
   2. the edge |B| range is printed for a physical plausibility review.
 
+For free-boundary states, ``--coils [PATH]`` adds the MAKEGRID filament
+geometry to every 3-D view as bronze tubes.  PATH can be omitted when the
+state embeds ``coils_file``; states made from a precomputed MGRID table need
+an explicit coils-dot path.  ``--coil-radius METERS`` overrides the small
+data-scaled default tube radius.
+
 Usage: plot_equilibrium.py [--state PATH] [--out PATH.png] [--field-lines]
+                           [--coils [PATH]] [--coil-radius METERS]
 """
 
 import argparse
@@ -49,6 +56,7 @@ from scipy.interpolate import RegularGridInterpolator
 SIGN_J = -1.0  # DeviceParams::kSignJacobian (device_params.hpp): the
                # solver's fixed coordinate-sign convention, not an input
 MU0 = 4.0e-7 * np.pi
+BRONZE = "#CD7F32"
 
 FAM_NAMES = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
 
@@ -241,6 +249,7 @@ def load_state(path):
             params = _read_input_record(
                 f, version == 4 or version >= 7,
                 version >= 5, version >= 5, version >= 6)
+            params["_source_path"] = source_path
         if source_path:
             name = os.path.splitext(os.path.basename(source_path))[0]
         return ns, mnmax, fams, params, name
@@ -357,6 +366,7 @@ def load_state(path):
             sp = getattr(nc, "source_path", "")
             if isinstance(sp, bytes):
                 sp = sp.decode()
+            params["_source_path"] = sp
             if sp:
                 name = os.path.splitext(os.path.basename(sp))[0]
         return ns, mnmax, fams, params, name
@@ -447,9 +457,10 @@ def load_state(path):
                 "makegrid_parameters": makegrid_parameters,
                 "extcur": darray("extcur"),
             }
-            if sattr("source_path", ""):
+            params["_source_path"] = sattr("source_path", "")
+            if params["_source_path"]:
                 name = os.path.splitext(
-                    os.path.basename(sattr("source_path", "")))[0]
+                    os.path.basename(params["_source_path"]))[0]
         return ns, mnmax, fams, params, name
     raise SystemExit(f"error: {path} is not a cumes state container "
                      f"(expected CUMES001/CUMECKP1/NetCDF/HDF5)")
@@ -905,6 +916,167 @@ def to_cartesian(R, Z, nfp):
     return Rfull * np.cos(phi[None, :]), Rfull * np.sin(phi[None, :]), Zfull
 
 
+def load_coil_filaments(path, circular_points=160):
+    """Read the polygon and axis-aligned circular filaments accepted by
+    MAKEGRID coils-dot files.  Coordinates in these files are already
+    Cartesian (x, y, z); circuit currents affect the field but not the
+    geometry rendered here."""
+    filaments = []
+    vertices = []
+    periods = None
+    in_filaments = False
+    found_end = False
+
+    try:
+        stream = open(path, "r", encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"error: could not open coils file {path}: {exc}") \
+            from exc
+
+    with stream:
+        for line_number, raw_line in enumerate(stream, 1):
+            line = raw_line.strip()
+            if not line or line.startswith("!"):
+                continue
+            lower = line.lower()
+            if not in_filaments:
+                if lower.startswith("periods"):
+                    fields = line.split()
+                    if len(fields) != 2:
+                        raise SystemExit(
+                            f"error: {path}:{line_number}: expected "
+                            "'periods <positive integer>'")
+                    try:
+                        periods = int(fields[1])
+                    except ValueError as exc:
+                        raise SystemExit(
+                            f"error: {path}:{line_number}: invalid periods") \
+                            from exc
+                elif lower.startswith("begin filament"):
+                    in_filaments = True
+                continue
+
+            if lower.startswith("mirror"):
+                if not (lower.endswith("nil") or lower.endswith("nul")):
+                    raise SystemExit(
+                        f"error: {path}:{line_number}: coil mirroring is "
+                        "unsupported; expected mirror NIL or NUL")
+                continue
+            if lower.startswith("end"):
+                found_end = True
+                break
+
+            fields = line.split()
+            if len(fields) not in (4, 6):
+                raise SystemExit(
+                    f"error: {path}:{line_number}: expected four or six "
+                    "filament fields")
+            try:
+                vertex = tuple(float(value) for value in fields[:3])
+            except ValueError as exc:
+                raise SystemExit(
+                    f"error: {path}:{line_number}: invalid filament vertex") \
+                    from exc
+            vertices.append(vertex)
+            if len(fields) == 6:
+                if len(vertices) == 1:
+                    radius, _, center_z = vertices[0]
+                    if radius <= 0.0:
+                        raise SystemExit(
+                            f"error: {path}:{line_number}: circular filament "
+                            "radius must be positive")
+                    phi = np.linspace(0.0, 2.0 * np.pi, circular_points,
+                                      endpoint=False)
+                    filament = np.column_stack(
+                        [radius * np.cos(phi), radius * np.sin(phi),
+                         np.full_like(phi, center_z)])
+                else:
+                    filament = np.asarray(vertices, dtype=float)
+                filaments.append(filament)
+                vertices = []
+
+    if not in_filaments:
+        raise SystemExit(f"error: {path}: no 'begin filament' section")
+    if not found_end:
+        raise SystemExit(f"error: {path}: no terminating 'end' line")
+    if vertices:
+        raise SystemExit(f"error: {path}: file ends inside a filament")
+    if periods is None or periods < 1:
+        raise SystemExit(f"error: {path}: no positive periods value")
+    if not filaments:
+        raise SystemExit(f"error: {path}: no coil filaments")
+    return periods, filaments
+
+
+def resolve_coils_path(requested, params):
+    """Resolve an explicit or embedded coils-dot path.  Relative paths are
+    first interpreted exactly as the solver does (from the current working
+    directory), then relative to the recorded input file when available."""
+    path = requested or params.get("coils_file", "")
+    if not path:
+        raise SystemExit(
+            "error: --coils needs PATH because this state contains a "
+            "precomputed mgrid_file but no embedded coils_file path")
+    candidates = [path]
+    source_path = params.get("_source_path", "")
+    if not os.path.isabs(path) and source_path:
+        candidates.append(os.path.join(os.path.dirname(source_path), path))
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    tried = ", ".join(os.path.abspath(candidate) for candidate in candidates)
+    raise SystemExit(f"error: coils file not found; tried {tried}")
+
+
+def tube_mesh(points, radius, n_sides=10):
+    """Build a closed tube around a filament centerline using a smoothly
+    transported local frame.  Coils-dot polygon filaments are closed by
+    convention; explicitly repeated terminal vertices are collapsed before
+    the periodic mesh is formed."""
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("filament points must have shape (n, 3)")
+    keep = np.ones(len(points), dtype=bool)
+    if len(points) > 1:
+        keep[1:] = np.linalg.norm(np.diff(points, axis=0), axis=1) > 1e-12
+    points = points[keep]
+    if len(points) > 2 and np.linalg.norm(points[-1] - points[0]) <= 1e-12:
+        points = points[:-1]
+    if len(points) < 3:
+        raise ValueError("a tube filament needs at least three unique points")
+
+    tangent = np.roll(points, -1, axis=0) - np.roll(points, 1, axis=0)
+    tangent_norm = np.linalg.norm(tangent, axis=1)
+    if np.any(tangent_norm <= 1e-14):
+        raise ValueError("filament has a degenerate tangent")
+    tangent /= tangent_norm[:, None]
+
+    axes = np.eye(3)
+    reference = axes[np.argmin(np.abs(axes @ tangent[0]))]
+    normal = np.empty_like(points)
+    normal[0] = np.cross(tangent[0], reference)
+    normal[0] /= np.linalg.norm(normal[0])
+    for i in range(1, len(points)):
+        transported = normal[i - 1] - np.dot(normal[i - 1], tangent[i]) * \
+            tangent[i]
+        magnitude = np.linalg.norm(transported)
+        if magnitude <= 1e-12:
+            reference = axes[np.argmin(np.abs(axes @ tangent[i]))]
+            transported = np.cross(tangent[i], reference)
+            magnitude = np.linalg.norm(transported)
+        normal[i] = transported / magnitude
+    binormal = np.cross(tangent, normal)
+
+    points = np.vstack([points, points[0]])
+    normal = np.vstack([normal, normal[0]])
+    binormal = np.vstack([binormal, binormal[0]])
+    angle = np.linspace(0.0, 2.0 * np.pi, n_sides + 1)
+    mesh = points[:, :, None] + radius * (
+        normal[:, :, None] * np.cos(angle)[None, None, :] +
+        binormal[:, :, None] * np.sin(angle)[None, None, :])
+    return mesh[:, 0, :], mesh[:, 1, :], mesh[:, 2, :]
+
+
 def converged_axis(fams, ns, ntor, nfp, n=240):
     """The converged magnetic axis: the m=0 content of the innermost
     computed surface (j=1). The axis is theta-independent by construction
@@ -980,7 +1152,7 @@ def _render_machinery(S):
 
 
 def draw_scene(ax, vw, S, cmap, norm, light_dir):
-    """Draw the flux surface + axis curve into one 3-D axis."""
+    """Draw the flux surface, optional coil tubes, and axis curve."""
     for s in S["surf_3d"]:  # a single opaque surface (the plasma boundary)
         X, Y, Z = to_cartesian(s["r12"], s["z12"], S["nfp"])
         B = periodic_close(np.concatenate([s["bmag"]] * S["nfp"], axis=1))
@@ -993,6 +1165,10 @@ def draw_scene(ax, vw, S, cmap, norm, light_dir):
                         rstride=1, cstride=2,
                         linewidth=0, antialiased=False,
                         alpha=1.0, shade=False)
+    for filament in S["coils"]:
+        X, Y, Z = tube_mesh(filament, S["coil_radius"])
+        ax.plot_surface(X, Y, Z, color=BRONZE, rstride=1, cstride=1,
+                        linewidth=0, antialiased=True, alpha=1.0, shade=True)
     for (x, y, z) in S["lines"]:
         ax.plot(x, y, z, color="#0b0b0b", linewidth=1.1, alpha=0.85, zorder=50)
     ax.plot(S["axx"], S["axy"], S["axz"], color="#0b0b0b", linewidth=1.4,
@@ -1049,7 +1225,8 @@ def render_combined(base, S):
         draw_scene(ax, vw, S, cmap, norm, light_dir)
         # mplot3d ignores the title pad, so place the label manually just
         # above the rendered box top (measured ~0.62 of the window).
-        ax.text2D(0.5, 0.70, label, transform=ax.transAxes, ha="center",
+        label_y = 0.92 if S["coils"] else 0.70
+        ax.text2D(0.5, label_y, label, transform=ax.transAxes, ha="center",
                   va="bottom", fontsize=10)
     cbar = fig.colorbar(mappable, ax=axes, orientation="horizontal",
                         shrink=0.6, aspect=24, pad=0.16)
@@ -1162,12 +1339,28 @@ def main():
     ap.add_argument("--field-lines", action="store_true",
                     help="also trace and draw field lines on the edge surface "
                          "(off by default: the figure stays cleaner)")
+    ap.add_argument("--coils", nargs="?", const="", default=None,
+                    metavar="PATH",
+                    help="for a free-boundary state, overlay the MAKEGRID "
+                         "coil filaments as bronze tubes; omit PATH to use "
+                         "the state's embedded coils_file")
+    ap.add_argument("--coil-radius", type=float, default=None,
+                    metavar="METERS",
+                    help="coil tube radius in meters (default: 0.6%% of the "
+                         "plasma's major radial extent)")
     args = ap.parse_args()
+
+    if args.coil_radius is not None and args.coil_radius <= 0.0:
+        ap.error("--coil-radius must be positive")
+    if args.coil_radius is not None and args.coils is None:
+        ap.error("--coil-radius requires --coils")
 
     output_dir = os.path.dirname(os.path.abspath(args.out))
     os.makedirs(output_dir, exist_ok=True)
 
     ns, mnmax, fams, params, name = load_state(args.state)
+    if args.coils is not None and not params["lfreeb"]:
+        ap.error("--coils is only valid for free-boundary states")
     ntor, nfp = params["ntor"], params["nfp"]
     if mnmax != params["mpol"] * (ntor + 1):
         raise SystemExit(
@@ -1264,8 +1457,40 @@ def main():
     # a small margin, so any device fills the frame.
     r_edge = surf_3d[0]["r12"]
     z_edge = surf_3d[0]["z12"]
-    lim = 1.06 * float(np.max(r_edge))
-    zlim = 1.10 * float(max(abs(z_edge.min()), abs(z_edge.max())))
+    plasma_lim = float(np.max(r_edge))
+    plasma_zlim = float(max(abs(z_edge.min()), abs(z_edge.max())))
+    coils = []
+    coil_radius = 0.0
+    if args.coils is not None:
+        coils_path = resolve_coils_path(args.coils, params)
+        coil_periods, loaded_coils = load_coil_filaments(coils_path)
+        if coil_periods != nfp:
+            raise SystemExit(
+                f"error: coils file has {coil_periods} field periods, state "
+                f"has nfp={nfp}")
+        # Idealized axis-current filaments can use million-meter closure
+        # segments.  They produce the intended field but are not physical
+        # coils and would collapse the useful plot scale, so omit only such
+        # unmistakable far-field constructions.
+        visible_extent = 50.0 * max(plasma_lim, plasma_zlim)
+        coils = [filament for filament in loaded_coils
+                 if np.max(np.linalg.norm(filament, axis=1)) <= visible_extent]
+        skipped = len(loaded_coils) - len(coils)
+        if not coils:
+            raise SystemExit("error: no coil filaments lie within the useful "
+                             "plot extent")
+        coil_radius = args.coil_radius \
+            if args.coil_radius is not None else 0.006 * plasma_lim
+        print(f"coils: loaded {len(coils)} filament(s) from {coils_path}; "
+              f"bronze tube radius={coil_radius:.4g} m" +
+              (f"; skipped {skipped} far-field filament(s)" if skipped else ""),
+              flush=True)
+
+    coil_xy_lim = max((np.max(np.hypot(f[:, 0], f[:, 1]))
+                       for f in coils), default=0.0)
+    coil_zlim = max((np.max(np.abs(f[:, 2])) for f in coils), default=0.0)
+    lim = 1.06 * max(plasma_lim, coil_xy_lim + coil_radius)
+    zlim = 1.10 * max(plasma_zlim, coil_zlim + coil_radius)
     views = [("perspective", "perspective view", dict(elev=24.0, azim=-58.0)),
              ("top", "top view", dict(elev=90.0, azim=-90.0))]
     S = {
@@ -1273,6 +1498,7 @@ def main():
         "fams": fams, "ns": ns, "nzt_r": nzt_r,
         "nfp": nfp, "ntor": ntor,
         "lines": lines, "axx": axx, "axy": axy, "axz": axz,
+        "coils": coils, "coil_radius": coil_radius,
         "bmin": b_all.min(), "bmax": b_all.max(),
         "views": views,
         "title": f"cuMES converged equilibrium — {name}",
