@@ -20,10 +20,12 @@ One PNG file per view: <out>_perspective.png, <out>_top.png,
 <out>_combined.png (both views side by side), and <out>_slices.png (the
 top view with six RZ poloidal cross-sections in two rows of three,
 spanning one field period, each showing nested flux-surface contours).
-The 3-D figures plot a single flux surface (the plasma boundary). The
-magnetic axis is the converged axis extracted from the state (m=0 content
-of the innermost surface, seed_state.hpp convention: nfp-fold
-modulation).
+The 3-D figures plot the full-grid LCFS; the cross-sections are likewise
+full-grid radial surfaces.  Since |B| is naturally staggered, its values are
+linearly interpolated from the adjacent half-grid surfaces (one-sided linear
+extrapolation at the LCFS).  The magnetic axis is the converged axis extracted
+from the state (m=0 content of the innermost surface, seed_state.hpp convention:
+nfp-fold modulation).
 
 Two self-checks run before rendering:
   1. for fixed boundary, the state LCFS (j = ns-1) must match the embedded
@@ -36,8 +38,14 @@ state embeds ``coils_file``; states made from a precomputed MGRID table need
 an explicit coils-dot or ``cumes-coils-v1`` JSON path.  ``--coil-radius
 METERS`` overrides the small data-scaled default tube radius.
 
+The default ``matplotlib`` 3-D backend has no depth buffer, so it globally
+sorts all plasma and coil faces before drawing.  ``--backend pyvista`` uses
+PyVista/VTK's real 3-D renderer and z-buffer instead; PyVista is an optional
+dependency and is imported only when that backend is selected.
+
 Usage: plot_equilibrium.py [--state PATH] [--out PATH.png] [--field-lines]
                            [--coils [PATH]] [--coil-radius METERS]
+                           [--backend {matplotlib,pyvista}]
 """
 
 import argparse
@@ -45,6 +53,7 @@ import json
 import multiprocessing
 import os
 import struct
+import sys
 import time
 
 import numpy as np
@@ -1202,17 +1211,21 @@ def converged_axis(fams, ns, ntor, nfp, n=240):
     return np.append(X, X[0]), np.append(Y, Y[0]), np.append(Zfull, Zfull[0])
 
 
-def field_lines(edge, th, zt, seeds, nfp, zeta_span=6 * 2.0 * np.pi,
-                n_steps=2400):
+def field_lines(edge, th, zt, seeds, nfp, geometry=None,
+                zeta_span=6 * 2.0 * np.pi, n_steps=2400):
     """Trace d(theta)/d(zeta) = B^theta/B^zeta on the edge half-grid surface
     (RK4, periodic in both angles), lifted onto the (r12, z12) geometry.
-    `edge` is the half_grid() result on the (th, zt) solver grid."""
+    `edge` is the half_grid() result on the (th, zt) solver grid. When
+    `geometry` is supplied, the half-grid field-line direction is lifted onto
+    that full-grid surface instead of the half-grid geometry."""
     ratio = edge["bsupu"] / edge["bsupv"]
     ri = RegularGridInterpolator((th, zt), ratio, method="linear",
                                  bounds_error=False, fill_value=None)
-    rgi = RegularGridInterpolator((th, zt), edge["r12"], method="linear",
+    r_surface = edge["r12"] if geometry is None else geometry["r"]
+    z_surface = edge["z12"] if geometry is None else geometry["z"]
+    rgi = RegularGridInterpolator((th, zt), r_surface, method="linear",
                                   bounds_error=False, fill_value=None)
-    zgi = RegularGridInterpolator((th, zt), edge["z12"], method="linear",
+    zgi = RegularGridInterpolator((th, zt), z_surface, method="linear",
                                   bounds_error=False, fill_value=None)
     lines = []
     for seed in seeds:
@@ -1246,6 +1259,18 @@ def _render_machinery(S):
     light_dir = mcolors.LightSource(azdeg=330, altdeg=55).direction
     mappable = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     return cmap, norm, light_dir, mappable
+
+
+def require_pyvista():
+    """Import the optional real-3-D backend with an actionable error."""
+    try:
+        import pyvista as pv
+    except ImportError as exc:
+        raise SystemExit(
+            "error: --backend pyvista requires the optional PyVista/VTK "
+            "renderer; install it with 'python -m pip install pyvista'") \
+            from exc
+    return pv
 
 
 def mesh_quads(X, Y, Z):
@@ -1290,7 +1315,7 @@ def draw_scene(ax, vw, S, cmap, norm, light_dir):
     colors = []
     antialiased = []
     for s in S["surf_3d"]:  # a single opaque surface (the plasma boundary)
-        X, Y, Z = to_cartesian(s["r12"], s["z12"], S["nfp"])
+        X, Y, Z = to_cartesian(s["r"], s["z"], S["nfp"])
         B = periodic_close(np.concatenate([s["bmag"]] * S["nfp"], axis=1))
         lam = surface_intensity(X, Y, Z, light_dir)
         hsv = mcolors.rgb_to_hsv(cmap(norm(B))[:, :, :3])
@@ -1330,6 +1355,124 @@ def draw_scene(ax, vw, S, cmap, norm, light_dir):
     ax.view_init(**vw)
 
 
+def pyvista_surface(pv, X, Y, Z, scalars):
+    """Create a quad PolyData surface without relying on VTK array-order
+    conventions.  Points and scalar values both use NumPy's C order."""
+    n0, n1 = X.shape
+    points = np.stack([X, Y, Z], axis=-1).reshape(-1, 3)
+    i, j = np.meshgrid(np.arange(n0 - 1), np.arange(n1 - 1),
+                       indexing="ij")
+    corner = (i * n1 + j).ravel()
+    faces = np.column_stack([
+        np.full(corner.size, 4, dtype=np.int64),
+        corner, corner + n1, corner + n1 + 1, corner + 1,
+    ])
+    mesh = pv.PolyData(points, faces)
+    mesh.point_data["B"] = np.asarray(scalars).ravel()
+    return mesh
+
+
+def pyvista_polyline(pv, points, close=False):
+    """Create one connected VTK polyline, optionally closing the loop."""
+    points = np.asarray(points, dtype=float)
+    keep = np.ones(len(points), dtype=bool)
+    if len(points) > 1:
+        keep[1:] = np.linalg.norm(np.diff(points, axis=0), axis=1) > 1e-12
+    points = points[keep]
+    if close and len(points) > 1:
+        if np.linalg.norm(points[-1] - points[0]) <= 1e-12:
+            points = points[:-1]
+        points = np.vstack([points, points[0]])
+    line = pv.PolyData(points)
+    line.lines = np.concatenate(
+        [np.array([len(points)], dtype=np.int64),
+         np.arange(len(points), dtype=np.int64)])
+    return line
+
+
+def add_pyvista_scene(plotter, pv, S, section_angles=()):
+    """Populate one VTK renderer with opaque, depth-tested scene actors."""
+    for s in S["surf_3d"]:
+        X, Y, Z = to_cartesian(s["r"], s["z"], S["nfp"])
+        B = periodic_close(np.concatenate([s["bmag"]] * S["nfp"], axis=1))
+        mesh = pyvista_surface(pv, X, Y, Z, B)
+        plotter.add_mesh(
+            mesh, scalars="B", cmap="viridis",
+            clim=(S["bmin"], S["bmax"]), show_scalar_bar=False,
+            smooth_shading=True, ambient=0.25, diffuse=0.75,
+            specular=0.08, specular_power=12.0)
+
+    for filament in S["coils"]:
+        centerline = pyvista_polyline(pv, filament, close=True)
+        tube = centerline.tube(radius=S["coil_radius"], n_sides=12,
+                               capping=False)
+        plotter.add_mesh(tube, color=BRONZE, smooth_shading=True,
+                         ambient=0.22, diffuse=0.72, specular=0.28,
+                         specular_power=24.0)
+
+    for x, y, z in S["lines"]:
+        line = pyvista_polyline(pv, np.column_stack([x, y, z]))
+        plotter.add_mesh(line, color="#0b0b0b", line_width=1.5,
+                         render_lines_as_tubes=True, lighting=False)
+    axis = pyvista_polyline(
+        pv, np.column_stack([S["axx"], S["axy"], S["axz"]]))
+    plotter.add_mesh(axis, color="#0b0b0b", line_width=2.0,
+                     render_lines_as_tubes=True, lighting=False)
+
+    # These guides belong only to the top-view panel in the slices figure.
+    # They remain ordinary depth-tested actors: sections passing behind the
+    # plasma are hidden instead of being painted over it.
+    for zeta in section_angles:
+        phi = zeta / S["nfp"]
+        guide = pyvista_polyline(
+            pv, [[0.0, 0.0, 0.0],
+                 [S["lim"] * np.cos(phi), S["lim"] * np.sin(phi), 0.0]])
+        plotter.add_mesh(guide, color="#0b0b0b", line_width=1.2,
+                         render_lines_as_tubes=True, lighting=False)
+
+
+def set_pyvista_camera(plotter, vw, S):
+    """Match the two established Matplotlib viewpoints in VTK."""
+    elev = np.radians(vw["elev"])
+    azim = np.radians(vw["azim"])
+    direction = np.array([np.cos(elev) * np.cos(azim),
+                          np.cos(elev) * np.sin(azim), np.sin(elev)])
+    distance = 4.5 * max(S["lim"], S["zlim"])
+    if abs(vw["elev"]) > 89.0:
+        # A defined up-vector avoids the singular roll at the north pole.
+        direction = np.array([0.0, 0.0, 1.0])
+        view_up = (0.0, 1.0, 0.0)
+    else:
+        view_up = (0.0, 0.0, 1.0)
+    plotter.camera_position = [tuple(distance * direction),
+                               (0.0, 0.0, 0.0), view_up]
+    if abs(vw["elev"]) > 89.0:
+        plotter.camera.parallel_projection = True
+        plotter.camera.parallel_scale = 1.04 * S["lim"]
+    else:
+        plotter.camera.parallel_projection = False
+        plotter.camera.view_angle = 30.0
+    plotter.reset_camera_clipping_range()
+
+
+def pyvista_scene_image(S, vw, section_angles=(), window_size=(1400, 1050)):
+    """Rasterize one scene through VTK's z-buffer and return an RGB image."""
+    pv = require_pyvista()
+    plotter = pv.Plotter(off_screen=True, window_size=window_size,
+                         lighting="light kit")
+    plotter.set_background("white")
+    try:
+        plotter.enable_anti_aliasing("ssaa")
+    except ValueError:  # older PyVista releases without SSAA support
+        plotter.enable_anti_aliasing()
+    add_pyvista_scene(plotter, pv, S, section_angles)
+    set_pyvista_camera(plotter, vw, S)
+    try:
+        return plotter.screenshot(return_img=True)
+    finally:
+        plotter.close()
+
+
 def render_single_view(base, suffix, label, vw, S):
     """One 3-D view per file (perspective / top); runs in its own process."""
     print(f"rendering {label} ...", flush=True)
@@ -1350,6 +1493,26 @@ def render_single_view(base, suffix, label, vw, S):
     fig.suptitle(f"{S['title']} ({label})", fontsize=11, y=1.01)
     out_png = f"{base}_{suffix}.png"
     fig.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    trim_white(out_png, center="body")
+    print(f"saved {out_png} ({time.perf_counter() - t0:.1f}s)", flush=True)
+
+
+def render_single_view_image(base, suffix, label, image, S):
+    """Lay out a VTK-rendered RGB scene with Matplotlib annotations."""
+    print(f"composing {label} ...", flush=True)
+    t0 = time.perf_counter()
+    _, _, _, mappable = _render_machinery(S)
+    fig = plt.figure(figsize=(7.4, 5.6), dpi=100, constrained_layout=True)
+    ax = fig.add_subplot(111)
+    ax.imshow(image)
+    ax.set_axis_off()
+    cbar = fig.colorbar(mappable, ax=ax, shrink=0.55, aspect=20, pad=0.01)
+    cbar.set_label("|B| (T)", fontsize=10)
+    cbar.ax.tick_params(labelsize=9)
+    fig.suptitle(f"{S['title']} ({label})", fontsize=11, y=0.99)
+    out_png = f"{base}_{suffix}.png"
+    fig.savefig(out_png, dpi=220, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     trim_white(out_png, center="body")
     print(f"saved {out_png} ({time.perf_counter() - t0:.1f}s)", flush=True)
@@ -1392,7 +1555,61 @@ def render_combined(base, S):
     print(f"saved {out_png} ({time.perf_counter() - t0:.1f}s)", flush=True)
 
 
-def render_slices(base, S):
+def render_combined_images(base, S, images):
+    """Lay out two VTK-rendered views with one shared scalar bar."""
+    print("composing combined view ...", flush=True)
+    t0 = time.perf_counter()
+    _, _, _, mappable = _render_machinery(S)
+    cropped_images = []
+    for image in images:
+        # VTK frames each camera in a fixed rectangular window. Crop those
+        # white margins only for the combined-view copies; the standalone
+        # views retain their original framing.
+        rgb = image[:, :, :3]
+        nonwhite = np.any(rgb < 250, axis=2)
+        ys, xs = np.where(nonwhite)
+        if len(xs):
+            pad = 6
+            x0, x1 = max(xs.min() - pad, 0), min(xs.max() + pad + 1,
+                                                   image.shape[1])
+            y0, y1 = max(ys.min() - pad, 0), min(ys.max() + pad + 1,
+                                                   image.shape[0])
+            image = image[y0:y1, x0:x1]
+        cropped_images.append(image)
+    # Match the Matplotlib combined composition: equal-width panel cells make
+    # the wide perspective projection naturally shorter than the nearly square
+    # top view, instead of scaling both scenes to the same height.
+    fig, axes = plt.subplots(
+        1, 2, figsize=(8.8, 5.4), dpi=100,
+        gridspec_kw={"width_ratios": (0.78, 1.0)})
+    # Reserve a real bottom strip before adding the colorbar. Calling
+    # subplots_adjust after fig.colorbar lets the image axes expand back into
+    # the automatically carved-out colorbar region, which can cover the lower
+    # part of the top-view coils.
+    fig.subplots_adjust(left=0.0, right=1.0, top=0.90, bottom=0.18,
+                        wspace=0.06)
+    for i, (ax, image, (_, label, _)) in enumerate(
+            zip(axes, cropped_images, S["views"])):
+        ax.imshow(image)
+        # Aspect correction shrinks the active image box inside its subplot.
+        # Anchor both boxes toward the shared edge so that slack stays outside
+        # rather than reopening the middle gutter.
+        ax.set_anchor("E" if i == 0 else "W")
+        ax.set_axis_off()
+        ax.set_title(label, fontsize=10, pad=3)
+    cbar_ax = fig.add_axes([0.30, 0.14, 0.40, 0.03])
+    cbar = fig.colorbar(mappable, cax=cbar_ax, orientation="horizontal")
+    cbar.set_label("|B| (T)", fontsize=10)
+    cbar.ax.tick_params(labelsize=9)
+    fig.suptitle(S["title"], fontsize=11, y=0.98)
+    out_png = f"{base}_combined.png"
+    fig.savefig(out_png, dpi=220, bbox_inches="tight", pad_inches=12.0 / 220.0,
+                facecolor="white")
+    plt.close(fig)
+    print(f"saved {out_png} ({time.perf_counter() - t0:.1f}s)", flush=True)
+
+
+def render_slices(base, S, scene_image=None):
     """Top view + six RZ poloidal cross-sections (two rows of three,
     spanning one field period), each with the nested flux-surface contour
     family."""
@@ -1419,27 +1636,33 @@ def render_slices(base, S):
            fig.add_subplot(gs[1, 2:4]),
            fig.add_subplot(gs[1, 4:6])]
     # Nearly square window (matches the top-view box) so the torus fills
-    # it and the gap to the slice block shrinks.
-    ax3d = fig.add_axes([0.455, 0.06, 0.48, 0.86], projection="3d")
-    draw_scene(ax3d, dict(elev=90.0, azim=-90.0), S, cmap, norm, light_dir)
-    # Mark the toroidal positions of the cross-sections on the top view
-    # with radial dashed lines (one period only).
-    lim = S["lim"]
-    for zc, _ in zeta_cuts:
-        phi = zc / nfp
-        ax3d.plot([0.0, lim * np.cos(phi)], [0.0, lim * np.sin(phi)],
-                  [0.0, 0.0], color="#0b0b0b", linestyle=(0, (5, 4)),
-                  linewidth=0.9, zorder=55)
-    r_all = np.concatenate([s["r12"].ravel() for s in surf_slices])
-    z_all = np.concatenate([s["z12"].ravel() for s in surf_slices])
+    # it and the gap to the slice block shrinks. The PyVista backend supplies
+    # an already depth-buffered image; the default backend draws into Axes3D.
+    if scene_image is None:
+        ax3d = fig.add_axes([0.455, 0.06, 0.48, 0.86], projection="3d")
+        draw_scene(ax3d, dict(elev=90.0, azim=-90.0), S, cmap, norm, light_dir)
+        # Mark the toroidal positions of the cross-sections on the top view
+        # with radial dashed lines (one period only).
+        lim = S["lim"]
+        for zc, _ in zeta_cuts:
+            phi = zc / nfp
+            ax3d.plot([0.0, lim * np.cos(phi)], [0.0, lim * np.sin(phi)],
+                      [0.0, 0.0], color="#0b0b0b", linestyle=(0, (5, 4)),
+                      linewidth=0.9, zorder=55)
+    else:
+        ax3d = fig.add_axes([0.455, 0.06, 0.48, 0.86])
+        ax3d.imshow(scene_image)
+        ax3d.set_axis_off()
+    r_all = np.concatenate([s["r"].ravel() for s in surf_slices])
+    z_all = np.concatenate([s["z"].ravel() for s in surf_slices])
     Rmin, Rmax = r_all.min(), r_all.max()
     Zmax = max(abs(z_all.min()), abs(z_all.max()))
     for i, (zc, name) in enumerate(zeta_cuts):
         idx = int(round(zc / (2.0 * np.pi) * nzt_r)) % nzt_r
         ax = axs[i]
         for k, s in enumerate(surf_slices):
-            R = np.append(s["r12"][:, idx], s["r12"][0, idx])
-            Z = np.append(s["z12"][:, idx], s["z12"][0, idx])
+            R = np.append(s["r"][:, idx], s["r"][0, idx])
+            Z = np.append(s["z"][:, idx], s["z"][0, idx])
             B = np.append(s["bmag"][:, idx], s["bmag"][0, idx])
             pts = np.stack([R, Z], axis=1)
             segs = np.stack([pts[:-1], pts[1:]], axis=1)
@@ -1478,6 +1701,30 @@ def render_slices(base, S):
     print(f"saved {out_png} ({time.perf_counter() - t0:.1f}s)", flush=True)
 
 
+def render_pyvista_figures(base, S):
+    """Render all 3-D panels sequentially through one real-3-D backend.
+
+    VTK/OpenGL contexts are deliberately not forked.  The two plain views
+    are reused in the single and combined figures; only the slices panel
+    needs a third render carrying its six section guides.
+    """
+    images = []
+    for _, label, vw in S["views"]:
+        print(f"VTK rendering {label} ...", flush=True)
+        t0 = time.perf_counter()
+        images.append(pyvista_scene_image(S, vw))
+        print(f"  rendered in {time.perf_counter() - t0:.1f}s", flush=True)
+    for image, (suffix, label, _) in zip(images, S["views"]):
+        render_single_view_image(base, suffix, label, image, S)
+    render_combined_images(base, S, images)
+    print("VTK rendering top view with section guides ...", flush=True)
+    section_angles = tuple(k * np.pi / 3.0 for k in range(6))
+    slices_image = pyvista_scene_image(
+        S, dict(elev=90.0, azim=-90.0), section_angles=section_angles)
+    render_slices(base, S, scene_image=slices_image)
+    print("all figures saved", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", default="figure_data/w7x_state.bin")
@@ -1494,7 +1741,19 @@ def main():
                     metavar="METERS",
                     help="coil tube radius in meters (default: 0.6%% of the "
                          "plasma's major radial extent)")
+    ap.add_argument("--backend", choices=("matplotlib", "pyvista"),
+                    default="matplotlib",
+                    help="3-D rendering backend (default: matplotlib; "
+                         "pyvista uses VTK's z-buffer and requires the "
+                         "optional pyvista package)")
+    if len(sys.argv) == 1:
+        ap.print_help()
+        return
     args = ap.parse_args()
+
+    # Fail before loading and reconstructing a potentially large state.
+    if args.backend == "pyvista":
+        require_pyvista()
 
     if args.coil_radius is not None and args.coil_radius <= 0.0:
         ap.error("--coil-radius must be positive")
@@ -1540,7 +1799,7 @@ def main():
         print(f"  max err = {err:.3e}", flush=True)
         assert err < 1e-8, "state LCFS does not match the embedded boundary"
 
-    # ---- the plotted flux surface (plasma boundary, edge half-grid) ------
+    # ---- edge half-grid field data used by interpolation / field lines ---
     print(f"edge surface: solving chi' + half-grid geometry (jh = {ns - 2}) ...",
           flush=True)
     th = np.linspace(0.0, 2.0 * np.pi, params["ntheta"], endpoint=False)
@@ -1553,24 +1812,56 @@ def main():
     print(f"  jh={ns - 2:3d}: chip={chip:+.4e}, |B| "
           f"{edge['bmag'].min():.3f}-{edge['bmag'].max():.3f} T", flush=True)
 
-    # ---- fine render grid (analytic reconstruction, same formulas) -------
-    # One flux surface for the 3-D figures (the plasma boundary); the RZ
-    # slices get a family of nested contours from the edge down to s ~ 0.1.
-    print("fine render grid: evaluating geometry + |B| on 240x120 ...", flush=True)
+    # ---- fine render grid (full-grid geometry + interpolated |B|) ---------
+    # The visible contours use integer/full radial surfaces. |B| naturally
+    # lives on the staggered half grid, so interior full-grid values are the
+    # average of their two bracketing half-grid values. The LCFS uses the
+    # corresponding one-sided linear extrapolation from the last two halves.
+    print("fine render grid: evaluating full-grid geometry + interpolated "
+          "|B| on 240x120 ...", flush=True)
     nth_r, nzt_r = 240, 120
     th_r = np.linspace(0.0, 2.0 * np.pi, nth_r, endpoint=False)
     zt_r = np.linspace(0.0, 2.0 * np.pi, nzt_r, endpoint=False)
-    jh_slices = tuple(range(ns - 2, 8, -8))   # the edge down to s ~ 0.1
-    surf_slices = []
-    for jh in jh_slices:
-        chip = solve_chip(fams, ns, jh, params, prof)
-        a = [eval_state(fams, ns, j, th_r, zt_r, ntor, nfp)
-             for j in (jh, jh + 1)]
-        surf_slices.append(half_grid(a, ns, jh, chip, prof["phip_avg"](jh),
-                                     prof["lamscale"]))
-    surf_3d = [surf_slices[0]]               # the edge is the first contour
+    render_states = {}
+    render_halves = {}
+
+    def render_state(j):
+        if j not in render_states:
+            render_states[j] = eval_state(
+                fams, ns, j, th_r, zt_r, ntor, nfp)
+        return render_states[j]
+
+    def render_half(jh):
+        if jh not in render_halves:
+            chip_h = solve_chip(fams, ns, jh, params, prof)
+            adjacent = [render_state(jh), render_state(jh + 1)]
+            render_halves[jh] = half_grid(
+                adjacent, ns, jh, chip_h, prof["phip_avg"](jh),
+                prof["lamscale"])
+        return render_halves[jh]
+
+    def render_full(j):
+        state = render_state(j)
+        rho = np.sqrt(j / (ns - 1))
+        R = state["re"] + rho * state["ro"]
+        Z = state["ze"] + rho * state["zo"]
+        if j == 0:
+            bmag = 1.5 * render_half(0)["bmag"] \
+                - 0.5 * render_half(1)["bmag"]
+        elif j == ns - 1:
+            bmag = 1.5 * render_half(ns - 2)["bmag"] \
+                - 0.5 * render_half(ns - 3)["bmag"]
+        else:
+            bmag = 0.5 * (render_half(j - 1)["bmag"]
+                          + render_half(j)["bmag"])
+        return {"r": R, "z": Z, "bmag": np.maximum(bmag, 0.0), "j": j}
+
+    j_slices = tuple(range(ns - 1, 8, -8))  # LCFS down toward s ~ 0.1
+    surf_slices = [render_full(j) for j in j_slices]
+    surf_3d = [surf_slices[0]]              # the full-grid LCFS
     b_all = np.concatenate([s["bmag"].ravel() for s in surf_slices])
-    print(f"  3D: 1 flux surface, slices: {len(surf_slices)} contours, "
+    print(f"  3D: full-grid LCFS j={ns - 1}, slices: "
+          f"{len(surf_slices)} full-grid contours, "
           f"|B| range {b_all.min():.3f} - {b_all.max():.3f} T", flush=True)
 
     # ---- field lines on the edge surface (opt-in) ------------------------
@@ -1580,7 +1871,8 @@ def main():
               flush=True)
         try:
             lines = field_lines(edge, th, zt, nfp=nfp,
-                                seeds=[0.0, 2.0 * np.pi / 3, 4.0 * np.pi / 3])
+                                seeds=[0.0, 2.0 * np.pi / 3, 4.0 * np.pi / 3],
+                                geometry=surf_3d[0])
             print(f"  {len(lines)} lines traced", flush=True)
         except Exception as exc:  # decorative; the figure survives without them
             lines = []
@@ -1601,8 +1893,8 @@ def main():
     # (surface_intensity), never the |B| heightfield.
     # Data-derived framing: the render window hugs the plotted surface with
     # a small margin, so any device fills the frame.
-    r_edge = surf_3d[0]["r12"]
-    z_edge = surf_3d[0]["z12"]
+    r_edge = surf_3d[0]["r"]
+    z_edge = surf_3d[0]["z"]
     plasma_lim = float(np.max(r_edge))
     plasma_zlim = float(max(abs(z_edge.min()), abs(z_edge.max())))
     coils = []
@@ -1652,6 +1944,10 @@ def main():
         "box_aspect": (1.0, 1.0, zlim / lim),
     }
     base = os.path.splitext(args.out)[0]
+    if args.backend == "pyvista":
+        render_pyvista_figures(base, S)
+        return
+
     jobs = [
         (render_single_view, (base, "perspective", "perspective view",
                               dict(elev=24.0, azim=-58.0), S)),

@@ -254,3 +254,20 @@ across revisions by design.) `scripts/plot_equilibrium.py` walks the full traile
 and parses the embedded input record, so a converged equilibrium plots
 without its input JSON (containers written before the record are rejected
 with a "re-run the solver" message).
+
+The plotter defaults to its dependency-light Matplotlib 3-D backend. For scenes
+where plasma/coil occlusion matters, install the optional PyVista package and
+select the VTK backend, which renders the 3-D panels with a z-buffer:
+
+```bash
+python -m pip install pyvista
+python scripts/plot_equilibrium.py --state out.bin --backend pyvista \
+  --coils path/to/coils.json --out equilibrium.png
+```
+
+Both backends write the same `_perspective.png`, `_top.png`, `_combined.png`,
+and `_slices.png` files. The R-Z cross-sections and final figure composition
+remain Matplotlib-based; with `--backend pyvista`, every embedded 3-D panel is
+the VTK-rendered image. Displayed flux surfaces use the integer/full radial
+grid. Their `|B|` colors are linearly interpolated from the staggered half grid;
+the LCFS uses one-sided linear extrapolation from the last two half-grid values.
