@@ -257,11 +257,9 @@ if(CUMES_USE_VACUUM_FIELD)
     vfield_cuda_float vfield::makegrid)
 endif()
 
-# ---- magnetic-coordinate postprocessor (deps/magnetic-coordinate) ---------
-# The solver and postprocessor remain separate executables: cumes writes the
-# versioned equilibrium, and cumes-boozer consumes it. Embedding the standalone
-# project here makes the library and CLI part of a normal cuMES build without
-# coupling the hot solver executable to post-processing dependencies.
+# ---- magnetic-coordinate library and postprocessor -------------------------
+# A normal build provides both the standalone cumes-boozer converter and an
+# in-process library path from the converged cuMES snapshot.
 if(CUMES_BUILD_MAGNETIC_COORDINATE AND NOT EXISTS
    ${CMAKE_CURRENT_SOURCE_DIR}/deps/magnetic-coordinate/CMakeLists.txt)
   message(WARNING "cuMES: deps/magnetic-coordinate not checked out "
@@ -292,6 +290,11 @@ target_include_directories(cumes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # is scanned while the backend-factory references are still undefined — the
 # linker then extracts the strong NetCDF/HDF5 factory definitions.
 target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
+if(CUMES_BUILD_MAGNETIC_COORDINATE)
+  target_link_libraries(cumes PRIVATE
+    magnetic-coordinate::magnetic_coordinate)
+  target_compile_definitions(cumes PRIVATE CUMES_HAVE_MAGNETIC_COORDINATE)
+endif()
 if(CUMES_USE_VACUUM_FIELD)
   target_link_libraries(cumes PRIVATE vfield::vfield)
 endif()

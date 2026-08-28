@@ -89,6 +89,16 @@ target_include_directories(test_checkpoint PRIVATE ${PROJECT_SOURCE_DIR}/include
 target_link_libraries(test_checkpoint PRIVATE cumes_io_host)
 cumes_enable_warnings(test_checkpoint)
 
+if(CUMES_BUILD_MAGNETIC_COORDINATE)
+  add_executable(test_magnetic_coordinate_bridge
+                 test_magnetic_coordinate_bridge.cpp)
+  target_include_directories(test_magnetic_coordinate_bridge PRIVATE
+                             ${PROJECT_SOURCE_DIR}/include)
+  target_link_libraries(test_magnetic_coordinate_bridge PRIVATE
+                        magnetic-coordinate::magnetic_coordinate)
+  cumes_enable_warnings(test_magnetic_coordinate_bridge)
+endif()
+
 add_executable(test_io_golden test_io_golden.cu)
 target_include_directories(test_io_golden PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_io_golden PRIVATE cumes_config_json cumes_io_host cumes_io)
@@ -144,6 +154,9 @@ cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_derived_fields   unit;io;physics)
 cumes_add_test(test_checkpoint       unit;io)
+if(CUMES_BUILD_MAGNETIC_COORDINATE)
+  cumes_add_test(test_magnetic_coordinate_bridge unit;io;boozer)
+endif()
 cumes_add_test(test_io_golden        unit;io)
 cumes_add_test(test_io_restart_offsets unit;io)
 cumes_add_test(test_io_malformed_shapes unit;io)
