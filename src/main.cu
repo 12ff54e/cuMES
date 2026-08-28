@@ -34,6 +34,13 @@
 #include "solver.cuh"
 #include "vmec_types.h"
 
+#ifdef CUMES_HAVE_MAGNETIC_COORDINATE
+#include "cumes/io/magnetic_coordinate_bridge.hpp"
+
+#include <magnetic_coordinate/boozer_binary.hpp>
+#include <magnetic_coordinate/transform.hpp>
+#endif
+
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -120,7 +127,15 @@ int main(int argc, char** argv) {
         std::string output_path;
         std::string restart_path;
         std::string checkpoint_path;
+        std::string boozer_output_path;
+        int boozer_ntheta;
+        int boozer_nzeta;
+        int boozer_mmax;
+        int boozer_nmax;
+        int boozer_radial_order;
+        double boozer_resonance_tolerance;
         bool compatibility;
+        bool boozer;
     };
 
     CLAP_BEGIN(CliInput)
@@ -136,6 +151,27 @@ int main(int argc, char** argv) {
         checkpoint_path, "--checkpoint", "-c",
         "write a restart checkpoint to PATH after solving")
     CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        boozer, "--boozer", "calculate the Boozer representation in memory")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        boozer_output_path, "--boozer-output",
+        "calculate and write the Boozer representation to PATH")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        boozer_ntheta, "--boozer-ntheta",
+        "set the Boozer output poloidal grid size")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        boozer_nzeta, "--boozer-nzeta",
+        "set the unchanged-toroidal-angle grid size")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(boozer_mmax, "--boozer-mmax",
+                                          "set the Boozer poloidal mode limit")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(boozer_nmax, "--boozer-nmax",
+                                          "set the Boozer toroidal mode limit")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        boozer_radial_order, "--boozer-radial-order",
+        "set half-to-full radial interpolation order (2 or 4)")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        boozer_resonance_tolerance, "--boozer-resonance-tolerance",
+        "set the resonant-denominator tolerance")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
         compatibility, "--compatibility",
         "warn and ignore unknown input keys instead of rejecting them")
     CLAP_END(CliInput)
@@ -143,6 +179,10 @@ int main(int argc, char** argv) {
     CliInput cli{};
     cli.output_path =
         (std::filesystem::current_path() / "cumes-output.bin").string();
+    cli.boozer_mmax = -1;
+    cli.boozer_nmax = -1;
+    cli.boozer_radial_order = 4;
+    cli.boozer_resonance_tolerance = 1.0e-12;
     try {
         CLAP<CliInput>::parse_input(cli, argc, argv);
     } catch (const std::exception& e) {
@@ -155,6 +195,37 @@ int main(int argc, char** argv) {
     const std::string& restart_path = cli.restart_path;
     const std::string& checkpoint_path = cli.checkpoint_path;
     const bool compatibility = cli.compatibility;
+    const bool boozer_requested = cli.boozer || !cli.boozer_output_path.empty();
+
+#ifndef CUMES_HAVE_MAGNETIC_COORDINATE
+    if (boozer_requested) {
+        fprintf(stderr,
+                "cuMES: Boozer conversion is not available in this build; "
+                "configure with -DCUMES_BUILD_MAGNETIC_COORDINATE=ON\n");
+        return EXIT_FAILURE;
+    }
+#else
+    magnetic_coordinate::TransformSettings boozer_settings;
+    if (boozer_requested) {
+        if (cli.boozer_ntheta < 0 || cli.boozer_nzeta < 0 ||
+            cli.boozer_mmax < -1 || cli.boozer_nmax < -1 ||
+            !(cli.boozer_resonance_tolerance > 0.0) ||
+            !std::isfinite(cli.boozer_resonance_tolerance) ||
+            (cli.boozer_radial_order != 2 && cli.boozer_radial_order != 4)) {
+            fprintf(stderr, "cuMES: invalid Boozer transform options\n");
+            return EINVAL;
+        }
+        boozer_settings.output_ntheta = cli.boozer_ntheta;
+        boozer_settings.output_nzeta = cli.boozer_nzeta;
+        boozer_settings.mmax = cli.boozer_mmax;
+        boozer_settings.nmax = cli.boozer_nmax;
+        boozer_settings.resonance_tolerance = cli.boozer_resonance_tolerance;
+        boozer_settings.radial_order =
+            cli.boozer_radial_order == 2
+                ? magnetic_coordinate::RadialInterpolationOrder::TWO_POINT
+                : magnetic_coordinate::RadialInterpolationOrder::FOUR_POINT;
+    }
+#endif
 
     // ---- output preflight (before any CUDA work) ----------------------------
     // A requested-but-unlinked format (e.g. .nc on a binary-only build) and an
@@ -353,6 +424,34 @@ int main(int argc, char** argv) {
             }
         }
 
+#ifdef CUMES_HAVE_MAGNETIC_COORDINATE
+        if (boozer_requested) {
+            try {
+                const auto boozer_result =
+                    magnetic_coordinate::transform_to_boozer(
+                        cumes::make_magnetic_coordinate_view(
+                            snapshot, outcome.report.input_params),
+                        boozer_settings);
+                printf(
+                    "Calculated Boozer representation: %zu non-axis "
+                    "surfaces, %dx%d mixed-grid points per surface, "
+                    "%zu modes per surface\n",
+                    boozer_result.s.size(), boozer_result.grid.ntheta,
+                    boozer_result.grid.nzeta, boozer_result.spectrum.m.size());
+                if (!cli.boozer_output_path.empty()) {
+                    magnetic_coordinate::write_boozer_binary(
+                        cli.boozer_output_path, boozer_result, spec.path);
+                    printf("Saved Boozer representation to %s\n",
+                           cli.boozer_output_path.c_str());
+                }
+            } catch (const std::exception& error) {
+                fprintf(stderr, "cuMES: Boozer transform failed: %s\n",
+                        error.what());
+                output_ok = false;
+            }
+        }
+#endif
+
         output_print<Real>(storage, p, result.iterations, result.converged,
                            result.fsqr, result.fsqz, result.fsql);
         if (n_grids > 1)
@@ -360,8 +459,8 @@ int main(int argc, char** argv) {
                    n_grids, total_iter);
         printf("\nDone.\n");
         if (!output_ok) {
-            fprintf(stderr, "cuMES: FAILED to write output state (%s)\n",
-                    output_path.c_str());
+            fprintf(stderr,
+                    "cuMES: requested output or post-processing failed\n");
             return EXIT_FAILURE;
         }
         return result.converged ? 0 : 1;
