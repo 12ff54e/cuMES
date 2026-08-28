@@ -6,6 +6,7 @@
 #   - --compatibility warns and continues (vmecpp-style ignore);
 #   - input is a mandatory positional argument;
 #   - output is an option and defaults to $PWD/cumes-output.bin;
+#   - native and Boozer result outputs are mutually exclusive;
 #   - strict rejects an unknown output suffix.
 #
 # Usage: cli_policy_test.sh <path-to-cuMES>
@@ -80,6 +81,10 @@ fi
 check "output is not positional" 22       "too many arguments" ""       "$BIN" in_clean.json out.bin
 
 check "strict rejects unknown output suffix" 1       "unrecognized output suffix" ""       "$BIN" in_clean.json --output out.weird
+
+check "native and Boozer outputs are mutually exclusive" 22       "mutually exclusive" ""       "$BIN" in_clean.json --output out.bin --boozer-output boozer.bin
+
+check "calculate-only Boozer option is rejected" 22       "unrecognized option '--boozer'" ""       "$BIN" in_clean.json --boozer
 
 if [ "$fail" -ne 0 ]; then
   echo "cli_policy_test: FAILED"

@@ -23,18 +23,19 @@ reference (see [Verification](#verification)).
 cmake --preset verify          # double precision, both backends, -Werror
 cmake --build build -j
 ./build/cumes inputs/solovev.json --output out.bin
-./build/cumes inputs/solovev.json --output out.bin \
-  --boozer-output boozer.bin
+./build/cumes inputs/solovev.json --boozer-output boozer.bin
 ./build/deps/magnetic-coordinate/cumes-boozer out.bin --output boozer.bin
 ctest --test-dir build --output-on-failure
 ```
 
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
-`deps/magnetic-coordinate`. `--boozer` calculates the representation directly
-from cuMES's converged in-memory snapshot; `--boozer-output PATH` also writes
-it. The standalone converter reads a schema-v8 binary equilibrium. Both paths
-run the same transform and produce the mixed
+`deps/magnetic-coordinate`. `--output PATH` writes the native PEST-like result;
+`--boozer-output PATH` instead transforms cuMES's converged in-memory snapshot
+and writes the Boozer result. These options are mutually exclusive, so one run
+never publishes both forms. The standalone converter reads an existing
+schema-v8 native binary equilibrium. Both Boozer paths run the same transform
+and produce the mixed
 `(s, theta_b, zeta)` representation; `zeta_b = zeta + nu`. Disable this
 component with `-DCUMES_BUILD_MAGNETIC_COORDINATE=OFF`. If its submodule is
 absent, configuration warns and continues without Boozer support.

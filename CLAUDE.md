@@ -20,8 +20,10 @@ The codebase is post-CUDA-overhaul (blueprint:
 cmake --preset verify          # verify-double: precise math, all backends, -Werror
 cmake --build build -j
 
-# INPUT_FILE is positional; output defaults to $PWD/cumes-output.bin
+# INPUT_FILE is positional; native output defaults to $PWD/cumes-output.bin
 ./build/cumes inputs/solovev.json --output out.bin
+# Alternative result form; never combine with --output
+./build/cumes inputs/solovev.json --boozer-output boozer.bin
 
 ctest --test-dir build --output-on-failure
 
@@ -47,7 +49,10 @@ point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
 ## CLI & Environment
 
 - Positional `INPUT_FILE` is mandatory. `--output <path>` / `-o <path>`
-  overrides the default `$PWD/cumes-output.bin`.
+  writes the native PEST-like result and overrides the default
+  `$PWD/cumes-output.bin`. `--boozer-output <path>` instead writes the Boozer
+  result directly from the converged in-memory snapshot. The two result-output
+  options are mutually exclusive.
 - `--restart <checkpoint>` / `-r <checkpoint>` and `--checkpoint <path>` /
   `-c <path>` — read/write the v2
   checkpoint (`docs/output-formats.md` §4).

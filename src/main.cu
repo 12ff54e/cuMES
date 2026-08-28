@@ -135,7 +135,6 @@ int main(int argc, char** argv) {
         int boozer_radial_order;
         double boozer_resonance_tolerance;
         bool compatibility;
-        bool boozer;
     };
 
     CLAP_BEGIN(CliInput)
@@ -151,10 +150,8 @@ int main(int argc, char** argv) {
         checkpoint_path, "--checkpoint", "-c",
         "write a restart checkpoint to PATH after solving")
     CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
-        boozer, "--boozer", "calculate the Boozer representation in memory")
-    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
         boozer_output_path, "--boozer-output",
-        "calculate and write the Boozer representation to PATH")
+        "write Boozer output to PATH instead of the native result")
     CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
         boozer_ntheta, "--boozer-ntheta",
         "set the Boozer output poloidal grid size")
@@ -177,8 +174,6 @@ int main(int argc, char** argv) {
     CLAP_END(CliInput)
 
     CliInput cli{};
-    cli.output_path =
-        (std::filesystem::current_path() / "cumes-output.bin").string();
     cli.boozer_mmax = -1;
     cli.boozer_nmax = -1;
     cli.boozer_radial_order = 4;
@@ -190,15 +185,25 @@ int main(int argc, char** argv) {
         return EINVAL;
     }
 
+    if (!cli.output_path.empty() && !cli.boozer_output_path.empty()) {
+        fprintf(stderr,
+                "cuMES: --output and --boozer-output are mutually exclusive\n");
+        return EINVAL;
+    }
+    const bool boozer_output_requested = !cli.boozer_output_path.empty();
+    if (!boozer_output_requested && cli.output_path.empty()) {
+        cli.output_path =
+            (std::filesystem::current_path() / "cumes-output.bin").string();
+    }
+
     const std::string& input_path = cli.input_path;
     const std::string& output_path = cli.output_path;
     const std::string& restart_path = cli.restart_path;
     const std::string& checkpoint_path = cli.checkpoint_path;
     const bool compatibility = cli.compatibility;
-    const bool boozer_requested = cli.boozer || !cli.boozer_output_path.empty();
 
 #ifndef CUMES_HAVE_MAGNETIC_COORDINATE
-    if (boozer_requested) {
+    if (boozer_output_requested) {
         fprintf(stderr,
                 "cuMES: Boozer conversion is not available in this build; "
                 "configure with -DCUMES_BUILD_MAGNETIC_COORDINATE=ON\n");
@@ -206,7 +211,7 @@ int main(int argc, char** argv) {
     }
 #else
     magnetic_coordinate::TransformSettings boozer_settings;
-    if (boozer_requested) {
+    if (boozer_output_requested) {
         if (cli.boozer_ntheta < 0 || cli.boozer_nzeta < 0 ||
             cli.boozer_mmax < -1 || cli.boozer_nmax < -1 ||
             !(cli.boozer_resonance_tolerance > 0.0) ||
@@ -231,18 +236,21 @@ int main(int argc, char** argv) {
     // A requested-but-unlinked format (e.g. .nc on a binary-only build) and an
     // unknown suffix are rejected HERE, before the CUDA context is created and
     // before any grid stage runs.
-    auto resolved = cumes::resolve_output_spec(output_path);
-    if (!resolved.has_value()) {
-        fprintf(stderr, "cuMES: %s\n", resolved.error().c_str());
-        return EXIT_FAILURE;
-    }
-    const cumes::OutputSpec output_spec = resolved.value();
-    if (!cumes::output_format_available(output_spec.format)) {
-        fprintf(stderr,
-                "cuMES: output format '%s' is not available in this "
-                "build; no output will be written\n",
-                cumes::output_suffix(output_spec.format).data());
-        return EXIT_FAILURE;
+    cumes::OutputSpec output_spec;
+    if (!boozer_output_requested) {
+        auto resolved = cumes::resolve_output_spec(output_path);
+        if (!resolved.has_value()) {
+            fprintf(stderr, "cuMES: %s\n", resolved.error().c_str());
+            return EXIT_FAILURE;
+        }
+        output_spec = resolved.value();
+        if (!cumes::output_format_available(output_spec.format)) {
+            fprintf(stderr,
+                    "cuMES: output format '%s' is not available in this "
+                    "build; no output will be written\n",
+                    cumes::output_suffix(output_spec.format).data());
+            return EXIT_FAILURE;
+        }
     }
 
     // ---- config: parse + validate -------------------------------------------
@@ -390,23 +398,24 @@ int main(int argc, char** argv) {
         // (including the checkpoint below) carries it, so consumers can
         // reconstruct the equilibrium without the input JSON.
         outcome.report.input_params = cumes::make_input_params(vp);
-        const cumes::OutputSpec spec = output_spec;
-        auto writer = cumes::make_writer(spec.format);
-        if (!writer) {
-            fprintf(stderr, "cuMES: no writer for suffix '%s'\n",
-                    cumes::output_suffix(spec.format).data());
-            output_ok = false;
-        } else {
-            fill_provenance(outcome.report, input_path, source_hash);
-            const cumes::Status status =
-                writer->write_atomic(snapshot, outcome.report, spec, vp);
-            if (status.has_value()) {
-                printf("Saved %s state to %s\n",
-                       cumes::output_suffix(spec.format).data(),
-                       spec.path.c_str());
-            } else {
-                fprintf(stderr, "cuMES: %s\n", status.error().c_str());
+        if (!boozer_output_requested) {
+            auto writer = cumes::make_writer(output_spec.format);
+            if (!writer) {
+                fprintf(stderr, "cuMES: no writer for suffix '%s'\n",
+                        cumes::output_suffix(output_spec.format).data());
                 output_ok = false;
+            } else {
+                fill_provenance(outcome.report, input_path, source_hash);
+                const cumes::Status status = writer->write_atomic(
+                    snapshot, outcome.report, output_spec, vp);
+                if (status.has_value()) {
+                    printf("Saved %s state to %s\n",
+                           cumes::output_suffix(output_spec.format).data(),
+                           output_spec.path.c_str());
+                } else {
+                    fprintf(stderr, "cuMES: %s\n", status.error().c_str());
+                    output_ok = false;
+                }
             }
         }
 
@@ -425,7 +434,7 @@ int main(int argc, char** argv) {
         }
 
 #ifdef CUMES_HAVE_MAGNETIC_COORDINATE
-        if (boozer_requested) {
+        if (boozer_output_requested) {
             try {
                 const auto boozer_result =
                     magnetic_coordinate::transform_to_boozer(
@@ -438,12 +447,10 @@ int main(int argc, char** argv) {
                     "%zu modes per surface\n",
                     boozer_result.s.size(), boozer_result.grid.ntheta,
                     boozer_result.grid.nzeta, boozer_result.spectrum.m.size());
-                if (!cli.boozer_output_path.empty()) {
-                    magnetic_coordinate::write_boozer_binary(
-                        cli.boozer_output_path, boozer_result, spec.path);
-                    printf("Saved Boozer representation to %s\n",
-                           cli.boozer_output_path.c_str());
-                }
+                magnetic_coordinate::write_boozer_binary(
+                    cli.boozer_output_path, boozer_result, input_path);
+                printf("Saved Boozer representation to %s\n",
+                       cli.boozer_output_path.c_str());
             } catch (const std::exception& error) {
                 fprintf(stderr, "cuMES: Boozer transform failed: %s\n",
                         error.what());
