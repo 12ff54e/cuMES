@@ -34,9 +34,10 @@ Two self-checks run before rendering:
 
 For free-boundary states, ``--coils [PATH]`` adds the MAKEGRID filament
 geometry to every 3-D view as bronze tubes.  PATH can be omitted when the
-state embeds ``coils_file``; states made from a precomputed MGRID table need
-an explicit coils-dot or ``cumes-coils-v1`` JSON path.  ``--coil-radius
-METERS`` overrides the small data-scaled default tube radius.
+state records a nonempty ``coils_file`` path; the coil geometry itself is not
+embedded.  States made from a precomputed MGRID table need an explicit
+coils-dot or ``cumes-coils-v1`` JSON path.  ``--coil-radius METERS`` overrides
+the small data-scaled default tube radius.
 
 The default ``matplotlib`` 3-D backend has no depth buffer, so it globally
 sorts all plasma and coil faces before drawing.  ``--backend pyvista`` uses
@@ -1114,7 +1115,7 @@ def load_coil_filaments(path, circular_points=160):
 
 
 def resolve_coils_path(requested, params):
-    """Resolve an explicit or embedded coil-configuration path. Relative
+    """Resolve an explicit or recorded coil-configuration path. Relative
     paths are first interpreted exactly as the solver does (from the current
     working directory), then relative to the recorded input file when
     available."""
@@ -1122,7 +1123,7 @@ def resolve_coils_path(requested, params):
     if not path:
         raise SystemExit(
             "error: --coils needs PATH because this state contains a "
-            "precomputed mgrid_file but no embedded coils_file path")
+            "precomputed mgrid_file but no recorded coils_file path")
     candidates = [path]
     source_path = params.get("_source_path", "")
     if not os.path.isabs(path) and source_path:
@@ -1728,7 +1729,12 @@ def render_pyvista_figures(base, S):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", default="figure_data/w7x_state.bin")
-    ap.add_argument("--out", default="figure_data/equilibrium.png")
+    ap.add_argument(
+        "--out", default="figure_data/equilibrium.png", metavar="PATH",
+        help="base output path; its final extension is removed and four PNGs "
+             "are written as BASE_perspective.png, BASE_top.png, "
+             "BASE_combined.png, and BASE_slices.png "
+             "(default: figure_data/equilibrium.png)")
     ap.add_argument("--field-lines", action="store_true",
                     help="also trace and draw field lines on the edge surface "
                          "(off by default: the figure stays cleaner)")
@@ -1736,7 +1742,8 @@ def main():
                     metavar="PATH",
                     help="for a free-boundary state, overlay the MAKEGRID "
                          "coil filaments as bronze tubes; omit PATH to use "
-                         "the state's embedded coils_file")
+                         "the coils_file path recorded in the state (the coil "
+                         "geometry itself is not embedded)")
     ap.add_argument("--coil-radius", type=float, default=None,
                     metavar="METERS",
                     help="coil tube radius in meters (default: 0.6%% of the "
