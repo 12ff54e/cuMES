@@ -257,6 +257,28 @@ if(CUMES_USE_VACUUM_FIELD)
     vfield_cuda_float vfield::makegrid)
 endif()
 
+# ---- magnetic-coordinate postprocessor (deps/magnetic-coordinate) ---------
+# The solver and postprocessor remain separate executables: cumes writes the
+# versioned equilibrium, and cumes-boozer consumes it. Embedding the standalone
+# project here makes the library and CLI part of a normal cuMES build without
+# coupling the hot solver executable to post-processing dependencies.
+if(CUMES_BUILD_MAGNETIC_COORDINATE AND NOT EXISTS
+   ${CMAKE_CURRENT_SOURCE_DIR}/deps/magnetic-coordinate/CMakeLists.txt)
+  message(WARNING "cuMES: deps/magnetic-coordinate not checked out "
+                  "(run: git submodule update --init); "
+                  "Boozer post-processing disabled")
+  set(CUMES_BUILD_MAGNETIC_COORDINATE OFF)
+endif()
+if(CUMES_BUILD_MAGNETIC_COORDINATE)
+  message(STATUS "cuMES: magnetic-coordinate post-processing enabled")
+  set(MAGNETIC_COORDINATE_BUILD_TESTING OFF CACHE BOOL
+      "standalone magnetic-coordinate tests are not duplicated in cuMES"
+      FORCE)
+  add_subdirectory(deps/magnetic-coordinate)
+else()
+  message(STATUS "cuMES: magnetic-coordinate post-processing disabled")
+endif()
+
 # ---- CLI executable --------------------------------------------------------
 if(CUMES_USE_FLOAT)
   set(CUMES_SELECTED_CUDA cumes_cuda_float)

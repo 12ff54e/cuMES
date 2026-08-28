@@ -56,6 +56,8 @@ monolithic compile (blueprint §9):
 | `cumes_cuda_runtime` | header-only CUDA-runtime interface | centralized `check_cuda`/`check_cufft` and buffer/stream/event RAII; propagates only the CUDA runtime/cuFFT links |
 | `cumes_cuda_double` / `cumes_cuda_float` | device | the nine `*_double.cu` / `*_float.cu` operator TUs |
 | `cuMES` | executable | `main.cu`, links only the TU matching `Real` |
+| `magnetic_coordinate` | standalone CUDA/C++ library | consumes schema-v8 equilibrium output and constructs PEST/Boozer coordinates |
+| `cumes-boozer` | postprocessor executable | writes the mixed `(s, theta_b, zeta)` Boozer representation |
 | `cumes_benchmark_fixed_iteration`, `cumes_benchmark_graph_overhead`, `cumes_benchmark_graph_realpass` | bench | §8.1 harness, graph microbenchmark, real-pass graph measurement |
 
 The CUDA operator libraries are the explicit-instantiation split that made the

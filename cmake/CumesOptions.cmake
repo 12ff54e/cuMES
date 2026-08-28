@@ -30,6 +30,13 @@ option(CUMES_USE_FLOAT "Build the cuMES CLI in single precision (float)" OFF)
 option(CUMES_USE_NETCDF "Enable NetCDF output of the solved state (.nc)" ON)
 option(CUMES_USE_HDF5  "Enable HDF5  output of the solved state (.h5/.hdf5)" ON)
 
+# Optional magnetic-coordinate post-processing library and cumes-boozer CLI.
+# This consumes the versioned binary output and is deliberately not linked
+# into the equilibrium solver executable.
+option(CUMES_BUILD_MAGNETIC_COORDINATE
+       "Build the magnetic-coordinate library and cumes-boozer postprocessor"
+       ON)
+
 # Optional Compute Sanitizer pass over the kernel-driving unit tests (memcheck).
 # Requires compute-sanitizer on PATH.
 option(CUMES_ENABLE_SANITIZER_TESTS "Register compute-sanitizer memcheck test variants" OFF)

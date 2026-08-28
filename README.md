@@ -23,8 +23,16 @@ reference (see [Verification](#verification)).
 cmake --preset verify          # double precision, both backends, -Werror
 cmake --build build -j
 ./build/cumes inputs/solovev.json --output out.bin
+./build/deps/magnetic-coordinate/cumes-boozer out.bin --output boozer.bin
 ctest --test-dir build --output-on-failure
 ```
+
+The default build also produces the `magnetic_coordinate` library and the
+`cumes-boozer` postprocessor from `deps/magnetic-coordinate`. The latter reads
+the schema-v8 binary equilibrium and writes the mixed
+`(s, theta_b, zeta)` representation; `zeta_b = zeta + nu`. Disable this
+component with `-DCUMES_BUILD_MAGNETIC_COORDINATE=OFF`. If its submodule is
+absent, configuration warns and continues without the postprocessor.
 
 `deps/vacuum-field` is optional. A fixed-boundary-only build neither configures
 nor links it:
