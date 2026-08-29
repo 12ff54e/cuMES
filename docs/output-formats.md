@@ -272,6 +272,41 @@ the VTK-rendered image. Displayed flux surfaces use the integer/full radial
 grid. Their `|B|` colors are linearly interpolated from the staggered half grid;
 the LCFS uses one-sided linear extrapolation from the last two half-grid values.
 
+A native result and its version-2 Boozer conversion provide the appropriate
+source data for the two magnetic-coordinate variants:
+
+```bash
+./build/cumes inputs/w7x.json --output equilibrium.bin
+./build/deps/magnetic-coordinate/cumes-boozer equilibrium.bin \
+  --output boozer.bin
+python scripts/plot_equilibrium.py --state equilibrium.bin \
+  --boozer-state boozer.bin \
+  --coordinate-only --out equilibrium.png
+```
+
+This writes five six-panel figures. `_COORD_coordinate_slices.png` contains
+PEST or Boozer coordinate meshes at six toroidal positions, and
+`_COORD_field_contours.png` shows `|B|` contours on six radial flux surfaces.
+Here `COORD` is `pest` or `boozer`. The coordinate-independent
+`_field_slices.png` contains the same physical R-Z cuts colored only by `|B|`;
+when both inputs are supplied it uses the higher-fidelity native-state
+reconstruction. Omit `--coordinate-only` to produce these files alongside the
+four equilibrium figures. `--coordinate-system pest` or
+`--coordinate-system boozer` selects only one coordinate variant. PEST lines
+are reconstructed from the native R/Z and physical lambda spectra; they are
+not inferred from the transformed and truncated Boozer spectra. Consequently
+a Boozer file alone supports only `--coordinate-system boozer`. The Boozer
+reader accepts all version-2 backends (`.bin`, `.nc`, `.h5`, and `.hdf5`).
+All figure configuration—including mesh-line counts, line colors, the shared
+field colormap, contour levels, fonts, figure sizes, camera angles, lighting,
+and output DPI—is grouped in the user-adjustable parameter block at the top of
+the sole entry script, `scripts/plot_equilibrium.py`. Implementation lives in
+the `scripts/cumes_plot/` package: `application.py` orchestrates the CLI,
+`state_io.py` reads native containers, `equilibrium.py` reconstructs physics,
+`coils.py` handles coil geometry, `render_3d.py` owns the overview renderers,
+and `coordinates.py` / `coordinate_figures.py` own magnetic-coordinate data
+and figures.
+
 ## 7. Boozer result containers
 
 `--boozer-output` and the standalone `cumes-boozer` converter dispatch `.bin`,
