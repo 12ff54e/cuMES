@@ -271,3 +271,13 @@ remain Matplotlib-based; with `--backend pyvista`, every embedded 3-D panel is
 the VTK-rendered image. Displayed flux surfaces use the integer/full radial
 grid. Their `|B|` colors are linearly interpolated from the staggered half grid;
 the LCFS uses one-sided linear extrapolation from the last two half-grid values.
+
+## 7. Boozer result containers
+
+`--boozer-output` and the standalone `cumes-boozer` converter dispatch `.bin`,
+`.nc`, `.h5`, and `.hdf5` to a shared version-2 Boozer data model. Unlike the
+transform's internal FFT workspace, the files contain no complex numbers:
+`R`, `Z`, and `nu` are represented by six real stellarator-symmetric Fourier
+families. The complete coordinate, normalization, ordering, and backend
+contract is documented in
+[`deps/magnetic-coordinate/docs/boozer-output-v2.md`](../deps/magnetic-coordinate/docs/boozer-output-v2.md).

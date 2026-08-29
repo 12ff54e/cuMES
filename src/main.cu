@@ -37,7 +37,7 @@
 #ifdef CUMES_HAVE_MAGNETIC_COORDINATE
 #include "cumes/io/magnetic_coordinate_bridge.hpp"
 
-#include <magnetic_coordinate/boozer_binary.hpp>
+#include <magnetic_coordinate/boozer_output.hpp>
 #include <magnetic_coordinate/transform.hpp>
 #endif
 
@@ -211,6 +211,7 @@ int main(int argc, char** argv) {
     }
 #else
     magnetic_coordinate::TransformSettings boozer_settings;
+    magnetic_coordinate::BoozerOutputSpec boozer_output_spec;
     if (boozer_output_requested) {
         if (cli.boozer_ntheta < 0 || cli.boozer_nzeta < 0 ||
             cli.boozer_mmax < -1 || cli.boozer_nmax < -1 ||
@@ -229,6 +230,24 @@ int main(int argc, char** argv) {
             cli.boozer_radial_order == 2
                 ? magnetic_coordinate::RadialInterpolationOrder::TWO_POINT
                 : magnetic_coordinate::RadialInterpolationOrder::FOUR_POINT;
+        try {
+            boozer_output_spec =
+                magnetic_coordinate::resolve_boozer_output_spec(
+                    cli.boozer_output_path);
+        } catch (const std::exception& error) {
+            fprintf(stderr, "cuMES: %s\n", error.what());
+            return EINVAL;
+        }
+        if (!magnetic_coordinate::boozer_output_format_available(
+                boozer_output_spec.format)) {
+            fprintf(stderr,
+                    "cuMES: Boozer output format '%s' is not available in "
+                    "this build\n",
+                    magnetic_coordinate::boozer_output_suffix(
+                        boozer_output_spec.format)
+                        .data());
+            return EXIT_FAILURE;
+        }
     }
 #endif
 
@@ -441,14 +460,17 @@ int main(int argc, char** argv) {
                         cumes::make_magnetic_coordinate_view(
                             snapshot, outcome.report.input_params),
                         boozer_settings);
+                const auto real_modes =
+                    static_cast<std::size_t>(boozer_result.spectrum.mmax + 1) *
+                    static_cast<std::size_t>(boozer_result.spectrum.nmax + 1);
                 printf(
                     "Calculated Boozer representation: %zu non-axis "
                     "surfaces, %dx%d mixed-grid points per surface, "
-                    "%zu modes per surface\n",
+                    "%zu real modes per surface\n",
                     boozer_result.s.size(), boozer_result.grid.ntheta,
-                    boozer_result.grid.nzeta, boozer_result.spectrum.m.size());
-                magnetic_coordinate::write_boozer_binary(
-                    cli.boozer_output_path, boozer_result, input_path);
+                    boozer_result.grid.nzeta, real_modes);
+                magnetic_coordinate::write_boozer_output(
+                    boozer_output_spec, boozer_result, input_path);
                 printf("Saved Boozer representation to %s\n",
                        cli.boozer_output_path.c_str());
             } catch (const std::exception& error) {

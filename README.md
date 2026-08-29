@@ -24,7 +24,7 @@ cmake --preset verify          # double precision, both backends, -Werror
 cmake --build build -j
 ./build/cumes inputs/solovev.json --output out.bin
 ./build/cumes inputs/solovev.json --boozer-output boozer.bin
-./build/deps/magnetic-coordinate/cumes-boozer out.bin --output boozer.bin
+./build/deps/magnetic-coordinate/cumes-boozer out.bin --output boozer.nc
 ctest --test-dir build --output-on-failure
 ```
 
@@ -39,6 +39,9 @@ and produce the mixed
 `(s, theta_b, zeta)` representation; `zeta_b = zeta + nu`. Disable this
 component with `-DCUMES_BUILD_MAGNETIC_COORDINATE=OFF`. If its submodule is
 absent, configuration warns and continues without Boozer support.
+The Boozer output suffix selects `.bin`, `.nc`, `.h5`, or `.hdf5`; optional
+NetCDF/HDF5 libraries are detected at configure time. All three containers
+store only the six real Fourier parity families, never complex coefficients.
 
 `deps/vacuum-field` is optional. A fixed-boundary-only build neither configures
 nor links it:

@@ -51,8 +51,10 @@ point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
 - Positional `INPUT_FILE` is mandatory. `--output <path>` / `-o <path>`
   writes the native PEST-like result and overrides the default
   `$PWD/cumes-output.bin`. `--boozer-output <path>` instead writes the Boozer
-  result directly from the converged in-memory snapshot. The two result-output
-  options are mutually exclusive.
+  result directly from the converged in-memory snapshot. Its `.bin`, `.nc`,
+  `.h5`, or `.hdf5` suffix selects the backend; every backend stores six real
+  Fourier parity families and no complex values. The two result-output options
+  are mutually exclusive.
 - `--restart <checkpoint>` / `-r <checkpoint>` and `--checkpoint <path>` /
   `-c <path>` — read/write the v2
   checkpoint (`docs/output-formats.md` §4).

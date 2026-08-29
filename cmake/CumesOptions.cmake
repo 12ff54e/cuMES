@@ -30,9 +30,9 @@ option(CUMES_USE_FLOAT "Build the cuMES CLI in single precision (float)" OFF)
 option(CUMES_USE_NETCDF "Enable NetCDF output of the solved state (.nc)" ON)
 option(CUMES_USE_HDF5  "Enable HDF5  output of the solved state (.h5/.hdf5)" ON)
 
-# Optional magnetic-coordinate post-processing library and cumes-boozer CLI.
-# This consumes the versioned binary output and is deliberately not linked
-# into the equilibrium solver executable.
+# Optional magnetic-coordinate library and cumes-boozer CLI. The library is
+# linked into cuMES for direct in-memory conversion and also consumes native
+# binary output through the standalone converter.
 option(CUMES_BUILD_MAGNETIC_COORDINATE
        "Build the magnetic-coordinate library and cumes-boozer postprocessor"
        ON)
