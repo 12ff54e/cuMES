@@ -13,7 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import numpy as np
 
-from cumes_plot.coordinate_figures import render_coordinate_figures
+from cumes_plot.coordinate_figures import (
+    _periodic_indices,
+    render_coordinate_figures,
+)
 from cumes_plot.coordinates import (
     COORDINATE_CONVENTION,
     FAMILY_NAMES,
@@ -78,6 +81,12 @@ def _manufactured_file(path):
 
 
 class PlotCoordinateTest(unittest.TestCase):
+    def test_periodic_theta_lines_do_not_duplicate_seam(self):
+        indices = _periodic_indices(120, 24)
+        np.testing.assert_array_equal(indices, np.arange(0, 120, 5))
+        wrapped_gaps = np.diff(np.append(indices, indices[0] + 120))
+        np.testing.assert_array_equal(wrapped_gaps, np.full(24, 5))
+
     def test_directory_only_output_names(self):
         base = resolve_output_base(output_directory="figure_data")
         self.assertEqual(figure_path(base, "perspective"),

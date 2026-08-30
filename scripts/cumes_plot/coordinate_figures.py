@@ -20,6 +20,14 @@ def _surface_indices(count, wanted, start=0):
                                          min(wanted, count))).astype(int))
 
 
+def _periodic_indices(count, wanted):
+    """Select uniformly spaced samples without duplicating the periodic seam."""
+    if count < 1:
+        raise ValueError("a periodic coordinate needs at least one sample")
+    selected = min(max(wanted, 1), count)
+    return np.arange(selected, dtype=int) * count // selected
+
+
 def _slice_angles(config):
     return PERIOD * np.arange(config.slice_panel_count) / \
         config.slice_panel_count
@@ -104,7 +112,7 @@ def render_coordinate_slices(base, grid, nfp, title, config):
     axes = axes.ravel()
     radial = _surface_indices(
         grid.s.size, config.coordinate_radial_line_count)
-    poloidal = _surface_indices(
+    poloidal = _periodic_indices(
         grid.theta.size, config.coordinate_theta_line_count)
     for ax, zeta in zip(axes, angles):
         r = interpolate_zeta(grid.r, zeta)
