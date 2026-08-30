@@ -91,6 +91,22 @@ l_v = -\partial_v\lambda.
 
 That sign convention must be part of the field type or name.
 
+### 2.1 Cold-start radial envelope
+
+The reference boundary/axis seed uses a linear `m=0` interpolation and the
+regular radial weight `s^(m/2)` for every `m>0` boundary harmonic. For a
+fixed-boundary 3-D cold start, cuMES retains that near-axis order but modestly
+increases the interior shaping:
+
+\[
+w_m(s)=s^{m/2}\left[1+c_{seed}(1-s)\right],\qquad c_{seed}=0.12.
+\]
+
+Thus `w_m(0)=0` for `m>0`, `w_m(1)=1`, and the LCFS is unchanged exactly.
+Axisymmetric and free-boundary starts use `c_seed=0`. The diagnostic override
+`CUMES_SEED_ENVELOPE` selects another coefficient; zero restores the reference
+`s^(m/2)` envelope. Lambda remains zero in a cold start.
+
 The state contains physical Fourier amplitudes. Forces and velocities use the VMEC-decomposed representation. A state update therefore reapplies the mode normalization
 
 \[

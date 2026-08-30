@@ -10,14 +10,15 @@ architecture and physics are real.
 own discrete force residuals and validity gates; vmecpp is a diagnostic
 cross-check, not the convergence oracle (see [Verification](#verification)).
 
-**Status: working.** The default fixed-boundary controller uses qualified
-one-shot time-step recovery. The prior audited trajectories remain available
-with `CUMES_DISABLE_STEP_RECOVERY=1`:
+**Status: working.** The default fixed-boundary path uses a shaped 3-D cold
+start and qualified one-shot time-step recovery. The prior audited trajectories
+remain available with `CUMES_SEED_ENVELOPE=0` and
+`CUMES_DISABLE_STEP_RECOVERY=1`:
 
 | case | multigrid stages | effective iters | final FSQR |
 | ---- | ---------------- | --------------- | ---------- |
 | Solovev (`inputs/solovev.json`) | 5 → 11 → 55 | 251 → 199 → 456 | 9.583e-17 |
-| W7-X (`inputs/w7x.json`) | 33 → 66 → 99 | 1741 → 1568 → 1635 (4944) | 9.989e-13 |
+| W7-X (`inputs/w7x.json`) | 33 → 66 → 99 | 1315 → 1559 → 1633 (4507) | 9.967e-13 |
 
 ## Quick start
 
@@ -206,6 +207,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
 | `CUMES_DELT0` | initial time step |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |
+| `CUMES_SEED_ENVELOPE` | override the fixed-boundary 3-D interior seed correction (default `0.12`; `0` restores the reference radial envelope) |
 | `CUMES_DUMP` | enables debug/dump output |
 
 ## Verification
@@ -231,15 +233,17 @@ library and the POSIX `sha256sum` subprocess used by `compare_bitwise`.
 - **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
 - **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505), final
   FSQR 9.778e-13 for the diagnostic reference controller. The default
-  recovery policy converges in 1741 → 1568 → 1635 iterations (total 4944),
-  FSQR 9.989e-13, and a checkpoint restart converges at iteration 1 with the
-  same residual triple.
+  recovery plus the shaped cold start converges in 1315 → 1559 → 1633
+  iterations (total 4507), FSQR 9.967e-13, and a checkpoint restart converges
+  at iteration 1 with the same residual triple. `CUMES_SEED_ENVELOPE=0`
+  restores the recovery-only 4944-pass trajectory.
 - **Single-grid W7-X**: with `n_grids=1` (`ns_array={99}`), one-shot recovery
-  converges in 2711 effective iterations (down from 2953), FSQR 9.988e-13.
-  Against an independent vmecpp 0.7.0 solve, the six-family worst difference
-  is 1.68e-5. `CUMES_DISABLE_STEP_RECOVERY=1` restores the 2953-iteration
-  trajectory, whose per-pass residuals track vmecpp at ≤1e-8 and whose final
-  state matches at ≤1.5e-9.
+  converges in 2627 effective iterations (down from 2711 with the reference
+  seed and 2953 with the reference controller), FSQR 9.968e-13.
+  `CUMES_SEED_ENVELOPE=0` restores the 2711-iteration recovery-only
+  trajectory; additionally setting
+  `CUMES_DISABLE_STEP_RECOVERY=1` restores the 2953-iteration reference
+  trajectory.
 
 See [`docs/verification.md`](docs/verification.md) for the full tier/gate
 structure (equivalence classes, sanitizers, equivalence gates, performance

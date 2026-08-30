@@ -159,6 +159,7 @@ Required host tests include:
 - `GridShape`, surface/mode indexing, and quadrature endpoint weights;
 - profile polynomial evaluation, flux normalization, fixed-iota/current policy selection, non-unit `tcon0`, and rejection of unsupported gamma;
 - controller residual histories reproducing convergence, ten-sample initialization/zero cases, bad-progress/Jacobian restarts, `ijacob=25/50` maintenance resets, checkpoint refresh/restore, effective-iteration counting, and the opt-in one-shot time-step recovery;
+- cold-start envelope policy and radial-weight invariants: exact LCFS, regular axis, reference opt-out, and axisymmetric/free-boundary exclusion;
 - multigrid interpolation at axis, interior points, LCFS, odd/even modes, and all six families;
 - output capability preflight and run-status-to-exit-code mapping;
 - versioned/legacy serialization round trips and deliberate I/O failures.

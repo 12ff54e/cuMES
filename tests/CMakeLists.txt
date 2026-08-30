@@ -132,6 +132,10 @@ add_executable(test_controller test_controller.cpp)
 target_include_directories(test_controller PRIVATE ${PROJECT_SOURCE_DIR}/include)
 cumes_enable_warnings(test_controller)
 
+add_executable(test_seed_envelope test_seed_envelope.cpp)
+target_include_directories(test_seed_envelope PRIVATE ${PROJECT_SOURCE_DIR}/include)
+cumes_enable_warnings(test_seed_envelope)
+
 add_executable(test_arena test_arena.cu)
 target_include_directories(test_arena PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_arena PRIVATE cumes_cuda_runtime)
@@ -162,6 +166,7 @@ cumes_add_test(test_io_restart_offsets unit;io)
 cumes_add_test(test_io_malformed_shapes unit;io)
 cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
+cumes_add_test(test_seed_envelope    unit;solver)
 
 # ---- host sanitizer twins (CUMES_HOST_SANITIZERS=ON) ------------------------
 # Dedicated ASan+UBSan copies of the host-only libraries and their tests, so

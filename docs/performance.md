@@ -113,6 +113,26 @@ a 9.33% end-to-end reduction (MAD 0.1090 s / 0.2123 s; unlocked-clock ranges
 3.1856–3.6662 s / 2.7096–3.5031 s). Solovev remains on its exact established
 trajectory because no reduced step survives to its recovery window.
 
+### 2.3 Shaped 3-D cold start (2026-08-30)
+
+ADR-0008 augments the regular `s^(m/2)` boundary-harmonic seed by the factor
+`1 + 0.12(1-s)` for fixed-boundary 3-D cold starts. It changes no LCFS value,
+preserves the required near-axis order, adds no GPU work, and can be disabled
+with `CUMES_SEED_ENVELOPE=0`.
+
+On W7-X single-grid it reduces effective iterations from 2711 to 2627 (3.10%).
+On W7-X multigrid it changes `1741 → 1568 → 1635` (4944 total) to
+`1315 → 1559 → 1633` (4507 total), an 8.84% reduction. Combined with the
+reference controller baseline, total multigrid passes fall by 18.13%. The
+final residual triple is FSQR `9.967e-13`, FSQZ `1.563e-13`, FSQL
+`4.956e-14`, and checkpoint replay converges at iteration 1 with the identical
+triple. Solovev remains byte-identical because axisymmetric seeds are excluded.
+
+Six alternating native gervais runs measured 1.9238 s versus 1.8823 s median
+for single-grid (2.16% wall reduction; MAD 6.3/14.8 ms) and 3.4419 s versus
+3.2983 s for multigrid (4.17%; MAD 0.331/0.388 s). Unlocked-clock outliers make
+these wall measurements noisier than the deterministic pass counts.
+
 ## 3. Phase 9 experiments and their outcomes
 
 The exit gate for §8.10–§8.12 was *"measure, then adopt or remove."* Three

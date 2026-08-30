@@ -77,6 +77,7 @@ Environment variables:
 | `CUMES_DELT0` | initial time step |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery and restores the reference controller trajectory |
+| `CUMES_SEED_ENVELOPE` | override fixed-boundary 3-D cold-start shaping (default `0.12`; `0` restores `s^(m/2)`) |
 | `CUMES_DUMP` | master switch for dump/debug output |
 | `CUMES_DUMP_ITER` / `CUMES_E2_START` | which iterations the windowed dump files fire on |
 
@@ -250,23 +251,21 @@ workspace structs remain.
 The CUDA overhaul is design-complete (phases 0–11 + the four closure steps +
 post-overhaul follow-up and reader-rank hardening, all re-verified Class A
 byte-identical against the frozen `dc0d0c4` baseline — full record in
-`docs/overhaul-history.md`). The frozen baselines (cuMES's own audited
-reference outputs, independent of any vmecpp bit-exactness target):
+`docs/overhaul-history.md`). Current qualified results are below; both seed and
+controller diagnostic opt-outs retain cuMES's own audited frozen trajectories,
+independent of any vmecpp bit-exactness target:
 
 - Solovev: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
-- W7-X: qualified recovery gives 1741 → 1568 → 1635 effective iters (total
-  4944), final FSQR 9.989e-13. Restarting the resulting checkpoint on the
-  final grid converges at iteration 1 with the same residual triple. The
-  diagnostic reference controller gives 1877 → 1617 → 2011 (total 5505),
-  FSQR 9.778e-13, under `CUMES_DISABLE_STEP_RECOVERY=1`.
-- Single-grid regression (`n_grids=1`, ns_array={99}): the qualified one-shot
-  step recovery converges in 2711 effective iters, FSQR 9.988e-13. The
-  converged state agrees with an independent vmecpp 0.7.0 solve to 1.68e-5 in
-  the worst of all six families. `CUMES_DISABLE_STEP_RECOVERY=1` restores the
-  2953-iteration reference trajectory: its per-iteration residuals track
-  vmecpp at ≤1e-8 over the ENTIRE run and its converged state matches the wout
-  at ≤1.5e-9 (wout comparisons must read the FULL-grid `lmns_full`, not the
-  half-grid `lmns`).
+- W7-X: shaped cold start plus qualified recovery gives 1315 → 1559 → 1633
+  effective iters (total 4507), final FSQR 9.967e-13. Restarting the resulting
+  checkpoint on the final grid converges at iteration 1 with the same residual
+  triple. `CUMES_SEED_ENVELOPE=0` restores the recovery-only 4944-pass
+  trajectory. Disabling both seed shaping and recovery restores
+  1877 → 1617 → 2011 (total 5505), FSQR 9.778e-13.
+- Single-grid regression (`n_grids=1`, ns_array={99}): shaped cold start plus
+  step recovery converges in 2627 effective iters, FSQR 9.968e-13.
+  `CUMES_SEED_ENVELOPE=0` restores the 2711-iteration recovery-only result;
+  disabling both changes restores the 2953-iteration reference trajectory.
 - The multigrid final state is a different member of the (near-degenerate)
   λ-gauge family than the single-grid and vmecpp trajectories. This does not
   override cuMES's residual convergence criterion: restarting the recovered
