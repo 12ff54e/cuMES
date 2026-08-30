@@ -26,6 +26,7 @@
 #define CUMES_SRC_FREE_BOUNDARY_IMPL_CUH_
 
 #include "cumes/physics/free_boundary_operator.hpp"
+#include "cumes/physics/free_boundary_policy.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "vfield/common/sizes.hpp"
 #include "vfield/free_boundary/vacuum_field_solver.hpp"
@@ -33,6 +34,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -209,6 +211,7 @@ struct FreeBoundaryOperator<T>::Impl {
     vfield::VacuumFieldSolver<T> solver;
     VacuumState state = VacuumState::OFF;
     int nvacskip = 1;
+    double activation_threshold = DEFAULT_VACUUM_ACTIVATION_RESIDUAL;
     int ivacskip = 0;
     bool run_block = false;
     bool full_update = false;
@@ -306,6 +309,10 @@ struct FreeBoundaryOperator<T>::Impl {
                 "mirror bridge assumes it)");
         }
         nvacskip = params.nvacskip;
+        if (const char* value =
+                std::getenv("CUMES_VACUUM_ACTIVATION_THRESHOLD")) {
+            activation_threshold = std::atof(value);
+        }
         if (params.hot_start) state = VacuumState::INITIALIZED;
     }
 };
@@ -449,7 +456,8 @@ void FreeBoundaryOperator<T>::advance(int iter2,
     impl_->soft_restart = false;
     if (!impl_->run_block) return;
     impl_->ivacskip = (iter2 - iter1) % impl_->nvacskip;
-    if (impl_->state != VacuumState::ACTIVE && fsqr + fsqz < 1.0e-3) {
+    if (impl_->state != VacuumState::ACTIVE &&
+        fsqr + fsqz < impl_->activation_threshold) {
         impl_->ivacskip = 0;
         impl_->state =
             static_cast<VacuumState>(static_cast<int>(impl_->state) + 1);

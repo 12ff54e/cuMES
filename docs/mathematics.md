@@ -545,6 +545,12 @@ fine or axisymmetric free-boundary, and mixed-float stages use the input value
 unchanged. `CUMES_DELT0`, when present, is the absolute experimental override
 after this policy.
 
+For a cold free-boundary run, the temporary no-vacuum predictor hands off to
+the vacuum edge force when `FSQR + FSQZ < 3e-2`. The handover performs a full
+vacuum update, zeroes velocity, and re-anchors the damping history before the
+vacuum-active descent. `CUMES_VACUUM_ACTIVATION_THRESHOLD=1e-3` restores the
+reference activation gate.
+
 Force normalization is refreshed with the preconditioner when
 
 \[

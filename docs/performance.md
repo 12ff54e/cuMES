@@ -168,6 +168,10 @@ are `9.932e-11`, `9.942e-11`, `9.705e-13`, and `9.822e-15`, respectively.
 Adding the qualified `17/14` step on 3-D free-boundary grids through `ns=25`
 reduces CTH-like single-grid further to 347 passes and multigrid to
 `208 -> 238` (446 total), with final FSQR `9.359e-11` and `9.745e-11`.
+Activating the vacuum force at residual sum `3e-2` reduces those trajectories
+again to 309 and `198 -> 233` (431 total), with FSQR `9.635e-11` and
+`9.885e-11`. W7-X falls from the seeded 1797 to 1733 passes (FSQR
+`9.996e-13`), while Solovev remains at 1025.
 
 ## 3. Phase 9 experiments and their outcomes
 

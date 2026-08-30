@@ -1,4 +1,5 @@
 // test_start_policy.cpp — host checks for stage-initial solver controls.
+#include "cumes/physics/free_boundary_policy.hpp"
 #include "cumes/solver/start_policy.hpp"
 #include "cumes_test.h"
 
@@ -11,6 +12,8 @@ static void check_near(double actual, double expected, const char* message) {
 }
 
 int main() {
+    check_near(cumes::DEFAULT_VACUUM_ACTIVATION_RESIDUAL, 3.0e-2,
+               "vacuum activates at the qualified residual gate");
     check_near(cumes::initial_step_for_stage(0.9, 12, 12, false, 99, 3, 0), 0.9,
                "3-D stages retain the configured step");
     check_near(cumes::initial_step_for_stage(0.7, 4, 36, true, 15, 2, 0), 0.85,

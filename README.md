@@ -210,6 +210,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |
 | `CUMES_SEED_ENVELOPE` | override cold-start shaping (fixed 3-D `0.12`, free 3-D `0.12` through `ns=25` and `0.03` above, coarse fixed-axisymmetric `-0.07`; `0` restores the reference envelope) |
 | `CUMES_AXISYM_LAMBDA_SEED` | override the axisymmetric geometric lambda predictor scale (fixed/free defaults `0.65`/`1.0`; `0` restores zero lambda) |
+| `CUMES_VACUUM_ACTIVATION_THRESHOLD` | override the free-boundary vacuum handover residual sum (default `3e-2`; `1e-3` restores the reference gate) |
 | `CUMES_DUMP` | enables debug/dump output |
 
 ## Verification
