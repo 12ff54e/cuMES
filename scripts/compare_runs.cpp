@@ -1,6 +1,7 @@
 // Compare two cuMES trajectories and, optionally, their converged states.
 
 #include "../include/clap.h"
+#define CUMES_COMPARE_COMMON_IMPLEMENTATION
 #include "include/compare_common.hpp"
 
 #include <algorithm>

@@ -1,6 +1,7 @@
 // Byte-exact comparison of two cuMES run trees (Class A gate).
 
 #include "../include/clap.h"
+#define CUMES_COMPARE_COMMON_IMPLEMENTATION
 #include "include/compare_common.hpp"
 
 #include <algorithm>
