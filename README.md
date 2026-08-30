@@ -208,8 +208,8 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses axisymmetric stage scaling) |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |
-| `CUMES_SEED_ENVELOPE` | override fixed-boundary cold-start shaping (3-D default `0.12`, coarse-axisymmetric default `-0.07`; `0` restores the reference envelope) |
-| `CUMES_AXISYM_LAMBDA_SEED` | override the axisymmetric geometric lambda predictor scale (default `0.65`; `0` restores zero lambda) |
+| `CUMES_SEED_ENVELOPE` | override cold-start shaping (fixed 3-D `0.12`, free 3-D `0.12` through `ns=25` and `0.03` above, coarse fixed-axisymmetric `-0.07`; `0` restores the reference envelope) |
+| `CUMES_AXISYM_LAMBDA_SEED` | override the axisymmetric geometric lambda predictor scale (fixed/free defaults `0.65`/`1.0`; `0` restores zero lambda) |
 | `CUMES_DUMP` | enables debug/dump output |
 
 ## Verification

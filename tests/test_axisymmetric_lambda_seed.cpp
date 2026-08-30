@@ -14,8 +14,8 @@ int main() {
           "fixed-boundary axisym selects the lambda predictor");
     check(cumes::default_axisymmetric_lambda_seed(1, false) == 0.0,
           "3-D starts retain zero lambda");
-    check(cumes::default_axisymmetric_lambda_seed(0, true) == 0.0,
-          "free-boundary starts retain zero lambda");
+    check(cumes::default_axisymmetric_lambda_seed(0, true) == 1.0,
+          "axisymmetric free-boundary uses the full geometry predictor");
 
     constexpr int ns = 5;
     constexpr int mpol = 6;

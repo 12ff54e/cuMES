@@ -77,8 +77,8 @@ Environment variables:
 | `CUMES_DELT0` | absolute initial time-step override (bypasses axisymmetric stage scaling) |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery and restores the reference controller trajectory |
-| `CUMES_SEED_ENVELOPE` | override fixed-boundary cold-start shaping (3-D default `0.12`, coarse-axisymmetric default `-0.07`; `0` restores `s^(m/2)`) |
-| `CUMES_AXISYM_LAMBDA_SEED` | override the axisymmetric geometric lambda predictor scale (default `0.65`; `0` restores zero lambda) |
+| `CUMES_SEED_ENVELOPE` | override cold-start shaping (fixed 3-D `0.12`, free 3-D coarse/fine `0.12`/`0.03`, coarse fixed-axisymmetric `-0.07`; `0` restores `s^(m/2)`) |
+| `CUMES_AXISYM_LAMBDA_SEED` | override the axisymmetric geometric lambda predictor scale (fixed/free defaults `0.65`/`1.0`; `0` restores zero lambda) |
 | `CUMES_DUMP` | master switch for dump/debug output |
 | `CUMES_DUMP_ITER` / `CUMES_E2_START` | which iterations the windowed dump files fire on |
 

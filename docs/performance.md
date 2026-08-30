@@ -156,6 +156,16 @@ reproduces the 815/354 pass counts. At this subsecond scale, CUDA process
 startup and unlocked P-state outliers dominate, so pass counts are the primary
 timing evidence.
 
+### 2.5 Free-boundary cold predictors (2026-08-31)
+
+ADR-0010 extends the host-only cold predictor to free-boundary starts without
+changing the vacuum-coupled iteration DAG. A resolution-limited 3-D envelope
+reduces CTH-like single-grid from 489 to 384 passes and `15 -> 25` multigrid
+from 592 to 563 total passes. The conservative fine-grid predictor reduces
+W7-X `ns=51` from 1831 to 1797 passes. The full axisymmetric lambda predictor
+reduces Solovev free-boundary from 1047 to 1025 total passes. Final FSQR values
+are `9.932e-11`, `9.942e-11`, `9.705e-13`, and `9.822e-15`, respectively.
+
 ## 3. Phase 9 experiments and their outcomes
 
 The exit gate for §8.10–§8.12 was *"measure, then adopt or remove."* Three

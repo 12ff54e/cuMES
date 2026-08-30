@@ -12,11 +12,13 @@
 namespace cumes {
 
 inline constexpr double DEFAULT_AXISYMMETRIC_LAMBDA_SEED_SCALE = 0.65;
+inline constexpr double DEFAULT_FREE_AXISYMMETRIC_LAMBDA_SEED_SCALE = 1.0;
 
 constexpr double default_axisymmetric_lambda_seed(int ntor,
                                                   bool free_boundary) noexcept {
-    return ntor == 0 && !free_boundary ? DEFAULT_AXISYMMETRIC_LAMBDA_SEED_SCALE
-                                       : 0.0;
+    if (ntor != 0) return 0.0;
+    return free_boundary ? DEFAULT_FREE_AXISYMMETRIC_LAMBDA_SEED_SCALE
+                         : DEFAULT_AXISYMMETRIC_LAMBDA_SEED_SCALE;
 }
 
 // For axisymmetry, B^zeta and the cylindrical toroidal-field relation imply

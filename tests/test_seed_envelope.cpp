@@ -17,8 +17,12 @@ int main() {
                "coarse axisymmetric starts select the fitted seed");
     check_near(cumes::default_seed_envelope(0, false, 55), 0.0,
                "fine axisymmetric starts retain the reference seed");
-    check_near(cumes::default_seed_envelope(12, true, 5), 0.0,
-               "free-boundary starts retain the reference seed");
+    check_near(cumes::default_seed_envelope(4, true, 15), 0.12,
+               "coarse 3-D free-boundary uses the shaped envelope");
+    check_near(cumes::default_seed_envelope(6, true, 51), 0.03,
+               "fine 3-D free-boundary uses the conservative envelope");
+    check_near(cumes::default_seed_envelope(0, true, 16), 0.0,
+               "axisymmetric free-boundary retains the reference envelope");
 
     check_near(cumes::seed_radial_weight(1, 0.25, 0.0), 0.5,
                "zero correction reproduces the m=1 regular weight");

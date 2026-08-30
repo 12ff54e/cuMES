@@ -104,12 +104,14 @@ w_m(s)=s^{m/2}\left[1+c_{seed}(1-s)\right],\qquad c_{seed}=0.12.
 
 Thus `w_m(0)=0` for `m>0`, `w_m(1)=1`, and the LCFS is unchanged exactly.
 Coarse fixed-boundary axisymmetric starts (`ns <= 11`) use `c_seed=-0.07`;
-fine axisymmetric and all free-boundary starts use `c_seed=0`. The diagnostic
-override `CUMES_SEED_ENVELOPE` selects another coefficient; zero restores the
-reference `s^(m/2)` envelope. Three-dimensional and free-boundary lambda
-remain zero in a cold start.
+fine fixed-boundary axisymmetric starts use `c_seed=0`. Three-dimensional
+free-boundary starts use `c_seed=0.12` through `ns=25` and the conservative
+`c_seed=0.03` on finer grids; axisymmetric free-boundary R/Z starts use zero.
+The diagnostic override `CUMES_SEED_ENVELOPE` selects another coefficient;
+zero restores the reference `s^(m/2)` envelope. Three-dimensional lambda
+remains zero in a cold start.
 
-For a fixed-boundary axisymmetric start, define
+For an axisymmetric start, define
 
 \[
 q(\theta)=\frac{\sqrt g}{R^2}
@@ -124,7 +126,7 @@ The cylindrical toroidal-field and straight-field-line relation gives
 
 Host quadrature projects this derivative onto `cos(m theta)` and divides each
 coefficient by `m` to seed the sine-family lambda modes. The default predictor
-scale is 0.65 because R/Z still evolve during the coupled solve. Invalid or
+scale is 0.65 for fixed boundary and 1.0 for free boundary. Invalid or
 degenerate initial geometry atomically falls back to zero lambda;
 `CUMES_AXISYM_LAMBDA_SEED=0` is the explicit reference opt-out.
 
