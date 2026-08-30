@@ -74,6 +74,13 @@ through `4e-2`; `3e-2` is the conservative edge. CTH-like also selects
 `3e-2` (309 single-grid and 431 multigrid) rather than `2e-2` (314) or `4e-2`
 (340).
 
+Alternating local TITAN Xp runs on the final code measured CTH-like
+multigrid at 1.93 s reference versus 1.50 s optimized median over seven pairs
+(22.3% lower; ranges 1.91--2.01 s and 1.48--1.50 s). Five W7-X pairs measured
+8.37 s versus 7.93 s median (5.3% lower; ranges 8.32--8.39 s and
+7.85--7.97 s). Every repetition retained the deterministic 592/431 and
+1831/1733 pass counts.
+
 For W7-X, applying the coarse `0.12` correction caused extra startup restarts
 and regressed to 1953 passes; the fine-grid `0.03` correction is therefore a
 deliberate stability limit. A full fixed-boundary predictor was also rejected:

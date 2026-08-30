@@ -173,6 +173,12 @@ again to 309 and `198 -> 233` (431 total), with FSQR `9.635e-11` and
 `9.885e-11`. W7-X falls from the seeded 1797 to 1733 passes (FSQR
 `9.996e-13`), while Solovev remains at 1025.
 
+Seven alternating local TITAN Xp A/B pairs reduced CTH-like multigrid median
+wall time from 1.93 s to 1.50 s (22.3%; ranges 1.91--2.01 s and
+1.48--1.50 s). Five alternating W7-X pairs reduced the median from 8.37 s to
+7.93 s (5.3%; ranges 8.32--8.39 s and 7.85--7.97 s). Pass counts were
+identical in every repetition.
+
 ## 3. Phase 9 experiments and their outcomes
 
 The exit gate for §8.10–§8.12 was *"measure, then adopt or remove."* Three
