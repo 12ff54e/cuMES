@@ -85,6 +85,24 @@ with force, geometry, tridiagonal, and residual work smaller — i.e. structural
 transform work dominates over generic occupancy tuning, and host synchronization
 matters more as kernels shorten.
 
+### 2.2 W7-X single-grid convergence recovery (2026-08-30)
+
+ADR-0007 adds a qualified one-shot recovery of a time step reduced by the
+early W7-X transient. It reduces deterministic effective iterations from 2953
+to 2711 (8.20%) without changing the per-pass CUDA DAG or its memory use.
+
+A native `sm_89` precise-double build on gervais (RTX 4090, CUDA 12.9,
+NetCDF/HDF5 disabled) reproduced both iteration counts and residuals. Six
+preheated, alternating A/B measurements pinned to NUMA-local CPU 10 gave
+2.0583 s baseline versus 1.9217 s recovery median, a 6.63% end-to-end wall
+reduction. Median absolute deviations were 6.1 ms and 7.6 ms. Unlocked GPU
+P-state transitions produced isolated slow samples (ranges 2.0510–2.5015 s
+and 1.9102–2.5244 s; interpolated p95 2.4893 s and 2.4846 s), so this set does
+not by itself establish the performance-policy confidence bound. The exact
+8.20% pass reduction, independent-solver state comparison, and frozen
+non-target trajectories are the primary acceptance evidence; the diagnostic
+opt-out retains direct A/B measurement.
+
 ## 3. Phase 9 experiments and their outcomes
 
 The exit gate for §8.10–§8.12 was *"measure, then adopt or remove."* Three

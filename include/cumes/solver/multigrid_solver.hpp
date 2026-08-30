@@ -107,7 +107,11 @@ class MultigridSolver {
                           std::reference_wrapper<FreeBoundaryOperator<T>>>(
                           std::ref(*vac))
                     : std::nullopt,
-                output_snapshot);
+                output_snapshot,
+                // Preserve the established multigrid/free-boundary
+                // trajectories. The recovery policy is qualified only for a
+                // fixed-boundary single-grid solve.
+                n_grids == 1 && !vac);
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();

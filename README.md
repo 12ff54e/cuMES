@@ -203,6 +203,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
 | `CUMES_DELT0` | initial time step |
+| `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables the qualified single-grid time-step recovery (diagnostic reference trajectory) |
 | `CUMES_DUMP` | enables debug/dump output |
 
 ## Verification
@@ -229,11 +230,12 @@ library and the POSIX `sha256sum` subprocess used by `compare_bitwise`.
 - **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505), final
   FSQR 9.778e-13. The converged final state agrees with the vmecpp/wout
   reference at ~1e-5 in R/Z and ~1e-4 in the weakly-determined near-axis λ.
-- **Per-iteration fidelity (W7-X, single-grid)**: invariant residuals track
-  vmecpp at ≤1e-8 over the entire run; the converged state matches the wout at
-  ≤1.5e-9 in all six families.
-- **Single-grid regression**: with `n_grids=1` (`ns_array={99}`) the run
-  converges at 2953 effective iters, FSQR 9.924e-13.
+- **Single-grid W7-X**: with `n_grids=1` (`ns_array={99}`), one-shot recovery
+  converges in 2711 effective iterations (down from 2953), FSQR 9.988e-13.
+  Against an independent vmecpp 0.7.0 solve, the six-family worst difference
+  is 1.68e-5. `CUMES_DISABLE_STEP_RECOVERY=1` restores the 2953-iteration
+  trajectory, whose per-pass residuals track vmecpp at ≤1e-8 and whose final
+  state matches at ≤1.5e-9.
 
 See [`docs/verification.md`](docs/verification.md) for the full tier/gate
 structure (equivalence classes, sanitizers, equivalence gates, performance

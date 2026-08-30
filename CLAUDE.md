@@ -74,6 +74,7 @@ Environment variables:
 | `CUMES_MAX_ITER` | iteration cap; overrides every stage's cap in a multigrid run |
 | `CUMES_DELT0` | initial time step |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
+| `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified single-grid time-step recovery and restores the reference controller trajectory |
 | `CUMES_DUMP` | master switch for dump/debug output |
 | `CUMES_DUMP_ITER` / `CUMES_E2_START` | which iterations the windowed dump files fire on |
 
@@ -254,10 +255,13 @@ reference outputs, independent of any vmecpp bit-exactness target):
 - W7-X: 1877 → 1617 → 2011 effective iters (total 5505), final FSQR 9.778e-13.
   The converged final states agree with the vmecpp/wout reference at ~1e-5 in
   R/Z, ~1e-4 in the weakly-determined near-axis λ.
-- Single-grid regression (`n_grids=1`, ns_array={99}): 2953 effective iters,
-  FSQR 9.924e-13. Per-iteration residuals track vmecpp at ≤1e-8 over the
-  ENTIRE run; the converged state matches the wout at ≤1.5e-9 in all six
-  families (wout comparisons must read the FULL-grid `lmns_full`, not the
+- Single-grid regression (`n_grids=1`, ns_array={99}): the qualified one-shot
+  step recovery converges in 2711 effective iters, FSQR 9.988e-13. The
+  converged state agrees with an independent vmecpp 0.7.0 solve to 1.68e-5 in
+  the worst of all six families. `CUMES_DISABLE_STEP_RECOVERY=1` restores the
+  2953-iteration reference trajectory: its per-iteration residuals track
+  vmecpp at ≤1e-8 over the ENTIRE run and its converged state matches the wout
+  at ≤1.5e-9 (wout comparisons must read the FULL-grid `lmns_full`, not the
   half-grid `lmns`).
 - The multigrid final state is a different member of the (near-degenerate)
   λ-gauge family than the single-grid run (~2.7e-4 in rmncc(0,1)) — intrinsic

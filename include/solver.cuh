@@ -60,7 +60,8 @@ struct SolverResult {
 // through `op`. When `op` is nullopt it defaults to `&transform` (the generic
 // backend). The two backends are Class B ULP-equivalent (test_axisym_backend);
 // selecting the axisymmetric backend for ntor=0/nzeta=1 is a trajectory
-// re-freeze.
+// re-freeze. `enable_step_recovery` opts a stage into the conservative,
+// one-shot recovery of a time step reduced by an early transient.
 template <typename T>
 SolverResult<T> solver_run(
     cumes::SpectralStorage<T>& state,
@@ -77,6 +78,7 @@ SolverResult<T> solver_run(
     std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op =
         std::nullopt,
     std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<T>>>
-        vacuum = std::nullopt);
+        vacuum = std::nullopt,
+    bool enable_step_recovery = false);
 
 #endif  // CUMES_INCLUDE_SOLVER_CUH_

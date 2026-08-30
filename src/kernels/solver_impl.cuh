@@ -1011,7 +1011,8 @@ SolverResult<T> solver_run(
     std::optional<std::reference_wrapper<cumes::SolverBench>> bench,
     std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op,
     std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<T>>>
-        vacuum) {
+        vacuum,
+    bool enable_step_recovery) {
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt, {}};
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
@@ -1041,6 +1042,9 @@ SolverResult<T> solver_run(
     if (const char* e = getenv("CUMES_MAX_ITER")) MAX_ITER_EFF = atoi(e);
     if (const char* e = getenv("CUMES_DELT0")) DELT0_EFF = atof(e);
     if (const char* e = getenv("CUMES_DTAU_FLOOR")) DTAU_FLOOR = atof(e);
+    if (const char* e = getenv("CUMES_DISABLE_STEP_RECOVERY")) {
+        if (atoi(e) != 0) enable_step_recovery = false;
+    }
     printf("knobs: max_iter=%d delt0=%.3f dtau_floor=%.3e\n", MAX_ITER_EFF,
            DELT0_EFF, DTAU_FLOOR);
 
@@ -1056,7 +1060,7 @@ SolverResult<T> solver_run(
     // (double build: identity — Class A bitwise; float build: the double
     // accumulations reach the host decisions unrounded — Class B).
     cumes::IterationController<double> controller(
-        {DELT0_EFF, (double)p.ftol, DTAU_FLOOR});
+        {DELT0_EFF, (double)p.ftol, DTAU_FLOOR, enable_step_recovery});
 
     // vmecpp residual normalization factors (computeForceNorms), refreshed on
     // the same cadence as the preconditioner (every PRECON_INTERVAL passes).

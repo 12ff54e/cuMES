@@ -37,6 +37,8 @@ namespace cumes {
 // radial preconditioner and residual normalization refresh every 25 passes
 // measured from the latest restart anchor.
 inline constexpr int PRECON_INTERVAL = 25;
+inline constexpr int STEP_RECOVERY_AGE = 250;
+inline constexpr double STEP_RECOVERY_FACTOR = 1.1;
 
 template <typename T>
 class IterationController {
@@ -47,12 +49,16 @@ class IterationController {
         T delta_t0 = T(0.9);  // initial time step (vmecpp delt)
         T ftol = T(1e-16);    // stage convergence tolerance
         T dtau_floor = T(0);  // optional 1/tau floor (0 = disabled)
+        // After a long stable window, cautiously recover part of a time-step
+        // reduction. Disabled by default so callers opt in deliberately.
+        bool enable_step_recovery = false;
     };
 
     explicit IterationController(Options o)
         : delt0_(o.delta_t0),
           ftol_(o.ftol),
           dtau_floor_(o.dtau_floor),
+          step_recovery_enabled_(o.enable_step_recovery),
           delt_(o.delta_t0) {
         // vmecpp initializes the ten-sample 1/tau history to 0.15/delt at
         // stage start (NOT 0.15/current-delt; the two coincide only until the
@@ -258,6 +264,15 @@ class IterationController {
             restart_events_.push_back(RestartEvent{iter2_});
         } else {
             ++iter2_;
+            // A transient bad Jacobian permanently reduces delt in the
+            // legacy controller. After ten preconditioner-refresh periods
+            // without another restart, recover 10% once. The normal
+            // fsq-growth/Jacobian gates remain responsible for rollback.
+            if (step_recovery_enabled_ && !step_recovery_attempted_ &&
+                (iter2_ - iter1_) >= STEP_RECOVERY_AGE && delt_ < delt0_) {
+                delt_ = std::min(delt0_, delt_ * T(STEP_RECOVERY_FACTOR));
+                step_recovery_attempted_ = true;
+            }
         }
     }
 
@@ -265,6 +280,7 @@ class IterationController {
     const T delt0_;
     const T ftol_;
     const T dtau_floor_;
+    const bool step_recovery_enabled_;
     T delt_;
     int iter2_ = 1;         // effective iteration (does not advance on restart)
     int iter1_ = 1;         // latest restart anchor
@@ -274,6 +290,7 @@ class IterationController {
     T fsq_prev_ = T(1.0);   // previous preconditioned sum
     T fsqz_prev_ = T(0.0);  // previous invariant Z-residual
     T inv_tau_hist_[10];    // ten-sample 1/tau history
+    bool step_recovery_attempted_ = false;
     std::vector<RestartEvent> restart_events_;
 };
 

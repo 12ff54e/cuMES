@@ -186,6 +186,8 @@ auto run_in_stage_arena(const DeviceParams<T>& p, F&& fn)
 // fixed-point solver on `state`, reports the arena's liveness/peak, and frees
 // the non-arena resources (cuFFT plans, pinned host faccon) before returning.
 // `state` stays owned by the caller; profilesCreate sets p.lamscale in place.
+// `enable_step_recovery` is an explicit numerical-policy choice made by the
+// multigrid driver, not inferred from the stage shape here.
 template <typename T>
 class StageSolver {
    public:
@@ -199,7 +201,8 @@ class StageSolver {
         std::optional<std::reference_wrapper<SolverBench>> bench = std::nullopt,
         std::optional<std::reference_wrapper<FreeBoundaryOperator<T>>> vacuum =
             std::nullopt,
-        EquilibriumSnapshot* output_snapshot = nullptr) {
+        EquilibriumSnapshot* output_snapshot = nullptr,
+        bool enable_step_recovery = false) {
         // One arena allocation, one construction of every module, one solve
         // (completion plan step 3.2): the modules' alloc_span calls ARE the
         // plan — there is no temporary measuring arena and nothing is
@@ -262,7 +265,7 @@ class StageSolver {
                              std::reference_wrapper<SpectralOperator<T>>>(
                              std::ref(*axisym))
                        : std::nullopt,
-                vacuum);
+                vacuum, enable_step_recovery);
 
             if (output_snapshot != nullptr) {
                 // The converged exit already has matching fields, but a run

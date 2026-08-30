@@ -151,7 +151,7 @@ Required host tests include:
 - mode folding/unfolding for signed toroidal input and every product-basis family;
 - `GridShape`, surface/mode indexing, and quadrature endpoint weights;
 - profile polynomial evaluation, flux normalization, fixed-iota/current policy selection, non-unit `tcon0`, and rejection of unsupported gamma;
-- controller residual histories reproducing convergence, ten-sample initialization/zero cases, bad-progress/Jacobian restarts, `ijacob=25/50` maintenance resets, checkpoint refresh/restore, and effective-iteration counting;
+- controller residual histories reproducing convergence, ten-sample initialization/zero cases, bad-progress/Jacobian restarts, `ijacob=25/50` maintenance resets, checkpoint refresh/restore, effective-iteration counting, and the opt-in one-shot time-step recovery;
 - multigrid interpolation at axis, interior points, LCFS, odd/even modes, and all six families;
 - output capability preflight and run-status-to-exit-code mapping;
 - versioned/legacy serialization round trips and deliberate I/O failures.
