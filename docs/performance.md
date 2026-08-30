@@ -126,12 +126,35 @@ On W7-X multigrid it changes `1741 → 1568 → 1635` (4944 total) to
 reference controller baseline, total multigrid passes fall by 18.13%. The
 final residual triple is FSQR `9.967e-13`, FSQZ `1.563e-13`, FSQL
 `4.956e-14`, and checkpoint replay converges at iteration 1 with the identical
-triple. Solovev remains byte-identical because axisymmetric seeds are excluded.
+triple. ADR-0008 alone leaves Solovev byte-identical because axisymmetric
+seeds are excluded; the later axisymmetric policy is measured separately
+below.
 
 Six alternating native gervais runs measured 1.9238 s versus 1.8823 s median
 for single-grid (2.16% wall reduction; MAD 6.3/14.8 ms) and 3.4419 s versus
 3.2983 s for multigrid (4.17%; MAD 0.331/0.388 s). Unlocked-clock outliers make
 these wall measurements noisier than the deterministic pass counts.
+
+### 2.4 Axisymmetric start policy (2026-08-30)
+
+ADR-0009 uses a `-0.07` envelope correction only for coarse fixed-boundary
+axisymmetric cold starts and raises the stage-initial descent step according
+to whether the state is cold, single-grid, or prolonged. It changes no GPU
+kernel, allocation, or per-pass DAG.
+
+Solovev multigrid falls from `251 -> 199 -> 456` (906 passes) to
+`238 -> 193 -> 387` (818), a 9.71% reduction, with final FSQR `9.781e-17`.
+A final-grid checkpoint replay converges at iteration 1 with a bit-identical
+state. A cold single `ns=55` grid falls from 533 to 416 passes (21.95%), with
+FSQR `9.691e-17`. W7-X remains exactly on its accepted
+`1315 -> 1559 -> 1633` trajectory.
+
+The local TITAN Xp gave 0.445 s versus 0.395 s median multigrid wall time
+(11.2%). A native sm_89 gervais build reproduced the iteration counts; ten
+alternating runs gave 344.3 ms versus 331.6 ms multigrid medians (3.7%) and
+309.3 ms versus 302.7 ms single-grid medians (2.1%). At this subsecond scale,
+CUDA process startup and unlocked P-state outliers dominate, so pass counts
+are the primary timing evidence.
 
 ## 3. Phase 9 experiments and their outcomes
 

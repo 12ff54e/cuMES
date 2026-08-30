@@ -10,14 +10,14 @@ architecture and physics are real.
 own discrete force residuals and validity gates; vmecpp is a diagnostic
 cross-check, not the convergence oracle (see [Verification](#verification)).
 
-**Status: working.** The default fixed-boundary path uses a shaped 3-D cold
-start and qualified one-shot time-step recovery. The prior audited trajectories
-remain available with `CUMES_SEED_ENVELOPE=0` and
-`CUMES_DISABLE_STEP_RECOVERY=1`:
+**Status: working.** The default fixed-boundary path uses shaped cold starts,
+an axisymmetric start policy, and qualified one-shot time-step recovery. The
+prior audited trajectories remain available with `CUMES_SEED_ENVELOPE=0`,
+`CUMES_DELT0=0.9`, and `CUMES_DISABLE_STEP_RECOVERY=1`:
 
 | case | multigrid stages | effective iters | final FSQR |
 | ---- | ---------------- | --------------- | ---------- |
-| Solovev (`inputs/solovev.json`) | 5 → 11 → 55 | 251 → 199 → 456 | 9.583e-17 |
+| Solovev (`inputs/solovev.json`) | 5 → 11 → 55 | 238 → 193 → 387 (818) | 9.781e-17 |
 | W7-X (`inputs/w7x.json`) | 33 → 66 → 99 | 1315 → 1559 → 1633 (4507) | 9.967e-13 |
 
 ## Quick start
@@ -205,9 +205,9 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | -------- | ------ |
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
-| `CUMES_DELT0` | initial time step |
+| `CUMES_DELT0` | absolute initial time-step override (bypasses axisymmetric stage scaling) |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |
-| `CUMES_SEED_ENVELOPE` | override the fixed-boundary 3-D interior seed correction (default `0.12`; `0` restores the reference radial envelope) |
+| `CUMES_SEED_ENVELOPE` | override fixed-boundary cold-start shaping (3-D default `0.12`, coarse-axisymmetric default `-0.07`; `0` restores the reference envelope) |
 | `CUMES_DUMP` | enables debug/dump output |
 
 ## Verification
@@ -230,7 +230,9 @@ g++ -std=c++20 scripts/compare_runs.cpp -o compare_runs
 `h5c++` or `pkg-config hdf5`; the other three tools need only the standard
 library and the POSIX `sha256sum` subprocess used by `compare_bitwise`.
 
-- **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
+- **Solovev 5→11→55**: tuned axisymmetric start gives 238 → 193 → 387
+  effective iters, final FSQR 9.781e-17. `CUMES_SEED_ENVELOPE=0` plus
+  `CUMES_DELT0=0.9` restores 251 → 199 → 456 and FSQR 9.583e-17.
 - **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505), final
   FSQR 9.778e-13 for the diagnostic reference controller. The default
   recovery plus the shaped cold start converges in 1315 → 1559 → 1633

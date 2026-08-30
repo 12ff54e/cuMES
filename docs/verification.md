@@ -103,7 +103,10 @@ cross-architecture claim is made (see `docs/performance.md`).
   state, init snapshots, and full dump manifests — see docs/dump-files.md). Note: the blueprint's
   pre-overhaul `FSQZ=4.273e-18` is stale — the axisymmetric backend's
   algorithm update moved the frozen value to `4.274e-18`, which is what
-  the baseline itself records.
+  the baseline itself records. Accepted Class-C defaults are additionally
+  gated by residual convergence and fixed-point replay: Solovev
+  `238→193→387` (FSQR 9.781e-17) and W7-X `1315→1559→1633`
+  (FSQR 9.967e-13).
 - **Sanitizer preset (`build-sanitize/`)**: the verify gate plus
   racecheck/synccheck variants of the kernel tests (RUN_SERIAL; racecheck
   exhausts the GPU under parallel runs) and ASan+UBSan twins of the

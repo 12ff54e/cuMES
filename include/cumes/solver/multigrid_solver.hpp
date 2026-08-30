@@ -16,6 +16,7 @@
 #include "cumes/numerics/prolongation.hpp"
 #include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/solver/stage_solver.hpp"
+#include "cumes/solver/start_policy.hpp"
 
 #include <cstdio>
 #include <memory>
@@ -56,6 +57,7 @@ class MultigridSolver {
         int total_iter = 0;
         const auto& stages = vp.spec().stages;
         const int n_grids = static_cast<int>(stages.size());
+        const T configured_delt = p.delt;
 
         // Free-boundary operator: constructed ONCE per run (vmecpp's
         // persistent vacuum solvers — the accumulated response matrix and the
@@ -82,10 +84,14 @@ class MultigridSolver {
             p.ns = static_cast<int>(stages[g].radial_surfaces);
             p.max_iter = static_cast<int>(stages[g].max_iterations);
             p.ftol = T(stages[g].tolerance);
+            p.delt = initial_step_for_stage(configured_delt, p.ntor, p.nzeta,
+                                            vp.spec().free_boundary.lfreeb,
+                                            n_grids, g);
             std::printf(
                 "\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d "
-                "ftol=%.0e ===\n",
-                g + 1, n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol);
+                "ftol=%.0e delt=%.6g ===\n",
+                g + 1, n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol,
+                (double)p.delt);
             if (g > 0) {
                 // Prolong the previous stage's converged state onto this grid
                 // on the same compute stream (ordered before the next stage).

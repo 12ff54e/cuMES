@@ -513,6 +513,14 @@ Every denominator must be checked relative to a norm of its local coefficients. 
 
 ## 10. Residual, damping, and descent
 
+Before constructing the per-stage controller, fixed-boundary axisymmetric
+runs scale the input `delt` by `7/6` for a single grid, `17/15` for the first
+grid of a continuation, and `6/5` for a prolonged grid. The first grid is more
+conservative because it starts from an analytic seed; prolonged grids start
+near a fixed point. Three-dimensional and free-boundary stages use the input
+value unchanged. `CUMES_DELT0`, when present, is the absolute experimental
+override after this policy.
+
 Force normalization is refreshed with the preconditioner when
 
 \[
