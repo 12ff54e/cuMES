@@ -62,7 +62,7 @@ The active implementation was verified as follows:
 
 - **Class A for the double build** — every widened expression is an identity
   when `T = double`: Solovev `251→199→456` FSQR 9.583e-17 and W7-X
-  `1877→1617→2011` FSQR 9.778e-13 **bit-identical** (compare_runs.py,
+  `1877→1617→2011` FSQR 9.778e-13 **bit-identical** (compare_runs,
   0.000e+00 max rel diff on all six families, identical restart sequences,
   converged-iter delta 0), 35/35 CTest.
 - **Class B for the float build** — 23/23 CTest; an end-to-end float smoke

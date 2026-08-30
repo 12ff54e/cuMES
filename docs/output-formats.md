@@ -50,7 +50,7 @@ Z = zmnsc·sin(mθ)cos(nζ) + zmncs·cos(mθ)sin(nζ)
 ```
 
 The axis row (`j = 0`) is the constant-extrapolated row, which the
-comparison scripts intentionally skip (compare_states.py).
+comparison tools intentionally skip (`build/compare_states`).
 
 ### Scientific result fields
 
@@ -235,20 +235,21 @@ plus the restart metadata `restart_stage_offset`/`restart_iteration`. The
 state families are 2-D datasets over `[ns, mnmax]` with the logical value
 `family[surface, mode]` mapped to device offset `surface + mode * ns`.
 
-## 6. Reading the state in Python
+## 6. Reading and comparing the state
 
-`scripts/compare_states.py` is the reference reader for the versioned
-binary payload:
+`build/compare_states` is the reference reader for the versioned
+binary payload. Its dependency-free C++ source is
+`scripts/compare_states.cpp`; the common binary reader is header-only so the
+tool can also be built directly:
 
-```python
-magic, version, ns, mnmax = struct.unpack("<8siii", f.read(20))  # "CUMES001"
-fams = {name: struct.unpack(f"<{ns*mnmax}d", f.read(8*ns*mnmax))
-        for name in ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")}
+```bash
+g++ -std=c++20 scripts/compare_states.cpp -o compare_states
+./compare_states state-a.bin state-b.bin
 ```
 
 The 20-byte header (magic + version + ns + mnmax) is followed directly by
 the six families; only a consumer that wants provenance needs the trailer.
-(compare_bitwise.py compares the state payload byte-wise, not the whole
+(`compare_bitwise` compares the state payload byte-wise, not the whole
 file: the trailer embeds the git revision, so full-file bytes differ
 across revisions by design.) `scripts/plot_equilibrium.py` walks the full trailer
 and parses the embedded input record, so a converged equilibrium plots

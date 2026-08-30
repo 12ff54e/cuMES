@@ -195,7 +195,7 @@ pre-change baseline.
 
 | Commit | What it does |
 | ------ | ------------ |
-| `a6eabd1` | **Verification anchor tooling.** `scripts/capture_baseline.sh` regenerates a byte-comparable run tree on demand (double+float × Solovev+W7-X, `CUMES_DUMP=1`, per-config float ftol); `scripts/compare_bitwise.py` byte-compares final state + per-iteration trajectory record + step_0 snapshots + full dump-set SHA-256 manifest. `.verify-scratch/` is gitignored. |
+| `a6eabd1` | **Verification anchor tooling.** `scripts/capture_baseline.sh` regenerates a byte-comparable run tree on demand (double+float × Solovev+W7-X, `CUMES_DUMP=1`, per-config float ftol); `build/compare_bitwise` byte-compares final state + per-iteration trajectory record + step_0 snapshots + full dump-set SHA-256 manifest. `.verify-scratch/` is gitignored. |
 | `c0f2dbb` | **JSON negative-test matrix** (test_input_json): nonzero gamma, negative/m>=mpol boundary skip, empty/oversized/mismatched/non-monotonic schedules, integer narrowing, wrong-type aux/asym keys, lasym/lfreeb/spline rejection, unknown-key stderr warning. 52 checks. |
 | `fa0932c` | **Output failure-injection matrix** (test_output_failure) + **close-safe cleanup**. Caught a real bug: all three writers double-closed the failing handle on close failure. |
 | `85708df` | **ncurr=0/1 memcheck regression** (test_geometry_ncurr) at the OOB ns=33 size; registered under `CUMES_ENABLE_SANITIZER_TESTS`. |
@@ -221,7 +221,7 @@ scripts/capture_baseline.sh --build build --float-build build-float \
     --out .verify-scratch/baseline --schema
 
 # Compare a candidate build's tree against it (Class A gate):
-scripts/compare_bitwise.py .verify-scratch/baseline/double/solovev \
+build/compare_bitwise .verify-scratch/baseline/double/solovev \
     <candidate>/double/solovev
 ```
 
@@ -285,7 +285,7 @@ partial changes.
 ### 7. Next steps (Phase 1)
 
 Phase 1 is the build/library split, and it can now proceed against a frozen,
-byte-comparable baseline using `compare_bitwise.py` as its Class A gate:
+byte-comparable baseline using `compare_bitwise` as its Class A gate:
 
 - target-scoped CMake + `CMakePresets.json` + `cmake/` module dir;
 - host-only `.cpp` parser/output targets (input_json, output_* are host-only but
@@ -375,7 +375,7 @@ reverted and the workaround retained.**
 #### 4.1 Class A bitwise gate (full dump set)
 
 `scripts/capture_baseline.sh` re-captured the baseline at `bd26857`, then the
-candidate after Phase 1. `scripts/compare_bitwise.py` (default `--essentials`
+candidate after Phase 1. `build/compare_bitwise` (default `--essentials`
 mode, which also verifies every `dump/cuMES/*` file against the manifest):
 
 | Config | state | trajectory | step_0 | dump manifest |
@@ -435,7 +435,7 @@ Phase 2 is the validated host model + versioned I/O (`ProblemSpec`,
 `ValidatedProblem`, `GridShape`, `ModeTable`, `PrecisionPolicy`, `OutputSpec`,
 `RunReport`, `EquilibriumSnapshot`, versioned writers and legacy adapters). It
 now builds on a frozen, byte-comparable Phase 1 baseline with the same
-`compare_bitwise.py` Class A gate.
+`compare_bitwise` Class A gate.
 
 ---
 
@@ -573,7 +573,7 @@ preflight degrades correctly to binary-only in `nobackend`.
 #### Class A safety
 
 No device/solver source changed. The frozen trajectories and
-`scripts/compare_bitwise.py` baseline are untouched by construction; the only
+`build/compare_bitwise` baseline are untouched by construction; the only
 legacy source touched is `src/input_json.cpp` (removed one `#define`, now
 linking the shared `cumes_json` parser — build-only, no behavior change,
 re-verified by the existing `test_input_json` passing unchanged).
@@ -726,7 +726,7 @@ arrays); the numerics are unaffected.
 
 Captured a fresh baseline at HEAD **plus only the diagnostic fix** (`.verify-scratch/
 baseline-phase3`) and compared against the full Phase-3 tree (`.verify-scratch/
-candidate-phase3`) with `scripts/compare_bitwise.py` (default `--essentials` mode,
+candidate-phase3`) with `build/compare_bitwise` (default `--essentials` mode,
 which also verifies every `dump/cuMES/*` file against the manifest):
 
 | Config | state | trajectory | step_0 | dump manifest |
@@ -862,7 +862,7 @@ state file identical to the `CUMES_DUMP=1` run.
 
 #### Class A bitwise gate (the critical gate)
 
-`scripts/compare_bitwise.py` against the Phase-3 baseline (`.verify-scratch/
+`build/compare_bitwise` against the Phase-3 baseline (`.verify-scratch/
 baseline-phase3`, tag `overhaul/phase-3`) after each of the four commits:
 
 | Config | state | trajectory | step_0 | dump manifest |
@@ -1048,7 +1048,7 @@ bundles are trivially copyable.
 
 Fresh baseline at `overhaul/phase-4` (`1b0d099`), captured to
 `.verify-scratch/baseline-phase5`; candidate trees captured from the Phase-5
-tree and compared with `scripts/compare_bitwise.py`:
+tree and compared with `build/compare_bitwise`:
 
 | Config | state | trajectory | step_0 | dump manifest |
 | ------ | ----- | ---------- | ------ | ------------- |
@@ -1125,7 +1125,7 @@ bytes unchanged (Class A).
   source hash, and GPU/driver/runtime/toolkit.
 
 Verification: `test_io_golden` passes (both precisions); the full test matrix is
-25/25; and `scripts/compare_bitwise.py` reports **byte-identical** for both
+25/25; and `build/compare_bitwise` reports **byte-identical** for both
 Solovev and W7-X (state, trajectory, step_0, and the full 235/526-file dump
 manifest) against the Phase-5 baseline.
 
@@ -1153,7 +1153,7 @@ names, while keeping the flat-index arithmetic bit-for-bit unchanged (Class A).
   Thomas reference) and a dual-run gate comparing the GPU kernel against the
   CPU reference on a frozen input across all 16 force families.
 
-Verification: each migration commit is Class A — `scripts/compare_bitwise.py`
+Verification: each migration commit is Class A — `build/compare_bitwise`
 reports **byte-identical** on Solovev (235 dump files) and W7-X (526 dump files)
 after every module — and the full test matrix is 26/26 (17 unit + 8 memcheck +
 1 force reference). The force reference agrees to 5.7e-14 (axisymmetric) /
@@ -1325,7 +1325,7 @@ reduction" item.
    if a non-self-healing cache is ever introduced.
 4. **Bitwise-equivalence gate as the acceptance criterion.** Each commit was
    captured (`scripts/capture_baseline.sh`) and byte-compared against the
-   Phase-6 baseline (`scripts/compare_bitwise.py`): `cumes_state.bin`,
+   Phase-6 baseline (`build/compare_bitwise`): `cumes_state.bin`,
    `per_iter_residuals_cumes.bin`, the `step_0_*` set, and the full dump
    manifest (235 Solovev / 526 W7-X files) are byte-identical.
 
@@ -1335,7 +1335,7 @@ reduction" item.
 
 Baseline captured at `overhaul/phase-5` (`2b9aaf8`) into
 `.verify-scratch/baseline-phase6`; candidate trees captured after each commit
-and compared with `scripts/compare_bitwise.py`:
+and compared with `build/compare_bitwise`:
 
 | Config | state | trajectory | step_0 | dump manifest |
 | ------ | ----- | ---------- | ------ | ------------- |
@@ -1390,8 +1390,8 @@ are deterministic independent of the work-area location).
 
 | Item | Gate | Result |
 | ---- | ---- | ------ |
-| Force-norm reduction | `compare_runs.py` (Class B) | PASS: restart sequence identical (W7-X 15 events), convergence identical (Solovev 456 / W7-X 2011), converged **state bitwise-identical**, residual/force-norm records differ ≤ 4 ULP |
-| cuFFT work area | `compare_bitwise.py` vs pre-change tree | PASS: byte-identical (bitwise-neutral) |
+| Force-norm reduction | `compare_runs` (Class B) | PASS: restart sequence identical (W7-X 15 events), convergence identical (Solovev 456 / W7-X 2011), converged **state bitwise-identical**, residual/force-norm records differ ≤ 4 ULP |
+| cuFFT work area | `compare_bitwise` vs pre-change tree | PASS: byte-identical (bitwise-neutral) |
 
 Full test matrix re-verified: double `verify` **26/26**, `float` **18/18**.
 
@@ -1557,7 +1557,7 @@ The `FuseRzCon=false` geometry path and the `constraintDealiasBandpass`
 extraction are pure moves: the full Solovev dump tree (235 files) is
 byte-identical to the Phase-6 baseline after both commits.
 
-#### Class B trajectory gate (`compare_runs.py` vs pre-change baselines)
+#### Class B trajectory gate (`compare_runs` vs pre-change baselines)
 
 | Config | Restart sequence | Convergence | Final residual | Final state (interior) |
 | ------ | ---------------- | ----------- | -------------- | ---------------------- |
@@ -1746,7 +1746,7 @@ values exactly — stages **251 → 199 → 456**, final **FSQR = 9.583e-17**,
 total 906 effective iterations (matching the Phase-5/6/7 handovers and the
 CLAUDE.md baseline).
 
-#### Class B trajectory gate (the 8.3 reductions, `compare_runs.py` vs the phase-7 tag)
+#### Class B trajectory gate (the 8.3 reductions, `compare_runs` vs the phase-7 tag)
 
 | Config | Restart sequence | Convergence | Final residual | Final state (interior) |
 | ------ | ---------------- | ----------- | -------------- | ---------------------- |
@@ -1938,7 +1938,7 @@ baseline `f83a3ca`:
 | Config | Effective iterations | Final residual | Final state |
 | ------ | -------------------- | -------------- | ----------- |
 | Solovev | 251 → 199 → 456 | FSQR 9.583e-17 | bit-identical |
-| W7-X | 1877 → 1617 → 2011 (5505) | FSQR 9.778e-13 | bit-identical (`compare_states.py` 0.0) |
+| W7-X | 1877 → 1617 → 2011 (5505) | FSQR 9.778e-13 | bit-identical (`compare_states` 0.0) |
 
 **Note on the recorded W7-X count.** `CLAUDE.md` and `README.md` still say
 "1878 → 1617 → 2011 (5506)", but the *actual* frozen baseline — recorded in the
@@ -3034,7 +3034,7 @@ trajectory at ~1e-10. It did not reproduce under the current layout: with the
 instantiation split in place the compiler inlines the two-line accessor and
 emits the same SASS, so the direct form is a pure source-level cleanup.
 
-`scripts/compare_runs.py` old-vs-new (fresh baselines captured from the
+`build/compare_runs` old-vs-new (fresh baselines captured from the
 pre-change binary immediately before the edit; `--max-iter-delta 0`):
 
 | Config | Iterations | Final FSQR | Restart sequence | Full-precision state |
@@ -3132,7 +3132,7 @@ Line numbers refer to the files at HEAD at review time.
 All 58 findings addressed in an 11-agent fix campaign; 57 fixed (mostly
 with a failing repro added first) and 1 kept with documentation (3.1).
 Verification: full ctest 35/35, float build 23/23, asan 4/4, and
-`compare_runs.py` vs the pre-fix baseline — Solovev and W7-X both PASS
+`compare_runs` vs the pre-fix baseline — Solovev and W7-X both PASS
 with **zero relative diff** in every residual row, all restart events,
 convergence, and all six state families (states bit-identical).
 
@@ -3810,7 +3810,7 @@ capped at 16, validated ints) — a mandate-conformance gap, not a hazard.
 > precision flags, the checked library-publication chain with fault-injection
 > tests, and the docs/repository-hygiene reconciliation. Both frozen
 > trajectories were re-verified **Class A byte-identical** against the frozen
-> `dc0d0c4` baseline (`scripts/compare_bitwise.py`, full dump manifests). Only
+> `dc0d0c4` baseline (`build/compare_bitwise`, full dump manifests). Only
 > the hardware-dependent modern-GPU performance validation remains, and it
 > stays explicitly POSTPONED — implementation commits landed and acceptance
 > gates passed are distinct claims; the modern-GPU gate is neither. The later

@@ -6,7 +6,7 @@
 // semantics: convergence, nonfinite recovery, the 1/tau damping history, the
 // refresh/restart predicates, the ijacob==25/50 maintenance reset, and the
 // effective-iteration / restart-anchor bookkeeping. The end-to-end
-// byte-for-byte gate (scripts/compare_bitwise.py) separately proves the
+// byte-for-byte gate (build/compare_bitwise) separately proves the
 // refactored solver replays the frozen trajectory identically.
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes_test.h"

@@ -208,9 +208,22 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 ## Verification
 
 The frozen reference trajectories are cuMES's own audited baselines and serve as
-the internal regression oracle (`scripts/compare_runs.py` +
-`scripts/compare_bitwise.py` + CTest). vmecpp is used only as an independent
+the internal regression oracle (`build/compare_runs` +
+`build/compare_bitwise` + CTest). vmecpp is used only as an independent
 correctness reference:
+
+The four comparison tools are host-only C++ executables built by CMake. They
+can also be built without configuring cuMES:
+
+```bash
+scripts/build_compare_tools.sh build/compare-tools
+# A non-HDF5 tool is also a directly compilable translation unit:
+g++ -std=c++20 scripts/compare_runs.cpp -o compare_runs
+```
+
+`compare_wout` reads vmecpp HDF5 output, so the standalone builder uses
+`h5c++` or `pkg-config hdf5`; the other three tools need only the standard
+library and the POSIX `sha256sum` subprocess used by `compare_bitwise`.
 
 - **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
 - **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505), final
@@ -276,7 +289,7 @@ cuMES/
 │   └── cumes/              Host-side C++ (config, io, core, runtime)
 ├── tests/                  Standalone correctness tests + support/
 ├── benchmarks/             fixed_iteration + graph_overhead harnesses
-├── scripts/                compare_runs.py / compare_states.py / compare_bitwise.py
+├── scripts/                four compare_*.cpp tools + standalone build script
 ├── inputs/                 solovev.json, w7x.json (vmecpp indata schema)
 ├── configs/                schema-v1.json (cumes-config-v1)
 └── docs/                   architecture, mathematics, verification, ADRs, history

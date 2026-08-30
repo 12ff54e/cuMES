@@ -9,7 +9,7 @@ DAG, and the solver-run helpers cover the pre-loop and post-loop ends.
 
 These files are development diagnostics, **not a stable format**. They are
 paired with the dump producer: the consumers are
-`scripts/compare_bitwise.py` / `scripts/capture_baseline.sh` (the Class A
+`build/compare_bitwise` / `scripts/capture_baseline.sh` (the Class A
 bitwise gate) and same-build test tooling. Everything stable is the versioned
 containers (`docs/output-formats.md`).
 
@@ -239,7 +239,7 @@ file per pass.
   (`CUMES_DUMP=1`, fixed knobs) and lifts the essentials
   (`per_iter_residuals_cumes.bin`, the `init_*` set) to the tree root plus a
   `dump_manifest.sha256` of the full `dump/cuMES/` set.
-- `scripts/compare_bitwise.py` compares two such trees: the final state
+- `build/compare_bitwise` compares two such trees: the final state
   payload, the per-pass record, the `init_*` set, the dump manifest
   checksums, and (with `--full`) every dump file.
 - Renaming a dump file invalidates stored baselines' manifests — regenerate

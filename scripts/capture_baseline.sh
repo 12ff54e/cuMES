@@ -11,7 +11,7 @@
 #
 # Because the dump machinery couples to the trajectory (solver.cu adds a precon
 # refresh at iter2==kDumpIter when dumpEnabled()), every run compared with
-# scripts/compare_bitwise.py MUST use the identical knobs — in particular
+# <build-dir>/compare_bitwise MUST use the identical knobs — in particular
 # CUMES_DUMP=1 — so the dump-window refresh is present on both sides. This
 # script fixes those knobs; do not override them when producing a candidate
 # tree.
@@ -33,7 +33,7 @@
 #                                  force_norms — ~150M for W7-X)
 #
 # The whole tree is regenerable and lives under a gitignored scratch dir; the
-# only committed artifacts are this script and scripts/compare_bitwise.py.
+# comparison sources and this capture recipe are the only committed artifacts.
 #
 # Usage:
 #   scripts/capture_baseline.sh \
@@ -133,7 +133,7 @@ run_capture() { # $1=build-dir  $2=precision-label  $3=input.json  $4=out-subdir
 
   # NetCDF/HDF5 schema dumps: re-run the identical solve with the other output
   # suffixes so the on-disk schemas are frozen as part of the recipe. These are
-  # separate files in the tree; compare_bitwise.py's --full mode includes them.
+  # separate files in the tree; compare_bitwise's --full mode includes them.
   if [ "$SCHEMA" = 1 ]; then
     ( cd "$tree" && CUMES_DUMP=1 "$build/cumes" "$input_abs" --output state.nc \
        > run-schema-nc.log 2>&1 )
@@ -207,4 +207,4 @@ fi
 
 echo
 echo "baseline captured at $OUT (revision $REV)"
-echo "verify a candidate tree with: scripts/compare_bitwise.py $OUT/double/<cfg> <candidate>/double/<cfg>"
+echo "verify a candidate tree with: $BUILD/compare_bitwise $OUT/double/<cfg> <candidate>/double/<cfg>"

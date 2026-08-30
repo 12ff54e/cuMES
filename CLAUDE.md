@@ -109,7 +109,7 @@ cuMES/
 │   └── output*.cpp         Binary/NetCDF/HDF5 writers + format dispatcher
 ├── tests/                  Standalone correctness tests (no framework) + support/
 ├── benchmarks/             fixed_iteration + graph_overhead harnesses
-├── scripts/                compare_runs.py / compare_states.py / compare_bitwise.py
+├── scripts/                four compare_*.cpp tools + standalone build script
 ├── inputs/                 solovev.json, w7x.json (vmecpp indata schema)
 └── docs/                   See the documentation map below
 ```
@@ -193,7 +193,7 @@ workspace structs remain.
   FSQR 9.778e-13) — the internal regression oracle for every refactor,
   independent of any vmecpp bit-exactness target. Class B = ULP-equivalent
   with identical controller decisions (iteration counts + restart sequence),
-  a deliberate re-freeze. Verify with `scripts/compare_runs.py` + CTest
+  a deliberate re-freeze. Verify with `build/compare_runs` + CTest
   (verification.md §6).
 
 ## Coding Conventions

@@ -97,7 +97,7 @@ cross-architecture claim is made (see `docs/performance.md`).
   whenever a sanitizer variant or backend fixture is added.) The frozen
   trajectory oracle: Solovev `251→199→456` FSQR 9.583e-17 and W7-X
   `1877→1617→2011` FSQR 9.778e-13 must reproduce **bit-identically**
-  (`scripts/compare_bitwise.py` over the full dump manifests). The
+  (`build/compare_bitwise` over the full dump manifests). The
   follow-up closure above was re-verified Class A byte-identical against
   the frozen `dc0d0c4` baseline (both configs: trajectory record, final
   state, init snapshots, and full dump manifests — see docs/dump-files.md). Note: the blueprint's
@@ -229,7 +229,7 @@ Classify each change before review:
 Never approve a change only because the final residual is small. Compare R/Z/lambda families, axis/boundary invariants, geometry/field intermediates, restart sequence, and iteration count.
 
 Independent-solver agreement (Class C) against a vmecpp run is scripted by
-`scripts/compare_wout.py <cumes_state.bin> <vmecpp_output.h5>`: it folds the
+`build/compare_wout <cumes_state.bin> <vmecpp_output.h5>`: it folds the
 wout's signed-n VMEC convention into cuMES's product basis (including the
 `m=0` axis-displacement parity and the `n=0` odd-family zeros), skips the
 extrapolated axis row, and reports the max absolute/relative difference per

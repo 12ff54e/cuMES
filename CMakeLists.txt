@@ -338,8 +338,31 @@ function(cumes_add_precision_provenance target)
 endfunction()
 cumes_add_precision_provenance(cumes)
 
+# ---- standalone verification tools ----------------------------------------
+# These remain ordinary one-file host programs under scripts/: each can also
+# be compiled directly with `g++ -std=c++20 scripts/compare_<name>.cpp -o ...`.
+# compare_wout uses the already-optional HDF5 dependency when available and
+# otherwise builds an explanatory runtime stub.
+foreach(tool IN ITEMS compare_states compare_runs compare_bitwise compare_wout)
+  add_executable(${tool} scripts/${tool}.cpp)
+  cumes_enable_warnings(${tool})
+endforeach()
+if(CUMES_HAVE_HDF5)
+  target_compile_definitions(compare_wout PRIVATE CUMES_COMPARE_HAVE_HDF5=1)
+  target_link_libraries(compare_wout PRIVATE HDF5::HDF5)
+endif()
+
 # ---- tests (standalone executables, no framework) --------------------------
 enable_testing()
+add_test(NAME compare_tools
+         COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/compare_tools_test.sh
+                 $<TARGET_FILE:compare_states>
+                 $<TARGET_FILE:compare_runs>
+                 $<TARGET_FILE:compare_bitwise>
+                 $<TARGET_FILE:compare_wout>)
+set_tests_properties(compare_tools PROPERTIES
+    LABELS "unit;verification" TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_subdirectory(tests)
 
 # ---- benchmarks (not part of the default CTest unit gate) --------------------
