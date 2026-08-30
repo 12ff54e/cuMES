@@ -108,10 +108,10 @@ class MultigridSolver {
                           std::ref(*vac))
                     : std::nullopt,
                 output_snapshot,
-                // Preserve the established multigrid/free-boundary
-                // trajectories. The recovery policy is qualified only for a
-                // fixed-boundary single-grid solve.
-                n_grids == 1 && !vac);
+                // The recovery policy is qualified for fixed-boundary stages.
+                // Free-boundary stages retain their vacuum-coupled reference
+                // trajectory until separately qualified.
+                !vac);
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();

@@ -613,8 +613,8 @@ bad_progress&:\quad age>12\ \land\ iter2>50\ \land\
 
 `bad_jacobian` multiplies `Delta t` by `0.9`; `bad_progress` divides it by `1.03`; both reset the restart anchor. These historically named conditions are distinct from the earlier oriented-Jacobian device status and should receive clearer enum names in schema v1 while legacy telemetry retains the original labels.
 
-For a fixed-boundary single-grid solve, cuMES also enables a conservative
-one-shot recovery from an early transient reduction. If 250 accepted passes
+For each fixed-boundary stage, cuMES also enables a conservative one-shot
+recovery from an early transient reduction. If 250 accepted passes
 (ten preconditioner-refresh periods) complete after the most recent restart,
 the recovery has not already been attempted in this stage, and
 `Delta t < Delta t_initial`, then after descent
@@ -626,10 +626,9 @@ the recovery has not already been attempted in this stage, and
 
 The existing residual-growth and oriented-Jacobian gates validate subsequent
 passes and roll back an unstable increase. The attempt flag is not re-armed by
-a later restart. Multigrid and free-boundary runs retain the reference
-VMEC_8_52 trajectory; `CUMES_DISABLE_STEP_RECOVERY=1` also restores that
-trajectory for single-grid diagnostics. ADR-0007 records the Class C evidence
-and scope.
+a later restart. Free-boundary runs retain the reference VMEC_8_52 trajectory;
+`CUMES_DISABLE_STEP_RECOVERY=1` restores it for all fixed-boundary diagnostic
+runs. ADR-0007 records the Class C evidence and scope.
 
 There is also a top-of-pass convergence-problem branch. If the accumulated bad-Jacobian counter equals 25 or 50, before axis extrapolation or geometry the solver restores the checkpoint, increments the counter, sets
 

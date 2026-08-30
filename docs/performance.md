@@ -85,7 +85,7 @@ with force, geometry, tridiagonal, and residual work smaller — i.e. structural
 transform work dominates over generic occupancy tuning, and host synchronization
 matters more as kernels shorten.
 
-### 2.2 W7-X single-grid convergence recovery (2026-08-30)
+### 2.2 W7-X fixed-boundary convergence recovery (2026-08-30)
 
 ADR-0007 adds a qualified one-shot recovery of a time step reduced by the
 early W7-X transient. It reduces deterministic effective iterations from 2953
@@ -102,6 +102,16 @@ not by itself establish the performance-policy confidence bound. The exact
 8.20% pass reduction, independent-solver state comparison, and frozen
 non-target trajectories are the primary acceptance evidence; the diagnostic
 opt-out retains direct A/B measurement.
+
+The same policy applied once per multigrid stage reduces W7-X from
+`1877 → 1617 → 2011` (5505 total) to `1741 → 1568 → 1635` (4944 total), a
+10.19% pass reduction. The final residual triple is FSQR `9.989e-13`, FSQZ
+`1.590e-13`, FSQL `5.116e-14`; restarting its checkpoint on the final grid
+converges at iteration 1 with the identical triple. Six alternating native
+gervais measurements gave 3.3109 s baseline versus 3.0021 s recovery median,
+a 9.33% end-to-end reduction (MAD 0.1090 s / 0.2123 s; unlocked-clock ranges
+3.1856–3.6662 s / 2.7096–3.5031 s). Solovev remains on its exact established
+trajectory because no reduced step survives to its recovery window.
 
 ## 3. Phase 9 experiments and their outcomes
 
@@ -166,7 +176,8 @@ complete numerical trajectory/state gate afterwards.
 
 Equivalence class precedes any timing claim: Class A requires bitwise equality;
 Class B requires per-operator ULP bounds and identical controller decisions;
-Class C requires independent CPU/VMEC++ agreement and a written ADR.
+Class C requires residual/validity qualification, independent comparisons with
+differences reported, and a written ADR.
 
 ## 5. Decision records and historical inputs
 

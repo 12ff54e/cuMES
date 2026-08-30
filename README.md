@@ -5,17 +5,19 @@ algorithm. All computation runs on GPU; the CPU host is a thin orchestrator.
 This is a pedagogical / scaffolding project — not production-grade, but the
 architecture and physics are real.
 
-**Reference implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
-(CPU-based C++ VMEC solver) at tag 0.7.0. vmecpp is cuMES's correctness
-reference (see [Verification](#verification)).
+**Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
+(CPU-based C++ VMEC solver) at tag 0.7.0. cuMES convergence is defined by its
+own discrete force residuals and validity gates; vmecpp is a diagnostic
+cross-check, not the convergence oracle (see [Verification](#verification)).
 
-**Status: working.** The solver reproduces its two frozen reference trajectories
-(cuMES's own audited baselines, re-derived after the CUDA overhaul):
+**Status: working.** The default fixed-boundary controller uses qualified
+one-shot time-step recovery. The prior audited trajectories remain available
+with `CUMES_DISABLE_STEP_RECOVERY=1`:
 
 | case | multigrid stages | effective iters | final FSQR |
 | ---- | ---------------- | --------------- | ---------- |
 | Solovev (`inputs/solovev.json`) | 5 → 11 → 55 | 251 → 199 → 456 | 9.583e-17 |
-| W7-X (`inputs/w7x.json`) | 33 → 66 → 99 | 1877 → 1617 → 2011 (5505) | 9.778e-13 |
+| W7-X (`inputs/w7x.json`) | 33 → 66 → 99 | 1741 → 1568 → 1635 (4944) | 9.989e-13 |
 
 ## Quick start
 
@@ -203,7 +205,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
 | `CUMES_DELT0` | initial time step |
-| `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables the qualified single-grid time-step recovery (diagnostic reference trajectory) |
+| `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |
 | `CUMES_DUMP` | enables debug/dump output |
 
 ## Verification
@@ -211,7 +213,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 The frozen reference trajectories are cuMES's own audited baselines and serve as
 the internal regression oracle (`build/compare_runs` +
 `build/compare_bitwise` + CTest). vmecpp is used only as an independent
-correctness reference:
+diagnostic comparison:
 
 The four comparison tools are host-only C++ executables built by CMake. They
 can also be built without configuring cuMES:
@@ -228,8 +230,10 @@ library and the POSIX `sha256sum` subprocess used by `compare_bitwise`.
 
 - **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
 - **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505), final
-  FSQR 9.778e-13. The converged final state agrees with the vmecpp/wout
-  reference at ~1e-5 in R/Z and ~1e-4 in the weakly-determined near-axis λ.
+  FSQR 9.778e-13 for the diagnostic reference controller. The default
+  recovery policy converges in 1741 → 1568 → 1635 iterations (total 4944),
+  FSQR 9.989e-13, and a checkpoint restart converges at iteration 1 with the
+  same residual triple.
 - **Single-grid W7-X**: with `n_grids=1` (`ns_array={99}`), one-shot recovery
   converges in 2711 effective iterations (down from 2953), FSQR 9.988e-13.
   Against an independent vmecpp 0.7.0 solve, the six-family worst difference

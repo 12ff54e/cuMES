@@ -7,8 +7,10 @@ equilibrium algorithm. All computation runs on GPU; the CPU host is a thin
 orchestrator. This is a pedagogical / scaffolding project — not production-grade,
 but the architecture is real.
 
-Reference implementation: `https://github.com/proximafusion/vmecpp` (CPU-based
-C++ VMEC solver) at tag 0.7.0 — cuMES's correctness reference (see Status).
+Independent comparison implementation: `https://github.com/proximafusion/vmecpp`
+(CPU-based C++ VMEC solver) at tag 0.7.0. cuMES convergence is defined by its
+own discrete residuals and validity gates; vmecpp is a diagnostic cross-check,
+not the convergence oracle (see Status).
 The codebase is post-CUDA-overhaul (blueprint:
 `docs/cuda-overhaul-blueprint.md`); details live in `docs/` — see the
 [documentation map](#documentation-map).
@@ -74,7 +76,7 @@ Environment variables:
 | `CUMES_MAX_ITER` | iteration cap; overrides every stage's cap in a multigrid run |
 | `CUMES_DELT0` | initial time step |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
-| `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified single-grid time-step recovery and restores the reference controller trajectory |
+| `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery and restores the reference controller trajectory |
 | `CUMES_DUMP` | master switch for dump/debug output |
 | `CUMES_DUMP_ITER` / `CUMES_E2_START` | which iterations the windowed dump files fire on |
 
@@ -252,9 +254,11 @@ byte-identical against the frozen `dc0d0c4` baseline — full record in
 reference outputs, independent of any vmecpp bit-exactness target):
 
 - Solovev: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
-- W7-X: 1877 → 1617 → 2011 effective iters (total 5505), final FSQR 9.778e-13.
-  The converged final states agree with the vmecpp/wout reference at ~1e-5 in
-  R/Z, ~1e-4 in the weakly-determined near-axis λ.
+- W7-X: qualified recovery gives 1741 → 1568 → 1635 effective iters (total
+  4944), final FSQR 9.989e-13. Restarting the resulting checkpoint on the
+  final grid converges at iteration 1 with the same residual triple. The
+  diagnostic reference controller gives 1877 → 1617 → 2011 (total 5505),
+  FSQR 9.778e-13, under `CUMES_DISABLE_STEP_RECOVERY=1`.
 - Single-grid regression (`n_grids=1`, ns_array={99}): the qualified one-shot
   step recovery converges in 2711 effective iters, FSQR 9.988e-13. The
   converged state agrees with an independent vmecpp 0.7.0 solve to 1.68e-5 in
@@ -264,9 +268,9 @@ reference outputs, independent of any vmecpp bit-exactness target):
   at ≤1.5e-9 (wout comparisons must read the FULL-grid `lmns_full`, not the
   half-grid `lmns`).
 - The multigrid final state is a different member of the (near-degenerate)
-  λ-gauge family than the single-grid run (~2.7e-4 in rmncc(0,1)) — intrinsic
-  to the continuation, not a cuMES artifact. Restarting from the multigrid
-  final state converges at iter 1 (a genuine fixed point).
+  λ-gauge family than the single-grid and vmecpp trajectories. This does not
+  override cuMES's residual convergence criterion: restarting the recovered
+  multigrid checkpoint converges at iter 1 (a genuine fixed point).
 
 Known issues:
 
