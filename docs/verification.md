@@ -105,7 +105,7 @@ cross-architecture claim is made (see `docs/performance.md`).
   algorithm update moved the frozen value to `4.274e-18`, which is what
   the baseline itself records. Accepted Class-C defaults are additionally
   gated by residual convergence and fixed-point replay: Solovev
-  `238→193→387` (FSQR 9.781e-17) and W7-X `1315→1559→1633`
+  `235→193→387` (FSQR 9.792e-17) and W7-X `1315→1559→1633`
   (FSQR 9.967e-13).
 - **Sanitizer preset (`build-sanitize/`)**: the verify gate plus
   racecheck/synccheck variants of the kernel tests (RUN_SERIAL; racecheck
@@ -162,7 +162,7 @@ Required host tests include:
 - `GridShape`, surface/mode indexing, and quadrature endpoint weights;
 - profile polynomial evaluation, flux normalization, fixed-iota/current policy selection, non-unit `tcon0`, and rejection of unsupported gamma;
 - controller residual histories reproducing convergence, ten-sample initialization/zero cases, bad-progress/Jacobian restarts, `ijacob=25/50` maintenance resets, checkpoint refresh/restore, effective-iteration counting, and the opt-in one-shot time-step recovery;
-- cold-start envelope policy and radial-weight invariants: exact LCFS, regular axis, reference opt-out, coarse/fine axisymmetric selection, and free-boundary exclusion;
+- cold-start envelope and axisymmetric-lambda policy: exact LCFS, regular axis, reference opt-outs, coarse/fine selection, analytic elliptical predictor, invalid-geometry atomic fallback, and free-boundary exclusion;
 - multigrid interpolation at axis, interior points, LCFS, odd/even modes, and all six families;
 - output capability preflight and run-status-to-exit-code mapping;
 - versioned/legacy serialization round trips and deliberate I/O failures.

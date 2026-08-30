@@ -78,6 +78,7 @@ Environment variables:
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery and restores the reference controller trajectory |
 | `CUMES_SEED_ENVELOPE` | override fixed-boundary cold-start shaping (3-D default `0.12`, coarse-axisymmetric default `-0.07`; `0` restores `s^(m/2)`) |
+| `CUMES_AXISYM_LAMBDA_SEED` | override the axisymmetric geometric lambda predictor scale (default `0.65`; `0` restores zero lambda) |
 | `CUMES_DUMP` | master switch for dump/debug output |
 | `CUMES_DUMP_ITER` / `CUMES_E2_START` | which iterations the windowed dump files fire on |
 
@@ -255,11 +256,11 @@ byte-identical against the frozen `dc0d0c4` baseline — full record in
 controller diagnostic opt-outs retain cuMES's own audited frozen trajectories,
 independent of any vmecpp bit-exactness target:
 
-- Solovev: tuned axisymmetric cold start gives 238 → 193 → 387 effective
-  iters (818 total), final FSQR 9.781e-17. A final-grid checkpoint replay
+- Solovev: tuned axisymmetric cold start gives 235 → 193 → 387 effective
+  iters (815 total), final FSQR 9.792e-17. A final-grid checkpoint replay
   converges at iteration 1 with the identical residual triple.
-  `CUMES_SEED_ENVELOPE=0 CUMES_DELT0=0.9` restores the audited
-  251 → 199 → 456 trajectory and FSQR 9.583e-17.
+  `CUMES_SEED_ENVELOPE=0 CUMES_AXISYM_LAMBDA_SEED=0 CUMES_DELT0=0.9`
+  restores the audited 251 → 199 → 456 trajectory and FSQR 9.583e-17.
 - W7-X: shaped cold start plus qualified recovery gives 1315 → 1559 → 1633
   effective iters (total 4507), final FSQR 9.967e-13. Restarting the resulting
   checkpoint on the final grid converges at iteration 1 with the same residual

@@ -43,6 +43,29 @@ first continuation grid is deliberately more conservative because it starts
 from the analytic seed; later grids start from a converged prolongation.
 Three-dimensional and free-boundary runs retain the configured step.
 `CUMES_DELT0` remains an absolute diagnostic override of this policy.
+Mixed-float axisymmetric runs also retain the configured step: applying the
+double-tuned boost makes the finest stage oscillate at `2e-6` to `6e-6`, while
+`delt=0.9` converges through a `1e-6` three-grid experiment in 285 passes.
+
+Finally, initialize axisymmetric lambda from the cold R/Z geometry. Defining
+
+```
+q(theta) = sqrt(g) / R^2
+         = (R_s Z_theta - R_theta Z_s) / R,
+```
+
+the straight-field-line relation gives
+
+```
+lambda_theta = 1 - q / <q>_theta.
+```
+
+Direct host quadrature projects this derivative into the resolved sine-family
+lambda coefficients. The coupled R/Z state will still move, so the cold seed
+uses 65% of the geometric predictor. A scale sweep from zero through two has
+a broad optimum from 0.64 through 0.655. Invalid initial geometry rejects the
+predictor atomically and falls back to zero lambda. The diagnostic override
+`CUMES_AXISYM_LAMBDA_SEED=0` restores the zero-lambda reference.
 
 ## Evidence
 
@@ -59,27 +82,40 @@ FSQR is `9.781e-17`; checkpoint replay on the final grid converges at iteration
 1 with a bit-identical state and residual triple. The generic transform
 backend gives the same 818 decisions (FSQR `9.789e-17`).
 
+Adding the geometric lambda predictor reduces the coarse stage by three more
+passes, producing `235 -> 193 -> 387` (815 total), 10.04% below the reference;
+final FSQR is `9.792e-17`. The generic backend gives the same 815 decisions
+(FSQR `9.788e-17`), and final-grid checkpoint replay remains bit-identical at
+iteration 1. The new and 818-pass final states differ by at most `9.400e-12`.
+
 For a cold single `ns=55` grid, the reference seed plus the `7/6` step reduces
 533 passes to 416 (21.95%), final FSQR `9.691e-17`. Its final state differs
 from the old trajectory by at most `5.626e-8` absolutely, while satisfying the
 same force tolerance; the multigrid fixed-point replay is the stronger
 equilibrium check.
 
+With the geometric predictor, the cold single `ns=55` solve falls further to
+354 passes, 33.58% below the original 533, with FSQR `9.835e-17`.
+
 A family- and mode-specific fit to the converged coarse state was also tested.
 It required 244 coarse passes and was rejected as both slower and less
 general than the single correction.
 
-A native precise-double sm_89 build on gervais reproduced the exact pass
-counts. Ten alternating process-level measurements gave 344.3 ms versus
-331.6 ms multigrid medians and 309.3 ms versus 302.7 ms single-grid medians.
-GPU P-state and process-startup outliers are large at this subsecond scale, so
-the deterministic 9.71%/21.95% pass reductions are the primary evidence.
+A native precise-double sm_89 build on gervais reproduced the exact final pass
+counts. GPU P-state and process-startup outliers are large at this subsecond
+scale, so the deterministic 10.04%/33.58% pass reductions are the primary
+evidence.
 
 ## Consequences
 
 - Coarse axisymmetric continuation starts require fewer GPU passes.
-- Single-grid fine starts retain the reference seed but use the tuned step.
+- Axisymmetric cold starts pay a small host-only quadrature cost once and
+  begin with a nonzero straight-field-line lambda predictor.
+- Single-grid fine starts retain the reference R/Z seed but use the tuned
+  step and lambda predictor.
 - Free-boundary starts, 3-D starts, and checkpoint contents retain their
   existing policies.
+- Mixed-float starts use the same geometric seeds but retain their configured
+  time step.
 - This is a Class C trajectory change judged by configured force convergence,
   not by reproduction of the previous iteration count.

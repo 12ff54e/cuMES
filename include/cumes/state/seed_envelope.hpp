@@ -24,6 +24,15 @@ T seed_radial_weight(int m, T s, T envelope_correction) {
     return regular_weight * (T(1) + envelope_correction * (T(1) - s));
 }
 
+template <typename T>
+T seed_radial_weight_derivative(int m, T s, T envelope_correction) {
+    const T half_m = T(m) / T(2);
+    const T regular_weight = std::pow(s, half_m);
+    const T regular_derivative = half_m * std::pow(s, half_m - T(1));
+    return regular_derivative * (T(1) + envelope_correction * (T(1) - s)) -
+           envelope_correction * regular_weight;
+}
+
 }  // namespace cumes
 
 #endif  // CUMES_INCLUDE_CUMES_STATE_SEED_ENVELOPE_HPP_

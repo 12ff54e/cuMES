@@ -106,7 +106,27 @@ Thus `w_m(0)=0` for `m>0`, `w_m(1)=1`, and the LCFS is unchanged exactly.
 Coarse fixed-boundary axisymmetric starts (`ns <= 11`) use `c_seed=-0.07`;
 fine axisymmetric and all free-boundary starts use `c_seed=0`. The diagnostic
 override `CUMES_SEED_ENVELOPE` selects another coefficient; zero restores the
-reference `s^(m/2)` envelope. Lambda remains zero in a cold start.
+reference `s^(m/2)` envelope. Three-dimensional and free-boundary lambda
+remain zero in a cold start.
+
+For a fixed-boundary axisymmetric start, define
+
+\[
+q(\theta)=\frac{\sqrt g}{R^2}
+=\frac{R_s Z_\theta-R_\theta Z_s}{R}.
+\]
+
+The cylindrical toroidal-field and straight-field-line relation gives
+
+\[
+\lambda_\theta=1-\frac{q}{\langle q\rangle_\theta}.
+\]
+
+Host quadrature projects this derivative onto `cos(m theta)` and divides each
+coefficient by `m` to seed the sine-family lambda modes. The default predictor
+scale is 0.65 because R/Z still evolve during the coupled solve. Invalid or
+degenerate initial geometry atomically falls back to zero lambda;
+`CUMES_AXISYM_LAMBDA_SEED=0` is the explicit reference opt-out.
 
 The state contains physical Fourier amplitudes. Forces and velocities use the VMEC-decomposed representation. A state update therefore reapplies the mode normalization
 
@@ -513,13 +533,13 @@ Every denominator must be checked relative to a norm of its local coefficients. 
 
 ## 10. Residual, damping, and descent
 
-Before constructing the per-stage controller, fixed-boundary axisymmetric
-runs scale the input `delt` by `7/6` for a single grid, `17/15` for the first
-grid of a continuation, and `6/5` for a prolonged grid. The first grid is more
-conservative because it starts from an analytic seed; prolonged grids start
-near a fixed point. Three-dimensional and free-boundary stages use the input
-value unchanged. `CUMES_DELT0`, when present, is the absolute experimental
-override after this policy.
+Before constructing the per-stage controller, double fixed-boundary
+axisymmetric runs scale the input `delt` by `7/6` for a single grid, `17/15`
+for the first grid of a continuation, and `6/5` for a prolonged grid. The
+first grid is more conservative because it starts from an analytic seed;
+prolonged grids start near a fixed point. Three-dimensional, free-boundary,
+and mixed-float stages use the input value unchanged. `CUMES_DELT0`, when
+present, is the absolute experimental override after this policy.
 
 Force normalization is refreshed with the preconditioner when
 

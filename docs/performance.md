@@ -143,18 +143,18 @@ to whether the state is cold, single-grid, or prolonged. It changes no GPU
 kernel, allocation, or per-pass DAG.
 
 Solovev multigrid falls from `251 -> 199 -> 456` (906 passes) to
-`238 -> 193 -> 387` (818), a 9.71% reduction, with final FSQR `9.781e-17`.
+`235 -> 193 -> 387` (815), a 10.04% reduction, with final FSQR `9.792e-17`.
 A final-grid checkpoint replay converges at iteration 1 with a bit-identical
-state. A cold single `ns=55` grid falls from 533 to 416 passes (21.95%), with
-FSQR `9.691e-17`. W7-X remains exactly on its accepted
+state. A cold single `ns=55` grid falls from 533 to 354 passes (33.58%), with
+FSQR `9.835e-17`. W7-X remains exactly on its accepted
 `1315 -> 1559 -> 1633` trajectory.
 
-The local TITAN Xp gave 0.445 s versus 0.395 s median multigrid wall time
-(11.2%). A native sm_89 gervais build reproduced the iteration counts; ten
-alternating runs gave 344.3 ms versus 331.6 ms multigrid medians (3.7%) and
-309.3 ms versus 302.7 ms single-grid medians (2.1%). At this subsecond scale,
-CUDA process startup and unlocked P-state outliers dominate, so pass counts
-are the primary timing evidence.
+Before adding the lambda predictor, the local TITAN Xp gave 0.445 s versus
+0.395 s median multigrid wall time (11.2%), and a native sm_89 gervais build
+gave a 3.7% median reduction for the staged-step policy. The final sm_89 build
+reproduces the 815/354 pass counts. At this subsecond scale, CUDA process
+startup and unlocked P-state outliers dominate, so pass counts are the primary
+timing evidence.
 
 ## 3. Phase 9 experiments and their outcomes
 

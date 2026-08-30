@@ -17,6 +17,7 @@
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/state/axisymmetric_lambda_seed.hpp"
 #include "cumes/state/seed_envelope.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "vmec_types.h"
@@ -126,10 +127,24 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
             }
         }
     }
+    double lambda_seed_scale =
+        default_axisymmetric_lambda_seed(p.ntor, sp.free_boundary.lfreeb);
+    if (const char* e = std::getenv("CUMES_AXISYM_LAMBDA_SEED")) {
+        lambda_seed_scale = std::atof(e);
+    }
+    if (lambda_seed_scale != 0.0 &&
+        !seed_axisymmetric_lambda<T>(p.ns, p.mpol, h_c, h_zsc, h_lsc, b.rbcc,
+                                     b.zbsc, sp.raxis_c[0], envelope_correction,
+                                     T(lambda_seed_scale))) {
+        std::fprintf(stderr,
+                     "cuMES: WARNING: axisymmetric lambda seed rejected "
+                     "invalid initial geometry; using zero lambda\n");
+        lambda_seed_scale = 0.0;
+    }
     printf(
         "  init_state: regular boundary/axis interpolation "
-        "(m>0 s^(m/2), envelope=%g)\n",
-        static_cast<double>(envelope_correction));
+        "(m>0 s^(m/2), envelope=%g, lambda=%g)\n",
+        static_cast<double>(envelope_correction), lambda_seed_scale);
 
     check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(), 6 * nb,
                           cudaMemcpyHostToDevice),

@@ -22,8 +22,8 @@ int main() {
     check_near(cumes::initial_step_for_stage(0.9, 0, 1, false, 3, 1), 1.08,
                "prolonged axisym grids use the larger step");
     check(std::abs(cumes::initial_step_for_stage(0.9F, 0, 1, false, 3, 2) -
-                   1.08F) <= 1e-6F,
-          "float uses the same axisymmetric step policy");
+                   0.9F) <= 1e-6F,
+          "float retains its configured stable step");
 
     if (failures()) {
         std::cout << format("test_start_policy: {} failure(s)\n", failures());
