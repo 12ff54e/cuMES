@@ -15,7 +15,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # default only when CMAKE_CUDA_ARCHITECTURES was not already provided.
 include(CumesCudaArchitectures)
 
-project(cuMES VERSION 1.0.0 LANGUAGES CXX CUDA)
+project(cuMES VERSION 1.1.0 LANGUAGES CXX CUDA)
 
 include(CumesOptions)
 include(CumesDependencies)
