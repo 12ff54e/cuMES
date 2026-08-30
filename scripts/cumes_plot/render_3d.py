@@ -11,6 +11,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from .coils import tube_mesh
 from .equilibrium import periodic_close, surface_intensity, to_cartesian
 from .image_processing import trim_white
+from .output_paths import figure_path
 
 
 def _render_machinery(S):
@@ -269,7 +270,7 @@ def render_single_view(base, suffix, label, vw, S):
     # placement cannot do it).
     fig.suptitle(f"{S['title']} ({label})",
                  fontsize=config.overview_title_fontsize, y=1.01)
-    out_png = f"{base}_{suffix}.png"
+    out_png = figure_path(base, suffix)
     fig.savefig(out_png, dpi=config.overview_save_dpi,
                 bbox_inches=config.save_bbox,
                 facecolor=config.save_face_color)
@@ -296,7 +297,7 @@ def render_single_view_image(base, suffix, label, image, S):
     cbar.ax.tick_params(labelsize=config.overview_colorbar_tick_fontsize)
     fig.suptitle(f"{S['title']} ({label})",
                  fontsize=config.overview_title_fontsize, y=0.99)
-    out_png = f"{base}_{suffix}.png"
+    out_png = figure_path(base, suffix)
     fig.savefig(out_png, dpi=config.pyvista_save_dpi,
                 bbox_inches=config.save_bbox,
                 facecolor=config.save_face_color)
@@ -338,7 +339,7 @@ def render_combined(base, S):
     # the strip top = 0.188 - 60px gap.
     cbar.ax.set_position([0.30, 0.106, 0.40, 0.045])
     fig.suptitle(S["title"], fontsize=config.overview_title_fontsize, y=0.98)
-    out_png = f"{base}_combined.png"
+    out_png = figure_path(base, "combined")
     fig.savefig(out_png, dpi=config.overview_save_dpi,
                 bbox_inches=config.save_bbox,
                 facecolor=config.save_face_color)
@@ -397,7 +398,7 @@ def render_combined_images(base, S, images):
                    fontsize=config.overview_colorbar_label_fontsize)
     cbar.ax.tick_params(labelsize=config.overview_colorbar_tick_fontsize)
     fig.suptitle(S["title"], fontsize=config.overview_title_fontsize, y=0.98)
-    out_png = f"{base}_combined.png"
+    out_png = figure_path(base, "combined")
     fig.savefig(out_png, dpi=config.pyvista_save_dpi,
                 bbox_inches=config.save_bbox,
                 pad_inches=12.0 / config.pyvista_save_dpi,
@@ -498,7 +499,7 @@ def render_slices(base, S, scene_image=None):
     cbar.ax.tick_params(labelsize=config.overview_colorbar_tick_fontsize)
     fig.suptitle(f"{S['title']} (top view + poloidal cross-sections)",
                  fontsize=config.overview_title_fontsize, y=1.01)
-    out_png = f"{base}_slices.png"
+    out_png = figure_path(base, "slices")
     fig.savefig(out_png, dpi=config.overview_save_dpi,
                 bbox_inches=config.save_bbox,
                 facecolor=config.save_face_color)

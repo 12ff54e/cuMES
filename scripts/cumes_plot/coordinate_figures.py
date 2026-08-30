@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 
 from .config import validate_figure_config
 from .coordinates import PERIOD, interpolate_zeta, make_boozer_grid
+from .output_paths import figure_path
 
 
 def _surface_indices(count, wanted, start=0):
@@ -124,7 +125,7 @@ def render_coordinate_slices(base, grid, nfp, title, config):
     _format_slice_axes(axes, angles, nfp, config)
     fig.suptitle(f"{title} — {grid.coordinate} coordinate mesh",
                  fontsize=config.figure_title_fontsize)
-    path = f"{base}_{grid.coordinate.lower()}_coordinate_slices.png"
+    path = figure_path(base, f"{grid.coordinate.lower()}_coordinate_slices")
     _save(fig, path, config)
     return path
 
@@ -159,7 +160,7 @@ def render_field_slices(base, grid, nfp, title, norm, cmap, config):
     cbar.set_label(config.colorbar_label)
     fig.suptitle(f"{title} — magnetic-field slices",
                  fontsize=config.figure_title_fontsize)
-    path = f"{base}_field_slices.png"
+    path = figure_path(base, "field_slices")
     _save(fig, path, config)
     return path
 
@@ -217,7 +218,7 @@ def render_field_contours(base, grid, title, norm, cmap, config):
     cbar.set_label(config.colorbar_label)
     fig.suptitle(f"{title} — {grid.coordinate} flux-surface |B| contours",
                  fontsize=config.figure_title_fontsize)
-    path = f"{base}_{grid.coordinate.lower()}_field_contours.png"
+    path = figure_path(base, f"{grid.coordinate.lower()}_field_contours")
     _save(fig, path, config)
     return path
 

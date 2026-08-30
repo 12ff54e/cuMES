@@ -266,12 +266,14 @@ python scripts/plot_equilibrium.py --state out.bin --backend pyvista \
   --coils path/to/coils.json --out equilibrium.png
 ```
 
-Both backends write the same `_perspective.png`, `_top.png`, `_combined.png`,
-and `_slices.png` files. The R-Z cross-sections and final figure composition
-remain Matplotlib-based; with `--backend pyvista`, every embedded 3-D panel is
-the VTK-rendered image. Displayed flux surfaces use the integer/full radial
-grid. Their `|B|` colors are linearly interpolated from the staggered half grid;
-the LCFS uses one-sided linear extrapolation from the last two half-grid values.
+Both backends write the same four views. With `--out BASE`, their names are
+`BASE_perspective.png`, `BASE_top.png`, `BASE_combined.png`, and
+`BASE_slices.png`; with `--output-dir DIRECTORY`, the `BASE_` prefix is
+omitted. The R-Z cross-sections and final figure composition remain
+Matplotlib-based; with `--backend pyvista`, every embedded 3-D panel is the
+VTK-rendered image. Displayed flux surfaces use the integer/full radial grid.
+Their `|B|` colors are linearly interpolated from the staggered half grid; the
+LCFS uses one-sided linear extrapolation from the last two half-grid values.
 
 A native result and its version-2 Boozer conversion provide the appropriate
 source data for the two magnetic-coordinate variants:
@@ -282,14 +284,19 @@ source data for the two magnetic-coordinate variants:
   --output boozer.bin
 python scripts/plot_equilibrium.py --state equilibrium.bin \
   --boozer-state boozer.bin \
-  --coordinate-only --out equilibrium.png
+  --coordinate-only --output-dir figure_data
 ```
 
-This writes five six-panel figures. `_COORD_coordinate_slices.png` contains
+`--output-dir` writes standard names directly into the selected directory,
+without a common filename prefix. It is mutually exclusive with `--out`, which
+retains the prefixed naming convention documented above.
+
+The coordinate command writes five six-panel figures.
+`COORD_coordinate_slices.png` contains
 PEST or Boozer coordinate meshes at six toroidal positions, and
-`_COORD_field_contours.png` shows `|B|` contours on six radial flux surfaces.
+`COORD_field_contours.png` shows `|B|` contours on six radial flux surfaces.
 Here `COORD` is `pest` or `boozer`. The coordinate-independent
-`_field_slices.png` contains the same physical R-Z cuts colored only by `|B|`;
+`field_slices.png` contains the same physical R-Z cuts colored only by `|B|`;
 when both inputs are supplied it uses the higher-fidelity native-state
 reconstruction. Omit `--coordinate-only` to produce these files alongside the
 four equilibrium figures. `--coordinate-system pest` or

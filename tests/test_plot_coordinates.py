@@ -24,6 +24,7 @@ from cumes_plot.coordinates import (
     make_boozer_grid,
     make_pest_grid,
 )
+from cumes_plot.output_paths import figure_path, resolve_output_base
 from plot_equilibrium import FIGURE_PARAMETERS
 
 
@@ -77,6 +78,16 @@ def _manufactured_file(path):
 
 
 class PlotCoordinateTest(unittest.TestCase):
+    def test_directory_only_output_names(self):
+        base = resolve_output_base(output_directory="figure_data")
+        self.assertEqual(figure_path(base, "perspective"),
+                         "figure_data/perspective.png")
+        self.assertEqual(figure_path(base, "pest_field_contours"),
+                         "figure_data/pest_field_contours.png")
+        prefixed = resolve_output_base("plots/equilibrium.png")
+        self.assertEqual(figure_path(prefixed, "perspective"),
+                         "plots/equilibrium_perspective.png")
+
     def test_binary_synthesis_and_native_pest_remap(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "manufactured.bin"
@@ -113,13 +124,13 @@ class PlotCoordinateTest(unittest.TestCase):
             path = Path(directory) / "manufactured.bin"
             _manufactured_file(path)
             outputs = render_coordinate_figures(
-                load_boozer(path), str(Path(directory) / "plot.png"),
+                load_boozer(path), str(Path(directory)) + os.sep,
                 FIGURE_PARAMETERS)
             self.assertEqual(len(outputs), 3)
-            self.assertIn(str(Path(directory) / "plot_field_slices.png"),
+            self.assertIn(str(Path(directory) / "field_slices.png"),
                           outputs)
             self.assertNotIn(
-                str(Path(directory) / "plot_boozer_field_slices.png"),
+                str(Path(directory) / "boozer_field_slices.png"),
                 outputs)
             for output in outputs:
                 self.assertGreater(Path(output).stat().st_size, 1000)

@@ -15,6 +15,7 @@ from .equilibrium import (
     boundary_from_params, converged_axis, eval_state, field_lines, half_grid,
     make_profiles, solve_chip,
 )
+from .output_paths import DEFAULT_OUTPUT_PATH, resolve_output_base
 from .render_3d import (
     render_combined, render_pyvista_figures, render_single_view, render_slices,
     require_pyvista,
@@ -26,12 +27,18 @@ def main(figure_parameters):
     figure_parameters = validate_figure_config(figure_parameters)
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", default="figure_data/w7x_state.bin")
-    ap.add_argument(
-        "--out", default="figure_data/equilibrium.png", metavar="PATH",
+    output = ap.add_mutually_exclusive_group()
+    output.add_argument(
+        "--out", metavar="PATH",
         help="base output path; its final extension is removed and four PNGs "
              "are written as BASE_perspective.png, BASE_top.png, "
              "BASE_combined.png, and BASE_slices.png "
              "(default: figure_data/equilibrium.png)")
+    output.add_argument(
+        "--output-dir", metavar="DIRECTORY",
+        help="output directory with no filename prefix; writes names such as "
+             "perspective.png, combined.png, field_slices.png, and "
+             "pest_field_contours.png")
     ap.add_argument("--field-lines", action="store_true",
                     help="also trace and draw field lines on the edge surface "
                          "(off by default: the figure stays cleaner)")
@@ -79,7 +86,12 @@ def main(figure_parameters):
     if args.coordinate_only and args.field_lines:
         ap.error("--field-lines is not used with --coordinate-only")
 
-    output_dir = os.path.dirname(os.path.abspath(args.out))
+    try:
+        output_base = resolve_output_base(args.out, args.output_dir)
+    except ValueError as exc:
+        ap.error(str(exc))
+    output_dir = args.output_dir if args.output_dir is not None else \
+        os.path.dirname(os.path.abspath(args.out or DEFAULT_OUTPUT_PATH))
     os.makedirs(output_dir, exist_ok=True)
 
     coordinate_requested = args.coordinate_only or \
@@ -107,7 +119,7 @@ def main(figure_parameters):
                                       coordinate_data.ntheta),
                                   max(figure_parameters.min_render_zeta,
                                       coordinate_data.nzeta))],
-                args.out, coordinate_data.nfp,
+                output_base, coordinate_data.nfp,
                 os.path.splitext(os.path.basename(
                     coordinate_data.source_path or args.boozer_state))[0],
                 figure_parameters)
@@ -297,7 +309,7 @@ def main(figure_parameters):
     if coordinate_requested:
         render_coordinate_grids(
             [coordinate_grids[system] for system in coordinate_systems],
-            args.out, nfp, name, figure_parameters)
+            output_base, nfp, name, figure_parameters)
         if args.coordinate_only:
             return
 
@@ -391,7 +403,7 @@ def main(figure_parameters):
         "lim": lim, "zlim": zlim,
         "box_aspect": (1.0, 1.0, zlim / lim),
     }
-    base = os.path.splitext(args.out)[0]
+    base = output_base
     if args.backend == "pyvista":
         render_pyvista_figures(base, S)
         return

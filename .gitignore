@@ -21,6 +21,7 @@ perf_refactor_pre/
 perf_refactor_post/
 
 # Editors / misc
+__pycache__
 *.swp
 *~
 .verify-scratch/
