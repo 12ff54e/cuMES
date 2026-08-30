@@ -74,7 +74,7 @@ Environment variables:
 | -------- | ------ |
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
 | `CUMES_MAX_ITER` | iteration cap; overrides every stage's cap in a multigrid run |
-| `CUMES_DELT0` | absolute initial time-step override (bypasses axisymmetric stage scaling) |
+| `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery and restores the reference controller trajectory |
 | `CUMES_SEED_ENVELOPE` | override cold-start shaping (fixed 3-D `0.12`, free 3-D coarse/fine `0.12`/`0.03`, coarse fixed-axisymmetric `-0.07`; `0` restores `s^(m/2)`) |

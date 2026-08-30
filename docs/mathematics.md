@@ -539,9 +539,11 @@ Before constructing the per-stage controller, double fixed-boundary
 axisymmetric runs scale the input `delt` by `7/6` for a single grid, `17/15`
 for the first grid of a continuation, and `6/5` for a prolonged grid. The
 first grid is more conservative because it starts from an analytic seed;
-prolonged grids start near a fixed point. Three-dimensional, free-boundary,
-and mixed-float stages use the input value unchanged. `CUMES_DELT0`, when
-present, is the absolute experimental override after this policy.
+prolonged grids start near a fixed point. Double 3-D free-boundary stages
+through `ns=25` use `17/14` times the input step. Other three-dimensional,
+fine or axisymmetric free-boundary, and mixed-float stages use the input value
+unchanged. `CUMES_DELT0`, when present, is the absolute experimental override
+after this policy.
 
 Force normalization is refreshed with the preconditioner when
 

@@ -165,6 +165,9 @@ from 592 to 563 total passes. The conservative fine-grid predictor reduces
 W7-X `ns=51` from 1831 to 1797 passes. The full axisymmetric lambda predictor
 reduces Solovev free-boundary from 1047 to 1025 total passes. Final FSQR values
 are `9.932e-11`, `9.942e-11`, `9.705e-13`, and `9.822e-15`, respectively.
+Adding the qualified `17/14` step on 3-D free-boundary grids through `ns=25`
+reduces CTH-like single-grid further to 347 passes and multigrid to
+`208 -> 238` (446 total), with final FSQR `9.359e-11` and `9.745e-11`.
 
 ## 3. Phase 9 experiments and their outcomes
 

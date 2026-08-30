@@ -1,4 +1,4 @@
-# ADR-0010: Seed free-boundary stages from the resolved geometry
+# ADR-0010: Tune free-boundary stage starts
 
 - Status: Accepted
 - Date: 2026-08-31
@@ -36,6 +36,11 @@ and use the full geometry-derived lambda predictor (`scale=1.0`).
 `CUMES_AXISYM_LAMBDA_SEED=0` restores zero lambda. Checkpoint restarts are
 unchanged.
 
+Double-precision 3-D free-boundary stages with at most 25 radial surfaces use
+`17/14` times the configured initial descent step. For CTH-like `delt=0.7`,
+this is 0.85. Finer, axisymmetric, and mixed-float free-boundary stages retain
+the configured step. `CUMES_DELT0` remains an absolute diagnostic override.
+
 ## Evidence
 
 All values below are precise-double results and meet every component of the
@@ -47,6 +52,12 @@ configured force tolerance:
 | CTH-like `15 -> 25` | `242 -> 350` (592) | `240 -> 323` (563) | `9.942e-11` |
 | W7-X `ns=51` | 1831 | 1797 | `9.705e-13` |
 | Solovev `16 -> 32` | `417 -> 630` (1047) | `389 -> 636` (1025) | `9.822e-15` |
+
+Combining the coarse 3-D seed with the `17/14` step reduces CTH-like
+single-grid further to 347 passes (29.0% below reference, FSQR `9.359e-11`)
+and multigrid to `208 -> 238` = 446 passes (24.7% below reference, FSQR
+`9.745e-11`). The step policy does not select W7-X `ns=51` or axisymmetric
+Solovev, so their qualified seeded trajectories remain unchanged.
 
 For W7-X, applying the coarse `0.12` correction caused extra startup restarts
 and regressed to 1953 passes; the fine-grid `0.03` correction is therefore a

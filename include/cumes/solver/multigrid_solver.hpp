@@ -86,7 +86,7 @@ class MultigridSolver {
             p.ftol = T(stages[g].tolerance);
             p.delt = initial_step_for_stage(configured_delt, p.ntor, p.nzeta,
                                             vp.spec().free_boundary.lfreeb,
-                                            n_grids, g);
+                                            p.ns, n_grids, g);
             std::printf(
                 "\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d "
                 "ftol=%.0e delt=%.6g ===\n",

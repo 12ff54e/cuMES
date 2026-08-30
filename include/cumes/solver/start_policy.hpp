@@ -4,21 +4,29 @@
 
 namespace cumes {
 
-// Double fixed-boundary axisymmetric stages tolerate a larger descent step
-// than the general 3-D path. Keep the first continuation grid conservative
-// because it starts from an analytic cold guess; later grids start from a
-// converged prolongation.  A single fine grid has no continuation safety net
-// and uses the intermediate factor. Float retains its configured step because
-// the larger value amplifies its state-rounding residual floor.
+// Qualified double-precision cold starts tolerate a larger descent step than
+// the general 3-D path. Coarse 3-D free-boundary grids use their measured
+// stable step. For fixed-boundary axisymmetry, keep the first continuation
+// grid conservative because it starts from an analytic cold guess; later grids
+// start from a converged prolongation. A single fine grid has no continuation
+// safety net and uses the intermediate factor. Float retains its configured
+// step because the larger value amplifies its state-rounding residual floor.
 template <typename T>
 constexpr T initial_step_for_stage(T configured_step,
                                    int ntor,
                                    int nzeta,
                                    bool free_boundary,
+                                   int radial_surfaces,
                                    int stage_count,
                                    int stage_index) noexcept {
-    if (free_boundary || ntor != 0 || nzeta != 1) return configured_step;
     if constexpr (sizeof(T) < sizeof(double)) return configured_step;
+    if (free_boundary) {
+        if (ntor > 0 && radial_surfaces <= 25) {
+            return configured_step * T(17) / T(14);
+        }
+        return configured_step;
+    }
+    if (ntor != 0 || nzeta != 1) return configured_step;
     if (stage_count == 1) return configured_step * T(7) / T(6);
     if (stage_index == 0) return configured_step * T(17) / T(15);
     return configured_step * T(6) / T(5);
