@@ -1,5 +1,7 @@
 #pragma once
 
+// Shared declarations for the standalone comparison tools.
+
 #include <array>
 #include <cstdint>
 #include <filesystem>

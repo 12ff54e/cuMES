@@ -1,7 +1,7 @@
 // Compare two cuMES converged-state binary payloads.
 
 #include "../include/clap.h"
-#include "compare_common.hpp"
+#include "include/compare_common.hpp"
 
 #include <algorithm>
 #include <cerrno>

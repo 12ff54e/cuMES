@@ -1,3 +1,5 @@
+// Inline implementation keeps each comparison tool directly compilable.
+
 #include <algorithm>
 #include <cctype>
 #include <cerrno>

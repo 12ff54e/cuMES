@@ -1,7 +1,7 @@
 // Compare a cuMES state with vmecpp's wout HDF5 spectra.
 
 #include "../include/clap.h"
-#include "compare_common.hpp"
+#include "include/compare_common.hpp"
 
 #include <algorithm>
 #include <array>
