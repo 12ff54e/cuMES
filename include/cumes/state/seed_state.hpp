@@ -71,11 +71,10 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     const size_t nb = one * sizeof(T);
     SpectralStorage<T> storage(p.ns, p.mnmax);
     T envelope_correction =
-        T(default_seed_envelope(p.ntor, sp.free_boundary.lfreeb));
+        T(default_seed_envelope(p.ntor, sp.free_boundary.lfreeb, p.ns));
     if (const char* e = std::getenv("CUMES_SEED_ENVELOPE")) {
         envelope_correction = T(std::atof(e));
     }
-
     // One staging buffer in the exact state_slab() order
     // (Rcc Zsc Lsc Rss Zcs Lcs — spectral_storage.hpp), so the six per-family
     // H2D copies become a single upload. The host staging exists only for the

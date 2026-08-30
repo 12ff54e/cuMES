@@ -7,9 +7,14 @@
 namespace cumes {
 
 inline constexpr double DEFAULT_3D_SEED_ENVELOPE = 0.12;
+inline constexpr double DEFAULT_AXISYMMETRIC_COARSE_SEED_ENVELOPE = -0.07;
 
-constexpr double default_seed_envelope(int ntor, bool free_boundary) noexcept {
-    return ntor > 0 && !free_boundary ? DEFAULT_3D_SEED_ENVELOPE : 0.0;
+constexpr double default_seed_envelope(int ntor,
+                                       bool free_boundary,
+                                       int initial_ns) noexcept {
+    if (free_boundary) return 0.0;
+    if (ntor > 0) return DEFAULT_3D_SEED_ENVELOPE;
+    return initial_ns <= 11 ? DEFAULT_AXISYMMETRIC_COARSE_SEED_ENVELOPE : 0.0;
 }
 
 template <typename T>

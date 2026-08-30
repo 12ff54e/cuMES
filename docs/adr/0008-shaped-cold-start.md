@@ -29,7 +29,9 @@ at the axis, so the exact boundary and the `s^(m/2)` regularity order are
 unchanged. The `m=0` axis-to-boundary interpolation and zero-lambda seed remain
 unchanged.
 
-Axisymmetric and free-boundary cold starts keep the reference envelope.
+Axisymmetric and free-boundary cold starts keep the reference envelope.  The
+later axisymmetric policy in ADR-0009 supersedes this for coarse fixed-boundary
+starts.
 `CUMES_SEED_ENVELOPE` overrides the coefficient for experiments; zero is the
 diagnostic reference opt-out.
 

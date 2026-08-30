@@ -11,11 +11,13 @@ static void check_near(double actual, double expected, const char* message) {
 }
 
 int main() {
-    check_near(cumes::default_seed_envelope(12, false), 0.12,
+    check_near(cumes::default_seed_envelope(12, false, 99), 0.12,
                "fixed-boundary 3-D selects the shaped seed");
-    check_near(cumes::default_seed_envelope(0, false), 0.0,
-               "axisymmetric starts retain the reference seed");
-    check_near(cumes::default_seed_envelope(12, true), 0.0,
+    check_near(cumes::default_seed_envelope(0, false, 5), -0.07,
+               "coarse axisymmetric starts select the fitted seed");
+    check_near(cumes::default_seed_envelope(0, false, 55), 0.0,
+               "fine axisymmetric starts retain the reference seed");
+    check_near(cumes::default_seed_envelope(12, true, 5), 0.0,
                "free-boundary starts retain the reference seed");
 
     check_near(cumes::seed_radial_weight(1, 0.25, 0.0), 0.5,

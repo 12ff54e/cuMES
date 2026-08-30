@@ -103,9 +103,10 @@ w_m(s)=s^{m/2}\left[1+c_{seed}(1-s)\right],\qquad c_{seed}=0.12.
 \]
 
 Thus `w_m(0)=0` for `m>0`, `w_m(1)=1`, and the LCFS is unchanged exactly.
-Axisymmetric and free-boundary starts use `c_seed=0`. The diagnostic override
-`CUMES_SEED_ENVELOPE` selects another coefficient; zero restores the reference
-`s^(m/2)` envelope. Lambda remains zero in a cold start.
+Coarse fixed-boundary axisymmetric starts (`ns <= 11`) use `c_seed=-0.07`;
+fine axisymmetric and all free-boundary starts use `c_seed=0`. The diagnostic
+override `CUMES_SEED_ENVELOPE` selects another coefficient; zero restores the
+reference `s^(m/2)` envelope. Lambda remains zero in a cold start.
 
 The state contains physical Fourier amplitudes. Forces and velocities use the VMEC-decomposed representation. A state update therefore reapplies the mode normalization
 
