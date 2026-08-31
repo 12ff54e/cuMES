@@ -386,6 +386,7 @@ int main(int argc, char** argv) {
         storage = std::move(outcome.state);
         result = outcome.result;
         total_iter = outcome.total_iterations;
+        printf("total device time: %.3f ms\n", outcome.total_device_time_ms);
 
         // vmecpp semantics (vmec.cc:367-392): a stage that exhausts its
         // iteration cap without meeting ftol fails the whole run. Single-grid

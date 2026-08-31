@@ -31,6 +31,14 @@ host observability (`bench == nullptr` in production leaves the hot loop
 byte-identical). A 2-pass smoke gate (`cumes_benchmark_smoke`) is registered in
 CTest.
 
+Production runs also print `device time` for every radial stage and
+`total device time` for their sum. These values are measured by CUDA events on
+the compute stream around `solver_run`; they exclude stage construction,
+publication-field re-evaluation, and file output. In free-boundary runs the
+reported interval includes the required host vacuum-coupling gaps between the
+prefix and suffix device work, so it represents end-to-end CUDA-stream elapsed
+time rather than a sum of kernel durations.
+
 ## 2. Steady-state wall time (TITAN Xp, sm_61)
 
 Measured by the fixed-iteration harness with 300 timed passes after 50 warmup

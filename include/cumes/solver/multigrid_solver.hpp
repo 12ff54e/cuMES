@@ -31,6 +31,7 @@ struct MultigridOutcome {
     SpectralStorage<T> state;  // final (finest-stage) state
     SolverResult<T> result;    // final stage's solver result
     int total_iterations = 0;
+    double total_device_time_ms = 0.0;
     RunReport report;
     EquilibriumSnapshot snapshot;  // final derived fields; state filled by CLI
     int failed_stage = -1;         // stage index that failed the run, or -1
@@ -55,6 +56,7 @@ class MultigridSolver {
         DeviceParams<T> p_prev;
         SolverResult<T> result{false, 0, T(1.0), T(1.0), T(1.0), T(0.9), {}};
         int total_iter = 0;
+        double total_device_time_ms = 0.0;
         const auto& stages = vp.spec().stages;
         const int n_grids = static_cast<int>(stages.size());
         const T configured_delt = p.delt;
@@ -107,6 +109,7 @@ class MultigridSolver {
             // snapshot whose radial extent conflicts with the next stage.
             EquilibriumSnapshot* output_snapshot =
                 (g + 1 == n_grids) ? &out.snapshot : nullptr;
+            double stage_device_time_ms = 0.0;
             result = StageSolver<T>::run(
                 p, vp, storage, stream, std::nullopt,
                 vac ? std::optional<
@@ -117,7 +120,8 @@ class MultigridSolver {
                 // The recovery policy is qualified for fixed-boundary stages.
                 // Free-boundary stages retain their vacuum-coupled reference
                 // trajectory until separately qualified.
-                !vac);
+                !vac, std::ref(stage_device_time_ms));
+            total_device_time_ms += stage_device_time_ms;
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();
@@ -156,6 +160,7 @@ class MultigridSolver {
         out.state = std::move(storage);
         out.result = result;
         out.total_iterations = total_iter;
+        out.total_device_time_ms = total_device_time_ms;
         out.report.total_effective_iterations = total_iter;
         out.report.status =
             result.converged ? RunStatus::CONVERGED : RunStatus::NOT_CONVERGED;
