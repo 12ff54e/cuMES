@@ -10,6 +10,7 @@
 // empty/mismatched/non-monotonic schedules, integer narrowing, wrong-type
 // aux/asym keys, unsupported physics, and unknown-key strict vs compatibility.
 #include "cumes/config/json_reader.hpp"
+#include "cumes/config/json_writer.hpp"
 #include "cumes/config/profile_functions.hpp"
 #include "cumes/config/validated_problem.hpp"
 #include "cumes_test.h"
@@ -133,6 +134,25 @@ static void test_goldens() {
         check(vr.value().normalize_to_json() == golden,
               std::string(name) + ": normalize_to_json matches golden");
     }
+}
+
+static void test_problem_spec_json_round_trip() {
+    SolverOptions opts;
+    auto original = read_and_validate("inputs/w7x.json", opts);
+    check(original.has_value(), "ProblemSpec writer source validates");
+    if (!original.has_value()) return;
+
+    const std::string serialized =
+        cumes::problem_spec_to_json(original.value().spec());
+    auto parsed = parse_problem_spec(serialized, opts);
+    check(parsed.report.ok(), "ProblemSpec writer output parses strictly");
+    if (!parsed.report.ok()) return;
+    auto round_trip = cumes::validate(std::move(parsed.spec), opts);
+    check(round_trip.has_value(), "ProblemSpec writer output validates");
+    if (!round_trip.has_value()) return;
+    check(round_trip.value().normalize_to_json() ==
+              original.value().normalize_to_json(),
+          "ProblemSpec writer preserves the validated solver input");
 }
 
 static void test_mode_table() {
@@ -589,6 +609,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     test_goldens();
+    test_problem_spec_json_round_trip();
     test_mode_table();
     test_precision_floor();
     test_malformed();
