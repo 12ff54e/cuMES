@@ -19,13 +19,14 @@
 //                      the delBSq surface-mean diagnostic
 //   edge force       : armn_e/o += (zu_e+zu_o)*rBSq, azmn_e/o -=
 //                      (ru_e+ru_o)*rBSq at the LCFS row
-//   rcon decay       : rCon0/zCon0 *= 0.9 on vacuum-active passes
+//   rcon decay       : scale rCon0/zCon0 on vacuum-active passes
 //
 // New-style conventions (snake_case) per the 2026-08-24 coding-style update.
 #ifndef CUMES_SRC_FREE_BOUNDARY_IMPL_CUH_
 #define CUMES_SRC_FREE_BOUNDARY_IMPL_CUH_
 
 #include "cumes/physics/free_boundary_operator.hpp"
+#include "cumes/physics/free_boundary_policy.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "vfield/common/sizes.hpp"
 #include "vfield/free_boundary/vacuum_field_solver.hpp"
@@ -33,6 +34,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -181,16 +183,16 @@ __global__ void vacuum_edge_force_kernel(T* __restrict__ armn_e,
     azmn_o[base] -= ru_full * r;
 }
 
-// rCon0/zCon0 *= 0.9 over every surface (vmecpp :651-661; nsMaxF = ns for
-// free boundary).
+// Scale rCon0/zCon0 over every surface (vmecpp :651-661; nsMaxF = ns for free
+// boundary).
 template <class T>
 __global__ void rcon_decay_kernel(T* __restrict__ rcon0,
                                   T* __restrict__ zcon0,
                                   int n) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    rcon0[i] *= T(0.9);
-    zcon0[i] *= T(0.9);
+    rcon0[i] *= T(control_policy::VACUUM_CONSTRAINT_DECAY_FACTOR);
+    zcon0[i] *= T(control_policy::VACUUM_CONSTRAINT_DECAY_FACTOR);
 }
 
 }  // namespace
@@ -209,6 +211,7 @@ struct FreeBoundaryOperator<T>::Impl {
     vfield::VacuumFieldSolver<T> solver;
     VacuumState state = VacuumState::OFF;
     int nvacskip = 1;
+    double activation_threshold = control_policy::VACUUM_ACTIVATION_RESIDUAL;
     int ivacskip = 0;
     bool run_block = false;
     bool full_update = false;
@@ -306,6 +309,10 @@ struct FreeBoundaryOperator<T>::Impl {
                 "mirror bridge assumes it)");
         }
         nvacskip = params.nvacskip;
+        if (const char* value =
+                std::getenv("CUMES_VACUUM_ACTIVATION_THRESHOLD")) {
+            activation_threshold = std::atof(value);
+        }
         if (params.hot_start) state = VacuumState::INITIALIZED;
     }
 };
@@ -449,7 +456,8 @@ void FreeBoundaryOperator<T>::advance(int iter2,
     impl_->soft_restart = false;
     if (!impl_->run_block) return;
     impl_->ivacskip = (iter2 - iter1) % impl_->nvacskip;
-    if (impl_->state != VacuumState::ACTIVE && fsqr + fsqz < 1.0e-3) {
+    if (impl_->state != VacuumState::ACTIVE &&
+        fsqr + fsqz < impl_->activation_threshold) {
         impl_->ivacskip = 0;
         impl_->state =
             static_cast<VacuumState>(static_cast<int>(impl_->state) + 1);

@@ -2,29 +2,30 @@
 // (blueprint §6.11; extracted from main.cu so the CLI and the fixed-iteration
 // benchmark share the exact same seeding, not two drifting copies).
 //
-// Three host-side helpers reproduce the legacy seeding verbatim, now consuming
-// the immutable ValidatedProblem directly (migration step 13.2 — the legacy
-// InputParams fixed-capacity bridge is gone):
+// Three host-side helpers consume the immutable ValidatedProblem directly
+// (migration step 13.2 — the legacy InputParams fixed-capacity bridge is
+// gone):
 //
 //   init_params   — DeviceParams<T> from ValidatedProblem (stage 0)
-//   init_state    — vmecpp interpFromBoundaryAndAxis cold start
+//   init_state    — regular boundary/axis cold start with optional 3-D shaping
 //   restart_state — upload a host EquilibriumSnapshot + LCFS/axis patch
 //
-// These are the same functions main.cu inlined before Phase 9; the move is a
-// pure code relocation (Class A — no arithmetic change), verified by the
-// unchanged Solovev/W7-X trajectories.
+// The reference envelope remains available with CUMES_SEED_ENVELOPE=0.
 #ifndef CUMES_INCLUDE_CUMES_STATE_SEED_STATE_HPP_
 #define CUMES_INCLUDE_CUMES_STATE_SEED_STATE_HPP_
 
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/state/axisymmetric_lambda_seed.hpp"
+#include "cumes/state/seed_envelope.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "vmec_types.h"
 
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <span>
 #include <vector>
 
@@ -70,7 +71,12 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     const size_t one = (size_t)p.ns * p.mnmax;
     const size_t nb = one * sizeof(T);
     SpectralStorage<T> storage(p.ns, p.mnmax);
-
+    T envelope_correction =
+        T(default_seed_envelope(p.ntor, sp.free_boundary.lfreeb, p.ns,
+                                static_cast<int>(sp.stages.size())));
+    if (const char* e = std::getenv("CUMES_SEED_ENVELOPE")) {
+        envelope_correction = T(std::atof(e));
+    }
     // One staging buffer in the exact state_slab() order
     // (Rcc Zsc Lsc Rss Zcs Lcs — spectral_storage.hpp), so the six per-family
     // H2D copies become a single upload. The host staging exists only for the
@@ -86,7 +92,6 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
 
     for (int j = 0; j < p.ns; ++j) {
         T sFlux = T(j) / T(p.ns - 1);  // normalized flux s
-        T sqrtS = std::sqrt(sFlux);    // sqrt(s)
         for (int m = 0; m < p.mpol; ++m) {
             for (int n = 0; n < p.ntor + 1; ++n) {
                 int mn = m * (p.ntor + 1) + n;
@@ -106,14 +111,14 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
                     // contribution is constant across the interior — matching
                     // vmecpp's decomposed real space (its real-space odd =
                     // physical/max).
-                    T w = sqrtS;  // s^(1/2)
+                    T w = seed_radial_weight(m, sFlux, envelope_correction);
                     h_c[j + mn * p.ns] = w * T(b.rbcc[m * ntorp1 + n]);
                     h_s[j + mn * p.ns] = w * T(b.rbss[m * ntorp1 + n]);
                     h_zsc[j + mn * p.ns] = w * T(b.zbsc[m * ntorp1 + n]);
                     h_zcs[j + mn * p.ns] = w * T(b.zbcs[m * ntorp1 + n]);
                 } else {
                     // m>=2: s^(m/2) radial envelope, vanishing at axis
-                    T w = std::pow(sqrtS, m);  // s^(m/2)
+                    T w = seed_radial_weight(m, sFlux, envelope_correction);
                     h_c[j + mn * p.ns] = w * T(b.rbcc[m * ntorp1 + n]);
                     h_s[j + mn * p.ns] = w * T(b.rbss[m * ntorp1 + n]);
                     h_zsc[j + mn * p.ns] = w * T(b.zbsc[m * ntorp1 + n]);
@@ -123,7 +128,24 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
             }
         }
     }
-    printf("  init_state: vmecpp interpFromBoundaryAndAxis (m>0 s^(m/2))\n");
+    double lambda_seed_scale =
+        default_axisymmetric_lambda_seed(p.ntor, sp.free_boundary.lfreeb);
+    if (const char* e = std::getenv("CUMES_AXISYM_LAMBDA_SEED")) {
+        lambda_seed_scale = std::atof(e);
+    }
+    if (lambda_seed_scale != 0.0 &&
+        !seed_axisymmetric_lambda<T>(p.ns, p.mpol, h_c, h_zsc, h_lsc, b.rbcc,
+                                     b.zbsc, sp.raxis_c[0], envelope_correction,
+                                     T(lambda_seed_scale))) {
+        std::fprintf(stderr,
+                     "cuMES: WARNING: axisymmetric lambda seed rejected "
+                     "invalid initial geometry; using zero lambda\n");
+        lambda_seed_scale = 0.0;
+    }
+    printf(
+        "  init_state: regular boundary/axis interpolation "
+        "(m>0 s^(m/2), envelope=%g, lambda=%g)\n",
+        static_cast<double>(envelope_correction), lambda_seed_scale);
 
     check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(), 6 * nb,
                           cudaMemcpyHostToDevice),

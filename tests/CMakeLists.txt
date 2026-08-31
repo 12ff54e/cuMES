@@ -57,7 +57,7 @@ foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
                    test_tridiagonal test_cuda_graph test_safety_predicates
-                   test_event_dag test_free_boundary_seed)
+                   test_event_dag test_free_boundary_seed test_prolongation)
   add_executable(${t} ${t}.cu)
   target_include_directories(${t} PRIVATE ${PROJECT_SOURCE_DIR}/include)
   target_link_libraries(${t} PRIVATE cumes_config_json cumes_cuda_double cumes_cuda_float)
@@ -132,6 +132,18 @@ add_executable(test_controller test_controller.cpp)
 target_include_directories(test_controller PRIVATE ${PROJECT_SOURCE_DIR}/include)
 cumes_enable_warnings(test_controller)
 
+add_executable(test_seed_envelope test_seed_envelope.cpp)
+target_include_directories(test_seed_envelope PRIVATE ${PROJECT_SOURCE_DIR}/include)
+cumes_enable_warnings(test_seed_envelope)
+
+add_executable(test_start_policy test_start_policy.cpp)
+target_include_directories(test_start_policy PRIVATE ${PROJECT_SOURCE_DIR}/include)
+cumes_enable_warnings(test_start_policy)
+
+add_executable(test_axisymmetric_lambda_seed test_axisymmetric_lambda_seed.cpp)
+target_include_directories(test_axisymmetric_lambda_seed PRIVATE ${PROJECT_SOURCE_DIR}/include)
+cumes_enable_warnings(test_axisymmetric_lambda_seed)
+
 add_executable(test_arena test_arena.cu)
 target_include_directories(test_arena PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_arena PRIVATE cumes_cuda_runtime)
@@ -162,6 +174,9 @@ cumes_add_test(test_io_restart_offsets unit;io)
 cumes_add_test(test_io_malformed_shapes unit;io)
 cumes_add_test(test_runtime          unit;runtime)
 cumes_add_test(test_controller       unit;solver)
+cumes_add_test(test_seed_envelope    unit;solver)
+cumes_add_test(test_start_policy     unit;solver)
+cumes_add_test(test_axisymmetric_lambda_seed unit;solver)
 
 # ---- host sanitizer twins (CUMES_HOST_SANITIZERS=ON) ------------------------
 # Dedicated ASan+UBSan copies of the host-only libraries and their tests, so
@@ -236,6 +251,7 @@ cumes_add_test(test_force_reference  unit;forces)
 cumes_add_test(test_axisym_backend   unit;fourier)
 cumes_add_test(test_tridiagonal      unit;precon)
 cumes_add_test(test_cuda_graph       unit;runtime)
+cumes_add_test(test_prolongation     unit;numerics)
 
 # Compute Sanitizer memcheck variants of the kernel-driving tests only
 # (test_input_json is host-only and compute-sanitizer refuses to profile it).
@@ -243,7 +259,7 @@ cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
     test_regression_kernels test_runtime test_arena test_operator_views
     test_accumulation test_axisym_backend test_tridiagonal
-    test_cuda_graph test_safety_predicates)
+    test_cuda_graph test_safety_predicates test_prolongation)
 # test_event_dag registers its sanitizer variants manually: the deliberate
 # pending-event API-error probes are skipped under the sanitizers (they count
 # the intended cudaErrorNotReady return as a sanitizer error).

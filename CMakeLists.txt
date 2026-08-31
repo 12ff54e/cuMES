@@ -214,11 +214,44 @@ add_library(cumes_cuda_runtime INTERFACE)
 target_include_directories(cumes_cuda_runtime INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_runtime INTERFACE CUDA::cudart CUDA::cufft)
 
+# Reuse the direct header-only BSplineInterpolation submodule to construct a
+# small radial transfer matrix on the host. The spectral state remains
+# device-resident; the matrix is uploaded and applied in one batched CUDA
+# kernel. Submodule-free builds retain the Catmull-Rom fallback. Do not call
+# the dependency's add_subdirectory(): it enables standalone tests and changes
+# its directory-wide language standard, neither of which cuMES needs.
+set(CUMES_HAVE_BSPLINE_PROLONGATION OFF)
+if(CUMES_USE_BSPLINE_PROLONGATION AND EXISTS
+   ${CMAKE_CURRENT_SOURCE_DIR}/deps/BSplineInterpolation/include/bsintp/Interpolation.hpp)
+  cumes_add_host_library(cumes_bspline_prolongation FALSE
+    src/cumes/numerics/bspline_matrix.cpp)
+  target_include_directories(cumes_bspline_prolongation SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/BSplineInterpolation/include)
+  target_compile_definitions(cumes_bspline_prolongation PRIVATE
+    INTP_CELL_LAYOUT)
+  # GCC 12/13 reports a false positive while inlining the dependency's
+  # std::variant-held band matrix; confine the suppression to this adapter.
+  target_compile_options(cumes_bspline_prolongation PRIVATE
+    $<$<CXX_COMPILER_ID:GNU>:-Wno-maybe-uninitialized>)
+  cumes_apply_host_tuning(cumes_bspline_prolongation)
+  set(CUMES_HAVE_BSPLINE_PROLONGATION ON)
+  message(STATUS "cuMES: B-spline multigrid transfer enabled")
+elseif(CUMES_USE_BSPLINE_PROLONGATION)
+  message(STATUS "cuMES: B-spline multigrid transfer unavailable; using Catmull-Rom")
+else()
+  message(STATUS "cuMES: B-spline multigrid transfer disabled; using Catmull-Rom")
+endif()
+
 # ---- CUDA operator libraries (one scalar type each) ------------------------
 
 add_library(cumes_cuda_double STATIC ${CUMES_CUDA_DOUBLE_SOURCES})
 target_include_directories(cumes_cuda_double PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_double PUBLIC CUDA::cufft cumes_cuda_runtime)
+if(CUMES_HAVE_BSPLINE_PROLONGATION)
+  target_link_libraries(cumes_cuda_double PUBLIC cumes_bspline_prolongation)
+  target_compile_definitions(cumes_cuda_double PUBLIC
+    CUMES_HAVE_BSPLINE_PROLONGATION)
+endif()
 cumes_enable_warnings(cumes_cuda_double)
 cumes_apply_policy_flags(cumes_cuda_double)
 if(CUMES_ENABLE_VERIFY_DUMP)
@@ -228,6 +261,11 @@ endif()
 add_library(cumes_cuda_float STATIC ${CUMES_CUDA_FLOAT_SOURCES})
 target_include_directories(cumes_cuda_float PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_float PUBLIC CUDA::cufft cumes_cuda_runtime)
+if(CUMES_HAVE_BSPLINE_PROLONGATION)
+  target_link_libraries(cumes_cuda_float PUBLIC cumes_bspline_prolongation)
+  target_compile_definitions(cumes_cuda_float PUBLIC
+    CUMES_HAVE_BSPLINE_PROLONGATION)
+endif()
 cumes_enable_warnings(cumes_cuda_float)
 cumes_apply_policy_flags(cumes_cuda_float)
 if(CUMES_ENABLE_VERIFY_DUMP)
@@ -289,7 +327,8 @@ target_include_directories(cumes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Link order matters: cumes_io_host BEFORE cumes_io so the adapter library
 # is scanned while the backend-factory references are still undefined — the
 # linker then extracts the strong NetCDF/HDF5 factory definitions.
-target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
+target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io
+  ${CUMES_SELECTED_CUDA} Threads::Threads)
 if(CUMES_BUILD_MAGNETIC_COORDINATE)
   target_link_libraries(cumes PRIVATE
     magnetic-coordinate::magnetic_coordinate)

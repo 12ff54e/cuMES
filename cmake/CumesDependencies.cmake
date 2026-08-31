@@ -2,6 +2,7 @@
 #
 # Defines:
 #   CUDAToolkit          (required; imported targets CUDA::cufft / CUDA::cudart)
+#   Threads              (required by asynchronous multigrid setup)
 #   CUMES_HAVE_NETCDF    (bool) — .nc output compiled in
 #   CUMES_HAVE_HDF5      (bool) — .h5/.hdf5 output compiled in
 #   netCDF::netCDF / PkgConfig::netcdf / netCDF_*     (NetCDF link target)
@@ -12,6 +13,7 @@
 # solver target.
 
 find_package(CUDAToolkit 11 REQUIRED)
+find_package(Threads REQUIRED)
 
 # ---- NetCDF ---------------------------------------------------------------
 # Debian's libnetcdf-dev ships neither FindnetCDF.cmake nor a netCDFConfig

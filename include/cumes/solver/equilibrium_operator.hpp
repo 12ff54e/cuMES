@@ -40,8 +40,8 @@ namespace cumes {
 struct EvaluationSchedule {
     bool update_iota_chi = false;             // (ncurr==1) || first pass
     bool reset_constraint_reference = false;  // iter2 == iter1
-    bool refresh_preconditioner = false;      // (iter2 - iter1) % 25 == 0
-    bool zero_z_force_m1 = false;             // iter2 < 2 || fsqz_prev < 1e-6
+    bool refresh_preconditioner = false;      // control-policy cadence
+    bool zero_z_force_m1 = false;             // control-policy gauge gate
     bool include_edge_rz_invariant = true;
     bool run_vacuum_block = false;
     bool decay_rcon0_zcon0 = false;

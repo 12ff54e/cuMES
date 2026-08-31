@@ -91,6 +91,47 @@ l_v = -\partial_v\lambda.
 
 That sign convention must be part of the field type or name.
 
+### 2.1 Cold-start radial envelope
+
+The reference boundary/axis seed uses a linear `m=0` interpolation and the
+regular radial weight `s^(m/2)` for every `m>0` boundary harmonic. For a
+fixed-boundary 3-D cold start, cuMES retains that near-axis order but modestly
+increases the interior shaping:
+
+\[
+w_m(s)=s^{m/2}\left[1+c_{seed}(1-s)\right],\qquad c_{seed}=0.12.
+\]
+
+Thus `w_m(0)=0` for `m>0`, `w_m(1)=1`, and the LCFS is unchanged exactly.
+Single-grid fixed-boundary 3-D starts use `c_seed=0.129`; the `0.12` value
+above applies to continuation starts.
+Coarse fixed-boundary axisymmetric starts (`ns <= 11`) use `c_seed=-0.07`;
+fine fixed-boundary axisymmetric starts use `c_seed=0`. Three-dimensional
+free-boundary starts use `c_seed=0.12` through `ns=25` and the conservative
+`c_seed=0.03` on finer grids; axisymmetric free-boundary R/Z starts use zero.
+The diagnostic override `CUMES_SEED_ENVELOPE` selects another coefficient;
+zero restores the reference `s^(m/2)` envelope. Three-dimensional lambda
+remains zero in a cold start.
+
+For an axisymmetric start, define
+
+\[
+q(\theta)=\frac{\sqrt g}{R^2}
+=\frac{R_s Z_\theta-R_\theta Z_s}{R}.
+\]
+
+The cylindrical toroidal-field and straight-field-line relation gives
+
+\[
+\lambda_\theta=1-\frac{q}{\langle q\rangle_\theta}.
+\]
+
+Host quadrature projects this derivative onto `cos(m theta)` and divides each
+coefficient by `m` to seed the sine-family lambda modes. The default predictor
+scale is 0.65 for fixed boundary and 1.0 for free boundary. Invalid or
+degenerate initial geometry atomically falls back to zero lambda;
+`CUMES_AXISYM_LAMBDA_SEED=0` is the explicit reference opt-out.
+
 The state contains physical Fourier amplitudes. Forces and velocities use the VMEC-decomposed representation. A state update therefore reapplies the mode normalization
 
 \[
@@ -496,6 +537,22 @@ Every denominator must be checked relative to a norm of its local coefficients. 
 
 ## 10. Residual, damping, and descent
 
+Before constructing the per-stage controller, double fixed-boundary
+axisymmetric runs scale the input `delt` by `7/6` for a single grid, `17/15`
+for the first grid of a continuation, and `6/5` for a prolonged grid. The
+first grid is more conservative because it starts from an analytic seed;
+prolonged grids start near a fixed point. Double 3-D free-boundary stages
+through `ns=25` use `17/14` times the input step. Other three-dimensional,
+fine or axisymmetric free-boundary, and mixed-float stages use the input value
+unchanged. `CUMES_DELT0`, when present, is the absolute experimental override
+after this policy.
+
+For a cold free-boundary run, the temporary no-vacuum predictor hands off to
+the vacuum edge force when `FSQR + FSQZ < 3e-2`. The handover performs a full
+vacuum update, zeroes velocity, and re-anchors the damping history before the
+vacuum-active descent. `CUMES_VACUUM_ACTIVATION_THRESHOLD=1e-3` restores the
+reference activation gate.
+
 Force normalization is refreshed with the preconditioner when
 
 \[
@@ -613,6 +670,23 @@ bad_progress&:\quad age>12\ \land\ iter2>50\ \land\
 
 `bad_jacobian` multiplies `Delta t` by `0.9`; `bad_progress` divides it by `1.03`; both reset the restart anchor. These historically named conditions are distinct from the earlier oriented-Jacobian device status and should receive clearer enum names in schema v1 while legacy telemetry retains the original labels.
 
+For each fixed-boundary stage, cuMES also enables a conservative one-shot
+recovery from an early transient reduction. If 250 accepted passes
+(ten preconditioner-refresh periods) complete after the most recent restart,
+the recovery has not already been attempted in this stage, and
+`Delta t < Delta t_initial`, then after descent
+
+\[
+\Delta t \leftarrow
+\min\left(\Delta t_{initial},\;1.1\,\Delta t\right).
+\]
+
+The existing residual-growth and oriented-Jacobian gates validate subsequent
+passes and roll back an unstable increase. The attempt flag is not re-armed by
+a later restart. Free-boundary runs retain the reference VMEC_8_52 trajectory;
+`CUMES_DISABLE_STEP_RECOVERY=1` restores it for all fixed-boundary diagnostic
+runs. ADR-0007 records the Class C evidence and scope.
+
 There is also a top-of-pass convergence-problem branch. If the accumulated bad-Jacobian counter equals 25 or 50, before axis extrapolation or geometry the solver restores the checkpoint, increments the counter, sets
 
 \[
@@ -634,4 +708,18 @@ x_c(s)=\frac{x_{\mathrm{physical}}(s)}
 {\max(\sqrt{s},\sqrt{\Delta s\_{\mathrm{old}}})}.
 \]
 
-The old-axis stencil is `2*x_c(s1)-x_c(s2)`. The result is unscaled on the new grid, new odd-mode axis entries are zero, and the LCFS is copied exactly. These four rules need direct property tests for all six coefficient families.
+The old-axis stencil is `2*x_c(s1)-x_c(s2)`. Precise-double fixed-boundary
+continuation uses a global interpolating cubic B-spline in this scaled
+coordinate. The reusable `[ns_new][ns_old]` maps are constructed from
+`InterpolationFunctionTemplate1D<3>` by one background host task while the
+coarse GPU stage is iterating. Each completed map is uploaded and applied to
+every spectral profile by a batched CUDA kernel; the state never leaves the
+device. 3-D
+free-boundary continuation uses the qualified four-point Catmull-Rom
+interpolant, while axisymmetric free-boundary and float runs retain two-point
+linear interpolation. The result is unscaled on the new grid, new odd-mode
+axis entries are zero, and the LCFS is copied exactly.
+`CUMES_FORCE_CATMULL_PROLONGATION=1` and
+`CUMES_FORCE_LINEAR_PROLONGATION=1` select the diagnostic alternatives.
+These rules have direct CPU/GPU property tests for all six coefficient
+families and both scalar types.

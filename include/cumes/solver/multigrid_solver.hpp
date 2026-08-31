@@ -13,13 +13,21 @@
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/run_report.hpp"
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+#include "cumes/numerics/bspline_matrix.hpp"
+#endif
 #include "cumes/numerics/prolongation.hpp"
 #include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/solver/stage_solver.hpp"
+#include "cumes/solver/start_policy.hpp"
 
 #include <cstdio>
+#include <cstdlib>
+#include <future>
 #include <memory>
+#include <span>
 #include <utility>
+#include <vector>
 
 namespace cumes {
 
@@ -30,6 +38,7 @@ struct MultigridOutcome {
     SpectralStorage<T> state;  // final (finest-stage) state
     SolverResult<T> result;    // final stage's solver result
     int total_iterations = 0;
+    double total_device_time_ms = 0.0;
     RunReport report;
     EquilibriumSnapshot snapshot;  // final derived fields; state filled by CLI
     int failed_stage = -1;         // stage index that failed the run, or -1
@@ -52,10 +61,68 @@ class MultigridSolver {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
         DeviceParams<T> p_prev;
-        SolverResult<T> result{false, 0, T(1.0), T(1.0), T(1.0), T(0.9), {}};
+        SolverResult<T> result{false,  0,
+                               T(1.0), T(1.0),
+                               T(1.0), T(control_policy::DEFAULT_INITIAL_STEP),
+                               {}};
         int total_iter = 0;
+        double total_device_time_ms = 0.0;
         const auto& stages = vp.spec().stages;
         const int n_grids = static_cast<int>(stages.size());
+        const T configured_delt = p.delt;
+        // A global cubic B-spline best preserves the smooth radial structure
+        // of precise-double fixed-boundary states. Free-boundary continuation
+        // does not benefit consistently: retain the qualified Catmull-Rom 3-D
+        // path and dissipative linear axisymmetric path. Float retains its
+        // frozen linear trajectory until separately qualified.
+        RadialInterpolation radial_interpolation = RadialInterpolation::LINEAR;
+        if constexpr (sizeof(T) == sizeof(double)) {
+            if (!vp.spec().free_boundary.lfreeb) {
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+                radial_interpolation = RadialInterpolation::BSPLINE;
+#else
+                radial_interpolation = RadialInterpolation::CATMULL_ROM;
+#endif
+            } else if (p.ntor != 0) {
+                radial_interpolation = RadialInterpolation::CATMULL_ROM;
+            }
+        }
+        if (const char* e = std::getenv("CUMES_FORCE_CATMULL_PROLONGATION")) {
+            if (std::atoi(e) != 0 && sizeof(T) == sizeof(double)) {
+                radial_interpolation = RadialInterpolation::CATMULL_ROM;
+            }
+        }
+        if (const char* e = std::getenv("CUMES_FORCE_LINEAR_PROLONGATION")) {
+            if (std::atoi(e) != 0) {
+                radial_interpolation = RadialInterpolation::LINEAR;
+            }
+        }
+
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+        using BsplineMatrixBatch = std::vector<std::vector<double>>;
+        std::future<BsplineMatrixBatch> bspline_matrix_future;
+        BsplineMatrixBatch bspline_matrices;
+        if (radial_interpolation == RadialInterpolation::BSPLINE &&
+            n_grids > 1) {
+            std::vector<std::pair<int, int>> transitions;
+            transitions.reserve(static_cast<std::size_t>(n_grids - 1));
+            for (int g = 1; g < n_grids; ++g) {
+                transitions.emplace_back(
+                    static_cast<int>(stages[g - 1].radial_surfaces),
+                    static_cast<int>(stages[g].radial_surfaces));
+            }
+            bspline_matrix_future = std::async(
+                std::launch::async, [transitions = std::move(transitions)]() {
+                    BsplineMatrixBatch matrices;
+                    matrices.reserve(transitions.size());
+                    for (const auto& [ns_old, ns_new] : transitions) {
+                        matrices.push_back(
+                            cubic_bspline_interpolation_matrix(ns_old, ns_new));
+                    }
+                    return matrices;
+                });
+        }
+#endif
 
         // Free-boundary operator: constructed ONCE per run (vmecpp's
         // persistent vacuum solvers — the accumulated response matrix and the
@@ -82,15 +149,30 @@ class MultigridSolver {
             p.ns = static_cast<int>(stages[g].radial_surfaces);
             p.max_iter = static_cast<int>(stages[g].max_iterations);
             p.ftol = T(stages[g].tolerance);
+            p.delt = initial_step_for_stage(configured_delt, p.ntor, p.nzeta,
+                                            vp.spec().free_boundary.lfreeb,
+                                            p.ns, n_grids, g);
             std::printf(
                 "\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d "
-                "ftol=%.0e ===\n",
-                g + 1, n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol);
+                "ftol=%.0e delt=%.6g ===\n",
+                g + 1, n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol,
+                (double)p.delt);
             if (g > 0) {
                 // Prolong the previous stage's converged state onto this grid
                 // on the same compute stream (ordered before the next stage).
-                storage = cumes::Prolongation<T>{}.enqueue(p, storage, p_prev,
-                                                           stream);
+                std::span<const double> precomputed_bspline_matrix;
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+                if (radial_interpolation == RadialInterpolation::BSPLINE) {
+                    if (bspline_matrices.empty()) {
+                        bspline_matrices = bspline_matrix_future.get();
+                    }
+                    precomputed_bspline_matrix =
+                        bspline_matrices[static_cast<std::size_t>(g - 1)];
+                }
+#endif
+                storage = cumes::Prolongation<T>{}.enqueue(
+                    p, storage, p_prev, stream, radial_interpolation,
+                    precomputed_bspline_matrix);
                 // vmecpp vmec.cc :536-539: the converged coarse-stage vacuum
                 // state stays valid; re-mark INITIALIZED so the new stage's
                 // first pass runs the vacuum block.
@@ -101,13 +183,19 @@ class MultigridSolver {
             // snapshot whose radial extent conflicts with the next stage.
             EquilibriumSnapshot* output_snapshot =
                 (g + 1 == n_grids) ? &out.snapshot : nullptr;
+            double stage_device_time_ms = 0.0;
             result = StageSolver<T>::run(
                 p, vp, storage, stream, std::nullopt,
                 vac ? std::optional<
                           std::reference_wrapper<FreeBoundaryOperator<T>>>(
                           std::ref(*vac))
                     : std::nullopt,
-                output_snapshot);
+                output_snapshot,
+                // The recovery policy is qualified for fixed-boundary stages.
+                // Free-boundary stages retain their vacuum-coupled reference
+                // trajectory until separately qualified.
+                !vac, std::ref(stage_device_time_ms));
+            total_device_time_ms += stage_device_time_ms;
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();
@@ -146,6 +234,7 @@ class MultigridSolver {
         out.state = std::move(storage);
         out.result = result;
         out.total_iterations = total_iter;
+        out.total_device_time_ms = total_device_time_ms;
         out.report.total_effective_iterations = total_iter;
         out.report.status =
             result.converged ? RunStatus::CONVERGED : RunStatus::NOT_CONVERGED;

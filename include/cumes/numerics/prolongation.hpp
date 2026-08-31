@@ -3,8 +3,8 @@
 //
 // Interpolates a converged state onto a finer radial grid: odd modes in the
 // scalxc-decomposed coordinate, old-axis 2*x1-x2 extrapolation, odd-m zeroed at
-// the new axis, LCFS copied exactly (vmecpp
-// Vmec::InterpolateToNextMultigridStep, LINEAR). (Migration step 13.3: the
+// the new axis, LCFS copied exactly. Linear, four-point Catmull-Rom, and global
+// cubic B-spline transfers are available. (Migration step 13.3: the
 // legacy interpolateState free function and the refine.cuh/refine_impl.cuh
 // module are gone — the body is Prolongation::enqueue, defined in
 // src/kernels/prolongation_impl.cuh.)
@@ -15,7 +15,15 @@
 
 #include <cuda_runtime.h>
 
+#include <span>
+
 namespace cumes {
+
+enum class RadialInterpolation {
+    LINEAR,
+    CATMULL_ROM,
+    BSPLINE,
+};
 
 template <class T>
 class Prolongation {
@@ -28,10 +36,13 @@ class Prolongation {
     // Precondition: ns_new > ns_old >= 3 with equal mnmax (validation enforces
     // this for validated problems). A violation throws cumes::CumesError — the
     // library never calls exit().
-    SpectralStorage<T> enqueue(const DeviceParams<T>& p_new,
-                               const SpectralStorage<T>& state_old,
-                               const DeviceParams<T>& p_old,
-                               cudaStream_t stream) const;
+    SpectralStorage<T> enqueue(
+        const DeviceParams<T>& p_new,
+        const SpectralStorage<T>& state_old,
+        const DeviceParams<T>& p_old,
+        cudaStream_t stream,
+        RadialInterpolation interpolation = RadialInterpolation::LINEAR,
+        std::span<const double> precomputed_bspline_matrix = {}) const;
 };
 
 }  // namespace cumes

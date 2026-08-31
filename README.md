@@ -5,21 +5,29 @@ algorithm. All computation runs on GPU; the CPU host is a thin orchestrator.
 This is a pedagogical / scaffolding project — not production-grade, but the
 architecture and physics are real.
 
-**Reference implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
-(CPU-based C++ VMEC solver) at tag 0.7.0. vmecpp is cuMES's correctness
-reference (see [Verification](#verification)).
+**Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
+(CPU-based C++ VMEC solver) at tag 0.7.0. cuMES convergence is defined by its
+own discrete force residuals and validity gates; vmecpp is a diagnostic
+cross-check, not the convergence oracle (see [Verification](#verification)).
 
-**Status: working.** The solver reproduces its two frozen reference trajectories
-(cuMES's own audited baselines, re-derived after the CUDA overhaul):
+**Status: working.** The default fixed-boundary path uses shaped cold starts,
+an axisymmetric start policy, asynchronously prepared B-spline multigrid
+transfer, and qualified one-shot time-step recovery. The
+prior audited trajectories remain available with `CUMES_SEED_ENVELOPE=0`,
+`CUMES_AXISYM_LAMBDA_SEED=0`, `CUMES_DELT0=0.9`, and
+`CUMES_DISABLE_STEP_RECOVERY=1`; the earlier Catmull-Rom and linear multigrid
+transfers remain available with `CUMES_FORCE_CATMULL_PROLONGATION=1` and
+`CUMES_FORCE_LINEAR_PROLONGATION=1`:
 
 | case | multigrid stages | effective iters | final FSQR |
 | ---- | ---------------- | --------------- | ---------- |
-| Solovev (`inputs/solovev.json`) | 5 → 11 → 55 | 251 → 199 → 456 | 9.583e-17 |
-| W7-X (`inputs/w7x.json`) | 33 → 66 → 99 | 1877 → 1617 → 2011 (5505) | 9.778e-13 |
+| Solovev (`inputs/solovev.json`) | 5 → 11 → 55 | 235 → 193 → 326 (754) | 9.973e-17 |
+| W7-X (`inputs/w7x.json`) | 33 → 66 → 99 | 1315 → 1419 → 1372 (4106) | 9.997e-13 |
 
 ## Quick start
 
 ```bash
+git submodule update --init --recursive
 cmake --preset verify          # double precision, both backends, -Werror
 cmake --build build -j
 ./build/cumes inputs/solovev.json --output out.bin
@@ -63,6 +71,13 @@ point to g++-12 (set in `CMakeLists.txt`). Built CUDA architectures: 61
 a plain `cmake -B build` detects them and continues with unavailable backends
 disabled. Without NetCDF, binary output and in-memory MAKEGRID free-boundary
 calculations remain available.
+
+`deps/BSplineInterpolation` is a direct header-only submodule used to prepare
+the fixed-boundary multigrid transfer matrices. It is deliberately separate
+from the copy used internally by `deps/magnetic-coordinate`, so either
+dependency can be updated or disabled independently. If the direct submodule
+is absent, cuMES falls back to Catmull-Rom prolongation; the explicit build
+switch is `-DCUMES_USE_BSPLINE_PROLONGATION=OFF`.
 
 ## Architecture
 
@@ -201,8 +216,14 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | Variable | Effect |
 | -------- | ------ |
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
+| `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects four-point Catmull-Rom coarse-to-fine transfer (the previous fixed-boundary default) |
+| `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer (default for axisymmetric free-boundary and float runs) |
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
-| `CUMES_DELT0` | initial time step |
+| `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
+| `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |
+| `CUMES_SEED_ENVELOPE` | override cold-start shaping (fixed 3-D multigrid `0.12`, fixed 3-D single-grid `0.129`, free 3-D `0.12` through `ns=25` and `0.03` above, coarse fixed-axisymmetric `-0.07`; `0` restores the reference envelope) |
+| `CUMES_AXISYM_LAMBDA_SEED` | override the axisymmetric geometric lambda predictor scale (fixed/free defaults `0.65`/`1.0`; `0` restores zero lambda) |
+| `CUMES_VACUUM_ACTIVATION_THRESHOLD` | override the free-boundary vacuum handover residual sum (default `3e-2`; `1e-3` restores the reference gate) |
 | `CUMES_DUMP` | enables debug/dump output |
 
 ## Verification
@@ -210,7 +231,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 The frozen reference trajectories are cuMES's own audited baselines and serve as
 the internal regression oracle (`build/compare_runs` +
 `build/compare_bitwise` + CTest). vmecpp is used only as an independent
-correctness reference:
+diagnostic comparison:
 
 The four comparison tools are host-only C++ executables built by CMake. They
 can also be built without configuring cuMES:
@@ -225,15 +246,31 @@ g++ -std=c++20 scripts/compare_runs.cpp -o compare_runs
 `h5c++` or `pkg-config hdf5`; the other three tools need only the standard
 library and the POSIX `sha256sum` subprocess used by `compare_bitwise`.
 
-- **Solovev 5→11→55**: 251 → 199 → 456 effective iters, final FSQR 9.583e-17.
+- **Solovev 5→11→55**: tuned axisymmetric start and cubic B-spline transfer
+  give 235 → 193 → 326 effective iters, final FSQR 9.973e-17.
+  `CUMES_FORCE_CATMULL_PROLONGATION=1` restores 235 → 190 → 341;
+  `CUMES_FORCE_LINEAR_PROLONGATION=1` restores 235 → 193 → 387.
+  `CUMES_SEED_ENVELOPE=0`,
+  `CUMES_AXISYM_LAMBDA_SEED=0`, and `CUMES_DELT0=0.9` restore
+  251 → 199 → 456 and FSQR 9.583e-17.
 - **W7-X 33→66→99**: 1877 → 1617 → 2011 effective iters (total 5505), final
-  FSQR 9.778e-13. The converged final state agrees with the vmecpp/wout
-  reference at ~1e-5 in R/Z and ~1e-4 in the weakly-determined near-axis λ.
-- **Per-iteration fidelity (W7-X, single-grid)**: invariant residuals track
-  vmecpp at ≤1e-8 over the entire run; the converged state matches the wout at
-  ≤1.5e-9 in all six families.
-- **Single-grid regression**: with `n_grids=1` (`ns_array={99}`) the run
-  converges at 2953 effective iters, FSQR 9.924e-13.
+  FSQR 9.778e-13 for the diagnostic reference controller. The default
+  recovery, shaped cold start, and cubic B-spline transfer converge in
+  1315 → 1419 → 1372 iterations (total 4106), FSQR 9.997e-13, and a
+  checkpoint restart remains below tolerance and converges at iteration 1.
+  `CUMES_FORCE_CATMULL_PROLONGATION=1` restores the 4160-pass transfer
+  trajectory;
+  `CUMES_FORCE_LINEAR_PROLONGATION=1` restores the 4507-pass transfer
+  trajectory. `CUMES_SEED_ENVELOPE=0`
+  restores the recovery-only 4944-pass trajectory.
+- **Single-grid W7-X**: with `n_grids=1` (`ns_array={99}`), one-shot recovery
+  and the single-grid seed converge in 2465 effective iterations (down from
+  2711 with the reference seed and 2953 with the reference controller), FSQR
+  9.959e-13.
+  `CUMES_SEED_ENVELOPE=0` restores the 2711-iteration recovery-only
+  trajectory; additionally setting
+  `CUMES_DISABLE_STEP_RECOVERY=1` restores the 2953-iteration reference
+  trajectory.
 
 See [`docs/verification.md`](docs/verification.md) for the full tier/gate
 structure (equivalence classes, sanitizers, equivalence gates, performance

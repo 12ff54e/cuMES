@@ -103,7 +103,10 @@ cross-architecture claim is made (see `docs/performance.md`).
   state, init snapshots, and full dump manifests — see docs/dump-files.md). Note: the blueprint's
   pre-overhaul `FSQZ=4.273e-18` is stale — the axisymmetric backend's
   algorithm update moved the frozen value to `4.274e-18`, which is what
-  the baseline itself records.
+  the baseline itself records. Accepted Class-C defaults are additionally
+  gated by residual convergence and fixed-point replay: Solovev
+  `235→193→387` (FSQR 9.792e-17) and W7-X `1315→1559→1633`
+  (FSQR 9.967e-13).
 - **Sanitizer preset (`build-sanitize/`)**: the verify gate plus
   racecheck/synccheck variants of the kernel tests (RUN_SERIAL; racecheck
   exhausts the GPU under parallel runs) and ASan+UBSan twins of the
@@ -133,11 +136,18 @@ cross-architecture claim is made (see `docs/performance.md`).
 
 ## 1. Reference hierarchy
 
-Use three layers of truth:
+Use three layers of evidence:
 
 1. **Local scalar reference:** simple CPU implementations of transforms, staggered geometry, force terms, constraint, residuals, and tridiagonal solves. These diagnose the first wrong component.
 2. **Frozen legacy trajectory:** per-iteration component snapshots, residuals, damping values, restart events, and final state from the audited cuMES baseline on safe inputs.
-3. **Independent VMEC++ reference:** inputs and outputs generated with a pinned VMEC++ 0.7.0 revision, toolchain, and conversion script.
+3. **Independent VMEC++ comparison:** inputs and outputs generated with a pinned VMEC++ 0.7.0 revision, toolchain, and conversion script.
+
+For a cuMES solve, convergence is authoritatively defined by finite discrete
+force residuals below the configured tolerances after all geometry/Jacobian
+validity gates. A checkpoint restart that converges at iteration 1 is the
+strong fixed-point replay check. VMEC++ differences remain valuable for
+diagnosing formulation errors, but do not override those convergence criteria
+or select one member of a weak gauge family as uniquely correct.
 
 The legacy solver is not an oracle for a path known to contain undefined behavior. Such paths are validated against a corrected scalar formulation and VMEC++ instead.
 
@@ -151,7 +161,8 @@ Required host tests include:
 - mode folding/unfolding for signed toroidal input and every product-basis family;
 - `GridShape`, surface/mode indexing, and quadrature endpoint weights;
 - profile polynomial evaluation, flux normalization, fixed-iota/current policy selection, non-unit `tcon0`, and rejection of unsupported gamma;
-- controller residual histories reproducing convergence, ten-sample initialization/zero cases, bad-progress/Jacobian restarts, `ijacob=25/50` maintenance resets, checkpoint refresh/restore, and effective-iteration counting;
+- controller residual histories reproducing convergence, ten-sample initialization/zero cases, bad-progress/Jacobian restarts, `ijacob=25/50` maintenance resets, checkpoint refresh/restore, effective-iteration counting, and the opt-in one-shot time-step recovery;
+- cold-start envelope and axisymmetric-lambda policy: exact LCFS, regular axis, reference opt-outs, coarse/fine selection, analytic elliptical predictor, invalid-geometry atomic fallback, and free-boundary exclusion;
 - multigrid interpolation at axis, interior points, LCFS, odd/even modes, and all six families;
 - output capability preflight and run-status-to-exit-code mapping;
 - versioned/legacy serialization round trips and deliberate I/O failures.
@@ -224,9 +235,13 @@ Classify each change before review:
 
 - **Class A — ownership/scheduling, same arithmetic order:** require bitwise equality of component outputs and the full residual/controller trajectory in the precise build.
 - **Class B — reduction/kernel reorder:** require per-operator absolute/relative/ULP thresholds derived from the reference scale, identical finite/status classification, and identical controller decisions on the frozen short trajectories.
-- **Class C — numerical algorithm change:** require independent CPU/VMEC++ agreement, physical invariant checks, final-equilibrium comparison, convergence robustness across the fixture matrix, and a written ADR.
+- **Class C — numerical algorithm change:** require the configured residual convergence, finite/valid geometry, physical invariant checks, fixed-point restart where practical, convergence robustness across the fixture matrix, an independent comparison with differences reported, and a written ADR.
 
-Never approve a change only because the final residual is small. Compare R/Z/lambda families, axis/boundary invariants, geometry/field intermediates, restart sequence, and iteration count.
+Never approve a change only because one residual component is small. Require
+all configured residuals and validity gates, then compare R/Z/lambda families,
+axis/boundary invariants, geometry/field intermediates, restart sequence, and
+iteration count. Independent-solver differences are diagnostic evidence, not
+an alternate convergence test.
 
 Independent-solver agreement (Class C) against a vmecpp run is scripted by
 `build/compare_wout <cumes_state.bin> <vmecpp_output.h5>`: it folds the

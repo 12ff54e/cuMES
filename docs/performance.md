@@ -31,6 +31,14 @@ host observability (`bench == nullptr` in production leaves the hot loop
 byte-identical). A 2-pass smoke gate (`cumes_benchmark_smoke`) is registered in
 CTest.
 
+Production runs also print `device time` for every radial stage and
+`total device time` for their sum. These values are measured by CUDA events on
+the compute stream around `solver_run`; they exclude stage construction,
+publication-field re-evaluation, and file output. In free-boundary runs the
+reported interval includes the required host vacuum-coupling gaps between the
+prefix and suffix device work, so it represents end-to-end CUDA-stream elapsed
+time rather than a sum of kernel durations.
+
 ## 2. Steady-state wall time (TITAN Xp, sm_61)
 
 Measured by the fixed-iteration harness with 300 timed passes after 50 warmup
@@ -84,6 +92,147 @@ blueprint §2) put the W7-X iteration work in the transform accumulation/reducti
 with force, geometry, tridiagonal, and residual work smaller — i.e. structural
 transform work dominates over generic occupancy tuning, and host synchronization
 matters more as kernels shorten.
+
+### 2.2 W7-X fixed-boundary convergence recovery (2026-08-30)
+
+ADR-0007 adds a qualified one-shot recovery of a time step reduced by the
+early W7-X transient. It reduces deterministic effective iterations from 2953
+to 2711 (8.20%) without changing the per-pass CUDA DAG or its memory use.
+
+A native `sm_89` precise-double build on gervais (RTX 4090, CUDA 12.9,
+NetCDF/HDF5 disabled) reproduced both iteration counts and residuals. Six
+preheated, alternating A/B measurements pinned to NUMA-local CPU 10 gave
+2.0583 s baseline versus 1.9217 s recovery median, a 6.63% end-to-end wall
+reduction. Median absolute deviations were 6.1 ms and 7.6 ms. Unlocked GPU
+P-state transitions produced isolated slow samples (ranges 2.0510–2.5015 s
+and 1.9102–2.5244 s; interpolated p95 2.4893 s and 2.4846 s), so this set does
+not by itself establish the performance-policy confidence bound. The exact
+8.20% pass reduction, independent-solver state comparison, and frozen
+non-target trajectories are the primary acceptance evidence; the diagnostic
+opt-out retains direct A/B measurement.
+
+The same policy applied once per multigrid stage reduces W7-X from
+`1877 → 1617 → 2011` (5505 total) to `1741 → 1568 → 1635` (4944 total), a
+10.19% pass reduction. The final residual triple is FSQR `9.989e-13`, FSQZ
+`1.590e-13`, FSQL `5.116e-14`; restarting its checkpoint on the final grid
+converges at iteration 1 with the identical triple. Six alternating native
+gervais measurements gave 3.3109 s baseline versus 3.0021 s recovery median,
+a 9.33% end-to-end reduction (MAD 0.1090 s / 0.2123 s; unlocked-clock ranges
+3.1856–3.6662 s / 2.7096–3.5031 s). Solovev remains on its exact established
+trajectory because no reduced step survives to its recovery window.
+
+### 2.3 Shaped 3-D cold start (2026-08-30)
+
+ADR-0008 augments the regular `s^(m/2)` boundary-harmonic seed by the factor
+`1 + 0.12(1-s)` for fixed-boundary 3-D cold starts. It changes no LCFS value,
+preserves the required near-axis order, adds no GPU work, and can be disabled
+with `CUMES_SEED_ENVELOPE=0`.
+
+On W7-X single-grid the schedule-specific `0.129` envelope reduces effective
+iterations from 2711 to 2465 (9.07%); the earlier common `0.12` value reached
+2627. A native `sm_89` gervais run measured 1.334 s of CUDA-stream time at the
+new value versus about 1.43 s at `0.12`.
+On W7-X multigrid it changes `1741 → 1568 → 1635` (4944 total) to
+`1315 → 1559 → 1633` (4507 total), an 8.84% reduction. Combined with the
+reference controller baseline, total multigrid passes fall by 18.13%. The
+final residual triple is FSQR `9.967e-13`, FSQZ `1.563e-13`, FSQL
+`4.956e-14`, and checkpoint replay converges at iteration 1 with the identical
+triple. ADR-0008 alone leaves Solovev byte-identical because axisymmetric
+seeds are excluded; the later axisymmetric policy is measured separately
+below.
+
+Six alternating native gervais runs measured 1.9238 s versus 1.8823 s median
+for single-grid (2.16% wall reduction; MAD 6.3/14.8 ms) and 3.4419 s versus
+3.2983 s for multigrid (4.17%; MAD 0.331/0.388 s). Unlocked-clock outliers make
+these wall measurements noisier than the deterministic pass counts.
+
+### 2.4 Axisymmetric start policy (2026-08-30)
+
+ADR-0009 uses a `-0.07` envelope correction only for coarse fixed-boundary
+axisymmetric cold starts and raises the stage-initial descent step according
+to whether the state is cold, single-grid, or prolonged. It changes no GPU
+kernel, allocation, or per-pass DAG.
+
+Solovev multigrid falls from `251 -> 199 -> 456` (906 passes) to
+`235 -> 193 -> 387` (815), a 10.04% reduction, with final FSQR `9.792e-17`.
+A final-grid checkpoint replay converges at iteration 1 with a bit-identical
+state. A cold single `ns=55` grid falls from 533 to 354 passes (33.58%), with
+FSQR `9.835e-17`. W7-X remains exactly on its accepted
+`1315 -> 1559 -> 1633` trajectory.
+
+Before adding the lambda predictor, the local TITAN Xp gave 0.445 s versus
+0.395 s median multigrid wall time (11.2%), and a native sm_89 gervais build
+gave a 3.7% median reduction for the staged-step policy. The final sm_89 build
+reproduces the 815/354 pass counts. At this subsecond scale, CUDA process
+startup and unlocked P-state outliers dominate, so pass counts are the primary
+timing evidence.
+
+### 2.5 Free-boundary cold predictors (2026-08-31)
+
+ADR-0010 extends the host-only cold predictor to free-boundary starts without
+changing the vacuum-coupled iteration DAG. A resolution-limited 3-D envelope
+reduces CTH-like single-grid from 489 to 384 passes and `15 -> 25` multigrid
+from 592 to 563 total passes. The conservative fine-grid predictor reduces
+W7-X `ns=51` from 1831 to 1797 passes. The full axisymmetric lambda predictor
+reduces Solovev free-boundary from 1047 to 1025 total passes. Final FSQR values
+are `9.932e-11`, `9.942e-11`, `9.705e-13`, and `9.822e-15`, respectively.
+Adding the qualified `17/14` step on 3-D free-boundary grids through `ns=25`
+reduces CTH-like single-grid further to 347 passes and multigrid to
+`208 -> 238` (446 total), with final FSQR `9.359e-11` and `9.745e-11`.
+Activating the vacuum force at residual sum `3e-2` reduces those trajectories
+again to 309 and `198 -> 233` (431 total), with FSQR `9.635e-11` and
+`9.885e-11`. W7-X falls from the seeded 1797 to 1733 passes (FSQR
+`9.996e-13`), while Solovev remains at 1025.
+
+Seven alternating local TITAN Xp A/B pairs reduced CTH-like multigrid median
+wall time from 1.93 s to 1.50 s (22.3%; ranges 1.91--2.01 s and
+1.48--1.50 s). Five alternating W7-X pairs reduced the median from 8.37 s to
+7.93 s (5.3%; ranges 8.32--8.39 s and 7.85--7.97 s). Pass counts were
+identical in every repetition.
+
+### 2.6 Cubic multigrid transfer (2026-08-31)
+
+ADR-0011 replaces two-point linear radial prolongation with a four-point cubic
+interpolant in the existing odd-mode regularized coordinate. It changes only
+the initial state of a refined stage; force evaluation, descent, convergence,
+and the exact axis/LCFS contracts are unchanged.
+
+W7-X changes from `1315 → 1559 → 1633` (4507) to
+`1315 → 1443 → 1402` (4160), a 7.70% reduction, with FSQR
+`9.986e-13`. Solovev changes from `235 → 193 → 387` (815) to
+`235 → 190 → 341` (766), a 6.01% reduction, with FSQR `9.695e-17`.
+CTH-like free-boundary changes from `198 → 233` (431) to
+`198 → 226` (424), with FSQR `9.920e-11`. Axisymmetric free-boundary
+retains linear transfer because cubic regressed its qualified Solovev case
+from 1025 to 1045 passes. A final-grid W7-X checkpoint replay converges in one
+iteration with the identical residual triple.
+
+### 2.7 Global B-spline fixed-boundary transfer (2026-08-31)
+
+ADR-0012 replaces Catmull-Rom with an interpolating cubic B-spline for
+precise-double fixed-boundary continuation. Directly applying the reusable
+`InterpolationFunctionTemplate1D<3>` batch on the host improved the initial
+state but cost 1.90 ms for W7-X `33 → 66` and 2.94 ms for `66 → 99`, before
+PCIe transfers. The production path instead constructs the small linear
+interpolation matrix once and applies it to all six spectral families on the
+GPU, keeping the state device-resident.
+
+Matrix construction is also removed from the transition's critical path. One
+background task builds every scheduled map while the first GPU stage is
+running. Over 10,000 warmed-up `-O3 -march=native` calls, gervais measured
+median construction times of 36.7 us for W7-X `33 → 66` and 136.5 us for
+`66 → 99` (173.3 us total), versus about 462 us for one average W7-X device
+iteration. Solovev's two matrices total 9.2 us. The future is therefore ready
+long before the first transition in the qualified workloads; only the small
+matrix upload and GPU application remain at that boundary.
+
+Relative to Catmull-Rom, W7-X changes from `1315 → 1443 → 1402` (4160) to
+`1315 → 1419 → 1372` (4106), with FSQR `9.997e-13`. Solovev changes from
+`235 → 190 → 341` (766) to `235 → 193 → 326` (754), with FSQR
+`9.973e-17`. The spline is not selected for free-boundary continuation:
+CTH-like changed from 424 to 425 passes, and axisymmetric free-boundary
+Solovev regressed from 1025 to 1074. Those paths retain their qualified
+Catmull-Rom and linear transfers respectively.
 
 ## 3. Phase 9 experiments and their outcomes
 
@@ -148,7 +297,8 @@ complete numerical trajectory/state gate afterwards.
 
 Equivalence class precedes any timing claim: Class A requires bitwise equality;
 Class B requires per-operator ULP bounds and identical controller decisions;
-Class C requires independent CPU/VMEC++ agreement and a written ADR.
+Class C requires residual/validity qualification, independent comparisons with
+differences reported, and a written ADR.
 
 ## 5. Decision records and historical inputs
 

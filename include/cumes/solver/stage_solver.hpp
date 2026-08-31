@@ -102,6 +102,57 @@ class ScopedModeTable {
     DeviceModeTable mt_;
 };
 
+// CUDA-event elapsed time for the solver interval. Events are recorded on the
+// stage's compute stream, so the measurement follows all kernels, transforms,
+// and transfers ordered on that stream without including stage construction or
+// the optional publication-field re-evaluation below. For a free-boundary run
+// this is intentionally end-to-end stream elapsed time: required host vacuum
+// coupling between the two device portions of a pass remains visible.
+class ScopedDeviceTimer {
+   public:
+    ScopedDeviceTimer() {
+        check_cuda(cudaEventCreate(&start_), "device timer start event create");
+        try {
+            check_cuda(cudaEventCreate(&stop_),
+                       "device timer stop event create");
+        } catch (...) {
+            (void)cudaEventDestroy(start_);
+            start_ = nullptr;
+            throw;
+        }
+    }
+
+    ~ScopedDeviceTimer() {
+        if (stop_ != nullptr) (void)cudaEventDestroy(stop_);
+        if (start_ != nullptr) (void)cudaEventDestroy(start_);
+    }
+
+    ScopedDeviceTimer(const ScopedDeviceTimer&) = delete;
+    ScopedDeviceTimer& operator=(const ScopedDeviceTimer&) = delete;
+    ScopedDeviceTimer(ScopedDeviceTimer&&) = delete;
+    ScopedDeviceTimer& operator=(ScopedDeviceTimer&&) = delete;
+
+    void start(cudaStream_t stream) {
+        check_cuda(cudaEventRecord(start_, stream),
+                   "device timer start event record");
+    }
+
+    double stop(cudaStream_t stream) {
+        check_cuda(cudaEventRecord(stop_, stream),
+                   "device timer stop event record");
+        check_cuda(cudaEventSynchronize(stop_),
+                   "device timer stop event synchronize");
+        float elapsed_ms = 0.0f;
+        check_cuda(cudaEventElapsedTime(&elapsed_ms, start_, stop_),
+                   "device timer elapsed time");
+        return static_cast<double>(elapsed_ms);
+    }
+
+   private:
+    cudaEvent_t start_ = nullptr;
+    cudaEvent_t stop_ = nullptr;
+};
+
 // Construct the exact arena-allocation sequence of one stage against `arena`
 // — no longer a SEPARATE measuring pass: the real stage builds inside the
 // retry helper below (completion plan step 3.2), so the constructors' own
@@ -186,6 +237,8 @@ auto run_in_stage_arena(const DeviceParams<T>& p, F&& fn)
 // fixed-point solver on `state`, reports the arena's liveness/peak, and frees
 // the non-arena resources (cuFFT plans, pinned host faccon) before returning.
 // `state` stays owned by the caller; profilesCreate sets p.lamscale in place.
+// `enable_step_recovery` is an explicit numerical-policy choice made by the
+// multigrid driver, not inferred from the stage shape here.
 template <typename T>
 class StageSolver {
    public:
@@ -199,7 +252,10 @@ class StageSolver {
         std::optional<std::reference_wrapper<SolverBench>> bench = std::nullopt,
         std::optional<std::reference_wrapper<FreeBoundaryOperator<T>>> vacuum =
             std::nullopt,
-        EquilibriumSnapshot* output_snapshot = nullptr) {
+        EquilibriumSnapshot* output_snapshot = nullptr,
+        bool enable_step_recovery = false,
+        std::optional<std::reference_wrapper<double>> device_time_ms =
+            std::nullopt) {
         // One arena allocation, one construction of every module, one solve
         // (completion plan step 3.2): the modules' alloc_span calls ARE the
         // plan — there is no temporary measuring arena and nothing is
@@ -255,6 +311,8 @@ class StageSolver {
                 vacuum->get().set_edge_pressure(T(edge_pressure));
             }
 
+            stage_detail::ScopedDeviceTimer device_timer;
+            device_timer.start(stream);
             SolverResult<T> result = solver_run<T>(
                 state, p, profiles, transform, *rs, geometry, arena, stream,
                 bench,
@@ -262,7 +320,11 @@ class StageSolver {
                              std::reference_wrapper<SpectralOperator<T>>>(
                              std::ref(*axisym))
                        : std::nullopt,
-                vacuum);
+                vacuum, enable_step_recovery);
+            const double elapsed_device_ms = device_timer.stop(stream);
+            if (device_time_ms.has_value())
+                device_time_ms->get() = elapsed_device_ms;
+            std::printf("  device time: %.3f ms\n", elapsed_device_ms);
 
             if (output_snapshot != nullptr) {
                 // The converged exit already has matching fields, but a run

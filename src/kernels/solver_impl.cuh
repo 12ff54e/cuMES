@@ -747,7 +747,8 @@ void cumes::EquilibriumOperator<T>::enqueue_prefix(
     // Reduced into the typed record (device-only), ordered after the base
     // geometry but before the magnetic field. The finalize kernel writes
     // status.jacobian_valid with the SAME rule the host controller applies
-    // at the fence (JACOBIAN_EPS / nZnT); every downstream cache/state
+    // at the fence (control_policy::JACOBIAN_RELATIVE_THRESHOLD / nZnT); every
+    // downstream cache/state
     // mutation and 1/√g consumer reads that bit and no-ops on an invalid
     // pass. The host gate remains authoritative for the restore/delt
     // bookkeeping — the device bit only prevents forbidden mutations.
@@ -1011,7 +1012,8 @@ SolverResult<T> solver_run(
     std::optional<std::reference_wrapper<cumes::SolverBench>> bench,
     std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op,
     std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<T>>>
-        vacuum) {
+        vacuum,
+    bool enable_step_recovery) {
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt, {}};
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
@@ -1037,10 +1039,13 @@ SolverResult<T> solver_run(
     // dump_impl.cuh.)
     int MAX_ITER_EFF = p.max_iter;
     double DELT0_EFF = p.delt;  // double: atof knob, converted to T at use
-    double DTAU_FLOOR = 0.0;
+    double DTAU_FLOOR = cumes::control_policy::DEFAULT_DTAU_FLOOR;
     if (const char* e = getenv("CUMES_MAX_ITER")) MAX_ITER_EFF = atoi(e);
     if (const char* e = getenv("CUMES_DELT0")) DELT0_EFF = atof(e);
     if (const char* e = getenv("CUMES_DTAU_FLOOR")) DTAU_FLOOR = atof(e);
+    if (const char* e = getenv("CUMES_DISABLE_STEP_RECOVERY")) {
+        if (atoi(e) != 0) enable_step_recovery = false;
+    }
     printf("knobs: max_iter=%d delt0=%.3f dtau_floor=%.3e\n", MAX_ITER_EFF,
            DELT0_EFF, DTAU_FLOOR);
 
@@ -1056,10 +1061,10 @@ SolverResult<T> solver_run(
     // (double build: identity — Class A bitwise; float build: the double
     // accumulations reach the host decisions unrounded — Class B).
     cumes::IterationController<double> controller(
-        {DELT0_EFF, (double)p.ftol, DTAU_FLOOR});
+        {DELT0_EFF, (double)p.ftol, DTAU_FLOOR, enable_step_recovery});
 
     // vmecpp residual normalization factors (computeForceNorms), refreshed on
-    // the same cadence as the preconditioner (every PRECON_INTERVAL passes).
+    // the same cadence as the preconditioner refresh policy.
     double fNormRZ = 0.0, fNormL = 0.0, fNorm1 = 0.0;
 
     // Pinned mirror of the typed control record (one async D2H per pass,
@@ -1220,17 +1225,22 @@ SolverResult<T> solver_run(
              (vacuum->get().state() != cumes::VacuumState::INITIALIZED &&
               vacuum->get().state() != cumes::VacuumState::ACTIVE));
         schedule.refresh_preconditioner = controller.refresh_preconditioner();
-        schedule.zero_z_force_m1 = (controller.effective_iteration() < 2) ||
-                                   (controller.fsqz_prev() < 1.0e-6);
+        schedule.zero_z_force_m1 =
+            (controller.effective_iteration() <
+             cumes::control_policy::M1_GAUGE_BOOTSTRAP_ITERATIONS) ||
+            (controller.fsqz_prev() <
+             cumes::control_policy::M1_GAUGE_RESIDUAL_THRESHOLD);
         schedule.run_vacuum_block = vacuum && vacuum->get().run_vacuum_block();
         if (vacuum) {
             const bool almost_converged =
-                (previous_fsqr + previous_fsqz) < 1.0e-6;
+                (previous_fsqr + previous_fsqz) <
+                cumes::control_policy::VACUUM_ALMOST_CONVERGED_RESIDUAL;
             const bool hot_restart =
                 iter2 == 1 &&
                 vacuum->get().state() == cumes::VacuumState::INITIALIZED;
             schedule.include_edge_rz_invariant =
-                (iter2 - controller.restart_anchor()) < 50 &&
+                (iter2 - controller.restart_anchor()) <
+                    cumes::control_policy::VACUUM_EDGE_INVARIANT_WINDOW &&
                 (almost_converged || hot_restart);
         }
         schedule.decay_rcon0_zcon0 =
@@ -1494,7 +1504,7 @@ SolverResult<T> solver_run(
         // ---- Output (every 100 effective iters on the restart-anchored
         // grid, plus the final pass of a max-iteration run) ----
         if ((controller.effective_iteration() - controller.output_anchor()) %
-                    100 ==
+                    cumes::control_policy::ITERATION_OUTPUT_INTERVAL ==
                 0 ||
             iter == MAX_ITER_EFF - 1) {
             print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
