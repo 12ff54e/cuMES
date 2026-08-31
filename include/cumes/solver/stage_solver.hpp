@@ -353,7 +353,8 @@ class StageSolver {
                     p, profiles, *rs, geometry, *output_snapshot);
                 if (!status) throw CumesError(status.error());
                 if (output_profiles != nullptr) {
-                    capture_equilibrium_profiles(p, profiles, *output_profiles);
+                    capture_equilibrium_profiles(p, profiles, *output_snapshot,
+                                                 *output_profiles);
                 }
             }
             // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +

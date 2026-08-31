@@ -76,6 +76,12 @@ target_include_directories(test_magnetic_gradient_target PRIVATE
 target_link_libraries(test_magnetic_gradient_target PRIVATE cumes_io_host)
 cumes_enable_warnings(test_magnetic_gradient_target)
 
+add_executable(test_quasisymmetry_target test_quasisymmetry_target.cpp)
+target_include_directories(test_quasisymmetry_target PRIVATE
+  ${PROJECT_SOURCE_DIR}/examples)
+target_link_libraries(test_quasisymmetry_target PRIVATE cumes_io_host)
+cumes_enable_warnings(test_quasisymmetry_target)
+
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
@@ -188,6 +194,7 @@ cumes_add_test(test_input_json       unit;input)
 cumes_add_test(test_solver_api       unit;solver;api)
 cumes_add_test(test_plasma_size_target unit;optimizer;geometry)
 cumes_add_test(test_magnetic_gradient_target unit;optimizer;geometry)
+cumes_add_test(test_quasisymmetry_target unit;optimizer;physics)
 cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_derived_fields   unit;io;physics)

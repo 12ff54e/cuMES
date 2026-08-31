@@ -109,6 +109,8 @@ struct MagneticGradientFields {
     // Native half-grid layout: point + half_surface*(ntheta*nzeta).
     std::vector<double> field_strength;
     std::vector<double> b_dot_grad_b;
+    std::vector<double> b_cross_grad_s_dot_grad_b;
+    std::vector<double> b_cross_grad_toroidal_flux_dot_grad_b;
     std::vector<double> b_cross_grad_psi_p_dot_grad_b;
 };
 
@@ -168,8 +170,13 @@ inline MagneticGradientFields calculate_magnetic_gradient_fields(
         1.0 / static_cast<double>(equilibrium.ns - 1));
 
     result.b_dot_grad_b.resize(count);
+    result.b_cross_grad_s_dot_grad_b.resize(count);
+    result.b_cross_grad_toroidal_flux_dot_grad_b.resize(count);
     result.b_cross_grad_psi_p_dot_grad_b.resize(count);
     for (int surface = 0; surface < half_surfaces; ++surface) {
+        const double toroidal_flux_prime =
+            profiles
+                .toroidal_flux_derivative[static_cast<std::size_t>(surface)];
         const double psi_p_prime =
             poloidal_flux_scale *
             profiles
@@ -185,11 +192,18 @@ inline MagneticGradientFields calculate_magnetic_gradient_fields(
             result.b_dot_grad_b[index] = bsups[index] * ds_b[index] +
                                          bsupu[index] * dtheta_b[index] +
                                          bsupv[index] * dzeta_b[index];
-            result.b_cross_grad_psi_p_dot_grad_b[index] =
-                psi_p_prime / sqrtg[index] *
+            result.b_cross_grad_s_dot_grad_b[index] =
+                1.0 / sqrtg[index] *
                 (bsubv[index] * dtheta_b[index] -
                  bsubu[index] * dzeta_b[index]);
+            result.b_cross_grad_toroidal_flux_dot_grad_b[index] =
+                toroidal_flux_prime * result.b_cross_grad_s_dot_grad_b[index];
+            result.b_cross_grad_psi_p_dot_grad_b[index] =
+                psi_p_prime * result.b_cross_grad_s_dot_grad_b[index];
             if (!std::isfinite(result.b_dot_grad_b[index]) ||
+                !std::isfinite(result.b_cross_grad_s_dot_grad_b[index]) ||
+                !std::isfinite(
+                    result.b_cross_grad_toroidal_flux_dot_grad_b[index]) ||
                 !std::isfinite(result.b_cross_grad_psi_p_dot_grad_b[index])) {
                 throw std::runtime_error(
                     "magnetic-gradient target produced a non-finite value");

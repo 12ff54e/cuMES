@@ -193,8 +193,8 @@ and residual weights remain part of the optimizer's target definition.
 
 ### 4.1 QS, QH, and QA optimizer targets
 
-The next optimizer-side milestone builds a least-squares residual vector from
-the equilibrium primitives. For helicity integers `(M,N)`, define
+The optimizer-side `quasisymmetry_target.hpp` builds a least-squares residual
+vector from the equilibrium primitives. For helicity integers `(M,N)`, define
 
 ```text
 q_QS = ((N - iota*M) (B cross grad(psi)) dot grad(B)
@@ -203,8 +203,8 @@ q_QS = ((N - iota*M) (B cross grad(psi)) dot grad(B)
 
 Here `I(s)=<B_theta>` and `G(s)=<B_zeta>` are the VMEC-compatible covariant
 flux functions (`buco` and `bvco`), not the pointwise native covariant field
-components. cuMES will publish them as equilibrium profiles. The optimizer
-helper will make the flux choice explicit: the requested poloidal flux is
+components. cuMES publishes them as equilibrium profiles. The optimizer
+helper makes the flux choice explicit: the requested poloidal flux is
 supported, while the conventional Landreman--Paul QS metric can select the
 normalized toroidal flux. The sign above follows the requested ordering
 `(B cross grad(psi)) dot grad(B)`; reversing the scalar triple product reverses
@@ -234,6 +234,10 @@ f_QA = f_QS + (A - A_target)^2
 uses midpoint quadrature on the solver's native uniform half grid. QA checks
 that `N=0`; surface selection, nonnegative surface weights, `(M,N)`, and target
 values are all explicit optimizer configuration.
+
+In current language, `I=mu0/(2*pi)` times the enclosed toroidal current and
+`G=mu0/(2*pi)` times the poloidal current outside the surface, subject to the
+equilibrium's orientation convention.
 
 ## 5. Repeated-solve and concurrency policy
 

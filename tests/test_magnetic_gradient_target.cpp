@@ -48,6 +48,8 @@ int main() {
     profiles.toroidal_flux_derivative.assign(ns - 1, 1.0);
     profiles.poloidal_flux_derivative.assign(ns - 1, chi_prime);
     profiles.rotational_transform.assign(ns - 1, 0.5);
+    profiles.poloidal_covariant_field.assign(ns - 1, 0.0);
+    profiles.toroidal_covariant_field.assign(ns - 1, 0.0);
 
     const auto fields = cumes_meow_example::calculate_magnetic_gradient_fields(
         equilibrium, profiles, 1);
@@ -62,6 +64,13 @@ int main() {
                   "magnetic target: field strength from mixed components");
             check(std::abs(fields.b_dot_grad_b[index] - derivative) < 1.0e-12,
                   "magnetic target: B dot grad B");
+            const double expected_cross_s = b * b * derivative / sqrtg_value;
+            check(std::abs(fields.b_cross_grad_s_dot_grad_b[index] -
+                           expected_cross_s) < 1.0e-12,
+                  "magnetic target: B cross grad s dot grad B");
+            check(std::abs(fields.b_cross_grad_toroidal_flux_dot_grad_b[index] -
+                           expected_cross_s) < 1.0e-12,
+                  "magnetic target: toroidal-flux gradient observable");
             const double expected_cross =
                 chi_prime / sqrtg_value * b * b * derivative;
             check(std::abs(fields.b_cross_grad_psi_p_dot_grad_b[index] -

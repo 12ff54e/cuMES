@@ -152,6 +152,34 @@ int main() {
         check(profile_identity,
               "solver API: fixed-iota flux derivatives are consistent");
 
+        bool covariant_flux_functions_match = true;
+        const std::size_t points = outcome.equilibrium.points_per_surface();
+        const auto& bsubu =
+            outcome.equilibrium.half_fields[cumes::EquilibriumSnapshot::BSUBU];
+        const auto& bsubv =
+            outcome.equilibrium.half_fields[cumes::EquilibriumSnapshot::BSUBV];
+        for (int surface = 0; surface < outcome.equilibrium.ns - 1; ++surface) {
+            const std::size_t offset =
+                static_cast<std::size_t>(surface) * points;
+            double poloidal_sum = 0.0;
+            double toroidal_sum = 0.0;
+            for (std::size_t point = 0; point < points; ++point) {
+                poloidal_sum += bsubu[offset + point];
+                toroidal_sum += bsubv[offset + point];
+            }
+            const std::size_t radial = static_cast<std::size_t>(surface);
+            covariant_flux_functions_match =
+                covariant_flux_functions_match &&
+                std::abs(outcome.profiles.poloidal_covariant_field[radial] -
+                         poloidal_sum / static_cast<double>(points)) <
+                    profile_tolerance &&
+                std::abs(outcome.profiles.toroidal_covariant_field[radial] -
+                         toroidal_sum / static_cast<double>(points)) <
+                    profile_tolerance;
+        }
+        check(covariant_flux_functions_match,
+              "solver API: I and G match covariant field averages");
+
         const auto magnetic_fields =
             cumes_meow_example::calculate_magnetic_gradient_fields(
                 outcome.equilibrium, outcome.profiles,

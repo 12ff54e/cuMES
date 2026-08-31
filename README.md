@@ -74,12 +74,19 @@ major/minor radii, and gives their two residuals to meow:
 ```
 
 `SolveOutcome` also carries the converged half-grid toroidal/poloidal flux
-derivatives and rotational transform. The optimizer-side
+derivatives, rotational transform, and the covariant flux functions `I(s)` and
+`G(s)`. The optimizer-side
 `examples/magnetic_gradient_target.hpp` combines these profiles with the
 snapshot's covariant/contravariant magnetic-field components to calculate the
 pointwise half-grid fields `B dot grad(B)` and
 `(B cross grad(psi_p)) dot grad(B)`. cuMES does not choose a surface average,
 norm, target value, or residual weight; those remain target-function policy.
+
+`examples/quasisymmetry_target.hpp` supplies that policy for QS, QH, and QA.
+It returns a residual vector whose squared norm is `f_QS`, and the QH/QA
+builders append the aspect-ratio and mean-iota residuals. The flux gradient is
+explicitly selectable between normalized toroidal flux (the conventional QS
+metric) and normalized poloidal flux.
 
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
