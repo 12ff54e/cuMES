@@ -710,9 +710,11 @@ x_c(s)=\frac{x_{\mathrm{physical}}(s)}
 
 The old-axis stencil is `2*x_c(s1)-x_c(s2)`. Precise-double fixed-boundary
 continuation uses a global interpolating cubic B-spline in this scaled
-coordinate. A reusable `[ns_new][ns_old]` map is constructed once from
-`InterpolationFunctionTemplate1D<3>`, uploaded, and applied to every spectral
-profile by a batched CUDA kernel; the state never leaves the device. 3-D
+coordinate. The reusable `[ns_new][ns_old]` maps are constructed from
+`InterpolationFunctionTemplate1D<3>` by one background host task while the
+coarse GPU stage is iterating. Each completed map is uploaded and applied to
+every spectral profile by a batched CUDA kernel; the state never leaves the
+device. 3-D
 free-boundary continuation uses the qualified four-point Catmull-Rom
 interpolant, while axisymmetric free-boundary and float runs retain two-point
 linear interpolation. The result is unscaled on the new grid, new odd-mode

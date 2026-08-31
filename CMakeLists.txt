@@ -325,7 +325,8 @@ target_include_directories(cumes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Link order matters: cumes_io_host BEFORE cumes_io so the adapter library
 # is scanned while the backend-factory references are still undefined — the
 # linker then extracts the strong NetCDF/HDF5 factory definitions.
-target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io ${CUMES_SELECTED_CUDA})
+target_link_libraries(cumes PRIVATE cumes_config_json cumes_io_host cumes_io
+  ${CUMES_SELECTED_CUDA} Threads::Threads)
 if(CUMES_BUILD_MAGNETIC_COORDINATE)
   target_link_libraries(cumes PRIVATE
     magnetic-coordinate::magnetic_coordinate)

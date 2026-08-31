@@ -24,9 +24,12 @@ total solver time.
 ## Decision
 
 Use the interpolation template only to construct the linear
-`[ns_new][ns_old]` cubic B-spline map once per fixed-boundary grid transition.
-Upload that small map and apply it to every `family × mode` radial profile in
-one CUDA kernel. The spectral state remains device-resident.
+`[ns_new][ns_old]` cubic B-spline maps. At multigrid entry, launch one
+background task that builds all scheduled fixed-boundary maps sequentially
+while the first stage iterates on the GPU. Consume the completed batch at the
+grid transitions, upload each small map, and apply it to every `family × mode`
+radial profile in one CUDA kernel. The spectral state remains device-resident.
+Direct `Prolongation` callers retain a synchronous construction fallback.
 
 As with the earlier transfers, odd poloidal modes are interpolated after the
 `scalxc` decomposition and the extrapolated old-axis value is used as the
@@ -55,12 +58,21 @@ W7-X changes from `1315 → 1443 → 1402` to
 `235 → 193 → 326`. The GPU matrix path reproduces the direct host B-spline
 iteration counts and residuals exactly.
 
+Over 10,000 warmed-up optimized repetitions, gervais constructs the W7-X
+`33 → 66` and `66 → 99` matrices in median times of 36.7 us and 136.5 us,
+respectively. Their 173.3 us total is less than one average W7-X device
+iteration (about 462 us), and stage 1 takes 1315 iterations. Solovev's two
+matrices total 9.2 us. Consequently the background batch is ready well before
+the first qualified transition.
+
 The rejected free-boundary measurements were CTH-like 3-D, 424 → 425, and
 axisymmetric Solovev, 1025 → 1074. Their selected policies are unchanged.
 
 ## Consequences
 
 - Fixed-boundary refined stages begin closer to the fine-grid fixed point.
+- Host matrix construction is overlapped with the coarse GPU solve rather
+  than blocking the stage transition.
 - The one-time transfer performs a dense radial dot product, but its cost is
   negligible compared with the saved solver iterations and no state PCIe copy
   is introduced.

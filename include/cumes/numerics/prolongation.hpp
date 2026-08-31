@@ -15,6 +15,8 @@
 
 #include <cuda_runtime.h>
 
+#include <span>
+
 namespace cumes {
 
 enum class RadialInterpolation {
@@ -39,7 +41,8 @@ class Prolongation {
         const SpectralStorage<T>& state_old,
         const DeviceParams<T>& p_old,
         cudaStream_t stream,
-        RadialInterpolation interpolation = RadialInterpolation::LINEAR) const;
+        RadialInterpolation interpolation = RadialInterpolation::LINEAR,
+        std::span<const double> precomputed_bspline_matrix = {}) const;
 };
 
 }  // namespace cumes

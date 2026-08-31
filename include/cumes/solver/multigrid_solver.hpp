@@ -13,6 +13,9 @@
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/run_report.hpp"
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+#include "cumes/numerics/bspline_matrix.hpp"
+#endif
 #include "cumes/numerics/prolongation.hpp"
 #include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/solver/stage_solver.hpp"
@@ -20,8 +23,11 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <future>
 #include <memory>
+#include <span>
 #include <utility>
+#include <vector>
 
 namespace cumes {
 
@@ -89,6 +95,32 @@ class MultigridSolver {
             }
         }
 
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+        using BsplineMatrixBatch = std::vector<std::vector<double>>;
+        std::future<BsplineMatrixBatch> bspline_matrix_future;
+        BsplineMatrixBatch bspline_matrices;
+        if (radial_interpolation == RadialInterpolation::BSPLINE &&
+            n_grids > 1) {
+            std::vector<std::pair<int, int>> transitions;
+            transitions.reserve(static_cast<std::size_t>(n_grids - 1));
+            for (int g = 1; g < n_grids; ++g) {
+                transitions.emplace_back(
+                    static_cast<int>(stages[g - 1].radial_surfaces),
+                    static_cast<int>(stages[g].radial_surfaces));
+            }
+            bspline_matrix_future = std::async(
+                std::launch::async, [transitions = std::move(transitions)]() {
+                    BsplineMatrixBatch matrices;
+                    matrices.reserve(transitions.size());
+                    for (const auto& [ns_old, ns_new] : transitions) {
+                        matrices.push_back(
+                            cubic_bspline_interpolation_matrix(ns_old, ns_new));
+                    }
+                    return matrices;
+                });
+        }
+#endif
+
         // Free-boundary operator: constructed ONCE per run (vmecpp's
         // persistent vacuum solvers — the accumulated response matrix and the
         // LU factors survive the multigrid transitions; nothing is
@@ -125,8 +157,19 @@ class MultigridSolver {
             if (g > 0) {
                 // Prolong the previous stage's converged state onto this grid
                 // on the same compute stream (ordered before the next stage).
+                std::span<const double> precomputed_bspline_matrix;
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+                if (radial_interpolation == RadialInterpolation::BSPLINE) {
+                    if (bspline_matrices.empty()) {
+                        bspline_matrices = bspline_matrix_future.get();
+                    }
+                    precomputed_bspline_matrix =
+                        bspline_matrices[static_cast<std::size_t>(g - 1)];
+                }
+#endif
                 storage = cumes::Prolongation<T>{}.enqueue(
-                    p, storage, p_prev, stream, radial_interpolation);
+                    p, storage, p_prev, stream, radial_interpolation,
+                    precomputed_bspline_matrix);
                 // vmecpp vmec.cc :536-539: the converged coarse-stage vacuum
                 // state stays valid; re-mark INITIALIZED so the new stage's
                 // first pass runs the vacuum block.

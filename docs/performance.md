@@ -217,6 +217,15 @@ PCIe transfers. The production path instead constructs the small linear
 interpolation matrix once and applies it to all six spectral families on the
 GPU, keeping the state device-resident.
 
+Matrix construction is also removed from the transition's critical path. One
+background task builds every scheduled map while the first GPU stage is
+running. Over 10,000 warmed-up `-O3 -march=native` calls, gervais measured
+median construction times of 36.7 us for W7-X `33 → 66` and 136.5 us for
+`66 → 99` (173.3 us total), versus about 462 us for one average W7-X device
+iteration. Solovev's two matrices total 9.2 us. The future is therefore ready
+long before the first transition in the qualified workloads; only the small
+matrix upload and GPU application remain at that boundary.
+
 Relative to Catmull-Rom, W7-X changes from `1315 → 1443 → 1402` (4160) to
 `1315 → 1419 → 1372` (4106), with FSQR `9.997e-13`. Solovev changes from
 `235 → 190 → 341` (766) to `235 → 193 → 326` (754), with FSQR

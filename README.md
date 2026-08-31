@@ -11,7 +11,8 @@ own discrete force residuals and validity gates; vmecpp is a diagnostic
 cross-check, not the convergence oracle (see [Verification](#verification)).
 
 **Status: working.** The default fixed-boundary path uses shaped cold starts,
-an axisymmetric start policy, and qualified one-shot time-step recovery. The
+an axisymmetric start policy, asynchronously prepared B-spline multigrid
+transfer, and qualified one-shot time-step recovery. The
 prior audited trajectories remain available with `CUMES_SEED_ENVELOPE=0`,
 `CUMES_AXISYM_LAMBDA_SEED=0`, `CUMES_DELT0=0.9`, and
 `CUMES_DISABLE_STEP_RECOVERY=1`; the earlier Catmull-Rom and linear multigrid

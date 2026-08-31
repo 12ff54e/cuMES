@@ -29,7 +29,9 @@
 
 #include <cmath>
 #include <cstdio>
+#include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 // vmecpp decomposeInto scalxc for odd-m: 1/max(sqrt(s), sqrt(1/(ns-1))).
@@ -177,7 +179,11 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     const cumes::SpectralStorage<T>& st_old,
     const DeviceParams<T>& p_old,
     cudaStream_t stream,
-    cumes::RadialInterpolation interpolation) const {
+    cumes::RadialInterpolation interpolation,
+    std::span<const double> precomputed_bspline_matrix) const {
+#ifndef CUMES_HAVE_BSPLINE_PROLONGATION
+    static_cast<void>(precomputed_bspline_matrix);
+#endif
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         // Library contract: never exit() here — the RAII device buffers, the
         // caller's --checkpoint write, and the CLI run-report mapping must
@@ -208,13 +214,29 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     cumes::check_cuda(cudaDeviceSynchronize(), "interpolateState pre-sync");
     if (interpolation == cumes::RadialInterpolation::BSPLINE) {
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
-        const std::vector<double> matrix_double =
-            cumes::cubic_bspline_interpolation_matrix(p_old.ns, p_new.ns);
-        const std::vector<T> matrix(matrix_double.cbegin(),
-                                    matrix_double.cend());
-        cumes::DeviceBuffer<T> d_matrix(matrix.size());
+        std::vector<double> owned_matrix;
+        if (precomputed_bspline_matrix.empty()) {
+            owned_matrix =
+                cumes::cubic_bspline_interpolation_matrix(p_old.ns, p_new.ns);
+            precomputed_bspline_matrix = owned_matrix;
+        }
+        const std::size_t expected_matrix_size =
+            static_cast<std::size_t>(p_new.ns) * p_old.ns;
+        if (precomputed_bspline_matrix.size() != expected_matrix_size) {
+            throw cumes::CumesError(
+                "interpolateState B-spline matrix size mismatch");
+        }
+
+        cumes::DeviceBuffer<T> d_matrix(expected_matrix_size);
+        const void* matrix_data = precomputed_bspline_matrix.data();
+        std::vector<T> converted_matrix;
+        if constexpr (!std::is_same_v<T, double>) {
+            converted_matrix.assign(precomputed_bspline_matrix.begin(),
+                                    precomputed_bspline_matrix.end());
+            matrix_data = converted_matrix.data();
+        }
         cumes::check_cuda(
-            cudaMemcpy(d_matrix.data(), matrix.data(), d_matrix.byte_size(),
+            cudaMemcpy(d_matrix.data(), matrix_data, d_matrix.byte_size(),
                        cudaMemcpyHostToDevice),
             "interpolateState B-spline matrix upload");
         const int total = 6 * p_new.mnmax * p_new.ns;

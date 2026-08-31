@@ -71,7 +71,8 @@ static T expected_value(const std::vector<T>& old_state,
 }
 
 template <typename T>
-static void run_case(cumes::RadialInterpolation interpolation) {
+static void run_case(cumes::RadialInterpolation interpolation,
+                     bool precompute_bspline = false) {
     constexpr int ns_old = 5;
     constexpr int ns_new = 8;  // deliberately not an integer refinement
     constexpr int mnmax = 2;   // m=0 even, m=1 odd (ntor=0)
@@ -103,12 +104,20 @@ static void run_case(cumes::RadialInterpolation interpolation) {
     cc(cudaMemcpy(old_state.state_slab(), input.data(),
                   input.size() * sizeof(T), cudaMemcpyHostToDevice),
        "prolongation input upload");
-    cumes::SpectralStorage<T> new_state = cumes::Prolongation<T>{}.enqueue(
-        p_new, old_state, p_old, 0, interpolation);
-
     std::vector<double> bspline_matrix;
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
-    if (interpolation == cumes::RadialInterpolation::BSPLINE) {
+    if (interpolation == cumes::RadialInterpolation::BSPLINE &&
+        precompute_bspline) {
+        bspline_matrix =
+            cumes::cubic_bspline_interpolation_matrix(ns_old, ns_new);
+    }
+#endif
+    cumes::SpectralStorage<T> new_state = cumes::Prolongation<T>{}.enqueue(
+        p_new, old_state, p_old, 0, interpolation, bspline_matrix);
+
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+    if (interpolation == cumes::RadialInterpolation::BSPLINE &&
+        bspline_matrix.empty()) {
         bspline_matrix =
             cumes::cubic_bspline_interpolation_matrix(ns_old, ns_new);
     }
@@ -143,7 +152,8 @@ static void run_case(cumes::RadialInterpolation interpolation) {
                           ? "linear"
                       : interpolation == cumes::RadialInterpolation::CATMULL_ROM
                           ? "Catmull-Rom"
-                          : "B-spline") +
+                      : precompute_bspline ? "precomputed B-spline"
+                                           : "fallback B-spline") +
               (sizeof(T) == sizeof(double) ? " double" : " float") +
               " CPU/GPU agreement");
     check(std::all_of(velocity.begin(), velocity.end(),
@@ -165,7 +175,8 @@ int main() {
     run_case<double>(cumes::RadialInterpolation::LINEAR);
     run_case<double>(cumes::RadialInterpolation::CATMULL_ROM);
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
-    run_case<double>(cumes::RadialInterpolation::BSPLINE);
+    run_case<double>(cumes::RadialInterpolation::BSPLINE, true);
+    run_case<double>(cumes::RadialInterpolation::BSPLINE, false);
     check(cumes::cubic_bspline_interpolation_matrix(3, 5).size() == 15,
           "B-spline matrix supports the minimum coarse grid");
 #endif
