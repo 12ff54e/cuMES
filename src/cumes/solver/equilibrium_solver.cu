@@ -11,6 +11,7 @@
 #include "cumes/state/seed_state.hpp"
 #include "vmec_types.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -58,10 +59,24 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
 
     ScopedDumpEnvironment dump_environment(request.use_process_environment);
     Stream compute_stream;
+    std::optional<RadialInterpolation> radial_interpolation;
+    switch (request.radial_transfer) {
+        case RadialTransferPolicy::AUTOMATIC:
+            break;
+        case RadialTransferPolicy::LINEAR:
+            radial_interpolation = RadialInterpolation::LINEAR;
+            break;
+        case RadialTransferPolicy::CATMULL_ROM:
+            radial_interpolation = RadialInterpolation::CATMULL_ROM;
+            break;
+        case RadialTransferPolicy::BSPLINE:
+            radial_interpolation = RadialInterpolation::BSPLINE;
+            break;
+    }
     MultigridOutcome<Real> internal = MultigridSolver<Real>::run(
         params, problem, std::move(seed), compute_stream.get(),
         request.restart.has_value(), request.verbose,
-        request.use_process_environment);
+        request.use_process_environment, radial_interpolation);
 
     SolveOutcome outcome;
     outcome.equilibrium = std::move(internal.snapshot);

@@ -18,6 +18,13 @@
 
 namespace cumes {
 
+enum class RadialTransferPolicy {
+    AUTOMATIC,
+    LINEAR,
+    CATMULL_ROM,
+    BSPLINE,
+};
+
 struct SolveRequest {
     // Optional hot-start state. Its shape must match the first radial stage
     // and the validated mode count. The referenced snapshot must outlive the
@@ -32,6 +39,11 @@ struct SolveRequest {
     // default. The CLI enables this to preserve its documented CUMES_*
     // environment controls.
     bool use_process_environment = false;
+
+    // AUTOMATIC retains the precision/boundary-qualified solver default.
+    // An embedding application can select a retained transfer explicitly for
+    // a configuration whose multigrid path has been qualified separately.
+    RadialTransferPolicy radial_transfer = RadialTransferPolicy::AUTOMATIC;
 };
 
 struct SolveOutcome {

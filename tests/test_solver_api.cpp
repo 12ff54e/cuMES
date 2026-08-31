@@ -181,6 +181,8 @@ int main() {
 
         cumes::SolveRequest restart_request;
         restart_request.restart = std::cref(outcome.equilibrium);
+        restart_request.radial_transfer =
+            cumes::RadialTransferPolicy::CATMULL_ROM;
         cumes::SolveOutcome restarted =
             solver.solve(validated.value(), restart_request);
         check(restarted.has_complete_equilibrium(),

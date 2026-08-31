@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <future>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -55,13 +56,16 @@ class MultigridSolver {
     // stage from the validated problem's stage schedule (exactly the legacy
     // stage loop). `seed` is the stage-0 cold-start state (already
     // interpolated from boundary + axis).
-    static MultigridOutcome<T> run(DeviceParams<T>& p,
-                                   const ValidatedProblem& vp,
-                                   SpectralStorage<T> seed,
-                                   cudaStream_t stream = 0,
-                                   bool hot_start = false,
-                                   bool verbose = true,
-                                   bool use_process_environment = true) {
+    static MultigridOutcome<T> run(
+        DeviceParams<T>& p,
+        const ValidatedProblem& vp,
+        SpectralStorage<T> seed,
+        cudaStream_t stream = 0,
+        bool hot_start = false,
+        bool verbose = true,
+        bool use_process_environment = true,
+        std::optional<RadialInterpolation> radial_interpolation_override =
+            std::nullopt) {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
         DeviceParams<T> p_prev;
@@ -104,6 +108,9 @@ class MultigridSolver {
                     radial_interpolation = RadialInterpolation::LINEAR;
                 }
             }
+        }
+        if (radial_interpolation_override.has_value()) {
+            radial_interpolation = *radial_interpolation_override;
         }
 
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
