@@ -61,7 +61,10 @@ class MultigridSolver {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
         DeviceParams<T> p_prev;
-        SolverResult<T> result{false, 0, T(1.0), T(1.0), T(1.0), T(0.9), {}};
+        SolverResult<T> result{false,  0,
+                               T(1.0), T(1.0),
+                               T(1.0), T(control_policy::DEFAULT_INITIAL_STEP),
+                               {}};
         int total_iter = 0;
         double total_device_time_ms = 0.0;
         const auto& stages = vp.spec().stages;

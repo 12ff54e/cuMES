@@ -19,7 +19,7 @@
 //                      the delBSq surface-mean diagnostic
 //   edge force       : armn_e/o += (zu_e+zu_o)*rBSq, azmn_e/o -=
 //                      (ru_e+ru_o)*rBSq at the LCFS row
-//   rcon decay       : rCon0/zCon0 *= 0.9 on vacuum-active passes
+//   rcon decay       : scale rCon0/zCon0 on vacuum-active passes
 //
 // New-style conventions (snake_case) per the 2026-08-24 coding-style update.
 #ifndef CUMES_SRC_FREE_BOUNDARY_IMPL_CUH_
@@ -183,16 +183,16 @@ __global__ void vacuum_edge_force_kernel(T* __restrict__ armn_e,
     azmn_o[base] -= ru_full * r;
 }
 
-// rCon0/zCon0 *= 0.9 over every surface (vmecpp :651-661; nsMaxF = ns for
-// free boundary).
+// Scale rCon0/zCon0 over every surface (vmecpp :651-661; nsMaxF = ns for free
+// boundary).
 template <class T>
 __global__ void rcon_decay_kernel(T* __restrict__ rcon0,
                                   T* __restrict__ zcon0,
                                   int n) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    rcon0[i] *= T(0.9);
-    zcon0[i] *= T(0.9);
+    rcon0[i] *= T(control_policy::VACUUM_CONSTRAINT_DECAY_FACTOR);
+    zcon0[i] *= T(control_policy::VACUUM_CONSTRAINT_DECAY_FACTOR);
 }
 
 }  // namespace
@@ -211,7 +211,7 @@ struct FreeBoundaryOperator<T>::Impl {
     vfield::VacuumFieldSolver<T> solver;
     VacuumState state = VacuumState::OFF;
     int nvacskip = 1;
-    double activation_threshold = DEFAULT_VACUUM_ACTIVATION_RESIDUAL;
+    double activation_threshold = control_policy::VACUUM_ACTIVATION_RESIDUAL;
     int ivacskip = 0;
     bool run_block = false;
     bool full_update = false;

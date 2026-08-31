@@ -178,7 +178,9 @@ int main() {
         const double inv[3] = {0.1, 0.1, 0.1};
         const double small[3] = {0.01, 0.01, 0.01};
         const double big[3] = {10.0, 10.0, 10.0};
-        for (int k = 0; k < 25; ++k) {
+        for (int k = 0;
+             k < cumes::control_policy::FIRST_MAINTENANCE_BAD_JACOBIAN_COUNT;
+             ++k) {
             ctl.classify_invariant(inv);
             ctl.after_descent(ctl.decide_restart(small, inv));  // good
             ctl.classify_invariant(inv);
@@ -202,7 +204,9 @@ int main() {
         // Advance one pass, then check the cadence predicate at iter2 == 26.
         ctl.classify_invariant(inv);
         ctl.after_descent(ctl.decide_restart(prec, inv));
-        for (int i = 0; i < 24; ++i) {
+        for (int i = 0;
+             i < cumes::control_policy::PRECONDITIONER_REFRESH_INTERVAL - 1;
+             ++i) {
             ctl.classify_invariant(inv);
             ctl.after_descent(ctl.decide_restart(prec, inv));
         }
@@ -226,7 +230,7 @@ int main() {
 
         const double inv[3] = {1e-3, 1e-3, 1e-3};
         const double prec[3] = {1e-4, 1e-4, 1e-4};
-        for (int i = 0; i < cumes::STEP_RECOVERY_AGE - 1; ++i) {
+        for (int i = 0; i < cumes::control_policy::STEP_RECOVERY_AGE - 1; ++i) {
             enabled.classify_invariant(inv);
             enabled.after_descent(enabled.decide_restart(prec, inv));
             disabled.classify_invariant(inv);
@@ -238,7 +242,8 @@ int main() {
         enabled.after_descent(enabled.decide_restart(prec, inv));
         disabled.classify_invariant(inv);
         disabled.after_descent(disabled.decide_restart(prec, inv));
-        check_near(enabled.delta_t(), 0.81 * cumes::STEP_RECOVERY_FACTOR, 1e-15,
+        check_near(enabled.delta_t(),
+                   0.81 * cumes::control_policy::STEP_RECOVERY_FACTOR, 1e-15,
                    "enabled controller recovers 10 percent once");
         check_near(disabled.delta_t(), 0.81, 1e-15,
                    "disabled controller preserves the reduced step");
@@ -247,8 +252,9 @@ int main() {
         // second recovery in the same stage.
         check(enabled.jacobian_invalid(js, 5),
               "post-recovery Jacobian failure shrinks the step");
-        const double reduced_again = 0.81 * cumes::STEP_RECOVERY_FACTOR * 0.9;
-        for (int i = 0; i < cumes::STEP_RECOVERY_AGE; ++i) {
+        const double reduced_again =
+            0.81 * cumes::control_policy::STEP_RECOVERY_FACTOR * 0.9;
+        for (int i = 0; i < cumes::control_policy::STEP_RECOVERY_AGE; ++i) {
             enabled.classify_invariant(inv);
             enabled.after_descent(enabled.decide_restart(prec, inv));
         }

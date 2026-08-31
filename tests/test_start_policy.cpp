@@ -12,7 +12,7 @@ static void check_near(double actual, double expected, const char* message) {
 }
 
 int main() {
-    check_near(cumes::DEFAULT_VACUUM_ACTIVATION_RESIDUAL, 3.0e-2,
+    check_near(cumes::control_policy::VACUUM_ACTIVATION_RESIDUAL, 3.0e-2,
                "vacuum activates at the qualified residual gate");
     check_near(cumes::initial_step_for_stage(0.9, 12, 12, false, 99, 3, 0), 0.9,
                "3-D stages retain the configured step");

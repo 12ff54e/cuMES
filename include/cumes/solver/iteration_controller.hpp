@@ -25,6 +25,7 @@
 #define CUMES_INCLUDE_CUMES_SOLVER_ITERATION_CONTROLLER_HPP_
 
 #include "cumes/io/run_report.hpp"
+#include "cumes/solver/control_policy.hpp"
 #include "cumes/solver/control_record.hpp"
 
 #include <cmath>
@@ -33,22 +34,15 @@
 
 namespace cumes {
 
-// vmecpp's shouldUpdateRadialPreconditioner cadence (blueprint §4.10): the
-// radial preconditioner and residual normalization refresh every 25 passes
-// measured from the latest restart anchor.
-inline constexpr int PRECON_INTERVAL = 25;
-inline constexpr int STEP_RECOVERY_AGE = 250;
-inline constexpr double STEP_RECOVERY_FACTOR = 1.1;
-
 template <typename T>
 class IterationController {
    public:
     using val_type = T;
 
     struct Options {
-        T delta_t0 = T(0.9);  // initial time step (vmecpp delt)
-        T ftol = T(1e-16);    // stage convergence tolerance
-        T dtau_floor = T(0);  // optional 1/tau floor (0 = disabled)
+        T delta_t0 = T(control_policy::DEFAULT_INITIAL_STEP);
+        T ftol = T(control_policy::DEFAULT_STAGE_TOLERANCE);
+        T dtau_floor = T(control_policy::DEFAULT_DTAU_FLOOR);
         // After a long stable window, cautiously recover part of a time-step
         // reduction. Disabled by default so callers opt in deliberately.
         bool enable_step_recovery = false;
@@ -63,7 +57,10 @@ class IterationController {
         // vmecpp initializes the ten-sample 1/tau history to 0.15/delt at
         // stage start (NOT 0.15/current-delt; the two coincide only until the
         // first restart or maintenance reset changes delt).
-        for (int ii = 0; ii < 10; ++ii) inv_tau_hist_[ii] = T(0.15) / delt0_;
+        for (int ii = 0; ii < control_policy::DAMPING_HISTORY_LENGTH; ++ii) {
+            inv_tau_hist_[ii] =
+                T(control_policy::DAMPING_LOG_RATIO_LIMIT) / delt0_;
+        }
     }
 
     // ---- pass-invariant accessors (the solver builds the device schedule)
@@ -90,7 +87,9 @@ class IterationController {
         return iter2_ == iter1_;
     }
     bool refresh_preconditioner() const noexcept {
-        return (iter2_ - iter1_) % PRECON_INTERVAL == 0;
+        return (iter2_ - iter1_) %
+                   control_policy::PRECONDITIONER_REFRESH_INTERVAL ==
+               0;
     }
 
     // ---- per-fence decisions ----
@@ -100,9 +99,14 @@ class IterationController {
     // the checkpoint and continues without geometry, descent, or an
     // effective-iteration increment.
     bool next_schedule() {
-        if (ijacob_ == 25 || ijacob_ == 50) {
+        if (ijacob_ == control_policy::FIRST_MAINTENANCE_BAD_JACOBIAN_COUNT ||
+            ijacob_ == control_policy::SECOND_MAINTENANCE_BAD_JACOBIAN_COUNT) {
             ++ijacob_;
-            delt_ = (ijacob_ < 50 ? T(0.98) : T(0.96)) * delt0_;
+            delt_ =
+                (ijacob_ < control_policy::SECOND_MAINTENANCE_BAD_JACOBIAN_COUNT
+                     ? T(control_policy::FIRST_MAINTENANCE_STEP_FACTOR)
+                     : T(control_policy::SECOND_MAINTENANCE_STEP_FACTOR)) *
+                delt0_;
             iter1_ = iter2_;
             log_anchor_ = iter2_;
             restart_events_.push_back(RestartEvent{iter2_});
@@ -137,8 +141,10 @@ class IterationController {
     bool jacobian_invalid(const JacobianStatus<T>& s, int nZnT) {
         if (s.nonfinite_count > T(0) || s.max_abs <= T(0) ||
             s.min_oriented <= T(0) ||
-            (s.min_oriented < T(1e-12) * s.max_abs && s.min_index >= nZnT)) {
-            delt_ *= T(0.9);
+            (s.min_oriented <
+                 T(control_policy::JACOBIAN_RELATIVE_THRESHOLD) * s.max_abs &&
+             s.min_index >= nZnT)) {
+            delt_ *= T(control_policy::RESTART_STEP_FACTOR);
             iter1_ = iter2_;
             log_anchor_ = iter2_;
             restart_events_.push_back(RestartEvent{iter2_});
@@ -156,7 +162,7 @@ class IterationController {
             !(std::isfinite(invariant[0]) && std::isfinite(invariant[1]) &&
               std::isfinite(invariant[2]));
         if (nonfinite) {
-            delt_ *= T(0.9);
+            delt_ *= T(control_policy::RESTART_STEP_FACTOR);
             iter1_ = iter2_;
             log_anchor_ = iter2_;
             restart_events_.push_back(RestartEvent{iter2_});
@@ -180,24 +186,32 @@ class IterationController {
         // inserted only when iter2 > iter1 (so the anchor pass leaves the last
         // entry at the initialized 0.15/delt value).
         if (iter2_ == iter1_) {
-            for (int ii = 0; ii < 10; ++ii) inv_tau_hist_[ii] = T(0.15) / delt_;
+            for (int ii = 0; ii < control_policy::DAMPING_HISTORY_LENGTH;
+                 ++ii) {
+                inv_tau_hist_[ii] =
+                    T(control_policy::DAMPING_LOG_RATIO_LIMIT) / delt_;
+            }
         }
-        for (int ii = 0; ii < 9; ++ii)
+        for (int ii = 0; ii < control_policy::DAMPING_HISTORY_LENGTH - 1; ++ii)
             inv_tau_hist_[ii] = inv_tau_hist_[ii + 1];
         if (iter2_ > iter1_) {
             T invtau_num = T(0);
             if (fsq != T(0)) {
                 invtau_num =
-                    std::min(std::abs(std::log(fsq / fsq_prev_)), T(0.15));
+                    std::min(std::abs(std::log(fsq / fsq_prev_)),
+                             T(control_policy::DAMPING_LOG_RATIO_LIMIT));
             }
-            inv_tau_hist_[9] = invtau_num / delt_;
+            inv_tau_hist_[control_policy::DAMPING_HISTORY_LENGTH - 1] =
+                invtau_num / delt_;
         }
         fsq_prev_ = fsq;
 
         T otav = T(0);
-        for (int ii = 0; ii < 10; ++ii) otav += inv_tau_hist_[ii];
-        otav /= T(10);
-        T dtau = delt_ * otav / T(2);
+        for (int ii = 0; ii < control_policy::DAMPING_HISTORY_LENGTH; ++ii) {
+            otav += inv_tau_hist_[ii];
+        }
+        otav /= T(control_policy::DAMPING_HISTORY_LENGTH);
+        T dtau = delt_ * otav / T(control_policy::DAMPING_TIME_SCALE_DIVISOR);
         if (dtau_floor_ > T(0)) dtau = std::fmax(dtau, dtau_floor_);
         const T b1 = T(1) - dtau;
         const T fac = T(1) / (T(1) + dtau);
@@ -209,12 +223,18 @@ class IterationController {
 
         RestartReason reason = RestartReason::NONE;
         bool do_refresh = false;
-        if (fsq <= res0_ && (iter2_ - iter1_) > 10) {
+        if (fsq <= res0_ &&
+            (iter2_ - iter1_) > control_policy::CHECKPOINT_REFRESH_MIN_AGE) {
             do_refresh = true;
-        } else if (fsq > T(100.0) * res0_ && iter2_ > iter1_) {
+        } else if (fsq >
+                       T(control_policy::BAD_JACOBIAN_RESIDUAL_GROWTH_FACTOR) *
+                           res0_ &&
+                   iter2_ > iter1_) {
             reason = RestartReason::BAD_JACOBIAN;
-        } else if ((iter2_ - iter1_) > 12 && iter2_ > 50 &&
-                   (invariant[0] + invariant[1]) > T(1.0e-2)) {
+        } else if ((iter2_ - iter1_) > control_policy::BAD_PROGRESS_MIN_AGE &&
+                   iter2_ > control_policy::BAD_PROGRESS_MIN_ITERATION &&
+                   (invariant[0] + invariant[1]) >
+                       T(control_policy::BAD_PROGRESS_RZ_RESIDUAL_THRESHOLD)) {
             reason = RestartReason::BAD_PROGRESS;
         }
 
@@ -254,10 +274,10 @@ class IterationController {
     void after_descent(const RestartDecision<T>& d) {
         if (d.reason != RestartReason::NONE) {
             if (d.reason == RestartReason::BAD_JACOBIAN) {
-                delt_ *= T(0.9);
+                delt_ *= T(control_policy::RESTART_STEP_FACTOR);
                 ++ijacob_;
             } else {
-                delt_ /= T(1.03);
+                delt_ /= T(control_policy::BAD_PROGRESS_STEP_DIVISOR);
             }
             iter1_ = iter2_;
             log_anchor_ = iter2_;
@@ -269,8 +289,10 @@ class IterationController {
             // without another restart, recover 10% once. The normal
             // fsq-growth/Jacobian gates remain responsible for rollback.
             if (step_recovery_enabled_ && !step_recovery_attempted_ &&
-                (iter2_ - iter1_) >= STEP_RECOVERY_AGE && delt_ < delt0_) {
-                delt_ = std::min(delt0_, delt_ * T(STEP_RECOVERY_FACTOR));
+                (iter2_ - iter1_) >= control_policy::STEP_RECOVERY_AGE &&
+                delt_ < delt0_) {
+                delt_ = std::min(
+                    delt0_, delt_ * T(control_policy::STEP_RECOVERY_FACTOR));
                 step_recovery_attempted_ = true;
             }
         }
@@ -289,7 +311,7 @@ class IterationController {
     T res0_ = T(-1.0);      // running minimum of the preconditioned sum
     T fsq_prev_ = T(1.0);   // previous preconditioned sum
     T fsqz_prev_ = T(0.0);  // previous invariant Z-residual
-    T inv_tau_hist_[10];    // ten-sample 1/tau history
+    T inv_tau_hist_[control_policy::DAMPING_HISTORY_LENGTH];
     bool step_recovery_attempted_ = false;
     std::vector<RestartEvent> restart_events_;
 };

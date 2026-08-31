@@ -2,6 +2,8 @@
 #ifndef CUMES_INCLUDE_CUMES_SOLVER_START_POLICY_HPP_
 #define CUMES_INCLUDE_CUMES_SOLVER_START_POLICY_HPP_
 
+#include "cumes/solver/control_policy.hpp"
+
 namespace cumes {
 
 // Qualified double-precision cold starts tolerate a larger descent step than
@@ -21,15 +23,28 @@ constexpr T initial_step_for_stage(T configured_step,
                                    int stage_index) noexcept {
     if constexpr (sizeof(T) < sizeof(double)) return configured_step;
     if (free_boundary) {
-        if (ntor > 0 && radial_surfaces <= 25) {
-            return configured_step * T(17) / T(14);
+        if (ntor > 0 && radial_surfaces <=
+                            control_policy::FREE_BOUNDARY_COARSE_MAX_SURFACES) {
+            return configured_step *
+                   T(control_policy::FREE_BOUNDARY_COARSE_STEP_NUMERATOR) /
+                   T(control_policy::FREE_BOUNDARY_COARSE_STEP_DENOMINATOR);
         }
         return configured_step;
     }
     if (ntor != 0 || nzeta != 1) return configured_step;
-    if (stage_count == 1) return configured_step * T(7) / T(6);
-    if (stage_index == 0) return configured_step * T(17) / T(15);
-    return configured_step * T(6) / T(5);
+    if (stage_count == 1) {
+        return configured_step *
+               T(control_policy::AXISYMMETRIC_SINGLE_GRID_STEP_NUMERATOR) /
+               T(control_policy::AXISYMMETRIC_SINGLE_GRID_STEP_DENOMINATOR);
+    }
+    if (stage_index == 0) {
+        return configured_step *
+               T(control_policy::AXISYMMETRIC_COARSE_STEP_NUMERATOR) /
+               T(control_policy::AXISYMMETRIC_COARSE_STEP_DENOMINATOR);
+    }
+    return configured_step *
+           T(control_policy::AXISYMMETRIC_REFINED_STEP_NUMERATOR) /
+           T(control_policy::AXISYMMETRIC_REFINED_STEP_DENOMINATOR);
 }
 
 }  // namespace cumes

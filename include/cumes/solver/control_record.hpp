@@ -7,6 +7,8 @@
 #ifndef CUMES_INCLUDE_CUMES_SOLVER_CONTROL_RECORD_HPP_
 #define CUMES_INCLUDE_CUMES_SOLVER_CONTROL_RECORD_HPP_
 
+#include "cumes/solver/control_policy.hpp"
+
 #include <cstdint>
 #include <type_traits>
 
@@ -113,12 +115,6 @@ static_assert(std::is_trivially_copyable<ControlRecord>::value,
               "control transfer");
 static_assert(std::is_trivially_copyable<ControlStatus>::value,
               "ControlStatus must be trivially copyable (device-visible)");
-
-// The relative Jacobian-vs-scale threshold shared by the device finalize
-// kernel and IterationController::jacobian_invalid (they must decide
-// identically: the device bit guards the DAG, the host rule owns the
-// restore/delt bookkeeping).
-inline constexpr double JACOBIAN_EPS = 1e-12;
 
 }  // namespace cumes
 
