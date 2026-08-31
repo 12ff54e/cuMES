@@ -50,8 +50,9 @@ cumes::Profiles<T>::Profiles(
 
     // Normalization scalars FIRST — before any device allocation. The host
     // validator (ValidatedProblem::validate) already rejects non-finite, zero,
-    // and ill-scaled normalizations before CUDA initialization; the guards
-    // here are the belt-and-suspenders error boundary, and they throw a typed
+    // and ill-scaled normalizations before CUDA initialization. The current
+    // normalization is intentionally absent when curtor=0. The guards here
+    // are the belt-and-suspenders error boundary, and they throw a typed
     // CumesError instead of exit()ing (library code never exits).
     // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
     // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
@@ -63,13 +64,14 @@ cumes::Profiles<T>::Profiles(
     // ncurr=1: normalize the enclosed toroidal current profile
     // Itor = signJ * μ0*curtor / (2π * I(1)), I(s) = ∫₀ˢ ac
     T Itor = T(0.0);
-    if (ncurr == 1) {
+    if (ncurr == 1 && sp.physical.curtor != 0.0) {
         T edgeCurrent = cumes::eval_curr_profile<T>(sp, T(1.0));
         if (edgeCurrent == T(0.0)) {
             // The normalization is a division by the edge current integral:
             // a degenerate (all-zero) ac profile would make Itor infinite and
             // poison the current constraint. Fail with a typed error (the
-            // validator rejects this case earlier, before any CUDA work).
+            // validator rejects this case earlier when curtor is nonzero,
+            // before any CUDA work).
             throw cumes::CumesError(
                 "profiles: ncurr=1 with a zero edge current integral "
                 "(ac profile integrates to 0 at s=1)");
@@ -163,9 +165,13 @@ cumes::Profiles<T>::Profiles(
     cumes::check_cuda(cudaMemcpy(d_dVds_H_, h, nH, cudaMemcpyHostToDevice),
                       "dVds_H cpy");
     for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = delta_s_ * (T(j) + T(0.5));
-        h[j] =
-            Itor * eval_curr_profile<T>(sp, fmin(torflux<T>(sp, sh), T(1.0)));
+        if (sp.physical.curtor == 0.0) {
+            h[j] = T(0.0);
+        } else {
+            T sh = delta_s_ * (T(j) + T(0.5));
+            h[j] = Itor *
+                   eval_curr_profile<T>(sp, fmin(torflux<T>(sp, sh), T(1.0)));
+        }
     }
     cumes::check_cuda(cudaMemcpy(d_curr_H_, h, nH, cudaMemcpyHostToDevice),
                       "curr_H cpy");

@@ -30,7 +30,10 @@ using namespace cumes::test;
 
 // Build a Solovev-like state with a few modes and run one geometry pass.
 template <typename T>
-static void run_geometry(int ns, int ncurr, const char* label) {
+static void run_geometry(int ns,
+                         int ncurr,
+                         const char* label,
+                         double curtor = 1.0) {
     DeviceParams<T> p;
     p.ns = ns;
     p.mnmax = 4;
@@ -67,7 +70,7 @@ static void run_geometry(int ns, int ncurr, const char* label) {
             spec.angular.ntheta = p.ntheta;
             spec.angular.nzeta = p.nzeta;
             spec.current_model = cumes::CurrentModel::PRESCRIBED_CURRENT;
-            spec.physical.curtor = 1.0;
+            spec.physical.curtor = curtor;
             spec.physical.phiedge = 1.0;
             // A well-scaled toroidal-flux profile: the edge normalization
             // T(1) is validated now (completion plan step 1.1) and must be
@@ -75,7 +78,7 @@ static void run_geometry(int ns, int ncurr, const char* label) {
             // relied on the silent no-divide fallback.
             spec.toroidal_flux.coefficients = {1.0};
             spec.mass.coefficients = {0.1};
-            spec.current.coefficients = {1.0};
+            if (curtor != 0.0) spec.current.coefficients = {1.0};
             spec.rbc = {{1, 0, 1.0}};
             spec.zbs = {{1, 0, 0.5}};
             spec.stages = {{static_cast<std::size_t>(ns), 10, 1e-14}};
@@ -116,6 +119,15 @@ static void run_geometry(int ns, int ncurr, const char* label) {
             all_finite = false;
     }
     check(all_finite, label);
+    if (ncurr == 1 && curtor == 0.0) {
+        std::vector<T> h_curr(p.ns - 1);
+        check_cuda(cudaMemcpy(h_curr.data(), rp.curr_H, (p.ns - 1) * sizeof(T),
+                              cudaMemcpyDeviceToHost),
+                   "currH");
+        bool all_zero = true;
+        for (T current : h_curr) all_zero = all_zero && current == T(0.0);
+        check(all_zero, "ncurr=1 curtor=0 publishes zero current profile");
+    }
     // Jacobian stats must be finite and the max nonzero. computeJacobianStats
     // is device-only (Phase 6A one-fence path) and writes DOUBLE stats in
     // both builds (ADR-0001); the stats now land in the typed ControlRecord
@@ -146,6 +158,7 @@ int main() {
     // Both current models at the exact failing resolution.
     run_geometry<double>(33, 0, "ncurr=0 fixed-iota geometry finite");
     run_geometry<double>(33, 1, "ncurr=1 prescribed-current geometry finite");
+    run_geometry<double>(33, 1, "ncurr=1 vacuum-current geometry finite", 0.0);
     // Also the smallest valid grid and a mid size, both current models.
     run_geometry<double>(5, 0, "ncurr=0 ns=5 finite");
     run_geometry<double>(5, 1, "ncurr=1 ns=5 finite");

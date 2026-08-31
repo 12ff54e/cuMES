@@ -509,6 +509,18 @@ static void test_malformed() {
               !find_error(vr, "integrates to zero at the edge").empty(),
           "malformed: zero prescribed-current edge integral rejected");
 
+    // A zero requested total current needs no profile normalization: this is
+    // the vacuum prescribed-current form used by the Landreman-Paul QA/QH
+    // configurations.
+    write_scratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [0.0], \"aphi\": [1.0],"
+        " \"ncurr\": 1, \"curtor\": 0.0,"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]} ");
+    vr = read_and_validate(scratch_path(), opts);
+    check(vr.has_value(),
+          "vacuum prescribed-current input validates without ac");
+
     // A healthy prescribed-current fixture still validates (positive control).
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"aphi\": [1.0],"
