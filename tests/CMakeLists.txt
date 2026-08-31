@@ -60,6 +60,14 @@ add_executable(test_solver_api test_solver_api.cpp)
 target_link_libraries(test_solver_api PRIVATE cumes::solver)
 cumes_enable_warnings(test_solver_api)
 
+# Optimizer-side observable: VMEC-compatible major/minor radii reconstructed
+# from the final LCFS coefficients returned by the solver facade.
+add_executable(test_plasma_size_target test_plasma_size_target.cpp)
+target_include_directories(test_plasma_size_target PRIVATE
+  ${PROJECT_SOURCE_DIR}/examples)
+target_link_libraries(test_plasma_size_target PRIVATE cumes_io_host)
+cumes_enable_warnings(test_plasma_size_target)
+
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
@@ -170,6 +178,7 @@ cumes_enable_warnings(test_accumulation)
 cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
 cumes_add_test(test_solver_api       unit;solver;api)
+cumes_add_test(test_plasma_size_target unit;optimizer;geometry)
 cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_derived_fields   unit;io;physics)

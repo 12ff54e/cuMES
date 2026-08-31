@@ -180,7 +180,8 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     const DeviceParams<T>& p_old,
     cudaStream_t stream,
     cumes::RadialInterpolation interpolation,
-    std::span<const double> precomputed_bspline_matrix) const {
+    std::span<const double> precomputed_bspline_matrix,
+    bool verbose) const {
 #ifndef CUMES_HAVE_BSPLINE_PROLONGATION
     static_cast<void>(precomputed_bspline_matrix);
 #endif
@@ -247,10 +248,12 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
         cumes::check_cuda(cudaGetLastError(), "interpolateState B-spline");
         cumes::check_cuda(cudaStreamSynchronize(stream),
                           "interpolateState B-spline sync");
-        printf(
-            "  interpolateState: ns=%d -> ns=%d (cubic B-spline matrix "
-            "on GPU, scalxc-scaled odd-m)\n",
-            p_old.ns, p_new.ns);
+        if (verbose) {
+            printf(
+                "  interpolateState: ns=%d -> ns=%d (cubic B-spline matrix "
+                "on GPU, scalxc-scaled odd-m)\n",
+                p_old.ns, p_new.ns);
+        }
         return st_new;
 #else
         throw cumes::CumesError(
@@ -279,10 +282,12 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     // as this returns. Wait for the kernel so the old buffer is not released
     // while still being read.
     cumes::check_cuda(cudaStreamSynchronize(stream), "interpolateState sync");
-    printf(
-        "  interpolateState: ns=%d -> ns=%d (%s in s, scalxc-scaled "
-        "odd-m)\n",
-        p_old.ns, p_new.ns, cubic ? "cubic" : "linear");
+    if (verbose) {
+        printf(
+            "  interpolateState: ns=%d -> ns=%d (%s in s, scalxc-scaled "
+            "odd-m)\n",
+            p_old.ns, p_new.ns, cubic ? "cubic" : "linear");
+    }
     return st_new;
 }
 

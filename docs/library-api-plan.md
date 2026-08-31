@@ -166,6 +166,13 @@ Objectives should prefer gauge-invariant physical fields over raw lambda
 coefficients. In particular, the documented near-degenerate lambda gauge makes
 raw lambda targets unsuitable unless the gauge is deliberately fixed.
 
+The `cumes_meow_optimize` example demonstrates this ownership explicitly.
+Its optimizer-side `plasma_size_target.hpp` reconstructs the final LCFS from
+the returned spectral state and computes VMEC-compatible cross-sectional area,
+volume, `Rmajor_p`, and `Aminor_p`. The residual callback returns the major- and
+minor-radius differences to meow. Neither this target definition nor its
+weighting is part of the cuMES solver or meow's generic TRF implementation.
+
 ## 5. Repeated-solve and concurrency policy
 
 The first implementation is a correctness-preserving facade over the existing

@@ -64,6 +64,15 @@ with `-DCUMES_MEOW_SOURCE_DIR=/path/to/meow`. See
 [`docs/library-api-plan.md`](docs/library-api-plan.md) for the ownership and
 optimizer-integration contract.
 
+The example keeps target evaluation in the optimization application: it
+reconstructs the final LCFS from `SolveOutcome`, calculates VMEC-compatible
+major/minor radii, and gives their two residuals to meow:
+
+```bash
+./build-meow/cumes_meow_optimize inputs/solovev.json \
+  TARGET_RMAJOR TARGET_AMINOR
+```
+
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
 `deps/magnetic-coordinate`. `--output PATH` writes the native PEST-like result;

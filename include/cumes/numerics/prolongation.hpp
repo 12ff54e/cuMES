@@ -42,7 +42,8 @@ class Prolongation {
         const DeviceParams<T>& p_old,
         cudaStream_t stream,
         RadialInterpolation interpolation = RadialInterpolation::LINEAR,
-        std::span<const double> precomputed_bspline_matrix = {}) const;
+        std::span<const double> precomputed_bspline_matrix = {},
+        bool verbose = true) const;
 };
 
 }  // namespace cumes

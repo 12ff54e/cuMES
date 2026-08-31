@@ -181,7 +181,7 @@ class MultigridSolver {
 #endif
                 storage = cumes::Prolongation<T>{}.enqueue(
                     p, storage, p_prev, stream, radial_interpolation,
-                    precomputed_bspline_matrix);
+                    precomputed_bspline_matrix, verbose);
                 // vmecpp vmec.cc :536-539: the converged coarse-stage vacuum
                 // state stays valid; re-mark INITIALIZED so the new stage's
                 // first pass runs the vacuum block.

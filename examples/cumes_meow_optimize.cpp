@@ -1,5 +1,7 @@
-// Example integration application: optimize one boundary harmonic against an
-// equilibrium-derived target while keeping cuMES and meow independent.
+// Example integration application: optimize one boundary harmonic against
+// major/minor-radius targets while keeping cuMES and meow independent.
+#include "plasma_size_target.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -11,7 +13,6 @@
 
 #include <cumes/config/json_reader.hpp>
 #include <cumes/config/validated_problem.hpp>
-#include <cumes/io/equilibrium_snapshot.hpp>
 #include <cumes/solver/equilibrium_solver.hpp>
 #include <meow/trf.hpp>
 
@@ -59,27 +60,16 @@ class BoundaryParameterization {
     BoundaryVariable variable_;
 };
 
-double outer_half_surface_mean(const cumes::EquilibriumSnapshot& equilibrium,
-                               cumes::EquilibriumSnapshot::HalfField field) {
-    const std::size_t points = equilibrium.points_per_surface();
-    const std::size_t offset =
-        static_cast<std::size_t>(equilibrium.ns - 2) * points;
-    const auto& values = equilibrium.half_fields[field];
-    double sum = 0.0;
-    for (std::size_t point = 0; point < points; ++point) {
-        sum += values[offset + point];
-    }
-    return sum / static_cast<double>(points);
-}
-
 class EquilibriumResidual {
    public:
     EquilibriumResidual(cumes::ProblemSpec baseline,
                         BoundaryParameterization boundary,
-                        double target)
+                        double target_major_radius,
+                        double target_minor_radius)
         : baseline_(std::move(baseline)),
           boundary_(std::move(boundary)),
-          target_(target) {
+          target_major_radius_(target_major_radius),
+          target_minor_radius_(target_minor_radius) {
 #ifdef CUMES_USE_FLOAT
         validation_options_.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
 #endif
@@ -105,10 +95,12 @@ class EquilibriumResidual {
                 "cuMES did not produce a converged complete equilibrium");
         }
 
-        const double achieved = outer_half_surface_mean(
-            solved.equilibrium, cumes::EquilibriumSnapshot::BSUPV);
-        meow::Vector residual(1);
-        residual[0] = achieved - target_;
+        const cumes_meow_example::PlasmaSize size =
+            cumes_meow_example::calculate_plasma_size(
+                solved.equilibrium, solved.report.input_params);
+        meow::Vector residual(2);
+        residual[0] = size.major_radius - target_major_radius_;
+        residual[1] = size.minor_radius - target_minor_radius_;
         cached_x_ = x;
         cached_residual_ = residual;
         return residual;
@@ -117,7 +109,8 @@ class EquilibriumResidual {
    private:
     cumes::ProblemSpec baseline_;
     BoundaryParameterization boundary_;
-    double target_;
+    double target_major_radius_;
+    double target_minor_radius_;
     cumes::SolverOptions validation_options_;
     cumes::EquilibriumSolver solver_;
     std::optional<meow::Vector> cached_x_;
@@ -127,9 +120,9 @@ class EquilibriumResidual {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 3) {
-        std::cerr
-            << "usage: cumes_meow_optimize INPUT.json TARGET_MEAN_BSUPV\n";
+    if (argc != 4) {
+        std::cerr << "usage: cumes_meow_optimize INPUT.json TARGET_RMAJOR "
+                     "TARGET_AMINOR\n";
         return 2;
     }
 
@@ -151,12 +144,19 @@ int main(int argc, char** argv) {
             throw std::runtime_error("input has no rbc(m=1,n=0) harmonic");
         }
 
-        const double target = std::stod(argv[2]);
+        const double target_major_radius = std::stod(argv[2]);
+        const double target_minor_radius = std::stod(argv[3]);
+        if (!std::isfinite(target_major_radius) ||
+            !std::isfinite(target_minor_radius) ||
+            !(target_major_radius > 0.0) || !(target_minor_radius > 0.0)) {
+            throw std::invalid_argument(
+                "radius targets must be finite and positive");
+        }
         EquilibriumResidual evaluator(
             parsed.spec,
             BoundaryParameterization(BoundaryVariable{BoundaryFamily::RBC, 1, 0,
                                                       harmonic->value, 0.01}),
-            target);
+            target_major_radius, target_minor_radius);
 
         meow::Vector initial = meow::Vector::Zero(1);
         meow::Bounds bounds{meow::Vector::Constant(1, -10.0),
