@@ -139,6 +139,12 @@ int main() {
         check(restarted.report.input_params == outcome.report.input_params,
               "solver API: cold and hot runs retain the same input metadata");
 
+        cumes::SolveOutcome repeated = solver.solve(validated.value());
+        check(repeated.fsqr == outcome.fsqr && repeated.fsqz == outcome.fsqz &&
+                  repeated.fsql == outcome.fsql &&
+                  repeated.equilibrium.families == outcome.equilibrium.families,
+              "solver API: repeated cold evaluation is deterministic");
+
         return cumes::test::summary();
     } catch (const std::exception& error) {
         cumes::test::check(false, error.what());
