@@ -191,6 +191,50 @@ current equilibria cannot reconstruct it from the input. The helper returns
 fields, not a chosen scalar: surface selection, aggregation, normalization,
 and residual weights remain part of the optimizer's target definition.
 
+### 4.1 QS, QH, and QA optimizer targets
+
+The next optimizer-side milestone builds a least-squares residual vector from
+the equilibrium primitives. For helicity integers `(M,N)`, define
+
+```text
+q_QS = ((N - iota*M) (B cross grad(psi)) dot grad(B)
+        + (M*G + N*I) B dot grad(B)) / B^3.
+```
+
+Here `I(s)=<B_theta>` and `G(s)=<B_zeta>` are the VMEC-compatible covariant
+flux functions (`buco` and `bvco`), not the pointwise native covariant field
+components. cuMES will publish them as equilibrium profiles. The optimizer
+helper will make the flux choice explicit: the requested poloidal flux is
+supported, while the conventional Landreman--Paul QS metric can select the
+normalized toroidal flux. The sign above follows the requested ordering
+`(B cross grad(psi)) dot grad(B)`; reversing the scalar triple product reverses
+both terms together and leaves the squared metric unchanged.
+
+For each requested half-grid surface, uniform angular quadrature represents
+the flux-surface average using `abs(sqrt(g))`:
+
+```text
+f_QS = sum_j w_j <q_QS^2>_j.
+```
+
+The API returns pointwise residuals whose squared Euclidean norm is exactly
+`f_QS`, along with the per-surface and scalar totals. This is preferable to
+returning `f_QS` as one residual, which would make a least-squares optimizer
+minimize `f_QS^2`.
+
+The composite residual builders append optimizer-owned scalar residuals:
+
+```text
+f_QH = f_QS + (A - A_target)^2
+f_QA = f_QS + (A - A_target)^2
+             + (integral_0^1 iota(s) ds - iota_target)^2.
+```
+
+`A` uses the existing VMEC-compatible plasma-size helper. The iota integral
+uses midpoint quadrature on the solver's native uniform half grid. QA checks
+that `N=0`; surface selection, nonnegative surface weights, `(M,N)`, and target
+values are all explicit optimizer configuration.
+
 ## 5. Repeated-solve and concurrency policy
 
 The first implementation is a correctness-preserving facade over the existing
