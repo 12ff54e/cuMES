@@ -708,11 +708,16 @@ x_c(s)=\frac{x_{\mathrm{physical}}(s)}
 {\max(\sqrt{s},\sqrt{\Delta s\_{\mathrm{old}}})}.
 \]
 
-The old-axis stencil is `2*x_c(s1)-x_c(s2)`. Double-precision continuation
-uses a four-point Catmull-Rom interpolant in this scaled coordinate, with
-linear extrapolation for a missing endpoint neighbor. Axisymmetric
-free-boundary and float runs retain two-point linear interpolation. The result
-is unscaled on the new grid, new odd-mode axis entries are zero, and the LCFS
-is copied exactly. `CUMES_FORCE_LINEAR_PROLONGATION=1` restores linear
-transfer for diagnostic A/B runs. These rules have direct CPU/GPU property
-tests for all six coefficient families and both scalar types.
+The old-axis stencil is `2*x_c(s1)-x_c(s2)`. Precise-double fixed-boundary
+continuation uses a global interpolating cubic B-spline in this scaled
+coordinate. A reusable `[ns_new][ns_old]` map is constructed once from
+`InterpolationFunctionTemplate1D<3>`, uploaded, and applied to every spectral
+profile by a batched CUDA kernel; the state never leaves the device. 3-D
+free-boundary continuation uses the qualified four-point Catmull-Rom
+interpolant, while axisymmetric free-boundary and float runs retain two-point
+linear interpolation. The result is unscaled on the new grid, new odd-mode
+axis entries are zero, and the LCFS is copied exactly.
+`CUMES_FORCE_CATMULL_PROLONGATION=1` and
+`CUMES_FORCE_LINEAR_PROLONGATION=1` select the diagnostic alternatives.
+These rules have direct CPU/GPU property tests for all six coefficient
+families and both scalar types.

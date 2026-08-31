@@ -207,6 +207,24 @@ retains linear transfer because cubic regressed its qualified Solovev case
 from 1025 to 1045 passes. A final-grid W7-X checkpoint replay converges in one
 iteration with the identical residual triple.
 
+### 2.7 Global B-spline fixed-boundary transfer (2026-08-31)
+
+ADR-0012 replaces Catmull-Rom with an interpolating cubic B-spline for
+precise-double fixed-boundary continuation. Directly applying the reusable
+`InterpolationFunctionTemplate1D<3>` batch on the host improved the initial
+state but cost 1.90 ms for W7-X `33 → 66` and 2.94 ms for `66 → 99`, before
+PCIe transfers. The production path instead constructs the small linear
+interpolation matrix once and applies it to all six spectral families on the
+GPU, keeping the state device-resident.
+
+Relative to Catmull-Rom, W7-X changes from `1315 → 1443 → 1402` (4160) to
+`1315 → 1419 → 1372` (4106), with FSQR `9.997e-13`. Solovev changes from
+`235 → 190 → 341` (766) to `235 → 193 → 326` (754), with FSQR
+`9.973e-17`. The spline is not selected for free-boundary continuation:
+CTH-like changed from 424 to 425 passes, and axisymmetric free-boundary
+Solovev regressed from 1025 to 1074. Those paths retain their qualified
+Catmull-Rom and linear transfers respectively.
+
 ## 3. Phase 9 experiments and their outcomes
 
 The exit gate for §8.10–§8.12 was *"measure, then adopt or remove."* Three

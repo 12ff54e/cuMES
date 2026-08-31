@@ -1,6 +1,9 @@
 // test_prolongation.cu — direct CPU/GPU checks for linear and cubic radial
 // multigrid transfer, including odd-m decomposition and endpoint contracts.
 #include "cumes/numerics/prolongation.hpp"
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+#include "cumes/numerics/bspline_matrix.hpp"
+#endif
 #include "cumes_test_cuda_helper.cuh"
 
 #include <algorithm>
@@ -24,7 +27,8 @@ static T expected_value(const std::vector<T>& old_state,
                         int ns_old,
                         int ns_new,
                         int mnmax,
-                        bool cubic) {
+                        cumes::RadialInterpolation interpolation,
+                        const std::vector<double>& bspline_matrix) {
     const bool odd = mode % 2 == 1;
     const T s = T(j_new) / T(ns_new - 1);
     const int j0 = (j_new * (ns_old - 1)) / (ns_new - 1);
@@ -43,13 +47,23 @@ static T expected_value(const std::vector<T>& old_state,
     const T y0 = axis_regular(j0);
     const T y1 = axis_regular(j1);
     T value = (T(1) - t) * y0 + t * y1;
-    if (cubic && j0 != j1) {
+    if (interpolation == cumes::RadialInterpolation::CATMULL_ROM && j0 != j1) {
         const T ym1 = j0 > 0 ? axis_regular(j0 - 1) : T(2) * y0 - y1;
         const T yp2 = j1 + 1 < ns_old ? axis_regular(j1 + 1) : T(2) * y1 - y0;
         value = y0 + T(0.5) * t *
                          (y1 - ym1 +
                           t * (T(2) * ym1 - T(5) * y0 + T(4) * y1 - yp2 +
                                t * (T(3) * (y0 - y1) + yp2 - ym1)));
+    } else if (interpolation == cumes::RadialInterpolation::BSPLINE) {
+        if (j_new == ns_new - 1) {
+            return old_state[family + mode * ns_old + ns_old - 1];
+        }
+        value = T(0);
+        for (int j_old = 0; j_old < ns_old; ++j_old) {
+            value += T(bspline_matrix[static_cast<std::size_t>(j_new) * ns_old +
+                                      j_old]) *
+                     axis_regular(j_old);
+        }
     }
     value *=
         odd ? std::max(std::sqrt(s), std::sqrt(T(1) / T(ns_new - 1))) : T(1);
@@ -57,7 +71,7 @@ static T expected_value(const std::vector<T>& old_state,
 }
 
 template <typename T>
-static void run_case(bool cubic) {
+static void run_case(cumes::RadialInterpolation interpolation) {
     constexpr int ns_old = 5;
     constexpr int ns_new = 8;  // deliberately not an integer refinement
     constexpr int mnmax = 2;   // m=0 even, m=1 odd (ntor=0)
@@ -89,8 +103,16 @@ static void run_case(bool cubic) {
     cc(cudaMemcpy(old_state.state_slab(), input.data(),
                   input.size() * sizeof(T), cudaMemcpyHostToDevice),
        "prolongation input upload");
-    cumes::SpectralStorage<T> new_state =
-        cumes::Prolongation<T>{}.enqueue(p_new, old_state, p_old, 0, cubic);
+    cumes::SpectralStorage<T> new_state = cumes::Prolongation<T>{}.enqueue(
+        p_new, old_state, p_old, 0, interpolation);
+
+    std::vector<double> bspline_matrix;
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+    if (interpolation == cumes::RadialInterpolation::BSPLINE) {
+        bspline_matrix =
+            cumes::cubic_bspline_interpolation_matrix(ns_old, ns_new);
+    }
+#endif
 
     std::vector<T> actual(families * mnmax * ns_new);
     std::vector<T> velocity(actual.size(), T(1));
@@ -105,8 +127,9 @@ static void run_case(bool cubic) {
     for (int f = 0; f < families; ++f) {
         for (int mode = 0; mode < mnmax; ++mode) {
             for (int j = 0; j < ns_new; ++j) {
-                const T expected = expected_value(input, f, mode, j, ns_old,
-                                                  ns_new, mnmax, cubic);
+                const T expected =
+                    expected_value(input, f, mode, j, ns_old, ns_new, mnmax,
+                                   interpolation, bspline_matrix);
                 error = std::max(
                     error,
                     std::abs(static_cast<double>(
@@ -116,7 +139,11 @@ static void run_case(bool cubic) {
     }
     const double tolerance = sizeof(T) == sizeof(double) ? 2e-13 : 3e-6;
     check(error <= tolerance,
-          std::string(cubic ? "cubic" : "linear") +
+          std::string(interpolation == cumes::RadialInterpolation::LINEAR
+                          ? "linear"
+                      : interpolation == cumes::RadialInterpolation::CATMULL_ROM
+                          ? "Catmull-Rom"
+                          : "B-spline") +
               (sizeof(T) == sizeof(double) ? " double" : " float") +
               " CPU/GPU agreement");
     check(std::all_of(velocity.begin(), velocity.end(),
@@ -135,9 +162,14 @@ static void run_case(bool cubic) {
 }
 
 int main() {
-    run_case<double>(false);
-    run_case<double>(true);
-    run_case<float>(false);
-    run_case<float>(true);
+    run_case<double>(cumes::RadialInterpolation::LINEAR);
+    run_case<double>(cumes::RadialInterpolation::CATMULL_ROM);
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+    run_case<double>(cumes::RadialInterpolation::BSPLINE);
+    check(cumes::cubic_bspline_interpolation_matrix(3, 5).size() == 15,
+          "B-spline matrix supports the minimum coarse grid");
+#endif
+    run_case<float>(cumes::RadialInterpolation::LINEAR);
+    run_case<float>(cumes::RadialInterpolation::CATMULL_ROM);
     return summary();
 }

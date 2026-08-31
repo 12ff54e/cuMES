@@ -214,11 +214,42 @@ add_library(cumes_cuda_runtime INTERFACE)
 target_include_directories(cumes_cuda_runtime INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_runtime INTERFACE CUDA::cudart CUDA::cufft)
 
+# Reuse magnetic-coordinate's header-only BSplineInterpolation dependency to
+# construct a small radial transfer matrix on the host. The spectral state
+# remains device-resident; the matrix is uploaded and applied in one batched
+# CUDA kernel. Submodule-free builds retain the Catmull-Rom fallback.
+set(CUMES_HAVE_BSPLINE_PROLONGATION OFF)
+if(CUMES_USE_BSPLINE_PROLONGATION AND EXISTS
+   ${CMAKE_CURRENT_SOURCE_DIR}/deps/magnetic-coordinate/BSplineInterpolation/include/bsintp/Interpolation.hpp)
+  cumes_add_host_library(cumes_bspline_prolongation FALSE
+    src/cumes/numerics/bspline_matrix.cpp)
+  target_include_directories(cumes_bspline_prolongation SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/magnetic-coordinate/BSplineInterpolation/include)
+  target_compile_definitions(cumes_bspline_prolongation PRIVATE
+    INTP_CELL_LAYOUT)
+  # GCC 12/13 reports a false positive while inlining the dependency's
+  # std::variant-held band matrix; confine the suppression to this adapter.
+  target_compile_options(cumes_bspline_prolongation PRIVATE
+    $<$<CXX_COMPILER_ID:GNU>:-Wno-maybe-uninitialized>)
+  cumes_apply_host_tuning(cumes_bspline_prolongation)
+  set(CUMES_HAVE_BSPLINE_PROLONGATION ON)
+  message(STATUS "cuMES: B-spline multigrid transfer enabled")
+elseif(CUMES_USE_BSPLINE_PROLONGATION)
+  message(STATUS "cuMES: B-spline multigrid transfer unavailable; using Catmull-Rom")
+else()
+  message(STATUS "cuMES: B-spline multigrid transfer disabled; using Catmull-Rom")
+endif()
+
 # ---- CUDA operator libraries (one scalar type each) ------------------------
 
 add_library(cumes_cuda_double STATIC ${CUMES_CUDA_DOUBLE_SOURCES})
 target_include_directories(cumes_cuda_double PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_double PUBLIC CUDA::cufft cumes_cuda_runtime)
+if(CUMES_HAVE_BSPLINE_PROLONGATION)
+  target_link_libraries(cumes_cuda_double PUBLIC cumes_bspline_prolongation)
+  target_compile_definitions(cumes_cuda_double PUBLIC
+    CUMES_HAVE_BSPLINE_PROLONGATION)
+endif()
 cumes_enable_warnings(cumes_cuda_double)
 cumes_apply_policy_flags(cumes_cuda_double)
 if(CUMES_ENABLE_VERIFY_DUMP)
@@ -228,6 +259,11 @@ endif()
 add_library(cumes_cuda_float STATIC ${CUMES_CUDA_FLOAT_SOURCES})
 target_include_directories(cumes_cuda_float PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_float PUBLIC CUDA::cufft cumes_cuda_runtime)
+if(CUMES_HAVE_BSPLINE_PROLONGATION)
+  target_link_libraries(cumes_cuda_float PUBLIC cumes_bspline_prolongation)
+  target_compile_definitions(cumes_cuda_float PUBLIC
+    CUMES_HAVE_BSPLINE_PROLONGATION)
+endif()
 cumes_enable_warnings(cumes_cuda_float)
 cumes_apply_policy_flags(cumes_cuda_float)
 if(CUMES_ENABLE_VERIFY_DUMP)

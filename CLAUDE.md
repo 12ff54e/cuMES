@@ -73,6 +73,8 @@ Environment variables:
 | Variable | Effect |
 | -------- | ------ |
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
+| `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects the previous four-point Catmull-Rom coarse-to-fine transfer |
+| `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer |
 | `CUMES_MAX_ITER` | iteration cap; overrides every stage's cap in a multigrid run |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |

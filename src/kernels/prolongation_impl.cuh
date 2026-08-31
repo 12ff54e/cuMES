@@ -6,10 +6,11 @@
 #define CUMES_SRC_PROLONGATION_IMPL_CUH_
 // prolongation.cu — grid-sequencing state interpolation (multi-radial-grid).
 //
-// Mirrors vmecpp's Vmec::InterpolateToNextMultigridStep (vmec.cc:1795-2042),
-// LINEAR scheme: each spectral coefficient is a function of the radial
-// index s = j/(ns-1), interpolated 2-point linearly in s. Odd-m modes are
-// interpolated in scalxc-decomposed space (xc = c * scalxc, scalxc =
+// The linear path mirrors vmecpp's Vmec::InterpolateToNextMultigridStep
+// (vmec.cc:1795-2042): each spectral coefficient is a function of the radial
+// index s = j/(ns-1), interpolated 2-point linearly in s. Catmull-Rom and a
+// reusable global cubic B-spline matrix are smoother alternatives. Odd-m
+// modes are interpolated in scalxc-decomposed space (xc = c * scalxc, scalxc =
 // 1/max(sqrt(s), sqrt(1/(ns-1)))) so the s^(m/2) near-axis behaviour is
 // regularized; the result is un-decomposed by the NEW grid's scalxc. The
 // odd-m axis value is extrapolated 2*x[1]-x[2] (decomposed) and feeds the
@@ -22,10 +23,14 @@
 // transiently in the real-space DFT slots).
 #include "cumes/numerics/prolongation.hpp"
 #include "cumes/runtime/cuda_status.hpp"
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+#include "cumes/numerics/bspline_matrix.hpp"
+#endif
 
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 // vmecpp decomposeInto scalxc for odd-m: 1/max(sqrt(s), sqrt(1/(ns-1))).
 // The max() clamp makes this identical to cuMES's sqrtS_F for every j
@@ -119,12 +124,60 @@ __global__ void interpolate_state_kernel(T* __restrict__ o_cc,
 }
 
 template <typename T>
+__global__ void interpolate_state_bspline_kernel(
+    T* __restrict__ output,
+    const T* __restrict__ input,
+    const T* __restrict__ interpolation_matrix,
+    int ns_new,
+    int ns_old,
+    int mnmax,
+    int ntorp1) {
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = 6 * mnmax * ns_new;
+    if (index >= total) return;
+
+    const int profile = index / ns_new;
+    const int j_new = index % ns_new;
+    const int mode = profile % mnmax;
+    const bool odd = ((mode / ntorp1) % 2) == 1;
+    const std::size_t old_offset = static_cast<std::size_t>(profile) * ns_old;
+
+    // Preserve the fixed-boundary contract bit-exactly. The spline evaluates
+    // to the endpoint mathematically, but an explicit copy avoids a dense-dot
+    // roundoff at the LCFS.
+    if (j_new == ns_new - 1) {
+        output[index] = input[old_offset + ns_old - 1];
+        return;
+    }
+
+    const T sqrtS1o = sqrt(T(1) / T(ns_old - 1));
+    const T axis_regular =
+        odd ? T(2) * input[old_offset + 1] * scalxc_of(1, ns_old, sqrtS1o) -
+                  input[old_offset + 2] * scalxc_of(2, ns_old, sqrtS1o)
+            : input[old_offset];
+    const T* weights =
+        interpolation_matrix + static_cast<std::size_t>(j_new) * ns_old;
+    T interpolated = weights[0] * axis_regular;
+    for (int j_old = 1; j_old < ns_old; ++j_old) {
+        T value = input[old_offset + j_old];
+        if (odd) value *= scalxc_of(j_old, ns_old, sqrtS1o);
+        interpolated += weights[j_old] * value;
+    }
+
+    const T s = T(j_new) / T(ns_new - 1);
+    const T sqrtS1n = sqrt(T(1) / T(ns_new - 1));
+    T value = interpolated * (odd ? fmax(sqrt(s), sqrtS1n) : T(1));
+    if (odd && j_new == 0) value = T(0);
+    output[index] = value;
+}
+
+template <typename T>
 cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     const DeviceParams<T>& p_new,
     const cumes::SpectralStorage<T>& st_old,
     const DeviceParams<T>& p_old,
     cudaStream_t stream,
-    bool cubic) const {
+    cumes::RadialInterpolation interpolation) const {
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         // Library contract: never exit() here — the RAII device buffers, the
         // caller's --checkpoint write, and the CLI run-report mapping must
@@ -153,6 +206,37 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     // Full-sync once per grid stage (never in the hot loop): this is a
     // stage-boundary point, so the cost is one fence per stage, not per pass.
     cumes::check_cuda(cudaDeviceSynchronize(), "interpolateState pre-sync");
+    if (interpolation == cumes::RadialInterpolation::BSPLINE) {
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+        const std::vector<double> matrix_double =
+            cumes::cubic_bspline_interpolation_matrix(p_old.ns, p_new.ns);
+        const std::vector<T> matrix(matrix_double.cbegin(),
+                                    matrix_double.cend());
+        cumes::DeviceBuffer<T> d_matrix(matrix.size());
+        cumes::check_cuda(
+            cudaMemcpy(d_matrix.data(), matrix.data(), d_matrix.byte_size(),
+                       cudaMemcpyHostToDevice),
+            "interpolateState B-spline matrix upload");
+        const int total = 6 * p_new.mnmax * p_new.ns;
+        dim3 bspline_gd((total + 255) / 256);
+        interpolate_state_bspline_kernel<T><<<bspline_gd, bd, 0, stream>>>(
+            st_new.state_slab(), st_old.state_slab(), d_matrix.data(), p_new.ns,
+            p_old.ns, p_new.mnmax, p_new.ntor + 1);
+        cumes::check_cuda(cudaGetLastError(), "interpolateState B-spline");
+        cumes::check_cuda(cudaStreamSynchronize(stream),
+                          "interpolateState B-spline sync");
+        printf(
+            "  interpolateState: ns=%d -> ns=%d (cubic B-spline matrix "
+            "on GPU, scalxc-scaled odd-m)\n",
+            p_old.ns, p_new.ns);
+        return st_new;
+#else
+        throw cumes::CumesError(
+            "B-spline prolongation requested but BSplineInterpolation is "
+            "unavailable");
+#endif
+    }
+    const bool cubic = interpolation == cumes::RadialInterpolation::CATMULL_ROM;
     interpolate_state_kernel<T><<<gd, bd, 0, stream>>>(
         st_new.family_ptr(cumes::SpectralComponent::Rcc),
         st_new.family_ptr(cumes::SpectralComponent::Zsc),

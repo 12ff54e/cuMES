@@ -61,16 +61,32 @@ class MultigridSolver {
         const auto& stages = vp.spec().stages;
         const int n_grids = static_cast<int>(stages.size());
         const T configured_delt = p.delt;
-        // Cubic transfer better preserves the smooth radial structure of a
-        // converged coarse state. Axisymmetric free-boundary continuation is
-        // the qualified exception: its moving LCFS response is better served
-        // by the more dissipative linear transfer. Float retains its frozen
-        // linear trajectory until separately qualified.
-        bool use_cubic_prolongation =
-            sizeof(T) == sizeof(double) &&
-            !(vp.spec().free_boundary.lfreeb && p.ntor == 0);
+        // A global cubic B-spline best preserves the smooth radial structure
+        // of precise-double fixed-boundary states. Free-boundary continuation
+        // does not benefit consistently: retain the qualified Catmull-Rom 3-D
+        // path and dissipative linear axisymmetric path. Float retains its
+        // frozen linear trajectory until separately qualified.
+        RadialInterpolation radial_interpolation = RadialInterpolation::LINEAR;
+        if constexpr (sizeof(T) == sizeof(double)) {
+            if (!vp.spec().free_boundary.lfreeb) {
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+                radial_interpolation = RadialInterpolation::BSPLINE;
+#else
+                radial_interpolation = RadialInterpolation::CATMULL_ROM;
+#endif
+            } else if (p.ntor != 0) {
+                radial_interpolation = RadialInterpolation::CATMULL_ROM;
+            }
+        }
+        if (const char* e = std::getenv("CUMES_FORCE_CATMULL_PROLONGATION")) {
+            if (std::atoi(e) != 0 && sizeof(T) == sizeof(double)) {
+                radial_interpolation = RadialInterpolation::CATMULL_ROM;
+            }
+        }
         if (const char* e = std::getenv("CUMES_FORCE_LINEAR_PROLONGATION")) {
-            if (std::atoi(e) != 0) use_cubic_prolongation = false;
+            if (std::atoi(e) != 0) {
+                radial_interpolation = RadialInterpolation::LINEAR;
+            }
         }
 
         // Free-boundary operator: constructed ONCE per run (vmecpp's
@@ -110,7 +126,7 @@ class MultigridSolver {
                 // Prolong the previous stage's converged state onto this grid
                 // on the same compute stream (ordered before the next stage).
                 storage = cumes::Prolongation<T>{}.enqueue(
-                    p, storage, p_prev, stream, use_cubic_prolongation);
+                    p, storage, p_prev, stream, radial_interpolation);
                 // vmecpp vmec.cc :536-539: the converged coarse-stage vacuum
                 // state stays valid; re-mark INITIALIZED so the new stage's
                 // first pass runs the vacuum block.
