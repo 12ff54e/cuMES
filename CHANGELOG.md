@@ -5,6 +5,58 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-08-31
+
+### Added
+
+#### Solver
+
+- Per-stage and total CUDA device-time reporting in the executable's standard
+  output.
+- A direct, optional `BSplineInterpolation` header-only dependency for
+  fixed-boundary multigrid transfer, with build-time and runtime fallbacks to
+  the previous Catmull-Rom and linear interpolation paths.
+- Diagnostic controls for cold-start shaping, axisymmetric lambda seeding,
+  time-step recovery, prolongation selection, and free-boundary vacuum
+  activation.
+
+#### Plotting
+
+- PyVista field lines rendered as three-dimensional tubes for improved depth
+  and visibility.
+
+### Changed
+
+#### Convergence
+
+- Fixed-boundary runs now use shaped cold starts, qualified stage-specific
+  initial steps, and a conservative one-shot recovery after an early
+  time-step reduction. Axisymmetric starts additionally seed lambda from the
+  initial geometry.
+- Free-boundary cold starts use qualified shaping and coarse-grid steps, and
+  activate the vacuum edge force earlier once the predictor residual is low
+  enough.
+- Precise-double fixed-boundary multigrid continuation now applies a global
+  cubic B-spline transfer matrix on the GPU. Matrix construction is prepared
+  asynchronously on the host while the coarse GPU stage iterates, so the
+  spectral state remains device-resident and stage transitions do not wait on
+  interpolation setup.
+- The qualified Solovev trajectory is reduced from 906 to 754 effective
+  iterations and W7-X from 5505 to 4106, with all configured force-residual
+  tolerances satisfied.
+
+#### Maintenance
+
+- Iteration-controller thresholds and tuning factors are centralized in the
+  `cumes::control_policy` namespace.
+- cuMES convergence is documented in terms of its own residual and validity
+  gates; VMEC++ remains an independent diagnostic comparison.
+
+### Fixed
+
+- Restored typed CLI diagnostics when atomic output publication fails,
+  including read-only and otherwise unwritable destinations.
+
 ## [1.1.0] - 2026-08-30
 
 ### Added
