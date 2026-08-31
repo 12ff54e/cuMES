@@ -1,5 +1,27 @@
 # cuMES library API and optimizer integration plan
 
+## Implementation status
+
+The first in-process milestone is implemented:
+
+- `cumes::EquilibriumSolver` accepts a `ValidatedProblem` and returns a
+  complete host `EquilibriumSnapshot` plus `RunReport`;
+- cold starts and in-memory snapshot restarts are supported;
+- embedding calls are quiet and ignore process-global `CUMES_*` controls by
+  default, while the CLI explicitly preserves them;
+- `parse_problem_spec` maps an in-memory JSON document;
+- `cumes::solver`, `cumes::config_json`, `cumes::core`, and `cumes::io` are
+  supported build-tree targets, and the static-library closure is installable
+  through `find_package(cuMES)`;
+- `examples/cumes_meow_optimize.cpp` demonstrates the independent integration
+  layer and builds when `CUMES_MEOW_SOURCE_DIR` names a meow checkout;
+- ordinary-C++ direct API and installed-package consumer tests cover the
+  embedding boundary.
+
+Topology-keyed CUDA resource reuse and controlled accepted-state continuation
+remain follow-up performance work. The current solver object intentionally
+keeps cold-start evaluations mathematically independent.
+
 ## 1. Goal and first milestone
 
 cuMES must be usable as an in-process equilibrium engine inside a nonlinear

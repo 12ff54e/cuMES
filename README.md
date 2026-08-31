@@ -36,6 +36,34 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+### In-process library
+
+The supported embedding API is `cumes::EquilibriumSolver`. It consumes an
+immutable validated problem and returns a complete host equilibrium without
+writing an output file or exposing CUDA objects:
+
+```cpp
+#include <cumes/config/json_reader.hpp>
+#include <cumes/solver/equilibrium_solver.hpp>
+
+cumes::SolverOptions config_options;
+auto parsed = cumes::read_problem_spec("inputs/solovev.json", config_options);
+parsed.spec.rbc.front().value += 1.0e-4;  // optimizer-owned boundary update
+
+auto validated = cumes::validate(std::move(parsed.spec), config_options);
+cumes::EquilibriumSolver solver;
+cumes::SolveOutcome solved = solver.solve(validated.value());
+```
+
+Library solves are quiet and ignore the CLI's process-global `CUMES_*`
+controls by default. `SolveRequest` can opt into those controls or provide an
+in-memory restart snapshot. Installed consumers use
+`find_package(cuMES CONFIG REQUIRED)` and link `cumes::solver`; a source-tree
+meow integration example is available as `cumes_meow_optimize` when configured
+with `-DCUMES_MEOW_SOURCE_DIR=/path/to/meow`. See
+[`docs/library-api-plan.md`](docs/library-api-plan.md) for the ownership and
+optimizer-integration contract.
+
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
 `deps/magnetic-coordinate`. `--output PATH` writes the native PEST-like result;
@@ -93,7 +121,8 @@ kernels live directly in operator classes that own their device buffers (RAII
   `precon`, `constraint`, `prolongation`, `axisymmetric`.
 - **Host-side `cumes` namespace** — `include/cumes/*` + `src/cumes/*`: config
   validation, RAII CUDA runtime, typed non-owning views, the I/O stack, and the
-  host orchestration (`MultigridSolver`, `StageSolver`, `IterationController`).
+  host orchestration (`EquilibriumSolver`, `MultigridSolver`, `StageSolver`,
+  `IterationController`).
 
 All GPU allocations happen at startup; there are zero `cudaMalloc` calls in the
 hot loop. See [`docs/architecture.md`](docs/architecture.md) for the full shape.

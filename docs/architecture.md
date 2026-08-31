@@ -52,10 +52,11 @@ monolithic compile (blueprint §9):
 | `cumes_core` | host C++ | `result.hpp`, `checked_size.hpp`, `grid_shape`, `mode_table` |
 | `cumes_config_json` | host C++ | `validation_report`, `validated_problem`, `json_reader` |
 | `cumes_io_host` | host C++ | `output_spec`, `run_report`, `equilibrium_snapshot`, binary v1, checkpoint |
-| `cumes_io` | host C++ (`output_print` links cudart for D2H) | the full `make_writer` dispatch + host-only NetCDF/HDF5 adapters (the ONLY target with the backend headers and defines) |
+| `cumes_io` (`cumes::io`) | host C++ | host-snapshot console output, full `make_writer` dispatch, and optional NetCDF/HDF5 adapters (the only target with backend headers/defines) |
 | `cumes_cuda_runtime` | header-only CUDA-runtime interface | centralized `check_cuda`/`check_cufft` and buffer/stream/event RAII; propagates only the CUDA runtime/cuFFT links |
 | `cumes_cuda_double` / `cumes_cuda_float` | device | the nine `*_double.cu` / `*_float.cu` operator TUs |
-| `cuMES` | executable | `main.cu`, links only the TU matching `Real` |
+| `cumes_solver` (`cumes::solver`) | CUDA/C++ facade | host-facing `EquilibriumSolver`: validated problem → seed/restart → multigrid → complete host snapshot/report |
+| `cumes` | executable | `main.cu`, consumes the same public solver facade as embedding applications |
 | `magnetic_coordinate` | standalone CUDA/C++ library | consumes schema-v8 equilibrium output and constructs PEST/Boozer coordinates |
 | `cumes-boozer` | postprocessor executable | writes the mixed `(s, theta_b, zeta)` Boozer representation |
 | `cumes_benchmark_fixed_iteration`, `cumes_benchmark_graph_overhead`, `cumes_benchmark_graph_realpass` | bench | §8.1 harness, graph microbenchmark, real-pass graph measurement |
@@ -119,6 +120,8 @@ build and the boundary headers:
   `SpectralOperator` interface, never through a raw hidden Fourier pointer;
 - output (`cumes_io_host`) consumes a host `EquilibriumSnapshot`/`RunReport`
   and never sees a device pointer;
+- the public solver facade returns that complete host snapshot and hides CUDA
+  streams, storage, and operators from ordinary C++ consumers;
 - the controller (`IterationController`) is a pure host state machine with no
   CUDA calls;
 - no library calls `exit()`; only `main.cu` maps `RunStatus` to an exit code.

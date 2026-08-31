@@ -53,6 +53,13 @@ target_include_directories(test_input_json PRIVATE ${PROJECT_SOURCE_DIR}/include
 target_link_libraries(test_input_json PRIVATE cumes_config_json)
 cumes_enable_warnings(test_input_json)
 
+# Public embedding boundary: this source is ordinary C++ (not CUDA) and sees
+# only the host-facing solver/config/snapshot API. Linking and executing it
+# proves downstream users do not need to compile their objective with nvcc.
+add_executable(test_solver_api test_solver_api.cpp)
+target_link_libraries(test_solver_api PRIVATE cumes::solver)
+cumes_enable_warnings(test_solver_api)
+
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
@@ -162,6 +169,7 @@ cumes_enable_warnings(test_accumulation)
 # ---- ctest registration ----------------------------------------------------
 cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
+cumes_add_test(test_solver_api       unit;solver;api)
 cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_derived_fields   unit;io;physics)

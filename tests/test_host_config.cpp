@@ -26,6 +26,7 @@
 #include <unistd.h>
 using namespace cumes::test;
 
+using cumes::parse_problem_spec;
 using cumes::PrecisionPolicy;
 using cumes::ProblemSpec;
 using cumes::read_and_validate;
@@ -555,6 +556,21 @@ static void test_two_power_evaluators() {
           "two_power current at the axis is zero");
 }
 
+static void test_in_memory_json() {
+    SolverOptions options;
+    const auto parsed = parse_problem_spec(
+        R"({"mpol": 3, "ntor": 1, "nfp": 5,
+             "rbc": [{"m": 1, "n": 0, "value": 1.25}],
+             "zbs": [{"m": 1, "n": 0, "value": 0.4}]})",
+        options);
+    check(parsed.report.ok(), "in-memory JSON mapping succeeds");
+    check(
+        parsed.spec.mpol == 3 && parsed.spec.ntor == 1 && parsed.spec.nfp == 5,
+        "in-memory JSON maps scalar resolution fields");
+    check(parsed.spec.rbc.size() == 1 && parsed.spec.rbc.front().value == 1.25,
+          "in-memory JSON maps boundary harmonics");
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--emit-golden") {
         emit_goldens(argv[2]);
@@ -565,6 +581,7 @@ int main(int argc, char** argv) {
     test_precision_floor();
     test_malformed();
     test_two_power_evaluators();
+    test_in_memory_json();
     // No explicit scratch removal: the TempDir RAII destructor cleans the
     // per-test directory even on an interrupted or failing run.
     return summary();
