@@ -253,6 +253,7 @@ class StageSolver {
         std::optional<std::reference_wrapper<FreeBoundaryOperator<T>>> vacuum =
             std::nullopt,
         EquilibriumSnapshot* output_snapshot = nullptr,
+        EquilibriumProfiles* output_profiles = nullptr,
         bool enable_step_recovery = false,
         std::optional<std::reference_wrapper<double>> device_time_ms =
             std::nullopt,
@@ -351,6 +352,9 @@ class StageSolver {
                 const Status status = capture_derived_fields(
                     p, profiles, *rs, geometry, *output_snapshot);
                 if (!status) throw CumesError(status.error());
+                if (output_profiles != nullptr) {
+                    capture_equilibrium_profiles(p, profiles, *output_profiles);
+                }
             }
             // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
             // the operator destructors); nothing to free manually.

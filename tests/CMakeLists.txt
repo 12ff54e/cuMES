@@ -57,6 +57,8 @@ cumes_enable_warnings(test_input_json)
 # only the host-facing solver/config/snapshot API. Linking and executing it
 # proves downstream users do not need to compile their objective with nvcc.
 add_executable(test_solver_api test_solver_api.cpp)
+target_include_directories(test_solver_api PRIVATE
+  ${PROJECT_SOURCE_DIR}/examples)
 target_link_libraries(test_solver_api PRIVATE cumes::solver)
 cumes_enable_warnings(test_solver_api)
 
@@ -67,6 +69,12 @@ target_include_directories(test_plasma_size_target PRIVATE
   ${PROJECT_SOURCE_DIR}/examples)
 target_link_libraries(test_plasma_size_target PRIVATE cumes_io_host)
 cumes_enable_warnings(test_plasma_size_target)
+
+add_executable(test_magnetic_gradient_target test_magnetic_gradient_target.cpp)
+target_include_directories(test_magnetic_gradient_target PRIVATE
+  ${PROJECT_SOURCE_DIR}/examples)
+target_link_libraries(test_magnetic_gradient_target PRIVATE cumes_io_host)
+cumes_enable_warnings(test_magnetic_gradient_target)
 
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
@@ -179,6 +187,7 @@ cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
 cumes_add_test(test_solver_api       unit;solver;api)
 cumes_add_test(test_plasma_size_target unit;optimizer;geometry)
+cumes_add_test(test_magnetic_gradient_target unit;optimizer;geometry)
 cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_derived_fields   unit;io;physics)

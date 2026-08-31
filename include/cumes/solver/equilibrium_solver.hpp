@@ -8,6 +8,7 @@
 #define CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_SOLVER_HPP_
 
 #include "cumes/config/validated_problem.hpp"
+#include "cumes/io/equilibrium_profiles.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/run_report.hpp"
 
@@ -35,6 +36,7 @@ struct SolveRequest {
 
 struct SolveOutcome {
     EquilibriumSnapshot equilibrium;
+    EquilibriumProfiles profiles;
     RunReport report;
 
     bool converged = false;
@@ -53,7 +55,8 @@ struct SolveOutcome {
         for (const auto& family : equilibrium.families) {
             if (family.size() != family_size) return false;
         }
-        return equilibrium.has_derived_fields();
+        return equilibrium.has_derived_fields() &&
+               profiles.has_half_grid_profiles(equilibrium.ns);
     }
 };
 

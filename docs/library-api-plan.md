@@ -5,7 +5,8 @@
 The first in-process milestone is implemented:
 
 - `cumes::EquilibriumSolver` accepts a `ValidatedProblem` and returns a
-  complete host `EquilibriumSnapshot` plus `RunReport`;
+  complete host `EquilibriumSnapshot`, converged flux profiles, and
+  `RunReport`;
 - cold starts and in-memory snapshot restarts are supported;
 - embedding calls are quiet and ignore process-global `CUMES_*` controls by
   default, while the CLI explicitly preserves them;
@@ -172,6 +173,23 @@ the returned spectral state and computes VMEC-compatible cross-sectional area,
 volume, `Rmajor_p`, and `Aminor_p`. The residual callback returns the major- and
 minor-radius differences to meow. Neither this target definition nor its
 weighting is part of the cuMES solver or meow's generic TRF implementation.
+
+The sibling optimizer helper `magnetic_gradient_target.hpp` computes the
+pointwise half-grid observables
+
+```text
+B = sqrt(B^i B_i)
+B dot grad(B) = B^s d_s B + B^u d_u B + B^v d_v B
+(B cross grad(psi_p)) dot grad(B)
+  = psi_p'(s)/sqrt(g) * (B_v d_u B - B_u d_v B).
+```
+
+Angular derivatives use periodic Fourier-collocation differentiation, with
+the physical `nfp` multiplier in the toroidal direction. The solver facade
+exports the converged physical poloidal-flux derivative because prescribed-
+current equilibria cannot reconstruct it from the input. The helper returns
+fields, not a chosen scalar: surface selection, aggregation, normalization,
+and residual weights remain part of the optimizer's target definition.
 
 ## 5. Repeated-solve and concurrency policy
 

@@ -11,6 +11,7 @@
 #define CUMES_INCLUDE_CUMES_SOLVER_MULTIGRID_SOLVER_HPP_
 
 #include "cumes/config/validated_problem.hpp"
+#include "cumes/io/equilibrium_profiles.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/run_report.hpp"
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
@@ -41,6 +42,7 @@ struct MultigridOutcome {
     double total_device_time_ms = 0.0;
     RunReport report;
     EquilibriumSnapshot snapshot;  // final derived fields; state filled by CLI
+    EquilibriumProfiles profiles;  // final half-grid equilibrium profiles
     int failed_stage = -1;         // stage index that failed the run, or -1
 };
 
@@ -199,7 +201,7 @@ class MultigridSolver {
                           std::reference_wrapper<FreeBoundaryOperator<T>>>(
                           std::ref(*vac))
                     : std::nullopt,
-                output_snapshot,
+                output_snapshot, (g + 1 == n_grids) ? &out.profiles : nullptr,
                 // The recovery policy is qualified for fixed-boundary stages.
                 // Free-boundary stages retain their vacuum-coupled reference
                 // trajectory until separately qualified.

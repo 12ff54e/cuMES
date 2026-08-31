@@ -65,6 +65,7 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
 
     SolveOutcome outcome;
     outcome.equilibrium = std::move(internal.snapshot);
+    outcome.profiles = std::move(internal.profiles);
     populate_snapshot_state_from_device(internal.state, outcome.equilibrium);
     outcome.report = std::move(internal.report);
     outcome.report.input_params = make_input_params(problem);

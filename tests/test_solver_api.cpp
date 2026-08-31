@@ -2,6 +2,7 @@
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/solver/equilibrium_solver.hpp"
 #include "cumes_test.h"
+#include "magnetic_gradient_target.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -120,6 +121,8 @@ int main() {
               "solver API: snapshot has validated mode count");
         check(outcome.has_complete_equilibrium(),
               "solver API: state and derived fields are complete");
+        check(outcome.profiles.has_half_grid_profiles(outcome.equilibrium.ns),
+              "solver API: equilibrium flux profiles are complete");
         check(!outcome.report.input_params.rbc_value.empty() &&
                   outcome.report.input_params.rbc_value.front() ==
                       validated.value().spec().rbc.front().value,
@@ -129,6 +132,35 @@ int main() {
         check(std::isfinite(outcome.fsqr) && std::isfinite(outcome.fsqz) &&
                   std::isfinite(outcome.fsql),
               "solver API: residuals are finite");
+
+        bool profile_identity = true;
+#ifdef CUMES_USE_FLOAT
+        constexpr double profile_tolerance = 1.0e-6;
+#else
+        constexpr double profile_tolerance = 1.0e-13;
+#endif
+        for (std::size_t j = 0;
+             j < outcome.profiles.rotational_transform.size(); ++j) {
+            const double expected =
+                outcome.profiles.rotational_transform[j] *
+                outcome.profiles.toroidal_flux_derivative[j];
+            profile_identity =
+                profile_identity &&
+                std::abs(outcome.profiles.poloidal_flux_derivative[j] -
+                         expected) < profile_tolerance;
+        }
+        check(profile_identity,
+              "solver API: fixed-iota flux derivatives are consistent");
+
+        const auto magnetic_fields =
+            cumes_meow_example::calculate_magnetic_gradient_fields(
+                outcome.equilibrium, outcome.profiles,
+                outcome.report.input_params.nfp);
+        check(magnetic_fields.b_dot_grad_b.size() ==
+                      outcome.equilibrium.half_field_size() &&
+                  magnetic_fields.b_cross_grad_psi_p_dot_grad_b.size() ==
+                      outcome.equilibrium.half_field_size(),
+              "solver API: optimizer magnetic observables cover the half grid");
 
         cumes::SolveRequest restart_request;
         restart_request.restart = std::cref(outcome.equilibrium);

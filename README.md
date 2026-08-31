@@ -73,6 +73,14 @@ major/minor radii, and gives their two residuals to meow:
   TARGET_RMAJOR TARGET_AMINOR
 ```
 
+`SolveOutcome` also carries the converged half-grid toroidal/poloidal flux
+derivatives and rotational transform. The optimizer-side
+`examples/magnetic_gradient_target.hpp` combines these profiles with the
+snapshot's covariant/contravariant magnetic-field components to calculate the
+pointwise half-grid fields `B dot grad(B)` and
+`(B cross grad(psi_p)) dot grad(B)`. cuMES does not choose a surface average,
+norm, target value, or residual weight; those remain target-function policy.
+
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
 `deps/magnetic-coordinate`. `--output PATH` writes the native PEST-like result;
