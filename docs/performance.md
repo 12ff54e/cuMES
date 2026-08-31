@@ -190,6 +190,23 @@ wall time from 1.93 s to 1.50 s (22.3%; ranges 1.91--2.01 s and
 7.93 s (5.3%; ranges 8.32--8.39 s and 7.85--7.97 s). Pass counts were
 identical in every repetition.
 
+### 2.6 Cubic multigrid transfer (2026-08-31)
+
+ADR-0011 replaces two-point linear radial prolongation with a four-point cubic
+interpolant in the existing odd-mode regularized coordinate. It changes only
+the initial state of a refined stage; force evaluation, descent, convergence,
+and the exact axis/LCFS contracts are unchanged.
+
+W7-X changes from `1315 → 1559 → 1633` (4507) to
+`1315 → 1443 → 1402` (4160), a 7.70% reduction, with FSQR
+`9.986e-13`. Solovev changes from `235 → 193 → 387` (815) to
+`235 → 190 → 341` (766), a 6.01% reduction, with FSQR `9.695e-17`.
+CTH-like free-boundary changes from `198 → 233` (431) to
+`198 → 226` (424), with FSQR `9.920e-11`. Axisymmetric free-boundary
+retains linear transfer because cubic regressed its qualified Solovev case
+from 1025 to 1045 passes. A final-grid W7-X checkpoint replay converges in one
+iteration with the identical residual triple.
+
 ## 3. Phase 9 experiments and their outcomes
 
 The exit gate for §8.10–§8.12 was *"measure, then adopt or remove."* Three

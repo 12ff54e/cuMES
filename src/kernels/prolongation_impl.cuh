@@ -51,7 +51,8 @@ __global__ void interpolate_state_kernel(T* __restrict__ o_cc,
                                          int ns_new,
                                          int ns_old,
                                          int mnmax,
-                                         int ntorp1) {
+                                         int ntorp1,
+                                         bool cubic) {
     int i = blockIdx.x * blockDim.x + threadIdx.x, total = mnmax * ns_new;
     if (i >= total) return;
     int mode = i / ns_new, jNew = i % ns_new;
@@ -85,14 +86,33 @@ __global__ void interpolate_state_kernel(T* __restrict__ o_cc,
         // vmecpp extrapolates the odd-m axis to 2*x[1] - x[2] (decomposed),
         // for ALL odd m — it feeds the first interior rows (js1 == 0, e.g.
         // jNew = 1, 2 for 33 -> 66) which straddle the old axis.
-        T xsl = (odd && js1 == 0) ? T(2.0) * xs(1) - xs(2) : xs(js1);
-        T xsr = xs(js2);
+        auto axis_regular_xs = [&](int j) -> T {
+            return (odd && j == 0) ? T(2.0) * xs(1) - xs(2) : xs(j);
+        };
+        T xsl = axis_regular_xs(js1);
+        T xsr = axis_regular_xs(js2);
+        T interpolated = wl * xsl + wr * xsr;
+        if (cubic && js1 != js2) {
+            // Uniform-grid Catmull-Rom interpolation in the same decomposed
+            // coordinate as the legacy linear transfer. Linear endpoint
+            // extrapolation supplies the missing neighbor at either edge;
+            // exact old-grid nodes and the LCFS remain exact.
+            const T xm1 =
+                js1 > 0 ? axis_regular_xs(js1 - 1) : T(2.0) * xsl - xsr;
+            const T xp2 = js2 + 1 < ns_old ? axis_regular_xs(js2 + 1)
+                                           : T(2.0) * xsr - xsl;
+            interpolated =
+                xsl +
+                T(0.5) * xint *
+                    (xsr - xm1 +
+                     xint * (T(2.0) * xm1 - T(5.0) * xsl + T(4.0) * xsr - xp2 +
+                             xint * (T(3.0) * (xsl - xsr) + xp2 - xm1)));
+        }
         // Unscale: physical = decomposed / scalxc = decomposed * max(...).
         // (scalxc = 1/max(sqrt(s), sqrtS1); scaling twice with scalxc would
         // divide by max(...)^2 and inflate the interior odd-m coefficients —
         // a 10x error near the axis, invisible at the LCFS where scalxc=1.)
-        T val =
-            (wl * xsl + wr * xsr) * (odd ? fmax(sqrt(sj), sqrtS1n) : T(1.0));
+        T val = interpolated * (odd ? fmax(sqrt(sj), sqrtS1n) : T(1.0));
         if (odd && jNew == 0) val = T(0.0);  // vmecpp: all odd-m zeroed at axis
         out[mode * ns_new + jNew] = val;
     }
@@ -103,7 +123,8 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     const DeviceParams<T>& p_new,
     const cumes::SpectralStorage<T>& st_old,
     const DeviceParams<T>& p_old,
-    cudaStream_t stream) const {
+    cudaStream_t stream,
+    bool cubic) const {
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         // Library contract: never exit() here — the RAII device buffers, the
         // caller's --checkpoint write, and the CLI run-report mapping must
@@ -145,7 +166,7 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
         st_old.family_ptr(cumes::SpectralComponent::Rss),
         st_old.family_ptr(cumes::SpectralComponent::Zcs),
         st_old.family_ptr(cumes::SpectralComponent::Lcs), p_new.ns, p_old.ns,
-        p_new.mnmax, p_new.ntor + 1);
+        p_new.mnmax, p_new.ntor + 1, cubic);
     cumes::check_cuda(cudaGetLastError(), "interpolateState");
     // The kernel reads the OLD (coarse) state asynchronously; the caller frees
     // that state (via move-assignment of the returned SpectralStorage) as soon
@@ -153,9 +174,9 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     // while still being read.
     cumes::check_cuda(cudaStreamSynchronize(stream), "interpolateState sync");
     printf(
-        "  interpolateState: ns=%d -> ns=%d (linear in s, scalxc-scaled "
+        "  interpolateState: ns=%d -> ns=%d (%s in s, scalxc-scaled "
         "odd-m)\n",
-        p_old.ns, p_new.ns);
+        p_old.ns, p_new.ns, cubic ? "cubic" : "linear");
     return st_new;
 }
 

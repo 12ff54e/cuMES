@@ -19,6 +19,7 @@
 #include "cumes/solver/start_policy.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <utility>
 
@@ -60,6 +61,17 @@ class MultigridSolver {
         const auto& stages = vp.spec().stages;
         const int n_grids = static_cast<int>(stages.size());
         const T configured_delt = p.delt;
+        // Cubic transfer better preserves the smooth radial structure of a
+        // converged coarse state. Axisymmetric free-boundary continuation is
+        // the qualified exception: its moving LCFS response is better served
+        // by the more dissipative linear transfer. Float retains its frozen
+        // linear trajectory until separately qualified.
+        bool use_cubic_prolongation =
+            sizeof(T) == sizeof(double) &&
+            !(vp.spec().free_boundary.lfreeb && p.ntor == 0);
+        if (const char* e = std::getenv("CUMES_FORCE_LINEAR_PROLONGATION")) {
+            if (std::atoi(e) != 0) use_cubic_prolongation = false;
+        }
 
         // Free-boundary operator: constructed ONCE per run (vmecpp's
         // persistent vacuum solvers — the accumulated response matrix and the
@@ -97,8 +109,8 @@ class MultigridSolver {
             if (g > 0) {
                 // Prolong the previous stage's converged state onto this grid
                 // on the same compute stream (ordered before the next stage).
-                storage = cumes::Prolongation<T>{}.enqueue(p, storage, p_prev,
-                                                           stream);
+                storage = cumes::Prolongation<T>{}.enqueue(
+                    p, storage, p_prev, stream, use_cubic_prolongation);
                 // vmecpp vmec.cc :536-539: the converged coarse-stage vacuum
                 // state stays valid; re-mark INITIALIZED so the new stage's
                 // first pass runs the vacuum block.

@@ -3,8 +3,8 @@
 //
 // Interpolates a converged state onto a finer radial grid: odd modes in the
 // scalxc-decomposed coordinate, old-axis 2*x1-x2 extrapolation, odd-m zeroed at
-// the new axis, LCFS copied exactly (vmecpp
-// Vmec::InterpolateToNextMultigridStep, LINEAR). (Migration step 13.3: the
+// the new axis, LCFS copied exactly. Both the legacy linear transfer and a
+// four-point cubic transfer are available. (Migration step 13.3: the
 // legacy interpolateState free function and the refine.cuh/refine_impl.cuh
 // module are gone — the body is Prolongation::enqueue, defined in
 // src/kernels/prolongation_impl.cuh.)
@@ -31,7 +31,8 @@ class Prolongation {
     SpectralStorage<T> enqueue(const DeviceParams<T>& p_new,
                                const SpectralStorage<T>& state_old,
                                const DeviceParams<T>& p_old,
-                               cudaStream_t stream) const;
+                               cudaStream_t stream,
+                               bool cubic = false) const;
 };
 
 }  // namespace cumes

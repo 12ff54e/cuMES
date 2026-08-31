@@ -103,6 +103,8 @@ w_m(s)=s^{m/2}\left[1+c_{seed}(1-s)\right],\qquad c_{seed}=0.12.
 \]
 
 Thus `w_m(0)=0` for `m>0`, `w_m(1)=1`, and the LCFS is unchanged exactly.
+Single-grid fixed-boundary 3-D starts use `c_seed=0.129`; the `0.12` value
+above applies to continuation starts.
 Coarse fixed-boundary axisymmetric starts (`ns <= 11`) use `c_seed=-0.07`;
 fine fixed-boundary axisymmetric starts use `c_seed=0`. Three-dimensional
 free-boundary starts use `c_seed=0.12` through `ns=25` and the conservative
@@ -706,4 +708,11 @@ x_c(s)=\frac{x_{\mathrm{physical}}(s)}
 {\max(\sqrt{s},\sqrt{\Delta s\_{\mathrm{old}}})}.
 \]
 
-The old-axis stencil is `2*x_c(s1)-x_c(s2)`. The result is unscaled on the new grid, new odd-mode axis entries are zero, and the LCFS is copied exactly. These four rules need direct property tests for all six coefficient families.
+The old-axis stencil is `2*x_c(s1)-x_c(s2)`. Double-precision continuation
+uses a four-point Catmull-Rom interpolant in this scaled coordinate, with
+linear extrapolation for a missing endpoint neighbor. Axisymmetric
+free-boundary and float runs retain two-point linear interpolation. The result
+is unscaled on the new grid, new odd-mode axis entries are zero, and the LCFS
+is copied exactly. `CUMES_FORCE_LINEAR_PROLONGATION=1` restores linear
+transfer for diagnostic A/B runs. These rules have direct CPU/GPU property
+tests for all six coefficient families and both scalar types.
