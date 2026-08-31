@@ -6,4 +6,4 @@
 	url = git@github.com:12ff54e/magnetic-coordinate.git
 [submodule "deps/BSplineInterpolation"]
 	path = deps/BSplineInterpolation
-	url = git@github.com:12ff54e/BSplineInterpolation.git
+	url = https://github.com/12ff54e/BSplineInterpolation.git
