@@ -27,6 +27,7 @@ transfers remain available with `CUMES_FORCE_CATMULL_PROLONGATION=1` and
 ## Quick start
 
 ```bash
+git submodule update --init --recursive
 cmake --preset verify          # double precision, both backends, -Werror
 cmake --build build -j
 ./build/cumes inputs/solovev.json --output out.bin
@@ -70,6 +71,13 @@ point to g++-12 (set in `CMakeLists.txt`). Built CUDA architectures: 61
 a plain `cmake -B build` detects them and continues with unavailable backends
 disabled. Without NetCDF, binary output and in-memory MAKEGRID free-boundary
 calculations remain available.
+
+`deps/BSplineInterpolation` is a direct header-only submodule used to prepare
+the fixed-boundary multigrid transfer matrices. It is deliberately separate
+from the copy used internally by `deps/magnetic-coordinate`, so either
+dependency can be updated or disabled independently. If the direct submodule
+is absent, cuMES falls back to Catmull-Rom prolongation; the explicit build
+switch is `-DCUMES_USE_BSPLINE_PROLONGATION=OFF`.
 
 ## Architecture
 

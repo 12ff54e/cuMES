@@ -123,6 +123,13 @@ build and the boundary headers:
   CUDA calls;
 - no library calls `exit()`; only `main.cu` maps `RunStatus` to an exit code.
 
+The header-only `deps/BSplineInterpolation` submodule is a direct cuMES
+dependency used only by the host B-spline matrix adapter. Its upstream CMake
+project is not added: cuMES consumes the headers through a scoped system
+include, avoiding the dependency's standalone tests and directory-wide
+language-standard settings. The independent nested copy used by
+`deps/magnetic-coordinate` remains private to that submodule.
+
 ## 5. Free-boundary vacuum library (`deps/vacuum-field`)
 
 `deps/vacuum-field` is a standalone CUDA C++ library — the port of vmecpp's

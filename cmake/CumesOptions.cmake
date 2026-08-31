@@ -38,9 +38,9 @@ option(CUMES_BUILD_MAGNETIC_COORDINATE
        ON)
 
 # Optional global cubic B-spline matrix for precise-double fixed-boundary
-# multigrid transfer. It reuses the header-only interpolation dependency under
-# deps/magnetic-coordinate when available; OFF (or an absent submodule) keeps
-# the self-contained Catmull-Rom transfer.
+# multigrid transfer. It reuses the direct header-only interpolation submodule
+# under deps/ when available; OFF (or an absent submodule) keeps the
+# self-contained Catmull-Rom transfer.
 option(CUMES_USE_BSPLINE_PROLONGATION
        "Use BSplineInterpolation for fixed-boundary multigrid transfer" ON)
 

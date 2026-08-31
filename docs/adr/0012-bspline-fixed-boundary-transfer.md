@@ -11,7 +11,7 @@ Catmull-Rom transfer reduced the main fixed-boundary workloads substantially,
 but it does not use all of the converged coarse profile when estimating a new
 radial row.
 
-`deps/magnetic-coordinate/BSplineInterpolation` provides
+`deps/BSplineInterpolation` provides
 `InterpolationFunctionTemplate1D<3>`, which factorizes the interpolation
 system once and reuses it for many profiles. A direct host batch over all 936
 W7-X spectral profiles was measured with `INTP_CELL_LAYOUT`: 1.90 ms for

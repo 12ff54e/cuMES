@@ -214,17 +214,19 @@ add_library(cumes_cuda_runtime INTERFACE)
 target_include_directories(cumes_cuda_runtime INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cumes_cuda_runtime INTERFACE CUDA::cudart CUDA::cufft)
 
-# Reuse magnetic-coordinate's header-only BSplineInterpolation dependency to
-# construct a small radial transfer matrix on the host. The spectral state
-# remains device-resident; the matrix is uploaded and applied in one batched
-# CUDA kernel. Submodule-free builds retain the Catmull-Rom fallback.
+# Reuse the direct header-only BSplineInterpolation submodule to construct a
+# small radial transfer matrix on the host. The spectral state remains
+# device-resident; the matrix is uploaded and applied in one batched CUDA
+# kernel. Submodule-free builds retain the Catmull-Rom fallback. Do not call
+# the dependency's add_subdirectory(): it enables standalone tests and changes
+# its directory-wide language standard, neither of which cuMES needs.
 set(CUMES_HAVE_BSPLINE_PROLONGATION OFF)
 if(CUMES_USE_BSPLINE_PROLONGATION AND EXISTS
-   ${CMAKE_CURRENT_SOURCE_DIR}/deps/magnetic-coordinate/BSplineInterpolation/include/bsintp/Interpolation.hpp)
+   ${CMAKE_CURRENT_SOURCE_DIR}/deps/BSplineInterpolation/include/bsintp/Interpolation.hpp)
   cumes_add_host_library(cumes_bspline_prolongation FALSE
     src/cumes/numerics/bspline_matrix.cpp)
   target_include_directories(cumes_bspline_prolongation SYSTEM PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/deps/magnetic-coordinate/BSplineInterpolation/include)
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/BSplineInterpolation/include)
   target_compile_definitions(cumes_bspline_prolongation PRIVATE
     INTP_CELL_LAYOUT)
   # GCC 12/13 reports a false positive while inlining the dependency's
