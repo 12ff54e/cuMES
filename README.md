@@ -58,48 +58,20 @@ cumes::SolveOutcome solved = solver.solve(validated.value());
 Library solves are quiet and ignore the CLI's process-global `CUMES_*`
 controls by default. `SolveRequest` can opt into those controls or provide an
 in-memory restart snapshot. Installed consumers use
-`find_package(cuMES CONFIG REQUIRED)` and link `cumes::solver`; a source-tree
-meow integration example is available as `cumes_meow_optimize` when configured
-with `-DCUMES_MEOW_SOURCE_DIR=/path/to/meow`. See
+`find_package(cuMES CONFIG REQUIRED)` and link `cumes::solver`.
+
+Optimization targets and integration applications are maintained in the meow
+repository. A source-tree integration build remains available by configuring
+cuMES with `-DCUMES_MEOW_SOURCE_DIR=/path/to/meow`; this asks meow to build its
+cuMES-backed examples without making cuMES depend on optimizer policy. See
 [`docs/library-api-plan.md`](docs/library-api-plan.md) for the ownership and
-optimizer-integration contract.
+data-publication contract.
 
-The example keeps target evaluation in the optimization application: it
-reconstructs the final LCFS from `SolveOutcome`, calculates VMEC-compatible
-major/minor radii, and gives their two residuals to meow:
-
-```bash
-./build-meow/cumes_meow_optimize inputs/solovev.json \
-  TARGET_RMAJOR TARGET_AMINOR
-```
-
-`SolveOutcome` also carries the converged half-grid toroidal/poloidal flux
-derivatives, rotational transform, and the covariant flux functions `I(s)` and
-`G(s)`. The optimizer-side
-`examples/magnetic_gradient_target.hpp` combines these profiles with the
-snapshot's covariant/contravariant magnetic-field components to calculate the
-pointwise half-grid fields `B dot grad(B)` and
-`(B cross grad(psi_p)) dot grad(B)`. cuMES does not choose a surface average,
-norm, target value, or residual weight; those remain target-function policy.
-
-`examples/quasisymmetry_target.hpp` supplies that policy for QS, QH, and QA.
-It returns a residual vector whose squared norm is `f_QS`, and the QH/QA
-builders append the aspect-ratio and mean-iota residuals. The flux gradient is
-explicitly selectable between normalized toroidal flux (the conventional QS
-metric) and normalized poloidal flux.
-
-The optional meow build also produces `cumes_meow_qs_optimize`. For example,
-the following uses the requested poloidal-flux form for QA with physical
-helicity `(M,N)=(1,0)`, target aspect ratio 5, and target integrated iota 0.4:
-
-```bash
-./build-meow/cumes_meow_qs_optimize inputs/solovev.json \
-  qa poloidal 1 0 5.0 0.4
-```
-
-The example selects every native half-grid surface and varies the same single
-`rbc(m=1,n=0)` boundary harmonic as `cumes_meow_optimize`; production adapters
-should expose their own surface set, weights, and boundary parameterization.
+`SolveOutcome` carries the complete equilibrium snapshot plus converged
+half-grid toroidal/poloidal flux derivatives, rotational transform, and the
+covariant flux functions `I(s)` and `G(s)`. cuMES publishes these physical
+quantities but does not choose target surfaces, interpolation, norms, weights,
+or target values.
 
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from

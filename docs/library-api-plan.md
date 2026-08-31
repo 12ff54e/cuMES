@@ -14,8 +14,8 @@ The first in-process milestone is implemented:
 - `cumes::solver`, `cumes::config_json`, `cumes::core`, and `cumes::io` are
   supported build-tree targets, and the static-library closure is installable
   through `find_package(cuMES)`;
-- `examples/cumes_meow_optimize.cpp` demonstrates the independent integration
-  layer and builds when `CUMES_MEOW_SOURCE_DIR` names a meow checkout;
+- meow owns the integration examples and target implementations; cuMES can
+  request their build when `CUMES_MEOW_SOURCE_DIR` names a meow checkout;
 - ordinary-C++ direct API and installed-package consumer tests cover the
   embedding boundary.
 
@@ -167,14 +167,14 @@ Objectives should prefer gauge-invariant physical fields over raw lambda
 coefficients. In particular, the documented near-degenerate lambda gauge makes
 raw lambda targets unsuitable unless the gauge is deliberately fixed.
 
-The `cumes_meow_optimize` example demonstrates this ownership explicitly.
-Its optimizer-side `plasma_size_target.hpp` reconstructs the final LCFS from
+The meow `cumes_meow_optimize` example demonstrates this ownership explicitly.
+Its optimizer-side plasma-size target reconstructs the final LCFS from
 the returned spectral state and computes VMEC-compatible cross-sectional area,
 volume, `Rmajor_p`, and `Aminor_p`. The residual callback returns the major- and
 minor-radius differences to meow. Neither this target definition nor its
 weighting is part of the cuMES solver or meow's generic TRF implementation.
 
-The sibling optimizer helper `magnetic_gradient_target.hpp` computes the
+The sibling meow magnetic-gradient target computes the
 pointwise half-grid observables
 
 ```text
@@ -193,7 +193,7 @@ and residual weights remain part of the optimizer's target definition.
 
 ### 4.1 QS, QH, and QA optimizer targets
 
-The optimizer-side `quasisymmetry_target.hpp` builds a least-squares residual
+The optimizer-side quasisymmetry target in meow builds a least-squares residual
 vector from the equilibrium primitives. For helicity integers `(M,N)`, define
 
 ```text
@@ -239,7 +239,7 @@ In current language, `I=mu0/(2*pi)` times the enclosed toroidal current and
 `G=mu0/(2*pi)` times the poloidal current outside the surface, subject to the
 equilibrium's orientation convention.
 
-The optional `cumes_meow_qs_optimize` integration executable demonstrates the
+The optional meow `cumes_meow_qs_optimize` integration executable demonstrates the
 full composition: boundary vector to validated problem, cuMES solve, QS/QH/QA
 residual construction, and meow TRF evaluation. Its command line makes the
 flux-gradient convention and physical `(M,N)` explicit. It selects all native

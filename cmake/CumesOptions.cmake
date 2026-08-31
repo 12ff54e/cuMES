@@ -72,8 +72,7 @@ option(CUMES_BUILD_CLI "Build the cumes command-line application" ON)
 option(CUMES_BUILD_TESTS "Build and register the cuMES test suite" ON)
 option(CUMES_BUILD_BENCHMARKS "Build cuMES benchmark executables" ON)
 
-# Optional source-tree integration example. Keep the generic cuMES and meow
-# libraries independent; when this points at a meow checkout, only the example
-# executable links both.
+# Optional source-tree integration. The target implementations and applications
+# live in meow; this option only makes their cuMES adapter build convenient.
 set(CUMES_MEOW_SOURCE_DIR "" CACHE PATH
-    "Path to a meow source tree for the optional boundary-optimization example")
+    "Path to a meow source tree for its optional cuMES integration")

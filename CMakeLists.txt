@@ -374,18 +374,10 @@ if(CUMES_MEOW_SOURCE_DIR)
   endif()
   set(MEOW_BUILD_TESTS OFF CACHE BOOL
       "do not duplicate meow tests in the cuMES integration build" FORCE)
+  set(MEOW_BUILD_CUMES_INTEGRATION ON CACHE BOOL
+      "build the meow-owned cuMES integration applications" FORCE)
   add_subdirectory(${CUMES_MEOW_SOURCE_DIR}
                    ${CMAKE_CURRENT_BINARY_DIR}/meow EXCLUDE_FROM_ALL)
-  add_executable(cumes_meow_optimize examples/cumes_meow_optimize.cpp)
-  target_link_libraries(cumes_meow_optimize PRIVATE
-    cumes::solver meow::trf)
-  cumes_enable_warnings(cumes_meow_optimize)
-
-  add_executable(cumes_meow_qs_optimize
-    examples/cumes_meow_qs_optimize.cpp)
-  target_link_libraries(cumes_meow_qs_optimize PRIVATE
-    cumes::solver meow::trf)
-  cumes_enable_warnings(cumes_meow_qs_optimize)
 endif()
 
 # Precision-policy provenance: the named policy and its effective flags

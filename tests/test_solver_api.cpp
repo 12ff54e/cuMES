@@ -2,7 +2,6 @@
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/solver/equilibrium_solver.hpp"
 #include "cumes_test.h"
-#include "magnetic_gradient_target.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -179,16 +178,6 @@ int main() {
         }
         check(covariant_flux_functions_match,
               "solver API: I and G match covariant field averages");
-
-        const auto magnetic_fields =
-            cumes_meow_example::calculate_magnetic_gradient_fields(
-                outcome.equilibrium, outcome.profiles,
-                outcome.report.input_params.nfp);
-        check(magnetic_fields.b_dot_grad_b.size() ==
-                      outcome.equilibrium.half_field_size() &&
-                  magnetic_fields.b_cross_grad_psi_p_dot_grad_b.size() ==
-                      outcome.equilibrium.half_field_size(),
-              "solver API: optimizer magnetic observables cover the half grid");
 
         cumes::SolveRequest restart_request;
         restart_request.restart = std::cref(outcome.equilibrium);
