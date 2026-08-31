@@ -79,6 +79,8 @@ SolverResult<T> solver_run(
         std::nullopt,
     std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<T>>>
         vacuum = std::nullopt,
-    bool enable_step_recovery = false);
+    bool enable_step_recovery = false,
+    bool verbose = true,
+    bool use_process_environment = true);
 
 #endif  // CUMES_INCLUDE_SOLVER_CUH_

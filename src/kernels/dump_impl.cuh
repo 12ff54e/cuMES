@@ -26,6 +26,7 @@ namespace cumes {
 
 inline bool dump_enabled() {
 #ifdef DUMP_CUMES_VERIFY
+    if (!dump_process_environment_enabled) return false;
     // Read the env var once per process (the old form re-read it at every
     // one of the ~6 dump-window entry points per iteration).
     static const bool enabled = [] {
@@ -146,6 +147,7 @@ static const DumpKnobs& dump_knobs() {
 }
 
 static int dump_max_iter(int default_max_iter) {
+    if (!dump_process_environment_enabled) return default_max_iter;
     static const bool has_override = getenv("CUMES_MAX_ITER") != nullptr;
     static const int override =
         has_override ? atoi(getenv("CUMES_MAX_ITER")) : 0;

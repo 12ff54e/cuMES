@@ -1013,7 +1013,9 @@ SolverResult<T> solver_run(
     std::optional<std::reference_wrapper<cumes::SpectralOperator<T>>> op,
     std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<T>>>
         vacuum,
-    bool enable_step_recovery) {
+    bool enable_step_recovery,
+    bool verbose,
+    bool use_process_environment) {
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt, {}};
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
@@ -1040,14 +1042,18 @@ SolverResult<T> solver_run(
     int MAX_ITER_EFF = p.max_iter;
     double DELT0_EFF = p.delt;  // double: atof knob, converted to T at use
     double DTAU_FLOOR = cumes::control_policy::DEFAULT_DTAU_FLOOR;
-    if (const char* e = getenv("CUMES_MAX_ITER")) MAX_ITER_EFF = atoi(e);
-    if (const char* e = getenv("CUMES_DELT0")) DELT0_EFF = atof(e);
-    if (const char* e = getenv("CUMES_DTAU_FLOOR")) DTAU_FLOOR = atof(e);
-    if (const char* e = getenv("CUMES_DISABLE_STEP_RECOVERY")) {
-        if (atoi(e) != 0) enable_step_recovery = false;
+    if (use_process_environment) {
+        if (const char* e = getenv("CUMES_MAX_ITER")) MAX_ITER_EFF = atoi(e);
+        if (const char* e = getenv("CUMES_DELT0")) DELT0_EFF = atof(e);
+        if (const char* e = getenv("CUMES_DTAU_FLOOR")) DTAU_FLOOR = atof(e);
+        if (const char* e = getenv("CUMES_DISABLE_STEP_RECOVERY")) {
+            if (atoi(e) != 0) enable_step_recovery = false;
+        }
     }
-    printf("knobs: max_iter=%d delt0=%.3f dtau_floor=%.3e\n", MAX_ITER_EFF,
-           DELT0_EFF, DTAU_FLOOR);
+    if (verbose) {
+        printf("knobs: max_iter=%d delt0=%.3f dtau_floor=%.3e\n", MAX_ITER_EFF,
+               DELT0_EFF, DTAU_FLOOR);
+    }
 
     // ---- vmecpp VMEC_8_52 time-step control state ----
     // iter2: effective iteration counter — does NOT advance on restart
@@ -1128,13 +1134,16 @@ SolverResult<T> solver_run(
     // Diagnostic: test inverse DFT at specified surface (CUMES_DUMP=1 only).
     cumes::dump_inverse_diag<T>(transform, storage, rs, p, stream);
 
-    printf("\n ITER |    FSQR        FSQZ        FSQL    |   DELT\n");
-    printf("------+------------------------------------+----------\n");
+    if (verbose) {
+        printf("\n ITER |    FSQR        FSQZ        FSQL    |   DELT\n");
+        printf("------+------------------------------------+----------\n");
+    }
 
     // One table row: effective iteration, invariant residuals, delt, and the
     // axis / boundary R_00 (same columns as vmecpp's iteration printout).
     auto print_iter_row = [&](int it2, double fsqr_v, double fsqz_v,
                               double fsql_v, double delt_v) {
+        if (!verbose) return;
         printf("%5d | %11.3e %11.3e %11.3e | %8.2e", it2, (double)fsqr_v,
                (double)fsqz_v, (double)fsql_v, (double)delt_v);
         // Both values come from the pinned telemetry mirror (completion
@@ -1169,7 +1178,8 @@ SolverResult<T> solver_run(
     // path because their host vacuum update splits the device DAG in two. The
     // legacy default stream is also direct: CUDA does not permit it to be the
     // root of a stream capture (production stages use an explicit stream).
-    const char* disable_cuda_graphs = getenv("CUMES_DISABLE_CUDA_GRAPHS");
+    const char* disable_cuda_graphs =
+        use_process_environment ? getenv("CUMES_DISABLE_CUDA_GRAPHS") : nullptr;
     const bool cuda_graphs_disabled =
         disable_cuda_graphs != nullptr && atoi(disable_cuda_graphs) != 0;
     const bool use_cuda_graphs = stream != nullptr && !vacuum &&
@@ -1202,10 +1212,13 @@ SolverResult<T> solver_run(
         // RestartIteration(BAD_JACOBIAN).
         if (controller.next_schedule()) {
             restore_state();
-            printf(
-                "  -> CONVERGENCE PROBLEM: RESETTING DELT to %.3e "
-                "(ijacob=%d)\n",
-                (double)controller.delta_t(), controller.bad_jacobian_count());
+            if (verbose) {
+                printf(
+                    "  -> CONVERGENCE PROBLEM: RESETTING DELT to %.3e "
+                    "(ijacob=%d)\n",
+                    (double)controller.delta_t(),
+                    controller.bad_jacobian_count());
+            }
             continue;
         }
 
@@ -1357,10 +1370,12 @@ SolverResult<T> solver_run(
             recorder.record(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
                             it2_before, it1_before);
             restore_state();
-            cumes::dump_event_bad_jacobian(
-                (double)js.min_oriented, (double)js.max_abs,
-                (double)js.nonfinite_count, js.min_index / p.nZnT,
-                (double)controller.delta_t());
+            if (verbose) {
+                cumes::dump_event_bad_jacobian(
+                    (double)js.min_oriented, (double)js.max_abs,
+                    (double)js.nonfinite_count, js.min_index / p.nZnT,
+                    (double)controller.delta_t());
+            }
             print_iter_row(controller.effective_iteration(), T(1.0), T(1.0),
                            T(1.0), controller.delta_t());
             continue;
@@ -1413,7 +1428,9 @@ SolverResult<T> solver_run(
             recorder.record(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0,
                             0, 0, 0, it2_before, it1_before);
             restore_state();
-            cumes::dump_event_nonfinite((double)controller.delta_t());
+            if (verbose) {
+                cumes::dump_event_nonfinite((double)controller.delta_t());
+            }
             print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
                            fsql_i, controller.delta_t());
             continue;
@@ -1433,7 +1450,9 @@ SolverResult<T> solver_run(
             // don't advance it, matching vmecpp's bad_resets counter and the
             // ITER column of the table above (the raw pass count, iter+1,
             // would disagree after any restart).
-            cumes::dump_event_converged(controller.effective_iteration());
+            if (verbose) {
+                cumes::dump_event_converged(controller.effective_iteration());
+            }
             print_iter_row(controller.effective_iteration(), fsqr_i, fsqz_i,
                            fsql_i, controller.delta_t());
             break;
@@ -1491,9 +1510,12 @@ SolverResult<T> solver_run(
             // discarded by the control block's RestartIteration).
             restore_state();
             controller.after_descent(decision);
-            cumes::dump_event_restart(
-                decision.reason == cumes::RestartReason::BAD_JACOBIAN,
-                controller.effective_iteration(), (double)controller.delta_t());
+            if (verbose) {
+                cumes::dump_event_restart(
+                    decision.reason == cumes::RestartReason::BAD_JACOBIAN,
+                    controller.effective_iteration(),
+                    (double)controller.delta_t());
+            }
         } else {
             controller.after_descent(
                 decision);  // advances iter2 on good passes
@@ -1529,9 +1551,9 @@ SolverResult<T> solver_run(
     cumes::check_cuda(cudaStreamSynchronize(stream), "solver end sync");
     // precon/constraint/equilibrium are RAII (their destructors free the
     // arena-backed workspaces and the transform-timing events); nothing else.
-    if (use_cuda_graphs) {
+    if (verbose && use_cuda_graphs) {
         printf("transform timing: unavailable during CUDA Graph replay\n");
-    } else {
+    } else if (verbose) {
         float t_inv_ms = 0.0f, t_fwd_ms = 0.0f;
         equilibrium.transform_timing_ms(t_inv_ms, t_fwd_ms);
         printf(

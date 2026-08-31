@@ -64,7 +64,9 @@ DeviceParams<T> init_params(const ValidatedProblem& vp) {
 // reconstruction identical).
 template <typename T>
 SpectralStorage<T> init_state(const DeviceParams<T>& p,
-                              const ValidatedProblem& vp) {
+                              const ValidatedProblem& vp,
+                              bool verbose = true,
+                              bool use_process_environment = true) {
     const ProblemSpec& sp = vp.spec();
     const FoldedBoundary& b = vp.boundary();
     const int ntorp1 = p.ntor + 1;
@@ -74,8 +76,10 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     T envelope_correction =
         T(default_seed_envelope(p.ntor, sp.free_boundary.lfreeb, p.ns,
                                 static_cast<int>(sp.stages.size())));
-    if (const char* e = std::getenv("CUMES_SEED_ENVELOPE")) {
-        envelope_correction = T(std::atof(e));
+    if (use_process_environment) {
+        if (const char* e = std::getenv("CUMES_SEED_ENVELOPE")) {
+            envelope_correction = T(std::atof(e));
+        }
     }
     // One staging buffer in the exact state_slab() order
     // (Rcc Zsc Lsc Rss Zcs Lcs — spectral_storage.hpp), so the six per-family
@@ -130,22 +134,28 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     }
     double lambda_seed_scale =
         default_axisymmetric_lambda_seed(p.ntor, sp.free_boundary.lfreeb);
-    if (const char* e = std::getenv("CUMES_AXISYM_LAMBDA_SEED")) {
-        lambda_seed_scale = std::atof(e);
+    if (use_process_environment) {
+        if (const char* e = std::getenv("CUMES_AXISYM_LAMBDA_SEED")) {
+            lambda_seed_scale = std::atof(e);
+        }
     }
     if (lambda_seed_scale != 0.0 &&
         !seed_axisymmetric_lambda<T>(p.ns, p.mpol, h_c, h_zsc, h_lsc, b.rbcc,
                                      b.zbsc, sp.raxis_c[0], envelope_correction,
                                      T(lambda_seed_scale))) {
-        std::fprintf(stderr,
-                     "cuMES: WARNING: axisymmetric lambda seed rejected "
-                     "invalid initial geometry; using zero lambda\n");
+        if (verbose) {
+            std::fprintf(stderr,
+                         "cuMES: WARNING: axisymmetric lambda seed rejected "
+                         "invalid initial geometry; using zero lambda\n");
+        }
         lambda_seed_scale = 0.0;
     }
-    printf(
-        "  init_state: regular boundary/axis interpolation "
-        "(m>0 s^(m/2), envelope=%g, lambda=%g)\n",
-        static_cast<double>(envelope_correction), lambda_seed_scale);
+    if (verbose) {
+        printf(
+            "  init_state: regular boundary/axis interpolation "
+            "(m>0 s^(m/2), envelope=%g, lambda=%g)\n",
+            static_cast<double>(envelope_correction), lambda_seed_scale);
+    }
 
     check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(), 6 * nb,
                           cudaMemcpyHostToDevice),
@@ -160,7 +170,8 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
 template <typename T>
 SpectralStorage<T> restart_state(const DeviceParams<T>& p,
                                  const ValidatedProblem& vp,
-                                 const EquilibriumSnapshot& snap) {
+                                 const EquilibriumSnapshot& snap,
+                                 bool verbose = true) {
     const FoldedBoundary& b = vp.boundary();
     const int ntorp1 = p.ntor + 1;
     const size_t one = (size_t)p.ns * p.mnmax;
@@ -222,7 +233,9 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
     check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(), 6 * nb,
                           cudaMemcpyHostToDevice),
                "restart state slab");
-    printf("  restart_state: uploaded checkpoint + LCFS/axis patch\n");
+    if (verbose) {
+        printf("  restart_state: uploaded checkpoint + LCFS/axis patch\n");
+    }
     return storage;
 }
 

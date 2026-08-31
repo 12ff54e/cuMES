@@ -255,7 +255,9 @@ class StageSolver {
         EquilibriumSnapshot* output_snapshot = nullptr,
         bool enable_step_recovery = false,
         std::optional<std::reference_wrapper<double>> device_time_ms =
-            std::nullopt) {
+            std::nullopt,
+        bool verbose = true,
+        bool use_process_environment = true) {
         // One arena allocation, one construction of every module, one solve
         // (completion plan step 3.2): the modules' alloc_span calls ARE the
         // plan — there is no temporary measuring arena and nothing is
@@ -269,7 +271,7 @@ class StageSolver {
             // real-space storage and the mode table are scoped RAII (their
             // frees no-op on the arena path and cover the nullptr-arena
             // path).
-            Profiles<T> profiles(p, vp, arena);
+            Profiles<T> profiles(p, vp, arena, verbose);
             stage_detail::ScopedRealSpace<T> rs(p, arena);
             stage_detail::ScopedModeTable<T> mt(p, arena);
             ToroidalFftOperator<T> transform(p, *rs, mt.get(), arena);
@@ -286,8 +288,10 @@ class StageSolver {
             // single `SpectralOperator<T>` (no axisym_active branch);
             // nullopt selects the generic ToroidalFft operator.
             bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
-            if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
-                if (std::atoi(e) != 0) use_axisym = false;
+            if (use_process_environment) {
+                if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
+                    if (std::atoi(e) != 0) use_axisym = false;
+            }
             std::unique_ptr<AxisymmetricOperator<T>> axisym;
             if (use_axisym)
                 axisym = std::make_unique<AxisymmetricOperator<T>>(p);
@@ -320,11 +324,13 @@ class StageSolver {
                              std::reference_wrapper<SpectralOperator<T>>>(
                              std::ref(*axisym))
                        : std::nullopt,
-                vacuum, enable_step_recovery);
+                vacuum, enable_step_recovery, verbose, use_process_environment);
             const double elapsed_device_ms = device_timer.stop(stream);
             if (device_time_ms.has_value())
                 device_time_ms->get() = elapsed_device_ms;
-            std::printf("  device time: %.3f ms\n", elapsed_device_ms);
+            if (verbose) {
+                std::printf("  device time: %.3f ms\n", elapsed_device_ms);
+            }
 
             if (output_snapshot != nullptr) {
                 // The converged exit already has matching fields, but a run
@@ -349,11 +355,14 @@ class StageSolver {
             // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
             // the operator destructors); nothing to free manually.
 
-            std::printf(
-                "  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
-                "reserved %zu bytes\n",
-                arena.span_count(), arena.peak_bytes(),
-                arena.peak_bytes() / (1024.0 * 1024.0), arena.total_bytes());
+            if (verbose) {
+                std::printf(
+                    "  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
+                    "reserved %zu bytes\n",
+                    arena.span_count(), arena.peak_bytes(),
+                    arena.peak_bytes() / (1024.0 * 1024.0),
+                    arena.total_bytes());
+            }
             return result;
         });
     }

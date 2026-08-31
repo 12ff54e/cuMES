@@ -57,7 +57,9 @@ class MultigridSolver {
                                    const ValidatedProblem& vp,
                                    SpectralStorage<T> seed,
                                    cudaStream_t stream = 0,
-                                   bool hot_start = false) {
+                                   bool hot_start = false,
+                                   bool verbose = true,
+                                   bool use_process_environment = true) {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
         DeviceParams<T> p_prev;
@@ -87,14 +89,18 @@ class MultigridSolver {
                 radial_interpolation = RadialInterpolation::CATMULL_ROM;
             }
         }
-        if (const char* e = std::getenv("CUMES_FORCE_CATMULL_PROLONGATION")) {
-            if (std::atoi(e) != 0 && sizeof(T) == sizeof(double)) {
-                radial_interpolation = RadialInterpolation::CATMULL_ROM;
+        if (use_process_environment) {
+            if (const char* e =
+                    std::getenv("CUMES_FORCE_CATMULL_PROLONGATION")) {
+                if (std::atoi(e) != 0 && sizeof(T) == sizeof(double)) {
+                    radial_interpolation = RadialInterpolation::CATMULL_ROM;
+                }
             }
-        }
-        if (const char* e = std::getenv("CUMES_FORCE_LINEAR_PROLONGATION")) {
-            if (std::atoi(e) != 0) {
-                radial_interpolation = RadialInterpolation::LINEAR;
+            if (const char* e =
+                    std::getenv("CUMES_FORCE_LINEAR_PROLONGATION")) {
+                if (std::atoi(e) != 0) {
+                    radial_interpolation = RadialInterpolation::LINEAR;
+                }
             }
         }
 
@@ -141,6 +147,7 @@ class MultigridSolver {
             hp.extcur = vp.spec().free_boundary.extcur;
             hp.nvacskip = vp.spec().free_boundary.nvacskip;
             hp.hot_start = hot_start;
+            hp.use_process_environment = use_process_environment;
             vac = std::make_unique<FreeBoundaryOperator<T>>(hp, p);
         }
 
@@ -152,11 +159,13 @@ class MultigridSolver {
             p.delt = initial_step_for_stage(configured_delt, p.ntor, p.nzeta,
                                             vp.spec().free_boundary.lfreeb,
                                             p.ns, n_grids, g);
-            std::printf(
-                "\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d "
-                "ftol=%.0e delt=%.6g ===\n",
-                g + 1, n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol,
-                (double)p.delt);
+            if (verbose) {
+                std::printf(
+                    "\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d "
+                    "ftol=%.0e delt=%.6g ===\n",
+                    g + 1, n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol,
+                    (double)p.delt);
+            }
             if (g > 0) {
                 // Prolong the previous stage's converged state onto this grid
                 // on the same compute stream (ordered before the next stage).
@@ -194,21 +203,26 @@ class MultigridSolver {
                 // The recovery policy is qualified for fixed-boundary stages.
                 // Free-boundary stages retain their vacuum-coupled reference
                 // trajectory until separately qualified.
-                !vac, std::ref(stage_device_time_ms));
+                !vac, std::ref(stage_device_time_ms), verbose,
+                use_process_environment);
             total_device_time_ms += stage_device_time_ms;
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();
                 if (before == cumes::VacuumState::INITIALIZED) {
-                    std::printf(
-                        "  VACUUM PRESSURE TURNED ON AT %d ITERATIONS\n",
-                        result.iterations);
+                    if (verbose) {
+                        std::printf(
+                            "  VACUUM PRESSURE TURNED ON AT %d ITERATIONS\n",
+                            result.iterations);
+                    }
                 }
-                std::printf(
-                    "  VACUUM: rBtor=%.6e cTor=%.6e bSubUVac=%.6e "
-                    "bSubVVac=%.6e delBSq=%.3e\n",
-                    vac->rbtor(), vac->ctor(), vac->bsubu_vac(),
-                    vac->bsubv_vac(), vac->delbsq_mean());
+                if (verbose) {
+                    std::printf(
+                        "  VACUUM: rBtor=%.6e cTor=%.6e bSubUVac=%.6e "
+                        "bSubVVac=%.6e delBSq=%.3e\n",
+                        vac->rbtor(), vac->ctor(), vac->bsubu_vac(),
+                        vac->bsubv_vac(), vac->delbsq_mean());
+                }
             }
 
             StageReport sr;

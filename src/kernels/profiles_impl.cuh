@@ -41,7 +41,8 @@ template <typename T>
 cumes::Profiles<T>::Profiles(
     DeviceParams<T>& p,
     const cumes::ValidatedProblem& vp,
-    const std::optional<std::reference_wrapper<DeviceArena>>& arena) {
+    const std::optional<std::reference_wrapper<DeviceArena>>& arena,
+    bool verbose) {
     const cumes::ProblemSpec& sp = vp.spec();
     const int ncurr =
         (sp.current_model == cumes::CurrentModel::PRESCRIBED_CURRENT) ? 1 : 0;
@@ -185,9 +186,13 @@ cumes::Profiles<T>::Profiles(
     for (int j = 0; j < p.ns - 1; ++j) rmsPhiP += h_phip[j] * h_phip[j];
     delete[] h_phip;
     p.lamscale = sqrt(rmsPhiP * delta_s_);
-    printf("  profiles: ns=%d phip=%.6e lamscale=%.6e maxToroidalFlux=%.6e\n",
-           p.ns, (double)(maxToroidalFlux * torflux_deriv<T>(sp, T(0.5))),
-           (double)p.lamscale, (double)maxToroidalFlux);
+    if (verbose) {
+        printf(
+            "  profiles: ns=%d phip=%.6e lamscale=%.6e "
+            "maxToroidalFlux=%.6e\n",
+            p.ns, (double)(maxToroidalFlux * torflux_deriv<T>(sp, T(0.5))),
+            (double)p.lamscale, (double)maxToroidalFlux);
+    }
 }
 
 template <typename T>
