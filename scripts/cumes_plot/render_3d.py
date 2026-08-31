@@ -161,6 +161,21 @@ def pyvista_polyline(pv, points, close=False):
     return line
 
 
+def add_pyvista_field_lines(plotter, pv, S):
+    """Add field lines as thin, physically sized tubes on the LCFS."""
+    config = S["figure_parameters"]
+    for x, y, z in S["lines"]:
+        centerline = pyvista_polyline(pv, np.column_stack([x, y, z]))
+        tube = centerline.tube(
+            radius=S["pyvista_field_line_tube_radius"],
+            n_sides=config.pyvista_field_line_tube_sides,
+            capping=False)
+        plotter.add_mesh(
+            tube, color=config.pyvista_field_line_color,
+            smooth_shading=True, ambient=0.35, diffuse=0.55,
+            specular=0.65, specular_power=40.0)
+
+
 def add_pyvista_scene(plotter, pv, S, section_angles=()):
     """Populate one VTK renderer with opaque, depth-tested scene actors."""
     config = S["figure_parameters"]
@@ -182,10 +197,7 @@ def add_pyvista_scene(plotter, pv, S, section_angles=()):
                          ambient=0.22, diffuse=0.72, specular=0.28,
                          specular_power=24.0)
 
-    for x, y, z in S["lines"]:
-        line = pyvista_polyline(pv, np.column_stack([x, y, z]))
-        plotter.add_mesh(line, color=config.curve_color, line_width=1.5,
-                         render_lines_as_tubes=True, lighting=False)
+    add_pyvista_field_lines(plotter, pv, S)
     axis = pyvista_polyline(
         pv, np.column_stack([S["axx"], S["axy"], S["axz"]]))
     plotter.add_mesh(axis, color=config.curve_color, line_width=2.0,

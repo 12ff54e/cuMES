@@ -355,15 +355,34 @@ def field_lines(edge, th, zt, seeds, nfp, geometry=None,
     `edge` is the half_grid() result on the (th, zt) solver grid. When
     `geometry` is supplied, the half-grid field-line direction is lifted onto
     that full-grid surface instead of the half-grid geometry."""
+    def periodic_interpolator(theta_grid, zeta_grid, values):
+        """Close both uniform angular axes before linear interpolation."""
+        values = np.asarray(values)
+        expected = (len(theta_grid), len(zeta_grid))
+        if values.shape != expected:
+            raise ValueError(
+                f"angular field shape {values.shape} does not match "
+                f"coordinate grid {expected}")
+        closed = np.concatenate([values, values[:1]], axis=0)
+        closed = np.concatenate([closed, closed[:, :1]], axis=1)
+        return RegularGridInterpolator(
+            (np.append(theta_grid, 2.0 * np.pi),
+             np.append(zeta_grid, 2.0 * np.pi)),
+            closed, method="linear", bounds_error=True)
+
     ratio = edge["bsupu"] / edge["bsupv"]
-    ri = RegularGridInterpolator((th, zt), ratio, method="linear",
-                                 bounds_error=False, fill_value=None)
+    ri = periodic_interpolator(th, zt, ratio)
     r_surface = edge["r12"] if geometry is None else geometry["r"]
     z_surface = edge["z12"] if geometry is None else geometry["z"]
-    rgi = RegularGridInterpolator((th, zt), r_surface, method="linear",
-                                  bounds_error=False, fill_value=None)
-    zgi = RegularGridInterpolator((th, zt), z_surface, method="linear",
-                                  bounds_error=False, fill_value=None)
+    if geometry is None:
+        geometry_th, geometry_zt = th, zt
+    else:
+        geometry_th = np.linspace(
+            0.0, 2.0 * np.pi, r_surface.shape[0], endpoint=False)
+        geometry_zt = np.linspace(
+            0.0, 2.0 * np.pi, r_surface.shape[1], endpoint=False)
+    rgi = periodic_interpolator(geometry_th, geometry_zt, r_surface)
+    zgi = periodic_interpolator(geometry_th, geometry_zt, z_surface)
     lines = []
     for seed in seeds:
         zeta = np.linspace(0.0, zeta_span, n_steps)

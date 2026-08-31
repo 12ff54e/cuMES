@@ -71,6 +71,9 @@ class FigureConfig:
     curve_color: str
     field_line_width: float
     field_line_alpha: float
+    pyvista_field_line_color: str
+    pyvista_field_line_tube_radius_fraction: float
+    pyvista_field_line_tube_sides: int
     axis_line_width: float
     perspective_view: tuple
     top_view: tuple
@@ -126,6 +129,9 @@ def validate_figure_config(config):
     if any(not 0.0 <= fraction < 1.0
            for fraction in config.field_line_seed_fractions):
         raise ValueError("field-line seed fractions must lie in [0, 1)")
+    if config.pyvista_field_line_tube_sides < 3 or \
+            config.pyvista_field_line_tube_radius_fraction <= 0.0:
+        raise ValueError("PyVista field-line tube parameters are invalid")
     if config.coil_default_radius_fraction <= 0.0 or \
             config.coil_visible_extent_factor <= 0.0 or \
             config.horizontal_limit_margin <= 0.0 or \

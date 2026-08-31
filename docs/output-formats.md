@@ -274,6 +274,10 @@ Matplotlib-based; with `--backend pyvista`, every embedded 3-D panel is the
 VTK-rendered image. Displayed flux surfaces use the integer/full radial grid.
 Their `|B|` colors are linearly interpolated from the staggered half grid; the
 LCFS uses one-sided linear extrapolation from the last two half-grid values.
+When `--field-lines` is selected, the PyVista backend renders the traced LCFS
+paths as thin, depth-tested tubes. Their physical radius, color, and
+tube resolution are configured in the parameter block at the top of
+`scripts/plot_equilibrium.py`.
 
 A native result and its version-2 Boozer conversion provide the appropriate
 source data for the two magnetic-coordinate variants:

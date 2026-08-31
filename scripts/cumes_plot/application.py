@@ -396,6 +396,9 @@ def main(figure_parameters):
         "nfp": nfp, "ntor": ntor,
         "lines": lines, "axx": axx, "axy": axy, "axz": axz,
         "coils": coils, "coil_radius": coil_radius,
+        "pyvista_field_line_tube_radius":
+            figure_parameters.pyvista_field_line_tube_radius_fraction *
+            plasma_lim,
         "bmin": b_all.min(), "bmax": b_all.max(),
         "views": views,
         "figure_parameters": figure_parameters,

@@ -6,7 +6,9 @@ from pathlib import Path
 import struct
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -27,7 +29,9 @@ from cumes_plot.coordinates import (
     make_boozer_grid,
     make_pest_grid,
 )
+from cumes_plot.equilibrium import field_lines
 from cumes_plot.output_paths import figure_path, resolve_output_base
+from cumes_plot.render_3d import add_pyvista_field_lines
 from plot_equilibrium import FIGURE_PARAMETERS
 
 
@@ -81,6 +85,69 @@ def _manufactured_file(path):
 
 
 class PlotCoordinateTest(unittest.TestCase):
+    def test_field_lines_lift_onto_independent_render_grid(self):
+        theta = np.linspace(0.0, PERIOD, 8, endpoint=False)
+        zeta = np.linspace(0.0, PERIOD, 4, endpoint=False)
+        edge = {
+            "bsupu": np.zeros((theta.size, zeta.size)),
+            "bsupv": np.ones((theta.size, zeta.size)),
+            "r12": np.zeros((theta.size, zeta.size)),
+            "z12": np.zeros((theta.size, zeta.size)),
+        }
+        render_theta = np.linspace(0.0, PERIOD, 16, endpoint=False)
+        render_zeta = np.linspace(0.0, PERIOD, 10, endpoint=False)
+        geometry = {
+            "r": np.repeat(
+                (2.0 + 0.2 * np.cos(render_theta))[:, None],
+                render_zeta.size, axis=1),
+            "z": np.repeat(
+                (0.2 * np.sin(render_theta))[:, None],
+                render_zeta.size, axis=1),
+        }
+        line, = field_lines(
+            edge, theta, zeta, seeds=(0.0,), nfp=1, geometry=geometry,
+            zeta_span=PERIOD, n_steps=64)
+        x, y, z = line
+        np.testing.assert_allclose(np.hypot(x, y), 2.2, atol=1.0e-12)
+        np.testing.assert_allclose(z, 0.0, atol=1.0e-12)
+
+    def test_pyvista_field_lines_use_configured_tubes(self):
+        class Centerline:
+            def __init__(self):
+                self.tube_arguments = None
+
+            def tube(self, **arguments):
+                self.tube_arguments = arguments
+                return "tube-mesh"
+
+        class Plotter:
+            def __init__(self):
+                self.mesh = None
+                self.arguments = None
+
+            def add_mesh(self, mesh, **arguments):
+                self.mesh = mesh
+                self.arguments = arguments
+
+        centerline = Centerline()
+        plotter = Plotter()
+        scene = {
+            "figure_parameters": SimpleNamespace(
+                pyvista_field_line_color="#101020",
+                pyvista_field_line_tube_sides=8),
+            "lines": [(np.array([1.0, 2.0]), np.array([0.0, 0.5]),
+                       np.array([0.0, 0.1]))],
+            "pyvista_field_line_tube_radius": 0.004,
+        }
+        with patch("cumes_plot.render_3d.pyvista_polyline",
+                   return_value=centerline):
+            add_pyvista_field_lines(plotter, object(), scene)
+        self.assertEqual(centerline.tube_arguments, {
+            "radius": 0.004, "n_sides": 8, "capping": False})
+        self.assertEqual(plotter.mesh, "tube-mesh")
+        self.assertEqual(plotter.arguments["color"], "#101020")
+        self.assertTrue(plotter.arguments["smooth_shading"])
+
     def test_periodic_theta_lines_do_not_duplicate_seam(self):
         indices = _periodic_indices(120, 24)
         np.testing.assert_array_equal(indices, np.arange(0, 120, 5))
