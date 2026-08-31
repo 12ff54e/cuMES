@@ -411,6 +411,9 @@ int main(int argc, char** argv) {
         // Writer interface — no backend reads device state or performs its own
         // D2H copies.
         bool output_ok = true;
+        bool native_output_failed = false;
+        bool checkpoint_failed = false;
+        bool boozer_output_failed = false;
         cumes::EquilibriumSnapshot snapshot = std::move(outcome.snapshot);
         cumes::populate_snapshot_state_from_device(storage, snapshot);
         // The embedded normalized-input record: every output container
@@ -423,6 +426,7 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "cuMES: no writer for suffix '%s'\n",
                         cumes::output_suffix(output_spec.format).data());
                 output_ok = false;
+                native_output_failed = true;
             } else {
                 fill_provenance(outcome.report, input_path, source_hash);
                 const cumes::Status status = writer->write_atomic(
@@ -434,6 +438,7 @@ int main(int argc, char** argv) {
                 } else {
                     fprintf(stderr, "cuMES: %s\n", status.error().c_str());
                     output_ok = false;
+                    native_output_failed = true;
                 }
             }
         }
@@ -449,6 +454,7 @@ int main(int argc, char** argv) {
             } else {
                 fprintf(stderr, "cuMES: %s\n", status.error().c_str());
                 output_ok = false;
+                checkpoint_failed = true;
             }
         }
 
@@ -477,6 +483,7 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "cuMES: Boozer transform failed: %s\n",
                         error.what());
                 output_ok = false;
+                boozer_output_failed = true;
             }
         }
 #endif
@@ -488,8 +495,18 @@ int main(int argc, char** argv) {
                    n_grids, total_iter);
         printf("\nDone.\n");
         if (!output_ok) {
-            fprintf(stderr,
-                    "cuMES: requested output or post-processing failed\n");
+            if (native_output_failed) {
+                fprintf(stderr, "cuMES: FAILED to write output state (%s)\n",
+                        output_path.c_str());
+            }
+            if (checkpoint_failed) {
+                fprintf(stderr, "cuMES: FAILED to write checkpoint (%s)\n",
+                        checkpoint_path.c_str());
+            }
+            if (boozer_output_failed) {
+                fprintf(stderr, "cuMES: FAILED to write Boozer output (%s)\n",
+                        cli.boozer_output_path.c_str());
+            }
             return EXIT_FAILURE;
         }
         return result.converged ? 0 : 1;
