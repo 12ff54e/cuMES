@@ -88,6 +88,19 @@ builders append the aspect-ratio and mean-iota residuals. The flux gradient is
 explicitly selectable between normalized toroidal flux (the conventional QS
 metric) and normalized poloidal flux.
 
+The optional meow build also produces `cumes_meow_qs_optimize`. For example,
+the following uses the requested poloidal-flux form for QA with physical
+helicity `(M,N)=(1,0)`, target aspect ratio 5, and target integrated iota 0.4:
+
+```bash
+./build-meow/cumes_meow_qs_optimize inputs/solovev.json \
+  qa poloidal 1 0 5.0 0.4
+```
+
+The example selects every native half-grid surface and varies the same single
+`rbc(m=1,n=0)` boundary harmonic as `cumes_meow_optimize`; production adapters
+should expose their own surface set, weights, and boundary parameterization.
+
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
 `deps/magnetic-coordinate`. `--output PATH` writes the native PEST-like result;

@@ -239,6 +239,12 @@ In current language, `I=mu0/(2*pi)` times the enclosed toroidal current and
 `G=mu0/(2*pi)` times the poloidal current outside the surface, subject to the
 equilibrium's orientation convention.
 
+The optional `cumes_meow_qs_optimize` integration executable demonstrates the
+full composition: boundary vector to validated problem, cuMES solve, QS/QH/QA
+residual construction, and meow TRF evaluation. Its command line makes the
+flux-gradient convention and physical `(M,N)` explicit. It selects all native
+half-grid surfaces only as an example policy.
+
 ## 5. Repeated-solve and concurrency policy
 
 The first implementation is a correctness-preserving facade over the existing

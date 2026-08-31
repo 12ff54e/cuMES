@@ -380,6 +380,12 @@ if(CUMES_MEOW_SOURCE_DIR)
   target_link_libraries(cumes_meow_optimize PRIVATE
     cumes::solver meow::trf)
   cumes_enable_warnings(cumes_meow_optimize)
+
+  add_executable(cumes_meow_qs_optimize
+    examples/cumes_meow_qs_optimize.cpp)
+  target_link_libraries(cumes_meow_qs_optimize PRIVATE
+    cumes::solver meow::trf)
+  cumes_enable_warnings(cumes_meow_qs_optimize)
 endif()
 
 # Precision-policy provenance: the named policy and its effective flags
