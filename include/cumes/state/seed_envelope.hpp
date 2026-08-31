@@ -7,20 +7,25 @@
 namespace cumes {
 
 inline constexpr double DEFAULT_3D_SEED_ENVELOPE = 0.12;
+inline constexpr double DEFAULT_SINGLE_GRID_3D_SEED_ENVELOPE = 0.129;
 inline constexpr double DEFAULT_FREE_3D_FINE_SEED_ENVELOPE = 0.03;
 inline constexpr int FREE_3D_COARSE_SEED_MAX_NS = 25;
 inline constexpr double DEFAULT_AXISYMMETRIC_COARSE_SEED_ENVELOPE = -0.07;
 
 constexpr double default_seed_envelope(int ntor,
                                        bool free_boundary,
-                                       int initial_ns) noexcept {
+                                       int initial_ns,
+                                       int stage_count) noexcept {
     if (free_boundary) {
         if (ntor == 0) return 0.0;
         return initial_ns <= FREE_3D_COARSE_SEED_MAX_NS
                    ? DEFAULT_3D_SEED_ENVELOPE
                    : DEFAULT_FREE_3D_FINE_SEED_ENVELOPE;
     }
-    if (ntor > 0) return DEFAULT_3D_SEED_ENVELOPE;
+    if (ntor > 0) {
+        return stage_count == 1 ? DEFAULT_SINGLE_GRID_3D_SEED_ENVELOPE
+                                : DEFAULT_3D_SEED_ENVELOPE;
+    }
     return initial_ns <= 11 ? DEFAULT_AXISYMMETRIC_COARSE_SEED_ENVELOPE : 0.0;
 }
 

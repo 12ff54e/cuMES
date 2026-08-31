@@ -11,17 +11,19 @@ static void check_near(double actual, double expected, const char* message) {
 }
 
 int main() {
-    check_near(cumes::default_seed_envelope(12, false, 99), 0.12,
-               "fixed-boundary 3-D selects the shaped seed");
-    check_near(cumes::default_seed_envelope(0, false, 5), -0.07,
+    check_near(cumes::default_seed_envelope(12, false, 99, 3), 0.12,
+               "multigrid fixed-boundary 3-D selects the shaped seed");
+    check_near(cumes::default_seed_envelope(12, false, 99, 1), 0.129,
+               "single-grid fixed-boundary 3-D selects its fitted seed");
+    check_near(cumes::default_seed_envelope(0, false, 5, 3), -0.07,
                "coarse axisymmetric starts select the fitted seed");
-    check_near(cumes::default_seed_envelope(0, false, 55), 0.0,
+    check_near(cumes::default_seed_envelope(0, false, 55, 1), 0.0,
                "fine axisymmetric starts retain the reference seed");
-    check_near(cumes::default_seed_envelope(4, true, 15), 0.12,
+    check_near(cumes::default_seed_envelope(4, true, 15, 2), 0.12,
                "coarse 3-D free-boundary uses the shaped envelope");
-    check_near(cumes::default_seed_envelope(6, true, 51), 0.03,
+    check_near(cumes::default_seed_envelope(6, true, 51, 1), 0.03,
                "fine 3-D free-boundary uses the conservative envelope");
-    check_near(cumes::default_seed_envelope(0, true, 16), 0.0,
+    check_near(cumes::default_seed_envelope(0, true, 16, 1), 0.0,
                "axisymmetric free-boundary retains the reference envelope");
 
     check_near(cumes::seed_radial_weight(1, 0.25, 0.0), 0.5,

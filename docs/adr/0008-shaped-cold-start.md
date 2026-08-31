@@ -18,7 +18,7 @@ best available guess.
 
 ## Decision
 
-For fixed-boundary 3-D cold starts, use
+For fixed-boundary 3-D multigrid cold starts, use
 
 ```
 w(m, s) = s^(m/2) * (1 + 0.12 * (1 - s))
@@ -28,6 +28,11 @@ for all `m>0` R/Z boundary families. The factor is one at the LCFS and finite
 at the axis, so the exact boundary and the `s^(m/2)` regularity order are
 unchanged. The `m=0` axis-to-boundary interpolation and zero-lambda seed remain
 unchanged.
+
+For a single-grid fixed-boundary 3-D cold start, use `0.129` in place of
+`0.12`. The single-grid and continuation trajectories have different optima:
+the finer single-grid seed benefits from the additional shaping, while using
+the same value on W7-X multigrid regresses its coarse stage.
 
 Axisymmetric and free-boundary cold starts keep the reference envelope.  The
 later axisymmetric policy in ADR-0009 supersedes this for coarse fixed-boundary
@@ -41,7 +46,7 @@ With the qualified one-shot step recovery already enabled:
 
 | workload | reference seed | shaped seed | reduction |
 | -------- | -------------: | ----------: | --------: |
-| W7-X single-grid | 2711 | 2627 | 3.10% |
+| W7-X single-grid | 2711 | 2465 | 9.07% |
 | W7-X multigrid | 1741 → 1568 → 1635 (4944) | 1315 → 1559 → 1633 (4507) | 8.84% |
 | Solovev multigrid | 251 → 199 → 456 | 251 → 199 → 456 | 0% |
 
@@ -49,10 +54,14 @@ The shaped multigrid result ends at FSQR `9.967e-13`, FSQZ `1.563e-13`, FSQL
 `4.956e-14`. Restarting its checkpoint on the final grid converges at iteration
 1 with the identical residual triple.
 
-Native RTX 4090 A/B measurements on gervais reduced median single-grid wall
-time from 1.9238 s to 1.8823 s and multigrid wall time from 3.4419 s to
-3.2983 s. GPU P-state outliers are reported in `docs/performance.md`; the
-deterministic pass reductions are the primary timing evidence.
+The original `0.12` policy reduced W7-X single-grid to 2627 passes. A native
+`sm_89` sweep on gervais found the single-grid minimum at `0.129`: 2465 passes,
+FSQR `9.959e-13`, and 1.334 s CUDA-stream time, versus 2627 passes and about
+1.43 s at `0.12`. Applying `0.13` to multigrid instead regressed it from 4507
+to 4948 passes, which is why the two schedules retain separate coefficients.
+The earlier wall-time A/B measurements and GPU P-state caveat are reported in
+`docs/performance.md`; deterministic pass reductions remain the primary timing
+evidence.
 
 ## Alternatives considered
 

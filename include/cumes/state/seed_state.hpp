@@ -72,7 +72,8 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     const size_t nb = one * sizeof(T);
     SpectralStorage<T> storage(p.ns, p.mnmax);
     T envelope_correction =
-        T(default_seed_envelope(p.ntor, sp.free_boundary.lfreeb, p.ns));
+        T(default_seed_envelope(p.ntor, sp.free_boundary.lfreeb, p.ns,
+                                static_cast<int>(sp.stages.size())));
     if (const char* e = std::getenv("CUMES_SEED_ENVELOPE")) {
         envelope_correction = T(std::atof(e));
     }

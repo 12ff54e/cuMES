@@ -128,7 +128,10 @@ ADR-0008 augments the regular `s^(m/2)` boundary-harmonic seed by the factor
 preserves the required near-axis order, adds no GPU work, and can be disabled
 with `CUMES_SEED_ENVELOPE=0`.
 
-On W7-X single-grid it reduces effective iterations from 2711 to 2627 (3.10%).
+On W7-X single-grid the schedule-specific `0.129` envelope reduces effective
+iterations from 2711 to 2465 (9.07%); the earlier common `0.12` value reached
+2627. A native `sm_89` gervais run measured 1.334 s of CUDA-stream time at the
+new value versus about 1.43 s at `0.12`.
 On W7-X multigrid it changes `1741 → 1568 → 1635` (4944 total) to
 `1315 → 1559 → 1633` (4507 total), an 8.84% reduction. Combined with the
 reference controller baseline, total multigrid passes fall by 18.13%. The
