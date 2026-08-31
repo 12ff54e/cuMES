@@ -105,3 +105,20 @@ pass. Full GPU regression is run before declaring the reproduction complete.
 - QA/QH runs report equilibrium convergence separately from target quality.
 - The result report contains aspect, mean iota when requested, weighted and
   unweighted QS totals, and per-surface QS values.
+
+## Frozen archived values
+
+Running `scripts/evaluate_landreman_qs.py` on the terminal optimization wout
+files reproduces the original SIMSOPT log values (differences below the last
+printed digit):
+
+| case | composite objective | weighted QS | unweighted QS | axis QS | edge QS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QA | 1.31838917076796e-6 | 1.318328430729835e-6 | 9.803160636071010e-8 | 1.692667660112380e-8 | 1.395084878766294e-8 |
+| QH | 3.447641837023028e-5 | 3.447629144415016e-5 | 2.110744659368261e-5 | 9.556217390373448e-7 | 5.730803009640856e-6 |
+
+The terminal files are `wout_nfp2_QA_000_000063.nc` in the final QA
+optimization directory and `wout_nfp4_QH_000_000090.nc` in the final QH
+optimization directory. The `configurations/new_QA` and `configurations/new_QH`
+wout files are later high-resolution convergence re-solves. They intentionally
+produce different target values, so both baselines must remain distinguishable.
