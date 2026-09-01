@@ -22,9 +22,9 @@ struct ResidualJvp {
 };
 
 struct TangentLinearOptions {
-    int max_iterations = 100;
-    int restart = 24;
-    double relative_tolerance = 1e-6;
+    int max_iterations = 300;
+    int restart = 80;
+    double relative_tolerance = 1e-4;
     double absolute_tolerance = 1e-10;
 };
 
