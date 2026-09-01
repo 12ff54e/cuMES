@@ -124,6 +124,7 @@ foreach(mod IN LISTS CUMES_CUDA_MODULES)
   list(APPEND CUMES_CUDA_DOUBLE_SOURCES src/${mod}_double.cu)
   list(APPEND CUMES_CUDA_FLOAT_SOURCES src/${mod}_float.cu)
 endforeach()
+list(APPEND CUMES_CUDA_DOUBLE_SOURCES src/tangent_double.cu)
 
 # ---- host-only library targets ---------------------------------------------
 # Source lists are defined once here and reused verbatim by the sanitizer

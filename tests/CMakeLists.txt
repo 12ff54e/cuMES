@@ -180,6 +180,12 @@ target_include_directories(test_forward_dual PRIVATE
 target_link_libraries(test_forward_dual PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(test_forward_dual)
 
+add_executable(test_dual_spectral_operator test_dual_spectral_operator.cu)
+target_include_directories(test_dual_spectral_operator PRIVATE
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_dual_spectral_operator PRIVATE cumes_cuda_double)
+cumes_enable_warnings(test_dual_spectral_operator)
+
 # ---- ctest registration ----------------------------------------------------
 cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
@@ -255,6 +261,7 @@ cumes_add_test(test_arena            unit;runtime)
 cumes_add_test(test_operator_views   unit;runtime)
 cumes_add_test(test_accumulation     unit;numerics)
 cumes_add_test(test_forward_dual     unit;numerics;sensitivity)
+cumes_add_test(test_dual_spectral_operator unit;fourier;sensitivity)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
@@ -282,7 +289,8 @@ cumes_add_test(test_prolongation     unit;numerics)
 cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
     test_regression_kernels test_runtime test_arena test_operator_views
-    test_accumulation test_forward_dual test_axisym_backend test_tridiagonal
+    test_accumulation test_forward_dual test_dual_spectral_operator
+    test_axisym_backend test_tridiagonal
     test_cuda_graph test_safety_predicates test_prolongation)
 # test_event_dag registers its sanitizer variants manually: the deliberate
 # pending-event API-error probes are skipped under the sanitizers (they count
