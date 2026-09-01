@@ -1,0 +1,127 @@
+# ADR-0013: Fixed-boundary equilibrium forward tangents
+
+Status: Accepted for staged implementation
+
+## Context
+
+An optimizer varies fixed-boundary Fourier coefficients `x`, cuMES solves for
+an equilibrium state `u`, and the optimizer evaluates a residual vector from
+the resulting fields.  Re-solving the nonlinear equilibrium once per boundary
+coefficient is robust but makes a dense least-squares Jacobian prohibitively
+expensive.  The final Landreman QH construction stage has 120 boundary
+variables and 44,353 optimizer residuals.
+
+The Jacobian discussed here is the derivative of the equilibrium map.  It is
+unrelated to the coordinate Jacobian `sqrt(g)` and its validity gate in the
+existing solver.
+
+## Decision
+
+cuMES will provide forward sensitivities of a converged fixed-boundary
+equilibrium.  It will not know about QS, aspect-ratio, iota, or optimizer
+weights.  Those target definitions and their chain rule remain in meow.
+
+For the converged discrete equilibrium equations
+
+```text
+F(u, x) = 0,
+```
+
+the tangent for a boundary direction `dx` is defined by
+
+```text
+F_u du = -F_x dx.
+```
+
+The production tangent operator must differentiate the discrete CUDA
+operators directly.  It must not perturb the boundary or re-run the nonlinear
+solver.  Boundary finite differences are retained only as an independent test
+oracle.
+
+The first qualified scope is precise-double, stellarator-symmetric,
+fixed-boundary equilibrium.  Free-boundary vacuum response and mixed-float
+tangents are later qualifications, not silent fallbacks.
+
+## Ownership and API boundary
+
+cuMES owns:
+
+- a typed boundary-direction representation in the validated folded Fourier
+  basis;
+- a retained final-grid linearization context;
+- matrix-free applications of `F_u` and `F_x`;
+- a preconditioned tangent linear solve;
+- tangent spectral state, derived fields, and radial equilibrium profiles.
+
+meow owns:
+
+- the mapping from optimizer variables to cuMES boundary directions;
+- directional derivatives of QS, aspect ratio, and mean iota;
+- assembly of the dense residual Jacobian required by TRF;
+- decisions about dense, block, or matrix-free optimization.
+
+The public cuMES interface will expose a solve-and-linearize session rather
+than adding target-specific data to `SolveOutcome`.  Multiple tangent
+directions reuse one converged primal state and one final-grid operator
+context.  A block interface may execute directions together on the GPU, but
+its mathematical result is identical to applying one direction at a time.
+
+## Discrete linearization contract
+
+The differentiated residual is the unpreconditioned, gauge-fixed spectral
+equilibrium residual before Garabedian descent.  Adaptive time-step control,
+restart decisions, convergence tests, and multigrid prolongation are not part
+of `F`.
+
+For fixed boundary:
+
+- prescribed LCFS `R` and `Z` tangent rows equal the supplied boundary
+  direction;
+- interior `R`, `Z`, and lambda are solved variables;
+- axis regularity and the existing lambda/m=1 gauge convention are imposed in
+  both the primal residual and tangent operator;
+- the tangent derived-field snapshot uses exactly the primal output grid and
+  layout.
+
+The existing nonlinear preconditioner may precondition the tangent Krylov
+solve, but it is not treated as `F_u^{-1}` and cannot define the derivative.
+
+## Implementation plan and gates
+
+1. **Contracts and host algebra.** Add boundary/tangent snapshot types,
+   checked layout operations, and meow target JVPs.  Validate target JVPs with
+   supplied synthetic equilibrium tangents.
+2. **Reusable residual evaluation.** Separate final-grid residual evaluation
+   from descent and retain its workspaces after convergence.  Verify that the
+   published converged state produces the same invariant residual without
+   changing the frozen nonlinear trajectory.
+3. **Analytic CUDA JVP.** Add tangent transforms and tangent geometry,
+   magnetic-field, profile, force, constraint, and derived-field operators.
+   Each operator gets a CPU-reference unit test and a directional finite-
+   difference validation test.
+4. **Linear tangent solve.** Implement restarted GMRES with explicit boundary
+   and gauge rows.  Require a reported linear residual and fail explicitly on
+   stagnation or unsupported problem classes.
+5. **meow integration.** Cache a solve-and-linearize session at each optimizer
+   point, map every boundary degree of freedom to a direction, propagate each
+   equilibrium tangent through the target JVP, and pass the assembled matrix
+   through `meow::JacobianFunction`.
+6. **Qualification.** On small Solovev and three-dimensional fixtures, compare
+   tangent columns against centered nonlinear finite differences.  Then compare
+   the analytic and finite-difference QH Jacobians by column norm, directional
+   prediction, `J^T r`, accepted TRF steps, and final objective.  Preserve the
+   existing Class-A nonlinear trajectories.
+
+No stage is considered complete merely because the code builds.  The first
+usable optimizer milestone requires the fixed-boundary QH directional and
+gradient gates to pass.
+
+## Consequences
+
+A dense Jacobian still contains one column per boundary variable, so forward
+tangents do not make its arithmetic independent of parameter count.  They do
+replace many full nonlinear solves with linear solves that reuse the same
+operator and preconditioner, and they admit block GPU execution.  If the
+parameter count later dominates, the same JVP foundation can support a
+matrix-free Gauss-Newton method; a scalar-objective adjoint is a separate
+future decision.
