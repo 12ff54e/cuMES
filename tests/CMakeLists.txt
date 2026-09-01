@@ -186,6 +186,14 @@ target_include_directories(test_dual_spectral_operator PRIVATE
 target_link_libraries(test_dual_spectral_operator PRIVATE cumes_cuda_double)
 cumes_enable_warnings(test_dual_spectral_operator)
 
+add_executable(test_nonlinear_forward_tangent
+               test_nonlinear_forward_tangent.cu)
+target_include_directories(test_nonlinear_forward_tangent PRIVATE
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_nonlinear_forward_tangent PRIVATE
+  cumes_config_json cumes_cuda_double)
+cumes_enable_warnings(test_nonlinear_forward_tangent)
+
 # ---- ctest registration ----------------------------------------------------
 cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
@@ -262,6 +270,7 @@ cumes_add_test(test_operator_views   unit;runtime)
 cumes_add_test(test_accumulation     unit;numerics)
 cumes_add_test(test_forward_dual     unit;numerics;sensitivity)
 cumes_add_test(test_dual_spectral_operator unit;fourier;sensitivity)
+cumes_add_test(test_nonlinear_forward_tangent unit;physics;sensitivity)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
