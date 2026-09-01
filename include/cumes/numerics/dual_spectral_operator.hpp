@@ -37,6 +37,8 @@ class DualSpectralOperator final : public SpectralOperator<ForwardDualDouble> {
     DualSpectralOperator& operator=(DualSpectralOperator&&) noexcept = delete;
 
     void bind_stream(cudaStream_t stream);
+    const int* xm() const { return transform_->xm(); }
+    const int* xn() const { return transform_->xn(); }
 
     void enqueue_inverse(
         SpectralView<const ForwardDualDouble, PhysicalStateDomain> coefficients,

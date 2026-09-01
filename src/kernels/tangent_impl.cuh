@@ -2,6 +2,7 @@
 #define CUMES_SRC_TANGENT_IMPL_CUH_
 
 #include "cumes/numerics/dual_spectral_operator.hpp"
+#include "cumes/numerics/equilibrium_residual_jvp.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 
 #include <cstddef>
@@ -177,6 +178,62 @@ __global__ void add_three_and_merge_kernel(const double* primal,
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
     output[i] = {primal[i], tangent0[i] + tangent1[i] + tangent2[i]};
+}
+
+__global__ void tangent_extrapolate_axis_kernel(
+    cumes::SpectralView<Dual, cumes::PhysicalStateDomain> state,
+    int mnmax,
+    int ntorp1) {
+    const int mode = blockIdx.x * blockDim.x + threadIdx.x;
+    if (mode >= mnmax) return;
+    const int m = mode / ntorp1;
+    if (m == 0) {
+        state(cumes::SpectralComponent::Lcs, mode, 0) =
+            state(cumes::SpectralComponent::Lcs, mode, 1);
+        return;
+    }
+    if (m != 1) return;
+    for (int component = 0; component < 6; ++component) {
+        state(static_cast<cumes::SpectralComponent>(component), mode, 0) =
+            state(static_cast<cumes::SpectralComponent>(component), mode, 1);
+    }
+}
+
+__global__ void tangent_scalxc_kernel(
+    cumes::SpectralView<Dual, cumes::DecomposedResidualDomain> residual,
+    const Dual* sqrt_s,
+    const int* xm,
+    int ns,
+    int mnmax,
+    Dual sqrt_s1) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= ns * mnmax) return;
+    const int mode = i / ns;
+    if (xm[mode] % 2 == 0) return;
+    const int surface = i % ns;
+    const Dual scale = Dual(1.0) / fmax(sqrt_s[surface], sqrt_s1);
+    for (int component = 0; component < 6; ++component) {
+        residual(static_cast<cumes::SpectralComponent>(component), mode,
+                 surface) *= scale;
+    }
+}
+
+__global__ void tangent_m1_gauge_kernel(
+    cumes::SpectralView<Dual, cumes::DecomposedResidualDomain> residual,
+    int ns,
+    int ntor) {
+    const int surface = blockIdx.x * blockDim.x + threadIdx.x;
+    if (surface >= ns) return;
+    const Dual scale = Dual(1.0 / ::sqrt(2.0));
+    const int first_m1 = ntor + 1;
+    for (int n = 0; n < ntor + 1; ++n) {
+        const int mode = first_m1 + n;
+        const Dual rss = residual(cumes::SpectralComponent::Rss, mode, surface);
+        const Dual zcs = residual(cumes::SpectralComponent::Zcs, mode, surface);
+        residual(cumes::SpectralComponent::Rss, mode, surface) =
+            (rss + zcs) * scale;
+        residual(cumes::SpectralComponent::Zcs, mode, surface) = Dual(0.0);
+    }
 }
 
 }  // namespace
@@ -369,6 +426,68 @@ void cumes::DualSpectralOperator::enqueue_dealias(
         primal_gcon_.data(), tangent_gcon_.data(), tangent_gcon_term_.data(),
         tangent_faccon_term_.data(), gcon.data(), real_count);
     check_cuda(cudaGetLastError(), "dual de-alias transform");
+}
+
+cumes::EquilibriumResidualJvpOperator::EquilibriumResidualJvpOperator(
+    const DeviceParams<double>& primal_params,
+    const ValidatedProblem& problem,
+    const DeviceModeTable& mode_table)
+    : p_(make_forward_dual_params(primal_params)),
+      profiles_(p_, problem, std::nullopt, false),
+      state_(p_.ns, p_.mnmax),
+      rs_(real_space_create(p_)),
+      transform_(primal_params, mode_table),
+      geometry_(p_, std::nullopt),
+      rcon_(static_cast<std::size_t>(p_.ns) * p_.nZnT),
+      zcon_(static_cast<std::size_t>(p_.ns) * p_.nZnT) {
+    const std::size_t real_count = static_cast<std::size_t>(p_.ns) * p_.nZnT;
+    for (auto& field : zero_constraint_) {
+        field.allocate(real_count);
+        field.zero();
+    }
+}
+
+cumes::EquilibriumResidualJvpOperator::~EquilibriumResidualJvpOperator() {
+    real_space_free(rs_);
+}
+
+void cumes::EquilibriumResidualJvpOperator::enqueue(
+    SpectralView<const ForwardDualDouble, PhysicalStateDomain> state,
+    SpectralView<ForwardDualDouble, DecomposedResidualDomain> residual,
+    cudaStream_t stream) {
+    const std::size_t state_bytes = static_cast<std::size_t>(6) * p_.ns *
+                                    p_.mnmax * sizeof(ForwardDualDouble);
+    check_cuda(cudaMemcpyAsync(state_.state_slab(), state.data(), state_bytes,
+                               cudaMemcpyDeviceToDevice, stream),
+               "tangent state copy");
+    tangent_extrapolate_axis_kernel<<<(p_.mnmax + 255) / 256, 256, 0, stream>>>(
+        state_.physical(), p_.mnmax, p_.ntor + 1);
+    check_cuda(cudaGetLastError(), "tangent axis extrapolation");
+    transform_.enqueue_inverse(
+        state_.physical_const(), geometry_parity_views(rs_, p_),
+        {rcon_.data(), p_.ns, p_.ntheta, p_.nzeta},
+        {zcon_.data(), p_.ns, p_.ntheta, p_.nzeta}, stream);
+    const auto radial = profiles_.profile_views();
+    geometry_.enqueue(rs_, p_, radial, stream);
+    MagneticFieldOperator<ForwardDualDouble>{}.enqueue(
+        rs_, p_, radial, geometry_.base_geometry_views(p_),
+        geometry_.magnetic_field_views(p_), nullptr, stream, true);
+    ForceOperator<ForwardDualDouble>{}.enqueue(
+        rs_, p_, radial, geometry_.base_geometry_views(p_),
+        geometry_.magnetic_field_views(p_), nullptr, stream);
+    const auto constraint = ConstraintForceViews<const ForwardDualDouble>{
+        {zero_constraint_[0].data(), p_.ns, p_.ntheta, p_.nzeta},
+        {zero_constraint_[1].data(), p_.ns, p_.ntheta, p_.nzeta},
+        {zero_constraint_[2].data(), p_.ns, p_.ntheta, p_.nzeta},
+        {zero_constraint_[3].data(), p_.ns, p_.ntheta, p_.nzeta}};
+    transform_.enqueue_forward(force_views_of(rs_, p_), constraint, residual,
+                               stream, false);
+    tangent_scalxc_kernel<<<(p_.ns * p_.mnmax + 255) / 256, 256, 0, stream>>>(
+        residual, radial.sqrtS_F, transform_.xm(), p_.ns, p_.mnmax,
+        sqrt(ForwardDualDouble(1.0) / ForwardDualDouble(p_.ns - 1.0)));
+    tangent_m1_gauge_kernel<<<(p_.ns + 255) / 256, 256, 0, stream>>>(
+        residual, p_.ns, p_.ntor);
+    check_cuda(cudaGetLastError(), "tangent residual postprocess");
 }
 
 #endif  // CUMES_SRC_TANGENT_IMPL_CUH_

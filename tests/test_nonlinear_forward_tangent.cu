@@ -1,4 +1,5 @@
 #include "cumes/numerics/dual_spectral_operator.hpp"
+#include "cumes/numerics/equilibrium_residual_jvp.hpp"
 #include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
@@ -82,6 +83,18 @@ int main() {
             dual_state[index] = {primal, direction};
             plus_state[index] = primal + epsilon * direction;
             minus_state[index] = primal - epsilon * direction;
+        }
+    }
+    for (int mode = 0; mode < p.mnmax; ++mode) {
+        const int m = mode / (p.ntor + 1);
+        for (std::size_t family = 0; family < primal_families.size();
+             ++family) {
+            if (m != 1 && !(m == 0 && family == 5)) continue;
+            const std::size_t axis = family * family_count + mode * p.ns;
+            const std::size_t first = axis + 1;
+            dual_state[axis] = dual_state[first];
+            plus_state[axis] = plus_state[first];
+            minus_state[axis] = minus_state[first];
         }
     }
 
@@ -201,6 +214,129 @@ int main() {
               << " relative error=" << relative_error << '\n';
     if (!(relative_error < 2e-6)) {
         std::cerr << "FAIL: nonlinear forward tangent disagrees with centered "
+                     "finite difference\n";
+        return 1;
+    }
+
+    cumes::EquilibriumResidualJvpOperator residual_jvp(p, vp, mode_table);
+    cumes::DeviceBuffer<Dual> dual_residual(state_count);
+    residual_jvp.enqueue(dual_storage.physical_const(),
+                         {dual_residual.data(), p.ns, p.mnmax}, 0);
+    std::array<cumes::DeviceBuffer<double>, 4> zero_constraint;
+    const std::size_t real_count_for_constraint =
+        static_cast<std::size_t>(p.ns) * p.nZnT;
+    for (auto& field : zero_constraint) {
+        field.allocate(real_count_for_constraint);
+        field.zero();
+    }
+    const auto zero_constraint_views =
+        cumes::ConstraintForceViews<const double>{
+            {zero_constraint[0].data(), p.ns, p.ntheta, p.nzeta},
+            {zero_constraint[1].data(), p.ns, p.ntheta, p.nzeta},
+            {zero_constraint[2].data(), p.ns, p.ntheta, p.nzeta},
+            {zero_constraint[3].data(), p.ns, p.ntheta, p.nzeta}};
+    cumes::DeviceBuffer<double> plus_residual(state_count);
+    cumes::DeviceBuffer<double> minus_residual(state_count);
+    plus_transform.enqueue_forward(
+        cumes::ForceParityViews<const double>{
+            {plus_rs.d_armn_e, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_armn_o, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_azmn_e, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_azmn_o, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_brmn_e, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_brmn_o, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_bzmn_e, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_bzmn_o, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_blmn_e, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_blmn_o, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_clmn_e, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_clmn_o, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_crmn_e, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_crmn_o, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_czmn_e, p.ns, p.ntheta, p.nzeta},
+            {plus_rs.d_czmn_o, p.ns, p.ntheta, p.nzeta}},
+        zero_constraint_views, {plus_residual.data(), p.ns, p.mnmax}, 0);
+    minus_transform.enqueue_forward(
+        cumes::ForceParityViews<const double>{
+            {minus_rs.d_armn_e, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_armn_o, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_azmn_e, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_azmn_o, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_brmn_e, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_brmn_o, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_bzmn_e, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_bzmn_o, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_blmn_e, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_blmn_o, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_clmn_e, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_clmn_o, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_crmn_e, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_crmn_o, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_czmn_e, p.ns, p.ntheta, p.nzeta},
+            {minus_rs.d_czmn_o, p.ns, p.ntheta, p.nzeta}},
+        zero_constraint_views, {minus_residual.data(), p.ns, p.mnmax}, 0);
+    cc(cudaDeviceSynchronize(), "residual JVP evaluation");
+
+    std::vector<Dual> actual_residual(state_count);
+    std::vector<double> plus_residual_host(state_count);
+    std::vector<double> minus_residual_host(state_count);
+    cc(cudaMemcpy(actual_residual.data(), dual_residual.data(),
+                  state_count * sizeof(Dual), cudaMemcpyDeviceToHost),
+       "download residual JVP");
+    cc(cudaMemcpy(plus_residual_host.data(), plus_residual.data(),
+                  state_count * sizeof(double), cudaMemcpyDeviceToHost),
+       "download plus residual");
+    cc(cudaMemcpy(minus_residual_host.data(), minus_residual.data(),
+                  state_count * sizeof(double), cudaMemcpyDeviceToHost),
+       "download minus residual");
+    auto postprocess = [&](std::vector<double>& residual) {
+        const double sqrt_s1 = std::sqrt(1.0 / (p.ns - 1.0));
+        for (int mode = 0; mode < p.mnmax; ++mode) {
+            const int m = mode / (p.ntor + 1);
+            if (m % 2 == 0) continue;
+            for (int surface = 0; surface < p.ns; ++surface) {
+                const double sqrt_s = std::sqrt(surface / (p.ns - 1.0) + 1e-12);
+                const double scale = 1.0 / std::max(sqrt_s, sqrt_s1);
+                for (std::size_t family = 0; family < 6; ++family) {
+                    residual[family * family_count + mode * p.ns + surface] *=
+                        scale;
+                }
+            }
+        }
+        const double gauge_scale = 1.0 / std::sqrt(2.0);
+        for (int n = 0; n < p.ntor + 1; ++n) {
+            const int mode = p.ntor + 1 + n;
+            for (int surface = 0; surface < p.ns; ++surface) {
+                const std::size_t rss =
+                    3 * family_count + mode * p.ns + surface;
+                const std::size_t zcs =
+                    4 * family_count + mode * p.ns + surface;
+                residual[rss] = (residual[rss] + residual[zcs]) * gauge_scale;
+                residual[zcs] = 0.0;
+            }
+        }
+    };
+    postprocess(plus_residual_host);
+    postprocess(minus_residual_host);
+    double residual_error = 0.0;
+    double residual_reference = 0.0;
+    for (std::size_t index = 0; index < state_count; ++index) {
+        const double reference =
+            (plus_residual_host[index] - minus_residual_host[index]) /
+            (2.0 * epsilon);
+        require_finite(actual_residual[index].tangent, "residual tangent");
+        require_finite(reference, "finite-difference residual tangent");
+        residual_error =
+            std::max(residual_error,
+                     std::abs(actual_residual[index].tangent - reference));
+        residual_reference = std::max(residual_reference, std::abs(reference));
+    }
+    const double residual_relative_error = residual_error / residual_reference;
+    std::cout << "spectral residual JVP max reference=" << residual_reference
+              << " max error=" << residual_error
+              << " relative error=" << residual_relative_error << '\n';
+    if (!(residual_relative_error < 3e-6)) {
+        std::cerr << "FAIL: spectral residual JVP disagrees with centered "
                      "finite difference\n";
         return 1;
     }
