@@ -21,6 +21,21 @@ struct ResidualJvp {
     std::vector<double> tangent;
 };
 
+struct TangentLinearOptions {
+    int max_iterations = 100;
+    int restart = 24;
+    double relative_tolerance = 1e-6;
+    double absolute_tolerance = 1e-10;
+};
+
+struct SpectralTangentSolve {
+    std::vector<double> state_tangent;
+    bool converged = false;
+    int iterations = 0;
+    double initial_residual = 0.0;
+    double final_residual = 0.0;
+};
+
 // Retains the final-grid CUDA workspaces for repeated JVPs around one primal
 // equilibrium. Construction does not rerun the nonlinear solver. The class is
 // host-facing: embedding applications compile as ordinary C++.
@@ -44,6 +59,12 @@ class EquilibriumLinearization {
     // Apply F_x to a folded fixed-boundary direction. Interior and lambda
     // directions are zero; the four R/Z LCFS rows receive the supplied data.
     ResidualJvp boundary_residual_jvp(const BoundaryTangent& direction);
+
+    // Solve F_u du = -F_x dx in the active fixed-boundary/gauge subspace.
+    // The returned full state tangent includes the prescribed LCFS direction.
+    SpectralTangentSolve solve_boundary_tangent(
+        const BoundaryTangent& direction,
+        const TangentLinearOptions& options = {});
 
    private:
     class Impl;

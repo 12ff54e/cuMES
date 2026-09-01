@@ -8,7 +8,9 @@
 #include "cumes/state/seed_state.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -500,6 +502,12 @@ void cumes::EquilibriumResidualJvpOperator::enqueue(
 
 class cumes::EquilibriumLinearization::Impl {
    public:
+    struct ActiveDof {
+        std::size_t first_state = 0;
+        std::size_t second_state = std::numeric_limits<std::size_t>::max();
+        std::size_t residual = 0;
+    };
+
     Impl(const ValidatedProblem& problem,
          const EquilibriumSnapshot& equilibrium)
         : problem_(&problem), p_(init_params<double>(problem)) {
@@ -533,6 +541,7 @@ class cumes::EquilibriumLinearization::Impl {
             p_, problem, mode_table_);
         dual_state_.allocate(primal_.size());
         dual_residual_.allocate(primal_.size());
+        build_active_dofs();
     }
 
     ~Impl() {
@@ -569,6 +578,84 @@ class cumes::EquilibriumLinearization::Impl {
         return result;
     }
 
+    void build_active_dofs() {
+        const std::size_t family_size =
+            static_cast<std::size_t>(p_.ns) * p_.mnmax;
+        auto index = [&](int component, int mode, int surface) {
+            return static_cast<std::size_t>(component) * family_size +
+                   static_cast<std::size_t>(mode) * p_.ns + surface;
+        };
+        auto add = [&](int component, int mode, int surface) {
+            const std::size_t i = index(component, mode, surface);
+            active_.push_back({i, std::numeric_limits<std::size_t>::max(), i});
+        };
+        for (int mode = 0; mode < p_.mnmax; ++mode) {
+            const int m = mode / (p_.ntor + 1);
+            const int n = mode % (p_.ntor + 1);
+            for (int surface = m == 0 ? 0 : 1; surface < p_.ns - 1; ++surface) {
+                add(0, mode, surface);  // Rcc
+            }
+            if (m > 0) {
+                for (int surface = 1; surface < p_.ns - 1; ++surface)
+                    add(1, mode, surface);  // Zsc
+                for (int surface = 1; surface < p_.ns; ++surface)
+                    add(2, mode, surface);  // Lsc
+            }
+            if (m > 0 && n > 0) {
+                for (int surface = 1; surface < p_.ns - 1; ++surface) {
+                    if (m == 1) {
+                        active_.push_back({index(3, mode, surface),
+                                           index(4, mode, surface),
+                                           index(3, mode, surface)});
+                    } else {
+                        add(3, mode, surface);  // Rss
+                    }
+                }
+            }
+            if (n > 0 && m != 1) {
+                for (int surface = m == 0 ? 0 : 1; surface < p_.ns - 1;
+                     ++surface)
+                    add(4, mode, surface);  // Zcs
+            }
+            if (n > 0) {
+                for (int surface = 1; surface < p_.ns; ++surface)
+                    add(5, mode, surface);  // Lcs
+            }
+        }
+    }
+
+    std::vector<double> expand(std::span<const double> active) const {
+        std::vector<double> full(primal_.size(), 0.0);
+        for (std::size_t i = 0; i < active_.size(); ++i) {
+            full[active_[i].first_state] = active[i];
+            if (active_[i].second_state !=
+                std::numeric_limits<std::size_t>::max()) {
+                full[active_[i].second_state] = active[i];
+            }
+        }
+        return full;
+    }
+
+    std::vector<double> apply_active(std::span<const double> active) {
+        const std::vector<double> full = expand(active);
+        const ResidualJvp jvp = evaluate(full);
+        std::vector<double> result(active_.size());
+        for (std::size_t i = 0; i < active_.size(); ++i)
+            result[i] = jvp.tangent[active_[i].residual];
+        return result;
+    }
+
+    static double dot(std::span<const double> lhs,
+                      std::span<const double> rhs) {
+        double result = 0.0;
+        for (std::size_t i = 0; i < lhs.size(); ++i) result += lhs[i] * rhs[i];
+        return result;
+    }
+
+    static double norm(std::span<const double> value) {
+        return std::sqrt(dot(value, value));
+    }
+
     const ValidatedProblem* problem_ = nullptr;
     DeviceParams<double> p_{};
     DeviceModeTable mode_table_;
@@ -577,6 +664,7 @@ class cumes::EquilibriumLinearization::Impl {
     DeviceBuffer<ForwardDualDouble> dual_residual_;
     std::vector<double> primal_;
     std::vector<ForwardDualDouble> host_dual_;
+    std::vector<ActiveDof> active_;
 };
 
 cumes::EquilibriumLinearization::EquilibriumLinearization(
@@ -620,6 +708,110 @@ cumes::ResidualJvp cumes::EquilibriumLinearization::boundary_residual_jvp(
         state_direction[4 * family_size + state_index] = direction.zbcs[mode];
     }
     return impl_->evaluate(state_direction);
+}
+
+cumes::SpectralTangentSolve
+cumes::EquilibriumLinearization::solve_boundary_tangent(
+    const BoundaryTangent& direction,
+    const TangentLinearOptions& options) {
+    if (options.max_iterations <= 0 || options.restart <= 0 ||
+        options.relative_tolerance < 0.0 || options.absolute_tolerance < 0.0) {
+        throw CumesError("invalid tangent linear-solver options");
+    }
+    const ResidualJvp boundary = boundary_residual_jvp(direction);
+    const std::size_t n = impl_->active_.size();
+    std::vector<double> rhs(n);
+    for (std::size_t i = 0; i < n; ++i)
+        rhs[i] = -boundary.tangent[impl_->active_[i].residual];
+    std::vector<double> x(n, 0.0);
+    std::vector<double> residual = rhs;
+    const double initial = Impl::norm(residual);
+    const double tolerance = std::max(options.absolute_tolerance,
+                                      options.relative_tolerance * initial);
+    SpectralTangentSolve result;
+    result.initial_residual = initial;
+    result.final_residual = initial;
+    if (initial <= tolerance) { result.converged = true; }
+
+    const int restart = std::min<int>(options.restart, static_cast<int>(n));
+    while (!result.converged && result.iterations < options.max_iterations) {
+        const double beta = Impl::norm(residual);
+        std::vector<std::vector<double>> basis(
+            static_cast<std::size_t>(restart + 1), std::vector<double>(n));
+        for (std::size_t i = 0; i < n; ++i) basis[0][i] = residual[i] / beta;
+        std::vector<double> h(static_cast<std::size_t>(restart + 1) * restart,
+                              0.0);
+        auto hij = [&](int row, int column) -> double& {
+            return h[static_cast<std::size_t>(column) * (restart + 1) + row];
+        };
+        std::vector<double> cosine(restart, 0.0), sine(restart, 0.0);
+        std::vector<double> g(restart + 1, 0.0);
+        g[0] = beta;
+        int used = 0;
+        for (int column = 0;
+             column < restart && result.iterations < options.max_iterations;
+             ++column) {
+            std::vector<double> w = impl_->apply_active(basis[column]);
+            ++result.iterations;
+            for (int row = 0; row <= column; ++row) {
+                hij(row, column) = Impl::dot(w, basis[row]);
+                for (std::size_t i = 0; i < n; ++i)
+                    w[i] -= hij(row, column) * basis[row][i];
+            }
+            hij(column + 1, column) = Impl::norm(w);
+            if (hij(column + 1, column) > 0.0) {
+                for (std::size_t i = 0; i < n; ++i)
+                    basis[column + 1][i] = w[i] / hij(column + 1, column);
+            }
+            for (int row = 0; row < column; ++row) {
+                const double a = hij(row, column);
+                const double b = hij(row + 1, column);
+                hij(row, column) = cosine[row] * a + sine[row] * b;
+                hij(row + 1, column) = -sine[row] * a + cosine[row] * b;
+            }
+            const double diagonal = hij(column, column);
+            const double below = hij(column + 1, column);
+            const double magnitude = std::hypot(diagonal, below);
+            cosine[column] = magnitude == 0.0 ? 1.0 : diagonal / magnitude;
+            sine[column] = magnitude == 0.0 ? 0.0 : below / magnitude;
+            hij(column, column) = magnitude;
+            hij(column + 1, column) = 0.0;
+            g[column + 1] = -sine[column] * g[column];
+            g[column] *= cosine[column];
+            used = column + 1;
+            result.final_residual = std::abs(g[column + 1]);
+            if (result.final_residual <= tolerance || magnitude == 0.0) break;
+        }
+        std::vector<double> y(used, 0.0);
+        for (int row = used - 1; row >= 0; --row) {
+            double value = g[row];
+            for (int column = row + 1; column < used; ++column)
+                value -= hij(row, column) * y[column];
+            const double diagonal = hij(row, row);
+            y[row] = diagonal == 0.0 ? 0.0 : value / diagonal;
+        }
+        for (int column = 0; column < used; ++column)
+            for (std::size_t i = 0; i < n; ++i)
+                x[i] += basis[column][i] * y[column];
+        std::vector<double> ax = impl_->apply_active(x);
+        for (std::size_t i = 0; i < n; ++i) residual[i] = rhs[i] - ax[i];
+        result.final_residual = Impl::norm(residual);
+        result.converged = result.final_residual <= tolerance;
+        if (used == 0) break;
+    }
+    result.state_tangent = impl_->expand(x);
+    const std::size_t family_size =
+        static_cast<std::size_t>(impl_->p_.ns) * impl_->p_.mnmax;
+    const int lcfs = impl_->p_.ns - 1;
+    for (int mode = 0; mode < impl_->p_.mnmax; ++mode) {
+        const std::size_t offset =
+            static_cast<std::size_t>(mode) * impl_->p_.ns + lcfs;
+        result.state_tangent[0 * family_size + offset] = direction.rbcc[mode];
+        result.state_tangent[1 * family_size + offset] = direction.zbsc[mode];
+        result.state_tangent[3 * family_size + offset] = direction.rbss[mode];
+        result.state_tangent[4 * family_size + offset] = direction.zbcs[mode];
+    }
+    return result;
 }
 
 #endif  // CUMES_SRC_TANGENT_IMPL_CUH_

@@ -395,6 +395,30 @@ int main() {
             return 1;
         }
     }
+    const cumes::SpectralTangentSolve zero_solve =
+        linearization.solve_boundary_tangent(cumes::BoundaryTangent::zero(vp));
+    if (!zero_solve.converged || zero_solve.iterations != 0 ||
+        zero_solve.final_residual != 0.0) {
+        std::cerr << "FAIL: zero boundary tangent was not an exact solve\n";
+        return 1;
+    }
+    cumes::TangentLinearOptions trial_options;
+    trial_options.max_iterations = 40;
+    trial_options.restart = 12;
+    trial_options.relative_tolerance = 1e-4;
+    const cumes::SpectralTangentSolve trial_solve =
+        linearization.solve_boundary_tangent(boundary, trial_options);
+    if (trial_solve.state_tangent.size() != state_count ||
+        !std::isfinite(trial_solve.initial_residual) ||
+        !std::isfinite(trial_solve.final_residual) ||
+        !(trial_solve.final_residual < trial_solve.initial_residual)) {
+        std::cerr << "FAIL: matrix-free tangent solve returned invalid data\n";
+        return 1;
+    }
+    std::cout << "trial GMRES initial=" << trial_solve.initial_residual
+              << " final=" << trial_solve.final_residual
+              << " iterations=" << trial_solve.iterations
+              << " converged=" << trial_solve.converged << '\n';
 
     real_space_free(dual_rs);
     real_space_free(plus_rs);
