@@ -226,7 +226,20 @@ def make_profiles(cfg, ns):
         prof["chip_iota"] = chip_iota
     else:
         c_edge = curr_eval(1.0)
-        prof["itor"] = SIGN_J * MU0 * cfg["curtor"] / (2.0 * np.pi * c_edge)
+        # A prescribed-current equilibrium may legitimately request zero
+        # total current with an empty (therefore identically zero) profile.
+        # The solver treats that combination as zero current; avoid forming
+        # the otherwise indeterminate normalization 0 / 0 here as well.
+        if c_edge == 0.0:
+            if cfg["curtor"] != 0.0:
+                raise ValueError(
+                    "nonzero curtor requires a current profile with nonzero edge value"
+                )
+            prof["itor"] = 0.0
+        else:
+            prof["itor"] = (
+                SIGN_J * MU0 * cfg["curtor"] / (2.0 * np.pi * c_edge)
+            )
 
         def curr_h(jh):
             sh = ds * (jh + 0.5)
