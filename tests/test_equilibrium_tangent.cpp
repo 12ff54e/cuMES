@@ -1,10 +1,14 @@
 #include "cumes/config/solver_options.hpp"
 #include "cumes/config/validated_problem.hpp"
+#include "cumes/solver/equilibrium_linearization.hpp"
 #include "cumes/solver/equilibrium_tangent.hpp"
 
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <type_traits>
+
+static_assert(std::is_move_constructible_v<cumes::EquilibriumLinearization>);
 
 namespace {
 

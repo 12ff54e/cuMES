@@ -4,9 +4,17 @@
 #include "cumes/numerics/dual_spectral_operator.hpp"
 #include "cumes/numerics/equilibrium_residual_jvp.hpp"
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/solver/equilibrium_linearization.hpp"
+#include "cumes/state/seed_state.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <memory>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -488,6 +496,130 @@ void cumes::EquilibriumResidualJvpOperator::enqueue(
     tangent_m1_gauge_kernel<<<(p_.ns + 255) / 256, 256, 0, stream>>>(
         residual, p_.ns, p_.ntor);
     check_cuda(cudaGetLastError(), "tangent residual postprocess");
+}
+
+class cumes::EquilibriumLinearization::Impl {
+   public:
+    Impl(const ValidatedProblem& problem,
+         const EquilibriumSnapshot& equilibrium)
+        : problem_(&problem), p_(init_params<double>(problem)) {
+        if (problem.spec().free_boundary.lfreeb) {
+            throw CumesError(
+                "equilibrium forward tangents currently support fixed "
+                "boundary only");
+        }
+        p_.ns = equilibrium.ns;
+        if (p_.ns < 2 || equilibrium.mnmax != p_.mnmax ||
+            equilibrium.ntheta != p_.ntheta || equilibrium.nzeta != p_.nzeta) {
+            throw CumesError(
+                "linearization equilibrium does not match the validated "
+                "final-grid shape");
+        }
+        const std::size_t family_size =
+            static_cast<std::size_t>(p_.ns) * p_.mnmax;
+        primal_.resize(6 * family_size);
+        for (std::size_t component = 0; component < 6; ++component) {
+            if (equilibrium.families[component].size() != family_size) {
+                throw CumesError(
+                    "linearization equilibrium has an invalid spectral "
+                    "family size");
+            }
+            std::copy(equilibrium.families[component].begin(),
+                      equilibrium.families[component].end(),
+                      primal_.begin() + component * family_size);
+        }
+        mode_table_ = mode_table_create(p_);
+        evaluator_ = std::make_unique<EquilibriumResidualJvpOperator>(
+            p_, problem, mode_table_);
+        dual_state_.allocate(primal_.size());
+        dual_residual_.allocate(primal_.size());
+    }
+
+    ~Impl() {
+        evaluator_.reset();
+        mode_table_free(mode_table_);
+    }
+
+    ResidualJvp evaluate(std::span<const double> direction) {
+        if (direction.size() != primal_.size()) {
+            throw CumesError(
+                "state tangent has " + std::to_string(direction.size()) +
+                " values; expected " + std::to_string(primal_.size()));
+        }
+        host_dual_.resize(primal_.size());
+        for (std::size_t index = 0; index < primal_.size(); ++index) {
+            host_dual_[index] = {primal_[index], direction[index]};
+        }
+        const std::size_t bytes = host_dual_.size() * sizeof(ForwardDualDouble);
+        check_cuda(cudaMemcpy(dual_state_.data(), host_dual_.data(), bytes,
+                              cudaMemcpyHostToDevice),
+                   "linearization state upload");
+        evaluator_->enqueue({dual_state_.data(), p_.ns, p_.mnmax},
+                            {dual_residual_.data(), p_.ns, p_.mnmax}, 0);
+        check_cuda(cudaMemcpy(host_dual_.data(), dual_residual_.data(), bytes,
+                              cudaMemcpyDeviceToHost),
+                   "linearization residual download");
+        ResidualJvp result;
+        result.residual.resize(primal_.size());
+        result.tangent.resize(primal_.size());
+        for (std::size_t index = 0; index < primal_.size(); ++index) {
+            result.residual[index] = host_dual_[index].value;
+            result.tangent[index] = host_dual_[index].tangent;
+        }
+        return result;
+    }
+
+    const ValidatedProblem* problem_ = nullptr;
+    DeviceParams<double> p_{};
+    DeviceModeTable mode_table_;
+    std::unique_ptr<EquilibriumResidualJvpOperator> evaluator_;
+    DeviceBuffer<ForwardDualDouble> dual_state_;
+    DeviceBuffer<ForwardDualDouble> dual_residual_;
+    std::vector<double> primal_;
+    std::vector<ForwardDualDouble> host_dual_;
+};
+
+cumes::EquilibriumLinearization::EquilibriumLinearization(
+    const ValidatedProblem& problem,
+    const EquilibriumSnapshot& equilibrium)
+    : impl_(std::make_unique<Impl>(problem, equilibrium)) {}
+
+cumes::EquilibriumLinearization::~EquilibriumLinearization() = default;
+
+cumes::EquilibriumLinearization::EquilibriumLinearization(
+    EquilibriumLinearization&&) noexcept = default;
+
+cumes::EquilibriumLinearization& cumes::EquilibriumLinearization::operator=(
+    EquilibriumLinearization&&) noexcept = default;
+
+std::size_t cumes::EquilibriumLinearization::state_size() const {
+    return impl_->primal_.size();
+}
+
+cumes::ResidualJvp cumes::EquilibriumLinearization::residual_jvp(
+    std::span<const double> state_direction) {
+    return impl_->evaluate(state_direction);
+}
+
+cumes::ResidualJvp cumes::EquilibriumLinearization::boundary_residual_jvp(
+    const BoundaryTangent& direction) {
+    if (!direction.matches(*impl_->problem_)) {
+        throw CumesError(
+            "boundary tangent does not match the validated folded basis");
+    }
+    std::vector<double> state_direction(impl_->primal_.size(), 0.0);
+    const std::size_t family_size =
+        static_cast<std::size_t>(impl_->p_.ns) * impl_->p_.mnmax;
+    const int lcfs = impl_->p_.ns - 1;
+    for (int mode = 0; mode < impl_->p_.mnmax; ++mode) {
+        const std::size_t state_index =
+            static_cast<std::size_t>(mode) * impl_->p_.ns + lcfs;
+        state_direction[0 * family_size + state_index] = direction.rbcc[mode];
+        state_direction[1 * family_size + state_index] = direction.zbsc[mode];
+        state_direction[3 * family_size + state_index] = direction.rbss[mode];
+        state_direction[4 * family_size + state_index] = direction.zbcs[mode];
+    }
+    return impl_->evaluate(state_direction);
 }
 
 #endif  // CUMES_SRC_TANGENT_IMPL_CUH_

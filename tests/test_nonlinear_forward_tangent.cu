@@ -4,6 +4,7 @@
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
 #include "cumes/physics/profiles.hpp"
+#include "cumes/solver/equilibrium_linearization.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
@@ -339,6 +340,60 @@ int main() {
         std::cerr << "FAIL: spectral residual JVP disagrees with centered "
                      "finite difference\n";
         return 1;
+    }
+
+    cumes::EquilibriumSnapshot snapshot;
+    snapshot.ns = p.ns;
+    snapshot.mnmax = p.mnmax;
+    snapshot.ntheta = p.ntheta;
+    snapshot.nzeta = p.nzeta;
+    std::vector<double> host_state_direction(state_count);
+    for (std::size_t family = 0; family < 6; ++family) {
+        snapshot.families[family].resize(family_count);
+        for (std::size_t offset = 0; offset < family_count; ++offset) {
+            const std::size_t index = family * family_count + offset;
+            snapshot.families[family][offset] = dual_state[index].value;
+            host_state_direction[index] = dual_state[index].tangent;
+        }
+    }
+    cumes::EquilibriumLinearization linearization(vp, snapshot);
+    const cumes::ResidualJvp host_jvp =
+        linearization.residual_jvp(host_state_direction);
+    for (std::size_t index = 0; index < state_count; ++index) {
+        const double scale =
+            std::max(1.0, std::abs(actual_residual[index].tangent));
+        if (std::abs(host_jvp.tangent[index] - actual_residual[index].tangent) >
+            2e-13 * scale) {
+            std::cerr << "FAIL: host linearization facade changed the JVP\n";
+            return 1;
+        }
+    }
+    cumes::BoundaryTangent boundary = cumes::BoundaryTangent::zero(vp);
+    boundary.rbcc[1] = 0.03;
+    boundary.zbcs[p.ntor + 2] = -0.02;
+    std::vector<double> boundary_state_direction(state_count, 0.0);
+    for (int mode = 0; mode < p.mnmax; ++mode) {
+        const std::size_t offset =
+            static_cast<std::size_t>(mode) * p.ns + p.ns - 1;
+        boundary_state_direction[0 * family_count + offset] =
+            boundary.rbcc[mode];
+        boundary_state_direction[1 * family_count + offset] =
+            boundary.zbsc[mode];
+        boundary_state_direction[3 * family_count + offset] =
+            boundary.rbss[mode];
+        boundary_state_direction[4 * family_count + offset] =
+            boundary.zbcs[mode];
+    }
+    const cumes::ResidualJvp boundary_jvp =
+        linearization.boundary_residual_jvp(boundary);
+    const cumes::ResidualJvp explicit_boundary_jvp =
+        linearization.residual_jvp(boundary_state_direction);
+    for (std::size_t index = 0; index < state_count; ++index) {
+        if (boundary_jvp.tangent[index] !=
+            explicit_boundary_jvp.tangent[index]) {
+            std::cerr << "FAIL: folded boundary tangent mapping changed JVP\n";
+            return 1;
+        }
     }
 
     real_space_free(dual_rs);
