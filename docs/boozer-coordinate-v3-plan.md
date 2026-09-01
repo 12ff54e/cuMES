@@ -70,3 +70,29 @@ calculation produced `5.49e-4`, compared with `4.78e-4` from the supplemental
 terminal QH `booz_xform` file. The residual difference is evaluated separately
 from the coordinate bug because the local optimization stopped much earlier
 than the supplemental refinement.
+
+## Completion evidence
+
+The versioned correction was completed in three independently tested commits:
+
+- `magnetic-coordinate` `f1bc462`: schema-v3 contract, writers, and the
+  `nfp > 1` manufactured shift regression;
+- cuMES `0b5cfd9`: uniform `(theta_b, alpha_b)` plot remap, explicit angle
+  labels, backend readers, and manufactured plotting test;
+- meow `ef02962`: `nfp`-aware phase/Jacobian in the optimizer-owned symmetry
+  diagnostic and a nonzero-`nu`, `nfp=4` regression.
+
+The regenerated QH artifacts under `../opt-qh-test` contain ten unchanged
+equilibrium snapshots, ten version-3 Boozer files at `96 x 64`, ninety
+per-step PNGs, and the initial/final comparison PNG. Their edge results are:
+
+| state | maximum breaking | RMS breaking |
+| --- | ---: | ---: |
+| local initial | `6.780138769084e-4` | `1.192479355133e-3` |
+| local final | `5.492144872285e-4` | `1.017128527046e-3` |
+| supplemental terminal | `4.778785416864e-4` | `8.414179804163e-4` |
+
+For the local final state, `48 x 32` and `96 x 64` differ by `8.465e-6`
+relatively in the maximum and `1.438e-4` in the RMS. The final verification
+passes all 87 cuMES tests, all 10 standalone magnetic-coordinate tests, and all
+4 meow tests.
