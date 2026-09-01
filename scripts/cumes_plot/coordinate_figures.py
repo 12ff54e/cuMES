@@ -50,10 +50,12 @@ def _set_slice_limits(axes, grid, config):
                       adjustable=config.slice_aspect_adjustable)
 
 
-def _format_slice_axes(axes, angles, nfp, config):
-    for panel, (ax, zeta) in enumerate(zip(axes, angles)):
-        physical_phi = np.degrees(zeta / nfp)
-        ax.set_title(rf"$\varphi={physical_phi:g}^\circ$",
+def _format_slice_axes(axes, angles, grid, nfp, config):
+    for panel, (ax, toroidal_angle) in enumerate(zip(axes, angles)):
+        physical_angle = np.degrees(toroidal_angle / nfp)
+        symbol = r"\zeta_b" if grid.coordinate.lower() == "boozer" \
+            else r"\varphi"
+        ax.set_title(rf"${symbol}={physical_angle:g}^\circ$",
                      fontsize=config.panel_title_fontsize)
         ax.tick_params(labelsize=config.tick_label_fontsize)
         if panel % config.panel_columns == 0:
@@ -130,7 +132,7 @@ def render_coordinate_slices(base, grid, nfp, title, config):
                     linewidth=config.coordinate_theta_linewidth,
                     alpha=config.coordinate_theta_alpha)
     _set_slice_limits(axes, grid, config)
-    _format_slice_axes(axes, angles, nfp, config)
+    _format_slice_axes(axes, angles, grid, nfp, config)
     fig.suptitle(f"{title} — {grid.coordinate} coordinate mesh",
                  fontsize=config.figure_title_fontsize)
     path = figure_path(base, f"{grid.coordinate.lower()}_coordinate_slices")
@@ -161,7 +163,7 @@ def render_field_slices(base, grid, nfp, title, norm, cmap, config):
                                shading=config.field_shading,
                                rasterized=config.field_rasterized)
     _set_slice_limits(axes, grid, config)
-    _format_slice_axes(axes, angles, nfp, config)
+    _format_slice_axes(axes, angles, grid, nfp, config)
     cbar = fig.colorbar(artist, ax=axes.tolist(),
                         shrink=config.colorbar_shrink,
                         pad=config.colorbar_pad)
@@ -213,7 +215,7 @@ def render_field_contours(base, grid, title, norm, cmap, config):
         ax.set_visible(False)
     for panel, ax in enumerate(axes):
         if panel % config.panel_columns == 0:
-            ax.set_ylabel(r"$\zeta / 2\pi$",
+            ax.set_ylabel(grid.toroidal_label + r" $/\ 2\pi$",
                           fontsize=config.axis_label_fontsize)
         if panel >= (config.panel_rows - 1) * config.panel_columns:
             ax.set_xlabel(grid.angle_label + r" $/\ 2\pi$",

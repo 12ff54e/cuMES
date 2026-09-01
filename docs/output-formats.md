@@ -308,7 +308,7 @@ four equilibrium figures. `--coordinate-system pest` or
 are reconstructed from the native R/Z and physical lambda spectra; they are
 not inferred from the transformed and truncated Boozer spectra. Consequently
 a Boozer file alone supports only `--coordinate-system boozer`. The Boozer
-reader accepts all version-2 backends (`.bin`, `.nc`, `.h5`, and `.hdf5`).
+reader accepts all version-3 backends (`.bin`, `.nc`, `.h5`, and `.hdf5`).
 All figure configuration—including mesh-line counts, line colors, the shared
 field colormap, contour levels, fonts, figure sizes, camera angles, lighting,
 and output DPI—is grouped in the user-adjustable parameter block at the top of
@@ -322,9 +322,11 @@ and figures.
 ## 7. Boozer result containers
 
 `--boozer-output` and the standalone `cumes-boozer` converter dispatch `.bin`,
-`.nc`, `.h5`, and `.hdf5` to a shared version-2 Boozer data model. Unlike the
+`.nc`, `.h5`, and `.hdf5` to a shared version-3 Boozer data model. Unlike the
 transform's internal FFT workspace, the files contain no complex numbers:
 `R`, `Z`, and `nu` are represented by six real stellarator-symmetric Fourier
-families. The complete coordinate, normalization, ordering, and backend
-contract is documented in
-[`deps/magnetic-coordinate/docs/boozer-output-v2.md`](../deps/magnetic-coordinate/docs/boozer-output-v2.md).
+families. The stored grid retains the source field-period angle `alpha`, with
+physical-angle shift `nu`; consumers construct a uniform Boozer toroidal grid
+using `alpha_b = alpha + nfp*nu`. The complete coordinate, normalization,
+ordering, and backend contract is documented in
+[`deps/magnetic-coordinate/docs/boozer-output-v3.md`](../deps/magnetic-coordinate/docs/boozer-output-v3.md).

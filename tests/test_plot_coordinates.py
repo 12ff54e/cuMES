@@ -45,30 +45,35 @@ def _manufactured_file(path):
     first_surface = 1
     surfaces = source_ns - first_surface
     ntheta, nzeta = 12, 6
-    mode_m = np.array([0, 1], dtype="<i4")
-    mode_n = np.array([0, 0], dtype="<i4")
+    mode_m = np.array([0, 1, 0, 1], dtype="<i4")
+    mode_n = np.array([0, 0, 1, 1], dtype="<i4")
     s = np.array([1.0 / 3.0, 2.0 / 3.0, 1.0], dtype="<f8")
     iota = np.array([0.0, 0.45, 0.60], dtype="<f8")
     radius = np.array([0.15, 0.30, 0.45])
-    families = {name: np.zeros((surfaces, 2), dtype="<f8")
+    families = {name: np.zeros((surfaces, 4), dtype="<f8")
                 for name in FAMILY_NAMES}
     families["rmncc"][:, 0] = 1.5
     families["rmncc"][:, 1] = radius
     families["zmnsc"][:, 1] = radius
     families["numnsc"][:, 1] = 0.08
+    families["numncs"][:, 2] = 0.03
     theta = PERIOD * np.arange(ntheta) / ntheta
+    alpha = PERIOD * np.arange(nzeta) / nzeta
     b = np.empty((surfaces, nzeta, ntheta), dtype="<f8")
     for surface in range(surfaces):
-        b[surface] = 1.0 + 0.1 * surface + 0.2 * np.cos(theta)[None, :]
+        b[surface] = (
+            1.0 + 0.1 * surface + 0.2 * np.cos(theta)[None, :]
+            + 0.05 * np.cos(alpha)[:, None]
+        )
     sqrtg = -1.0 / (b * b)
     b2j00 = -np.ones(surfaces, dtype="<f8")
 
     header = [
         8, source_ns, ntheta, nzeta, 2, 0, 5, first_surface,
-        ntheta, nzeta, 1, 0, 4,
+        ntheta, nzeta, 1, 1, 4,
     ]
     payload = bytearray(MAGIC)
-    payload += struct.pack("<i", 2)
+    payload += struct.pack("<i", 3)
     payload += _string(COORDINATE_CONVENTION)
     payload += _string(FOURIER_CONVENTION)
     payload += _string("manufactured.json")
@@ -180,6 +185,19 @@ class PlotCoordinateTest(unittest.TestCase):
                                        atol=2.0e-15)
             np.testing.assert_allclose(boozer.z[:, 0], expected_z,
                                        atol=2.0e-15)
+
+            # At fixed theta_b, remap the sampled field with the manufactured
+            # version-3 relation
+            # alpha_b=alpha+nfp*(0.08*sin(theta_b)+0.03*sin(alpha)).
+            expected_b = np.empty_like(boozer.b)
+            for poloidal, theta_b in enumerate(theta):
+                mapped = data.alpha + data.nfp * (
+                    0.08 * np.sin(theta_b) + 0.03 * np.sin(data.alpha))
+                for surface in range(3):
+                    expected_b[surface, :, poloidal] = np.interp(
+                        data.alpha, mapped, b[surface, :, poloidal],
+                        period=PERIOD)
+            np.testing.assert_allclose(boozer.b, expected_b, atol=2.0e-12)
 
             r_native = np.repeat(expected_r[:, None, :], 6, axis=1)
             z_native = np.repeat(expected_z[:, None, :], 6, axis=1)
