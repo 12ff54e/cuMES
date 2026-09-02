@@ -147,6 +147,8 @@ int main() {
         std::cerr << "FAIL: perturbed Solovev oracle did not converge\n";
         return 1;
     }
+    std::cout << "hot-restart oracle iterations: plus=" << plus.total_iterations
+              << " minus=" << minus.total_iterations << '\n';
     std::vector<double> nonlinear_fd_state(linearization.state_size());
     for (std::size_t component = 0; component < 6; ++component) {
         for (std::size_t index = 0; index < family_size; ++index) {

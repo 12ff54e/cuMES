@@ -27,6 +27,7 @@ struct TangentLinearOptions {
     int restart = 80;
     double relative_tolerance = 1e-4;
     double absolute_tolerance = 1e-10;
+    bool use_equilibrium_preconditioner = true;
 };
 
 struct SpectralTangentSolve {

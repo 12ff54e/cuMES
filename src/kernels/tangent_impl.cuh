@@ -499,6 +499,13 @@ void cumes::EquilibriumResidualJvpOperator::enqueue(
     check_cuda(cudaGetLastError(), "tangent residual postprocess");
 }
 
+void cumes::EquilibriumResidualJvpOperator::enqueue_precondition(
+    SpectralView<ForwardDualDouble, DecomposedResidualDomain> residual,
+    cudaStream_t stream) {
+    preconditioner_.enqueue_m1_scale(residual, p_, nullptr, stream);
+    preconditioner_.enqueue_apply(residual, p_, nullptr, stream, false);
+}
+
 class cumes::EquilibriumLinearization::Impl {
    public:
     struct ActiveDof {
@@ -644,6 +651,36 @@ class cumes::EquilibriumLinearization::Impl {
         return result;
     }
 
+    std::vector<double> precondition_active(
+        std::span<const double> active_residual) {
+        host_dual_.assign(primal_.size(), ForwardDualDouble(0.0));
+        for (std::size_t i = 0; i < active_.size(); ++i)
+            host_dual_[active_[i].residual].tangent = active_residual[i];
+        const std::size_t bytes = host_dual_.size() * sizeof(ForwardDualDouble);
+        check_cuda(cudaMemcpy(dual_residual_.data(), host_dual_.data(), bytes,
+                              cudaMemcpyHostToDevice),
+                   "tangent preconditioner upload");
+        evaluator_->enqueue_precondition(
+            {dual_residual_.data(), p_.ns, p_.mnmax}, 0);
+        check_cuda(cudaMemcpy(host_dual_.data(), dual_residual_.data(), bytes,
+                              cudaMemcpyDeviceToHost),
+                   "tangent preconditioner download");
+        std::vector<double> state(active_.size(), 0.0);
+        const std::size_t family_size =
+            static_cast<std::size_t>(p_.ns) * p_.mnmax;
+        for (std::size_t i = 0; i < active_.size(); ++i) {
+            const std::size_t within = active_[i].first_state % family_size;
+            const int mode = static_cast<int>(within / p_.ns);
+            const int m = mode / (p_.ntor + 1);
+            const int n = mode % (p_.ntor + 1);
+            const double mscale = m == 0 ? 1.0 : std::sqrt(2.0);
+            const double nscale = n == 0 ? 1.0 : std::sqrt(2.0);
+            state[i] =
+                mscale * nscale * host_dual_[active_[i].residual].tangent;
+        }
+        return state;
+    }
+
     static double dot(std::span<const double> lhs,
                       std::span<const double> rhs) {
         double result = 0.0;
@@ -744,6 +781,12 @@ cumes::EquilibriumLinearization::solve_boundary_tangent(
         rhs[i] = -boundary.tangent[impl_->active_[i].residual];
     std::vector<double> x(n, 0.0);
     std::vector<double> residual = rhs;
+    auto apply_krylov = [&](std::span<const double> value) {
+        if (!options.use_equilibrium_preconditioner)
+            return impl_->apply_active(value);
+        const std::vector<double> state = impl_->precondition_active(value);
+        return impl_->apply_active(state);
+    };
     const double initial = Impl::norm(residual);
     const double tolerance = std::max(options.absolute_tolerance,
                                       options.relative_tolerance * initial);
@@ -770,7 +813,7 @@ cumes::EquilibriumLinearization::solve_boundary_tangent(
         for (int column = 0;
              column < restart && result.iterations < options.max_iterations;
              ++column) {
-            std::vector<double> w = impl_->apply_active(basis[column]);
+            std::vector<double> w = apply_krylov(basis[column]);
             ++result.iterations;
             for (int row = 0; row <= column; ++row) {
                 hij(row, column) = Impl::dot(w, basis[row]);
@@ -812,13 +855,16 @@ cumes::EquilibriumLinearization::solve_boundary_tangent(
         for (int column = 0; column < used; ++column)
             for (std::size_t i = 0; i < n; ++i)
                 x[i] += basis[column][i] * y[column];
-        std::vector<double> ax = impl_->apply_active(x);
+        std::vector<double> ax = apply_krylov(x);
         for (std::size_t i = 0; i < n; ++i) residual[i] = rhs[i] - ax[i];
         result.final_residual = Impl::norm(residual);
         result.converged = result.final_residual <= tolerance;
         if (used == 0) break;
     }
-    result.state_tangent = impl_->expand(x);
+    const std::vector<double> active_state =
+        options.use_equilibrium_preconditioner ? impl_->precondition_active(x)
+                                               : x;
+    result.state_tangent = impl_->expand(active_state);
     const std::size_t family_size =
         static_cast<std::size_t>(impl_->p_.ns) * impl_->p_.mnmax;
     const int lcfs = impl_->p_.ns - 1;

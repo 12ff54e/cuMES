@@ -48,4 +48,15 @@ template void cumes::Preconditioner<TangentDual>::enqueue_compute(
     const cumes::ControlStatus*,
     cudaStream_t,
     bool);
+template void cumes::Preconditioner<TangentDual>::enqueue_m1_scale(
+    cumes::SpectralView<TangentDual, cumes::DecomposedResidualDomain>,
+    const DeviceParams<TangentDual>&,
+    const cumes::ControlStatus*,
+    cudaStream_t) const;
+template void cumes::Preconditioner<TangentDual>::enqueue_apply(
+    cumes::SpectralView<TangentDual, cumes::DecomposedResidualDomain>,
+    const DeviceParams<TangentDual>&,
+    const cumes::ControlStatus*,
+    cudaStream_t,
+    bool) const;
 template class cumes::ConstraintOperator<TangentDual>;

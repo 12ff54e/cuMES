@@ -7,6 +7,7 @@
 #include <cuda_runtime.h>
 
 #include <cmath>
+#include <limits>
 #include <type_traits>
 
 namespace cumes {
@@ -199,6 +200,14 @@ __host__ __device__ inline bool isfinite(ForwardDual<T> x) {
 // ForwardDual is a cuMES implementation type, and these overloads preserve
 // the ordinary scalar call spelling while propagating its derivative lane.
 namespace std {
+
+template <class T>
+class numeric_limits<cumes::ForwardDual<T>> : public numeric_limits<T> {
+   public:
+    static constexpr cumes::ForwardDual<T> epsilon() noexcept {
+        return {numeric_limits<T>::epsilon(), T(0)};
+    }
+};
 
 template <class T>
 __host__ __device__ inline cumes::ForwardDual<T> sqrt(cumes::ForwardDual<T> x) {

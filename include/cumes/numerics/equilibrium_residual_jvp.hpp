@@ -42,6 +42,10 @@ class EquilibriumResidualJvpOperator {
         SpectralView<ForwardDualDouble, DecomposedResidualDomain> residual,
         cudaStream_t stream);
 
+    void enqueue_precondition(
+        SpectralView<ForwardDualDouble, DecomposedResidualDomain> residual,
+        cudaStream_t stream);
+
     const DeviceParams<ForwardDualDouble>& params() const { return p_; }
     const RealSpaceStorage<ForwardDualDouble>& real_space() const {
         return rs_;
