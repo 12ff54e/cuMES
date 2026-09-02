@@ -12,6 +12,16 @@
 namespace cumes {
 
 template <class T>
+__device__ inline T shuffle_down(T value, int offset) {
+    return __shfl_down_sync(0xffffffffu, value, offset);
+}
+
+template <class T>
+__device__ inline void atomic_add(T* address, T value) {
+    atomicAdd(address, value);
+}
+
+template <class T>
 struct ForwardDual {
     using val_type = T;
 
@@ -48,6 +58,20 @@ struct ForwardDual {
         return *this;
     }
 };
+
+template <class T>
+__device__ inline ForwardDual<T> shuffle_down(ForwardDual<T> value,
+                                              int offset) {
+    return {__shfl_down_sync(0xffffffffu, value.value, offset),
+            __shfl_down_sync(0xffffffffu, value.tangent, offset)};
+}
+
+template <class T>
+__device__ inline void atomic_add(ForwardDual<T>* address,
+                                  ForwardDual<T> value) {
+    atomicAdd(&address->value, value.value);
+    atomicAdd(&address->tangent, value.tangent);
+}
 
 template <class T>
 __host__ __device__ constexpr ForwardDual<T> operator+(ForwardDual<T> lhs,
@@ -139,6 +163,12 @@ template <class T>
 __host__ __device__ inline ForwardDual<T> fmax(ForwardDual<T> lhs,
                                                ForwardDual<T> rhs) {
     return lhs.value >= rhs.value ? lhs : rhs;
+}
+
+template <class T>
+__host__ __device__ inline ForwardDual<T> copysign(ForwardDual<T> magnitude,
+                                                   ForwardDual<T> sign) {
+    return sign.value < T(0) ? -fabs(magnitude) : fabs(magnitude);
 }
 
 template <class T>

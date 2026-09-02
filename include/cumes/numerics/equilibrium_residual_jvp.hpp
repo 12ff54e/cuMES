@@ -5,6 +5,8 @@
 
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/numerics/dual_spectral_operator.hpp"
+#include "cumes/numerics/preconditioner.hpp"
+#include "cumes/physics/constraint_operator.hpp"
 #include "cumes/physics/force_operator.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/magnetic_field_operator.hpp"
@@ -12,19 +14,15 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 
-#include <array>
-
 namespace cumes {
 
 // Evaluates the primal physical MHD residual and its exact directional
 // derivative together. The state direction includes both interior unknowns
 // and prescribed LCFS values; callers impose the fixed-boundary partition.
 //
-// The spectral-condensation force is deliberately absent. It is an iterative
-// regularizer with a cadence-dependent preconditioner cache, rather than a
-// physical equilibrium equation. The fixed-boundary tangent solve uses this
-// gauge-fixed ideal-MHD residual and treats the production preconditioner only
-// as a possible linear-solver preconditioner.
+// Includes the spectral-condensation force and its geometry-dependent
+// multiplier so the derivative follows the equilibrium black box rather than
+// an ideal-MHD-only surrogate.
 class EquilibriumResidualJvpOperator {
    public:
     using val_type = ForwardDualDouble;
@@ -60,9 +58,10 @@ class EquilibriumResidualJvpOperator {
     RealSpaceStorage<ForwardDualDouble> rs_;
     DualSpectralOperator transform_;
     GeometryOperator<ForwardDualDouble> geometry_;
+    Preconditioner<ForwardDualDouble> preconditioner_;
+    ConstraintOperator<ForwardDualDouble> constraint_;
     DeviceBuffer<ForwardDualDouble> rcon_;
     DeviceBuffer<ForwardDualDouble> zcon_;
-    std::array<DeviceBuffer<ForwardDualDouble>, 4> zero_constraint_;
 };
 
 }  // namespace cumes

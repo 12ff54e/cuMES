@@ -4,6 +4,7 @@
 #define CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_LINEARIZATION_HPP_
 
 #include "cumes/config/validated_problem.hpp"
+#include "cumes/io/equilibrium_profiles.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/solver/equilibrium_tangent.hpp"
 
@@ -65,6 +66,13 @@ class EquilibriumLinearization {
     SpectralTangentSolve solve_boundary_tangent(
         const BoundaryTangent& direction,
         const TangentLinearOptions& options = {});
+
+    // Propagate a solved spectral direction through the final geometry and
+    // magnetic-field pass into the public target-facing tangent layout.
+    EquilibriumTangent materialize_tangent(
+        std::span<const double> state_direction,
+        const EquilibriumSnapshot& primal_equilibrium,
+        const EquilibriumProfiles& primal_profiles);
 
    private:
     class Impl;

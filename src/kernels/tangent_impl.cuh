@@ -448,14 +448,10 @@ cumes::EquilibriumResidualJvpOperator::EquilibriumResidualJvpOperator(
       rs_(real_space_create(p_)),
       transform_(primal_params, mode_table),
       geometry_(p_, std::nullopt),
+      preconditioner_(p_, std::nullopt),
+      constraint_(p_, std::nullopt),
       rcon_(static_cast<std::size_t>(p_.ns) * p_.nZnT),
-      zcon_(static_cast<std::size_t>(p_.ns) * p_.nZnT) {
-    const std::size_t real_count = static_cast<std::size_t>(p_.ns) * p_.nZnT;
-    for (auto& field : zero_constraint_) {
-        field.allocate(real_count);
-        field.zero();
-    }
-}
+      zcon_(static_cast<std::size_t>(p_.ns) * p_.nZnT) {}
 
 cumes::EquilibriumResidualJvpOperator::~EquilibriumResidualJvpOperator() {
     real_space_free(rs_);
@@ -482,15 +478,18 @@ void cumes::EquilibriumResidualJvpOperator::enqueue(
     MagneticFieldOperator<ForwardDualDouble>{}.enqueue(
         rs_, p_, radial, geometry_.base_geometry_views(p_),
         geometry_.magnetic_field_views(p_), nullptr, stream, true);
+    preconditioner_.enqueue_compute(rs_, transform_.xm(), transform_.xn(), p_,
+                                    radial, geometry_.base_geometry_views(p_),
+                                    geometry_.magnetic_field_views(p_), nullptr,
+                                    stream, false);
     ForceOperator<ForwardDualDouble>{}.enqueue(
         rs_, p_, radial, geometry_.base_geometry_views(p_),
         geometry_.magnetic_field_views(p_), nullptr, stream);
-    const auto constraint = ConstraintForceViews<const ForwardDualDouble>{
-        {zero_constraint_[0].data(), p_.ns, p_.ntheta, p_.nzeta},
-        {zero_constraint_[1].data(), p_.ns, p_.ntheta, p_.nzeta},
-        {zero_constraint_[2].data(), p_.ns, p_.ntheta, p_.nzeta},
-        {zero_constraint_[3].data(), p_.ns, p_.ntheta, p_.nzeta}};
-    transform_.enqueue_forward(force_views_of(rs_, p_), constraint, residual,
+    constraint_.reset_reference(p_, radial.sqrtS_F, nullptr, stream);
+    constraint_.enqueue(p_, rs_, preconditioner_.ard(), preconditioner_.azd(),
+                        radial.sqrtS_F, true, &transform_, nullptr, stream);
+    transform_.enqueue_forward(force_views_of(rs_, p_),
+                               constraint_.constraint_force_views(p_), residual,
                                stream, false);
     tangent_scalxc_kernel<<<(p_.ns * p_.mnmax + 255) / 256, 256, 0, stream>>>(
         residual, radial.sqrtS_F, transform_.xm(), p_.ns, p_.mnmax,
@@ -656,6 +655,26 @@ class cumes::EquilibriumLinearization::Impl {
         return std::sqrt(dot(value, value));
     }
 
+    std::vector<ForwardDualDouble> copy_dual(const ForwardDualDouble* device,
+                                             std::size_t count,
+                                             const char* label) {
+        std::vector<ForwardDualDouble> result(count);
+        if (count != 0) {
+            check_cuda(cudaMemcpy(result.data(), device,
+                                  count * sizeof(ForwardDualDouble),
+                                  cudaMemcpyDeviceToHost),
+                       label);
+        }
+        return result;
+    }
+
+    static void assign_tangent(std::vector<double>& output,
+                               const std::vector<ForwardDualDouble>& input) {
+        output.resize(input.size());
+        for (std::size_t i = 0; i < input.size(); ++i)
+            output[i] = input[i].tangent;
+    }
+
     const ValidatedProblem* problem_ = nullptr;
     DeviceParams<double> p_{};
     DeviceModeTable mode_table_;
@@ -811,6 +830,162 @@ cumes::EquilibriumLinearization::solve_boundary_tangent(
         result.state_tangent[3 * family_size + offset] = direction.rbss[mode];
         result.state_tangent[4 * family_size + offset] = direction.zbcs[mode];
     }
+    return result;
+}
+
+cumes::EquilibriumTangent cumes::EquilibriumLinearization::materialize_tangent(
+    std::span<const double> state_direction,
+    const EquilibriumSnapshot& primal_equilibrium,
+    const EquilibriumProfiles& primal_profiles) {
+    if (primal_equilibrium.ns != impl_->p_.ns ||
+        primal_equilibrium.mnmax != impl_->p_.mnmax ||
+        primal_equilibrium.ntheta != impl_->p_.ntheta ||
+        primal_equilibrium.nzeta != impl_->p_.nzeta) {
+        throw CumesError("tangent materialization primal shape mismatch");
+    }
+    static_cast<void>(impl_->evaluate(state_direction));
+    EquilibriumTangent result =
+        EquilibriumTangent::zero_like(primal_equilibrium, primal_profiles);
+    const std::size_t family_size =
+        static_cast<std::size_t>(impl_->p_.ns) * impl_->p_.mnmax;
+    for (std::size_t component = 0; component < 6; ++component) {
+        std::copy_n(state_direction.begin() + component * family_size,
+                    family_size,
+                    result.equilibrium.families[component].begin());
+    }
+    // Match the published state convention after production axis
+    // extrapolation.
+    for (int mode = 0; mode < impl_->p_.mnmax; ++mode) {
+        const int m = mode / (impl_->p_.ntor + 1);
+        for (int component = 0; component < 6; ++component) {
+            if (m != 1 && !(m == 0 && component == 5)) continue;
+            auto& family = result.equilibrium.families[component];
+            family[static_cast<std::size_t>(mode) * impl_->p_.ns] =
+                family[static_cast<std::size_t>(mode) * impl_->p_.ns + 1];
+        }
+    }
+
+    const auto& evaluator = *impl_->evaluator_;
+    const auto& p = evaluator.params();
+    const auto& rs = evaluator.real_space();
+    const auto base = evaluator.geometry().base_geometry_views(p);
+    const auto field = evaluator.geometry().magnetic_field_views(p);
+    const auto radial = evaluator.profiles().profile_views();
+    const std::size_t points = static_cast<std::size_t>(p.ntheta) * p.nzeta;
+    const std::size_t full = static_cast<std::size_t>(p.ns) * points;
+    const std::size_t half = static_cast<std::size_t>(p.ns - 1) * points;
+    auto tangent_field = [&](EquilibriumSnapshot::HalfField destination,
+                             const ForwardDualDouble* source,
+                             const char* label) {
+        Impl::assign_tangent(result.equilibrium.half_fields[destination],
+                             impl_->copy_dual(source, half, label));
+    };
+    tangent_field(EquilibriumSnapshot::SQRTG, base.gsqrt.data(),
+                  "copy tangent sqrtg");
+    tangent_field(EquilibriumSnapshot::BSUPU, field.bsupu.data(),
+                  "copy tangent bsupu");
+    tangent_field(EquilibriumSnapshot::BSUPV, field.bsupv.data(),
+                  "copy tangent bsupv");
+    tangent_field(EquilibriumSnapshot::BSUBU, field.bsubu.data(),
+                  "copy tangent bsubu");
+    tangent_field(EquilibriumSnapshot::BSUBV, field.bsubv.data(),
+                  "copy tangent bsubv");
+    // B^s is identically zero for nested flux surfaces.
+    std::fill(
+        result.equilibrium.half_fields[EquilibriumSnapshot::BSUPS].begin(),
+        result.equilibrium.half_fields[EquilibriumSnapshot::BSUPS].end(), 0.0);
+
+    const auto r_o = impl_->copy_dual(rs.d_r_o, full, "copy tangent r_o");
+    const auto z_o = impl_->copy_dual(rs.d_z_o, full, "copy tangent z_o");
+    const auto rv_e = impl_->copy_dual(rs.d_rv_e, full, "copy tangent rv_e");
+    const auto rv_o = impl_->copy_dual(rs.d_rv_o, full, "copy tangent rv_o");
+    const auto zv_e = impl_->copy_dual(rs.d_zv_e, full, "copy tangent zv_e");
+    const auto zv_o = impl_->copy_dual(rs.d_zv_o, full, "copy tangent zv_o");
+    const auto radial_rs =
+        impl_->copy_dual(base.rs.data(), half, "copy tangent radial rs");
+    const auto radial_zs =
+        impl_->copy_dual(base.zs.data(), half, "copy tangent radial zs");
+    const auto ru12 =
+        impl_->copy_dual(base.ru12.data(), half, "copy tangent ru12");
+    const auto zu12 =
+        impl_->copy_dual(base.zu12.data(), half, "copy tangent zu12");
+    const auto bsupu =
+        impl_->copy_dual(field.bsupu.data(), half, "copy tangent bsupu dual");
+    const auto bsupv =
+        impl_->copy_dual(field.bsupv.data(), half, "copy tangent bsupv dual");
+    const auto bsubu =
+        impl_->copy_dual(field.bsubu.data(), half, "copy tangent bsubu dual");
+    const auto bsubv =
+        impl_->copy_dual(field.bsubv.data(), half, "copy tangent bsubv dual");
+    const auto sqrt_s_half =
+        impl_->copy_dual(radial.sqrtS_H, p.ns - 1, "copy tangent sqrtS_H");
+    auto& bsubs = result.equilibrium.half_fields[EquilibriumSnapshot::BSUBS];
+    for (int surface = 0; surface < p.ns - 1; ++surface) {
+        const ForwardDualDouble sqrt_s = sqrt_s_half[surface];
+        const std::size_t inner = static_cast<std::size_t>(surface) * points;
+        const std::size_t outer = inner + points;
+        for (std::size_t point = 0; point < points; ++point) {
+            const std::size_t hi = inner + point;
+            const ForwardDualDouble ro =
+                ForwardDualDouble(0.5) *
+                (r_o[inner + point] + r_o[outer + point]);
+            const ForwardDualDouble zo =
+                ForwardDualDouble(0.5) *
+                (z_o[inner + point] + z_o[outer + point]);
+            const ForwardDualDouble rs_physical =
+                radial_rs[hi] + ro / (ForwardDualDouble(2.0) * sqrt_s);
+            const ForwardDualDouble zs_physical =
+                radial_zs[hi] + zo / (ForwardDualDouble(2.0) * sqrt_s);
+            const ForwardDualDouble rv =
+                ForwardDualDouble(0.5) *
+                ((rv_e[inner + point] + rv_e[outer + point]) +
+                 sqrt_s * (rv_o[inner + point] + rv_o[outer + point]));
+            const ForwardDualDouble zv =
+                ForwardDualDouble(0.5) *
+                ((zv_e[inner + point] + zv_e[outer + point]) +
+                 sqrt_s * (zv_o[inner + point] + zv_o[outer + point]));
+            const ForwardDualDouble gsu =
+                rs_physical * ru12[hi] + zs_physical * zu12[hi];
+            const ForwardDualDouble gsv = rs_physical * rv + zs_physical * zv;
+            bsubs[hi] = (gsu * bsupu[hi] + gsv * bsupv[hi]).tangent;
+        }
+    }
+
+    auto profile_tangent = [&](std::vector<double>& destination,
+                               const ForwardDualDouble* source,
+                               const char* label) {
+        Impl::assign_tangent(destination,
+                             impl_->copy_dual(source, p.ns - 1, label));
+    };
+    profile_tangent(result.profiles.toroidal_flux_derivative, radial.phip_H,
+                    "copy tangent phip_H");
+    profile_tangent(result.profiles.poloidal_flux_derivative, radial.chip_H,
+                    "copy tangent chip_H");
+    profile_tangent(result.profiles.rotational_transform, radial.iota_H,
+                    "copy tangent iota_H");
+    const double flux_scale =
+        static_cast<double>(DeviceParams<ForwardDualDouble>::SIGN_JACOBIAN) *
+        2.0 * M_PI;
+    for (double& value : result.profiles.toroidal_flux_derivative)
+        value *= flux_scale;
+    for (double& value : result.profiles.poloidal_flux_derivative)
+        value *= flux_scale;
+    result.profiles.poloidal_covariant_field.assign(p.ns - 1, 0.0);
+    result.profiles.toroidal_covariant_field.assign(p.ns - 1, 0.0);
+    for (int surface = 0; surface < p.ns - 1; ++surface) {
+        for (std::size_t point = 0; point < points; ++point) {
+            const std::size_t index =
+                static_cast<std::size_t>(surface) * points + point;
+            result.profiles.poloidal_covariant_field[surface] +=
+                bsubu[index].tangent;
+            result.profiles.toroidal_covariant_field[surface] +=
+                bsubv[index].tangent;
+        }
+        result.profiles.poloidal_covariant_field[surface] /= points;
+        result.profiles.toroidal_covariant_field[surface] /= points;
+    }
+    // Current-density tangents are not consumed by the optimizer targets and
+    // remain zero until curl(B) tangent output is qualified separately.
     return result;
 }
 
