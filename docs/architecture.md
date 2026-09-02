@@ -26,9 +26,11 @@ trajectories bit-for-bit.
   `solver_run`), `profiles` (`Profiles` — the 11 radial arrays), `precon`
   (`Preconditioner`), `constraint` (`ConstraintOperator`), `prolongation`
   (`Prolongation` — the grid-sequencing state interpolation), and
-  `axisymmetric` (`AxisymmetricOperator`). Each operator owns its raw device
-  buffers directly (arena-carved per stage) and exposes typed view bundles
-  (`RadialProfileViews`, `BaseGeometryHalfViews`, `GeometryParityViews`, …).
+  `axisymmetric` (`AxisymmetricOperator`), plus `tangent`
+  (`EquilibriumLinearization` — retained residual JVP and preconditioned
+  tangent solve). Each operator owns its raw device buffers directly
+  (arena-carved per stage) and exposes typed view bundles (`RadialProfileViews`,
+  `BaseGeometryHalfViews`, `GeometryParityViews`, …).
 - **Host-side `cumes` namespace** — `include/cumes/*` + `src/cumes/*`. Validated
   config model (`ProblemSpec` → `ValidatedProblem`), RAII CUDA runtime
   (`DeviceBuffer`, `PinnedBuffer`, `DeviceArena`, `Stream`, `Event`), typed
@@ -55,7 +57,7 @@ monolithic compile (blueprint §9):
 | `cumes_io` (`cumes::io`) | host C++ | host-snapshot console output, full `make_writer` dispatch, and optional NetCDF/HDF5 adapters (the only target with backend headers/defines) |
 | `cumes_cuda_runtime` | header-only CUDA-runtime interface | centralized `check_cuda`/`check_cufft` and buffer/stream/event RAII; propagates only the CUDA runtime/cuFFT links |
 | `cumes_cuda_double` / `cumes_cuda_float` | device | the nine `*_double.cu` / `*_float.cu` operator TUs |
-| `cumes_solver` (`cumes::solver`) | CUDA/C++ facade | host-facing `EquilibriumSolver`: validated problem → seed/restart → multigrid → complete host snapshot, converged flux/current profiles (`Phi'`, `chi'`, `iota`, `I`, `G`), and report |
+| `cumes_solver` (`cumes::solver`) | CUDA/C++ facade | host-facing `EquilibriumSolver` plus retained fixed-boundary `EquilibriumLinearization`: validated problem → equilibrium snapshot/profiles/report, then analytic residual JVPs and preconditioned tangent solves |
 | `cumes` | executable | `main.cu`, consumes the same public solver facade as embedding applications |
 | `magnetic_coordinate` | standalone CUDA/C++ library | consumes schema-v8 equilibrium output and constructs PEST/Boozer coordinates |
 | `cumes-boozer` | postprocessor executable | writes the mixed `(s, theta_b, zeta)` Boozer representation |
@@ -122,6 +124,9 @@ build and the boundary headers:
   and never sees a device pointer;
 - the public solver facade returns that complete host snapshot and hides CUDA
   streams, storage, and operators from ordinary C++ consumers;
+- the public linearization facade accepts only solver-owned boundary/state
+  layouts; optimizer variables, targets, weights, and target chain rules stay
+  outside cuMES;
 - the controller (`IterationController`) is a pure host state machine with no
   CUDA calls;
 - no library calls `exit()`; only `main.cu` maps `RunStatus` to an exit code.

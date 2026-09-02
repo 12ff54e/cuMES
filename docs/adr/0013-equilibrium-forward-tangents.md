@@ -1,6 +1,6 @@
 # ADR-0013: Fixed-boundary equilibrium forward tangents
 
-Status: Accepted for staged implementation
+Status: Implemented for the qualified fixed-boundary precise-double scope
 
 ## Context
 
@@ -115,6 +115,30 @@ solve, but it is not treated as `F_u^{-1}` and cannot define the derivative.
 No stage is considered complete merely because the code builds.  The first
 usable optimizer milestone requires the fixed-boundary QH directional and
 gradient gates to pass.
+
+## Implementation outcome
+
+The public implementation consists of `BoundaryTangent`,
+`EquilibriumTangent`, and `EquilibriumLinearization`. The retained session
+evaluates analytic CUDA JVPs, solves the gauge-fixed tangent system with
+right-preconditioned restarted GMRES, and materializes the spectral,
+geometry/magnetic-field, and `Phi'`/`chi'`/`iota`/`I`/`G` derivatives consumed
+by optimizer targets. It never evaluates an optimizer target.
+
+The cuMES sensitivity suite checks the dual algebra, nonlinear operator JVP,
+residual JVP, boundary solve, and target-facing materialization. The meow
+integration independently checks folded optimizer directions and compares a
+strict QH target tangent against centered nonlinear equilibrium solves. At the
+mode-1 analytic QH start, the complete residual-vector derivative differs by
+5.2% while the coordinate-invariant objective derivative differs by 0.14%.
+The residual-vector difference reflects the equilibrium lambda/radial gauge
+branch; both tangent states satisfy the linearized equilibrium residual.
+
+The production meow driver uses the default `1e-4` relative linear tolerance
+for trust-region work. One accepted-step scaling runs completed every QA mode
+through 80 variables and every QH mode through 120 variables. A future block
+interface can reduce the still-linear cost in the number of boundary
+directions without changing this contract.
 
 ## Consequences
 
