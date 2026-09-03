@@ -283,6 +283,34 @@ centered, converged restart finite difference in the following order:
 Diagnostic files generated during this work belong outside either repository
 under the sibling `tmp/` directory.
 
+### 7.1 Constraint-tangent correction outcome
+
+The 2026-09-03 branch investigation found a concrete residual-JVP wiring
+defect before any additional gauge condition was justified.  The dual inverse
+transform wrote `rCon` and `zCon` into standalone tangent-owned buffers, while
+the following `ConstraintOperator` read its own distinct, never-populated
+buffers.  The nonlinear residual path already connected these views directly.
+The tangent path now likewise writes into `constraint_.rcon_view()` and
+`constraint_.zcon_view()`; the redundant buffers were removed.
+
+The correction is guarded by a nonlinear-restart agreement check in
+`test_equilibrium_tangent_solve`.  Compute Sanitizer subsequently exposed four
+uninitialized dual de-aliasing scratch families on the magnetic axis; these
+are now zero-initialized at construction.  The verify suite passes all 96
+tests, including the memcheck/initcheck wrappers, and meow's linked suite
+passes all 10 tests.
+
+This correction substantially improves the optimizer-facing derivative, but
+does not by itself satisfy the 1% target-column gate above.  At the QH mode-1
+analytic start, materially nonzero residual columns still differ from the
+converged nonlinear reference by 2.95--11.68%, although the hybrid objective
+directional derivative differs by at most 0.705%.  Tightening GMRES from
+`5e-6` to `1e-8` reduces the worst residual-column error only to 7.77%, so the
+remaining discrepancy is not merely the stopping tolerance.  No gauge mode
+is removed: a general lambda harmonic participates in the coupled
+`(R,Z,lambda)` coordinate response even though a coordinate-invariant target
+has no independent physical dependence on a pure relabelling.
+
 ## 8. Performance acceptance
 
 For a performance-motivated change:
