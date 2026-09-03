@@ -268,6 +268,23 @@ remaining a non-regressing improvement on the other. Fixed-boundary schedules
 are captured lazily and cached by shape. Free-boundary and verification-dump
 paths remain direct; `CUMES_DISABLE_CUDA_GRAPHS=1` is the diagnostic opt-out.
 
+### 3.4 Concurrent independent solves — experiment plan
+
+Meow's cold finite-difference columns can run as independent equilibrium
+solves. A two-worker QA diagnostic produced bit-identical target Jacobian
+columns and reduced eight-column wall time from 2.801 s to 1.256 s. The same
+QH diagnostic exposed a runtime coordination defect: one solver can call the
+multigrid stage-boundary `cudaDeviceSynchronize` while another thread is
+capturing its fixed-boundary CUDA graph, which CUDA rejects.
+
+The scoped fix is a process-wide host mutex shared only by graph capture and
+the multigrid device-wide stage fence. Graph execution and the equilibrium hot
+loop remain unlocked, so independent solves can overlap after setup. The
+change must preserve the frozen single-solver trajectories, pass the full
+cuMES test suite, make the QH concurrent diagnostic deterministic, and show a
+positive two-worker throughput result before concurrent solves are treated as
+supported. No optimizer or target policy enters cuMES.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
