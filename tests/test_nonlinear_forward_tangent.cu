@@ -31,6 +31,21 @@ std::array<const T*, 16> force_fields(const cumes::RealSpaceStorage<T>& rs) {
             rs.d_crmn_e, rs.d_crmn_o, rs.d_czmn_e, rs.d_czmn_o};
 }
 
+template <class T>
+cumes::ForceParityViews<const T> force_views(
+    const cumes::RealSpaceStorage<T>& rs,
+    const DeviceParams<T>& p) {
+    auto view = [&](const T* data) {
+        return cumes::RealFieldView<const T>(data, p.ns, p.ntheta, p.nzeta);
+    };
+    return {view(rs.d_armn_e), view(rs.d_armn_o), view(rs.d_azmn_e),
+            view(rs.d_azmn_o), view(rs.d_brmn_e), view(rs.d_brmn_o),
+            view(rs.d_bzmn_e), view(rs.d_bzmn_o), view(rs.d_blmn_e),
+            view(rs.d_blmn_o), view(rs.d_clmn_e), view(rs.d_clmn_o),
+            view(rs.d_crmn_e), view(rs.d_crmn_o), view(rs.d_czmn_e),
+            view(rs.d_czmn_o)};
+}
+
 void require_finite(double value, const char* label) {
     if (!std::isfinite(value)) {
         std::cerr << "FAIL: non-finite " << label << '\n';
@@ -223,59 +238,48 @@ int main() {
     cumes::DeviceBuffer<Dual> dual_residual(state_count);
     residual_jvp.enqueue(dual_storage.physical_const(),
                          {dual_residual.data(), p.ns, p.mnmax}, 0);
-    std::array<cumes::DeviceBuffer<double>, 4> zero_constraint;
-    const std::size_t real_count_for_constraint =
-        static_cast<std::size_t>(p.ns) * p.nZnT;
-    for (auto& field : zero_constraint) {
-        field.allocate(real_count_for_constraint);
-        field.zero();
-    }
-    const auto zero_constraint_views =
-        cumes::ConstraintForceViews<const double>{
-            {zero_constraint[0].data(), p.ns, p.ntheta, p.nzeta},
-            {zero_constraint[1].data(), p.ns, p.ntheta, p.nzeta},
-            {zero_constraint[2].data(), p.ns, p.ntheta, p.nzeta},
-            {zero_constraint[3].data(), p.ns, p.ntheta, p.nzeta}};
     cumes::DeviceBuffer<double> plus_residual(state_count);
     cumes::DeviceBuffer<double> minus_residual(state_count);
-    plus_transform.enqueue_forward(
-        cumes::ForceParityViews<const double>{
-            {plus_rs.d_armn_e, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_armn_o, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_azmn_e, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_azmn_o, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_brmn_e, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_brmn_o, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_bzmn_e, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_bzmn_o, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_blmn_e, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_blmn_o, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_clmn_e, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_clmn_o, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_crmn_e, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_crmn_o, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_czmn_e, p.ns, p.ntheta, p.nzeta},
-            {plus_rs.d_czmn_o, p.ns, p.ntheta, p.nzeta}},
-        zero_constraint_views, {plus_residual.data(), p.ns, p.mnmax}, 0);
-    minus_transform.enqueue_forward(
-        cumes::ForceParityViews<const double>{
-            {minus_rs.d_armn_e, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_armn_o, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_azmn_e, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_azmn_o, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_brmn_e, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_brmn_o, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_bzmn_e, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_bzmn_o, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_blmn_e, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_blmn_o, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_clmn_e, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_clmn_o, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_crmn_e, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_crmn_o, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_czmn_e, p.ns, p.ntheta, p.nzeta},
-            {minus_rs.d_czmn_o, p.ns, p.ntheta, p.nzeta}},
-        zero_constraint_views, {minus_residual.data(), p.ns, p.mnmax}, 0);
+    cumes::Preconditioner<double> plus_preconditioner(p, std::nullopt);
+    cumes::Preconditioner<double> minus_preconditioner(p, std::nullopt);
+    cumes::ConstraintOperator<double> plus_constraint(p, std::nullopt);
+    cumes::ConstraintOperator<double> minus_constraint(p, std::nullopt);
+    auto run_residual_double =
+        [&p, &profiles](const cumes::SpectralStorage<double>& state,
+                        cumes::RealSpaceStorage<double>& rs,
+                        cumes::ToroidalFftOperator<double>& transform,
+                        cumes::GeometryOperator<double>& geometry,
+                        cumes::Preconditioner<double>& preconditioner,
+                        cumes::ConstraintOperator<double>& constraint,
+                        cumes::DeviceBuffer<double>& residual) {
+            transform.enqueue_inverse(
+                state.physical_const(), cumes::geometry_parity_views(rs, p),
+                constraint.rcon_view(p), constraint.zcon_view(p), 0);
+            const auto radial = profiles.profile_views();
+            geometry.enqueue(rs, p, radial, 0);
+            cumes::MagneticFieldOperator<double>{}.enqueue(
+                rs, p, radial, geometry.base_geometry_views(p),
+                geometry.magnetic_field_views(p), nullptr, 0, true);
+            preconditioner.enqueue_compute(
+                rs, transform.xm(), transform.xn(), p, radial,
+                geometry.base_geometry_views(p),
+                geometry.magnetic_field_views(p), nullptr, 0, false);
+            cumes::ForceOperator<double>{}.enqueue(
+                rs, p, radial, geometry.base_geometry_views(p),
+                geometry.magnetic_field_views(p), nullptr, 0);
+            constraint.reset_reference(p, radial.sqrtS_F, nullptr, 0);
+            constraint.enqueue(p, rs, preconditioner.ard(),
+                               preconditioner.azd(), radial.sqrtS_F, true,
+                               &transform, nullptr, 0);
+            transform.enqueue_forward(force_views(rs, p),
+                                      constraint.constraint_force_views(p),
+                                      {residual.data(), p.ns, p.mnmax}, 0);
+        };
+    run_residual_double(plus_storage, plus_rs, plus_transform, plus_geometry,
+                        plus_preconditioner, plus_constraint, plus_residual);
+    run_residual_double(minus_storage, minus_rs, minus_transform,
+                        minus_geometry, minus_preconditioner, minus_constraint,
+                        minus_residual);
     cc(cudaDeviceSynchronize(), "residual JVP evaluation");
 
     std::vector<Dual> actual_residual(state_count);

@@ -202,15 +202,18 @@ int main() {
     const double field_error = std::sqrt(field_error_sq);
     std::cout << "Solovev nonlinear-FD tangent spectral error="
               << spectral_error << " field error=" << field_error << '\n';
-    // Both directions satisfy the linearized equilibrium equations, but the
-    // raw state may differ because the equilibrium Jacobian has a lambda/
-    // radial-coordinate nullspace. Matching the black-box state derivative
-    // therefore requires the production descent/preconditioner metric; it
-    // cannot be imposed by Euclidean minimum-norm GMRES.
     if (!(nonlinear_fd_residual_norm < 1e-5) ||
         !(implicit_residual_norm < 1e-5)) {
         std::cerr << "FAIL: tangent directions do not satisfy the linearized "
                      "equilibrium equations\n";
+        return 1;
+    }
+    // This comparison also catches a disconnected condensation-constraint
+    // path: the dual inverse must populate the ConstraintOperator-owned
+    // rCon/zCon views, exactly as the nonlinear equilibrium pass does.
+    if (!(spectral_error < 1e-2) || !(field_error < 2e-2)) {
+        std::cerr << "FAIL: tangent solve selected a response inconsistent "
+                     "with the converged nonlinear restart\n";
         return 1;
     }
     return 0;

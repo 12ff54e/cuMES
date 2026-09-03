@@ -449,9 +449,7 @@ cumes::EquilibriumResidualJvpOperator::EquilibriumResidualJvpOperator(
       transform_(primal_params, mode_table),
       geometry_(p_, std::nullopt),
       preconditioner_(p_, std::nullopt),
-      constraint_(p_, std::nullopt),
-      rcon_(static_cast<std::size_t>(p_.ns) * p_.nZnT),
-      zcon_(static_cast<std::size_t>(p_.ns) * p_.nZnT) {}
+      constraint_(p_, std::nullopt) {}
 
 cumes::EquilibriumResidualJvpOperator::~EquilibriumResidualJvpOperator() {
     real_space_free(rs_);
@@ -471,8 +469,7 @@ void cumes::EquilibriumResidualJvpOperator::enqueue(
     check_cuda(cudaGetLastError(), "tangent axis extrapolation");
     transform_.enqueue_inverse(
         state_.physical_const(), geometry_parity_views(rs_, p_),
-        {rcon_.data(), p_.ns, p_.ntheta, p_.nzeta},
-        {zcon_.data(), p_.ns, p_.ntheta, p_.nzeta}, stream);
+        constraint_.rcon_view(p_), constraint_.zcon_view(p_), stream);
     const auto radial = profiles_.profile_views();
     geometry_.enqueue(rs_, p_, radial, stream);
     MagneticFieldOperator<ForwardDualDouble>{}.enqueue(

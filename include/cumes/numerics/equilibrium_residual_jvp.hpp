@@ -64,8 +64,6 @@ class EquilibriumResidualJvpOperator {
     GeometryOperator<ForwardDualDouble> geometry_;
     Preconditioner<ForwardDualDouble> preconditioner_;
     ConstraintOperator<ForwardDualDouble> constraint_;
-    DeviceBuffer<ForwardDualDouble> rcon_;
-    DeviceBuffer<ForwardDualDouble> zcon_;
 };
 
 }  // namespace cumes
