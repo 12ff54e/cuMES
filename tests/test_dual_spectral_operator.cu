@@ -316,6 +316,10 @@ int main() {
     cumes::DeviceBuffer<double> tangent_gcon0(real_count);
     cumes::DeviceBuffer<double> tangent_gcon1(real_count);
     cumes::DeviceBuffer<double> tangent_gcon2(real_count);
+    primal_gcon.zero();
+    tangent_gcon0.zero();
+    tangent_gcon1.zero();
+    tangent_gcon2.zero();
 #define CUMES_UPLOAD(buffer, values, label)              \
     cc(cudaMemcpy((buffer).data(), (values).data(),      \
                   (values).size() * sizeof((values)[0]), \

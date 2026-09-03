@@ -294,7 +294,15 @@ cumes::DualSpectralOperator::DualSpectralOperator(
       primal_gcon_(static_cast<std::size_t>(p.ns) * p.nZnT),
       tangent_gcon_(static_cast<std::size_t>(p.ns) * p.nZnT),
       tangent_gcon_term_(static_cast<std::size_t>(p.ns) * p.nZnT),
-      tangent_faccon_term_(static_cast<std::size_t>(p.ns) * p.nZnT) {}
+      tangent_faccon_term_(static_cast<std::size_t>(p.ns) * p.nZnT) {
+    // The constraint bandpass deliberately skips the magnetic-axis row.
+    // Keep the four split product-rule outputs zero there, matching the
+    // ConstraintOperator-owned gCon buffer used by the nonlinear path.
+    primal_gcon_.zero();
+    tangent_gcon_.zero();
+    tangent_gcon_term_.zero();
+    tangent_faccon_term_.zero();
+}
 
 cumes::DualSpectralOperator::~DualSpectralOperator() {
     transform_.reset();
