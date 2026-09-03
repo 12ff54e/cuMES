@@ -251,7 +251,39 @@ extrapolated axis row, and reports the max absolute/relative difference per
 family. The `wout` comparison reads the FULL-grid `lmns_full`, not the
 half-grid `lmns`.
 
-## 7. Performance acceptance
+## 7. Equilibrium-tangent branch qualification
+
+The matrix-free solve `F_u du = -F_x dx` is underdetermined when the discrete
+equilibrium Jacobian retains coordinate near-null directions.  A small linear
+residual is therefore necessary but is not sufficient evidence that the
+returned direction is the derivative of the nonlinear black-box solve used by
+an optimizer.  The retained `EquilibriumLinearization` is qualified against a
+centered, converged restart finite difference in the following order:
+
+1. Freeze the nonlinear finite-difference oracle and verify separately that
+   the analytic and finite-difference directions satisfy the same linearized
+   force equation.
+2. Decompose their difference by spectral family, mode, and radial surface;
+   report the numerical rank across independent boundary perturbations and
+   test explicitly for the converged-pass m=1 mixed R/Z gauge.
+3. Identify the continuation condition selected by the nonlinear
+   descent/preconditioner trajectory.  Add only that condition to the tangent
+   solve; do not alter the nonlinear equilibrium trajectory or optimizer
+   target definition.
+4. Require the cuMES tangent unit/integration tests and the meow field/profile
+   and target-residual finite-difference oracle to pass before an optimization
+   timing is reported.  The target-facing acceptance gate is at most 1%
+   relative error for materially nonzero columns; near-zero references are
+   assessed with an absolute scale.
+5. Re-run one-stage QA and QH optimization smoke tests before the full
+   convergence benchmark.  A speedup is qualified only when the optimized
+   objectives and accepted equilibrium residuals agree with the finite-
+   difference baseline.
+
+Diagnostic files generated during this work belong outside either repository
+under the sibling `tmp/` directory.
+
+## 8. Performance acceptance
 
 For a performance-motivated change:
 
