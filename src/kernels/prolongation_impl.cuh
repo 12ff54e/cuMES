@@ -22,6 +22,7 @@
 // SpectralStorage convention (the odd-m decomposition factor appears only
 // transiently in the real-space DFT slots).
 #include "cumes/numerics/prolongation.hpp"
+#include "cumes/runtime/cuda_capture_coordination.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
 #include "cumes/numerics/bspline_matrix.hpp"
@@ -212,7 +213,11 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     // orders (observed as an all-zero ns=55 stage on the axisymmetric path).
     // Full-sync once per grid stage (never in the hot loop): this is a
     // stage-boundary point, so the cost is one fence per stage, not per pass.
-    cumes::check_cuda(cudaDeviceSynchronize(), "interpolateState pre-sync");
+    {
+        std::lock_guard<std::mutex> capture_guard(
+            cumes::cuda_capture_coordination_mutex());
+        cumes::check_cuda(cudaDeviceSynchronize(), "interpolateState pre-sync");
+    }
     if (interpolation == cumes::RadialInterpolation::BSPLINE) {
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
         std::vector<double> owned_matrix;

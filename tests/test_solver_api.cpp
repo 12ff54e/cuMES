@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <future>
 #include <stdexcept>
 #include <utility>
 
@@ -195,6 +196,34 @@ int main() {
                   repeated.fsql == outcome.fsql &&
                   repeated.equilibrium.families == outcome.equilibrium.families,
               "solver API: repeated cold evaluation is deterministic");
+
+        cumes::ParsedProblem concurrent_parsed =
+            cumes::read_problem_spec("inputs/w7x.json", options);
+        check(concurrent_parsed.report.ok(),
+              "solver API: concurrent 3-D input mapping succeeds");
+        cumes::ValidationResult concurrent_validated =
+            cumes::validate(std::move(concurrent_parsed.spec), options);
+        check(concurrent_validated.has_value(),
+              "solver API: concurrent 3-D problem validates");
+        if (!concurrent_validated.has_value()) {
+            return cumes::test::summary();
+        }
+        const auto concurrent_solve = [&concurrent_validated]() {
+            cumes::EquilibriumSolver independent_solver;
+            cumes::SolveRequest request;
+            request.radial_transfer = cumes::RadialTransferPolicy::CATMULL_ROM;
+            return independent_solver.solve(concurrent_validated.value(),
+                                            request);
+        };
+        auto first_future = std::async(std::launch::async, concurrent_solve);
+        auto second_future = std::async(std::launch::async, concurrent_solve);
+        const cumes::SolveOutcome first_concurrent = first_future.get();
+        const cumes::SolveOutcome second_concurrent = second_future.get();
+        check(first_concurrent.converged && second_concurrent.converged,
+              "solver API: concurrent 3-D solves converge");
+        check(first_concurrent.equilibrium.families ==
+                  second_concurrent.equilibrium.families,
+              "solver API: concurrent 3-D solves are deterministic");
 
         return cumes::test::summary();
     } catch (const std::exception& error) {

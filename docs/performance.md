@@ -285,6 +285,15 @@ cuMES test suite, make the QH concurrent diagnostic deterministic, and show a
 positive two-worker throughput result before concurrent solves are treated as
 supported. No optimizer or target policy enters cuMES.
 
+The coordination lock passed all 96 verify tests, including a new public-API
+regression that runs two complete W7-X multigrid solves concurrently and
+requires identical spectral families. The meow diagnostics then produced
+bit-identical serial/concurrent Jacobians for both cases. Eight QA columns took
+2.823 s serial and 1.247 s with two workers (2.26x); eight QH columns took
+2.250 s and 1.025 s (2.20x). These are focused single-Jacobian throughput
+measurements, not the repeated end-to-end acceptance statistics required by
+§4; end-to-end optimizer qualification remains in meow.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
