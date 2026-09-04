@@ -1,10 +1,12 @@
 #include "cumes/webgpu/toroidal.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <sstream>
@@ -63,7 +65,7 @@ std::string validate_case(const ToroidalInverseCase& input) {
     return {};
 }
 
-std::vector<float> make_basis(const ToroidalInverseCase& input) {
+std::vector<float> generate_basis(const ToroidalInverseCase& input) {
     const std::size_t mnmax =
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
     const std::size_t n_z_n_t =
@@ -101,6 +103,31 @@ std::vector<float> make_basis(const ToroidalInverseCase& input) {
     return basis;
 }
 
+const std::vector<float>& cached_basis(int mpol,
+                                       int ntor,
+                                       int ntheta,
+                                       int nzeta) {
+    using BasisKey = std::array<int, 4>;
+    static std::map<BasisKey, std::vector<float>> cache;
+    const BasisKey key{mpol, ntor, ntheta, nzeta};
+    auto [position, inserted] = cache.try_emplace(key);
+    if (inserted) {
+        ToroidalInverseCase shape;
+        shape.ns = 2;
+        shape.mpol = mpol;
+        shape.ntor = ntor;
+        shape.ntheta = ntheta;
+        shape.nzeta = nzeta;
+        shape.nfp = 1;
+        position->second = generate_basis(shape);
+    }
+    return position->second;
+}
+
+const std::vector<float>& make_basis(const ToroidalInverseCase& input) {
+    return cached_basis(input.mpol, input.ntor, input.ntheta, input.nzeta);
+}
+
 std::string validate_case(const ToroidalForwardCase& input) {
     if (input.ns < 2 || input.mpol <= 0 || input.ntor < 1 || input.ntheta < 2 ||
         input.ntheta % 2 != 0 || input.nzeta < 2 || input.nfp < 1) {
@@ -122,15 +149,8 @@ std::string validate_case(const ToroidalForwardCase& input) {
     return {};
 }
 
-std::vector<float> make_basis(const ToroidalForwardCase& input) {
-    ToroidalInverseCase shape;
-    shape.ns = input.ns;
-    shape.mpol = input.mpol;
-    shape.ntor = input.ntor;
-    shape.ntheta = input.ntheta;
-    shape.nzeta = input.nzeta;
-    shape.nfp = input.nfp;
-    return make_basis(shape);
+const std::vector<float>& make_basis(const ToroidalForwardCase& input) {
+    return cached_basis(input.mpol, input.ntor, input.ntheta, input.nzeta);
 }
 
 std::string validate_case(const ToroidalDealiasCase& input) {
@@ -150,15 +170,8 @@ std::string validate_case(const ToroidalDealiasCase& input) {
     return {};
 }
 
-std::vector<float> make_basis(const ToroidalDealiasCase& input) {
-    ToroidalInverseCase shape;
-    shape.ns = input.ns;
-    shape.mpol = input.mpol;
-    shape.ntor = input.ntor;
-    shape.ntheta = input.ntheta;
-    shape.nzeta = input.nzeta;
-    shape.nfp = 1;
-    return make_basis(shape);
+const std::vector<float>& make_basis(const ToroidalDealiasCase& input) {
+    return cached_basis(input.mpol, input.ntor, input.ntheta, input.nzeta);
 }
 
 std::string load_shader() {
@@ -230,7 +243,7 @@ ToroidalInverseResult toroidal_inverse_reference(
     const int n_z_n_t = input.ntheta * input.nzeta;
     const std::size_t total_points =
         static_cast<std::size_t>(input.ns) * n_z_n_t;
-    const auto basis = make_basis(input);
+    const auto& basis = make_basis(input);
     ToroidalInverseResult result;
     result.geometry.assign(GEOMETRY_PARITY_FIELD_COUNT * total_points, 0.0F);
     result.r_con.assign(total_points, 0.0F);
@@ -307,7 +320,7 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         callback("cannot load embedded /shaders/toroidal_inverse.wgsl", {});
         return;
     }
-    const std::vector<float> basis = make_basis(input);
+    const std::vector<float>& basis = make_basis(input);
     const std::size_t n_z_n_t =
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t total_points =
@@ -437,7 +450,7 @@ ToroidalForwardResult toroidal_forward_reference(
     const int theta_reduced = input.ntheta / 2 + 1;
     const float norm =
         1.0F / static_cast<float>(input.nzeta * (theta_reduced - 1));
-    const auto basis = make_basis(input);
+    const auto& basis = make_basis(input);
     ToroidalForwardResult result;
     result.residual.assign(SPECTRAL_COMPONENT_COUNT * mnmax * input.ns, 0.0F);
     const auto field = [&](int component, int surface, int angular) {
@@ -527,7 +540,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         callback("cannot load embedded /shaders/toroidal_forward.wgsl", {});
         return;
     }
-    const std::vector<float> basis = make_basis(input);
+    const std::vector<float>& basis = make_basis(input);
     const std::size_t mnmax =
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
     const std::size_t n_z_n_t =
@@ -646,7 +659,7 @@ ToroidalDealiasResult toroidal_dealias_reference(
     const int band_modes = input.mpol - 2;
     const int n_z_n_t = input.ntheta * input.nzeta;
     const int mnmax = input.mpol * (input.ntor + 1);
-    const auto basis = make_basis(input);
+    const auto& basis = make_basis(input);
     const auto table = [&](int family, int mode, int angular) {
         return basis[(static_cast<std::size_t>(family) * mnmax + mode) *
                          n_z_n_t +
@@ -700,7 +713,7 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
         callback("cannot load embedded /shaders/toroidal_dealias.wgsl", {});
         return;
     }
-    const std::vector<float> basis = make_basis(input);
+    const std::vector<float>& basis = make_basis(input);
     std::vector<float> profiles;
     profiles.reserve(input.tcon.size() + input.faccon.size());
     profiles.insert(profiles.end(), input.tcon.begin(), input.tcon.end());
