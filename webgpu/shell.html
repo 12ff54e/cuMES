@@ -22,14 +22,31 @@
 </pre>
   <script>
     const output = document.getElementById('output');
-    const append = (line) => { output.textContent += line + '\n'; };
+    const w7xSolve = new URLSearchParams(window.location.search)
+      .get('solve') === 'w7x';
+    const append = (line) => {
+      output.append(document.createTextNode(line + '\n'));
+    };
+    const publishLine = (line) => {
+      if (!w7xSolve) {
+        append(line);
+        return;
+      }
+      const progress = line.match(/host controller: PASS \(iter=(\d+)/);
+      if (progress) {
+        const iteration = Number(progress[1]);
+        if (iteration <= 3 || iteration % 50 === 0) append(line);
+        return;
+      }
+      if (/running complete|stage .*converged|stage prolongation|published|self-test|FATAL/.test(line)) {
+        append(line);
+      }
+    };
     var Module = {
-      print: (...args) => append(args.join(' ')),
+      print: (...args) => publishLine(args.join(' ')),
       printErr: (...args) => append('ERROR: ' + args.join(' '))
     };
     window.cumesKeepAlive = setInterval(() => {}, 50);
-    const w7xSolve = new URLSearchParams(window.location.search)
-      .get('solve') === 'w7x';
     window.cumesDeadline = setTimeout(() => {
       if (!document.body.dataset.cumesWebgpu) {
         document.body.dataset.cumesWebgpu = 'fail';
