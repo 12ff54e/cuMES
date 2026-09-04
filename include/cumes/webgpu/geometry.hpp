@@ -48,24 +48,38 @@ struct MagneticFieldCase {
     int ntheta = 0;
     int nzeta = 1;
     float lamscale = 0.0F;
+    float lamscale_lo = 0.0F;
     bool prescribed_current = false;
+    bool double_single = false;
     std::vector<float> geometry;
+    std::vector<float> geometry_lo;
     std::vector<float> base_geometry;
+    std::vector<float> base_geometry_lo;
     std::vector<float> sqrt_s_h;
+    std::vector<float> sqrt_s_h_lo;
     std::vector<float> phip_f;
+    std::vector<float> phip_f_lo;
     std::vector<float> chip_h;
+    std::vector<float> chip_h_lo;
     std::vector<float> pres_h;
+    std::vector<float> pres_h_lo;
     std::vector<float> curr_h;
+    std::vector<float> curr_h_lo;
     std::vector<float> phip_h;
+    std::vector<float> phip_h_lo;
     std::vector<float> iota_h;
+    std::vector<float> iota_h_lo;
 };
 
 struct MagneticFieldResult {
     // Field-major half-grid order: B^theta, B^zeta, B_theta, B_zeta,
     // total pressure.
     std::vector<float> fields;
+    std::vector<float> fields_lo;
     std::vector<float> chip_h;
+    std::vector<float> chip_h_lo;
     std::vector<float> iota_h;
+    std::vector<float> iota_h_lo;
 };
 
 using MagneticFieldCallback =
