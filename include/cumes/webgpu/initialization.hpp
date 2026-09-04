@@ -44,6 +44,9 @@ struct AxisymmetricStageData {
     bool free_boundary = false;
     bool prescribed_current = false;
     std::vector<float> state;
+    // Low words for precision-selective WebGPU solves. Ordinary mixed-float
+    // callers ignore this vector and retain the existing fast path.
+    std::vector<float> state_lo;
     RadialProfiles profiles;
     float envelope_correction = 0.0F;
     float lambda_seed_scale = 0.0F;

@@ -7,6 +7,7 @@
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/constraint.hpp"
 #include "cumes/webgpu/descent.hpp"
+#include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
@@ -1222,6 +1223,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
             problem_.emplace(std::move(validated.value()));
             production_solve_ = true;
+            double_single_solve_ = true;
             active_case_name_ = "W7-X";
             active_input_path_ = "inputs/w7x.json";
             stage_index_ = 0;
@@ -1268,6 +1270,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
             problem_.emplace(std::move(validated.value()));
             production_solve_ = true;
+            double_single_solve_ = false;
             active_case_name_ = "Interactive equilibrium";
             active_input_path_ = "browser boundary editor";
             stage_index_ = 0;
@@ -1889,6 +1892,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     static_cast<std::size_t>(mode) * initialized_stage_.ns;
                 initialized_stage_.state[axis] =
                     initialized_stage_.state[axis + 1];
+                if (double_single_solve_) {
+                    stage_state_lo_[axis] = stage_state_lo_[axis + 1];
+                }
             }
         }
         const auto self = shared_from_this();
@@ -2954,8 +2960,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             static_cast<float>(pending_decision_.damping.b1);
         descent_case_.damping_fac =
             static_cast<float>(pending_decision_.damping.fac);
+        descent_case_.double_single = double_single_solve_;
         descent_case_.state = initialized_stage_.state;
         descent_case_.velocity = stage_velocity_;
+        if (double_single_solve_) {
+            descent_case_.state_lo = stage_state_lo_;
+            descent_case_.velocity_lo = stage_velocity_lo_;
+        } else {
+            descent_case_.state_lo.clear();
+            descent_case_.velocity_lo.clear();
+        }
         descent_case_.residual = std::move(residual);
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_descent(
@@ -2995,6 +3009,22 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         std::all_of(
                             actual.velocity.begin(), actual.velocity.end(),
                             [](float value) { return std::isfinite(value); });
+                    if (self->double_single_solve_) {
+                        valid &=
+                            actual.state_lo.size() == actual.state.size() &&
+                            actual.velocity_lo.size() ==
+                                actual.velocity.size() &&
+                            std::all_of(actual.state_lo.begin(),
+                                        actual.state_lo.end(),
+                                        [](float value) {
+                                            return std::isfinite(value);
+                                        }) &&
+                            std::all_of(actual.velocity_lo.begin(),
+                                        actual.velocity_lo.end(),
+                                        [](float value) {
+                                            return std::isfinite(value);
+                                        });
+                    }
                 }
                 const std::size_t family_values =
                     static_cast<std::size_t>(self->descent_case_.ns) *
@@ -3012,6 +3042,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                             self->descent_case_.ns - 1;
                         fixed_lcfs &= actual.state[lcfs] ==
                                       self->descent_case_.state[lcfs];
+                        if (self->double_single_solve_ &&
+                            actual.state_lo.size() == actual.state.size()) {
+                            fixed_lcfs &= actual.state_lo[lcfs] ==
+                                          self->descent_case_.state_lo[lcfs];
+                        }
                     }
                 }
                 if (!valid || !fixed_lcfs || max_scaled_error > 2.0e-5F) {
@@ -3028,6 +3063,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 if (self->pending_decision_.do_refresh) {
                     self->checkpoint_state_ = actual.state;
+                    if (self->double_single_solve_) {
+                        self->checkpoint_state_lo_ = actual.state_lo;
+                    }
                 }
                 if (self->pending_decision_.reason !=
                     cumes::RestartReason::NONE) {
@@ -3035,6 +3073,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 } else {
                     self->initialized_stage_.state = std::move(actual.state);
                     self->stage_velocity_ = std::move(actual.velocity);
+                    if (self->double_single_solve_) {
+                        self->stage_state_lo_ = std::move(actual.state_lo);
+                        self->stage_velocity_lo_ =
+                            std::move(actual.velocity_lo);
+                    }
                 }
                 self->controller_->after_descent(self->pending_decision_);
                 ++self->completed_passes_;
@@ -3063,6 +3106,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     void restore_checkpoint() {
         initialized_stage_.state = checkpoint_state_;
         stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
+        if (double_single_solve_) {
+            stage_state_lo_ = checkpoint_state_lo_;
+            stage_velocity_lo_.assign(initialized_stage_.state.size(), 0.0F);
+        }
     }
 
     void reset_stage_state() {
@@ -3071,6 +3118,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             initialized_stage_.tolerance, 0.0, false});
         stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
         checkpoint_state_ = initialized_stage_.state;
+        if (double_single_solve_) {
+            if (stage_state_lo_.size() != initialized_stage_.state.size()) {
+                stage_state_lo_ = initialized_stage_.state_lo;
+            }
+            stage_velocity_lo_.assign(initialized_stage_.state.size(), 0.0F);
+            checkpoint_state_lo_ = stage_state_lo_;
+        } else {
+            stage_state_lo_.clear();
+            stage_velocity_lo_.clear();
+            checkpoint_state_lo_.clear();
+        }
         constraint_r_con0_.clear();
         constraint_z_con0_.clear();
         constraint_tcon_.clear();
@@ -3129,10 +3187,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         transfer.ntor = initialized_stage_.ntor;
         transfer.interpolation = cumes::webgpu::RadialInterpolation::LINEAR;
         transfer.state = initialized_stage_.state;
+        auto low_transfer = transfer;
+        low_transfer.state = stage_state_lo_;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_prolongation(
             device_, transfer,
-            [self, transfer, next_stage](
+            [self, transfer, low_transfer, next_stage](
                 std::string error,
                 cumes::webgpu::ProlongationResult prolonged) {
                 if (!error.empty()) {
@@ -3159,9 +3219,23 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 self->stage_index_ = next_stage;
+                std::vector<float> prolonged_lo;
+                if (self->double_single_solve_) {
+                    const auto low =
+                        cumes::webgpu::prolongation_reference(low_transfer);
+                    prolonged_lo.resize(prolonged.state.size());
+                    for (std::size_t i = 0; i < prolonged.state.size(); ++i) {
+                        const auto combined = cumes::webgpu::add(
+                            cumes::webgpu::FloatFloat{prolonged.state[i], 0.0F},
+                            low.state[i]);
+                        prolonged.state[i] = combined.hi;
+                        prolonged_lo[i] = combined.lo;
+                    }
+                }
                 self->initialized_stage_ = cumes::webgpu::initialize_stage(
                     *self->problem_, next_stage);
                 self->initialized_stage_.state = std::move(prolonged.state);
+                self->stage_state_lo_ = std::move(prolonged_lo);
                 self->reset_stage_state();
                 std::printf(
                     "  %s stage prolongation: PASS (ns=%d -> %d, max "
@@ -3184,6 +3258,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             const auto begin =
                 initialized_stage_.state.begin() + component * family_values;
             snapshot.families[component].assign(begin, begin + family_values);
+            if (double_single_solve_) {
+                const auto low_begin =
+                    stage_state_lo_.begin() + component * family_values;
+                for (std::size_t i = 0; i < family_values; ++i) {
+                    snapshot.families[component][i] +=
+                        static_cast<double>(low_begin[i]);
+                }
+            }
         }
 
         cumes::DerivedFieldInputs fields;
@@ -3415,6 +3497,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     bool force_norm_ready_ = false;
     bool w7x_stage_slice_ = false;
     bool production_solve_ = false;
+    bool double_single_solve_ = false;
     std::vector<float> stage_r_con_;
     std::vector<float> stage_z_con_;
     std::vector<float> stage_force_fields_;
@@ -3426,7 +3509,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> constraint_z_con0_;
     std::vector<float> constraint_tcon_;
     std::vector<float> stage_velocity_;
+    std::vector<float> stage_state_lo_;
+    std::vector<float> stage_velocity_lo_;
     std::vector<float> checkpoint_state_;
+    std::vector<float> checkpoint_state_lo_;
     int completed_passes_ = 0;
     int attempted_passes_ = 0;
     std::size_t stage_index_ = 0;

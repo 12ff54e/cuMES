@@ -5,6 +5,7 @@
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/state/axisymmetric_lambda_seed.hpp"
 #include "cumes/state/seed_envelope.hpp"
+#include "cumes/webgpu/float_float.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -113,9 +114,11 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
     const std::size_t family_values =
         static_cast<std::size_t>(shape.ns) * shape.modes();
     stage.state.assign(6 * family_values, 0.0F);
-    stage.envelope_correction = static_cast<float>(
+    stage.state_lo.assign(6 * family_values, 0.0F);
+    const double envelope_correction =
         default_seed_envelope(shape.ntor, spec.free_boundary.lfreeb, shape.ns,
-                              static_cast<int>(spec.stages.size())));
+                              static_cast<int>(spec.stages.size()));
+    stage.envelope_correction = static_cast<float>(envelope_correction);
     stage.lambda_seed_scale =
         static_cast<float>(default_axisymmetric_lambda_seed(
             shape.ntor, spec.free_boundary.lfreeb));
@@ -144,6 +147,16 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
                     zcs[index] =
                         s * static_cast<float>(boundary.zbcs[mode]) -
                         (1.0F - s) * static_cast<float>(spec.zaxis_s[n]);
+                    const double exact_s = static_cast<double>(surface) /
+                                           static_cast<double>(shape.ns - 1);
+                    stage.state_lo[index] =
+                        static_cast<float>(exact_s * boundary.rbcc[mode] +
+                                           (1.0 - exact_s) * spec.raxis_c[n] -
+                                           static_cast<double>(rcc[index]));
+                    stage.state_lo[4 * family_values + index] =
+                        static_cast<float>(exact_s * boundary.zbcs[mode] -
+                                           (1.0 - exact_s) * spec.zaxis_s[n] -
+                                           static_cast<double>(zcs[index]));
                     continue;
                 }
                 const float weight =
@@ -152,6 +165,22 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
                 rss[index] = weight * static_cast<float>(boundary.rbss[mode]);
                 zsc[index] = weight * static_cast<float>(boundary.zbsc[mode]);
                 zcs[index] = weight * static_cast<float>(boundary.zbcs[mode]);
+                const double exact_s = static_cast<double>(surface) /
+                                       static_cast<double>(shape.ns - 1);
+                const double exact_weight =
+                    seed_radial_weight(m, exact_s, envelope_correction);
+                stage.state_lo[index] =
+                    static_cast<float>(exact_weight * boundary.rbcc[mode] -
+                                       static_cast<double>(rcc[index]));
+                stage.state_lo[3 * family_values + index] =
+                    static_cast<float>(exact_weight * boundary.rbss[mode] -
+                                       static_cast<double>(rss[index]));
+                stage.state_lo[family_values + index] =
+                    static_cast<float>(exact_weight * boundary.zbsc[mode] -
+                                       static_cast<double>(zsc[index]));
+                stage.state_lo[4 * family_values + index] =
+                    static_cast<float>(exact_weight * boundary.zbcs[mode] -
+                                       static_cast<double>(zcs[index]));
             }
         }
     }

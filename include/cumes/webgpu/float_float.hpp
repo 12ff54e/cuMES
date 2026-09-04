@@ -55,6 +55,11 @@ inline double value(FloatFloat input) {
     return static_cast<double>(input.hi) + static_cast<double>(input.lo);
 }
 
+inline FloatFloat split(double input) {
+    const float hi = static_cast<float>(input);
+    return {hi, static_cast<float>(input - static_cast<double>(hi))};
+}
+
 }  // namespace cumes::webgpu
 
 #endif  // CUMES_INCLUDE_CUMES_WEBGPU_FLOAT_FLOAT_HPP_
