@@ -79,6 +79,11 @@ cuMES owns:
 - convergence and numerical-validity classification;
 - construction of a complete host equilibrium and structured run report.
 
+`SolveOutcome::timings` separates host-wall setup, multigrid execution, final
+spectral-state transfer, and their total. These values are diagnostic metadata
+for repeated-solve profiling; `total_device_time_ms` remains the distinct sum
+of timed CUDA work reported by the multigrid stages.
+
 ## 3. Public library surfaces
 
 ### 3.1 Configuration API

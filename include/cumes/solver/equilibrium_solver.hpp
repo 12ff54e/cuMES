@@ -46,6 +46,15 @@ struct SolveRequest {
     RadialTransferPolicy radial_transfer = RadialTransferPolicy::AUTOMATIC;
 };
 
+struct SolveTimings {
+    // Host wall-clock phases. These complement total_device_time_ms, which
+    // measures only timed device work accumulated by the multigrid solver.
+    double setup_wall_ms = 0.0;
+    double multigrid_wall_ms = 0.0;
+    double final_state_transfer_wall_ms = 0.0;
+    double total_wall_ms = 0.0;
+};
+
 struct SolveOutcome {
     EquilibriumSnapshot equilibrium;
     EquilibriumProfiles profiles;
@@ -59,6 +68,7 @@ struct SolveOutcome {
     double delt = 0.9;
     int total_iterations = 0;
     double total_device_time_ms = 0.0;
+    SolveTimings timings;
     int failed_stage = -1;
 
     bool has_complete_equilibrium() const {

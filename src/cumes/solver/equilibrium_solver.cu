@@ -11,6 +11,7 @@
 #include "cumes/state/seed_state.hpp"
 #include "vmec_types.h"
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <utility>
@@ -28,6 +29,8 @@ EquilibriumSolver& EquilibriumSolver::operator=(EquilibriumSolver&&) noexcept =
 SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
                                       const SolveRequest& request) {
     static_cast<void>(impl_);
+
+    const auto solve_start = std::chrono::steady_clock::now();
 
     DeviceParams<Real> params = init_params<Real>(problem);
     const StageRequest& first_stage = problem.spec().stages.front();
@@ -73,15 +76,18 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
             radial_interpolation = RadialInterpolation::BSPLINE;
             break;
     }
+    const auto setup_end = std::chrono::steady_clock::now();
     MultigridOutcome<Real> internal = MultigridSolver<Real>::run(
         params, problem, std::move(seed), compute_stream.get(),
         request.restart.has_value(), request.verbose,
         request.use_process_environment, radial_interpolation);
+    const auto multigrid_end = std::chrono::steady_clock::now();
 
     SolveOutcome outcome;
     outcome.equilibrium = std::move(internal.snapshot);
     outcome.profiles = std::move(internal.profiles);
     populate_snapshot_state_from_device(internal.state, outcome.equilibrium);
+    const auto transfer_end = std::chrono::steady_clock::now();
     outcome.report = std::move(internal.report);
     outcome.report.input_params = make_input_params(problem);
     outcome.converged = internal.result.converged;
@@ -92,6 +98,18 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
     outcome.delt = static_cast<double>(internal.result.delt);
     outcome.total_iterations = internal.total_iterations;
     outcome.total_device_time_ms = internal.total_device_time_ms;
+    outcome.timings.setup_wall_ms =
+        std::chrono::duration<double, std::milli>(setup_end - solve_start)
+            .count();
+    outcome.timings.multigrid_wall_ms =
+        std::chrono::duration<double, std::milli>(multigrid_end - setup_end)
+            .count();
+    outcome.timings.final_state_transfer_wall_ms =
+        std::chrono::duration<double, std::milli>(transfer_end - multigrid_end)
+            .count();
+    outcome.timings.total_wall_ms =
+        std::chrono::duration<double, std::milli>(transfer_end - solve_start)
+            .count();
     outcome.failed_stage = internal.failed_stage;
     return outcome;
 }

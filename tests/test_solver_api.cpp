@@ -132,6 +132,17 @@ int main() {
         check(std::isfinite(outcome.fsqr) && std::isfinite(outcome.fsqz) &&
                   std::isfinite(outcome.fsql),
               "solver API: residuals are finite");
+        const double timed_phase_sum =
+            outcome.timings.setup_wall_ms + outcome.timings.multigrid_wall_ms +
+            outcome.timings.final_state_transfer_wall_ms;
+        check(outcome.timings.setup_wall_ms >= 0.0 &&
+                  outcome.timings.multigrid_wall_ms > 0.0 &&
+                  outcome.timings.final_state_transfer_wall_ms >= 0.0 &&
+                  outcome.timings.total_wall_ms > 0.0,
+              "solver API: structured wall timings are nonnegative");
+        check(std::abs(timed_phase_sum - outcome.timings.total_wall_ms) <=
+                  1.0e-9 * outcome.timings.total_wall_ms,
+              "solver API: structured wall timings cover the timed call");
 
         bool profile_identity = true;
 #ifdef CUMES_USE_FLOAT
