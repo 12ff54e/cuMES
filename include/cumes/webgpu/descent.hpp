@@ -12,6 +12,7 @@ namespace cumes::webgpu {
 struct AxisymmetricDescentCase {
     int ns = 0;
     int mpol = 0;
+    int ntor = 0;
     bool move_lcfs = false;
     float delta_t = 0.0F;
     float damping_b1 = 0.0F;

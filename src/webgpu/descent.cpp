@@ -15,17 +15,18 @@ namespace {
 constexpr std::uint32_t WORKGROUP_SIZE = 256;
 
 struct Params {
-    std::uint32_t ns, mpol, points, move_lcfs;
+    std::uint32_t ns, ntor_plus_one, points, move_lcfs;
     float delta_t, damping_b1, damping_fac, padding;
 };
 static_assert(sizeof(Params) == 32);
 
 std::string validate_case(const AxisymmetricDescentCase& in) {
-    if (in.ns < 2 || in.mpol < 2 || !std::isfinite(in.delta_t) ||
+    if (in.ns < 2 || in.mpol < 2 || in.ntor < 0 || !std::isfinite(in.delta_t) ||
         !std::isfinite(in.damping_b1) || !std::isfinite(in.damping_fac)) {
         return "axisymmetric descent has invalid dimensions or scalars";
     }
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.mpol;
+    const std::size_t points =
+        static_cast<std::size_t>(in.ns) * in.mpol * (in.ntor + 1);
     if (points > std::numeric_limits<std::uint32_t>::max() ||
         in.state.size() != 6 * points || in.velocity.size() != 6 * points ||
         in.residual.size() != 6 * points) {
@@ -65,7 +66,8 @@ struct Dispatch {
 AxisymmetricDescentResult axisymmetric_descent_reference(
     const AxisymmetricDescentCase& input) {
     if (!validate_case(input).empty()) return {};
-    const std::size_t points = static_cast<std::size_t>(input.ns) * input.mpol;
+    const int mode_count = input.mpol * (input.ntor + 1);
+    const std::size_t points = static_cast<std::size_t>(input.ns) * mode_count;
     AxisymmetricDescentResult out{input.state, input.velocity};
     const auto index = [points, &input](int component, int mode, int surface) {
         return static_cast<std::size_t>(component) * points +
@@ -77,10 +79,14 @@ AxisymmetricDescentResult axisymmetric_descent_reference(
                                     input.delta_t * input.residual[i]);
     };
     const int j_max = input.move_lcfs ? input.ns : input.ns - 1;
-    for (int mode = 0; mode < input.mpol; ++mode) {
-        const float basis_scale = mode == 0 ? 1.0F : 1.4142135623730951F;
+    for (int mode = 0; mode < mode_count; ++mode) {
+        const int m = mode / (input.ntor + 1);
+        const int n = mode % (input.ntor + 1);
+        const float m_scale = m == 0 ? 1.0F : 1.4142135623730951F;
+        const float n_scale = n == 0 ? 1.0F : 1.4142135623730951F;
+        const float basis_scale = m_scale * n_scale;
         for (int surface = 0; surface < input.ns; ++surface) {
-            if (surface == 0 && mode > 0) continue;
+            if (surface == 0 && m > 0) continue;
             if (surface < j_max) {
                 const float vr = update_velocity(0, mode, surface);
                 const float vz = update_velocity(1, mode, surface);
@@ -94,7 +100,7 @@ AxisymmetricDescentResult axisymmetric_descent_reference(
                     input.delta_t * vr * basis_scale;
                 out.state[index(1, mode, surface)] +=
                     input.delta_t * vz * basis_scale;
-                if (mode == 1) {
+                if (m == 1) {
                     out.state[index(3, mode, surface)] +=
                         input.delta_t * (vrs + vzc) * basis_scale;
                     out.state[index(4, mode, surface)] +=
@@ -132,7 +138,8 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         callback("cannot load axisymmetric descent shader", {});
         return;
     }
-    const std::size_t points = static_cast<std::size_t>(input.ns) * input.mpol;
+    const std::size_t points =
+        static_cast<std::size_t>(input.ns) * input.mpol * (input.ntor + 1);
     const auto input_bytes = input.state.size() * sizeof(float);
     const auto output_values = 12 * points;
     const auto output_bytes = output_values * sizeof(float);
@@ -170,7 +177,7 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
     pipeline_descriptor.compute.entryPoint = "main";
     auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
     const Params params{static_cast<std::uint32_t>(input.ns),
-                        static_cast<std::uint32_t>(input.mpol),
+                        static_cast<std::uint32_t>(input.ntor + 1),
                         static_cast<std::uint32_t>(points),
                         input.move_lcfs ? 1U : 0U,
                         input.delta_t,

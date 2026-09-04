@@ -13,6 +13,7 @@ namespace cumes::webgpu {
 struct ResidualDecompositionCase {
     int ns = 0;
     int mpol = 0;
+    int ntor = 0;
     bool include_edge_rz = false;
     bool zero_m1_z = false;
     std::vector<float> residual;
@@ -37,7 +38,9 @@ ResidualDecompositionResult residual_decomposition_reference(
 struct AxisymmetricForceNormalizationCase {
     int ns = 0;
     int mpol = 0;
+    int ntor = 0;
     int ntheta = 0;
+    int nzeta = 1;
     float delta_s = 0.0F;
     float lamscale = 0.0F;
     std::vector<float> state;
@@ -60,6 +63,7 @@ ForceNormalizationResult axisymmetric_force_normalization(
 std::array<double, 3> residual_raw_norms(const std::vector<float>& residual,
                                          int ns,
                                          int mpol,
+                                         int ntor,
                                          bool include_edge_rz);
 
 }  // namespace cumes::webgpu

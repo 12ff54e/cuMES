@@ -14,14 +14,16 @@ namespace cumes::webgpu {
 namespace {
 constexpr std::uint32_t WORKGROUP_SIZE = 256;
 struct Params {
-    std::uint32_t ns, mpol, values_per_component, zero_m1_z;
+    std::uint32_t ns, mode_count, ntor_plus_one, zero_m1_z;
     std::uint32_t padding[4];
 };
 static_assert(sizeof(Params) == 32);
 std::string validate(const ResidualDecompositionCase& in) {
-    if (in.ns < 2 || in.mpol < 2)
-        return "residual decomposition requires ns,mpol>=2";
-    const std::size_t n = static_cast<std::size_t>(in.ns) * in.mpol;
+    if (in.ns < 2 || in.mpol < 2 || in.ntor < 0)
+        return "residual decomposition requires ns,mpol>=2 and ntor>=0";
+    const std::size_t mode_count =
+        static_cast<std::size_t>(in.mpol) * (in.ntor + 1);
+    const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
     if (n > std::numeric_limits<std::uint32_t>::max() ||
         in.residual.size() != 6 * n ||
         in.sqrt_s_f.size() != static_cast<std::size_t>(in.ns))
@@ -47,12 +49,12 @@ wgpu::Buffer make_buffer(const wgpu::Device& d,
 }
 void accumulate_norms(ResidualDecompositionResult& out,
                       int ns,
-                      int mpol,
+                      int mode_count,
                       bool include_edge) {
-    const std::size_t n = static_cast<std::size_t>(ns) * mpol;
+    const std::size_t n = static_cast<std::size_t>(ns) * mode_count;
     for (int group = 0; group < 3; ++group) {
         double sum = 0.0;
-        for (int mode = 0; mode < mpol; ++mode) {
+        for (int mode = 0; mode < mode_count; ++mode) {
             for (int surface = 0; surface < ns; ++surface) {
                 if (group < 2 && !include_edge && surface == ns - 1) continue;
                 const auto index =
@@ -68,18 +70,18 @@ void accumulate_norms(ResidualDecompositionResult& out,
 
 std::array<double, 3> accumulate_norms(const std::vector<float>& residual,
                                        int ns,
-                                       int mpol,
+                                       int mode_count,
                                        bool include_edge) {
     ResidualDecompositionResult result;
     result.residual = residual;
-    accumulate_norms(result, ns, mpol, include_edge);
+    accumulate_norms(result, ns, mode_count, include_edge);
     return result.raw_norm;
 }
 struct Dispatch {
     ResidualDecompositionCallback callback;
     wgpu::Buffer output, readback;
     std::size_t count = 0, bytes = 0;
-    int ns = 0, mpol = 0;
+    int ns = 0, mode_count = 0;
     bool include_edge = false;
 };
 }  // namespace
@@ -87,19 +89,21 @@ struct Dispatch {
 ResidualDecompositionResult residual_decomposition_reference(
     const ResidualDecompositionCase& in) {
     if (!validate(in).empty()) return {};
-    const std::size_t n = static_cast<std::size_t>(in.ns) * in.mpol;
+    const int mode_count = in.mpol * (in.ntor + 1);
+    const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
     ResidualDecompositionResult out;
     out.residual = in.residual;
-    for (int mode = 0; mode < in.mpol; ++mode) {
+    for (int mode = 0; mode < mode_count; ++mode) {
+        const int m = mode / (in.ntor + 1);
         for (int surface = 0; surface < in.ns; ++surface) {
             const float scale =
-                mode % 2 == 0
+                m % 2 == 0
                     ? 1.0F
                     : 1.0F / std::max(in.sqrt_s_f[surface], in.sqrt_s_f[1]);
             const auto index = static_cast<std::size_t>(mode) * in.ns + surface;
             for (int component = 0; component < 6; ++component)
                 out.residual[component * n + index] *= scale;
-            if (mode == 1) {
+            if (m == 1) {
                 const float old_r = out.residual[3 * n + index];
                 const float old_z = out.residual[4 * n + index];
                 constexpr float INV_SQRT_TWO = 0.7071067811865476F;
@@ -109,32 +113,38 @@ ResidualDecompositionResult residual_decomposition_reference(
             }
         }
     }
-    accumulate_norms(out, in.ns, in.mpol, in.include_edge_rz);
+    accumulate_norms(out, in.ns, mode_count, in.include_edge_rz);
     return out;
 }
 
 std::array<double, 3> residual_raw_norms(const std::vector<float>& residual,
                                          int ns,
                                          int mpol,
+                                         int ntor,
                                          bool include_edge_rz) {
-    const std::size_t count = static_cast<std::size_t>(ns) * mpol;
-    if (ns < 2 || mpol < 1 || residual.size() != 6 * count) return {};
-    return accumulate_norms(residual, ns, mpol, include_edge_rz);
+    const int mode_count = mpol * (ntor + 1);
+    const std::size_t count = static_cast<std::size_t>(ns) * mode_count;
+    if (ns < 2 || mpol < 1 || ntor < 0 || residual.size() != 6 * count)
+        return {};
+    return accumulate_norms(residual, ns, mode_count, include_edge_rz);
 }
 
 ForceNormalizationResult axisymmetric_force_normalization(
     const AxisymmetricForceNormalizationCase& in) {
-    const std::size_t half = static_cast<std::size_t>(in.ns - 1) * in.ntheta;
-    const std::size_t spectral = static_cast<std::size_t>(in.ns) * in.mpol;
-    if (in.ns < 2 || in.mpol < 1 || in.ntheta < 2 || in.ntheta % 2 != 0 ||
-        !(in.delta_s > 0.0F) || in.state.size() != 6 * spectral ||
+    const std::size_t angular = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t half = static_cast<std::size_t>(in.ns - 1) * angular;
+    const int mode_count = in.mpol * (in.ntor + 1);
+    const std::size_t spectral = static_cast<std::size_t>(in.ns) * mode_count;
+    if (in.ns < 2 || in.mpol < 1 || in.ntor < 0 || in.ntheta < 2 ||
+        in.ntheta % 2 != 0 || in.nzeta < 1 || !(in.delta_s > 0.0F) ||
+        in.state.size() != 6 * spectral ||
         in.base_geometry.size() != 10 * half ||
         in.magnetic_field.size() != 5 * half ||
         in.pres_h.size() != static_cast<std::size_t>(in.ns - 1)) {
         return {};
     }
     const int ntheta_red = in.ntheta / 2 + 1;
-    const float norm = 1.0F / static_cast<float>(ntheta_red - 1);
+    const float norm = 1.0F / static_cast<float>(in.nzeta * (ntheta_red - 1));
     std::vector<float> partials(4 * static_cast<std::size_t>(in.ns - 1));
     std::vector<float> dvds(in.ns - 1);
     for (int surface = 0; surface < in.ns - 1; ++surface) {
@@ -142,23 +152,26 @@ ForceNormalizationResult axisymmetric_force_normalization(
         float s_l = 0.0F;
         float s_mag = 0.0F;
         float s_g = 0.0F;
-        for (int theta = 0; theta < ntheta_red; ++theta) {
-            float weight = norm;
-            if (theta == 0 || theta == ntheta_red - 1) weight *= 0.5F;
-            const std::size_t point =
-                static_cast<std::size_t>(surface) * in.ntheta + theta;
-            const float gsqrt = in.base_geometry[6 * half + point];
-            const float guu = in.base_geometry[7 * half + point];
-            const float r12 = in.base_geometry[point];
-            const float bsupu = in.magnetic_field[point];
-            const float bsupv = in.magnetic_field[half + point];
-            const float bsubu = in.magnetic_field[2 * half + point];
-            const float bsubv = in.magnetic_field[3 * half + point];
-            const float bmag2 = 0.5F * (bsupu * bsubu + bsupv * bsubv);
-            s_rz += guu * r12 * r12 * weight;
-            s_l += (bsubu * bsubu + bsubv * bsubv) * weight;
-            s_mag += gsqrt * bmag2 * weight;
-            s_g += gsqrt * weight;
+        for (int zeta = 0; zeta < in.nzeta; ++zeta) {
+            for (int theta = 0; theta < ntheta_red; ++theta) {
+                float weight = norm;
+                if (theta == 0 || theta == ntheta_red - 1) weight *= 0.5F;
+                const std::size_t point =
+                    static_cast<std::size_t>(surface) * angular +
+                    static_cast<std::size_t>(zeta) * in.ntheta + theta;
+                const float gsqrt = in.base_geometry[6 * half + point];
+                const float guu = in.base_geometry[7 * half + point];
+                const float r12 = in.base_geometry[point];
+                const float bsupu = in.magnetic_field[point];
+                const float bsupv = in.magnetic_field[half + point];
+                const float bsubu = in.magnetic_field[2 * half + point];
+                const float bsubv = in.magnetic_field[3 * half + point];
+                const float bmag2 = 0.5F * (bsupu * bsubu + bsupv * bsubv);
+                s_rz += guu * r12 * r12 * weight;
+                s_l += (bsubu * bsubu + bsubv * bsubv) * weight;
+                s_mag += gsqrt * bmag2 * weight;
+                s_g += gsqrt * weight;
+            }
         }
         partials[4 * surface] = s_rz;
         partials[4 * surface + 1] = s_l;
@@ -174,23 +187,27 @@ ForceNormalizationResult axisymmetric_force_normalization(
         out.raw[3] += static_cast<double>(in.pres_h[surface] * dvds[surface]);
         out.raw[4] += dvds[surface];
     }
-    for (int mode = 0; mode < in.mpol; ++mode) {
-        const float mode_factor = mode == 0 ? 1.0F : std::sqrt(2.0F);
-        const float inverse_square = 1.0F / (mode_factor * mode_factor);
+    for (int mode = 0; mode < mode_count; ++mode) {
+        const int m = mode / (in.ntor + 1);
+        const int n = mode % (in.ntor + 1);
+        const float m_factor = m == 0 ? 1.0F : std::sqrt(2.0F);
+        const float n_factor = n == 0 ? 1.0F : std::sqrt(2.0F);
+        const float inverse_square =
+            1.0F / (m_factor * n_factor * m_factor * n_factor);
         for (int surface = 0; surface < in.ns; ++surface) {
-            if (surface == 0 && mode > 0) continue;
+            if (surface == 0 && m > 0) continue;
             const std::size_t point =
                 static_cast<std::size_t>(mode) * in.ns + surface;
             const float rcc = in.state[point];
             const float zsc = in.state[spectral + point];
             const float rss = in.state[3 * spectral + point];
             const float zcs = in.state[4 * spectral + point];
-            if (mode > 0) {
+            if (m > 0 || n > 0) {
                 out.raw[5] += static_cast<double>(rcc * rcc * inverse_square);
             }
             out.raw[5] += static_cast<double>(zsc * zsc * inverse_square);
             const float odd_pair = rss * rss + zcs * zcs;
-            out.raw[5] += static_cast<double>((mode == 1 ? 0.5F : 1.0F) *
+            out.raw[5] += static_cast<double>((m == 1 ? 0.5F : 1.0F) *
                                               odd_pair * inverse_square);
         }
     }
@@ -220,7 +237,8 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
         callback("cannot load embedded /shaders/residual_decompose.wgsl", {});
         return;
     }
-    const std::size_t n = static_cast<std::size_t>(in.ns) * in.mpol;
+    const int mode_count = in.mpol * (in.ntor + 1);
+    const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
     const auto input_bytes = in.residual.size() * sizeof(float);
     const auto radial_bytes = in.sqrt_s_f.size() * sizeof(float);
     auto input =
@@ -253,8 +271,8 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
     pd.compute.entryPoint = "main";
     auto pipeline = device.CreateComputePipeline(&pd);
     Params params{static_cast<std::uint32_t>(in.ns),
-                  static_cast<std::uint32_t>(in.mpol),
-                  static_cast<std::uint32_t>(n),
+                  static_cast<std::uint32_t>(mode_count),
+                  static_cast<std::uint32_t>(in.ntor + 1),
                   in.zero_m1_z ? 1U : 0U,
                   {0, 0, 0, 0}};
     auto queue = device.GetQueue();
@@ -290,7 +308,7 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
     d->count = in.residual.size();
     d->bytes = input_bytes;
     d->ns = in.ns;
-    d->mpol = in.mpol;
+    d->mode_count = mode_count;
     d->include_edge = in.include_edge_rz;
     readback.MapAsync(
         wgpu::MapMode::Read, 0, input_bytes,
@@ -311,7 +329,7 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
             ResidualDecompositionResult out;
             out.residual.assign(values, values + d->count);
             d->readback.Unmap();
-            accumulate_norms(out, d->ns, d->mpol, d->include_edge);
+            accumulate_norms(out, d->ns, d->mode_count, d->include_edge);
             d->callback({}, std::move(out));
         });
 }

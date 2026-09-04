@@ -1,6 +1,6 @@
 struct Params {
     ns: u32,
-    mpol: u32,
+    ntor_plus_one: u32,
     points: u32,
     move_lcfs: u32,
     delta_t: f32,
@@ -37,8 +37,12 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     }
     let mode = point / params.ns;
     let surface = point % params.ns;
-    if (surface == 0u && mode > 0u) { return; }
-    let basis_scale = select(1.4142135623730951, 1.0, mode == 0u);
+    let m = mode / params.ntor_plus_one;
+    let n = mode % params.ntor_plus_one;
+    if (surface == 0u && m > 0u) { return; }
+    let m_scale = select(1.4142135623730951, 1.0, m == 0u);
+    let n_scale = select(1.4142135623730951, 1.0, n == 0u);
+    let basis_scale = m_scale * n_scale;
     let j_max = select(params.ns - 1u, params.ns, params.move_lcfs != 0u);
     if (surface < j_max) {
         let vr = update_velocity(0u, point);
@@ -51,7 +55,7 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
         output.data[6u * params.points + index(4u, point)] = vzc;
         output.data[index(0u, point)] += params.delta_t * vr * basis_scale;
         output.data[index(1u, point)] += params.delta_t * vz * basis_scale;
-        if (mode == 1u) {
+        if (m == 1u) {
             output.data[index(3u, point)] +=
                 params.delta_t * (vrs + vzc) * basis_scale;
             output.data[index(4u, point)] +=
