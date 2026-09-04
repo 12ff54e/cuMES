@@ -17,11 +17,13 @@ namespace {
 constexpr std::uint32_t WORKGROUP_SIZE = 64;
 
 struct Params {
-    std::uint32_t ns, mpol, ntheta, points;
-    std::uint32_t half_points, nfp, free_boundary;
+    std::uint32_t ns, mpol, ntor, ntheta;
+    std::uint32_t nzeta, n_z_n_t, points, half_points;
+    std::uint32_t nfp, free_boundary;
     float delta_s;
+    std::uint32_t padding;
 };
-static_assert(sizeof(Params) == 32);
+static_assert(sizeof(Params) == 48);
 
 struct MatrixValues {
     float upper_r = 0.0F;
@@ -45,13 +47,16 @@ bool has_element_shapes(const AxisymmetricPreconditionerMatrixCase& in) {
 }
 
 std::string validate_case(const AxisymmetricPreconditionerMatrixCase& in) {
-    if (in.ns < 2 || in.mpol < 1 || in.ntheta < 2 || in.ntheta % 2 != 0 ||
-        in.nfp < 1 || !(in.delta_s > 0.0F) || !std::isfinite(in.delta_s)) {
+    if (in.ns < 2 || in.mpol < 1 || in.ntor < 0 || in.ntheta < 2 ||
+        in.ntheta % 2 != 0 || in.nzeta < 1 || in.nfp < 1 ||
+        !(in.delta_s > 0.0F) || !std::isfinite(in.delta_s)) {
         return "axisymmetric preconditioner matrix has invalid scalars";
     }
     const std::size_t half_points =
-        static_cast<std::size_t>(in.ns - 1) * in.ntheta;
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.mpol;
+        static_cast<std::size_t>(in.ns - 1) * in.ntheta * in.nzeta;
+    const std::size_t mode_count =
+        static_cast<std::size_t>(in.mpol) * (in.ntor + 1);
+    const std::size_t points = static_cast<std::size_t>(in.ns) * mode_count;
     if (points > std::numeric_limits<std::uint32_t>::max() ||
         !has_element_shapes(in) ||
         in.base_geometry.size() != BASE_GEOMETRY_FIELD_COUNT * half_points ||
@@ -66,8 +71,11 @@ MatrixValues matrix_values(const AxisymmetricPreconditionerMatrixCase& in,
                            int mode,
                            int surface) {
     MatrixValues out;
-    const int parity = mode % 2;
-    const float m2 = static_cast<float>(mode * mode);
+    const int m = mode / (in.ntor + 1);
+    const int n = mode % (in.ntor + 1);
+    const int parity = m % 2;
+    const float m2 = static_cast<float>(m * m);
+    const float n2 = static_cast<float>(n * in.nfp * n * in.nfp);
     const auto& e = in.elements;
     if (surface < in.ns - 1) {
         out.upper_r =
@@ -75,15 +83,15 @@ MatrixValues matrix_values(const AxisymmetricPreconditionerMatrixCase& in,
         out.upper_z =
             -(e.azm[2 * surface + parity] + e.bzm[2 * surface + parity] * m2);
     }
-    out.diagonal_r =
-        -(e.ard[2 * surface + parity] + e.brd[2 * surface + parity] * m2);
-    out.diagonal_z =
-        -(e.azd[2 * surface + parity] + e.bzd[2 * surface + parity] * m2);
+    out.diagonal_r = -(e.ard[2 * surface + parity] +
+                       e.brd[2 * surface + parity] * m2 + e.cxd[surface] * n2);
+    out.diagonal_z = -(e.azd[2 * surface + parity] +
+                       e.bzd[2 * surface + parity] * m2 + e.cxd[surface] * n2);
     if (in.free_boundary && surface == in.ns - 1) {
-        const float pedestal = mode <= 1 ? 0.05F : 0.1F;
+        const float pedestal = m <= 1 ? 0.05F : 0.1F;
         out.diagonal_r *= 1.0F + pedestal;
         out.diagonal_z *= 1.0F + pedestal;
-        if (mode == 0) {
+        if (m == 0 && n == 0) {
             const float mult_fact = std::min(0.25F, 0.25F * in.delta_s * 15.0F);
             out.diagonal_z *= (1.0F - mult_fact) / 1.05F;
         }
@@ -94,30 +102,36 @@ MatrixValues matrix_values(const AxisymmetricPreconditionerMatrixCase& in,
         out.lower_z = -(e.azm[2 * (surface - 1) + parity] +
                         e.bzm[2 * (surface - 1) + parity] * m2);
     }
-    if (surface == 1 && mode == 1) {
+    if (surface == 1 && m == 1) {
         out.diagonal_r += out.lower_r;
         out.diagonal_z += out.lower_z;
     }
     return out;
 }
 
-float half_c_lambda(const AxisymmetricPreconditionerMatrixCase& in,
-                    int shifted) {
+float half_lambda(const AxisymmetricPreconditionerMatrixCase& in,
+                  int shifted,
+                  int metric_field) {
     if (shifted == 0 || shifted == in.ns) return 0.0F;
     const int half_surface = shifted - 1;
     const std::size_t half_points =
-        static_cast<std::size_t>(in.ns - 1) * in.ntheta;
+        static_cast<std::size_t>(in.ns - 1) * in.ntheta * in.nzeta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
     const int ntheta_red = in.ntheta / 2 + 1;
-    const float norm = 1.0F / static_cast<float>(ntheta_red - 1);
+    const float norm = 1.0F / static_cast<float>(in.nzeta * (ntheta_red - 1));
     float sum = 0.0F;
-    for (int theta = 0; theta < ntheta_red; ++theta) {
-        float weight = norm;
-        if (theta == 0 || theta == ntheta_red - 1) weight *= 0.5F;
-        const std::size_t point =
-            static_cast<std::size_t>(half_surface) * in.ntheta + theta;
-        const float gsqrt = in.base_geometry[6 * half_points + point];
-        const float gvv = in.base_geometry[9 * half_points + point];
-        sum += gvv / gsqrt * weight;
+    for (int zeta = 0; zeta < in.nzeta; ++zeta) {
+        for (int theta = 0; theta < ntheta_red; ++theta) {
+            float weight = norm;
+            if (theta == 0 || theta == ntheta_red - 1) weight *= 0.5F;
+            const std::size_t point =
+                static_cast<std::size_t>(half_surface) * n_z_n_t +
+                zeta * in.ntheta + theta;
+            const float gsqrt = in.base_geometry[6 * half_points + point];
+            const float metric =
+                in.base_geometry[metric_field * half_points + point];
+            sum += metric / gsqrt * weight;
+        }
     }
     return sum;
 }
@@ -134,14 +148,25 @@ float lambda_value(const AxisymmetricPreconditionerMatrixCase& in,
                    int mode,
                    int surface,
                    float rms) {
-    if (surface == 0 || mode == 0) return 0.0F;
+    const int m = mode / (in.ntor + 1);
+    const int n = mode % (in.ntor + 1);
+    if (surface == 0 || (m == 0 && n == 0)) return 0.0F;
     const float lamscale = std::sqrt(std::max(rms * in.delta_s, 1.0e-30F));
     const float p_factor = 2.0F / (4.0F * lamscale * lamscale);
     const float pwr =
-        std::min(static_cast<float>(mode * mode) / (16.0F * 16.0F), 8.0F);
-    const float c_full =
-        0.5F * (half_c_lambda(in, surface + 1) + half_c_lambda(in, surface));
-    float faclam = static_cast<float>(mode * mode) * c_full;
+        std::min(static_cast<float>(m * m) / (16.0F * 16.0F), 8.0F);
+    const auto full_metric = [&](int field) {
+        return 0.5F * (half_lambda(in, surface + 1, field) +
+                       half_lambda(in, surface, field));
+    };
+    const float b_full = full_metric(7);
+    const float d_full = full_metric(8);
+    const float c_full = full_metric(9);
+    const float toroidal = static_cast<float>(n * in.nfp);
+    float faclam = toroidal * toroidal * b_full +
+                   2.0F * static_cast<float>(m) * toroidal *
+                       std::copysign(d_full, b_full) +
+                   static_cast<float>(m * m) * c_full;
     if (faclam == 0.0F) faclam = -1.0e-10F;
     return p_factor / faclam * std::pow(in.sqrt_s_f[surface], pwr);
 }
@@ -202,7 +227,8 @@ struct Dispatch {
 AxisymmetricPreconditionerMatrix axisymmetric_preconditioner_matrix_reference(
     const AxisymmetricPreconditionerMatrixCase& input) {
     if (!validate_case(input).empty()) return {};
-    const std::size_t points = static_cast<std::size_t>(input.ns) * input.mpol;
+    const int mode_count = input.mpol * (input.ntor + 1);
+    const std::size_t points = static_cast<std::size_t>(input.ns) * mode_count;
     AxisymmetricPreconditionerMatrix out;
     out.upper_r.resize(points);
     out.diagonal_r.resize(points);
@@ -211,11 +237,12 @@ AxisymmetricPreconditionerMatrix axisymmetric_preconditioner_matrix_reference(
     out.diagonal_z.resize(points);
     out.lower_z.resize(points);
     out.lambda.resize(points);
-    out.scale.assign(input.mpol, 0.0F);
-    out.first_surface.resize(input.mpol);
+    out.scale.assign(mode_count, 0.0F);
+    out.first_surface.resize(mode_count);
     const float rms = rms_phip(input);
-    for (int mode = 0; mode < input.mpol; ++mode) {
-        out.first_surface[mode] = mode == 0 ? 0 : 1;
+    for (int mode = 0; mode < mode_count; ++mode) {
+        const int m = mode / (input.ntor + 1);
+        out.first_surface[mode] = m == 0 ? 0 : 1;
         for (int surface = 0; surface < input.ns; ++surface) {
             const std::size_t index =
                 static_cast<std::size_t>(mode) * input.ns + surface;
@@ -252,9 +279,10 @@ void enqueue_axisymmetric_preconditioner_matrix(
         callback("cannot load axisymmetric preconditioner-matrix shader", {});
         return;
     }
-    const std::size_t points = static_cast<std::size_t>(input.ns) * input.mpol;
+    const int mode_count = input.mpol * (input.ntor + 1);
+    const std::size_t points = static_cast<std::size_t>(input.ns) * mode_count;
     const std::size_t half_points =
-        static_cast<std::size_t>(input.ns - 1) * input.ntheta;
+        static_cast<std::size_t>(input.ns - 1) * input.ntheta * input.nzeta;
     auto elements = flatten_elements(input.elements);
     std::vector<float> radial = input.sqrt_s_f;
     radial.insert(radial.end(), input.phip_h.begin(), input.phip_h.end());
@@ -262,7 +290,7 @@ void enqueue_axisymmetric_preconditioner_matrix(
     const auto element_bytes = elements.size() * sizeof(float);
     const auto base_bytes = input.base_geometry.size() * sizeof(float);
     const auto radial_bytes = radial.size() * sizeof(float);
-    const auto output_values = 7 * points + input.mpol;
+    const auto output_values = 7 * points + mode_count;
     const auto output_bytes = output_values * sizeof(float);
     auto element_buffer =
         make_buffer(device, element_bytes,
@@ -299,12 +327,16 @@ void enqueue_axisymmetric_preconditioner_matrix(
     auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
     const Params params{static_cast<std::uint32_t>(input.ns),
                         static_cast<std::uint32_t>(input.mpol),
+                        static_cast<std::uint32_t>(input.ntor),
                         static_cast<std::uint32_t>(input.ntheta),
+                        static_cast<std::uint32_t>(input.nzeta),
+                        static_cast<std::uint32_t>(input.ntheta * input.nzeta),
                         static_cast<std::uint32_t>(points),
                         static_cast<std::uint32_t>(half_points),
                         static_cast<std::uint32_t>(input.nfp),
                         input.free_boundary ? 1U : 0U,
-                        input.delta_s};
+                        input.delta_s,
+                        0};
     auto queue = device.GetQueue();
     queue.WriteBuffer(element_buffer, 0, elements.data(), element_bytes);
     queue.WriteBuffer(base_buffer, 0, input.base_geometry.data(), base_bytes);
@@ -340,10 +372,11 @@ void enqueue_axisymmetric_preconditioner_matrix(
     dispatch->readback = readback;
     dispatch->bytes = output_bytes;
     dispatch->points = points;
-    dispatch->mpol = input.mpol;
-    dispatch->first_surface.resize(input.mpol);
-    for (int mode = 0; mode < input.mpol; ++mode) {
-        dispatch->first_surface[mode] = mode == 0 ? 0 : 1;
+    dispatch->mpol = mode_count;
+    dispatch->first_surface.resize(mode_count);
+    for (int mode = 0; mode < mode_count; ++mode) {
+        const int m = mode / (input.ntor + 1);
+        dispatch->first_surface[mode] = m == 0 ? 0 : 1;
     }
     readback.MapAsync(
         wgpu::MapMode::Read, 0, output_bytes,

@@ -950,6 +950,182 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  direct 3-D forward transform: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
+                self->run_toroidal_preconditioner_elements(
+                    std::move(actual.residual));
+            });
+    }
+
+    void run_toroidal_preconditioner_elements(std::vector<float> residual) {
+        toroidal_preconditioner_case_.ns = toroidal_geometry_case_.ns;
+        toroidal_preconditioner_case_.ntheta = toroidal_geometry_case_.ntheta;
+        toroidal_preconditioner_case_.nzeta = toroidal_geometry_case_.nzeta;
+        toroidal_preconditioner_case_.delta_s = toroidal_geometry_case_.delta_s;
+        toroidal_preconditioner_case_.free_boundary = false;
+        toroidal_preconditioner_case_.geometry =
+            toroidal_geometry_case_.geometry;
+        toroidal_preconditioner_case_.base_geometry =
+            toroidal_magnetic_case_.base_geometry;
+        toroidal_preconditioner_case_.magnetic_field =
+            toroidal_force_case_.magnetic_field;
+        toroidal_preconditioner_case_.sqrt_s_f =
+            toroidal_geometry_case_.sqrt_s_f;
+        toroidal_preconditioner_case_.sqrt_s_h =
+            toroidal_geometry_case_.sqrt_s_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_elements(
+            device_, toroidal_preconditioner_case_,
+            [self, residual = std::move(residual)](
+                std::string error,
+                cumes::webgpu::AxisymmetricPreconditionerElements
+                    actual) mutable {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::
+                    axisymmetric_preconditioner_element_reference(
+                        self->toroidal_preconditioner_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.ard, expected.ard);
+                compare(actual.brd, expected.brd);
+                compare(actual.azd, expected.azd);
+                compare(actual.bzd, expected.bzd);
+                compare(actual.cxd, expected.cxd);
+                compare(actual.arm, expected.arm);
+                compare(actual.brm, expected.brm);
+                compare(actual.azm, expected.azm);
+                compare(actual.bzm, expected.bzm);
+                if (!valid || max_error > 5.0e-5F) {
+                    self->finish(false,
+                                 "3-D preconditioner element mismatch: " +
+                                     std::to_string(max_error));
+                    return;
+                }
+                self->toroidal_preconditioner_elements_ = std::move(actual);
+                self->run_toroidal_preconditioner_matrix(std::move(residual));
+            });
+    }
+
+    void run_toroidal_preconditioner_matrix(std::vector<float> residual) {
+        toroidal_preconditioner_matrix_case_.ns = toroidal_case_.ns;
+        toroidal_preconditioner_matrix_case_.mpol = toroidal_case_.mpol;
+        toroidal_preconditioner_matrix_case_.ntor = toroidal_case_.ntor;
+        toroidal_preconditioner_matrix_case_.ntheta = toroidal_case_.ntheta;
+        toroidal_preconditioner_matrix_case_.nzeta = toroidal_case_.nzeta;
+        toroidal_preconditioner_matrix_case_.nfp = toroidal_case_.nfp;
+        toroidal_preconditioner_matrix_case_.delta_s =
+            toroidal_geometry_case_.delta_s;
+        toroidal_preconditioner_matrix_case_.free_boundary = false;
+        toroidal_preconditioner_matrix_case_.elements =
+            toroidal_preconditioner_elements_;
+        toroidal_preconditioner_matrix_case_.base_geometry =
+            toroidal_magnetic_case_.base_geometry;
+        toroidal_preconditioner_matrix_case_.sqrt_s_f =
+            toroidal_geometry_case_.sqrt_s_f;
+        toroidal_preconditioner_matrix_case_.phip_h = {0.875F, 0.825F};
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_matrix(
+            device_, toroidal_preconditioner_matrix_case_,
+            [self, residual = std::move(residual)](
+                std::string error,
+                cumes::webgpu::AxisymmetricPreconditionerMatrix
+                    actual) mutable {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_preconditioner_matrix_reference(
+                        self->toroidal_preconditioner_matrix_case_);
+                float max_error = 0.0F;
+                bool valid = actual.first_surface == expected.first_surface;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.upper_r, expected.upper_r);
+                compare(actual.diagonal_r, expected.diagonal_r);
+                compare(actual.lower_r, expected.lower_r);
+                compare(actual.upper_z, expected.upper_z);
+                compare(actual.diagonal_z, expected.diagonal_z);
+                compare(actual.lower_z, expected.lower_z);
+                compare(actual.lambda, expected.lambda);
+                compare(actual.scale, expected.scale);
+                if (!valid || max_error > 2.0e-4F) {
+                    self->finish(false, "3-D preconditioner matrix mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                self->toroidal_preconditioner_matrix_ = std::move(actual);
+                self->run_toroidal_preconditioner_apply(std::move(residual));
+            });
+    }
+
+    void run_toroidal_preconditioner_apply(std::vector<float> residual) {
+        toroidal_preconditioner_apply_case_.ns = toroidal_case_.ns;
+        toroidal_preconditioner_apply_case_.mpol = toroidal_case_.mpol;
+        toroidal_preconditioner_apply_case_.ntor = toroidal_case_.ntor;
+        toroidal_preconditioner_apply_case_.include_lcfs = false;
+        toroidal_preconditioner_apply_case_.elements =
+            toroidal_preconditioner_elements_;
+        toroidal_preconditioner_apply_case_.matrix =
+            toroidal_preconditioner_matrix_;
+        toroidal_preconditioner_apply_case_.residual = std::move(residual);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_apply(
+            device_, toroidal_preconditioner_apply_case_,
+            [self](
+                std::string error,
+                cumes::webgpu::AxisymmetricPreconditionerApplyResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_preconditioner_apply_reference(
+                        self->toroidal_preconditioner_apply_case_);
+                float max_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.residual[i] -
+                                     expected.residual[i]) /
+                                (1.0F + std::abs(expected.residual[i])));
+                        valid &= std::isfinite(actual.residual[i]);
+                    }
+                }
+                valid &= actual.breakdown_count == expected.breakdown_count;
+                if (!valid || actual.breakdown_count != 0 ||
+                    max_error > 2.0e-4F) {
+                    self->finish(false, "3-D preconditioner apply mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  complete 3-D preconditioner: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
                 self->run_solovev_initialization();
             });
     }
@@ -2124,6 +2300,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::BaseGeometryCase toroidal_geometry_case_;
     cumes::webgpu::MagneticFieldCase toroidal_magnetic_case_;
     cumes::webgpu::AxisymmetricForceCase toroidal_force_case_;
+    cumes::webgpu::AxisymmetricPreconditionerElementCase
+        toroidal_preconditioner_case_;
+    cumes::webgpu::AxisymmetricPreconditionerElements
+        toroidal_preconditioner_elements_;
+    cumes::webgpu::AxisymmetricPreconditionerMatrixCase
+        toroidal_preconditioner_matrix_case_;
+    cumes::webgpu::AxisymmetricPreconditionerMatrix
+        toroidal_preconditioner_matrix_;
+    cumes::webgpu::AxisymmetricPreconditionerApplyCase
+        toroidal_preconditioner_apply_case_;
     cumes::webgpu::AxisymmetricStageData initialized_stage_;
     cumes::webgpu::BaseGeometryCase base_geometry_case_;
     cumes::webgpu::MagneticFieldCase magnetic_field_case_;

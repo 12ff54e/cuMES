@@ -1,9 +1,13 @@
 const MAX_SURFACES: u32 = 512u;
 struct Params {
     ns: u32,
-    mpol: u32,
+    mode_count: u32,
+    ntor: u32,
     points: u32,
     last_surface: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
 };
 struct Values { data: array<f32>, };
 // Seven matrix planes followed by scale[mpol].
@@ -33,7 +37,8 @@ fn guarded_pivot(value: f32, floor: f32) -> f32 {
     return select(-floor, floor, value >= 0.0);
 }
 fn solve_pair(mode: u32, z_system: bool, floor: f32) -> bool {
-    let first = select(1u, 0u, mode == 0u);
+    let m = mode / (params.ntor + 1u);
+    let first = select(1u, 0u, m == 0u);
     let count = params.last_surface - first;
     if (count == 0u) { return false; }
     let matrix_offset = select(0u, 3u, z_system);
@@ -79,14 +84,15 @@ fn solve_pair(mode: u32, z_system: bool, floor: f32) -> bool {
 @compute @workgroup_size(1)
 fn main(@builtin(workgroup_id) workgroup: vec3<u32>) {
     let mode = workgroup.x;
-    if (mode >= params.mpol || params.ns > MAX_SURFACES) { return; }
+    if (mode >= params.mode_count || params.ns > MAX_SURFACES) { return; }
+    let m = mode / (params.ntor + 1u);
     for (var component = 0u; component < 6u; component++) {
         for (var surface = 0u; surface < params.ns; surface++) {
             let index = component * params.points + mode * params.ns + surface;
             output.data[index] = input_residual.data[index];
         }
     }
-    if (mode == 1u) {
+    if (m == 1u) {
         let pair_count = 2u * params.ns;
         for (var surface = 0u; surface < params.ns; surface++) {
             let odd = 2u * surface + 1u;
@@ -109,7 +115,7 @@ fn main(@builtin(workgroup_id) workgroup: vec3<u32>) {
     let floor = select(relative_floor, relative_floor * scale, scale > 0.0);
     var broke = solve_pair(mode, false, floor);
     broke = solve_pair(mode, true, floor) || broke;
-    let first = select(1u, 0u, mode == 0u);
+    let first = select(1u, 0u, m == 0u);
     for (var surface = 0u; surface < first; surface++) {
         for (var component = 0u; component < 5u; component++) {
             put_residual(component, mode, surface, 0.0);

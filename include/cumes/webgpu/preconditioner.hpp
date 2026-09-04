@@ -12,6 +12,7 @@ namespace cumes::webgpu {
 struct AxisymmetricPreconditionerElementCase {
     int ns = 0;
     int ntheta = 0;
+    int nzeta = 1;
     float delta_s = 0.0F;
     bool free_boundary = false;
     std::vector<float> geometry;
@@ -50,7 +51,9 @@ axisymmetric_preconditioner_element_reference(
 struct AxisymmetricPreconditionerMatrixCase {
     int ns = 0;
     int mpol = 0;
+    int ntor = 0;
     int ntheta = 0;
+    int nzeta = 1;
     int nfp = 1;
     float delta_s = 0.0F;
     bool free_boundary = false;
@@ -87,6 +90,7 @@ AxisymmetricPreconditionerMatrix axisymmetric_preconditioner_matrix_reference(
 struct AxisymmetricPreconditionerApplyCase {
     int ns = 0;
     int mpol = 0;
+    int ntor = 0;
     bool include_lcfs = false;
     AxisymmetricPreconditionerElements elements;
     AxisymmetricPreconditionerMatrix matrix;

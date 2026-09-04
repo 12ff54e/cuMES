@@ -18,7 +18,7 @@ namespace {
 constexpr std::uint32_t WORKGROUP_SIZE = 64;
 
 struct Params {
-    std::uint32_t ns, ntheta, full_points, half_points;
+    std::uint32_t ns, n_z_n_t, full_points, half_points;
     float delta_s;
     std::uint32_t free_boundary, padding0, padding1;
 };
@@ -41,12 +41,13 @@ struct Diagonal {
 };
 
 std::string validate_case(const AxisymmetricPreconditionerElementCase& in) {
-    if (in.ns < 2 || in.ntheta < 2 || in.ntheta % 2 != 0 ||
+    if (in.ns < 2 || in.ntheta < 2 || in.ntheta % 2 != 0 || in.nzeta < 1 ||
         !(in.delta_s > 0.0F) || !std::isfinite(in.delta_s)) {
         return "axisymmetric preconditioner elements have invalid scalars";
     }
-    const std::size_t full = static_cast<std::size_t>(in.ns) * in.ntheta;
-    const std::size_t half = static_cast<std::size_t>(in.ns - 1) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t full = static_cast<std::size_t>(in.ns) * n_z_n_t;
+    const std::size_t half = static_cast<std::size_t>(in.ns - 1) * n_z_n_t;
     if (full > std::numeric_limits<std::uint32_t>::max() ||
         in.geometry.size() != GEOMETRY_PARITY_FIELD_COUNT * full ||
         in.base_geometry.size() != BASE_GEOMETRY_FIELD_COUNT * half ||
@@ -60,8 +61,9 @@ std::string validate_case(const AxisymmetricPreconditionerElementCase& in) {
 
 HalfTerms half_terms(const AxisymmetricPreconditionerElementCase& in,
                      int surface) {
-    const std::size_t full = static_cast<std::size_t>(in.ns) * in.ntheta;
-    const std::size_t half = static_cast<std::size_t>(in.ns - 1) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t full = static_cast<std::size_t>(in.ns) * n_z_n_t;
+    const std::size_t half = static_cast<std::size_t>(in.ns - 1) * n_z_n_t;
     const auto fg = [&](int field, std::size_t point) {
         return in.geometry[static_cast<std::size_t>(field) * full + point];
     };
@@ -75,12 +77,12 @@ HalfTerms half_terms(const AxisymmetricPreconditionerElementCase& in,
     HalfTerms out;
     const float sqrt_h = in.sqrt_s_h[surface];
     const float inv_sqrt_h = 1.0F / sqrt_h;
-    const float weight = 1.0F / static_cast<float>(in.ntheta);
-    for (int theta = 0; theta < in.ntheta; ++theta) {
+    const float weight = 1.0F / static_cast<float>(n_z_n_t);
+    for (std::size_t angular = 0; angular < n_z_n_t; ++angular) {
         const std::size_t half_point =
-            static_cast<std::size_t>(surface) * in.ntheta + theta;
+            static_cast<std::size_t>(surface) * n_z_n_t + angular;
         const std::size_t inner = half_point;
-        const std::size_t outer = half_point + in.ntheta;
+        const std::size_t outer = half_point + n_z_n_t;
         const float p_tau = -4.0F * hg(0, half_point) * bf(4, half_point) /
                             hg(5, half_point) * weight;
         const float r_t1a = hg(2, half_point) / in.delta_s;
@@ -280,9 +282,10 @@ void enqueue_axisymmetric_preconditioner_elements(
         callback("cannot load axisymmetric preconditioner-element shader", {});
         return;
     }
-    const std::size_t full = static_cast<std::size_t>(input.ns) * input.ntheta;
-    const std::size_t half =
-        static_cast<std::size_t>(input.ns - 1) * input.ntheta;
+    const std::size_t n_z_n_t =
+        static_cast<std::size_t>(input.ntheta) * input.nzeta;
+    const std::size_t full = static_cast<std::size_t>(input.ns) * n_z_n_t;
+    const std::size_t half = static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     std::vector<float> radial = input.sqrt_s_f;
     radial.insert(radial.end(), input.sqrt_s_h.begin(), input.sqrt_s_h.end());
     const auto geometry_bytes = input.geometry.size() * sizeof(float);
@@ -330,7 +333,7 @@ void enqueue_axisymmetric_preconditioner_elements(
     pipeline_descriptor.compute.entryPoint = "main";
     auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
     const Params params{static_cast<std::uint32_t>(input.ns),
-                        static_cast<std::uint32_t>(input.ntheta),
+                        static_cast<std::uint32_t>(n_z_n_t),
                         static_cast<std::uint32_t>(full),
                         static_cast<std::uint32_t>(half),
                         input.delta_s,

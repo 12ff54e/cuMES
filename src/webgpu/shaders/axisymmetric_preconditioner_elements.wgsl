@@ -1,6 +1,6 @@
 struct Params {
     ns: u32,
-    ntheta: u32,
+    n_z_n_t: u32,
     full_points: u32,
     half_points: u32,
     delta_s: f32,
@@ -47,11 +47,11 @@ fn half_terms(surface: u32) -> HalfTerms {
     out.bz0 = 0.0; out.bz1 = 0.0; out.bz2 = 0.0; out.cx = 0.0;
     let sqrt_h = radial.data[params.ns + surface];
     let inv_sqrt_h = 1.0 / sqrt_h;
-    let weight = 1.0 / f32(params.ntheta);
-    for (var theta = 0u; theta < params.ntheta; theta++) {
-        let half_point = surface * params.ntheta + theta;
+    let weight = 1.0 / f32(params.n_z_n_t);
+    for (var angular = 0u; angular < params.n_z_n_t; angular++) {
+        let half_point = surface * params.n_z_n_t + angular;
         let inner = half_point;
-        let outer = half_point + params.ntheta;
+        let outer = half_point + params.n_z_n_t;
         let p_tau = -4.0 * hg(0u, half_point) * bf(4u, half_point) /
                     hg(5u, half_point) * weight;
         let r_t1a = hg(2u, half_point) / params.delta_s;

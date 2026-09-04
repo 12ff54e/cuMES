@@ -16,9 +16,14 @@ namespace {
 constexpr int MAX_SURFACES = 512;
 
 struct Params {
-    std::uint32_t ns, mpol, points, last_surface;
+    std::uint32_t ns, mode_count, ntor, points;
+    std::uint32_t last_surface, padding[3];
 };
-static_assert(sizeof(Params) == 16);
+static_assert(sizeof(Params) == 32);
+
+int mode_count(const AxisymmetricPreconditionerApplyCase& in) {
+    return in.mpol * (in.ntor + 1);
+}
 
 bool valid_elements(const AxisymmetricPreconditionerApplyCase& in) {
     const std::size_t pairs = 2 * static_cast<std::size_t>(in.ns);
@@ -27,7 +32,8 @@ bool valid_elements(const AxisymmetricPreconditionerApplyCase& in) {
 }
 
 bool valid_matrix(const AxisymmetricPreconditionerApplyCase& in) {
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.mpol;
+    const int modes = mode_count(in);
+    const std::size_t points = static_cast<std::size_t>(in.ns) * modes;
     const auto has_points = [points](const auto& values) {
         return values.size() == points;
     };
@@ -35,15 +41,15 @@ bool valid_matrix(const AxisymmetricPreconditionerApplyCase& in) {
            has_points(in.matrix.lower_r) && has_points(in.matrix.upper_z) &&
            has_points(in.matrix.diagonal_z) && has_points(in.matrix.lower_z) &&
            has_points(in.matrix.lambda) &&
-           in.matrix.scale.size() == static_cast<std::size_t>(in.mpol) &&
-           in.matrix.first_surface.size() == static_cast<std::size_t>(in.mpol);
+           in.matrix.scale.size() == static_cast<std::size_t>(modes) &&
+           in.matrix.first_surface.size() == static_cast<std::size_t>(modes);
 }
 
 std::string validate_case(const AxisymmetricPreconditionerApplyCase& in) {
-    if (in.ns < 2 || in.ns > MAX_SURFACES || in.mpol < 2) {
+    if (in.ns < 2 || in.ns > MAX_SURFACES || in.mpol < 2 || in.ntor < 0) {
         return "axisymmetric preconditioner apply has invalid dimensions";
     }
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.mpol;
+    const std::size_t points = static_cast<std::size_t>(in.ns) * mode_count(in);
     if (!valid_elements(in) || !valid_matrix(in) ||
         in.residual.size() != 6 * points) {
         return "axisymmetric preconditioner apply input shape mismatch";
@@ -96,7 +102,7 @@ bool solve_pair(const AxisymmetricPreconditionerApplyCase& in,
     const int first = in.matrix.first_surface[mode];
     const int count = last_surface - first;
     if (count <= 0) return false;
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.mpol;
+    const std::size_t points = static_cast<std::size_t>(in.ns) * mode_count(in);
     const auto& lower = z_system ? in.matrix.lower_z : in.matrix.lower_r;
     const auto& diagonal =
         z_system ? in.matrix.diagonal_z : in.matrix.diagonal_r;
@@ -177,27 +183,31 @@ AxisymmetricPreconditionerApplyResult
 axisymmetric_preconditioner_apply_reference(
     const AxisymmetricPreconditionerApplyCase& input) {
     if (!validate_case(input).empty()) return {};
-    const std::size_t points = static_cast<std::size_t>(input.ns) * input.mpol;
+    const int modes = mode_count(input);
+    const std::size_t points = static_cast<std::size_t>(input.ns) * modes;
     AxisymmetricPreconditionerApplyResult out;
     out.residual = input.residual;
     if (input.mpol > 1) {
-        for (int surface = 0; surface < input.ns; ++surface) {
-            const int odd = 2 * surface + 1;
-            const float rsum =
-                input.elements.ard[odd] + input.elements.brd[odd];
-            const float zsum =
-                input.elements.azd[odd] + input.elements.bzd[odd];
-            const float denominator = rsum + zsum;
-            if (std::abs(denominator) >= 1.0e-30F) {
-                const std::size_t base =
-                    static_cast<std::size_t>(1) * input.ns + surface;
-                out.residual[3 * points + base] *= rsum / denominator;
-                out.residual[4 * points + base] *= zsum / denominator;
+        for (int n = 0; n <= input.ntor; ++n) {
+            const int mode = input.ntor + 1 + n;
+            for (int surface = 0; surface < input.ns; ++surface) {
+                const int odd = 2 * surface + 1;
+                const float rsum =
+                    input.elements.ard[odd] + input.elements.brd[odd];
+                const float zsum =
+                    input.elements.azd[odd] + input.elements.bzd[odd];
+                const float denominator = rsum + zsum;
+                if (std::abs(denominator) >= 1.0e-30F) {
+                    const std::size_t base =
+                        static_cast<std::size_t>(mode) * input.ns + surface;
+                    out.residual[3 * points + base] *= rsum / denominator;
+                    out.residual[4 * points + base] *= zsum / denominator;
+                }
             }
         }
     }
     const int last_surface = input.include_lcfs ? input.ns : input.ns - 1;
-    for (int mode = 0; mode < input.mpol; ++mode) {
+    for (int mode = 0; mode < modes; ++mode) {
         const float relative_floor = std::numeric_limits<float>::epsilon();
         const float scale = input.matrix.scale[mode];
         const float floor =
@@ -242,13 +252,14 @@ void enqueue_axisymmetric_preconditioner_apply(
         callback("cannot load axisymmetric preconditioner-apply shader", {});
         return;
     }
-    const std::size_t points = static_cast<std::size_t>(input.ns) * input.mpol;
+    const int modes = mode_count(input);
+    const std::size_t points = static_cast<std::size_t>(input.ns) * modes;
     auto matrix = flatten_matrix(input.matrix);
     auto elements = flatten_elements(input.elements);
     const auto matrix_bytes = matrix.size() * sizeof(float);
     const auto element_bytes = elements.size() * sizeof(float);
     const auto input_bytes = input.residual.size() * sizeof(float);
-    const auto output_values = 6 * points + input.mpol;
+    const auto output_values = 6 * points + modes;
     const auto output_bytes = output_values * sizeof(float);
     auto matrix_buffer =
         make_buffer(device, matrix_bytes,
@@ -284,10 +295,12 @@ void enqueue_axisymmetric_preconditioner_apply(
     pipeline_descriptor.compute.entryPoint = "main";
     auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
     const Params params{static_cast<std::uint32_t>(input.ns),
-                        static_cast<std::uint32_t>(input.mpol),
+                        static_cast<std::uint32_t>(modes),
+                        static_cast<std::uint32_t>(input.ntor),
                         static_cast<std::uint32_t>(points),
                         static_cast<std::uint32_t>(
-                            input.include_lcfs ? input.ns : input.ns - 1)};
+                            input.include_lcfs ? input.ns : input.ns - 1),
+                        {0, 0, 0}};
     auto queue = device.GetQueue();
     queue.WriteBuffer(matrix_buffer, 0, matrix.data(), matrix_bytes);
     queue.WriteBuffer(element_buffer, 0, elements.data(), element_bytes);
@@ -310,7 +323,7 @@ void enqueue_axisymmetric_preconditioner_apply(
     auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(pipeline);
     pass.SetBindGroup(0, bind_group);
-    pass.DispatchWorkgroups(static_cast<std::uint32_t>(input.mpol));
+    pass.DispatchWorkgroups(static_cast<std::uint32_t>(modes));
     pass.End();
     encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
     auto commands = encoder.Finish();
@@ -321,7 +334,7 @@ void enqueue_axisymmetric_preconditioner_apply(
     dispatch->readback = readback;
     dispatch->bytes = output_bytes;
     dispatch->points = points;
-    dispatch->mpol = input.mpol;
+    dispatch->mpol = modes;
     readback.MapAsync(
         wgpu::MapMode::Read, 0, output_bytes,
         wgpu::CallbackMode::AllowSpontaneous,

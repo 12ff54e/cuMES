@@ -74,6 +74,10 @@ browser-validated:
   pivot guards, paired R/Z Thomas solves, axis boundary zeroing, and lambda
   diagonal scaling; the browser gate applies it to the constrained Solovev
   residual and requires zero pivot breakdowns;
+- the complete 3-D preconditioner generalization: full angular element
+  averages, `(m,n)` radial systems with physical `n*nfp` stiffness, mixed
+  `mn*g_uv` lambda coupling, per-mode pivot scales, m=1 force scaling for every
+  toroidal family, and guarded paired solves across all `mnmax` modes;
 - Garabedian accelerated descent for all six spectral families, including
   physical/decomposed basis conversion, the m=1 undone-gauge update, rigid R/Z
   LCFS behavior, free lambda LCFS behavior, and velocity persistence;
@@ -195,9 +199,9 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. integrate the completed direct 3-D transform, constraint, geometry,
-   fixed-iota magnetic-field, and force paths with the 3-D preconditioner;
-6. qualify fixed-boundary W7-X, then optimize the direct DFT with a WebGPU FFT;
+5. integrate the completed fixed-iota 3-D operator set into a persistent stage
+   loop and qualify fixed-boundary W7-X;
+6. optimize the direct DFT with a WebGPU FFT and persistent command resources;
 7. only then integrate free-boundary/NESTOR support.
 
 Free-boundary support is last because `deps/vacuum-field` is itself CUDA-based

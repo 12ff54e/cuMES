@@ -15,7 +15,9 @@ into a W7-X solve. The shared half-grid geometry and fixed-iota magnetic-field
 operators now cover the full 3-D angular grid as well, as does the complete
 radial/poloidal/toroidal MHD force operator. The complete 3-D constraint chain
 also includes a two-pass direct spectral-condensation bandpass and publishes
-the constraint-force channels consumed by the toroidal projection. It
+the constraint-force channels consumed by the toroidal projection. A full
+`(m,n)` 3-D preconditioner includes toroidal and mixed-metric lambda terms. The
+backend
 parses and initializes the shipped Solovev case in-browser and evaluates its
 staggered half-grid geometry, magnetic field, total pressure, and axisymmetric
 MHD force through spectral residual projection, but is not yet a complete
