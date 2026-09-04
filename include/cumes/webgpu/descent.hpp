@@ -17,14 +17,19 @@ struct AxisymmetricDescentCase {
     float delta_t = 0.0F;
     float damping_b1 = 0.0F;
     float damping_fac = 0.0F;
+    bool double_single = false;
     std::vector<float> state;
+    std::vector<float> state_lo;
     std::vector<float> velocity;
+    std::vector<float> velocity_lo;
     std::vector<float> residual;
 };
 
 struct AxisymmetricDescentResult {
     std::vector<float> state;
+    std::vector<float> state_lo;
     std::vector<float> velocity;
+    std::vector<float> velocity_lo;
 };
 
 using AxisymmetricDescentCallback =

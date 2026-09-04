@@ -1689,8 +1689,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_descent_case_.delta_t = 0.01F;
         w7x_descent_case_.damping_b1 = 0.9F;
         w7x_descent_case_.damping_fac = 1.0F;
+        w7x_descent_case_.double_single = true;
         w7x_descent_case_.state = w7x_stage_.state;
+        w7x_descent_case_.state_lo.assign(w7x_stage_.state.size(), 0.0F);
+        // Exercise persistence below the high word's ulp independently of the
+        // particular first-pass W7-X force values.
+        w7x_descent_case_.state_lo[w7x_stage_.ns - 1] = 1.0e-8F;
         w7x_descent_case_.velocity.assign(w7x_stage_.state.size(), 0.0F);
+        w7x_descent_case_.velocity_lo.assign(w7x_stage_.state.size(), 0.0F);
         w7x_descent_case_.residual = std::move(residual);
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_descent(
@@ -1718,10 +1724,40 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     }
                 };
                 compare(actual.state, expected.state);
+                compare(actual.state_lo, expected.state_lo);
                 compare(actual.velocity, expected.velocity);
-                if (!valid || max_error > 5.0e-4F) {
-                    self->finish(false, "W7-X descent mismatch: " +
-                                            std::to_string(max_error));
+                compare(actual.velocity_lo, expected.velocity_lo);
+                double max_reconstructed_error = 0.0;
+                if (actual.state_lo.size() == expected.state_lo.size() &&
+                    actual.velocity_lo.size() == expected.velocity_lo.size()) {
+                    for (std::size_t i = 0; i < actual.state_lo.size(); ++i) {
+                        max_reconstructed_error = std::max(
+                            {max_reconstructed_error,
+                             std::abs((static_cast<double>(actual.state[i]) +
+                                       actual.state_lo[i]) -
+                                      (static_cast<double>(expected.state[i]) +
+                                       expected.state_lo[i])),
+                             std::abs(
+                                 (static_cast<double>(actual.velocity[i]) +
+                                  actual.velocity_lo[i]) -
+                                 (static_cast<double>(expected.velocity[i]) +
+                                  expected.velocity_lo[i]))});
+                    }
+                }
+                const bool retained_low_bits =
+                    std::any_of(actual.state_lo.begin(), actual.state_lo.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !retained_low_bits || max_error > 5.0e-4F ||
+                    max_reconstructed_error > 2.0e-12) {
+                    self->finish(false,
+                                 "W7-X descent mismatch: error=" +
+                                     std::to_string(max_error) + " state_lo=" +
+                                     std::to_string(actual.state_lo.size()) +
+                                     " reconstruction_error=" +
+                                     std::to_string(max_reconstructed_error) +
+                                     " retained=" +
+                                     (retained_low_bits ? "true" : "false") +
+                                     " valid=" + (valid ? "true" : "false"));
                     return;
                 }
                 std::printf(
