@@ -2890,6 +2890,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             controller_->reset_constraint_reference();
         constraint_case_.refresh_preconditioner =
             controller_->refresh_preconditioner();
+        constraint_case_.double_single = double_single_solve_;
         constraint_case_.geometry = base_geometry_case_.geometry;
         constraint_case_.r_con = stage_r_con_;
         constraint_case_.z_con = stage_z_con_;
@@ -2913,6 +2914,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.force_fields.assign(
             stage_force_fields_.begin(),
             stage_force_fields_.begin() + force_field_count * points);
+        if (double_single_solve_) {
+            constraint_case_.force_fields_lo.assign(
+                stage_force_fields_lo_.begin(),
+                stage_force_fields_lo_.begin() + force_field_count * points);
+        } else {
+            constraint_case_.force_fields_lo.clear();
+        }
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_constraint(
             device_, constraint_case_,
@@ -2923,9 +2931,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 if (self->production_solve_) {
-                    const bool finite = std::all_of(
+                    bool finite = std::all_of(
                         actual.fields.begin(), actual.fields.end(),
                         [](float value) { return std::isfinite(value); });
+                    if (self->double_single_solve_)
+                        finite &=
+                            actual.fields_lo.size() == actual.fields.size() &&
+                            std::all_of(actual.fields_lo.begin(),
+                                        actual.fields_lo.end(),
+                                        [](float value) {
+                                            return std::isfinite(value);
+                                        });
                     if (!finite) {
                         self->finish(false,
                                      "constraint produced nonfinite fields");
@@ -2934,6 +2950,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->constraint_r_con0_ = actual.r_con0;
                     self->constraint_z_con0_ = actual.z_con0;
                     self->constraint_tcon_ = actual.tcon;
+                    self->constraint_fields_lo_ = std::move(actual.fields_lo);
                     self->run_constraint_forward(std::move(actual.fields));
                     return;
                 }
@@ -2975,6 +2992,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 self->constraint_r_con0_ = actual.r_con0;
                 self->constraint_z_con0_ = actual.z_con0;
                 self->constraint_tcon_ = actual.tcon;
+                self->constraint_fields_lo_ = std::move(actual.fields_lo);
                 self->run_constraint_forward(std::move(actual.fields));
             });
     }
@@ -2989,7 +3007,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             constraint_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
             constraint_toroidal_forward_case_.nfp = initialized_stage_.nfp;
             constraint_toroidal_forward_case_.include_lcfs = false;
+            constraint_toroidal_forward_case_.double_single =
+                double_single_solve_;
             constraint_toroidal_forward_case_.fields = std::move(fields);
+            constraint_toroidal_forward_case_.fields_lo = constraint_fields_lo_;
             const auto self = shared_from_this();
             cumes::webgpu::enqueue_toroidal_forward(
                 device_, constraint_toroidal_forward_case_,
@@ -2999,6 +3020,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->finish(false, std::move(error));
                         return;
                     }
+                    self->constraint_spectral_residual_lo_ =
+                        std::move(actual.residual_lo);
                     self->finish_constraint_forward(
                         std::move(actual.residual),
                         self->production_solve_
@@ -3071,9 +3094,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_residual_case_.zero_m1_z =
             controller_->effective_iteration() < 2 ||
             controller_->fsqz_prev() < 1.0e-6;
+        constraint_residual_case_.double_single = double_single_solve_;
         constraint_residual_case_.residual = std::move(residual);
+        constraint_residual_case_.residual_lo =
+            constraint_spectral_residual_lo_;
         constraint_residual_case_.sqrt_s_f =
             initialized_stage_.profiles.sqrt_s_f;
+        constraint_residual_case_.sqrt_s_f_lo =
+            initialized_stage_.profiles.sqrt_s_f_lo;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_residual_decomposition(
             device_, constraint_residual_case_,
@@ -3112,6 +3140,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 self->invariant_raw_ = actual.raw_norm;
+                self->constraint_decomposed_residual_lo_ =
+                    std::move(actual.residual_lo);
                 self->run_preconditioner_apply(std::move(actual.residual));
             });
     }
@@ -3835,6 +3865,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> constraint_r_con0_;
     std::vector<float> constraint_z_con0_;
     std::vector<float> constraint_tcon_;
+    std::vector<float> constraint_fields_lo_;
+    std::vector<float> constraint_spectral_residual_lo_;
+    std::vector<float> constraint_decomposed_residual_lo_;
     std::vector<float> stage_velocity_;
     std::vector<float> stage_state_lo_;
     std::vector<float> stage_velocity_lo_;

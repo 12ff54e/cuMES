@@ -1,6 +1,7 @@
 #include "cumes/webgpu/constraint.hpp"
 
 #include "cumes/webgpu/axisymmetric.hpp"
+#include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/toroidal.hpp"
 #include "pipeline_cache.hpp"
@@ -66,6 +67,8 @@ std::string validate_case(const AxisymmetricConstraintCase& in) {
         in.force_fields.size() != force_fields * points) {
         return "constraint input shape mismatch";
     }
+    if (in.double_single && in.force_fields_lo.size() != in.force_fields.size())
+        return "double-single constraint force low-word shape mismatch";
     return {};
 }
 
@@ -185,6 +188,23 @@ void apply_constraint_tail(const AxisymmetricConstraintCase& in,
     out.fields.assign(output_fields * points, 0.0F);
     std::copy(in.force_fields.begin(), in.force_fields.end(),
               out.fields.begin());
+    if (in.double_single) {
+        out.fields_lo.assign(output_fields * points, 0.0F);
+        std::copy(in.force_fields_lo.begin(), in.force_fields_lo.end(),
+                  out.fields_lo.begin());
+    }
+    const auto add_force = [&](std::size_t index, double correction) {
+        const double old = static_cast<double>(out.fields[index]) +
+                           (in.double_single ? out.fields_lo[index] : 0.0);
+        const auto pair = split(old + correction);
+        out.fields[index] = pair.hi;
+        if (in.double_single) out.fields_lo[index] = pair.lo;
+    };
+    const auto put = [&](std::size_t index, double value) {
+        const auto pair = split(value);
+        out.fields[index] = pair.hi;
+        if (in.double_single) out.fields_lo[index] = pair.lo;
+    };
     for (int surface = 1; surface < in.ns; ++surface) {
         const float sqrt_s = in.sqrt_s_f[surface];
         for (std::size_t angular = 0; angular < n_z_n_t; ++angular) {
@@ -195,20 +215,22 @@ void apply_constraint_tail(const AxisymmetricConstraintCase& in,
             const float gc = g_con[point];
             const float brcon = dr * gc;
             const float bzcon = dz * gc;
-            out.fields[4 * points + point] += brcon;
-            out.fields[5 * points + point] += brcon * sqrt_s;
-            out.fields[6 * points + point] += bzcon;
-            out.fields[7 * points + point] += bzcon * sqrt_s;
+            add_force(4 * points + point, brcon);
+            add_force(5 * points + point, static_cast<double>(brcon) * sqrt_s);
+            add_force(6 * points + point, bzcon);
+            add_force(7 * points + point, static_cast<double>(bzcon) * sqrt_s);
             const float ru = in.geometry[3 * points + point] +
                              sqrt_s * in.geometry[9 * points + point];
             const float zu = in.geometry[4 * points + point] +
                              sqrt_s * in.geometry[10 * points + point];
-            out.fields[(constraint_offset + 0) * points + point] = ru * gc;
-            out.fields[(constraint_offset + 1) * points + point] =
-                ru * gc * sqrt_s;
-            out.fields[(constraint_offset + 2) * points + point] = zu * gc;
-            out.fields[(constraint_offset + 3) * points + point] =
-                zu * gc * sqrt_s;
+            put((constraint_offset + 0) * points + point,
+                static_cast<double>(ru) * gc);
+            put((constraint_offset + 1) * points + point,
+                static_cast<double>(ru) * gc * sqrt_s);
+            put((constraint_offset + 2) * points + point,
+                static_cast<double>(zu) * gc);
+            put((constraint_offset + 3) * points + point,
+                static_cast<double>(zu) * gc * sqrt_s);
         }
     }
 }
@@ -360,6 +382,7 @@ struct TailDispatch {
     AxisymmetricConstraintResult result;
     wgpu::Buffer output, readback;
     std::size_t values = 0, bytes = 0;
+    bool double_single = false;
 };
 
 void enqueue_tail(const wgpu::Device& device,
@@ -367,8 +390,9 @@ void enqueue_tail(const wgpu::Device& device,
                   HeadResult head,
                   std::vector<float> g_con,
                   AxisymmetricConstraintCallback callback) {
-    const auto shader_text =
-        load_shader("/shaders/axisymmetric_constraint_tail.wgsl");
+    const auto shader_text = load_shader(
+        in.double_single ? "/shaders/constraint_tail_double_single.wgsl"
+                         : "/shaders/axisymmetric_constraint_tail.wgsl");
     if (shader_text.empty()) {
         callback("cannot load axisymmetric constraint-tail shader", {});
         return;
@@ -390,7 +414,8 @@ void enqueue_tail(const wgpu::Device& device,
     const std::size_t output_fields =
         in.ntor == 0 ? FORWARD_INPUT_FIELD_COUNT : TOROIDAL_FORWARD_FIELD_COUNT;
     const std::size_t output_values = output_fields * points;
-    const auto output_bytes = output_values * sizeof(float);
+    const auto output_bytes =
+        output_values * sizeof(float) * (in.double_single ? 2 : 1);
     auto force_buffer =
         make_buffer(device, force_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
@@ -419,9 +444,22 @@ void enqueue_tail(const wgpu::Device& device,
         make_buffer(device, sizeof(TailParams),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "constraint tail params");
-    const auto& pipeline =
-        detail::cached_compute_pipeline(device, "constraint-tail", shader_text,
-                                        "cuMES constraint tail pipeline");
+    wgpu::Buffer force_low_buffer, rounding_buffer;
+    if (in.double_single) {
+        force_low_buffer =
+            make_buffer(device, force_bytes,
+                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                        "constraint force input low");
+        rounding_buffer = make_buffer(device, points * sizeof(std::uint32_t),
+                                      wgpu::BufferUsage::Storage,
+                                      "constraint tail double-single rounding");
+    }
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device,
+        in.double_single ? "constraint-tail-double-single" : "constraint-tail",
+        shader_text,
+        in.double_single ? "cuMES double-single constraint tail pipeline"
+                         : "cuMES constraint tail pipeline");
     const TailParams params{static_cast<std::uint32_t>(in.ns),
                             static_cast<std::uint32_t>(n_z_n_t),
                             static_cast<std::uint32_t>(points),
@@ -430,23 +468,32 @@ void enqueue_tail(const wgpu::Device& device,
                             {0, 0, 0}};
     auto queue = device.GetQueue();
     queue.WriteBuffer(force_buffer, 0, in.force_fields.data(), force_bytes);
+    if (in.double_single)
+        queue.WriteBuffer(force_low_buffer, 0, in.force_fields_lo.data(),
+                          force_bytes);
     queue.WriteBuffer(geometry_buffer, 0, in.geometry.data(), geometry_bytes);
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, in.sqrt_s_f.data(), radial_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     auto layout = pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry entries[] = {
+    std::vector<wgpu::BindGroupEntry> entries = {
         {nullptr, 0, force_buffer, 0, force_bytes, nullptr, nullptr},
         {nullptr, 1, geometry_buffer, 0, geometry_bytes, nullptr, nullptr},
         {nullptr, 2, constraint_buffer, 0, constraint_bytes, nullptr, nullptr},
         {nullptr, 3, radial_buffer, 0, radial_bytes, nullptr, nullptr},
         {nullptr, 4, output_buffer, 0, output_bytes, nullptr, nullptr},
         {nullptr, 5, params_buffer, 0, sizeof(params), nullptr, nullptr}};
+    if (in.double_single) {
+        entries.push_back(
+            {nullptr, 6, force_low_buffer, 0, force_bytes, nullptr, nullptr});
+        entries.push_back({nullptr, 7, rounding_buffer, 0,
+                           points * sizeof(std::uint32_t), nullptr, nullptr});
+    }
     wgpu::BindGroupDescriptor bind_descriptor{};
     bind_descriptor.layout = layout;
-    bind_descriptor.entryCount = std::size(entries);
-    bind_descriptor.entries = entries;
+    bind_descriptor.entryCount = entries.size();
+    bind_descriptor.entries = entries.data();
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
     auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
@@ -471,6 +518,7 @@ void enqueue_tail(const wgpu::Device& device,
     dispatch->readback = readback;
     dispatch->values = output_values;
     dispatch->bytes = output_bytes;
+    dispatch->double_single = in.double_single;
     readback.MapAsync(
         wgpu::MapMode::Read, 0, output_bytes,
         wgpu::CallbackMode::AllowSpontaneous,
@@ -491,6 +539,9 @@ void enqueue_tail(const wgpu::Device& device,
                 return;
             }
             dispatch->result.fields.assign(values, values + dispatch->values);
+            if (dispatch->double_single)
+                dispatch->result.fields_lo.assign(
+                    values + dispatch->values, values + 2 * dispatch->values);
             dispatch->readback.Unmap();
             dispatch->callback({}, std::move(dispatch->result));
         });
