@@ -270,12 +270,191 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, self->gpu_error_);
                     return;
                 }
+                self->forward_cases_ = make_forward_cases();
+                self->run_axisymmetric_forward();
+            });
+    }
+
+    static std::vector<cumes::webgpu::AxisymmetricForwardCase>
+    make_forward_cases() {
+        cumes::webgpu::AxisymmetricForwardCase base;
+        base.ns = 5;
+        base.mpol = 6;
+        base.ntheta = 18;
+        const std::size_t points =
+            static_cast<std::size_t>(base.ns) * base.ntheta;
+        base.fields.resize(cumes::webgpu::FORWARD_INPUT_FIELD_COUNT * points);
+        for (std::size_t field = 0;
+             field < cumes::webgpu::FORWARD_INPUT_FIELD_COUNT; ++field) {
+            for (int surface = 0; surface < base.ns; ++surface) {
+                for (int theta = 0; theta < base.ntheta; ++theta) {
+                    const auto index =
+                        field * points +
+                        static_cast<std::size_t>(surface) * base.ntheta + theta;
+                    base.fields[index] =
+                        0.023F * static_cast<float>(field + 1) +
+                        0.017F * static_cast<float>(surface + 1) +
+                        0.009F * static_cast<float>((theta * 5 + field) % 11);
+                }
+            }
+        }
+        auto include_lcfs = base;
+        include_lcfs.include_lcfs = true;
+        return {std::move(base), std::move(include_lcfs)};
+    }
+
+    void run_axisymmetric_forward() {
+        if (forward_case_index_ == forward_cases_.size()) {
+            run_axisymmetric_dealias();
+            return;
+        }
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_forward(
+            device_, forward_cases_[forward_case_index_],
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto& test =
+                    self->forward_cases_[self->forward_case_index_];
+                const auto expected =
+                    cumes::webgpu::axisymmetric_forward_reference(test);
+                if (actual.residual.size() != expected.residual.size()) {
+                    self->finish(false,
+                                 "axisymmetric forward result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                    max_error = std::max(
+                        max_error,
+                        std::abs(actual.residual[i] - expected.residual[i]));
+                }
+                const auto value = [&test, &actual](int component, int mode,
+                                                    int surface) {
+                    return actual
+                        .residual[(static_cast<std::size_t>(component) *
+                                       test.mpol +
+                                   mode) *
+                                      test.ns +
+                                  surface];
+                };
+                bool boundary_contract = true;
+                for (int component = 3; component < 6; ++component) {
+                    for (int mode = 0; mode < test.mpol; ++mode) {
+                        for (int surface = 0; surface < test.ns; ++surface) {
+                            boundary_contract &=
+                                value(component, mode, surface) == 0.0F;
+                        }
+                    }
+                }
+                for (int mode = 0; mode < test.mpol; ++mode) {
+                    boundary_contract &= value(1, mode, 0) == 0.0F;
+                    boundary_contract &= value(2, mode, 0) == 0.0F;
+                    if (mode > 0) {
+                        boundary_contract &= value(0, mode, 0) == 0.0F;
+                    }
+                    if (!test.include_lcfs) {
+                        boundary_contract &=
+                            value(0, mode, test.ns - 1) == 0.0F;
+                        boundary_contract &=
+                            value(1, mode, test.ns - 1) == 0.0F;
+                    }
+                }
+                if (max_error > 1.0e-4F || !boundary_contract) {
+                    self->finish(false,
+                                 "axisymmetric forward mismatch: max_error=" +
+                                     std::to_string(max_error) +
+                                     " boundary_contract=" +
+                                     (boundary_contract ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  axisymmetric forward (%s LCFS): PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    test.include_lcfs ? "included" : "fixed",
+                    static_cast<double>(max_error));
+                ++self->forward_case_index_;
+                self->run_axisymmetric_forward();
+            });
+    }
+
+    static cumes::webgpu::AxisymmetricDealiasCase make_dealias_case() {
+        cumes::webgpu::AxisymmetricDealiasCase test;
+        test.ns = 5;
+        test.mpol = 6;
+        test.ntheta = 18;
+        const std::size_t points =
+            static_cast<std::size_t>(test.ns) * test.ntheta;
+        test.g_con_eff.resize(points);
+        for (std::size_t i = 0; i < points; ++i) {
+            test.g_con_eff[i] =
+                std::sin(0.21F * static_cast<float>(i)) +
+                0.13F * std::cos(0.07F * static_cast<float>(i * i));
+        }
+        test.tcon.resize(test.ns);
+        for (int surface = 0; surface < test.ns; ++surface) {
+            test.tcon[surface] = 0.5F + 0.1F * static_cast<float>(surface);
+        }
+        test.faccon.resize(test.mpol, 0.0F);
+        for (int mode = 1; mode < test.mpol; ++mode) {
+            const float xmpq = static_cast<float>((mode + 1) * mode);
+            test.faccon[mode] = 0.25F / (xmpq * xmpq);
+        }
+        return test;
+    }
+
+    void run_axisymmetric_dealias() {
+        dealias_case_ = make_dealias_case();
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_dealias(
+            device_, dealias_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricDealiasResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_dealias_reference(
+                        self->dealias_case_);
+                if (actual.g_con.size() != expected.g_con.size()) {
+                    self->finish(false,
+                                 "axisymmetric dealias result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                for (std::size_t i = 0; i < actual.g_con.size(); ++i) {
+                    max_error =
+                        std::max(max_error,
+                                 std::abs(actual.g_con[i] - expected.g_con[i]));
+                }
+                const bool axis_zero = std::all_of(
+                    actual.g_con.begin(),
+                    actual.g_con.begin() + self->dealias_case_.ntheta,
+                    [](float value) { return value == 0.0F; });
+                if (max_error > 1.0e-4F || !axis_zero) {
+                    self->finish(false,
+                                 "axisymmetric dealias mismatch: max_error=" +
+                                     std::to_string(max_error) + " axis_zero=" +
+                                     (axis_zero ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  axisymmetric constraint dealias: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                if (!self->gpu_error_.empty()) {
+                    self->finish(false, self->gpu_error_);
+                    return;
+                }
                 self->finish(
                     true,
-                    "prolongation and axisymmetric inverse GPU/CPU agreement; "
-                    "odd-m scaling, zero toroidal derivatives, fused "
-                    "rCon/zCon, "
-                    "LCFS preservation, and velocity reset verified");
+                    "prolongation and complete axisymmetric transform GPU/CPU "
+                    "agreement; inverse, forward boundary gates, fused "
+                    "rCon/zCon, and constraint dealias verified");
             });
     }
 
@@ -293,7 +472,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     wgpu::Device device_;
     std::vector<cumes::webgpu::ProlongationCase> cases_;
     cumes::webgpu::AxisymmetricInverseCase axisymmetric_case_;
+    std::vector<cumes::webgpu::AxisymmetricForwardCase> forward_cases_;
+    cumes::webgpu::AxisymmetricDealiasCase dealias_case_;
     std::size_t case_index_ = 0;
+    std::size_t forward_case_index_ = 0;
     std::string gpu_error_;
 };
 

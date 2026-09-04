@@ -12,6 +12,7 @@ namespace cumes::webgpu {
 
 inline constexpr std::size_t SPECTRAL_COMPONENT_COUNT = 6;
 inline constexpr std::size_t GEOMETRY_PARITY_FIELD_COUNT = 18;
+inline constexpr std::size_t FORWARD_INPUT_FIELD_COUNT = 14;
 
 struct AxisymmetricInverseCase {
     int ns = 0;
@@ -39,6 +40,54 @@ void enqueue_axisymmetric_inverse(const wgpu::Device& device,
 
 AxisymmetricInverseResult axisymmetric_inverse_reference(
     const AxisymmetricInverseCase& input);
+
+struct AxisymmetricForwardCase {
+    int ns = 0;
+    int mpol = 0;
+    int ntheta = 0;
+    bool include_lcfs = false;
+    // Field-major [field][surface][theta]: armn e/o, azmn e/o, brmn e/o,
+    // bzmn e/o, blmn e/o, frcon e/o, fzcon e/o.
+    std::vector<float> fields;
+};
+
+struct AxisymmetricForwardResult {
+    // Component-major [component][mode][surface].
+    std::vector<float> residual;
+};
+
+using AxisymmetricForwardCallback =
+    std::function<void(std::string, AxisymmetricForwardResult)>;
+
+void enqueue_axisymmetric_forward(const wgpu::Device& device,
+                                  const AxisymmetricForwardCase& input,
+                                  AxisymmetricForwardCallback callback);
+
+AxisymmetricForwardResult axisymmetric_forward_reference(
+    const AxisymmetricForwardCase& input);
+
+struct AxisymmetricDealiasCase {
+    int ns = 0;
+    int mpol = 0;
+    int ntheta = 0;
+    std::vector<float> g_con_eff;
+    std::vector<float> tcon;
+    std::vector<float> faccon;
+};
+
+struct AxisymmetricDealiasResult {
+    std::vector<float> g_con;
+};
+
+using AxisymmetricDealiasCallback =
+    std::function<void(std::string, AxisymmetricDealiasResult)>;
+
+void enqueue_axisymmetric_dealias(const wgpu::Device& device,
+                                  const AxisymmetricDealiasCase& input,
+                                  AxisymmetricDealiasCallback callback);
+
+AxisymmetricDealiasResult axisymmetric_dealias_reference(
+    const AxisymmetricDealiasCase& input);
 
 }  // namespace cumes::webgpu
 

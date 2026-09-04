@@ -3,6 +3,7 @@
 # final link as required by the Emscripten port contract.
 add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric_forward.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/main.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/prolongation.cpp)
 
@@ -17,6 +18,8 @@ target_link_options(cumes_webgpu PRIVATE
   -sEXIT_RUNTIME=1
   -sASSERTIONS=1
   "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl@/shaders/axisymmetric_dealias.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl@/shaders/axisymmetric_forward.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl@/shaders/axisymmetric_inverse.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl@/shaders/prolongation.wgsl")
 
