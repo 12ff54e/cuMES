@@ -22,6 +22,12 @@ browser-validated:
   `rCon`/`zCon` synthesis;
 - the axisymmetric reduced-θ forward projection with axis and fixed/free LCFS
   gates, plus the constraint de-alias bandpass;
+- direct 3-D inverse and forward transforms over the full reduced-θ/full-ζ
+  grid, covering all six folded parity families, physical `nfp` toroidal
+  derivatives, VMEC lambda sign conventions, odd-m scaling, fused constraint
+  synthesis, and axis/LCFS force gates; browser conformance agrees value for
+  value with the independent C++ float references, and the native CUDA Fourier
+  suite provides an external convention check;
 - host-generated `f32` Fourier tables, matching the CUDA operator contract and
   avoiding adapter-dependent WGSL transcendental approximations;
 - the existing JSON mapper, validator, boundary folder, and resolution logic
@@ -94,7 +100,8 @@ browser-validated:
 
 This milestone parses and initializes the embedded Solovev input and converges
 all three axisymmetric multigrid stages. It is a functioning fixed-boundary
-axisymmetric solver, but not yet a complete cuMES WebGPU solver.
+axisymmetric solver and has standalone direct 3-D transforms, but the 3-D
+operators are not yet integrated into a complete W7-X solve.
 
 ## Build and run
 
@@ -175,9 +182,10 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
-   correctness path before optimization;
-6. 3-D W7-X qualification and only then free-boundary/NESTOR integration.
+5. integrate the completed direct 3-D transform correctness path with 3-D
+   geometry, field, force, constraint, and preconditioner operators;
+6. qualify fixed-boundary W7-X, then optimize the direct DFT with a WebGPU FFT;
+7. only then integrate free-boundary/NESTOR support.
 
 Free-boundary support is last because `deps/vacuum-field` is itself CUDA-based
 and includes host/device coupling beyond the main operator DAG. NetCDF/HDF5 and
@@ -192,8 +200,8 @@ fields, multigrid history, provenance, and the normalized input record.
   emdawnwebgpu headers and links the embedded WGSL/browser bundle.
 - `ctest ...`: verifies non-empty `.html`, `.js`, and `.wasm` artifacts.
 - browser self-test: compiles WGSL on the selected adapter, dispatches both
-  prolongation modes and the complete direct axisymmetric transform path, maps
-  results, compares every value with the C++ references, then parses and
+  prolongation modes and the complete direct axisymmetric and 3-D transform
+  paths, maps results, compares every value with the C++ references, then parses and
   initializes the embedded Solovev case, converges all three multigrid stages,
   and evaluates every half-grid geometry plus first- and later-pass
   force/residual path against a C++ reference (operator tolerances `4e-6`

@@ -24,6 +24,8 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/preconditioner_apply.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/preconditioner_matrix.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/prolongation.cpp)
+target_sources(cumes_webgpu PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/webgpu/toroidal.cpp)
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_FIELD_DISABLED)
@@ -58,6 +60,9 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl@/shaders/axisymmetric_forward.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl@/shaders/axisymmetric_inverse.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl@/shaders/prolongation.wgsl")
+target_link_options(cumes_webgpu PRIVATE
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse.wgsl@/shaders/toroidal_inverse.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl@/shaders/toroidal_forward.wgsl")
 
 set_target_properties(cumes_webgpu PROPERTIES SUFFIX ".html")
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
@@ -75,6 +80,9 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl)
+set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl)
 
 # CTest cannot provide a browser WebGPU implementation, but it can guard the
 # complete browser artifact set. Emscripten 6 embeds the preloaded shader in

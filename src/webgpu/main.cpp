@@ -13,6 +13,7 @@
 #include "cumes/webgpu/numerics.hpp"
 #include "cumes/webgpu/preconditioner.hpp"
 #include "cumes/webgpu/prolongation.hpp"
+#include "cumes/webgpu/toroidal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -504,6 +505,147 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, self->gpu_error_);
                     return;
                 }
+                self->run_toroidal_inverse();
+            });
+    }
+
+    void run_toroidal_inverse() {
+        toroidal_case_.ns = 3;
+        toroidal_case_.mpol = 3;
+        toroidal_case_.ntor = 2;
+        toroidal_case_.ntheta = 16;
+        toroidal_case_.nzeta = 8;
+        toroidal_case_.nfp = 5;
+        const std::size_t values = cumes::webgpu::SPECTRAL_COMPONENT_COUNT *
+                                   toroidal_case_.ns * toroidal_case_.mpol *
+                                   (toroidal_case_.ntor + 1);
+        toroidal_case_.state.resize(values);
+        for (std::size_t i = 0; i < values; ++i) {
+            toroidal_case_.state[i] =
+                0.03F * std::sin(0.17F * static_cast<float>(i + 1)) +
+                0.01F * std::cos(0.07F * static_cast<float>(i * i + 3));
+        }
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_inverse(
+            device_, toroidal_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalInverseResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_inverse_reference(
+                    self->toroidal_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.geometry, expected.geometry);
+                compare(actual.r_con, expected.r_con);
+                compare(actual.z_con, expected.z_con);
+                const std::size_t points =
+                    static_cast<std::size_t>(self->toroidal_case_.ns) *
+                    self->toroidal_case_.ntheta * self->toroidal_case_.nzeta;
+                const bool toroidal_derivatives =
+                    std::any_of(actual.geometry.begin() + 12 * points,
+                                actual.geometry.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !toroidal_derivatives || max_error > 2.0e-5F) {
+                    self->finish(false, "toroidal inverse mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  direct 3-D inverse transform: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_toroidal_forward();
+            });
+    }
+
+    void run_toroidal_forward() {
+        toroidal_forward_case_.ns = toroidal_case_.ns;
+        toroidal_forward_case_.mpol = toroidal_case_.mpol;
+        toroidal_forward_case_.ntor = toroidal_case_.ntor;
+        toroidal_forward_case_.ntheta = toroidal_case_.ntheta;
+        toroidal_forward_case_.nzeta = toroidal_case_.nzeta;
+        toroidal_forward_case_.nfp = toroidal_case_.nfp;
+        toroidal_forward_case_.include_lcfs = false;
+        const std::size_t points =
+            static_cast<std::size_t>(toroidal_forward_case_.ns) *
+            toroidal_forward_case_.ntheta * toroidal_forward_case_.nzeta;
+        toroidal_forward_case_.fields.resize(
+            cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points);
+        for (std::size_t i = 0; i < toroidal_forward_case_.fields.size(); ++i) {
+            toroidal_forward_case_.fields[i] =
+                0.07F * std::sin(0.031F * static_cast<float>(i + 5)) -
+                0.02F * std::cos(0.013F * static_cast<float>(i * i + 1));
+        }
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, toroidal_forward_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_forward_reference(
+                    self->toroidal_forward_case_);
+                float max_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+                        valid &= std::isfinite(actual.residual[i]);
+                    }
+                }
+                const int mnmax = self->toroidal_forward_case_.mpol *
+                                  (self->toroidal_forward_case_.ntor + 1);
+                bool gates_valid = true;
+                bool interior_nonzero = false;
+                for (int component = 0; component < 6; ++component) {
+                    for (int mode = 0; mode < mnmax; ++mode) {
+                        const int m =
+                            mode / (self->toroidal_forward_case_.ntor + 1);
+                        const auto at = [&](int surface) {
+                            return actual
+                                .residual[(static_cast<std::size_t>(component) *
+                                               mnmax +
+                                           mode) *
+                                              self->toroidal_forward_case_.ns +
+                                          surface];
+                        };
+                        if (m > 0 || (component != 0 && component != 4)) {
+                            gates_valid &= at(0) == 0.0F;
+                        }
+                        if (component != 2 && component != 5) {
+                            gates_valid &=
+                                at(self->toroidal_forward_case_.ns - 1) == 0.0F;
+                        }
+                        interior_nonzero |= at(1) != 0.0F;
+                    }
+                }
+                if (!valid || !gates_valid || !interior_nonzero ||
+                    max_error > 2.0e-5F) {
+                    self->finish(false, "toroidal forward mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  direct 3-D forward transform: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
                 self->run_solovev_initialization();
             });
     }
@@ -1670,6 +1812,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricInverseCase axisymmetric_case_;
     std::vector<cumes::webgpu::AxisymmetricForwardCase> forward_cases_;
     cumes::webgpu::AxisymmetricDealiasCase dealias_case_;
+    cumes::webgpu::ToroidalInverseCase toroidal_case_;
+    cumes::webgpu::ToroidalForwardCase toroidal_forward_case_;
     cumes::webgpu::AxisymmetricStageData initialized_stage_;
     cumes::webgpu::BaseGeometryCase base_geometry_case_;
     cumes::webgpu::MagneticFieldCase magnetic_field_case_;
