@@ -1873,7 +1873,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     }
                     self->finish_stage_inverse(
                         std::move(actual),
-                        cumes::webgpu::axisymmetric_inverse_reference(inverse));
+                        self->production_solve_
+                            ? cumes::webgpu::ToroidalInverseResult{}
+                            : cumes::webgpu::axisymmetric_inverse_reference(
+                                  inverse));
                 });
             return;
         }
@@ -1929,9 +1932,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                    "iterative inverse mismatch: " + std::to_string(max_error));
             return;
         }
-        std::printf("  %s pass %d inverse: PASS (max |GPU-CPU| = %.3e)\n",
-                    active_case_name_.c_str(), completed_passes_ + 1,
-                    static_cast<double>(max_error));
+        if (!production_solve_) {
+            std::printf("  %s pass %d inverse: PASS (max |GPU-CPU| = %.3e)\n",
+                        active_case_name_.c_str(), completed_passes_ + 1,
+                        static_cast<double>(max_error));
+        }
         stage_r_con_ = std::move(actual.r_con);
         stage_z_con_ = std::move(actual.z_con);
         run_base_geometry(std::move(actual.geometry));
@@ -1956,18 +1961,21 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::BaseGeometryResult{}
                         : cumes::webgpu::base_geometry_reference(
                               self->base_geometry_case_);
-                if (actual.fields.size() != expected.fields.size()) {
+                if (!self->production_solve_ &&
+                    actual.fields.size() != expected.fields.size()) {
                     self->finish(false, "base geometry result shape mismatch");
                     return;
                 }
                 float max_error = 0.0F;
-                for (std::size_t i = 0; i < actual.fields.size(); ++i) {
-                    max_error = std::max(
-                        max_error,
-                        std::abs(actual.fields[i] - expected.fields[i]));
+                if (!self->production_solve_) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                    }
                 }
                 const std::size_t half_points =
                     static_cast<std::size_t>(self->base_geometry_case_.ns - 1) *
@@ -2024,11 +2032,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->run_stage_inverse();
                     return;
                 }
-                std::printf(
-                    "  %s half-grid base geometry: PASS "
-                    "(max |GPU-CPU| = %.3e)\n",
-                    self->active_case_name_.c_str(),
-                    static_cast<double>(max_error));
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s half-grid base geometry: PASS "
+                        "(max |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_error));
+                }
                 self->run_magnetic_field(std::move(actual.fields));
             });
     }
@@ -2060,28 +2070,33 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::MagneticFieldResult{}
                         : cumes::webgpu::magnetic_field_reference(
                               self->magnetic_field_case_);
-                if (actual.fields.size() != expected.fields.size() ||
-                    actual.chip_h.size() != expected.chip_h.size() ||
-                    actual.iota_h.size() != expected.iota_h.size()) {
+                if (!self->production_solve_ &&
+                    (actual.fields.size() != expected.fields.size() ||
+                     actual.chip_h.size() != expected.chip_h.size() ||
+                     actual.iota_h.size() != expected.iota_h.size())) {
                     self->finish(false, "magnetic field result shape mismatch");
                     return;
                 }
                 float max_error = 0.0F;
                 bool finite = true;
                 for (std::size_t i = 0; i < actual.fields.size(); ++i) {
-                    max_error = std::max(
-                        max_error,
-                        std::abs(actual.fields[i] - expected.fields[i]));
+                    if (!self->production_solve_) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                    }
                     finite &= std::isfinite(actual.fields[i]);
                 }
                 for (std::size_t i = 0; i < actual.chip_h.size(); ++i) {
-                    max_error = std::max(
-                        {max_error,
-                         std::abs(actual.chip_h[i] - expected.chip_h[i]),
-                         std::abs(actual.iota_h[i] - expected.iota_h[i])});
+                    if (!self->production_solve_) {
+                        max_error = std::max(
+                            {max_error,
+                             std::abs(actual.chip_h[i] - expected.chip_h[i]),
+                             std::abs(actual.iota_h[i] - expected.iota_h[i])});
+                    }
                     finite &= std::isfinite(actual.chip_h[i]) &&
                               std::isfinite(actual.iota_h[i]);
                 }
@@ -2092,11 +2107,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                      " finite=" + (finite ? "true" : "false"));
                     return;
                 }
-                std::printf(
-                    "  %s magnetic field+pressure: PASS "
-                    "(max |GPU-CPU| = %.3e)\n",
-                    self->active_case_name_.c_str(),
-                    static_cast<double>(max_error));
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s magnetic field+pressure: PASS "
+                        "(max |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_error));
+                }
                 self->initialized_stage_.profiles.chip_h = actual.chip_h;
                 self->initialized_stage_.profiles.iota_h = actual.iota_h;
                 if (self->initialized_stage_.prescribed_current) {
@@ -2144,19 +2161,22 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::AxisymmetricForceResult{}
                         : cumes::webgpu::axisymmetric_force_reference(
                               self->force_case_);
-                if (actual.fields.size() != expected.fields.size()) {
+                if (!self->production_solve_ &&
+                    actual.fields.size() != expected.fields.size()) {
                     self->finish(false, "force result shape mismatch");
                     return;
                 }
                 float max_error = 0.0F;
                 bool finite = true;
                 for (std::size_t i = 0; i < actual.fields.size(); ++i) {
-                    max_error = std::max(
-                        max_error,
-                        std::abs(actual.fields[i] - expected.fields[i]));
+                    if (!self->production_solve_) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                    }
                     finite &= std::isfinite(actual.fields[i]);
                 }
                 if (max_error > 5.0e-4F || !finite) {
@@ -2164,11 +2184,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                             std::to_string(max_error));
                     return;
                 }
-                std::printf(
-                    "  %s MHD force: PASS "
-                    "(max |GPU-CPU| = %.3e)\n",
-                    self->active_case_name_.c_str(),
-                    static_cast<double>(max_error));
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s MHD force: PASS "
+                        "(max |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_error));
+                }
                 self->stage_force_fields_ = actual.fields;
                 self->run_solovev_forward(std::move(actual.fields));
             });
@@ -2230,11 +2252,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, std::move(error));
                     return;
                 }
-                const auto expected =
-                    cumes::webgpu::axisymmetric_forward_reference(
-                        self->solver_forward_case_);
-                self->finish_stage_forward(std::move(actual.residual),
-                                           expected.residual);
+                self->finish_stage_forward(
+                    std::move(actual.residual),
+                    self->production_solve_
+                        ? std::vector<float>{}
+                        : cumes::webgpu::axisymmetric_forward_reference(
+                              self->solver_forward_case_)
+                              .residual);
             });
     }
 
@@ -2262,10 +2286,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                               std::to_string(max_error));
             return;
         }
-        std::printf(
-            "  %s spectral residual projection: PASS "
-            "(max |GPU-CPU| = %.3e)\n",
-            active_case_name_.c_str(), static_cast<double>(max_error));
+        if (!production_solve_) {
+            std::printf(
+                "  %s spectral residual projection: PASS "
+                "(max |GPU-CPU| = %.3e)\n",
+                active_case_name_.c_str(), static_cast<double>(max_error));
+        }
         run_residual_decomposition(std::move(residual));
     }
 
@@ -2288,12 +2314,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::ResidualDecompositionResult{}
                         : cumes::webgpu::residual_decomposition_reference(
                               self->residual_case_);
                 float max_error = 0.0F;
-                bool valid = actual.residual.size() == expected.residual.size();
-                if (valid) {
+                bool valid = self->production_solve_ ||
+                             actual.residual.size() == expected.residual.size();
+                if (valid && !self->production_solve_) {
                     for (std::size_t i = 0; i < actual.residual.size(); ++i) {
                         max_error =
                             std::max(max_error, std::abs(actual.residual[i] -
@@ -2302,22 +2329,31 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 double max_norm_error = 0.0;
                 for (int group = 0; group < 3; ++group) {
-                    max_norm_error = std::max(
-                        max_norm_error,
-                        std::abs(actual.raw_norm[group] -
-                                 expected.raw_norm[group]) /
-                            (1.0 + std::abs(expected.raw_norm[group])));
+                    if (!self->production_solve_) {
+                        max_norm_error = std::max(
+                            max_norm_error,
+                            std::abs(actual.raw_norm[group] -
+                                     expected.raw_norm[group]) /
+                                (1.0 + std::abs(expected.raw_norm[group])));
+                    }
                     valid &= std::isfinite(actual.raw_norm[group]);
+                }
+                if (self->production_solve_) {
+                    valid &= std::all_of(
+                        actual.residual.begin(), actual.residual.end(),
+                        [](float value) { return std::isfinite(value); });
                 }
                 if (!valid || max_error > 5.0e-4F || max_norm_error > 5.0e-4) {
                     self->finish(false, "residual decomposition mismatch: " +
                                             std::to_string(max_error));
                     return;
                 }
-                std::printf(
-                    "  decomposed residual+double norms: PASS "
-                    "(max |GPU-CPU| = %.3e)\n",
-                    static_cast<double>(max_error));
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  decomposed residual+double norms: PASS "
+                        "(max |GPU-CPU| = %.3e)\n",
+                        static_cast<double>(max_error));
+                }
                 self->run_preconditioner_elements();
             });
     }
@@ -2349,7 +2385,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::AxisymmetricPreconditionerElements{}
                         : cumes::webgpu::
                               axisymmetric_preconditioner_element_reference(
                                   self->preconditioner_case_);
@@ -2366,25 +2402,40 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         valid &= std::isfinite(gpu[i]);
                     }
                 };
-                compare(actual.ard, expected.ard);
-                compare(actual.brd, expected.brd);
-                compare(actual.azd, expected.azd);
-                compare(actual.bzd, expected.bzd);
-                compare(actual.cxd, expected.cxd);
-                compare(actual.arm, expected.arm);
-                compare(actual.brm, expected.brm);
-                compare(actual.azm, expected.azm);
-                compare(actual.bzm, expected.bzm);
+                if (!self->production_solve_) {
+                    compare(actual.ard, expected.ard);
+                    compare(actual.brd, expected.brd);
+                    compare(actual.azd, expected.azd);
+                    compare(actual.bzd, expected.bzd);
+                    compare(actual.cxd, expected.cxd);
+                    compare(actual.arm, expected.arm);
+                    compare(actual.brm, expected.brm);
+                    compare(actual.azm, expected.azm);
+                    compare(actual.bzm, expected.bzm);
+                } else {
+                    const auto finite = [](const auto& values) {
+                        return std::all_of(
+                            values.begin(), values.end(),
+                            [](float value) { return std::isfinite(value); });
+                    };
+                    valid = finite(actual.ard) && finite(actual.brd) &&
+                            finite(actual.azd) && finite(actual.bzd) &&
+                            finite(actual.cxd) && finite(actual.arm) &&
+                            finite(actual.brm) && finite(actual.azm) &&
+                            finite(actual.bzm);
+                }
                 if (!valid || max_scaled_error > 5.0e-5F) {
                     self->finish(false, "preconditioner element mismatch: " +
                                             std::to_string(max_scaled_error));
                     return;
                 }
-                std::printf(
-                    "  %s radial preconditioner elements: PASS "
-                    "(max scaled |GPU-CPU| = %.3e)\n",
-                    self->active_case_name_.c_str(),
-                    static_cast<double>(max_scaled_error));
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s radial preconditioner elements: PASS "
+                        "(max scaled |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_scaled_error));
+                }
                 self->preconditioner_elements_ = std::move(actual);
                 self->run_preconditioner_matrix();
             });
@@ -2417,12 +2468,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::AxisymmetricPreconditionerMatrix{}
                         : cumes::webgpu::
                               axisymmetric_preconditioner_matrix_reference(
                                   self->preconditioner_matrix_case_);
                 float max_scaled_error = 0.0F;
-                bool valid = actual.first_surface == expected.first_surface;
+                bool valid = self->production_solve_ ||
+                             actual.first_surface == expected.first_surface;
                 const auto compare = [&max_scaled_error, &valid](
                                          const auto& gpu, const auto& cpu) {
                     valid &= gpu.size() == cpu.size();
@@ -2434,24 +2486,39 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         valid &= std::isfinite(gpu[i]);
                     }
                 };
-                compare(actual.upper_r, expected.upper_r);
-                compare(actual.diagonal_r, expected.diagonal_r);
-                compare(actual.lower_r, expected.lower_r);
-                compare(actual.upper_z, expected.upper_z);
-                compare(actual.diagonal_z, expected.diagonal_z);
-                compare(actual.lower_z, expected.lower_z);
-                compare(actual.lambda, expected.lambda);
-                compare(actual.scale, expected.scale);
+                if (!self->production_solve_) {
+                    compare(actual.upper_r, expected.upper_r);
+                    compare(actual.diagonal_r, expected.diagonal_r);
+                    compare(actual.lower_r, expected.lower_r);
+                    compare(actual.upper_z, expected.upper_z);
+                    compare(actual.diagonal_z, expected.diagonal_z);
+                    compare(actual.lower_z, expected.lower_z);
+                    compare(actual.lambda, expected.lambda);
+                    compare(actual.scale, expected.scale);
+                } else {
+                    const auto finite = [](const auto& values) {
+                        return std::all_of(
+                            values.begin(), values.end(),
+                            [](float value) { return std::isfinite(value); });
+                    };
+                    valid =
+                        finite(actual.upper_r) && finite(actual.diagonal_r) &&
+                        finite(actual.lower_r) && finite(actual.upper_z) &&
+                        finite(actual.diagonal_z) && finite(actual.lower_z) &&
+                        finite(actual.lambda) && finite(actual.scale);
+                }
                 if (!valid || max_scaled_error > 2.0e-4F) {
                     self->finish(false, "preconditioner matrix mismatch: " +
                                             std::to_string(max_scaled_error));
                     return;
                 }
-                std::printf(
-                    "  %s tridiagonal+lambda preconditioner: PASS "
-                    "(max scaled |GPU-CPU| = %.3e)\n",
-                    self->active_case_name_.c_str(),
-                    static_cast<double>(max_scaled_error));
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s tridiagonal+lambda preconditioner: PASS "
+                        "(max scaled |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_scaled_error));
+                }
                 self->preconditioner_matrix_ = std::move(actual);
                 self->run_axisymmetric_constraint();
             });
@@ -2602,11 +2669,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, std::move(error));
                     return;
                 }
-                const auto expected =
-                    cumes::webgpu::axisymmetric_forward_reference(
-                        self->constraint_forward_case_);
-                self->finish_constraint_forward(std::move(actual.residual),
-                                                expected.residual);
+                self->finish_constraint_forward(
+                    std::move(actual.residual),
+                    self->production_solve_
+                        ? std::vector<float>{}
+                        : cumes::webgpu::axisymmetric_forward_reference(
+                              self->constraint_forward_case_)
+                              .residual);
             });
     }
 
@@ -2631,10 +2700,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                               std::to_string(max_error));
             return;
         }
-        std::printf(
-            "  constrained spectral residual projection: PASS "
-            "(max |GPU-CPU| = %.3e)\n",
-            static_cast<double>(max_error));
+        if (!production_solve_) {
+            std::printf(
+                "  constrained spectral residual projection: PASS "
+                "(max |GPU-CPU| = %.3e)\n",
+                static_cast<double>(max_error));
+        }
         run_constraint_residual_decomposition(std::move(residual));
     }
 
@@ -2660,12 +2731,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::ResidualDecompositionResult{}
                         : cumes::webgpu::residual_decomposition_reference(
                               self->constraint_residual_case_);
                 float max_error = 0.0F;
-                bool valid = actual.residual.size() == expected.residual.size();
-                if (valid) {
+                bool valid = self->production_solve_ ||
+                             actual.residual.size() == expected.residual.size();
+                if (valid && !self->production_solve_) {
                     for (std::size_t i = 0; i < actual.residual.size(); ++i) {
                         max_error =
                             std::max(max_error, std::abs(actual.residual[i] -
@@ -2676,6 +2748,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(
                         false, "constrained residual decomposition mismatch: " +
                                    std::to_string(max_error));
+                    return;
+                }
+                if (self->production_solve_ &&
+                    !std::all_of(
+                        actual.residual.begin(), actual.residual.end(),
+                        [](float value) { return std::isfinite(value); })) {
+                    self->finish(false, "constrained residual is nonfinite");
                     return;
                 }
                 self->invariant_raw_ = actual.raw_norm;
@@ -2703,15 +2782,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::AxisymmetricPreconditionerApplyResult{}
                         : cumes::webgpu::
                               axisymmetric_preconditioner_apply_reference(
                                   self->preconditioner_apply_case_);
                 float max_scaled_error = 0.0F;
                 std::size_t max_error_index = 0;
-                bool valid = actual.residual.size() == expected.residual.size();
-                valid &= actual.breakdown_count == expected.breakdown_count;
-                if (valid) {
+                bool valid = self->production_solve_ ||
+                             actual.residual.size() == expected.residual.size();
+                if (!self->production_solve_) {
+                    valid &= actual.breakdown_count == expected.breakdown_count;
+                }
+                if (valid && !self->production_solve_) {
                     for (std::size_t i = 0; i < actual.residual.size(); ++i) {
                         const float error =
                             std::abs(actual.residual[i] -
@@ -2723,6 +2805,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         }
                         valid &= std::isfinite(actual.residual[i]);
                     }
+                } else if (self->production_solve_) {
+                    valid = std::all_of(
+                        actual.residual.begin(), actual.residual.end(),
+                        [](float value) { return std::isfinite(value); });
                 }
                 if (!valid || actual.breakdown_count != 0 ||
                     max_scaled_error > 2.0e-4F) {
@@ -2731,7 +2817,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                             ? actual.residual[max_error_index]
                             : 0.0F;
                     const float expected_value =
-                        max_error_index < expected.residual.size()
+                        !self->production_solve_ &&
+                                max_error_index < expected.residual.size()
                             ? expected.residual[max_error_index]
                             : 0.0F;
                     char detail[256];
@@ -2742,7 +2829,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         static_cast<double>(max_scaled_error), max_error_index,
                         static_cast<double>(actual_value),
                         static_cast<double>(expected_value),
-                        actual.breakdown_count, expected.breakdown_count);
+                        actual.breakdown_count,
+                        self->production_solve_ ? 0 : expected.breakdown_count);
                     self->finish(false, detail);
                     return;
                 }
@@ -2809,11 +2897,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 self->pending_decision_ = self->controller_->decide_restart(
                     self->preconditioned_normalized_.data(),
                     self->invariant_normalized_.data());
-                std::printf(
-                    "  %s preconditioned residual: PASS "
-                    "(max scaled |GPU-CPU| = %.3e)\n",
-                    self->active_case_name_.c_str(),
-                    static_cast<double>(max_scaled_error));
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s preconditioned residual: PASS "
+                        "(max scaled |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_scaled_error));
+                }
                 self->run_descent(std::move(actual.residual));
             });
     }
@@ -2842,7 +2932,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected =
                     self->production_solve_
-                        ? actual
+                        ? cumes::webgpu::AxisymmetricDescentResult{}
                         : cumes::webgpu::axisymmetric_descent_reference(
                               self->descent_case_);
                 float max_scaled_error = 0.0F;
@@ -2858,8 +2948,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         valid &= std::isfinite(gpu[i]);
                     }
                 };
-                compare(actual.state, expected.state);
-                compare(actual.velocity, expected.velocity);
+                if (!self->production_solve_) {
+                    compare(actual.state, expected.state);
+                    compare(actual.velocity, expected.velocity);
+                } else {
+                    valid =
+                        std::all_of(
+                            actual.state.begin(), actual.state.end(),
+                            [](float value) { return std::isfinite(value); }) &&
+                        std::all_of(
+                            actual.velocity.begin(), actual.velocity.end(),
+                            [](float value) { return std::isfinite(value); });
+                }
                 const std::size_t family_values =
                     static_cast<std::size_t>(self->descent_case_.ns) *
                     self->descent_case_.mpol * (self->descent_case_.ntor + 1);
@@ -2883,11 +2983,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                             std::to_string(max_scaled_error));
                     return;
                 }
-                std::printf(
-                    "  %s accelerated descent: PASS "
-                    "(max scaled |GPU-CPU| = %.3e)\n",
-                    self->active_case_name_.c_str(),
-                    static_cast<double>(max_scaled_error));
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s accelerated descent: PASS "
+                        "(max scaled |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_scaled_error));
+                }
                 if (self->pending_decision_.do_refresh) {
                     self->checkpoint_state_ = actual.state;
                 }
@@ -2900,12 +3002,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 self->controller_->after_descent(self->pending_decision_);
                 ++self->completed_passes_;
-                std::printf(
-                    "  host controller: PASS (iter=%d, FSQR=%.3e, "
-                    "delta=%.3e)\n",
-                    self->controller_->effective_iteration(),
-                    self->invariant_normalized_[0],
-                    self->controller_->delta_t());
+                const int iteration = self->controller_->effective_iteration();
+                if (!self->production_solve_ || iteration <= 3 ||
+                    iteration % 25 == 0) {
+                    std::printf(
+                        "  host controller: PASS (iter=%d, FSQR=%.3e, "
+                        "delta=%.3e)\n",
+                        iteration, self->invariant_normalized_[0],
+                        self->controller_->delta_t());
+                }
                 if (self->w7x_stage_slice_ && self->completed_passes_ == 2) {
                     std::printf(
                         "  W7-X controller-complete two-pass slice: PASS "
