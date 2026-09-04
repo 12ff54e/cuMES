@@ -61,6 +61,10 @@ EM_JS(int, publish_browser_output, (const char* path), {
     }
 });
 
+EM_JS(int, requested_w7x_solve, (), {
+    return new URLSearchParams(window.location.search).get('solve') == 'w7x';
+});
+
 #ifndef CUMES_GIT_REVISION
 #define CUMES_GIT_REVISION ""
 #endif
@@ -130,6 +134,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 self->device_ = std::move(device);
+                if (requested_w7x_solve() != 0) {
+                    self->run_selected_w7x_solver();
+                    return;
+                }
                 self->cases_ = make_cases();
                 std::printf(
                     "adapter/device ready; running %zu radial-transfer "
@@ -1146,6 +1154,49 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
+    void run_selected_w7x_solver() {
+        try {
+            cumes::SolverOptions options;
+            options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+            auto parsed = cumes::read_problem_spec("/inputs/w7x.json", options);
+            if (parsed.report.has_errors()) {
+                const auto errors = parsed.report.errors();
+                finish(false, "W7-X JSON mapping failed: " + errors.front());
+                return;
+            }
+            for (auto& stage : parsed.spec.stages) {
+                stage.tolerance = std::max(
+                    stage.tolerance, cumes::tolerance_floor(options.precision));
+            }
+            auto validated = cumes::validate(std::move(parsed.spec), options);
+            if (!validated.has_value()) {
+                const auto errors = validated.error().errors();
+                finish(false, "W7-X validation failed: " +
+                                  (errors.empty() ? std::string("unknown error")
+                                                  : errors.front()));
+                return;
+            }
+            problem_.emplace(std::move(validated.value()));
+            active_case_name_ = "W7-X";
+            active_input_path_ = "inputs/w7x.json";
+            stage_index_ = 0;
+            total_iterations_ = 0;
+            stage_iterations_.clear();
+            stage_reports_.clear();
+            initialized_stage_ =
+                cumes::webgpu::initialize_stage(*problem_, stage_index_);
+            reset_stage_state();
+            std::printf(
+                "running complete W7-X fixed-boundary multigrid solve "
+                "(%zu stages)\n",
+                problem_->stage_shapes().size());
+            run_stage_inverse();
+        } catch (const std::exception& error) {
+            finish(false,
+                   "W7-X solver startup failed: " + std::string(error.what()));
+        }
+    }
+
     void run_w7x_initialization() {
         try {
             cumes::SolverOptions options;
@@ -1580,6 +1631,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     static_cast<double>(max_error));
                 self->initialized_stage_ = self->w7x_stage_;
                 self->w7x_stage_slice_ = true;
+                self->active_case_name_ = "W7-X";
                 self->reset_stage_state();
                 self->run_stage_inverse();
             });
@@ -1609,6 +1661,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             problem_.emplace(std::move(validated.value()));
+            active_case_name_ = "Solovev";
+            active_input_path_ = "inputs/solovev.json";
             const auto& boundary = problem_->boundary();
             initialized_stage_ =
                 cumes::webgpu::initialize_axisymmetric_stage(*problem_, 0);
@@ -1669,7 +1723,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     void run_stage_inverse() {
         if (attempted_passes_ >= initialized_stage_.max_iterations) {
             finish(false,
-                   "Solovev stage exhausted its iteration limit at iter=" +
+                   active_case_name_ +
+                       " stage exhausted its iteration limit at iter=" +
                        std::to_string(controller_->effective_iteration()) +
                        " FSQR=" + std::to_string(invariant_normalized_[0]));
             return;
@@ -1768,8 +1823,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             return;
         }
         std::printf("  %s pass %d inverse: PASS (max |GPU-CPU| = %.3e)\n",
-                    w7x_stage_slice_ ? "W7-X" : "Solovev",
-                    completed_passes_ + 1, static_cast<double>(max_error));
+                    active_case_name_.c_str(), completed_passes_ + 1,
+                    static_cast<double>(max_error));
         stage_r_con_ = std::move(actual.r_con);
         stage_z_con_ = std::move(actual.z_con);
         run_base_geometry(std::move(actual.geometry));
@@ -1862,7 +1917,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  %s half-grid base geometry: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
-                    self->w7x_stage_slice_ ? "W7-X" : "Solovev",
+                    self->active_case_name_.c_str(),
                     static_cast<double>(max_error));
                 self->run_magnetic_field(std::move(actual.fields));
             });
@@ -1927,10 +1982,28 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  %s magnetic field+pressure: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
-                    self->w7x_stage_slice_ ? "W7-X" : "Solovev",
+                    self->active_case_name_.c_str(),
                     static_cast<double>(max_error));
                 self->initialized_stage_.profiles.chip_h = actual.chip_h;
                 self->initialized_stage_.profiles.iota_h = actual.iota_h;
+                if (self->initialized_stage_.prescribed_current) {
+                    auto& profiles = self->initialized_stage_.profiles;
+                    const int ns = self->initialized_stage_.ns;
+                    profiles.iota_f[0] =
+                        1.5F * profiles.iota_h[0] - 0.5F * profiles.iota_h[1];
+                    for (int surface = 1; surface < ns - 1; ++surface) {
+                        profiles.iota_f[surface] =
+                            0.5F * (profiles.iota_h[surface] +
+                                    profiles.iota_h[surface - 1]);
+                        profiles.chi_f[surface] =
+                            0.5F * (profiles.chip_h[surface] +
+                                    profiles.chip_h[surface - 1]);
+                    }
+                    profiles.iota_f[ns - 1] = 1.5F * profiles.iota_h[ns - 2] -
+                                              0.5F * profiles.iota_h[ns - 3];
+                    profiles.chi_f[ns - 1] = 2.0F * profiles.chip_h[ns - 2] -
+                                             profiles.chip_h[ns - 3];
+                }
                 self->run_axisymmetric_force(std::move(actual.fields));
             });
     }
@@ -1979,7 +2052,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  %s MHD force: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
-                    self->w7x_stage_slice_ ? "W7-X" : "Solovev",
+                    self->active_case_name_.c_str(),
                     static_cast<double>(max_error));
                 self->stage_force_fields_ = actual.fields;
                 self->run_solovev_forward(std::move(actual.fields));
@@ -2070,8 +2143,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         std::printf(
             "  %s spectral residual projection: PASS "
             "(max |GPU-CPU| = %.3e)\n",
-            w7x_stage_slice_ ? "W7-X" : "Solovev",
-            static_cast<double>(max_error));
+            active_case_name_.c_str(), static_cast<double>(max_error));
         run_residual_decomposition(std::move(residual));
     }
 
@@ -2179,7 +2251,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  %s radial preconditioner elements: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
-                    self->w7x_stage_slice_ ? "W7-X" : "Solovev",
+                    self->active_case_name_.c_str(),
                     static_cast<double>(max_scaled_error));
                 self->preconditioner_elements_ = std::move(actual);
                 self->run_preconditioner_matrix();
@@ -2243,7 +2315,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  %s tridiagonal+lambda preconditioner: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
-                    self->w7x_stage_slice_ ? "W7-X" : "Solovev",
+                    self->active_case_name_.c_str(),
                     static_cast<double>(max_scaled_error));
                 self->preconditioner_matrix_ = std::move(actual);
                 self->run_axisymmetric_constraint();
@@ -2326,7 +2398,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  %s constraint refresh+force: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
-                    self->w7x_stage_slice_ ? "W7-X" : "Solovev",
+                    self->active_case_name_.c_str(),
                     static_cast<double>(max_error));
                 self->constraint_r_con0_ = actual.r_con0;
                 self->constraint_z_con0_ = actual.z_con0;
@@ -2557,7 +2629,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  %s preconditioned residual: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
-                    self->w7x_stage_slice_ ? "W7-X" : "Solovev",
+                    self->active_case_name_.c_str(),
                     static_cast<double>(max_scaled_error));
                 self->run_descent(std::move(actual.residual));
             });
@@ -2629,7 +2701,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  %s accelerated descent: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
-                    self->w7x_stage_slice_ ? "W7-X" : "Solovev",
+                    self->active_case_name_.c_str(),
                     static_cast<double>(max_scaled_error));
                 if (self->pending_decision_.do_refresh) {
                     self->checkpoint_state_ = actual.state;
@@ -2698,9 +2770,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         stage_report.restarts = controller_->restart_events();
         stage_reports_.push_back(std::move(stage_report));
         std::printf(
-            "  Solovev stage %zu/%zu converged: iter=%d residual=(%.3e, "
+            "  %s stage %zu/%zu converged: iter=%d residual=(%.3e, "
             "%.3e, %.3e)\n",
-            stage_index_ + 1, problem_->stage_shapes().size(), stage_iterations,
+            active_case_name_.c_str(), stage_index_ + 1,
+            problem_->stage_shapes().size(), stage_iterations,
             invariant_normalized_[0], invariant_normalized_[1],
             invariant_normalized_[2]);
         if (stage_index_ + 1 == problem_->stage_shapes().size()) {
@@ -2710,12 +2783,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             char detail[320];
-            std::snprintf(
-                detail, sizeof(detail),
-                "Solovev multigrid converged in %d effective iterations; "
-                "final residual=(%.3e, %.3e, %.3e)",
-                total_iterations_, invariant_normalized_[0],
-                invariant_normalized_[1], invariant_normalized_[2]);
+            std::snprintf(detail, sizeof(detail),
+                          "%s multigrid converged in %d effective iterations; "
+                          "final residual=(%.3e, %.3e, %.3e)",
+                          active_case_name_.c_str(), total_iterations_,
+                          invariant_normalized_[0], invariant_normalized_[1],
+                          invariant_normalized_[2]);
             finish(true, detail);
             return;
         }
@@ -2725,8 +2798,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         cumes::webgpu::ProlongationCase transfer;
         transfer.ns_old = initialized_stage_.ns;
         transfer.ns_new = next_shape.ns;
-        transfer.mnmax = initialized_stage_.mpol;
-        transfer.ntor = 0;
+        transfer.mnmax =
+            initialized_stage_.mpol * (initialized_stage_.ntor + 1);
+        transfer.ntor = initialized_stage_.ntor;
         transfer.interpolation = cumes::webgpu::RadialInterpolation::LINEAR;
         transfer.state = initialized_stage_.state;
         const auto self = shared_from_this();
@@ -2759,16 +2833,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 self->stage_index_ = next_stage;
-                self->initialized_stage_ =
-                    cumes::webgpu::initialize_axisymmetric_stage(
-                        *self->problem_, next_stage);
+                self->initialized_stage_ = cumes::webgpu::initialize_stage(
+                    *self->problem_, next_stage);
                 self->initialized_stage_.state = std::move(prolonged.state);
                 self->reset_stage_state();
                 std::printf(
-                    "  Solovev stage prolongation: PASS (ns=%d -> %d, max "
+                    "  %s stage prolongation: PASS (ns=%d -> %d, max "
                     "|GPU-CPU| = %.3e)\n",
-                    transfer.ns_old, transfer.ns_new,
-                    static_cast<double>(max_error));
+                    self->active_case_name_.c_str(), transfer.ns_old,
+                    transfer.ns_new, static_cast<double>(max_error));
                 self->run_stage_inverse();
             });
     }
@@ -2776,7 +2849,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::string publish_output() {
         cumes::EquilibriumSnapshot snapshot;
         snapshot.ns = initialized_stage_.ns;
-        snapshot.mnmax = initialized_stage_.mpol;
+        snapshot.mnmax =
+            initialized_stage_.mpol * (initialized_stage_.ntor + 1);
         const std::size_t family_values =
             static_cast<std::size_t>(snapshot.ns) * snapshot.mnmax;
         for (std::size_t component = 0;
@@ -2789,7 +2863,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         cumes::DerivedFieldInputs fields;
         fields.ns = initialized_stage_.ns;
         fields.ntheta = initialized_stage_.ntheta;
-        fields.nzeta = 1;
+        fields.nzeta = initialized_stage_.nzeta;
         fields.nfp = problem_->spec().nfp;
         fields.delta_s = initialized_stage_.profiles.delta_s;
         fields.mu0 = static_cast<double>(DeviceParams<float>::MU_0);
@@ -2798,9 +2872,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         fields.sqrt_s_half.assign(initialized_stage_.profiles.sqrt_s_h.begin(),
                                   initialized_stage_.profiles.sqrt_s_h.end());
         const std::size_t full_points =
-            static_cast<std::size_t>(fields.ns) * fields.ntheta;
+            static_cast<std::size_t>(fields.ns) * fields.ntheta * fields.nzeta;
         const std::size_t half_points =
-            static_cast<std::size_t>(fields.ns - 1) * fields.ntheta;
+            static_cast<std::size_t>(fields.ns - 1) * fields.ntheta *
+            fields.nzeta;
         const auto copy_field = [](const std::vector<float>& source,
                                    std::size_t field, std::size_t count) {
             const auto begin = source.begin() + field * count;
@@ -2846,7 +2921,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         report.build.scalar_type = "float";
         report.build.precision_policy = CUMES_PRECISION_POLICY_NAME;
         report.build.compile_flags = CUMES_PRECISION_FLAGS;
-        report.input.source_path = "inputs/solovev.json";
+        report.input.source_path = active_input_path_;
         report.runtime.gpu_name = "WebGPU adapter";
         report.runtime.runtime = "emdawnwebgpu";
         report.runtime.toolkit = "Emscripten";
@@ -2979,6 +3054,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<cumes::StageReport> stage_reports_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
+    std::string active_case_name_ = "Solovev";
+    std::string active_input_path_ = "inputs/solovev.json";
     std::string gpu_error_;
 };
 
