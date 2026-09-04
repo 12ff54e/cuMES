@@ -389,6 +389,20 @@ verify the intermediate transform and final state bitwise, then measure it
 alone and with tile 4. Reject both changes if the combined production latency
 still misses 5%.
 
+The derived-table variant retained the exact hash but regressed median latency
+by about 0.5%; combining it with tile 4 was also slower than tile 4 alone. The
+cached poloidal tables are not a limiting input source, so both source changes
+are removed.
+
+The single-solver gate does not yet answer whether tile 4 helps meow's actual
+four-stream Jacobian throughput: smaller forward-reduction blocks may permit
+more useful inter-solver residency than the isolated benchmark exposes. Build
+an otherwise identical temporary cuMES package with tile 4, run the controlled
+QA/QH mode-1 four-worker Jacobians against baseline, and require identical
+matrices and nonlinear iteration counts. Adopt the static tile only if this
+embedding workload clears 5% in repeated Release runs without violating the
+single-solver regression gate.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
