@@ -67,11 +67,18 @@ browser-validated:
   constraint reference/`tcon`, cached preconditioner, rollback checkpoint, and
   controller state; WebGPU and native CUDA mixed-float both report the
   effective-iteration-3 residual triple `(1.820e-03, 2.723e-04, 4.029e-04)`;
+- a controller-complete coarse-grid loop with top-of-pass maintenance restore,
+  oriented-Jacobian recovery, nonfinite recovery, post-descent checkpoint
+  refresh/restart, iteration-limit failure, and convergence termination;
+  WebGPU and native CUDA mixed-float both converge the `ns=5` Solovev stage at
+  effective iteration 72, with terminal residual triples
+  `(9.947e-07, 4.857e-07, 3.318e-07)` and
+  `(9.912e-07, 4.861e-07, 3.320e-07)` respectively;
 - an independent C++ float reference evaluated by the browser self-test.
 
-This milestone parses and initializes the embedded Solovev input, but does
-**not** yet run equilibrium iterations. It is a functioning compute-backend
-slice, not a complete cuMES WebGPU solver.
+This milestone parses and initializes the embedded Solovev input and converges
+its first axisymmetric multigrid stage. It is a functioning compute-backend
+slice, not yet a complete cuMES WebGPU solver.
 
 ## Build and run
 
@@ -149,10 +156,10 @@ The recommended dependency order is:
    parsing, cold seeding, and host profile evaluation are complete);
 3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
    base geometry are complete);
-4. terminal/restart branches and an unbounded axisymmetric stage loop (the
-   operator DAG and persistent host-visible pass state are complete), then
-   persistent stage-owned GPU buffers and batched command encoding;
-5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
+4. persistent stage-owned GPU buffers and batched command encoding (the
+   controller-complete fixed-boundary axisymmetric stage loop and its
+   relaxed-float coarse Solovev gate are complete);
+5. all three fixed-boundary Solovev multigrid stages and result publication;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;
 7. 3-D W7-X qualification and only then free-boundary/NESTOR integration.

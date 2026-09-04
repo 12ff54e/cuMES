@@ -24,9 +24,10 @@ two-right-hand-side Thomas solves. The resulting residual drives a validated
 Garabedian accelerated-descent update with fixed-boundary and gauge contracts.
 Force normalization and the production double host controller now consume the
 mapped pass record, including the per-pass m=1 axis extrapolation contract.
-The browser gate advances two complete passes with persistent velocity,
-constraint, preconditioner, checkpoint, and controller state and matches the
-native mixed-float residual triple at effective iteration 3.
+The browser gate now runs the controller-complete coarse Solovev stage with
+persistent velocity, constraint, preconditioner, and rollback state. It
+converges at effective iteration 72, matching native CUDA mixed-float's
+controller decision with a closely equivalent terminal residual triple.
 See
 [the WebGPU port status](docs/webgpu-port.md).
 

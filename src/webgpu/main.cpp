@@ -552,6 +552,22 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_stage_inverse() {
+        if (attempted_passes_ >= initialized_stage_.max_iterations) {
+            finish(false,
+                   "Solovev stage exhausted its iteration limit at iter=" +
+                       std::to_string(controller_->effective_iteration()) +
+                       " FSQR=" + std::to_string(invariant_normalized_[0]));
+            return;
+        }
+        ++attempted_passes_;
+        if (controller_->next_schedule()) {
+            restore_checkpoint();
+            std::printf(
+                "  controller maintenance restore: iter=%d delta=%.3e\n",
+                controller_->effective_iteration(), controller_->delta_t());
+            run_stage_inverse();
+            return;
+        }
         // CUDA's extrapolateTowardsAxis mutates the physical state immediately
         // before every inverse pass.
         const std::size_t family_values =
@@ -660,6 +676,37 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                    (axisymmetric_guv_zero ? "true" : "false") +
                                    " finite_jacobian=" +
                                    (finite_jacobian ? "true" : "false"));
+                    return;
+                }
+                cumes::JacobianStatus<double> jacobian;
+                jacobian.min_oriented = std::numeric_limits<double>::infinity();
+                jacobian.max_abs = 0.0;
+                jacobian.min_index = -1;
+                jacobian.nonfinite_count = 0.0;
+                for (std::size_t i = 0; i < half_points; ++i) {
+                    const double value = static_cast<double>(gsqrt[i]);
+                    if (!std::isfinite(value)) {
+                        jacobian.nonfinite_count += 1.0;
+                        continue;
+                    }
+                    const double oriented = -value;
+                    if (oriented < jacobian.min_oriented) {
+                        jacobian.min_oriented = oriented;
+                        jacobian.min_index = static_cast<int>(i);
+                    }
+                    jacobian.max_abs =
+                        std::max(jacobian.max_abs, std::abs(value));
+                }
+                if (self->controller_->jacobian_invalid(
+                        jacobian, self->initialized_stage_.ntheta)) {
+                    self->restore_checkpoint();
+                    std::printf(
+                        "  invalid Jacobian restore: iter=%d min=%.3e "
+                        "max=%.3e delta=%.3e\n",
+                        self->controller_->effective_iteration(),
+                        jacobian.min_oriented, jacobian.max_abs,
+                        self->controller_->delta_t());
+                    self->run_stage_inverse();
                     return;
                 }
                 std::printf(
@@ -1232,10 +1279,26 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->initialized_stage_.profiles.delta_s};
                 const auto verdict = self->controller_->classify_invariant(
                     self->invariant_normalized_.data());
-                if (verdict.nonfinite || verdict.converged) {
-                    self->finish(false,
-                                 "unexpected terminal first-pass controller "
-                                 "verdict");
+                if (verdict.nonfinite) {
+                    self->restore_checkpoint();
+                    std::printf(
+                        "  nonfinite residual restore: iter=%d delta=%.3e\n",
+                        self->controller_->effective_iteration(),
+                        self->controller_->delta_t());
+                    self->run_stage_inverse();
+                    return;
+                }
+                if (verdict.converged) {
+                    char detail[256];
+                    std::snprintf(
+                        detail, sizeof(detail),
+                        "Solovev axisymmetric stage converged at iter=%d "
+                        "residual=(%.3e, %.3e, %.3e)",
+                        self->controller_->effective_iteration(),
+                        self->invariant_normalized_[0],
+                        self->invariant_normalized_[1],
+                        self->invariant_normalized_[2]);
+                    self->finish(true, detail);
                     return;
                 }
                 self->pending_decision_ = self->controller_->decide_restart(
@@ -1319,9 +1382,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 if (self->pending_decision_.reason !=
                     cumes::RestartReason::NONE) {
-                    self->initialized_stage_.state = self->checkpoint_state_;
-                    self->stage_velocity_.assign(
-                        self->initialized_stage_.state.size(), 0.0F);
+                    self->restore_checkpoint();
                 } else {
                     self->initialized_stage_.state = std::move(actual.state);
                     self->stage_velocity_ = std::move(actual.velocity);
@@ -1334,15 +1395,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->controller_->effective_iteration(),
                     self->invariant_normalized_[0],
                     self->controller_->delta_t());
-                if (self->completed_passes_ < 2) {
-                    self->run_stage_inverse();
-                    return;
-                }
-                self->finish(true,
-                             "two controller-driven Solovev passes through "
-                             "persistent constraint/preconditioner/descent "
-                             "state verified");
+                self->run_stage_inverse();
             });
+    }
+
+    void restore_checkpoint() {
+        initialized_stage_.state = checkpoint_state_;
+        stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
     }
 
     static void finish(bool success, const std::string& detail) {
@@ -1393,6 +1452,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_velocity_;
     std::vector<float> checkpoint_state_;
     int completed_passes_ = 0;
+    int attempted_passes_ = 0;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;

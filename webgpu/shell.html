@@ -30,7 +30,7 @@
         append('ERROR: WebGPU self-test timed out');
       }
       clearInterval(window.cumesKeepAlive);
-    }, 15000);
+    }, 180000);
     window.addEventListener('error', (event) => {
       document.body.dataset.cumesWebgpu = 'fail';
       document.body.dataset.cumesDetail = event.message;
