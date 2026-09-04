@@ -3,78 +3,216 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>cuMES WebGPU</title>
+  <meta name="color-scheme" content="dark">
+  <title>cuMES · Magnetic equilibrium in your browser</title>
   <style>
-    body { margin: 2rem auto; max-width: 60rem; padding: 0 1rem;
-           background: #10151c; color: #e8eef6; font: 16px system-ui; }
-    pre { padding: 1rem; border: 1px solid #354455; background: #090d12;
-          white-space: pre-wrap; }
+    :root { --ink:#f5f7fb; --muted:#9aa9bb; --panel:#121b28; --line:#27374b;
+      --cyan:#55d6d0; --blue:#5f8fff; --orange:#ffb65d; --danger:#ff6f75; --bg:#07101a; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; color:var(--ink); background:
+      radial-gradient(circle at 76% -10%,#17365a 0,transparent 38rem),
+      radial-gradient(circle at 8% 100%,#103837 0,transparent 32rem),var(--bg);
+      font:15px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; }
+    button,input { font:inherit; } a { color:#9cb9ff; }
+    .page { width:min(1440px,calc(100% - 40px)); margin:auto; padding:24px 0 40px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:22px; }
+    .brand { display:flex; align-items:center; gap:13px; }
+    .mark { width:38px; height:38px; border:1px solid #62ddd4; border-radius:50%;
+      display:grid; place-items:center; box-shadow:inset 0 0 18px #55d6d033; }
+    .mark::after { content:''; width:18px; height:8px; border:2px solid var(--cyan); border-radius:50%; }
+    h1 { font-size:18px; margin:0; letter-spacing:.02em; }
+    .subtitle { color:var(--muted); font-size:12px; }
+    nav { display:flex; gap:18px; font-size:13px; }
+    nav a { color:var(--muted); text-decoration:none; } nav a:hover { color:var(--ink); }
+    .workspace { display:grid; grid-template-columns:minmax(340px,.82fr) minmax(500px,1.3fr); gap:18px; }
+    .panel { border:1px solid var(--line); border-radius:16px; background:#101a27e8;
+      box-shadow:0 18px 60px #0005; overflow:hidden; }
+    .panel-head { display:flex; align-items:center; justify-content:space-between; padding:17px 20px;
+      border-bottom:1px solid var(--line); }
+    .panel-head h2 { margin:0; font-size:14px; letter-spacing:.06em; text-transform:uppercase; }
+    .tag { color:var(--cyan); background:#55d6d014; border:1px solid #55d6d044;
+      border-radius:99px; padding:3px 9px; font-size:11px; }
+    .plot-wrap { position:relative; min-height:480px; padding:16px; }
+    svg { display:block; width:100%; height:100%; min-height:448px; border-radius:10px;
+      background:linear-gradient(145deg,#0b1521,#0a121c); touch-action:none; }
+    .axis-label { fill:#7f90a6; font-size:12px; }
+    .grid-line { stroke:#29394c; stroke-width:1; }
+    .boundary { fill:#55d6d012; stroke:var(--cyan); stroke-width:2.5; filter:drop-shadow(0 0 5px #55d6d055); }
+    .handle { fill:#0b1521; stroke:#b3fff9; stroke-width:2; cursor:grab; }
+    .handle:hover,.handle.active { fill:var(--cyan); }
+    .hint { position:absolute; left:30px; bottom:27px; color:var(--muted); font-size:12px;
+      background:#07101acc; border-radius:6px; padding:5px 8px; pointer-events:none; }
+    .controls { border-top:1px solid var(--line); padding:16px 20px 19px; }
+    .control-grid { display:grid; grid-template-columns:1fr 1fr; gap:13px 18px; }
+    label { display:grid; grid-template-columns:1fr auto; gap:3px 10px; color:#c7d1df; font-size:12px; }
+    label output { color:var(--cyan); font-variant-numeric:tabular-nums; }
+    input[type=range] { grid-column:1/-1; width:100%; accent-color:var(--cyan); }
+    .coefficients { margin-top:13px; color:#75869a; white-space:pre-wrap;
+      font:11px/1.6 ui-monospace,SFMono-Regular,monospace; }
+    .actions { display:flex; align-items:center; gap:12px; margin-top:17px; }
+    .primary { border:0; border-radius:9px; color:#061313; background:linear-gradient(135deg,#69e7dc,#64a5ff);
+      padding:10px 18px; font-weight:700; cursor:pointer; box-shadow:0 8px 24px #55d6d028; }
+    .primary:hover { filter:brightness(1.08); } .primary:disabled { filter:grayscale(.7); cursor:wait; opacity:.7; }
+    .secondary { border:1px solid var(--line); border-radius:9px; color:var(--muted); background:transparent;
+      padding:9px 13px; cursor:pointer; text-decoration:none; }
+    .results { display:grid; grid-template-rows:auto 1fr auto; }
+    .result-empty { position:absolute; inset:0; display:grid; place-content:center; text-align:center;
+      color:var(--muted); pointer-events:none; }
+    .result-empty strong { color:#dce5f0; font-size:17px; margin-bottom:5px; }
+    .status-strip { display:grid; grid-template-columns:1.2fr .8fr .8fr; border-top:1px solid var(--line); }
+    .metric { padding:15px 18px; border-right:1px solid var(--line); min-width:0; }
+    .metric:last-child { border:0; } .metric small { display:block; color:var(--muted); font-size:10px;
+      letter-spacing:.08em; text-transform:uppercase; }
+    .metric span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      font-variant-numeric:tabular-nums; margin-top:3px; }
+    .status-dot { display:inline-block; width:8px; height:8px; margin-right:7px; border-radius:50%; background:#7c8998; }
+    body[data-cumes-webgpu=pass] .status-dot { background:var(--cyan); box-shadow:0 0 9px var(--cyan); }
+    body[data-cumes-webgpu=fail] .status-dot { background:var(--danger); }
+    .busy .status-dot { background:var(--orange); animation:pulse 1s infinite alternate; }
+    @keyframes pulse { to { opacity:.35; } }
+    details { margin-top:18px; border:1px solid var(--line); border-radius:12px; background:#0b141fbb; }
+    summary { cursor:pointer; color:var(--muted); padding:11px 15px; }
+    pre { max-height:280px; overflow:auto; margin:0; padding:0 15px 15px; color:#a9b8ca;
+      white-space:pre-wrap; font:11px/1.55 ui-monospace,SFMono-Regular,monospace; }
+    .legacy { max-width:960px; margin:70px auto 0; } .legacy h2 { font-size:24px; }
+    [hidden] { display:none!important; }
+    @media(max-width:920px){ .page{width:min(100% - 22px,700px)} .workspace{grid-template-columns:1fr}
+      nav{display:none}.plot-wrap{min-height:390px}svg{min-height:358px} }
+    @media(max-width:520px){ .control-grid{grid-template-columns:1fr}.status-strip{grid-template-columns:1fr}
+      .metric{border-right:0;border-bottom:1px solid var(--line)} }
   </style>
 </head>
 <body>
-  <h1>cuMES WebGPU backend</h1>
-  <p>
-    <a href="?solve=w7x">Run full W7-X solve</a>
-    · <a href="?">Run conformance/Solovev suite</a>
-    · <a id="download" hidden>Download converged equilibrium</a>
-  </p>
-  <pre id="output">Loading WebAssembly and requesting WebGPU…
-</pre>
+  <div class="page" id="app">
+    <header>
+      <div class="brand"><span class="mark"></span><div><h1>cuMES</h1><div class="subtitle">Magnetic equilibrium · WebGPU</div></div></div>
+      <nav><a href="?">Boundary editor</a><a href="?mode=test">GPU verification</a><a href="?solve=w7x">W7-X benchmark</a></nav>
+    </header>
+    <main class="workspace">
+      <section class="panel editor">
+        <div class="panel-head"><h2>Input boundary</h2><span class="tag">Stellarator symmetric</span></div>
+        <div class="plot-wrap"><svg id="boundary-plot" viewBox="0 0 600 520" aria-label="Editable plasma boundary"></svg>
+          <div class="hint">Drag the points to shape the boundary</div></div>
+        <div class="controls">
+          <div class="control-grid">
+            <label>Major radius R₀ <output id="major-value"></output><input id="major" type="range" min="2" max="8" step="0.01"></label>
+            <label>Minor radius a <output id="minor-value"></output><input id="minor" type="range" min="0.3" max="2" step="0.01"></label>
+            <label>Elongation κ <output id="elongation-value"></output><input id="elongation" type="range" min="0.6" max="2.2" step="0.01"></label>
+            <label>Triangularity δ <output id="triangularity-value"></output><input id="triangularity" type="range" min="-0.5" max="0.5" step="0.01"></label>
+            <label>Squareness <output id="squareness-value"></output><input id="squareness" type="range" min="-0.15" max="0.15" step="0.005"></label>
+            <label>Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
+          </div>
+          <div class="coefficients" id="coefficients"></div>
+          <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="reset">Reset</button></div>
+        </div>
+      </section>
+      <section class="panel results">
+        <div class="panel-head"><h2>Flux surfaces</h2><a class="tag" id="download" hidden>Download .bin</a></div>
+        <div class="plot-wrap"><svg id="result-plot" viewBox="0 0 700 520" aria-label="Converged flux surfaces"></svg>
+          <div class="result-empty" id="result-empty"><strong>Ready to solve</strong><span>Shape the boundary, then run it on your GPU.</span></div></div>
+        <div class="status-strip">
+          <div class="metric"><small>Status</small><span><i class="status-dot"></i><b id="status">Editor ready</b></span></div>
+          <div class="metric"><small>Iteration</small><span id="iteration">—</span></div>
+          <div class="metric"><small>FSQR</small><span id="fsqr">—</span></div>
+        </div>
+      </section>
+    </main>
+    <details><summary>Solver log</summary><pre id="output"></pre></details>
+  </div>
+  <div class="page legacy" id="legacy" hidden>
+    <h2 id="legacy-title">cuMES WebGPU verification</h2>
+    <p><a href="?">Open boundary editor</a> · <a href="?mode=test">Run conformance suite</a> · <a href="?solve=w7x">Run W7-X benchmark</a> · <a id="legacy-download" hidden>Download output</a></p>
+    <pre id="legacy-output">Loading WebAssembly and requesting WebGPU…\n</pre>
+  </div>
   <script>
-    const output = document.getElementById('output');
-    const w7xSolve = new URLSearchParams(window.location.search)
-      .get('solve') === 'w7x';
-    const append = (line) => {
-      output.append(document.createTextNode(line + '\n'));
-    };
-    const publishLine = (line) => {
-      if (!w7xSolve) {
-        append(line);
-        return;
-      }
-      const progress = line.match(
-        /host controller: PASS \(iter=(\d+), FSQR=([^,]+)/);
-      if (progress) {
-        const iteration = Number(progress[1]);
-        document.body.dataset.cumesIteration = progress[1];
-        document.body.dataset.cumesFsqr = progress[2];
-        document.body.dataset.cumesLastProgressAt = String(Date.now());
-        if (iteration <= 3 || iteration % 50 === 0) append(line);
-        return;
-      }
-      const stage = line.match(/stage (\d+)\/(\d+) converged/);
-      if (stage) {
-        document.body.dataset.cumesStage = stage[1];
-        document.body.dataset.cumesStageCount = stage[2];
-      }
-      if (/running complete|stage .*converged|stage prolongation|published|self-test|FATAL/.test(line)) {
-        append(line);
-      }
-    };
-    var Module = {
-      print: (...args) => publishLine(args.join(' ')),
-      printErr: (...args) => append('ERROR: ' + args.join(' '))
-    };
-    window.cumesKeepAlive = setInterval(() => {}, 50);
-    window.cumesDeadline = setTimeout(() => {
-      if (!document.body.dataset.cumesWebgpu) {
-        document.body.dataset.cumesWebgpu = 'fail';
-        document.body.dataset.cumesDetail = 'WebGPU self-test timed out';
-        append('ERROR: WebGPU self-test timed out');
-      }
-      clearInterval(window.cumesKeepAlive);
-    }, w7xSolve ? 21600000 : 600000);
-    window.addEventListener('error', (event) => {
-      document.body.dataset.cumesWebgpu = 'fail';
-      document.body.dataset.cumesDetail = event.message;
-      append('ERROR: ' + event.message);
-    });
-    window.addEventListener('unhandledrejection', (event) => {
-      document.body.dataset.cumesWebgpu = 'fail';
-      document.body.dataset.cumesDetail = String(event.reason);
-      append('ERROR: ' + event.reason);
-    });
+    const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x';
+    const appMode=query.get('mode')!=='test'&&!w7xSolve,running=appMode&&query.get('run')==='1';
+    const app=document.getElementById('app'),legacy=document.getElementById('legacy');
+    const output=appMode?document.getElementById('output'):document.getElementById('legacy-output');
+    app.hidden=!appMode;legacy.hidden=appMode;
+    if(w7xSolve)document.getElementById('legacy-title').textContent='cuMES WebGPU · W7-X benchmark';
+    const defaults={r:[3.999,1.026,-.068,0],z:[0,1.580,.010,0],pressure:.125};
+    const saved=(()=>{try{return JSON.parse(localStorage.getItem('cumes.editor.v1'))}catch(_){return null}})();
+    const shape=saved&&Array.isArray(saved.r)&&Array.isArray(saved.z)?saved:structuredClone(defaults);
+    const value=id=>document.getElementById(id),controls=['major','minor','elongation','triangularity','squareness','pressure'];
+    function paramsFromShape(){const a=Math.max(.05,Math.abs(shape.r[1]));return{major:shape.r[0],minor:a,
+      elongation:shape.z[1]/a,triangularity:-shape.r[2]/a,squareness:(shape.r[3]-shape.z[3])/(2*a),pressure:shape.pressure}}
+    function syncControls(){const p=paramsFromShape();for(const id of controls){const input=value(id);if(!input)continue;
+      input.value=Math.min(Number(input.max),Math.max(Number(input.min),p[id]));value(id+'-value').textContent=Number(input.value).toFixed(id==='pressure'?3:2)}}
+    function applyControls(){const p=Object.fromEntries(controls.map(id=>[id,Number(value(id).value)]));
+      shape.r=[p.major,p.minor,-p.triangularity*p.minor,p.squareness*p.minor];shape.z=[0,p.elongation*p.minor,0,-p.squareness*p.minor];
+      shape.pressure=p.pressure;drawBoundary();syncControls()}
+    function pointAt(theta){let r=0,z=0;for(let m=0;m<shape.r.length;++m)r+=shape.r[m]*Math.cos(m*theta);
+      for(let m=1;m<shape.z.length;++m)z+=shape.z[m]*Math.sin(m*theta);return[r,z]}
+    function projection(points,width,height,pad=55){let minR=Infinity,maxR=-Infinity,minZ=Infinity,maxZ=-Infinity;
+      for(const[r,z]of points){minR=Math.min(minR,r);maxR=Math.max(maxR,r);minZ=Math.min(minZ,z);maxZ=Math.max(maxZ,z)}
+      const spanR=Math.max(.1,maxR-minR),spanZ=Math.max(.1,maxZ-minZ),scale=Math.min((width-2*pad)/spanR,(height-2*pad)/spanZ);
+      const midR=(minR+maxR)/2,midZ=(minZ+maxZ)/2;return{map:([r,z])=>[width/2+(r-midR)*scale,height/2-(z-midZ)*scale],
+        unmap:([x,y])=>[midR+(x-width/2)/scale,midZ-(y-height/2)/scale],minR,maxR,minZ,maxZ,scale}}
+    const ns='http://www.w3.org/2000/svg';
+    function node(name,attrs={}){const n=document.createElementNS(ns,name);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);return n}
+    function drawGrid(svg,width,height){const group=node('g');for(let i=0;i<=6;i++){const x=45+i*(width-90)/6;group.append(node('line',{x1:x,y1:30,x2:x,y2:height-35,class:'grid-line'}))}
+      for(let i=0;i<=5;i++){const y=35+i*(height-70)/5;group.append(node('line',{x1:45,y1:y,x2:width-35,y2:y,class:'grid-line'}))}
+      const rl=node('text',{x:width-35,y:height-12,'text-anchor':'end',class:'axis-label'});rl.textContent='R (m)';group.append(rl);
+      const zl=node('text',{x:18,y:31,class:'axis-label'});zl.textContent='Z (m)';group.append(zl);svg.append(group)}
+    let boundaryProjection;
+    function drawBoundary(){const svg=value('boundary-plot');if(!svg)return;svg.replaceChildren();
+      const points=Array.from({length:161},(_,i)=>pointAt(2*Math.PI*i/160));boundaryProjection=projection(points,600,520,65);drawGrid(svg,600,520);
+      const d=points.map((p,i)=>`${i?'L':'M'}${boundaryProjection.map(p).join(',')}`).join(' ')+' Z';svg.append(node('path',{d,class:'boundary'}));
+      for(let i=0;i<12;i++){const theta=2*Math.PI*i/12,[x,y]=boundaryProjection.map(pointAt(theta));svg.append(node('circle',{cx:x,cy:y,r:6,class:'handle','data-theta':theta,tabindex:0}))}
+      value('coefficients').textContent=`R cos: ${shape.r.map((v,m)=>`m${m} ${v.toFixed(3)}`).join('  ·  ')}\nZ sin: ${shape.z.slice(1).map((v,i)=>`m${i+1} ${v.toFixed(3)}`).join('  ·  ')}`;
+      localStorage.setItem('cumes.editor.v1',JSON.stringify(shape))}
+    function svgPosition(event,svg){const pt=new DOMPoint(event.clientX,event.clientY).matrixTransform(svg.getScreenCTM().inverse());return[pt.x,pt.y]}
+    let activeHandle=null;
+    value('boundary-plot')?.addEventListener('pointerdown',event=>{const target=event.target.closest('.handle');if(!target||running)return;
+      activeHandle=target;target.classList.add('active');target.setPointerCapture(event.pointerId)});
+    value('boundary-plot')?.addEventListener('pointermove',event=>{if(!activeHandle)return;const theta=Number(activeHandle.dataset.theta),
+      target=boundaryProjection.unmap(svgPosition(event,value('boundary-plot'))),current=pointAt(theta);
+      const rb=shape.r.map((_,m)=>Math.cos(m*theta)),zb=shape.z.map((_,m)=>m?Math.sin(m*theta):0),rn=rb.reduce((a,b)=>a+b*b,0),zn=zb.reduce((a,b)=>a+b*b,0);
+      for(let m=0;m<shape.r.length;m++)shape.r[m]+=(target[0]-current[0])*rb[m]/rn;
+      if(zn>1e-8)for(let m=1;m<shape.z.length;m++)shape.z[m]+=(target[1]-current[1])*zb[m]/zn;
+      drawBoundary();syncControls();activeHandle=document.querySelector(`.handle[data-theta="${theta}"]`);activeHandle?.classList.add('active')});
+    function releaseHandle(){activeHandle?.classList.remove('active');activeHandle=null}
+    value('boundary-plot')?.addEventListener('pointerup',releaseHandle);value('boundary-plot')?.addEventListener('pointercancel',releaseHandle);
+    controls.forEach(id=>value(id)?.addEventListener('input',applyControls));
+    function inputJSON(){const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
+      return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,ns_array:[5,11,55],niter_array:[1200,2500,3000],
+        ftol_array:[1e-5,1e-5,1e-5],am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
+        rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,0)},null,2)}
+    value('run')?.addEventListener('click',()=>{localStorage.setItem('cumes.input.v1',inputJSON());location.search='?run=1'});
+    value('reset')?.addEventListener('click',()=>{localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');location.href=location.pathname});
+    function append(line){output.append(document.createTextNode(line+'\n'));output.scrollTop=output.scrollHeight}
+    function publishLine(line){const progress=line.match(/host controller: PASS \(iter=(\d+), FSQR=([^,]+)/);
+      if(progress){document.body.dataset.cumesIteration=progress[1];document.body.dataset.cumesFsqr=progress[2];if(appMode){value('iteration').textContent=progress[1];value('fsqr').textContent=progress[2]}
+        if((appMode&&(Number(progress[1])<=3||Number(progress[1])%25===0))||
+          (w7xSolve&&(Number(progress[1])<=3||Number(progress[1])%50===0))||(!appMode&&!w7xSolve))append(line);return}
+      const stage=line.match(/stage (\d+)\/(\d+) converged/);if(stage)document.body.dataset.cumesStage=stage[1];
+      if((appMode&&/running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))||
+        (!appMode&&!w7xSolve)||(w7xSolve&&/running complete|stage .*converged|stage prolongation|published|self-test|FATAL/.test(line)))append(line)}
+    function drawResult(data){const svg=value('result-plot');if(!svg||!data.surfaces?.length)return;svg.replaceChildren();
+      const p=projection(data.surfaces.flat(),700,520,55);drawGrid(svg,700,520);data.surfaces.forEach((surface,i)=>{const d=surface.map((v,j)=>`${j?'L':'M'}${p.map(v).join(',')}`).join(' '),
+        t=data.surfaces.length<2?1:i/(data.surfaces.length-1);svg.append(node('path',{d,fill:'none',stroke:`hsl(${188+32*t} 78% ${55+16*t}%)`,'stroke-width':i===data.surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))});
+      value('result-empty').hidden=true;value('iteration').textContent=String(data.iterations);value('fsqr').textContent=Number(data.residual[0]).toExponential(3)}
+    window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
+    function updateStatus(){if(!appMode)return;const state=document.body.dataset.cumesWebgpu;
+      if(state==='pass'){document.body.classList.remove('busy');value('status').textContent='Converged';value('run').disabled=false;value('run').textContent='Run again'}
+      else if(state==='fail'){document.body.classList.remove('busy');value('status').textContent='Solve failed';value('result-empty').innerHTML='<strong>Could not converge</strong><span>Open the solver log for details.</span>'}
+      const adapter=document.body.dataset.cumesAdapter;if(adapter&&document.body.classList.contains('busy'))value('status').textContent='Solving on '+adapter}
+    new MutationObserver(updateStatus).observe(document.body,{attributes:true,attributeFilter:['data-cumes-webgpu','data-cumes-adapter']});
+    if(appMode){syncControls();drawBoundary();controls.forEach(id=>value(id).disabled=running);value('reset').disabled=running;
+      if(running){document.body.classList.add('busy');value('run').disabled=true;value('run').textContent='Solving…';value('status').textContent='Requesting GPU';
+        value('result-empty').innerHTML='<strong>Computing equilibrium…</strong><span>All numerical operators are running locally via WebGPU.</span>'}}
+    var Module={preRun:[()=>{if(running){FS.mkdirTree('/inputs');const source=localStorage.getItem('cumes.input.v1')||inputJSON();FS.writeFile('/inputs/interactive.json',source)}}],
+      print:(...args)=>publishLine(args.join(' ')),printErr:(...args)=>append('ERROR: '+args.join(' '))};
+    if(!appMode||running){window.cumesKeepAlive=setInterval(()=>{},50);window.cumesDeadline=setTimeout(()=>{if(!document.body.dataset.cumesWebgpu){document.body.dataset.cumesWebgpu='fail';
+      document.body.dataset.cumesDetail='WebGPU run timed out';append('ERROR: WebGPU run timed out')}clearInterval(window.cumesKeepAlive)},w7xSolve?21600000:1800000)}
+    window.addEventListener('error',event=>{document.body.dataset.cumesWebgpu='fail';document.body.dataset.cumesDetail=event.message;append('ERROR: '+event.message)});
+    window.addEventListener('unhandledrejection',event=>{document.body.dataset.cumesWebgpu='fail';document.body.dataset.cumesDetail=String(event.reason);append('ERROR: '+event.reason)});
   </script>
   {{{ SCRIPT }}}
+  <script>
+    new MutationObserver(()=>{const link=document.getElementById('download'),legacyLink=document.getElementById('legacy-download');
+      if(link?.href&&legacyLink){legacyLink.href=link.href;legacyLink.download=link.download;legacyLink.hidden=false}}).observe(document.getElementById('download'),{attributes:true});
+  </script>
 </body>
 </html>

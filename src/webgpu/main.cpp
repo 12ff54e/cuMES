@@ -20,59 +20,33 @@
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <iomanip>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <emscripten.h>
-#include <emscripten/em_js.h>
 #include <webgpu/webgpu_cpp.h>
 
 namespace {
 
-EM_JS(void, publish_browser_result, (int success, const char* detail), {
-    document.body.dataset.cumesWebgpu = success ? 'pass' : 'fail';
-    document.body.dataset.cumesDetail = UTF8ToString(detail);
-    clearTimeout(window.cumesDeadline);
-    clearInterval(window.cumesKeepAlive);
-});
-
-EM_JS(int, publish_browser_output, (const char* path), {
-    try {
-        const bytes = FS.readFile(UTF8ToString(path));
-        const blob = new Blob([bytes], {
-            type:
-                'application/octet-stream'
-        });
-        if (window.cumesOutputUrl) URL.revokeObjectURL(window.cumesOutputUrl);
-        window.cumesOutputUrl = URL.createObjectURL(blob);
-        const link = document.getElementById('download');
-        link.href = window.cumesOutputUrl;
-        link.download = 'cumes-webgpu-output.bin';
-        link.hidden = false;
-        document.body.dataset.cumesOutputBytes = String(bytes.length);
-        return bytes.length;
-    } catch (error) {
-        document.body.dataset.cumesOutputError = String(error);
-        return -1;
-    }
-});
-
-EM_JS(int, requested_w7x_solve, (), {
-    return new URLSearchParams(window.location.search).get('solve') == 'w7x';
-});
-
-EM_JS(void,
-      publish_browser_adapter,
-      (const char* device, const char* type, const char* backend),
-      {
-          document.body.dataset.cumesAdapter = UTF8ToString(device);
-          document.body.dataset.cumesAdapterType = UTF8ToString(type);
-          document.body.dataset.cumesAdapterBackend = UTF8ToString(backend);
-      });
+extern "C" {
+void publish_browser_result(int success, const char* detail);
+int publish_browser_output(const char* path);
+int requested_w7x_solve();
+int requested_app_mode();
+int requested_app_run();
+void publish_browser_ready();
+void publish_browser_equilibrium(const char* json);
+void publish_browser_adapter(const char* device,
+                             const char* type,
+                             const char* backend);
+}
 
 #ifndef CUMES_GIT_REVISION
 #define CUMES_GIT_REVISION ""
@@ -201,6 +175,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 self->device_ = std::move(device);
                 if (requested_w7x_solve() != 0) {
                     self->run_selected_w7x_solver();
+                    return;
+                }
+                if (requested_app_mode() != 0) {
+                    self->run_interactive_solver();
                     return;
                 }
                 self->cases_ = make_cases();
@@ -1261,6 +1239,52 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         } catch (const std::exception& error) {
             finish(false,
                    "W7-X solver startup failed: " + std::string(error.what()));
+        }
+    }
+
+    void run_interactive_solver() {
+        try {
+            cumes::SolverOptions options;
+            options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+            auto parsed =
+                cumes::read_problem_spec("/inputs/interactive.json", options);
+            if (parsed.report.has_errors()) {
+                const auto errors = parsed.report.errors();
+                finish(false,
+                       "Interactive input mapping failed: " + errors.front());
+                return;
+            }
+            for (auto& stage : parsed.spec.stages) {
+                stage.tolerance = std::max(
+                    stage.tolerance, cumes::tolerance_floor(options.precision));
+            }
+            auto validated = cumes::validate(std::move(parsed.spec), options);
+            if (!validated.has_value()) {
+                const auto errors = validated.error().errors();
+                finish(false, "Interactive input validation failed: " +
+                                  (errors.empty() ? std::string("unknown error")
+                                                  : errors.front()));
+                return;
+            }
+            problem_.emplace(std::move(validated.value()));
+            production_solve_ = true;
+            active_case_name_ = "Interactive equilibrium";
+            active_input_path_ = "browser boundary editor";
+            stage_index_ = 0;
+            total_iterations_ = 0;
+            stage_iterations_.clear();
+            stage_reports_.clear();
+            initialized_stage_ =
+                cumes::webgpu::initialize_stage(*problem_, stage_index_);
+            reset_stage_state();
+            std::printf(
+                "running interactive fixed-boundary multigrid solve "
+                "(%zu stages)\n",
+                problem_->stage_shapes().size());
+            run_stage_inverse();
+        } catch (const std::exception& error) {
+            finish(false, "Interactive solver startup failed: " +
+                              std::string(error.what()));
         }
     }
 
@@ -3072,6 +3096,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             return "WebGPU derived fields failed: " + derived_status.error();
         }
 
+        publish_equilibrium_plot();
+
         cumes::RunReport report;
         report.status = cumes::RunStatus::CONVERGED;
         report.total_effective_iterations = total_iterations_;
@@ -3122,6 +3148,58 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
         std::printf("  published schema-v8 output: %d bytes\n", output_bytes);
         return {};
+    }
+
+    void publish_equilibrium_plot() const {
+        const int ns = initialized_stage_.ns;
+        const int mpol = initialized_stage_.mpol;
+        const int ntor = initialized_stage_.ntor;
+        const int mnmax = mpol * (ntor + 1);
+        const auto& state = initialized_stage_.state;
+        const std::size_t family_values = static_cast<std::size_t>(ns) * mnmax;
+        if (ns <= 0 || mpol <= 0 || state.size() < 2 * family_values) return;
+
+        std::ostringstream json;
+        json << std::setprecision(9);
+        json << "{\"name\":\"" << active_case_name_
+             << "\",\"iterations\":" << total_iterations_ << ",\"residual\":["
+             << invariant_normalized_[0] << ',' << invariant_normalized_[1]
+             << ',' << invariant_normalized_[2] << "],\"surfaces\":[";
+        const int stride = std::max(1, (ns - 1) / 18);
+        bool first_surface = true;
+        for (int surface = 0; surface < ns; ++surface) {
+            if (surface != 0 && surface != ns - 1 && surface % stride != 0) {
+                continue;
+            }
+            if (!first_surface) json << ',';
+            first_surface = false;
+            json << '[';
+            constexpr int PLOT_SEGMENTS = 128;
+            for (int theta_index = 0; theta_index <= PLOT_SEGMENTS;
+                 ++theta_index) {
+                if (theta_index != 0) json << ',';
+                const double theta = 2.0 * std::numbers::pi_v<double> *
+                                     theta_index / PLOT_SEGMENTS;
+                double r = 0.0;
+                double z = 0.0;
+                for (int m = 0; m < mpol; ++m) {
+                    if (surface == 0 && m % 2 == 1) continue;
+                    const double cosine = std::cos(m * theta);
+                    const double sine = std::sin(m * theta);
+                    for (int n = 0; n <= ntor; ++n) {
+                        const int mode = m * (ntor + 1) + n;
+                        const std::size_t offset =
+                            static_cast<std::size_t>(mode) * ns + surface;
+                        r += state[offset] * cosine;
+                        z += state[family_values + offset] * sine;
+                    }
+                }
+                json << '[' << r << ',' << z << ']';
+            }
+            json << ']';
+        }
+        json << "]}";
+        publish_browser_equilibrium(json.str().c_str());
     }
 
     static void finish(bool success, const std::string& detail) {
@@ -3224,6 +3302,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 }  // namespace
 
 int main() {
+    if (requested_app_mode() != 0 && requested_app_run() == 0) {
+        publish_browser_ready();
+        return 0;
+    }
     std::make_shared<BrowserSelfTest>()->start();
     return 0;
 }
