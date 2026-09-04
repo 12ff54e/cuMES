@@ -5,6 +5,68 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-09-05
+
+### Added
+
+#### Library API
+
+- An installable `cumes::solver` target and `cuMESConfig.cmake` package for
+  `find_package(cuMES CONFIG REQUIRED)` and CMake `FetchContent` consumers.
+- The in-process `cumes::EquilibriumSolver` facade, which accepts an immutable
+  validated problem and returns an equilibrium snapshot, half-grid physical
+  profiles, convergence report, and structured phase timings without writing
+  files or exposing CUDA objects.
+- Library solve controls for in-memory hot starts, quiet or diagnostic
+  execution, process-environment isolation, and explicit radial-transfer
+  selection.
+- A deterministic `ProblemSpec` JSON writer for modifying and round-tripping
+  optimizer-owned boundary inputs.
+
+#### Forward sensitivities
+
+- Fixed-boundary, stellarator-symmetric precise-double forward tangents through
+  the spectral transforms, geometry, magnetic field, profiles, force, and
+  constraint operators.
+- The retained `cumes::EquilibriumLinearization` session for residual JVPs and
+  repeated matrix-free boundary tangent solves using right-preconditioned
+  restarted GMRES.
+- Target-facing spectral, magnetic-field, geometry, flux, rotational-transform,
+  and covariant-field derivatives. Current-density derivatives remain outside
+  the qualified tangent interface.
+
+#### Observability
+
+- Per-solve setup, multigrid, stage setup/iteration/output/teardown, final-state
+  transfer, and total wall-clock timings.
+
+### Changed
+
+- The CLI now delegates equilibrium calculation to the same supported solver
+  facade used by embedding applications; optimizer parameterization and target
+  functions remain owned by meow.
+- Independent concurrent solvers coordinate CUDA graph capture without
+  serializing their ordinary execution.
+- Near-axisymmetric three-dimensional cold starts use a qualified coarse-grid
+  shaping policy for analytic QA/QH optimization inputs.
+- Boozer plotting and containers use the field-period toroidal-angle convention
+  consistently, including the version-3 magnetic-coordinate schema.
+- Zero-prescribed-current equilibria and plots are supported without requiring
+  a nonzero current profile.
+
+### Fixed
+
+- Mixed-float packages now provide a linkable tangent API that reports the
+  precise-double requirement explicitly instead of failing at final link.
+- Retained tangent sessions no longer depend on the lifetime of the input
+  `ValidatedProblem`, and reject non-finite linear-solver tolerances.
+- Forward-dual elementary functions use conforming argument-dependent lookup
+  instead of adding function overloads to `std`.
+- Tangent constraint evaluation initializes and propagates all required
+  scratch fields, including the magnetic-axis path.
+- JSON serialization escapes every control character accepted in string
+  values.
+
 ## [1.2.0] - 2026-08-31
 
 ### Added
