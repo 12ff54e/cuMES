@@ -68,6 +68,9 @@ target_link_options(cumes_webgpu PRIVATE
 
 set_target_properties(cumes_webgpu PROPERTIES SUFFIX ".html")
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
+  ${PROJECT_SOURCE_DIR}/inputs/solovev.json
+  ${PROJECT_SOURCE_DIR}/inputs/w7x.json
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl

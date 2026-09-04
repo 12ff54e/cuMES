@@ -13,7 +13,11 @@
 </head>
 <body>
   <h1>cuMES WebGPU backend</h1>
-  <p><a id="download" hidden>Download converged equilibrium</a></p>
+  <p>
+    <a href="?solve=w7x">Run full W7-X solve</a>
+    · <a href="?">Run conformance/Solovev suite</a>
+    · <a id="download" hidden>Download converged equilibrium</a>
+  </p>
   <pre id="output">Loading WebAssembly and requesting WebGPU…
 </pre>
   <script>
@@ -24,6 +28,8 @@
       printErr: (...args) => append('ERROR: ' + args.join(' '))
     };
     window.cumesKeepAlive = setInterval(() => {}, 50);
+    const w7xSolve = new URLSearchParams(window.location.search)
+      .get('solve') === 'w7x';
     window.cumesDeadline = setTimeout(() => {
       if (!document.body.dataset.cumesWebgpu) {
         document.body.dataset.cumesWebgpu = 'fail';
@@ -31,7 +37,7 @@
         append('ERROR: WebGPU self-test timed out');
       }
       clearInterval(window.cumesKeepAlive);
-    }, 600000);
+    }, w7xSolve ? 21600000 : 600000);
     window.addEventListener('error', (event) => {
       document.body.dataset.cumesWebgpu = 'fail';
       document.body.dataset.cumesDetail = event.message;

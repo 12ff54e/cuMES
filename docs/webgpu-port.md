@@ -3,7 +3,9 @@
 ## Status
 
 The WebGPU backend is an additive, experimental backend. CUDA remains the
-default and the only complete equilibrium solver.
+default and the only backend with free-boundary coupling and production
+performance qualification. WebGPU now implements the complete fixed-boundary
+iteration DAG for axisymmetric and folded 3-D equilibria.
 
 The current WebGPU correctness milestones are implemented and
 browser-validated:
@@ -41,6 +43,10 @@ browser-validated:
   magnetic-axis interpolation; the shipped prescribed-current W7-X input now
   parses and initializes its first `ns=33`, `mnmax=156`, 1080-point angular
   stage in-browser with the production `0.12` seed envelope;
+- the prescribed-current surface solve: reduced-grid current integrals produce
+  `chipH`/`iotaH`, reconstruct `B^theta`, covariant field, and total pressure,
+  and update full-grid current/iota profiles using the CUDA extrapolation
+  rules;
 - the shipped Solovev input parsed in-browser, relaxed to the documented f32
   tolerance floor, initialized, and passed through the WGSL inverse transform;
 - the staggered half-grid base-geometry operator in WGSL: parity recombination,
@@ -85,6 +91,9 @@ browser-validated:
 - Garabedian accelerated descent for all six spectral families, including
   physical/decomposed basis conversion, the m=1 undone-gauge update, rigid R/Z
   LCFS behavior, free lambda LCFS behavior, and velocity persistence;
+- folded `(m,n)` residual decomposition, force normalization, and descent with
+  independent poloidal/toroidal basis factors and the m=1 gauge applied to all
+  toroidal families;
 - the production pre-inverse m=1 axis extrapolation, host force-normalization
   reductions, invariant/preconditioned residual scaling, and the shared
   `IterationController<double>` damping/restart decision; a one-pass native
@@ -108,6 +117,13 @@ browser-validated:
   `(9.831e-07, 3.438e-07, 3.011e-10)`, while native CUDA mixed-float converges
   in `72 -> 31 -> 182` (285 total) with
   `(9.696e-07, 4.486e-07, 3.081e-10)`;
+- the complete controller-driven 3-D W7-X stage path: inverse transform,
+  geometry, prescribed-current closure, MHD force, constraint bandpass,
+  toroidal projection, residual decomposition, `(m,n)` preconditioner, and
+  descent. The browser and native CUDA mixed-float paths agree at effective
+  iteration 3 on `(FSQR,FSQZ,FSQL) = (1.141e+01, 7.079e+00, 1.012e-01)`;
+- a selectable `?solve=w7x` browser mode that runs the complete three-stage
+  W7-X multigrid path and publishes the same schema-v8 result form;
 - schema-v8 native binary publication into Emscripten MEMFS, an in-Wasm
   writer/reader round-trip check, and a browser Blob download link; the
   downloaded `CUMES001` file is accepted by the native reader as `ns=55`,
@@ -119,10 +135,11 @@ browser-validated:
   passes the in-Wasm field round trip and the project plotting workflow;
 - an independent C++ float reference evaluated by the browser self-test.
 
-This milestone parses and initializes the embedded Solovev input and converges
-all three axisymmetric multigrid stages. It is a functioning fixed-boundary
-axisymmetric solver and has standalone direct 3-D transforms, but the 3-D
-operators are not yet integrated into a complete W7-X solve.
+The default self-test parses both embedded inputs, runs a controller-complete
+two-pass W7-X slice, then converges all three Solovev stages. The separate W7-X
+solve entry point is integrated end to end; a full browser convergence run has
+not yet been performance-qualified on this host because Chromium exposes only
+its software WebGPU adapter here.
 
 ## Build and run
 
@@ -152,6 +169,11 @@ interpolation cases followed by:
 ```text
 cuMES WebGPU self-test: PASS
 ```
+
+Open `http://localhost:8000/cumes_webgpu.html?solve=w7x` to run the complete
+fixed-boundary W7-X multigrid solver instead of the conformance suite. This
+path can be slow on software WebGPU adapters because the current 3-D transform
+is a direct DFT.
 
 The page also publishes `data-cumes-webgpu="pass|fail"` and a diagnostic
 `data-cumes-detail` on `<body>` so browser automation can inspect the result.
@@ -193,20 +215,17 @@ source-level macro layer.
 
 ## Remaining port sequence
 
-The recommended dependency order is:
+The remaining qualification and optimization order is:
 
 1. reusable buffer/pipeline/bind-group ownership and a stage command encoder;
 2. persistent spectral/real-space stage storage and profile GPU buffers (input
    parsing, cold seeding, and host profile evaluation are complete);
-3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
-   base geometry are complete);
-4. persistent stage-owned GPU buffers and batched command encoding (the
+3. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. add prescribed-current closure, then integrate the completed 3-D operator
-   set into a persistent stage loop and qualify fixed-boundary W7-X;
-6. optimize the direct DFT with a WebGPU FFT and persistent command resources;
-7. only then integrate free-boundary/NESTOR support.
+4. qualify a complete W7-X convergence run on a hardware WebGPU adapter;
+5. optimize the direct DFT with a WebGPU FFT and persistent command resources;
+6. only then integrate free-boundary/NESTOR support.
 
 Free-boundary support is last because `deps/vacuum-field` is itself CUDA-based
 and includes host/device coupling beyond the main operator DAG. NetCDF/HDF5 and
@@ -222,10 +241,9 @@ fields, multigrid history, provenance, and the normalized input record.
 - `ctest ...`: verifies non-empty `.html`, `.js`, and `.wasm` artifacts.
 - browser self-test: compiles WGSL on the selected adapter, dispatches both
   prolongation modes and the complete direct axisymmetric and 3-D transform
-  paths, maps results, compares every value with the C++ references, then parses and
-  initializes the embedded Solovev case, converges all three multigrid stages,
-  and evaluates every half-grid geometry plus first- and later-pass
-  force/residual path against a C++ reference (operator tolerances `4e-6`
-  through `1e-3`, solver tolerance `1e-6`).
-- future operator gates: compare full typed views against existing test
-  references before wiring the operator into the stage DAG.
+  paths, maps results, compares every value with the C++ references, runs two
+  complete W7-X controller passes, then converges all three Solovev multigrid
+  stages (operator tolerances `4e-6` through `1e-3`, solver tolerance `1e-6`).
+- W7-X integration gate: the browser controller trajectory through effective
+  iteration 3 must match native CUDA mixed-float, including the invariant
+  residual triple.

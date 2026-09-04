@@ -5,39 +5,20 @@ algorithm. All computation runs on GPU; the CPU host is a thin orchestrator.
 This is a pedagogical / scaffolding project — not production-grade, but the
 architecture and physics are real.
 
-An experimental browser backend is being developed with Emscripten and
-emdawnwebgpu. It currently provides the CUDA-free build path, WebGPU runtime,
-validated linear/Catmull-Rom multigrid prolongation, and the axisymmetric
-inverse/forward transforms with constraint synthesis and de-aliasing. Direct
-3-D inverse/forward transforms are also browser-validated across all six
-parity families and toroidal derivative couplings, but are not yet integrated
-into a W7-X solve. The shared half-grid geometry and fixed-iota magnetic-field
-operators now cover the full 3-D angular grid as well, as does the complete
-radial/poloidal/toroidal MHD force operator. The complete 3-D constraint chain
-also includes a two-pass direct spectral-condensation bandpass and publishes
-the constraint-force channels consumed by the toroidal projection. A full
-`(m,n)` 3-D preconditioner includes toroidal and mixed-metric lambda terms. The
-backend
-parses and initializes both shipped inputs in-browser, including the folded
-W7-X boundary and prescribed-current profiles. It evaluates the Solovev case's
-staggered half-grid geometry, magnetic field, total pressure, and axisymmetric
-MHD force through spectral residual projection, but is not yet a complete
-equilibrium solver. The projected forces are now decomposed into the solver's
-invariant residual basis and reduced with CUDA-compatible float products and
-double host accumulation. The later-pass axisymmetric constraint refresh,
-spectral bandpass, force injection, and constrained residual projection are
-also browser-validated, using radial preconditioner elements assembled from
-the live Solovev geometry and magnetic field. The mode-major R/Z tridiagonal
-matrices, pivot scales, radial boundary gates, and lambda diagonal are also
-assembled and applied in WebGPU, including m=1 force scaling and guarded
-two-right-hand-side Thomas solves. The resulting residual drives a validated
-Garabedian accelerated-descent update with fixed-boundary and gauge contracts.
-Force normalization and the production double host controller now consume the
-mapped pass record, including the per-pass m=1 axis extrapolation contract.
-The browser gate now runs the controller-complete three-stage Solovev
-multigrid solve with persistent velocity, constraint, preconditioner, and
+An experimental browser backend is available through Emscripten and
+emdawnwebgpu. It provides a CUDA-free build and the complete fixed-boundary
+iteration DAG for both axisymmetric and folded 3-D equilibria: transforms,
+half-grid geometry, fixed-iota and prescribed-current magnetic closure,
+radial/poloidal/toroidal force, spectral-condensation constraint, full `(m,n)`
+preconditioner, accelerated descent, controller recovery, and multigrid
+transfer. The default browser gate runs the controller-complete three-stage
+Solovev solve with persistent velocity, constraint, preconditioner, and
 rollback state. It converges in `72 -> 32 -> 182` effective iterations, versus
 native CUDA mixed-float's closely equivalent `72 -> 31 -> 182` trajectory.
+The shipped W7-X case executes the same integrated path in the browser,
+including its prescribed-current closure; its iteration-3 residual triple
+matches native CUDA mixed-float at `(1.141e+01, 7.079e+00, 1.012e-01)`. A
+dedicated `?solve=w7x` browser entry point runs all three W7-X stages.
 The converged spectral state and run provenance are published as a version-8
 native binary through a browser download link and verified by an in-Wasm
 round trip. The download also contains the complete half/full-grid scientific
@@ -87,6 +68,8 @@ cmake --build --preset webgpu -j
 ctest --preset webgpu
 python3 -m http.server --directory ../tmp/cumes-build-webgpu/webgpu
 # open http://localhost:8000/cumes_webgpu.html in a WebGPU-capable browser
+# or run the complete folded W7-X path:
+# http://localhost:8000/cumes_webgpu.html?solve=w7x
 ```
 
 The page runs GPU/CPU conformance cases and prints `cuMES WebGPU self-test:
@@ -211,7 +194,7 @@ the convergence decision.
 | `fast` | fast-double | opt-in `--use_fast_math`, dump machinery compiled out |
 | `debug` | debug-double | precise + `-G` |
 | `sanitizer` | verify-double | compute-sanitizer memcheck/initcheck/racecheck/synccheck + ASan/UBSan host twins |
-| `webgpu` | mixed-float | Emscripten + emdawnwebgpu; experimental first-pass axisymmetric residual DAG |
+| `webgpu` | mixed-float | Emscripten + emdawnwebgpu; experimental fixed-boundary axisymmetric/3-D solver |
 
 The backend matrix (`nobackend`, `netcdf-only`, `hdf5-only`) rounds out the
 optional-backend presets. Every computation is `template<typename T>`; `Real`
