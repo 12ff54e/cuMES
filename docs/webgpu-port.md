@@ -42,8 +42,10 @@ browser-validated:
 - fixed-iota contravariant/covariant magnetic fields and total pressure, with
   the CUDA path's finite-Jacobian division guard and full 3-D lambda/toroidal
   geometry contributions;
-- axisymmetric radial/poloidal MHD weak-form forces and hybrid λ force on the
-  full grid;
+- radial, poloidal, and toroidal MHD weak-form forces on the full 3-D grid,
+  including the `g_uv B^theta B^zeta` couplings, `crmn`/`czmn`, hybrid poloidal
+  lambda force, and toroidal `clmn`; the resulting 16 fields feed the direct
+  3-D forward projection without a host-side physics approximation;
 - first-pass Solovev force projection into the six-family spectral residual
   slab (the initial constraint multiplier is zero, matching CUDA/vmecpp);
 - odd-m residual decomposition, the m=1 force gauge, fixed-boundary LCFS norm
@@ -185,8 +187,8 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. integrate the completed direct 3-D transform, geometry, and fixed-iota
-   magnetic-field paths with 3-D force, constraint, and preconditioner
+5. integrate the completed direct 3-D transform, geometry, fixed-iota
+   magnetic-field, and force paths with 3-D constraint and preconditioner
    operators;
 6. qualify fixed-boundary W7-X, then optimize the direct DFT with a WebGPU FFT;
 7. only then integrate free-boundary/NESTOR support.

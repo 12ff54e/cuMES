@@ -16,19 +16,20 @@ namespace cumes::webgpu {
 namespace {
 constexpr std::uint32_t WORKGROUP_SIZE = 256;
 struct ShaderParams {
-    std::uint32_t ns, ntheta, full_points, half_points;
+    std::uint32_t ns, n_z_n_t, full_points, half_points;
     float delta_s, lamscale;
     std::uint32_t padding[2];
 };
 static_assert(sizeof(ShaderParams) == 32);
 
 std::string validate_case(const AxisymmetricForceCase& in) {
-    if (in.ns < 2 || in.ntheta < 2 || in.ntheta % 2 != 0 ||
+    if (in.ns < 2 || in.ntheta < 2 || in.ntheta % 2 != 0 || in.nzeta < 1 ||
         !(in.delta_s > 0.0F) || !std::isfinite(in.delta_s) ||
         !std::isfinite(in.lamscale))
         return "axisymmetric force has invalid shape or scalars";
-    const std::size_t nf = static_cast<std::size_t>(in.ns) * in.ntheta;
-    const std::size_t nh = static_cast<std::size_t>(in.ns - 1) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t nf = static_cast<std::size_t>(in.ns) * n_z_n_t;
+    const std::size_t nh = static_cast<std::size_t>(in.ns - 1) * n_z_n_t;
     if (nf > std::numeric_limits<std::uint32_t>::max() ||
         nh > std::numeric_limits<std::uint32_t>::max())
         return "axisymmetric force exceeds WebGPU indexing limits";
@@ -68,10 +69,11 @@ struct Dispatch {
 AxisymmetricForceResult axisymmetric_force_reference(
     const AxisymmetricForceCase& in) {
     if (!validate_case(in).empty()) return {};
-    const std::size_t nf = static_cast<std::size_t>(in.ns) * in.ntheta;
-    const std::size_t nh = static_cast<std::size_t>(in.ns - 1) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t nf = static_cast<std::size_t>(in.ns) * n_z_n_t;
+    const std::size_t nh = static_cast<std::size_t>(in.ns - 1) * n_z_n_t;
     AxisymmetricForceResult out;
-    out.fields.resize(AXISYMMETRIC_FORCE_FIELD_COUNT * nf);
+    out.fields.resize(FORCE_FIELD_COUNT * nf);
     auto fg = [&](int f, std::size_t p) { return in.geometry[f * nf + p]; };
     auto hg = [&](int f, std::size_t p) {
         return in.base_geometry[f * nh + p];
@@ -83,17 +85,17 @@ AxisymmetricForceResult axisymmetric_force_reference(
         out.fields[f * nf + p] = v;
     };
     for (int j = 0; j < in.ns; ++j) {
-        for (int k = 0; k < in.ntheta; ++k) {
-            const std::size_t p = static_cast<std::size_t>(j) * in.ntheta + k;
+        for (std::size_t k = 0; k < n_z_n_t; ++k) {
+            const std::size_t p = static_cast<std::size_t>(j) * n_z_n_t + k;
             float r12i = 0, ru12i = 0, zu12i = 0, rsi = 0, zsi = 0, taui = 0,
-                  gi = 0, gvvi = 0, bui = 0, bvi = 0, bdvi = 0, tpi = 0,
-                  shi = 0;
+                  gi = 0, guvi = 0, gvvi = 0, bui = 0, bvi = 0, bdui = 0,
+                  bdvi = 0, tpi = 0, shi = 0;
             float r12o = 0, ru12o = 0, zu12o = 0, rso = 0, zso = 0, tauo = 0,
-                  go = 0, gvvo = 0, buo = 0, bvo = 0, bdvo = 0, tpo = 0,
-                  sho = 0;
+                  go = 0, guvo = 0, gvvo = 0, buo = 0, bvo = 0, bduo = 0,
+                  bdvo = 0, tpo = 0, sho = 0;
             if (j > 0) {
                 const std::size_t h =
-                    static_cast<std::size_t>(j - 1) * in.ntheta + k;
+                    static_cast<std::size_t>(j - 1) * n_z_n_t + k;
                 r12i = hg(0, h);
                 ru12i = hg(1, h);
                 zu12i = hg(2, h);
@@ -101,16 +103,17 @@ AxisymmetricForceResult axisymmetric_force_reference(
                 zsi = hg(4, h);
                 taui = hg(5, h);
                 gi = hg(6, h);
+                guvi = hg(8, h);
                 gvvi = hg(9, h);
                 bui = bf(0, h);
                 bvi = bf(1, h);
+                bdui = bf(2, h);
                 bdvi = bf(3, h);
                 tpi = bf(4, h);
                 shi = in.sqrt_s_h[j - 1];
             }
             if (j < in.ns - 1) {
-                const std::size_t h =
-                    static_cast<std::size_t>(j) * in.ntheta + k;
+                const std::size_t h = static_cast<std::size_t>(j) * n_z_n_t + k;
                 r12o = hg(0, h);
                 ru12o = hg(1, h);
                 zu12o = hg(2, h);
@@ -118,9 +121,11 @@ AxisymmetricForceResult axisymmetric_force_reference(
                 zso = hg(4, h);
                 tauo = hg(5, h);
                 go = hg(6, h);
+                guvo = hg(8, h);
                 gvvo = hg(9, h);
                 buo = bf(0, h);
                 bvo = bf(1, h);
+                bduo = bf(2, h);
                 bdvo = bf(3, h);
                 tpo = bf(4, h);
                 sho = in.sqrt_s_h[j];
@@ -133,6 +138,7 @@ AxisymmetricForceResult axisymmetric_force_reference(
             const float taupi = taui * tpi, taupo = tauo * tpo;
             const float gbuui = gi * bui * bui, gbuuo = go * buo * buo;
             const float gbvvi = gi * bvi * bvi, gbvvo = go * bvo * bvo;
+            const float gbuv_i = gi * bui * bvi, gbuv_o = go * buo * bvo;
             const float invsi = j > 0 ? 1.0F / shi : 0.0F;
             const float invso = j < in.ns - 1 ? 1.0F / sho : 0.0F;
             const float pav = 0.5F * (po + pi);
@@ -141,10 +147,14 @@ AxisymmetricForceResult axisymmetric_force_reference(
             const float guw = 0.5F * (gbuuo * sho + gbuui * shi);
             const float gvav = 0.5F * (gbvvo + gbvvi);
             const float gvw = 0.5F * (gbvvo * sho + gbvvi * shi);
+            const float guvav = 0.5F * (gbuv_o + gbuv_i);
+            const float guvw = 0.5F * (gbuv_o * sho + gbuv_i * shi);
             const float sf = in.sqrt_s_f[j], s = sf * sf;
             const float re = fg(0, p), ro = fg(6, p), zo = fg(7, p);
             const float rue = fg(3, p), ruo = fg(9, p);
             const float zue = fg(4, p), zuo = fg(10, p);
+            const float rve = fg(12, p), rvo = fg(15, p);
+            const float zve = fg(13, p), zvo = fg(16, p);
             put(0, p,
                 (zupo - zupi) / in.delta_s + 0.5F * (taupo + taupi) -
                     gvav * re - gvw * ro);
@@ -157,27 +167,41 @@ AxisymmetricForceResult axisymmetric_force_reference(
                 -(rupo * sho - rupi * shi) / in.delta_s + 0.5F * pw * rue +
                     0.5F * pav * ruo);
             put(4, p,
-                0.5F * (zspo + zspi) + 0.5F * pw * zo - guav * rue - guw * ruo);
+                0.5F * (zspo + zspi) + 0.5F * pw * zo - guav * rue - guw * ruo -
+                    guvav * rve - guvw * rvo);
             put(5, p,
                 0.5F * (zspo * sho + zspi * shi) + 0.5F * pav * zo - guw * rue -
-                    guav * ruo * s);
+                    guav * ruo * s - guvw * rve - guvav * rvo * s);
             put(6, p,
                 -0.5F * (rspo + rspi) - 0.5F * pw * ro - guav * zue -
-                    guw * zuo);
+                    guw * zuo - guvav * zve - guvw * zvo);
             put(7, p,
                 -0.5F * (rspo * sho + rspi * shi) - 0.5F * pav * ro -
-                    guw * zue - guav * zuo * s);
+                    guw * zue - guav * zuo * s - guvw * zve - guvav * zvo * s);
             const float gvi = j > 0 ? gvvi / gi : 0.0F;
             const float gvo = j < in.ns - 1 ? gvvo / go : 0.0F;
+            const float guv_bu_i = j > 0 ? guvi * bui : 0.0F;
+            const float guv_bu_o = j < in.ns - 1 ? guvo * buo : 0.0F;
             const float lue = in.lamscale * fg(5, p) + in.phip_f[j];
             const float luo = in.lamscale * fg(11, p);
-            const float alt =
-                0.5F * (gvi + gvo) * lue + 0.5F * (gvi * shi + gvo * sho) * luo;
+            const float alt = 0.5F * (gvi + gvo) * lue +
+                              0.5F * (gvi * shi + gvo * sho) * luo +
+                              0.5F * (guv_bu_i + guv_bu_o);
             const float blend = 0.1F * (1.0F - s);
             float lambda = 0.5F * (bdvo + bdvi) * (1.0F - blend) + alt * blend;
             if (j > 0) lambda *= -in.lamscale;
             put(8, p, lambda);
             put(9, p, lambda * sf);
+            put(10, p, guvav * rue + guvw * ruo + gvav * rve + gvw * rvo);
+            put(11, p,
+                guvw * rue + guvav * ruo * s + gvw * rve + gvav * rvo * s);
+            put(12, p, guvav * zue + guvw * zuo + gvav * zve + gvw * zvo);
+            put(13, p,
+                guvw * zue + guvav * zuo * s + gvw * zve + gvav * zvo * s);
+            float lambda_toroidal = 0.5F * (bduo + bdui);
+            if (j > 0) lambda_toroidal *= -in.lamscale;
+            put(14, p, lambda_toroidal);
+            put(15, p, lambda_toroidal * sf);
         }
     }
     return out;
@@ -196,8 +220,9 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
         callback("cannot load embedded /shaders/axisymmetric_force.wgsl", {});
         return;
     }
-    const std::size_t nf = static_cast<std::size_t>(in.ns) * in.ntheta;
-    const std::size_t nh = static_cast<std::size_t>(in.ns - 1) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t nf = static_cast<std::size_t>(in.ns) * n_z_n_t;
+    const std::size_t nh = static_cast<std::size_t>(in.ns - 1) * n_z_n_t;
     std::vector<float> radial;
     radial.insert(radial.end(), in.sqrt_s_f.begin(), in.sqrt_s_f.end());
     radial.insert(radial.end(), in.sqrt_s_h.begin(), in.sqrt_s_h.end());
@@ -206,7 +231,7 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     const auto hb = in.base_geometry.size() * sizeof(float);
     const auto bb = in.magnetic_field.size() * sizeof(float);
     const auto rb = radial.size() * sizeof(float);
-    const auto values = AXISYMMETRIC_FORCE_FIELD_COUNT * nf;
+    const auto values = FORCE_FIELD_COUNT * nf;
     const auto ob = values * sizeof(float);
     auto gbuf = buffer(device, gb,
                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
@@ -239,7 +264,7 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     pd.compute.entryPoint = "main";
     auto pipeline = device.CreateComputePipeline(&pd);
     ShaderParams params{static_cast<std::uint32_t>(in.ns),
-                        static_cast<std::uint32_t>(in.ntheta),
+                        static_cast<std::uint32_t>(n_z_n_t),
                         static_cast<std::uint32_t>(nf),
                         static_cast<std::uint32_t>(nh),
                         in.delta_s,

@@ -10,11 +10,12 @@
 
 namespace cumes::webgpu {
 
-inline constexpr std::size_t AXISYMMETRIC_FORCE_FIELD_COUNT = 10;
+inline constexpr std::size_t FORCE_FIELD_COUNT = 16;
 
 struct AxisymmetricForceCase {
     int ns = 0;
     int ntheta = 0;
+    int nzeta = 1;
     float delta_s = 0.0F;
     float lamscale = 0.0F;
     std::vector<float> geometry;
@@ -26,8 +27,10 @@ struct AxisymmetricForceCase {
 };
 
 struct AxisymmetricForceResult {
-    // Field-major full-grid order: armn e/o, azmn e/o, brmn e/o, bzmn e/o,
-    // blmn e/o.
+    // Field-major full-grid order consumed by the direct forward transform:
+    // armn e/o, azmn e/o, brmn e/o, bzmn e/o, blmn e/o, crmn e/o,
+    // czmn e/o, clmn e/o. The historical type name is retained while the
+    // operator supports both axisymmetric and 3-D angular grids.
     std::vector<float> fields;
 };
 

@@ -691,11 +691,66 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  3-D magnetic field+pressure: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
-                self->run_toroidal_forward();
+                self->run_toroidal_force(std::move(actual.fields));
             });
     }
 
-    void run_toroidal_forward() {
+    void run_toroidal_force(std::vector<float> magnetic_field) {
+        toroidal_force_case_.ns = toroidal_geometry_case_.ns;
+        toroidal_force_case_.ntheta = toroidal_geometry_case_.ntheta;
+        toroidal_force_case_.nzeta = toroidal_geometry_case_.nzeta;
+        toroidal_force_case_.delta_s = toroidal_geometry_case_.delta_s;
+        toroidal_force_case_.lamscale = toroidal_magnetic_case_.lamscale;
+        toroidal_force_case_.geometry = toroidal_geometry_case_.geometry;
+        toroidal_force_case_.base_geometry =
+            toroidal_magnetic_case_.base_geometry;
+        toroidal_force_case_.magnetic_field = std::move(magnetic_field);
+        toroidal_force_case_.sqrt_s_f = toroidal_geometry_case_.sqrt_s_f;
+        toroidal_force_case_.sqrt_s_h = toroidal_geometry_case_.sqrt_s_h;
+        toroidal_force_case_.phip_f = toroidal_magnetic_case_.phip_f;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_force(
+            device_, toroidal_force_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForceResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_force_reference(
+                        self->toroidal_force_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                const std::size_t points =
+                    static_cast<std::size_t>(self->toroidal_force_case_.ns) *
+                    self->toroidal_force_case_.ntheta *
+                    self->toroidal_force_case_.nzeta;
+                const bool toroidal_force_nonzero =
+                    valid && std::any_of(actual.fields.begin() + 10 * points,
+                                         actual.fields.end(), [](float value) {
+                                             return value != 0.0F;
+                                         });
+                if (!valid || !toroidal_force_nonzero || max_error > 5.0e-4F) {
+                    self->finish(false, "3-D MHD force mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf("  3-D MHD force: PASS (max |GPU-CPU| = %.3e)\n",
+                            static_cast<double>(max_error));
+                self->run_toroidal_forward(std::move(actual.fields));
+            });
+    }
+
+    void run_toroidal_forward(std::vector<float> force_fields) {
         toroidal_forward_case_.ns = toroidal_case_.ns;
         toroidal_forward_case_.mpol = toroidal_case_.mpol;
         toroidal_forward_case_.ntor = toroidal_case_.ntor;
@@ -706,13 +761,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const std::size_t points =
             static_cast<std::size_t>(toroidal_forward_case_.ns) *
             toroidal_forward_case_.ntheta * toroidal_forward_case_.nzeta;
-        toroidal_forward_case_.fields.resize(
-            cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points);
-        for (std::size_t i = 0; i < toroidal_forward_case_.fields.size(); ++i) {
-            toroidal_forward_case_.fields[i] =
-                0.07F * std::sin(0.031F * static_cast<float>(i + 5)) -
-                0.02F * std::cos(0.013F * static_cast<float>(i * i + 1));
-        }
+        toroidal_forward_case_.fields.assign(
+            cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+        std::copy(force_fields.begin(), force_fields.end(),
+                  toroidal_forward_case_.fields.begin());
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_toroidal_forward(
             device_, toroidal_forward_case_,
@@ -1127,8 +1179,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             solver_forward_case_.ntheta;
         solver_forward_case_.fields.assign(
             cumes::webgpu::FORWARD_INPUT_FIELD_COUNT * points, 0.0F);
-        std::copy(force_fields.begin(), force_fields.end(),
-                  solver_forward_case_.fields.begin());
+        std::copy_n(force_fields.begin(),
+                    cumes::webgpu::FORWARD_INPUT_FIELD_COUNT * points,
+                    solver_forward_case_.fields.begin());
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_forward(
             device_, solver_forward_case_,
@@ -1940,6 +1993,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::ToroidalForwardCase toroidal_forward_case_;
     cumes::webgpu::BaseGeometryCase toroidal_geometry_case_;
     cumes::webgpu::MagneticFieldCase toroidal_magnetic_case_;
+    cumes::webgpu::AxisymmetricForceCase toroidal_force_case_;
     cumes::webgpu::AxisymmetricStageData initialized_stage_;
     cumes::webgpu::BaseGeometryCase base_geometry_case_;
     cumes::webgpu::MagneticFieldCase magnetic_field_case_;
