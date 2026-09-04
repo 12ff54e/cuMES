@@ -2,10 +2,11 @@
 
 ## Status
 
-The WebGPU backend is an additive, experimental backend. CUDA remains the
-default and the only backend with free-boundary coupling and production
-performance qualification. WebGPU now implements the complete fixed-boundary
-iteration DAG for axisymmetric and folded 3-D equilibria.
+The WebGPU backend is an additive browser backend. CUDA remains the default
+and the only backend with the optional free-boundary coupling. The WebGPU port
+of cuMES's fixed-boundary solver is complete: it implements and hardware-
+qualifies the entire iteration DAG for axisymmetric and folded 3-D equilibria,
+multigrid control, and native binary result publication.
 
 The current WebGPU correctness milestones are implemented and
 browser-validated:
@@ -139,7 +140,9 @@ browser-validated:
   qualified mixed-float tolerance, the TITAN Xp Vulkan WebGPU path converges in
   `82 -> 35 -> 25` effective iterations (142 total), with final residual
   `(8.893e-03, 2.347e-03, 7.882e-06)` and an 11,809,203-byte result; the
-  end-to-end browser run takes 47.1 seconds including page/Wasm startup;
+  sequential end-to-end browser run takes 47.1 seconds including page/Wasm
+  startup; SwiftShader converges independently in `82 -> 30 -> 20` (132 total)
+  with `(7.692e-03, 2.082e-03, 1.347e-05)`;
 - cached immutable toroidal basis buffers plus persistent, grow-only operator
   scratch/readback buffers and compute pipelines; this removes hot-loop shader
   recompilation/allocation and keeps the complete high-resolution W7-X run
@@ -243,22 +246,26 @@ and completion is callback-driven. This makes synchronization and ownership
 visible instead of attempting to reproduce CUDA stream behavior through a
 source-level macro layer.
 
-## Remaining port sequence
+## Capability boundary and future optimization
 
-The remaining optimization and feature order is:
+The following are follow-on optimizations or optional backend expansions, not
+completion gates for the fixed-boundary WebGPU port:
 
 1. retain spectral/real-space fields on device across adjacent operators and
    batch each device-only segment into one command submission (buffers and
    pipelines are persistent today, but mapped host results still connect the
    operator APIs);
-2. integrate free-boundary/NESTOR support.
+2. port the optional free-boundary/NESTOR dependency as a separate WebGPU
+   project if browser free-boundary equilibria are required.
 
-Free-boundary support is last because `deps/vacuum-field` is itself CUDA-based
-and includes host/device coupling beyond the main operator DAG. NetCDF/HDF5 and
-the magnetic-coordinate CUDA postprocessor are also excluded from the browser
-target. The browser publishes the complete native binary schema through MEMFS
-and a JavaScript Blob download adapter, including spectral state, scientific
-fields, multigrid history, provenance, and the normalized input record.
+`deps/vacuum-field` is itself a CUDA solver and is intentionally outside the
+CUDA-free browser target; inputs with `lfreeb=true` therefore fail validation
+instead of silently using fixed-boundary physics. NetCDF/HDF5 and the
+magnetic-coordinate CUDA postprocessor are likewise host/native extensions,
+not browser solver requirements. The browser publishes the complete native
+binary schema through MEMFS and a JavaScript Blob download adapter, including
+spectral state, scientific fields, multigrid history, provenance, and the
+normalized input record.
 
 ## Verification levels
 
