@@ -63,6 +63,10 @@ browser-validated:
   `IterationController<double>` damping/restart decision; a one-pass native
   CUDA cross-check and the browser path both report first-pass Solovev
   `FSQR=2.565e-02`;
+- a repeating two-pass axisymmetric stage slice with persistent velocity,
+  constraint reference/`tcon`, cached preconditioner, rollback checkpoint, and
+  controller state; WebGPU and native CUDA mixed-float both report the
+  effective-iteration-3 residual triple `(1.820e-03, 2.723e-04, 4.029e-04)`;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -145,10 +149,9 @@ The recommended dependency order is:
    parsing, cold seeding, and host profile evaluation are complete);
 3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
    base geometry are complete);
-4. checkpoint/restart orchestration and a repeating axisymmetric stage loop
-   (the operator DAG through controller-driven accelerated descent is
-   complete), then persistent stage-owned GPU buffers and batched command
-   encoding;
+4. terminal/restart branches and an unbounded axisymmetric stage loop (the
+   operator DAG and persistent host-visible pass state are complete), then
+   persistent stage-owned GPU buffers and batched command encoding;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;

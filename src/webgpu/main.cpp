@@ -539,74 +539,77 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
 
-            // The CUDA solver mutates the physical state with
-            // extrapolateTowardsAxis immediately before every inverse pass.
-            // Preserve the cold-state assertions above, then establish that
-            // production state contract for this and subsequent passes.
-            for (std::size_t component = 0;
-                 component < cumes::webgpu::SPECTRAL_COMPONENT_COUNT;
-                 ++component) {
-                const std::size_t m1 = (component * stage.mpol + 1) * stage.ns;
-                initialized_stage_.state[m1] = initialized_stage_.state[m1 + 1];
-            }
-            const std::size_t lcs_m0 = 5 * family_values;
-            initialized_stage_.state[lcs_m0] =
-                initialized_stage_.state[lcs_m0 + 1];
             controller_.emplace(cumes::IterationController<double>::Options{
                 static_cast<double>(stage.delta_t), stage.tolerance, 0.0,
                 false});
-
-            cumes::webgpu::AxisymmetricInverseCase inverse;
-            inverse.ns = stage.ns;
-            inverse.mpol = stage.mpol;
-            inverse.ntheta = stage.ntheta;
-            inverse.state = stage.state;
-            const auto self = shared_from_this();
-            cumes::webgpu::enqueue_axisymmetric_inverse(
-                device_, inverse,
-                [self, inverse](
-                    std::string error,
-                    cumes::webgpu::AxisymmetricInverseResult actual) {
-                    if (!error.empty()) {
-                        self->finish(false, std::move(error));
-                        return;
-                    }
-                    const auto expected =
-                        cumes::webgpu::axisymmetric_inverse_reference(inverse);
-                    float max_error = 0.0F;
-                    const auto compare = [&max_error](const auto& gpu,
-                                                      const auto& cpu) {
-                        if (gpu.size() != cpu.size()) {
-                            max_error = std::numeric_limits<float>::infinity();
-                            return;
-                        }
-                        for (std::size_t i = 0; i < gpu.size(); ++i) {
-                            max_error =
-                                std::max(max_error, std::abs(gpu[i] - cpu[i]));
-                        }
-                    };
-                    compare(actual.geometry, expected.geometry);
-                    compare(actual.r_con, expected.r_con);
-                    compare(actual.z_con, expected.z_con);
-                    if (max_error > 1.0e-4F) {
-                        self->finish(
-                            false,
-                            "initialized Solovev inverse mismatch: max_error=" +
-                                std::to_string(max_error));
-                        return;
-                    }
-                    std::printf(
-                        "  parsed Solovev seed+profiles+inverse: PASS "
-                        "(max |GPU-CPU| = %.3e)\n",
-                        static_cast<double>(max_error));
-                    self->solovev_r_con_ = std::move(actual.r_con);
-                    self->solovev_z_con_ = std::move(actual.z_con);
-                    self->run_base_geometry(std::move(actual.geometry));
-                });
+            stage_velocity_.assign(stage.state.size(), 0.0F);
+            checkpoint_state_ = stage.state;
+            run_stage_inverse();
         } catch (const std::exception& error) {
             finish(false, "Solovev initialization failed: " +
                               std::string(error.what()));
         }
+    }
+
+    void run_stage_inverse() {
+        // CUDA's extrapolateTowardsAxis mutates the physical state immediately
+        // before every inverse pass.
+        const std::size_t family_values =
+            static_cast<std::size_t>(initialized_stage_.ns) *
+            initialized_stage_.mpol;
+        for (std::size_t component = 0;
+             component < cumes::webgpu::SPECTRAL_COMPONENT_COUNT; ++component) {
+            const std::size_t m1 = (component * initialized_stage_.mpol + 1) *
+                                   initialized_stage_.ns;
+            initialized_stage_.state[m1] = initialized_stage_.state[m1 + 1];
+        }
+        const std::size_t lcs_m0 = 5 * family_values;
+        initialized_stage_.state[lcs_m0] = initialized_stage_.state[lcs_m0 + 1];
+        cumes::webgpu::AxisymmetricInverseCase inverse;
+        inverse.ns = initialized_stage_.ns;
+        inverse.mpol = initialized_stage_.mpol;
+        inverse.ntheta = initialized_stage_.ntheta;
+        inverse.state = initialized_stage_.state;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_inverse(
+            device_, inverse,
+            [self, inverse](std::string error,
+                            cumes::webgpu::AxisymmetricInverseResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_inverse_reference(inverse);
+                float max_error = 0.0F;
+                const auto compare = [&max_error](const auto& gpu,
+                                                  const auto& cpu) {
+                    if (gpu.size() != cpu.size()) {
+                        max_error = std::numeric_limits<float>::infinity();
+                        return;
+                    }
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                    }
+                };
+                compare(actual.geometry, expected.geometry);
+                compare(actual.r_con, expected.r_con);
+                compare(actual.z_con, expected.z_con);
+                if (max_error > 1.0e-4F) {
+                    self->finish(false, "Solovev iterative inverse mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  Solovev pass %d inverse: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    self->completed_passes_ + 1,
+                    static_cast<double>(max_error));
+                self->solovev_r_con_ = std::move(actual.r_con);
+                self->solovev_z_con_ = std::move(actual.z_con);
+                self->run_base_geometry(std::move(actual.geometry));
+            });
     }
 
     void run_base_geometry(std::vector<float> geometry) {
@@ -860,6 +863,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_preconditioner_elements() {
+        if (!controller_->refresh_preconditioner() &&
+            !preconditioner_elements_.ard.empty()) {
+            run_axisymmetric_constraint();
+            return;
+        }
         preconditioner_case_.ns = initialized_stage_.ns;
         preconditioner_case_.ntheta = initialized_stage_.ntheta;
         preconditioner_case_.delta_s = initialized_stage_.profiles.delta_s;
@@ -984,17 +992,24 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.ntheta = initialized_stage_.ntheta;
         constraint_case_.delta_s = initialized_stage_.profiles.delta_s;
         constraint_case_.tcon0 = initialized_stage_.tcon0;
-        constraint_case_.reset_reference = true;
-        constraint_case_.refresh_preconditioner = true;
+        constraint_case_.reset_reference =
+            controller_->reset_constraint_reference();
+        constraint_case_.refresh_preconditioner =
+            controller_->refresh_preconditioner();
         constraint_case_.geometry = base_geometry_case_.geometry;
         constraint_case_.r_con = solovev_r_con_;
         constraint_case_.z_con = solovev_z_con_;
         const std::size_t points =
             static_cast<std::size_t>(constraint_case_.ns) *
             constraint_case_.ntheta;
-        constraint_case_.r_con0.assign(points, 0.0F);
-        constraint_case_.z_con0.assign(points, 0.0F);
-        constraint_case_.tcon.assign(constraint_case_.ns, 0.0F);
+        if (constraint_r_con0_.empty()) {
+            constraint_r_con0_.assign(points, 0.0F);
+            constraint_z_con0_.assign(points, 0.0F);
+            constraint_tcon_.assign(constraint_case_.ns, 0.0F);
+        }
+        constraint_case_.r_con0 = constraint_r_con0_;
+        constraint_case_.z_con0 = constraint_z_con0_;
+        constraint_case_.tcon = constraint_tcon_;
         constraint_case_.ard = preconditioner_elements_.ard;
         constraint_case_.azd = preconditioner_elements_.azd;
         constraint_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
@@ -1043,6 +1058,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  Solovev constraint refresh+force: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
+                self->constraint_r_con0_ = actual.r_con0;
+                self->constraint_z_con0_ = actual.z_con0;
+                self->constraint_tcon_ = actual.tcon;
                 self->run_constraint_forward(std::move(actual.fields));
             });
     }
@@ -1094,7 +1112,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_residual_case_.ns = initialized_stage_.ns;
         constraint_residual_case_.mpol = initialized_stage_.mpol;
         constraint_residual_case_.include_edge_rz = false;
-        constraint_residual_case_.zero_m1_z = false;
+        constraint_residual_case_.zero_m1_z =
+            controller_->effective_iteration() < 2 ||
+            controller_->fsqz_prev() < 1.0e-6;
         constraint_residual_case_.residual = std::move(residual);
         constraint_residual_case_.sqrt_s_f =
             initialized_stage_.profiles.sqrt_s_f;
@@ -1169,19 +1189,26 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                             std::to_string(max_scaled_error));
                     return;
                 }
-                cumes::webgpu::AxisymmetricForceNormalizationCase norm_case;
-                norm_case.ns = self->initialized_stage_.ns;
-                norm_case.mpol = self->initialized_stage_.mpol;
-                norm_case.ntheta = self->initialized_stage_.ntheta;
-                norm_case.delta_s = self->initialized_stage_.profiles.delta_s;
-                norm_case.lamscale = self->initialized_stage_.profiles.lamscale;
-                norm_case.state = self->initialized_stage_.state;
-                norm_case.base_geometry =
-                    self->magnetic_field_case_.base_geometry;
-                norm_case.magnetic_field = self->force_case_.magnetic_field;
-                norm_case.pres_h = self->initialized_stage_.profiles.pres_h;
-                self->force_normalization_ =
-                    cumes::webgpu::axisymmetric_force_normalization(norm_case);
+                if (!self->force_norm_ready_ ||
+                    self->controller_->refresh_preconditioner()) {
+                    cumes::webgpu::AxisymmetricForceNormalizationCase norm_case;
+                    norm_case.ns = self->initialized_stage_.ns;
+                    norm_case.mpol = self->initialized_stage_.mpol;
+                    norm_case.ntheta = self->initialized_stage_.ntheta;
+                    norm_case.delta_s =
+                        self->initialized_stage_.profiles.delta_s;
+                    norm_case.lamscale =
+                        self->initialized_stage_.profiles.lamscale;
+                    norm_case.state = self->initialized_stage_.state;
+                    norm_case.base_geometry =
+                        self->magnetic_field_case_.base_geometry;
+                    norm_case.magnetic_field = self->force_case_.magnetic_field;
+                    norm_case.pres_h = self->initialized_stage_.profiles.pres_h;
+                    self->force_normalization_ =
+                        cumes::webgpu::axisymmetric_force_normalization(
+                            norm_case);
+                    self->force_norm_ready_ = true;
+                }
                 const double plain =
                     static_cast<double>(self->initialized_stage_.ns) *
                     self->initialized_stage_.mpol;
@@ -1232,7 +1259,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         descent_case_.damping_fac =
             static_cast<float>(pending_decision_.damping.fac);
         descent_case_.state = initialized_stage_.state;
-        descent_case_.velocity.assign(descent_case_.state.size(), 0.0F);
+        descent_case_.velocity = stage_velocity_;
         descent_case_.residual = std::move(residual);
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_descent(
@@ -1287,17 +1314,34 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  Solovev accelerated descent: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_scaled_error));
+                if (self->pending_decision_.do_refresh) {
+                    self->checkpoint_state_ = actual.state;
+                }
+                if (self->pending_decision_.reason !=
+                    cumes::RestartReason::NONE) {
+                    self->initialized_stage_.state = self->checkpoint_state_;
+                    self->stage_velocity_.assign(
+                        self->initialized_stage_.state.size(), 0.0F);
+                } else {
+                    self->initialized_stage_.state = std::move(actual.state);
+                    self->stage_velocity_ = std::move(actual.velocity);
+                }
                 self->controller_->after_descent(self->pending_decision_);
+                ++self->completed_passes_;
                 std::printf(
                     "  host controller: PASS (iter=%d, FSQR=%.3e, "
                     "delta=%.3e)\n",
                     self->controller_->effective_iteration(),
                     self->invariant_normalized_[0],
                     self->controller_->delta_t());
-                self->finish(
-                    true,
-                    "parsed Solovev pass through constraint, preconditioning, "
-                    "and accelerated descent verified");
+                if (self->completed_passes_ < 2) {
+                    self->run_stage_inverse();
+                    return;
+                }
+                self->finish(true,
+                             "two controller-driven Solovev passes through "
+                             "persistent constraint/preconditioner/descent "
+                             "state verified");
             });
     }
 
@@ -1340,8 +1384,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::array<double, 3> invariant_normalized_{};
     std::array<double, 3> preconditioned_normalized_{};
     cumes::webgpu::ForceNormalizationResult force_normalization_;
+    bool force_norm_ready_ = false;
     std::vector<float> solovev_r_con_;
     std::vector<float> solovev_z_con_;
+    std::vector<float> constraint_r_con0_;
+    std::vector<float> constraint_z_con0_;
+    std::vector<float> constraint_tcon_;
+    std::vector<float> stage_velocity_;
+    std::vector<float> checkpoint_state_;
+    int completed_passes_ = 0;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;
