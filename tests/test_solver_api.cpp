@@ -228,6 +228,11 @@ int main() {
             cumes::read_problem_spec("inputs/w7x.json", options);
         check(concurrent_parsed.report.ok(),
               "solver API: concurrent 3-D input mapping succeeds");
+#ifdef CUMES_USE_FLOAT
+        for (auto& stage : concurrent_parsed.spec.stages) {
+            stage.tolerance = 1.0e-2;
+        }
+#endif
         cumes::ValidationResult concurrent_validated =
             cumes::validate(std::move(concurrent_parsed.spec), options);
         check(concurrent_validated.has_value(),

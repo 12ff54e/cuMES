@@ -347,6 +347,10 @@ else()
 endif()
 
 add_library(cumes_solver STATIC src/cumes/solver/equilibrium_solver.cu)
+if(CUMES_USE_FLOAT)
+  target_sources(cumes_solver PRIVATE
+    src/cumes/solver/equilibrium_linearization_unsupported.cpp)
+endif()
 target_include_directories(cumes_solver PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)

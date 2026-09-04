@@ -6,10 +6,13 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace {
 
+#ifndef CUMES_USE_FLOAT
 double relative_difference(const std::vector<double>& tangent,
                            const std::vector<double>& plus,
                            const std::vector<double>& minus,
@@ -24,10 +27,36 @@ double relative_difference(const std::vector<double>& tangent,
     }
     return std::sqrt(difference_sq / reference_sq);
 }
+#endif
 
 }  // namespace
 
 int main() {
+#ifdef CUMES_USE_FLOAT
+    cumes::SolverOptions options;
+    options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+    auto parsed = cumes::read_problem_spec("inputs/solovev.json", options);
+    for (auto& stage : parsed.spec.stages) stage.tolerance = 1.0e-6;
+    auto problem = cumes::validate(std::move(parsed.spec), options);
+    if (!problem.has_value()) {
+        std::cerr << "FAIL: mixed-float Solovev input did not validate\n";
+        return 1;
+    }
+    try {
+        const cumes::EquilibriumSnapshot unused_equilibrium;
+        const cumes::EquilibriumLinearization unsupported(problem.value(),
+                                                          unused_equilibrium);
+        static_cast<void>(unsupported);
+    } catch (const cumes::CumesError& error) {
+        const std::string message = error.what();
+        if (message.find("precise-double") != std::string::npos) return 0;
+        std::cerr << "FAIL: unexpected mixed-float tangent error: " << message
+                  << '\n';
+        return 1;
+    }
+    std::cerr << "FAIL: mixed-float tangent construction did not fail\n";
+    return 1;
+#else
     const auto problem =
         cumes::read_and_validate("inputs/solovev.json", cumes::SolverOptions{});
     if (!problem.has_value()) {
@@ -217,4 +246,5 @@ int main() {
         return 1;
     }
     return 0;
+#endif
 }
