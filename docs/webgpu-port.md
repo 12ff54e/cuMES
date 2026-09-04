@@ -74,11 +74,18 @@ browser-validated:
   effective iteration 72, with terminal residual triples
   `(9.947e-07, 4.857e-07, 3.318e-07)` and
   `(9.912e-07, 4.861e-07, 3.320e-07)` respectively;
+- all three fixed-boundary Solovev multigrid stages, with the production float
+  linear/scalxc transfer dispatched through WebGPU and every transition checked
+  against the independent C++ reference; WebGPU converges in `72 -> 32 -> 182`
+  effective iterations (286 total) with final residual
+  `(9.831e-07, 3.438e-07, 3.011e-10)`, while native CUDA mixed-float converges
+  in `72 -> 31 -> 182` (285 total) with
+  `(9.696e-07, 4.486e-07, 3.081e-10)`;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input and converges
-its first axisymmetric multigrid stage. It is a functioning compute-backend
-slice, not yet a complete cuMES WebGPU solver.
+all three axisymmetric multigrid stages. It is a functioning fixed-boundary
+axisymmetric solver, but not yet a complete cuMES WebGPU solver.
 
 ## Build and run
 
@@ -159,7 +166,7 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. all three fixed-boundary Solovev multigrid stages and result publication;
+5. fixed-boundary result publication (all three Solovev stages are complete);
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;
 7. 3-D W7-X qualification and only then free-boundary/NESTOR integration.
@@ -178,8 +185,9 @@ virtual filesystem or a JavaScript download adapter.
 - browser self-test: compiles WGSL on the selected adapter, dispatches both
   prolongation modes and the complete direct axisymmetric transform path, maps
   results, compares every value with the C++ references, then parses and
-  initializes the embedded Solovev case and evaluates its half-grid geometry
-  plus first- and later-pass force/residual paths (tolerances `4e-6` through
-  `1e-3`).
+  initializes the embedded Solovev case, converges all three multigrid stages,
+  and evaluates every half-grid geometry plus first- and later-pass
+  force/residual path against a C++ reference (operator tolerances `4e-6`
+  through `1e-3`, solver tolerance `1e-6`).
 - future operator gates: compare full typed views against existing test
   references before wiring the operator into the stage DAG.

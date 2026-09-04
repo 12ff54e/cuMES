@@ -490,9 +490,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                                   : errors.front()));
                 return;
             }
-            const auto& boundary = validated.value().boundary();
-            initialized_stage_ = cumes::webgpu::initialize_axisymmetric_stage(
-                validated.value(), 0);
+            problem_.emplace(std::move(validated.value()));
+            const auto& boundary = problem_->boundary();
+            initialized_stage_ =
+                cumes::webgpu::initialize_axisymmetric_stage(*problem_, 0);
             const auto& stage = initialized_stage_;
             const std::size_t family_values =
                 static_cast<std::size_t>(stage.ns) * stage.mpol;
@@ -539,11 +540,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
 
-            controller_.emplace(cumes::IterationController<double>::Options{
-                static_cast<double>(stage.delta_t), stage.tolerance, 0.0,
-                false});
-            stage_velocity_.assign(stage.state.size(), 0.0F);
-            checkpoint_state_ = stage.state;
+            reset_stage_state();
             run_stage_inverse();
         } catch (const std::exception& error) {
             finish(false, "Solovev initialization failed: " +
@@ -1289,16 +1286,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 if (verdict.converged) {
-                    char detail[256];
-                    std::snprintf(
-                        detail, sizeof(detail),
-                        "Solovev axisymmetric stage converged at iter=%d "
-                        "residual=(%.3e, %.3e, %.3e)",
-                        self->controller_->effective_iteration(),
-                        self->invariant_normalized_[0],
-                        self->invariant_normalized_[1],
-                        self->invariant_normalized_[2]);
-                    self->finish(true, detail);
+                    self->complete_stage();
                     return;
                 }
                 self->pending_decision_ = self->controller_->decide_restart(
@@ -1404,6 +1392,98 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
     }
 
+    void reset_stage_state() {
+        controller_.emplace(cumes::IterationController<double>::Options{
+            static_cast<double>(initialized_stage_.delta_t),
+            initialized_stage_.tolerance, 0.0, false});
+        stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
+        checkpoint_state_ = initialized_stage_.state;
+        constraint_r_con0_.clear();
+        constraint_z_con0_.clear();
+        constraint_tcon_.clear();
+        preconditioner_elements_ = {};
+        preconditioner_matrix_ = {};
+        force_normalization_ = {};
+        force_norm_ready_ = false;
+        completed_passes_ = 0;
+        attempted_passes_ = 0;
+    }
+
+    void complete_stage() {
+        const int stage_iterations = controller_->effective_iteration();
+        stage_iterations_.push_back(stage_iterations);
+        total_iterations_ += stage_iterations;
+        std::printf(
+            "  Solovev stage %zu/%zu converged: iter=%d residual=(%.3e, "
+            "%.3e, %.3e)\n",
+            stage_index_ + 1, problem_->stage_shapes().size(), stage_iterations,
+            invariant_normalized_[0], invariant_normalized_[1],
+            invariant_normalized_[2]);
+        if (stage_index_ + 1 == problem_->stage_shapes().size()) {
+            char detail[320];
+            std::snprintf(
+                detail, sizeof(detail),
+                "Solovev multigrid converged in %d effective iterations; "
+                "final residual=(%.3e, %.3e, %.3e)",
+                total_iterations_, invariant_normalized_[0],
+                invariant_normalized_[1], invariant_normalized_[2]);
+            finish(true, detail);
+            return;
+        }
+
+        const std::size_t next_stage = stage_index_ + 1;
+        const auto& next_shape = problem_->stage_shapes()[next_stage];
+        cumes::webgpu::ProlongationCase transfer;
+        transfer.ns_old = initialized_stage_.ns;
+        transfer.ns_new = next_shape.ns;
+        transfer.mnmax = initialized_stage_.mpol;
+        transfer.ntor = 0;
+        transfer.interpolation = cumes::webgpu::RadialInterpolation::LINEAR;
+        transfer.state = initialized_stage_.state;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_prolongation(
+            device_, transfer,
+            [self, transfer, next_stage](
+                std::string error,
+                cumes::webgpu::ProlongationResult prolonged) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::prolongation_reference(transfer);
+                float max_error = 0.0F;
+                bool valid =
+                    prolonged.state.size() == expected.state.size() &&
+                    prolonged.velocity.size() == expected.velocity.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < prolonged.state.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(prolonged.state[i] - expected.state[i]));
+                        valid &= prolonged.velocity[i] == 0.0F;
+                    }
+                }
+                if (!valid || max_error > 4.0e-6F) {
+                    self->finish(false, "stage prolongation mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                self->stage_index_ = next_stage;
+                self->initialized_stage_ =
+                    cumes::webgpu::initialize_axisymmetric_stage(
+                        *self->problem_, next_stage);
+                self->initialized_stage_.state = std::move(prolonged.state);
+                self->reset_stage_state();
+                std::printf(
+                    "  Solovev stage prolongation: PASS (ns=%d -> %d, max "
+                    "|GPU-CPU| = %.3e)\n",
+                    transfer.ns_old, transfer.ns_new,
+                    static_cast<double>(max_error));
+                self->run_stage_inverse();
+            });
+    }
+
     static void finish(bool success, const std::string& detail) {
         std::printf("cuMES WebGPU self-test: %s — %s\n",
                     success ? "PASS" : "FAIL", detail.c_str());
@@ -1438,6 +1518,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_apply_case_;
     cumes::webgpu::AxisymmetricDescentCase descent_case_;
     std::optional<cumes::IterationController<double>> controller_;
+    std::optional<cumes::ValidatedProblem> problem_;
     cumes::RestartDecision<double> pending_decision_;
     std::array<double, 3> invariant_raw_{};
     std::array<double, 3> invariant_normalized_{};
@@ -1453,6 +1534,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> checkpoint_state_;
     int completed_passes_ = 0;
     int attempted_passes_ = 0;
+    std::size_t stage_index_ = 0;
+    int total_iterations_ = 0;
+    std::vector<int> stage_iterations_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;
