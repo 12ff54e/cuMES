@@ -5,6 +5,11 @@ algorithm. All computation runs on GPU; the CPU host is a thin orchestrator.
 This is a pedagogical / scaffolding project — not production-grade, but the
 architecture and physics are real.
 
+An experimental browser backend is being developed with Emscripten and
+emdawnwebgpu. It currently provides the CUDA-free build path, WebGPU runtime,
+and validated linear/Catmull-Rom multigrid prolongation kernel; it is not yet a
+complete equilibrium solver. See [the WebGPU port status](docs/webgpu-port.md).
+
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
 (CPU-based C++ VMEC solver) at tag 0.7.0. cuMES convergence is defined by its
 own discrete force residuals and validity gates; vmecpp is a diagnostic
@@ -35,6 +40,23 @@ cmake --build build -j
 ./build/deps/magnetic-coordinate/cumes-boozer out.bin --output boozer.nc
 ctest --test-dir build --output-on-failure
 ```
+
+The current WebGPU milestone builds separately and requires core WebGPU/WGSL
+single precision:
+
+```bash
+source "/lustre/qzhong/emsdk/emsdk_env.sh"
+export EM_CACHE="$PWD/../tmp/cumes-emscripten-cache"
+emcmake cmake --preset webgpu
+cmake --build --preset webgpu -j
+ctest --preset webgpu
+python3 -m http.server --directory ../tmp/cumes-build-webgpu/webgpu
+# open http://localhost:8000/cumes_webgpu.html in a WebGPU-capable browser
+```
+
+The page runs GPU/CPU conformance cases and prints `cuMES WebGPU self-test:
+PASS` when dispatch and readback agree. The artifact test checks the generated
+HTML/JavaScript/Wasm bundle; browser execution is the numerical gate.
 
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
@@ -154,6 +176,7 @@ the convergence decision.
 | `fast` | fast-double | opt-in `--use_fast_math`, dump machinery compiled out |
 | `debug` | debug-double | precise + `-G` |
 | `sanitizer` | verify-double | compute-sanitizer memcheck/initcheck/racecheck/synccheck + ASan/UBSan host twins |
+| `webgpu` | mixed-float | Emscripten + emdawnwebgpu; experimental prolongation milestone |
 
 The backend matrix (`nobackend`, `netcdf-only`, `hdf5-only`) rounds out the
 optional-backend presets. Every computation is `template<typename T>`; `Real`

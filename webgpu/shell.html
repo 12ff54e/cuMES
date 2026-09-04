@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cuMES WebGPU</title>
+  <style>
+    body { margin: 2rem auto; max-width: 60rem; padding: 0 1rem;
+           background: #10151c; color: #e8eef6; font: 16px system-ui; }
+    pre { padding: 1rem; border: 1px solid #354455; background: #090d12;
+          white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>cuMES WebGPU backend</h1>
+  <pre id="output">Loading WebAssembly and requesting WebGPU…
+</pre>
+  <script>
+    const output = document.getElementById('output');
+    const append = (line) => { output.textContent += line + '\n'; };
+    var Module = {
+      print: (...args) => append(args.join(' ')),
+      printErr: (...args) => append('ERROR: ' + args.join(' '))
+    };
+    window.cumesKeepAlive = setInterval(() => {}, 50);
+    window.cumesDeadline = setTimeout(() => {
+      if (!document.body.dataset.cumesWebgpu) {
+        document.body.dataset.cumesWebgpu = 'fail';
+        document.body.dataset.cumesDetail = 'WebGPU self-test timed out';
+        append('ERROR: WebGPU self-test timed out');
+      }
+      clearInterval(window.cumesKeepAlive);
+    }, 15000);
+    window.addEventListener('error', (event) => {
+      document.body.dataset.cumesWebgpu = 'fail';
+      document.body.dataset.cumesDetail = event.message;
+      append('ERROR: ' + event.message);
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      document.body.dataset.cumesWebgpu = 'fail';
+      document.body.dataset.cumesDetail = String(event.reason);
+      append('ERROR: ' + event.reason);
+    });
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>
