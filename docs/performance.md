@@ -326,6 +326,35 @@ reusable arena/cuFFT construction from required output work and host/device
 iteration synchronization. The split is diagnostic only and must sum back to
 the already exposed multigrid wall time without changing solver ordering.
 
+The full-package Release QA profile closes that follow-up. Summed over the
+eight finite-difference solves, 3.2173 s of multigrid wall time split into
+0.15335 s stage setup (4.77%), 2.94751 s iteration (91.61%), 0.06087 s final
+derived-field capture (1.89%), 0.04052 s teardown (1.26%), and 0.01506 s other
+orchestration (0.47%). A persistent topology-keyed stage cache cannot clear the
+5% acceptance threshold even if it unrealistically removes every setup cycle;
+it would also retain roughly 69 MB per worker at the W7-X final grid. Resource
+caching is therefore rejected without implementation. The structured timing
+API remains useful observability for embedding applications.
+
+### 3.6 Transform launch-shape tuning — experiment plan
+
+With resource lifetime ruled out, optimize only the dominant device path. A
+warmed, graph-disabled W7-X `ns=99` fixed-iteration run on the TITAN Xp measured
+1.681 ms median wall time per iteration. CUDA-event instrumentation attributed
+0.657 ms/pass to inverse transforms and 0.492 ms/pass to forward transforms,
+about 68% combined. Hardware-counter collection is unavailable on this host
+(`ERR_NVGPUCTRPERM`), so experiments must use repeated alternating runs of the
+existing fixed-iteration harness and its bit-identical state hash gate.
+
+First sweep the zeta tile widths of the inverse-accumulate and forward-reduce
+kernels independently. Tile width changes only the CUDA launch decomposition:
+each output retains its existing serial poloidal accumulation order. Compare
+the shipped W7-X and Solovev workloads, retain no public/environment knob, and
+adopt a static launch policy only if W7-X clears the 5% gate while Solovev
+regresses by at most 2%. If no tile clears that gate, restore the current
+launch policy and record the negative result before considering a more invasive
+transform algorithm.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
