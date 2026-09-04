@@ -1,4 +1,6 @@
+#include "cumes/config/device_params.hpp"
 #include "cumes/config/json_reader.hpp"
+#include "cumes/io/derived_fields.hpp"
 #include "cumes/io/reader.hpp"
 #include "cumes/io/writer.hpp"
 #include "cumes/solver/iteration_controller.hpp"
@@ -1550,6 +1552,56 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             snapshot.families[component].assign(begin, begin + family_values);
         }
 
+        cumes::DerivedFieldInputs fields;
+        fields.ns = initialized_stage_.ns;
+        fields.ntheta = initialized_stage_.ntheta;
+        fields.nzeta = 1;
+        fields.nfp = problem_->spec().nfp;
+        fields.delta_s = initialized_stage_.profiles.delta_s;
+        fields.mu0 = static_cast<double>(DeviceParams<float>::MU_0);
+        fields.sqrt_s_full.assign(initialized_stage_.profiles.sqrt_s_f.begin(),
+                                  initialized_stage_.profiles.sqrt_s_f.end());
+        fields.sqrt_s_half.assign(initialized_stage_.profiles.sqrt_s_h.begin(),
+                                  initialized_stage_.profiles.sqrt_s_h.end());
+        const std::size_t full_points =
+            static_cast<std::size_t>(fields.ns) * fields.ntheta;
+        const std::size_t half_points =
+            static_cast<std::size_t>(fields.ns - 1) * fields.ntheta;
+        const auto copy_field = [](const std::vector<float>& source,
+                                   std::size_t field, std::size_t count) {
+            const auto begin = source.begin() + field * count;
+            return std::vector<double>(begin, begin + count);
+        };
+        const auto& full = base_geometry_case_.geometry;
+        fields.r_e = copy_field(full, 0, full_points);
+        fields.z_e = copy_field(full, 1, full_points);
+        fields.ru_e = copy_field(full, 3, full_points);
+        fields.zu_e = copy_field(full, 4, full_points);
+        fields.r_o = copy_field(full, 6, full_points);
+        fields.z_o = copy_field(full, 7, full_points);
+        fields.ru_o = copy_field(full, 9, full_points);
+        fields.zu_o = copy_field(full, 10, full_points);
+        fields.rv_e = copy_field(full, 12, full_points);
+        fields.zv_e = copy_field(full, 13, full_points);
+        fields.rv_o = copy_field(full, 15, full_points);
+        fields.zv_o = copy_field(full, 16, full_points);
+        const auto& base = magnetic_field_case_.base_geometry;
+        fields.ru12 = copy_field(base, 1, half_points);
+        fields.zu12 = copy_field(base, 2, half_points);
+        fields.rs = copy_field(base, 3, half_points);
+        fields.zs = copy_field(base, 4, half_points);
+        fields.sqrtg = copy_field(base, 6, half_points);
+        const auto& magnetic = force_case_.magnetic_field;
+        fields.bsupu = copy_field(magnetic, 0, half_points);
+        fields.bsupv = copy_field(magnetic, 1, half_points);
+        fields.bsubu = copy_field(magnetic, 2, half_points);
+        fields.bsubv = copy_field(magnetic, 3, half_points);
+        const cumes::Status derived_status =
+            cumes::populate_derived_fields(fields, snapshot);
+        if (!derived_status.has_value()) {
+            return "WebGPU derived fields failed: " + derived_status.error();
+        }
+
         cumes::RunReport report;
         report.status = cumes::RunStatus::CONVERGED;
         report.total_effective_iterations = total_iterations_;
@@ -1585,6 +1637,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const auto& recovered = roundtrip.value();
         if (recovered.ns != snapshot.ns || recovered.mnmax != snapshot.mnmax ||
             recovered.families != snapshot.families ||
+            !recovered.has_derived_fields() ||
+            recovered.half_fields != snapshot.half_fields ||
+            recovered.full_fields != snapshot.full_fields ||
             roundtrip_report.status != cumes::RunStatus::CONVERGED ||
             roundtrip_report.total_effective_iterations != total_iterations_ ||
             roundtrip_report.stages.size() != stage_reports_.size() ||

@@ -30,7 +30,8 @@ rollback state. It converges in `72 -> 32 -> 182` effective iterations, versus
 native CUDA mixed-float's closely equivalent `72 -> 31 -> 182` trajectory.
 The converged spectral state and run provenance are published as a version-8
 native binary through a browser download link and verified by an in-Wasm
-round trip.
+round trip. The download also contains the complete half/full-grid scientific
+field block and is accepted by the standard plotting workflow.
 See
 [the WebGPU port status](docs/webgpu-port.md).
 

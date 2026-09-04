@@ -8,6 +8,7 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/cumes/config/validation_report.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/core/mode_table.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/derived_fields.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/io/versioned_binary.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric_forward.cpp

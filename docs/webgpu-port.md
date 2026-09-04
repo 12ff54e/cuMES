@@ -83,9 +83,13 @@ browser-validated:
   `(9.696e-07, 4.486e-07, 3.081e-10)`;
 - schema-v8 native binary publication into Emscripten MEMFS, an in-Wasm
   writer/reader round-trip check, and a browser Blob download link; the
-  downloaded 16,784-byte `CUMES001` file is accepted by the native reader as
-  `ns=55`, `mnmax=6`, and its interior spectral state is within `1.818e-05`
-  relative of the native CUDA mixed-float state (the maximum is in lambda);
+  downloaded `CUMES001` file is accepted by the native reader as `ns=55`,
+  `mnmax=6`, and its interior spectral state is within `1.818e-05` relative of
+  the native CUDA mixed-float state (the maximum is in lambda);
+- complete version-8 scientific fields: final WebGPU geometry and magnetic
+  buffers feed the shared host curl/current-density derivation, producing all
+  seven half-grid and six full-grid arrays; the 118,736-byte downloaded file
+  passes the in-Wasm field round trip and the project plotting workflow;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input and converges
@@ -171,19 +175,16 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. scientific real-space result-field publication (the spectral payload,
-   provenance, and all three Solovev stages are complete);
-6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
+5. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;
-7. 3-D W7-X qualification and only then free-boundary/NESTOR integration.
+6. 3-D W7-X qualification and only then free-boundary/NESTOR integration.
 
 Free-boundary support is last because `deps/vacuum-field` is itself CUDA-based
 and includes host/device coupling beyond the main operator DAG. NetCDF/HDF5 and
 the magnetic-coordinate CUDA postprocessor are also excluded from the browser
-target. The browser publishes the native binary schema through MEMFS and a
-JavaScript Blob download adapter. Its spectral payload and provenance are
-complete; its version-8 scientific-field block uses the schema's explicit
-absent marker until browser-side derived-field capture is wired.
+target. The browser publishes the complete native binary schema through MEMFS
+and a JavaScript Blob download adapter, including spectral state, scientific
+fields, multigrid history, provenance, and the normalized input record.
 
 ## Verification levels
 
