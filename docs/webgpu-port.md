@@ -5,7 +5,7 @@
 The WebGPU backend is an additive, experimental backend. CUDA remains the
 default and the only complete equilibrium solver.
 
-The first four WebGPU milestones are implemented and browser-validated:
+The first five WebGPU milestones are implemented and browser-validated:
 
 - a top-level `CUMES_BACKEND=WEBGPU` path that never enables CUDA or probes
   CUDA-only dependencies;
@@ -28,6 +28,8 @@ The first four WebGPU milestones are implemented and browser-validated:
   radial-profile initialization;
 - the shipped Solovev input parsed in-browser, relaxed to the documented f32
   tolerance floor, initialized, and passed through the WGSL inverse transform;
+- the staggered half-grid base-geometry operator in WGSL: parity recombination,
+  radial interpolation and derivatives, Jacobian, and covariant metric;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -106,7 +108,7 @@ The recommended dependency order is:
 1. reusable buffer/pipeline/bind-group ownership and a stage command encoder;
 2. persistent spectral/real-space stage storage and profile GPU buffers (input
    parsing, cold seeding, and host profile evaluation are complete);
-3. geometry and magnetic-field shaders;
+3. magnetic-field shaders (base geometry is complete);
 4. force, constraint, residual, preconditioner, and descent shaders, each
    compared with the existing CPU/CUDA references;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
@@ -128,6 +130,7 @@ virtual filesystem or a JavaScript download adapter.
 - browser self-test: compiles WGSL on the selected adapter, dispatches both
   prolongation modes and the complete direct axisymmetric transform path, maps
   results, compares every value with the C++ references, then parses and
-  initializes the embedded Solovev case (tolerances `4e-6` and `1e-4`).
+  initializes the embedded Solovev case and evaluates its half-grid geometry
+  (tolerances `4e-6` through `2e-4`).
 - future operator gates: compare full typed views against existing test
   references before wiring the operator into the stage DAG.

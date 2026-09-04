@@ -9,8 +9,8 @@ An experimental browser backend is being developed with Emscripten and
 emdawnwebgpu. It currently provides the CUDA-free build path, WebGPU runtime,
 validated linear/Catmull-Rom multigrid prolongation, and the axisymmetric
 inverse/forward transforms with constraint synthesis and de-aliasing. It also
-parses and initializes the shipped Solovev case in-browser, but is not yet a
-complete equilibrium solver. See
+parses and initializes the shipped Solovev case in-browser and evaluates its
+staggered half-grid geometry, but is not yet a complete equilibrium solver. See
 [the WebGPU port status](docs/webgpu-port.md).
 
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)

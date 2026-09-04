@@ -1,5 +1,6 @@
 #include "cumes/config/json_reader.hpp"
 #include "cumes/webgpu/axisymmetric.hpp"
+#include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
 #include "cumes/webgpu/prolongation.hpp"
 
@@ -573,15 +574,73 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         "  parsed Solovev seed+profiles+inverse: PASS "
                         "(max |GPU-CPU| = %.3e)\n",
                         static_cast<double>(max_error));
-                    self->finish(
-                        true,
-                        "prolongation, complete axisymmetric transforms, and "
-                        "parsed Solovev f32 stage initialization verified");
+                    self->run_base_geometry(std::move(actual.geometry));
                 });
         } catch (const std::exception& error) {
             finish(false, "Solovev initialization failed: " +
                               std::string(error.what()));
         }
+    }
+
+    void run_base_geometry(std::vector<float> geometry) {
+        base_geometry_case_.ns = initialized_stage_.ns;
+        base_geometry_case_.ntheta = initialized_stage_.ntheta;
+        base_geometry_case_.delta_s = initialized_stage_.profiles.delta_s;
+        base_geometry_case_.geometry = std::move(geometry);
+        base_geometry_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        base_geometry_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_base_geometry(
+            device_, base_geometry_case_,
+            [self](std::string error,
+                   cumes::webgpu::BaseGeometryResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::base_geometry_reference(
+                    self->base_geometry_case_);
+                if (actual.fields.size() != expected.fields.size()) {
+                    self->finish(false, "base geometry result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                    max_error = std::max(
+                        max_error,
+                        std::abs(actual.fields[i] - expected.fields[i]));
+                }
+                const std::size_t half_points =
+                    static_cast<std::size_t>(self->base_geometry_case_.ns - 1) *
+                    self->base_geometry_case_.ntheta;
+                const auto guv = actual.fields.begin() + 8 * half_points;
+                const bool axisymmetric_guv_zero =
+                    std::all_of(guv, guv + half_points,
+                                [](float value) { return value == 0.0F; });
+                const auto gsqrt = actual.fields.begin() + 6 * half_points;
+                const bool finite_jacobian =
+                    std::all_of(gsqrt, gsqrt + half_points, [](float value) {
+                        return std::isfinite(value) && value != 0.0F;
+                    });
+                if (max_error > 2.0e-4F || !axisymmetric_guv_zero ||
+                    !finite_jacobian) {
+                    self->finish(
+                        false, "base geometry mismatch: max_error=" +
+                                   std::to_string(max_error) + " guv_zero=" +
+                                   (axisymmetric_guv_zero ? "true" : "false") +
+                                   " finite_jacobian=" +
+                                   (finite_jacobian ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  Solovev half-grid base geometry: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->finish(
+                    true,
+                    "prolongation, axisymmetric transforms, parsed Solovev "
+                    "initialization, and half-grid geometry verified");
+            });
     }
 
     static void finish(bool success, const std::string& detail) {
@@ -601,6 +660,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<cumes::webgpu::AxisymmetricForwardCase> forward_cases_;
     cumes::webgpu::AxisymmetricDealiasCase dealias_case_;
     cumes::webgpu::AxisymmetricStageData initialized_stage_;
+    cumes::webgpu::BaseGeometryCase base_geometry_case_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;
