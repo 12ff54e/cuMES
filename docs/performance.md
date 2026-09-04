@@ -326,15 +326,19 @@ reusable arena/cuFFT construction from required output work and host/device
 iteration synchronization. The split is diagnostic only and must sum back to
 the already exposed multigrid wall time without changing solver ordering.
 
-The full-package Release QA profile closes that follow-up. Summed over the
-eight finite-difference solves, 3.2173 s of multigrid wall time split into
-0.15335 s stage setup (4.77%), 2.94751 s iteration (91.61%), 0.06087 s final
-derived-field capture (1.89%), 0.04052 s teardown (1.26%), and 0.01506 s other
-orchestration (0.47%). A persistent topology-keyed stage cache cannot clear the
-5% acceptance threshold even if it unrealistically removes every setup cycle;
-it would also retain roughly 69 MB per worker at the W7-X final grid. Resource
-caching is therefore rejected without implementation. The structured timing
-API remains useful observability for embedding applications.
+The three-run, full-package Release profile closes that follow-up. Averaged
+over eight finite-difference solves, QA's 3.1525 s multigrid time split into
+0.13690 s stage setup (4.3%), 2.89850 s iteration (91.9%), 0.06035 s final
+derived-field capture (1.9%), 0.04174 s teardown (1.3%), and 0.01505 s other
+orchestration (0.5%). QH's 2.6627 s split into 0.14062 s setup (5.3%),
+2.40979 s iteration (90.5%), 0.06185 s capture (2.3%), 0.03798 s teardown
+(1.4%), and 0.01246 s other (0.5%). A persistent topology-keyed stage cache
+has only a 5.6%/6.7% absolute QA/QH ceiling even if it removes every setup and
+teardown cycle; seeding, uploads, and state publication would remain. It would
+also retain roughly 69 MB per worker at the W7-X final grid. That complexity is
+not justified by the removable fraction, so resource caching is rejected
+without implementation. The structured timing API remains useful
+observability for embedding applications.
 
 ### 3.6 Transform launch-shape tuning — experiment plan
 
@@ -354,6 +358,22 @@ adopt a static launch policy only if W7-X clears the 5% gate while Solovev
 regresses by at most 2%. If no tile clears that gate, restore the current
 launch policy and record the negative result before considering a more invasive
 transform algorithm.
+
+The sweep compared forward zeta tiles 4, 6, 8, 12, and 16 and an inverse tile
+of 8. Every candidate produced the baseline state hash. Tile 4 was best:
+across three preheated alternating runs it reduced the W7-X median from
+1.584 ms to 1.528 ms with graphs disabled (3.5%) and from 1.573 ms to 1.518 ms
+with production graphs (3.5%). The inverse tile of 8 regressed steady-state
+latency. No launch-only variant clears the 5% gate, so the source is restored
+to tile 16 and no policy knob is retained.
+
+The next bounded transform experiment targets `inverse_pack_kernel`'s
+uncoalesced scratch writes. The current surface-fast thread order coalesces six
+coefficient reads but makes each of twelve half-spectrum writes stride by one
+FFT row. Compare a toroidal-mode-fast mapping, which coalesces those writes at
+the cost of strided coefficient reads, both alone and with the best tile-4
+forward launch. It changes no arithmetic or cuFFT layout. Retain it only if the
+combined production result clears the same acceptance gate and state hash.
 
 ## 4. Acceptance policy (verification.md §7)
 
