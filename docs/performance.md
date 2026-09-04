@@ -375,6 +375,20 @@ the cost of strided coefficient reads, both alone and with the best tile-4
 forward launch. It changes no arithmetic or cuFFT layout. Retain it only if the
 combined production result clears the same acceptance gate and state hash.
 
+Five alternating production-graph runs rejected that mapping. The pack-only
+variant was flat to slightly slower than baseline; the combined variant was
+indistinguishable from tile 4 alone. All hashes remained identical. Coalescing
+twelve scratch writes does not compensate for making the six state-family
+reads surface-strided, so the original mapping is restored.
+
+The next local experiment removes two redundant poloidal-table loads in the
+forward reduction. `mcos` and `msin` are exactly `m*cos` and `-m*sin`; deriving
+them from the already loaded cosine/sine values trades two cached loads for two
+multiplications and may reduce the 72-register kernel's input pressure. First
+verify the intermediate transform and final state bitwise, then measure it
+alone and with tile 4. Reject both changes if the combined production latency
+still misses 5%.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
