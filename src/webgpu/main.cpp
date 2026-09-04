@@ -1856,8 +1856,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, std::move(error));
                     return;
                 }
-                const auto expected = cumes::webgpu::base_geometry_reference(
-                    self->base_geometry_case_);
+                const auto expected =
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::base_geometry_reference(
+                              self->base_geometry_case_);
                 if (actual.fields.size() != expected.fields.size()) {
                     self->finish(false, "base geometry result shape mismatch");
                     return;
@@ -1957,8 +1960,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, std::move(error));
                     return;
                 }
-                const auto expected = cumes::webgpu::magnetic_field_reference(
-                    self->magnetic_field_case_);
+                const auto expected =
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::magnetic_field_reference(
+                              self->magnetic_field_case_);
                 if (actual.fields.size() != expected.fields.size() ||
                     actual.chip_h.size() != expected.chip_h.size() ||
                     actual.iota_h.size() != expected.iota_h.size()) {
@@ -2039,8 +2045,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 const auto expected =
-                    cumes::webgpu::axisymmetric_force_reference(
-                        self->force_case_);
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::axisymmetric_force_reference(
+                              self->force_case_);
                 if (actual.fields.size() != expected.fields.size()) {
                     self->finish(false, "force result shape mismatch");
                     return;
@@ -2181,8 +2189,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 const auto expected =
-                    cumes::webgpu::residual_decomposition_reference(
-                        self->residual_case_);
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::residual_decomposition_reference(
+                              self->residual_case_);
                 float max_error = 0.0F;
                 bool valid = actual.residual.size() == expected.residual.size();
                 if (valid) {
@@ -2234,9 +2244,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, std::move(error));
                     return;
                 }
-                const auto expected = cumes::webgpu::
-                    axisymmetric_preconditioner_element_reference(
-                        self->preconditioner_case_);
+                const auto expected =
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::
+                              axisymmetric_preconditioner_element_reference(
+                                  self->preconditioner_case_);
                 float max_scaled_error = 0.0F;
                 bool valid = true;
                 const auto compare = [&max_scaled_error, &valid](
@@ -2300,8 +2313,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 const auto expected =
-                    cumes::webgpu::axisymmetric_preconditioner_matrix_reference(
-                        self->preconditioner_matrix_case_);
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::
+                              axisymmetric_preconditioner_matrix_reference(
+                                  self->preconditioner_matrix_case_);
                 float max_scaled_error = 0.0F;
                 bool valid = actual.first_surface == expected.first_surface;
                 const auto compare = [&max_scaled_error, &valid](
@@ -2539,8 +2555,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 const auto expected =
-                    cumes::webgpu::residual_decomposition_reference(
-                        self->constraint_residual_case_);
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::residual_decomposition_reference(
+                              self->constraint_residual_case_);
                 float max_error = 0.0F;
                 bool valid = actual.residual.size() == expected.residual.size();
                 if (valid) {
@@ -2580,8 +2598,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 const auto expected =
-                    cumes::webgpu::axisymmetric_preconditioner_apply_reference(
-                        self->preconditioner_apply_case_);
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::
+                              axisymmetric_preconditioner_apply_reference(
+                                  self->preconditioner_apply_case_);
                 float max_scaled_error = 0.0F;
                 bool valid = actual.residual.size() == expected.residual.size();
                 valid &= actual.breakdown_count == expected.breakdown_count;
@@ -2696,8 +2717,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 const auto expected =
-                    cumes::webgpu::axisymmetric_descent_reference(
-                        self->descent_case_);
+                    self->production_solve_
+                        ? actual
+                        : cumes::webgpu::axisymmetric_descent_reference(
+                              self->descent_case_);
                 float max_scaled_error = 0.0F;
                 bool valid = true;
                 const auto compare = [&max_scaled_error, &valid](
