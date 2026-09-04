@@ -148,6 +148,13 @@ browser-validated:
   scratch/readback buffers and compute pipelines; this removes hot-loop shader
   recompilation/allocation and keeps the complete high-resolution W7-X run
   stable on Chromium's software adapter;
+- production solves skip the independent CPU oracle and per-operator diagnostic
+  logging while retaining finite-value, Jacobian, fixed-boundary, and
+  preconditioner-breakdown checks. On the TITAN Xp Vulkan adapter, the default
+  73-iteration interactive solve completes in 2.33 seconds; a stronger
+  `RBC(0,2)=-0.15` boundary converges in 123 iterations and 3.77 seconds at the
+  same `1e-5` tolerance. The `?mode=test` route continues to run every GPU/CPU
+  comparison;
 - schema-v8 native binary publication into Emscripten MEMFS, an in-Wasm
   writer/reader round-trip check, and a browser Blob download link; the
   downloaded `CUMES001` file is accepted by the native reader as `ns=55`,
