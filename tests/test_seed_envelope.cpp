@@ -13,6 +13,10 @@ static void check_near(double actual, double expected, const char* message) {
 int main() {
     check_near(cumes::default_seed_envelope(12, false, 99, 3), 0.12,
                "multigrid fixed-boundary 3-D selects the shaped seed");
+    check_near(cumes::default_seed_envelope(3, false, 12, 3), -0.10,
+               "very coarse fixed-boundary 3-D selects its predictor");
+    check_near(cumes::default_seed_envelope(3, false, 13, 3), 0.12,
+               "larger fixed-boundary 3-D retains the shaped seed");
     check_near(cumes::default_seed_envelope(12, false, 99, 1), 0.129,
                "single-grid fixed-boundary 3-D selects its fitted seed");
     check_near(cumes::default_seed_envelope(0, false, 5, 3), -0.07,
