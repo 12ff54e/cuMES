@@ -11,6 +11,7 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric_forward.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/geometry.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/force.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/initialization.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/main.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/magnetic_field.cpp
@@ -30,6 +31,7 @@ target_link_options(cumes_webgpu PRIVATE
   "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/solovev.json@/inputs/solovev.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl@/shaders/base_geometry.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_force.wgsl@/shaders/axisymmetric_force.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl@/shaders/magnetic_field.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl@/shaders/axisymmetric_dealias.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl@/shaders/axisymmetric_forward.wgsl"
@@ -41,6 +43,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_force.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl)

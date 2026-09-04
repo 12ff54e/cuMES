@@ -1,5 +1,6 @@
 #include "cumes/config/json_reader.hpp"
 #include "cumes/webgpu/axisymmetric.hpp"
+#include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
 #include "cumes/webgpu/prolongation.hpp"
@@ -684,10 +685,57 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  Solovev magnetic field+pressure: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
-                self->finish(
-                    true,
-                    "prolongation, axisymmetric transforms, parsed Solovev "
-                    "initialization, geometry, and magnetic field verified");
+                self->run_axisymmetric_force(std::move(actual.fields));
+            });
+    }
+
+    void run_axisymmetric_force(std::vector<float> magnetic_field) {
+        force_case_.ns = initialized_stage_.ns;
+        force_case_.ntheta = initialized_stage_.ntheta;
+        force_case_.delta_s = initialized_stage_.profiles.delta_s;
+        force_case_.lamscale = initialized_stage_.profiles.lamscale;
+        force_case_.geometry = magnetic_field_case_.geometry;
+        force_case_.base_geometry = magnetic_field_case_.base_geometry;
+        force_case_.magnetic_field = std::move(magnetic_field);
+        force_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        force_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        force_case_.phip_f = initialized_stage_.profiles.phip_f;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_force(
+            device_, force_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForceResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_force_reference(
+                        self->force_case_);
+                if (actual.fields.size() != expected.fields.size()) {
+                    self->finish(false, "force result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                bool finite = true;
+                for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                    max_error = std::max(
+                        max_error,
+                        std::abs(actual.fields[i] - expected.fields[i]));
+                    finite &= std::isfinite(actual.fields[i]);
+                }
+                if (max_error > 5.0e-4F || !finite) {
+                    self->finish(false, "axisymmetric force mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  Solovev MHD force: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->finish(true,
+                             "Solovev initialization, transforms, geometry, "
+                             "magnetic field, and MHD force verified");
             });
     }
 
@@ -710,6 +758,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricStageData initialized_stage_;
     cumes::webgpu::BaseGeometryCase base_geometry_case_;
     cumes::webgpu::MagneticFieldCase magnetic_field_case_;
+    cumes::webgpu::AxisymmetricForceCase force_case_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;
