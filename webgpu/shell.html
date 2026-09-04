@@ -30,6 +30,10 @@
     .panel-head { display:flex; align-items:center; justify-content:space-between; padding:17px 20px;
       border-bottom:1px solid var(--line); }
     .panel-head h2 { margin:0; font-size:14px; letter-spacing:.06em; text-transform:uppercase; }
+    .mode-switch { display:flex; padding:3px; border:1px solid var(--line); border-radius:9px; background:#08111b; }
+    .mode-switch button { border:0; border-radius:6px; padding:4px 10px; color:var(--muted); background:transparent;
+      font-size:11px; cursor:pointer; }
+    .mode-switch button.active { color:#071214; background:var(--cyan); font-weight:700; }
     .tag { color:var(--cyan); background:#55d6d014; border:1px solid #55d6d044;
       border-radius:99px; padding:3px 9px; font-size:11px; }
     .plot-wrap { position:relative; min-height:480px; padding:16px; }
@@ -38,6 +42,7 @@
     .axis-label { fill:#7f90a6; font-size:12px; }
     .grid-line { stroke:#29394c; stroke-width:1; }
     .boundary { fill:#55d6d012; stroke:var(--cyan); stroke-width:2.5; filter:drop-shadow(0 0 5px #55d6d055); }
+    .contour-target { fill:#ffb65d0b; stroke:var(--orange); stroke-width:2; stroke-dasharray:7 5; }
     .handle { fill:#0b1521; stroke:#b3fff9; stroke-width:2; cursor:grab; }
     .handle:hover,.handle.active { fill:var(--cyan); }
     .hint { position:absolute; left:30px; bottom:27px; color:var(--muted); font-size:12px;
@@ -52,6 +57,12 @@
     input[type=range] { grid-column:1/-1; width:100%; accent-color:var(--cyan); }
     .pressure-control { margin-top:14px; max-width:calc(50% - 10px); }
     .formula { margin-top:13px; color:#75869a; font:11px/1.6 ui-monospace,SFMono-Regular,monospace; }
+    .contour-editor { min-height:178px; display:grid; align-content:start; gap:12px; }
+    .contour-editor p { margin:0; color:#aebccc; font-size:12px; }
+    .contour-legend { display:flex; flex-wrap:wrap; gap:13px; color:#8293a8; font-size:11px; }
+    .swatch { display:inline-block; width:18px; margin-right:5px; vertical-align:middle; border-top:2px solid var(--cyan); }
+    .swatch.target { border-color:var(--orange); border-top-style:dashed; }
+    .fit-error { color:var(--cyan); font-variant-numeric:tabular-nums; }
     .editor .plot-wrap { min-height:360px; } .editor svg { min-height:328px; }
     .actions { display:flex; align-items:center; gap:12px; margin-top:17px; }
     .primary { border:0; border-radius:9px; color:#061313; background:linear-gradient(135deg,#69e7dc,#64a5ff);
@@ -94,16 +105,24 @@
     </header>
     <main class="workspace">
       <section class="panel editor">
-        <div class="panel-head"><h2>Input boundary</h2><span class="tag">n = 0 · m = 0…5</span></div>
+        <div class="panel-head"><h2>Input boundary</h2><div class="mode-switch" role="tablist" aria-label="Boundary editor mode">
+          <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div></div>
         <div class="plot-wrap"><svg id="boundary-plot" viewBox="0 0 600 520" aria-label="Editable plasma boundary"></svg>
-          <div class="hint">Tune a harmonic or drag the boundary handles</div></div>
+          <div class="hint" id="editor-hint">Tune the Fourier harmonics below</div></div>
         <div class="controls">
-          <div class="coefficient-columns">
-            <section class="harmonic-group"><h3>R cosine coefficients <span>R(θ) = Σ RBC(0,m) cos(mθ)</span></h3><div class="harmonic-controls" id="rbc-controls"></div></section>
-            <section class="harmonic-group"><h3>Z sine coefficients <span>Z(θ) = Σ ZBS(0,m) sin(mθ)</span></h3><div class="harmonic-controls" id="zbs-controls"></div></section>
+          <div id="fourier-editor">
+            <div class="coefficient-columns">
+              <section class="harmonic-group"><h3>R cosine coefficients <span>R(θ) = Σ RBC(0,m) cos(mθ)</span></h3><div class="harmonic-controls" id="rbc-controls"></div></section>
+              <section class="harmonic-group"><h3>Z sine coefficients <span>Z(θ) = Σ ZBS(0,m) sin(mθ)</span></h3><div class="harmonic-controls" id="zbs-controls"></div></section>
+            </div>
+            <div class="formula">VMEC stellarator-symmetric boundary harmonics; toroidal mode n = 0.</div>
+          </div>
+          <div class="contour-editor" id="contour-editor" hidden>
+            <p>Move any contour point freely. Its opposite point is mirrored to preserve the solver's stellarator symmetry. A periodic cubic contour is transformed continuously into coefficients capped at <strong>m = 5</strong>.</p>
+            <div class="contour-legend"><span><i class="swatch target"></i>free contour</span><span><i class="swatch"></i>m ≤ 5 Fourier fit</span><span class="fit-error" id="fit-error"></span></div>
+            <button class="secondary" id="reset-contour">Reset points from Fourier fit</button>
           </div>
           <label class="pressure-control">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
-          <div class="formula">VMEC stellarator-symmetric boundary harmonics; toroidal mode n = 0.</div>
           <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="reset">Reset</button></div>
         </div>
       </section>
@@ -132,11 +151,16 @@
     const output=appMode?document.getElementById('output'):document.getElementById('legacy-output');
     app.hidden=!appMode;legacy.hidden=appMode;
     if(w7xSolve)document.getElementById('legacy-title').textContent='cuMES WebGPU · W7-X benchmark';
+    const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
     const saved=(()=>{try{return JSON.parse(localStorage.getItem('cumes.editor.v1'))}catch(_){return null}})();
     const finite=(candidate,fallback)=>Number.isFinite(Number(candidate))?Number(candidate):fallback;
+    const savedContour=Array.isArray(saved?.contour)&&saved.contour.length===CONTOUR_POINTS&&
+      saved.contour.every(point=>Array.isArray(point)&&point.length===2&&point.every(Number.isFinite))?
+      saved.contour.map(point=>point.map(Number)):null;
     const shape={r:defaults.r.map((v,m)=>finite(saved?.r?.[m],v)),z:defaults.z.map((v,m)=>finite(saved?.z?.[m],v)),
-      pressure:finite(saved?.pressure,defaults.pressure)};
+      pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier'};
+    let editorMode=shape.mode;
     const value=id=>document.getElementById(id);
     const harmonicSpecs=[...Array.from({length:6},(_,m)=>({family:'r',m,id:`rbc-${m}`})),
       ...Array.from({length:5},(_,i)=>({family:'z',m:i+1,id:`zbs-${i+1}`}))];
@@ -147,7 +171,7 @@
       output=document.createElement('output'),input=document.createElement('input'),[min,max]=coefficientBounds(spec.family,spec.m);
       label.append(document.createTextNode(`${prefix}(0,${spec.m})`));output.id=`${spec.id}-value`;label.append(output);
       input.id=spec.id;input.className='coefficient-slider';input.type='range';input.min=min;input.max=max;input.step='.001';
-      input.addEventListener('input',()=>{shape[spec.family][spec.m]=Number(input.value);drawBoundary();syncControls();invalidateResult()});label.append(input);
+      input.addEventListener('input',()=>{shape[spec.family][spec.m]=Number(input.value);shape.contour=null;drawBoundary();syncControls();invalidateResult()});label.append(input);
       value(spec.family==='r'?'rbc-controls':'zbs-controls').append(label)}}
     function syncControls(){clampCoefficients();for(const spec of harmonicSpecs){value(spec.id).value=shape[spec.family][spec.m];
       value(`${spec.id}-value`).textContent=shape[spec.family][spec.m].toFixed(3)}
@@ -155,6 +179,20 @@
       value('pressure-value').textContent=Number(value('pressure').value).toFixed(3)}
     function pointAt(theta){let r=0,z=0;for(let m=0;m<shape.r.length;++m)r+=shape.r[m]*Math.cos(m*theta);
       for(let m=1;m<shape.z.length;++m)z+=shape.z[m]*Math.sin(m*theta);return[r,z]}
+    function resetContourFromFourier(){shape.contour=Array.from({length:CONTOUR_POINTS},(_,i)=>pointAt(2*Math.PI*i/CONTOUR_POINTS))}
+    function ensureContour(){if(!shape.contour||shape.contour.length!==CONTOUR_POINTS)resetContourFromFourier()}
+    function catmullRom(a,b,c,d,t){return .5*((2*b)+(-a+c)*t+(2*a-5*b+4*c-d)*t*t+(-a+3*b-3*c+d)*t*t*t)}
+    function contourAt(theta){ensureContour();const position=((theta/(2*Math.PI))*CONTOUR_POINTS)%CONTOUR_POINTS,
+      i=Math.floor(position),t=position-i,at=offset=>shape.contour[(i+offset+CONTOUR_POINTS)%CONTOUR_POINTS];
+      return[catmullRom(at(-1)[0],at(0)[0],at(1)[0],at(2)[0],t),catmullRom(at(-1)[1],at(0)[1],at(1)[1],at(2)[1],t)]}
+    function updateFourierFromContour(){const r=Array(MAX_M+1).fill(0),z=Array(MAX_M+1).fill(0);
+      for(let i=0;i<TRANSFORM_SAMPLES;i++){const theta=2*Math.PI*i/TRANSFORM_SAMPLES,[rv,zv]=contourAt(theta);r[0]+=rv;
+        for(let m=1;m<=MAX_M;m++){r[m]+=rv*Math.cos(m*theta);z[m]+=zv*Math.sin(m*theta)}}
+      shape.r[0]=r[0]/TRANSFORM_SAMPLES;for(let m=1;m<=MAX_M;m++){shape.r[m]=2*r[m]/TRANSFORM_SAMPLES;shape.z[m]=2*z[m]/TRANSFORM_SAMPLES}
+      clampCoefficients();syncControls()}
+    function contourFitError(){if(editorMode!=='contour')return 0;let squared=0;
+      for(let i=0;i<TRANSFORM_SAMPLES;i++){const theta=2*Math.PI*i/TRANSFORM_SAMPLES,target=contourAt(theta),fit=pointAt(theta);
+        squared+=(target[0]-fit[0])**2+(target[1]-fit[1])**2}return Math.sqrt(squared/TRANSFORM_SAMPLES)}
     function projection(points,width,height,pad=55){let minR=Infinity,maxR=-Infinity,minZ=Infinity,maxZ=-Infinity;
       for(const[r,z]of points){minR=Math.min(minR,r);maxR=Math.max(maxR,r);minZ=Math.min(minZ,z);maxZ=Math.max(maxZ,z)}
       const spanR=Math.max(.1,maxR-minR),spanZ=Math.max(.1,maxZ-minZ),scale=Math.min((width-2*pad)/spanR,(height-2*pad)/spanZ);
@@ -166,24 +204,35 @@
       for(let i=0;i<=5;i++){const y=35+i*(height-70)/5;group.append(node('line',{x1:45,y1:y,x2:width-35,y2:y,class:'grid-line'}))}
       const rl=node('text',{x:width-35,y:height-12,'text-anchor':'end',class:'axis-label'});rl.textContent='R (m)';group.append(rl);
       const zl=node('text',{x:18,y:31,class:'axis-label'});zl.textContent='Z (m)';group.append(zl);svg.append(group)}
+    function pathData(points,project){return points.map((point,i)=>`${i?'L':'M'}${project(point).join(',')}`).join(' ')+' Z'}
     let boundaryProjection;
     function drawBoundary(){const svg=value('boundary-plot');if(!svg)return;svg.replaceChildren();
-      const points=Array.from({length:161},(_,i)=>pointAt(2*Math.PI*i/160));boundaryProjection=projection(points,600,520,65);drawGrid(svg,600,520);
-      const d=points.map((p,i)=>`${i?'L':'M'}${boundaryProjection.map(p).join(',')}`).join(' ')+' Z';svg.append(node('path',{d,class:'boundary'}));
-      for(let i=0;i<12;i++){const theta=2*Math.PI*i/12,[x,y]=boundaryProjection.map(pointAt(theta));svg.append(node('circle',{cx:x,cy:y,r:6,class:'handle','data-theta':theta,tabindex:0}))}
+      const fit=Array.from({length:161},(_,i)=>pointAt(2*Math.PI*i/160)),target=editorMode==='contour'?
+        Array.from({length:161},(_,i)=>contourAt(2*Math.PI*i/160)):fit;
+      boundaryProjection=projection([...fit,...target],600,520,65);drawGrid(svg,600,520);
+      if(editorMode==='contour')svg.append(node('path',{d:pathData(target,boundaryProjection.map),class:'contour-target'}));
+      svg.append(node('path',{d:pathData(fit,boundaryProjection.map),class:'boundary'}));
+      if(editorMode==='contour'){ensureContour();for(let i=0;i<CONTOUR_POINTS;i++){const[x,y]=boundaryProjection.map(shape.contour[i]);
+        svg.append(node('circle',{cx:x,cy:y,r:6,class:'handle','data-index':i}))}value('fit-error').textContent=`RMS fit error: ${contourFitError().toExponential(2)} m`}
       localStorage.setItem('cumes.editor.v1',JSON.stringify(shape))}
     function svgPosition(event,svg){const pt=new DOMPoint(event.clientX,event.clientY).matrixTransform(svg.getScreenCTM().inverse());return[pt.x,pt.y]}
+    function setEditorMode(mode,preserveContour=false){if(mode!=='fourier'&&mode!=='contour')return;
+      if(mode==='contour'&&(!preserveContour||!shape.contour))resetContourFromFourier();editorMode=mode;shape.mode=mode;
+      value('fourier-editor').hidden=mode!=='fourier';value('contour-editor').hidden=mode!=='contour';
+      for(const candidate of ['fourier','contour']){const selected=candidate===mode,button=value(`mode-${candidate}`);button.classList.toggle('active',selected);button.setAttribute('aria-selected',String(selected))}
+      value('editor-hint').textContent=mode==='fourier'?'Tune the Fourier harmonics below':'Drag a point; its symmetric partner follows';drawBoundary()}
     let activeHandle=null;
     value('boundary-plot')?.addEventListener('pointerdown',event=>{const target=event.target.closest('.handle');if(!target||document.body.classList.contains('busy'))return;
-      activeHandle=target;target.classList.add('active');target.setPointerCapture(event.pointerId)});
-    value('boundary-plot')?.addEventListener('pointermove',event=>{if(!activeHandle)return;const theta=Number(activeHandle.dataset.theta),
-      target=boundaryProjection.unmap(svgPosition(event,value('boundary-plot'))),current=pointAt(theta);
-      const rb=shape.r.map((_,m)=>Math.cos(m*theta)),zb=shape.z.map((_,m)=>m?Math.sin(m*theta):0),rn=rb.reduce((a,b)=>a+b*b,0),zn=zb.reduce((a,b)=>a+b*b,0);
-      for(let m=0;m<shape.r.length;m++)shape.r[m]+=(target[0]-current[0])*rb[m]/rn;
-      if(zn>1e-8)for(let m=1;m<shape.z.length;m++)shape.z[m]+=(target[1]-current[1])*zb[m]/zn;
-      clampCoefficients();drawBoundary();syncControls();invalidateResult();activeHandle=document.querySelector(`.handle[data-theta="${theta}"]`);activeHandle?.classList.add('active')});
-    function releaseHandle(){activeHandle?.classList.remove('active');activeHandle=null}
-    value('boundary-plot')?.addEventListener('pointerup',releaseHandle);value('boundary-plot')?.addEventListener('pointercancel',releaseHandle);
+      activeHandle={index:Number(target.dataset.index),pointerId:event.pointerId};target.classList.add('active');event.preventDefault()});
+    window.addEventListener('pointermove',event=>{if(!activeHandle||event.pointerId!==activeHandle.pointerId)return;const index=activeHandle.index,
+      target=boundaryProjection.unmap(svgPosition(event,value('boundary-plot'))),mirror=(CONTOUR_POINTS-index)%CONTOUR_POINTS;
+      if(index===0||index===CONTOUR_POINTS/2)target[1]=0;shape.contour[index]=target;shape.contour[mirror]=[target[0],-target[1]];
+      updateFourierFromContour();drawBoundary();invalidateResult();document.querySelector(`.handle[data-index="${index}"]`)?.classList.add('active');event.preventDefault()});
+    function releaseHandle(event){if(!activeHandle||event.pointerId!==activeHandle.pointerId)return;activeHandle=null}
+    window.addEventListener('pointerup',releaseHandle);window.addEventListener('pointercancel',releaseHandle);
+    value('mode-fourier')?.addEventListener('click',()=>setEditorMode('fourier'));
+    value('mode-contour')?.addEventListener('click',()=>setEditorMode('contour'));
+    value('reset-contour')?.addEventListener('click',()=>{resetContourFromFourier();drawBoundary()});
     function inputJSON(){const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
       return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,ns_array:[5,11,55],niter_array:[1200,2500,3000],
         ftol_array:[1e-5,1e-5,1e-5],am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
@@ -207,15 +256,17 @@
       value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-empty').hidden=false;
       value('result-empty').innerHTML='<strong>Boundary changed</strong><span>Run again to update the equilibrium.</span>';value('download').hidden=true}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
+    function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,.mode-switch button,#reset-contour').forEach(control=>control.disabled=disabled);
+      value('reset').disabled=disabled}
     function updateStatus(){if(!appMode)return;const state=document.body.dataset.cumesWebgpu;
       if(state==='pass'){document.body.classList.remove('busy');value('status').textContent='Converged';value('run').disabled=false;value('run').textContent='Run again';
-        document.querySelectorAll('.coefficient-slider,#pressure').forEach(control=>control.disabled=false);value('reset').disabled=false}
+        setEditorDisabled(false)}
       else if(state==='fail'){document.body.classList.remove('busy');value('status').textContent='Solve failed';value('result-empty').innerHTML='<strong>Could not converge</strong><span>Open the solver log for details.</span>';
-        document.querySelectorAll('.coefficient-slider,#pressure').forEach(control=>control.disabled=false);value('reset').disabled=false}
+        setEditorDisabled(false)}
       const adapter=document.body.dataset.cumesAdapter;if(adapter&&document.body.classList.contains('busy'))value('status').textContent='Solving on '+adapter}
     new MutationObserver(updateStatus).observe(document.body,{attributes:true,attributeFilter:['data-cumes-webgpu','data-cumes-adapter']});
     if(appMode){buildHarmonicControls();value('pressure').addEventListener('input',()=>{shape.pressure=Number(value('pressure').value);drawBoundary();syncControls();invalidateResult()});
-      syncControls();drawBoundary();document.querySelectorAll('.coefficient-slider,#pressure').forEach(control=>control.disabled=running);value('reset').disabled=running;
+      syncControls();setEditorMode(editorMode,true);setEditorDisabled(running);
       if(running){document.body.classList.add('busy');value('run').disabled=true;value('run').textContent='Solving…';value('status').textContent='Requesting GPU';
         value('result-empty').innerHTML='<strong>Computing equilibrium…</strong><span>All numerical operators are running locally via WebGPU.</span>'}}
     var Module={preRun:[()=>{if(running){FS.mkdirTree('/inputs');const source=localStorage.getItem('cumes.input.v1')||inputJSON();FS.writeFile('/inputs/interactive.json',source)}}],

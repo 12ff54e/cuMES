@@ -158,12 +158,15 @@ browser-validated:
   seven half-grid and six full-grid arrays; the 118,736-byte downloaded file
   passes the in-Wasm field round trip and the project plotting workflow;
 - an independent C++ float reference evaluated by the browser self-test.
-- a responsive browser application that edits the stellarator-symmetric
-  `n=0` R-cosine/Z-sine boundary harmonics through coefficient sliders or
-  direct manipulation, validates the generated input with the production parser,
-  runs the three-grid solver, Fourier-synthesizes smooth converged flux
-  surfaces, and exposes the schema-v8 download without a server-side compute
-  service;
+- a responsive browser application with distinct Fourier and contour modes.
+  Fourier mode directly edits the stellarator-symmetric `n=0` R-cosine/Z-sine
+  harmonics. Contour mode freely moves 16 periodic cubic control points,
+  mirrors their partners to retain the solver symmetry, and continuously
+  projects 512 contour samples into the same basis capped at `m=5`; it draws
+  both the free contour and truncated fit plus their RMS error. The resulting
+  input passes through the production validator and three-grid solver, which
+  Fourier-synthesizes smooth converged surfaces and exposes the schema-v8
+  download without a server-side compute service;
 - a narrow C-linkage browser bridge, implemented in
   `webgpu/browser_bridge.js`, keeping DOM, URL, local-storage, and Blob policy
   out of the C++ translation units.
@@ -199,13 +202,17 @@ browsers do not reliably initialize WebGPU from `file://` URLs:
 http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html
 ```
 
-The editor exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)` for `m=1..5` as
-sliders beside a live boundary preview; the preview handles update the same
-coefficients. Select **Run equilibrium** to solve the current boundary. The
-generated input and editor state stay in browser local storage; compute and
-output generation remain local to the page. The interactive profile currently
-uses stellarator-symmetric axisymmetric harmonics (`ntor=0`), three grids
-(`ns=5,11,55`), and a responsive mixed-float tolerance of `1e-5`.
+In **Fourier** mode the editor exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
+for `m=1..5` as sliders beside a live boundary preview. In **Contour** mode,
+16 points define a periodic Catmull-Rom contour; dragging one point mirrors its
+partner and a 512-point discrete Fourier transform updates those same
+coefficients through `m=5`. The orange target and cyan truncated reconstruction
+make the approximation explicit. Select **Run equilibrium** to solve the
+fitted boundary. The generated input, editing mode, contour, and coefficients
+stay in browser local storage; compute and output generation remain local to
+the page. The interactive profile uses stellarator-symmetric axisymmetric
+harmonics (`ntor=0`), three grids (`ns=5,11,55`), and a responsive mixed-float
+tolerance of `1e-5`.
 
 Append `?mode=test` for the full GPU/CPU operator conformance suite and
 stricter Solovev convergence gate. A successful run finishes with:

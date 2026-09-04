@@ -11,11 +11,13 @@ iteration DAG for both axisymmetric and folded 3-D equilibria: transforms,
 half-grid geometry, fixed-iota and prescribed-current magnetic closure,
 radial/poloidal/toroidal force, spectral-condensation constraint, full `(m,n)`
 preconditioner, accelerated descent, controller recovery, and multigrid
-transfer. The default browser page is an interactive application: adjust the
-active `RBC(0,m)` and `ZBS(0,m)` Fourier coefficients with sliders while a
-live R-Z boundary preview updates, then run a three-grid equilibrium locally
-on the user's GPU. It displays the converged flux surfaces in-page and offers
-the complete schema-v8 result as a download. A separate browser gate
+transfer. The default browser page is an interactive application with two
+boundary modes. **Fourier** adjusts the active `RBC(0,m)` and `ZBS(0,m)`
+coefficients directly; **Contour** moves periodic control points and projects
+the free contour into the supported Fourier basis, capped at `m=5`. Both modes
+update a live R-Z preview before running a three-grid equilibrium locally on
+the user's GPU. The page displays the converged flux surfaces in-place and
+offers the complete schema-v8 result as a download. A separate browser gate
 runs the controller-complete three-stage Solovev solve with persistent
 velocity, constraint, preconditioner, and rollback state. On the NVIDIA TITAN
 Xp through Dawn's Vulkan backend it converges in `72 -> 31 -> 247` effective

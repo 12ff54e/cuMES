@@ -12,8 +12,10 @@ endforeach()
 file(READ "${ARTIFACT_BASE}.html" html)
 foreach(marker IN ITEMS
     "Input boundary"
+    "Boundary editor mode"
     "R cosine coefficients"
     "Z sine coefficients"
+    "RMS fit error"
     "Run equilibrium"
     "Flux surfaces")
   string(FIND "${html}" "${marker}" marker_offset)
