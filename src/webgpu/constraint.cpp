@@ -39,8 +39,11 @@ static_assert(sizeof(TailParams) == 32);
 
 struct HeadResult {
     std::vector<float> g_con_eff;
+    std::vector<float> g_con_eff_lo;
     std::vector<float> r_con0;
+    std::vector<float> r_con0_lo;
     std::vector<float> z_con0;
+    std::vector<float> z_con0_lo;
     std::vector<float> tcon;
 };
 
@@ -67,7 +70,14 @@ std::string validate_case(const AxisymmetricConstraintCase& in) {
         in.force_fields.size() != force_fields * points) {
         return "constraint input shape mismatch";
     }
-    if (in.double_single && in.force_fields_lo.size() != in.force_fields.size())
+    if (in.double_single &&
+        (in.force_fields_lo.size() != in.force_fields.size() ||
+         in.geometry_lo.size() != in.geometry.size() ||
+         in.r_con_lo.size() != in.r_con.size() ||
+         in.z_con_lo.size() != in.z_con.size() ||
+         in.r_con0_lo.size() != in.r_con0.size() ||
+         in.z_con0_lo.size() != in.z_con0.size() ||
+         in.sqrt_s_f_lo.size() != in.sqrt_s_f.size()))
         return "double-single constraint force low-word shape mismatch";
     return {};
 }
@@ -240,13 +250,15 @@ struct HeadDispatch {
     wgpu::Buffer output, readback;
     std::size_t points = 0, bytes = 0;
     int ns = 0;
+    bool double_single = false;
 };
 
 void enqueue_head(const wgpu::Device& device,
                   const AxisymmetricConstraintCase& in,
                   std::function<void(std::string, HeadResult)> callback) {
-    const auto shader_text =
-        load_shader("/shaders/axisymmetric_constraint_head.wgsl");
+    const auto shader_text = load_shader(
+        in.double_single ? "/shaders/constraint_head_double_single.wgsl"
+                         : "/shaders/axisymmetric_constraint_head.wgsl");
     if (shader_text.empty()) {
         callback("cannot load axisymmetric constraint-head shader", {});
         return;
@@ -259,13 +271,32 @@ void enqueue_head(const wgpu::Device& device,
     constraint.insert(constraint.end(), in.z_con.begin(), in.z_con.end());
     constraint.insert(constraint.end(), in.r_con0.begin(), in.r_con0.end());
     constraint.insert(constraint.end(), in.z_con0.begin(), in.z_con0.end());
+    std::vector<float> constraint_lo;
+    if (in.double_single) {
+        constraint_lo.reserve(4 * points);
+        constraint_lo.insert(constraint_lo.end(), in.r_con_lo.begin(),
+                             in.r_con_lo.end());
+        constraint_lo.insert(constraint_lo.end(), in.z_con_lo.begin(),
+                             in.z_con_lo.end());
+        constraint_lo.insert(constraint_lo.end(), in.r_con0_lo.begin(),
+                             in.r_con0_lo.end());
+        constraint_lo.insert(constraint_lo.end(), in.z_con0_lo.begin(),
+                             in.z_con0_lo.end());
+    }
     std::vector<float> radial;
     radial.reserve(6 * static_cast<std::size_t>(in.ns));
     radial.insert(radial.end(), in.sqrt_s_f.begin(), in.sqrt_s_f.end());
     radial.insert(radial.end(), in.tcon.begin(), in.tcon.end());
     radial.insert(radial.end(), in.ard.begin(), in.ard.end());
     radial.insert(radial.end(), in.azd.begin(), in.azd.end());
-    const std::size_t output_values = 3 * points + in.ns;
+    std::vector<float> radial_lo;
+    if (in.double_single) {
+        radial_lo.assign(radial.size(), 0.0F);
+        std::copy(in.sqrt_s_f_lo.begin(), in.sqrt_s_f_lo.end(),
+                  radial_lo.begin());
+    }
+    const std::size_t output_values =
+        (in.double_single ? 6 : 3) * points + in.ns;
     const auto geometry_bytes = in.geometry.size() * sizeof(float);
     const auto constraint_bytes = constraint.size() * sizeof(float);
     const auto radial_bytes = radial.size() * sizeof(float);
@@ -294,9 +325,31 @@ void enqueue_head(const wgpu::Device& device,
         make_buffer(device, sizeof(HeadParams),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "constraint head params");
-    const auto& pipeline =
-        detail::cached_compute_pipeline(device, "constraint-head", shader_text,
-                                        "cuMES constraint head pipeline");
+    wgpu::Buffer geometry_low_buffer, constraint_low_buffer, radial_low_buffer,
+        rounding_buffer;
+    if (in.double_single) {
+        geometry_low_buffer =
+            make_buffer(device, geometry_bytes,
+                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                        "constraint geometry low");
+        constraint_low_buffer =
+            make_buffer(device, constraint_bytes,
+                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                        "constraint state low");
+        radial_low_buffer =
+            make_buffer(device, radial_bytes,
+                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                        "constraint radial data low");
+        rounding_buffer = make_buffer(device, points * sizeof(std::uint32_t),
+                                      wgpu::BufferUsage::Storage,
+                                      "constraint head double-single rounding");
+    }
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device,
+        in.double_single ? "constraint-head-double-single" : "constraint-head",
+        shader_text,
+        in.double_single ? "cuMES double-single constraint head pipeline"
+                         : "cuMES constraint head pipeline");
     const HeadParams params{static_cast<std::uint32_t>(in.ns),
                             static_cast<std::uint32_t>(in.mpol),
                             static_cast<std::uint32_t>(in.ntheta),
@@ -313,18 +366,35 @@ void enqueue_head(const wgpu::Device& device,
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, radial.data(), radial_bytes);
+    if (in.double_single) {
+        queue.WriteBuffer(geometry_low_buffer, 0, in.geometry_lo.data(),
+                          geometry_bytes);
+        queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
+                          constraint_bytes);
+        queue.WriteBuffer(radial_low_buffer, 0, radial_lo.data(), radial_bytes);
+    }
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     auto layout = pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry entries[] = {
+    std::vector<wgpu::BindGroupEntry> entries = {
         {nullptr, 0, geometry_buffer, 0, geometry_bytes, nullptr, nullptr},
         {nullptr, 1, constraint_buffer, 0, constraint_bytes, nullptr, nullptr},
         {nullptr, 2, radial_buffer, 0, radial_bytes, nullptr, nullptr},
         {nullptr, 3, output_buffer, 0, output_bytes, nullptr, nullptr},
         {nullptr, 4, params_buffer, 0, sizeof(params), nullptr, nullptr}};
+    if (in.double_single) {
+        entries.push_back({nullptr, 5, geometry_low_buffer, 0, geometry_bytes,
+                           nullptr, nullptr});
+        entries.push_back({nullptr, 6, constraint_low_buffer, 0,
+                           constraint_bytes, nullptr, nullptr});
+        entries.push_back(
+            {nullptr, 7, radial_low_buffer, 0, radial_bytes, nullptr, nullptr});
+        entries.push_back({nullptr, 8, rounding_buffer, 0,
+                           points * sizeof(std::uint32_t), nullptr, nullptr});
+    }
     wgpu::BindGroupDescriptor bind_descriptor{};
     bind_descriptor.layout = layout;
-    bind_descriptor.entryCount = std::size(entries);
-    bind_descriptor.entries = entries;
+    bind_descriptor.entryCount = entries.size();
+    bind_descriptor.entries = entries.data();
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
     auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
@@ -345,6 +415,7 @@ void enqueue_head(const wgpu::Device& device,
     dispatch->points = points;
     dispatch->bytes = output_bytes;
     dispatch->ns = in.ns;
+    dispatch->double_single = in.double_single;
     readback.MapAsync(
         wgpu::MapMode::Read, 0, output_bytes,
         wgpu::CallbackMode::AllowSpontaneous,
@@ -370,8 +441,21 @@ void enqueue_head(const wgpu::Device& device,
                               values + 2 * dispatch->points);
             out.z_con0.assign(values + 2 * dispatch->points,
                               values + 3 * dispatch->points);
-            out.tcon.assign(values + 3 * dispatch->points,
-                            values + 3 * dispatch->points + dispatch->ns);
+            std::size_t tcon_offset = 3 * dispatch->points;
+            if (dispatch->double_single) {
+                out.g_con_eff_lo.assign(
+                    values + tcon_offset,
+                    values + tcon_offset + dispatch->points);
+                out.r_con0_lo.assign(
+                    values + tcon_offset + dispatch->points,
+                    values + tcon_offset + 2 * dispatch->points);
+                out.z_con0_lo.assign(
+                    values + tcon_offset + 2 * dispatch->points,
+                    values + tcon_offset + 3 * dispatch->points);
+                tcon_offset += 3 * dispatch->points;
+            }
+            out.tcon.assign(values + tcon_offset,
+                            values + tcon_offset + dispatch->ns);
             dispatch->readback.Unmap();
             dispatch->callback({}, std::move(out));
         });
@@ -406,6 +490,19 @@ void enqueue_tail(const wgpu::Device& device,
     constraint.insert(constraint.end(), head.r_con0.begin(), head.r_con0.end());
     constraint.insert(constraint.end(), head.z_con0.begin(), head.z_con0.end());
     constraint.insert(constraint.end(), g_con.begin(), g_con.end());
+    std::vector<float> constraint_lo;
+    if (in.double_single) {
+        constraint_lo.reserve(5 * points);
+        constraint_lo.insert(constraint_lo.end(), in.r_con_lo.begin(),
+                             in.r_con_lo.end());
+        constraint_lo.insert(constraint_lo.end(), in.z_con_lo.begin(),
+                             in.z_con_lo.end());
+        constraint_lo.insert(constraint_lo.end(), head.r_con0_lo.begin(),
+                             head.r_con0_lo.end());
+        constraint_lo.insert(constraint_lo.end(), head.z_con0_lo.begin(),
+                             head.z_con0_lo.end());
+        constraint_lo.insert(constraint_lo.end(), points, 0.0F);
+    }
     const auto force_bytes = in.force_fields.size() * sizeof(float);
     const auto geometry_bytes = in.geometry.size() * sizeof(float);
     const auto constraint_bytes = constraint.size() * sizeof(float);
@@ -444,12 +541,25 @@ void enqueue_tail(const wgpu::Device& device,
         make_buffer(device, sizeof(TailParams),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "constraint tail params");
-    wgpu::Buffer force_low_buffer, rounding_buffer;
+    wgpu::Buffer force_low_buffer, geometry_low_buffer, constraint_low_buffer,
+        radial_low_buffer, rounding_buffer;
     if (in.double_single) {
         force_low_buffer =
             make_buffer(device, force_bytes,
                         wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                         "constraint force input low");
+        geometry_low_buffer =
+            make_buffer(device, geometry_bytes,
+                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                        "constraint tail geometry low");
+        constraint_low_buffer =
+            make_buffer(device, constraint_bytes,
+                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                        "dealiased constraint low");
+        radial_low_buffer =
+            make_buffer(device, radial_bytes,
+                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                        "constraint sqrt s low");
         rounding_buffer = make_buffer(device, points * sizeof(std::uint32_t),
                                       wgpu::BufferUsage::Storage,
                                       "constraint tail double-single rounding");
@@ -475,6 +585,14 @@ void enqueue_tail(const wgpu::Device& device,
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, in.sqrt_s_f.data(), radial_bytes);
+    if (in.double_single) {
+        queue.WriteBuffer(geometry_low_buffer, 0, in.geometry_lo.data(),
+                          geometry_bytes);
+        queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
+                          constraint_bytes);
+        queue.WriteBuffer(radial_low_buffer, 0, in.sqrt_s_f_lo.data(),
+                          radial_bytes);
+    }
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     auto layout = pipeline.GetBindGroupLayout(0);
     std::vector<wgpu::BindGroupEntry> entries = {
@@ -487,7 +605,13 @@ void enqueue_tail(const wgpu::Device& device,
     if (in.double_single) {
         entries.push_back(
             {nullptr, 6, force_low_buffer, 0, force_bytes, nullptr, nullptr});
-        entries.push_back({nullptr, 7, rounding_buffer, 0,
+        entries.push_back({nullptr, 7, geometry_low_buffer, 0, geometry_bytes,
+                           nullptr, nullptr});
+        entries.push_back({nullptr, 8, constraint_low_buffer, 0,
+                           constraint_bytes, nullptr, nullptr});
+        entries.push_back(
+            {nullptr, 9, radial_low_buffer, 0, radial_bytes, nullptr, nullptr});
+        entries.push_back({nullptr, 10, rounding_buffer, 0,
                            points * sizeof(std::uint32_t), nullptr, nullptr});
     }
     wgpu::BindGroupDescriptor bind_descriptor{};
@@ -510,9 +634,12 @@ void enqueue_tail(const wgpu::Device& device,
     auto dispatch = std::make_shared<TailDispatch>();
     dispatch->callback = std::move(callback);
     dispatch->result.r_con0 = std::move(head.r_con0);
+    dispatch->result.r_con0_lo = std::move(head.r_con0_lo);
     dispatch->result.z_con0 = std::move(head.z_con0);
+    dispatch->result.z_con0_lo = std::move(head.z_con0_lo);
     dispatch->result.tcon = std::move(head.tcon);
     dispatch->result.g_con_eff = std::move(head.g_con_eff);
+    dispatch->result.g_con_eff_lo = std::move(head.g_con_eff_lo);
     dispatch->result.g_con = std::move(g_con);
     dispatch->output = output_buffer;
     dispatch->readback = readback;
@@ -591,9 +718,12 @@ AxisymmetricConstraintResult axisymmetric_constraint_reference(
     }
     AxisymmetricConstraintResult result;
     result.r_con0 = head.r_con0;
+    result.r_con0_lo = head.r_con0_lo;
     result.z_con0 = head.z_con0;
+    result.z_con0_lo = head.z_con0_lo;
     result.tcon = head.tcon;
     result.g_con_eff = head.g_con_eff;
+    result.g_con_eff_lo = head.g_con_eff_lo;
     result.g_con = g_con;
     apply_constraint_tail(input, head, g_con, result);
     return result;

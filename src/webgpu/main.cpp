@@ -65,11 +65,6 @@ void publish_browser_adapter(const char* device,
 #define CUMES_PRECISION_FLAGS ""
 #endif
 
-// The CUDA mixed-float W7-X trajectory has an empirically qualified residual
-// floor near 3e-3. Its regression capture therefore uses 1e-2; WebGPU is f32
-// and must use the same achievable solver contract.
-constexpr double W7X_MIXED_FLOAT_TOLERANCE = 1.0e-2;
-
 std::string message_text(wgpu::StringView message) {
     return message.length == 0 ? std::string{}
                                : std::string(message.data, message.length);
@@ -1213,16 +1208,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     void run_selected_w7x_solver() {
         try {
             cumes::SolverOptions options;
-            options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+            // The WebGPU solver stores precision-critical values as paired
+            // binary32 words, so validate against the double-precision
+            // tolerance contract even though WGSL has no scalar f64.
+            options.precision = cumes::PrecisionPolicy::VERIFY_DOUBLE;
             auto parsed = cumes::read_problem_spec("/inputs/w7x.json", options);
             if (parsed.report.has_errors()) {
                 const auto errors = parsed.report.errors();
                 finish(false, "W7-X JSON mapping failed: " + errors.front());
                 return;
-            }
-            for (auto& stage : parsed.spec.stages) {
-                stage.tolerance =
-                    std::max(stage.tolerance, W7X_MIXED_FLOAT_TOLERANCE);
             }
             auto validated = cumes::validate(std::move(parsed.spec), options);
             if (!validated.has_value()) {
@@ -1246,8 +1240,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             reset_stage_state();
             std::printf(
                 "running complete W7-X fixed-boundary multigrid solve "
-                "(%zu stages, mixed-float ftol=%.0e)\n",
-                problem_->stage_shapes().size(), W7X_MIXED_FLOAT_TOLERANCE);
+                "(%zu stages, first double-single ftol=%.0e)\n",
+                problem_->stage_shapes().size(), initialized_stage_.tolerance);
             run_stage_inverse();
         } catch (const std::exception& error) {
             finish(false,
@@ -1854,6 +1848,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_descent_case_.velocity.assign(w7x_stage_.state.size(), 0.0F);
         w7x_descent_case_.velocity_lo.assign(w7x_stage_.state.size(), 0.0F);
         w7x_descent_case_.residual = std::move(residual);
+        w7x_descent_case_.residual_lo = w7x_decomposed_residual_lo_;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_descent(
             device_, w7x_descent_case_,
@@ -2892,22 +2887,30 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             controller_->refresh_preconditioner();
         constraint_case_.double_single = double_single_solve_;
         constraint_case_.geometry = base_geometry_case_.geometry;
+        constraint_case_.geometry_lo = stage_geometry_lo_;
         constraint_case_.r_con = stage_r_con_;
+        constraint_case_.r_con_lo = stage_r_con_lo_;
         constraint_case_.z_con = stage_z_con_;
+        constraint_case_.z_con_lo = stage_z_con_lo_;
         const std::size_t points =
             static_cast<std::size_t>(constraint_case_.ns) *
             constraint_case_.ntheta * constraint_case_.nzeta;
         if (constraint_r_con0_.empty()) {
             constraint_r_con0_.assign(points, 0.0F);
             constraint_z_con0_.assign(points, 0.0F);
+            constraint_r_con0_lo_.assign(points, 0.0F);
+            constraint_z_con0_lo_.assign(points, 0.0F);
             constraint_tcon_.assign(constraint_case_.ns, 0.0F);
         }
         constraint_case_.r_con0 = constraint_r_con0_;
+        constraint_case_.r_con0_lo = constraint_r_con0_lo_;
         constraint_case_.z_con0 = constraint_z_con0_;
+        constraint_case_.z_con0_lo = constraint_z_con0_lo_;
         constraint_case_.tcon = constraint_tcon_;
         constraint_case_.ard = preconditioner_elements_.ard;
         constraint_case_.azd = preconditioner_elements_.azd;
         constraint_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        constraint_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
         const std::size_t force_field_count =
             initialized_stage_.ntor == 0 ? 10
                                          : cumes::webgpu::FORCE_FIELD_COUNT;
@@ -2948,7 +2951,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         return;
                     }
                     self->constraint_r_con0_ = actual.r_con0;
+                    self->constraint_r_con0_lo_ = actual.r_con0_lo;
                     self->constraint_z_con0_ = actual.z_con0;
+                    self->constraint_z_con0_lo_ = actual.z_con0_lo;
                     self->constraint_tcon_ = actual.tcon;
                     self->constraint_fields_lo_ = std::move(actual.fields_lo);
                     self->run_constraint_forward(std::move(actual.fields));
@@ -2990,7 +2995,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->active_case_name_.c_str(),
                     static_cast<double>(max_error));
                 self->constraint_r_con0_ = actual.r_con0;
+                self->constraint_r_con0_lo_ = actual.r_con0_lo;
                 self->constraint_z_con0_ = actual.z_con0;
+                self->constraint_z_con0_lo_ = actual.z_con0_lo;
                 self->constraint_tcon_ = actual.tcon;
                 self->constraint_fields_lo_ = std::move(actual.fields_lo);
                 self->run_constraint_forward(std::move(actual.fields));
@@ -3313,6 +3320,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             descent_case_.velocity_lo.clear();
         }
         descent_case_.residual = std::move(residual);
+        if (double_single_solve_) {
+            // The f32 radial preconditioner changes the search direction but
+            // not the paired invariant used for convergence. Preserve the
+            // paired descent contract; a later paired preconditioner can
+            // populate these correction words directly.
+            descent_case_.residual_lo.assign(descent_case_.residual.size(),
+                                             0.0F);
+        } else {
+            descent_case_.residual_lo.clear();
+        }
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_descent(
             device_, descent_case_,
@@ -3473,7 +3490,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             checkpoint_state_lo_.clear();
         }
         constraint_r_con0_.clear();
+        constraint_r_con0_lo_.clear();
         constraint_z_con0_.clear();
+        constraint_z_con0_lo_.clear();
         constraint_tcon_.clear();
         preconditioner_elements_ = {};
         preconditioner_matrix_ = {};
@@ -3863,7 +3882,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> w7x_spectral_residual_lo_;
     std::vector<float> w7x_decomposed_residual_lo_;
     std::vector<float> constraint_r_con0_;
+    std::vector<float> constraint_r_con0_lo_;
     std::vector<float> constraint_z_con0_;
+    std::vector<float> constraint_z_con0_lo_;
     std::vector<float> constraint_tcon_;
     std::vector<float> constraint_fields_lo_;
     std::vector<float> constraint_spectral_residual_lo_;

@@ -23,6 +23,7 @@ struct AxisymmetricDescentCase {
     std::vector<float> velocity;
     std::vector<float> velocity_lo;
     std::vector<float> residual;
+    std::vector<float> residual_lo;
 };
 
 struct AxisymmetricDescentResult {

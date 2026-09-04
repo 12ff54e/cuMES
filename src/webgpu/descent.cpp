@@ -35,7 +35,8 @@ std::string validate_case(const AxisymmetricDescentCase& in) {
         in.state.size() != 6 * points || in.velocity.size() != 6 * points ||
         in.residual.size() != 6 * points ||
         (in.double_single && (in.state_lo.size() != 6 * points ||
-                              in.velocity_lo.size() != 6 * points))) {
+                              in.velocity_lo.size() != 6 * points ||
+                              in.residual_lo.size() != 6 * points))) {
         return "axisymmetric descent input shape mismatch";
     }
     return {};
@@ -99,8 +100,9 @@ AxisymmetricDescentResult axisymmetric_descent_reference(
     const auto update_velocity_ds = [&](int component, int mode, int surface) {
         const auto i = index(component, mode, surface);
         const FloatFloat velocity{input.velocity[i], input.velocity_lo[i]};
+        const FloatFloat residual{input.residual[i], input.residual_lo[i]};
         return multiply(add(multiply(velocity, input.damping_b1),
-                            input.delta_t * input.residual[i]),
+                            multiply(residual, input.delta_t)),
                         input.damping_fac);
     };
     const auto advance_ds = [&](std::size_t i, FloatFloat velocity,
@@ -220,6 +222,7 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
                     "descent velocity");
     wgpu::Buffer state_lo_buffer;
     wgpu::Buffer velocity_lo_buffer;
+    wgpu::Buffer residual_lo_buffer;
     if (input.double_single) {
         state_lo_buffer =
             make_buffer(device, input_bytes,
@@ -229,6 +232,10 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
             make_buffer(device, input_bytes,
                         wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                         "double-single descent velocity low");
+        residual_lo_buffer =
+            make_buffer(device, input_bytes,
+                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                        "double-single descent residual low");
     }
     auto residual_buffer =
         make_buffer(device, input_bytes,
@@ -276,11 +283,13 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
                           input_bytes);
         queue.WriteBuffer(velocity_lo_buffer, 0, input.velocity_lo.data(),
                           input_bytes);
+        queue.WriteBuffer(residual_lo_buffer, 0, input.residual_lo.data(),
+                          input_bytes);
     }
     queue.WriteBuffer(residual_buffer, 0, input.residual.data(), input_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     auto layout = pipeline.GetBindGroupLayout(0);
-    std::array<wgpu::BindGroupEntry, 8> entries{};
+    std::array<wgpu::BindGroupEntry, 9> entries{};
     if (input.double_single) {
         entries = {
             {{nullptr, 0, state_buffer, 0, input_bytes, nullptr, nullptr},
@@ -291,7 +300,9 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
              {nullptr, 5, output_buffer, 0, output_bytes, nullptr, nullptr},
              {nullptr, 6, params_buffer, 0, sizeof(params), nullptr, nullptr},
              {nullptr, 7, rounding_buffer, 0, points * sizeof(std::uint32_t),
-              nullptr, nullptr}}};
+              nullptr, nullptr},
+             {nullptr, 8, residual_lo_buffer, 0, input_bytes, nullptr,
+              nullptr}}};
     } else {
         entries = {
             {{nullptr, 0, state_buffer, 0, input_bytes, nullptr, nullptr},
@@ -301,11 +312,12 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
              {nullptr, 4, params_buffer, 0, sizeof(params), nullptr, nullptr},
              {},
              {},
+             {},
              {}}};
     }
     wgpu::BindGroupDescriptor bind_descriptor{};
     bind_descriptor.layout = layout;
-    bind_descriptor.entryCount = input.double_single ? 8 : 5;
+    bind_descriptor.entryCount = input.double_single ? 9 : 5;
     bind_descriptor.entries = entries.data();
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
     auto encoder = device.CreateCommandEncoder();

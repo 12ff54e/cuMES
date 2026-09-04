@@ -13,7 +13,10 @@ struct AtomicValues { data: array<atomic<u32>>, };
 @group(0) @binding(4) var<storage, read_write> output: Values;
 @group(0) @binding(5) var<uniform> params: Params;
 @group(0) @binding(6) var<storage, read> force_lo: Values;
-@group(0) @binding(7) var<storage, read_write> rounding: AtomicValues;
+@group(0) @binding(7) var<storage, read> geometry_lo: Values;
+@group(0) @binding(8) var<storage, read> constraint_lo: Values;
+@group(0) @binding(9) var<storage, read> sqrt_s_f_lo: Values;
+@group(0) @binding(10) var<storage, read_write> rounding: AtomicValues;
 
 fn rnd(value: f32, slot: u32) -> f32 {
     atomicStore(&rounding.data[slot], bitcast<u32>(value));
@@ -33,11 +36,19 @@ fn add(a: FF, b: FF, slot: u32) -> FF {
     let h = ts(a.hi, b.hi, slot);
     return norm(FF(h.hi, rnd(rnd(h.lo + a.lo, slot) + b.lo, slot)), slot);
 }
-fn con(field: u32, point: u32) -> f32 {
-    return constraint.data[field * params.points + point];
+fn mul(a: FF, b: FF, slot: u32) -> FF {
+    let p = rnd(a.hi * b.hi, slot); let e = rnd(fma(a.hi, b.hi, -p), slot);
+    return norm(FF(p, rnd(rnd(e + rnd(a.hi * b.lo, slot), slot) +
+                               rnd(a.lo * b.hi, slot), slot)), slot);
 }
-fn geom(field: u32, point: u32) -> f32 {
-    return geometry.data[field * params.points + point];
+fn sub(a: FF, b: FF, slot: u32) -> FF { return add(a, FF(-b.hi, -b.lo), slot); }
+fn con(field: u32, point: u32, slot: u32) -> FF {
+    let i = field * params.points + point;
+    return norm(FF(constraint.data[i], constraint_lo.data[i]), slot);
+}
+fn geom(field: u32, point: u32, slot: u32) -> FF {
+    let i = field * params.points + point;
+    return norm(FF(geometry.data[i], geometry_lo.data[i]), slot);
 }
 fn force(field: u32, point: u32, slot: u32) -> FF {
     let i = field * params.points + point;
@@ -63,19 +74,20 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
         }
         return;
     }
-    let sqrt_s = sqrt_s_f.data[surface];
-    let dr = con(0u, point) - con(2u, point);
-    let dz = con(1u, point) - con(3u, point);
-    let gc = con(4u, point);
-    let brcon = dr * gc; let bzcon = dz * gc;
-    put(4u, point, add(force(4u, point, point), FF(brcon, 0.0), point));
-    put(5u, point, add(force(5u, point, point), FF(brcon * sqrt_s, 0.0), point));
-    put(6u, point, add(force(6u, point, point), FF(bzcon, 0.0), point));
-    put(7u, point, add(force(7u, point, point), FF(bzcon * sqrt_s, 0.0), point));
-    let ru = geom(3u, point) + sqrt_s * geom(9u, point);
-    let zu = geom(4u, point) + sqrt_s * geom(10u, point);
-    put(offset + 0u, point, FF(ru * gc, 0.0));
-    put(offset + 1u, point, FF(ru * gc * sqrt_s, 0.0));
-    put(offset + 2u, point, FF(zu * gc, 0.0));
-    put(offset + 3u, point, FF(zu * gc * sqrt_s, 0.0));
+    let sqrt_s = norm(FF(sqrt_s_f.data[surface], sqrt_s_f_lo.data[surface]), point);
+    let dr = sub(con(0u, point, point), con(2u, point, point), point);
+    let dz = sub(con(1u, point, point), con(3u, point, point), point);
+    let gc = con(4u, point, point);
+    let brcon = mul(dr, gc, point); let bzcon = mul(dz, gc, point);
+    put(4u, point, add(force(4u, point, point), brcon, point));
+    put(5u, point, add(force(5u, point, point), mul(brcon, sqrt_s, point), point));
+    put(6u, point, add(force(6u, point, point), bzcon, point));
+    put(7u, point, add(force(7u, point, point), mul(bzcon, sqrt_s, point), point));
+    let ru = add(geom(3u, point, point), mul(sqrt_s, geom(9u, point, point), point), point);
+    let zu = add(geom(4u, point, point), mul(sqrt_s, geom(10u, point, point), point), point);
+    let rug = mul(ru, gc, point); let zug = mul(zu, gc, point);
+    put(offset + 0u, point, rug);
+    put(offset + 1u, point, mul(rug, sqrt_s, point));
+    put(offset + 2u, point, zug);
+    put(offset + 3u, point, mul(zug, sqrt_s, point));
 }

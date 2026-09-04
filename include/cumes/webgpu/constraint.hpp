@@ -24,18 +24,24 @@ struct AxisymmetricConstraintCase {
     // GeometryParityViews field-major data and the inverse transform's
     // xmpq-weighted constraint reconstructions.
     std::vector<float> geometry;
+    std::vector<float> geometry_lo;
     std::vector<float> r_con;
+    std::vector<float> r_con_lo;
     std::vector<float> z_con;
+    std::vector<float> z_con_lo;
 
     // Persistent constraint state entering this pass.
     std::vector<float> r_con0;
+    std::vector<float> r_con0_lo;
     std::vector<float> z_con0;
+    std::vector<float> z_con0_lo;
     std::vector<float> tcon;
 
     // Even/odd m=1 radial-preconditioner diagonals: [surface][parity].
     std::vector<float> ard;
     std::vector<float> azd;
     std::vector<float> sqrt_s_f;
+    std::vector<float> sqrt_s_f_lo;
 
     // MHD force fields. Axisymmetric cases use the first ten fields; 3-D
     // cases additionally carry crmn/czmn/clmn (16 total).
@@ -49,9 +55,12 @@ struct AxisymmetricConstraintResult {
     std::vector<float> fields;
     std::vector<float> fields_lo;
     std::vector<float> r_con0;
+    std::vector<float> r_con0_lo;
     std::vector<float> z_con0;
+    std::vector<float> z_con0_lo;
     std::vector<float> tcon;
     std::vector<float> g_con_eff;
+    std::vector<float> g_con_eff_lo;
     std::vector<float> g_con;
 };
 

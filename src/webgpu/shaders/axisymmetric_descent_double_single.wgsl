@@ -22,6 +22,7 @@ struct AtomicValues { data: array<atomic<u32>>, };
 // of error-free transforms. The u32 atomic round trip prevents WebGPU shader
 // compilers from reassociating the cancellation expressions.
 @group(0) @binding(7) var<storage, read_write> rounding: AtomicValues;
+@group(0) @binding(8) var<storage, read> residual_lo: Values;
 
 fn ff_strict_round(value: f32, slot: u32) -> f32 {
     atomicStore(&rounding.data[slot], bitcast<u32>(value));
@@ -74,6 +75,10 @@ fn velocity_at(i: u32) -> FF {
     return FF(velocity_hi.data[i], velocity_lo.data[i]);
 }
 
+fn residual_at(i: u32) -> FF {
+    return FF(residual.data[i], residual_lo.data[i]);
+}
+
 fn put_state(i: u32, value: FF) {
     output.data[i] = value.hi;
     output.data[6u * params.points + i] = value.lo;
@@ -87,8 +92,7 @@ fn put_velocity(i: u32, value: FF) {
 fn update_velocity(component: u32, point: u32) -> FF {
     let i = index(component, point);
     let damped = ff_strict_mul_f32(velocity_at(i), params.damping_b1, point);
-    let forced = ff_from_f32(
-        ff_strict_round(params.delta_t * residual.data[i], point));
+    let forced = ff_strict_mul_f32(residual_at(i), params.delta_t, point);
     return ff_strict_mul_f32(ff_strict_add(damped, forced, point),
                              params.damping_fac, point);
 }
