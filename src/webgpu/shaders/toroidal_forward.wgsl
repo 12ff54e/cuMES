@@ -9,22 +9,46 @@ struct Params {
     include_lcfs: u32,
 };
 
-struct Values {
-    data: array<f32>,
-};
+struct Values { data: array<f32>, };
 
 @group(0) @binding(0) var<storage, read> fields: Values;
 @group(0) @binding(1) var<storage, read> basis: Values;
 @group(0) @binding(2) var<storage, read_write> residual: Values;
 @group(0) @binding(3) var<uniform> params: Params;
+// Cosine/sine toroidal projections for all 20 real-space fields.
+@group(0) @binding(4) var<storage, read_write> intermediate: Values;
 
-fn field_value(field: u32, surface: u32, angular: u32) -> f32 {
+fn field_value(field: u32, surface: u32, theta: u32, zeta: u32) -> f32 {
+    let angular = zeta * params.ntheta + theta;
     return fields.data[(field * params.ns + surface) * params.n_z_n_t + angular];
 }
 
-fn basis_value(field: u32, mode: u32, angular: u32) -> f32 {
-    let mnmax = params.mpol * (params.ntor + 1u);
-    return basis.data[(field * mnmax + mode) * params.n_z_n_t + angular];
+fn theta_basis(sine: bool, m: u32, theta: u32) -> f32 {
+    let plane = select(0u, 1u, sine);
+    return basis.data[plane * params.mpol * params.ntheta +
+                      m * params.ntheta + theta];
+}
+
+fn zeta_basis(sine: bool, n: u32, zeta: u32) -> f32 {
+    let theta_values = 2u * params.mpol * params.ntheta;
+    let plane = select(0u, 1u, sine);
+    return basis.data[theta_values +
+                      plane * (params.ntor + 1u) * params.nzeta +
+                      n * params.nzeta + zeta];
+}
+
+fn intermediate_index(family: u32, field: u32, surface: u32, theta: u32,
+                      n: u32) -> u32 {
+    let theta_reduced = params.ntheta / 2u + 1u;
+    let plane_size = params.ns * theta_reduced * (params.ntor + 1u);
+    return (family * 20u + field) * plane_size +
+           ((surface * theta_reduced + theta) * (params.ntor + 1u) + n);
+}
+
+fn projected(family: u32, field: u32, surface: u32, theta: u32, n: u32)
+    -> f32 {
+    return intermediate.data[
+        intermediate_index(family, field, surface, theta, n)];
 }
 
 fn store(component: u32, mode: u32, surface: u32, value: f32) {
@@ -41,12 +65,39 @@ fn compensated_add(sum: ptr<function, f32>, correction: ptr<function, f32>,
 }
 
 @compute @workgroup_size(128)
-fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
+fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let theta_reduced = params.ntheta / 2u + 1u;
+    let sequence_count = 20u * params.ns * theta_reduced * (params.ntor + 1u);
+    let index = invocation.x;
+    if (index >= sequence_count) { return; }
+    let n = index % (params.ntor + 1u);
+    let theta_surface_field = index / (params.ntor + 1u);
+    let theta = theta_surface_field % theta_reduced;
+    let surface_field = theta_surface_field / theta_reduced;
+    let surface = surface_field % params.ns;
+    let field = surface_field / params.ns;
+    var cosine_sum = 0.0;
+    var sine_sum = 0.0;
+    var cosine_correction = 0.0;
+    var sine_correction = 0.0;
+    for (var zeta = 0u; zeta < params.nzeta; zeta++) {
+        let value = field_value(field, surface, theta, zeta);
+        compensated_add(&cosine_sum, &cosine_correction,
+                        value * zeta_basis(false, n, zeta));
+        compensated_add(&sine_sum, &sine_correction,
+                        value * zeta_basis(true, n, zeta));
+    }
+    intermediate.data[intermediate_index(0u, field, surface, theta, n)] =
+        cosine_sum;
+    intermediate.data[intermediate_index(1u, field, surface, theta, n)] =
+        sine_sum;
+}
+
+@compute @workgroup_size(128)
+fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let mnmax = params.mpol * (params.ntor + 1u);
     let index = invocation.x;
-    if (index >= params.ns * mnmax) {
-        return;
-    }
+    if (index >= params.ns * mnmax) { return; }
     let surface = index % params.ns;
     let mode = index / params.ns;
     let m = mode / (params.ntor + 1u);
@@ -63,40 +114,43 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
         sums[component] = 0.0;
         corrections[component] = 0.0;
     }
-    for (var zeta = 0u; zeta < params.nzeta; zeta++) {
-        for (var theta = 0u; theta < theta_reduced; theta++) {
-            let angular = zeta * params.ntheta + theta;
-            var weight = norm;
-            if (theta == 0u || theta + 1u == theta_reduced) {
-                weight *= 0.5;
-            }
-            let cc = weight * basis_value(0u, mode, angular);
-            let ss = weight * basis_value(1u, mode, angular);
-            let sc = weight * basis_value(2u, mode, angular);
-            let cs = weight * basis_value(3u, mode, angular);
-            let temp_r = field_value(0u + parity, surface, angular) +
-                         xmpq * field_value(16u + parity, surface, angular);
-            let temp_z = field_value(2u + parity, surface, angular) +
-                         xmpq * field_value(18u + parity, surface, angular);
-            let br = field_value(4u + parity, surface, angular);
-            let bz = field_value(6u + parity, surface, angular);
-            let bl = field_value(8u + parity, surface, angular);
-            let cr = field_value(10u + parity, surface, angular);
-            let cz = field_value(12u + parity, surface, angular);
-            let cl = field_value(14u + parity, surface, angular);
-            compensated_add(&sums[0], &corrections[0],
-                            temp_r * cc - mf * br * sc + nf * cr * cs);
-            compensated_add(&sums[3], &corrections[3],
-                            temp_r * ss + mf * br * cs - nf * cr * sc);
-            compensated_add(&sums[1], &corrections[1],
-                            temp_z * sc + mf * bz * cc + nf * cz * ss);
-            compensated_add(&sums[4], &corrections[4],
-                            temp_z * cs - mf * bz * ss - nf * cz * cc);
-            compensated_add(&sums[2], &corrections[2],
-                            mf * bl * cc + nf * cl * ss);
-            compensated_add(&sums[5], &corrections[5],
-                            -mf * bl * ss - nf * cl * cc);
-        }
+    for (var theta = 0u; theta < theta_reduced; theta++) {
+        var weight = norm;
+        if (theta == 0u || theta + 1u == theta_reduced) { weight *= 0.5; }
+        let cm = theta_basis(false, m, theta);
+        let sm = theta_basis(true, m, theta);
+        let temp_r_cos = projected(0u, parity, surface, theta, n) +
+                         xmpq * projected(0u, 16u + parity, surface, theta, n);
+        let temp_r_sin = projected(1u, parity, surface, theta, n) +
+                         xmpq * projected(1u, 16u + parity, surface, theta, n);
+        let temp_z_cos = projected(0u, 2u + parity, surface, theta, n) +
+                         xmpq * projected(0u, 18u + parity, surface, theta, n);
+        let temp_z_sin = projected(1u, 2u + parity, surface, theta, n) +
+                         xmpq * projected(1u, 18u + parity, surface, theta, n);
+        let br_cos = projected(0u, 4u + parity, surface, theta, n);
+        let br_sin = projected(1u, 4u + parity, surface, theta, n);
+        let bz_cos = projected(0u, 6u + parity, surface, theta, n);
+        let bz_sin = projected(1u, 6u + parity, surface, theta, n);
+        let bl_cos = projected(0u, 8u + parity, surface, theta, n);
+        let bl_sin = projected(1u, 8u + parity, surface, theta, n);
+        let cr_cos = projected(0u, 10u + parity, surface, theta, n);
+        let cr_sin = projected(1u, 10u + parity, surface, theta, n);
+        let cz_cos = projected(0u, 12u + parity, surface, theta, n);
+        let cz_sin = projected(1u, 12u + parity, surface, theta, n);
+        let cl_cos = projected(0u, 14u + parity, surface, theta, n);
+        let cl_sin = projected(1u, 14u + parity, surface, theta, n);
+        compensated_add(&sums[0], &corrections[0], weight *
+            (temp_r_cos * cm - mf * br_cos * sm + nf * cr_sin * cm));
+        compensated_add(&sums[3], &corrections[3], weight *
+            (temp_r_sin * sm + mf * br_sin * cm - nf * cr_cos * sm));
+        compensated_add(&sums[1], &corrections[1], weight *
+            (temp_z_cos * sm + mf * bz_cos * cm + nf * cz_sin * sm));
+        compensated_add(&sums[4], &corrections[4], weight *
+            (temp_z_sin * cm - mf * bz_sin * sm - nf * cz_cos * cm));
+        compensated_add(&sums[2], &corrections[2], weight *
+            (mf * bl_cos * cm + nf * cl_sin * sm));
+        compensated_add(&sums[5], &corrections[5], weight *
+            (-mf * bl_sin * sm - nf * cl_cos * cm));
     }
     let mscale = select(sqrt(2.0), 1.0, m == 0u);
     let nscale = select(sqrt(2.0), 1.0, n == 0u);

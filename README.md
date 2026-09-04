@@ -19,7 +19,7 @@ The shipped W7-X case executes the same integrated path in the browser,
 including its prescribed-current closure; its iteration-3 residual triple
 matches native CUDA mixed-float at `(1.141e+01, 7.079e+00, 1.012e-01)`. A
 dedicated `?solve=w7x` browser entry point runs all three W7-X stages; the
-hardware-qualified run converges in `82 -> 30 -> 31` effective iterations.
+hardware-qualified run converges in `82 -> 35 -> 25` effective iterations.
 The converged spectral state and run provenance are published as a version-8
 native binary through a browser download link and verified by an in-Wasm
 round trip. The download also contains the complete half/full-grid scientific
