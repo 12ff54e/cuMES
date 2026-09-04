@@ -51,6 +51,7 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl@/shaders/base_geometry.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry_double_single.wgsl@/shaders/base_geometry_double_single.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_force.wgsl@/shaders/axisymmetric_force.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/force_double_single.wgsl@/shaders/force_double_single.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_head.wgsl@/shaders/axisymmetric_constraint_head.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_tail.wgsl@/shaders/axisymmetric_constraint_tail.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_descent.wgsl@/shaders/axisymmetric_descent.wgsl"
@@ -82,6 +83,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_force.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/force_double_single.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_head.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_tail.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_descent.wgsl

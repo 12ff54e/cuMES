@@ -155,6 +155,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const auto self = shared_from_this();
         wgpu::DeviceDescriptor descriptor{};
         descriptor.label = "cuMES WebGPU device";
+        wgpu::Limits supported_limits{};
+        if (!adapter_.GetLimits(&supported_limits) ||
+            supported_limits.maxStorageBuffersPerShaderStage < 10) {
+            finish(false,
+                   "WebGPU adapter needs at least 10 compute storage buffers "
+                   "for the high-precision solver");
+            return;
+        }
+        wgpu::Limits required_limits{};
+        required_limits.maxStorageBuffersPerShaderStage = 10;
+        descriptor.requiredLimits = &required_limits;
         descriptor.SetUncapturedErrorCallback(
             [](const wgpu::Device&, wgpu::ErrorType type,
                wgpu::StringView message, BrowserSelfTest* test) {
@@ -1631,13 +1642,22 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_force_case_.ntheta = w7x_stage_.ntheta;
         w7x_force_case_.nzeta = w7x_stage_.nzeta;
         w7x_force_case_.delta_s = w7x_stage_.profiles.delta_s;
+        w7x_force_case_.delta_s_lo = w7x_stage_.profiles.delta_s_lo;
         w7x_force_case_.lamscale = w7x_stage_.profiles.lamscale;
+        w7x_force_case_.lamscale_lo = w7x_stage_.profiles.lamscale_lo;
+        w7x_force_case_.double_single = true;
         w7x_force_case_.geometry = w7x_geometry_case_.geometry;
+        w7x_force_case_.geometry_lo = w7x_geometry_lo_;
         w7x_force_case_.base_geometry = w7x_magnetic_case_.base_geometry;
+        w7x_force_case_.base_geometry_lo = w7x_base_geometry_lo_;
         w7x_force_case_.magnetic_field = std::move(magnetic_field);
+        w7x_force_case_.magnetic_field_lo = w7x_magnetic_field_lo_;
         w7x_force_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
+        w7x_force_case_.sqrt_s_f_lo = w7x_stage_.profiles.sqrt_s_f_lo;
         w7x_force_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
+        w7x_force_case_.sqrt_s_h_lo = w7x_stage_.profiles.sqrt_s_h_lo;
         w7x_force_case_.phip_f = w7x_stage_.profiles.phip_f;
+        w7x_force_case_.phip_f_lo = w7x_stage_.profiles.phip_f_lo;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_force(
             device_, w7x_force_case_,
@@ -1650,26 +1670,35 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 const auto expected =
                     cumes::webgpu::axisymmetric_force_reference(
                         self->w7x_force_case_);
-                float max_error = 0.0F;
-                bool valid = actual.fields.size() == expected.fields.size();
+                double max_error = 0.0;
+                bool valid =
+                    actual.fields.size() == expected.fields.size() &&
+                    actual.fields_lo.size() == expected.fields_lo.size();
                 if (valid) {
                     for (std::size_t i = 0; i < actual.fields.size(); ++i) {
                         max_error = std::max(
                             max_error,
-                            std::abs(actual.fields[i] - expected.fields[i]) /
-                                (1.0F + std::abs(expected.fields[i])));
-                        valid &= std::isfinite(actual.fields[i]);
+                            std::abs((static_cast<double>(actual.fields[i]) +
+                                      actual.fields_lo[i]) -
+                                     (static_cast<double>(expected.fields[i]) +
+                                      expected.fields_lo[i])) /
+                                (1.0 + std::abs(static_cast<double>(
+                                                    expected.fields[i]) +
+                                                expected.fields_lo[i])));
+                        valid &= std::isfinite(actual.fields[i]) &&
+                                 std::isfinite(actual.fields_lo[i]);
                     }
                 }
-                if (!valid || max_error > 5.0e-4F) {
+                if (!valid || max_error > 2.0e-7) {
                     self->finish(false, "W7-X force mismatch: " +
                                             std::to_string(max_error));
                     return;
                 }
                 std::printf(
-                    "  W7-X MHD force: PASS "
-                    "(max scaled |GPU-CPU| = %.3e)\n",
-                    static_cast<double>(max_error));
+                    "  W7-X double-single MHD force: PASS "
+                    "(max reconstructed scaled |GPU-CPU| = %.3e)\n",
+                    max_error);
+                self->w7x_force_fields_lo_ = std::move(actual.fields_lo);
                 self->run_w7x_forward(std::move(actual.fields));
             });
     }
@@ -1866,6 +1895,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     static_cast<double>(max_error));
                 self->initialized_stage_ = self->w7x_stage_;
                 self->w7x_stage_slice_ = true;
+                self->double_single_solve_ = true;
                 self->active_case_name_ = "W7-X";
                 self->reset_stage_state();
                 self->run_stage_inverse();
@@ -2389,13 +2419,22 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.ntheta = initialized_stage_.ntheta;
         force_case_.nzeta = initialized_stage_.nzeta;
         force_case_.delta_s = initialized_stage_.profiles.delta_s;
+        force_case_.delta_s_lo = initialized_stage_.profiles.delta_s_lo;
         force_case_.lamscale = initialized_stage_.profiles.lamscale;
+        force_case_.lamscale_lo = initialized_stage_.profiles.lamscale_lo;
+        force_case_.double_single = double_single_solve_;
         force_case_.geometry = magnetic_field_case_.geometry;
+        force_case_.geometry_lo = stage_geometry_lo_;
         force_case_.base_geometry = magnetic_field_case_.base_geometry;
+        force_case_.base_geometry_lo = stage_base_geometry_lo_;
         force_case_.magnetic_field = std::move(magnetic_field);
+        force_case_.magnetic_field_lo = stage_magnetic_field_lo_;
         force_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        force_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
         force_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        force_case_.sqrt_s_h_lo = initialized_stage_.profiles.sqrt_s_h_lo;
         force_case_.phip_f = initialized_stage_.profiles.phip_f;
+        force_case_.phip_f_lo = initialized_stage_.profiles.phip_f_lo;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_force(
             device_, force_case_,
@@ -2411,23 +2450,47 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         : cumes::webgpu::axisymmetric_force_reference(
                               self->force_case_);
                 if (!self->production_solve_ &&
-                    actual.fields.size() != expected.fields.size()) {
+                    (actual.fields.size() != expected.fields.size() ||
+                     (self->force_case_.double_single &&
+                      (actual.fields_lo.size() != actual.fields.size() ||
+                       expected.fields_lo.size() != expected.fields.size())))) {
                     self->finish(false, "force result shape mismatch");
                     return;
                 }
                 float max_error = 0.0F;
+                double max_reconstructed_error = 0.0;
                 bool finite = true;
                 for (std::size_t i = 0; i < actual.fields.size(); ++i) {
                     if (!self->production_solve_) {
                         max_error = std::max(
                             max_error,
                             std::abs(actual.fields[i] - expected.fields[i]));
+                        if (self->force_case_.double_single) {
+                            max_reconstructed_error = std::max(
+                                max_reconstructed_error,
+                                std::abs(
+                                    (static_cast<double>(actual.fields[i]) +
+                                     actual.fields_lo[i]) -
+                                    (static_cast<double>(expected.fields[i]) +
+                                     expected.fields_lo[i])) /
+                                    (1.0 + std::abs(static_cast<double>(
+                                                        expected.fields[i]) +
+                                                    expected.fields_lo[i])));
+                        }
                     }
                     finite &= std::isfinite(actual.fields[i]);
+                    if (self->force_case_.double_single)
+                        finite &= std::isfinite(actual.fields_lo[i]);
                 }
-                if (max_error > 5.0e-4F || !finite) {
+                const bool mismatch = self->force_case_.double_single
+                                          ? max_reconstructed_error > 2.0e-7
+                                          : max_error > 5.0e-4F;
+                if (mismatch || !finite) {
                     self->finish(false, "axisymmetric force mismatch: " +
-                                            std::to_string(max_error));
+                                            std::to_string(
+                                                self->force_case_.double_single
+                                                    ? max_reconstructed_error
+                                                    : max_error));
                     return;
                 }
                 if (!self->production_solve_) {
@@ -2438,6 +2501,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         static_cast<double>(max_error));
                 }
                 self->stage_force_fields_ = actual.fields;
+                self->stage_force_fields_lo_ = std::move(actual.fields_lo);
                 self->run_solovev_forward(std::move(actual.fields));
             });
     }
@@ -3300,6 +3364,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         "(FSQR=%.3e)\n",
                         self->invariant_normalized_[0]);
                     self->w7x_stage_slice_ = false;
+                    self->double_single_solve_ = false;
                     self->run_solovev_initialization();
                     return;
                 }
@@ -3710,6 +3775,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_r_con_lo_;
     std::vector<float> stage_z_con_lo_;
     std::vector<float> stage_force_fields_;
+    std::vector<float> stage_force_fields_lo_;
     std::vector<float> toroidal_r_con_;
     std::vector<float> toroidal_z_con_;
     std::vector<float> w7x_r_con_;
@@ -3717,6 +3783,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> w7x_geometry_lo_;
     std::vector<float> w7x_base_geometry_lo_;
     std::vector<float> w7x_magnetic_field_lo_;
+    std::vector<float> w7x_force_fields_lo_;
     std::vector<float> constraint_r_con0_;
     std::vector<float> constraint_z_con0_;
     std::vector<float> constraint_tcon_;
