@@ -410,6 +410,20 @@ QH changed from 0.678 s to 0.682 s (0.7% slower). The smaller block therefore
 does not improve inter-solver residency enough to matter on the four-worker
 TITAN Xp workload. The production tile remains 16.
 
+### 3.7 Near-axisymmetric cold-start experiment plan
+
+The mode-1 analytic QA/QH boundaries are three-dimensional but have very small
+non-axisymmetric amplitudes; their cold solves still take roughly 1,500 passes.
+Use the existing diagnostic `CUMES_SEED_ENVELOPE` override to sweep the radial
+boundary-harmonic envelope on the exact center inputs before changing policy.
+Record per-stage iterations, final residuals, and state equivalence for both
+cases. If one value materially reduces both trajectories, derive any production
+selection from a dimensionless boundary-spectrum measure rather than a meow or
+target-function special case. The W7-X and axisymmetric frozen trajectories,
+checkpoint replay, and the full verify suite remain mandatory gates. Reject the
+idea if QA and QH prefer incompatible values or the converged state moves beyond
+the accepted equilibrium tolerance.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
