@@ -294,6 +294,27 @@ bit-identical serial/concurrent Jacobians for both cases. Eight QA columns took
 measurements, not the repeated end-to-end acceptance statistics required by
 §4; end-to-end optimizer qualification remains in meow.
 
+### 3.5 Repeated-solve resource reuse — experiment plan
+
+Meow now evaluates exact finite-difference Jacobian columns concurrently, but
+each column constructs a fresh `EquilibriumSolver`. The facade's implementation
+is currently empty and every `solve()` recreates its CUDA stream, multigrid
+stage arenas, cuFFT plans, operator stacks, and host snapshot transfers. Before
+introducing a session or batch API, expose structured per-call wall timings for
+pre-multigrid setup, multigrid execution, final state transfer, and total solve
+time. Keep the existing device-pass timer distinct from these host wall times.
+
+Use those timings in meow's QA and QH mode-1 Jacobian workload to determine the
+dominant repeated cost. If stream lifetime is measurable, retain one stream per
+`EquilibriumSolver` first because it does not alter seeding, stage arithmetic,
+or ownership between worker objects. Retaining topology-dependent arenas,
+cuFFT plans, and operator stacks is a larger follow-up and is allowed only when
+the timing breakdown justifies it. Any reuse must preserve cold-start semantics,
+exact serial/concurrent Jacobians, one-solver-per-worker ownership, the frozen
+single-solver trajectories, and the 96-test verify suite. End-to-end QA/QH
+acceptance remains in meow, while cuMES owns only equilibrium-solve resources
+and timings.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
