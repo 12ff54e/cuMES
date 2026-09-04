@@ -1453,6 +1453,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 self->w7x_r_con_ = std::move(actual.r_con);
                 self->w7x_z_con_ = std::move(actual.z_con);
+                self->w7x_geometry_lo_ = std::move(actual.geometry_lo);
                 std::printf(
                     "  W7-X double-single inverse transform: PASS "
                     "(max reconstructed |GPU-CPU| = %.3e)\n",
@@ -1466,7 +1467,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_geometry_case_.ntheta = w7x_stage_.ntheta;
         w7x_geometry_case_.nzeta = w7x_stage_.nzeta;
         w7x_geometry_case_.delta_s = w7x_stage_.profiles.delta_s;
+        w7x_geometry_case_.double_single = true;
         w7x_geometry_case_.geometry = std::move(geometry);
+        w7x_geometry_case_.geometry_lo = w7x_geometry_lo_;
         w7x_geometry_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
         w7x_geometry_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
         const auto self = shared_from_this();
@@ -1490,15 +1493,34 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         valid &= std::isfinite(actual.fields[i]);
                     }
                 }
-                if (!valid || max_error > 5.0e-4F) {
-                    self->finish(false, "W7-X geometry mismatch: " +
-                                            std::to_string(max_error));
+                double max_reconstructed_error = 0.0;
+                valid &= actual.fields_lo.size() == actual.fields.size() &&
+                         expected.fields_lo.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_reconstructed_error = std::max(
+                            max_reconstructed_error,
+                            std::abs((static_cast<double>(actual.fields[i]) +
+                                      actual.fields_lo[i]) -
+                                     (static_cast<double>(expected.fields[i]) +
+                                      expected.fields_lo[i])));
+                        valid &= std::isfinite(actual.fields_lo[i]);
+                    }
+                }
+                if (!valid || max_error > 5.0e-4F ||
+                    max_reconstructed_error > 5.0e-9) {
+                    self->finish(
+                        false,
+                        "W7-X geometry mismatch: " + std::to_string(max_error) +
+                            " reconstructed=" +
+                            std::to_string(max_reconstructed_error));
                     return;
                 }
                 std::printf(
-                    "  W7-X half-grid geometry: PASS "
-                    "(max |GPU-CPU| = %.3e)\n",
-                    static_cast<double>(max_error));
+                    "  W7-X double-single half-grid geometry: PASS "
+                    "(max reconstructed |GPU-CPU| = %.3e)\n",
+                    max_reconstructed_error);
+                self->w7x_base_geometry_lo_ = std::move(actual.fields_lo);
                 self->run_w7x_magnetic_field(std::move(actual.fields));
             });
     }
@@ -2030,7 +2052,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         base_geometry_case_.ntheta = initialized_stage_.ntheta;
         base_geometry_case_.nzeta = initialized_stage_.nzeta;
         base_geometry_case_.delta_s = initialized_stage_.profiles.delta_s;
+        base_geometry_case_.double_single = double_single_solve_;
         base_geometry_case_.geometry = std::move(geometry);
+        if (double_single_solve_) {
+            base_geometry_case_.geometry_lo = stage_geometry_lo_;
+        } else {
+            base_geometry_case_.geometry_lo.clear();
+        }
         base_geometry_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
         base_geometry_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
         const auto self = shared_from_this();
@@ -2074,8 +2102,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     std::all_of(gsqrt, gsqrt + half_points, [](float value) {
                         return std::isfinite(value) && value != 0.0F;
                     });
+                const bool precision_valid =
+                    !self->double_single_solve_ ||
+                    (actual.fields_lo.size() == actual.fields.size() &&
+                     std::all_of(
+                         actual.fields_lo.begin(), actual.fields_lo.end(),
+                         [](float value) { return std::isfinite(value); }));
                 if (max_error > 2.0e-4F || !axisymmetric_guv_zero ||
-                    !finite_jacobian) {
+                    !finite_jacobian || !precision_valid) {
                     self->finish(
                         false, "base geometry mismatch: max_error=" +
                                    std::to_string(max_error) + " guv_zero=" +
@@ -2090,7 +2124,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 jacobian.min_index = -1;
                 jacobian.nonfinite_count = 0.0;
                 for (std::size_t i = 0; i < half_points; ++i) {
-                    const double value = static_cast<double>(gsqrt[i]);
+                    const std::size_t gsqrt_index = 6 * half_points + i;
+                    const double value = static_cast<double>(gsqrt[i]) +
+                                         (self->double_single_solve_
+                                              ? actual.fields_lo[gsqrt_index]
+                                              : 0.0);
                     if (!std::isfinite(value)) {
                         jacobian.nonfinite_count += 1.0;
                         continue;
@@ -2122,6 +2160,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->active_case_name_.c_str(),
                         static_cast<double>(max_error));
                 }
+                self->stage_base_geometry_lo_ = std::move(actual.fields_lo);
                 self->run_magnetic_field(std::move(actual.fields));
             });
     }
@@ -3542,6 +3581,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_r_con_;
     std::vector<float> stage_z_con_;
     std::vector<float> stage_geometry_lo_;
+    std::vector<float> stage_base_geometry_lo_;
     std::vector<float> stage_r_con_lo_;
     std::vector<float> stage_z_con_lo_;
     std::vector<float> stage_force_fields_;
@@ -3549,6 +3589,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> toroidal_z_con_;
     std::vector<float> w7x_r_con_;
     std::vector<float> w7x_z_con_;
+    std::vector<float> w7x_geometry_lo_;
+    std::vector<float> w7x_base_geometry_lo_;
     std::vector<float> constraint_r_con0_;
     std::vector<float> constraint_z_con0_;
     std::vector<float> constraint_tcon_;

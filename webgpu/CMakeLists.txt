@@ -49,6 +49,7 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/solovev.json@/inputs/solovev.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/w7x.json@/inputs/w7x.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl@/shaders/base_geometry.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry_double_single.wgsl@/shaders/base_geometry_double_single.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_force.wgsl@/shaders/axisymmetric_force.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_head.wgsl@/shaders/axisymmetric_constraint_head.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_tail.wgsl@/shaders/axisymmetric_constraint_tail.wgsl"
@@ -90,6 +91,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_apply.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_matrix.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry_double_single.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl)
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS

@@ -17,8 +17,10 @@ struct BaseGeometryCase {
     int ntheta = 0;
     int nzeta = 1;
     float delta_s = 0.0F;
+    bool double_single = false;
     // The 18 field-major full-grid fields produced by the inverse transform.
     std::vector<float> geometry;
+    std::vector<float> geometry_lo;
     std::vector<float> sqrt_s_f;
     std::vector<float> sqrt_s_h;
 };
@@ -27,6 +29,7 @@ struct BaseGeometryResult {
     // Field-major half-grid order: r12, ru12, zu12, rs, zs, tau, gsqrt,
     // guu, guv, gvv.
     std::vector<float> fields;
+    std::vector<float> fields_lo;
 };
 
 using BaseGeometryCallback =
