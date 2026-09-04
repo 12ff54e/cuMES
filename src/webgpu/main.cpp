@@ -1379,6 +1379,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     static_cast<std::size_t>(component) * family_values +
                     static_cast<std::size_t>(mode) * w7x_stage_.ns;
                 w7x_stage_.state[axis] = w7x_stage_.state[axis + 1];
+                w7x_stage_.state_lo[axis] = w7x_stage_.state_lo[axis + 1];
             }
         }
         w7x_inverse_case_.ns = w7x_stage_.ns;
@@ -1387,7 +1388,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_inverse_case_.ntheta = w7x_stage_.ntheta;
         w7x_inverse_case_.nzeta = w7x_stage_.nzeta;
         w7x_inverse_case_.nfp = w7x_stage_.nfp;
+        w7x_inverse_case_.double_single = true;
         w7x_inverse_case_.state = w7x_stage_.state;
+        w7x_inverse_case_.state_lo = w7x_stage_.state_lo;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_toroidal_inverse(
             device_, w7x_inverse_case_,
@@ -1414,17 +1417,46 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 compare(actual.geometry, expected.geometry);
                 compare(actual.r_con, expected.r_con);
                 compare(actual.z_con, expected.z_con);
-                if (!valid || max_error > 5.0e-4F) {
-                    self->finish(false, "W7-X inverse mismatch: " +
-                                            std::to_string(max_error));
+                double max_reconstructed_error = 0.0;
+                const auto compare_pairs =
+                    [&max_reconstructed_error, &valid](
+                        const auto& gpu_hi, const auto& gpu_lo,
+                        const auto& cpu_hi, const auto& cpu_lo) {
+                        valid &= gpu_hi.size() == gpu_lo.size() &&
+                                 gpu_hi.size() == cpu_hi.size() &&
+                                 gpu_hi.size() == cpu_lo.size();
+                        if (!valid) return;
+                        for (std::size_t i = 0; i < gpu_hi.size(); ++i) {
+                            const double gpu =
+                                static_cast<double>(gpu_hi[i]) + gpu_lo[i];
+                            const double cpu =
+                                static_cast<double>(cpu_hi[i]) + cpu_lo[i];
+                            max_reconstructed_error = std::max(
+                                max_reconstructed_error, std::abs(gpu - cpu));
+                            valid &= std::isfinite(gpu_lo[i]);
+                        }
+                    };
+                compare_pairs(actual.geometry, actual.geometry_lo,
+                              expected.geometry, expected.geometry_lo);
+                compare_pairs(actual.r_con, actual.r_con_lo, expected.r_con,
+                              expected.r_con_lo);
+                compare_pairs(actual.z_con, actual.z_con_lo, expected.z_con,
+                              expected.z_con_lo);
+                if (!valid || max_error > 5.0e-4F ||
+                    max_reconstructed_error > 2.0e-10) {
+                    self->finish(
+                        false,
+                        "W7-X inverse mismatch: " + std::to_string(max_error) +
+                            " reconstructed=" +
+                            std::to_string(max_reconstructed_error));
                     return;
                 }
                 self->w7x_r_con_ = std::move(actual.r_con);
                 self->w7x_z_con_ = std::move(actual.z_con);
                 std::printf(
-                    "  W7-X inverse transform: PASS "
-                    "(max |GPU-CPU| = %.3e)\n",
-                    static_cast<double>(max_error));
+                    "  W7-X double-single inverse transform: PASS "
+                    "(max reconstructed |GPU-CPU| = %.3e)\n",
+                    max_reconstructed_error);
                 self->run_w7x_geometry(std::move(actual.geometry));
             });
     }
@@ -1928,7 +1960,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         stage_toroidal_inverse_case_.ntheta = initialized_stage_.ntheta;
         stage_toroidal_inverse_case_.nzeta = initialized_stage_.nzeta;
         stage_toroidal_inverse_case_.nfp = initialized_stage_.nfp;
+        stage_toroidal_inverse_case_.double_single = double_single_solve_;
         stage_toroidal_inverse_case_.state = initialized_stage_.state;
+        if (double_single_solve_) {
+            stage_toroidal_inverse_case_.state_lo = stage_state_lo_;
+        } else {
+            stage_toroidal_inverse_case_.state_lo.clear();
+        }
         cumes::webgpu::enqueue_toroidal_inverse(
             device_, stage_toroidal_inverse_case_,
             [self](std::string error,
@@ -1981,6 +2019,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
         stage_r_con_ = std::move(actual.r_con);
         stage_z_con_ = std::move(actual.z_con);
+        stage_geometry_lo_ = std::move(actual.geometry_lo);
+        stage_r_con_lo_ = std::move(actual.r_con_lo);
+        stage_z_con_lo_ = std::move(actual.z_con_lo);
         run_base_geometry(std::move(actual.geometry));
     }
 
@@ -3500,6 +3541,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     bool double_single_solve_ = false;
     std::vector<float> stage_r_con_;
     std::vector<float> stage_z_con_;
+    std::vector<float> stage_geometry_lo_;
+    std::vector<float> stage_r_con_lo_;
+    std::vector<float> stage_z_con_lo_;
     std::vector<float> stage_force_fields_;
     std::vector<float> toroidal_r_con_;
     std::vector<float> toroidal_z_con_;

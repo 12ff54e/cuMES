@@ -29,6 +29,9 @@ struct AxisymmetricInverseResult {
     std::vector<float> geometry;
     std::vector<float> r_con;
     std::vector<float> z_con;
+    std::vector<float> geometry_lo;
+    std::vector<float> r_con_lo;
+    std::vector<float> z_con_lo;
 };
 
 using AxisymmetricInverseCallback =

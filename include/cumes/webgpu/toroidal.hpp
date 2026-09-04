@@ -18,9 +18,11 @@ struct ToroidalInverseCase {
     int ntheta = 0;
     int nzeta = 0;
     int nfp = 0;
+    bool double_single = false;
     // Component-major [component][mode][surface], with
     // mode=m*(ntor+1)+n.
     std::vector<float> state;
+    std::vector<float> state_lo;
 };
 
 using ToroidalInverseResult = AxisymmetricInverseResult;

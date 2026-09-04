@@ -1,5 +1,6 @@
 #include "cumes/webgpu/toroidal.hpp"
 
+#include "cumes/webgpu/float_float.hpp"
 #include "pipeline_cache.hpp"
 
 #include <algorithm>
@@ -64,7 +65,8 @@ std::string validate_case(const ToroidalInverseCase& input) {
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t total_points =
         static_cast<std::size_t>(input.ns) * n_z_n_t;
-    if (input.state.size() != SPECTRAL_COMPONENT_COUNT * mnmax * input.ns) {
+    if (input.state.size() != SPECTRAL_COMPONENT_COUNT * mnmax * input.ns ||
+        (input.double_single && input.state_lo.size() != input.state.size())) {
         return "toroidal state size does not match 6*mnmax*ns";
     }
     if (total_points > std::numeric_limits<std::uint32_t>::max() ||
@@ -183,12 +185,21 @@ const std::vector<float>& make_basis(const ToroidalDealiasCase& input) {
     return cached_basis(input.mpol, input.ntor, input.ntheta, input.nzeta);
 }
 
-std::string load_shader() {
-    std::ifstream stream("/shaders/toroidal_inverse.wgsl", std::ios::binary);
+std::string read_shader(const char* path) {
+    std::ifstream stream(path, std::ios::binary);
     if (!stream) return {};
     std::ostringstream text;
     text << stream.rdbuf();
     return text.str();
+}
+
+std::string load_shader(bool double_single) {
+    if (!double_single) return read_shader("/shaders/toroidal_inverse.wgsl");
+    const std::string prelude = read_shader("/shaders/float_float.wgsl");
+    const std::string kernel =
+        read_shader("/shaders/toroidal_inverse_double_single.wgsl");
+    if (prelude.empty() || kernel.empty()) return {};
+    return prelude + '\n' + kernel;
 }
 
 std::string load_forward_shader() {
@@ -227,6 +238,7 @@ wgpu::Buffer create_buffer(const wgpu::Device& device,
 
 struct GpuBasis {
     wgpu::Buffer buffer;
+    wgpu::Buffer low_buffer;
     std::size_t bytes = 0;
 };
 
@@ -242,6 +254,7 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
         std::vector<float> basis(2 * static_cast<std::size_t>(mpol) * ntheta +
                                  2 * static_cast<std::size_t>(ntor + 1) *
                                      nzeta);
+        std::vector<float> basis_lo(basis.size());
         const std::size_t theta_plane = static_cast<std::size_t>(mpol) * ntheta;
         for (int m = 0; m < mpol; ++m) {
             for (int theta_index = 0; theta_index < ntheta; ++theta_index) {
@@ -253,6 +266,15 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
                 basis[index] = std::cos(static_cast<float>(m) * theta);
                 basis[theta_plane + index] =
                     std::sin(static_cast<float>(m) * theta);
+                const double exact_theta = 2.0 * std::numbers::pi *
+                                           static_cast<double>(theta_index) /
+                                           static_cast<double>(ntheta);
+                basis_lo[index] = static_cast<float>(
+                    std::cos(static_cast<double>(m) * exact_theta) -
+                    static_cast<double>(basis[index]));
+                basis_lo[theta_plane + index] = static_cast<float>(
+                    std::sin(static_cast<double>(m) * exact_theta) -
+                    static_cast<double>(basis[theta_plane + index]));
             }
         }
         const std::size_t zeta_start = 2 * theta_plane;
@@ -269,6 +291,16 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
                     std::cos(static_cast<float>(n) * zeta);
                 basis[zeta_start + zeta_plane + index] =
                     std::sin(static_cast<float>(n) * zeta);
+                const double exact_zeta = 2.0 * std::numbers::pi *
+                                          static_cast<double>(zeta_index) /
+                                          static_cast<double>(nzeta);
+                basis_lo[zeta_start + index] = static_cast<float>(
+                    std::cos(static_cast<double>(n) * exact_zeta) -
+                    static_cast<double>(basis[zeta_start + index]));
+                basis_lo[zeta_start + zeta_plane + index] = static_cast<float>(
+                    std::sin(static_cast<double>(n) * exact_zeta) -
+                    static_cast<double>(
+                        basis[zeta_start + zeta_plane + index]));
             }
         }
         position->second.bytes = basis.size() * sizeof(float);
@@ -276,8 +308,14 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
             device, position->second.bytes,
             wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
             "cuMES cached separable toroidal basis");
+        position->second.low_buffer = create_uncached_buffer(
+            device, position->second.bytes,
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            "cuMES cached separable toroidal basis low");
         device.GetQueue().WriteBuffer(position->second.buffer, 0, basis.data(),
                                       position->second.bytes);
+        device.GetQueue().WriteBuffer(position->second.low_buffer, 0,
+                                      basis_lo.data(), position->second.bytes);
     }
     return position->second;
 }
@@ -288,6 +326,7 @@ struct DispatchState {
     wgpu::Buffer readback_buffer;
     std::size_t total_points = 0;
     std::size_t result_bytes = 0;
+    bool double_single = false;
 };
 
 struct ForwardDispatchState {
@@ -309,9 +348,162 @@ struct DealiasDispatchState {
 
 }  // namespace
 
+namespace {
+
+ToroidalInverseResult toroidal_inverse_double_single_reference(
+    const ToroidalInverseCase& input) {
+    const int mnmax = input.mpol * (input.ntor + 1);
+    const int angular_points = input.ntheta * input.nzeta;
+    const std::size_t total_points =
+        static_cast<std::size_t>(input.ns) * angular_points;
+    std::vector<double> theta_basis_values(
+        2 * static_cast<std::size_t>(input.mpol) * input.ntheta);
+    for (int m = 0; m < input.mpol; ++m) {
+        for (int theta_index = 0; theta_index < input.ntheta; ++theta_index) {
+            const double theta = 2.0 * std::numbers::pi *
+                                 static_cast<double>(theta_index) /
+                                 static_cast<double>(input.ntheta);
+            const std::size_t index =
+                static_cast<std::size_t>(m) * input.ntheta + theta_index;
+            theta_basis_values[index] =
+                std::cos(static_cast<double>(m) * theta);
+            theta_basis_values[static_cast<std::size_t>(input.mpol) *
+                                   input.ntheta +
+                               index] =
+                std::sin(static_cast<double>(m) * theta);
+        }
+    }
+    std::vector<double> zeta_basis_values(
+        2 * static_cast<std::size_t>(input.ntor + 1) * input.nzeta);
+    for (int n = 0; n <= input.ntor; ++n) {
+        for (int zeta_index = 0; zeta_index < input.nzeta; ++zeta_index) {
+            const double zeta = 2.0 * std::numbers::pi *
+                                static_cast<double>(zeta_index) /
+                                static_cast<double>(input.nzeta);
+            const std::size_t index =
+                static_cast<std::size_t>(n) * input.nzeta + zeta_index;
+            zeta_basis_values[index] = std::cos(static_cast<double>(n) * zeta);
+            zeta_basis_values[static_cast<std::size_t>(input.ntor + 1) *
+                                  input.nzeta +
+                              index] = std::sin(static_cast<double>(n) * zeta);
+        }
+    }
+    std::vector<double> values(RESULT_FIELD_COUNT * total_points, 0.0);
+    const auto coefficient = [&](int component, int mode, int surface) {
+        const std::size_t index =
+            (static_cast<std::size_t>(component) * mnmax + mode) * input.ns +
+            surface;
+        return static_cast<double>(input.state[index]) + input.state_lo[index];
+    };
+    const auto table = [&](int field, int mode, int angular) {
+        const int m = mode / (input.ntor + 1);
+        const int n = mode % (input.ntor + 1);
+        const int theta = angular % input.ntheta;
+        const int zeta = angular / input.ntheta;
+        const std::size_t theta_plane =
+            static_cast<std::size_t>(input.mpol) * input.ntheta;
+        const std::size_t zeta_plane =
+            static_cast<std::size_t>(input.ntor + 1) * input.nzeta;
+        const double cm =
+            theta_basis_values[static_cast<std::size_t>(m) * input.ntheta +
+                               theta];
+        const double sm =
+            theta_basis_values[theta_plane +
+                               static_cast<std::size_t>(m) * input.ntheta +
+                               theta];
+        const double cn =
+            zeta_basis_values[static_cast<std::size_t>(n) * input.nzeta + zeta];
+        const double sn =
+            zeta_basis_values[zeta_plane +
+                              static_cast<std::size_t>(n) * input.nzeta + zeta];
+        switch (field) {
+            case 0:
+                return cm * cn;
+            case 1:
+                return sm * sn;
+            case 2:
+                return sm * cn;
+            default:
+                return cm * sn;
+        }
+    };
+    for (int surface = 0; surface < input.ns; ++surface) {
+        const double maxsc =
+            std::max(std::sqrt(static_cast<double>(surface) /
+                               static_cast<double>(input.ns - 1)),
+                     std::sqrt(1.0 / static_cast<double>(input.ns - 1)));
+        for (int angular = 0; angular < angular_points; ++angular) {
+            const std::size_t point =
+                static_cast<std::size_t>(surface) * angular_points + angular;
+            for (int mode = 0; mode < mnmax; ++mode) {
+                const int m = mode / (input.ntor + 1);
+                const int n = mode % (input.ntor + 1);
+                const double mf = static_cast<double>(m);
+                const double nf = static_cast<double>(n * input.nfp);
+                const double cc = table(0, mode, angular);
+                const double ss = table(1, mode, angular);
+                const double sc = table(2, mode, angular);
+                const double cs = table(3, mode, angular);
+                const double scale = m % 2 == 1 ? 1.0 / maxsc : 1.0;
+                const int parity = m % 2 == 1 ? 6 : 0;
+                const double rc = coefficient(0, mode, surface);
+                const double zs = coefficient(1, mode, surface);
+                const double ls = coefficient(2, mode, surface);
+                const double rs = coefficient(3, mode, surface);
+                const double zc = coefficient(4, mode, surface);
+                const double lc = coefficient(5, mode, surface);
+                const auto add = [&](int field, double term) {
+                    values[static_cast<std::size_t>(field) * total_points +
+                           point] += scale * term;
+                };
+                add(parity, rc * cc + rs * ss);
+                add(parity + 1, zs * sc + zc * cs);
+                add(parity + 2, ls * sc + lc * cs);
+                add(parity + 3, mf * (-rc * sc + rs * cs));
+                add(parity + 4, mf * (zs * cc - zc * ss));
+                add(parity + 5, mf * (ls * cc - lc * ss));
+                const int toroidal_parity = m % 2 == 1 ? 3 : 0;
+                add(12 + toroidal_parity, nf * (-rc * cs + rs * sc));
+                add(13 + toroidal_parity, nf * (-zs * ss + zc * cc));
+                add(14 + toroidal_parity, nf * (ls * ss - lc * cc));
+                const double xmpq = mf * (mf - 1.0);
+                values[18 * total_points + point] += xmpq * (rc * cc + rs * ss);
+                values[19 * total_points + point] += xmpq * (zs * sc + zc * cs);
+            }
+        }
+    }
+
+    ToroidalInverseResult result;
+    result.geometry.resize(GEOMETRY_PARITY_FIELD_COUNT * total_points);
+    result.geometry_lo.resize(result.geometry.size());
+    result.r_con.resize(total_points);
+    result.r_con_lo.resize(total_points);
+    result.z_con.resize(total_points);
+    result.z_con_lo.resize(total_points);
+    const auto copy_pair = [&](std::size_t source, std::vector<float>& hi,
+                               std::vector<float>& lo, std::size_t target) {
+        const FloatFloat pair = split(values[source]);
+        hi[target] = pair.hi;
+        lo[target] = pair.lo;
+    };
+    for (std::size_t i = 0; i < result.geometry.size(); ++i) {
+        copy_pair(i, result.geometry, result.geometry_lo, i);
+    }
+    for (std::size_t i = 0; i < total_points; ++i) {
+        copy_pair(18 * total_points + i, result.r_con, result.r_con_lo, i);
+        copy_pair(19 * total_points + i, result.z_con, result.z_con_lo, i);
+    }
+    return result;
+}
+
+}  // namespace
+
 ToroidalInverseResult toroidal_inverse_reference(
     const ToroidalInverseCase& input) {
     if (!validate_case(input).empty()) return {};
+    if (input.double_single) {
+        return toroidal_inverse_double_single_reference(input);
+    }
     const int mnmax = input.mpol * (input.ntor + 1);
     const int n_z_n_t = input.ntheta * input.nzeta;
     const std::size_t total_points =
@@ -395,7 +587,7 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text = load_shader();
+    const std::string shader_text = load_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/toroidal_inverse.wgsl", {});
         return;
@@ -406,17 +598,59 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t total_points =
         static_cast<std::size_t>(input.ns) * n_z_n_t;
-    const std::size_t result_values = RESULT_FIELD_COUNT * total_points;
+    const std::size_t result_values =
+        RESULT_FIELD_COUNT * total_points * (input.double_single ? 2 : 1);
     const std::size_t state_bytes = input.state.size() * sizeof(float);
     const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t result_bytes = result_values * sizeof(float);
+    const std::size_t intermediate_points =
+        static_cast<std::size_t>(input.ns) * input.mpol * input.nzeta;
     const std::size_t intermediate_values =
-        12 * static_cast<std::size_t>(input.ns) * input.mpol * input.nzeta;
+        12 * intermediate_points * (input.double_single ? 2 : 1);
     const std::size_t intermediate_bytes = intermediate_values * sizeof(float);
     const auto state_buffer =
         create_buffer(device, state_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal state");
+    wgpu::Buffer state_lo_buffer;
+    wgpu::Buffer rounding_buffer;
+    wgpu::Buffer radial_scale_hi_buffer;
+    wgpu::Buffer radial_scale_lo_buffer;
+    std::vector<float> radial_scale_hi;
+    std::vector<float> radial_scale_lo;
+    std::size_t rounding_bytes = 0;
+    if (input.double_single) {
+        state_lo_buffer = create_buffer(
+            device, state_bytes,
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            "cuMES double-single toroidal state low");
+        rounding_bytes =
+            std::max(intermediate_points, total_points) * sizeof(std::uint32_t);
+        rounding_buffer =
+            create_buffer(device, rounding_bytes, wgpu::BufferUsage::Storage,
+                          "cuMES double-single toroidal rounding barriers");
+        radial_scale_hi.resize(input.ns);
+        radial_scale_lo.resize(input.ns);
+        for (int surface = 0; surface < input.ns; ++surface) {
+            const double maxsc =
+                std::max(std::sqrt(static_cast<double>(surface) /
+                                   static_cast<double>(input.ns - 1)),
+                         std::sqrt(1.0 / static_cast<double>(input.ns - 1)));
+            const FloatFloat scale = split(1.0 / maxsc);
+            radial_scale_hi[surface] = scale.hi;
+            radial_scale_lo[surface] = scale.lo;
+        }
+        const std::size_t radial_scale_bytes =
+            radial_scale_hi.size() * sizeof(float);
+        radial_scale_hi_buffer = create_buffer(
+            device, radial_scale_bytes,
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            "cuMES double-single radial scale high");
+        radial_scale_lo_buffer = create_buffer(
+            device, radial_scale_bytes,
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            "cuMES double-single radial scale low");
+    }
     const auto result_buffer =
         create_buffer(device, result_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
@@ -433,12 +667,24 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal inverse parameters");
 
+    const char* toroidal_key = input.double_single
+                                   ? "toroidal-inverse-double-single-toroidal"
+                                   : "toroidal-inverse-toroidal";
+    const char* poloidal_key = input.double_single
+                                   ? "toroidal-inverse-double-single-poloidal"
+                                   : "toroidal-inverse-poloidal";
+    const char* toroidal_label =
+        input.double_single
+            ? "cuMES double-single separable toroidal inverse pipeline"
+            : "cuMES separable toroidal inverse pipeline";
+    const char* poloidal_label =
+        input.double_single
+            ? "cuMES double-single separable poloidal inverse pipeline"
+            : "cuMES separable poloidal inverse pipeline";
     const auto& toroidal_pipeline = detail::cached_compute_pipeline(
-        device, "toroidal-inverse-toroidal", shader_text,
-        "cuMES separable toroidal inverse pipeline", "toroidal_stage");
+        device, toroidal_key, shader_text, toroidal_label, "toroidal_stage");
     const auto& poloidal_pipeline = detail::cached_compute_pipeline(
-        device, "toroidal-inverse-poloidal", shader_text,
-        "cuMES separable poloidal inverse pipeline", "poloidal_stage");
+        device, poloidal_key, shader_text, poloidal_label, "poloidal_stage");
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(input.mpol),
@@ -450,36 +696,66 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                               static_cast<std::uint32_t>(total_points)};
     const auto queue = device.GetQueue();
     queue.WriteBuffer(state_buffer, 0, input.state.data(), state_bytes);
+    if (input.double_single) {
+        queue.WriteBuffer(state_lo_buffer, 0, input.state_lo.data(),
+                          state_bytes);
+        const std::size_t radial_scale_bytes =
+            radial_scale_hi.size() * sizeof(float);
+        queue.WriteBuffer(radial_scale_hi_buffer, 0, radial_scale_hi.data(),
+                          radial_scale_bytes);
+        queue.WriteBuffer(radial_scale_lo_buffer, 0, radial_scale_lo.data(),
+                          radial_scale_bytes);
+    }
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
 
     const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry toroidal_entries[] = {
+    std::vector<wgpu::BindGroupEntry> toroidal_entries = {
         {nullptr, 0, state_buffer, 0, state_bytes, nullptr, nullptr},
         {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
         {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
          nullptr},
     };
+    if (input.double_single) {
+        toroidal_entries.push_back(
+            {nullptr, 5, state_lo_buffer, 0, state_bytes, nullptr, nullptr});
+        toroidal_entries.push_back(
+            {nullptr, 6, rounding_buffer, 0, rounding_bytes, nullptr, nullptr});
+        toroidal_entries.push_back({nullptr, 9, gpu_basis.low_buffer, 0,
+                                    basis_bytes, nullptr, nullptr});
+    }
     wgpu::BindGroupDescriptor toroidal_bind_descriptor{};
     toroidal_bind_descriptor.label = "cuMES toroidal inverse first bindings";
     toroidal_bind_descriptor.layout = toroidal_layout;
-    toroidal_bind_descriptor.entryCount = std::size(toroidal_entries);
-    toroidal_bind_descriptor.entries = toroidal_entries;
+    toroidal_bind_descriptor.entryCount = toroidal_entries.size();
+    toroidal_bind_descriptor.entries = toroidal_entries.data();
     const auto toroidal_bind_group =
         device.CreateBindGroup(&toroidal_bind_descriptor);
     const auto poloidal_layout = poloidal_pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry poloidal_entries[] = {
+    std::vector<wgpu::BindGroupEntry> poloidal_entries = {
         {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
         {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
          nullptr},
     };
+    if (input.double_single) {
+        poloidal_entries.push_back(
+            {nullptr, 6, rounding_buffer, 0, rounding_bytes, nullptr, nullptr});
+        const std::size_t radial_scale_bytes =
+            radial_scale_hi.size() * sizeof(float);
+        poloidal_entries.push_back({nullptr, 7, radial_scale_hi_buffer, 0,
+                                    radial_scale_bytes, nullptr, nullptr});
+        poloidal_entries.push_back({nullptr, 8, radial_scale_lo_buffer, 0,
+                                    radial_scale_bytes, nullptr, nullptr});
+        poloidal_entries.push_back({nullptr, 9, gpu_basis.low_buffer, 0,
+                                    basis_bytes, nullptr, nullptr});
+    }
     wgpu::BindGroupDescriptor poloidal_bind_descriptor{};
     poloidal_bind_descriptor.label = "cuMES toroidal inverse second bindings";
     poloidal_bind_descriptor.layout = poloidal_layout;
-    poloidal_bind_descriptor.entryCount = std::size(poloidal_entries);
-    poloidal_bind_descriptor.entries = poloidal_entries;
+    poloidal_bind_descriptor.entryCount = poloidal_entries.size();
+    poloidal_bind_descriptor.entries = poloidal_entries.data();
     const auto poloidal_bind_group =
         device.CreateBindGroup(&poloidal_bind_descriptor);
     const auto encoder = device.CreateCommandEncoder();
@@ -487,10 +763,10 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     const auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(toroidal_pipeline);
     pass.SetBindGroup(0, toroidal_bind_group);
-    const std::uint32_t intermediate_points = static_cast<std::uint32_t>(
-        static_cast<std::size_t>(input.ns) * input.mpol * input.nzeta);
-    pass.DispatchWorkgroups((intermediate_points + WORKGROUP_SIZE - 1) /
-                            WORKGROUP_SIZE);
+    const std::uint32_t intermediate_dispatch_points =
+        static_cast<std::uint32_t>(intermediate_points);
+    pass.DispatchWorkgroups(
+        (intermediate_dispatch_points + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
     pass.SetPipeline(poloidal_pipeline);
     pass.SetBindGroup(0, poloidal_bind_group);
     pass.DispatchWorkgroups(
@@ -508,6 +784,7 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     dispatch->readback_buffer = readback_buffer;
     dispatch->total_points = total_points;
     dispatch->result_bytes = result_bytes;
+    dispatch->double_single = input.double_single;
     readback_buffer.MapAsync(
         wgpu::MapMode::Read, 0, result_bytes,
         wgpu::CallbackMode::AllowSpontaneous,
@@ -537,6 +814,19 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
             result.z_con.assign(
                 values + geometry_values + dispatch->total_points,
                 values + geometry_values + 2 * dispatch->total_points);
+            if (dispatch->double_single) {
+                const std::size_t low_offset =
+                    RESULT_FIELD_COUNT * dispatch->total_points;
+                result.geometry_lo.assign(
+                    values + low_offset, values + low_offset + geometry_values);
+                result.r_con_lo.assign(values + low_offset + geometry_values,
+                                       values + low_offset + geometry_values +
+                                           dispatch->total_points);
+                result.z_con_lo.assign(values + low_offset + geometry_values +
+                                           dispatch->total_points,
+                                       values + low_offset + geometry_values +
+                                           2 * dispatch->total_points);
+            }
             dispatch->readback_buffer.Unmap();
             dispatch->callback({}, std::move(result));
         });
