@@ -108,6 +108,8 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
     stage.delta_t = static_cast<float>(spec.delt);
     stage.tcon0 = static_cast<float>(spec.physical.tcon0);
     stage.free_boundary = spec.free_boundary.lfreeb;
+    stage.prescribed_current =
+        spec.current_model == CurrentModel::PRESCRIBED_CURRENT;
     const std::size_t family_values =
         static_cast<std::size_t>(shape.ns) * shape.modes();
     stage.state.assign(6 * family_values, 0.0F);

@@ -42,6 +42,7 @@ struct AxisymmetricStageData {
     float delta_t = 0.9F;
     float tcon0 = 1.0F;
     bool free_boundary = false;
+    bool prescribed_current = false;
     std::vector<float> state;
     RadialProfiles profiles;
     float envelope_correction = 0.0F;
