@@ -1214,11 +1214,275 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 "(ns=%d, mnmax=%d, angular=%d)\n",
                 shape.ns, static_cast<int>(shape.modes()),
                 shape.ntheta * shape.nzeta);
-            run_solovev_initialization();
+            run_w7x_inverse();
         } catch (const std::exception& error) {
             finish(false,
                    "W7-X initialization failed: " + std::string(error.what()));
         }
+    }
+
+    void run_w7x_inverse() {
+        const int modes = w7x_stage_.mpol * (w7x_stage_.ntor + 1);
+        const std::size_t family_values =
+            static_cast<std::size_t>(w7x_stage_.ns) * modes;
+        for (int mode = 0; mode < modes; ++mode) {
+            const int m = mode / (w7x_stage_.ntor + 1);
+            if (m != 0 && m != 1) continue;
+            const int first_component = m == 0 ? 5 : 0;
+            for (int component = first_component; component < 6; ++component) {
+                const std::size_t axis =
+                    static_cast<std::size_t>(component) * family_values +
+                    static_cast<std::size_t>(mode) * w7x_stage_.ns;
+                w7x_stage_.state[axis] = w7x_stage_.state[axis + 1];
+            }
+        }
+        w7x_inverse_case_.ns = w7x_stage_.ns;
+        w7x_inverse_case_.mpol = w7x_stage_.mpol;
+        w7x_inverse_case_.ntor = w7x_stage_.ntor;
+        w7x_inverse_case_.ntheta = w7x_stage_.ntheta;
+        w7x_inverse_case_.nzeta = w7x_stage_.nzeta;
+        w7x_inverse_case_.nfp = w7x_stage_.nfp;
+        w7x_inverse_case_.state = w7x_stage_.state;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_inverse(
+            device_, w7x_inverse_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalInverseResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_inverse_reference(
+                    self->w7x_inverse_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.geometry, expected.geometry);
+                compare(actual.r_con, expected.r_con);
+                compare(actual.z_con, expected.z_con);
+                if (!valid || max_error > 5.0e-4F) {
+                    self->finish(false, "W7-X inverse mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                self->w7x_r_con_ = std::move(actual.r_con);
+                self->w7x_z_con_ = std::move(actual.z_con);
+                std::printf(
+                    "  W7-X inverse transform: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_w7x_geometry(std::move(actual.geometry));
+            });
+    }
+
+    void run_w7x_geometry(std::vector<float> geometry) {
+        w7x_geometry_case_.ns = w7x_stage_.ns;
+        w7x_geometry_case_.ntheta = w7x_stage_.ntheta;
+        w7x_geometry_case_.nzeta = w7x_stage_.nzeta;
+        w7x_geometry_case_.delta_s = w7x_stage_.profiles.delta_s;
+        w7x_geometry_case_.geometry = std::move(geometry);
+        w7x_geometry_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
+        w7x_geometry_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_base_geometry(
+            device_, w7x_geometry_case_,
+            [self](std::string error,
+                   cumes::webgpu::BaseGeometryResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::base_geometry_reference(
+                    self->w7x_geometry_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                if (!valid || max_error > 5.0e-4F) {
+                    self->finish(false, "W7-X geometry mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  W7-X half-grid geometry: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_w7x_magnetic_field(std::move(actual.fields));
+            });
+    }
+
+    void run_w7x_magnetic_field(std::vector<float> base_geometry) {
+        w7x_magnetic_case_.ns = w7x_stage_.ns;
+        w7x_magnetic_case_.ntheta = w7x_stage_.ntheta;
+        w7x_magnetic_case_.nzeta = w7x_stage_.nzeta;
+        w7x_magnetic_case_.lamscale = w7x_stage_.profiles.lamscale;
+        w7x_magnetic_case_.prescribed_current = true;
+        w7x_magnetic_case_.geometry = w7x_geometry_case_.geometry;
+        w7x_magnetic_case_.base_geometry = std::move(base_geometry);
+        w7x_magnetic_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
+        w7x_magnetic_case_.phip_f = w7x_stage_.profiles.phip_f;
+        w7x_magnetic_case_.chip_h = w7x_stage_.profiles.chip_h;
+        w7x_magnetic_case_.pres_h = w7x_stage_.profiles.pres_h;
+        w7x_magnetic_case_.curr_h = w7x_stage_.profiles.curr_h;
+        w7x_magnetic_case_.phip_h = w7x_stage_.profiles.phip_h;
+        w7x_magnetic_case_.iota_h = w7x_stage_.profiles.iota_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_magnetic_field(
+            device_, w7x_magnetic_case_,
+            [self](std::string error,
+                   cumes::webgpu::MagneticFieldResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::magnetic_field_reference(
+                    self->w7x_magnetic_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size() &&
+                             actual.chip_h.size() == expected.chip_h.size() &&
+                             actual.iota_h.size() == expected.iota_h.size();
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.fields, expected.fields);
+                compare(actual.chip_h, expected.chip_h);
+                compare(actual.iota_h, expected.iota_h);
+                if (!valid || max_error > 5.0e-4F) {
+                    self->finish(false, "W7-X current solve mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                self->w7x_stage_.profiles.chip_h = actual.chip_h;
+                self->w7x_stage_.profiles.iota_h = actual.iota_h;
+                std::printf(
+                    "  W7-X prescribed-current magnetic field: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_w7x_force(std::move(actual.fields));
+            });
+    }
+
+    void run_w7x_force(std::vector<float> magnetic_field) {
+        w7x_force_case_.ns = w7x_stage_.ns;
+        w7x_force_case_.ntheta = w7x_stage_.ntheta;
+        w7x_force_case_.nzeta = w7x_stage_.nzeta;
+        w7x_force_case_.delta_s = w7x_stage_.profiles.delta_s;
+        w7x_force_case_.lamscale = w7x_stage_.profiles.lamscale;
+        w7x_force_case_.geometry = w7x_geometry_case_.geometry;
+        w7x_force_case_.base_geometry = w7x_magnetic_case_.base_geometry;
+        w7x_force_case_.magnetic_field = std::move(magnetic_field);
+        w7x_force_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
+        w7x_force_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
+        w7x_force_case_.phip_f = w7x_stage_.profiles.phip_f;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_force(
+            device_, w7x_force_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForceResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_force_reference(
+                        self->w7x_force_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]) /
+                                (1.0F + std::abs(expected.fields[i])));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                if (!valid || max_error > 5.0e-4F) {
+                    self->finish(false, "W7-X force mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  W7-X MHD force: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_w7x_forward(std::move(actual.fields));
+            });
+    }
+
+    void run_w7x_forward(std::vector<float> force_fields) {
+        w7x_forward_case_.ns = w7x_stage_.ns;
+        w7x_forward_case_.mpol = w7x_stage_.mpol;
+        w7x_forward_case_.ntor = w7x_stage_.ntor;
+        w7x_forward_case_.ntheta = w7x_stage_.ntheta;
+        w7x_forward_case_.nzeta = w7x_stage_.nzeta;
+        w7x_forward_case_.nfp = w7x_stage_.nfp;
+        w7x_forward_case_.include_lcfs = false;
+        const std::size_t points = static_cast<std::size_t>(w7x_stage_.ns) *
+                                   w7x_stage_.ntheta * w7x_stage_.nzeta;
+        w7x_forward_case_.fields.assign(
+            cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+        std::copy(force_fields.begin(), force_fields.end(),
+                  w7x_forward_case_.fields.begin());
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, w7x_forward_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_forward_reference(
+                    self->w7x_forward_case_);
+                float max_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.residual[i] -
+                                     expected.residual[i]) /
+                                (1.0F + std::abs(expected.residual[i])));
+                        valid &= std::isfinite(actual.residual[i]);
+                    }
+                }
+                const bool nonzero =
+                    std::any_of(actual.residual.begin(), actual.residual.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !nonzero || max_error > 5.0e-4F) {
+                    self->finish(false, "W7-X forward residual mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  W7-X first physical residual pass: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_solovev_initialization();
+            });
     }
 
     void run_solovev_initialization() {
@@ -2427,6 +2691,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::optional<cumes::ValidatedProblem> problem_;
     std::optional<cumes::ValidatedProblem> w7x_problem_;
     cumes::webgpu::AxisymmetricStageData w7x_stage_;
+    cumes::webgpu::ToroidalInverseCase w7x_inverse_case_;
+    cumes::webgpu::BaseGeometryCase w7x_geometry_case_;
+    cumes::webgpu::MagneticFieldCase w7x_magnetic_case_;
+    cumes::webgpu::AxisymmetricForceCase w7x_force_case_;
+    cumes::webgpu::ToroidalForwardCase w7x_forward_case_;
     cumes::RestartDecision<double> pending_decision_;
     std::array<double, 3> invariant_raw_{};
     std::array<double, 3> invariant_normalized_{};
@@ -2437,6 +2706,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> solovev_z_con_;
     std::vector<float> toroidal_r_con_;
     std::vector<float> toroidal_z_con_;
+    std::vector<float> w7x_r_con_;
+    std::vector<float> w7x_z_con_;
     std::vector<float> constraint_r_con0_;
     std::vector<float> constraint_z_con0_;
     std::vector<float> constraint_tcon_;
