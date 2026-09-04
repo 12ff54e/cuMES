@@ -62,7 +62,8 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl@/shaders/prolongation.wgsl")
 target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse.wgsl@/shaders/toroidal_inverse.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl@/shaders/toroidal_forward.wgsl")
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl@/shaders/toroidal_forward.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_dealias.wgsl@/shaders/toroidal_dealias.wgsl")
 
 set_target_properties(cumes_webgpu PROPERTIES SUFFIX ".html")
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
@@ -82,7 +83,8 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl)
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl)
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_dealias.wgsl)
 
 # CTest cannot provide a browser WebGPU implementation, but it can guard the
 # complete browser artifact set. Emscripten 6 embeds the preloaded shader in

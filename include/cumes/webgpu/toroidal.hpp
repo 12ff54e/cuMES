@@ -64,6 +64,31 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
 ToroidalForwardResult toroidal_forward_reference(
     const ToroidalForwardCase& input);
 
+struct ToroidalDealiasCase {
+    int ns = 0;
+    int mpol = 0;
+    int ntor = 0;
+    int ntheta = 0;
+    int nzeta = 0;
+    std::vector<float> g_con_eff;
+    std::vector<float> tcon;
+    std::vector<float> faccon;
+};
+
+struct ToroidalDealiasResult {
+    std::vector<float> g_con;
+};
+
+using ToroidalDealiasCallback =
+    std::function<void(std::string, ToroidalDealiasResult)>;
+
+void enqueue_toroidal_dealias(const wgpu::Device& device,
+                              const ToroidalDealiasCase& input,
+                              ToroidalDealiasCallback callback);
+
+ToroidalDealiasResult toroidal_dealias_reference(
+    const ToroidalDealiasCase& input);
+
 }  // namespace cumes::webgpu
 
 #endif  // CUMES_INCLUDE_CUMES_WEBGPU_TOROIDAL_HPP_

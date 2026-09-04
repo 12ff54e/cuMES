@@ -28,6 +28,18 @@ struct ShaderParams {
 };
 static_assert(sizeof(ShaderParams) == 32);
 
+struct DealiasParams {
+    std::uint32_t ns;
+    std::uint32_t mpol;
+    std::uint32_t ntor;
+    std::uint32_t ntheta;
+    std::uint32_t nzeta;
+    std::uint32_t n_z_n_t;
+    std::uint32_t band_modes;
+    std::uint32_t points;
+};
+static_assert(sizeof(DealiasParams) == 32);
+
 std::string validate_case(const ToroidalInverseCase& input) {
     if (input.ns < 2 || input.mpol <= 0 || input.ntor < 1 || input.ntheta < 2 ||
         input.ntheta % 2 != 0 || input.nzeta < 2 || input.nfp < 1) {
@@ -121,6 +133,34 @@ std::vector<float> make_basis(const ToroidalForwardCase& input) {
     return make_basis(shape);
 }
 
+std::string validate_case(const ToroidalDealiasCase& input) {
+    if (input.ns < 2 || input.mpol < 3 || input.ntor < 1 || input.ntheta < 2 ||
+        input.ntheta % 2 != 0 || input.nzeta < 2) {
+        return "toroidal dealias requires ns>=2, mpol>=3, ntor>=1, even "
+               "ntheta>=2, and nzeta>=2";
+    }
+    const std::size_t points =
+        static_cast<std::size_t>(input.ns) * input.ntheta * input.nzeta;
+    if (points > std::numeric_limits<std::uint32_t>::max() ||
+        input.g_con_eff.size() != points ||
+        input.tcon.size() != static_cast<std::size_t>(input.ns) ||
+        input.faccon.size() != static_cast<std::size_t>(input.mpol)) {
+        return "toroidal dealias input shape mismatch";
+    }
+    return {};
+}
+
+std::vector<float> make_basis(const ToroidalDealiasCase& input) {
+    ToroidalInverseCase shape;
+    shape.ns = input.ns;
+    shape.mpol = input.mpol;
+    shape.ntor = input.ntor;
+    shape.ntheta = input.ntheta;
+    shape.nzeta = input.nzeta;
+    shape.nfp = 1;
+    return make_basis(shape);
+}
+
 std::string load_shader() {
     std::ifstream stream("/shaders/toroidal_inverse.wgsl", std::ios::binary);
     if (!stream) return {};
@@ -131,6 +171,14 @@ std::string load_shader() {
 
 std::string load_forward_shader() {
     std::ifstream stream("/shaders/toroidal_forward.wgsl", std::ios::binary);
+    if (!stream) return {};
+    std::ostringstream text;
+    text << stream.rdbuf();
+    return text.str();
+}
+
+std::string load_dealias_shader() {
+    std::ifstream stream("/shaders/toroidal_dealias.wgsl", std::ios::binary);
     if (!stream) return {};
     std::ostringstream text;
     text << stream.rdbuf();
@@ -158,6 +206,15 @@ struct DispatchState {
 
 struct ForwardDispatchState {
     ToroidalForwardCallback callback;
+    wgpu::Buffer result_buffer;
+    wgpu::Buffer readback_buffer;
+    std::size_t result_values = 0;
+    std::size_t result_bytes = 0;
+};
+
+struct DealiasDispatchState {
+    ToroidalDealiasCallback callback;
+    wgpu::Buffer coefficients_buffer;
     wgpu::Buffer result_buffer;
     wgpu::Buffer readback_buffer;
     std::size_t result_values = 0;
@@ -578,6 +635,223 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
             }
             ToroidalForwardResult result;
             result.residual.assign(values, values + dispatch->result_values);
+            dispatch->readback_buffer.Unmap();
+            dispatch->callback({}, std::move(result));
+        });
+}
+
+ToroidalDealiasResult toroidal_dealias_reference(
+    const ToroidalDealiasCase& input) {
+    if (!validate_case(input).empty()) return {};
+    const int band_modes = input.mpol - 2;
+    const int n_z_n_t = input.ntheta * input.nzeta;
+    const int mnmax = input.mpol * (input.ntor + 1);
+    const auto basis = make_basis(input);
+    const auto table = [&](int family, int mode, int angular) {
+        return basis[(static_cast<std::size_t>(family) * mnmax + mode) *
+                         n_z_n_t +
+                     angular];
+    };
+    ToroidalDealiasResult result;
+    result.g_con.assign(static_cast<std::size_t>(input.ns) * n_z_n_t, 0.0F);
+    for (int surface = 1; surface < input.ns; ++surface) {
+        for (int angular = 0; angular < n_z_n_t; ++angular) {
+            float value = 0.0F;
+            for (int m = 1; m <= band_modes; ++m) {
+                for (int n = 0; n <= input.ntor; ++n) {
+                    const int mode = m * (input.ntor + 1) + n;
+                    float sum_sc = 0.0F;
+                    float sum_cs = 0.0F;
+                    for (int source = 0; source < n_z_n_t; ++source) {
+                        const float g =
+                            input.g_con_eff[static_cast<std::size_t>(surface) *
+                                                n_z_n_t +
+                                            source];
+                        sum_sc += g * table(2, mode, source);
+                        sum_cs += g * table(3, mode, source);
+                    }
+                    const float norm = n == 0
+                                           ? 2.0F / static_cast<float>(n_z_n_t)
+                                           : 4.0F / static_cast<float>(n_z_n_t);
+                    const float scale =
+                        norm * input.tcon[surface] * input.faccon[m];
+                    value += scale * (sum_sc * table(2, mode, angular) +
+                                      sum_cs * table(3, mode, angular));
+                }
+            }
+            result
+                .g_con[static_cast<std::size_t>(surface) * n_z_n_t + angular] =
+                value;
+        }
+    }
+    return result;
+}
+
+void enqueue_toroidal_dealias(const wgpu::Device& device,
+                              const ToroidalDealiasCase& input,
+                              ToroidalDealiasCallback callback) {
+    const std::string validation_error = validate_case(input);
+    if (!validation_error.empty()) {
+        callback(validation_error, {});
+        return;
+    }
+    const std::string shader_text = load_dealias_shader();
+    if (shader_text.empty()) {
+        callback("cannot load embedded /shaders/toroidal_dealias.wgsl", {});
+        return;
+    }
+    const std::vector<float> basis = make_basis(input);
+    std::vector<float> profiles;
+    profiles.reserve(input.tcon.size() + input.faccon.size());
+    profiles.insert(profiles.end(), input.tcon.begin(), input.tcon.end());
+    profiles.insert(profiles.end(), input.faccon.begin(), input.faccon.end());
+    const std::size_t n_z_n_t =
+        static_cast<std::size_t>(input.ntheta) * input.nzeta;
+    const std::size_t points = static_cast<std::size_t>(input.ns) * n_z_n_t;
+    const std::size_t band_modes = static_cast<std::size_t>(input.mpol - 2);
+    const std::size_t coefficient_values =
+        2 * input.ns * band_modes * (input.ntor + 1);
+    const std::size_t input_bytes = input.g_con_eff.size() * sizeof(float);
+    const std::size_t profile_bytes = profiles.size() * sizeof(float);
+    const std::size_t basis_bytes = basis.size() * sizeof(float);
+    const std::size_t coefficient_bytes = coefficient_values * sizeof(float);
+    const std::size_t result_bytes = points * sizeof(float);
+    const auto input_buffer =
+        create_buffer(device, input_bytes,
+                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                      "cuMES toroidal effective constraint");
+    const auto profile_buffer =
+        create_buffer(device, profile_bytes,
+                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                      "cuMES toroidal constraint profiles");
+    const auto basis_buffer =
+        create_buffer(device, basis_bytes,
+                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                      "cuMES toroidal constraint basis");
+    const auto coefficient_buffer =
+        create_buffer(device, coefficient_bytes, wgpu::BufferUsage::Storage,
+                      "cuMES toroidal constraint coefficients");
+    const auto result_buffer =
+        create_buffer(device, result_bytes,
+                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
+                      "cuMES toroidal dealiased constraint");
+    const auto readback_buffer =
+        create_buffer(device, result_bytes,
+                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
+                      "cuMES toroidal constraint readback");
+    const auto params_buffer =
+        create_buffer(device, sizeof(DealiasParams),
+                      wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+                      "cuMES toroidal dealias parameters");
+
+    wgpu::ShaderSourceWGSL wgsl{};
+    wgsl.code = shader_text.c_str();
+    wgpu::ShaderModuleDescriptor shader_descriptor{};
+    shader_descriptor.label = "cuMES direct toroidal dealias";
+    shader_descriptor.nextInChain = &wgsl;
+    const auto shader = device.CreateShaderModule(&shader_descriptor);
+    const auto make_pipeline = [&](const char* entry_point) {
+        wgpu::ComputePipelineDescriptor descriptor{};
+        descriptor.label = entry_point;
+        descriptor.compute.module = shader;
+        descriptor.compute.entryPoint = entry_point;
+        return device.CreateComputePipeline(&descriptor);
+    };
+    const auto analyze_pipeline = make_pipeline("analyze");
+    const auto synthesize_pipeline = make_pipeline("synthesize");
+    const DealiasParams params{static_cast<std::uint32_t>(input.ns),
+                               static_cast<std::uint32_t>(input.mpol),
+                               static_cast<std::uint32_t>(input.ntor),
+                               static_cast<std::uint32_t>(input.ntheta),
+                               static_cast<std::uint32_t>(input.nzeta),
+                               static_cast<std::uint32_t>(n_z_n_t),
+                               static_cast<std::uint32_t>(band_modes),
+                               static_cast<std::uint32_t>(points)};
+    const auto queue = device.GetQueue();
+    queue.WriteBuffer(input_buffer, 0, input.g_con_eff.data(), input_bytes);
+    queue.WriteBuffer(profile_buffer, 0, profiles.data(), profile_bytes);
+    queue.WriteBuffer(basis_buffer, 0, basis.data(), basis_bytes);
+    queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
+    const auto analyze_layout = analyze_pipeline.GetBindGroupLayout(0);
+    const wgpu::BindGroupEntry analyze_entries[] = {
+        {nullptr, 0, input_buffer, 0, input_bytes, nullptr, nullptr},
+        {nullptr, 1, profile_buffer, 0, profile_bytes, nullptr, nullptr},
+        {nullptr, 2, basis_buffer, 0, basis_bytes, nullptr, nullptr},
+        {nullptr, 3, coefficient_buffer, 0, coefficient_bytes, nullptr,
+         nullptr},
+        {nullptr, 5, params_buffer, 0, sizeof(params), nullptr, nullptr},
+    };
+    wgpu::BindGroupDescriptor analyze_bind_descriptor{};
+    analyze_bind_descriptor.label = "cuMES toroidal dealias analysis bindings";
+    analyze_bind_descriptor.layout = analyze_layout;
+    analyze_bind_descriptor.entryCount = std::size(analyze_entries);
+    analyze_bind_descriptor.entries = analyze_entries;
+    const auto analyze_bind_group =
+        device.CreateBindGroup(&analyze_bind_descriptor);
+    const auto synthesize_layout = synthesize_pipeline.GetBindGroupLayout(0);
+    const wgpu::BindGroupEntry synthesize_entries[] = {
+        {nullptr, 2, basis_buffer, 0, basis_bytes, nullptr, nullptr},
+        {nullptr, 3, coefficient_buffer, 0, coefficient_bytes, nullptr,
+         nullptr},
+        {nullptr, 4, result_buffer, 0, result_bytes, nullptr, nullptr},
+        {nullptr, 5, params_buffer, 0, sizeof(params), nullptr, nullptr},
+    };
+    wgpu::BindGroupDescriptor synthesize_bind_descriptor{};
+    synthesize_bind_descriptor.label =
+        "cuMES toroidal dealias synthesis bindings";
+    synthesize_bind_descriptor.layout = synthesize_layout;
+    synthesize_bind_descriptor.entryCount = std::size(synthesize_entries);
+    synthesize_bind_descriptor.entries = synthesize_entries;
+    const auto synthesize_bind_group =
+        device.CreateBindGroup(&synthesize_bind_descriptor);
+    const auto encoder = device.CreateCommandEncoder();
+    wgpu::ComputePassDescriptor pass_descriptor{};
+    const auto pass = encoder.BeginComputePass(&pass_descriptor);
+    pass.SetPipeline(analyze_pipeline);
+    pass.SetBindGroup(0, analyze_bind_group);
+    pass.DispatchWorkgroups(
+        (static_cast<std::uint32_t>(coefficient_values / 2) + WORKGROUP_SIZE -
+         1) /
+        WORKGROUP_SIZE);
+    pass.SetPipeline(synthesize_pipeline);
+    pass.SetBindGroup(0, synthesize_bind_group);
+    pass.DispatchWorkgroups(
+        (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
+        WORKGROUP_SIZE);
+    pass.End();
+    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
+                               result_bytes);
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    auto dispatch = std::make_shared<DealiasDispatchState>();
+    dispatch->callback = std::move(callback);
+    dispatch->coefficients_buffer = coefficient_buffer;
+    dispatch->result_buffer = result_buffer;
+    dispatch->readback_buffer = readback_buffer;
+    dispatch->result_values = points;
+    dispatch->result_bytes = result_bytes;
+    readback_buffer.MapAsync(
+        wgpu::MapMode::Read, 0, result_bytes,
+        wgpu::CallbackMode::AllowSpontaneous,
+        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
+            if (status != wgpu::MapAsyncStatus::Success) {
+                dispatch->callback(
+                    "WebGPU toroidal dealias mapping failed: " +
+                        std::string(message.data, message.length),
+                    {});
+                return;
+            }
+            const auto* values = static_cast<const float*>(
+                dispatch->readback_buffer.GetConstMappedRange(
+                    0, dispatch->result_bytes));
+            if (values == nullptr) {
+                dispatch->callback(
+                    "WebGPU toroidal dealias returned a null mapped range", {});
+                return;
+            }
+            ToroidalDealiasResult result;
+            result.g_con.assign(values, values + dispatch->result_values);
             dispatch->readback_buffer.Unmap();
             dispatch->callback({}, std::move(result));
         });

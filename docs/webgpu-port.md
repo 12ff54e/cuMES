@@ -28,6 +28,10 @@ browser-validated:
   synthesis, and axis/LCFS force gates; browser conformance agrees value for
   value with the independent C++ float references, and the native CUDA Fourier
   suite provides an external convention check;
+- a two-pass direct 3-D spectral-condensation bandpass, with separate `sc` and
+  `cs` folded families, CUDA-compatible `n=0`/`n>0` normalization, and
+  per-surface `tcon*faccon` scaling; the browser result agrees with its C++
+  reference to `1.164e-10` on the conformance case;
 - host-generated `f32` Fourier tables, matching the CUDA operator contract and
   avoiding adapter-dependent WGSL transcendental approximations;
 - the existing JSON mapper, validator, boundary folder, and resolution logic
@@ -187,9 +191,9 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. integrate the completed direct 3-D transform, geometry, fixed-iota
-   magnetic-field, and force paths with 3-D constraint and preconditioner
-   operators;
+5. integrate the completed direct 3-D transform, bandpass, geometry,
+   fixed-iota magnetic-field, and force paths with the remaining 3-D
+   constraint and preconditioner operators;
 6. qualify fixed-boundary W7-X, then optimize the direct DFT with a WebGPU FFT;
 7. only then integrate free-boundary/NESTOR support.
 
