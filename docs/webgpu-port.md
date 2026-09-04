@@ -36,8 +36,8 @@ browser-validated:
   reference to `1.164e-10` on the conformance case;
 - host-generated `f32` Fourier tables, matching the CUDA operator contract and
   avoiding adapter-dependent WGSL transcendental approximations; direct 3-D
-  analysis and synthesis use compensated f32 accumulation, which restores the
-  qualified W7-X stage trajectory despite WebGPU's lack of f64;
+  analysis and synthesis use compensated f32 accumulation, which stabilizes
+  the qualified W7-X solve despite WebGPU's lack of f64;
 - the existing JSON mapper, validator, boundary folder, and resolution logic
   compiled into Wasm, with production-shaped axisymmetric cold-start and
   radial-profile initialization;
@@ -83,9 +83,10 @@ browser-validated:
   `jMin`, per-mode pivot scale, and the axisymmetric lambda diagonal assembled
   from reduced-poloidal surface averages;
 - in-place preconditioner application using m=1 force scaling, scale-aware
-  pivot guards, paired R/Z Thomas solves, axis boundary zeroing, and lambda
-  diagonal scaling; the browser gate applies it to the constrained Solovev
-  residual and requires zero pivot breakdowns;
+  pivot guards, CUDA-equivalent paired R/Z parallel cyclic reduction (PCR),
+  axis boundary zeroing, and lambda diagonal scaling; PCR scratch lives in a
+  persistent storage buffer so the implementation supports the validated
+  `ns <= 512` range without exceeding portable workgroup-memory limits;
 - the complete 3-D preconditioner generalization: full angular element
   averages, `(m,n)` radial systems with physical `n*nfp` stiffness, mixed
   `mn*g_uv` lambda coupling, per-mode pivot scales, m=1 force scaling for every
@@ -114,11 +115,11 @@ browser-validated:
   `(9.912e-07, 4.861e-07, 3.320e-07)` respectively;
 - all three fixed-boundary Solovev multigrid stages, with the production float
   linear/scalxc transfer dispatched through WebGPU and every transition checked
-  against the independent C++ reference; WebGPU converges in `72 -> 32 -> 182`
-  effective iterations (286 total) with final residual
-  `(9.831e-07, 3.438e-07, 3.011e-10)`, while native CUDA mixed-float converges
-  in `72 -> 31 -> 182` (285 total) with
-  `(9.696e-07, 4.486e-07, 3.081e-10)`;
+  against the independent C++ reference; on the TITAN Xp Vulkan adapter the
+  PCR path converges in `72 -> 31 -> 247` effective iterations (350 total) with
+  final residual `(8.158e-07, 2.653e-07, 2.915e-10)`; SwiftShader independently
+  converges in `72 -> 32 -> 155` (259 total) with
+  `(8.666e-07, 3.637e-07, 3.181e-10)`;
 - the complete controller-driven 3-D W7-X stage path: inverse transform,
   geometry, prescribed-current closure, MHD force, constraint bandpass,
   toroidal projection, residual decomposition, `(m,n)` preconditioner, and
@@ -126,9 +127,9 @@ browser-validated:
   iteration 3 on `(FSQR,FSQZ,FSQL) = (1.141e+01, 7.079e+00, 1.012e-01)`;
 - a selectable `?solve=w7x` browser mode that runs the complete three-stage
   W7-X multigrid path and publishes the same schema-v8 result form; at the
-  qualified mixed-float tolerance, both native CUDA and WebGPU converge in
-  `82 -> 30 -> 20` effective iterations (132 total), with WebGPU's final
-  residual `(7.346e-03, 2.026e-03, 1.347e-05)`;
+  qualified mixed-float tolerance, the TITAN Xp Vulkan WebGPU path converges in
+  `82 -> 36 -> 134` effective iterations (252 total), with final residual
+  `(9.827e-03, 2.093e-03, 3.748e-06)` and an 11,809,231-byte result;
 - cached immutable toroidal basis buffers plus persistent, grow-only operator
   scratch/readback buffers and compute pipelines; this removes hot-loop shader
   recompilation/allocation and keeps the complete high-resolution W7-X run
@@ -146,10 +147,12 @@ browser-validated:
 
 The default self-test parses both embedded inputs, runs a controller-complete
 two-pass W7-X slice, then converges all three Solovev stages. The separate W7-X
-solve entry point is integrated and convergence-qualified end to end on
-Chromium SwiftShader. Hardware WebGPU performance remains unqualified on this
-host because its headless browser cannot acquire the NVIDIA Vulkan adapter;
-native CUDA verification does use the TITAN Xp.
+solve entry point is integrated and convergence-qualified end to end on both
+Chromium SwiftShader and the physical NVIDIA TITAN Xp through Chrome/Dawn's
+Vulkan backend. The page requests the high-performance adapter and publishes
+its device/type/backend metadata for automation. Chrome's privacy-reduced
+adapter name is the PCI device id `0x1b02`; `chrome://gpu` and Vulkan enumerate
+that id as the TITAN Xp, and `nvidia-smi` observes the browser GPU process.
 
 ## Build and run
 
@@ -185,8 +188,10 @@ fixed-boundary W7-X multigrid solver instead of the conformance suite. This
 path can be slow on software WebGPU adapters because the current 3-D transform
 is a direct DFT.
 
-The page also publishes `data-cumes-webgpu="pass|fail"` and a diagnostic
-`data-cumes-detail` on `<body>` so browser automation can inspect the result.
+The page also publishes `data-cumes-webgpu="pass|fail"`, a diagnostic
+`data-cumes-detail`, and `data-cumes-adapter`, `data-cumes-adapter-type`, and
+`data-cumes-adapter-backend` on `<body>` so browser automation can inspect both
+the result and the selected device.
 Long W7-X runs additionally publish the current stage, iteration, FSQR, and
 last-progress timestamp as `data-cumes-stage`, `data-cumes-iteration`,
 `data-cumes-fsqr`, and `data-cumes-last-progress-at`.
@@ -230,15 +235,14 @@ source-level macro layer.
 
 ## Remaining port sequence
 
-The remaining qualification and optimization order is:
+The remaining optimization and feature order is:
 
-1. qualify the complete W7-X convergence run on a hardware WebGPU adapter;
-2. replace the compensated direct DFT with a WebGPU FFT;
-3. retain spectral/real-space fields on device across adjacent operators and
+1. replace the compensated direct DFT with a WebGPU FFT;
+2. retain spectral/real-space fields on device across adjacent operators and
    batch each device-only segment into one command submission (buffers and
    pipelines are persistent today, but mapped host results still connect the
    operator APIs);
-4. integrate free-boundary/NESTOR support.
+3. integrate free-boundary/NESTOR support.
 
 Free-boundary support is last because `deps/vacuum-field` is itself CUDA-based
 and includes host/device coupling beyond the main operator DAG. NetCDF/HDF5 and

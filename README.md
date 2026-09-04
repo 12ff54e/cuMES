@@ -13,12 +13,13 @@ radial/poloidal/toroidal force, spectral-condensation constraint, full `(m,n)`
 preconditioner, accelerated descent, controller recovery, and multigrid
 transfer. The default browser gate runs the controller-complete three-stage
 Solovev solve with persistent velocity, constraint, preconditioner, and
-rollback state. It converges in `72 -> 32 -> 182` effective iterations, versus
-native CUDA mixed-float's closely equivalent `72 -> 31 -> 182` trajectory.
+rollback state. On the NVIDIA TITAN Xp through Dawn's Vulkan backend it
+converges in `72 -> 31 -> 247` effective iterations.
 The shipped W7-X case executes the same integrated path in the browser,
 including its prescribed-current closure; its iteration-3 residual triple
 matches native CUDA mixed-float at `(1.141e+01, 7.079e+00, 1.012e-01)`. A
-dedicated `?solve=w7x` browser entry point runs all three W7-X stages.
+dedicated `?solve=w7x` browser entry point runs all three W7-X stages; the
+hardware-qualified run converges in `82 -> 36 -> 134` effective iterations.
 The converged spectral state and run provenance are published as a version-8
 native binary through a browser download link and verified by an in-Wasm
 round trip. The download also contains the complete half/full-grid scientific

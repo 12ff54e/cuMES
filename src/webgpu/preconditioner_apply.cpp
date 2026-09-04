@@ -114,39 +114,90 @@ bool solve_pair(const AxisymmetricPreconditionerApplyCase& in,
         return static_cast<std::size_t>(component) * points +
                static_cast<std::size_t>(mode) * in.ns + surface;
     };
-    std::vector<float> cprime(count);
-    std::vector<float> dprime0(count);
-    std::vector<float> dprime1(count);
+    std::vector<float> current_lower(count);
+    std::vector<float> current_diagonal(count);
+    std::vector<float> current_upper(count);
+    std::vector<float> current_rhs0(count);
+    std::vector<float> current_rhs1(count);
+    std::vector<float> next_lower(count);
+    std::vector<float> next_diagonal(count);
+    std::vector<float> next_upper(count);
+    std::vector<float> next_rhs0(count);
+    std::vector<float> next_rhs1(count);
     bool broke = false;
-    const std::size_t first_index =
-        static_cast<std::size_t>(mode) * in.ns + first;
-    float denominator = guarded_pivot(diagonal[first_index], floor, broke);
-    cprime[0] = upper[first_index] / denominator;
-    dprime0[0] = residual[index(component0, first)] / denominator;
-    dprime1[0] = residual[index(component1, first)] / denominator;
-    for (int i = 1; i < count; ++i) {
-        const int surface = first + i;
+    for (int row = 0; row < count; ++row) {
+        const int surface = first + row;
         const std::size_t matrix_index =
             static_cast<std::size_t>(mode) * in.ns + surface;
-        const float lower_value = lower[matrix_index];
-        float pivot = diagonal[matrix_index] - lower_value * cprime[i - 1];
-        pivot = guarded_pivot(pivot, floor, broke);
-        cprime[i] = upper[matrix_index] / pivot;
-        dprime0[i] = (residual[index(component0, surface)] -
-                      lower_value * dprime0[i - 1]) /
-                     pivot;
-        dprime1[i] = (residual[index(component1, surface)] -
-                      lower_value * dprime1[i - 1]) /
-                     pivot;
+        current_lower[row] = lower[matrix_index];
+        current_diagonal[row] = diagonal[matrix_index];
+        current_upper[row] = upper[matrix_index];
+        current_rhs0[row] = residual[index(component0, surface)];
+        current_rhs1[row] = residual[index(component1, surface)];
     }
-    residual[index(component0, last_surface - 1)] = dprime0[count - 1];
-    residual[index(component1, last_surface - 1)] = dprime1[count - 1];
-    for (int i = count - 2; i >= 0; --i) {
-        const int surface = first + i;
-        residual[index(component0, surface)] =
-            dprime0[i] - cprime[i] * residual[index(component0, surface + 1)];
-        residual[index(component1, surface)] =
-            dprime1[i] - cprime[i] * residual[index(component1, surface + 1)];
+    for (int stride = 1; stride <= count; stride *= 2) {
+        for (int row = 0; row < count; ++row) {
+            const bool has_lower = row >= stride;
+            const bool has_upper = row + stride < count;
+            float lower_diagonal =
+                has_lower ? current_diagonal[row - stride] : 0.0F;
+            float upper_diagonal =
+                has_upper ? current_diagonal[row + stride] : 0.0F;
+            if (has_lower) {
+                lower_diagonal = guarded_pivot(lower_diagonal, floor, broke);
+            }
+            if (has_upper) {
+                upper_diagonal = guarded_pivot(upper_diagonal, floor, broke);
+            }
+            const float inverse_lower =
+                has_lower ? 1.0F / lower_diagonal : 0.0F;
+            const float inverse_upper =
+                has_upper ? 1.0F / upper_diagonal : 0.0F;
+            const float row_lower = current_lower[row];
+            const float row_diagonal = current_diagonal[row];
+            const float row_upper = current_upper[row];
+            const float neighbor_lower =
+                has_lower ? current_lower[row - stride] : 0.0F;
+            const float neighbor_lower_upper =
+                has_lower ? current_upper[row - stride] : 0.0F;
+            const float neighbor_upper_lower =
+                has_upper ? current_lower[row + stride] : 0.0F;
+            const float neighbor_upper =
+                has_upper ? current_upper[row + stride] : 0.0F;
+            next_lower[row] = -row_lower * neighbor_lower * inverse_lower;
+            next_upper[row] = -row_upper * neighbor_upper * inverse_upper;
+            float reduced_diagonal =
+                row_diagonal -
+                row_lower * neighbor_lower_upper * inverse_lower -
+                row_upper * neighbor_upper_lower * inverse_upper;
+            reduced_diagonal = guarded_pivot(reduced_diagonal, floor, broke);
+            next_diagonal[row] = reduced_diagonal;
+            const float lower_rhs0 =
+                has_lower ? current_rhs0[row - stride] : 0.0F;
+            const float upper_rhs0 =
+                has_upper ? current_rhs0[row + stride] : 0.0F;
+            const float lower_rhs1 =
+                has_lower ? current_rhs1[row - stride] : 0.0F;
+            const float upper_rhs1 =
+                has_upper ? current_rhs1[row + stride] : 0.0F;
+            next_rhs0[row] = current_rhs0[row] -
+                             row_lower * lower_rhs0 * inverse_lower -
+                             row_upper * upper_rhs0 * inverse_upper;
+            next_rhs1[row] = current_rhs1[row] -
+                             row_lower * lower_rhs1 * inverse_lower -
+                             row_upper * upper_rhs1 * inverse_upper;
+        }
+        current_lower.swap(next_lower);
+        current_diagonal.swap(next_diagonal);
+        current_upper.swap(next_upper);
+        current_rhs0.swap(next_rhs0);
+        current_rhs1.swap(next_rhs1);
+    }
+    for (int row = 0; row < count; ++row) {
+        float pivot = guarded_pivot(current_diagonal[row], floor, broke);
+        const int surface = first + row;
+        residual[index(component0, surface)] = current_rhs0[row] / pivot;
+        residual[index(component1, surface)] = current_rhs1[row] / pivot;
     }
     return broke;
 }
@@ -256,8 +307,13 @@ void enqueue_axisymmetric_preconditioner_apply(
     const auto matrix_bytes = matrix.size() * sizeof(float);
     const auto element_bytes = elements.size() * sizeof(float);
     const auto input_bytes = input.residual.size() * sizeof(float);
-    const auto output_values = 6 * points + modes;
-    const auto output_bytes = output_values * sizeof(float);
+    const auto result_values = 6 * points + modes;
+    const auto result_bytes = result_values * sizeof(float);
+    // PCR keeps two five-plane banks in storage. Unlike CUDA dynamic shared
+    // memory this remains within WebGPU's portable workgroup-storage limit for
+    // the full validated ns <= 512 range.
+    const auto storage_values = result_values + 10 * points;
+    const auto storage_bytes = storage_values * sizeof(float);
     auto matrix_buffer =
         make_buffer(device, matrix_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
@@ -271,11 +327,11 @@ void enqueue_axisymmetric_preconditioner_apply(
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                     "preconditioner residual input");
     auto output_buffer =
-        make_buffer(device, output_bytes,
+        make_buffer(device, storage_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                     "preconditioned residual");
     auto readback =
-        make_buffer(device, output_bytes,
+        make_buffer(device, result_bytes,
                     wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
                     "preconditioned residual readback");
     auto params_buffer =
@@ -302,7 +358,7 @@ void enqueue_axisymmetric_preconditioner_apply(
         {nullptr, 0, matrix_buffer, 0, matrix_bytes, nullptr, nullptr},
         {nullptr, 1, element_buffer, 0, element_bytes, nullptr, nullptr},
         {nullptr, 2, input_buffer, 0, input_bytes, nullptr, nullptr},
-        {nullptr, 3, output_buffer, 0, output_bytes, nullptr, nullptr},
+        {nullptr, 3, output_buffer, 0, storage_bytes, nullptr, nullptr},
         {nullptr, 4, params_buffer, 0, sizeof(params), nullptr, nullptr}};
     wgpu::BindGroupDescriptor bind_descriptor{};
     bind_descriptor.layout = layout;
@@ -316,18 +372,18 @@ void enqueue_axisymmetric_preconditioner_apply(
     pass.SetBindGroup(0, bind_group);
     pass.DispatchWorkgroups(static_cast<std::uint32_t>(modes));
     pass.End();
-    encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
+    encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, result_bytes);
     auto commands = encoder.Finish();
     queue.Submit(1, &commands);
     auto dispatch = std::make_shared<Dispatch>();
     dispatch->callback = std::move(callback);
     dispatch->output = output_buffer;
     dispatch->readback = readback;
-    dispatch->bytes = output_bytes;
+    dispatch->bytes = result_bytes;
     dispatch->points = points;
     dispatch->mpol = modes;
     readback.MapAsync(
-        wgpu::MapMode::Read, 0, output_bytes,
+        wgpu::MapMode::Read, 0, result_bytes,
         wgpu::CallbackMode::AllowSpontaneous,
         [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
             if (status != wgpu::MapAsyncStatus::Success) {

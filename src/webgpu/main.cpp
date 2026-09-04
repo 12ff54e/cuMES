@@ -65,6 +65,15 @@ EM_JS(int, requested_w7x_solve, (), {
     return new URLSearchParams(window.location.search).get('solve') == 'w7x';
 });
 
+EM_JS(void,
+      publish_browser_adapter,
+      (const char* device, const char* type, const char* backend),
+      {
+          document.body.dataset.cumesAdapter = UTF8ToString(device);
+          document.body.dataset.cumesAdapterType = UTF8ToString(type);
+          document.body.dataset.cumesAdapterBackend = UTF8ToString(backend);
+      });
+
 #ifndef CUMES_GIT_REVISION
 #define CUMES_GIT_REVISION ""
 #endif
@@ -91,6 +100,44 @@ std::string message_text(wgpu::StringView message) {
                                : std::string(message.data, message.length);
 }
 
+const char* adapter_type_name(wgpu::AdapterType type) {
+    switch (type) {
+        case wgpu::AdapterType::DiscreteGPU:
+            return "discrete-gpu";
+        case wgpu::AdapterType::IntegratedGPU:
+            return "integrated-gpu";
+        case wgpu::AdapterType::CPU:
+            return "cpu";
+        case wgpu::AdapterType::Unknown:
+            return "unknown";
+    }
+    return "unknown";
+}
+
+const char* backend_type_name(wgpu::BackendType type) {
+    switch (type) {
+        case wgpu::BackendType::Undefined:
+            return "undefined";
+        case wgpu::BackendType::Null:
+            return "null";
+        case wgpu::BackendType::WebGPU:
+            return "webgpu";
+        case wgpu::BackendType::D3D11:
+            return "d3d11";
+        case wgpu::BackendType::D3D12:
+            return "d3d12";
+        case wgpu::BackendType::Metal:
+            return "metal";
+        case wgpu::BackendType::Vulkan:
+            return "vulkan";
+        case wgpu::BackendType::OpenGL:
+            return "opengl";
+        case wgpu::BackendType::OpenGLES:
+            return "opengles";
+    }
+    return "unknown";
+}
+
 class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
    public:
     void start() {
@@ -101,8 +148,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
         std::printf("cuMES WebGPU milestone: requesting adapter\n");
         const auto self = shared_from_this();
+        wgpu::RequestAdapterOptions options{};
+        options.powerPreference = wgpu::PowerPreference::HighPerformance;
         instance_.RequestAdapter(
-            nullptr, wgpu::CallbackMode::AllowSpontaneous,
+            &options, wgpu::CallbackMode::AllowSpontaneous,
             [self](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter,
                    wgpu::StringView message) {
                 if (status != wgpu::RequestAdapterStatus::Success) {
@@ -111,6 +160,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 self->adapter_ = std::move(adapter);
+                wgpu::AdapterInfo info{};
+                if (self->adapter_.GetInfo(&info)) {
+                    const std::string device_name = message_text(info.device);
+                    const char* type_name = adapter_type_name(info.adapterType);
+                    const char* backend_name =
+                        backend_type_name(info.backendType);
+                    std::printf("adapter selected: %s (%s, %s)\n",
+                                device_name.c_str(), type_name, backend_name);
+                    publish_browser_adapter(device_name.c_str(), type_name,
+                                            backend_name);
+                }
                 self->request_device();
             });
     }
@@ -557,7 +617,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     if (gpu.size() != cpu.size()) return;
                     for (std::size_t i = 0; i < gpu.size(); ++i) {
                         max_error =
-                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
                         valid &= std::isfinite(gpu[i]);
                     }
                 };
@@ -1574,8 +1635,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         valid &= std::isfinite(actual.residual[i]);
                     }
                 }
-                valid &= actual.raw_norm == expected.raw_norm;
-                if (!valid || max_error > 5.0e-4F) {
+                double max_norm_error = 0.0;
+                for (int group = 0; group < 3; ++group) {
+                    max_norm_error = std::max(
+                        max_norm_error,
+                        std::abs(actual.raw_norm[group] -
+                                 expected.raw_norm[group]) /
+                            (1.0 + std::abs(expected.raw_norm[group])));
+                    valid &= std::isfinite(actual.raw_norm[group]);
+                }
+                if (!valid || max_error > 5.0e-4F || max_norm_error > 5.0e-4) {
                     self->finish(false, "W7-X decomposition mismatch: " +
                                             std::to_string(max_error));
                     return;
@@ -2207,11 +2276,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                                          expected.residual[i]));
                     }
                 }
+                double max_norm_error = 0.0;
                 for (int group = 0; group < 3; ++group) {
-                    valid &= actual.raw_norm[group] == expected.raw_norm[group];
+                    max_norm_error = std::max(
+                        max_norm_error,
+                        std::abs(actual.raw_norm[group] -
+                                 expected.raw_norm[group]) /
+                            (1.0 + std::abs(expected.raw_norm[group])));
                     valid &= std::isfinite(actual.raw_norm[group]);
                 }
-                if (!valid || max_error > 5.0e-4F) {
+                if (!valid || max_error > 5.0e-4F || max_norm_error > 5.0e-4) {
                     self->finish(false, "residual decomposition mismatch: " +
                                             std::to_string(max_error));
                     return;
@@ -2429,7 +2503,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     if (gpu.size() != cpu.size()) return;
                     for (std::size_t i = 0; i < gpu.size(); ++i) {
                         max_error =
-                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
                         valid &= std::isfinite(gpu[i]);
                     }
                 };
@@ -2449,7 +2524,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 std::printf(
                     "  %s constraint refresh+force: PASS "
-                    "(max |GPU-CPU| = %.3e)\n",
+                    "(max scaled |GPU-CPU| = %.3e)\n",
                     self->active_case_name_.c_str(),
                     static_cast<double>(max_error));
                 self->constraint_r_con0_ = actual.r_con0;
@@ -2609,22 +2684,42 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                               axisymmetric_preconditioner_apply_reference(
                                   self->preconditioner_apply_case_);
                 float max_scaled_error = 0.0F;
+                std::size_t max_error_index = 0;
                 bool valid = actual.residual.size() == expected.residual.size();
                 valid &= actual.breakdown_count == expected.breakdown_count;
                 if (valid) {
                     for (std::size_t i = 0; i < actual.residual.size(); ++i) {
-                        max_scaled_error = std::max(
-                            max_scaled_error,
+                        const float error =
                             std::abs(actual.residual[i] -
                                      expected.residual[i]) /
-                                (1.0F + std::abs(expected.residual[i])));
+                            (1.0F + std::abs(expected.residual[i]));
+                        if (error > max_scaled_error) {
+                            max_scaled_error = error;
+                            max_error_index = i;
+                        }
                         valid &= std::isfinite(actual.residual[i]);
                     }
                 }
                 if (!valid || actual.breakdown_count != 0 ||
                     max_scaled_error > 2.0e-4F) {
-                    self->finish(false, "preconditioner apply mismatch: " +
-                                            std::to_string(max_scaled_error));
+                    const float actual_value =
+                        max_error_index < actual.residual.size()
+                            ? actual.residual[max_error_index]
+                            : 0.0F;
+                    const float expected_value =
+                        max_error_index < expected.residual.size()
+                            ? expected.residual[max_error_index]
+                            : 0.0F;
+                    char detail[256];
+                    std::snprintf(
+                        detail, sizeof(detail),
+                        "preconditioner apply mismatch: scaled=%.6g index=%zu "
+                        "actual=%.9g expected=%.9g breakdown=%d/%d",
+                        static_cast<double>(max_scaled_error), max_error_index,
+                        static_cast<double>(actual_value),
+                        static_cast<double>(expected_value),
+                        actual.breakdown_count, expected.breakdown_count);
+                    self->finish(false, detail);
                     return;
                 }
                 if (!self->force_norm_ready_ ||

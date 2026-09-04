@@ -19,10 +19,6 @@ struct Values { data: array<f32>, };
 @group(0) @binding(3) var<storage, read_write> output: Values;
 @group(0) @binding(4) var<uniform> params: Params;
 
-var<workgroup> cprime: array<f32, 512>;
-var<workgroup> dprime0: array<f32, 512>;
-var<workgroup> dprime1: array<f32, 512>;
-
 fn matrix_at(field: u32, mode: u32, surface: u32) -> f32 {
     return matrix.data[field * params.points + mode * params.ns + surface];
 }
@@ -36,6 +32,16 @@ fn guarded_pivot(value: f32, floor: f32) -> f32 {
     if (abs(value) >= floor) { return value; }
     return select(-floor, floor, value >= 0.0);
 }
+fn scratch_index(bank: u32, field: u32, mode: u32, row: u32) -> u32 {
+    return 6u * params.points + params.mode_count +
+           (bank * 5u + field) * params.points + mode * params.ns + row;
+}
+fn scratch_at(bank: u32, field: u32, mode: u32, row: u32) -> f32 {
+    return output.data[scratch_index(bank, field, mode, row)];
+}
+fn put_scratch(bank: u32, field: u32, mode: u32, row: u32, value: f32) {
+    output.data[scratch_index(bank, field, mode, row)] = value;
+}
 fn solve_pair(mode: u32, z_system: bool, floor: f32) -> bool {
     let m = mode / (params.ntor + 1u);
     let first = select(1u, 0u, m == 0u);
@@ -45,38 +51,100 @@ fn solve_pair(mode: u32, z_system: bool, floor: f32) -> bool {
     let component0 = select(0u, 1u, z_system);
     let component1 = component0 + 3u;
     var broke = false;
-    var denominator = matrix_at(matrix_offset + 1u, mode, first);
-    if (abs(denominator) < floor) { broke = true; }
-    denominator = guarded_pivot(denominator, floor);
-    cprime[0] = matrix_at(matrix_offset, mode, first) / denominator;
-    dprime0[0] = residual_at(component0, mode, first) / denominator;
-    dprime1[0] = residual_at(component1, mode, first) / denominator;
-    for (var i = 1u; i < count; i++) {
-        let surface = first + i;
-        let lower = matrix_at(matrix_offset + 2u, mode, surface);
-        var pivot = matrix_at(matrix_offset + 1u, mode, surface) -
-                    lower * cprime[i - 1u];
+    for (var row = 0u; row < count; row++) {
+        let surface = first + row;
+        put_scratch(0u, 0u, mode, row,
+                    matrix_at(matrix_offset + 2u, mode, surface));
+        put_scratch(0u, 1u, mode, row,
+                    matrix_at(matrix_offset + 1u, mode, surface));
+        put_scratch(0u, 2u, mode, row,
+                    matrix_at(matrix_offset, mode, surface));
+        put_scratch(0u, 3u, mode, row,
+                    residual_at(component0, mode, surface));
+        put_scratch(0u, 4u, mode, row,
+                    residual_at(component1, mode, surface));
+    }
+    var current_bank = 0u;
+    for (var stride = 1u; stride <= count; stride *= 2u) {
+        let next_bank = 1u - current_bank;
+        for (var row = 0u; row < count; row++) {
+            let has_lower = row >= stride;
+            let has_upper = row + stride < count;
+            var lower_diagonal = 0.0;
+            var upper_diagonal = 0.0;
+            var neighbor_lower = 0.0;
+            var neighbor_lower_upper = 0.0;
+            var neighbor_upper_lower = 0.0;
+            var neighbor_upper = 0.0;
+            var lower_rhs0 = 0.0;
+            var upper_rhs0 = 0.0;
+            var lower_rhs1 = 0.0;
+            var upper_rhs1 = 0.0;
+            if (has_lower) {
+                lower_diagonal = scratch_at(
+                    current_bank, 1u, mode, row - stride);
+                neighbor_lower = scratch_at(
+                    current_bank, 0u, mode, row - stride);
+                neighbor_lower_upper = scratch_at(
+                    current_bank, 2u, mode, row - stride);
+                lower_rhs0 = scratch_at(
+                    current_bank, 3u, mode, row - stride);
+                lower_rhs1 = scratch_at(
+                    current_bank, 4u, mode, row - stride);
+            }
+            if (has_upper) {
+                upper_diagonal = scratch_at(
+                    current_bank, 1u, mode, row + stride);
+                neighbor_upper_lower = scratch_at(
+                    current_bank, 0u, mode, row + stride);
+                neighbor_upper = scratch_at(
+                    current_bank, 2u, mode, row + stride);
+                upper_rhs0 = scratch_at(
+                    current_bank, 3u, mode, row + stride);
+                upper_rhs1 = scratch_at(
+                    current_bank, 4u, mode, row + stride);
+            }
+            if (has_lower && abs(lower_diagonal) < floor) { broke = true; }
+            if (has_upper && abs(upper_diagonal) < floor) { broke = true; }
+            lower_diagonal = select(
+                1.0, guarded_pivot(lower_diagonal, floor), has_lower);
+            upper_diagonal = select(
+                1.0, guarded_pivot(upper_diagonal, floor), has_upper);
+            let inverse_lower = select(0.0, 1.0 / lower_diagonal, has_lower);
+            let inverse_upper = select(0.0, 1.0 / upper_diagonal, has_upper);
+            let row_lower = scratch_at(current_bank, 0u, mode, row);
+            let row_diagonal = scratch_at(current_bank, 1u, mode, row);
+            let row_upper = scratch_at(current_bank, 2u, mode, row);
+            put_scratch(next_bank, 0u, mode, row,
+                        -row_lower * neighbor_lower * inverse_lower);
+            put_scratch(next_bank, 2u, mode, row,
+                        -row_upper * neighbor_upper * inverse_upper);
+            var reduced_diagonal =
+                row_diagonal - row_lower * neighbor_lower_upper * inverse_lower -
+                row_upper * neighbor_upper_lower * inverse_upper;
+            if (abs(reduced_diagonal) < floor) { broke = true; }
+            reduced_diagonal = guarded_pivot(reduced_diagonal, floor);
+            put_scratch(next_bank, 1u, mode, row, reduced_diagonal);
+            put_scratch(next_bank, 3u, mode, row,
+                        scratch_at(current_bank, 3u, mode, row) -
+                        row_lower * lower_rhs0 * inverse_lower -
+                        row_upper * upper_rhs0 * inverse_upper);
+            put_scratch(next_bank, 4u, mode, row,
+                        scratch_at(current_bank, 4u, mode, row) -
+                        row_lower * lower_rhs1 * inverse_lower -
+                        row_upper * upper_rhs1 * inverse_upper);
+        }
+        current_bank = next_bank;
+    }
+    for (var row = 0u; row < count; row++) {
+        var pivot = scratch_at(current_bank, 1u, mode, row);
         if (abs(pivot) < floor) { broke = true; }
         pivot = guarded_pivot(pivot, floor);
-        cprime[i] = matrix_at(matrix_offset, mode, surface) / pivot;
-        dprime0[i] = (residual_at(component0, mode, surface) -
-                      lower * dprime0[i - 1u]) / pivot;
-        dprime1[i] = (residual_at(component1, mode, surface) -
-                      lower * dprime1[i - 1u]) / pivot;
-    }
-    put_residual(component0, mode, params.last_surface - 1u,
-                 dprime0[count - 1u]);
-    put_residual(component1, mode, params.last_surface - 1u,
-                 dprime1[count - 1u]);
-    for (var reverse = count - 1u; reverse > 0u; reverse--) {
-        let i = reverse - 1u;
-        let surface = first + i;
+        let surface = first + row;
         put_residual(component0, mode, surface,
-                     dprime0[i] - cprime[i] *
-                         residual_at(component0, mode, surface + 1u));
+                     scratch_at(current_bank, 3u, mode, row) / pivot);
         put_residual(component1, mode, surface,
-                     dprime1[i] - cprime[i] *
-                         residual_at(component1, mode, surface + 1u));
+                     scratch_at(current_bank, 4u, mode, row) / pivot);
     }
     return broke;
 }
