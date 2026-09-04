@@ -315,6 +315,17 @@ single-solver trajectories, and the 96-test verify suite. End-to-end QA/QH
 acceptance remains in meow, while cuMES owns only equilibrium-solve resources
 and timings.
 
+The first Release mode-1 measurements put facade setup at only 0.12% of QA
+solve wall time and 0.19% of QH. Retaining only the CUDA stream therefore has a
+sub-percent ceiling and is rejected. Multigrid wall time accounts for more than
+99.7% of each solve, while its existing device-pass timer accounts for roughly
+90--92%. Before designing reusable stage workspaces, extend the structured
+timings to split aggregate stage setup, iterative solve, final derived-field
+capture, teardown, and non-stage multigrid orchestration. This will distinguish
+reusable arena/cuFFT construction from required output work and host/device
+iteration synchronization. The split is diagnostic only and must sum back to
+the already exposed multigrid wall time without changing solver ordering.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
