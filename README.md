@@ -26,7 +26,11 @@ The shipped W7-X case executes the same integrated path in the browser,
 including its prescribed-current closure; its iteration-3 residual triple
 matches native CUDA mixed-float at `(1.141e+01, 7.079e+00, 1.012e-01)`. A
 dedicated `?solve=w7x` browser entry point runs all three W7-X stages; the
-hardware-qualified run converges in `82 -> 35 -> 25` effective iterations.
+precision-critical state, transforms, geometry, magnetic field, force,
+constraint, residual, and descent values use paired `f32` words. On the
+NVIDIA TITAN Xp through Dawn's Vulkan backend, the hardware-qualified
+`1e-12` run converges in `1421 -> 3220 -> 2964` effective iterations (7605
+total), with final residual `(1.000e-12, 2.115e-13, 1.528e-13)`.
 The converged spectral state and run provenance are published as a version-8
 native binary through a browser download link and verified by an in-Wasm
 round trip. The download also contains the complete half/full-grid scientific
@@ -65,8 +69,8 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-The current WebGPU milestone builds separately and requires core WebGPU/WGSL
-single precision:
+The current WebGPU milestone builds separately. WGSL arithmetic remains
+`f32`, with paired words used by the strict W7-X path:
 
 ```bash
 source "/lustre/qzhong/emsdk/emsdk_env.sh"

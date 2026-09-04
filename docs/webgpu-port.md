@@ -37,9 +37,12 @@ browser-validated:
   per-surface `tcon*faccon` scaling; the browser result agrees with its C++
   reference to `1.164e-10` on the conformance case;
 - host-generated `f32` Fourier tables, matching the CUDA operator contract and
-  avoiding adapter-dependent WGSL transcendental approximations; direct 3-D
-  analysis and synthesis use compensated f32 accumulation, which stabilizes
-  the qualified W7-X solve despite WebGPU's lack of f64;
+  avoiding adapter-dependent WGSL transcendental approximations; the strict
+  W7-X path carries precision-critical values as normalized `(hi, lo)` `f32`
+  pairs through state and velocity, inverse/forward transforms, geometry,
+  magnetic closure, MHD force, constraint cancellation, residual
+  decomposition, and descent. Explicit storage round trips provide the WGSL
+  rounding barriers required by error-free transforms;
 - a two-dispatch separable 3-D inverse transform: a short compensated toroidal
   synthesis feeds the poloidal synthesis through persistent storage. For the
   W7-X shape this replaces a 156-term mode loop per real-space point with
@@ -138,12 +141,12 @@ browser-validated:
   iteration 3 on `(FSQR,FSQZ,FSQL) = (1.141e+01, 7.079e+00, 1.012e-01)`;
 - a selectable `?solve=w7x` browser mode that runs the complete three-stage
   W7-X multigrid path and publishes the same schema-v8 result form; at the
-  qualified mixed-float tolerance, the TITAN Xp Vulkan WebGPU path converges in
-  `82 -> 35 -> 25` effective iterations (142 total), with final residual
-  `(8.893e-03, 2.347e-03, 7.882e-06)` and an 11,809,203-byte result; the
-  sequential end-to-end browser run takes 47.1 seconds including page/Wasm
-  startup; SwiftShader converges independently in `82 -> 30 -> 20` (132 total)
-  with `(7.692e-03, 2.082e-03, 1.347e-05)`;
+  input's unmodified `1e-12` tolerance, the paired-`f32` TITAN Xp Vulkan
+  WebGPU path converges in `1421 -> 3220 -> 2964` effective iterations (7605
+  total), with final residual
+  `(1.000e-12, 2.115e-13, 1.528e-13)` and an 11,809,203-byte result. The
+  sequential end-to-end browser run takes 4929.3 seconds including page/Wasm
+  startup;
 - cached immutable toroidal basis buffers plus persistent, grow-only operator
   scratch/readback buffers and compute pipelines; this removes hot-loop shader
   recompilation/allocation and keeps the complete high-resolution W7-X run
@@ -180,12 +183,12 @@ browser-validated:
 
 The default self-test parses both embedded inputs, runs a controller-complete
 two-pass W7-X slice, then converges all three Solovev stages. The separate W7-X
-solve entry point is integrated and convergence-qualified end to end on both
-Chromium SwiftShader and the physical NVIDIA TITAN Xp through Chrome/Dawn's
-Vulkan backend. The page requests the high-performance adapter and publishes
-its device/type/backend metadata for automation. Chrome's privacy-reduced
-adapter name is the PCI device id `0x1b02`; `chrome://gpu` and Vulkan enumerate
-that id as the TITAN Xp, and `nvidia-smi` observes the browser GPU process.
+solve entry point is convergence-qualified end to end at `1e-12` on the
+physical NVIDIA TITAN Xp through Chrome/Dawn's Vulkan backend. The page
+requests the high-performance adapter and publishes its device/type/backend
+metadata for automation. Chrome's privacy-reduced adapter name is the PCI
+device id `0x1b02`; `chrome://gpu` and Vulkan enumerate that id as the TITAN
+Xp, and `nvidia-smi` observes the browser GPU process.
 
 ## Build and run
 
@@ -242,23 +245,21 @@ last-progress timestamp as `data-cumes-stage`, `data-cumes-iteration`,
 
 ## Precision policy
 
-Core WGSL exposes `f32` but not `f64`. Consequently:
+Core WGSL exposes `f32` but not `f64`. The WebGPU preset therefore keeps
+`CUMES_USE_FLOAT=ON`, while the selected W7-X solver uses a double-single
+representation for its precision-critical path. Each logical value is the
+unevaluated sum of two binary32 words. Error-free sum/product kernels retain
+the low word, and atomic storage round trips prevent WGSL compilers from
+reassociating away the required rounding points.
 
-- the WebGPU preset requires `mixed-float` and `CUMES_USE_FLOAT=ON`;
-- configuring WebGPU with a double policy is a hard error;
-- CUDA Class A byte identity is not a WebGPU acceptance criterion;
-- operator acceptance uses the existing float tolerances and CPU-reference
-  comparisons;
-- full-solver tolerances must be achievable in mixed-float. Solovev qualifies
-  at `1e-6`; prescribed-current W7-X has a measured CUDA float floor near
-  `3e-3`, so both the CUDA float capture and the browser's selected W7-X solve
-  use `1e-2`.
-
-The host uses double for the invariant residual reduction after mapped WebGPU
-readback. Each squared residual pair is evaluated in `f32` before the sum is
-promoted, matching the CUDA mixed-float expression, and the long accumulation
-is `double`. Future device-only reductions must use `f32` or a documented
-compensated/multiword representation.
+CUDA Class A byte identity is not a WebGPU acceptance criterion. Ordinary
+operator cases retain their float CPU-reference tolerances; dedicated W7-X
+cases compare reconstructed `hi + lo` values against double references. The
+host reconstructs paired spectral residuals in `double` before accumulating
+the invariant norms. This supports the input's original `1e-12` tolerance,
+where scalar-f32 W7-X previously stalled near its float floor. Interactive
+axisymmetric solves intentionally remain scalar-f32 at their responsive
+`1e-5` tolerance.
 
 ## Backend boundary
 
@@ -310,5 +311,6 @@ normalized input record.
   stages (operator tolerances `4e-6` through `1e-3`, solver tolerance `1e-6`).
 - W7-X integration gate: the browser controller trajectory through effective
   iteration 3 must match native CUDA mixed-float, including the invariant
-  residual triple. The selected `?solve=w7x` path uses the CUDA mixed-float
-  qualification tolerance (`1e-2`) for all three stages.
+  residual triple. The selected `?solve=w7x` path must additionally converge
+  all three grids with the input's unmodified `1e-12` tolerance on a physical
+  WebGPU adapter.
