@@ -4,6 +4,7 @@
 
 #include "cumes/core/checked_size.hpp"
 #include "cumes/io/derived_fields.hpp"
+#include "cumes/io/equilibrium_profiles.hpp"
 #include "cumes/physics/geometry_operator.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/runtime/cuda_status.hpp"
@@ -109,6 +110,53 @@ Status capture_derived_fields(const DeviceParams<T>& p,
     in.bsubv = copy_to_double(field.bsubv.data(), *half, "copy output bsubv");
 
     return populate_derived_fields(in, snapshot);
+}
+
+// Capture the converged radial flux profiles needed by downstream physics
+// observables. In prescribed-current mode chi'/iota are equilibrium outputs,
+// not reconstructible from the input profile, so they must cross the solver
+// boundary with the field snapshot.
+template <class T>
+void capture_equilibrium_profiles(const DeviceParams<T>& p,
+                                  const Profiles<T>& profiles,
+                                  const EquilibriumSnapshot& snapshot,
+                                  EquilibriumProfiles& output) {
+    const RadialProfileViews<T> radial = profiles.profile_views();
+    using derived_bridge_detail::copy_to_double;
+    const std::size_t half = static_cast<std::size_t>(p.ns - 1);
+    output.toroidal_flux_derivative =
+        copy_to_double(radial.phip_H, half, "copy output phip_H");
+    output.poloidal_flux_derivative =
+        copy_to_double(radial.chip_H, half, "copy output chip_H");
+    output.rotational_transform =
+        copy_to_double(radial.iota_H, half, "copy output iota_H");
+    const double flux_scale =
+        static_cast<double>(DeviceParams<T>::SIGN_JACOBIAN) * 2.0 * M_PI;
+    for (double& value : output.toroidal_flux_derivative) value *= flux_scale;
+    for (double& value : output.poloidal_flux_derivative) value *= flux_scale;
+
+    if (!snapshot.has_derived_fields()) {
+        throw CumesError(
+            "covariant flux functions require complete derived fields");
+    }
+    const std::size_t points = snapshot.points_per_surface();
+    const auto& bsubu = snapshot.half_fields[EquilibriumSnapshot::BSUBU];
+    const auto& bsubv = snapshot.half_fields[EquilibriumSnapshot::BSUBV];
+    output.poloidal_covariant_field.assign(half, 0.0);
+    output.toroidal_covariant_field.assign(half, 0.0);
+    for (std::size_t surface = 0; surface < half; ++surface) {
+        const std::size_t offset = surface * points;
+        double poloidal_sum = 0.0;
+        double toroidal_sum = 0.0;
+        for (std::size_t point = 0; point < points; ++point) {
+            poloidal_sum += bsubu[offset + point];
+            toroidal_sum += bsubv[offset + point];
+        }
+        output.poloidal_covariant_field[surface] =
+            poloidal_sum / static_cast<double>(points);
+        output.toroidal_covariant_field[surface] =
+            toroidal_sum / static_cast<double>(points);
+    }
 }
 
 }  // namespace cumes

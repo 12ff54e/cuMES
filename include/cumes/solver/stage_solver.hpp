@@ -35,6 +35,7 @@
 #include "solver.cuh"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -44,6 +45,23 @@
 #include <vector>
 
 namespace cumes {
+
+struct StageWallTimings {
+    double setup_ms = 0.0;
+    double iteration_ms = 0.0;
+    double output_ms = 0.0;
+    double teardown_ms = 0.0;
+    double total_ms = 0.0;
+
+    StageWallTimings& operator+=(const StageWallTimings& other) {
+        setup_ms += other.setup_ms;
+        iteration_ms += other.iteration_ms;
+        output_ms += other.output_ms;
+        teardown_ms += other.teardown_ms;
+        total_ms += other.total_ms;
+        return *this;
+    }
+};
 namespace stage_detail {
 
 // ---- RAII wrappers for the two free-function stage resources (8.3) -------
@@ -253,8 +271,13 @@ class StageSolver {
         std::optional<std::reference_wrapper<FreeBoundaryOperator<T>>> vacuum =
             std::nullopt,
         EquilibriumSnapshot* output_snapshot = nullptr,
+        EquilibriumProfiles* output_profiles = nullptr,
         bool enable_step_recovery = false,
         std::optional<std::reference_wrapper<double>> device_time_ms =
+            std::nullopt,
+        bool verbose = true,
+        bool use_process_environment = true,
+        std::optional<std::reference_wrapper<StageWallTimings>> wall_timings =
             std::nullopt) {
         // One arena allocation, one construction of every module, one solve
         // (completion plan step 3.2): the modules' alloc_span calls ARE the
@@ -262,100 +285,138 @@ class StageSolver {
         // constructed twice. The retry loop below only grows the budget when
         // the seed underestimates (an ArenaOverflow aborts the attempt and
         // the scope exit destroys the partial modules).
-        return run_in_stage_arena<T>(p, [&](DeviceArena& arena) {
-            // Setup (profiles/Fourier/metric) is synchronous on the default
-            // stream, so it completes before the solve; the hot loop runs on
-            // the explicit nonblocking compute stream (Phase 6A). The
-            // real-space storage and the mode table are scoped RAII (their
-            // frees no-op on the arena path and cover the nullptr-arena
-            // path).
-            Profiles<T> profiles(p, vp, arena);
-            stage_detail::ScopedRealSpace<T> rs(p, arena);
-            stage_detail::ScopedModeTable<T> mt(p, arena);
-            ToroidalFftOperator<T> transform(p, *rs, mt.get(), arena);
-            GeometryOperator<T> geometry(p, arena);
+        const auto stage_start = std::chrono::steady_clock::now();
+        auto setup_end = stage_start;
+        auto iteration_end = stage_start;
+        auto output_end = stage_start;
+        SolverResult<T> stage_result =
+            run_in_stage_arena<T>(p, [&](DeviceArena& arena) {
+                // Setup (profiles/Fourier/metric) is synchronous on the default
+                // stream, so it completes before the solve; the hot loop runs
+                // on the explicit nonblocking compute stream (Phase 6A). The
+                // real-space storage and the mode table are scoped RAII (their
+                // frees no-op on the arena path and cover the nullptr-arena
+                // path).
+                Profiles<T> profiles(p, vp, arena, verbose);
+                stage_detail::ScopedRealSpace<T> rs(p, arena);
+                stage_detail::ScopedModeTable<T> mt(p, arena);
+                ToroidalFftOperator<T> transform(p, *rs, mt.get(), arena);
+                GeometryOperator<T> geometry(p, arena);
 
-            // Transform backend selection (blueprint §8.5): for ntor=0/nzeta=1
-            // the toroidal direction is a single point, so the length-one
-            // cuFFT round trips are replaced by direct-poloidal
-            // synthesis/projection. The operator holds only ns-independent
-            // poloidal tables, but its kernels launch on `p.ns`, so one is
-            // built per stage (re-uploading the tiny tables is negligible).
-            // CUMES_FORCE_GENERIC=1 restores the generic backend for A/B
-            // comparison against the frozen trajectory. The solver drives a
-            // single `SpectralOperator<T>` (no axisym_active branch);
-            // nullopt selects the generic ToroidalFft operator.
-            bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
-            if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
-                if (std::atoi(e) != 0) use_axisym = false;
-            std::unique_ptr<AxisymmetricOperator<T>> axisym;
-            if (use_axisym)
-                axisym = std::make_unique<AxisymmetricOperator<T>>(p);
-
-            if (vacuum.has_value()) {
-                const RadialProfileViews<T> profile_views =
-                    profiles.profile_views();
-                T pressure_last = T(0);
-                check_cuda(cudaMemcpy(&pressure_last,
-                                      profile_views.pres_H + (p.ns - 2),
-                                      sizeof(T), cudaMemcpyDeviceToHost),
-                           "copy pres_H[ns-2]");
-                const double mass_edge =
-                    eval_mass_profile<double>(vp.spec(), 1.0);
-                double edge_pressure = eval_mass_profile<double>(
-                    vp.spec(), (p.ns - 1.5) / (p.ns - 1.0));
-                if (edge_pressure != 0.0) {
-                    edge_pressure = mass_edge / edge_pressure *
-                                    static_cast<double>(pressure_last);
+                // Transform backend selection (blueprint §8.5): for
+                // ntor=0/nzeta=1 the toroidal direction is a single point, so
+                // the length-one cuFFT round trips are replaced by
+                // direct-poloidal synthesis/projection. The operator holds only
+                // ns-independent poloidal tables, but its kernels launch on
+                // `p.ns`, so one is built per stage (re-uploading the tiny
+                // tables is negligible). CUMES_FORCE_GENERIC=1 restores the
+                // generic backend for A/B comparison against the frozen
+                // trajectory. The solver drives a single `SpectralOperator<T>`
+                // (no axisym_active branch); nullopt selects the generic
+                // ToroidalFft operator.
+                bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
+                if (use_process_environment) {
+                    if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
+                        if (std::atoi(e) != 0) use_axisym = false;
                 }
-                vacuum->get().set_edge_pressure(T(edge_pressure));
-            }
+                std::unique_ptr<AxisymmetricOperator<T>> axisym;
+                if (use_axisym)
+                    axisym = std::make_unique<AxisymmetricOperator<T>>(p);
 
-            stage_detail::ScopedDeviceTimer device_timer;
-            device_timer.start(stream);
-            SolverResult<T> result = solver_run<T>(
-                state, p, profiles, transform, *rs, geometry, arena, stream,
-                bench,
-                axisym ? std::optional<
-                             std::reference_wrapper<SpectralOperator<T>>>(
-                             std::ref(*axisym))
-                       : std::nullopt,
-                vacuum, enable_step_recovery);
-            const double elapsed_device_ms = device_timer.stop(stream);
-            if (device_time_ms.has_value())
-                device_time_ms->get() = elapsed_device_ms;
-            std::printf("  device time: %.3f ms\n", elapsed_device_ms);
+                if (vacuum.has_value()) {
+                    const RadialProfileViews<T> profile_views =
+                        profiles.profile_views();
+                    T pressure_last = T(0);
+                    check_cuda(cudaMemcpy(&pressure_last,
+                                          profile_views.pres_H + (p.ns - 2),
+                                          sizeof(T), cudaMemcpyDeviceToHost),
+                               "copy pres_H[ns-2]");
+                    const double mass_edge =
+                        eval_mass_profile<double>(vp.spec(), 1.0);
+                    double edge_pressure = eval_mass_profile<double>(
+                        vp.spec(), (p.ns - 1.5) / (p.ns - 1.0));
+                    if (edge_pressure != 0.0) {
+                        edge_pressure = mass_edge / edge_pressure *
+                                        static_cast<double>(pressure_last);
+                    }
+                    vacuum->get().set_edge_pressure(T(edge_pressure));
+                }
 
-            if (output_snapshot != nullptr) {
-                // The converged exit already has matching fields, but a run
-                // that reaches max_iter has performed one final descent after
-                // its last evaluated geometry. Re-evaluate the inexpensive
-                // transform/geometry/field prefix unconditionally so every
-                // published field belongs to the exact spectral state in the
-                // same file. This happens after solver timing and cannot alter
-                // controller decisions or the state.
-                transform.inverse(state.physical_const(), false, stream);
-                geometry.enqueue(*rs, p, profiles.profile_views(), stream);
-                MagneticFieldOperator<T>{}.enqueue(
-                    *rs, p, profiles.profile_views(),
-                    geometry.base_geometry_views(p),
-                    geometry.magnetic_field_views(p), nullptr, stream, true);
-                check_cuda(cudaStreamSynchronize(stream),
-                           "output field evaluation");
-                const Status status = capture_derived_fields(
-                    p, profiles, *rs, geometry, *output_snapshot);
-                if (!status) throw CumesError(status.error());
-            }
-            // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
-            // the operator destructors); nothing to free manually.
+                setup_end = std::chrono::steady_clock::now();
 
-            std::printf(
-                "  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
-                "reserved %zu bytes\n",
-                arena.span_count(), arena.peak_bytes(),
-                arena.peak_bytes() / (1024.0 * 1024.0), arena.total_bytes());
-            return result;
-        });
+                stage_detail::ScopedDeviceTimer device_timer;
+                device_timer.start(stream);
+                SolverResult<T> result = solver_run<T>(
+                    state, p, profiles, transform, *rs, geometry, arena, stream,
+                    bench,
+                    axisym ? std::optional<
+                                 std::reference_wrapper<SpectralOperator<T>>>(
+                                 std::ref(*axisym))
+                           : std::nullopt,
+                    vacuum, enable_step_recovery, verbose,
+                    use_process_environment);
+                const double elapsed_device_ms = device_timer.stop(stream);
+                iteration_end = std::chrono::steady_clock::now();
+                if (device_time_ms.has_value())
+                    device_time_ms->get() = elapsed_device_ms;
+                if (verbose) {
+                    std::printf("  device time: %.3f ms\n", elapsed_device_ms);
+                }
+
+                if (output_snapshot != nullptr) {
+                    // The converged exit already has matching fields, but a run
+                    // that reaches max_iter has performed one final descent
+                    // after its last evaluated geometry. Re-evaluate the
+                    // inexpensive transform/geometry/field prefix
+                    // unconditionally so every published field belongs to the
+                    // exact spectral state in the same file. This happens after
+                    // solver timing and cannot alter controller decisions or
+                    // the state.
+                    transform.inverse(state.physical_const(), false, stream);
+                    geometry.enqueue(*rs, p, profiles.profile_views(), stream);
+                    MagneticFieldOperator<T>{}.enqueue(
+                        *rs, p, profiles.profile_views(),
+                        geometry.base_geometry_views(p),
+                        geometry.magnetic_field_views(p), nullptr, stream,
+                        true);
+                    check_cuda(cudaStreamSynchronize(stream),
+                               "output field evaluation");
+                    const Status status = capture_derived_fields(
+                        p, profiles, *rs, geometry, *output_snapshot);
+                    if (!status) throw CumesError(status.error());
+                    if (output_profiles != nullptr) {
+                        capture_equilibrium_profiles(
+                            p, profiles, *output_snapshot, *output_profiles);
+                    }
+                }
+                output_end = std::chrono::steady_clock::now();
+                // profiles/transform/geometry/rs/mt are RAII (scoped wrappers +
+                // the operator destructors); nothing to free manually.
+
+                if (verbose) {
+                    std::printf(
+                        "  stage arena: %zu spans, peak %zu bytes (%.2f MiB), "
+                        "reserved %zu bytes\n",
+                        arena.span_count(), arena.peak_bytes(),
+                        arena.peak_bytes() / (1024.0 * 1024.0),
+                        arena.total_bytes());
+                }
+                return result;
+            });
+        const auto stage_end = std::chrono::steady_clock::now();
+        if (wall_timings.has_value()) {
+            auto milliseconds = [](auto duration) {
+                return std::chrono::duration<double, std::milli>(duration)
+                    .count();
+            };
+            StageWallTimings& timing = wall_timings->get();
+            timing.setup_ms = milliseconds(setup_end - stage_start);
+            timing.iteration_ms = milliseconds(iteration_end - setup_end);
+            timing.output_ms = milliseconds(output_end - iteration_end);
+            timing.teardown_ms = milliseconds(stage_end - output_end);
+            timing.total_ms = milliseconds(stage_end - stage_start);
+        }
+        return stage_result;
     }
 };
 

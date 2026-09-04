@@ -24,6 +24,7 @@
 // configs (Solovev 251->199->456 / W7-X 1877->1617->2011, full-precision
 // state, identical restart sequence) — the frozen baseline stands unchanged.
 
+#include "cumes/numerics/forward_dual.cuh"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/numerics/tridiagonal_backend.hpp"
 #include "cumes/runtime/cuda_status.hpp"
@@ -256,7 +257,7 @@ __global__ void precon_compute_kernel(
 #pragma unroll
     for (int c = 0; c < 15; ++c)
         for (int o = 16; o > 0; o >>= 1)
-            acc[c] += __shfl_down_sync(0xffffffffu, acc[c], o);
+            acc[c] += cumes::shuffle_down(acc[c], o);
     const int lane = tid & 31, warp = tid >> 5;
     __shared__ T warp_sum[8 * 15];
     if (lane == 0)
@@ -605,9 +606,9 @@ __global__ void lambda_prec_assemble_kernel(
     // tree is fixed (deterministic); the summation ORDER differs from the old
     // shared-memory binary tree, a Class B (ULP-level) change.
     for (int o = 16; o > 0; o >>= 1) {
-        bsum += __shfl_down_sync(0xffffffffu, bsum, o);
-        dsum += __shfl_down_sync(0xffffffffu, dsum, o);
-        csum += __shfl_down_sync(0xffffffffu, csum, o);
+        bsum += cumes::shuffle_down(bsum, o);
+        dsum += cumes::shuffle_down(dsum, o);
+        csum += cumes::shuffle_down(csum, o);
     }
     const int lane = tid & 31, warp = tid >> 5;
     __shared__ T w_b[8], w_d[8], w_c[8];
@@ -632,9 +633,9 @@ __global__ void lambda_prec_assemble_kernel(
         // is scheduling-dependent, making rmsPhiP — and hence the lambda
         // preconditioner — vary by ~1 ulp run to run).
         if (jH == ns - 2) {
-            double total = 0.0;
+            T total = T(0.0);
             for (int j = 0; j < ns - 1; ++j) total += phipH[j] * phipH[j];
-            atomicAdd(rmsPhiP, total);
+            cumes::atomic_add(rmsPhiP, total);
         }
     }
 }

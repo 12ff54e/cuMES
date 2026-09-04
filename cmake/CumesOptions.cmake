@@ -67,3 +67,12 @@ option(CUMES_ENABLE_VERIFY_DUMP "Compile the CUMES_DUMP-gated dump machinery" ON
 
 # Promote warnings to errors for project sources (excluding vendored deps).
 option(CUMES_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+
+option(CUMES_BUILD_CLI "Build the cumes command-line application" ON)
+option(CUMES_BUILD_TESTS "Build and register the cuMES test suite" ON)
+option(CUMES_BUILD_BENCHMARKS "Build cuMES benchmark executables" ON)
+
+# Optional source-tree integration. The target implementations and applications
+# live in meow; this option only makes their cuMES adapter build convenient.
+set(CUMES_MEOW_SOURCE_DIR "" CACHE PATH
+    "Path to a meow source tree for its optional cuMES integration")

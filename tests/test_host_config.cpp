@@ -10,6 +10,7 @@
 // empty/mismatched/non-monotonic schedules, integer narrowing, wrong-type
 // aux/asym keys, unsupported physics, and unknown-key strict vs compatibility.
 #include "cumes/config/json_reader.hpp"
+#include "cumes/config/json_writer.hpp"
 #include "cumes/config/profile_functions.hpp"
 #include "cumes/config/validated_problem.hpp"
 #include "cumes_test.h"
@@ -26,6 +27,7 @@
 #include <unistd.h>
 using namespace cumes::test;
 
+using cumes::parse_problem_spec;
 using cumes::PrecisionPolicy;
 using cumes::ProblemSpec;
 using cumes::read_and_validate;
@@ -132,6 +134,37 @@ static void test_goldens() {
         check(vr.value().normalize_to_json() == golden,
               std::string(name) + ": normalize_to_json matches golden");
     }
+}
+
+static void test_problem_spec_json_round_trip() {
+    SolverOptions opts;
+    auto original = read_and_validate("inputs/w7x.json", opts);
+    check(original.has_value(), "ProblemSpec writer source validates");
+    if (!original.has_value()) return;
+
+    const std::string serialized =
+        cumes::problem_spec_to_json(original.value().spec());
+    auto parsed = parse_problem_spec(serialized, opts);
+    check(parsed.report.ok(), "ProblemSpec writer output parses strictly");
+    if (!parsed.report.ok()) return;
+    auto round_trip = cumes::validate(std::move(parsed.spec), opts);
+    check(round_trip.has_value(), "ProblemSpec writer output validates");
+    if (!round_trip.has_value()) return;
+    check(round_trip.value().normalize_to_json() ==
+              original.value().normalize_to_json(),
+          "ProblemSpec writer preserves the validated solver input");
+
+    ProblemSpec escaped = original.value().spec();
+    escaped.free_boundary.mgrid_file =
+        std::string("grid\b\f") + static_cast<char>(0x01) + ".nc";
+    const std::string escaped_json = cumes::problem_spec_to_json(escaped);
+    check(escaped_json.find("grid\\b\\f\\u0001.nc") != std::string::npos,
+          "ProblemSpec writer escapes every JSON control character");
+    const auto escaped_round_trip = parse_problem_spec(escaped_json, opts);
+    check(escaped_round_trip.report.ok() &&
+              escaped_round_trip.spec.free_boundary.mgrid_file ==
+                  escaped.free_boundary.mgrid_file,
+          "ProblemSpec control-character strings round trip");
 }
 
 static void test_mode_table() {
@@ -508,6 +541,18 @@ static void test_malformed() {
               !find_error(vr, "integrates to zero at the edge").empty(),
           "malformed: zero prescribed-current edge integral rejected");
 
+    // A zero requested total current needs no profile normalization: this is
+    // the vacuum prescribed-current form used by the Landreman-Paul QA/QH
+    // configurations.
+    write_scratch(
+        "{\"mpol\": 2, \"ntor\": 0, \"am\": [0.0], \"aphi\": [1.0],"
+        " \"ncurr\": 1, \"curtor\": 0.0,"
+        " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
+        " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]} ");
+    vr = read_and_validate(scratch_path(), opts);
+    check(vr.has_value(),
+          "vacuum prescribed-current input validates without ac");
+
     // A healthy prescribed-current fixture still validates (positive control).
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"aphi\": [1.0],"
@@ -555,16 +600,33 @@ static void test_two_power_evaluators() {
           "two_power current at the axis is zero");
 }
 
+static void test_in_memory_json() {
+    SolverOptions options;
+    const auto parsed = parse_problem_spec(
+        R"({"mpol": 3, "ntor": 1, "nfp": 5,
+             "rbc": [{"m": 1, "n": 0, "value": 1.25}],
+             "zbs": [{"m": 1, "n": 0, "value": 0.4}]})",
+        options);
+    check(parsed.report.ok(), "in-memory JSON mapping succeeds");
+    check(
+        parsed.spec.mpol == 3 && parsed.spec.ntor == 1 && parsed.spec.nfp == 5,
+        "in-memory JSON maps scalar resolution fields");
+    check(parsed.spec.rbc.size() == 1 && parsed.spec.rbc.front().value == 1.25,
+          "in-memory JSON maps boundary harmonics");
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--emit-golden") {
         emit_goldens(argv[2]);
         return 0;
     }
     test_goldens();
+    test_problem_spec_json_round_trip();
     test_mode_table();
     test_precision_floor();
     test_malformed();
     test_two_power_evaluators();
+    test_in_memory_json();
     // No explicit scratch removal: the TempDir RAII destructor cleans the
     // per-test directory even on an interrupted or failing run.
     return summary();

@@ -314,6 +314,7 @@ Known issues:
 | `docs/dump-files.md` | the `CUMES_DUMP` diagnostics: file manifest, formats, naming scheme |
 | `docs/verification.md` | verification tiers/gates, equivalence classes (Class A/B/C), review checklist |
 | `docs/performance.md` | measured performance + acceptance policy |
+| `docs/library-api.md` | public solver/config API, packaging, and least-squares optimizer integration contract |
 | `docs/overhaul-history.md` | phase-by-phase overhaul record and closeout handovers |
 | `docs/cuda-overhaul-blueprint.md` | the original overhaul plan |
 | `docs/adr/` | architecture decision records |

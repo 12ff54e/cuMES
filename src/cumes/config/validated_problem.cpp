@@ -162,10 +162,12 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     // normalization scalars: maxToroidalFlux = signJ·phiedge/(2π·T_edge) with
     // T_edge = T(1) = torflux(1), and (ncurr=1) Itor = signJ·μ0·curtor/
     // (2π·C_edge) with C_edge = J_C(min(|bloat|, 1)) — the prescribed-current
-    // edge integral, independent of T(1). A non-finite, zero, or ill-scaled
-    // value here would poison every downstream quantity, so both are rejected
-    // BEFORE any CUDA context or stage construction. The evaluation is the
-    // shared cumes::torflux/eval_curr_profile used by the upload step, so the
+    // edge integral, independent of T(1). C_edge is not needed for curtor=0,
+    // which represents an identically zero prescribed current. Otherwise a
+    // non-finite, zero, or ill-scaled value would poison every downstream
+    // quantity, so it is rejected BEFORE any CUDA context or stage
+    // construction. The evaluation is the shared
+    // cumes::torflux/eval_curr_profile used by the upload step, so the
     // validated values are bit-identical to the divided ones.
     const double torflux_edge = torflux<double>(spec, 1.0);
     if (!std::isfinite(torflux_edge)) {
@@ -182,7 +184,8 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
                      "toroidal-flux profile is ill-scaled at the edge "
                      "(|T(1)| < 1e-30); the edge normalization would overflow");
     }
-    if (spec.current_model == CurrentModel::PRESCRIBED_CURRENT) {
+    if (spec.current_model == CurrentModel::PRESCRIBED_CURRENT &&
+        spec.physical.curtor != 0.0) {
         const double curr_edge = eval_curr_profile<double>(spec, 1.0);
         if (!std::isfinite(curr_edge)) {
             report.error("ac",

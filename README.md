@@ -36,6 +36,65 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+### In-process library
+
+The supported embedding API is `cumes::EquilibriumSolver`. It consumes an
+immutable validated problem and returns a complete host equilibrium without
+writing an output file or exposing CUDA objects:
+
+```cpp
+#include <cumes/config/json_reader.hpp>
+#include <cumes/solver/equilibrium_linearization.hpp>
+#include <cumes/solver/equilibrium_solver.hpp>
+
+cumes::SolverOptions config_options;
+auto parsed = cumes::read_problem_spec("inputs/solovev.json", config_options);
+parsed.spec.rbc.front().value += 1.0e-4;  // optimizer-owned boundary update
+
+auto validated = cumes::validate(std::move(parsed.spec), config_options);
+cumes::EquilibriumSolver solver;
+cumes::SolveOutcome solved = solver.solve(validated.value());
+
+cumes::EquilibriumLinearization linearization(validated.value(),
+                                              solved.equilibrium);
+auto direction = cumes::BoundaryTangent::zero(validated.value());
+direction.rbcc[1] = 1.0;  // embedding-owned optimizer direction
+auto spectral_tangent = linearization.solve_boundary_tangent(direction);
+auto tangent = linearization.materialize_tangent(
+    spectral_tangent.state_tangent, solved.equilibrium, solved.profiles);
+```
+
+Library solves are quiet and ignore the CLI's process-global `CUMES_*`
+controls by default. `SolveRequest` can opt into those controls or provide an
+in-memory restart snapshot. Installed consumers use
+`find_package(cuMES CONFIG REQUIRED)` and link `cumes::solver`.
+
+Optimization targets and integration applications are maintained in the meow
+repository. A source-tree integration build remains available by configuring
+cuMES with `-DCUMES_MEOW_SOURCE_DIR=/path/to/meow`; this asks meow to build its
+cuMES-backed examples without making cuMES depend on optimizer policy. See
+[`docs/library-api.md`](docs/library-api.md) for the ownership and
+data-publication contract.
+
+`SolveOutcome` carries the complete equilibrium snapshot plus converged
+half-grid toroidal/poloidal flux derivatives, rotational transform, and the
+covariant flux functions `I(s)` and `G(s)`. cuMES publishes these physical
+quantities but does not choose target surfaces, interpolation, norms, weights,
+or target values.
+
+`EquilibriumLinearization` retains the converged final-grid CUDA operators and
+applies analytic residual JVPs without rerunning the nonlinear equilibrium.
+`solve_boundary_tangent()` solves `F_u du = -F_x dx` with right-preconditioned
+restarted GMRES; repeated directions reuse the same session. The qualified
+scope is precise-double, stellarator-symmetric, fixed-boundary equilibrium.
+Materialized tangents include spectral, magnetic-field, geometry, and profile
+derivatives; current-density derivatives are not part of the qualified API.
+Constructing `EquilibriumLinearization` in a mixed-float build throws
+`CumesError` with that unsupported-precision context.
+Optimizer parameterization, QS/aspect/iota target derivatives, and dense
+Jacobian assembly remain in meow. See
+[`docs/adr/0013-equilibrium-forward-tangents.md`](docs/adr/0013-equilibrium-forward-tangents.md).
+
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
 `deps/magnetic-coordinate`. `--output PATH` writes the native PEST-like result;
@@ -90,10 +149,12 @@ kernels live directly in operator classes that own their device buffers (RAII
   `double`/`float` instantiation TUs (`src/<mod>_{double,float}.cu`): `fourier`
   (`ToroidalFftOperator`), `geometry` (`GeometryOperator`/`MagneticFieldOperator`),
   `forces` (`ForceOperator`), `solver` (`EquilibriumOperator`), `profiles`,
-  `precon`, `constraint`, `prolongation`, `axisymmetric`.
+  `precon`, `constraint`, `prolongation`, `axisymmetric`, and `tangent`
+  (`EquilibriumLinearization`).
 - **Host-side `cumes` namespace** — `include/cumes/*` + `src/cumes/*`: config
   validation, RAII CUDA runtime, typed non-owning views, the I/O stack, and the
-  host orchestration (`MultigridSolver`, `StageSolver`, `IterationController`).
+  host orchestration (`EquilibriumSolver`, `MultigridSolver`, `StageSolver`,
+  `IterationController`).
 
 All GPU allocations happen at startup; there are zero `cudaMalloc` calls in the
 hot loop. See [`docs/architecture.md`](docs/architecture.md) for the full shape.

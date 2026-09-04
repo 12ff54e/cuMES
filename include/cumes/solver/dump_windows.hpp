@@ -38,6 +38,27 @@
 
 namespace cumes {
 
+// Per-calling-thread gate used by the public solver facade. The CLI leaves
+// environment-driven dumps enabled; embedding calls disable them so a
+// process-global CUMES_DUMP cannot make a nominally pure residual evaluation
+// write files or alter graph selection.
+inline thread_local bool dump_process_environment_enabled = true;
+
+class ScopedDumpEnvironment {
+   public:
+    explicit ScopedDumpEnvironment(bool enabled)
+        : previous_(dump_process_environment_enabled) {
+        dump_process_environment_enabled = enabled;
+    }
+    ~ScopedDumpEnvironment() { dump_process_environment_enabled = previous_; }
+
+    ScopedDumpEnvironment(const ScopedDumpEnvironment&) = delete;
+    ScopedDumpEnvironment& operator=(const ScopedDumpEnvironment&) = delete;
+
+   private:
+    bool previous_;
+};
+
 // Master switch for the dump/debug machinery: off unless CUMES_DUMP=1.
 // Compiled out (returns false) in production-style builds.
 bool dump_enabled();

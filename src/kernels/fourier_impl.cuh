@@ -38,6 +38,8 @@
 #include <functional>
 #include <optional>
 
+using std::sqrt;
+
 // The consuming kernels declare their dynamic shared memory directly as
 // `extern __shared__ T sh[]` — legal per TU because the explicit
 // double/float instantiation split puts exactly one scalar type in each TU.
@@ -1256,8 +1258,8 @@ __global__ void forward_recover_kernel(
     int j = t % ns, mode = t / ns;
     int m = xm[mode], n = xn[mode];
     T nf = T(n * nfp);
-    T ms = (m == 0) ? T(1.0) : std::sqrt(T(2.0));
-    T nsq = (n == 0) ? T(1.0) : std::sqrt(T(2.0));
+    T ms = (m == 0) ? T(1.0) : sqrt(T(2.0));
+    T nsq = (n == 0) ? T(1.0) : sqrt(T(2.0));
     T mn = ms * nsq;
     size_t step = (size_t)mpol * ns * nz2;
     const Complex* slot = spectra + ((size_t)m * ns + j) * nz2 + n;

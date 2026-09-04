@@ -53,6 +53,21 @@ target_include_directories(test_input_json PRIVATE ${PROJECT_SOURCE_DIR}/include
 target_link_libraries(test_input_json PRIVATE cumes_config_json)
 cumes_enable_warnings(test_input_json)
 
+# Public embedding boundary: this source is ordinary C++ (not CUDA) and sees
+# only the host-facing solver/config/snapshot API. Linking and executing it
+# proves downstream users do not need to compile their objective with nvcc.
+add_executable(test_solver_api test_solver_api.cpp)
+target_include_directories(test_solver_api PRIVATE
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_solver_api PRIVATE cumes::solver)
+cumes_enable_warnings(test_solver_api)
+
+add_executable(test_equilibrium_tangent test_equilibrium_tangent.cpp)
+target_include_directories(test_equilibrium_tangent PRIVATE
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_equilibrium_tangent PRIVATE cumes_config_json)
+cumes_enable_warnings(test_equilibrium_tangent)
+
 foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
@@ -159,9 +174,38 @@ target_include_directories(test_accumulation PRIVATE ${PROJECT_SOURCE_DIR}/inclu
 target_link_libraries(test_accumulation PRIVATE cumes_cuda_runtime)
 cumes_enable_warnings(test_accumulation)
 
+add_executable(test_forward_dual test_forward_dual.cu)
+target_include_directories(test_forward_dual PRIVATE
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_forward_dual PRIVATE cumes_cuda_runtime)
+cumes_enable_warnings(test_forward_dual)
+
+add_executable(test_dual_spectral_operator test_dual_spectral_operator.cu)
+target_include_directories(test_dual_spectral_operator PRIVATE
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_dual_spectral_operator PRIVATE cumes_cuda_double)
+cumes_enable_warnings(test_dual_spectral_operator)
+
+add_executable(test_nonlinear_forward_tangent
+               test_nonlinear_forward_tangent.cu)
+target_include_directories(test_nonlinear_forward_tangent PRIVATE
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_nonlinear_forward_tangent PRIVATE
+  cumes_config_json cumes_cuda_double)
+cumes_enable_warnings(test_nonlinear_forward_tangent)
+
+add_executable(test_equilibrium_tangent_solve
+               test_equilibrium_tangent_solve.cpp)
+target_include_directories(test_equilibrium_tangent_solve PRIVATE
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(test_equilibrium_tangent_solve PRIVATE cumes::solver)
+cumes_enable_warnings(test_equilibrium_tangent_solve)
+
 # ---- ctest registration ----------------------------------------------------
 cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_input_json       unit;input)
+cumes_add_test(test_solver_api       unit;solver;api)
+cumes_add_test(test_equilibrium_tangent unit;solver;api;sensitivity)
 cumes_add_test(test_host_config      unit;config)
 cumes_add_test(test_host_io          unit;io)
 cumes_add_test(test_derived_fields   unit;io;physics)
@@ -231,6 +275,11 @@ endif()
 cumes_add_test(test_arena            unit;runtime)
 cumes_add_test(test_operator_views   unit;runtime)
 cumes_add_test(test_accumulation     unit;numerics)
+cumes_add_test(test_forward_dual     unit;numerics;sensitivity)
+cumes_add_test(test_dual_spectral_operator unit;fourier;sensitivity)
+cumes_add_test(test_nonlinear_forward_tangent unit;physics;sensitivity)
+cumes_add_test(test_equilibrium_tangent_solve integration;solver;sensitivity)
+set_tests_properties(test_equilibrium_tangent_solve PROPERTIES TIMEOUT 120)
 cumes_add_test(test_forces           unit;forces)
 cumes_add_test(test_output_failure   unit;output)
 cumes_add_test(test_geometry_ncurr   unit;geometry)
@@ -258,7 +307,8 @@ cumes_add_test(test_prolongation     unit;numerics)
 cumes_register_sanitizer_variants(
     test_fourier test_forces test_geometry_ncurr test_constraint_tcon
     test_regression_kernels test_runtime test_arena test_operator_views
-    test_accumulation test_axisym_backend test_tridiagonal
+    test_accumulation test_forward_dual test_dual_spectral_operator
+    test_axisym_backend test_tridiagonal
     test_cuda_graph test_safety_predicates test_prolongation)
 # test_event_dag registers its sanitizer variants manually: the deliberate
 # pending-event API-error probes are skipped under the sanitizers (they count

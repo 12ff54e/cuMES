@@ -14,6 +14,7 @@
 #ifndef CUMES_INCLUDE_CUMES_RUNTIME_CUDA_GRAPH_HPP_
 #define CUMES_INCLUDE_CUMES_RUNTIME_CUDA_GRAPH_HPP_
 
+#include "cumes/runtime/cuda_capture_coordination.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 
 #include <cuda_runtime.h>
@@ -53,6 +54,8 @@ class CudaGraph {
     template <class Fn>
     static CudaGraph capture(cudaStream_t stream, Fn&& enqueue) {
         CudaGraph g;
+        std::lock_guard<std::mutex> capture_guard(
+            cuda_capture_coordination_mutex());
         check_cuda(
             cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal),
             "CudaGraph::capture begin");

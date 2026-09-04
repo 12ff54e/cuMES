@@ -11,6 +11,7 @@
 #define CUMES_INCLUDE_CUMES_SOLVER_MULTIGRID_SOLVER_HPP_
 
 #include "cumes/config/validated_problem.hpp"
+#include "cumes/io/equilibrium_profiles.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
 #include "cumes/io/run_report.hpp"
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
@@ -25,6 +26,7 @@
 #include <cstdlib>
 #include <future>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -39,8 +41,10 @@ struct MultigridOutcome {
     SolverResult<T> result;    // final stage's solver result
     int total_iterations = 0;
     double total_device_time_ms = 0.0;
+    StageWallTimings stage_wall_timings;
     RunReport report;
     EquilibriumSnapshot snapshot;  // final derived fields; state filled by CLI
+    EquilibriumProfiles profiles;  // final half-grid equilibrium profiles
     int failed_stage = -1;         // stage index that failed the run, or -1
 };
 
@@ -53,11 +57,16 @@ class MultigridSolver {
     // stage from the validated problem's stage schedule (exactly the legacy
     // stage loop). `seed` is the stage-0 cold-start state (already
     // interpolated from boundary + axis).
-    static MultigridOutcome<T> run(DeviceParams<T>& p,
-                                   const ValidatedProblem& vp,
-                                   SpectralStorage<T> seed,
-                                   cudaStream_t stream = 0,
-                                   bool hot_start = false) {
+    static MultigridOutcome<T> run(
+        DeviceParams<T>& p,
+        const ValidatedProblem& vp,
+        SpectralStorage<T> seed,
+        cudaStream_t stream = 0,
+        bool hot_start = false,
+        bool verbose = true,
+        bool use_process_environment = true,
+        std::optional<RadialInterpolation> radial_interpolation_override =
+            std::nullopt) {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
         DeviceParams<T> p_prev;
@@ -87,15 +96,22 @@ class MultigridSolver {
                 radial_interpolation = RadialInterpolation::CATMULL_ROM;
             }
         }
-        if (const char* e = std::getenv("CUMES_FORCE_CATMULL_PROLONGATION")) {
-            if (std::atoi(e) != 0 && sizeof(T) == sizeof(double)) {
-                radial_interpolation = RadialInterpolation::CATMULL_ROM;
+        if (use_process_environment) {
+            if (const char* e =
+                    std::getenv("CUMES_FORCE_CATMULL_PROLONGATION")) {
+                if (std::atoi(e) != 0 && sizeof(T) == sizeof(double)) {
+                    radial_interpolation = RadialInterpolation::CATMULL_ROM;
+                }
+            }
+            if (const char* e =
+                    std::getenv("CUMES_FORCE_LINEAR_PROLONGATION")) {
+                if (std::atoi(e) != 0) {
+                    radial_interpolation = RadialInterpolation::LINEAR;
+                }
             }
         }
-        if (const char* e = std::getenv("CUMES_FORCE_LINEAR_PROLONGATION")) {
-            if (std::atoi(e) != 0) {
-                radial_interpolation = RadialInterpolation::LINEAR;
-            }
+        if (radial_interpolation_override.has_value()) {
+            radial_interpolation = *radial_interpolation_override;
         }
 
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
@@ -141,6 +157,7 @@ class MultigridSolver {
             hp.extcur = vp.spec().free_boundary.extcur;
             hp.nvacskip = vp.spec().free_boundary.nvacskip;
             hp.hot_start = hot_start;
+            hp.use_process_environment = use_process_environment;
             vac = std::make_unique<FreeBoundaryOperator<T>>(hp, p);
         }
 
@@ -152,11 +169,13 @@ class MultigridSolver {
             p.delt = initial_step_for_stage(configured_delt, p.ntor, p.nzeta,
                                             vp.spec().free_boundary.lfreeb,
                                             p.ns, n_grids, g);
-            std::printf(
-                "\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d "
-                "ftol=%.0e delt=%.6g ===\n",
-                g + 1, n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol,
-                (double)p.delt);
+            if (verbose) {
+                std::printf(
+                    "\n=== grid stage %d/%d: ns=%d mnmax=%d max_iter=%d "
+                    "ftol=%.0e delt=%.6g ===\n",
+                    g + 1, n_grids, p.ns, p.mnmax, p.max_iter, (double)p.ftol,
+                    (double)p.delt);
+            }
             if (g > 0) {
                 // Prolong the previous stage's converged state onto this grid
                 // on the same compute stream (ordered before the next stage).
@@ -172,7 +191,7 @@ class MultigridSolver {
 #endif
                 storage = cumes::Prolongation<T>{}.enqueue(
                     p, storage, p_prev, stream, radial_interpolation,
-                    precomputed_bspline_matrix);
+                    precomputed_bspline_matrix, verbose);
                 // vmecpp vmec.cc :536-539: the converged coarse-stage vacuum
                 // state stays valid; re-mark INITIALIZED so the new stage's
                 // first pass runs the vacuum block.
@@ -184,31 +203,38 @@ class MultigridSolver {
             EquilibriumSnapshot* output_snapshot =
                 (g + 1 == n_grids) ? &out.snapshot : nullptr;
             double stage_device_time_ms = 0.0;
+            StageWallTimings stage_wall_timings;
             result = StageSolver<T>::run(
                 p, vp, storage, stream, std::nullopt,
                 vac ? std::optional<
                           std::reference_wrapper<FreeBoundaryOperator<T>>>(
                           std::ref(*vac))
                     : std::nullopt,
-                output_snapshot,
+                output_snapshot, (g + 1 == n_grids) ? &out.profiles : nullptr,
                 // The recovery policy is qualified for fixed-boundary stages.
                 // Free-boundary stages retain their vacuum-coupled reference
                 // trajectory until separately qualified.
-                !vac, std::ref(stage_device_time_ms));
+                !vac, std::ref(stage_device_time_ms), verbose,
+                use_process_environment, std::ref(stage_wall_timings));
             total_device_time_ms += stage_device_time_ms;
+            out.stage_wall_timings += stage_wall_timings;
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();
                 if (before == cumes::VacuumState::INITIALIZED) {
-                    std::printf(
-                        "  VACUUM PRESSURE TURNED ON AT %d ITERATIONS\n",
-                        result.iterations);
+                    if (verbose) {
+                        std::printf(
+                            "  VACUUM PRESSURE TURNED ON AT %d ITERATIONS\n",
+                            result.iterations);
+                    }
                 }
-                std::printf(
-                    "  VACUUM: rBtor=%.6e cTor=%.6e bSubUVac=%.6e "
-                    "bSubVVac=%.6e delBSq=%.3e\n",
-                    vac->rbtor(), vac->ctor(), vac->bsubu_vac(),
-                    vac->bsubv_vac(), vac->delbsq_mean());
+                if (verbose) {
+                    std::printf(
+                        "  VACUUM: rBtor=%.6e cTor=%.6e bSubUVac=%.6e "
+                        "bSubVVac=%.6e delBSq=%.3e\n",
+                        vac->rbtor(), vac->ctor(), vac->bsubu_vac(),
+                        vac->bsubv_vac(), vac->delbsq_mean());
+                }
             }
 
             StageReport sr;

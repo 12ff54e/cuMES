@@ -251,7 +251,67 @@ extrapolated axis row, and reports the max absolute/relative difference per
 family. The `wout` comparison reads the FULL-grid `lmns_full`, not the
 half-grid `lmns`.
 
-## 7. Performance acceptance
+## 7. Equilibrium-tangent branch qualification
+
+The matrix-free solve `F_u du = -F_x dx` is underdetermined when the discrete
+equilibrium Jacobian retains coordinate near-null directions.  A small linear
+residual is therefore necessary but is not sufficient evidence that the
+returned direction is the derivative of the nonlinear black-box solve used by
+an optimizer.  The retained `EquilibriumLinearization` is qualified against a
+centered, converged restart finite difference in the following order:
+
+1. Freeze the nonlinear finite-difference oracle and verify separately that
+   the analytic and finite-difference directions satisfy the same linearized
+   force equation.
+2. Decompose their difference by spectral family, mode, and radial surface;
+   report the numerical rank across independent boundary perturbations and
+   test explicitly for the converged-pass m=1 mixed R/Z gauge.
+3. Identify the continuation condition selected by the nonlinear
+   descent/preconditioner trajectory.  Add only that condition to the tangent
+   solve; do not alter the nonlinear equilibrium trajectory or optimizer
+   target definition.
+4. Require the cuMES tangent unit/integration tests and the meow field/profile
+   and target-residual finite-difference oracle to pass before an optimization
+   timing is reported.  The target-facing acceptance gate is at most 1%
+   relative error for materially nonzero columns; near-zero references are
+   assessed with an absolute scale.
+5. Re-run one-stage QA and QH optimization smoke tests before the full
+   convergence benchmark.  A speedup is qualified only when the optimized
+   objectives and accepted equilibrium residuals agree with the finite-
+   difference baseline.
+
+Diagnostic files generated during this work belong outside either repository
+under the sibling `tmp/` directory.
+
+### 7.1 Constraint-tangent correction outcome
+
+The 2026-09-03 branch investigation found a concrete residual-JVP wiring
+defect before any additional gauge condition was justified.  The dual inverse
+transform wrote `rCon` and `zCon` into standalone tangent-owned buffers, while
+the following `ConstraintOperator` read its own distinct, never-populated
+buffers.  The nonlinear residual path already connected these views directly.
+The tangent path now likewise writes into `constraint_.rcon_view()` and
+`constraint_.zcon_view()`; the redundant buffers were removed.
+
+The correction is guarded by a nonlinear-restart agreement check in
+`test_equilibrium_tangent_solve`.  Compute Sanitizer subsequently exposed four
+uninitialized dual de-aliasing scratch families on the magnetic axis; these
+are now zero-initialized at construction.  The verify suite passes all 96
+tests, including the memcheck/initcheck wrappers, and meow's linked suite
+passes all 10 tests.
+
+This correction substantially improves the optimizer-facing derivative, but
+does not by itself satisfy the 1% target-column gate above.  At the QH mode-1
+analytic start, materially nonzero residual columns still differ from the
+converged nonlinear reference by 2.95--11.68%, although the hybrid objective
+directional derivative differs by at most 0.705%.  Tightening GMRES from
+`5e-6` to `1e-8` reduces the worst residual-column error only to 7.77%, so the
+remaining discrepancy is not merely the stopping tolerance.  No gauge mode
+is removed: a general lambda harmonic participates in the coupled
+`(R,Z,lambda)` coordinate response even though a coordinate-invariant target
+has no independent physical dependence on a pure relabelling.
+
+## 8. Performance acceptance
 
 For a performance-motivated change:
 

@@ -268,6 +268,180 @@ remaining a non-regressing improvement on the other. Fixed-boundary schedules
 are captured lazily and cached by shape. Free-boundary and verification-dump
 paths remain direct; `CUMES_DISABLE_CUDA_GRAPHS=1` is the diagnostic opt-out.
 
+### 3.4 Concurrent independent solves — adopted coordination
+
+Meow's cold finite-difference columns can run as independent equilibrium
+solves. A two-worker QA diagnostic produced bit-identical target Jacobian
+columns and reduced eight-column wall time from 2.801 s to 1.256 s. The same
+QH diagnostic exposed a runtime coordination defect: one solver can call the
+multigrid stage-boundary `cudaDeviceSynchronize` while another thread is
+capturing its fixed-boundary CUDA graph, which CUDA rejects.
+
+The scoped fix is a process-wide host mutex shared only by graph capture and
+the multigrid device-wide stage fence. Graph execution and the equilibrium hot
+loop remain unlocked, so independent solves can overlap after setup. The
+change must preserve the frozen single-solver trajectories, pass the full
+cuMES test suite, make the QH concurrent diagnostic deterministic, and show a
+positive two-worker throughput result before concurrent solves are treated as
+supported. No optimizer or target policy enters cuMES.
+
+The coordination lock passed all 96 verify tests, including a new public-API
+regression that runs two complete W7-X multigrid solves concurrently and
+requires identical spectral families. The meow diagnostics then produced
+bit-identical serial/concurrent Jacobians for both cases. Eight QA columns took
+2.823 s serial and 1.247 s with two workers (2.26x); eight QH columns took
+2.250 s and 1.025 s (2.20x). These are focused single-Jacobian throughput
+measurements, not the repeated end-to-end acceptance statistics required by
+§4; end-to-end optimizer qualification remains in meow.
+
+### 3.5 Repeated-solve resource reuse — rejected
+
+Meow now evaluates exact finite-difference Jacobian columns concurrently, but
+each column constructs a fresh `EquilibriumSolver`. The facade's implementation
+is currently empty and every `solve()` recreates its CUDA stream, multigrid
+stage arenas, cuFFT plans, operator stacks, and host snapshot transfers. Before
+introducing a session or batch API, expose structured per-call wall timings for
+pre-multigrid setup, multigrid execution, final state transfer, and total solve
+time. Keep the existing device-pass timer distinct from these host wall times.
+
+Use those timings in meow's QA and QH mode-1 Jacobian workload to determine the
+dominant repeated cost. If stream lifetime is measurable, retain one stream per
+`EquilibriumSolver` first because it does not alter seeding, stage arithmetic,
+or ownership between worker objects. Retaining topology-dependent arenas,
+cuFFT plans, and operator stacks is a larger follow-up and is allowed only when
+the timing breakdown justifies it. Any reuse must preserve cold-start semantics,
+exact serial/concurrent Jacobians, one-solver-per-worker ownership, the frozen
+single-solver trajectories, and the 96-test verify suite. End-to-end QA/QH
+acceptance remains in meow, while cuMES owns only equilibrium-solve resources
+and timings.
+
+The first Release mode-1 measurements put facade setup at only 0.12% of QA
+solve wall time and 0.19% of QH. Retaining only the CUDA stream therefore has a
+sub-percent ceiling and is rejected. Multigrid wall time accounts for more than
+99.7% of each solve, while its existing device-pass timer accounts for roughly
+90--92%. Before designing reusable stage workspaces, extend the structured
+timings to split aggregate stage setup, iterative solve, final derived-field
+capture, teardown, and non-stage multigrid orchestration. This will distinguish
+reusable arena/cuFFT construction from required output work and host/device
+iteration synchronization. The split is diagnostic only and must sum back to
+the already exposed multigrid wall time without changing solver ordering.
+
+The three-run, full-package Release profile closes that follow-up. Averaged
+over eight finite-difference solves, QA's 3.1525 s multigrid time split into
+0.13690 s stage setup (4.3%), 2.89850 s iteration (91.9%), 0.06035 s final
+derived-field capture (1.9%), 0.04174 s teardown (1.3%), and 0.01505 s other
+orchestration (0.5%). QH's 2.6627 s split into 0.14062 s setup (5.3%),
+2.40979 s iteration (90.5%), 0.06185 s capture (2.3%), 0.03798 s teardown
+(1.4%), and 0.01246 s other (0.5%). A persistent topology-keyed stage cache
+has only a 5.6%/6.7% absolute QA/QH ceiling even if it removes every setup and
+teardown cycle; seeding, uploads, and state publication would remain. It would
+also retain roughly 69 MB per worker at the W7-X final grid. That complexity is
+not justified by the removable fraction, so resource caching is rejected
+without implementation. The structured timing API remains useful
+observability for embedding applications.
+
+### 3.6 Transform launch-shape tuning — rejected
+
+With resource lifetime ruled out, optimize only the dominant device path. A
+warmed, graph-disabled W7-X `ns=99` fixed-iteration run on the TITAN Xp measured
+1.681 ms median wall time per iteration. CUDA-event instrumentation attributed
+0.657 ms/pass to inverse transforms and 0.492 ms/pass to forward transforms,
+about 68% combined. Hardware-counter collection is unavailable on this host
+(`ERR_NVGPUCTRPERM`), so experiments must use repeated alternating runs of the
+existing fixed-iteration harness and its bit-identical state hash gate.
+
+First sweep the zeta tile widths of the inverse-accumulate and forward-reduce
+kernels independently. Tile width changes only the CUDA launch decomposition:
+each output retains its existing serial poloidal accumulation order. Compare
+the shipped W7-X and Solovev workloads, retain no public/environment knob, and
+adopt a static launch policy only if W7-X clears the 5% gate while Solovev
+regresses by at most 2%. If no tile clears that gate, restore the current
+launch policy and record the negative result before considering a more invasive
+transform algorithm.
+
+The sweep compared forward zeta tiles 4, 6, 8, 12, and 16 and an inverse tile
+of 8. Every candidate produced the baseline state hash. Tile 4 was best:
+across three preheated alternating runs it reduced the W7-X median from
+1.584 ms to 1.528 ms with graphs disabled (3.5%) and from 1.573 ms to 1.518 ms
+with production graphs (3.5%). The inverse tile of 8 regressed steady-state
+latency. No launch-only variant clears the 5% gate, so the source is restored
+to tile 16 and no policy knob is retained.
+
+The next bounded transform experiment targets `inverse_pack_kernel`'s
+uncoalesced scratch writes. The current surface-fast thread order coalesces six
+coefficient reads but makes each of twelve half-spectrum writes stride by one
+FFT row. Compare a toroidal-mode-fast mapping, which coalesces those writes at
+the cost of strided coefficient reads, both alone and with the best tile-4
+forward launch. It changes no arithmetic or cuFFT layout. Retain it only if the
+combined production result clears the same acceptance gate and state hash.
+
+Five alternating production-graph runs rejected that mapping. The pack-only
+variant was flat to slightly slower than baseline; the combined variant was
+indistinguishable from tile 4 alone. All hashes remained identical. Coalescing
+twelve scratch writes does not compensate for making the six state-family
+reads surface-strided, so the original mapping is restored.
+
+The next local experiment removes two redundant poloidal-table loads in the
+forward reduction. `mcos` and `msin` are exactly `m*cos` and `-m*sin`; deriving
+them from the already loaded cosine/sine values trades two cached loads for two
+multiplications and may reduce the 72-register kernel's input pressure. First
+verify the intermediate transform and final state bitwise, then measure it
+alone and with tile 4. Reject both changes if the combined production latency
+still misses 5%.
+
+The derived-table variant retained the exact hash but regressed median latency
+by about 0.5%; combining it with tile 4 was also slower than tile 4 alone. The
+cached poloidal tables are not a limiting input source, so both source changes
+are removed.
+
+The single-solver gate does not yet answer whether tile 4 helps meow's actual
+four-stream Jacobian throughput: smaller forward-reduction blocks may permit
+more useful inter-solver residency than the isolated benchmark exposes. Build
+an otherwise identical temporary cuMES package with tile 4, run the controlled
+QA/QH mode-1 four-worker Jacobians against baseline, and require identical
+matrices and nonlinear iteration counts. Adopt the static tile only if this
+embedding workload clears 5% in repeated Release runs without violating the
+single-solver regression gate.
+
+The concurrent gate also rejects tile 4. Three alternating Release runs kept
+every Jacobian bit-identical and retained exactly 12,171 QA / 8,347 QH
+nonlinear iterations. QA's median changed from 0.814 s to 0.801 s (1.6%), while
+QH changed from 0.678 s to 0.682 s (0.7% slower). The smaller block therefore
+does not improve inter-solver residency enough to matter on the four-worker
+TITAN Xp workload. The production tile remains 16.
+
+### 3.7 Near-axisymmetric cold-start shaping — adopted
+
+The mode-1 analytic QA/QH boundaries are three-dimensional but have very small
+non-axisymmetric amplitudes; their cold solves still take roughly 1,500 passes.
+Use the existing diagnostic `CUMES_SEED_ENVELOPE` override to sweep the radial
+boundary-harmonic envelope on the exact center inputs before changing policy.
+Record per-stage iterations, final residuals, and state equivalence for both
+cases. If one value materially reduces both trajectories, derive any production
+selection from a dimensionless boundary-spectrum measure rather than a meow or
+target-function special case. The W7-X and axisymmetric frozen trajectories,
+checkpoint replay, and the full verify suite remain mandatory gates. Reject the
+idea if QA and QH prefer incompatible values or the converged state moves beyond
+the accepted equilibrium tolerance.
+
+The sweep selected `-0.10` for fixed-boundary 3-D multigrid starts with
+`initial_ns <= 12`; all other paths retain their previous policy. At the
+analytic centers, QA changed from `1178 -> 252 -> 118` (1548 total) to
+`886 -> 226 -> 100` (1212, 21.7% fewer), and QH changed from
+`445 -> 302 -> 361` (1108 total) to `303 -> 293 -> 314` (910, 17.9% fewer).
+The converged discrete states are not bit-identical, so this is qualified as a
+cold-start branch change rather than a Class-A refactor.
+
+Three four-worker mode-1 Jacobian runs retained exact serial/parallel matrices.
+QA's median fell from 0.827 s to 0.658 s (20.4%, 1.256x) and aggregate nonlinear
+work fell from 12,171 to 8,829 passes. QH's median changed from 0.693 s to
+0.687 s (0.8%) and work from 8,347 to 8,296 passes. Complete exact-Jacobian
+mode-1 gates reduced QA work from 242,168 to 208,099 passes (14.1%) with a
+0.032% objective change, and QH from 269,787 to 229,078 (15.1%) with a 0.0015%
+objective change; both remain within meow's 0.1% quality gate. The standard
+Solovev `235 -> 193 -> 326` and W7-X `1315 -> 1419 -> 1372` trajectories remain
+unchanged because their start geometries do not enter the new policy branch.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
