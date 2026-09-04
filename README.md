@@ -11,11 +11,11 @@ iteration DAG for both axisymmetric and folded 3-D equilibria: transforms,
 half-grid geometry, fixed-iota and prescribed-current magnetic closure,
 radial/poloidal/toroidal force, spectral-condensation constraint, full `(m,n)`
 preconditioner, accelerated descent, controller recovery, and multigrid
-transfer. The default browser page is an interactive application: drag an
-axisymmetric boundary or adjust its major radius, minor radius, elongation,
-triangularity, squareness, and pressure, then run a three-grid equilibrium
-locally on the user's GPU. It displays the converged flux surfaces in-page and
-offers the complete schema-v8 result as a download. A separate browser gate
+transfer. The default browser page is an interactive application: adjust the
+active `RBC(0,m)` and `ZBS(0,m)` Fourier coefficients with sliders while a
+live R-Z boundary preview updates, then run a three-grid equilibrium locally
+on the user's GPU. It displays the converged flux surfaces in-page and offers
+the complete schema-v8 result as a download. A separate browser gate
 runs the controller-complete three-stage Solovev solve with persistent
 velocity, constraint, preconditioner, and rollback state. On the NVIDIA TITAN
 Xp through Dawn's Vulkan backend it converges in `72 -> 31 -> 247` effective
@@ -72,12 +72,12 @@ export EM_CACHE="$PWD/../tmp/cumes-emscripten-cache"
 emcmake cmake --preset webgpu
 cmake --build --preset webgpu -j
 ctest --preset webgpu
-python3 -m http.server --directory ../tmp/cumes-build-webgpu/webgpu
-# open http://localhost:8000/cumes_webgpu.html in a WebGPU-capable browser
+# open the generated app through the existing nginx file server:
+# http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html
 # or run the numerical conformance/strict Solovev gate:
-# http://localhost:8000/cumes_webgpu.html?mode=test
+# http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?mode=test
 # or run the complete folded W7-X path:
-# http://localhost:8000/cumes_webgpu.html?solve=w7x
+# http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?solve=w7x
 ```
 
 The default page is the visual boundary editor. Its preview solve uses an

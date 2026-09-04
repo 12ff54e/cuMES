@@ -159,8 +159,8 @@ browser-validated:
   passes the in-Wasm field round trip and the project plotting workflow;
 - an independent C++ float reference evaluated by the browser self-test.
 - a responsive browser application that edits the stellarator-symmetric
-  `n=0` R-cosine/Z-sine boundary harmonics by direct manipulation or physical
-  shape controls, validates the generated input with the production parser,
+  `n=0` R-cosine/Z-sine boundary harmonics through coefficient sliders or
+  direct manipulation, validates the generated input with the production parser,
   runs the three-grid solver, Fourier-synthesizes smooth converged flux
   surfaces, and exposes the schema-v8 download without a server-side compute
   service;
@@ -191,33 +191,32 @@ cmake --build --preset webgpu -j
 ctest --preset webgpu
 ```
 
-Serve the generated files over HTTP; browsers do not reliably initialize
-WebGPU from `file://` URLs:
+The parent workspace is already exposed by nginx with the cross-origin headers
+needed by the Wasm application. Open the generated files through that server;
+browsers do not reliably initialize WebGPU from `file://` URLs:
 
-```bash
-python3 -m http.server 8000 \
-  --directory ../tmp/cumes-build-webgpu/webgpu
+```text
+http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html
 ```
 
-Open `http://localhost:8000/cumes_webgpu.html` for the application. Drag the
-boundary handles or use the six shape controls, then select **Run equilibrium**.
-The generated input and editor state stay in browser local storage; compute and
+The editor exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)` for `m=1..5` as
+sliders beside a live boundary preview; the preview handles update the same
+coefficients. Select **Run equilibrium** to solve the current boundary. The
+generated input and editor state stay in browser local storage; compute and
 output generation remain local to the page. The interactive profile currently
 uses stellarator-symmetric axisymmetric harmonics (`ntor=0`), three grids
 (`ns=5,11,55`), and a responsive mixed-float tolerance of `1e-5`.
 
-Open `http://localhost:8000/cumes_webgpu.html?mode=test` for the full GPU/CPU
-operator conformance suite and stricter Solovev convergence gate. A successful
-run finishes with:
+Append `?mode=test` for the full GPU/CPU operator conformance suite and
+stricter Solovev convergence gate. A successful run finishes with:
 
 ```text
 cuMES WebGPU self-test: PASS
 ```
 
-Open `http://localhost:8000/cumes_webgpu.html?solve=w7x` to run the complete
-fixed-boundary W7-X multigrid solver instead of the conformance suite. This
-path can be slow on software WebGPU adapters because the current 3-D transform
-is a direct DFT.
+Append `?solve=w7x` to run the complete fixed-boundary W7-X multigrid solver
+instead of the conformance suite. This path can be slow on software WebGPU
+adapters because the current 3-D transform is a direct DFT.
 
 The page also publishes `data-cumes-webgpu="pass|fail"`, a diagnostic
 `data-cumes-detail`, and `data-cumes-adapter`, `data-cumes-adapter-type`, and
