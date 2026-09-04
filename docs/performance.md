@@ -424,6 +424,24 @@ checkpoint replay, and the full verify suite remain mandatory gates. Reject the
 idea if QA and QH prefer incompatible values or the converged state moves beyond
 the accepted equilibrium tolerance.
 
+The sweep selected `-0.10` for fixed-boundary 3-D multigrid starts with
+`initial_ns <= 12`; all other paths retain their previous policy. At the
+analytic centers, QA changed from `1178 -> 252 -> 118` (1548 total) to
+`886 -> 226 -> 100` (1212, 21.7% fewer), and QH changed from
+`445 -> 302 -> 361` (1108 total) to `303 -> 293 -> 314` (910, 17.9% fewer).
+The converged discrete states are not bit-identical, so this is qualified as a
+cold-start branch change rather than a Class-A refactor.
+
+Three four-worker mode-1 Jacobian runs retained exact serial/parallel matrices.
+QA's median fell from 0.827 s to 0.658 s (20.4%, 1.256x) and aggregate nonlinear
+work fell from 12,171 to 8,829 passes. QH's median changed from 0.693 s to
+0.687 s (0.8%) and work from 8,347 to 8,296 passes. Complete exact-Jacobian
+mode-1 gates reduced QA work from 242,168 to 208,099 passes (14.1%) with a
+0.032% objective change, and QH from 269,787 to 229,078 (15.1%) with a 0.0015%
+objective change; both remain within meow's 0.1% quality gate. The standard
+Solovev `235 -> 193 -> 326` and W7-X `1315 -> 1419 -> 1372` trajectories remain
+unchanged because their start geometries do not enter the new policy branch.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
