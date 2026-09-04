@@ -21,6 +21,13 @@ constexpr std::uint32_t WORKGROUP_SIZE = 128;
 constexpr std::size_t RESULT_FIELD_COUNT = GEOMETRY_PARITY_FIELD_COUNT + 2;
 using BasisKey = std::array<int, 4>;
 
+void compensated_add(float& sum, float& correction, float term) {
+    const float adjusted = term - correction;
+    const float next = sum + adjusted;
+    correction = (next - sum) - adjusted;
+    sum = next;
+}
+
 struct ShaderParams {
     std::uint32_t ns;
     std::uint32_t mpol;
@@ -200,15 +207,22 @@ std::string load_dealias_shader() {
     return text.str();
 }
 
-wgpu::Buffer create_buffer(const wgpu::Device& device,
-                           std::uint64_t size,
-                           wgpu::BufferUsage usage,
-                           const char* label) {
+wgpu::Buffer create_uncached_buffer(const wgpu::Device& device,
+                                    std::uint64_t size,
+                                    wgpu::BufferUsage usage,
+                                    const char* label) {
     wgpu::BufferDescriptor descriptor{};
     descriptor.label = label;
     descriptor.size = size;
     descriptor.usage = usage;
     return device.CreateBuffer(&descriptor);
+}
+
+wgpu::Buffer create_buffer(const wgpu::Device& device,
+                           std::uint64_t size,
+                           wgpu::BufferUsage usage,
+                           const char* label) {
+    return detail::cached_buffer(device, size, usage, label);
 }
 
 struct GpuBasis {
@@ -227,7 +241,7 @@ const GpuBasis& cached_gpu_basis(const wgpu::Device& device,
     if (inserted) {
         const auto& basis = cached_basis(mpol, ntor, ntheta, nzeta);
         position->second.bytes = basis.size() * sizeof(float);
-        position->second.buffer = create_buffer(
+        position->second.buffer = create_uncached_buffer(
             device, position->second.bytes,
             wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
             "cuMES cached toroidal basis");
@@ -295,6 +309,9 @@ ToroidalInverseResult toroidal_inverse_reference(
         for (int angular = 0; angular < n_z_n_t; ++angular) {
             const std::size_t point =
                 static_cast<std::size_t>(surface) * n_z_n_t + angular;
+            std::array<float, GEOMETRY_PARITY_FIELD_COUNT> corrections{};
+            float r_con_correction = 0.0F;
+            float z_con_correction = 0.0F;
             for (int mode = 0; mode < mnmax; ++mode) {
                 const int m = mode / (input.ntor + 1);
                 const int n = mode % (input.ntor + 1);
@@ -313,9 +330,11 @@ ToroidalInverseResult toroidal_inverse_reference(
                 const float zc = coeff(4, mode, surface);
                 const float lc = coeff(5, mode, surface);
                 auto add = [&](int field, float value) {
-                    result.geometry[static_cast<std::size_t>(field) *
-                                        total_points +
-                                    point] += scale * value;
+                    auto& sum =
+                        result.geometry[static_cast<std::size_t>(field) *
+                                            total_points +
+                                        point];
+                    compensated_add(sum, corrections[field], scale * value);
                 };
                 add(parity + 0, rc * cc + rs * ss);
                 add(parity + 1, zs * sc + zc * cs);
@@ -327,8 +346,10 @@ ToroidalInverseResult toroidal_inverse_reference(
                 add(13 + (m % 2 == 1 ? 3 : 0), -nf * zs * ss + nf * zc * cc);
                 add(14 + (m % 2 == 1 ? 3 : 0), nf * ls * ss - nf * lc * cc);
                 const float xmpq = mf * (mf - 1.0F);
-                result.r_con[point] += xmpq * (rc * cc + rs * ss);
-                result.z_con[point] += xmpq * (zs * sc + zc * cs);
+                compensated_add(result.r_con[point], r_con_correction,
+                                xmpq * (rc * cc + rs * ss));
+                compensated_add(result.z_con[point], z_con_correction,
+                                xmpq * (zs * sc + zc * cs));
             }
         }
     }
@@ -491,6 +512,7 @@ ToroidalForwardResult toroidal_forward_reference(
                             (n == 0 ? 1.0F : std::sqrt(2.0F));
         for (int surface = 0; surface < input.ns; ++surface) {
             std::array<float, SPECTRAL_COMPONENT_COUNT> sums{};
+            std::array<float, SPECTRAL_COMPONENT_COUNT> corrections{};
             for (int zeta = 0; zeta < input.nzeta; ++zeta) {
                 for (int theta = 0; theta < theta_reduced; ++theta) {
                     const int angular = zeta * input.ntheta + theta;
@@ -514,12 +536,18 @@ ToroidalForwardResult toroidal_forward_reference(
                     const float cr = field(10 + parity, surface, angular);
                     const float cz = field(12 + parity, surface, angular);
                     const float cl = field(14 + parity, surface, angular);
-                    sums[0] += temp_r * cc - mf * br * sc + nf * cr * cs;
-                    sums[3] += temp_r * ss + mf * br * cs - nf * cr * sc;
-                    sums[1] += temp_z * sc + mf * bz * cc + nf * cz * ss;
-                    sums[4] += temp_z * cs - mf * bz * ss - nf * cz * cc;
-                    sums[2] += mf * bl * cc + nf * cl * ss;
-                    sums[5] += -mf * bl * ss - nf * cl * cc;
+                    compensated_add(sums[0], corrections[0],
+                                    temp_r * cc - mf * br * sc + nf * cr * cs);
+                    compensated_add(sums[3], corrections[3],
+                                    temp_r * ss + mf * br * cs - nf * cr * sc);
+                    compensated_add(sums[1], corrections[1],
+                                    temp_z * sc + mf * bz * cc + nf * cz * ss);
+                    compensated_add(sums[4], corrections[4],
+                                    temp_z * cs - mf * bz * ss - nf * cz * cc);
+                    compensated_add(sums[2], corrections[2],
+                                    mf * bl * cc + nf * cl * ss);
+                    compensated_add(sums[5], corrections[5],
+                                    -mf * bl * ss - nf * cl * cc);
                 }
             }
             for (int component = 0;
@@ -674,26 +702,32 @@ ToroidalDealiasResult toroidal_dealias_reference(
     for (int surface = 1; surface < input.ns; ++surface) {
         for (int angular = 0; angular < n_z_n_t; ++angular) {
             float value = 0.0F;
+            float correction = 0.0F;
             for (int m = 1; m <= band_modes; ++m) {
                 for (int n = 0; n <= input.ntor; ++n) {
                     const int mode = m * (input.ntor + 1) + n;
                     float sum_sc = 0.0F;
                     float sum_cs = 0.0F;
+                    float correction_sc = 0.0F;
+                    float correction_cs = 0.0F;
                     for (int source = 0; source < n_z_n_t; ++source) {
                         const float g =
                             input.g_con_eff[static_cast<std::size_t>(surface) *
                                                 n_z_n_t +
                                             source];
-                        sum_sc += g * table(2, mode, source);
-                        sum_cs += g * table(3, mode, source);
+                        compensated_add(sum_sc, correction_sc,
+                                        g * table(2, mode, source));
+                        compensated_add(sum_cs, correction_cs,
+                                        g * table(3, mode, source));
                     }
                     const float norm = n == 0
                                            ? 2.0F / static_cast<float>(n_z_n_t)
                                            : 4.0F / static_cast<float>(n_z_n_t);
                     const float scale =
                         norm * input.tcon[surface] * input.faccon[m];
-                    value += scale * (sum_sc * table(2, mode, angular) +
-                                      sum_cs * table(3, mode, angular));
+                    compensated_add(value, correction,
+                                    scale * (sum_sc * table(2, mode, angular) +
+                                             sum_cs * table(3, mode, angular)));
                 }
             }
             result

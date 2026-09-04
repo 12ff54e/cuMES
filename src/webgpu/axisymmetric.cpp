@@ -61,11 +61,7 @@ wgpu::Buffer create_buffer(const wgpu::Device& device,
                            std::uint64_t size,
                            wgpu::BufferUsage usage,
                            const char* label) {
-    wgpu::BufferDescriptor descriptor{};
-    descriptor.label = label;
-    descriptor.size = size;
-    descriptor.usage = usage;
-    return device.CreateBuffer(&descriptor);
+    return detail::cached_buffer(device, size, usage, label);
 }
 
 struct DispatchState {

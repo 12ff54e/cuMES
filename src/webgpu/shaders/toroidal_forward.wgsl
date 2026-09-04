@@ -32,6 +32,14 @@ fn store(component: u32, mode: u32, surface: u32, value: f32) {
     residual.data[(component * mnmax + mode) * params.ns + surface] = value;
 }
 
+fn compensated_add(sum: ptr<function, f32>, correction: ptr<function, f32>,
+                   term: f32) {
+    let adjusted = term - *correction;
+    let next = *sum + adjusted;
+    *correction = (next - *sum) - adjusted;
+    *sum = next;
+}
+
 @compute @workgroup_size(128)
 fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let mnmax = params.mpol * (params.ntor + 1u);
@@ -50,8 +58,10 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let theta_reduced = params.ntheta / 2u + 1u;
     let norm = 1.0 / (f32(params.nzeta) * f32(theta_reduced - 1u));
     var sums: array<f32, 6>;
+    var corrections: array<f32, 6>;
     for (var component = 0u; component < 6u; component++) {
         sums[component] = 0.0;
+        corrections[component] = 0.0;
     }
     for (var zeta = 0u; zeta < params.nzeta; zeta++) {
         for (var theta = 0u; theta < theta_reduced; theta++) {
@@ -74,12 +84,18 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             let cr = field_value(10u + parity, surface, angular);
             let cz = field_value(12u + parity, surface, angular);
             let cl = field_value(14u + parity, surface, angular);
-            sums[0] += temp_r * cc - mf * br * sc + nf * cr * cs;
-            sums[3] += temp_r * ss + mf * br * cs - nf * cr * sc;
-            sums[1] += temp_z * sc + mf * bz * cc + nf * cz * ss;
-            sums[4] += temp_z * cs - mf * bz * ss - nf * cz * cc;
-            sums[2] += mf * bl * cc + nf * cl * ss;
-            sums[5] += -mf * bl * ss - nf * cl * cc;
+            compensated_add(&sums[0], &corrections[0],
+                            temp_r * cc - mf * br * sc + nf * cr * cs);
+            compensated_add(&sums[3], &corrections[3],
+                            temp_r * ss + mf * br * cs - nf * cr * sc);
+            compensated_add(&sums[1], &corrections[1],
+                            temp_z * sc + mf * bz * cc + nf * cz * ss);
+            compensated_add(&sums[4], &corrections[4],
+                            temp_z * cs - mf * bz * ss - nf * cz * cc);
+            compensated_add(&sums[2], &corrections[2],
+                            mf * bl * cc + nf * cl * ss);
+            compensated_add(&sums[5], &corrections[5],
+                            -mf * bl * ss - nf * cl * cc);
         }
     }
     let mscale = select(sqrt(2.0), 1.0, m == 0u);

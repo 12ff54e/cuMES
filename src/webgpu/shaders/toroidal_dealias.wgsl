@@ -32,6 +32,14 @@ fn coefficient_index(family: u32, surface: u32, m1: u32, n: u32) -> u32 {
            (surface * params.band_modes + m1) * (params.ntor + 1u) + n;
 }
 
+fn compensated_add(sum: ptr<function, f32>, correction: ptr<function, f32>,
+                   term: f32) {
+    let adjusted = term - *correction;
+    let next = *sum + adjusted;
+    *correction = (next - *sum) - adjusted;
+    *sum = next;
+}
+
 @compute @workgroup_size(128)
 fn analyze(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let index = invocation.x;
@@ -45,11 +53,15 @@ fn analyze(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let mode = m * (params.ntor + 1u) + n;
     var sum_sc = 0.0;
     var sum_cs = 0.0;
+    var correction_sc = 0.0;
+    var correction_cs = 0.0;
     if (surface != 0u) {
         for (var angular = 0u; angular < params.n_z_n_t; angular++) {
             let value = g_con_eff.data[surface * params.n_z_n_t + angular];
-            sum_sc += value * basis_value(2u, mode, angular);
-            sum_cs += value * basis_value(3u, mode, angular);
+            compensated_add(&sum_sc, &correction_sc,
+                            value * basis_value(2u, mode, angular));
+            compensated_add(&sum_cs, &correction_cs,
+                            value * basis_value(3u, mode, angular));
         }
     }
     let norm = select(4.0 / f32(params.n_z_n_t),
@@ -67,16 +79,18 @@ fn synthesize(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let surface = point / params.n_z_n_t;
     let angular = point % params.n_z_n_t;
     var value = 0.0;
+    var correction = 0.0;
     if (surface != 0u) {
         for (var m1 = 0u; m1 < params.band_modes; m1++) {
             let m = m1 + 1u;
             for (var n = 0u; n <= params.ntor; n++) {
                 let mode = m * (params.ntor + 1u) + n;
-                value +=
+                compensated_add(
+                    &value, &correction,
                     coefficients.data[coefficient_index(0u, surface, m1, n)] *
                         basis_value(2u, mode, angular) +
                     coefficients.data[coefficient_index(1u, surface, m1, n)] *
-                        basis_value(3u, mode, angular);
+                        basis_value(3u, mode, angular));
             }
         }
     }

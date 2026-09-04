@@ -35,7 +35,9 @@ browser-validated:
   per-surface `tcon*faccon` scaling; the browser result agrees with its C++
   reference to `1.164e-10` on the conformance case;
 - host-generated `f32` Fourier tables, matching the CUDA operator contract and
-  avoiding adapter-dependent WGSL transcendental approximations;
+  avoiding adapter-dependent WGSL transcendental approximations; direct 3-D
+  analysis and synthesis use compensated f32 accumulation, which restores the
+  qualified W7-X stage trajectory despite WebGPU's lack of f64;
 - the existing JSON mapper, validator, boundary folder, and resolution logic
   compiled into Wasm, with production-shaped axisymmetric cold-start and
   radial-profile initialization;
@@ -123,7 +125,14 @@ browser-validated:
   descent. The browser and native CUDA mixed-float paths agree at effective
   iteration 3 on `(FSQR,FSQZ,FSQL) = (1.141e+01, 7.079e+00, 1.012e-01)`;
 - a selectable `?solve=w7x` browser mode that runs the complete three-stage
-  W7-X multigrid path and publishes the same schema-v8 result form;
+  W7-X multigrid path and publishes the same schema-v8 result form; at the
+  qualified mixed-float tolerance, both native CUDA and WebGPU converge in
+  `82 -> 30 -> 20` effective iterations (132 total), with WebGPU's final
+  residual `(7.346e-03, 2.026e-03, 1.347e-05)`;
+- cached immutable toroidal basis buffers plus persistent, grow-only operator
+  scratch/readback buffers and compute pipelines; this removes hot-loop shader
+  recompilation/allocation and keeps the complete high-resolution W7-X run
+  stable on Chromium's software adapter;
 - schema-v8 native binary publication into Emscripten MEMFS, an in-Wasm
   writer/reader round-trip check, and a browser Blob download link; the
   downloaded `CUMES001` file is accepted by the native reader as `ns=55`,
@@ -137,9 +146,10 @@ browser-validated:
 
 The default self-test parses both embedded inputs, runs a controller-complete
 two-pass W7-X slice, then converges all three Solovev stages. The separate W7-X
-solve entry point is integrated end to end; a full browser convergence run has
-not yet been performance-qualified on this host because Chromium exposes only
-its software WebGPU adapter here.
+solve entry point is integrated and convergence-qualified end to end on
+Chromium SwiftShader. Hardware WebGPU performance remains unqualified on this
+host because its headless browser cannot acquire the NVIDIA Vulkan adapter;
+native CUDA verification does use the TITAN Xp.
 
 ## Build and run
 
@@ -177,6 +187,9 @@ is a direct DFT.
 
 The page also publishes `data-cumes-webgpu="pass|fail"` and a diagnostic
 `data-cumes-detail` on `<body>` so browser automation can inspect the result.
+Long W7-X runs additionally publish the current stage, iteration, FSQR, and
+last-progress timestamp as `data-cumes-stage`, `data-cumes-iteration`,
+`data-cumes-fsqr`, and `data-cumes-last-progress-at`.
 
 ## Precision policy
 
@@ -187,8 +200,10 @@ Core WGSL exposes `f32` but not `f64`. Consequently:
 - CUDA Class A byte identity is not a WebGPU acceptance criterion;
 - operator acceptance uses the existing float tolerances and CPU-reference
   comparisons;
-- full-solver inputs will need `ftol_array >= 1e-6`, consistent with the CUDA
-  mixed-float policy.
+- full-solver tolerances must be achievable in mixed-float. Solovev qualifies
+  at `1e-6`; prescribed-current W7-X has a measured CUDA float floor near
+  `3e-3`, so both the CUDA float capture and the browser's selected W7-X solve
+  use `1e-2`.
 
 The host uses double for the invariant residual reduction after mapped WebGPU
 readback. Each squared residual pair is evaluated in `f32` before the sum is
@@ -217,15 +232,13 @@ source-level macro layer.
 
 The remaining qualification and optimization order is:
 
-1. reusable buffer/pipeline/bind-group ownership and a stage command encoder;
-2. persistent spectral/real-space stage storage and profile GPU buffers (input
-   parsing, cold seeding, and host profile evaluation are complete);
-3. persistent stage-owned GPU buffers and batched command encoding (the
-   controller-complete fixed-boundary axisymmetric stage loop and its
-   relaxed-float coarse Solovev gate are complete);
-4. qualify a complete W7-X convergence run on a hardware WebGPU adapter;
-5. optimize the direct DFT with a WebGPU FFT and persistent command resources;
-6. only then integrate free-boundary/NESTOR support.
+1. qualify the complete W7-X convergence run on a hardware WebGPU adapter;
+2. replace the compensated direct DFT with a WebGPU FFT;
+3. retain spectral/real-space fields on device across adjacent operators and
+   batch each device-only segment into one command submission (buffers and
+   pipelines are persistent today, but mapped host results still connect the
+   operator APIs);
+4. integrate free-boundary/NESTOR support.
 
 Free-boundary support is last because `deps/vacuum-field` is itself CUDA-based
 and includes host/device coupling beyond the main operator DAG. NetCDF/HDF5 and
@@ -246,4 +259,5 @@ fields, multigrid history, provenance, and the normalized input record.
   stages (operator tolerances `4e-6` through `1e-3`, solver tolerance `1e-6`).
 - W7-X integration gate: the browser controller trajectory through effective
   iteration 3 must match native CUDA mixed-float, including the invariant
-  residual triple.
+  residual triple. The selected `?solve=w7x` path uses the CUDA mixed-float
+  qualification tolerance (`1e-2`) for all three stages.

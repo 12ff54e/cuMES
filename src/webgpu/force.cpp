@@ -54,11 +54,7 @@ wgpu::Buffer buffer(const wgpu::Device& d,
                     std::uint64_t n,
                     wgpu::BufferUsage u,
                     const char* label) {
-    wgpu::BufferDescriptor x{};
-    x.label = label;
-    x.size = n;
-    x.usage = u;
-    return d.CreateBuffer(&x);
+    return detail::cached_buffer(d, n, u, label);
 }
 struct Dispatch {
     AxisymmetricForceCallback callback;

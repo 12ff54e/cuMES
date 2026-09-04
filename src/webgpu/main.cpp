@@ -81,6 +81,11 @@ EM_JS(int, requested_w7x_solve, (), {
 #define CUMES_PRECISION_FLAGS ""
 #endif
 
+// The CUDA mixed-float W7-X trajectory has an empirically qualified residual
+// floor near 3e-3. Its regression capture therefore uses 1e-2; WebGPU is f32
+// and must use the same achievable solver contract.
+constexpr double W7X_MIXED_FLOAT_TOLERANCE = 1.0e-2;
+
 std::string message_text(wgpu::StringView message) {
     return message.length == 0 ? std::string{}
                                : std::string(message.data, message.length);
@@ -1165,8 +1170,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             for (auto& stage : parsed.spec.stages) {
-                stage.tolerance = std::max(
-                    stage.tolerance, cumes::tolerance_floor(options.precision));
+                stage.tolerance =
+                    std::max(stage.tolerance, W7X_MIXED_FLOAT_TOLERANCE);
             }
             auto validated = cumes::validate(std::move(parsed.spec), options);
             if (!validated.has_value()) {
@@ -1189,8 +1194,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             reset_stage_state();
             std::printf(
                 "running complete W7-X fixed-boundary multigrid solve "
-                "(%zu stages)\n",
-                problem_->stage_shapes().size());
+                "(%zu stages, mixed-float ftol=%.0e)\n",
+                problem_->stage_shapes().size(), W7X_MIXED_FLOAT_TOLERANCE);
             run_stage_inverse();
         } catch (const std::exception& error) {
             finish(false,

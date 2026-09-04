@@ -43,11 +43,7 @@ wgpu::Buffer make_buffer(const wgpu::Device& d,
                          std::uint64_t size,
                          wgpu::BufferUsage usage,
                          const char* label) {
-    wgpu::BufferDescriptor x{};
-    x.label = label;
-    x.size = size;
-    x.usage = usage;
-    return d.CreateBuffer(&x);
+    return detail::cached_buffer(d, size, usage, label);
 }
 void accumulate_norms(ResidualDecompositionResult& out,
                       int ns,
