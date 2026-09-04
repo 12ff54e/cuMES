@@ -40,6 +40,10 @@ browser-validated:
 - odd-m residual decomposition, the m=1 force gauge, fixed-boundary LCFS norm
   exclusion, and CUDA-compatible `f32` products accumulated into `double` host
   residual sums;
+- the later-pass axisymmetric spectral-condensation constraint: LCFS-volume
+  reference reset, current-preconditioner `tcon` refresh, `gConEff`, direct
+  poloidal bandpass, MHD-force injection, `frcon`/`fzcon`, and constrained
+  residual projection;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -122,9 +126,9 @@ The recommended dependency order is:
    parsing, cold seeding, and host profile evaluation are complete);
 3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
    base geometry are complete);
-4. later-pass constraint-force, preconditioner, and descent shaders (the core
-   axisymmetric MHD force and invariant residual decomposition are complete),
-   each compared with the existing CPU/CUDA references;
+4. preconditioner and descent shaders (the core axisymmetric MHD force,
+   later-pass constraint force, and invariant residual decomposition are
+   complete), each compared with the existing CPU/CUDA references;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;
@@ -145,6 +149,7 @@ virtual filesystem or a JavaScript download adapter.
   prolongation modes and the complete direct axisymmetric transform path, maps
   results, compares every value with the C++ references, then parses and
   initializes the embedded Solovev case and evaluates its half-grid geometry
-  (tolerances `4e-6` through `2e-4`).
+  plus first- and later-pass force/residual paths (tolerances `4e-6` through
+  `1e-3`).
 - future operator gates: compare full typed views against existing test
   references before wiring the operator into the stage DAG.

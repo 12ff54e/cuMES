@@ -14,7 +14,9 @@ staggered half-grid geometry, magnetic field, total pressure, and axisymmetric
 MHD force through spectral residual projection, but is not yet a complete
 equilibrium solver. The projected forces are now decomposed into the solver's
 invariant residual basis and reduced with CUDA-compatible float products and
-double host accumulation. See
+double host accumulation. The later-pass axisymmetric constraint refresh,
+spectral bandpass, force injection, and constrained residual projection are
+also browser-validated. See
 [the WebGPU port status](docs/webgpu-port.md).
 
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)

@@ -1,5 +1,6 @@
 #include "cumes/config/json_reader.hpp"
 #include "cumes/webgpu/axisymmetric.hpp"
+#include "cumes/webgpu/constraint.hpp"
 #include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
@@ -576,6 +577,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         "  parsed Solovev seed+profiles+inverse: PASS "
                         "(max |GPU-CPU| = %.3e)\n",
                         static_cast<double>(max_error));
+                    self->solovev_r_con_ = std::move(actual.r_con);
+                    self->solovev_z_con_ = std::move(actual.z_con);
                     self->run_base_geometry(std::move(actual.geometry));
                 });
         } catch (const std::exception& error) {
@@ -830,9 +833,129 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  decomposed residual+double norms: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
-                self->finish(true,
-                             "parsed Solovev first-pass DAG through invariant "
-                             "decomposed residual norms verified");
+                self->run_axisymmetric_constraint();
+            });
+    }
+
+    void run_axisymmetric_constraint() {
+        constraint_case_.ns = initialized_stage_.ns;
+        constraint_case_.mpol = initialized_stage_.mpol;
+        constraint_case_.ntheta = initialized_stage_.ntheta;
+        constraint_case_.delta_s = initialized_stage_.profiles.delta_s;
+        constraint_case_.tcon0 = 1.0F;
+        constraint_case_.reset_reference = true;
+        constraint_case_.refresh_preconditioner = true;
+        constraint_case_.geometry = base_geometry_case_.geometry;
+        constraint_case_.r_con = solovev_r_con_;
+        constraint_case_.z_con = solovev_z_con_;
+        const std::size_t points =
+            static_cast<std::size_t>(constraint_case_.ns) *
+            constraint_case_.ntheta;
+        constraint_case_.r_con0.assign(points, 0.0F);
+        constraint_case_.z_con0.assign(points, 0.0F);
+        constraint_case_.tcon.assign(constraint_case_.ns, 0.0F);
+        constraint_case_.ard.resize(2 * constraint_case_.ns);
+        constraint_case_.azd.resize(2 * constraint_case_.ns);
+        for (int surface = 0; surface < constraint_case_.ns; ++surface) {
+            constraint_case_.ard[2 * surface] =
+                0.25F + 0.03F * static_cast<float>(surface);
+            constraint_case_.ard[2 * surface + 1] = 0.0F;
+            constraint_case_.azd[2 * surface] =
+                0.30F + 0.02F * static_cast<float>(surface);
+            constraint_case_.azd[2 * surface + 1] = 0.0F;
+        }
+        constraint_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        constraint_case_.force_fields.assign(
+            solver_forward_case_.fields.begin(),
+            solver_forward_case_.fields.begin() + 10 * points);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_constraint(
+            device_, constraint_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricConstraintResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_constraint_reference(
+                        self->constraint_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.fields, expected.fields);
+                compare(actual.r_con0, expected.r_con0);
+                compare(actual.z_con0, expected.z_con0);
+                compare(actual.tcon, expected.tcon);
+                compare(actual.g_con_eff, expected.g_con_eff);
+                compare(actual.g_con, expected.g_con);
+                const bool active =
+                    std::any_of(actual.g_con.begin(), actual.g_con.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !active || max_error > 1.0e-3F) {
+                    self->finish(false, "axisymmetric constraint mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  Solovev constraint refresh+force: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_constraint_forward(std::move(actual.fields));
+            });
+    }
+
+    void run_constraint_forward(std::vector<float> fields) {
+        constraint_forward_case_.ns = initialized_stage_.ns;
+        constraint_forward_case_.mpol = initialized_stage_.mpol;
+        constraint_forward_case_.ntheta = initialized_stage_.ntheta;
+        constraint_forward_case_.include_lcfs = false;
+        constraint_forward_case_.fields = std::move(fields);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_forward(
+            device_, constraint_forward_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_forward_reference(
+                        self->constraint_forward_case_);
+                float max_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+                        valid &= std::isfinite(actual.residual[i]);
+                    }
+                }
+                if (!valid || max_error > 5.0e-4F) {
+                    self->finish(false,
+                                 "constraint residual projection mismatch: " +
+                                     std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  constrained spectral residual projection: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->finish(
+                    true,
+                    "parsed Solovev DAG through refreshed constraint force "
+                    "and invariant residual verified");
             });
     }
 
@@ -858,6 +981,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricForceCase force_case_;
     cumes::webgpu::AxisymmetricForwardCase solver_forward_case_;
     cumes::webgpu::ResidualDecompositionCase residual_case_;
+    cumes::webgpu::AxisymmetricConstraintCase constraint_case_;
+    cumes::webgpu::AxisymmetricForwardCase constraint_forward_case_;
+    std::vector<float> solovev_r_con_;
+    std::vector<float> solovev_z_con_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;
