@@ -73,7 +73,7 @@ Optimization targets and integration applications are maintained in the meow
 repository. A source-tree integration build remains available by configuring
 cuMES with `-DCUMES_MEOW_SOURCE_DIR=/path/to/meow`; this asks meow to build its
 cuMES-backed examples without making cuMES depend on optimizer policy. See
-[`docs/library-api-plan.md`](docs/library-api-plan.md) for the ownership and
+[`docs/library-api.md`](docs/library-api.md) for the ownership and
 data-publication contract.
 
 `SolveOutcome` carries the complete equilibrium snapshot plus converged
