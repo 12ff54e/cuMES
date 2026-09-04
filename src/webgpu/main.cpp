@@ -1,6 +1,7 @@
 #include "cumes/config/json_reader.hpp"
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/constraint.hpp"
+#include "cumes/webgpu/descent.hpp"
 #include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
@@ -1151,10 +1152,77 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  Solovev preconditioned residual: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_scaled_error));
+                self->run_descent(std::move(actual.residual));
+            });
+    }
+
+    void run_descent(std::vector<float> residual) {
+        descent_case_.ns = initialized_stage_.ns;
+        descent_case_.mpol = initialized_stage_.mpol;
+        descent_case_.move_lcfs = false;
+        descent_case_.delta_t = 0.9F;
+        descent_case_.damping_b1 = static_cast<float>(1.0 - 0.075);
+        descent_case_.damping_fac = static_cast<float>(1.0 / (1.0 + 0.075));
+        descent_case_.state = initialized_stage_.state;
+        descent_case_.velocity.assign(descent_case_.state.size(), 0.0F);
+        descent_case_.residual = std::move(residual);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_descent(
+            device_, descent_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricDescentResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_descent_reference(
+                        self->descent_case_);
+                float max_scaled_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_scaled_error, &valid](
+                                         const auto& gpu, const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_scaled_error = std::max(
+                            max_scaled_error, std::abs(gpu[i] - cpu[i]) /
+                                                  (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.state, expected.state);
+                compare(actual.velocity, expected.velocity);
+                const std::size_t family_values =
+                    static_cast<std::size_t>(self->descent_case_.ns) *
+                    self->descent_case_.mpol;
+                bool fixed_lcfs = true;
+                for (const int component : {0, 1, 3, 4}) {
+                    for (int mode = 0; mode < self->descent_case_.mpol;
+                         ++mode) {
+                        const std::size_t lcfs =
+                            static_cast<std::size_t>(component) *
+                                family_values +
+                            static_cast<std::size_t>(mode) *
+                                self->descent_case_.ns +
+                            self->descent_case_.ns - 1;
+                        fixed_lcfs &= actual.state[lcfs] ==
+                                      self->descent_case_.state[lcfs];
+                    }
+                }
+                if (!valid || !fixed_lcfs || max_scaled_error > 2.0e-5F) {
+                    self->finish(false, "descent mismatch: " +
+                                            std::to_string(max_scaled_error));
+                    return;
+                }
+                std::printf(
+                    "  Solovev accelerated descent: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_scaled_error));
                 self->finish(
                     true,
-                    "parsed Solovev DAG through constraint and radial/lambda "
-                    "preconditioning verified");
+                    "parsed Solovev pass through constraint, preconditioning, "
+                    "and accelerated descent verified");
             });
     }
 
@@ -1190,6 +1258,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::ResidualDecompositionCase constraint_residual_case_;
     cumes::webgpu::AxisymmetricPreconditionerApplyCase
         preconditioner_apply_case_;
+    cumes::webgpu::AxisymmetricDescentCase descent_case_;
     std::vector<float> solovev_r_con_;
     std::vector<float> solovev_z_con_;
     std::size_t case_index_ = 0;

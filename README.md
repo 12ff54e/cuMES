@@ -20,7 +20,9 @@ also browser-validated, using radial preconditioner elements assembled from
 the live Solovev geometry and magnetic field. The mode-major R/Z tridiagonal
 matrices, pivot scales, radial boundary gates, and lambda diagonal are also
 assembled and applied in WebGPU, including m=1 force scaling and guarded
-two-right-hand-side Thomas solves. See
+two-right-hand-side Thomas solves. The resulting residual drives a validated
+Garabedian accelerated-descent update with fixed-boundary and gauge contracts.
+See
 [the WebGPU port status](docs/webgpu-port.md).
 
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)

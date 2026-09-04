@@ -55,6 +55,9 @@ browser-validated:
   pivot guards, paired R/Z Thomas solves, axis boundary zeroing, and lambda
   diagonal scaling; the browser gate applies it to the constrained Solovev
   residual and requires zero pivot breakdowns;
+- Garabedian accelerated descent for all six spectral families, including
+  physical/decomposed basis conversion, the m=1 undone-gauge update, rigid R/Z
+  LCFS behavior, free lambda LCFS behavior, and velocity persistence;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -137,10 +140,9 @@ The recommended dependency order is:
    parsing, cold seeding, and host profile evaluation are complete);
 3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
    base geometry are complete);
-4. descent and controller shaders (preconditioner assembly/application, the
-   core axisymmetric MHD force, later-pass constraint force, and invariant
-   residual decomposition are complete), each compared with the existing
-   CPU/CUDA references;
+4. controller/checkpoint orchestration (the operator DAG through accelerated
+   descent is complete), then persistent stage-owned GPU buffers and batched
+   command encoding;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;
