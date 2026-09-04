@@ -251,6 +251,58 @@ const GpuBasis& cached_gpu_basis(const wgpu::Device& device,
     return position->second;
 }
 
+const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
+                                           int mpol,
+                                           int ntor,
+                                           int ntheta,
+                                           int nzeta) {
+    static std::map<BasisKey, GpuBasis> cache;
+    const BasisKey key{mpol, ntor, ntheta, nzeta};
+    auto [position, inserted] = cache.try_emplace(key);
+    if (inserted) {
+        std::vector<float> basis(2 * static_cast<std::size_t>(mpol) * ntheta +
+                                 2 * static_cast<std::size_t>(ntor + 1) *
+                                     nzeta);
+        const std::size_t theta_plane = static_cast<std::size_t>(mpol) * ntheta;
+        for (int m = 0; m < mpol; ++m) {
+            for (int theta_index = 0; theta_index < ntheta; ++theta_index) {
+                const float theta = 2.0F * std::numbers::pi_v<float> *
+                                    static_cast<float>(theta_index) /
+                                    static_cast<float>(ntheta);
+                const std::size_t index =
+                    static_cast<std::size_t>(m) * ntheta + theta_index;
+                basis[index] = std::cos(static_cast<float>(m) * theta);
+                basis[theta_plane + index] =
+                    std::sin(static_cast<float>(m) * theta);
+            }
+        }
+        const std::size_t zeta_start = 2 * theta_plane;
+        const std::size_t zeta_plane =
+            static_cast<std::size_t>(ntor + 1) * nzeta;
+        for (int n = 0; n <= ntor; ++n) {
+            for (int zeta_index = 0; zeta_index < nzeta; ++zeta_index) {
+                const float zeta = 2.0F * std::numbers::pi_v<float> *
+                                   static_cast<float>(zeta_index) /
+                                   static_cast<float>(nzeta);
+                const std::size_t index =
+                    static_cast<std::size_t>(n) * nzeta + zeta_index;
+                basis[zeta_start + index] =
+                    std::cos(static_cast<float>(n) * zeta);
+                basis[zeta_start + zeta_plane + index] =
+                    std::sin(static_cast<float>(n) * zeta);
+            }
+        }
+        position->second.bytes = basis.size() * sizeof(float);
+        position->second.buffer = create_uncached_buffer(
+            device, position->second.bytes,
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            "cuMES cached separable toroidal basis");
+        device.GetQueue().WriteBuffer(position->second.buffer, 0, basis.data(),
+                                      position->second.bytes);
+    }
+    return position->second;
+}
+
 struct DispatchState {
     ToroidalInverseCallback callback;
     wgpu::Buffer result_buffer;
@@ -369,8 +421,8 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         callback("cannot load embedded /shaders/toroidal_inverse.wgsl", {});
         return;
     }
-    const auto& gpu_basis = cached_gpu_basis(device, input.mpol, input.ntor,
-                                             input.ntheta, input.nzeta);
+    const auto& gpu_basis = cached_separable_gpu_basis(
+        device, input.mpol, input.ntor, input.ntheta, input.nzeta);
     const std::size_t n_z_n_t =
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t total_points =
@@ -379,6 +431,9 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     const std::size_t state_bytes = input.state.size() * sizeof(float);
     const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t result_bytes = result_values * sizeof(float);
+    const std::size_t intermediate_values =
+        12 * static_cast<std::size_t>(input.ns) * input.mpol * input.nzeta;
+    const std::size_t intermediate_bytes = intermediate_values * sizeof(float);
     const auto state_buffer =
         create_buffer(device, state_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
@@ -387,6 +442,9 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         create_buffer(device, result_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                       "cuMES toroidal inverse result");
+    const auto intermediate_buffer =
+        create_buffer(device, intermediate_bytes, wgpu::BufferUsage::Storage,
+                      "cuMES toroidal inverse intermediate");
     const auto readback_buffer =
         create_buffer(device, result_bytes,
                       wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
@@ -396,9 +454,12 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal inverse parameters");
 
-    const auto& pipeline = detail::cached_compute_pipeline(
-        device, "toroidal-inverse", shader_text,
-        "cuMES direct toroidal inverse pipeline", "main");
+    const auto& toroidal_pipeline = detail::cached_compute_pipeline(
+        device, "toroidal-inverse-toroidal", shader_text,
+        "cuMES separable toroidal inverse pipeline", "toroidal_stage");
+    const auto& poloidal_pipeline = detail::cached_compute_pipeline(
+        device, "toroidal-inverse-poloidal", shader_text,
+        "cuMES separable poloidal inverse pipeline", "poloidal_stage");
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(input.mpol),
@@ -412,24 +473,47 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     queue.WriteBuffer(state_buffer, 0, input.state.data(), state_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
 
-    const auto layout = pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry entries[] = {
+    const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
+    const wgpu::BindGroupEntry toroidal_entries[] = {
         {nullptr, 0, state_buffer, 0, state_bytes, nullptr, nullptr},
+        {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
+        {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
+        {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
+         nullptr},
+    };
+    wgpu::BindGroupDescriptor toroidal_bind_descriptor{};
+    toroidal_bind_descriptor.label = "cuMES toroidal inverse first bindings";
+    toroidal_bind_descriptor.layout = toroidal_layout;
+    toroidal_bind_descriptor.entryCount = std::size(toroidal_entries);
+    toroidal_bind_descriptor.entries = toroidal_entries;
+    const auto toroidal_bind_group =
+        device.CreateBindGroup(&toroidal_bind_descriptor);
+    const auto poloidal_layout = poloidal_pipeline.GetBindGroupLayout(0);
+    const wgpu::BindGroupEntry poloidal_entries[] = {
         {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
+        {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
+         nullptr},
     };
-    wgpu::BindGroupDescriptor bind_descriptor{};
-    bind_descriptor.label = "cuMES toroidal inverse bindings";
-    bind_descriptor.layout = layout;
-    bind_descriptor.entryCount = std::size(entries);
-    bind_descriptor.entries = entries;
-    const auto bind_group = device.CreateBindGroup(&bind_descriptor);
+    wgpu::BindGroupDescriptor poloidal_bind_descriptor{};
+    poloidal_bind_descriptor.label = "cuMES toroidal inverse second bindings";
+    poloidal_bind_descriptor.layout = poloidal_layout;
+    poloidal_bind_descriptor.entryCount = std::size(poloidal_entries);
+    poloidal_bind_descriptor.entries = poloidal_entries;
+    const auto poloidal_bind_group =
+        device.CreateBindGroup(&poloidal_bind_descriptor);
     const auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     const auto pass = encoder.BeginComputePass(&pass_descriptor);
-    pass.SetPipeline(pipeline);
-    pass.SetBindGroup(0, bind_group);
+    pass.SetPipeline(toroidal_pipeline);
+    pass.SetBindGroup(0, toroidal_bind_group);
+    const std::uint32_t intermediate_points = static_cast<std::uint32_t>(
+        static_cast<std::size_t>(input.ns) * input.mpol * input.nzeta);
+    pass.DispatchWorkgroups((intermediate_points + WORKGROUP_SIZE - 1) /
+                            WORKGROUP_SIZE);
+    pass.SetPipeline(poloidal_pipeline);
+    pass.SetBindGroup(0, poloidal_bind_group);
     pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(total_points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);

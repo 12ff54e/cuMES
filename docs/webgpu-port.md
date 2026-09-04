@@ -38,6 +38,11 @@ browser-validated:
   avoiding adapter-dependent WGSL transcendental approximations; direct 3-D
   analysis and synthesis use compensated f32 accumulation, which stabilizes
   the qualified W7-X solve despite WebGPU's lack of f64;
+- a two-dispatch separable 3-D inverse transform: a short compensated toroidal
+  synthesis feeds the poloidal synthesis through persistent storage. For the
+  W7-X shape this replaces a 156-term mode loop per real-space point with
+  13-term toroidal and 12-term poloidal loops, while improving the hardware
+  conformance error from `2.861e-06` to `1.431e-06`;
 - the existing JSON mapper, validator, boundary folder, and resolution logic
   compiled into Wasm, with production-shaped axisymmetric cold-start and
   radial-profile initialization;
@@ -128,8 +133,8 @@ browser-validated:
 - a selectable `?solve=w7x` browser mode that runs the complete three-stage
   W7-X multigrid path and publishes the same schema-v8 result form; at the
   qualified mixed-float tolerance, the TITAN Xp Vulkan WebGPU path converges in
-  `82 -> 36 -> 134` effective iterations (252 total), with final residual
-  `(9.827e-03, 2.093e-03, 3.748e-06)` and an 11,809,231-byte result;
+  `82 -> 30 -> 31` effective iterations (143 total), with final residual
+  `(9.843e-03, 2.198e-03, 7.635e-06)` and an 11,809,203-byte result;
 - cached immutable toroidal basis buffers plus persistent, grow-only operator
   scratch/readback buffers and compute pipelines; this removes hot-loop shader
   recompilation/allocation and keeps the complete high-resolution W7-X run
@@ -237,7 +242,9 @@ source-level macro layer.
 
 The remaining optimization and feature order is:
 
-1. replace the compensated direct DFT with a WebGPU FFT;
+1. apply the separable transform strategy to the remaining forward/dealias
+   direct DFTs, using a WebGPU FFT where the configured spectrum makes it a
+   measured win;
 2. retain spectral/real-space fields on device across adjacent operators and
    batch each device-only segment into one command submission (buffers and
    pipelines are persistent today, but mapped host results still connect the
