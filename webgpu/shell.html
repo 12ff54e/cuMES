@@ -32,11 +32,20 @@
         append(line);
         return;
       }
-      const progress = line.match(/host controller: PASS \(iter=(\d+)/);
+      const progress = line.match(
+        /host controller: PASS \(iter=(\d+), FSQR=([^,]+)/);
       if (progress) {
         const iteration = Number(progress[1]);
+        document.body.dataset.cumesIteration = progress[1];
+        document.body.dataset.cumesFsqr = progress[2];
+        document.body.dataset.cumesLastProgressAt = String(Date.now());
         if (iteration <= 3 || iteration % 50 === 0) append(line);
         return;
+      }
+      const stage = line.match(/stage (\d+)\/(\d+) converged/);
+      if (stage) {
+        document.body.dataset.cumesStage = stage[1];
+        document.body.dataset.cumesStageCount = stage[2];
       }
       if (/running complete|stage .*converged|stage prolongation|published|self-test|FATAL/.test(line)) {
         append(line);

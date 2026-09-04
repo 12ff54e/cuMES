@@ -17,6 +17,7 @@ namespace {
 
 constexpr std::uint32_t WORKGROUP_SIZE = 128;
 constexpr std::size_t RESULT_FIELD_COUNT = GEOMETRY_PARITY_FIELD_COUNT + 2;
+using BasisKey = std::array<int, 4>;
 
 struct ShaderParams {
     std::uint32_t ns;
@@ -107,7 +108,6 @@ const std::vector<float>& cached_basis(int mpol,
                                        int ntor,
                                        int ntheta,
                                        int nzeta) {
-    using BasisKey = std::array<int, 4>;
     static std::map<BasisKey, std::vector<float>> cache;
     const BasisKey key{mpol, ntor, ntheta, nzeta};
     auto [position, inserted] = cache.try_emplace(key);
@@ -207,6 +207,55 @@ wgpu::Buffer create_buffer(const wgpu::Device& device,
     descriptor.size = size;
     descriptor.usage = usage;
     return device.CreateBuffer(&descriptor);
+}
+
+struct GpuBasis {
+    wgpu::Buffer buffer;
+    std::size_t bytes = 0;
+};
+
+const GpuBasis& cached_gpu_basis(const wgpu::Device& device,
+                                 int mpol,
+                                 int ntor,
+                                 int ntheta,
+                                 int nzeta) {
+    static std::map<BasisKey, GpuBasis> cache;
+    const BasisKey key{mpol, ntor, ntheta, nzeta};
+    auto [position, inserted] = cache.try_emplace(key);
+    if (inserted) {
+        const auto& basis = cached_basis(mpol, ntor, ntheta, nzeta);
+        position->second.bytes = basis.size() * sizeof(float);
+        position->second.buffer = create_buffer(
+            device, position->second.bytes,
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            "cuMES cached toroidal basis");
+        device.GetQueue().WriteBuffer(position->second.buffer, 0, basis.data(),
+                                      position->second.bytes);
+    }
+    return position->second;
+}
+
+const wgpu::ComputePipeline& cached_pipeline(const wgpu::Device& device,
+                                             const std::string& key,
+                                             const std::string& shader_text,
+                                             const char* label,
+                                             const char* entry_point) {
+    static std::map<std::string, wgpu::ComputePipeline> cache;
+    auto [position, inserted] = cache.try_emplace(key);
+    if (inserted) {
+        wgpu::ShaderSourceWGSL wgsl{};
+        wgsl.code = shader_text.c_str();
+        wgpu::ShaderModuleDescriptor shader_descriptor{};
+        shader_descriptor.label = label;
+        shader_descriptor.nextInChain = &wgsl;
+        const auto shader = device.CreateShaderModule(&shader_descriptor);
+        wgpu::ComputePipelineDescriptor pipeline_descriptor{};
+        pipeline_descriptor.label = label;
+        pipeline_descriptor.compute.module = shader;
+        pipeline_descriptor.compute.entryPoint = entry_point;
+        position->second = device.CreateComputePipeline(&pipeline_descriptor);
+    }
+    return position->second;
 }
 
 struct DispatchState {
@@ -320,23 +369,20 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         callback("cannot load embedded /shaders/toroidal_inverse.wgsl", {});
         return;
     }
-    const std::vector<float>& basis = make_basis(input);
+    const auto& gpu_basis = cached_gpu_basis(device, input.mpol, input.ntor,
+                                             input.ntheta, input.nzeta);
     const std::size_t n_z_n_t =
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t total_points =
         static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t result_values = RESULT_FIELD_COUNT * total_points;
     const std::size_t state_bytes = input.state.size() * sizeof(float);
-    const std::size_t basis_bytes = basis.size() * sizeof(float);
+    const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t result_bytes = result_values * sizeof(float);
     const auto state_buffer =
         create_buffer(device, state_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal state");
-    const auto basis_buffer =
-        create_buffer(device, basis_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-                      "cuMES toroidal basis");
     const auto result_buffer =
         create_buffer(device, result_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
@@ -350,17 +396,9 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal inverse parameters");
 
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.label = "cuMES direct toroidal inverse";
-    shader_descriptor.nextInChain = &wgsl;
-    const auto shader = device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = "cuMES direct toroidal inverse pipeline";
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    const auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline =
+        cached_pipeline(device, "toroidal-inverse", shader_text,
+                        "cuMES direct toroidal inverse pipeline", "main");
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(input.mpol),
@@ -372,13 +410,12 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                               static_cast<std::uint32_t>(total_points)};
     const auto queue = device.GetQueue();
     queue.WriteBuffer(state_buffer, 0, input.state.data(), state_bytes);
-    queue.WriteBuffer(basis_buffer, 0, basis.data(), basis_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
 
     const auto layout = pipeline.GetBindGroupLayout(0);
     const wgpu::BindGroupEntry entries[] = {
         {nullptr, 0, state_buffer, 0, state_bytes, nullptr, nullptr},
-        {nullptr, 1, basis_buffer, 0, basis_bytes, nullptr, nullptr},
+        {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
     };
@@ -540,7 +577,8 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         callback("cannot load embedded /shaders/toroidal_forward.wgsl", {});
         return;
     }
-    const std::vector<float>& basis = make_basis(input);
+    const auto& gpu_basis = cached_gpu_basis(device, input.mpol, input.ntor,
+                                             input.ntheta, input.nzeta);
     const std::size_t mnmax =
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
     const std::size_t n_z_n_t =
@@ -548,16 +586,12 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
     const std::size_t result_values =
         SPECTRAL_COMPONENT_COUNT * mnmax * input.ns;
     const std::size_t fields_bytes = input.fields.size() * sizeof(float);
-    const std::size_t basis_bytes = basis.size() * sizeof(float);
+    const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t result_bytes = result_values * sizeof(float);
     const auto fields_buffer =
         create_buffer(device, fields_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal forces");
-    const auto basis_buffer =
-        create_buffer(device, basis_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-                      "cuMES toroidal forward basis");
     const auto result_buffer =
         create_buffer(device, result_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
@@ -571,17 +605,9 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal forward parameters");
 
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.label = "cuMES direct toroidal forward";
-    shader_descriptor.nextInChain = &wgsl;
-    const auto shader = device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = "cuMES direct toroidal forward pipeline";
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    const auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline =
+        cached_pipeline(device, "toroidal-forward", shader_text,
+                        "cuMES direct toroidal forward pipeline", "main");
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(input.mpol),
                               static_cast<std::uint32_t>(input.ntor),
@@ -592,12 +618,11 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
                               static_cast<std::uint32_t>(input.include_lcfs)};
     const auto queue = device.GetQueue();
     queue.WriteBuffer(fields_buffer, 0, input.fields.data(), fields_bytes);
-    queue.WriteBuffer(basis_buffer, 0, basis.data(), basis_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     const auto layout = pipeline.GetBindGroupLayout(0);
     const wgpu::BindGroupEntry entries[] = {
         {nullptr, 0, fields_buffer, 0, fields_bytes, nullptr, nullptr},
-        {nullptr, 1, basis_buffer, 0, basis_bytes, nullptr, nullptr},
+        {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
     };
@@ -713,7 +738,8 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
         callback("cannot load embedded /shaders/toroidal_dealias.wgsl", {});
         return;
     }
-    const std::vector<float>& basis = make_basis(input);
+    const auto& gpu_basis = cached_gpu_basis(device, input.mpol, input.ntor,
+                                             input.ntheta, input.nzeta);
     std::vector<float> profiles;
     profiles.reserve(input.tcon.size() + input.faccon.size());
     profiles.insert(profiles.end(), input.tcon.begin(), input.tcon.end());
@@ -726,7 +752,7 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
         2 * input.ns * band_modes * (input.ntor + 1);
     const std::size_t input_bytes = input.g_con_eff.size() * sizeof(float);
     const std::size_t profile_bytes = profiles.size() * sizeof(float);
-    const std::size_t basis_bytes = basis.size() * sizeof(float);
+    const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t coefficient_bytes = coefficient_values * sizeof(float);
     const std::size_t result_bytes = points * sizeof(float);
     const auto input_buffer =
@@ -737,10 +763,6 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
         create_buffer(device, profile_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal constraint profiles");
-    const auto basis_buffer =
-        create_buffer(device, basis_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-                      "cuMES toroidal constraint basis");
     const auto coefficient_buffer =
         create_buffer(device, coefficient_bytes, wgpu::BufferUsage::Storage,
                       "cuMES toroidal constraint coefficients");
@@ -757,21 +779,12 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal dealias parameters");
 
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.label = "cuMES direct toroidal dealias";
-    shader_descriptor.nextInChain = &wgsl;
-    const auto shader = device.CreateShaderModule(&shader_descriptor);
-    const auto make_pipeline = [&](const char* entry_point) {
-        wgpu::ComputePipelineDescriptor descriptor{};
-        descriptor.label = entry_point;
-        descriptor.compute.module = shader;
-        descriptor.compute.entryPoint = entry_point;
-        return device.CreateComputePipeline(&descriptor);
-    };
-    const auto analyze_pipeline = make_pipeline("analyze");
-    const auto synthesize_pipeline = make_pipeline("synthesize");
+    const auto& analyze_pipeline =
+        cached_pipeline(device, "toroidal-dealias-analyze", shader_text,
+                        "cuMES toroidal dealias analysis pipeline", "analyze");
+    const auto& synthesize_pipeline = cached_pipeline(
+        device, "toroidal-dealias-synthesize", shader_text,
+        "cuMES toroidal dealias synthesis pipeline", "synthesize");
     const DealiasParams params{static_cast<std::uint32_t>(input.ns),
                                static_cast<std::uint32_t>(input.mpol),
                                static_cast<std::uint32_t>(input.ntor),
@@ -783,13 +796,12 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
     const auto queue = device.GetQueue();
     queue.WriteBuffer(input_buffer, 0, input.g_con_eff.data(), input_bytes);
     queue.WriteBuffer(profile_buffer, 0, profiles.data(), profile_bytes);
-    queue.WriteBuffer(basis_buffer, 0, basis.data(), basis_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     const auto analyze_layout = analyze_pipeline.GetBindGroupLayout(0);
     const wgpu::BindGroupEntry analyze_entries[] = {
         {nullptr, 0, input_buffer, 0, input_bytes, nullptr, nullptr},
         {nullptr, 1, profile_buffer, 0, profile_bytes, nullptr, nullptr},
-        {nullptr, 2, basis_buffer, 0, basis_bytes, nullptr, nullptr},
+        {nullptr, 2, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 3, coefficient_buffer, 0, coefficient_bytes, nullptr,
          nullptr},
         {nullptr, 5, params_buffer, 0, sizeof(params), nullptr, nullptr},
@@ -803,7 +815,7 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
         device.CreateBindGroup(&analyze_bind_descriptor);
     const auto synthesize_layout = synthesize_pipeline.GetBindGroupLayout(0);
     const wgpu::BindGroupEntry synthesize_entries[] = {
-        {nullptr, 2, basis_buffer, 0, basis_bytes, nullptr, nullptr},
+        {nullptr, 2, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 3, coefficient_buffer, 0, coefficient_bytes, nullptr,
          nullptr},
         {nullptr, 4, result_buffer, 0, result_bytes, nullptr, nullptr},
