@@ -34,6 +34,8 @@ The first seven WebGPU milestones are implemented and browser-validated:
   the CUDA path's finite-Jacobian division guard;
 - axisymmetric radial/poloidal MHD weak-form forces and hybrid λ force on the
   full grid;
+- first-pass Solovev force projection into the six-family spectral residual
+  slab (the initial constraint multiplier is zero, matching CUDA/vmecpp);
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does

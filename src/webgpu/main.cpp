@@ -733,9 +733,60 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  Solovev MHD force: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
+                self->run_solovev_forward(std::move(actual.fields));
+            });
+    }
+
+    void run_solovev_forward(std::vector<float> force_fields) {
+        solver_forward_case_.ns = initialized_stage_.ns;
+        solver_forward_case_.mpol = initialized_stage_.mpol;
+        solver_forward_case_.ntheta = initialized_stage_.ntheta;
+        solver_forward_case_.include_lcfs = false;
+        const std::size_t points =
+            static_cast<std::size_t>(solver_forward_case_.ns) *
+            solver_forward_case_.ntheta;
+        solver_forward_case_.fields.assign(
+            cumes::webgpu::FORWARD_INPUT_FIELD_COUNT * points, 0.0F);
+        std::copy(force_fields.begin(), force_fields.end(),
+                  solver_forward_case_.fields.begin());
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_forward(
+            device_, solver_forward_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_forward_reference(
+                        self->solver_forward_case_);
+                float max_error = 0.0F;
+                bool finite =
+                    actual.residual.size() == expected.residual.size();
+                if (finite) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+                        finite &= std::isfinite(actual.residual[i]);
+                    }
+                }
+                const bool nonzero =
+                    std::any_of(actual.residual.begin(), actual.residual.end(),
+                                [](float value) { return value != 0.0F; });
+                if (max_error > 5.0e-4F || !finite || !nonzero) {
+                    self->finish(false, "Solovev forward residual mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  Solovev spectral residual projection: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
                 self->finish(true,
-                             "Solovev initialization, transforms, geometry, "
-                             "magnetic field, and MHD force verified");
+                             "parsed Solovev first-pass DAG through spectral "
+                             "MHD residual verified");
             });
     }
 
@@ -759,6 +810,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::BaseGeometryCase base_geometry_case_;
     cumes::webgpu::MagneticFieldCase magnetic_field_case_;
     cumes::webgpu::AxisymmetricForceCase force_case_;
+    cumes::webgpu::AxisymmetricForwardCase solver_forward_case_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;
