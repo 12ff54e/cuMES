@@ -10,7 +10,12 @@ foreach(extension IN ITEMS html js wasm)
 endforeach()
 
 file(READ "${ARTIFACT_BASE}.html" html)
-foreach(marker IN ITEMS "Input boundary" "Run equilibrium" "Flux surfaces")
+foreach(marker IN ITEMS
+    "Input boundary"
+    "R cosine coefficients"
+    "Z sine coefficients"
+    "Run equilibrium"
+    "Flux surfaces")
   string(FIND "${html}" "${marker}" marker_offset)
   if(marker_offset EQUAL -1)
     message(FATAL_ERROR
