@@ -1,6 +1,8 @@
 #include "cumes/webgpu/constraint.hpp"
 
 #include "cumes/webgpu/axisymmetric.hpp"
+#include "cumes/webgpu/force.hpp"
+#include "cumes/webgpu/toroidal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -18,16 +20,20 @@ namespace {
 constexpr std::uint32_t WORKGROUP_SIZE = 256;
 
 struct HeadParams {
-    std::uint32_t ns, mpol, ntheta, points;
+    std::uint32_t ns, mpol, ntheta, nzeta;
+    std::uint32_t n_z_n_t, points;
     std::uint32_t reset_reference, refresh_preconditioner;
     float delta_s, tcon_multiplier;
+    std::uint32_t padding[2];
 };
-static_assert(sizeof(HeadParams) == 32);
+static_assert(sizeof(HeadParams) == 48);
 
 struct TailParams {
-    std::uint32_t ns, ntheta, points, padding;
+    std::uint32_t ns, n_z_n_t, points, force_fields;
+    std::uint32_t output_fields;
+    std::uint32_t padding[3];
 };
-static_assert(sizeof(TailParams) == 16);
+static_assert(sizeof(TailParams) == 32);
 
 struct HeadResult {
     std::vector<float> g_con_eff;
@@ -37,12 +43,17 @@ struct HeadResult {
 };
 
 std::string validate_case(const AxisymmetricConstraintCase& in) {
-    if (in.ns < 2 || in.mpol < 2 || in.ntheta < 2 || in.ntheta % 2 != 0 ||
-        !(in.delta_s > 0.0F) || !std::isfinite(in.delta_s) ||
-        !std::isfinite(in.tcon0)) {
+    if (in.ns < 2 || in.mpol < 2 || in.ntor < 0 || in.ntheta < 2 ||
+        in.ntheta % 2 != 0 || in.nzeta < 1 || !(in.delta_s > 0.0F) ||
+        !std::isfinite(in.delta_s) || !std::isfinite(in.tcon0)) {
         return "axisymmetric constraint has invalid shape or scalars";
     }
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.ntheta;
+    if ((in.ntor == 0) != (in.nzeta == 1)) {
+        return "constraint requires ntor=0 exactly when nzeta=1";
+    }
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
+    const std::size_t force_fields = in.ntor == 0 ? 10 : FORCE_FIELD_COUNT;
     if (points > std::numeric_limits<std::uint32_t>::max() ||
         in.geometry.size() != GEOMETRY_PARITY_FIELD_COUNT * points ||
         in.r_con.size() != points || in.z_con.size() != points ||
@@ -51,8 +62,8 @@ std::string validate_case(const AxisymmetricConstraintCase& in) {
         in.ard.size() != 2 * static_cast<std::size_t>(in.ns) ||
         in.azd.size() != 2 * static_cast<std::size_t>(in.ns) ||
         in.sqrt_s_f.size() != static_cast<std::size_t>(in.ns) ||
-        in.force_fields.size() != 10 * points) {
-        return "axisymmetric constraint input shape mismatch";
+        in.force_fields.size() != force_fields * points) {
+        return "constraint input shape mismatch";
     }
     return {};
 }
@@ -86,34 +97,39 @@ float reference_value(const AxisymmetricConstraintCase& in,
                       const std::vector<float>& value,
                       const std::vector<float>& old_reference,
                       int surface,
-                      int theta) {
+                      std::size_t angular) {
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
     const std::size_t point =
-        static_cast<std::size_t>(surface) * in.ntheta + theta;
+        static_cast<std::size_t>(surface) * n_z_n_t + angular;
     if (!in.reset_reference || surface == 0) return old_reference[point];
     const std::size_t lcfs =
-        static_cast<std::size_t>(in.ns - 1) * in.ntheta + theta;
+        static_cast<std::size_t>(in.ns - 1) * n_z_n_t + angular;
     const float sqrt_s = in.sqrt_s_f[surface];
     return value[lcfs] * sqrt_s * sqrt_s;
 }
 
 float compute_tcon_base(const AxisymmetricConstraintCase& in, int surface) {
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
     const int ntheta_red = in.ntheta / 2 + 1;
-    const float norm = 1.0F / static_cast<float>(ntheta_red - 1);
+    const float norm = 1.0F / static_cast<float>(in.nzeta * (ntheta_red - 1));
     const float sqrt_s = in.sqrt_s_f[surface];
     float ar_n = 0.0F;
     float az_n = 0.0F;
-    for (int theta = 0; theta < ntheta_red; ++theta) {
-        float weight = norm;
-        if (theta == 0 || theta == ntheta_red - 1) weight *= 0.5F;
-        const std::size_t point =
-            static_cast<std::size_t>(surface) * in.ntheta + theta;
-        const float ru = in.geometry[3 * points + point] +
-                         sqrt_s * in.geometry[9 * points + point];
-        const float zu = in.geometry[4 * points + point] +
-                         sqrt_s * in.geometry[10 * points + point];
-        ar_n += ru * ru * weight;
-        az_n += zu * zu * weight;
+    for (int zeta = 0; zeta < in.nzeta; ++zeta) {
+        for (int theta = 0; theta < ntheta_red; ++theta) {
+            float weight = norm;
+            if (theta == 0 || theta == ntheta_red - 1) weight *= 0.5F;
+            const std::size_t point =
+                static_cast<std::size_t>(surface) * n_z_n_t + zeta * in.ntheta +
+                theta;
+            const float ru = in.geometry[3 * points + point] +
+                             sqrt_s * in.geometry[9 * points + point];
+            const float zu = in.geometry[4 * points + point] +
+                             sqrt_s * in.geometry[10 * points + point];
+            ar_n += ru * ru * weight;
+            az_n += zu * zu * weight;
+        }
     }
     if (ar_n == 0.0F) ar_n = 1.0e-10F;
     if (az_n == 0.0F) az_n = 1.0e-10F;
@@ -123,20 +139,21 @@ float compute_tcon_base(const AxisymmetricConstraintCase& in, int surface) {
 }
 
 HeadResult head_reference(const AxisymmetricConstraintCase& in) {
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
     HeadResult out;
     out.g_con_eff.assign(points, 0.0F);
     out.r_con0.resize(points);
     out.z_con0.resize(points);
     out.tcon = in.tcon;
     for (int surface = 0; surface < in.ns; ++surface) {
-        for (int theta = 0; theta < in.ntheta; ++theta) {
+        for (std::size_t angular = 0; angular < n_z_n_t; ++angular) {
             const std::size_t point =
-                static_cast<std::size_t>(surface) * in.ntheta + theta;
+                static_cast<std::size_t>(surface) * n_z_n_t + angular;
             const float r0 =
-                reference_value(in, in.r_con, in.r_con0, surface, theta);
+                reference_value(in, in.r_con, in.r_con0, surface, angular);
             const float z0 =
-                reference_value(in, in.z_con, in.z_con0, surface, theta);
+                reference_value(in, in.z_con, in.z_con0, surface, angular);
             out.r_con0[point] = r0;
             out.z_con0[point] = z0;
             if (surface == 0) continue;
@@ -163,15 +180,19 @@ void apply_constraint_tail(const AxisymmetricConstraintCase& in,
                            const HeadResult& head,
                            const std::vector<float>& g_con,
                            AxisymmetricConstraintResult& out) {
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.ntheta;
-    out.fields.assign(FORWARD_INPUT_FIELD_COUNT * points, 0.0F);
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
+    const std::size_t output_fields =
+        in.ntor == 0 ? FORWARD_INPUT_FIELD_COUNT : TOROIDAL_FORWARD_FIELD_COUNT;
+    const std::size_t constraint_offset = output_fields - 4;
+    out.fields.assign(output_fields * points, 0.0F);
     std::copy(in.force_fields.begin(), in.force_fields.end(),
               out.fields.begin());
     for (int surface = 1; surface < in.ns; ++surface) {
         const float sqrt_s = in.sqrt_s_f[surface];
-        for (int theta = 0; theta < in.ntheta; ++theta) {
+        for (std::size_t angular = 0; angular < n_z_n_t; ++angular) {
             const std::size_t point =
-                static_cast<std::size_t>(surface) * in.ntheta + theta;
+                static_cast<std::size_t>(surface) * n_z_n_t + angular;
             const float dr = in.r_con[point] - head.r_con0[point];
             const float dz = in.z_con[point] - head.z_con0[point];
             const float gc = g_con[point];
@@ -185,10 +206,12 @@ void apply_constraint_tail(const AxisymmetricConstraintCase& in,
                              sqrt_s * in.geometry[9 * points + point];
             const float zu = in.geometry[4 * points + point] +
                              sqrt_s * in.geometry[10 * points + point];
-            out.fields[10 * points + point] = ru * gc;
-            out.fields[11 * points + point] = ru * gc * sqrt_s;
-            out.fields[12 * points + point] = zu * gc;
-            out.fields[13 * points + point] = zu * gc * sqrt_s;
+            out.fields[(constraint_offset + 0) * points + point] = ru * gc;
+            out.fields[(constraint_offset + 1) * points + point] =
+                ru * gc * sqrt_s;
+            out.fields[(constraint_offset + 2) * points + point] = zu * gc;
+            out.fields[(constraint_offset + 3) * points + point] =
+                zu * gc * sqrt_s;
         }
     }
 }
@@ -209,7 +232,8 @@ void enqueue_head(const wgpu::Device& device,
         callback("cannot load axisymmetric constraint-head shader", {});
         return;
     }
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
     std::vector<float> constraint;
     constraint.reserve(4 * points);
     constraint.insert(constraint.end(), in.r_con.begin(), in.r_con.end());
@@ -263,11 +287,14 @@ void enqueue_head(const wgpu::Device& device,
     const HeadParams params{static_cast<std::uint32_t>(in.ns),
                             static_cast<std::uint32_t>(in.mpol),
                             static_cast<std::uint32_t>(in.ntheta),
+                            static_cast<std::uint32_t>(in.nzeta),
+                            static_cast<std::uint32_t>(n_z_n_t),
                             static_cast<std::uint32_t>(points),
                             in.reset_reference ? 1U : 0U,
                             in.refresh_preconditioner ? 1U : 0U,
                             in.delta_s,
-                            tcon_multiplier(in)};
+                            tcon_multiplier(in),
+                            {0, 0}};
     auto queue = device.GetQueue();
     queue.WriteBuffer(geometry_buffer, 0, in.geometry.data(), geometry_bytes);
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
@@ -355,7 +382,8 @@ void enqueue_tail(const wgpu::Device& device,
         callback("cannot load axisymmetric constraint-tail shader", {});
         return;
     }
-    const std::size_t points = static_cast<std::size_t>(in.ns) * in.ntheta;
+    const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
     std::vector<float> constraint;
     constraint.reserve(5 * points);
     constraint.insert(constraint.end(), in.r_con.begin(), in.r_con.end());
@@ -367,7 +395,10 @@ void enqueue_tail(const wgpu::Device& device,
     const auto geometry_bytes = in.geometry.size() * sizeof(float);
     const auto constraint_bytes = constraint.size() * sizeof(float);
     const auto radial_bytes = in.sqrt_s_f.size() * sizeof(float);
-    const std::size_t output_values = FORWARD_INPUT_FIELD_COUNT * points;
+    const std::size_t force_fields = in.ntor == 0 ? 10 : FORCE_FIELD_COUNT;
+    const std::size_t output_fields =
+        in.ntor == 0 ? FORWARD_INPUT_FIELD_COUNT : TOROIDAL_FORWARD_FIELD_COUNT;
+    const std::size_t output_values = output_fields * points;
     const auto output_bytes = output_values * sizeof(float);
     auto force_buffer =
         make_buffer(device, force_bytes,
@@ -407,8 +438,11 @@ void enqueue_tail(const wgpu::Device& device,
     pipeline_descriptor.compute.entryPoint = "main";
     auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
     const TailParams params{static_cast<std::uint32_t>(in.ns),
-                            static_cast<std::uint32_t>(in.ntheta),
-                            static_cast<std::uint32_t>(points), 0};
+                            static_cast<std::uint32_t>(n_z_n_t),
+                            static_cast<std::uint32_t>(points),
+                            static_cast<std::uint32_t>(force_fields),
+                            static_cast<std::uint32_t>(output_fields),
+                            {0, 0, 0}};
     auto queue = device.GetQueue();
     queue.WriteBuffer(force_buffer, 0, in.force_fields.data(), force_bytes);
     queue.WriteBuffer(geometry_buffer, 0, in.geometry.data(), geometry_bytes);
@@ -489,25 +523,43 @@ AxisymmetricConstraintResult axisymmetric_constraint_reference(
     const AxisymmetricConstraintCase& input) {
     if (!validate_case(input).empty()) return {};
     auto head = head_reference(input);
-    AxisymmetricDealiasCase dealias;
-    dealias.ns = input.ns;
-    dealias.mpol = input.mpol;
-    dealias.ntheta = input.ntheta;
-    dealias.g_con_eff = head.g_con_eff;
-    dealias.tcon = head.tcon;
-    dealias.faccon.assign(input.mpol, 0.0F);
-    for (int mode = 1; mode < input.mpol; ++mode) {
-        const float xmpq = static_cast<float>((mode + 1) * mode);
-        dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
+    std::vector<float> g_con;
+    if (input.ntor > 0) {
+        ToroidalDealiasCase dealias;
+        dealias.ns = input.ns;
+        dealias.mpol = input.mpol;
+        dealias.ntor = input.ntor;
+        dealias.ntheta = input.ntheta;
+        dealias.nzeta = input.nzeta;
+        dealias.g_con_eff = head.g_con_eff;
+        dealias.tcon = head.tcon;
+        dealias.faccon.assign(input.mpol, 0.0F);
+        for (int mode = 1; mode < input.mpol; ++mode) {
+            const float xmpq = static_cast<float>((mode + 1) * mode);
+            dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
+        }
+        g_con = toroidal_dealias_reference(dealias).g_con;
+    } else {
+        AxisymmetricDealiasCase dealias;
+        dealias.ns = input.ns;
+        dealias.mpol = input.mpol;
+        dealias.ntheta = input.ntheta;
+        dealias.g_con_eff = head.g_con_eff;
+        dealias.tcon = head.tcon;
+        dealias.faccon.assign(input.mpol, 0.0F);
+        for (int mode = 1; mode < input.mpol; ++mode) {
+            const float xmpq = static_cast<float>((mode + 1) * mode);
+            dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
+        }
+        g_con = axisymmetric_dealias_reference(dealias).g_con;
     }
-    auto filtered = axisymmetric_dealias_reference(dealias);
     AxisymmetricConstraintResult result;
     result.r_con0 = head.r_con0;
     result.z_con0 = head.z_con0;
     result.tcon = head.tcon;
     result.g_con_eff = head.g_con_eff;
-    result.g_con = filtered.g_con;
-    apply_constraint_tail(input, head, filtered.g_con, result);
+    result.g_con = g_con;
+    apply_constraint_tail(input, head, g_con, result);
     return result;
 }
 
@@ -527,6 +579,35 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
         device, chain->input, [chain](std::string error, HeadResult head) {
             if (!error.empty()) {
                 chain->callback(std::move(error), {});
+                return;
+            }
+            if (chain->input.ntor > 0) {
+                ToroidalDealiasCase dealias;
+                dealias.ns = chain->input.ns;
+                dealias.mpol = chain->input.mpol;
+                dealias.ntor = chain->input.ntor;
+                dealias.ntheta = chain->input.ntheta;
+                dealias.nzeta = chain->input.nzeta;
+                dealias.g_con_eff = head.g_con_eff;
+                dealias.tcon = head.tcon;
+                dealias.faccon.assign(chain->input.mpol, 0.0F);
+                for (int mode = 1; mode < chain->input.mpol; ++mode) {
+                    const float xmpq = static_cast<float>((mode + 1) * mode);
+                    dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
+                }
+                enqueue_toroidal_dealias(
+                    chain->device, dealias,
+                    [chain, head = std::move(head)](
+                        std::string filter_error,
+                        ToroidalDealiasResult filtered) mutable {
+                        if (!filter_error.empty()) {
+                            chain->callback(std::move(filter_error), {});
+                            return;
+                        }
+                        enqueue_tail(chain->device, chain->input,
+                                     std::move(head), std::move(filtered.g_con),
+                                     std::move(chain->callback));
+                    });
                 return;
             }
             AxisymmetricDealiasCase dealias;

@@ -13,8 +13,9 @@ inverse/forward transforms with constraint synthesis and de-aliasing. Direct
 parity families and toroidal derivative couplings, but are not yet integrated
 into a W7-X solve. The shared half-grid geometry and fixed-iota magnetic-field
 operators now cover the full 3-D angular grid as well, as does the complete
-radial/poloidal/toroidal MHD force operator. The backend also
-has a two-pass direct 3-D spectral-condensation bandpass. It
+radial/poloidal/toroidal MHD force operator. The complete 3-D constraint chain
+also includes a two-pass direct spectral-condensation bandpass and publishes
+the constraint-force channels consumed by the toroidal projection. It
 parses and initializes the shipped Solovev case in-browser and evaluates its
 staggered half-grid geometry, magnetic field, total pressure, and axisymmetric
 MHD force through spectral residual projection, but is not yet a complete

@@ -59,6 +59,10 @@ browser-validated:
   reference reset, current-preconditioner `tcon` refresh, `gConEff`, direct
   poloidal bandpass, MHD-force injection, `frcon`/`fzcon`, and constrained
   residual projection;
+- the same complete constraint chain on the 3-D angular grid: per-zeta LCFS
+  reference reset, reduced-theta/full-zeta `tcon` averages, direct bandpass,
+  force injection, and 20-field `frcon`/`fzcon` output ready for toroidal
+  projection;
 - fixed-boundary radial preconditioner element assembly from half-grid force
   Hessian surface integrals, including parity factors, full-grid diagonal
   averaging, and the LCFS pedestal; these live Solovev `ard`/`azd` values feed
@@ -191,9 +195,8 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. integrate the completed direct 3-D transform, bandpass, geometry,
-   fixed-iota magnetic-field, and force paths with the remaining 3-D
-   constraint and preconditioner operators;
+5. integrate the completed direct 3-D transform, constraint, geometry,
+   fixed-iota magnetic-field, and force paths with the 3-D preconditioner;
 6. qualify fixed-boundary W7-X, then optimize the direct DFT with a WebGPU FFT;
 7. only then integrate free-boundary/NESTOR support.
 

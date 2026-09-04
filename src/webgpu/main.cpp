@@ -599,6 +599,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             coefficient(1, 2, 2, surface) = -0.002F * s;
         }
         const auto full = cumes::webgpu::toroidal_inverse_reference(physical);
+        toroidal_r_con_ = full.r_con;
+        toroidal_z_con_ = full.z_con;
         toroidal_geometry_case_.ns = physical.ns;
         toroidal_geometry_case_.ntheta = physical.ntheta;
         toroidal_geometry_case_.nzeta = physical.nzeta;
@@ -746,11 +748,78 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 std::printf("  3-D MHD force: PASS (max |GPU-CPU| = %.3e)\n",
                             static_cast<double>(max_error));
+                self->run_toroidal_constraint(std::move(actual.fields));
+            });
+    }
+
+    void run_toroidal_constraint(std::vector<float> force_fields) {
+        toroidal_constraint_case_.ns = toroidal_case_.ns;
+        toroidal_constraint_case_.mpol = toroidal_case_.mpol;
+        toroidal_constraint_case_.ntor = toroidal_case_.ntor;
+        toroidal_constraint_case_.ntheta = toroidal_case_.ntheta;
+        toroidal_constraint_case_.nzeta = toroidal_case_.nzeta;
+        toroidal_constraint_case_.delta_s = toroidal_geometry_case_.delta_s;
+        toroidal_constraint_case_.tcon0 = 1.0F;
+        toroidal_constraint_case_.reset_reference = true;
+        toroidal_constraint_case_.refresh_preconditioner = true;
+        toroidal_constraint_case_.geometry = toroidal_geometry_case_.geometry;
+        toroidal_constraint_case_.r_con = toroidal_r_con_;
+        toroidal_constraint_case_.z_con = toroidal_z_con_;
+        const std::size_t points = toroidal_r_con_.size();
+        toroidal_constraint_case_.r_con0.assign(points, 0.0F);
+        toroidal_constraint_case_.z_con0.assign(points, 0.0F);
+        toroidal_constraint_case_.tcon.assign(toroidal_case_.ns, 0.0F);
+        toroidal_constraint_case_.ard.assign(2 * toroidal_case_.ns, 0.8F);
+        toroidal_constraint_case_.azd.assign(2 * toroidal_case_.ns, 0.9F);
+        toroidal_constraint_case_.sqrt_s_f = toroidal_geometry_case_.sqrt_s_f;
+        toroidal_constraint_case_.force_fields = std::move(force_fields);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_constraint(
+            device_, toroidal_constraint_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricConstraintResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_constraint_reference(
+                        self->toroidal_constraint_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.fields, expected.fields);
+                compare(actual.r_con0, expected.r_con0);
+                compare(actual.z_con0, expected.z_con0);
+                compare(actual.tcon, expected.tcon);
+                compare(actual.g_con_eff, expected.g_con_eff);
+                compare(actual.g_con, expected.g_con);
+                const bool active =
+                    std::any_of(actual.g_con.begin(), actual.g_con.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !active || max_error > 1.0e-3F) {
+                    self->finish(false, "3-D constraint mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  complete 3-D constraint: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
                 self->run_toroidal_dealias(std::move(actual.fields));
             });
     }
 
-    void run_toroidal_dealias(std::vector<float> force_fields) {
+    void run_toroidal_dealias(std::vector<float> constrained_fields) {
         toroidal_dealias_case_.ns = toroidal_case_.ns;
         toroidal_dealias_case_.mpol = toroidal_case_.mpol;
         toroidal_dealias_case_.ntor = toroidal_case_.ntor;
@@ -773,7 +842,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_toroidal_dealias(
             device_, toroidal_dealias_case_,
-            [self, force_fields = std::move(force_fields)](
+            [self, constrained_fields = std::move(constrained_fields)](
                 std::string error,
                 cumes::webgpu::ToroidalDealiasResult actual) mutable {
                 if (!error.empty()) {
@@ -805,7 +874,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  direct 3-D constraint dealias: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
-                self->run_toroidal_forward(std::move(force_fields));
+                self->run_toroidal_forward(std::move(constrained_fields));
             });
     }
 
@@ -2051,6 +2120,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::ToroidalInverseCase toroidal_case_;
     cumes::webgpu::ToroidalForwardCase toroidal_forward_case_;
     cumes::webgpu::ToroidalDealiasCase toroidal_dealias_case_;
+    cumes::webgpu::AxisymmetricConstraintCase toroidal_constraint_case_;
     cumes::webgpu::BaseGeometryCase toroidal_geometry_case_;
     cumes::webgpu::MagneticFieldCase toroidal_magnetic_case_;
     cumes::webgpu::AxisymmetricForceCase toroidal_force_case_;
@@ -2081,6 +2151,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     bool force_norm_ready_ = false;
     std::vector<float> solovev_r_con_;
     std::vector<float> solovev_z_con_;
+    std::vector<float> toroidal_r_con_;
+    std::vector<float> toroidal_z_con_;
     std::vector<float> constraint_r_con0_;
     std::vector<float> constraint_z_con0_;
     std::vector<float> constraint_tcon_;

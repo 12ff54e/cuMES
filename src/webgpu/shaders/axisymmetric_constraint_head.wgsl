@@ -2,11 +2,15 @@ struct Params {
     ns: u32,
     mpol: u32,
     ntheta: u32,
+    nzeta: u32,
+    n_z_n_t: u32,
     points: u32,
     reset_reference: u32,
     refresh_preconditioner: u32,
     delta_s: f32,
     tcon_multiplier: f32,
+    _padding0: u32,
+    _padding1: u32,
 };
 struct Values { data: array<f32>, };
 @group(0) @binding(0) var<storage, read> geometry: Values;
@@ -24,10 +28,10 @@ fn geom(field: u32, point: u32) -> f32 {
 fn con(field: u32, point: u32) -> f32 {
     return constraint.data[field * params.points + point];
 }
-fn reference(field: u32, surface: u32, theta: u32) -> f32 {
-    let point = surface * params.ntheta + theta;
+fn reference(field: u32, surface: u32, angular: u32) -> f32 {
+    let point = surface * params.n_z_n_t + angular;
     if (params.reset_reference != 0u && surface != 0u) {
-        let lcfs = (params.ns - 1u) * params.ntheta + theta;
+        let lcfs = (params.ns - 1u) * params.n_z_n_t + angular;
         let sqrt_s = radial.data[surface];
         return con(field, lcfs) * sqrt_s * sqrt_s;
     }
@@ -35,18 +39,20 @@ fn reference(field: u32, surface: u32, theta: u32) -> f32 {
 }
 fn tcon_base(surface: u32) -> f32 {
     let ntheta_red = params.ntheta / 2u + 1u;
-    let norm = 1.0 / f32(ntheta_red - 1u);
+    let norm = 1.0 / f32(params.nzeta * (ntheta_red - 1u));
     let sqrt_s = radial.data[surface];
     var ar_n = 0.0;
     var az_n = 0.0;
-    for (var theta = 0u; theta < ntheta_red; theta++) {
-        var weight = norm;
-        if (theta == 0u || theta + 1u == ntheta_red) { weight *= 0.5; }
-        let point = surface * params.ntheta + theta;
-        let ru = geom(3u, point) + sqrt_s * geom(9u, point);
-        let zu = geom(4u, point) + sqrt_s * geom(10u, point);
-        ar_n += ru * ru * weight;
-        az_n += zu * zu * weight;
+    for (var zeta = 0u; zeta < params.nzeta; zeta++) {
+        for (var theta = 0u; theta < ntheta_red; theta++) {
+            var weight = norm;
+            if (theta == 0u || theta + 1u == ntheta_red) { weight *= 0.5; }
+            let point = surface * params.n_z_n_t + zeta * params.ntheta + theta;
+            let ru = geom(3u, point) + sqrt_s * geom(9u, point);
+            let zu = geom(4u, point) + sqrt_s * geom(10u, point);
+            ar_n += ru * ru * weight;
+            az_n += zu * zu * weight;
+        }
     }
     if (ar_n == 0.0) { ar_n = 1.0e-10; }
     if (az_n == 0.0) { az_n = 1.0e-10; }
@@ -63,10 +69,10 @@ fn tcon_base(surface: u32) -> f32 {
 fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let point = invocation.x;
     if (point >= params.points) { return; }
-    let surface = point / params.ntheta;
-    let theta = point % params.ntheta;
-    let r0 = reference(0u, surface, theta);
-    let z0 = reference(1u, surface, theta);
+    let surface = point / params.n_z_n_t;
+    let angular = point % params.n_z_n_t;
+    let r0 = reference(0u, surface, angular);
+    let z0 = reference(1u, surface, angular);
     output.data[params.points + point] = r0;
     output.data[2u * params.points + point] = z0;
     if (surface == 0u) {
@@ -78,7 +84,7 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
         output.data[point] =
             (con(0u, point) - r0) * ru + (con(1u, point) - z0) * zu;
     }
-    if (theta == 0u) {
+    if (angular == 0u) {
         let tcon_offset = 3u * params.points;
         if (surface == 0u) {
             output.data[tcon_offset] = 0.0;
