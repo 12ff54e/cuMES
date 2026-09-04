@@ -19,7 +19,8 @@ spectral bandpass, force injection, and constrained residual projection are
 also browser-validated, using radial preconditioner elements assembled from
 the live Solovev geometry and magnetic field. The mode-major R/Z tridiagonal
 matrices, pivot scales, radial boundary gates, and lambda diagonal are also
-assembled in WebGPU. See
+assembled and applied in WebGPU, including m=1 force scaling and guarded
+two-right-hand-side Thomas solves. See
 [the WebGPU port status](docs/webgpu-port.md).
 
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)

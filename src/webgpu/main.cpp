@@ -1064,10 +1064,97 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  constrained spectral residual projection: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
+                self->run_constraint_residual_decomposition(
+                    std::move(actual.residual));
+            });
+    }
+
+    void run_constraint_residual_decomposition(std::vector<float> residual) {
+        constraint_residual_case_.ns = initialized_stage_.ns;
+        constraint_residual_case_.mpol = initialized_stage_.mpol;
+        constraint_residual_case_.include_edge_rz = false;
+        constraint_residual_case_.zero_m1_z = false;
+        constraint_residual_case_.residual = std::move(residual);
+        constraint_residual_case_.sqrt_s_f =
+            initialized_stage_.profiles.sqrt_s_f;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_residual_decomposition(
+            device_, constraint_residual_case_,
+            [self](std::string error,
+                   cumes::webgpu::ResidualDecompositionResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::residual_decomposition_reference(
+                        self->constraint_residual_case_);
+                float max_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+                    }
+                }
+                if (!valid || max_error > 5.0e-4F) {
+                    self->finish(
+                        false, "constrained residual decomposition mismatch: " +
+                                   std::to_string(max_error));
+                    return;
+                }
+                self->run_preconditioner_apply(std::move(actual.residual));
+            });
+    }
+
+    void run_preconditioner_apply(std::vector<float> residual) {
+        preconditioner_apply_case_.ns = initialized_stage_.ns;
+        preconditioner_apply_case_.mpol = initialized_stage_.mpol;
+        preconditioner_apply_case_.include_lcfs = false;
+        preconditioner_apply_case_.elements = preconditioner_elements_;
+        preconditioner_apply_case_.matrix = preconditioner_matrix_;
+        preconditioner_apply_case_.residual = std::move(residual);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_apply(
+            device_, preconditioner_apply_case_,
+            [self](
+                std::string error,
+                cumes::webgpu::AxisymmetricPreconditionerApplyResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_preconditioner_apply_reference(
+                        self->preconditioner_apply_case_);
+                float max_scaled_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                valid &= actual.breakdown_count == expected.breakdown_count;
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_scaled_error = std::max(
+                            max_scaled_error,
+                            std::abs(actual.residual[i] -
+                                     expected.residual[i]) /
+                                (1.0F + std::abs(expected.residual[i])));
+                        valid &= std::isfinite(actual.residual[i]);
+                    }
+                }
+                if (!valid || actual.breakdown_count != 0 ||
+                    max_scaled_error > 2.0e-4F) {
+                    self->finish(false, "preconditioner apply mismatch: " +
+                                            std::to_string(max_scaled_error));
+                    return;
+                }
+                std::printf(
+                    "  Solovev preconditioned residual: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_scaled_error));
                 self->finish(
                     true,
-                    "parsed Solovev DAG through refreshed constraint force "
-                    "and invariant residual verified");
+                    "parsed Solovev DAG through constraint and radial/lambda "
+                    "preconditioning verified");
             });
     }
 
@@ -1100,6 +1187,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricPreconditionerMatrixCase
         preconditioner_matrix_case_;
     cumes::webgpu::AxisymmetricPreconditionerMatrix preconditioner_matrix_;
+    cumes::webgpu::ResidualDecompositionCase constraint_residual_case_;
+    cumes::webgpu::AxisymmetricPreconditionerApplyCase
+        preconditioner_apply_case_;
     std::vector<float> solovev_r_con_;
     std::vector<float> solovev_z_con_;
     std::size_t case_index_ = 0;

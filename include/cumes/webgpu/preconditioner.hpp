@@ -84,6 +84,33 @@ void enqueue_axisymmetric_preconditioner_matrix(
 AxisymmetricPreconditionerMatrix axisymmetric_preconditioner_matrix_reference(
     const AxisymmetricPreconditionerMatrixCase& input);
 
+struct AxisymmetricPreconditionerApplyCase {
+    int ns = 0;
+    int mpol = 0;
+    bool include_lcfs = false;
+    AxisymmetricPreconditionerElements elements;
+    AxisymmetricPreconditionerMatrix matrix;
+    // Decomposed component-major [component][mode][surface] residual.
+    std::vector<float> residual;
+};
+
+struct AxisymmetricPreconditionerApplyResult {
+    std::vector<float> residual;
+    int breakdown_count = 0;
+};
+
+using AxisymmetricPreconditionerApplyCallback =
+    std::function<void(std::string, AxisymmetricPreconditionerApplyResult)>;
+
+void enqueue_axisymmetric_preconditioner_apply(
+    const wgpu::Device& device,
+    const AxisymmetricPreconditionerApplyCase& input,
+    AxisymmetricPreconditionerApplyCallback callback);
+
+AxisymmetricPreconditionerApplyResult
+axisymmetric_preconditioner_apply_reference(
+    const AxisymmetricPreconditionerApplyCase& input);
+
 }  // namespace cumes::webgpu
 
 #endif  // CUMES_INCLUDE_CUMES_WEBGPU_PRECONDITIONER_HPP_
