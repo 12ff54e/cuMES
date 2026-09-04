@@ -636,10 +636,58 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  Solovev half-grid base geometry: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
+                self->run_magnetic_field(std::move(actual.fields));
+            });
+    }
+
+    void run_magnetic_field(std::vector<float> base_geometry) {
+        magnetic_field_case_.ns = initialized_stage_.ns;
+        magnetic_field_case_.ntheta = initialized_stage_.ntheta;
+        magnetic_field_case_.lamscale = initialized_stage_.profiles.lamscale;
+        magnetic_field_case_.geometry = base_geometry_case_.geometry;
+        magnetic_field_case_.base_geometry = std::move(base_geometry);
+        magnetic_field_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        magnetic_field_case_.phip_f = initialized_stage_.profiles.phip_f;
+        magnetic_field_case_.chip_h = initialized_stage_.profiles.chip_h;
+        magnetic_field_case_.pres_h = initialized_stage_.profiles.pres_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_magnetic_field(
+            device_, magnetic_field_case_,
+            [self](std::string error,
+                   cumes::webgpu::MagneticFieldResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::magnetic_field_reference(
+                    self->magnetic_field_case_);
+                if (actual.fields.size() != expected.fields.size()) {
+                    self->finish(false, "magnetic field result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                bool finite = true;
+                for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                    max_error = std::max(
+                        max_error,
+                        std::abs(actual.fields[i] - expected.fields[i]));
+                    finite &= std::isfinite(actual.fields[i]);
+                }
+                if (max_error > 2.0e-4F || !finite) {
+                    self->finish(false,
+                                 "magnetic field mismatch: max_error=" +
+                                     std::to_string(max_error) +
+                                     " finite=" + (finite ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  Solovev magnetic field+pressure: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
                 self->finish(
                     true,
                     "prolongation, axisymmetric transforms, parsed Solovev "
-                    "initialization, and half-grid geometry verified");
+                    "initialization, geometry, and magnetic field verified");
             });
     }
 
@@ -661,6 +709,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricDealiasCase dealias_case_;
     cumes::webgpu::AxisymmetricStageData initialized_stage_;
     cumes::webgpu::BaseGeometryCase base_geometry_case_;
+    cumes::webgpu::MagneticFieldCase magnetic_field_case_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;

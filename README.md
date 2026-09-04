@@ -10,7 +10,8 @@ emdawnwebgpu. It currently provides the CUDA-free build path, WebGPU runtime,
 validated linear/Catmull-Rom multigrid prolongation, and the axisymmetric
 inverse/forward transforms with constraint synthesis and de-aliasing. It also
 parses and initializes the shipped Solovev case in-browser and evaluates its
-staggered half-grid geometry, but is not yet a complete equilibrium solver. See
+staggered half-grid geometry, magnetic field, and total pressure, but is not yet
+a complete equilibrium solver. See
 [the WebGPU port status](docs/webgpu-port.md).
 
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)

@@ -37,6 +37,35 @@ void enqueue_base_geometry(const wgpu::Device& device,
 
 BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input);
 
+inline constexpr std::size_t MAGNETIC_FIELD_COUNT = 5;
+
+struct MagneticFieldCase {
+    int ns = 0;
+    int ntheta = 0;
+    float lamscale = 0.0F;
+    std::vector<float> geometry;
+    std::vector<float> base_geometry;
+    std::vector<float> sqrt_s_h;
+    std::vector<float> phip_f;
+    std::vector<float> chip_h;
+    std::vector<float> pres_h;
+};
+
+struct MagneticFieldResult {
+    // Field-major half-grid order: B^theta, B^zeta, B_theta, B_zeta,
+    // total pressure.
+    std::vector<float> fields;
+};
+
+using MagneticFieldCallback =
+    std::function<void(std::string, MagneticFieldResult)>;
+
+void enqueue_magnetic_field(const wgpu::Device& device,
+                            const MagneticFieldCase& input,
+                            MagneticFieldCallback callback);
+
+MagneticFieldResult magnetic_field_reference(const MagneticFieldCase& input);
+
 }  // namespace cumes::webgpu
 
 #endif  // CUMES_INCLUDE_CUMES_WEBGPU_GEOMETRY_HPP_

@@ -5,7 +5,7 @@
 The WebGPU backend is an additive, experimental backend. CUDA remains the
 default and the only complete equilibrium solver.
 
-The first five WebGPU milestones are implemented and browser-validated:
+The first six WebGPU milestones are implemented and browser-validated:
 
 - a top-level `CUMES_BACKEND=WEBGPU` path that never enables CUDA or probes
   CUDA-only dependencies;
@@ -30,6 +30,8 @@ The first five WebGPU milestones are implemented and browser-validated:
   tolerance floor, initialized, and passed through the WGSL inverse transform;
 - the staggered half-grid base-geometry operator in WGSL: parity recombination,
   radial interpolation and derivatives, Jacobian, and covariant metric;
+- fixed-iota contravariant/covariant magnetic fields and total pressure, with
+  the CUDA path's finite-Jacobian division guard;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -108,7 +110,8 @@ The recommended dependency order is:
 1. reusable buffer/pipeline/bind-group ownership and a stage command encoder;
 2. persistent spectral/real-space stage storage and profile GPU buffers (input
    parsing, cold seeding, and host profile evaluation are complete);
-3. magnetic-field shaders (base geometry is complete);
+3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
+   base geometry are complete);
 4. force, constraint, residual, preconditioner, and descent shaders, each
    compared with the existing CPU/CUDA references;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
