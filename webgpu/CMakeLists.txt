@@ -17,6 +17,7 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/main.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/magnetic_field.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/numerics.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/preconditioner.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/prolongation.cpp)
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
@@ -38,6 +39,7 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_tail.wgsl@/shaders/axisymmetric_constraint_tail.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl@/shaders/magnetic_field.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose.wgsl@/shaders/residual_decompose.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_elements.wgsl@/shaders/axisymmetric_preconditioner_elements.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl@/shaders/axisymmetric_dealias.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl@/shaders/axisymmetric_forward.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl@/shaders/axisymmetric_inverse.wgsl"
@@ -52,6 +54,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_head.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_tail.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_elements.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl)

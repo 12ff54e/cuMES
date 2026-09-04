@@ -44,6 +44,10 @@ browser-validated:
   reference reset, current-preconditioner `tcon` refresh, `gConEff`, direct
   poloidal bandpass, MHD-force injection, `frcon`/`fzcon`, and constrained
   residual projection;
+- fixed-boundary radial preconditioner element assembly from half-grid force
+  Hessian surface integrals, including parity factors, full-grid diagonal
+  averaging, and the LCFS pedestal; these live Solovev `ard`/`azd` values feed
+  the constraint multiplier test;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -126,9 +130,10 @@ The recommended dependency order is:
    parsing, cold seeding, and host profile evaluation are complete);
 3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
    base geometry are complete);
-4. preconditioner and descent shaders (the core axisymmetric MHD force,
-   later-pass constraint force, and invariant residual decomposition are
-   complete), each compared with the existing CPU/CUDA references;
+4. tridiagonal/lambda preconditioner assembly and application, then descent
+   shaders (the radial element cache, core axisymmetric MHD force, later-pass
+   constraint force, and invariant residual decomposition are complete), each
+   compared with the existing CPU/CUDA references;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;

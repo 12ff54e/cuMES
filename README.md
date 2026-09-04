@@ -16,7 +16,8 @@ equilibrium solver. The projected forces are now decomposed into the solver's
 invariant residual basis and reduced with CUDA-compatible float products and
 double host accumulation. The later-pass axisymmetric constraint refresh,
 spectral bandpass, force injection, and constrained residual projection are
-also browser-validated. See
+also browser-validated, using radial preconditioner elements assembled from
+the live Solovev geometry and magnetic field. See
 [the WebGPU port status](docs/webgpu-port.md).
 
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)

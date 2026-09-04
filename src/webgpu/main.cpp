@@ -5,6 +5,7 @@
 #include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
 #include "cumes/webgpu/numerics.hpp"
+#include "cumes/webgpu/preconditioner.hpp"
 #include "cumes/webgpu/prolongation.hpp"
 
 #include <algorithm>
@@ -833,6 +834,60 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  decomposed residual+double norms: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
+                self->run_preconditioner_elements();
+            });
+    }
+
+    void run_preconditioner_elements() {
+        preconditioner_case_.ns = initialized_stage_.ns;
+        preconditioner_case_.ntheta = initialized_stage_.ntheta;
+        preconditioner_case_.delta_s = initialized_stage_.profiles.delta_s;
+        preconditioner_case_.free_boundary = false;
+        preconditioner_case_.geometry = base_geometry_case_.geometry;
+        preconditioner_case_.base_geometry = magnetic_field_case_.base_geometry;
+        preconditioner_case_.magnetic_field = force_case_.magnetic_field;
+        preconditioner_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        preconditioner_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_elements(
+            device_, preconditioner_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricPreconditionerElements actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::
+                    axisymmetric_preconditioner_element_reference(
+                        self->preconditioner_case_);
+                float max_scaled_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_scaled_error, &valid](
+                                         const auto& gpu, const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_scaled_error = std::max(
+                            max_scaled_error, std::abs(gpu[i] - cpu[i]) /
+                                                  (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.ard, expected.ard);
+                compare(actual.brd, expected.brd);
+                compare(actual.azd, expected.azd);
+                compare(actual.bzd, expected.bzd);
+                compare(actual.cxd, expected.cxd);
+                if (!valid || max_scaled_error > 5.0e-5F) {
+                    self->finish(false, "preconditioner element mismatch: " +
+                                            std::to_string(max_scaled_error));
+                    return;
+                }
+                std::printf(
+                    "  Solovev radial preconditioner elements: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_scaled_error));
+                self->preconditioner_elements_ = std::move(actual);
                 self->run_axisymmetric_constraint();
             });
     }
@@ -854,16 +909,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.r_con0.assign(points, 0.0F);
         constraint_case_.z_con0.assign(points, 0.0F);
         constraint_case_.tcon.assign(constraint_case_.ns, 0.0F);
-        constraint_case_.ard.resize(2 * constraint_case_.ns);
-        constraint_case_.azd.resize(2 * constraint_case_.ns);
-        for (int surface = 0; surface < constraint_case_.ns; ++surface) {
-            constraint_case_.ard[2 * surface] =
-                0.25F + 0.03F * static_cast<float>(surface);
-            constraint_case_.ard[2 * surface + 1] = 0.0F;
-            constraint_case_.azd[2 * surface] =
-                0.30F + 0.02F * static_cast<float>(surface);
-            constraint_case_.azd[2 * surface + 1] = 0.0F;
-        }
+        constraint_case_.ard = preconditioner_elements_.ard;
+        constraint_case_.azd = preconditioner_elements_.azd;
         constraint_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
         constraint_case_.force_fields.assign(
             solver_forward_case_.fields.begin(),
@@ -983,6 +1030,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::ResidualDecompositionCase residual_case_;
     cumes::webgpu::AxisymmetricConstraintCase constraint_case_;
     cumes::webgpu::AxisymmetricForwardCase constraint_forward_case_;
+    cumes::webgpu::AxisymmetricPreconditionerElementCase preconditioner_case_;
+    cumes::webgpu::AxisymmetricPreconditionerElements preconditioner_elements_;
     std::vector<float> solovev_r_con_;
     std::vector<float> solovev_z_con_;
     std::size_t case_index_ = 0;
