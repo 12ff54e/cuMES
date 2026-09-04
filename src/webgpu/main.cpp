@@ -878,6 +878,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 compare(actual.azd, expected.azd);
                 compare(actual.bzd, expected.bzd);
                 compare(actual.cxd, expected.cxd);
+                compare(actual.arm, expected.arm);
+                compare(actual.brm, expected.brm);
+                compare(actual.azm, expected.azm);
+                compare(actual.bzm, expected.bzm);
                 if (!valid || max_scaled_error > 5.0e-5F) {
                     self->finish(false, "preconditioner element mismatch: " +
                                             std::to_string(max_scaled_error));
@@ -888,6 +892,67 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "(max scaled |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_scaled_error));
                 self->preconditioner_elements_ = std::move(actual);
+                self->run_preconditioner_matrix();
+            });
+    }
+
+    void run_preconditioner_matrix() {
+        preconditioner_matrix_case_.ns = initialized_stage_.ns;
+        preconditioner_matrix_case_.mpol = initialized_stage_.mpol;
+        preconditioner_matrix_case_.ntheta = initialized_stage_.ntheta;
+        preconditioner_matrix_case_.nfp = 1;
+        preconditioner_matrix_case_.delta_s =
+            initialized_stage_.profiles.delta_s;
+        preconditioner_matrix_case_.free_boundary = false;
+        preconditioner_matrix_case_.elements = preconditioner_elements_;
+        preconditioner_matrix_case_.base_geometry =
+            magnetic_field_case_.base_geometry;
+        preconditioner_matrix_case_.sqrt_s_f =
+            initialized_stage_.profiles.sqrt_s_f;
+        preconditioner_matrix_case_.phip_h = initialized_stage_.profiles.phip_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_matrix(
+            device_, preconditioner_matrix_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricPreconditionerMatrix actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_preconditioner_matrix_reference(
+                        self->preconditioner_matrix_case_);
+                float max_scaled_error = 0.0F;
+                bool valid = actual.first_surface == expected.first_surface;
+                const auto compare = [&max_scaled_error, &valid](
+                                         const auto& gpu, const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_scaled_error = std::max(
+                            max_scaled_error, std::abs(gpu[i] - cpu[i]) /
+                                                  (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.upper_r, expected.upper_r);
+                compare(actual.diagonal_r, expected.diagonal_r);
+                compare(actual.lower_r, expected.lower_r);
+                compare(actual.upper_z, expected.upper_z);
+                compare(actual.diagonal_z, expected.diagonal_z);
+                compare(actual.lower_z, expected.lower_z);
+                compare(actual.lambda, expected.lambda);
+                compare(actual.scale, expected.scale);
+                if (!valid || max_scaled_error > 2.0e-4F) {
+                    self->finish(false, "preconditioner matrix mismatch: " +
+                                            std::to_string(max_scaled_error));
+                    return;
+                }
+                std::printf(
+                    "  Solovev tridiagonal+lambda preconditioner: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_scaled_error));
+                self->preconditioner_matrix_ = std::move(actual);
                 self->run_axisymmetric_constraint();
             });
     }
@@ -1032,6 +1097,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricForwardCase constraint_forward_case_;
     cumes::webgpu::AxisymmetricPreconditionerElementCase preconditioner_case_;
     cumes::webgpu::AxisymmetricPreconditionerElements preconditioner_elements_;
+    cumes::webgpu::AxisymmetricPreconditionerMatrixCase
+        preconditioner_matrix_case_;
+    cumes::webgpu::AxisymmetricPreconditionerMatrix preconditioner_matrix_;
     std::vector<float> solovev_r_con_;
     std::vector<float> solovev_z_con_;
     std::size_t case_index_ = 0;

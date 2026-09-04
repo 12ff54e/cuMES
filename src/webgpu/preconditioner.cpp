@@ -234,6 +234,10 @@ axisymmetric_preconditioner_element_reference(
     out.azd.resize(2 * input.ns);
     out.bzd.resize(2 * input.ns);
     out.cxd.resize(input.ns);
+    out.arm.resize(2 * (input.ns - 1));
+    out.brm.resize(2 * (input.ns - 1));
+    out.azm.resize(2 * (input.ns - 1));
+    out.bzm.resize(2 * (input.ns - 1));
     for (int surface = 0; surface < input.ns; ++surface) {
         const auto even = diagonal(input, surface, 0);
         const auto odd = diagonal(input, surface, 1);
@@ -246,6 +250,18 @@ axisymmetric_preconditioner_element_reference(
         out.bzd[2 * surface] = even.bzd;
         out.bzd[2 * surface + 1] = odd.bzd;
         out.cxd[surface] = even.cxd;
+        if (surface < input.ns - 1) {
+            const auto half = half_terms(input, surface);
+            const float smsp = sm(input, surface) * sp(input, surface);
+            out.arm[2 * surface] = -half.ar[0];
+            out.arm[2 * surface + 1] = half.ar[1] * smsp;
+            out.brm[2 * surface] = half.br[0];
+            out.brm[2 * surface + 1] = half.br[0] * smsp;
+            out.azm[2 * surface] = -half.az[0];
+            out.azm[2 * surface + 1] = half.az[1] * smsp;
+            out.bzm[2 * surface] = half.bz[0];
+            out.bzm[2 * surface + 1] = half.bz[0] * smsp;
+        }
     }
     return out;
 }
@@ -273,8 +289,9 @@ void enqueue_axisymmetric_preconditioner_elements(
     const auto base_bytes = input.base_geometry.size() * sizeof(float);
     const auto magnetic_bytes = input.magnetic_field.size() * sizeof(float);
     const auto radial_bytes = radial.size() * sizeof(float);
-    const auto output_bytes =
-        9 * static_cast<std::size_t>(input.ns) * sizeof(float);
+    const auto output_values = 9 * static_cast<std::size_t>(input.ns) +
+                               8 * static_cast<std::size_t>(input.ns - 1);
+    const auto output_bytes = output_values * sizeof(float);
     auto geometry_buffer =
         make_buffer(device, geometry_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
@@ -386,6 +403,12 @@ void enqueue_axisymmetric_preconditioner_elements(
             out.bzd.assign(values + 3 * pair_count, values + 4 * pair_count);
             out.cxd.assign(values + 4 * pair_count,
                            values + 4 * pair_count + dispatch->ns);
+            const std::size_t half_count = 2 * (dispatch->ns - 1);
+            const auto* half = values + 4 * pair_count + dispatch->ns;
+            out.arm.assign(half, half + half_count);
+            out.brm.assign(half + half_count, half + 2 * half_count);
+            out.azm.assign(half + 2 * half_count, half + 3 * half_count);
+            out.bzm.assign(half + 3 * half_count, half + 4 * half_count);
             dispatch->readback.Unmap();
             dispatch->callback({}, std::move(out));
         });

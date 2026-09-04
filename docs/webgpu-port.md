@@ -48,6 +48,9 @@ browser-validated:
   Hessian surface integrals, including parity factors, full-grid diagonal
   averaging, and the LCFS pedestal; these live Solovev `ard`/`azd` values feed
   the constraint multiplier test;
+- mode-major R/Z tridiagonal matrix assembly, m=1 correction, magnetic-axis
+  `jMin`, per-mode pivot scale, and the axisymmetric lambda diagonal assembled
+  from reduced-poloidal surface averages;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -130,10 +133,10 @@ The recommended dependency order is:
    parsing, cold seeding, and host profile evaluation are complete);
 3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
    base geometry are complete);
-4. tridiagonal/lambda preconditioner assembly and application, then descent
-   shaders (the radial element cache, core axisymmetric MHD force, later-pass
-   constraint force, and invariant residual decomposition are complete), each
-   compared with the existing CPU/CUDA references;
+4. tridiagonal preconditioner application and descent shaders (matrix and
+   lambda assembly, the radial element cache, core axisymmetric MHD force,
+   later-pass constraint force, and invariant residual decomposition are
+   complete), each compared with the existing CPU/CUDA references;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;

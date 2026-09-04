@@ -14,7 +14,8 @@ struct Values { data: array<f32>, };
 @group(0) @binding(2) var<storage, read> magnetic_field: Values;
 // sqrtS_F[ns], then sqrtS_H[ns-1].
 @group(0) @binding(3) var<storage, read> radial: Values;
-// ard[2*ns], brd[2*ns], azd[2*ns], bzd[2*ns], cxd[ns].
+// ard[2*ns], brd[2*ns], azd[2*ns], bzd[2*ns], cxd[ns], then
+// arm/brm/azm/bzm, each [2*(ns-1)].
 @group(0) @binding(4) var<storage, read_write> output: Values;
 @group(0) @binding(5) var<uniform> params: Params;
 
@@ -172,4 +173,21 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     output.data[3u * pair_count + pair] = even.bzd;
     output.data[3u * pair_count + pair + 1u] = odd.bzd;
     output.data[4u * pair_count + surface] = even.cxd;
+    if (surface + 1u < params.ns) {
+        let half = half_terms(surface);
+        let smsp = sm(surface) * sp(surface);
+        let half_count = 2u * (params.ns - 1u);
+        let half_base = 4u * pair_count + params.ns;
+        output.data[half_base + 2u * surface] = -half.ar0;
+        output.data[half_base + 2u * surface + 1u] = half.ar1 * smsp;
+        output.data[half_base + half_count + 2u * surface] = half.br0;
+        output.data[half_base + half_count + 2u * surface + 1u] =
+            half.br0 * smsp;
+        output.data[half_base + 2u * half_count + 2u * surface] = -half.az0;
+        output.data[half_base + 2u * half_count + 2u * surface + 1u] =
+            half.az1 * smsp;
+        output.data[half_base + 3u * half_count + 2u * surface] = half.bz0;
+        output.data[half_base + 3u * half_count + 2u * surface + 1u] =
+            half.bz0 * smsp;
+    }
 }

@@ -28,6 +28,11 @@ struct AxisymmetricPreconditionerElements {
     std::vector<float> azd;
     std::vector<float> bzd;
     std::vector<float> cxd;
+    // Half-grid [surface][even, odd] off-diagonal element caches.
+    std::vector<float> arm;
+    std::vector<float> brm;
+    std::vector<float> azm;
+    std::vector<float> bzm;
 };
 
 using AxisymmetricPreconditionerElementCallback =
@@ -41,6 +46,43 @@ void enqueue_axisymmetric_preconditioner_elements(
 AxisymmetricPreconditionerElements
 axisymmetric_preconditioner_element_reference(
     const AxisymmetricPreconditionerElementCase& input);
+
+struct AxisymmetricPreconditionerMatrixCase {
+    int ns = 0;
+    int mpol = 0;
+    int ntheta = 0;
+    int nfp = 1;
+    float delta_s = 0.0F;
+    bool free_boundary = false;
+    AxisymmetricPreconditionerElements elements;
+    std::vector<float> base_geometry;
+    std::vector<float> sqrt_s_f;
+    std::vector<float> phip_h;
+};
+
+struct AxisymmetricPreconditionerMatrix {
+    // Mode-major radial systems.
+    std::vector<float> upper_r;
+    std::vector<float> diagonal_r;
+    std::vector<float> lower_r;
+    std::vector<float> upper_z;
+    std::vector<float> diagonal_z;
+    std::vector<float> lower_z;
+    std::vector<float> lambda;
+    std::vector<float> scale;
+    std::vector<int> first_surface;
+};
+
+using AxisymmetricPreconditionerMatrixCallback =
+    std::function<void(std::string, AxisymmetricPreconditionerMatrix)>;
+
+void enqueue_axisymmetric_preconditioner_matrix(
+    const wgpu::Device& device,
+    const AxisymmetricPreconditionerMatrixCase& input,
+    AxisymmetricPreconditionerMatrixCallback callback);
+
+AxisymmetricPreconditionerMatrix axisymmetric_preconditioner_matrix_reference(
+    const AxisymmetricPreconditionerMatrixCase& input);
 
 }  // namespace cumes::webgpu
 
