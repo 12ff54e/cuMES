@@ -70,6 +70,8 @@ class EquilibriumLinearization {
 
     // Propagate a solved spectral direction through the final geometry and
     // magnetic-field pass into the public target-facing tangent layout.
+    // Current-density full_fields remain zero-filled placeholders; their
+    // derivatives are not part of the qualified interface.
     EquilibriumTangent materialize_tangent(
         std::span<const double> state_direction,
         const EquilibriumSnapshot& primal_equilibrium,

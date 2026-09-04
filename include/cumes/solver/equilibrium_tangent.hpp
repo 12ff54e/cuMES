@@ -41,9 +41,12 @@ struct BoundaryTangent {
 };
 
 // Directional derivative of the public equilibrium result. The nested values
-// use the exact public primal layouts; every number is a derivative, not an
-// independently writable equilibrium. Keeping one layout contract lets meow
-// apply its target chain rule without seeing CUDA storage.
+// use the exact public primal layouts. Spectral, half-grid magnetic, and
+// profile values materialized by EquilibriumLinearization are derivatives,
+// not an independently writable equilibrium. Current-density full_fields are
+// zero-filled layout placeholders because their derivatives are outside the
+// qualified tangent API. Keeping one layout contract lets meow apply its
+// target chain rule without seeing CUDA storage.
 struct EquilibriumTangent {
     EquilibriumSnapshot equilibrium;
     EquilibriumProfiles profiles;

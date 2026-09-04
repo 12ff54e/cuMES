@@ -1,9 +1,9 @@
 // equilibrium_solver.hpp — host-facing in-process equilibrium solve facade.
 //
 // This is the supported embedding boundary. Consumers provide an immutable
-// ValidatedProblem and receive a complete host snapshot/report; CUDA streams,
-// device storage, operator workspaces, and multigrid orchestration remain
-// implementation details.
+// ValidatedProblem and receive a complete host snapshot plus a structured run
+// report; CUDA streams, device storage, operator workspaces, and multigrid
+// orchestration remain implementation details.
 #ifndef CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_SOLVER_HPP_
 #define CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_SOLVER_HPP_
 

@@ -153,6 +153,18 @@ static void test_problem_spec_json_round_trip() {
     check(round_trip.value().normalize_to_json() ==
               original.value().normalize_to_json(),
           "ProblemSpec writer preserves the validated solver input");
+
+    ProblemSpec escaped = original.value().spec();
+    escaped.free_boundary.mgrid_file =
+        std::string("grid\b\f") + static_cast<char>(0x01) + ".nc";
+    const std::string escaped_json = cumes::problem_spec_to_json(escaped);
+    check(escaped_json.find("grid\\b\\f\\u0001.nc") != std::string::npos,
+          "ProblemSpec writer escapes every JSON control character");
+    const auto escaped_round_trip = parse_problem_spec(escaped_json, opts);
+    check(escaped_round_trip.report.ok() &&
+              escaped_round_trip.spec.free_boundary.mgrid_file ==
+                  escaped.free_boundary.mgrid_file,
+          "ProblemSpec control-character strings round trip");
 }
 
 static void test_mode_table() {

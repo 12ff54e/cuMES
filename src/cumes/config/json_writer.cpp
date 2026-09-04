@@ -43,8 +43,23 @@ std::string escape(std::string_view value) {
             case '\t':
                 result += "\\t";
                 break;
+            case '\b':
+                result += "\\b";
+                break;
+            case '\f':
+                result += "\\f";
+                break;
             default:
-                result += character;
+                if (static_cast<unsigned char>(character) < 0x20) {
+                    constexpr char HEX[] = "0123456789abcdef";
+                    const unsigned char value =
+                        static_cast<unsigned char>(character);
+                    result += "\\u00";
+                    result += HEX[value >> 4];
+                    result += HEX[value & 0x0f];
+                } else {
+                    result += character;
+                }
         }
     }
     return result;

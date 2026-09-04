@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -84,11 +86,41 @@ int main() {
     const int m1n0 = problem.value().spec().ntor + 1;
     direction.rbcc[m1n0] = 1e-3;
     direction.zbsc[m1n0] = -5e-4;
+
+    std::unique_ptr<cumes::EquilibriumLinearization> detached_linearization;
+    {
+        auto short_lived_problem = cumes::validate(problem.value().spec(), {});
+        if (!short_lived_problem.has_value()) {
+            std::cerr << "FAIL: short-lived tangent problem did not validate\n";
+            return 1;
+        }
+        detached_linearization =
+            std::make_unique<cumes::EquilibriumLinearization>(
+                short_lived_problem.value(), equilibrium.equilibrium);
+    }
+    const cumes::ResidualJvp detached_boundary =
+        detached_linearization->boundary_residual_jvp(direction);
+    if (detached_boundary.tangent.size() !=
+        detached_linearization->state_size()) {
+        std::cerr << "FAIL: tangent session retained its input problem\n";
+        return 1;
+    }
+    detached_linearization.reset();
+
     cumes::TangentLinearOptions options;
     options.max_iterations = 1000;
     options.restart = 300;
     options.relative_tolerance = 2e-6;
     options.absolute_tolerance = 1e-11;
+    cumes::TangentLinearOptions invalid_options = options;
+    invalid_options.relative_tolerance =
+        std::numeric_limits<double>::quiet_NaN();
+    try {
+        static_cast<void>(
+            linearization.solve_boundary_tangent(direction, invalid_options));
+        std::cerr << "FAIL: non-finite tangent tolerance was accepted\n";
+        return 1;
+    } catch (const cumes::CumesError&) {}
     const cumes::SpectralTangentSolve tangent =
         linearization.solve_boundary_tangent(direction, options);
     std::cout << "Solovev tangent GMRES initial=" << tangent.initial_residual

@@ -521,7 +521,8 @@ class cumes::EquilibriumLinearization::Impl {
 
     Impl(const ValidatedProblem& problem,
          const EquilibriumSnapshot& equilibrium)
-        : problem_(&problem), p_(init_params<double>(problem)) {
+        : boundary_size_(problem.boundary().size()),
+          p_(init_params<double>(problem)) {
         if (problem.spec().free_boundary.lfreeb) {
             throw CumesError(
                 "equilibrium forward tangents currently support fixed "
@@ -717,7 +718,7 @@ class cumes::EquilibriumLinearization::Impl {
             output[i] = input[i].tangent;
     }
 
-    const ValidatedProblem* problem_ = nullptr;
+    std::size_t boundary_size_ = 0;
     DeviceParams<double> p_{};
     DeviceModeTable mode_table_;
     std::unique_ptr<EquilibriumResidualJvpOperator> evaluator_;
@@ -752,7 +753,10 @@ cumes::ResidualJvp cumes::EquilibriumLinearization::residual_jvp(
 
 cumes::ResidualJvp cumes::EquilibriumLinearization::boundary_residual_jvp(
     const BoundaryTangent& direction) {
-    if (!direction.matches(*impl_->problem_)) {
+    if (direction.rbcc.size() != impl_->boundary_size_ ||
+        direction.rbss.size() != impl_->boundary_size_ ||
+        direction.zbsc.size() != impl_->boundary_size_ ||
+        direction.zbcs.size() != impl_->boundary_size_) {
         throw CumesError(
             "boundary tangent does not match the validated folded basis");
     }
@@ -776,6 +780,8 @@ cumes::EquilibriumLinearization::solve_boundary_tangent(
     const BoundaryTangent& direction,
     const TangentLinearOptions& options) {
     if (options.max_iterations <= 0 || options.restart <= 0 ||
+        !std::isfinite(options.relative_tolerance) ||
+        !std::isfinite(options.absolute_tolerance) ||
         options.relative_tolerance < 0.0 || options.absolute_tolerance < 0.0) {
         throw CumesError("invalid tangent linear-solver options");
     }
