@@ -60,6 +60,7 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl@/shaders/magnetic_field.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field_double_single.wgsl@/shaders/magnetic_field_double_single.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose.wgsl@/shaders/residual_decompose.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose_double_single.wgsl@/shaders/residual_decompose_double_single.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_elements.wgsl@/shaders/axisymmetric_preconditioner_elements.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_apply.wgsl@/shaders/axisymmetric_preconditioner_apply.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_matrix.wgsl@/shaders/axisymmetric_preconditioner_matrix.wgsl"
@@ -91,6 +92,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_descent_double_single.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/float_float.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose_double_single.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_elements.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_apply.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_matrix.wgsl

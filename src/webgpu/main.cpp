@@ -1776,8 +1776,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_residual_case_.ntor = w7x_stage_.ntor;
         w7x_residual_case_.include_edge_rz = false;
         w7x_residual_case_.zero_m1_z = true;
+        w7x_residual_case_.double_single = true;
         w7x_residual_case_.residual = std::move(residual);
+        w7x_residual_case_.residual_lo = w7x_spectral_residual_lo_;
         w7x_residual_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
+        w7x_residual_case_.sqrt_s_f_lo = w7x_stage_.profiles.sqrt_s_f_lo;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_residual_decomposition(
             device_, w7x_residual_case_,
@@ -1790,16 +1793,24 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 const auto expected =
                     cumes::webgpu::residual_decomposition_reference(
                         self->w7x_residual_case_);
-                float max_error = 0.0F;
-                bool valid = actual.residual.size() == expected.residual.size();
+                double max_error = 0.0;
+                bool valid =
+                    actual.residual.size() == expected.residual.size() &&
+                    actual.residual_lo.size() == expected.residual_lo.size();
                 if (valid) {
                     for (std::size_t i = 0; i < actual.residual.size(); ++i) {
                         max_error = std::max(
                             max_error,
-                            std::abs(actual.residual[i] -
-                                     expected.residual[i]) /
-                                (1.0F + std::abs(expected.residual[i])));
-                        valid &= std::isfinite(actual.residual[i]);
+                            std::abs(
+                                (static_cast<double>(actual.residual[i]) +
+                                 actual.residual_lo[i]) -
+                                (static_cast<double>(expected.residual[i]) +
+                                 expected.residual_lo[i])) /
+                                (1.0 + std::abs(static_cast<double>(
+                                                    expected.residual[i]) +
+                                                expected.residual_lo[i])));
+                        valid &= std::isfinite(actual.residual[i]) &&
+                                 std::isfinite(actual.residual_lo[i]);
                     }
                 }
                 double max_norm_error = 0.0;
@@ -1811,15 +1822,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                             (1.0 + std::abs(expected.raw_norm[group])));
                     valid &= std::isfinite(actual.raw_norm[group]);
                 }
-                if (!valid || max_error > 5.0e-4F || max_norm_error > 5.0e-4) {
+                if (!valid || max_error > 2.0e-7 || max_norm_error > 2.0e-7) {
                     self->finish(false, "W7-X decomposition mismatch: " +
                                             std::to_string(max_error));
                     return;
                 }
                 std::printf(
-                    "  W7-X residual decomposition: PASS "
-                    "(max scaled |GPU-CPU| = %.3e)\n",
-                    static_cast<double>(max_error));
+                    "  W7-X double-single residual decomposition: PASS "
+                    "(max reconstructed scaled |GPU-CPU| = %.3e)\n",
+                    max_error);
+                self->w7x_decomposed_residual_lo_ =
+                    std::move(actual.residual_lo);
                 self->run_w7x_descent(std::move(actual.residual));
             });
     }
@@ -2637,8 +2650,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         residual_case_.ntor = initialized_stage_.ntor;
         residual_case_.include_edge_rz = false;
         residual_case_.zero_m1_z = true;
+        residual_case_.double_single = double_single_solve_;
         residual_case_.residual = std::move(residual);
+        residual_case_.residual_lo = stage_spectral_residual_lo_;
         residual_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        residual_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_residual_decomposition(
             device_, residual_case_,
@@ -2690,6 +2706,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         "(max |GPU-CPU| = %.3e)\n",
                         static_cast<double>(max_error));
                 }
+                self->stage_decomposed_residual_lo_ =
+                    std::move(actual.residual_lo);
                 self->run_preconditioner_elements();
             });
     }
@@ -3803,6 +3821,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_force_fields_;
     std::vector<float> stage_force_fields_lo_;
     std::vector<float> stage_spectral_residual_lo_;
+    std::vector<float> stage_decomposed_residual_lo_;
     std::vector<float> toroidal_r_con_;
     std::vector<float> toroidal_z_con_;
     std::vector<float> w7x_r_con_;
@@ -3812,6 +3831,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> w7x_magnetic_field_lo_;
     std::vector<float> w7x_force_fields_lo_;
     std::vector<float> w7x_spectral_residual_lo_;
+    std::vector<float> w7x_decomposed_residual_lo_;
     std::vector<float> constraint_r_con0_;
     std::vector<float> constraint_z_con0_;
     std::vector<float> constraint_tcon_;

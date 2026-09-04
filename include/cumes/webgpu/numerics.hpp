@@ -16,12 +16,16 @@ struct ResidualDecompositionCase {
     int ntor = 0;
     bool include_edge_rz = false;
     bool zero_m1_z = false;
+    bool double_single = false;
     std::vector<float> residual;
+    std::vector<float> residual_lo;
     std::vector<float> sqrt_s_f;
+    std::vector<float> sqrt_s_f_lo;
 };
 
 struct ResidualDecompositionResult {
     std::vector<float> residual;
+    std::vector<float> residual_lo;
     std::array<double, 3> raw_norm{};
 };
 
