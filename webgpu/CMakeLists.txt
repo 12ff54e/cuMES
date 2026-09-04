@@ -71,6 +71,7 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse.wgsl@/shaders/toroidal_inverse.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse_double_single.wgsl@/shaders/toroidal_inverse_double_single.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl@/shaders/toroidal_forward.wgsl"
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward_double_single.wgsl@/shaders/toroidal_forward_double_single.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_dealias.wgsl@/shaders/toroidal_dealias.wgsl")
 
 set_target_properties(cumes_webgpu PROPERTIES SUFFIX ".html")
@@ -102,6 +103,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse_double_single.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward_double_single.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_dealias.wgsl)
 
 # CTest cannot provide a browser WebGPU implementation, but it can guard the

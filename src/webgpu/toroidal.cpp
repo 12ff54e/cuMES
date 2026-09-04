@@ -22,9 +22,10 @@ constexpr std::uint32_t WORKGROUP_SIZE = 128;
 constexpr std::size_t RESULT_FIELD_COUNT = GEOMETRY_PARITY_FIELD_COUNT + 2;
 using BasisKey = std::array<int, 4>;
 
-void compensated_add(float& sum, float& correction, float term) {
-    const float adjusted = term - correction;
-    const float next = sum + adjusted;
+template <typename T>
+void compensated_add(T& sum, T& correction, T term) {
+    const T adjusted = term - correction;
+    const T next = sum + adjusted;
     correction = (next - sum) - adjusted;
     sum = next;
 }
@@ -38,8 +39,12 @@ struct ShaderParams {
     std::uint32_t nfp;
     std::uint32_t n_z_n_t;
     std::uint32_t total_points;
+    float norm_hi;
+    float norm_lo;
+    float sqrt2_hi;
+    float sqrt2_lo;
 };
-static_assert(sizeof(ShaderParams) == 32);
+static_assert(sizeof(ShaderParams) == 48);
 
 struct DealiasParams {
     std::uint32_t ns;
@@ -153,6 +158,9 @@ std::string validate_case(const ToroidalForwardCase& input) {
         TOROIDAL_FORWARD_FIELD_COUNT * input.ns * n_z_n_t) {
         return "toroidal force size does not match 20*ns*ntheta*nzeta";
     }
+    if (input.double_single && input.fields_lo.size() != input.fields.size()) {
+        return "double-single toroidal force low-word size mismatch";
+    }
     if (static_cast<std::size_t>(input.ns) * mnmax >
         std::numeric_limits<std::uint32_t>::max()) {
         return "toroidal forward exceeds WebGPU indexing limits";
@@ -202,8 +210,11 @@ std::string load_shader(bool double_single) {
     return prelude + '\n' + kernel;
 }
 
-std::string load_forward_shader() {
-    std::ifstream stream("/shaders/toroidal_forward.wgsl", std::ios::binary);
+std::string load_forward_shader(bool double_single) {
+    std::ifstream stream(double_single
+                             ? "/shaders/toroidal_forward_double_single.wgsl"
+                             : "/shaders/toroidal_forward.wgsl",
+                         std::ios::binary);
     if (!stream) return {};
     std::ostringstream text;
     text << stream.rdbuf();
@@ -335,6 +346,7 @@ struct ForwardDispatchState {
     wgpu::Buffer readback_buffer;
     std::size_t result_values = 0;
     std::size_t result_bytes = 0;
+    bool double_single = false;
 };
 
 struct DealiasDispatchState {
@@ -693,7 +705,11 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                               static_cast<std::uint32_t>(input.nzeta),
                               static_cast<std::uint32_t>(input.nfp),
                               static_cast<std::uint32_t>(n_z_n_t),
-                              static_cast<std::uint32_t>(total_points)};
+                              static_cast<std::uint32_t>(total_points),
+                              0.0F,
+                              0.0F,
+                              0.0F,
+                              0.0F};
     const auto queue = device.GetQueue();
     queue.WriteBuffer(state_buffer, 0, input.state.data(), state_bytes);
     if (input.double_single) {
@@ -838,57 +854,80 @@ ToroidalForwardResult toroidal_forward_reference(
     const int mnmax = input.mpol * (input.ntor + 1);
     const int n_z_n_t = input.ntheta * input.nzeta;
     const int theta_reduced = input.ntheta / 2 + 1;
-    const float norm =
-        1.0F / static_cast<float>(input.nzeta * (theta_reduced - 1));
+    const double norm =
+        1.0 / static_cast<double>(input.nzeta * (theta_reduced - 1));
     const auto& basis = make_basis(input);
     ToroidalForwardResult result;
     result.residual.assign(SPECTRAL_COMPONENT_COUNT * mnmax * input.ns, 0.0F);
+    if (input.double_single)
+        result.residual_lo.assign(result.residual.size(), 0.0F);
     const auto field = [&](int component, int surface, int angular) {
-        return input
-            .fields[(static_cast<std::size_t>(component) * input.ns + surface) *
-                        n_z_n_t +
-                    angular];
+        const std::size_t index =
+            (static_cast<std::size_t>(component) * input.ns + surface) *
+                n_z_n_t +
+            angular;
+        return static_cast<double>(input.fields[index]) +
+               (input.double_single ? input.fields_lo[index] : 0.0);
     };
     const auto table = [&](int component, int mode, int angular) {
+        if (input.double_single) {
+            const int m = mode / (input.ntor + 1);
+            const int n = mode % (input.ntor + 1);
+            const int theta_index = angular % input.ntheta;
+            const int zeta_index = angular / input.ntheta;
+            const double theta = 2.0 * std::numbers::pi * theta_index /
+                                 static_cast<double>(input.ntheta);
+            const double zeta = 2.0 * std::numbers::pi * zeta_index /
+                                static_cast<double>(input.nzeta);
+            const double cm = std::cos(static_cast<double>(m) * theta);
+            const double sm = std::sin(static_cast<double>(m) * theta);
+            const double cn = std::cos(static_cast<double>(n) * zeta);
+            const double sn = std::sin(static_cast<double>(n) * zeta);
+            if (component == 0) return cm * cn;
+            if (component == 1) return sm * sn;
+            if (component == 2) return sm * cn;
+            return cm * sn;
+        }
         return basis[(static_cast<std::size_t>(component) * mnmax + mode) *
                          n_z_n_t +
-                     angular];
+                     angular] *
+               1.0;
     };
     for (int mode = 0; mode < mnmax; ++mode) {
         const int m = mode / (input.ntor + 1);
         const int n = mode % (input.ntor + 1);
-        const float mf = static_cast<float>(m);
-        const float nf = static_cast<float>(n * input.nfp);
+        const double mf = static_cast<double>(m);
+        const double nf = static_cast<double>(n * input.nfp);
         const int parity = m % 2;
-        const float xmpq = mf * (mf - 1.0F);
-        const float scale = (m == 0 ? 1.0F : std::sqrt(2.0F)) *
-                            (n == 0 ? 1.0F : std::sqrt(2.0F));
+        const double xmpq = mf * (mf - 1.0);
+        const double scale =
+            (m == 0 ? 1.0 : std::sqrt(2.0)) * (n == 0 ? 1.0 : std::sqrt(2.0));
         for (int surface = 0; surface < input.ns; ++surface) {
-            std::array<float, SPECTRAL_COMPONENT_COUNT> sums{};
-            std::array<float, SPECTRAL_COMPONENT_COUNT> corrections{};
+            std::array<double, SPECTRAL_COMPONENT_COUNT> sums{};
+            std::array<double, SPECTRAL_COMPONENT_COUNT> corrections{};
             for (int zeta = 0; zeta < input.nzeta; ++zeta) {
                 for (int theta = 0; theta < theta_reduced; ++theta) {
                     const int angular = zeta * input.ntheta + theta;
-                    float weight = norm;
+                    double weight = norm;
                     if (theta == 0 || theta + 1 == theta_reduced) {
                         weight *= 0.5F;
                     }
-                    const float cc = weight * table(0, mode, angular);
-                    const float ss = weight * table(1, mode, angular);
-                    const float sc = weight * table(2, mode, angular);
-                    const float cs = weight * table(3, mode, angular);
-                    const float temp_r =
+                    const double cc = weight * table(0, mode, angular);
+                    const double ss = weight * table(1, mode, angular);
+                    const double sc = weight * table(2, mode, angular);
+                    const double cs = weight * table(3, mode, angular);
+                    const double temp_r =
                         field(parity, surface, angular) +
                         xmpq * field(16 + parity, surface, angular);
-                    const float temp_z =
+                    const double temp_z =
                         field(2 + parity, surface, angular) +
                         xmpq * field(18 + parity, surface, angular);
-                    const float br = field(4 + parity, surface, angular);
-                    const float bz = field(6 + parity, surface, angular);
-                    const float bl = field(8 + parity, surface, angular);
-                    const float cr = field(10 + parity, surface, angular);
-                    const float cz = field(12 + parity, surface, angular);
-                    const float cl = field(14 + parity, surface, angular);
+                    const double br = field(4 + parity, surface, angular);
+                    const double bz = field(6 + parity, surface, angular);
+                    const double bl = field(8 + parity, surface, angular);
+                    const double cr = field(10 + parity, surface, angular);
+                    const double cz = field(12 + parity, surface, angular);
+                    const double cl = field(14 + parity, surface, angular);
                     compensated_add(sums[0], corrections[0],
                                     temp_r * cc - mf * br * sc + nf * cr * cs);
                     compensated_add(sums[3], corrections[3],
@@ -906,7 +945,7 @@ ToroidalForwardResult toroidal_forward_reference(
             for (int component = 0;
                  component < static_cast<int>(SPECTRAL_COMPONENT_COUNT);
                  ++component) {
-                float value = scale * sums[component];
+                double value = scale * sums[component];
                 if (surface == 0 &&
                     !(m == 0 && (component == 0 || component == 4))) {
                     value = 0.0F;
@@ -914,10 +953,13 @@ ToroidalForwardResult toroidal_forward_reference(
                            component != 2 && component != 5) {
                     value = 0.0F;
                 }
-                result.residual[(static_cast<std::size_t>(component) * mnmax +
-                                 mode) *
-                                    input.ns +
-                                surface] = value;
+                const std::size_t index =
+                    (static_cast<std::size_t>(component) * mnmax + mode) *
+                        input.ns +
+                    surface;
+                const auto pair = split(value);
+                result.residual[index] = pair.hi;
+                if (input.double_single) result.residual_lo[index] = pair.lo;
             }
         }
     }
@@ -932,7 +974,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text = load_forward_shader();
+    const std::string shader_text = load_forward_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/toroidal_forward.wgsl", {});
         return;
@@ -947,12 +989,14 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         SPECTRAL_COMPONENT_COUNT * mnmax * input.ns;
     const std::size_t fields_bytes = input.fields.size() * sizeof(float);
     const std::size_t basis_bytes = gpu_basis.bytes;
-    const std::size_t result_bytes = result_values * sizeof(float);
+    const std::size_t result_bytes =
+        result_values * sizeof(float) * (input.double_single ? 2 : 1);
     const std::size_t theta_reduced = input.ntheta / 2 + 1;
     const std::size_t intermediate_values = 40 *
                                             static_cast<std::size_t>(input.ns) *
                                             theta_reduced * (input.ntor + 1);
-    const std::size_t intermediate_bytes = intermediate_values * sizeof(float);
+    const std::size_t intermediate_bytes =
+        intermediate_values * sizeof(float) * (input.double_single ? 2 : 1);
     const auto fields_buffer =
         create_buffer(device, fields_bytes,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
@@ -972,52 +1016,97 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         create_buffer(device, sizeof(ShaderParams),
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal forward parameters");
+    wgpu::Buffer fields_low_buffer, rounding_buffer;
+    if (input.double_single) {
+        fields_low_buffer = create_buffer(
+            device, fields_bytes,
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            "cuMES toroidal forces low");
+        const std::size_t invocation_count =
+            std::max(20 * static_cast<std::size_t>(input.ns) * theta_reduced *
+                         (input.ntor + 1),
+                     static_cast<std::size_t>(input.ns) * mnmax);
+        rounding_buffer =
+            create_buffer(device, invocation_count * sizeof(std::uint32_t),
+                          wgpu::BufferUsage::Storage,
+                          "cuMES toroidal forward double-single rounding");
+    }
 
     const auto& toroidal_pipeline = detail::cached_compute_pipeline(
-        device, "toroidal-forward-toroidal", shader_text,
-        "cuMES separable toroidal forward pipeline", "toroidal_stage");
+        device,
+        input.double_single ? "toroidal-forward-toroidal-double-single"
+                            : "toroidal-forward-toroidal",
+        shader_text, "cuMES separable toroidal forward pipeline",
+        "toroidal_stage");
     const auto& poloidal_pipeline = detail::cached_compute_pipeline(
-        device, "toroidal-forward-poloidal", shader_text,
-        "cuMES separable poloidal forward pipeline", "poloidal_stage");
-    const ShaderParams params{static_cast<std::uint32_t>(input.ns),
-                              static_cast<std::uint32_t>(input.mpol),
-                              static_cast<std::uint32_t>(input.ntor),
-                              static_cast<std::uint32_t>(input.ntheta),
-                              static_cast<std::uint32_t>(input.nzeta),
-                              static_cast<std::uint32_t>(input.nfp),
-                              static_cast<std::uint32_t>(n_z_n_t),
-                              static_cast<std::uint32_t>(input.include_lcfs)};
+        device,
+        input.double_single ? "toroidal-forward-poloidal-double-single"
+                            : "toroidal-forward-poloidal",
+        shader_text, "cuMES separable poloidal forward pipeline",
+        "poloidal_stage");
+    const ShaderParams params{
+        static_cast<std::uint32_t>(input.ns),
+        static_cast<std::uint32_t>(input.mpol),
+        static_cast<std::uint32_t>(input.ntor),
+        static_cast<std::uint32_t>(input.ntheta),
+        static_cast<std::uint32_t>(input.nzeta),
+        static_cast<std::uint32_t>(input.nfp),
+        static_cast<std::uint32_t>(n_z_n_t),
+        static_cast<std::uint32_t>(input.include_lcfs),
+        split(1.0 / static_cast<double>(input.nzeta * (input.ntheta / 2))).hi,
+        split(1.0 / static_cast<double>(input.nzeta * (input.ntheta / 2))).lo,
+        split(std::sqrt(2.0)).hi,
+        split(std::sqrt(2.0)).lo};
     const auto queue = device.GetQueue();
     queue.WriteBuffer(fields_buffer, 0, input.fields.data(), fields_bytes);
+    if (input.double_single)
+        queue.WriteBuffer(fields_low_buffer, 0, input.fields_lo.data(),
+                          fields_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry toroidal_entries[] = {
+    std::vector<wgpu::BindGroupEntry> toroidal_entries = {
         {nullptr, 0, fields_buffer, 0, fields_bytes, nullptr, nullptr},
         {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
         {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
          nullptr},
     };
+    if (input.double_single) {
+        toroidal_entries.push_back(
+            {nullptr, 5, fields_low_buffer, 0, fields_bytes, nullptr, nullptr});
+        toroidal_entries.push_back({nullptr, 6, gpu_basis.low_buffer, 0,
+                                    basis_bytes, nullptr, nullptr});
+        toroidal_entries.push_back({nullptr, 7, rounding_buffer, 0,
+                                    rounding_buffer.GetSize(), nullptr,
+                                    nullptr});
+    }
     wgpu::BindGroupDescriptor toroidal_bind_descriptor{};
     toroidal_bind_descriptor.label = "cuMES toroidal forward first bindings";
     toroidal_bind_descriptor.layout = toroidal_layout;
-    toroidal_bind_descriptor.entryCount = std::size(toroidal_entries);
-    toroidal_bind_descriptor.entries = toroidal_entries;
+    toroidal_bind_descriptor.entryCount = toroidal_entries.size();
+    toroidal_bind_descriptor.entries = toroidal_entries.data();
     const auto toroidal_bind_group =
         device.CreateBindGroup(&toroidal_bind_descriptor);
     const auto poloidal_layout = poloidal_pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry poloidal_entries[] = {
+    std::vector<wgpu::BindGroupEntry> poloidal_entries = {
         {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
         {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
          nullptr},
     };
+    if (input.double_single) {
+        poloidal_entries.push_back({nullptr, 6, gpu_basis.low_buffer, 0,
+                                    basis_bytes, nullptr, nullptr});
+        poloidal_entries.push_back({nullptr, 7, rounding_buffer, 0,
+                                    rounding_buffer.GetSize(), nullptr,
+                                    nullptr});
+    }
     wgpu::BindGroupDescriptor poloidal_bind_descriptor{};
     poloidal_bind_descriptor.label = "cuMES toroidal forward second bindings";
     poloidal_bind_descriptor.layout = poloidal_layout;
-    poloidal_bind_descriptor.entryCount = std::size(poloidal_entries);
-    poloidal_bind_descriptor.entries = poloidal_entries;
+    poloidal_bind_descriptor.entryCount = poloidal_entries.size();
+    poloidal_bind_descriptor.entries = poloidal_entries.data();
     const auto poloidal_bind_group =
         device.CreateBindGroup(&poloidal_bind_descriptor);
     const auto encoder = device.CreateCommandEncoder();
@@ -1047,6 +1136,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
     dispatch->readback_buffer = readback_buffer;
     dispatch->result_values = result_values;
     dispatch->result_bytes = result_bytes;
+    dispatch->double_single = input.double_single;
     readback_buffer.MapAsync(
         wgpu::MapMode::Read, 0, result_bytes,
         wgpu::CallbackMode::AllowSpontaneous,
@@ -1068,6 +1158,9 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
             }
             ToroidalForwardResult result;
             result.residual.assign(values, values + dispatch->result_values);
+            if (dispatch->double_single)
+                result.residual_lo.assign(values + dispatch->result_values,
+                                          values + 2 * dispatch->result_values);
             dispatch->readback_buffer.Unmap();
             dispatch->callback({}, std::move(result));
         });

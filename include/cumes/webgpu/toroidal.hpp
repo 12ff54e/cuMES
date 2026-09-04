@@ -46,14 +46,17 @@ struct ToroidalForwardCase {
     int nzeta = 0;
     int nfp = 0;
     bool include_lcfs = false;
+    bool double_single = false;
     // Field-major [field][surface][zeta][theta]: armn e/o, azmn e/o,
     // brmn e/o, bzmn e/o, blmn e/o, crmn e/o, czmn e/o, clmn e/o,
     // frcon e/o, fzcon e/o.
     std::vector<float> fields;
+    std::vector<float> fields_lo;
 };
 
 struct ToroidalForwardResult {
     std::vector<float> residual;
+    std::vector<float> residual_lo;
 };
 
 using ToroidalForwardCallback =

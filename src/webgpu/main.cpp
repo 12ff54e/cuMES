@@ -1711,12 +1711,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_forward_case_.nzeta = w7x_stage_.nzeta;
         w7x_forward_case_.nfp = w7x_stage_.nfp;
         w7x_forward_case_.include_lcfs = false;
+        w7x_forward_case_.double_single = true;
         const std::size_t points = static_cast<std::size_t>(w7x_stage_.ns) *
                                    w7x_stage_.ntheta * w7x_stage_.nzeta;
         w7x_forward_case_.fields.assign(
             cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
         std::copy(force_fields.begin(), force_fields.end(),
                   w7x_forward_case_.fields.begin());
+        w7x_forward_case_.fields_lo.assign(
+            cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+        std::copy(w7x_force_fields_lo_.begin(), w7x_force_fields_lo_.end(),
+                  w7x_forward_case_.fields_lo.begin());
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_toroidal_forward(
             device_, w7x_forward_case_,
@@ -1728,30 +1733,39 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 const auto expected = cumes::webgpu::toroidal_forward_reference(
                     self->w7x_forward_case_);
-                float max_error = 0.0F;
-                bool valid = actual.residual.size() == expected.residual.size();
+                double max_error = 0.0;
+                bool valid =
+                    actual.residual.size() == expected.residual.size() &&
+                    actual.residual_lo.size() == expected.residual_lo.size();
                 if (valid) {
                     for (std::size_t i = 0; i < actual.residual.size(); ++i) {
                         max_error = std::max(
                             max_error,
-                            std::abs(actual.residual[i] -
-                                     expected.residual[i]) /
-                                (1.0F + std::abs(expected.residual[i])));
-                        valid &= std::isfinite(actual.residual[i]);
+                            std::abs(
+                                (static_cast<double>(actual.residual[i]) +
+                                 actual.residual_lo[i]) -
+                                (static_cast<double>(expected.residual[i]) +
+                                 expected.residual_lo[i])) /
+                                (1.0 + std::abs(static_cast<double>(
+                                                    expected.residual[i]) +
+                                                expected.residual_lo[i])));
+                        valid &= std::isfinite(actual.residual[i]) &&
+                                 std::isfinite(actual.residual_lo[i]);
                     }
                 }
                 const bool nonzero =
                     std::any_of(actual.residual.begin(), actual.residual.end(),
                                 [](float value) { return value != 0.0F; });
-                if (!valid || !nonzero || max_error > 5.0e-4F) {
+                if (!valid || !nonzero || max_error > 2.0e-7) {
                     self->finish(false, "W7-X forward residual mismatch: " +
                                             std::to_string(max_error));
                     return;
                 }
                 std::printf(
-                    "  W7-X first physical residual pass: PASS "
-                    "(max scaled |GPU-CPU| = %.3e)\n",
-                    static_cast<double>(max_error));
+                    "  W7-X double-single spectral residual projection: PASS "
+                    "(max reconstructed scaled |GPU-CPU| = %.3e)\n",
+                    max_error);
+                self->w7x_spectral_residual_lo_ = std::move(actual.residual_lo);
                 self->run_w7x_decomposition(std::move(actual.residual));
             });
     }
@@ -2515,6 +2529,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             solver_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
             solver_toroidal_forward_case_.nfp = initialized_stage_.nfp;
             solver_toroidal_forward_case_.include_lcfs = false;
+            solver_toroidal_forward_case_.double_single = double_single_solve_;
             const std::size_t points =
                 static_cast<std::size_t>(initialized_stage_.ns) *
                 initialized_stage_.ntheta * initialized_stage_.nzeta;
@@ -2522,6 +2537,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
             std::copy(force_fields.begin(), force_fields.end(),
                       solver_toroidal_forward_case_.fields.begin());
+            if (double_single_solve_) {
+                solver_toroidal_forward_case_.fields_lo.assign(
+                    cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+                std::copy(stage_force_fields_lo_.begin(),
+                          stage_force_fields_lo_.end(),
+                          solver_toroidal_forward_case_.fields_lo.begin());
+            } else {
+                solver_toroidal_forward_case_.fields_lo.clear();
+            }
             const auto self = shared_from_this();
             cumes::webgpu::enqueue_toroidal_forward(
                 device_, solver_toroidal_forward_case_,
@@ -2531,6 +2555,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->finish(false, std::move(error));
                         return;
                     }
+                    self->stage_spectral_residual_lo_ =
+                        std::move(actual.residual_lo);
                     self->finish_stage_forward(
                         std::move(actual.residual),
                         self->production_solve_
@@ -3776,6 +3802,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_z_con_lo_;
     std::vector<float> stage_force_fields_;
     std::vector<float> stage_force_fields_lo_;
+    std::vector<float> stage_spectral_residual_lo_;
     std::vector<float> toroidal_r_con_;
     std::vector<float> toroidal_z_con_;
     std::vector<float> w7x_r_con_;
@@ -3784,6 +3811,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> w7x_base_geometry_lo_;
     std::vector<float> w7x_magnetic_field_lo_;
     std::vector<float> w7x_force_fields_lo_;
+    std::vector<float> w7x_spectral_residual_lo_;
     std::vector<float> constraint_r_con0_;
     std::vector<float> constraint_z_con0_;
     std::vector<float> constraint_tcon_;
