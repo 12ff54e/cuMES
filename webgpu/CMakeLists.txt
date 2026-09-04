@@ -8,6 +8,7 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/cumes/config/validation_report.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/core/mode_table.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/versioned_binary.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric_forward.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/constraint.cpp
@@ -25,6 +26,12 @@ add_executable(cumes_webgpu
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_FIELD_DISABLED)
+target_compile_definitions(cumes_webgpu PRIVATE
+  CUMES_GIT_REVISION="${CUMES_GIT_REVISION}"
+  CUMES_GIT_DIRTY=${CUMES_GIT_DIRTY}
+  CUMES_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+  CUMES_PRECISION_POLICY_NAME="${CUMES_PRECISION_POLICY}"
+  CUMES_PRECISION_FLAGS="${CUMES_PRECISION_FLAGS_STR}")
 cumes_enable_warnings(cumes_webgpu)
 
 target_compile_options(cumes_webgpu PRIVATE --use-port=emdawnwebgpu)

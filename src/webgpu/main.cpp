@@ -1,4 +1,6 @@
 #include "cumes/config/json_reader.hpp"
+#include "cumes/io/reader.hpp"
+#include "cumes/io/writer.hpp"
 #include "cumes/solver/iteration_controller.hpp"
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/constraint.hpp"
@@ -34,6 +36,43 @@ EM_JS(void, publish_browser_result, (int success, const char* detail), {
     clearTimeout(window.cumesDeadline);
     clearInterval(window.cumesKeepAlive);
 });
+
+EM_JS(int, publish_browser_output, (const char* path), {
+    try {
+        const bytes = FS.readFile(UTF8ToString(path));
+        const blob = new Blob([bytes], {
+            type:
+                'application/octet-stream'
+        });
+        if (window.cumesOutputUrl) URL.revokeObjectURL(window.cumesOutputUrl);
+        window.cumesOutputUrl = URL.createObjectURL(blob);
+        const link = document.getElementById('download');
+        link.href = window.cumesOutputUrl;
+        link.download = 'cumes-webgpu-output.bin';
+        link.hidden = false;
+        document.body.dataset.cumesOutputBytes = String(bytes.length);
+        return bytes.length;
+    } catch (error) {
+        document.body.dataset.cumesOutputError = String(error);
+        return -1;
+    }
+});
+
+#ifndef CUMES_GIT_REVISION
+#define CUMES_GIT_REVISION ""
+#endif
+#ifndef CUMES_GIT_DIRTY
+#define CUMES_GIT_DIRTY 0
+#endif
+#ifndef CUMES_BUILD_TYPE
+#define CUMES_BUILD_TYPE ""
+#endif
+#ifndef CUMES_PRECISION_POLICY_NAME
+#define CUMES_PRECISION_POLICY_NAME "mixed-float"
+#endif
+#ifndef CUMES_PRECISION_FLAGS
+#define CUMES_PRECISION_FLAGS ""
+#endif
 
 std::string message_text(wgpu::StringView message) {
     return message.length == 0 ? std::string{}
@@ -1413,6 +1452,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const int stage_iterations = controller_->effective_iteration();
         stage_iterations_.push_back(stage_iterations);
         total_iterations_ += stage_iterations;
+        cumes::StageReport stage_report;
+        stage_report.ns = initialized_stage_.ns;
+        stage_report.effective_iterations = stage_iterations;
+        stage_report.converged = true;
+        stage_report.final_residual = cumes::ResidualTriple{
+            invariant_normalized_[0], invariant_normalized_[1],
+            invariant_normalized_[2]};
+        stage_report.restarts = controller_->restart_events();
+        stage_reports_.push_back(std::move(stage_report));
         std::printf(
             "  Solovev stage %zu/%zu converged: iter=%d residual=(%.3e, "
             "%.3e, %.3e)\n",
@@ -1420,6 +1468,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             invariant_normalized_[0], invariant_normalized_[1],
             invariant_normalized_[2]);
         if (stage_index_ + 1 == problem_->stage_shapes().size()) {
+            const std::string output_error = publish_output();
+            if (!output_error.empty()) {
+                finish(false, output_error);
+                return;
+            }
             char detail[320];
             std::snprintf(
                 detail, sizeof(detail),
@@ -1484,6 +1537,68 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
+    std::string publish_output() {
+        cumes::EquilibriumSnapshot snapshot;
+        snapshot.ns = initialized_stage_.ns;
+        snapshot.mnmax = initialized_stage_.mpol;
+        const std::size_t family_values =
+            static_cast<std::size_t>(snapshot.ns) * snapshot.mnmax;
+        for (std::size_t component = 0;
+             component < cumes::EquilibriumSnapshot::COUNT; ++component) {
+            const auto begin =
+                initialized_stage_.state.begin() + component * family_values;
+            snapshot.families[component].assign(begin, begin + family_values);
+        }
+
+        cumes::RunReport report;
+        report.status = cumes::RunStatus::CONVERGED;
+        report.total_effective_iterations = total_iterations_;
+        report.stages = stage_reports_;
+        report.build.revision = CUMES_GIT_REVISION;
+        report.build.dirty = CUMES_GIT_DIRTY != 0;
+        report.build.build_type = CUMES_BUILD_TYPE;
+        report.build.scalar_type = "float";
+        report.build.precision_policy = CUMES_PRECISION_POLICY_NAME;
+        report.build.compile_flags = CUMES_PRECISION_FLAGS;
+        report.input.source_path = "inputs/solovev.json";
+        report.runtime.gpu_name = "WebGPU adapter";
+        report.runtime.runtime = "emdawnwebgpu";
+        report.runtime.toolkit = "Emscripten";
+        report.input_params = cumes::make_input_params(*problem_);
+
+        const cumes::OutputSpec spec{cumes::OutputFormat::BINARY,
+                                     "/cumes-output.bin"};
+        auto writer = cumes::make_binary_writer();
+        if (!writer) return "WebGPU binary writer is unavailable";
+        const cumes::Status status =
+            writer->write_atomic(snapshot, report, spec, *problem_);
+        if (!status.has_value()) {
+            return "WebGPU output failed: " + status.error();
+        }
+        auto reader = cumes::make_binary_reader();
+        if (!reader) return "WebGPU binary reader is unavailable";
+        cumes::RunReport roundtrip_report;
+        auto roundtrip = reader->read(spec.path, std::ref(roundtrip_report));
+        if (!roundtrip.has_value()) {
+            return "WebGPU output round-trip failed: " + roundtrip.error();
+        }
+        const auto& recovered = roundtrip.value();
+        if (recovered.ns != snapshot.ns || recovered.mnmax != snapshot.mnmax ||
+            recovered.families != snapshot.families ||
+            roundtrip_report.status != cumes::RunStatus::CONVERGED ||
+            roundtrip_report.total_effective_iterations != total_iterations_ ||
+            roundtrip_report.stages.size() != stage_reports_.size() ||
+            !(roundtrip_report.input_params == report.input_params)) {
+            return "WebGPU output round-trip contract mismatch";
+        }
+        const int output_bytes = publish_browser_output(spec.path.c_str());
+        if (output_bytes <= 0) {
+            return "WebGPU output could not be exposed for download";
+        }
+        std::printf("  published schema-v8 output: %d bytes\n", output_bytes);
+        return {};
+    }
+
     static void finish(bool success, const std::string& detail) {
         std::printf("cuMES WebGPU self-test: %s — %s\n",
                     success ? "PASS" : "FAIL", detail.c_str());
@@ -1537,6 +1652,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::size_t stage_index_ = 0;
     int total_iterations_ = 0;
     std::vector<int> stage_iterations_;
+    std::vector<cumes::StageReport> stage_reports_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;

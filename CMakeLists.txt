@@ -30,6 +30,25 @@ if(CUMES_BACKEND STREQUAL "WEBGPU")
       "CUMES_USE_FLOAT=ON because core WGSL has no f64 scalar type")
   endif()
 
+  execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE CUMES_GIT_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  execute_process(
+    COMMAND git status --porcelain
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE CUMES_GIT_STATUS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  if(CUMES_GIT_STATUS STREQUAL "")
+    set(CUMES_GIT_DIRTY 0)
+  else()
+    set(CUMES_GIT_DIRTY 1)
+  endif()
+  set(CUMES_PRECISION_FLAGS_STR "")
+
   enable_testing()
   add_subdirectory(webgpu)
   return()

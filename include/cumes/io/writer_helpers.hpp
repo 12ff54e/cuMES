@@ -62,6 +62,14 @@ inline std::string temp_path_for(const std::string& path) {
 // fsync and the close result; a failed directory fsync now propagates to the
 // writer and from there to main.
 inline std::string fsync_directory_of(const std::string& path) {
+#ifdef __EMSCRIPTEN__
+    // Browser output is first published into Emscripten's in-memory MEMFS and
+    // immediately copied into a Blob. MEMFS implements file rename but has no
+    // directory descriptor that can be opened and fsynced; durability begins
+    // at the subsequent browser download boundary.
+    static_cast<void>(path);
+    return "";
+#else
     const std::size_t slash = path.find_last_of('/');
     const std::string dir =
         (slash == std::string::npos) ? std::string(".") : path.substr(0, slash);
@@ -80,6 +88,7 @@ inline std::string fsync_directory_of(const std::string& path) {
                std::string(strerror(close_errno_saved));
     }
     return "";
+#endif
 }
 
 // Rename `tmp` over `path`, then fsync the containing directory (durable

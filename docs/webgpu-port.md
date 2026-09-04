@@ -81,6 +81,11 @@ browser-validated:
   `(9.831e-07, 3.438e-07, 3.011e-10)`, while native CUDA mixed-float converges
   in `72 -> 31 -> 182` (285 total) with
   `(9.696e-07, 4.486e-07, 3.081e-10)`;
+- schema-v8 native binary publication into Emscripten MEMFS, an in-Wasm
+  writer/reader round-trip check, and a browser Blob download link; the
+  downloaded 16,784-byte `CUMES001` file is accepted by the native reader as
+  `ns=55`, `mnmax=6`, and its interior spectral state is within `1.818e-05`
+  relative of the native CUDA mixed-float state (the maximum is in lambda);
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input and converges
@@ -166,7 +171,8 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. fixed-boundary result publication (all three Solovev stages are complete);
+5. scientific real-space result-field publication (the spectral payload,
+   provenance, and all three Solovev stages are complete);
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;
 7. 3-D W7-X qualification and only then free-boundary/NESTOR integration.
@@ -174,8 +180,10 @@ The recommended dependency order is:
 Free-boundary support is last because `deps/vacuum-field` is itself CUDA-based
 and includes host/device coupling beyond the main operator DAG. NetCDF/HDF5 and
 the magnetic-coordinate CUDA postprocessor are also excluded from the browser
-target; browser output should first use the native binary schema through the
-virtual filesystem or a JavaScript download adapter.
+target. The browser publishes the native binary schema through MEMFS and a
+JavaScript Blob download adapter. Its spectral payload and provenance are
+complete; its version-8 scientific-field block uses the schema's explicit
+absent marker until browser-side derived-field capture is wired.
 
 ## Verification levels
 

@@ -28,6 +28,9 @@ The browser gate now runs the controller-complete three-stage Solovev
 multigrid solve with persistent velocity, constraint, preconditioner, and
 rollback state. It converges in `72 -> 32 -> 182` effective iterations, versus
 native CUDA mixed-float's closely equivalent `72 -> 31 -> 182` trajectory.
+The converged spectral state and run provenance are published as a version-8
+native binary through a browser download link and verified by an in-Wasm
+round trip.
 See
 [the WebGPU port status](docs/webgpu-port.md).
 
