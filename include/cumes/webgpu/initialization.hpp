@@ -33,7 +33,10 @@ struct AxisymmetricStageData {
 
     int ns = 0;
     int mpol = 0;
+    int ntor = 0;
     int ntheta = 0;
+    int nzeta = 1;
+    int nfp = 1;
     int max_iterations = 0;
     double tolerance = 0.0;
     float delta_t = 0.9F;
@@ -46,7 +49,10 @@ struct AxisymmetricStageData {
 };
 
 // Constructs the same f32 cold-start state and immutable radial profiles as
-// the CUDA stage setup. Only the direct axisymmetric backend is supported.
+// the CUDA stage setup for either axisymmetric or folded 3-D modes.
+AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
+                                       std::size_t stage_index);
+
 AxisymmetricStageData initialize_axisymmetric_stage(
     const ValidatedProblem& problem,
     std::size_t stage_index);

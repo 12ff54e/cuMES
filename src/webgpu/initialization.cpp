@@ -87,24 +87,21 @@ RadialProfiles initialize_profiles(const ProblemSpec& spec, int ns) {
 
 }  // namespace
 
-AxisymmetricStageData initialize_axisymmetric_stage(
-    const ValidatedProblem& problem,
-    std::size_t stage_index) {
+AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
+                                       std::size_t stage_index) {
     if (stage_index >= problem.stage_shapes().size()) {
         throw std::runtime_error("WebGPU stage index is out of range");
     }
     const GridShape& shape = problem.stage_shapes()[stage_index];
-    if (shape.ntor != 0 || shape.nzeta != 1) {
-        throw std::runtime_error(
-            "WebGPU initialization currently requires ntor=0 and nzeta=1");
-    }
-
     const ProblemSpec& spec = problem.spec();
     const FoldedBoundary& boundary = problem.boundary();
     AxisymmetricStageData stage;
     stage.ns = shape.ns;
     stage.mpol = shape.mpol;
+    stage.ntor = shape.ntor;
     stage.ntheta = shape.ntheta;
+    stage.nzeta = shape.nzeta;
+    stage.nfp = shape.nfp;
     stage.max_iterations =
         static_cast<int>(spec.stages[stage_index].max_iterations);
     stage.tolerance = spec.stages[stage_index].tolerance;
@@ -112,13 +109,14 @@ AxisymmetricStageData initialize_axisymmetric_stage(
     stage.tcon0 = static_cast<float>(spec.physical.tcon0);
     stage.free_boundary = spec.free_boundary.lfreeb;
     const std::size_t family_values =
-        static_cast<std::size_t>(shape.ns) * shape.mpol;
+        static_cast<std::size_t>(shape.ns) * shape.modes();
     stage.state.assign(6 * family_values, 0.0F);
     stage.envelope_correction = static_cast<float>(
-        default_seed_envelope(0, spec.free_boundary.lfreeb, shape.ns,
+        default_seed_envelope(shape.ntor, spec.free_boundary.lfreeb, shape.ns,
                               static_cast<int>(spec.stages.size())));
-    stage.lambda_seed_scale = static_cast<float>(
-        default_axisymmetric_lambda_seed(0, spec.free_boundary.lfreeb));
+    stage.lambda_seed_scale =
+        static_cast<float>(default_axisymmetric_lambda_seed(
+            shape.ntor, spec.free_boundary.lfreeb));
 
     auto family = [&](std::size_t component) {
         return std::span<float>(stage.state.data() + component * family_values,
@@ -132,22 +130,27 @@ AxisymmetricStageData initialize_axisymmetric_stage(
     for (int surface = 0; surface < shape.ns; ++surface) {
         const float s =
             static_cast<float>(surface) / static_cast<float>(shape.ns - 1);
-        for (int mode = 0; mode < shape.mpol; ++mode) {
-            const std::size_t index =
-                static_cast<std::size_t>(mode) * shape.ns + surface;
-            if (mode == 0) {
-                rcc[index] = s * static_cast<float>(boundary.rbcc[0]) +
-                             (1.0F - s) * static_cast<float>(spec.raxis_c[0]);
-                zcs[index] = s * static_cast<float>(boundary.zbcs[0]) -
-                             (1.0F - s) * static_cast<float>(spec.zaxis_s[0]);
-                continue;
+        for (int m = 0; m < shape.mpol; ++m) {
+            for (int n = 0; n <= shape.ntor; ++n) {
+                const int mode = m * (shape.ntor + 1) + n;
+                const std::size_t index =
+                    static_cast<std::size_t>(mode) * shape.ns + surface;
+                if (m == 0) {
+                    rcc[index] =
+                        s * static_cast<float>(boundary.rbcc[mode]) +
+                        (1.0F - s) * static_cast<float>(spec.raxis_c[n]);
+                    zcs[index] =
+                        s * static_cast<float>(boundary.zbcs[mode]) -
+                        (1.0F - s) * static_cast<float>(spec.zaxis_s[n]);
+                    continue;
+                }
+                const float weight =
+                    seed_radial_weight(m, s, stage.envelope_correction);
+                rcc[index] = weight * static_cast<float>(boundary.rbcc[mode]);
+                rss[index] = weight * static_cast<float>(boundary.rbss[mode]);
+                zsc[index] = weight * static_cast<float>(boundary.zbsc[mode]);
+                zcs[index] = weight * static_cast<float>(boundary.zbcs[mode]);
             }
-            const float weight =
-                seed_radial_weight(mode, s, stage.envelope_correction);
-            rcc[index] = weight * static_cast<float>(boundary.rbcc[mode]);
-            rss[index] = weight * static_cast<float>(boundary.rbss[mode]);
-            zsc[index] = weight * static_cast<float>(boundary.zbsc[mode]);
-            zcs[index] = weight * static_cast<float>(boundary.zbcs[mode]);
         }
     }
 
@@ -161,6 +164,17 @@ AxisymmetricStageData initialize_axisymmetric_stage(
     }
     stage.profiles = initialize_profiles(spec, shape.ns);
     return stage;
+}
+
+AxisymmetricStageData initialize_axisymmetric_stage(
+    const ValidatedProblem& problem,
+    std::size_t stage_index) {
+    const auto& shape = problem.stage_shapes().at(stage_index);
+    if (shape.ntor != 0 || shape.nzeta != 1) {
+        throw std::runtime_error(
+            "axisymmetric WebGPU initialization requires ntor=0 and nzeta=1");
+    }
+    return initialize_stage(problem, stage_index);
 }
 
 }  // namespace cumes::webgpu

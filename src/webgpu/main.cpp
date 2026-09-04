@@ -1126,8 +1126,83 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  complete 3-D preconditioner: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
-                self->run_solovev_initialization();
+                self->run_w7x_initialization();
             });
+    }
+
+    void run_w7x_initialization() {
+        try {
+            cumes::SolverOptions options;
+            options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+            auto parsed = cumes::read_problem_spec("/inputs/w7x.json", options);
+            if (parsed.report.has_errors()) {
+                const auto errors = parsed.report.errors();
+                finish(false, "W7-X JSON mapping failed: " + errors.front());
+                return;
+            }
+            for (auto& stage : parsed.spec.stages) {
+                stage.tolerance = std::max(
+                    stage.tolerance, cumes::tolerance_floor(options.precision));
+            }
+            auto validated = cumes::validate(std::move(parsed.spec), options);
+            if (!validated.has_value()) {
+                const auto errors = validated.error().errors();
+                finish(false, "W7-X validation failed: " +
+                                  (errors.empty() ? std::string("unknown error")
+                                                  : errors.front()));
+                return;
+            }
+            w7x_problem_.emplace(std::move(validated.value()));
+            w7x_stage_ = cumes::webgpu::initialize_stage(*w7x_problem_, 0);
+            const auto& shape = w7x_problem_->stage_shapes()[0];
+            const auto& boundary = w7x_problem_->boundary();
+            const std::size_t family_values =
+                static_cast<std::size_t>(shape.ns) * shape.modes();
+            bool valid = w7x_stage_.ns == 33 && w7x_stage_.mpol == 12 &&
+                         w7x_stage_.ntor == 12 && w7x_stage_.ntheta == 30 &&
+                         w7x_stage_.nzeta == 36 && w7x_stage_.nfp == 5 &&
+                         w7x_stage_.state.size() == 6 * family_values &&
+                         w7x_stage_.envelope_correction == 0.12F &&
+                         w7x_stage_.lambda_seed_scale == 0.0F;
+            for (std::size_t mode = 0; mode < shape.modes(); ++mode) {
+                const int m = static_cast<int>(mode) / (shape.ntor + 1);
+                const std::size_t axis =
+                    mode * static_cast<std::size_t>(shape.ns);
+                const std::size_t lcfs = axis + shape.ns - 1;
+                valid &= w7x_stage_.state[lcfs] ==
+                         static_cast<float>(boundary.rbcc[mode]);
+                valid &= w7x_stage_.state[3 * family_values + lcfs] ==
+                         static_cast<float>(boundary.rbss[mode]);
+                valid &= w7x_stage_.state[family_values + lcfs] ==
+                         static_cast<float>(boundary.zbsc[mode]);
+                valid &= w7x_stage_.state[4 * family_values + lcfs] ==
+                         static_cast<float>(boundary.zbcs[mode]);
+                if (m > 0) {
+                    for (int component = 0; component < 6; ++component) {
+                        valid &= w7x_stage_
+                                     .state[component * family_values + axis] ==
+                                 0.0F;
+                    }
+                }
+            }
+            valid &= w7x_stage_.profiles.curr_h.size() == 32;
+            valid &= std::any_of(w7x_stage_.profiles.curr_h.begin(),
+                                 w7x_stage_.profiles.curr_h.end(),
+                                 [](float value) { return value != 0.0F; });
+            if (!valid) {
+                finish(false, "W7-X cold-start/profile contract mismatch");
+                return;
+            }
+            std::printf(
+                "  parsed W7-X 3-D cold start: PASS "
+                "(ns=%d, mnmax=%d, angular=%d)\n",
+                shape.ns, static_cast<int>(shape.modes()),
+                shape.ntheta * shape.nzeta);
+            run_solovev_initialization();
+        } catch (const std::exception& error) {
+            finish(false,
+                   "W7-X initialization failed: " + std::string(error.what()));
+        }
     }
 
     void run_solovev_initialization() {
@@ -2329,6 +2404,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricDescentCase descent_case_;
     std::optional<cumes::IterationController<double>> controller_;
     std::optional<cumes::ValidatedProblem> problem_;
+    std::optional<cumes::ValidatedProblem> w7x_problem_;
+    cumes::webgpu::AxisymmetricStageData w7x_stage_;
     cumes::RestartDecision<double> pending_decision_;
     std::array<double, 3> invariant_raw_{};
     std::array<double, 3> invariant_normalized_{};

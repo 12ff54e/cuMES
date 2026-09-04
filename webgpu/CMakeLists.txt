@@ -46,6 +46,7 @@ target_link_options(cumes_webgpu PRIVATE
   -sASSERTIONS=1
   "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/solovev.json@/inputs/solovev.json"
+  "--embed-file=${PROJECT_SOURCE_DIR}/inputs/w7x.json@/inputs/w7x.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl@/shaders/base_geometry.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_force.wgsl@/shaders/axisymmetric_force.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_head.wgsl@/shaders/axisymmetric_constraint_head.wgsl"

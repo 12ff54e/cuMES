@@ -37,6 +37,10 @@ browser-validated:
 - the existing JSON mapper, validator, boundary folder, and resolution logic
   compiled into Wasm, with production-shaped axisymmetric cold-start and
   radial-profile initialization;
+- generic folded-mode cold-start initialization matching the CUDA boundary and
+  magnetic-axis interpolation; the shipped prescribed-current W7-X input now
+  parses and initializes its first `ns=33`, `mnmax=156`, 1080-point angular
+  stage in-browser with the production `0.12` seed envelope;
 - the shipped Solovev input parsed in-browser, relaxed to the documented f32
   tolerance floor, initialized, and passed through the WGSL inverse transform;
 - the staggered half-grid base-geometry operator in WGSL: parity recombination,
@@ -199,8 +203,8 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. integrate the completed fixed-iota 3-D operator set into a persistent stage
-   loop and qualify fixed-boundary W7-X;
+5. add prescribed-current closure, then integrate the completed 3-D operator
+   set into a persistent stage loop and qualify fixed-boundary W7-X;
 6. optimize the direct DFT with a WebGPU FFT and persistent command resources;
 7. only then integrate free-boundary/NESTOR support.
 
