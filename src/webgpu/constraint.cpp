@@ -3,6 +3,7 @@
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/toroidal.hpp"
+#include "pipeline_cache.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -275,15 +276,9 @@ void enqueue_head(const wgpu::Device& device,
         make_buffer(device, sizeof(HeadParams),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "constraint head params");
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.nextInChain = &wgsl;
-    auto shader = device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline =
+        detail::cached_compute_pipeline(device, "constraint-head", shader_text,
+                                        "cuMES constraint head pipeline");
     const HeadParams params{static_cast<std::uint32_t>(in.ns),
                             static_cast<std::uint32_t>(in.mpol),
                             static_cast<std::uint32_t>(in.ntheta),
@@ -428,15 +423,9 @@ void enqueue_tail(const wgpu::Device& device,
         make_buffer(device, sizeof(TailParams),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "constraint tail params");
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.nextInChain = &wgsl;
-    auto shader = device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline =
+        detail::cached_compute_pipeline(device, "constraint-tail", shader_text,
+                                        "cuMES constraint tail pipeline");
     const TailParams params{static_cast<std::uint32_t>(in.ns),
                             static_cast<std::uint32_t>(n_z_n_t),
                             static_cast<std::uint32_t>(points),

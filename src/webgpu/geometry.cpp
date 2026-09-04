@@ -1,5 +1,7 @@
 #include "cumes/webgpu/geometry.hpp"
 
+#include "pipeline_cache.hpp"
+
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -250,19 +252,8 @@ void enqueue_base_geometry(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES base geometry parameters");
 
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.label = "cuMES base geometry";
-    shader_descriptor.nextInChain = &wgsl;
-    const wgpu::ShaderModule shader =
-        device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = "cuMES base geometry pipeline";
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    const wgpu::ComputePipeline pipeline =
-        device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "base-geometry", shader_text, "cuMES base geometry pipeline");
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(n_z_n_t),

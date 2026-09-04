@@ -1,4 +1,5 @@
 #include "cumes/webgpu/preconditioner.hpp"
+#include "pipeline_cache.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -285,15 +286,9 @@ void enqueue_axisymmetric_preconditioner_apply(
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "preconditioner apply params");
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.nextInChain = &wgsl;
-    auto shader = device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "preconditioner-apply", shader_text,
+        "cuMES preconditioner apply pipeline");
     const Params params{static_cast<std::uint32_t>(input.ns),
                         static_cast<std::uint32_t>(modes),
                         static_cast<std::uint32_t>(input.ntor),

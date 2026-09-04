@@ -1,4 +1,5 @@
 #include "cumes/webgpu/axisymmetric.hpp"
+#include "pipeline_cache.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -254,19 +255,9 @@ void enqueue_axisymmetric_forward(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES axisymmetric forward parameters");
 
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.label = "cuMES axisymmetric forward";
-    shader_descriptor.nextInChain = &wgsl;
-    const wgpu::ShaderModule shader =
-        device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = "cuMES axisymmetric forward pipeline";
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    const wgpu::ComputePipeline pipeline =
-        device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "axisymmetric-forward", shader_text,
+        "cuMES axisymmetric forward pipeline");
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(input.mpol),
@@ -441,19 +432,9 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES axisymmetric dealias parameters");
 
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.label = "cuMES axisymmetric dealias";
-    shader_descriptor.nextInChain = &wgsl;
-    const wgpu::ShaderModule shader =
-        device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = "cuMES axisymmetric dealias pipeline";
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    const wgpu::ComputePipeline pipeline =
-        device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "axisymmetric-dealias", shader_text,
+        "cuMES axisymmetric dealias pipeline");
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(input.mpol),

@@ -1,5 +1,7 @@
 #include "cumes/webgpu/prolongation.hpp"
 
+#include "pipeline_cache.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -186,20 +188,9 @@ void enqueue_prolongation(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES prolongation parameters");
 
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.label = "cuMES radial prolongation";
-    shader_descriptor.nextInChain = &wgsl;
-    const wgpu::ShaderModule shader =
-        device.CreateShaderModule(&shader_descriptor);
-
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = "cuMES radial prolongation pipeline";
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    const wgpu::ComputePipeline pipeline =
-        device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "radial-prolongation", shader_text,
+        "cuMES radial prolongation pipeline");
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns_old),
                               static_cast<std::uint32_t>(input.ns_new),

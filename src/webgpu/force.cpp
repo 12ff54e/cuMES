@@ -2,6 +2,7 @@
 
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/geometry.hpp"
+#include "pipeline_cache.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -254,15 +255,8 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     auto pbuf = buffer(device, sizeof(ShaderParams),
                        wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                        "force params");
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor sd{};
-    sd.nextInChain = &wgsl;
-    auto shader = device.CreateShaderModule(&sd);
-    wgpu::ComputePipelineDescriptor pd{};
-    pd.compute.module = shader;
-    pd.compute.entryPoint = "main";
-    auto pipeline = device.CreateComputePipeline(&pd);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "mhd-force", shader_text, "cuMES MHD force pipeline");
     ShaderParams params{static_cast<std::uint32_t>(in.ns),
                         static_cast<std::uint32_t>(n_z_n_t),
                         static_cast<std::uint32_t>(nf),

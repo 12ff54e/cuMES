@@ -1,4 +1,5 @@
 #include "cumes/webgpu/geometry.hpp"
+#include "pipeline_cache.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -280,21 +281,11 @@ void enqueue_magnetic_field(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES magnetic field parameters");
 
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.label = "cuMES magnetic field";
-    shader_descriptor.nextInChain = &wgsl;
-    const auto shader = device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = "cuMES magnetic field pipeline";
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    const auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
-    pipeline_descriptor.label = "cuMES prescribed-current finalize pipeline";
-    pipeline_descriptor.compute.entryPoint = "finalize_current";
-    const auto finalize_pipeline =
-        device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "magnetic-field", shader_text, "cuMES magnetic field pipeline");
+    const auto& finalize_pipeline = detail::cached_compute_pipeline(
+        device, "magnetic-field-finalize-current", shader_text,
+        "cuMES prescribed-current finalize pipeline", "finalize_current");
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(n_z_n_t),
                               static_cast<std::uint32_t>(input.ntheta),

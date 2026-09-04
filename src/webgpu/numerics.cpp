@@ -1,5 +1,7 @@
 #include "cumes/webgpu/numerics.hpp"
 
+#include "pipeline_cache.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -261,15 +263,9 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "decomposition params");
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = source.c_str();
-    wgpu::ShaderModuleDescriptor sd{};
-    sd.nextInChain = &wgsl;
-    auto shader = device.CreateShaderModule(&sd);
-    wgpu::ComputePipelineDescriptor pd{};
-    pd.compute.module = shader;
-    pd.compute.entryPoint = "main";
-    auto pipeline = device.CreateComputePipeline(&pd);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "residual-decomposition", source,
+        "cuMES residual decomposition pipeline");
     Params params{static_cast<std::uint32_t>(in.ns),
                   static_cast<std::uint32_t>(mode_count),
                   static_cast<std::uint32_t>(in.ntor + 1),

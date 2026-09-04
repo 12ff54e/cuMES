@@ -1,5 +1,7 @@
 #include "cumes/webgpu/toroidal.hpp"
 
+#include "pipeline_cache.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -235,29 +237,6 @@ const GpuBasis& cached_gpu_basis(const wgpu::Device& device,
     return position->second;
 }
 
-const wgpu::ComputePipeline& cached_pipeline(const wgpu::Device& device,
-                                             const std::string& key,
-                                             const std::string& shader_text,
-                                             const char* label,
-                                             const char* entry_point) {
-    static std::map<std::string, wgpu::ComputePipeline> cache;
-    auto [position, inserted] = cache.try_emplace(key);
-    if (inserted) {
-        wgpu::ShaderSourceWGSL wgsl{};
-        wgsl.code = shader_text.c_str();
-        wgpu::ShaderModuleDescriptor shader_descriptor{};
-        shader_descriptor.label = label;
-        shader_descriptor.nextInChain = &wgsl;
-        const auto shader = device.CreateShaderModule(&shader_descriptor);
-        wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-        pipeline_descriptor.label = label;
-        pipeline_descriptor.compute.module = shader;
-        pipeline_descriptor.compute.entryPoint = entry_point;
-        position->second = device.CreateComputePipeline(&pipeline_descriptor);
-    }
-    return position->second;
-}
-
 struct DispatchState {
     ToroidalInverseCallback callback;
     wgpu::Buffer result_buffer;
@@ -396,9 +375,9 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal inverse parameters");
 
-    const auto& pipeline =
-        cached_pipeline(device, "toroidal-inverse", shader_text,
-                        "cuMES direct toroidal inverse pipeline", "main");
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "toroidal-inverse", shader_text,
+        "cuMES direct toroidal inverse pipeline", "main");
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(input.mpol),
@@ -605,9 +584,9 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal forward parameters");
 
-    const auto& pipeline =
-        cached_pipeline(device, "toroidal-forward", shader_text,
-                        "cuMES direct toroidal forward pipeline", "main");
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "toroidal-forward", shader_text,
+        "cuMES direct toroidal forward pipeline", "main");
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(input.mpol),
                               static_cast<std::uint32_t>(input.ntor),
@@ -779,10 +758,10 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal dealias parameters");
 
-    const auto& analyze_pipeline =
-        cached_pipeline(device, "toroidal-dealias-analyze", shader_text,
-                        "cuMES toroidal dealias analysis pipeline", "analyze");
-    const auto& synthesize_pipeline = cached_pipeline(
+    const auto& analyze_pipeline = detail::cached_compute_pipeline(
+        device, "toroidal-dealias-analyze", shader_text,
+        "cuMES toroidal dealias analysis pipeline", "analyze");
+    const auto& synthesize_pipeline = detail::cached_compute_pipeline(
         device, "toroidal-dealias-synthesize", shader_text,
         "cuMES toroidal dealias synthesis pipeline", "synthesize");
     const DealiasParams params{static_cast<std::uint32_t>(input.ns),

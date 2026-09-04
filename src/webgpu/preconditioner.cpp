@@ -2,6 +2,7 @@
 
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/geometry.hpp"
+#include "pipeline_cache.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -323,15 +324,9 @@ void enqueue_axisymmetric_preconditioner_elements(
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "preconditioner element params");
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.nextInChain = &wgsl;
-    auto shader = device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "preconditioner-elements", shader_text,
+        "cuMES preconditioner elements pipeline");
     const Params params{static_cast<std::uint32_t>(input.ns),
                         static_cast<std::uint32_t>(n_z_n_t),
                         static_cast<std::uint32_t>(full),

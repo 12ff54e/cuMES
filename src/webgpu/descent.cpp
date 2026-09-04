@@ -1,5 +1,7 @@
 #include "cumes/webgpu/descent.hpp"
 
+#include "pipeline_cache.hpp"
+
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -167,15 +169,9 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "descent params");
-    wgpu::ShaderSourceWGSL wgsl{};
-    wgsl.code = shader_text.c_str();
-    wgpu::ShaderModuleDescriptor shader_descriptor{};
-    shader_descriptor.nextInChain = &wgsl;
-    auto shader = device.CreateShaderModule(&shader_descriptor);
-    wgpu::ComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.compute.module = shader;
-    pipeline_descriptor.compute.entryPoint = "main";
-    auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "accelerated-descent", shader_text,
+        "cuMES accelerated descent pipeline");
     const Params params{static_cast<std::uint32_t>(input.ns),
                         static_cast<std::uint32_t>(input.ntor + 1),
                         static_cast<std::uint32_t>(points),
