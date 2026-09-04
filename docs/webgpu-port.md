@@ -5,7 +5,7 @@
 The WebGPU backend is an additive, experimental backend. CUDA remains the
 default and the only complete equilibrium solver.
 
-The first three WebGPU milestones are implemented and browser-validated:
+The first four WebGPU milestones are implemented and browser-validated:
 
 - a top-level `CUMES_BACKEND=WEBGPU` path that never enables CUDA or probes
   CUDA-only dependencies;
@@ -23,10 +23,16 @@ The first three WebGPU milestones are implemented and browser-validated:
   gates, plus the constraint de-alias bandpass;
 - host-generated `f32` Fourier tables, matching the CUDA operator contract and
   avoiding adapter-dependent WGSL transcendental approximations;
+- the existing JSON mapper, validator, boundary folder, and resolution logic
+  compiled into Wasm, with production-shaped axisymmetric cold-start and
+  radial-profile initialization;
+- the shipped Solovev input parsed in-browser, relaxed to the documented f32
+  tolerance floor, initialized, and passed through the WGSL inverse transform;
 - an independent C++ float reference evaluated by the browser self-test.
 
-This milestone does **not** yet parse an input or run equilibrium iterations.
-It is a functioning compute-backend slice, not a complete cuMES WebGPU solver.
+This milestone parses and initializes the embedded Solovev input, but does
+**not** yet run equilibrium iterations. It is a functioning compute-backend
+slice, not a complete cuMES WebGPU solver.
 
 ## Build and run
 
@@ -98,11 +104,11 @@ source-level macro layer.
 The recommended dependency order is:
 
 1. reusable buffer/pipeline/bind-group ownership and a stage command encoder;
-2. spectral state and real-space storage layouts with upload/readback tests;
-3. seed and profile upload (the direct axisymmetric inverse, forward, fused
-   `rCon`/`zCon`, and constraint de-alias paths are complete);
-4. geometry, magnetic field, force, constraint, residual, preconditioner, and
-   descent shaders, each compared with the existing CPU/CUDA references;
+2. persistent spectral/real-space stage storage and profile GPU buffers (input
+   parsing, cold seeding, and host profile evaluation are complete);
+3. geometry and magnetic-field shaders;
+4. force, constraint, residual, preconditioner, and descent shaders, each
+   compared with the existing CPU/CUDA references;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;
@@ -121,7 +127,7 @@ virtual filesystem or a JavaScript download adapter.
 - `ctest ...`: verifies non-empty `.html`, `.js`, and `.wasm` artifacts.
 - browser self-test: compiles WGSL on the selected adapter, dispatches both
   prolongation modes and the complete direct axisymmetric transform path, maps
-  results, and compares every value with the C++ references (tolerances `4e-6`
-  and `1e-4`, respectively).
+  results, compares every value with the C++ references, then parses and
+  initializes the embedded Solovev case (tolerances `4e-6` and `1e-4`).
 - future operator gates: compare full typed views against existing test
   references before wiring the operator into the stage DAG.

@@ -2,12 +2,20 @@
 # includes or libraries; emdawnwebgpu is enabled for both compilation and the
 # final link as required by the Emscripten port contract.
 add_executable(cumes_webgpu
+  ${PROJECT_SOURCE_DIR}/src/json_parser.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/json_reader.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/validated_problem.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/validation_report.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/core/mode_table.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/axisymmetric_forward.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/initialization.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/main.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/prolongation.cpp)
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_FIELD_DISABLED)
 cumes_enable_warnings(cumes_webgpu)
 
 target_compile_options(cumes_webgpu PRIVATE --use-port=emdawnwebgpu)
@@ -18,6 +26,7 @@ target_link_options(cumes_webgpu PRIVATE
   -sEXIT_RUNTIME=1
   -sASSERTIONS=1
   "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
+  "--embed-file=${PROJECT_SOURCE_DIR}/inputs/solovev.json@/inputs/solovev.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl@/shaders/axisymmetric_dealias.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl@/shaders/axisymmetric_forward.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl@/shaders/axisymmetric_inverse.wgsl"
