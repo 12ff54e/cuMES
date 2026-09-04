@@ -143,6 +143,22 @@ int main() {
         check(std::abs(timed_phase_sum - outcome.timings.total_wall_ms) <=
                   1.0e-9 * outcome.timings.total_wall_ms,
               "solver API: structured wall timings cover the timed call");
+        const double multigrid_phase_sum =
+            outcome.timings.stage_setup_wall_ms +
+            outcome.timings.stage_iteration_wall_ms +
+            outcome.timings.stage_output_wall_ms +
+            outcome.timings.stage_teardown_wall_ms +
+            outcome.timings.multigrid_other_wall_ms;
+        check(outcome.timings.stage_setup_wall_ms >= 0.0 &&
+                  outcome.timings.stage_iteration_wall_ms > 0.0 &&
+                  outcome.timings.stage_output_wall_ms >= 0.0 &&
+                  outcome.timings.stage_teardown_wall_ms >= 0.0 &&
+                  outcome.timings.multigrid_other_wall_ms >= 0.0,
+              "solver API: multigrid wall timing phases are nonnegative");
+        check(
+            std::abs(multigrid_phase_sum - outcome.timings.multigrid_wall_ms) <=
+                1.0e-9 * outcome.timings.multigrid_wall_ms,
+            "solver API: stage timing phases cover multigrid wall time");
 
         bool profile_identity = true;
 #ifdef CUMES_USE_FLOAT

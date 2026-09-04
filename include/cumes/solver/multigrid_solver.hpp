@@ -41,6 +41,7 @@ struct MultigridOutcome {
     SolverResult<T> result;    // final stage's solver result
     int total_iterations = 0;
     double total_device_time_ms = 0.0;
+    StageWallTimings stage_wall_timings;
     RunReport report;
     EquilibriumSnapshot snapshot;  // final derived fields; state filled by CLI
     EquilibriumProfiles profiles;  // final half-grid equilibrium profiles
@@ -202,6 +203,7 @@ class MultigridSolver {
             EquilibriumSnapshot* output_snapshot =
                 (g + 1 == n_grids) ? &out.snapshot : nullptr;
             double stage_device_time_ms = 0.0;
+            StageWallTimings stage_wall_timings;
             result = StageSolver<T>::run(
                 p, vp, storage, stream, std::nullopt,
                 vac ? std::optional<
@@ -213,8 +215,9 @@ class MultigridSolver {
                 // Free-boundary stages retain their vacuum-coupled reference
                 // trajectory until separately qualified.
                 !vac, std::ref(stage_device_time_ms), verbose,
-                use_process_environment);
+                use_process_environment, std::ref(stage_wall_timings));
             total_device_time_ms += stage_device_time_ms;
+            out.stage_wall_timings += stage_wall_timings;
             if (vac) {
                 const cumes::VacuumState before = vac->state();
                 vac->on_stage_end();

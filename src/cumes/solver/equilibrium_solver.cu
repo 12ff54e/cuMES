@@ -11,6 +11,7 @@
 #include "cumes/state/seed_state.hpp"
 #include "vmec_types.h"
 
+#include <algorithm>
 #include <chrono>
 #include <optional>
 #include <string>
@@ -104,6 +105,16 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
     outcome.timings.multigrid_wall_ms =
         std::chrono::duration<double, std::milli>(multigrid_end - setup_end)
             .count();
+    outcome.timings.stage_setup_wall_ms = internal.stage_wall_timings.setup_ms;
+    outcome.timings.stage_iteration_wall_ms =
+        internal.stage_wall_timings.iteration_ms;
+    outcome.timings.stage_output_wall_ms =
+        internal.stage_wall_timings.output_ms;
+    outcome.timings.stage_teardown_wall_ms =
+        internal.stage_wall_timings.teardown_ms;
+    outcome.timings.multigrid_other_wall_ms =
+        std::max(0.0, outcome.timings.multigrid_wall_ms -
+                          internal.stage_wall_timings.total_ms);
     outcome.timings.final_state_transfer_wall_ms =
         std::chrono::duration<double, std::milli>(transfer_end - multigrid_end)
             .count();

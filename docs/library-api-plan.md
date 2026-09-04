@@ -82,7 +82,10 @@ cuMES owns:
 `SolveOutcome::timings` separates host-wall setup, multigrid execution, final
 spectral-state transfer, and their total. These values are diagnostic metadata
 for repeated-solve profiling; `total_device_time_ms` remains the distinct sum
-of timed CUDA work reported by the multigrid stages.
+of timed CUDA work reported by the multigrid stages. The multigrid timing is
+further partitioned into aggregate stage resource setup, iterative solve,
+derived-field output capture, resource teardown, and other orchestration such
+as radial prolongation. The subphases sum to `multigrid_wall_ms`.
 
 ## 3. Public library surfaces
 

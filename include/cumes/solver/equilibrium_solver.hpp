@@ -51,6 +51,11 @@ struct SolveTimings {
     // measures only timed device work accumulated by the multigrid solver.
     double setup_wall_ms = 0.0;
     double multigrid_wall_ms = 0.0;
+    double stage_setup_wall_ms = 0.0;
+    double stage_iteration_wall_ms = 0.0;
+    double stage_output_wall_ms = 0.0;
+    double stage_teardown_wall_ms = 0.0;
+    double multigrid_other_wall_ms = 0.0;
     double final_state_transfer_wall_ms = 0.0;
     double total_wall_ms = 0.0;
 };
