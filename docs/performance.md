@@ -403,6 +403,13 @@ matrices and nonlinear iteration counts. Adopt the static tile only if this
 embedding workload clears 5% in repeated Release runs without violating the
 single-solver regression gate.
 
+The concurrent gate also rejects tile 4. Three alternating Release runs kept
+every Jacobian bit-identical and retained exactly 12,171 QA / 8,347 QH
+nonlinear iterations. QA's median changed from 0.814 s to 0.801 s (1.6%), while
+QH changed from 0.678 s to 0.682 s (0.7% slower). The smaller block therefore
+does not improve inter-solver residency enough to matter on the four-worker
+TITAN Xp workload. The production tile remains 16.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
