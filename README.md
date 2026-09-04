@@ -12,7 +12,9 @@ inverse/forward transforms with constraint synthesis and de-aliasing. It also
 parses and initializes the shipped Solovev case in-browser and evaluates its
 staggered half-grid geometry, magnetic field, total pressure, and axisymmetric
 MHD force through spectral residual projection, but is not yet a complete
-equilibrium solver. See
+equilibrium solver. The projected forces are now decomposed into the solver's
+invariant residual basis and reduced with CUDA-compatible float products and
+double host accumulation. See
 [the WebGPU port status](docs/webgpu-port.md).
 
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
@@ -181,7 +183,7 @@ the convergence decision.
 | `fast` | fast-double | opt-in `--use_fast_math`, dump machinery compiled out |
 | `debug` | debug-double | precise + `-G` |
 | `sanitizer` | verify-double | compute-sanitizer memcheck/initcheck/racecheck/synccheck + ASan/UBSan host twins |
-| `webgpu` | mixed-float | Emscripten + emdawnwebgpu; experimental prolongation and axisymmetric-transform milestones |
+| `webgpu` | mixed-float | Emscripten + emdawnwebgpu; experimental first-pass axisymmetric residual DAG |
 
 The backend matrix (`nobackend`, `netcdf-only`, `hdf5-only`) rounds out the
 optional-backend presets. Every computation is `template<typename T>`; `Real`

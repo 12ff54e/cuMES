@@ -5,7 +5,8 @@
 The WebGPU backend is an additive, experimental backend. CUDA remains the
 default and the only complete equilibrium solver.
 
-The first seven WebGPU milestones are implemented and browser-validated:
+The current WebGPU correctness milestones are implemented and
+browser-validated:
 
 - a top-level `CUMES_BACKEND=WEBGPU` path that never enables CUDA or probes
   CUDA-only dependencies;
@@ -36,6 +37,9 @@ The first seven WebGPU milestones are implemented and browser-validated:
   full grid;
 - first-pass Solovev force projection into the six-family spectral residual
   slab (the initial constraint multiplier is zero, matching CUDA/vmecpp);
+- odd-m residual decomposition, the m=1 force gauge, fixed-boundary LCFS norm
+  exclusion, and CUDA-compatible `f32` products accumulated into `double` host
+  residual sums;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -86,9 +90,11 @@ Core WGSL exposes `f32` but not `f64`. Consequently:
 - full-solver inputs will need `ftol_array >= 1e-6`, consistent with the CUDA
   mixed-float policy.
 
-The host can still use double for control and reductions where values are read
-back, but WGSL reductions themselves must be designed around `f32` or a
-documented compensated/multiword representation.
+The host uses double for the invariant residual reduction after mapped WebGPU
+readback. Each squared residual pair is evaluated in `f32` before the sum is
+promoted, matching the CUDA mixed-float expression, and the long accumulation
+is `double`. Future device-only reductions must use `f32` or a documented
+compensated/multiword representation.
 
 ## Backend boundary
 
@@ -116,9 +122,9 @@ The recommended dependency order is:
    parsing, cold seeding, and host profile evaluation are complete);
 3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
    base geometry are complete);
-4. constraint-force, residual, preconditioner, and descent shaders (the core
-   axisymmetric MHD force is complete), each compared with the existing
-   CPU/CUDA references;
+4. later-pass constraint-force, preconditioner, and descent shaders (the core
+   axisymmetric MHD force and invariant residual decomposition are complete),
+   each compared with the existing CPU/CUDA references;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;

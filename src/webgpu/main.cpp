@@ -3,6 +3,7 @@
 #include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
+#include "cumes/webgpu/numerics.hpp"
 #include "cumes/webgpu/prolongation.hpp"
 
 #include <algorithm>
@@ -784,9 +785,54 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  Solovev spectral residual projection: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
+                self->run_residual_decomposition(std::move(actual.residual));
+            });
+    }
+
+    void run_residual_decomposition(std::vector<float> residual) {
+        residual_case_.ns = initialized_stage_.ns;
+        residual_case_.mpol = initialized_stage_.mpol;
+        residual_case_.include_edge_rz = false;
+        residual_case_.zero_m1_z = true;
+        residual_case_.residual = std::move(residual);
+        residual_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_residual_decomposition(
+            device_, residual_case_,
+            [self](std::string error,
+                   cumes::webgpu::ResidualDecompositionResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::residual_decomposition_reference(
+                        self->residual_case_);
+                float max_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+                    }
+                }
+                for (int group = 0; group < 3; ++group) {
+                    valid &= actual.raw_norm[group] == expected.raw_norm[group];
+                    valid &= std::isfinite(actual.raw_norm[group]);
+                }
+                if (!valid || max_error > 5.0e-4F) {
+                    self->finish(false, "residual decomposition mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  decomposed residual+double norms: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
                 self->finish(true,
-                             "parsed Solovev first-pass DAG through spectral "
-                             "MHD residual verified");
+                             "parsed Solovev first-pass DAG through invariant "
+                             "decomposed residual norms verified");
             });
     }
 
@@ -811,6 +857,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::MagneticFieldCase magnetic_field_case_;
     cumes::webgpu::AxisymmetricForceCase force_case_;
     cumes::webgpu::AxisymmetricForwardCase solver_forward_case_;
+    cumes::webgpu::ResidualDecompositionCase residual_case_;
     std::size_t case_index_ = 0;
     std::size_t forward_case_index_ = 0;
     std::string gpu_error_;
