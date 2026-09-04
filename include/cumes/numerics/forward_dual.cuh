@@ -196,9 +196,6 @@ __host__ __device__ inline bool isfinite(ForwardDual<T> x) {
 
 }  // namespace cumes
 
-// A few production kernels qualify these elementary functions with std::.
-// ForwardDual is a cuMES implementation type, and these overloads preserve
-// the ordinary scalar call spelling while propagating its derivative lane.
 namespace std {
 
 template <class T>
@@ -208,16 +205,6 @@ class numeric_limits<cumes::ForwardDual<T>> : public numeric_limits<T> {
         return {numeric_limits<T>::epsilon(), T(0)};
     }
 };
-
-template <class T>
-__host__ __device__ inline cumes::ForwardDual<T> sqrt(cumes::ForwardDual<T> x) {
-    return cumes::sqrt(x);
-}
-
-template <class T>
-__host__ __device__ inline bool isfinite(cumes::ForwardDual<T> x) {
-    return cumes::isfinite(x);
-}
 
 }  // namespace std
 

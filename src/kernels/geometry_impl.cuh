@@ -21,6 +21,7 @@
 
 #include "cumes/state/real_space_storage.hpp"
 
+#include <cmath>
 #include <cstdio>
 
 #include <math_constants.h>
@@ -42,6 +43,8 @@
 
 #include <functional>
 #include <optional>
+
+using std::isfinite;
 
 // The geometry_parity_views factory (typed real-space view bundle over the
 // workspace structs) is the single shared inline definition in
@@ -343,7 +346,7 @@ __global__ void magnetic_field_kernel(
     T guu_v = guu[idx], guv_v = guv[idx], gvv_v = gvv[idx];
 
     T bsupv_v, bsupu_v;
-    if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+    if (isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
         bsupv_v = (lamscale * lu_h + phipF_avg) / gsqrt_v;
         // the χ' part (chipH) is added below (ncurr=1) or taken from the
         // fixed profile (ncurr=0).
@@ -359,7 +362,7 @@ __global__ void magnetic_field_kernel(
     if (ncurr == 0) {
         // Fixed iota profile: chipH is precomputed in profiles.
         // (chip_H[jH] / gsqrt_v — the same validity branch as above.)
-        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+        if (isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
             bsupu_v += chip_H[jH] / gsqrt_v;
         }
         bsupu[idx] = bsupu_v;
@@ -433,7 +436,7 @@ __global__ void ncurr1_finalize_kernel(
         // Same degenerate-√g guard as geometryKernel: a non-finite or ~zero
         // √g would otherwise make the surface average NaN and the chipH
         // solve below degenerate before the jacobian-stats check runs.
-        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+        if (isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
             avg += guu_v / gsqrt_v * w;
         }
     }
@@ -462,7 +465,7 @@ __global__ void ncurr1_finalize_kernel(
         T gsqrt_v = gsqrt[idx];
         // Same validity branch as geometryKernel (chip / √g exactly).
         T bsupu_v = bsupu[idx];
-        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+        if (isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
             bsupu_v += chip / gsqrt_v;
         }
         T bsubu_v = guu[idx] * bsupu_v + guv[idx] * bsupv[idx];
@@ -647,7 +650,7 @@ __global__ void jacobian_stats_partials_kernel(const T* __restrict__ gsqrt,
     int grid_stride = blockDim.x * gridDim.x;
     for (int i = global_tid; i < nHalf; i += grid_stride) {
         T g = gsqrt[i];
-        if (!std::isfinite(g)) {
+        if (!isfinite(g)) {
             vbad += T(1.0);
             continue;
         }

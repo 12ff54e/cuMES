@@ -52,6 +52,8 @@
 #include <optional>
 #include <vector>
 
+using std::sqrt;
+
 template <typename T>
 __global__ void
 rz_norm_kernel(  // defined below (before compute_residuals_kernel)
@@ -274,7 +276,7 @@ __global__ void m1_constraint_kernel(
     int zeroZ) {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j >= ns) return;
-    const T s = T(1.0) / std::sqrt(T(2.0));
+    const T s = T(1.0) / sqrt(T(2.0));
     int m1base = ntor + 1;  // mode index of (m=1, n=0)
     for (int n = 0; n < ntor + 1; ++n) {
         int mn = m1base + n;
@@ -318,8 +320,8 @@ __global__ void rz_norm_kernel(
                        // space); the state-file axis row
                        // therefore contributes nothing to
                        // rzNorm
-        T mfac = (mm == 0) ? T(1.0) : std::sqrt(T(2.0));
-        T nfac = (nn == 0) ? T(1.0) : std::sqrt(T(2.0));
+        T mfac = (mm == 0) ? T(1.0) : sqrt(T(2.0));
+        T nfac = (nn == 0) ? T(1.0) : sqrt(T(2.0));
         // decomposed = physical/(ms*ns): the squared term picks up 1/(ms*ns)^2
         T inv2 = T(1.0) / (mfac * nfac * mfac * nfac);
         T rcc = st(cumes::SpectralComponent::Rcc, m, j);
@@ -408,8 +410,8 @@ __global__ void descent_step_kernel(
     // must therefore be scaled by ms*ns per mode. (FIXED 2026-08-02: the
     // odd-n/odd-m increments were ms*ns too small, e.g. sqrt(2) for m=1n=0,
     // making the iter-2+ states drift ~0.7%/step.)
-    T mfac = (mm == 0) ? T(1.0) : std::sqrt(T(2.0));
-    T nfac = (xn[m] == 0) ? T(1.0) : std::sqrt(T(2.0));
+    T mfac = (mm == 0) ? T(1.0) : sqrt(T(2.0));
+    T nfac = (xn[m] == 0) ? T(1.0) : sqrt(T(2.0));
     T f = mfac * nfac;
 
     // R/Z components (0,1,3,4): LCFS is fixed — the force was zeroed by
@@ -920,9 +922,9 @@ void cumes::EquilibriumOperator<T>::enqueue_suffix(
     // force is present at the LCFS (free gauge, evolved by descent).
     {
         dim3 bs(256), gs((p.ns * p.mnmax + 255) / 256);
-        scalxc_apply_kernel<T><<<gs, bs, 0, stream>>>(
-            residual_view, rpv.sqrtS_F, transform.xm(), p.ns, p.mnmax,
-            std::sqrt(T(1.0) / T(p.ns - 1)));
+        scalxc_apply_kernel<T>
+            <<<gs, bs, 0, stream>>>(residual_view, rpv.sqrtS_F, transform.xm(),
+                                    p.ns, p.mnmax, sqrt(T(1.0) / T(p.ns - 1)));
         cumes::check_cuda(cudaGetLastError(), "scalxc");
     }
 
