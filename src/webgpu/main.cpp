@@ -1,3 +1,4 @@
+#include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/prolongation.hpp"
 
 #include <algorithm>
@@ -133,10 +134,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             if (!gpu_error_.empty()) {
                 finish(false, gpu_error_);
             } else {
-                finish(true,
-                       "linear and Catmull-Rom GPU/CPU agreement; odd-m axis "
-                       "regularity, LCFS preservation, and velocity reset "
-                       "verified");
+                run_axisymmetric_inverse();
             }
             return;
         }
@@ -186,6 +184,101 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
+    static cumes::webgpu::AxisymmetricInverseCase make_axisymmetric_case() {
+        cumes::webgpu::AxisymmetricInverseCase test;
+        test.ns = 5;
+        test.mpol = 6;
+        test.ntheta = 18;
+        test.state.resize(cumes::webgpu::SPECTRAL_COMPONENT_COUNT * test.mpol *
+                          test.ns);
+        for (std::size_t component = 0;
+             component < cumes::webgpu::SPECTRAL_COMPONENT_COUNT; ++component) {
+            for (int mode = 0; mode < test.mpol; ++mode) {
+                for (int surface = 0; surface < test.ns; ++surface) {
+                    const auto index =
+                        (component * test.mpol + mode) * test.ns + surface;
+                    test.state[index] =
+                        0.17F * static_cast<float>(component + 1) +
+                        0.031F * static_cast<float>(mode * mode + 1) +
+                        0.043F * static_cast<float>(surface) -
+                        0.007F * static_cast<float>(mode * surface);
+                }
+            }
+        }
+        return test;
+    }
+
+    void run_axisymmetric_inverse() {
+        axisymmetric_case_ = make_axisymmetric_case();
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_inverse(
+            device_, axisymmetric_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricInverseResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_inverse_reference(
+                        self->axisymmetric_case_);
+                if (actual.geometry.size() != expected.geometry.size() ||
+                    actual.r_con.size() != expected.r_con.size() ||
+                    actual.z_con.size() != expected.z_con.size()) {
+                    self->finish(false,
+                                 "axisymmetric inverse result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                const auto compare = [&max_error](const auto& gpu,
+                                                  const auto& cpu) {
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                    }
+                };
+                compare(actual.geometry, expected.geometry);
+                compare(actual.r_con, expected.r_con);
+                compare(actual.z_con, expected.z_con);
+
+                const std::size_t points =
+                    static_cast<std::size_t>(self->axisymmetric_case_.ns) *
+                    self->axisymmetric_case_.ntheta;
+                bool toroidal_derivatives_zero = true;
+                for (std::size_t field = 12;
+                     field < cumes::webgpu::GEOMETRY_PARITY_FIELD_COUNT;
+                     ++field) {
+                    const auto first = actual.geometry.begin() + field * points;
+                    toroidal_derivatives_zero &=
+                        std::all_of(first, first + points,
+                                    [](float value) { return value == 0.0F; });
+                }
+                if (max_error > 1.0e-4F || !toroidal_derivatives_zero) {
+                    self->finish(
+                        false,
+                        "axisymmetric inverse mismatch: max_error=" +
+                            std::to_string(max_error) +
+                            " toroidal_derivatives_zero=" +
+                            (toroidal_derivatives_zero ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  axisymmetric inverse+rCon/zCon: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                if (!self->gpu_error_.empty()) {
+                    self->finish(false, self->gpu_error_);
+                    return;
+                }
+                self->finish(
+                    true,
+                    "prolongation and axisymmetric inverse GPU/CPU agreement; "
+                    "odd-m scaling, zero toroidal derivatives, fused "
+                    "rCon/zCon, "
+                    "LCFS preservation, and velocity reset verified");
+            });
+    }
+
     static void finish(bool success, const std::string& detail) {
         std::printf("cuMES WebGPU self-test: %s — %s\n",
                     success ? "PASS" : "FAIL", detail.c_str());
@@ -199,6 +292,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     wgpu::Adapter adapter_;
     wgpu::Device device_;
     std::vector<cumes::webgpu::ProlongationCase> cases_;
+    cumes::webgpu::AxisymmetricInverseCase axisymmetric_case_;
     std::size_t case_index_ = 0;
     std::string gpu_error_;
 };

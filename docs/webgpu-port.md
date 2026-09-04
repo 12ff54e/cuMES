@@ -5,7 +5,7 @@
 The WebGPU backend is an additive, experimental backend. CUDA remains the
 default and the only complete equilibrium solver.
 
-The first WebGPU milestone is implemented and browser-validated:
+The first two WebGPU milestones are implemented and browser-validated:
 
 - a top-level `CUMES_BACKEND=WEBGPU` path that never enables CUDA or probes
   CUDA-only dependencies;
@@ -16,6 +16,11 @@ The first WebGPU milestone is implemented and browser-validated:
   Catmull-Rom interpolation;
 - correct poloidal-m parity for folded `(m,n)` modes, odd-m axis
   regularization, exact LCFS transfer, and velocity reset;
+- the axisymmetric inverse transform in WGSL, including parity-separated
+  geometry and poloidal derivatives, zero toroidal derivatives, and fused
+  `rCon`/`zCon` synthesis;
+- host-generated `f32` Fourier tables, matching the CUDA operator contract and
+  avoiding adapter-dependent WGSL transcendental approximations;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone does **not** yet parse an input or run equilibrium iterations.
@@ -92,8 +97,8 @@ The recommended dependency order is:
 
 1. reusable buffer/pipeline/bind-group ownership and a stage command encoder;
 2. spectral state and real-space storage layouts with upload/readback tests;
-3. axisymmetric inverse/forward transforms (no FFT dependency), then seed and
-   profile upload;
+3. axisymmetric forward transform and constraint de-aliasing (the inverse and
+   fused `rCon`/`zCon` path are complete), then seed and profile upload;
 4. geometry, magnetic field, force, constraint, residual, preconditioner, and
    descent shaders, each compared with the existing CPU/CUDA references;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
@@ -113,7 +118,8 @@ virtual filesystem or a JavaScript download adapter.
   emdawnwebgpu headers and links the embedded WGSL/browser bundle.
 - `ctest ...`: verifies non-empty `.html`, `.js`, and `.wasm` artifacts.
 - browser self-test: compiles WGSL on the selected adapter, dispatches both
-  prolongation modes, maps results, and compares every value with the C++
-  reference (tolerance `4e-6`).
+  prolongation modes and the axisymmetric inverse transform, maps results, and
+  compares every value with the C++ references (tolerances `4e-6` and `1e-4`,
+  respectively).
 - future operator gates: compare full typed views against existing test
   references before wiring the operator into the stage DAG.
