@@ -6,7 +6,8 @@ The WebGPU backend is an additive browser backend. CUDA remains the default
 and the only backend with the optional free-boundary coupling. The WebGPU port
 of cuMES's fixed-boundary solver is complete: it implements and hardware-
 qualifies the entire iteration DAG for axisymmetric and folded 3-D equilibria,
-multigrid control, and native binary result publication.
+multigrid control, native binary result publication, and an interactive
+axisymmetric boundary editor.
 
 The current WebGPU correctness milestones are implemented and
 browser-validated:
@@ -157,6 +158,15 @@ browser-validated:
   seven half-grid and six full-grid arrays; the 118,736-byte downloaded file
   passes the in-Wasm field round trip and the project plotting workflow;
 - an independent C++ float reference evaluated by the browser self-test.
+- a responsive browser application that edits the stellarator-symmetric
+  `n=0` R-cosine/Z-sine boundary harmonics by direct manipulation or physical
+  shape controls, validates the generated input with the production parser,
+  runs the three-grid solver, Fourier-synthesizes smooth converged flux
+  surfaces, and exposes the schema-v8 download without a server-side compute
+  service;
+- a narrow C-linkage browser bridge, implemented in
+  `webgpu/browser_bridge.js`, keeping DOM, URL, local-storage, and Blob policy
+  out of the C++ translation units.
 
 The default self-test parses both embedded inputs, runs a controller-complete
 two-pass W7-X slice, then converges all three Solovev stages. The separate W7-X
@@ -189,8 +199,16 @@ python3 -m http.server 8000 \
   --directory ../tmp/cumes-build-webgpu/webgpu
 ```
 
-Open `http://localhost:8000/cumes_webgpu.html`. A successful run reports both
-interpolation cases followed by:
+Open `http://localhost:8000/cumes_webgpu.html` for the application. Drag the
+boundary handles or use the six shape controls, then select **Run equilibrium**.
+The generated input and editor state stay in browser local storage; compute and
+output generation remain local to the page. The interactive profile currently
+uses stellarator-symmetric axisymmetric harmonics (`ntor=0`), three grids
+(`ns=5,11,55`), and a responsive mixed-float tolerance of `1e-5`.
+
+Open `http://localhost:8000/cumes_webgpu.html?mode=test` for the full GPU/CPU
+operator conformance suite and stricter Solovev convergence gate. A successful
+run finishes with:
 
 ```text
 cuMES WebGPU self-test: PASS
@@ -237,7 +255,7 @@ The WebGPU implementation lives under these paths:
 include/cumes/webgpu/          public WebGPU operator contracts
 src/webgpu/                    emdawnwebgpu host implementation
 src/webgpu/shaders/            WGSL compute kernels
-webgpu/                        Emscripten target and browser shell
+webgpu/                        Emscripten target, browser bridge, and webapp
 ```
 
 WebGPU code does not include CUDA compatibility shims. Buffers are WebGPU

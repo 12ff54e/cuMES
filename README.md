@@ -11,10 +11,15 @@ iteration DAG for both axisymmetric and folded 3-D equilibria: transforms,
 half-grid geometry, fixed-iota and prescribed-current magnetic closure,
 radial/poloidal/toroidal force, spectral-condensation constraint, full `(m,n)`
 preconditioner, accelerated descent, controller recovery, and multigrid
-transfer. The default browser gate runs the controller-complete three-stage
-Solovev solve with persistent velocity, constraint, preconditioner, and
-rollback state. On the NVIDIA TITAN Xp through Dawn's Vulkan backend it
-converges in `72 -> 31 -> 247` effective iterations.
+transfer. The default browser page is an interactive application: drag an
+axisymmetric boundary or adjust its major radius, minor radius, elongation,
+triangularity, squareness, and pressure, then run a three-grid equilibrium
+locally on the user's GPU. It displays the converged flux surfaces in-page and
+offers the complete schema-v8 result as a download. A separate browser gate
+runs the controller-complete three-stage Solovev solve with persistent
+velocity, constraint, preconditioner, and rollback state. On the NVIDIA TITAN
+Xp through Dawn's Vulkan backend it converges in `72 -> 31 -> 247` effective
+iterations.
 The shipped W7-X case executes the same integrated path in the browser,
 including its prescribed-current closure; its iteration-3 residual triple
 matches native CUDA mixed-float at `(1.141e+01, 7.079e+00, 1.012e-01)`. A
@@ -69,13 +74,17 @@ cmake --build --preset webgpu -j
 ctest --preset webgpu
 python3 -m http.server --directory ../tmp/cumes-build-webgpu/webgpu
 # open http://localhost:8000/cumes_webgpu.html in a WebGPU-capable browser
+# or run the numerical conformance/strict Solovev gate:
+# http://localhost:8000/cumes_webgpu.html?mode=test
 # or run the complete folded W7-X path:
 # http://localhost:8000/cumes_webgpu.html?solve=w7x
 ```
 
-The page runs GPU/CPU conformance cases and prints `cuMES WebGPU self-test:
-PASS` when dispatch and readback agree. The artifact test checks the generated
-HTML/JavaScript/Wasm bundle; browser execution is the numerical gate.
+The default page is the visual boundary editor. Its preview solve uses an
+interactive mixed-float tolerance of `1e-5`; the `?mode=test` route retains the
+strict `1e-6` Solovev numerical gate and prints `cuMES WebGPU self-test: PASS`
+when dispatch, readback, and convergence agree. The artifact test checks the
+generated HTML/JavaScript/Wasm bundle; browser execution is the numerical gate.
 
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from

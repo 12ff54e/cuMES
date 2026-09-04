@@ -8,3 +8,21 @@ foreach(extension IN ITEMS html js wasm)
     message(FATAL_ERROR "empty WebGPU artifact: ${path}")
   endif()
 endforeach()
+
+file(READ "${ARTIFACT_BASE}.html" html)
+foreach(marker IN ITEMS "Input boundary" "Run equilibrium" "Flux surfaces")
+  string(FIND "${html}" "${marker}" marker_offset)
+  if(marker_offset EQUAL -1)
+    message(FATAL_ERROR
+      "WebGPU HTML is missing interactive-app marker: ${marker}")
+  endif()
+endforeach()
+
+file(READ "${ARTIFACT_BASE}.js" javascript)
+foreach(marker IN ITEMS "publish_browser_equilibrium" "requested_app_mode")
+  string(FIND "${javascript}" "${marker}" marker_offset)
+  if(marker_offset EQUAL -1)
+    message(FATAL_ERROR
+      "WebGPU JavaScript is missing browser bridge: ${marker}")
+  endif()
+endforeach()
