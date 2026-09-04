@@ -268,7 +268,7 @@ remaining a non-regressing improvement on the other. Fixed-boundary schedules
 are captured lazily and cached by shape. Free-boundary and verification-dump
 paths remain direct; `CUMES_DISABLE_CUDA_GRAPHS=1` is the diagnostic opt-out.
 
-### 3.4 Concurrent independent solves — experiment plan
+### 3.4 Concurrent independent solves — adopted coordination
 
 Meow's cold finite-difference columns can run as independent equilibrium
 solves. A two-worker QA diagnostic produced bit-identical target Jacobian
@@ -294,7 +294,7 @@ bit-identical serial/concurrent Jacobians for both cases. Eight QA columns took
 measurements, not the repeated end-to-end acceptance statistics required by
 §4; end-to-end optimizer qualification remains in meow.
 
-### 3.5 Repeated-solve resource reuse — experiment plan
+### 3.5 Repeated-solve resource reuse — rejected
 
 Meow now evaluates exact finite-difference Jacobian columns concurrently, but
 each column constructs a fresh `EquilibriumSolver`. The facade's implementation
@@ -340,7 +340,7 @@ not justified by the removable fraction, so resource caching is rejected
 without implementation. The structured timing API remains useful
 observability for embedding applications.
 
-### 3.6 Transform launch-shape tuning — experiment plan
+### 3.6 Transform launch-shape tuning — rejected
 
 With resource lifetime ruled out, optimize only the dominant device path. A
 warmed, graph-disabled W7-X `ns=99` fixed-iteration run on the TITAN Xp measured
@@ -410,7 +410,7 @@ QH changed from 0.678 s to 0.682 s (0.7% slower). The smaller block therefore
 does not improve inter-solver residency enough to matter on the four-worker
 TITAN Xp workload. The production tile remains 16.
 
-### 3.7 Near-axisymmetric cold-start experiment plan
+### 3.7 Near-axisymmetric cold-start shaping — adopted
 
 The mode-1 analytic QA/QH boundaries are three-dimensional but have very small
 non-axisymmetric amplitudes; their cold solves still take roughly 1,500 passes.

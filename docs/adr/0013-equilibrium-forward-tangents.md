@@ -86,35 +86,33 @@ For fixed boundary:
 The existing nonlinear preconditioner may precondition the tangent Krylov
 solve, but it is not treated as `F_u^{-1}` and cannot define the derivative.
 
-## Implementation plan and gates
+## Qualification gates
 
-1. **Contracts and host algebra.** Add boundary/tangent snapshot types,
-   checked layout operations, and meow target JVPs.  Validate target JVPs with
-   supplied synthetic equilibrium tangents.
-2. **Reusable residual evaluation.** Separate final-grid residual evaluation
-   from descent and retain its workspaces after convergence.  Verify that the
+1. **Contracts and host algebra.** Boundary/tangent snapshot types use checked
+   layout operations. Synthetic equilibrium tangents validate meow's target
+   JVPs.
+2. **Reusable residual evaluation.** Final-grid residual evaluation is
+   separate from descent and retains its workspaces after convergence. The
    published converged state produces the same invariant residual without
    changing the frozen nonlinear trajectory.
-3. **Analytic CUDA JVP.** Add tangent transforms and tangent geometry,
-   magnetic-field, profile, force, constraint, and derived-field operators.
-   Each operator gets a CPU-reference unit test and a directional finite-
-   difference validation test.
-4. **Linear tangent solve.** Implement restarted GMRES with explicit boundary
-   and gauge rows.  Require a reported linear residual and fail explicitly on
+3. **Analytic CUDA JVP.** CPU references and directional finite differences
+   validate the tangent transform, geometry, magnetic-field, profile, force,
+   constraint, and derived-field operators.
+4. **Linear tangent solve.** Restarted GMRES uses explicit boundary and gauge
+   rows, reports its linear residual, and fails explicitly on
    stagnation or unsupported problem classes.
-5. **meow integration.** Cache a solve-and-linearize session at each optimizer
-   point, map every boundary degree of freedom to a direction, propagate each
-   equilibrium tangent through the target JVP, and pass the assembled matrix
-   through `meow::JacobianFunction`.
-6. **Qualification.** On small Solovev and three-dimensional fixtures, compare
-   tangent columns against centered nonlinear finite differences.  Then compare
+5. **meow integration.** A solve-and-linearize session is cached at each
+   optimizer point. Every boundary degree of freedom maps to a direction; each
+   equilibrium tangent propagates through the target JVP into the matrix passed
+   to `meow::JacobianFunction`.
+6. **Qualification.** Small Solovev and three-dimensional fixtures compare
+   tangent columns against centered nonlinear finite differences, and compare
    the analytic and finite-difference QH Jacobians by column norm, directional
-   prediction, `J^T r`, accepted TRF steps, and final objective.  Preserve the
-   existing Class-A nonlinear trajectories.
+   prediction, `J^T r`, accepted TRF steps, and final objective while preserving
+   the existing Class-A nonlinear trajectories.
 
-No stage is considered complete merely because the code builds.  The first
-usable optimizer milestone requires the fixed-boundary QH directional and
-gradient gates to pass.
+The fixed-boundary QH directional and gradient gates are required in addition
+to a successful build.
 
 ## Implementation outcome
 

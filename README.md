@@ -87,6 +87,10 @@ applies analytic residual JVPs without rerunning the nonlinear equilibrium.
 `solve_boundary_tangent()` solves `F_u du = -F_x dx` with right-preconditioned
 restarted GMRES; repeated directions reuse the same session. The qualified
 scope is precise-double, stellarator-symmetric, fixed-boundary equilibrium.
+Materialized tangents include spectral, magnetic-field, geometry, and profile
+derivatives; current-density derivatives are not part of the qualified API.
+Constructing `EquilibriumLinearization` in a mixed-float build throws
+`CumesError` with that unsupported-precision context.
 Optimizer parameterization, QS/aspect/iota target derivatives, and dense
 Jacobian assembly remain in meow. See
 [`docs/adr/0013-equilibrium-forward-tangents.md`](docs/adr/0013-equilibrium-forward-tangents.md).
