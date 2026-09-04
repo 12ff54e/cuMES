@@ -105,6 +105,12 @@ AxisymmetricStageData initialize_axisymmetric_stage(
     stage.ns = shape.ns;
     stage.mpol = shape.mpol;
     stage.ntheta = shape.ntheta;
+    stage.max_iterations =
+        static_cast<int>(spec.stages[stage_index].max_iterations);
+    stage.tolerance = spec.stages[stage_index].tolerance;
+    stage.delta_t = static_cast<float>(spec.delt);
+    stage.tcon0 = static_cast<float>(spec.physical.tcon0);
+    stage.free_boundary = spec.free_boundary.lfreeb;
     const std::size_t family_values =
         static_cast<std::size_t>(shape.ns) * shape.mpol;
     stage.state.assign(6 * family_values, 0.0F);

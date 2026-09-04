@@ -22,6 +22,8 @@ matrices, pivot scales, radial boundary gates, and lambda diagonal are also
 assembled and applied in WebGPU, including m=1 force scaling and guarded
 two-right-hand-side Thomas solves. The resulting residual drives a validated
 Garabedian accelerated-descent update with fixed-boundary and gauge contracts.
+Force normalization and the production double host controller now consume the
+mapped pass record, including the per-pass m=1 axis extrapolation contract.
 See
 [the WebGPU port status](docs/webgpu-port.md).
 

@@ -1,4 +1,5 @@
 #include "cumes/config/json_reader.hpp"
+#include "cumes/solver/iteration_controller.hpp"
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/constraint.hpp"
 #include "cumes/webgpu/descent.hpp"
@@ -10,11 +11,13 @@
 #include "cumes/webgpu/prolongation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <exception>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -536,6 +539,23 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
 
+            // The CUDA solver mutates the physical state with
+            // extrapolateTowardsAxis immediately before every inverse pass.
+            // Preserve the cold-state assertions above, then establish that
+            // production state contract for this and subsequent passes.
+            for (std::size_t component = 0;
+                 component < cumes::webgpu::SPECTRAL_COMPONENT_COUNT;
+                 ++component) {
+                const std::size_t m1 = (component * stage.mpol + 1) * stage.ns;
+                initialized_stage_.state[m1] = initialized_stage_.state[m1 + 1];
+            }
+            const std::size_t lcs_m0 = 5 * family_values;
+            initialized_stage_.state[lcs_m0] =
+                initialized_stage_.state[lcs_m0 + 1];
+            controller_.emplace(cumes::IterationController<double>::Options{
+                static_cast<double>(stage.delta_t), stage.tolerance, 0.0,
+                false});
+
             cumes::webgpu::AxisymmetricInverseCase inverse;
             inverse.ns = stage.ns;
             inverse.mpol = stage.mpol;
@@ -963,7 +983,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.mpol = initialized_stage_.mpol;
         constraint_case_.ntheta = initialized_stage_.ntheta;
         constraint_case_.delta_s = initialized_stage_.profiles.delta_s;
-        constraint_case_.tcon0 = 1.0F;
+        constraint_case_.tcon0 = initialized_stage_.tcon0;
         constraint_case_.reset_reference = true;
         constraint_case_.refresh_preconditioner = true;
         constraint_case_.geometry = base_geometry_case_.geometry;
@@ -1105,6 +1125,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                    std::to_string(max_error));
                     return;
                 }
+                self->invariant_raw_ = actual.raw_norm;
                 self->run_preconditioner_apply(std::move(actual.residual));
             });
     }
@@ -1148,6 +1169,51 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                             std::to_string(max_scaled_error));
                     return;
                 }
+                cumes::webgpu::AxisymmetricForceNormalizationCase norm_case;
+                norm_case.ns = self->initialized_stage_.ns;
+                norm_case.mpol = self->initialized_stage_.mpol;
+                norm_case.ntheta = self->initialized_stage_.ntheta;
+                norm_case.delta_s = self->initialized_stage_.profiles.delta_s;
+                norm_case.lamscale = self->initialized_stage_.profiles.lamscale;
+                norm_case.state = self->initialized_stage_.state;
+                norm_case.base_geometry =
+                    self->magnetic_field_case_.base_geometry;
+                norm_case.magnetic_field = self->force_case_.magnetic_field;
+                norm_case.pres_h = self->initialized_stage_.profiles.pres_h;
+                self->force_normalization_ =
+                    cumes::webgpu::axisymmetric_force_normalization(norm_case);
+                const double plain =
+                    static_cast<double>(self->initialized_stage_.ns) *
+                    self->initialized_stage_.mpol;
+                self->invariant_normalized_ = {
+                    self->invariant_raw_[0] * plain *
+                        self->force_normalization_.f_norm_rz * 0.25,
+                    self->invariant_raw_[1] * plain *
+                        self->force_normalization_.f_norm_rz * 0.25,
+                    self->invariant_raw_[2] * plain *
+                        self->force_normalization_.f_norm_l};
+                const auto preconditioned_raw =
+                    cumes::webgpu::residual_raw_norms(
+                        actual.residual, self->initialized_stage_.ns,
+                        self->initialized_stage_.mpol, true);
+                self->preconditioned_normalized_ = {
+                    preconditioned_raw[0] * plain *
+                        self->force_normalization_.f_norm_1,
+                    preconditioned_raw[1] * plain *
+                        self->force_normalization_.f_norm_1,
+                    preconditioned_raw[2] * plain *
+                        self->initialized_stage_.profiles.delta_s};
+                const auto verdict = self->controller_->classify_invariant(
+                    self->invariant_normalized_.data());
+                if (verdict.nonfinite || verdict.converged) {
+                    self->finish(false,
+                                 "unexpected terminal first-pass controller "
+                                 "verdict");
+                    return;
+                }
+                self->pending_decision_ = self->controller_->decide_restart(
+                    self->preconditioned_normalized_.data(),
+                    self->invariant_normalized_.data());
                 std::printf(
                     "  Solovev preconditioned residual: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
@@ -1160,9 +1226,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         descent_case_.ns = initialized_stage_.ns;
         descent_case_.mpol = initialized_stage_.mpol;
         descent_case_.move_lcfs = false;
-        descent_case_.delta_t = 0.9F;
-        descent_case_.damping_b1 = static_cast<float>(1.0 - 0.075);
-        descent_case_.damping_fac = static_cast<float>(1.0 / (1.0 + 0.075));
+        descent_case_.delta_t = static_cast<float>(controller_->delta_t());
+        descent_case_.damping_b1 =
+            static_cast<float>(pending_decision_.damping.b1);
+        descent_case_.damping_fac =
+            static_cast<float>(pending_decision_.damping.fac);
         descent_case_.state = initialized_stage_.state;
         descent_case_.velocity.assign(descent_case_.state.size(), 0.0F);
         descent_case_.residual = std::move(residual);
@@ -1219,6 +1287,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  Solovev accelerated descent: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_scaled_error));
+                self->controller_->after_descent(self->pending_decision_);
+                std::printf(
+                    "  host controller: PASS (iter=%d, FSQR=%.3e, "
+                    "delta=%.3e)\n",
+                    self->controller_->effective_iteration(),
+                    self->invariant_normalized_[0],
+                    self->controller_->delta_t());
                 self->finish(
                     true,
                     "parsed Solovev pass through constraint, preconditioning, "
@@ -1259,6 +1334,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricPreconditionerApplyCase
         preconditioner_apply_case_;
     cumes::webgpu::AxisymmetricDescentCase descent_case_;
+    std::optional<cumes::IterationController<double>> controller_;
+    cumes::RestartDecision<double> pending_decision_;
+    std::array<double, 3> invariant_raw_{};
+    std::array<double, 3> invariant_normalized_{};
+    std::array<double, 3> preconditioned_normalized_{};
+    cumes::webgpu::ForceNormalizationResult force_normalization_;
     std::vector<float> solovev_r_con_;
     std::vector<float> solovev_z_con_;
     std::size_t case_index_ = 0;

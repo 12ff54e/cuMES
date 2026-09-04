@@ -58,6 +58,11 @@ browser-validated:
 - Garabedian accelerated descent for all six spectral families, including
   physical/decomposed basis conversion, the m=1 undone-gauge update, rigid R/Z
   LCFS behavior, free lambda LCFS behavior, and velocity persistence;
+- the production pre-inverse m=1 axis extrapolation, host force-normalization
+  reductions, invariant/preconditioned residual scaling, and the shared
+  `IterationController<double>` damping/restart decision; a one-pass native
+  CUDA cross-check and the browser path both report first-pass Solovev
+  `FSQR=2.565e-02`;
 - an independent C++ float reference evaluated by the browser self-test.
 
 This milestone parses and initializes the embedded Solovev input, but does
@@ -140,9 +145,10 @@ The recommended dependency order is:
    parsing, cold seeding, and host profile evaluation are complete);
 3. prescribed-current magnetic-field closure (fixed-iota field evaluation and
    base geometry are complete);
-4. controller/checkpoint orchestration (the operator DAG through accelerated
-   descent is complete), then persistent stage-owned GPU buffers and batched
-   command encoding;
+4. checkpoint/restart orchestration and a repeating axisymmetric stage loop
+   (the operator DAG through controller-driven accelerated descent is
+   complete), then persistent stage-owned GPU buffers and batched command
+   encoding;
 5. a fixed-boundary axisymmetric stage loop and relaxed-float Solovev gate;
 6. generic 3-D transforms, using a WebGPU FFT implementation or a direct DFT
    correctness path before optimization;
