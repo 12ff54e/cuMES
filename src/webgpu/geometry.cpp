@@ -17,7 +17,7 @@ constexpr std::size_t GEOMETRY_INPUT_FIELD_COUNT = 18;
 
 struct ShaderParams {
     std::uint32_t ns;
-    std::uint32_t ntheta;
+    std::uint32_t n_z_n_t;
     std::uint32_t full_points;
     std::uint32_t half_points;
     float delta_s;
@@ -27,14 +27,17 @@ static_assert(sizeof(ShaderParams) == 32);
 
 std::string validate_case(const BaseGeometryCase& input) {
     if (input.ns < 2 || input.ntheta < 2 || input.ntheta % 2 != 0 ||
-        !std::isfinite(input.delta_s) || input.delta_s <= 0.0F) {
-        return "base geometry requires ns>=2, even ntheta>=2, and positive "
-               "finite delta_s";
+        input.nzeta < 1 || !std::isfinite(input.delta_s) ||
+        input.delta_s <= 0.0F) {
+        return "base geometry requires ns>=2, even ntheta>=2, nzeta>=1, and "
+               "positive finite delta_s";
     }
+    const std::size_t n_z_n_t =
+        static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t full_points =
-        static_cast<std::size_t>(input.ns) * input.ntheta;
+        static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t half_points =
-        static_cast<std::size_t>(input.ns - 1) * input.ntheta;
+        static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     if (full_points > std::numeric_limits<std::uint32_t>::max() ||
         half_points > std::numeric_limits<std::uint32_t>::max()) {
         return "base geometry exceeds WebGPU indexing limits";
@@ -78,10 +81,12 @@ struct DispatchState {
 
 BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input) {
     if (!validate_case(input).empty()) return {};
+    const std::size_t n_z_n_t =
+        static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t full_points =
-        static_cast<std::size_t>(input.ns) * input.ntheta;
+        static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t half_points =
-        static_cast<std::size_t>(input.ns - 1) * input.ntheta;
+        static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     BaseGeometryResult result;
     result.fields.resize(BASE_GEOMETRY_FIELD_COUNT * half_points);
     const auto full = [&](std::size_t field, std::size_t point) {
@@ -97,11 +102,11 @@ BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input) {
         const float sqrt_o = input.sqrt_s_f[surface + 1];
         const float sqrt_i_squared = sqrt_i * sqrt_i;
         const float sqrt_o_squared = sqrt_o * sqrt_o;
-        for (int theta = 0; theta < input.ntheta; ++theta) {
+        for (std::size_t angular = 0; angular < n_z_n_t; ++angular) {
             const std::size_t point =
-                static_cast<std::size_t>(surface) * input.ntheta + theta;
+                static_cast<std::size_t>(surface) * n_z_n_t + angular;
             const std::size_t inside = point;
-            const std::size_t outside = point + input.ntheta;
+            const std::size_t outside = point + n_z_n_t;
             const float r12 =
                 0.5F * ((full(0, inside) + full(0, outside)) +
                         sqrt_h * (full(6, inside) + full(6, outside)));
@@ -210,10 +215,12 @@ void enqueue_base_geometry(const wgpu::Device& device,
         callback("cannot load embedded /shaders/base_geometry.wgsl", {});
         return;
     }
+    const std::size_t n_z_n_t =
+        static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t full_points =
-        static_cast<std::size_t>(input.ns) * input.ntheta;
+        static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t half_points =
-        static_cast<std::size_t>(input.ns - 1) * input.ntheta;
+        static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     std::vector<float> radial;
     radial.reserve(input.sqrt_s_f.size() + input.sqrt_s_h.size());
     radial.insert(radial.end(), input.sqrt_s_f.begin(), input.sqrt_s_f.end());
@@ -258,7 +265,7 @@ void enqueue_base_geometry(const wgpu::Device& device,
         device.CreateComputePipeline(&pipeline_descriptor);
 
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
-                              static_cast<std::uint32_t>(input.ntheta),
+                              static_cast<std::uint32_t>(n_z_n_t),
                               static_cast<std::uint32_t>(full_points),
                               static_cast<std::uint32_t>(half_points),
                               input.delta_s,

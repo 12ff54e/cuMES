@@ -567,6 +567,130 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  direct 3-D inverse transform: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
+                self->run_toroidal_geometry();
+            });
+    }
+
+    void run_toroidal_geometry() {
+        cumes::webgpu::ToroidalInverseCase physical = toroidal_case_;
+        std::fill(physical.state.begin(), physical.state.end(), 0.0F);
+        const int mnmax = physical.mpol * (physical.ntor + 1);
+        const auto coefficient = [&](int component, int m, int n,
+                                     int surface) -> float& {
+            const int mode = m * (physical.ntor + 1) + n;
+            return physical
+                .state[(static_cast<std::size_t>(component) * mnmax + mode) *
+                           physical.ns +
+                       surface];
+        };
+        for (int surface = 0; surface < physical.ns; ++surface) {
+            const float s = static_cast<float>(surface) /
+                            static_cast<float>(physical.ns - 1);
+            coefficient(0, 0, 0, surface) = 10.0F;
+            coefficient(0, 1, 0, surface) = 0.8F * s;
+            coefficient(1, 1, 0, surface) = 0.8F * s;
+            coefficient(0, 1, 1, surface) = 0.025F * s;
+            coefficient(1, 1, 1, surface) = -0.018F * s;
+            coefficient(2, 1, 1, surface) = 0.006F * s;
+            coefficient(3, 1, 1, surface) = 0.012F * s;
+            coefficient(4, 1, 1, surface) = -0.009F * s;
+            coefficient(5, 1, 1, surface) = 0.004F * s;
+            coefficient(0, 2, 2, surface) = 0.003F * s;
+            coefficient(1, 2, 2, surface) = -0.002F * s;
+        }
+        const auto full = cumes::webgpu::toroidal_inverse_reference(physical);
+        toroidal_geometry_case_.ns = physical.ns;
+        toroidal_geometry_case_.ntheta = physical.ntheta;
+        toroidal_geometry_case_.nzeta = physical.nzeta;
+        toroidal_geometry_case_.delta_s = 0.5F;
+        toroidal_geometry_case_.geometry = full.geometry;
+        toroidal_geometry_case_.sqrt_s_f = {0.0F, std::sqrt(0.5F), 1.0F};
+        toroidal_geometry_case_.sqrt_s_h = {std::sqrt(0.25F), std::sqrt(0.75F)};
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_base_geometry(
+            device_, toroidal_geometry_case_,
+            [self](std::string error,
+                   cumes::webgpu::BaseGeometryResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::base_geometry_reference(
+                    self->toroidal_geometry_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                const std::size_t half_points =
+                    static_cast<std::size_t>(self->toroidal_geometry_case_.ns -
+                                             1) *
+                    self->toroidal_geometry_case_.ntheta *
+                    self->toroidal_geometry_case_.nzeta;
+                const bool guv_nonzero =
+                    valid &&
+                    std::any_of(actual.fields.begin() + 8 * half_points,
+                                actual.fields.begin() + 9 * half_points,
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !guv_nonzero || max_error > 2.0e-4F) {
+                    self->finish(false, "3-D base geometry mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  3-D half-grid base geometry: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_toroidal_magnetic_field(std::move(actual.fields));
+            });
+    }
+
+    void run_toroidal_magnetic_field(std::vector<float> base_geometry) {
+        toroidal_magnetic_case_.ns = toroidal_geometry_case_.ns;
+        toroidal_magnetic_case_.ntheta = toroidal_geometry_case_.ntheta;
+        toroidal_magnetic_case_.nzeta = toroidal_geometry_case_.nzeta;
+        toroidal_magnetic_case_.lamscale = 1.0F;
+        toroidal_magnetic_case_.geometry = toroidal_geometry_case_.geometry;
+        toroidal_magnetic_case_.base_geometry = std::move(base_geometry);
+        toroidal_magnetic_case_.sqrt_s_h = toroidal_geometry_case_.sqrt_s_h;
+        toroidal_magnetic_case_.phip_f = {0.9F, 0.85F, 0.8F};
+        toroidal_magnetic_case_.chip_h = {0.2F, 0.25F};
+        toroidal_magnetic_case_.pres_h = {0.03F, 0.01F};
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_magnetic_field(
+            device_, toroidal_magnetic_case_,
+            [self](std::string error,
+                   cumes::webgpu::MagneticFieldResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::magnetic_field_reference(
+                    self->toroidal_magnetic_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                if (!valid || max_error > 2.0e-4F) {
+                    self->finish(false, "3-D magnetic field mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  3-D magnetic field+pressure: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
                 self->run_toroidal_forward();
             });
     }
@@ -1814,6 +1938,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricDealiasCase dealias_case_;
     cumes::webgpu::ToroidalInverseCase toroidal_case_;
     cumes::webgpu::ToroidalForwardCase toroidal_forward_case_;
+    cumes::webgpu::BaseGeometryCase toroidal_geometry_case_;
+    cumes::webgpu::MagneticFieldCase toroidal_magnetic_case_;
     cumes::webgpu::AxisymmetricStageData initialized_stage_;
     cumes::webgpu::BaseGeometryCase base_geometry_case_;
     cumes::webgpu::MagneticFieldCase magnetic_field_case_;

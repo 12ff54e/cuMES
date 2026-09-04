@@ -1,6 +1,6 @@
 struct Params {
     ns: u32,
-    ntheta: u32,
+    n_z_n_t: u32,
     full_points: u32,
     half_points: u32,
     delta_s: f32,
@@ -33,10 +33,10 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (point >= params.half_points) {
         return;
     }
-    let surface = point / params.ntheta;
-    let theta = point % params.ntheta;
-    let inside = surface * params.ntheta + theta;
-    let outside = inside + params.ntheta;
+    let surface = point / params.n_z_n_t;
+    let angular = point % params.n_z_n_t;
+    let inside = surface * params.n_z_n_t + angular;
+    let outside = inside + params.n_z_n_t;
     let sqrt_h = radial.data[params.ns + surface];
     let sqrt_i = radial.data[surface];
     let sqrt_o = radial.data[surface + 1u];

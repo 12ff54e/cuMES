@@ -17,7 +17,7 @@ constexpr std::size_t FULL_GEOMETRY_FIELD_COUNT = 18;
 
 struct ShaderParams {
     std::uint32_t ns;
-    std::uint32_t ntheta;
+    std::uint32_t n_z_n_t;
     std::uint32_t full_points;
     std::uint32_t half_points;
     float lamscale;
@@ -27,14 +27,16 @@ static_assert(sizeof(ShaderParams) == 32);
 
 std::string validate_case(const MagneticFieldCase& input) {
     if (input.ns < 2 || input.ntheta < 2 || input.ntheta % 2 != 0 ||
-        !std::isfinite(input.lamscale)) {
-        return "magnetic field requires ns>=2, even ntheta>=2, and finite "
-               "lamscale";
+        input.nzeta < 1 || !std::isfinite(input.lamscale)) {
+        return "magnetic field requires ns>=2, even ntheta>=2, nzeta>=1, and "
+               "finite lamscale";
     }
+    const std::size_t n_z_n_t =
+        static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t full_points =
-        static_cast<std::size_t>(input.ns) * input.ntheta;
+        static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t half_points =
-        static_cast<std::size_t>(input.ns - 1) * input.ntheta;
+        static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     if (full_points > std::numeric_limits<std::uint32_t>::max() ||
         half_points > std::numeric_limits<std::uint32_t>::max()) {
         return "magnetic field exceeds WebGPU indexing limits";
@@ -82,10 +84,12 @@ struct DispatchState {
 
 MagneticFieldResult magnetic_field_reference(const MagneticFieldCase& input) {
     if (!validate_case(input).empty()) return {};
+    const std::size_t n_z_n_t =
+        static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t full_points =
-        static_cast<std::size_t>(input.ns) * input.ntheta;
+        static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t half_points =
-        static_cast<std::size_t>(input.ns - 1) * input.ntheta;
+        static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     MagneticFieldResult result;
     result.fields.resize(MAGNETIC_FIELD_COUNT * half_points);
     const auto full = [&](std::size_t field, std::size_t point) {
@@ -101,11 +105,11 @@ MagneticFieldResult magnetic_field_reference(const MagneticFieldCase& input) {
         const float sqrt_h = input.sqrt_s_h[surface];
         const float phip_average =
             0.5F * (input.phip_f[surface] + input.phip_f[surface + 1]);
-        for (int theta = 0; theta < input.ntheta; ++theta) {
+        for (std::size_t angular = 0; angular < n_z_n_t; ++angular) {
             const std::size_t point =
-                static_cast<std::size_t>(surface) * input.ntheta + theta;
+                static_cast<std::size_t>(surface) * n_z_n_t + angular;
             const std::size_t inside = point;
-            const std::size_t outside = point + input.ntheta;
+            const std::size_t outside = point + n_z_n_t;
             const float lu_h =
                 0.5F * ((full(5, inside) + full(5, outside)) +
                         sqrt_h * (full(11, inside) + full(11, outside)));
@@ -146,10 +150,12 @@ void enqueue_magnetic_field(const wgpu::Device& device,
         callback("cannot load embedded /shaders/magnetic_field.wgsl", {});
         return;
     }
+    const std::size_t n_z_n_t =
+        static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t full_points =
-        static_cast<std::size_t>(input.ns) * input.ntheta;
+        static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t half_points =
-        static_cast<std::size_t>(input.ns - 1) * input.ntheta;
+        static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     std::vector<float> profiles;
     profiles.reserve(input.sqrt_s_h.size() + input.phip_f.size() +
                      input.chip_h.size() + input.pres_h.size());
@@ -200,7 +206,7 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     pipeline_descriptor.compute.entryPoint = "main";
     const auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
-                              static_cast<std::uint32_t>(input.ntheta),
+                              static_cast<std::uint32_t>(n_z_n_t),
                               static_cast<std::uint32_t>(full_points),
                               static_cast<std::uint32_t>(half_points),
                               input.lamscale,

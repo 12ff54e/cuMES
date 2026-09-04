@@ -36,9 +36,12 @@ browser-validated:
 - the shipped Solovev input parsed in-browser, relaxed to the documented f32
   tolerance floor, initialized, and passed through the WGSL inverse transform;
 - the staggered half-grid base-geometry operator in WGSL: parity recombination,
-  radial interpolation and derivatives, Jacobian, and covariant metric;
+  radial interpolation and derivatives, Jacobian, and covariant metric, now
+  over the complete reduced-θ/full-ζ grid with nonzero `g_uv`/`g_vv` 3-D
+  coverage;
 - fixed-iota contravariant/covariant magnetic fields and total pressure, with
-  the CUDA path's finite-Jacobian division guard;
+  the CUDA path's finite-Jacobian division guard and full 3-D lambda/toroidal
+  geometry contributions;
 - axisymmetric radial/poloidal MHD weak-form forces and hybrid λ force on the
   full grid;
 - first-pass Solovev force projection into the six-family spectral residual
@@ -182,8 +185,9 @@ The recommended dependency order is:
 4. persistent stage-owned GPU buffers and batched command encoding (the
    controller-complete fixed-boundary axisymmetric stage loop and its
    relaxed-float coarse Solovev gate are complete);
-5. integrate the completed direct 3-D transform correctness path with 3-D
-   geometry, field, force, constraint, and preconditioner operators;
+5. integrate the completed direct 3-D transform, geometry, and fixed-iota
+   magnetic-field paths with 3-D force, constraint, and preconditioner
+   operators;
 6. qualify fixed-boundary W7-X, then optimize the direct DFT with a WebGPU FFT;
 7. only then integrate free-boundary/NESTOR support.
 

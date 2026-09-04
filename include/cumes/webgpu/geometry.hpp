@@ -15,6 +15,7 @@ inline constexpr std::size_t BASE_GEOMETRY_FIELD_COUNT = 10;
 struct BaseGeometryCase {
     int ns = 0;
     int ntheta = 0;
+    int nzeta = 1;
     float delta_s = 0.0F;
     // The 18 field-major full-grid fields produced by the inverse transform.
     std::vector<float> geometry;
@@ -42,6 +43,7 @@ inline constexpr std::size_t MAGNETIC_FIELD_COUNT = 5;
 struct MagneticFieldCase {
     int ns = 0;
     int ntheta = 0;
+    int nzeta = 1;
     float lamscale = 0.0F;
     std::vector<float> geometry;
     std::vector<float> base_geometry;

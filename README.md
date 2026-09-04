@@ -11,7 +11,8 @@ validated linear/Catmull-Rom multigrid prolongation, and the axisymmetric
 inverse/forward transforms with constraint synthesis and de-aliasing. Direct
 3-D inverse/forward transforms are also browser-validated across all six
 parity families and toroidal derivative couplings, but are not yet integrated
-into a W7-X solve. The backend also
+into a W7-X solve. The shared half-grid geometry and fixed-iota magnetic-field
+operators now cover the full 3-D angular grid as well. The backend also
 parses and initializes the shipped Solovev case in-browser and evaluates its
 staggered half-grid geometry, magnetic field, total pressure, and axisymmetric
 MHD force through spectral residual projection, but is not yet a complete
