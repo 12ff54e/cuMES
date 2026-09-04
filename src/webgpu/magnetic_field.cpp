@@ -18,12 +18,16 @@ constexpr std::size_t FULL_GEOMETRY_FIELD_COUNT = 18;
 struct ShaderParams {
     std::uint32_t ns;
     std::uint32_t n_z_n_t;
+    std::uint32_t ntheta;
+    std::uint32_t nzeta;
     std::uint32_t full_points;
     std::uint32_t half_points;
+    std::uint32_t prescribed_current;
+    std::uint32_t padding0;
     float lamscale;
     std::uint32_t padding[3];
 };
-static_assert(sizeof(ShaderParams) == 32);
+static_assert(sizeof(ShaderParams) == 48);
 
 std::string validate_case(const MagneticFieldCase& input) {
     if (input.ns < 2 || input.ntheta < 2 || input.ntheta % 2 != 0 ||
@@ -47,7 +51,10 @@ std::string validate_case(const MagneticFieldCase& input) {
         input.sqrt_s_h.size() != half_surfaces ||
         input.phip_f.size() != static_cast<std::size_t>(input.ns) ||
         input.chip_h.size() != half_surfaces ||
-        input.pres_h.size() != half_surfaces) {
+        input.pres_h.size() != half_surfaces ||
+        input.iota_h.size() != half_surfaces ||
+        (input.prescribed_current && (input.curr_h.size() != half_surfaces ||
+                                      input.phip_h.size() != half_surfaces))) {
         return "magnetic field input shape mismatch";
     }
     return {};
@@ -78,6 +85,7 @@ struct DispatchState {
     wgpu::Buffer readback_buffer;
     std::size_t result_values = 0;
     std::size_t result_bytes = 0;
+    std::size_t half_surfaces = 0;
 };
 
 }  // namespace
@@ -92,6 +100,8 @@ MagneticFieldResult magnetic_field_reference(const MagneticFieldCase& input) {
         static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     MagneticFieldResult result;
     result.fields.resize(MAGNETIC_FIELD_COUNT * half_points);
+    result.chip_h = input.chip_h;
+    result.iota_h = input.iota_h;
     const auto full = [&](std::size_t field, std::size_t point) {
         return input.geometry[field * full_points + point];
     };
@@ -121,17 +131,79 @@ MagneticFieldResult magnetic_field_reference(const MagneticFieldCase& input) {
             float bsupv = 0.0F;
             if (std::isfinite(gsqrt) && std::abs(gsqrt) > 1.0e-30F) {
                 bsupv = (input.lamscale * lu_h + phip_average) / gsqrt;
-                bsupu = (input.lamscale * lv_h + input.chip_h[surface]) / gsqrt;
+                bsupu = input.lamscale * lv_h / gsqrt;
+                if (!input.prescribed_current) {
+                    bsupu += input.chip_h[surface] / gsqrt;
+                }
             }
-            const float bsubu = half(7, point) * bsupu + half(8, point) * bsupv;
-            const float bsubv = half(8, point) * bsupu + half(9, point) * bsupv;
-            const float magnetic_pressure =
-                0.5F * (bsupu * bsubu + bsupv * bsubv);
             store(0, point, bsupu);
             store(1, point, bsupv);
-            store(2, point, bsubu);
-            store(3, point, bsubv);
-            store(4, point, magnetic_pressure + input.pres_h[surface]);
+            if (!input.prescribed_current) {
+                const float bsubu =
+                    half(7, point) * bsupu + half(8, point) * bsupv;
+                const float bsubv =
+                    half(8, point) * bsupu + half(9, point) * bsupv;
+                const float magnetic_pressure =
+                    0.5F * (bsupu * bsubu + bsupv * bsubv);
+                store(2, point, bsubu);
+                store(3, point, bsubv);
+                store(4, point, magnetic_pressure + input.pres_h[surface]);
+            }
+        }
+    }
+    if (input.prescribed_current) {
+        const int reduced_ntheta = input.ntheta / 2 + 1;
+        const float normalization =
+            1.0F / static_cast<float>(input.nzeta * (reduced_ntheta - 1));
+        for (int surface = 0; surface < input.ns - 1; ++surface) {
+            float jv = 0.0F;
+            float average = 0.0F;
+            const std::size_t base_point =
+                static_cast<std::size_t>(surface) * n_z_n_t;
+            for (int izeta = 0; izeta < input.nzeta; ++izeta) {
+                for (int itheta = 0; itheta < reduced_ntheta; ++itheta) {
+                    const std::size_t point =
+                        base_point +
+                        static_cast<std::size_t>(izeta) * input.ntheta + itheta;
+                    const float weight =
+                        normalization *
+                        ((itheta == 0 || itheta == reduced_ntheta - 1) ? 0.5F
+                                                                       : 1.0F);
+                    const float gsqrt = half(6, point);
+                    jv +=
+                        (half(7, point) * result.fields[point] +
+                         half(8, point) * result.fields[half_points + point]) *
+                        weight;
+                    if (std::isfinite(gsqrt) && std::abs(gsqrt) > 1.0e-30F) {
+                        average += half(7, point) / gsqrt * weight;
+                    }
+                }
+            }
+            const float chip =
+                average == 0.0F ? 0.0F : (input.curr_h[surface] - jv) / average;
+            result.chip_h[surface] = chip;
+            if (input.phip_h[surface] != 0.0F) {
+                result.iota_h[surface] = chip / input.phip_h[surface];
+            }
+            for (std::size_t angular = 0; angular < n_z_n_t; ++angular) {
+                const std::size_t point = base_point + angular;
+                const float gsqrt = half(6, point);
+                float bsupu = result.fields[point];
+                const float bsupv = result.fields[half_points + point];
+                if (std::isfinite(gsqrt) && std::abs(gsqrt) > 1.0e-30F) {
+                    bsupu += chip / gsqrt;
+                }
+                const float bsubu =
+                    half(7, point) * bsupu + half(8, point) * bsupv;
+                const float bsubv =
+                    half(8, point) * bsupu + half(9, point) * bsupv;
+                result.fields[point] = bsupu;
+                store(2, point, bsubu);
+                store(3, point, bsubv);
+                store(4, point,
+                      0.5F * (bsupu * bsubu + bsupv * bsubv) +
+                          input.pres_h[surface]);
+            }
         }
     }
     return result;
@@ -157,17 +229,31 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     const std::size_t half_points =
         static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     std::vector<float> profiles;
-    profiles.reserve(input.sqrt_s_h.size() + input.phip_f.size() +
-                     input.chip_h.size() + input.pres_h.size());
+    const std::size_t half_surfaces = static_cast<std::size_t>(input.ns - 1);
+    profiles.reserve(input.phip_f.size() + 6 * half_surfaces);
     profiles.insert(profiles.end(), input.sqrt_s_h.begin(),
                     input.sqrt_s_h.end());
     profiles.insert(profiles.end(), input.phip_f.begin(), input.phip_f.end());
     profiles.insert(profiles.end(), input.chip_h.begin(), input.chip_h.end());
     profiles.insert(profiles.end(), input.pres_h.begin(), input.pres_h.end());
+    if (input.curr_h.empty()) {
+        profiles.insert(profiles.end(), half_surfaces, 0.0F);
+    } else {
+        profiles.insert(profiles.end(), input.curr_h.begin(),
+                        input.curr_h.end());
+    }
+    if (input.phip_h.empty()) {
+        profiles.insert(profiles.end(), half_surfaces, 0.0F);
+    } else {
+        profiles.insert(profiles.end(), input.phip_h.begin(),
+                        input.phip_h.end());
+    }
+    profiles.insert(profiles.end(), input.iota_h.begin(), input.iota_h.end());
     const std::size_t geometry_bytes = input.geometry.size() * sizeof(float);
     const std::size_t base_bytes = input.base_geometry.size() * sizeof(float);
     const std::size_t profile_bytes = profiles.size() * sizeof(float);
-    const std::size_t result_values = MAGNETIC_FIELD_COUNT * half_points;
+    const std::size_t field_values = MAGNETIC_FIELD_COUNT * half_points;
+    const std::size_t result_values = field_values + 2 * half_surfaces;
     const std::size_t result_bytes = result_values * sizeof(float);
     const auto geometry_buffer =
         create_buffer(device, geometry_bytes,
@@ -205,10 +291,18 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     pipeline_descriptor.compute.module = shader;
     pipeline_descriptor.compute.entryPoint = "main";
     const auto pipeline = device.CreateComputePipeline(&pipeline_descriptor);
+    pipeline_descriptor.label = "cuMES prescribed-current finalize pipeline";
+    pipeline_descriptor.compute.entryPoint = "finalize_current";
+    const auto finalize_pipeline =
+        device.CreateComputePipeline(&pipeline_descriptor);
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(n_z_n_t),
+                              static_cast<std::uint32_t>(input.ntheta),
+                              static_cast<std::uint32_t>(input.nzeta),
                               static_cast<std::uint32_t>(full_points),
                               static_cast<std::uint32_t>(half_points),
+                              input.prescribed_current ? 1U : 0U,
+                              0U,
                               input.lamscale,
                               {0, 0, 0}};
     const auto queue = device.GetQueue();
@@ -231,6 +325,19 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     bind_group_descriptor.entryCount = std::size(entries);
     bind_group_descriptor.entries = entries;
     const auto bind_group = device.CreateBindGroup(&bind_group_descriptor);
+    const auto finalize_layout = finalize_pipeline.GetBindGroupLayout(0);
+    const wgpu::BindGroupEntry finalize_entries[] = {
+        {nullptr, 1, base_buffer, 0, base_bytes, nullptr, nullptr},
+        {nullptr, 2, profile_buffer, 0, profile_bytes, nullptr, nullptr},
+        {nullptr, 3, result_buffer, 0, result_bytes, nullptr, nullptr},
+        {nullptr, 4, params_buffer, 0, sizeof(params), nullptr, nullptr},
+    };
+    bind_group_descriptor.label = "cuMES prescribed-current finalize bindings";
+    bind_group_descriptor.layout = finalize_layout;
+    bind_group_descriptor.entryCount = std::size(finalize_entries);
+    bind_group_descriptor.entries = finalize_entries;
+    const auto finalize_bind_group =
+        device.CreateBindGroup(&bind_group_descriptor);
     const auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     const auto pass = encoder.BeginComputePass(&pass_descriptor);
@@ -239,6 +346,10 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(half_points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
+    pass.SetPipeline(finalize_pipeline);
+    pass.SetBindGroup(0, finalize_bind_group);
+    pass.DispatchWorkgroups((static_cast<std::uint32_t>(half_surfaces) + 63U) /
+                            64U);
     pass.End();
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);
@@ -250,6 +361,7 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     dispatch->readback_buffer = readback_buffer;
     dispatch->result_values = result_values;
     dispatch->result_bytes = result_bytes;
+    dispatch->half_surfaces = half_surfaces;
     readback_buffer.MapAsync(
         wgpu::MapMode::Read, 0, result_bytes,
         wgpu::CallbackMode::AllowSpontaneous,
@@ -271,7 +383,15 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             }
             const auto* values = static_cast<const float*>(mapped);
             MagneticFieldResult result;
-            result.fields.assign(values, values + dispatch->result_values);
+            const std::size_t half_surfaces = dispatch->half_surfaces;
+            const std::size_t profile_values = 2 * half_surfaces;
+            const std::size_t field_values =
+                dispatch->result_values - profile_values;
+            result.fields.assign(values, values + field_values);
+            result.chip_h.assign(values + field_values,
+                                 values + field_values + half_surfaces);
+            result.iota_h.assign(values + field_values + half_surfaces,
+                                 values + dispatch->result_values);
             dispatch->readback_buffer.Unmap();
             dispatch->callback({}, std::move(result));
         });

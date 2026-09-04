@@ -657,12 +657,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         toroidal_magnetic_case_.ntheta = toroidal_geometry_case_.ntheta;
         toroidal_magnetic_case_.nzeta = toroidal_geometry_case_.nzeta;
         toroidal_magnetic_case_.lamscale = 1.0F;
+        toroidal_magnetic_case_.prescribed_current = true;
         toroidal_magnetic_case_.geometry = toroidal_geometry_case_.geometry;
         toroidal_magnetic_case_.base_geometry = std::move(base_geometry);
         toroidal_magnetic_case_.sqrt_s_h = toroidal_geometry_case_.sqrt_s_h;
         toroidal_magnetic_case_.phip_f = {0.9F, 0.85F, 0.8F};
         toroidal_magnetic_case_.chip_h = {0.2F, 0.25F};
         toroidal_magnetic_case_.pres_h = {0.03F, 0.01F};
+        toroidal_magnetic_case_.curr_h = {0.18F, 0.22F};
+        toroidal_magnetic_case_.phip_h = {0.875F, 0.825F};
+        toroidal_magnetic_case_.iota_h = {0.2F, 0.25F};
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_magnetic_field(
             device_, toroidal_magnetic_case_,
@@ -675,7 +679,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 const auto expected = cumes::webgpu::magnetic_field_reference(
                     self->toroidal_magnetic_case_);
                 float max_error = 0.0F;
-                bool valid = actual.fields.size() == expected.fields.size();
+                bool valid = actual.fields.size() == expected.fields.size() &&
+                             actual.chip_h.size() == expected.chip_h.size() &&
+                             actual.iota_h.size() == expected.iota_h.size();
                 if (valid) {
                     for (std::size_t i = 0; i < actual.fields.size(); ++i) {
                         max_error = std::max(
@@ -684,13 +690,23 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         valid &= std::isfinite(actual.fields[i]);
                     }
                 }
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.chip_h.size(); ++i) {
+                        max_error = std::max(
+                            {max_error,
+                             std::abs(actual.chip_h[i] - expected.chip_h[i]),
+                             std::abs(actual.iota_h[i] - expected.iota_h[i])});
+                        valid &= std::isfinite(actual.chip_h[i]) &&
+                                 std::isfinite(actual.iota_h[i]);
+                    }
+                }
                 if (!valid || max_error > 2.0e-4F) {
                     self->finish(false, "3-D magnetic field mismatch: " +
                                             std::to_string(max_error));
                     return;
                 }
                 std::printf(
-                    "  3-D magnetic field+pressure: PASS "
+                    "  3-D prescribed-current magnetic field+pressure: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
                 self->run_toroidal_force(std::move(actual.fields));
@@ -1455,13 +1471,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     void run_magnetic_field(std::vector<float> base_geometry) {
         magnetic_field_case_.ns = initialized_stage_.ns;
         magnetic_field_case_.ntheta = initialized_stage_.ntheta;
+        magnetic_field_case_.nzeta = initialized_stage_.nzeta;
         magnetic_field_case_.lamscale = initialized_stage_.profiles.lamscale;
+        magnetic_field_case_.prescribed_current = false;
         magnetic_field_case_.geometry = base_geometry_case_.geometry;
         magnetic_field_case_.base_geometry = std::move(base_geometry);
         magnetic_field_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
         magnetic_field_case_.phip_f = initialized_stage_.profiles.phip_f;
         magnetic_field_case_.chip_h = initialized_stage_.profiles.chip_h;
         magnetic_field_case_.pres_h = initialized_stage_.profiles.pres_h;
+        magnetic_field_case_.curr_h = initialized_stage_.profiles.curr_h;
+        magnetic_field_case_.phip_h = initialized_stage_.profiles.phip_h;
+        magnetic_field_case_.iota_h = initialized_stage_.profiles.iota_h;
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_magnetic_field(
             device_, magnetic_field_case_,
