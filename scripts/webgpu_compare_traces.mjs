@@ -15,6 +15,11 @@ const fields = ['state_hash', 'state_low_hash', 'preconditioned_hash',
   'restart', 'anchor', 'refresh', 'checkpoint'];
 const firstDifferences = {};
 const second = new Map(controllers[1].map(row => [row.attempt, row]));
+const first = new Set(controllers[0].map(row => row.attempt));
+const commonEnd = Math.min(...controllers.map(rows => rows.at(-1)?.attempt ?? 0));
+const unmatchedAttempts = [controllers[0].filter(row => row.attempt <= commonEnd && !second.has(row.attempt)),
+  controllers[1].filter(row => row.attempt <= commonEnd && !first.has(row.attempt))]
+  .map(rows => rows.map(row => row.attempt));
 for (const a of controllers[0]) {
   const b = second.get(a.attempt);
   if (!b) continue;
@@ -25,5 +30,5 @@ for (const a of controllers[0]) {
   }
 }
 console.log(JSON.stringify({paths, lengths: controllers.map(rows => rows.length),
-  firstDifferences, last: controllers.map(rows => rows.at(-1)),
+  commonEnd, unmatchedAttempts, firstDifferences, last: controllers.map(rows => rows.at(-1)),
   sameInput: traces.map(trace => trace.filter(row => row.kind === 'transform'))}, null, 2));

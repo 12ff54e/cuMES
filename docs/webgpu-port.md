@@ -455,6 +455,43 @@ Through iteration 750 the two FSQR histories remain close: the FFT/direct
 ratio is 1.00033 there. The large difference in final iteration count is not
 an immediate large force error at startup.
 
+### Specialized paired FFT performance
+
+The paired small-transform implementation now uses radix-2 sum/difference
+butterflies, a radix-3 sum/difference and real-scale formula, exact trivial
+twiddles, and direct natural-order stores from the final stage. The final
+shared-memory write/read and two barriers are removed. Explicit rounding
+barriers inside paired arithmetic are retained. Scalar-f32 keeps the original
+generator: the specialization regressed at the full solver batch size, so it
+is not enabled for that precision.
+
+On the same foreground Chrome / RTX 3060 Ti session, N=36 and the actual
+`20*99*16 = 31,680` solver batch size, seven samples of 30 repeated dispatches
+gave the following median queue-completion times (setup, upload and readback
+excluded; command encoding and submission included):
+
+| Standalone paired transform | ms/pass |
+| --- | ---: |
+| Generic FFT | 3.736 |
+| Specialized FFT | 1.851 |
+| Standalone full-complex direct DFT | 10.152 |
+
+The FFT improvement is **2.02×**. The standalone DFT computes all 36 complex
+bins; it is not the solver's truncated 13-bin real projection and must not be
+used to claim a 5.5× solver speedup.
+
+The optimized cuMES operator conformance and 327-iteration Solovev regression
+passed with same-input shadow diagnostics enabled. The dependency separately
+passed 496 small-transform cases (including 248 same-input generic/optimized
+comparisons), 197 real/large-transform cases, and 12 actual Emdawnwebgpu C++
+runtime cases. See its `docs/qualification.md` for accuracy and timing details.
+
+A warmed 287-pass optimized W7-X profile measured 100.3 ms/iteration. The two
+forward-projection readback waits totalled about 18.1 ms/iteration and remained
+the largest aggregate wait category. These waits include queued pack, FFT,
+poloidal projection, and synchronization work, not isolated kernel times.
+Doubling FFT throughput cannot double the whole solver's throughput.
+
 ## Backend boundary
 
 The WebGPU implementation lives under these paths:
