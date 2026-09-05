@@ -440,8 +440,9 @@ The Chrome/D3D12 RTX 3060 Ti investigation established:
 - Double damping differs on iteration 2; after the actual f32 conversion
   used by descent, `fac` first differs on iteration 35 and `b1` on iteration
   40. The two runs still have identical time steps, restart anchors, restart
-  reasons, and preconditioner-refresh schedules through the first 781
-  effective iterations compared. An early branch mismatch is not the cause.
+  reasons, and preconditioner-refresh schedules through the direct run's
+  2812 effective iterations. The derived m=1 gauge schedule also matches.
+  A discrete restart, step-size, or gauge branch mismatch is not the cause.
 
 These observations explain how roundoff enters and propagates into different
 nonlinear trajectories. They do not assign every additional iteration to one
@@ -454,6 +455,20 @@ with `FSQR=9.985159710508547e-13` (291.9 seconds navigation to result).
 Through iteration 750 the two FSQR histories remain close: the FFT/direct
 ratio is 1.00033 there. The large difference in final iteration count is not
 an immediate large force error at startup.
+The full generic replay reproduced 3450 iterations and the original residual
+triple. It also matched every available controller field and fingerprint in
+the earlier 781-iteration shadow-instrumented capture: the extra diagnostic
+dispatches did not perturb that trajectory.
+
+All three complete runs have their last restart anchor at iteration 93 and
+retain `delta=0.5246427169237352` afterwards. Over iterations 2000–2800,
+mean `dtau=1-b1` is `0.002130` direct, `0.002588` generic FFT, and `0.002113`
+optimized FFT. The generic run thus has about 22% more damping in this
+window. At iteration 2800, FSQR is respectively `1.021e-12`, `1.480e-12`,
+and `1.450e-12`. The evolved state/search direction also matters; damping
+alone is not a complete causal attribution. Generic and optimized checkpoint
+refresh choices first differ at attempt 520, but there are no later restores
+to consume those checkpoints.
 
 ### Specialized paired FFT performance
 
@@ -466,7 +481,7 @@ generator: the specialization regressed at the full solver batch size, so it
 is not enabled for that precision.
 
 On the same foreground Chrome / RTX 3060 Ti session, N=36 and the actual
-`20*99*16 = 31,680` solver batch size, seven samples of 30 repeated dispatches
+`20*99*16 = 31,680` solver batch size, seven samples of 20 repeated dispatches
 gave the following median queue-completion times (setup, upload and readback
 excluded; command encoding and submission included):
 
@@ -482,15 +497,45 @@ used to claim a 5.5× solver speedup.
 
 The optimized cuMES operator conformance and 327-iteration Solovev regression
 passed with same-input shadow diagnostics enabled. The dependency separately
-passed 496 small-transform cases (including 248 same-input generic/optimized
-comparisons), 197 real/large-transform cases, and 12 actual Emdawnwebgpu C++
-runtime cases. See its `docs/qualification.md` for accuracy and timing details.
+passed 496 small-transform GPU/CPU comparisons plus 248 same-input
+generic/optimized comparisons, 197 real/large-transform cases, and 12 actual
+Emdawnwebgpu C++ runtime cases. See its `docs/qualification.md` for accuracy
+and timing details.
 
 A warmed 287-pass optimized W7-X profile measured 100.3 ms/iteration. The two
 forward-projection readback waits totalled about 18.1 ms/iteration and remained
 the largest aggregate wait category. These waits include queued pack, FFT,
 poloidal projection, and synchronization work, not isolated kernel times.
 Doubling FFT throughput cannot double the whole solver's throughput.
+A separate warmed generic sample measured 100.2 ms/iteration over 723 passes,
+with 10.38 ms per forward-projection wait versus 9.07 ms optimized. Thus the
+forward waits improved, but these samples **do not establish an end-to-end
+per-iteration speedup**: total pass throughput was essentially unchanged.
+
+The optimized full single-grid W7-X run converged in **3091** effective
+iterations, with residual `(9.987756002533206e-13, 2.0790797273186487e-13,
+1.725519314229383e-13)`, in **311.8 seconds** navigation to result. The
+unchanged direct-projection control took 291.9 seconds / 2812 iterations in
+this session, so direct projection remains the default. `?solve=w7x&fft=1`
+selects the optimized FFT; append `&fft_kernel=generic` for the reference.
+The optimization changes arithmetic ordering as well as execution cost;
+changes in full-solve wall time cannot be attributed solely to kernel speed.
+
+The complete same-session comparison (foreground, resident fields, unchanged
+single-grid input and `1e-12` tolerance) is:
+
+| Forward transform | Effective iterations | Wall seconds | Final FSQR |
+| --- | ---: | ---: | ---: |
+| Direct projection | 2812 | 291.9 | 9.985e-13 |
+| Generic FFT replay | 3450 | 348.3 | 9.980e-13 |
+| Optimized FFT | 3091 | 311.8 | 9.988e-13 |
+
+The optimized FFT run takes 10.5% less wall time than the generic replay,
+predominantly from fewer iterations; it remains 6.8% slower than direct
+projection overall. These are one-case, one-adapter measurements, not a
+universal FFT/DFT crossover rule. Traces add optional host fingerprinting;
+the short optimized and generic profiles additionally include measurement
+hooks. No shadow dispatches were enabled in these three complete timings.
 
 ## Backend boundary
 

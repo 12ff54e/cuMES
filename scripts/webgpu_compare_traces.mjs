@@ -1,4 +1,4 @@
-// Compare captures from webgpu_cdp.mjs eval 'window.cumesDiagnostics'.
+// Compare single-grid W7-X captures from webgpu_cdp.mjs eval 'window.cumesDiagnostics'.
 // Hashes locate divergence; they are diagnostics, not numerical error bounds.
 import {readFile} from 'node:fs/promises';
 
@@ -9,11 +9,19 @@ const traces = await Promise.all(paths.map(async path => {
   return parsed.result?.value ?? parsed;
 }));
 const controllers = traces.map(trace => trace.filter(row => row.kind === 'controller')
-  .map(row => ({...row, b1_f32: Math.fround(row.b1), fac_f32: Math.fround(row.fac)})));
+  .map((row, index, rows) => ({...row,
+    b1_f32: Math.fround(row.b1), fac_f32: Math.fround(row.fac),
+    zero_m1_z: row.iter < 2 || (rows[index - 1]?.fsq[1] ?? 0) < 1e-6})));
+for (const rows of controllers) {
+  if (!rows.length) throw Error('Trace has no controller records');
+  if (new Set(rows.map(row => row.attempt)).size !== rows.length)
+    throw Error('Expected a single-grid trace with unique attempt numbers');
+}
 const fields = ['state_hash', 'state_low_hash', 'preconditioned_hash',
   'fsq', 'preconditioned', 'delta', 'b1', 'fac', 'b1_f32', 'fac_f32',
-  'restart', 'anchor', 'refresh', 'checkpoint'];
+  'restart', 'anchor', 'refresh', 'checkpoint', 'zero_m1_z'];
 const firstDifferences = {};
+const unavailableFields = new Set();
 const second = new Map(controllers[1].map(row => [row.attempt, row]));
 const first = new Set(controllers[0].map(row => row.attempt));
 const commonEnd = Math.min(...controllers.map(rows => rows.at(-1)?.attempt ?? 0));
@@ -24,11 +32,16 @@ for (const a of controllers[0]) {
   const b = second.get(a.attempt);
   if (!b) continue;
   for (const field of fields) {
+    if (!(field in a) || !(field in b)) {
+      unavailableFields.add(field);
+      continue;
+    }
     if (!(field in firstDifferences) && JSON.stringify(a[field]) !== JSON.stringify(b[field]))
       firstDifferences[field] = {attempt: a.attempt, iterations: [a.iter, b.iter],
         values: [a[field], b[field]]};
   }
 }
 console.log(JSON.stringify({paths, lengths: controllers.map(rows => rows.length),
-  commonEnd, unmatchedAttempts, firstDifferences, last: controllers.map(rows => rows.at(-1)),
+  commonEnd, unmatchedAttempts, unavailableFields: [...unavailableFields],
+  firstDifferences, last: controllers.map(rows => rows.at(-1)),
   sameInput: traces.map(trace => trace.filter(row => row.kind === 'transform'))}, null, 2));
