@@ -54,12 +54,14 @@ fn store(field: u32, point: u32, value: f32) {
     output.data[field * params.total_points + point] = value;
 }
 
-fn compensated_add(sum: ptr<function, f32>, correction: ptr<function, f32>,
-                   term: f32) {
-    let adjusted = term - *correction;
-    let next = *sum + adjusted;
-    *correction = (next - *sum) - adjusted;
-    *sum = next;
+// Return the updated (sum, correction) pair instead of passing pointers to
+// dynamically indexed function-local arrays.  Both forms are valid WGSL, but
+// the value-returning form avoids a known weak spot in some browser backend
+// compilers when lowering non-constant access-chain pointers.
+fn compensated_add(accumulator: vec2<f32>, term: f32) -> vec2<f32> {
+    let adjusted = term - accumulator.y;
+    let next = accumulator.x + adjusted;
+    return vec2<f32>(next, (next - accumulator.x) - adjusted);
 }
 
 // First synthesize every positive toroidal mode for a fixed (surface,m,zeta).
@@ -74,11 +76,9 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let surface_m = index / params.nzeta;
     let m = surface_m % params.mpol;
     let surface = surface_m / params.mpol;
-    var sums: array<f32, 12>;
-    var corrections: array<f32, 12>;
+    var sums: array<vec2<f32>, 12>;
     for (var field = 0u; field < 12u; field++) {
-        sums[field] = 0.0;
-        corrections[field] = 0.0;
+        sums[field] = vec2<f32>(0.0, 0.0);
     }
     for (var n = 0u; n <= params.ntor; n++) {
         let cn = zeta_basis(false, n, zeta);
@@ -90,22 +90,22 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let rs = coefficient(3u, m, n, surface);
         let zc = coefficient(4u, m, n, surface);
         let lc = coefficient(5u, m, n, surface);
-        compensated_add(&sums[0], &corrections[0], rc * cn);
-        compensated_add(&sums[1], &corrections[1], rs * sn);
-        compensated_add(&sums[2], &corrections[2], zs * cn);
-        compensated_add(&sums[3], &corrections[3], zc * sn);
-        compensated_add(&sums[4], &corrections[4], ls * cn);
-        compensated_add(&sums[5], &corrections[5], lc * sn);
-        compensated_add(&sums[6], &corrections[6], -nf * rc * sn);
-        compensated_add(&sums[7], &corrections[7], nf * rs * cn);
-        compensated_add(&sums[8], &corrections[8], -nf * zs * sn);
-        compensated_add(&sums[9], &corrections[9], nf * zc * cn);
-        compensated_add(&sums[10], &corrections[10], nf * ls * sn);
-        compensated_add(&sums[11], &corrections[11], -nf * lc * cn);
+        sums[0] = compensated_add(sums[0], rc * cn);
+        sums[1] = compensated_add(sums[1], rs * sn);
+        sums[2] = compensated_add(sums[2], zs * cn);
+        sums[3] = compensated_add(sums[3], zc * sn);
+        sums[4] = compensated_add(sums[4], ls * cn);
+        sums[5] = compensated_add(sums[5], lc * sn);
+        sums[6] = compensated_add(sums[6], -nf * rc * sn);
+        sums[7] = compensated_add(sums[7], nf * rs * cn);
+        sums[8] = compensated_add(sums[8], -nf * zs * sn);
+        sums[9] = compensated_add(sums[9], nf * zc * cn);
+        sums[10] = compensated_add(sums[10], nf * ls * sn);
+        sums[11] = compensated_add(sums[11], -nf * lc * cn);
     }
     for (var field = 0u; field < 12u; field++) {
         intermediate.data[intermediate_index(field, surface, m, zeta)] =
-            sums[field];
+            sums[field].x;
     }
 }
 
@@ -121,16 +121,12 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let maxsc = max(sqrt(f32(surface) / f32(params.ns - 1u)),
                     sqrt(1.0 / f32(params.ns - 1u)));
     let odd_scale = 1.0 / maxsc;
-    var values: array<f32, 18>;
-    var corrections: array<f32, 18>;
+    var values: array<vec2<f32>, 18>;
     for (var field = 0u; field < 18u; field++) {
-        values[field] = 0.0;
-        corrections[field] = 0.0;
+        values[field] = vec2<f32>(0.0, 0.0);
     }
-    var r_con = 0.0;
-    var z_con = 0.0;
-    var r_con_correction = 0.0;
-    var z_con_correction = 0.0;
+    var r_con = vec2<f32>(0.0, 0.0);
+    var z_con = vec2<f32>(0.0, 0.0);
     for (var m = 0u; m < params.mpol; m++) {
         let cm = theta_basis(false, m, theta);
         let sm = theta_basis(true, m, theta);
@@ -147,37 +143,37 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let r = a0 * cm + a1 * sm;
         let z = a2 * sm + a3 * cm;
         let lambda = a4 * sm + a5 * cm;
-        compensated_add(&values[parity], &corrections[parity], scale * r);
-        compensated_add(&values[parity + 1u], &corrections[parity + 1u],
-                        scale * z);
-        compensated_add(&values[parity + 2u], &corrections[parity + 2u],
-                        scale * lambda);
-        compensated_add(&values[parity + 3u], &corrections[parity + 3u],
-                        scale * mf * (-a0 * sm + a1 * cm));
-        compensated_add(&values[parity + 4u], &corrections[parity + 4u],
-                        scale * mf * (a2 * cm - a3 * sm));
-        compensated_add(&values[parity + 5u], &corrections[parity + 5u],
-                        scale * mf * (a4 * cm - a5 * sm));
+        values[parity] = compensated_add(values[parity], scale * r);
+        values[parity + 1u] =
+            compensated_add(values[parity + 1u], scale * z);
+        values[parity + 2u] =
+            compensated_add(values[parity + 2u], scale * lambda);
+        values[parity + 3u] = compensated_add(
+            values[parity + 3u], scale * mf * (-a0 * sm + a1 * cm));
+        values[parity + 4u] = compensated_add(
+            values[parity + 4u], scale * mf * (a2 * cm - a3 * sm));
+        values[parity + 5u] = compensated_add(
+            values[parity + 5u], scale * mf * (a4 * cm - a5 * sm));
         let toroidal_parity = select(0u, 3u, odd);
-        compensated_add(&values[12u + toroidal_parity],
-                        &corrections[12u + toroidal_parity],
-                        scale * (intermediate_at(6u, surface, m, zeta) * cm +
-                                 intermediate_at(7u, surface, m, zeta) * sm));
-        compensated_add(&values[13u + toroidal_parity],
-                        &corrections[13u + toroidal_parity],
-                        scale * (intermediate_at(8u, surface, m, zeta) * sm +
-                                 intermediate_at(9u, surface, m, zeta) * cm));
-        compensated_add(&values[14u + toroidal_parity],
-                        &corrections[14u + toroidal_parity],
-                        scale * (intermediate_at(10u, surface, m, zeta) * sm +
-                                 intermediate_at(11u, surface, m, zeta) * cm));
+        values[12u + toroidal_parity] = compensated_add(
+            values[12u + toroidal_parity],
+            scale * (intermediate_at(6u, surface, m, zeta) * cm +
+                     intermediate_at(7u, surface, m, zeta) * sm));
+        values[13u + toroidal_parity] = compensated_add(
+            values[13u + toroidal_parity],
+            scale * (intermediate_at(8u, surface, m, zeta) * sm +
+                     intermediate_at(9u, surface, m, zeta) * cm));
+        values[14u + toroidal_parity] = compensated_add(
+            values[14u + toroidal_parity],
+            scale * (intermediate_at(10u, surface, m, zeta) * sm +
+                     intermediate_at(11u, surface, m, zeta) * cm));
         let xmpq = mf * (mf - 1.0);
-        compensated_add(&r_con, &r_con_correction, xmpq * r);
-        compensated_add(&z_con, &z_con_correction, xmpq * z);
+        r_con = compensated_add(r_con, xmpq * r);
+        z_con = compensated_add(z_con, xmpq * z);
     }
     for (var field = 0u; field < 18u; field++) {
-        store(field, point, values[field]);
+        store(field, point, values[field].x);
     }
-    store(18u, point, r_con);
-    store(19u, point, z_con);
+    store(18u, point, r_con.x);
+    store(19u, point, z_con.x);
 }

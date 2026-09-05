@@ -776,19 +776,21 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         device.CreateBindGroup(&poloidal_bind_descriptor);
     const auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
-    const auto pass = encoder.BeginComputePass(&pass_descriptor);
-    pass.SetPipeline(toroidal_pipeline);
-    pass.SetBindGroup(0, toroidal_bind_group);
+    const auto toroidal_pass = encoder.BeginComputePass(&pass_descriptor);
+    toroidal_pass.SetPipeline(toroidal_pipeline);
+    toroidal_pass.SetBindGroup(0, toroidal_bind_group);
     const std::uint32_t intermediate_dispatch_points =
         static_cast<std::uint32_t>(intermediate_points);
-    pass.DispatchWorkgroups(
+    toroidal_pass.DispatchWorkgroups(
         (intermediate_dispatch_points + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
-    pass.SetPipeline(poloidal_pipeline);
-    pass.SetBindGroup(0, poloidal_bind_group);
-    pass.DispatchWorkgroups(
+    toroidal_pass.End();
+    const auto poloidal_pass = encoder.BeginComputePass(&pass_descriptor);
+    poloidal_pass.SetPipeline(poloidal_pipeline);
+    poloidal_pass.SetBindGroup(0, poloidal_bind_group);
+    poloidal_pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(total_points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
-    pass.End();
+    poloidal_pass.End();
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);
     const auto commands = encoder.Finish();
