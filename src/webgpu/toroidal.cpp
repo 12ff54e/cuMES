@@ -266,9 +266,10 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
                                            int mpol,
                                            int ntor,
                                            int ntheta,
-                                           int nzeta) {
-    static std::map<BasisKey, GpuBasis> cache;
-    const BasisKey key{mpol, ntor, ntheta, nzeta};
+                                           int nzeta,
+                                           bool canonical_zeta = false) {
+    static std::map<std::array<int, 5>, GpuBasis> cache;
+    const std::array<int, 5> key{mpol, ntor, ntheta, nzeta, canonical_zeta};
     auto [position, inserted] = cache.try_emplace(key);
     if (inserted) {
         std::vector<float> basis(2 * static_cast<std::size_t>(mpol) * ntheta +
@@ -314,6 +315,12 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
                 const double exact_zeta = 2.0 * std::numbers::pi *
                                           static_cast<double>(zeta_index) /
                                           static_cast<double>(nzeta);
+                if (canonical_zeta) {
+                    basis[zeta_start + index] = static_cast<float>(
+                        std::cos(static_cast<double>(n) * exact_zeta));
+                    basis[zeta_start + zeta_plane + index] = static_cast<float>(
+                        std::sin(static_cast<double>(n) * exact_zeta));
+                }
                 basis_lo[zeta_start + index] = static_cast<float>(
                     std::cos(static_cast<double>(n) * exact_zeta) -
                     static_cast<double>(basis[zeta_start + index]));
@@ -983,7 +990,8 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         return;
     }
     const auto& gpu_basis = cached_separable_gpu_basis(
-        device, input.mpol, input.ntor, input.ntheta, input.nzeta);
+        device, input.mpol, input.ntor, input.ntheta, input.nzeta,
+        input.double_single && input.canonical_zeta);
     const std::size_t mnmax =
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
     const std::size_t n_z_n_t =
@@ -1123,10 +1131,13 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         const auto& unpack = detail::cached_compute_pipeline(
             device, "forward-fft-unpack", transfer, "cuMES FFT unpack",
             "unpack");
-        const auto fft_key = "forward-fft-" + std::to_string(input.nzeta);
-        static std::map<int, std::string> fft_shaders;
-        auto [source, inserted] = fft_shaders.try_emplace(input.nzeta);
-        if (inserted) source->second = webgpu_fft::shader(input.nzeta, true);
+        const auto fft_key = "forward-fft-" + std::to_string(input.nzeta) +
+                             (input.optimized_fft ? "-optimized" : "-generic");
+        static std::map<std::string, std::string> fft_shaders;
+        auto [source, inserted] = fft_shaders.try_emplace(fft_key);
+        if (inserted)
+            source->second = webgpu_fft::shader(input.nzeta, true, false,
+                                                input.optimized_fft);
         const auto& fft = detail::cached_compute_pipeline(
             device, fft_key, source->second, "cuMES mixed radix FFT");
         const auto dispatch_pass =

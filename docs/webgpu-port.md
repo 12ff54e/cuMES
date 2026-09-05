@@ -394,6 +394,67 @@ The rebuilt conformance page passed all operator checks and the 327-iteration
 Solovev multigrid test after integration. Keep browser tests in the foreground:
 Chrome background-tab timer throttling can dominate small-grid callback chains.
 
+### FFT trajectory diagnostics
+
+`&trace=1` records per-pass residuals, search-direction and state fingerprints,
+damping, restart anchors, and refresh decisions in `window.cumesDiagnostics`.
+`&compare_fft=1` additionally runs shadow forward transforms on **identical
+resident input fields**, on iterations 1–3 and multiples of 100. Shadow outputs
+never enter the solver. The variants are 0: generic FFT, 1: legacy direct DFT,
+2: direct DFT with canonically split double-precision zeta roots. These extra
+dispatches are for numerical diagnosis, not benchmarking.
+
+`&fft_kernel=generic` retains the pre-optimization FFT arithmetic as a reference.
+`&basis=canonical` selects the corrected zeta table for direct forward
+projection only; the poloidal table, inverse synthesis, grid, tolerance, and
+controller are unchanged. This is an explicit diagnostic option, not a claim
+that a more accurate table must converge faster.
+
+Capture and compare traces with:
+
+```sh
+CUMES_CDP_TARGET=YOUR_TEST_TAB node scripts/webgpu_cdp.mjs eval 'window.cumesDiagnostics' > ../tmp/direct-trace.json
+# Repeat for the FFT run, saving ../tmp/fft-trace.json.
+node scripts/webgpu_compare_traces.mjs ../tmp/direct-trace.json ../tmp/fft-trace.json
+```
+
+The Chrome/D3D12 RTX 3060 Ti investigation established:
+
+- Both paths start from identical paired state. On the first force projection,
+  generic FFT versus direct DFT differs by `1.21e-14` relative L2
+  (`1.82e-12` maximum absolute coefficient difference). The first constrained
+  projection differs by `2.50e-14` relative L2. This is small numerical error,
+  not a transform sign, grid, or normalization mismatch.
+- The legacy table uses a float-angle sine/cosine high word and a float
+  correction toward double trigonometry. A host reproduction on the W7-X
+  zeta grid gives up to `1.74e-13` reconstruction error; directly splitting
+  the double root gives `8.88e-16`. Correcting only this table reduces the
+  first force discrepancy to `7.84e-15` relative L2 and the constrained one
+  to `2.11e-14`, but does **not** remove the discrepancy. Different summation
+  and cancellation order therefore remains important.
+- The first preconditioned search-direction fingerprint differs on iteration
+  1; both state-word fingerprints differ by iteration 2. The preconditioner
+  operates on scalar-f32 forces, so tiny cancellation-sensitive coefficients
+  can already have different high words. Paired state evolution and paired
+  invariant norms do not make this search direction bit-identical.
+- Double damping differs on iteration 2; after the actual f32 conversion
+  used by descent, `fac` first differs on iteration 35 and `b1` on iteration
+  40. The two runs still have identical time steps, restart anchors, restart
+  reasons, and preconditioner-refresh schedules through the first 781
+  effective iterations compared. An early branch mismatch is not the cause.
+
+These observations explain how roundoff enters and propagates into different
+nonlinear trajectories. They do not assign every additional iteration to one
+coefficient, nor imply that FFT is intrinsically less accurate. Accuracy is
+qualified against references and convergence gates; runtime is measured over
+the complete solve. Hashes locate divergence but are not error bounds.
+
+The traced direct control repeated the established 2812-iteration solution
+with `FSQR=9.985159710508547e-13` (291.9 seconds navigation to result).
+Through iteration 750 the two FSQR histories remain close: the FFT/direct
+ratio is 1.00033 there. The large difference in final iteration count is not
+an immediate large force error at startup.
+
 ## Backend boundary
 
 The WebGPU implementation lives under these paths:

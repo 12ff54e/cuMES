@@ -5,6 +5,7 @@ mergeInto(LibraryManager.library, {
   publish_browser_result: function(success, detail) {
     document.body.dataset.cumesWebgpu = success ? 'pass' : 'fail';
     document.body.dataset.cumesDetail = UTF8ToString(detail);
+    document.body.dataset.cumesFinishedMilliseconds = String(performance.now());
     clearTimeout(window.cumesDeadline);
     clearInterval(window.cumesKeepAlive);
   },
@@ -44,6 +45,23 @@ mergeInto(LibraryManager.library, {
     // but direct projection reaches tolerance sooner on the qualified GPU.
     // Keep the reusable FFT available explicitly without slowing the example.
     return new URLSearchParams(window.location.search).get('fft') !== '1';
+  },
+  requested_generic_fft: function() {
+    return new URLSearchParams(window.location.search).get('fft_kernel') === 'generic';
+  },
+  requested_canonical_zeta: function() {
+    return new URLSearchParams(window.location.search).get('basis') === 'canonical';
+  },
+  requested_solver_trace: function() {
+    return new URLSearchParams(window.location.search).get('trace') === '1';
+  },
+  requested_compare_fft: function() {
+    return new URLSearchParams(window.location.search).get('compare_fft') === '1';
+  },
+  publish_browser_diagnostic__deps: ['$UTF8ToString'],
+  publish_browser_diagnostic: function(json) {
+    (window.cumesDiagnostics ||= []).push({milliseconds: performance.now(),
+      ...JSON.parse(UTF8ToString(json))});
   },
 
   requested_app_mode: function() {

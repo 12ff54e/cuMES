@@ -49,6 +49,10 @@ struct ToroidalForwardCase {
     bool include_lcfs = false;
     bool double_single = false;
     bool use_fft = true;
+    bool optimized_fft = true;
+    // Diagnostic/reference option: split double-precision zeta roots directly.
+    // The poloidal basis and inverse transform remain unchanged.
+    bool canonical_zeta = false;
     // Field-major [field][surface][zeta][theta]: armn e/o, azmn e/o,
     // brmn e/o, bzmn e/o, blmn e/o, crmn e/o, czmn e/o, clmn e/o,
     // frcon e/o, fzcon e/o.

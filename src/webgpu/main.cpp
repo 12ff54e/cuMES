@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <exception>
@@ -26,6 +27,7 @@
 #include <memory>
 #include <numbers>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -43,6 +45,11 @@ int requested_w7x_solve();
 int requested_w7x_multigrid();
 int requested_reference_transfers();
 int requested_direct_dft();
+int requested_generic_fft();
+int requested_canonical_zeta();
+int requested_solver_trace();
+int requested_compare_fft();
+void publish_browser_diagnostic(const char* json);
 int requested_app_mode();
 int requested_app_run();
 void publish_browser_ready();
@@ -2568,6 +2575,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             solver_toroidal_forward_case_.ns = initialized_stage_.ns;
             solver_toroidal_forward_case_.device_fields = device_force_fields_;
             solver_toroidal_forward_case_.use_fft = requested_direct_dft() == 0;
+            solver_toroidal_forward_case_.optimized_fft =
+                !requested_generic_fft();
+            solver_toroidal_forward_case_.canonical_zeta =
+                requested_canonical_zeta();
             solver_toroidal_forward_case_.mpol = initialized_stage_.mpol;
             solver_toroidal_forward_case_.ntor = initialized_stage_.ntor;
             solver_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
@@ -2598,8 +2609,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 solver_toroidal_forward_case_.fields_lo.clear();
             }
             const auto self = shared_from_this();
-            cumes::webgpu::enqueue_toroidal_forward(
-                device_, solver_toroidal_forward_case_,
+            enqueue_checked_forward(
+                solver_toroidal_forward_case_, "force",
                 [self](std::string error,
                        cumes::webgpu::ToroidalForwardResult actual) {
                     if (!error.empty()) {
@@ -3059,6 +3070,128 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
+    // Compare transforms on identical resident fields, never feed the shadow
+    // result into the controller. Disabled diagnostics have no GPU work.
+    void enqueue_checked_forward(
+        const cumes::webgpu::ToroidalForwardCase& input,
+        std::string label,
+        cumes::webgpu::ToroidalForwardCallback callback) {
+        const int iteration = controller_->effective_iteration();
+        if (!input.double_single || !requested_compare_fft() ||
+            (iteration > 3 && iteration % 100 != 0)) {
+            cumes::webgpu::enqueue_toroidal_forward(device_, input,
+                                                    std::move(callback));
+            return;
+        }
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, input,
+            [self, input, label = std::move(label),
+             callback = std::move(callback)](
+                std::string error,
+                cumes::webgpu::ToroidalForwardResult primary) mutable {
+                if (!error.empty()) {
+                    callback(std::move(error), {});
+                    return;
+                }
+                self->enqueue_shadow_forward(input, std::move(label),
+                                             std::move(primary),
+                                             std::move(callback), 0);
+            });
+    }
+
+    void enqueue_shadow_forward(cumes::webgpu::ToroidalForwardCase input,
+                                std::string label,
+                                cumes::webgpu::ToroidalForwardResult primary,
+                                cumes::webgpu::ToroidalForwardCallback callback,
+                                int variant) {
+        if (variant == 3) {
+            callback({}, std::move(primary));
+            return;
+        }
+        input.use_fft = variant == 0;
+        input.optimized_fft = false;
+        input.canonical_zeta = variant == 2;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, input,
+            [self, input, label = std::move(label),
+             primary = std::move(primary), callback = std::move(callback),
+             variant](std::string error,
+                      cumes::webgpu::ToroidalForwardResult shadow) mutable {
+                if (!error.empty()) {
+                    callback(std::move(error), {});
+                    return;
+                }
+                double max_abs = 0, error2 = 0, norm2 = 0;
+                std::size_t high_differences = 0, max_index = 0;
+                for (std::size_t i = 0; i < primary.residual.size(); ++i) {
+                    const double a =
+                        double(primary.residual[i]) + primary.residual_lo[i];
+                    const double b =
+                        double(shadow.residual[i]) + shadow.residual_lo[i];
+                    const double difference = std::abs(a - b);
+                    if (difference > max_abs) {
+                        max_abs = difference;
+                        max_index = i;
+                    }
+                    error2 += difference * difference;
+                    norm2 += a * a;
+                    high_differences +=
+                        primary.residual[i] != shadow.residual[i];
+                }
+                std::ostringstream json;
+                json << std::setprecision(17)
+                     << "{\"kind\":\"transform\",\"phase\":\"" << label
+                     << "\",\"attempt\":" << self->attempted_passes_
+                     << ",\"iter\":" << self->controller_->effective_iteration()
+                     << ",\"variant\":" << variant << ",\"max_abs\":" << max_abs
+                     << ",\"relative_l2\":"
+                     << std::sqrt(error2 / std::max(norm2, 1e-300))
+                     << ",\"high_differences\":" << high_differences
+                     << ",\"max_index\":" << max_index << '}';
+                publish_browser_diagnostic(json.str().c_str());
+                self->enqueue_shadow_forward(input, std::move(label),
+                                             std::move(primary),
+                                             std::move(callback), variant + 1);
+            });
+    }
+
+    void trace_controller(std::span<const float> preconditioned,
+                          bool converged) {
+        if (!requested_solver_trace()) return;
+        const auto fingerprint = [](std::span<const float> values) {
+            std::uint32_t hash = 2166136261U;
+            for (float value : values) {
+                hash ^= std::bit_cast<std::uint32_t>(value);
+                hash *= 16777619U;
+            }
+            return hash;
+        };
+        std::ostringstream json;
+        json << std::setprecision(17)
+             << "{\"kind\":\"controller\",\"attempt\":" << attempted_passes_
+             << ",\"iter\":" << controller_->effective_iteration()
+             << ",\"fsq\":[" << invariant_normalized_[0] << ','
+             << invariant_normalized_[1] << ',' << invariant_normalized_[2]
+             << "],\"preconditioned\":[" << preconditioned_normalized_[0] << ','
+             << preconditioned_normalized_[1] << ','
+             << preconditioned_normalized_[2]
+             << "],\"delta\":" << controller_->delta_t()
+             << ",\"b1\":" << pending_decision_.damping.b1
+             << ",\"fac\":" << pending_decision_.damping.fac
+             << ",\"restart\":" << int(pending_decision_.reason)
+             << ",\"anchor\":" << controller_->restart_anchor()
+             << ",\"refresh\":" << int(controller_->refresh_preconditioner())
+             << ",\"checkpoint\":" << int(pending_decision_.do_refresh)
+             << ",\"converged\":" << int(converged)
+             << ",\"state_hash\":" << fingerprint(initialized_stage_.state)
+             << ",\"state_low_hash\":" << fingerprint(stage_state_lo_)
+             << ",\"preconditioned_hash\":" << fingerprint(preconditioned)
+             << '}';
+        publish_browser_diagnostic(json.str().c_str());
+    }
+
     void run_constraint_forward(std::vector<float> fields) {
         if (initialized_stage_.ntor != 0) {
             constraint_toroidal_forward_case_.ns = initialized_stage_.ns;
@@ -3066,6 +3199,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 device_constraint_fields_;
             constraint_toroidal_forward_case_.use_fft =
                 requested_direct_dft() == 0;
+            constraint_toroidal_forward_case_.optimized_fft =
+                !requested_generic_fft();
+            constraint_toroidal_forward_case_.canonical_zeta =
+                requested_canonical_zeta();
             constraint_toroidal_forward_case_.mpol = initialized_stage_.mpol;
             constraint_toroidal_forward_case_.ntor = initialized_stage_.ntor;
             constraint_toroidal_forward_case_.ntheta =
@@ -3078,8 +3215,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             constraint_toroidal_forward_case_.fields = std::move(fields);
             constraint_toroidal_forward_case_.fields_lo = constraint_fields_lo_;
             const auto self = shared_from_this();
-            cumes::webgpu::enqueue_toroidal_forward(
-                device_, constraint_toroidal_forward_case_,
+            enqueue_checked_forward(
+                constraint_toroidal_forward_case_, "constraint",
                 [self](std::string error,
                        cumes::webgpu::ToroidalForwardResult actual) {
                     if (!error.empty()) {
@@ -3341,12 +3478,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 if (verdict.converged) {
+                    self->trace_controller(actual.residual, true);
                     self->complete_stage();
                     return;
                 }
                 self->pending_decision_ = self->controller_->decide_restart(
                     self->preconditioned_normalized_.data(),
                     self->invariant_normalized_.data());
+                self->trace_controller(actual.residual, false);
                 if (!self->production_solve_) {
                     std::printf(
                         "  %s preconditioned residual: PASS "
