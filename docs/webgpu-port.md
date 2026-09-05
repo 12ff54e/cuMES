@@ -319,6 +319,13 @@ Inverse synthesis and constraint filtering currently retain their separable
 direct transforms. FFT summation changes the iterative trajectory, so this
 path is qualified by residual convergence, not bit-identical iteration counts.
 
+The standalone dependency's v0.2 API additionally supports packed R2C/C2R
+and every integer length from 2 to 1,048,576 (subject to GPU buffer limits),
+using multipass radix-2 or Bluestein for larger lengths. Both C++ and JS/TS
+interfaces keep execution device-resident. cuMES currently uses its compact
+N≤256 C2C shader path; the new general-purpose plans are not automatically
+substituted into the solver's existing larger-grid DFT fallback.
+
 `DeviceFields` retains an owning WebGPU buffer handle plus high/low plane
 offsets. Geometry, half-grid metrics, magnetic fields, forces, and constrained
 forces can feed downstream kernels through device copies instead of Wasm
