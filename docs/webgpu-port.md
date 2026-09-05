@@ -47,7 +47,11 @@ browser-validated:
   synthesis feeds the poloidal synthesis through persistent storage. For the
   W7-X shape this replaces a 156-term mode loop per real-space point with
   13-term toroidal and 12-term poloidal loops, while improving the hardware
-  conformance error from `2.861e-06` to `1.431e-06`;
+  conformance error from `2.861e-06` to `1.431e-06`. The scalar and paired-f32
+  variants keep their large accumulator sets as named locals: Chrome/Dawn's
+  D3D12/DXC path returned zero from the otherwise valid dynamically indexed
+  function-local arrays, while the named form passes identically on D3D12 and
+  Vulkan;
 - matching separable forward projection and constraint bandpass pipelines;
   the latter factors both analysis and synthesis into toroidal/poloidal passes,
   reducing the W7-X transform work from about 28 million accumulated terms to
@@ -146,7 +150,11 @@ browser-validated:
   total), with final residual
   `(1.000e-12, 2.115e-13, 1.528e-13)` and an 11,809,203-byte result. The
   sequential end-to-end browser run takes 4929.3 seconds including page/Wasm
-  startup;
+  startup. Chrome 152 on Windows 10, using Dawn's D3D12/DXC backend on an RTX
+  3060 Ti, independently converges in `1416 -> 1621 -> 1670` effective
+  iterations (4707 total), with final residual
+  `(9.996e-13, 2.160e-13, 1.339e-13)` and the same 11,809,203-byte result in
+  1024.2 seconds;
 - cached immutable toroidal basis buffers plus persistent, grow-only operator
   scratch/readback buffers and compute pipelines; this removes hot-loop shader
   recompilation/allocation and keeps the complete high-resolution W7-X run
@@ -183,10 +191,11 @@ browser-validated:
 
 The default self-test parses both embedded inputs, runs a controller-complete
 two-pass W7-X slice, then converges all three Solovev stages. The separate W7-X
-solve entry point is convergence-qualified end to end at `1e-12` on the
-physical NVIDIA TITAN Xp through Chrome/Dawn's Vulkan backend. The page
-requests the high-performance adapter and publishes its device/type/backend
-metadata for automation. Chrome's privacy-reduced adapter name is the PCI
+solve entry point is convergence-qualified end to end at `1e-12` on both an
+NVIDIA TITAN Xp through Chrome/Dawn's Vulkan backend and an RTX 3060 Ti through
+Chrome/Dawn's Windows D3D12/DXC backend. The page requests the high-performance
+adapter and publishes its device/type/backend metadata for automation. On the
+Linux qualification host, Chrome's privacy-reduced adapter name is the PCI
 device id `0x1b02`; `chrome://gpu` and Vulkan enumerate that id as the TITAN
 Xp, and `nvidia-smi` observes the browser GPU process.
 
