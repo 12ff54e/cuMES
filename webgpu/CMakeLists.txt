@@ -28,6 +28,9 @@ target_sources(cumes_webgpu PRIVATE
   ${PROJECT_SOURCE_DIR}/src/webgpu/toroidal.cpp)
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
+if(NOT EXISTS "${PROJECT_SOURCE_DIR}/deps/webgpu-fft/CMakeLists.txt")
+  message(FATAL_ERROR "Missing webgpu-fft: run git submodule update --init deps/webgpu-fft")
+endif()
 add_subdirectory(${PROJECT_SOURCE_DIR}/deps/webgpu-fft ${CMAKE_CURRENT_BINARY_DIR}/fft)
 target_link_libraries(cumes_webgpu PRIVATE webgpu_fft)
 target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_FIELD_DISABLED)

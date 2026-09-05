@@ -3,7 +3,9 @@ import {readFile} from 'node:fs/promises';
 const [command, argument, port = '9333'] = process.argv.slice(2);
 const expression = command === 'eval-file' ? await readFile(argument, 'utf8') : argument;
 const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-const page = pages.find(page => page.type === 'page' && page.url.includes('magnetic-equilibrium-solver'));
+const page = pages.find(page => process.env.CUMES_CDP_TARGET
+  ? page.id === process.env.CUMES_CDP_TARGET
+  : page.type === 'page' && page.url.includes('magnetic-equilibrium-solver'));
 if (!page) throw Error('No project tab is exposed');
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 const timeout = setTimeout(() => {console.error('CDP timeout');process.exit(2);}, 30000);

@@ -308,7 +308,8 @@ the Wasm/host boundary between adjacent operators.
 
 ### Mixed-radix FFT and resident field edges
 
-The strict 3-D forward projection now uses `deps/webgpu-fft`: batched complex
+The strict 3-D forward projection now uses the standalone
+[webgpu-fft](https://github.com/12ff54e/webgpu-fft) submodule: batched complex
 mixed-radix FFTs in zeta, followed by the existing direct poloidal projection.
 W7-X keeps its exact 36-point toroidal grid (radices 2, 2, 3, 3); there is no
 zero padding or change to angular quadrature. Packing preserves both words,
@@ -336,6 +337,8 @@ For a running Chrome session exposed through the user's DevTools tunnel:
 ```sh
 node scripts/webgpu_cdp.mjs eval-file scripts/webgpu_profile.js
 node scripts/webgpu_cdp.mjs eval 'cumesGpuProfile.report()'
+# Four-way warmed-up comparison in a separate temporary Chrome tab:
+node scripts/webgpu_benchmark.mjs 'http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu-ds/webgpu/cumes_webgpu.html'
 ```
 
 The probe reports upload, device-copy, and readback byte counts by buffer label,
@@ -350,6 +353,24 @@ and published the 11,809,091-byte output. Navigation-to-result wall time was
 run (43% less time, despite a different iteration count). During a 563-pass
 steady-state sample, throughput was 9.68 iterations/s. This is one adapter,
 not a cross-platform performance guarantee.
+
+A controlled four-way probe of 100 warmed-up passes (starting after pass 100)
+on the same adapter measured:
+
+| Host/device policy | Zeta projection | Iterations/s |
+| --- | --- | ---: |
+| Reference host transfers | Direct DFT | 4.28 |
+| Reference host transfers | Mixed-radix FFT | 4.28 |
+| Resident field edges | Direct DFT | 9.95 |
+| Resident field edges | Mixed-radix FFT | 9.98 |
+
+These short samples do not establish a speed difference between FFT and DFT.
+The measured improvement is predominantly residency: uploads dropped from
+about 159.7 MB/pass to 14.1 MB/pass, and readbacks from about 68.3 MB/pass to
+37.6 MB/pass (decimal MB; sample boundaries can include a partial operator).
+The independent library benchmark also finds that its strict paired-f32 FFT
+can be slower than its workgroup-local DFT at N=36; see the dependency's
+`docs/qualification.md`. FFT availability is not itself a performance claim.
 
 ## Backend boundary
 
