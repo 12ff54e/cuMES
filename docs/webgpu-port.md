@@ -308,7 +308,7 @@ the Wasm/host boundary between adjacent operators.
 
 ### Mixed-radix FFT and resident field edges
 
-The strict 3-D forward projection now uses the standalone
+The strict 3-D forward projection can use the standalone
 [webgpu-fft](https://github.com/12ff54e/webgpu-fft) submodule: batched complex
 mixed-radix FFTs in zeta, followed by the existing direct poloidal projection.
 W7-X keeps its exact 36-point toroidal grid (radices 2, 2, 3, 3); there is no
@@ -329,8 +329,10 @@ Producer buffers remain live until consumers are submitted on the same queue.
 
 This is partial residency: geometry/Jacobian validation, host norm calculation,
 constraint reference maintenance, and spectral updates still use readbacks.
-The explicit reference switches are `&resident=0` and `&fft=0`; defaults enable
-both optimizations. Conformance paths retain full host arrays for comparison.
+The explicit switches are `&resident=0` to restore host transfers and `&fft=1`
+to select FFT (`&fft=0` selects direct projection). Residency is enabled by
+default; the W7-X example defaults to direct projection based on the complete
+solve comparison below. Conformance paths retain full host arrays for comparison.
 
 For a running Chrome session exposed through the user's DevTools tunnel:
 
@@ -371,6 +373,15 @@ about 159.7 MB/pass to 14.1 MB/pass, and readbacks from about 68.3 MB/pass to
 The independent library benchmark also finds that its strict paired-f32 FFT
 can be slower than its workgroup-local DFT at N=36; see the dependency's
 `docs/qualification.md`. FFT availability is not itself a performance claim.
+
+The resident direct-projection full run converged in the original 2812
+iterations with the same reported residual triple
+`(9.985e-13, 2.130e-13, 1.955e-13)` and output size. Wall time was 296.7
+seconds: 53% less than the 627.2-second baseline, and 17% less than the FFT
+run. Consequently the example defaults to resident direct projection, while
+`?solve=w7x&fft=1` explicitly exercises the qualified FFT path. Neither the
+small-transform benchmark nor this one-case comparison justifies a universal
+FFT/DFT crossover threshold.
 
 ## Backend boundary
 

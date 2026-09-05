@@ -40,7 +40,10 @@ mergeInto(LibraryManager.library, {
     return new URLSearchParams(window.location.search).get('resident') === '0';
   },
   requested_direct_dft: function() {
-    return new URLSearchParams(window.location.search).get('fft') === '0';
+    // At W7-X's 36-point grid the two transforms have equal pass throughput,
+    // but direct projection reaches tolerance sooner on the qualified GPU.
+    // Keep the reusable FFT available explicitly without slowing the example.
+    return new URLSearchParams(window.location.search).get('fft') !== '1';
   },
 
   requested_app_mode: function() {
