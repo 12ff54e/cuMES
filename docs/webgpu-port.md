@@ -383,6 +383,10 @@ run. Consequently the example defaults to resident direct projection, while
 small-transform benchmark nor this one-case comparison justifies a universal
 FFT/DFT crossover threshold.
 
+The rebuilt conformance page passed all operator checks and the 327-iteration
+Solovev multigrid test after integration. Keep browser tests in the foreground:
+Chrome background-tab timer throttling can dominate small-grid callback chains.
+
 ## Backend boundary
 
 The WebGPU implementation lives under these paths:

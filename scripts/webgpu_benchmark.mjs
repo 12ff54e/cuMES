@@ -34,6 +34,7 @@ try {
     const url = new URL(appUrl);
     url.search = new URLSearchParams({solve: 'w7x', resident, fft}).toString();
     await call('Page.navigate', {url: url.href});
+    await call('Page.bringToFront', {});
     // Wait for the new document, then warm the real full-size solver.
     await new Promise(resolve => setTimeout(resolve, 500));
     await evaluate(`new Promise((resolve,reject)=>{const t=setInterval(()=>{
