@@ -92,6 +92,9 @@ interactive mixed-float tolerance of `1e-5`; the `?mode=test` route retains the
 strict `1e-6` Solovev numerical gate and prints `cuMES WebGPU self-test: PASS`
 when dispatch, readback, and convergence agree. The artifact test checks the
 generated HTML/JavaScript/Wasm bundle; browser execution is the numerical gate.
+Converged runs expose both a poloidal cut and an interactive 3-D flux-surface
+mesh reconstructed in the frontend from the solver's six Fourier parity
+families; drag to orbit and use the wheel to zoom.
 
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from

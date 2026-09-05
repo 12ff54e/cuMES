@@ -16,7 +16,8 @@ mergeInto(LibraryManager.library, {
       const blob = new Blob([bytes], {type: 'application/octet-stream'});
       if (window.cumesOutputUrl) URL.revokeObjectURL(window.cumesOutputUrl);
       window.cumesOutputUrl = URL.createObjectURL(blob);
-      const link = document.getElementById('download');
+      const app = document.getElementById('app');
+      const link = document.getElementById(app && app.hidden ? 'legacy-download' : 'download');
       link.href = window.cumesOutputUrl;
       link.download = 'cumes-webgpu-output.bin';
       link.hidden = false;

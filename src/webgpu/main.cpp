@@ -3759,7 +3759,37 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const int mnmax = mpol * (ntor + 1);
         const auto& state = initialized_stage_.state;
         const std::size_t family_values = static_cast<std::size_t>(ns) * mnmax;
-        if (ns <= 0 || mpol <= 0 || state.size() < 2 * family_values) return;
+        if (ns <= 1 || mpol <= 0 ||
+            state.size() < cumes::EquilibriumSnapshot::COUNT * family_values) {
+            return;
+        }
+
+        std::vector<int> plotted_surfaces;
+        const int stride = std::max(1, (ns - 1) / 18);
+        for (int surface = 0; surface < ns; ++surface) {
+            if (surface == 0 || surface == ns - 1 || surface % stride == 0) {
+                plotted_surfaces.push_back(surface);
+            }
+        }
+        const auto physical_coefficient = [&](int family, int mode,
+                                              int surface) -> double {
+            const std::size_t offset =
+                (static_cast<std::size_t>(family) * mnmax + mode) * ns +
+                surface;
+            double value = state[offset];
+            if (double_single_solve_ && offset < stage_state_lo_.size()) {
+                value += static_cast<double>(stage_state_lo_[offset]);
+            }
+            const int m = mode / (ntor + 1);
+            if (m % 2 != 0) {
+                const double maxsc =
+                    std::max(std::sqrt(static_cast<double>(surface) /
+                                       static_cast<double>(ns - 1)),
+                             std::sqrt(1.0 / static_cast<double>(ns - 1)));
+                value /= maxsc;
+            }
+            return value;
+        };
 
         std::ostringstream json;
         json << std::setprecision(9);
@@ -3767,12 +3797,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
              << "\",\"iterations\":" << total_iterations_ << ",\"residual\":["
              << invariant_normalized_[0] << ',' << invariant_normalized_[1]
              << ',' << invariant_normalized_[2] << "],\"surfaces\":[";
-        const int stride = std::max(1, (ns - 1) / 18);
         bool first_surface = true;
-        for (int surface = 0; surface < ns; ++surface) {
-            if (surface != 0 && surface != ns - 1 && surface % stride != 0) {
-                continue;
-            }
+        for (const int surface : plotted_surfaces) {
             if (!first_surface) json << ',';
             first_surface = false;
             json << '[';
@@ -3790,17 +3816,35 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     const double sine = std::sin(m * theta);
                     for (int n = 0; n <= ntor; ++n) {
                         const int mode = m * (ntor + 1) + n;
-                        const std::size_t offset =
-                            static_cast<std::size_t>(mode) * ns + surface;
-                        r += state[offset] * cosine;
-                        z += state[family_values + offset] * sine;
+                        r += physical_coefficient(0, mode, surface) * cosine;
+                        z += physical_coefficient(1, mode, surface) * sine;
                     }
                 }
                 json << '[' << r << ',' << z << ']';
             }
             json << ']';
         }
-        json << "]}";
+        json << "],\"fourier\":{\"ns\":" << ns << ",\"mpol\":" << mpol
+             << ",\"ntor\":" << ntor << ",\"nfp\":" << problem_->spec().nfp
+             << ",\"surfaces\":[";
+        first_surface = true;
+        for (const int surface : plotted_surfaces) {
+            if (!first_surface) json << ',';
+            first_surface = false;
+            json << "{\"index\":" << surface << ",\"coefficients\":[";
+            bool first_coefficient = true;
+            for (int family = 0;
+                 family < static_cast<int>(cumes::EquilibriumSnapshot::COUNT);
+                 ++family) {
+                for (int mode = 0; mode < mnmax; ++mode) {
+                    if (!first_coefficient) json << ',';
+                    first_coefficient = false;
+                    json << physical_coefficient(family, mode, surface);
+                }
+            }
+            json << "]}";
+        }
+        json << "]}}";
         publish_browser_equilibrium(json.str().c_str());
     }
 

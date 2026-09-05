@@ -240,6 +240,13 @@ the page. The interactive profile uses stellarator-symmetric axisymmetric
 harmonics (`ntor=0`), three grids (`ns=5,11,55`), and a responsive mixed-float
 tolerance of `1e-5`.
 
+After convergence the result panel defaults to an interactive 3-D equilibrium
+view, with a **2D cut** toggle for the poloidal cross-section. The solver sends
+the selected nested surfaces as all six physical Fourier parity families plus
+`mpol`, `ntor`, and `nfp`; JavaScript reconstructs the full torus locally. Drag
+the canvas to orbit and use the wheel to zoom. The W7-X route presents the same
+3-D viewer below its solver log.
+
 Append `?mode=test` for the full GPU/CPU operator conformance suite and
 stricter Solovev convergence gate. A successful run finishes with:
 
@@ -251,8 +258,8 @@ Append `?solve=w7x` to run the fixed-boundary W7-X example directly on its
 final `ns=99` radial grid instead of the conformance suite. This avoids the two
 coarser browser stages while retaining the input's `1e-12` tolerance. Append
 `&grids=3` to retain the complete `33 -> 66 -> 99` integration route. Either
-path can be slow on software WebGPU adapters because the 3-D transform is a
-direct DFT.
+path can be slow on software WebGPU adapters because the 3-D transform uses
+separable direct DFT stages.
 
 The page also publishes `data-cumes-webgpu="pass|fail"`, a diagnostic
 `data-cumes-detail`, and `data-cumes-adapter`, `data-cumes-adapter-type`, and

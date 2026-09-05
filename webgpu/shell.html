@@ -37,8 +37,12 @@
     .tag { color:var(--cyan); background:#55d6d014; border:1px solid #55d6d044;
       border-radius:99px; padding:3px 9px; font-size:11px; }
     .plot-wrap { position:relative; min-height:480px; padding:16px; }
-    svg { display:block; width:100%; height:100%; min-height:448px; border-radius:10px;
+    svg,.equilibrium-3d { display:block; width:100%; border-radius:10px;
       background:linear-gradient(145deg,#0b1521,#0a121c); touch-action:none; }
+    svg { height:100%; min-height:448px; }
+    .equilibrium-3d { height:448px; cursor:grab; }
+    .equilibrium-3d:active { cursor:grabbing; }
+    .result-head-actions { display:flex; align-items:center; gap:10px; }
     .axis-label { fill:#7f90a6; font-size:12px; }
     .grid-line { stroke:#29394c; stroke-width:1; }
     .boundary { fill:#55d6d012; stroke:var(--cyan); stroke-width:2.5; filter:drop-shadow(0 0 5px #55d6d055); }
@@ -90,9 +94,12 @@
     pre { max-height:280px; overflow:auto; margin:0; padding:0 15px 15px; color:#a9b8ca;
       white-space:pre-wrap; font:11px/1.55 ui-monospace,SFMono-Regular,monospace; }
     .legacy { max-width:960px; margin:70px auto 0; } .legacy h2 { font-size:24px; }
+    .legacy-viewer { margin-top:18px; }
+    .legacy-viewer .plot-wrap { min-height:560px; }
+    .legacy-viewer .equilibrium-3d { height:528px; }
     [hidden] { display:none!important; }
     @media(max-width:920px){ .page{width:min(100% - 22px,700px)} .workspace{grid-template-columns:1fr}
-      nav{display:none}.plot-wrap{min-height:390px}svg{min-height:358px} }
+      nav{display:none}.plot-wrap{min-height:390px}svg{min-height:358px}.equilibrium-3d{height:358px} }
     @media(max-width:520px){ .coefficient-columns{grid-template-columns:1fr}.pressure-control{max-width:none}.status-strip{grid-template-columns:1fr}
       .metric{border-right:0;border-bottom:1px solid var(--line)} }
   </style>
@@ -127,8 +134,10 @@
         </div>
       </section>
       <section class="panel results">
-        <div class="panel-head"><h2>Flux surfaces</h2><a class="tag" id="download" hidden>Download .bin</a></div>
-        <div class="plot-wrap"><svg id="result-plot" viewBox="0 0 700 520" aria-label="Converged flux surfaces"></svg>
+        <div class="panel-head"><h2>Flux surfaces</h2><div class="result-head-actions"><div class="mode-switch" id="result-switch" hidden>
+          <button id="mode-result-2d">2D cut</button><button id="mode-result-3d" class="active">3D view</button></div><a class="tag" id="download" hidden>Download .bin</a></div></div>
+        <div class="plot-wrap"><svg id="result-plot" viewBox="0 0 700 520" aria-label="Converged flux-surface cross-section"></svg>
+          <canvas class="equilibrium-3d" id="result-3d" aria-label="Interactive three-dimensional equilibrium" hidden></canvas>
           <div class="result-empty" id="result-empty"><strong>Ready to solve</strong><span>Shape the boundary, then run it on your GPU.</span></div></div>
         <div class="status-strip">
           <div class="metric"><small>Status</small><span><i class="status-dot"></i><b id="status">Editor ready</b></span></div>
@@ -143,6 +152,8 @@
     <h2 id="legacy-title">cuMES WebGPU verification</h2>
     <p><a href="?">Open boundary editor</a> · <a href="?mode=test">Run conformance suite</a> · <a href="?solve=w7x">Run W7-X single-grid example</a> · <a id="legacy-download" hidden>Download output</a></p>
     <pre id="legacy-output">Loading WebAssembly and requesting WebGPU…\n</pre>
+    <section class="panel legacy-viewer" id="legacy-viewer" hidden><div class="panel-head"><h2>3D equilibrium</h2><span class="tag">Drag to orbit · wheel to zoom</span></div>
+      <div class="plot-wrap"><canvas class="equilibrium-3d" id="legacy-result-3d" aria-label="Interactive three-dimensional equilibrium"></canvas></div></section>
   </div>
   <script>
     const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x',w7xMultigrid=query.get('grids')==='3';
@@ -248,13 +259,63 @@
       const stage=line.match(/stage (\d+)\/(\d+) converged/);if(stage)document.body.dataset.cumesStage=stage[1];
       if((appMode&&/running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))||
         (!appMode&&!w7xSolve)||(w7xSolve&&/running W7-X|stage .*converged|stage prolongation|published|self-test|FATAL/.test(line)))append(line)}
-    function drawResult(data){const svg=value('result-plot');if(!svg||!data.surfaces?.length)return;svg.replaceChildren();
-      const p=projection(data.surfaces.flat(),700,520,55);drawGrid(svg,700,520);data.surfaces.forEach((surface,i)=>{const d=surface.map((v,j)=>`${j?'L':'M'}${p.map(v).join(',')}`).join(' '),
-        t=data.surfaces.length<2?1:i/(data.surfaces.length-1);svg.append(node('path',{d,fill:'none',stroke:`hsl(${188+32*t} 78% ${55+16*t}%)`,'stroke-width':i===data.surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))});
-      value('result-empty').hidden=true;value('iteration').textContent=String(data.iterations);value('fsqr').textContent=Number(data.residual[0]).toExponential(3)}
+    function equilibriumMesh(fourier){const{mpol,ntor,nfp,ns}=fourier,mnmax=mpol*(ntor+1),thetaSegments=40,
+      phiSegments=ntor?Math.max(64,nfp*16):64,surfaces=[];
+      for(const source of fourier.surfaces){const points=new Float32Array((phiSegments+1)*(thetaSegments+1)*3),c=source.coefficients;
+        for(let p=0;p<=phiSegments;p++){const phi=2*Math.PI*p/phiSegments,zeta=nfp*phi,cp=Math.cos(phi),sp=Math.sin(phi);
+          for(let t=0;t<=thetaSegments;t++){const theta=2*Math.PI*t/thetaSegments;let r=0,z=0;
+            for(let m=0;m<mpol;m++){const cm=Math.cos(m*theta),sm=Math.sin(m*theta);for(let n=0;n<=ntor;n++){const mode=m*(ntor+1)+n,
+              cn=Math.cos(n*zeta),sn=Math.sin(n*zeta);r+=c[mode]*cm*cn+c[3*mnmax+mode]*sm*sn;
+              z+=c[mnmax+mode]*sm*cn+c[4*mnmax+mode]*cm*sn}}
+            const i=(p*(thetaSegments+1)+t)*3;points[i]=r*cp;points[i+1]=r*sp;points[i+2]=z}}
+        surfaces.push({radial:source.index/(ns-1),points})}return{surfaces,thetaSegments,phiSegments}}
+    function installOrbitRenderer(canvas,fourier){if(!canvas||!fourier?.surfaces?.length)return;const mesh=equilibriumMesh(fourier),
+      state={mesh,yaw:-.55,pitch:.55,zoom:1,drag:null,frame:0};canvas.cumesOrbit=state;
+      let radius=1;for(const surface of mesh.surfaces)for(let i=0;i<surface.points.length;i+=3)radius=Math.max(radius,
+        Math.hypot(surface.points[i],surface.points[i+1],surface.points[i+2]));state.radius=radius;
+      if(!canvas.dataset.orbitReady){canvas.dataset.orbitReady='1';canvas.addEventListener('pointerdown',event=>{const s=canvas.cumesOrbit;
+          s.drag={id:event.pointerId,x:event.clientX,y:event.clientY,yaw:s.yaw,pitch:s.pitch};canvas.setPointerCapture(event.pointerId)});
+        canvas.addEventListener('pointermove',event=>{const s=canvas.cumesOrbit;if(!s?.drag||s.drag.id!==event.pointerId)return;
+          s.yaw=s.drag.yaw+(event.clientX-s.drag.x)*.008;s.pitch=Math.max(-1.35,Math.min(1.35,s.drag.pitch+(event.clientY-s.drag.y)*.008));queueOrbitDraw(canvas)});
+        const release=event=>{const s=canvas.cumesOrbit;if(s?.drag?.id===event.pointerId)s.drag=null};canvas.addEventListener('pointerup',release);
+        canvas.addEventListener('pointercancel',release);canvas.addEventListener('wheel',event=>{const s=canvas.cumesOrbit;if(!s)return;
+          s.zoom=Math.max(.45,Math.min(3,s.zoom*Math.exp(-event.deltaY*.001)));queueOrbitDraw(canvas);event.preventDefault()},{passive:false});
+        new ResizeObserver(()=>queueOrbitDraw(canvas)).observe(canvas)}queueOrbitDraw(canvas)}
+    function queueOrbitDraw(canvas){const state=canvas?.cumesOrbit;if(!state||state.frame||canvas.hidden)return;
+      state.frame=requestAnimationFrame(()=>{state.frame=0;drawOrbit(canvas,state)})}
+    function drawOrbit(canvas,state){const rect=canvas.getBoundingClientRect();if(rect.width<2||rect.height<2)return;
+      const dpr=Math.min(2,devicePixelRatio||1),width=rect.width,height=rect.height;if(canvas.width!==Math.round(width*dpr)||canvas.height!==Math.round(height*dpr)){
+        canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr)}const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
+      const background=ctx.createRadialGradient(width*.52,height*.44,0,width*.52,height*.44,Math.max(width,height)*.68);
+      background.addColorStop(0,'#13263a');background.addColorStop(1,'#07101a');ctx.fillStyle=background;ctx.fillRect(0,0,width,height);
+      const cy=Math.cos(state.yaw),sy=Math.sin(state.yaw),cp=Math.cos(state.pitch),sp=Math.sin(state.pitch),camera=4.5*state.radius,
+        base=Math.min(width,height)*.43/state.radius*state.zoom,project=(points,index)=>{const x=points[index],y=points[index+1],z=points[index+2],
+          rx=cy*x-sy*y,ry=sy*x+cy*y,depth=cp*ry-sp*z,vertical=sp*ry+cp*z,k=camera/(camera+depth);
+          return[width/2+rx*base*k,height/2-vertical*base*k,depth]};
+      const curves=[],surfaceStep=Math.max(1,Math.floor(state.mesh.surfaces.length/10)),selected=[];
+      for(let s=0;s<state.mesh.surfaces.length;s+=surfaceStep)selected.push(s);if(selected.at(-1)!==state.mesh.surfaces.length-1)selected.push(state.mesh.surfaces.length-1);
+      for(const s of selected){const surface=state.mesh.surfaces[s],row=state.mesh.thetaSegments+1,add=indices=>{const path=[];let depth=0;
+          for(const index of indices){const point=project(surface.points,index*3);path.push(point);depth+=point[2]}curves.push({path,depth:depth/path.length,radial:surface.radial,outer:s===state.mesh.surfaces.length-1})};
+        for(let p=0;p<state.mesh.phiSegments;p+=4)add(Array.from({length:row},(_,t)=>p*row+t));
+        for(let t=0;t<state.mesh.thetaSegments;t+=4)add(Array.from({length:state.mesh.phiSegments+1},(_,p)=>p*row+t))}
+      curves.sort((a,b)=>b.depth-a.depth);ctx.lineJoin='round';for(const curve of curves){ctx.beginPath();curve.path.forEach((point,i)=>ctx[i?'lineTo':'moveTo'](point[0],point[1]));
+        const light=55+curve.radial*18,alpha=curve.outer?.78:.12+.35*curve.radial;ctx.strokeStyle=`hsla(${186+35*curve.radial} 82% ${light}% / ${alpha})`;
+        ctx.lineWidth=curve.outer?1.35:.6+.45*curve.radial;ctx.stroke()}
+      ctx.fillStyle='#9aa9bb';ctx.font='12px system-ui,sans-serif';ctx.fillText('Drag to orbit · wheel to zoom',18,height-18)}
+    let resultMode='3d';function showResultMode(mode){resultMode=mode;const svg=value('result-plot'),canvas=value('result-3d');if(!svg||!canvas)return;
+      svg.hidden=mode==='3d';canvas.hidden=mode!=='3d';for(const candidate of ['2d','3d'])value(`mode-result-${candidate}`)?.classList.toggle('active',candidate===mode);
+      if(mode==='3d')queueOrbitDraw(canvas)}
+    value('mode-result-2d')?.addEventListener('click',()=>showResultMode('2d'));value('mode-result-3d')?.addEventListener('click',()=>showResultMode('3d'));
+    function drawResult(data){if(!data.surfaces?.length)return;const svg=value('result-plot');if(svg){svg.replaceChildren();
+        const p=projection(data.surfaces.flat(),700,520,55);drawGrid(svg,700,520);data.surfaces.forEach((surface,i)=>{const d=surface.map((v,j)=>`${j?'L':'M'}${p.map(v).join(',')}`).join(' '),
+          t=data.surfaces.length<2?1:i/(data.surfaces.length-1);svg.append(node('path',{d,fill:'none',stroke:`hsl(${188+32*t} 78% ${55+16*t}%)`,'stroke-width':i===data.surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))})}
+      if(data.fourier){if(appMode){value('result-switch').hidden=false;showResultMode('3d');installOrbitRenderer(value('result-3d'),data.fourier)}
+        else if(w7xSolve){value('legacy-viewer').hidden=false;installOrbitRenderer(value('legacy-result-3d'),data.fourier)}}
+      if(appMode){value('result-empty').hidden=true;value('iteration').textContent=String(data.iterations);value('fsqr').textContent=Number(data.residual[0]).toExponential(3)}}
     function invalidateResult(){if(document.body.dataset.cumesWebgpu!=='pass'&&document.body.dataset.cumesWebgpu!=='fail')return;
       document.body.dataset.cumesWebgpu='ready';value('status').textContent='Boundary changed';value('run').textContent='Run updated boundary';
-      value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-empty').hidden=false;
+      value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-plot').hidden=false;
+      value('result-3d').hidden=true;value('result-switch').hidden=true;value('result-empty').hidden=false;
       value('result-empty').innerHTML='<strong>Boundary changed</strong><span>Run again to update the equilibrium.</span>';value('download').hidden=true}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
     function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,.mode-switch button,#reset-contour').forEach(control=>control.disabled=disabled);
