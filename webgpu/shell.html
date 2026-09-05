@@ -101,7 +101,7 @@
   <div class="page" id="app">
     <header>
       <div class="brand"><span class="mark"></span><div><h1>cuMES</h1><div class="subtitle">Magnetic equilibrium · WebGPU</div></div></div>
-      <nav><a href="?">Boundary editor</a><a href="?mode=test">GPU verification</a><a href="?solve=w7x">W7-X benchmark</a></nav>
+      <nav><a href="?">Boundary editor</a><a href="?mode=test">GPU verification</a><a href="?solve=w7x">W7-X single-grid</a></nav>
     </header>
     <main class="workspace">
       <section class="panel editor">
@@ -141,16 +141,17 @@
   </div>
   <div class="page legacy" id="legacy" hidden>
     <h2 id="legacy-title">cuMES WebGPU verification</h2>
-    <p><a href="?">Open boundary editor</a> · <a href="?mode=test">Run conformance suite</a> · <a href="?solve=w7x">Run W7-X benchmark</a> · <a id="legacy-download" hidden>Download output</a></p>
+    <p><a href="?">Open boundary editor</a> · <a href="?mode=test">Run conformance suite</a> · <a href="?solve=w7x">Run W7-X single-grid example</a> · <a id="legacy-download" hidden>Download output</a></p>
     <pre id="legacy-output">Loading WebAssembly and requesting WebGPU…\n</pre>
   </div>
   <script>
-    const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x';
+    const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x',w7xMultigrid=query.get('grids')==='3';
     const appMode=query.get('mode')!=='test'&&!w7xSolve,running=appMode&&query.get('run')==='1';
     const app=document.getElementById('app'),legacy=document.getElementById('legacy');
     const output=appMode?document.getElementById('output'):document.getElementById('legacy-output');
     app.hidden=!appMode;legacy.hidden=appMode;
-    if(w7xSolve)document.getElementById('legacy-title').textContent='cuMES WebGPU · W7-X benchmark';
+    if(w7xSolve)document.getElementById('legacy-title').textContent=
+      `cuMES WebGPU · W7-X ${w7xMultigrid?'multigrid benchmark':'single-grid example'}`;
     const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
     const saved=(()=>{try{return JSON.parse(localStorage.getItem('cumes.editor.v1'))}catch(_){return null}})();
@@ -246,7 +247,7 @@
           (w7xSolve&&(Number(progress[1])<=3||Number(progress[1])%50===0))||(!appMode&&!w7xSolve))append(line);return}
       const stage=line.match(/stage (\d+)\/(\d+) converged/);if(stage)document.body.dataset.cumesStage=stage[1];
       if((appMode&&/running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))||
-        (!appMode&&!w7xSolve)||(w7xSolve&&/running complete|stage .*converged|stage prolongation|published|self-test|FATAL/.test(line)))append(line)}
+        (!appMode&&!w7xSolve)||(w7xSolve&&/running W7-X|stage .*converged|stage prolongation|published|self-test|FATAL/.test(line)))append(line)}
     function drawResult(data){const svg=value('result-plot');if(!svg||!data.surfaces?.length)return;svg.replaceChildren();
       const p=projection(data.surfaces.flat(),700,520,55);drawGrid(svg,700,520);data.surfaces.forEach((surface,i)=>{const d=surface.map((v,j)=>`${j?'L':'M'}${p.map(v).join(',')}`).join(' '),
         t=data.surfaces.length<2?1:i/(data.surfaces.length-1);svg.append(node('path',{d,fill:'none',stroke:`hsl(${188+32*t} 78% ${55+16*t}%)`,'stroke-width':i===data.surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))});

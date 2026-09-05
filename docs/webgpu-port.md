@@ -247,9 +247,12 @@ stricter Solovev convergence gate. A successful run finishes with:
 cuMES WebGPU self-test: PASS
 ```
 
-Append `?solve=w7x` to run the complete fixed-boundary W7-X multigrid solver
-instead of the conformance suite. This path can be slow on software WebGPU
-adapters because the current 3-D transform is a direct DFT.
+Append `?solve=w7x` to run the fixed-boundary W7-X example directly on its
+final `ns=99` radial grid instead of the conformance suite. This avoids the two
+coarser browser stages while retaining the input's `1e-12` tolerance. Append
+`&grids=3` to retain the complete `33 -> 66 -> 99` integration route. Either
+path can be slow on software WebGPU adapters because the 3-D transform is a
+direct DFT.
 
 The page also publishes `data-cumes-webgpu="pass|fail"`, a diagnostic
 `data-cumes-detail`, and `data-cumes-adapter`, `data-cumes-adapter-type`, and

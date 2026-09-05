@@ -32,6 +32,10 @@ mergeInto(LibraryManager.library, {
     return new URLSearchParams(window.location.search).get('solve') === 'w7x';
   },
 
+  requested_w7x_multigrid: function() {
+    return new URLSearchParams(window.location.search).get('grids') === '3';
+  },
+
   requested_app_mode: function() {
     const query = new URLSearchParams(window.location.search);
     return query.get('mode') !== 'test' && query.get('solve') !== 'w7x';

@@ -40,6 +40,7 @@ extern "C" {
 void publish_browser_result(int success, const char* detail);
 int publish_browser_output(const char* path);
 int requested_w7x_solve();
+int requested_w7x_multigrid();
 int requested_app_mode();
 int requested_app_run();
 void publish_browser_ready();
@@ -1218,6 +1219,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 finish(false, "W7-X JSON mapping failed: " + errors.front());
                 return;
             }
+            // The public W7-X example starts directly on the final radial
+            // resolution to avoid making a browser user wait through three
+            // grids. Keep the qualified multigrid route available explicitly.
+            if (requested_w7x_multigrid() == 0 &&
+                parsed.spec.stages.size() > 1) {
+                const auto final_stage = parsed.spec.stages.back();
+                parsed.spec.stages.assign(1, final_stage);
+            }
             auto validated = cumes::validate(std::move(parsed.spec), options);
             if (!validated.has_value()) {
                 const auto errors = validated.error().errors();
@@ -1230,7 +1239,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             production_solve_ = true;
             double_single_solve_ = true;
             active_case_name_ = "W7-X";
-            active_input_path_ = "inputs/w7x.json";
+            active_input_path_ = problem_->stage_shapes().size() == 1
+                                     ? "inputs/w7x.json (browser single-grid)"
+                                     : "inputs/w7x.json";
             stage_index_ = 0;
             total_iterations_ = 0;
             stage_iterations_.clear();
@@ -1239,9 +1250,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 cumes::webgpu::initialize_stage(*problem_, stage_index_);
             reset_stage_state();
             std::printf(
-                "running complete W7-X fixed-boundary multigrid solve "
-                "(%zu stages, first double-single ftol=%.0e)\n",
-                problem_->stage_shapes().size(), initialized_stage_.tolerance);
+                "running W7-X fixed-boundary %s solve "
+                "(%zu stage%s, double-single ftol=%.0e)\n",
+                problem_->stage_shapes().size() == 1 ? "single-grid"
+                                                     : "multigrid",
+                problem_->stage_shapes().size(),
+                problem_->stage_shapes().size() == 1 ? "" : "s",
+                initialized_stage_.tolerance);
             run_stage_inverse();
         } catch (const std::exception& error) {
             finish(false,
@@ -3530,11 +3545,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
             char detail[320];
             std::snprintf(detail, sizeof(detail),
-                          "%s multigrid converged in %d effective iterations; "
+                          "%s %s converged in %d effective iterations; "
                           "final residual=(%.3e, %.3e, %.3e)",
-                          active_case_name_.c_str(), total_iterations_,
-                          invariant_normalized_[0], invariant_normalized_[1],
-                          invariant_normalized_[2]);
+                          active_case_name_.c_str(),
+                          problem_->stage_shapes().size() == 1 ? "single-grid"
+                                                               : "multigrid",
+                          total_iterations_, invariant_normalized_[0],
+                          invariant_normalized_[1], invariant_normalized_[2]);
             finish(true, detail);
             return;
         }

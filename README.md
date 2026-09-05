@@ -82,8 +82,9 @@ ctest --preset webgpu
 # http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html
 # or run the numerical conformance/strict Solovev gate:
 # http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?mode=test
-# or run the complete folded W7-X path:
+# or run the folded W7-X single-grid example (ns=99):
 # http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?solve=w7x
+# retain the complete three-grid integration route with &grids=3
 ```
 
 The default page is the visual boundary editor. Its preview solve uses an
