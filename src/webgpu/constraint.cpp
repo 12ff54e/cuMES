@@ -67,7 +67,8 @@ std::string validate_case(const AxisymmetricConstraintCase& in) {
         in.ard.size() != 2 * static_cast<std::size_t>(in.ns) ||
         in.azd.size() != 2 * static_cast<std::size_t>(in.ns) ||
         in.sqrt_s_f.size() != static_cast<std::size_t>(in.ns) ||
-        in.force_fields.size() != force_fields * points) {
+        !field_shape(in.force_fields, in.device_force_fields,
+                     force_fields * points)) {
         return "constraint input shape mismatch";
     }
     if (in.double_single &&
@@ -358,13 +359,13 @@ void enqueue_head(const wgpu::Device& device,
                             tcon_multiplier(in),
                             {0, 0}};
     auto queue = device.GetQueue();
-    queue.WriteBuffer(geometry_buffer, 0, in.geometry.data(), geometry_bytes);
+    transfer_fields(device, geometry_buffer, in.geometry, in.device_geometry);
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, radial.data(), radial_bytes);
     if (in.double_single) {
-        queue.WriteBuffer(geometry_low_buffer, 0, in.geometry_lo.data(),
-                          geometry_bytes);
+        transfer_fields(device, geometry_low_buffer, in.geometry_lo,
+                        in.device_geometry, true);
         queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
                           constraint_bytes);
         queue.WriteBuffer(radial_low_buffer, 0, radial_lo.data(), radial_bytes);
@@ -497,7 +498,10 @@ void enqueue_tail(const wgpu::Device& device,
                              head.z_con0_lo.end());
         constraint_lo.insert(constraint_lo.end(), points, 0.0F);
     }
-    const auto force_bytes = in.force_fields.size() * sizeof(float);
+    const auto force_bytes =
+        (in.device_force_fields ? in.device_force_fields.values
+                                : in.force_fields.size()) *
+        sizeof(float);
     const auto geometry_bytes = in.geometry.size() * sizeof(float);
     const auto constraint_bytes = constraint.size() * sizeof(float);
     const auto radial_bytes = in.sqrt_s_f.size() * sizeof(float);
@@ -568,17 +572,18 @@ void enqueue_tail(const wgpu::Device& device,
                             static_cast<std::uint32_t>(output_fields),
                             {0, 0, 0}};
     auto queue = device.GetQueue();
-    queue.WriteBuffer(force_buffer, 0, in.force_fields.data(), force_bytes);
+    transfer_fields(device, force_buffer, in.force_fields,
+                    in.device_force_fields);
     if (in.double_single)
-        queue.WriteBuffer(force_low_buffer, 0, in.force_fields_lo.data(),
-                          force_bytes);
-    queue.WriteBuffer(geometry_buffer, 0, in.geometry.data(), geometry_bytes);
+        transfer_fields(device, force_low_buffer, in.force_fields_lo,
+                        in.device_force_fields, true);
+    transfer_fields(device, geometry_buffer, in.geometry, in.device_geometry);
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, in.sqrt_s_f.data(), radial_bytes);
     if (in.double_single) {
-        queue.WriteBuffer(geometry_low_buffer, 0, in.geometry_lo.data(),
-                          geometry_bytes);
+        transfer_fields(device, geometry_low_buffer, in.geometry_lo,
+                        in.device_geometry, true);
         queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
                           constraint_bytes);
         queue.WriteBuffer(radial_low_buffer, 0, in.sqrt_s_f_lo.data(),
@@ -617,7 +622,8 @@ void enqueue_tail(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
-    encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
+    if (in.readback)
+        encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
     auto commands = encoder.Finish();
     queue.Submit(1, &commands);
     auto dispatch = std::make_shared<TailDispatch>();
@@ -635,6 +641,12 @@ void enqueue_tail(const wgpu::Device& device,
     dispatch->values = output_values;
     dispatch->bytes = output_bytes;
     dispatch->double_single = in.double_single;
+    dispatch->result.device_fields = {output_buffer, output_values, 0,
+                                      output_values * sizeof(float)};
+    if (!in.readback) {
+        dispatch->callback({}, std::move(dispatch->result));
+        return;
+    }
     readback.MapAsync(
         wgpu::MapMode::Read, 0, output_bytes,
         wgpu::CallbackMode::AllowSpontaneous,

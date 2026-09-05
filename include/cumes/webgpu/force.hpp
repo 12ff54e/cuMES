@@ -1,5 +1,6 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_FORCE_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_FORCE_HPP_
+#include "cumes/webgpu/device_fields.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -13,6 +14,10 @@ namespace cumes::webgpu {
 inline constexpr std::size_t FORCE_FIELD_COUNT = 16;
 
 struct AxisymmetricForceCase {
+    DeviceFields device_geometry;
+    DeviceFields device_base_geometry;
+    DeviceFields device_magnetic_field;
+    bool readback = true;
     int ns = 0;
     int ntheta = 0;
     int nzeta = 1;
@@ -36,6 +41,7 @@ struct AxisymmetricForceCase {
 };
 
 struct AxisymmetricForceResult {
+    DeviceFields device_fields;
     // Field-major full-grid order consumed by the direct forward transform:
     // armn e/o, azmn e/o, brmn e/o, bzmn e/o, blmn e/o, crmn e/o,
     // czmn e/o, clmn e/o. The historical type name is retained while the

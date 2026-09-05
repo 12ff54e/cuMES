@@ -454,11 +454,12 @@ void enqueue_base_geometry(const wgpu::Device& device,
                               delta_s.lo,
                               {0, 0}};
     const wgpu::Queue queue = device.GetQueue();
-    queue.WriteBuffer(input_buffer, 0, input.geometry.data(), input_bytes);
+    transfer_fields(device, input_buffer, input.geometry,
+                    input.device_geometry);
     queue.WriteBuffer(radial_buffer, 0, radial.data(), radial_bytes);
     if (input.double_single) {
-        queue.WriteBuffer(input_lo_buffer, 0, input.geometry_lo.data(),
-                          input_bytes);
+        transfer_fields(device, input_lo_buffer, input.geometry_lo,
+                        input.device_geometry, true);
         queue.WriteBuffer(radial_lo_buffer, 0, radial_lo.data(), radial_bytes);
     }
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
@@ -525,6 +526,9 @@ void enqueue_base_geometry(const wgpu::Device& device,
             }
             const auto* values = static_cast<const float*>(mapped);
             BaseGeometryResult result;
+            result.device_fields = {dispatch->result_buffer,
+                                    dispatch->result_values, 0,
+                                    dispatch->result_values * sizeof(float)};
             result.fields.assign(values, values + dispatch->result_values);
             if (dispatch->double_single) {
                 result.fields_lo.assign(values + dispatch->result_values,

@@ -1,5 +1,6 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_CONSTRAINT_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_CONSTRAINT_HPP_
+#include "cumes/webgpu/device_fields.hpp"
 
 #include <functional>
 #include <string>
@@ -10,6 +11,9 @@
 namespace cumes::webgpu {
 
 struct AxisymmetricConstraintCase {
+    DeviceFields device_geometry;
+    DeviceFields device_force_fields;
+    bool readback = true;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -50,6 +54,7 @@ struct AxisymmetricConstraintCase {
 };
 
 struct AxisymmetricConstraintResult {
+    DeviceFields device_fields;
     // Forward-transform fields: 14 for axisymmetry or 20 for 3-D, with
     // frcon/fzcon occupying the final four fields.
     std::vector<float> fields;

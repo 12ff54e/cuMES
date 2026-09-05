@@ -36,6 +36,12 @@ mergeInto(LibraryManager.library, {
   requested_w7x_multigrid: function() {
     return new URLSearchParams(window.location.search).get('grids') === '3';
   },
+  requested_reference_transfers: function() {
+    return new URLSearchParams(window.location.search).get('resident') === '0';
+  },
+  requested_direct_dft: function() {
+    return new URLSearchParams(window.location.search).get('fft') === '0';
+  },
 
   requested_app_mode: function() {
     const query = new URLSearchParams(window.location.search);

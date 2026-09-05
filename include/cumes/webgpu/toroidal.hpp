@@ -39,6 +39,7 @@ ToroidalInverseResult toroidal_inverse_reference(
 inline constexpr std::size_t TOROIDAL_FORWARD_FIELD_COUNT = 20;
 
 struct ToroidalForwardCase {
+    DeviceFields device_fields;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -47,6 +48,7 @@ struct ToroidalForwardCase {
     int nfp = 0;
     bool include_lcfs = false;
     bool double_single = false;
+    bool use_fft = true;
     // Field-major [field][surface][zeta][theta]: armn e/o, azmn e/o,
     // brmn e/o, bzmn e/o, blmn e/o, crmn e/o, czmn e/o, clmn e/o,
     // frcon e/o, fzcon e/o.

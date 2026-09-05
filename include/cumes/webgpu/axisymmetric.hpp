@@ -1,5 +1,6 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_AXISYMMETRIC_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_AXISYMMETRIC_HPP_
+#include "cumes/webgpu/device_fields.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -23,6 +24,7 @@ struct AxisymmetricInverseCase {
 };
 
 struct AxisymmetricInverseResult {
+    DeviceFields device_geometry;
     // Field-major real-space layout: [field][surface][theta]. Field order is
     // r/z/l, ru/zu/lu even; r/z/l, ru/zu/lu odd; then the six zero toroidal
     // derivatives, matching GeometryParityViews.

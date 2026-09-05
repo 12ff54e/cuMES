@@ -14,9 +14,10 @@ struct BufferCacheEntry {
     wgpu::BufferUsage usage = wgpu::BufferUsage::None;
 };
 
-// The browser solver is deliberately single-flight: an operator starts only
-// after the previous operator's readback callback has unmapped its buffer.
-// That makes one persistent allocation per semantic label safe to reuse.
+// The browser solver is deliberately single-flight on one device/queue.
+// Resident consumers are submitted before a producer is reused; mapped
+// readbacks are unmapped before reuse. One allocation per semantic label is
+// therefore safe even when an edge no longer needs a host readback fence.
 inline const wgpu::Buffer& cached_buffer(const wgpu::Device& device,
                                          std::uint64_t size,
                                          wgpu::BufferUsage usage,

@@ -41,6 +41,8 @@ void publish_browser_result(int success, const char* detail);
 int publish_browser_output(const char* path);
 int requested_w7x_solve();
 int requested_w7x_multigrid();
+int requested_reference_transfers();
+int requested_direct_dft();
 int requested_app_mode();
 int requested_app_run();
 void publish_browser_ready();
@@ -2149,6 +2151,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         active_case_name_.c_str(), completed_passes_ + 1,
                         static_cast<double>(max_error));
         }
+        device_geometry_ = resident_path() ? actual.device_geometry
+                                           : cumes::webgpu::DeviceFields{};
         stage_r_con_ = std::move(actual.r_con);
         stage_z_con_ = std::move(actual.z_con);
         stage_geometry_lo_ = std::move(actual.geometry_lo);
@@ -2158,6 +2162,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_base_geometry(std::vector<float> geometry) {
+        base_geometry_case_.device_geometry = device_geometry_;
         base_geometry_case_.ns = initialized_stage_.ns;
         base_geometry_case_.ntheta = initialized_stage_.ntheta;
         base_geometry_case_.nzeta = initialized_stage_.nzeta;
@@ -2270,12 +2275,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->active_case_name_.c_str(),
                         static_cast<double>(max_error));
                 }
+                self->device_base_geometry_ =
+                    self->resident_path() ? actual.device_fields
+                                          : cumes::webgpu::DeviceFields{};
                 self->stage_base_geometry_lo_ = std::move(actual.fields_lo);
                 self->run_magnetic_field(std::move(actual.fields));
             });
     }
 
     void run_magnetic_field(std::vector<float> base_geometry) {
+        magnetic_field_case_.device_geometry = device_geometry_;
+        magnetic_field_case_.device_base_geometry = device_base_geometry_;
         magnetic_field_case_.ns = initialized_stage_.ns;
         magnetic_field_case_.ntheta = initialized_stage_.ntheta;
         magnetic_field_case_.nzeta = initialized_stage_.nzeta;
@@ -2446,12 +2456,19 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                  profiles.chi_f, profiles.chi_f_lo, ns - 1);
                     }
                 }
+                self->device_magnetic_field_ =
+                    self->resident_path() ? actual.device_fields
+                                          : cumes::webgpu::DeviceFields{};
                 self->stage_magnetic_field_lo_ = std::move(actual.fields_lo);
                 self->run_axisymmetric_force(std::move(actual.fields));
             });
     }
 
     void run_axisymmetric_force(std::vector<float> magnetic_field) {
+        force_case_.device_geometry = device_geometry_;
+        force_case_.device_base_geometry = device_base_geometry_;
+        force_case_.device_magnetic_field = device_magnetic_field_;
+        force_case_.readback = !(production_solve_ && resident_path());
         force_case_.ns = initialized_stage_.ns;
         force_case_.ntheta = initialized_stage_.ntheta;
         force_case_.nzeta = initialized_stage_.nzeta;
@@ -2537,6 +2554,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->active_case_name_.c_str(),
                         static_cast<double>(max_error));
                 }
+                self->device_force_fields_ =
+                    self->resident_path() ? actual.device_fields
+                                          : cumes::webgpu::DeviceFields{};
                 self->stage_force_fields_ = actual.fields;
                 self->stage_force_fields_lo_ = std::move(actual.fields_lo);
                 self->run_solovev_forward(std::move(actual.fields));
@@ -2546,6 +2566,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     void run_solovev_forward(std::vector<float> force_fields) {
         if (initialized_stage_.ntor != 0) {
             solver_toroidal_forward_case_.ns = initialized_stage_.ns;
+            solver_toroidal_forward_case_.device_fields = device_force_fields_;
+            solver_toroidal_forward_case_.use_fft = requested_direct_dft() == 0;
             solver_toroidal_forward_case_.mpol = initialized_stage_.mpol;
             solver_toroidal_forward_case_.ntor = initialized_stage_.ntor;
             solver_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
@@ -2556,17 +2578,23 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             const std::size_t points =
                 static_cast<std::size_t>(initialized_stage_.ns) *
                 initialized_stage_.ntheta * initialized_stage_.nzeta;
-            solver_toroidal_forward_case_.fields.assign(
-                cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
-            std::copy(force_fields.begin(), force_fields.end(),
-                      solver_toroidal_forward_case_.fields.begin());
-            if (double_single_solve_) {
-                solver_toroidal_forward_case_.fields_lo.assign(
+            if (!device_force_fields_ || !production_solve_) {
+                solver_toroidal_forward_case_.fields.assign(
                     cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
-                std::copy(stage_force_fields_lo_.begin(),
-                          stage_force_fields_lo_.end(),
-                          solver_toroidal_forward_case_.fields_lo.begin());
+                std::copy(force_fields.begin(), force_fields.end(),
+                          solver_toroidal_forward_case_.fields.begin());
+                if (double_single_solve_) {
+                    solver_toroidal_forward_case_.fields_lo.assign(
+                        cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points,
+                        0.0F);
+                    std::copy(stage_force_fields_lo_.begin(),
+                              stage_force_fields_lo_.end(),
+                              solver_toroidal_forward_case_.fields_lo.begin());
+                } else {
+                    solver_toroidal_forward_case_.fields_lo.clear();
+                }
             } else {
+                solver_toroidal_forward_case_.fields.clear();
                 solver_toroidal_forward_case_.fields_lo.clear();
             }
             const auto self = shared_from_this();
@@ -2889,6 +2917,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_axisymmetric_constraint() {
+        constraint_case_.device_geometry = device_geometry_;
+        constraint_case_.device_force_fields = device_force_fields_;
+        constraint_case_.readback = !(production_solve_ && resident_path());
         constraint_case_.ns = initialized_stage_.ns;
         constraint_case_.mpol = initialized_stage_.mpol;
         constraint_case_.ntor = initialized_stage_.ntor;
@@ -2929,14 +2960,20 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const std::size_t force_field_count =
             initialized_stage_.ntor == 0 ? 10
                                          : cumes::webgpu::FORCE_FIELD_COUNT;
-        constraint_case_.force_fields.assign(
-            stage_force_fields_.begin(),
-            stage_force_fields_.begin() + force_field_count * points);
-        if (double_single_solve_) {
-            constraint_case_.force_fields_lo.assign(
-                stage_force_fields_lo_.begin(),
-                stage_force_fields_lo_.begin() + force_field_count * points);
+        if (!device_force_fields_ || !production_solve_) {
+            constraint_case_.force_fields.assign(
+                stage_force_fields_.begin(),
+                stage_force_fields_.begin() + force_field_count * points);
+            if (double_single_solve_) {
+                constraint_case_.force_fields_lo.assign(
+                    stage_force_fields_lo_.begin(),
+                    stage_force_fields_lo_.begin() +
+                        force_field_count * points);
+            } else {
+                constraint_case_.force_fields_lo.clear();
+            }
         } else {
+            constraint_case_.force_fields.clear();
             constraint_case_.force_fields_lo.clear();
         }
         const auto self = shared_from_this();
@@ -2948,6 +2985,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, std::move(error));
                     return;
                 }
+                self->device_constraint_fields_ =
+                    self->resident_path() ? actual.device_fields
+                                          : cumes::webgpu::DeviceFields{};
                 if (self->production_solve_) {
                     bool finite = std::all_of(
                         actual.fields.begin(), actual.fields.end(),
@@ -3022,6 +3062,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     void run_constraint_forward(std::vector<float> fields) {
         if (initialized_stage_.ntor != 0) {
             constraint_toroidal_forward_case_.ns = initialized_stage_.ns;
+            constraint_toroidal_forward_case_.device_fields =
+                device_constraint_fields_;
+            constraint_toroidal_forward_case_.use_fft =
+                requested_direct_dft() == 0;
             constraint_toroidal_forward_case_.mpol = initialized_stage_.mpol;
             constraint_toroidal_forward_case_.ntor = initialized_stage_.ntor;
             constraint_toroidal_forward_case_.ntheta =
@@ -3923,6 +3967,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     bool double_single_solve_ = false;
     std::vector<float> stage_r_con_;
     std::vector<float> stage_z_con_;
+    bool resident_path() const {
+        return initialized_stage_.ntor > 0 &&
+               requested_reference_transfers() == 0;
+    }
+    cumes::webgpu::DeviceFields device_geometry_, device_base_geometry_,
+        device_magnetic_field_, device_force_fields_, device_constraint_fields_;
     std::vector<float> stage_geometry_lo_;
     std::vector<float> stage_base_geometry_lo_;
     std::vector<float> stage_magnetic_field_lo_;

@@ -28,6 +28,8 @@ target_sources(cumes_webgpu PRIVATE
   ${PROJECT_SOURCE_DIR}/src/webgpu/toroidal.cpp)
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_subdirectory(${PROJECT_SOURCE_DIR}/deps/webgpu-fft ${CMAKE_CURRENT_BINARY_DIR}/fft)
+target_link_libraries(cumes_webgpu PRIVATE webgpu_fft)
 target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_FIELD_DISABLED)
 target_compile_definitions(cumes_webgpu PRIVATE
   CUMES_GIT_REVISION="${CUMES_GIT_REVISION}"
@@ -39,6 +41,7 @@ cumes_enable_warnings(cumes_webgpu)
 
 target_compile_options(cumes_webgpu PRIVATE --use-port=emdawnwebgpu)
 target_link_options(cumes_webgpu PRIVATE
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_fft_transfer.wgsl@/shaders/toroidal_fft_transfer.wgsl"
   --use-port=emdawnwebgpu
   -sASYNCIFY=1
   -sALLOW_MEMORY_GROWTH=1
@@ -117,6 +120,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse_double_single.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward_double_single.wgsl
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_fft_transfer.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_dealias.wgsl)
 
 # CTest cannot provide a browser WebGPU implementation, but it can guard the

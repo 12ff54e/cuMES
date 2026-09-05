@@ -536,15 +536,16 @@ void enqueue_magnetic_field(const wgpu::Device& device,
                               input.double_single ? input.lamscale_lo : 0.0F,
                               {0, 0}};
     const auto queue = device.GetQueue();
-    queue.WriteBuffer(geometry_buffer, 0, input.geometry.data(),
-                      geometry_bytes);
-    queue.WriteBuffer(base_buffer, 0, input.base_geometry.data(), base_bytes);
+    transfer_fields(device, geometry_buffer, input.geometry,
+                    input.device_geometry);
+    transfer_fields(device, base_buffer, input.base_geometry,
+                    input.device_base_geometry);
     queue.WriteBuffer(profile_buffer, 0, profiles.data(), profile_bytes);
     if (input.double_single) {
-        queue.WriteBuffer(geometry_lo_buffer, 0, input.geometry_lo.data(),
-                          geometry_bytes);
-        queue.WriteBuffer(base_lo_buffer, 0, input.base_geometry_lo.data(),
-                          base_bytes);
+        transfer_fields(device, geometry_lo_buffer, input.geometry_lo,
+                        input.device_geometry, true);
+        transfer_fields(device, base_lo_buffer, input.base_geometry_lo,
+                        input.device_base_geometry, true);
         queue.WriteBuffer(profile_lo_buffer, 0, profiles_lo.data(),
                           profile_bytes);
     }
@@ -660,6 +661,8 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             const std::size_t profile_values = 2 * half_surfaces;
             const std::size_t field_values =
                 dispatch->result_values - profile_values;
+            result.device_fields = {dispatch->result_buffer, field_values, 0,
+                                    dispatch->result_values * sizeof(float)};
             result.fields.assign(values, values + field_values);
             result.chip_h.assign(values + field_values,
                                  values + field_values + half_surfaces);

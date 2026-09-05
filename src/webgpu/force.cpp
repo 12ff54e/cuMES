@@ -332,14 +332,17 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
                         in.double_single ? in.lamscale : 0.0F,
                         in.double_single ? in.lamscale_lo : 0.0F};
     auto q = device.GetQueue();
-    q.WriteBuffer(gbuf, 0, in.geometry.data(), gb);
-    q.WriteBuffer(hbuf, 0, in.base_geometry.data(), hb);
-    q.WriteBuffer(bbuf, 0, in.magnetic_field.data(), bb);
+    transfer_fields(device, gbuf, in.geometry, in.device_geometry);
+    transfer_fields(device, hbuf, in.base_geometry, in.device_base_geometry);
+    transfer_fields(device, bbuf, in.magnetic_field, in.device_magnetic_field);
     q.WriteBuffer(rbuf, 0, radial.data(), rb);
     if (in.double_single) {
-        q.WriteBuffer(glbuf, 0, in.geometry_lo.data(), gb);
-        q.WriteBuffer(hlbuf, 0, in.base_geometry_lo.data(), hb);
-        q.WriteBuffer(blbuf, 0, in.magnetic_field_lo.data(), bb);
+        transfer_fields(device, glbuf, in.geometry_lo, in.device_geometry,
+                        true);
+        transfer_fields(device, hlbuf, in.base_geometry_lo,
+                        in.device_base_geometry, true);
+        transfer_fields(device, blbuf, in.magnetic_field_lo,
+                        in.device_magnetic_field, true);
         q.WriteBuffer(rlbuf, 0, radial_lo.data(), rb);
     }
     q.WriteBuffer(pbuf, 0, &params, sizeof(params));
@@ -370,6 +373,14 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(nf) + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
     pass.End();
+    if (!in.readback) {
+        const auto commands = encoder.Finish();
+        q.Submit(1, &commands);
+        AxisymmetricForceResult result;
+        result.device_fields = {obuf, values, 0, values * sizeof(float)};
+        callback({}, std::move(result));
+        return;
+    }
     encoder.CopyBufferToBuffer(obuf, 0, read, 0, ob);
     auto commands = encoder.Finish();
     q.Submit(1, &commands);
@@ -396,6 +407,8 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
                 return;
             }
             AxisymmetricForceResult out;
+            out.device_fields = {d->result, d->values, 0,
+                                 d->values * sizeof(float)};
             out.fields.assign(v, v + d->values);
             if (d->double_single)
                 out.fields_lo.assign(v + d->values, v + 2 * d->values);

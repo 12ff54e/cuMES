@@ -15,6 +15,8 @@
 #include <sstream>
 #include <utility>
 
+#include <webgpu_fft/shader.hpp>
+
 namespace cumes::webgpu {
 namespace {
 
@@ -154,11 +156,18 @@ std::string validate_case(const ToroidalForwardCase& input) {
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
     const std::size_t n_z_n_t =
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
-    if (input.fields.size() !=
-        TOROIDAL_FORWARD_FIELD_COUNT * input.ns * n_z_n_t) {
+    if (!input.device_fields &&
+        input.fields.size() !=
+            TOROIDAL_FORWARD_FIELD_COUNT * input.ns * n_z_n_t) {
         return "toroidal force size does not match 20*ns*ntheta*nzeta";
     }
-    if (input.double_single && input.fields_lo.size() != input.fields.size()) {
+    if (input.device_fields &&
+        input.device_fields.values != 16 * input.ns * n_z_n_t &&
+        input.device_fields.values != 20 * input.ns * n_z_n_t) {
+        return "resident toroidal force must contain 16 or 20 field planes";
+    }
+    if (!input.device_fields && input.double_single &&
+        input.fields_lo.size() != input.fields.size()) {
         return "double-single toroidal force low-word size mismatch";
     }
     if (static_cast<std::size_t>(input.ns) * mnmax >
@@ -814,6 +823,9 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
             ToroidalInverseResult result;
             const std::size_t geometry_values =
                 GEOMETRY_PARITY_FIELD_COUNT * dispatch->total_points;
+            result.device_geometry = {
+                dispatch->result_buffer, geometry_values, 0,
+                RESULT_FIELD_COUNT * dispatch->total_points * sizeof(float)};
             result.geometry.assign(values, values + geometry_values);
             result.r_con.assign(
                 values + geometry_values,
@@ -978,7 +990,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t result_values =
         SPECTRAL_COMPONENT_COUNT * mnmax * input.ns;
-    const std::size_t fields_bytes = input.fields.size() * sizeof(float);
+    const std::size_t fields_bytes = 20 * input.ns * n_z_n_t * sizeof(float);
     const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t result_bytes =
         result_values * sizeof(float) * (input.double_single ? 2 : 1);
@@ -1041,10 +1053,10 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         split(std::sqrt(2.0)).hi,
         split(std::sqrt(2.0)).lo};
     const auto queue = device.GetQueue();
-    queue.WriteBuffer(fields_buffer, 0, input.fields.data(), fields_bytes);
+    transfer_fields(device, fields_buffer, input.fields, input.device_fields);
     if (input.double_single)
-        queue.WriteBuffer(fields_low_buffer, 0, input.fields_lo.data(),
-                          fields_bytes);
+        transfer_fields(device, fields_low_buffer, input.fields_lo,
+                        input.device_fields, true);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
     std::vector<wgpu::BindGroupEntry> toroidal_entries = {
@@ -1088,14 +1100,78 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         device.CreateBindGroup(&poloidal_bind_descriptor);
     const auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
-    const auto pass = encoder.BeginComputePass(&pass_descriptor);
-    pass.SetPipeline(toroidal_pipeline);
-    pass.SetBindGroup(0, toroidal_bind_group);
     const std::uint32_t toroidal_sequences =
         static_cast<std::uint32_t>(20 * static_cast<std::size_t>(input.ns) *
                                    theta_reduced * (input.ntor + 1));
-    pass.DispatchWorkgroups((toroidal_sequences + WORKGROUP_SIZE - 1) /
-                            WORKGROUP_SIZE);
+    const auto fft_batches = static_cast<std::uint32_t>(
+        20 * static_cast<std::size_t>(input.ns) * theta_reduced);
+    if (input.use_fft && input.double_single && input.nzeta <= 256 &&
+        fft_batches <= 65535) {
+        const std::size_t complex_bytes =
+            static_cast<std::size_t>(fft_batches) * input.nzeta * 4 *
+            sizeof(float);
+        const auto fft_input =
+            create_buffer(device, complex_bytes, wgpu::BufferUsage::Storage,
+                          "cuMES forward FFT input");
+        const auto fft_output =
+            create_buffer(device, complex_bytes, wgpu::BufferUsage::Storage,
+                          "cuMES forward FFT output");
+        std::ifstream file("/shaders/toroidal_fft_transfer.wgsl");
+        const std::string transfer((std::istreambuf_iterator<char>(file)), {});
+        const auto& pack = detail::cached_compute_pipeline(
+            device, "forward-fft-pack", transfer, "cuMES FFT pack", "pack");
+        const auto& unpack = detail::cached_compute_pipeline(
+            device, "forward-fft-unpack", transfer, "cuMES FFT unpack",
+            "unpack");
+        const auto fft_key = "forward-fft-" + std::to_string(input.nzeta);
+        static std::map<int, std::string> fft_shaders;
+        auto [source, inserted] = fft_shaders.try_emplace(input.nzeta);
+        if (inserted) source->second = webgpu_fft::shader(input.nzeta, true);
+        const auto& fft = detail::cached_compute_pipeline(
+            device, fft_key, source->second, "cuMES mixed radix FFT");
+        const auto dispatch_pass =
+            [&](const wgpu::ComputePipeline& pipeline,
+                std::vector<wgpu::BindGroupEntry> entries,
+                std::uint32_t groups) {
+                wgpu::BindGroupDescriptor descriptor{};
+                descriptor.layout = pipeline.GetBindGroupLayout(0);
+                descriptor.entryCount = entries.size();
+                descriptor.entries = entries.data();
+                const auto group = device.CreateBindGroup(&descriptor);
+                const auto compute = encoder.BeginComputePass();
+                compute.SetPipeline(pipeline);
+                compute.SetBindGroup(0, group);
+                compute.DispatchWorkgroups(groups);
+                compute.End();
+            };
+        dispatch_pass(
+            pack,
+            {{nullptr, 0, fields_buffer, 0, fields_bytes, nullptr, nullptr},
+             {nullptr, 1, fields_low_buffer, 0, fields_bytes, nullptr, nullptr},
+             {nullptr, 2, fft_input, 0, complex_bytes, nullptr, nullptr},
+             {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr}},
+            (fft_batches * input.nzeta + 127) / 128);
+        dispatch_pass(
+            fft,
+            {{nullptr, 0, fft_input, 0, complex_bytes, nullptr, nullptr},
+             {nullptr, 1, fft_output, 0, complex_bytes, nullptr, nullptr}},
+            fft_batches);
+        dispatch_pass(
+            unpack,
+            {{nullptr, 2, fft_output, 0, complex_bytes, nullptr, nullptr},
+             {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
+             {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
+              nullptr}},
+            (toroidal_sequences + 127) / 128);
+    } else {
+        const auto toroidal_pass = encoder.BeginComputePass(&pass_descriptor);
+        toroidal_pass.SetPipeline(toroidal_pipeline);
+        toroidal_pass.SetBindGroup(0, toroidal_bind_group);
+        toroidal_pass.DispatchWorkgroups(
+            (toroidal_sequences + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
+        toroidal_pass.End();
+    }
+    const auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(poloidal_pipeline);
     pass.SetBindGroup(0, poloidal_bind_group);
     pass.DispatchWorkgroups(

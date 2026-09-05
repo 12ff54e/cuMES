@@ -1,5 +1,6 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_GEOMETRY_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_GEOMETRY_HPP_
+#include "cumes/webgpu/device_fields.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -13,6 +14,7 @@ namespace cumes::webgpu {
 inline constexpr std::size_t BASE_GEOMETRY_FIELD_COUNT = 10;
 
 struct BaseGeometryCase {
+    DeviceFields device_geometry;
     int ns = 0;
     int ntheta = 0;
     int nzeta = 1;
@@ -26,6 +28,7 @@ struct BaseGeometryCase {
 };
 
 struct BaseGeometryResult {
+    DeviceFields device_fields;
     // Field-major half-grid order: r12, ru12, zu12, rs, zs, tau, gsqrt,
     // guu, guv, gvv.
     std::vector<float> fields;
@@ -44,6 +47,8 @@ BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input);
 inline constexpr std::size_t MAGNETIC_FIELD_COUNT = 5;
 
 struct MagneticFieldCase {
+    DeviceFields device_geometry;
+    DeviceFields device_base_geometry;
     int ns = 0;
     int ntheta = 0;
     int nzeta = 1;
@@ -72,6 +77,7 @@ struct MagneticFieldCase {
 };
 
 struct MagneticFieldResult {
+    DeviceFields device_fields;
     // Field-major half-grid order: B^theta, B^zeta, B_theta, B_zeta,
     // total pressure.
     std::vector<float> fields;

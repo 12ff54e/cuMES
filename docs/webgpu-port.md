@@ -306,6 +306,51 @@ include each operator's queued copies, dispatch, and result mapping, so they
 also expose the next architectural bottleneck: intermediate fields still cross
 the Wasm/host boundary between adjacent operators.
 
+### Mixed-radix FFT and resident field edges
+
+The strict 3-D forward projection now uses `deps/webgpu-fft`: batched complex
+mixed-radix FFTs in zeta, followed by the existing direct poloidal projection.
+W7-X keeps its exact 36-point toroidal grid (radices 2, 2, 3, 3); there is no
+zero padding or change to angular quadrature. Packing preserves both words,
+and unpacking converts the FFT's negative imaginary part to the solver's
+positive sine projection. Scalar-f32 and unsupported shapes retain the DFT.
+Inverse synthesis and constraint filtering currently retain their separable
+direct transforms. FFT summation changes the iterative trajectory, so this
+path is qualified by residual convergence, not bit-identical iteration counts.
+
+`DeviceFields` retains an owning WebGPU buffer handle plus high/low plane
+offsets. Geometry, half-grid metrics, magnetic fields, forces, and constrained
+forces can feed downstream kernels through device copies instead of Wasm
+uploads. The two large force outputs are no longer mapped in production 3-D
+solves: at ns=99 this removes 30,792,960 readback bytes per iteration. Device
+copies accommodate low-word offsets that do not meet storage-binding alignment.
+Producer buffers remain live until consumers are submitted on the same queue.
+
+This is partial residency: geometry/Jacobian validation, host norm calculation,
+constraint reference maintenance, and spectral updates still use readbacks.
+The explicit reference switches are `&resident=0` and `&fft=0`; defaults enable
+both optimizations. Conformance paths retain full host arrays for comparison.
+
+For a running Chrome session exposed through the user's DevTools tunnel:
+
+```sh
+node scripts/webgpu_cdp.mjs eval-file scripts/webgpu_profile.js
+node scripts/webgpu_cdp.mjs eval 'cumesGpuProfile.report()'
+```
+
+The probe reports upload, device-copy, and readback byte counts by buffer label,
+plus CPU upload-call and `mapAsync` wait duration. Mapping waits include queued
+GPU work and synchronization; they must not be described as isolated kernel
+or transfer timings. Use full iteration throughput for end-to-end comparisons.
+
+The first combined full `ns=99` Chrome/D3D12 RTX 3060 Ti run converged in
+3450 effective iterations with residual `(9.980e-13, 2.009e-13, 1.633e-13)`
+and published the 11,809,091-byte output. Navigation-to-result wall time was
+357.5 seconds versus the previous 627.2-second direct-transform/host-transfer
+run (43% less time, despite a different iteration count). During a 563-pass
+steady-state sample, throughput was 9.68 iterations/s. This is one adapter,
+not a cross-platform performance guarantee.
+
 ## Backend boundary
 
 The WebGPU implementation lives under these paths:
