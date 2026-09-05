@@ -10,6 +10,10 @@ foreach(extension IN ITEMS html js wasm)
 endforeach()
 
 file(READ "${ARTIFACT_BASE}.html" html)
+if(NOT html MATCHES "src=\\\"cumes_webgpu\\.js\\?v=[0-9a-f]+\\\"")
+  message(FATAL_ERROR
+    "WebGPU HTML does not use a content-versioned JavaScript URL")
+endif()
 foreach(marker IN ITEMS
     "Input boundary"
     "Boundary editor mode"

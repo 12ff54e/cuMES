@@ -212,6 +212,13 @@ browsers do not reliably initialize WebGPU from `file://` URLs:
 http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html
 ```
 
+The generated HTML gives the JavaScript and Wasm files a shared content hash
+in their query strings. This prevents a normal browser cache from combining a
+runtime from one build with the embedded shaders and C++ module from another.
+After upgrading from a build that predates this scheme, use one hard refresh
+or add any one-time query parameter to the HTML URL; subsequent rebuilds are
+cache-coherent automatically.
+
 In **Fourier** mode the editor exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
 for `m=1..5` as sliders beside a live boundary preview. In **Contour** mode,
 16 points define a periodic Catmull-Rom contour; dragging one point mirrors its

@@ -78,9 +78,16 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_dealias.wgsl@/shaders/toroidal_dealias.wgsl")
 
 set_target_properties(cumes_webgpu PROPERTIES SUFFIX ".html")
+add_custom_command(
+  TARGET cumes_webgpu POST_BUILD
+  COMMAND ${CMAKE_COMMAND}
+          -DARTIFACT_BASE=$<TARGET_FILE_DIR:cumes_webgpu>/cumes_webgpu
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
+  COMMENT "Adding content versions to the WebGPU runtime artifacts")
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
   ${PROJECT_SOURCE_DIR}/inputs/solovev.json
   ${PROJECT_SOURCE_DIR}/inputs/w7x.json
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl

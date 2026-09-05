@@ -269,7 +269,12 @@
       syncControls();setEditorMode(editorMode,true);setEditorDisabled(running);
       if(running){document.body.classList.add('busy');value('run').disabled=true;value('run').textContent='Solving…';value('status').textContent='Requesting GPU';
         value('result-empty').innerHTML='<strong>Computing equilibrium…</strong><span>All numerical operators are running locally via WebGPU.</span>'}}
-    var Module={preRun:[()=>{if(running){FS.mkdirTree('/inputs');const source=localStorage.getItem('cumes.input.v1')||inputJSON();FS.writeFile('/inputs/interactive.json',source)}}],
+    function versionedAsset(path,prefix){
+      const runtime=document.querySelector('script[src*="cumes_webgpu.js"]');
+      const version=runtime?new URL(runtime.src,location.href).search:'';
+      return prefix+path+version
+    }
+    var Module={locateFile:versionedAsset,preRun:[()=>{if(running){FS.mkdirTree('/inputs');const source=localStorage.getItem('cumes.input.v1')||inputJSON();FS.writeFile('/inputs/interactive.json',source)}}],
       print:(...args)=>publishLine(args.join(' ')),printErr:(...args)=>append('ERROR: '+args.join(' '))};
     if(!appMode||running){window.cumesKeepAlive=setInterval(()=>{},50);window.cumesDeadline=setTimeout(()=>{if(!document.body.dataset.cumesWebgpu){document.body.dataset.cumesWebgpu='fail';
       document.body.dataset.cumesDetail='WebGPU run timed out';append('ERROR: WebGPU run timed out')}clearInterval(window.cumesKeepAlive)},w7xSolve?21600000:1800000)}
