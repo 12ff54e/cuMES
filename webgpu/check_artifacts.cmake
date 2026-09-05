@@ -21,7 +21,9 @@ foreach(marker IN ITEMS
     "Z sine coefficients"
     "RMS fit error"
     "Run equilibrium"
-    "Flux surfaces")
+    "Flux surfaces"
+    "3D equilibrium"
+    "Interactive three-dimensional equilibrium")
   string(FIND "${html}" "${marker}" marker_offset)
   if(marker_offset EQUAL -1)
     message(FATAL_ERROR

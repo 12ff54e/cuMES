@@ -143,18 +143,18 @@ browser-validated:
   toroidal projection, residual decomposition, `(m,n)` preconditioner, and
   descent. The browser and native CUDA mixed-float paths agree at effective
   iteration 3 on `(FSQR,FSQZ,FSQL) = (1.141e+01, 7.079e+00, 1.012e-01)`;
-- a selectable `?solve=w7x` browser mode that runs the complete three-stage
-  W7-X multigrid path and publishes the same schema-v8 result form; at the
-  input's unmodified `1e-12` tolerance, the paired-`f32` TITAN Xp Vulkan
-  WebGPU path converges in `1421 -> 3220 -> 2964` effective iterations (7605
-  total), with final residual
-  `(1.000e-12, 2.115e-13, 1.528e-13)` and an 11,809,203-byte result. The
-  sequential end-to-end browser run takes 4929.3 seconds including page/Wasm
-  startup. Chrome 152 on Windows 10, using Dawn's D3D12/DXC backend on an RTX
-  3060 Ti, independently converges in `1416 -> 1621 -> 1670` effective
-  iterations (4707 total), with final residual
-  `(9.996e-13, 2.160e-13, 1.339e-13)` and the same 11,809,203-byte result in
-  1024.2 seconds;
+- a selectable `?solve=w7x` browser mode that defaults to the final `ns=99`
+  radial grid and publishes the same schema-v8 result form. At the input's
+  unmodified `1e-12` tolerance, Chrome 152 on Windows 10 using Dawn's
+  D3D12/DXC backend on an RTX 3060 Ti converges in 2812 effective iterations,
+  with final residual `(9.985e-13, 2.130e-13, 1.955e-13)` and an
+  11,809,091-byte result in 627.2 seconds. `&grids=3` retains the complete
+  multigrid integration route: the same adapter converges in
+  `1416 -> 1621 -> 1670` (4707 total), with residual
+  `(9.996e-13, 2.160e-13, 1.339e-13)` and an 11,809,203-byte result in 1024.2
+  seconds. The paired-`f32` TITAN Xp Vulkan route independently converges all
+  three grids in `1421 -> 3220 -> 2964` (7605 total), with residual
+  `(1.000e-12, 2.115e-13, 1.528e-13)` in 4929.3 seconds;
 - cached immutable toroidal basis buffers plus persistent, grow-only operator
   scratch/readback buffers and compute pipelines; this removes hot-loop shader
   recompilation/allocation and keeps the complete high-resolution W7-X run
@@ -329,9 +329,9 @@ The following are follow-on optimizations or optional backend expansions, not
 completion gates for the fixed-boundary WebGPU port:
 
 1. retain spectral/real-space fields on device across adjacent operators and
-   batch each device-only segment into one command submission (pipelines are
-   cached today, but operator-local buffers and mapped host results still
-   connect the APIs);
+   batch each device-only segment into one command submission (buffers and
+   pipelines are persistent today, but mapped host results still connect the
+   operator APIs);
 2. port the optional free-boundary/NESTOR dependency as a separate WebGPU
    project if browser free-boundary equilibria are required.
 
@@ -357,5 +357,5 @@ normalized input record.
 - W7-X integration gate: the browser controller trajectory through effective
   iteration 3 must match native CUDA mixed-float, including the invariant
   residual triple. The selected `?solve=w7x` path must additionally converge
-  all three grids with the input's unmodified `1e-12` tolerance on a physical
-  WebGPU adapter.
+  its final `ns=99` grid with the input's unmodified `1e-12` tolerance on a
+  physical WebGPU adapter; `?solve=w7x&grids=3` is the full multigrid gate.
