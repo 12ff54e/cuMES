@@ -138,10 +138,20 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let surface_m = index / params.nzeta;
     let m = surface_m % params.mpol;
     let surface = surface_m / params.mpol;
-    var sums: array<FF, 12>;
-    for (var field = 0u; field < 12u; field++) {
-        sums[field] = FF(0.0, 0.0);
-    }
+    // Keep these accumulators named. Chrome/Dawn's D3D12 DXC path can
+    // miscompile a dynamically indexed function-local array here to zeros.
+    var sum0 = FF(0.0, 0.0);
+    var sum1 = FF(0.0, 0.0);
+    var sum2 = FF(0.0, 0.0);
+    var sum3 = FF(0.0, 0.0);
+    var sum4 = FF(0.0, 0.0);
+    var sum5 = FF(0.0, 0.0);
+    var sum6 = FF(0.0, 0.0);
+    var sum7 = FF(0.0, 0.0);
+    var sum8 = FF(0.0, 0.0);
+    var sum9 = FF(0.0, 0.0);
+    var sum10 = FF(0.0, 0.0);
+    var sum11 = FF(0.0, 0.0);
     for (var n = 0u; n <= params.ntor; n++) {
         let cn = zeta_basis(false, n, zeta, index);
         let sn = zeta_basis(true, n, zeta, index);
@@ -152,28 +162,37 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let rs = coefficient(3u, m, n, surface);
         let zc = coefficient(4u, m, n, surface);
         let lc = coefficient(5u, m, n, surface);
-        sums[0] = ff_strict_add(sums[0], ff_strict_mul(rc, cn, index), index);
-        sums[1] = ff_strict_add(sums[1], ff_strict_mul(rs, sn, index), index);
-        sums[2] = ff_strict_add(sums[2], ff_strict_mul(zs, cn, index), index);
-        sums[3] = ff_strict_add(sums[3], ff_strict_mul(zc, sn, index), index);
-        sums[4] = ff_strict_add(sums[4], ff_strict_mul(ls, cn, index), index);
-        sums[5] = ff_strict_add(sums[5], ff_strict_mul(lc, sn, index), index);
-        sums[6] = ff_strict_add(sums[6], ff_strict_mul(
+        sum0 = ff_strict_add(sum0, ff_strict_mul(rc, cn, index), index);
+        sum1 = ff_strict_add(sum1, ff_strict_mul(rs, sn, index), index);
+        sum2 = ff_strict_add(sum2, ff_strict_mul(zs, cn, index), index);
+        sum3 = ff_strict_add(sum3, ff_strict_mul(zc, sn, index), index);
+        sum4 = ff_strict_add(sum4, ff_strict_mul(ls, cn, index), index);
+        sum5 = ff_strict_add(sum5, ff_strict_mul(lc, sn, index), index);
+        sum6 = ff_strict_add(sum6, ff_strict_mul(
             ff_strict_mul_f32(rc, -nf, index), sn, index), index);
-        sums[7] = ff_strict_add(sums[7], ff_strict_mul(
+        sum7 = ff_strict_add(sum7, ff_strict_mul(
             ff_strict_mul_f32(rs, nf, index), cn, index), index);
-        sums[8] = ff_strict_add(sums[8], ff_strict_mul(
+        sum8 = ff_strict_add(sum8, ff_strict_mul(
             ff_strict_mul_f32(zs, -nf, index), sn, index), index);
-        sums[9] = ff_strict_add(sums[9], ff_strict_mul(
+        sum9 = ff_strict_add(sum9, ff_strict_mul(
             ff_strict_mul_f32(zc, nf, index), cn, index), index);
-        sums[10] = ff_strict_add(sums[10], ff_strict_mul(
+        sum10 = ff_strict_add(sum10, ff_strict_mul(
             ff_strict_mul_f32(ls, nf, index), sn, index), index);
-        sums[11] = ff_strict_add(sums[11], ff_strict_mul(
+        sum11 = ff_strict_add(sum11, ff_strict_mul(
             ff_strict_mul_f32(lc, -nf, index), cn, index), index);
     }
-    for (var field = 0u; field < 12u; field++) {
-        put_intermediate(field, surface, m, zeta, sums[field]);
-    }
+    put_intermediate(0u, surface, m, zeta, sum0);
+    put_intermediate(1u, surface, m, zeta, sum1);
+    put_intermediate(2u, surface, m, zeta, sum2);
+    put_intermediate(3u, surface, m, zeta, sum3);
+    put_intermediate(4u, surface, m, zeta, sum4);
+    put_intermediate(5u, surface, m, zeta, sum5);
+    put_intermediate(6u, surface, m, zeta, sum6);
+    put_intermediate(7u, surface, m, zeta, sum7);
+    put_intermediate(8u, surface, m, zeta, sum8);
+    put_intermediate(9u, surface, m, zeta, sum9);
+    put_intermediate(10u, surface, m, zeta, sum10);
+    put_intermediate(11u, surface, m, zeta, sum11);
 }
 
 @compute @workgroup_size(128)
@@ -186,10 +205,25 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let zeta = angular / params.ntheta;
     let odd_scale = FF(radial_scale_hi.data[surface],
                        radial_scale_lo.data[surface]);
-    var values: array<FF, 18>;
-    for (var field = 0u; field < 18u; field++) {
-        values[field] = FF(0.0, 0.0);
-    }
+    // See the D3D12 portability note in toroidal_stage.
+    var value0 = FF(0.0, 0.0);
+    var value1 = FF(0.0, 0.0);
+    var value2 = FF(0.0, 0.0);
+    var value3 = FF(0.0, 0.0);
+    var value4 = FF(0.0, 0.0);
+    var value5 = FF(0.0, 0.0);
+    var value6 = FF(0.0, 0.0);
+    var value7 = FF(0.0, 0.0);
+    var value8 = FF(0.0, 0.0);
+    var value9 = FF(0.0, 0.0);
+    var value10 = FF(0.0, 0.0);
+    var value11 = FF(0.0, 0.0);
+    var value12 = FF(0.0, 0.0);
+    var value13 = FF(0.0, 0.0);
+    var value14 = FF(0.0, 0.0);
+    var value15 = FF(0.0, 0.0);
+    var value16 = FF(0.0, 0.0);
+    var value17 = FF(0.0, 0.0);
     var r_con = FF(0.0, 0.0);
     var z_con = FF(0.0, 0.0);
     for (var m = 0u; m < params.mpol; m++) {
@@ -199,7 +233,6 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let odd = (m & 1u) == 1u;
         var scale = FF(1.0, 0.0);
         if (odd) { scale = odd_scale; }
-        let parity = select(0u, 6u, odd);
         let a0 = intermediate_at(0u, surface, m, zeta);
         let a1 = intermediate_at(1u, surface, m, zeta);
         let a2 = intermediate_at(2u, surface, m, zeta);
@@ -212,12 +245,6 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
                               ff_strict_mul(a3, cm, point), point);
         let lambda = ff_strict_add(ff_strict_mul(a4, sm, point),
                                    ff_strict_mul(a5, cm, point), point);
-        values[parity] = ff_strict_add(
-            values[parity], ff_strict_mul(r, scale, point), point);
-        values[parity + 1u] = ff_strict_add(
-            values[parity + 1u], ff_strict_mul(z, scale, point), point);
-        values[parity + 2u] = ff_strict_add(
-            values[parity + 2u], ff_strict_mul(lambda, scale, point), point);
         let ru = ff_strict_add(ff_strict_mul(a0, FF(-sm.hi, -sm.lo), point),
                                ff_strict_mul(a1, cm, point), point);
         let zu = ff_strict_sub(ff_strict_mul(a2, cm, point),
@@ -225,39 +252,70 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let lu = ff_strict_sub(ff_strict_mul(a4, cm, point),
                                ff_strict_mul(a5, sm, point), point);
         let derivative_scale = ff_strict_mul_f32(scale, mf, point);
-        values[parity + 3u] = ff_strict_add(
-            values[parity + 3u],
-            ff_strict_mul(ru, derivative_scale, point), point);
-        values[parity + 4u] = ff_strict_add(
-            values[parity + 4u],
-            ff_strict_mul(zu, derivative_scale, point), point);
-        values[parity + 5u] = ff_strict_add(
-            values[parity + 5u],
-            ff_strict_mul(lu, derivative_scale, point), point);
-        let toroidal_parity = select(0u, 3u, odd);
-        for (var family = 0u; family < 3u; family++) {
-            let left = intermediate_at(6u + 2u * family, surface, m, zeta);
-            let right = intermediate_at(7u + 2u * family, surface, m, zeta);
-            var left_basis = cm;
-            var right_basis = sm;
-            if (family != 0u) {
-                left_basis = sm;
-                right_basis = cm;
-            }
-            let term = ff_strict_add(
-                ff_strict_mul(left, left_basis, point),
-                ff_strict_mul(right, right_basis, point), point);
-            let field = 12u + family + toroidal_parity;
-            values[field] = ff_strict_add(
-                values[field], ff_strict_mul(term, scale, point), point);
+        let rv = ff_strict_add(
+            ff_strict_mul(intermediate_at(6u, surface, m, zeta), cm, point),
+            ff_strict_mul(intermediate_at(7u, surface, m, zeta), sm, point),
+            point);
+        let zv = ff_strict_add(
+            ff_strict_mul(intermediate_at(8u, surface, m, zeta), sm, point),
+            ff_strict_mul(intermediate_at(9u, surface, m, zeta), cm, point),
+            point);
+        let lv = ff_strict_add(
+            ff_strict_mul(intermediate_at(10u, surface, m, zeta), sm, point),
+            ff_strict_mul(intermediate_at(11u, surface, m, zeta), cm, point),
+            point);
+        let scaled_r = ff_strict_mul(r, scale, point);
+        let scaled_z = ff_strict_mul(z, scale, point);
+        let scaled_lambda = ff_strict_mul(lambda, scale, point);
+        let scaled_ru = ff_strict_mul(ru, derivative_scale, point);
+        let scaled_zu = ff_strict_mul(zu, derivative_scale, point);
+        let scaled_lu = ff_strict_mul(lu, derivative_scale, point);
+        let scaled_rv = ff_strict_mul(rv, scale, point);
+        let scaled_zv = ff_strict_mul(zv, scale, point);
+        let scaled_lv = ff_strict_mul(lv, scale, point);
+        if (odd) {
+            value6 = ff_strict_add(value6, scaled_r, point);
+            value7 = ff_strict_add(value7, scaled_z, point);
+            value8 = ff_strict_add(value8, scaled_lambda, point);
+            value9 = ff_strict_add(value9, scaled_ru, point);
+            value10 = ff_strict_add(value10, scaled_zu, point);
+            value11 = ff_strict_add(value11, scaled_lu, point);
+            value15 = ff_strict_add(value15, scaled_rv, point);
+            value16 = ff_strict_add(value16, scaled_zv, point);
+            value17 = ff_strict_add(value17, scaled_lv, point);
+        } else {
+            value0 = ff_strict_add(value0, scaled_r, point);
+            value1 = ff_strict_add(value1, scaled_z, point);
+            value2 = ff_strict_add(value2, scaled_lambda, point);
+            value3 = ff_strict_add(value3, scaled_ru, point);
+            value4 = ff_strict_add(value4, scaled_zu, point);
+            value5 = ff_strict_add(value5, scaled_lu, point);
+            value12 = ff_strict_add(value12, scaled_rv, point);
+            value13 = ff_strict_add(value13, scaled_zv, point);
+            value14 = ff_strict_add(value14, scaled_lv, point);
         }
         let xmpq = ff_strict_round(mf * ff_strict_round(mf - 1.0, point), point);
         r_con = ff_strict_add(r_con, ff_strict_mul_f32(r, xmpq, point), point);
         z_con = ff_strict_add(z_con, ff_strict_mul_f32(z, xmpq, point), point);
     }
-    for (var field = 0u; field < 18u; field++) {
-        put_output(field, point, values[field]);
-    }
+    put_output(0u, point, value0);
+    put_output(1u, point, value1);
+    put_output(2u, point, value2);
+    put_output(3u, point, value3);
+    put_output(4u, point, value4);
+    put_output(5u, point, value5);
+    put_output(6u, point, value6);
+    put_output(7u, point, value7);
+    put_output(8u, point, value8);
+    put_output(9u, point, value9);
+    put_output(10u, point, value10);
+    put_output(11u, point, value11);
+    put_output(12u, point, value12);
+    put_output(13u, point, value13);
+    put_output(14u, point, value14);
+    put_output(15u, point, value15);
+    put_output(16u, point, value16);
+    put_output(17u, point, value17);
     put_output(18u, point, r_con);
     put_output(19u, point, z_con);
 }
