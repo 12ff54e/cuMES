@@ -275,8 +275,10 @@ Core WGSL exposes `f32` but not `f64`. The WebGPU preset therefore keeps
 `CUMES_USE_FLOAT=ON`, while the selected W7-X solver uses a double-single
 representation for its precision-critical path. Each logical value is the
 unevaluated sum of two binary32 words. Error-free sum/product kernels retain
-the low word, and atomic storage round trips prevent WGSL compilers from
-reassociating away the required rounding points.
+the low word, and workgroup-local atomic round trips prevent WGSL compilers
+from reassociating away the required rounding points. Every invocation owns a
+workgroup slot, so this keeps the strict rounding boundary without paying a
+device-memory transaction for each error-free-transform operation.
 
 CUDA Class A byte identity is not a WebGPU acceptance criterion. Ordinary
 operator cases retain their float CPU-reference tolerances; dedicated W7-X
@@ -286,6 +288,23 @@ the invariant norms. This supports the input's original `1e-12` tolerance,
 where scalar-f32 W7-X previously stalled near its float floor. Interactive
 axisymmetric solves intentionally remain scalar-f32 at their responsive
 `1e-5` tolerance.
+
+## Browser performance
+
+Profiling the `ns=99` W7-X hot loop on Chrome/Dawn D3D12 and an RTX 3060 Ti
+identified global atomic rounding barriers and the prescribed-current field
+finalization as the dominant shader costs. The field finalization now reduces
+current once per radial surface and finalizes its 1080 angular points in
+parallel. Strict double-single rounding slots now use workgroup memory in the
+inverse, geometry, magnetic, force, constraint, projection, decomposition, and
+descent shaders; the corresponding per-dispatch storage buffers were removed.
+
+In the same live `mapAsync` timing probe, throughput increased from about 3.78
+to 4.47 W7-X iterations/s (roughly 18%). The magnetic-field stage fell from
+54.6 ms to 18.3 ms and the toroidal inverse from 18.7 ms to 12.1 ms. Timings
+include each operator's queued copies, dispatch, and result mapping, so they
+also expose the next architectural bottleneck: intermediate fields still cross
+the Wasm/host boundary between adjacent operators.
 
 ## Backend boundary
 
@@ -310,9 +329,9 @@ The following are follow-on optimizations or optional backend expansions, not
 completion gates for the fixed-boundary WebGPU port:
 
 1. retain spectral/real-space fields on device across adjacent operators and
-   batch each device-only segment into one command submission (buffers and
-   pipelines are persistent today, but mapped host results still connect the
-   operator APIs);
+   batch each device-only segment into one command submission (pipelines are
+   cached today, but operator-local buffers and mapped host results still
+   connect the APIs);
 2. port the optional free-boundary/NESTOR dependency as a separate WebGPU
    project if browser free-boundary equilibria are required.
 

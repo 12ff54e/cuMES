@@ -290,7 +290,7 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "decomposition params");
-    wgpu::Buffer input_lo, radial_lo, rounding;
+    wgpu::Buffer input_lo, radial_lo;
     if (in.double_single) {
         input_lo =
             make_buffer(device, input_bytes,
@@ -300,9 +300,6 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
             make_buffer(device, radial_bytes,
                         wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                         "residual radial low");
-        rounding = make_buffer(device, n * sizeof(std::uint32_t),
-                               wgpu::BufferUsage::Storage,
-                               "residual decomposition rounding");
     }
     const auto& pipeline = detail::cached_compute_pipeline(
         device,
@@ -335,8 +332,6 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
             {nullptr, 4, input_lo, 0, input_bytes, nullptr, nullptr});
         entries.push_back(
             {nullptr, 5, radial_lo, 0, radial_bytes, nullptr, nullptr});
-        entries.push_back({nullptr, 6, rounding, 0, n * sizeof(std::uint32_t),
-                           nullptr, nullptr});
     }
     wgpu::BindGroupDescriptor bd{};
     bd.layout = layout;

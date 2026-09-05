@@ -4,7 +4,6 @@ struct Params {
 };
 struct FF { hi: f32, lo: f32, };
 struct Values { data: array<f32>, };
-struct AtomicValues { data: array<atomic<u32>>, };
 @group(0) @binding(0) var<storage, read> force_hi: Values;
 @group(0) @binding(1) var<storage, read> geometry: Values;
 @group(0) @binding(2) var<storage, read> constraint: Values;
@@ -16,11 +15,12 @@ struct AtomicValues { data: array<atomic<u32>>, };
 @group(0) @binding(7) var<storage, read> geometry_lo: Values;
 @group(0) @binding(8) var<storage, read> constraint_lo: Values;
 @group(0) @binding(9) var<storage, read> sqrt_s_f_lo: Values;
-@group(0) @binding(10) var<storage, read_write> rounding: AtomicValues;
+var<workgroup> rounding: array<atomic<u32>, 256>;
 
 fn rnd(value: f32, slot: u32) -> f32 {
-    atomicStore(&rounding.data[slot], bitcast<u32>(value));
-    return bitcast<f32>(atomicLoad(&rounding.data[slot]));
+    let local_slot = slot % 256u;
+    atomicStore(&rounding[local_slot], bitcast<u32>(value));
+    return bitcast<f32>(atomicLoad(&rounding[local_slot]));
 }
 fn qts(a: f32, b: f32, slot: u32) -> FF {
     let s = rnd(a + b, slot); let v = rnd(s - a, slot);

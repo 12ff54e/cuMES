@@ -4,7 +4,6 @@ struct Params {
 };
 struct FF { hi: f32, lo: f32, };
 struct Values { data: array<f32>, };
-struct AtomicValues { data: array<atomic<u32>>, };
 @group(0) @binding(0) var<storage, read> input_hi: Values;
 @group(0) @binding(1) var<storage, read> sqrt_hi: Values;
 // Six high planes followed by six low planes.
@@ -12,11 +11,12 @@ struct AtomicValues { data: array<atomic<u32>>, };
 @group(0) @binding(3) var<uniform> params: Params;
 @group(0) @binding(4) var<storage, read> input_lo: Values;
 @group(0) @binding(5) var<storage, read> sqrt_lo: Values;
-@group(0) @binding(6) var<storage, read_write> rounding: AtomicValues;
+var<workgroup> rounding: array<atomic<u32>, 256>;
 
 fn rnd(value: f32, slot: u32) -> f32 {
-    atomicStore(&rounding.data[slot], bitcast<u32>(value));
-    return bitcast<f32>(atomicLoad(&rounding.data[slot]));
+    let local_slot = slot % 256u;
+    atomicStore(&rounding[local_slot], bitcast<u32>(value));
+    return bitcast<f32>(atomicLoad(&rounding[local_slot]));
 }
 fn qts(a: f32, b: f32, slot: u32) -> FF {
     let s = rnd(a + b, slot); let v = rnd(s - a, slot);

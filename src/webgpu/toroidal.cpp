@@ -625,22 +625,15 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal state");
     wgpu::Buffer state_lo_buffer;
-    wgpu::Buffer rounding_buffer;
     wgpu::Buffer radial_scale_hi_buffer;
     wgpu::Buffer radial_scale_lo_buffer;
     std::vector<float> radial_scale_hi;
     std::vector<float> radial_scale_lo;
-    std::size_t rounding_bytes = 0;
     if (input.double_single) {
         state_lo_buffer = create_buffer(
             device, state_bytes,
             wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
             "cuMES double-single toroidal state low");
-        rounding_bytes =
-            std::max(intermediate_points, total_points) * sizeof(std::uint32_t);
-        rounding_buffer =
-            create_buffer(device, rounding_bytes, wgpu::BufferUsage::Storage,
-                          "cuMES double-single toroidal rounding barriers");
         radial_scale_hi.resize(input.ns);
         radial_scale_lo.resize(input.ns);
         for (int surface = 0; surface < input.ns; ++surface) {
@@ -735,8 +728,6 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     if (input.double_single) {
         toroidal_entries.push_back(
             {nullptr, 5, state_lo_buffer, 0, state_bytes, nullptr, nullptr});
-        toroidal_entries.push_back(
-            {nullptr, 6, rounding_buffer, 0, rounding_bytes, nullptr, nullptr});
         toroidal_entries.push_back({nullptr, 9, gpu_basis.low_buffer, 0,
                                     basis_bytes, nullptr, nullptr});
     }
@@ -756,8 +747,6 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
          nullptr},
     };
     if (input.double_single) {
-        poloidal_entries.push_back(
-            {nullptr, 6, rounding_buffer, 0, rounding_bytes, nullptr, nullptr});
         const std::size_t radial_scale_bytes =
             radial_scale_hi.size() * sizeof(float);
         poloidal_entries.push_back({nullptr, 7, radial_scale_hi_buffer, 0,
@@ -1018,20 +1007,12 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         create_buffer(device, sizeof(ShaderParams),
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                       "cuMES toroidal forward parameters");
-    wgpu::Buffer fields_low_buffer, rounding_buffer;
+    wgpu::Buffer fields_low_buffer;
     if (input.double_single) {
         fields_low_buffer = create_buffer(
             device, fields_bytes,
             wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
             "cuMES toroidal forces low");
-        const std::size_t invocation_count =
-            std::max(20 * static_cast<std::size_t>(input.ns) * theta_reduced *
-                         (input.ntor + 1),
-                     static_cast<std::size_t>(input.ns) * mnmax);
-        rounding_buffer =
-            create_buffer(device, invocation_count * sizeof(std::uint32_t),
-                          wgpu::BufferUsage::Storage,
-                          "cuMES toroidal forward double-single rounding");
     }
 
     const auto& toroidal_pipeline = detail::cached_compute_pipeline(
@@ -1078,9 +1059,6 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
             {nullptr, 5, fields_low_buffer, 0, fields_bytes, nullptr, nullptr});
         toroidal_entries.push_back({nullptr, 6, gpu_basis.low_buffer, 0,
                                     basis_bytes, nullptr, nullptr});
-        toroidal_entries.push_back({nullptr, 7, rounding_buffer, 0,
-                                    rounding_buffer.GetSize(), nullptr,
-                                    nullptr});
     }
     wgpu::BindGroupDescriptor toroidal_bind_descriptor{};
     toroidal_bind_descriptor.label = "cuMES toroidal forward first bindings";
@@ -1100,9 +1078,6 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
     if (input.double_single) {
         poloidal_entries.push_back({nullptr, 6, gpu_basis.low_buffer, 0,
                                     basis_bytes, nullptr, nullptr});
-        poloidal_entries.push_back({nullptr, 7, rounding_buffer, 0,
-                                    rounding_buffer.GetSize(), nullptr,
-                                    nullptr});
     }
     wgpu::BindGroupDescriptor poloidal_bind_descriptor{};
     poloidal_bind_descriptor.label = "cuMES toroidal forward second bindings";

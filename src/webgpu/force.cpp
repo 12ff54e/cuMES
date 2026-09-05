@@ -303,7 +303,7 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     auto pbuf = buffer(device, sizeof(ShaderParams),
                        wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                        "force params");
-    wgpu::Buffer glbuf, hlbuf, blbuf, rlbuf, roundbuf;
+    wgpu::Buffer glbuf, hlbuf, blbuf, rlbuf;
     if (in.double_single) {
         glbuf = buffer(device, gb,
                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
@@ -317,9 +317,6 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
         rlbuf = buffer(device, rb,
                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                        "force radial profiles low");
-        roundbuf =
-            buffer(device, nf * sizeof(std::uint32_t),
-                   wgpu::BufferUsage::Storage, "force double-single rounding");
     }
     const auto& pipeline = detail::cached_compute_pipeline(
         device, in.double_single ? "mhd-force-double-single" : "mhd-force",
@@ -359,8 +356,6 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
         entries.push_back({nullptr, 7, hlbuf, 0, hb, nullptr, nullptr});
         entries.push_back({nullptr, 8, blbuf, 0, bb, nullptr, nullptr});
         entries.push_back({nullptr, 9, rlbuf, 0, rb, nullptr, nullptr});
-        entries.push_back({nullptr, 10, roundbuf, 0, nf * sizeof(std::uint32_t),
-                           nullptr, nullptr});
     }
     wgpu::BindGroupDescriptor bd{};
     bd.layout = layout;

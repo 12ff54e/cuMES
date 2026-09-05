@@ -253,12 +253,6 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "descent params");
-    wgpu::Buffer rounding_buffer;
-    if (input.double_single) {
-        rounding_buffer = make_buffer(
-            device, points * sizeof(std::uint32_t), wgpu::BufferUsage::Storage,
-            "double-single descent rounding barriers");
-    }
     const char* pipeline_key = input.double_single
                                    ? "accelerated-descent-double-single"
                                    : "accelerated-descent";
@@ -299,10 +293,8 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
              {nullptr, 4, residual_buffer, 0, input_bytes, nullptr, nullptr},
              {nullptr, 5, output_buffer, 0, output_bytes, nullptr, nullptr},
              {nullptr, 6, params_buffer, 0, sizeof(params), nullptr, nullptr},
-             {nullptr, 7, rounding_buffer, 0, points * sizeof(std::uint32_t),
-              nullptr, nullptr},
-             {nullptr, 8, residual_lo_buffer, 0, input_bytes, nullptr,
-              nullptr}}};
+             {nullptr, 8, residual_lo_buffer, 0, input_bytes, nullptr, nullptr},
+             {}}};
     } else {
         entries = {
             {{nullptr, 0, state_buffer, 0, input_bytes, nullptr, nullptr},
@@ -317,7 +309,7 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
     }
     wgpu::BindGroupDescriptor bind_descriptor{};
     bind_descriptor.layout = layout;
-    bind_descriptor.entryCount = input.double_single ? 9 : 5;
+    bind_descriptor.entryCount = input.double_single ? 8 : 5;
     bind_descriptor.entries = entries.data();
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
     auto encoder = device.CreateCommandEncoder();

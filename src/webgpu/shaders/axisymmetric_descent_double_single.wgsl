@@ -9,7 +9,6 @@ struct Params {
     _padding0: f32,
 };
 struct Values { data: array<f32>, };
-struct AtomicValues { data: array<atomic<u32>>, };
 @group(0) @binding(0) var<storage, read> state_hi: Values;
 @group(0) @binding(1) var<storage, read> state_lo: Values;
 @group(0) @binding(2) var<storage, read> velocity_hi: Values;
@@ -18,15 +17,16 @@ struct AtomicValues { data: array<atomic<u32>>, };
 // state_hi, state_lo, velocity_hi, velocity_lo, each with 6*points values.
 @group(0) @binding(5) var<storage, read_write> output: Values;
 @group(0) @binding(6) var<uniform> params: Params;
-// One temporary per spectral point forces binary32 rounding at the boundaries
-// of error-free transforms. The u32 atomic round trip prevents WebGPU shader
-// compilers from reassociating the cancellation expressions.
-@group(0) @binding(7) var<storage, read_write> rounding: AtomicValues;
+// One workgroup-local temporary per invocation forces binary32 rounding at the
+// boundaries of error-free transforms. The u32 atomic round trip prevents
+// WebGPU shader compilers from reassociating the cancellation expressions.
+var<workgroup> rounding: array<atomic<u32>, 256>;
 @group(0) @binding(8) var<storage, read> residual_lo: Values;
 
 fn ff_strict_round(value: f32, slot: u32) -> f32 {
-    atomicStore(&rounding.data[slot], bitcast<u32>(value));
-    return bitcast<f32>(atomicLoad(&rounding.data[slot]));
+    let local_slot = slot % 256u;
+    atomicStore(&rounding[local_slot], bitcast<u32>(value));
+    return bitcast<f32>(atomicLoad(&rounding[local_slot]));
 }
 
 fn ff_strict_quick_two_sum(a: f32, b: f32, slot: u32) -> FF {

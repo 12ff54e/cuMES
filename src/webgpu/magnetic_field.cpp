@@ -471,8 +471,6 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     wgpu::Buffer geometry_lo_buffer;
     wgpu::Buffer base_lo_buffer;
     wgpu::Buffer profile_lo_buffer;
-    wgpu::Buffer rounding_buffer;
-    const std::size_t rounding_bytes = half_points * sizeof(std::uint32_t);
     if (input.double_single) {
         geometry_lo_buffer = create_buffer(
             device, geometry_bytes,
@@ -486,9 +484,6 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             device, profile_bytes,
             wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
             "cuMES magnetic profiles low");
-        rounding_buffer =
-            create_buffer(device, rounding_bytes, wgpu::BufferUsage::Storage,
-                          "cuMES double-single magnetic rounding barriers");
     }
     const auto result_buffer =
         create_buffer(device, result_bytes,
@@ -508,6 +503,9 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     const char* finalize_key = input.double_single
                                    ? "magnetic-field-double-single-finalize"
                                    : "magnetic-field-finalize-current";
+    const char* finalize_fields_key =
+        input.double_single ? "magnetic-field-double-single-finalize-fields"
+                            : nullptr;
     const char* pipeline_label =
         input.double_single ? "cuMES double-single magnetic field pipeline"
                             : "cuMES magnetic field pipeline";
@@ -519,6 +517,13 @@ void enqueue_magnetic_field(const wgpu::Device& device,
         device, pipeline_key, shader_text, pipeline_label);
     const auto& finalize_pipeline = detail::cached_compute_pipeline(
         device, finalize_key, shader_text, finalize_label, "finalize_current");
+    wgpu::ComputePipeline finalize_fields_pipeline;
+    if (input.double_single) {
+        finalize_fields_pipeline = detail::cached_compute_pipeline(
+            device, finalize_fields_key, shader_text,
+            "cuMES double-single prescribed-current field finalize pipeline",
+            "finalize_fields");
+    }
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(n_z_n_t),
                               static_cast<std::uint32_t>(input.ntheta),
@@ -559,8 +564,6 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             {nullptr, 6, base_lo_buffer, 0, base_bytes, nullptr, nullptr});
         entries.push_back({nullptr, 7, profile_lo_buffer, 0, profile_bytes,
                            nullptr, nullptr});
-        entries.push_back(
-            {nullptr, 8, rounding_buffer, 0, rounding_bytes, nullptr, nullptr});
     }
     wgpu::BindGroupDescriptor bind_group_descriptor{};
     bind_group_descriptor.label = "cuMES magnetic field bindings";
@@ -580,8 +583,6 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             {nullptr, 6, base_lo_buffer, 0, base_bytes, nullptr, nullptr});
         finalize_entries.push_back({nullptr, 7, profile_lo_buffer, 0,
                                     profile_bytes, nullptr, nullptr});
-        finalize_entries.push_back(
-            {nullptr, 8, rounding_buffer, 0, rounding_bytes, nullptr, nullptr});
     }
     bind_group_descriptor.label = "cuMES prescribed-current finalize bindings";
     bind_group_descriptor.layout = finalize_layout;
@@ -589,19 +590,39 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     bind_group_descriptor.entries = finalize_entries.data();
     const auto finalize_bind_group =
         device.CreateBindGroup(&bind_group_descriptor);
+    wgpu::BindGroup finalize_fields_bind_group;
+    if (input.double_single) {
+        bind_group_descriptor.label =
+            "cuMES prescribed-current field finalize bindings";
+        bind_group_descriptor.layout =
+            finalize_fields_pipeline.GetBindGroupLayout(0);
+        finalize_fields_bind_group =
+            device.CreateBindGroup(&bind_group_descriptor);
+    }
     const auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
-    const auto pass = encoder.BeginComputePass(&pass_descriptor);
-    pass.SetPipeline(pipeline);
-    pass.SetBindGroup(0, bind_group);
-    pass.DispatchWorkgroups(
+    const auto field_pass = encoder.BeginComputePass(&pass_descriptor);
+    field_pass.SetPipeline(pipeline);
+    field_pass.SetBindGroup(0, bind_group);
+    field_pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(half_points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
-    pass.SetPipeline(finalize_pipeline);
-    pass.SetBindGroup(0, finalize_bind_group);
-    pass.DispatchWorkgroups((static_cast<std::uint32_t>(half_surfaces) + 63U) /
-                            64U);
-    pass.End();
+    field_pass.End();
+    const auto current_pass = encoder.BeginComputePass(&pass_descriptor);
+    current_pass.SetPipeline(finalize_pipeline);
+    current_pass.SetBindGroup(0, finalize_bind_group);
+    current_pass.DispatchWorkgroups(
+        (static_cast<std::uint32_t>(half_surfaces) + 63U) / 64U);
+    current_pass.End();
+    if (input.double_single) {
+        const auto finalize_pass = encoder.BeginComputePass(&pass_descriptor);
+        finalize_pass.SetPipeline(finalize_fields_pipeline);
+        finalize_pass.SetBindGroup(0, finalize_fields_bind_group);
+        finalize_pass.DispatchWorkgroups(
+            (static_cast<std::uint32_t>(half_points) + WORKGROUP_SIZE - 1) /
+            WORKGROUP_SIZE);
+        finalize_pass.End();
+    }
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);
     const auto commands = encoder.Finish();

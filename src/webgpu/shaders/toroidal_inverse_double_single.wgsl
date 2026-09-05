@@ -10,7 +10,6 @@ struct Params {
 };
 
 struct Values { data: array<f32>, };
-struct AtomicValues { data: array<atomic<u32>>, };
 
 @group(0) @binding(0) var<storage, read> state_hi: Values;
 @group(0) @binding(1) var<storage, read> basis: Values;
@@ -20,14 +19,15 @@ struct AtomicValues { data: array<atomic<u32>>, };
 // Twelve high planes followed by twelve low planes.
 @group(0) @binding(4) var<storage, read_write> intermediate: Values;
 @group(0) @binding(5) var<storage, read> state_lo: Values;
-@group(0) @binding(6) var<storage, read_write> rounding: AtomicValues;
+var<workgroup> rounding: array<atomic<u32>, 128>;
 @group(0) @binding(7) var<storage, read> radial_scale_hi: Values;
 @group(0) @binding(8) var<storage, read> radial_scale_lo: Values;
 @group(0) @binding(9) var<storage, read> basis_lo: Values;
 
 fn ff_strict_round(value: f32, slot: u32) -> f32 {
-    atomicStore(&rounding.data[slot], bitcast<u32>(value));
-    return bitcast<f32>(atomicLoad(&rounding.data[slot]));
+    let local_slot = slot % 128u;
+    atomicStore(&rounding[local_slot], bitcast<u32>(value));
+    return bitcast<f32>(atomicLoad(&rounding[local_slot]));
 }
 
 fn ff_strict_quick_two_sum(a: f32, b: f32, slot: u32) -> FF {

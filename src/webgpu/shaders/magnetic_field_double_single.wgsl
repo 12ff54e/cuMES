@@ -15,7 +15,6 @@ struct Params {
 
 struct FF { hi: f32, lo: f32, };
 struct Values { data: array<f32>, };
-struct AtomicValues { data: array<atomic<u32>>, };
 @group(0) @binding(0) var<storage, read> geometry_hi: Values;
 @group(0) @binding(1) var<storage, read> base_hi: Values;
 @group(0) @binding(2) var<storage, read> profiles_hi: Values;
@@ -25,11 +24,12 @@ struct AtomicValues { data: array<atomic<u32>>, };
 @group(0) @binding(5) var<storage, read> geometry_lo: Values;
 @group(0) @binding(6) var<storage, read> base_lo: Values;
 @group(0) @binding(7) var<storage, read> profiles_lo: Values;
-@group(0) @binding(8) var<storage, read_write> rounding: AtomicValues;
+var<workgroup> rounding: array<atomic<u32>, 256>;
 
 fn ff_strict_round(value: f32, slot: u32) -> f32 {
-    atomicStore(&rounding.data[slot], bitcast<u32>(value));
-    return bitcast<f32>(atomicLoad(&rounding.data[slot]));
+    let local_slot = slot % 256u;
+    atomicStore(&rounding[local_slot], bitcast<u32>(value));
+    return bitcast<f32>(atomicLoad(&rounding[local_slot]));
 }
 fn ff_qts(a: f32, b: f32, slot: u32) -> FF {
     let sum = ff_strict_round(a + b, slot);
@@ -210,22 +210,39 @@ fn finalize_current(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let phip_h = profile(phip_h_offset + surface, surface);
     if (phip_h.hi != 0.0) { iota = ff_div(chip, phip_h, surface); }
     store_index(chip_result, chip); store_index(iota_result, iota);
-    for (var angular = 0u; angular < params.n_z_n_t; angular++) {
-        let point = base_point + angular;
-        let gsqrt = half(6u, point, surface);
-        var bsupu = field_at(0u, point, surface);
-        let bsupv = field_at(1u, point, surface);
-        if (abs(gsqrt.hi) > 1.0e-30 && abs(gsqrt.hi) <= 3.402823e38) {
-            bsupu = ff_add(bsupu, ff_div(chip, gsqrt, surface), surface);
-        }
-        let bsubu = ff_add(ff_mul(half(7u, point, surface), bsupu, surface),
-                           ff_mul(half(8u, point, surface), bsupv, surface), surface);
-        let bsubv = ff_add(ff_mul(half(8u, point, surface), bsupu, surface),
-                           ff_mul(half(9u, point, surface), bsupv, surface), surface);
-        let pressure = ff_add(ff_mul_f32(ff_add(
-            ff_mul(bsupu, bsubu, surface), ff_mul(bsupv, bsubv, surface), surface),
-            0.5, surface), profile(pres_offset + surface, surface), surface);
-        store(0u, point, bsupu); store(2u, point, bsubu);
-        store(3u, point, bsubv); store(4u, point, pressure);
+}
+
+// The current integral is one serial reduction per surface. Once chip is
+// known, finalize every angular point independently instead of serializing all
+// 1080 W7-X points inside that surface invocation.
+@compute @workgroup_size(256)
+fn finalize_fields(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let point = invocation.x;
+    if (point >= params.half_points || params.prescribed_current == 0u) {
+        return;
     }
+    let surface = point / params.n_z_n_t;
+    let half_count = params.ns - 1u;
+    let field_values = 5u * params.half_points;
+    let chip_result = field_values + surface;
+    let pres_offset = half_count + params.ns + half_count;
+    let chip = FF(field.data[chip_result],
+                  field.data[result_values() + chip_result]);
+    let gsqrt = half(6u, point, point);
+    var bsupu = field_at(0u, point, point);
+    let bsupv = field_at(1u, point, point);
+    if (abs(gsqrt.hi) > 1.0e-30 && abs(gsqrt.hi) <= 3.402823e38) {
+        bsupu = ff_add(bsupu, ff_div(chip, gsqrt, point), point);
+    }
+    let bsubu = ff_add(ff_mul(half(7u, point, point), bsupu, point),
+                       ff_mul(half(8u, point, point), bsupv, point), point);
+    let bsubv = ff_add(ff_mul(half(8u, point, point), bsupu, point),
+                       ff_mul(half(9u, point, point), bsupv, point), point);
+    let pressure = ff_add(ff_mul_f32(ff_add(
+        ff_mul(bsupu, bsubu, point), ff_mul(bsupv, bsubv, point), point),
+        0.5, point), profile(pres_offset + surface, point), point);
+    store(0u, point, bsupu);
+    store(2u, point, bsubu);
+    store(3u, point, bsubv);
+    store(4u, point, pressure);
 }

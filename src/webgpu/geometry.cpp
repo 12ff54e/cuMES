@@ -412,8 +412,6 @@ void enqueue_base_geometry(const wgpu::Device& device,
                       "cuMES geometry radial profiles");
     wgpu::Buffer input_lo_buffer;
     wgpu::Buffer radial_lo_buffer;
-    wgpu::Buffer rounding_buffer;
-    const std::size_t rounding_bytes = half_points * sizeof(std::uint32_t);
     if (input.double_single) {
         input_lo_buffer = create_buffer(
             device, input_bytes,
@@ -423,9 +421,6 @@ void enqueue_base_geometry(const wgpu::Device& device,
             device, radial_bytes,
             wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
             "cuMES geometry radial profiles low");
-        rounding_buffer =
-            create_buffer(device, rounding_bytes, wgpu::BufferUsage::Storage,
-                          "cuMES double-single geometry rounding barriers");
     }
     const wgpu::Buffer result_buffer =
         create_buffer(device, result_bytes,
@@ -479,8 +474,6 @@ void enqueue_base_geometry(const wgpu::Device& device,
             {nullptr, 4, input_lo_buffer, 0, input_bytes, nullptr, nullptr});
         entries.push_back(
             {nullptr, 5, radial_lo_buffer, 0, radial_bytes, nullptr, nullptr});
-        entries.push_back(
-            {nullptr, 6, rounding_buffer, 0, rounding_bytes, nullptr, nullptr});
     }
     wgpu::BindGroupDescriptor bind_group_descriptor{};
     bind_group_descriptor.label = "cuMES base geometry bindings";

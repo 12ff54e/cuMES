@@ -325,8 +325,7 @@ void enqueue_head(const wgpu::Device& device,
         make_buffer(device, sizeof(HeadParams),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "constraint head params");
-    wgpu::Buffer geometry_low_buffer, constraint_low_buffer, radial_low_buffer,
-        rounding_buffer;
+    wgpu::Buffer geometry_low_buffer, constraint_low_buffer, radial_low_buffer;
     if (in.double_single) {
         geometry_low_buffer =
             make_buffer(device, geometry_bytes,
@@ -340,9 +339,6 @@ void enqueue_head(const wgpu::Device& device,
             make_buffer(device, radial_bytes,
                         wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                         "constraint radial data low");
-        rounding_buffer = make_buffer(device, points * sizeof(std::uint32_t),
-                                      wgpu::BufferUsage::Storage,
-                                      "constraint head double-single rounding");
     }
     const auto& pipeline = detail::cached_compute_pipeline(
         device,
@@ -388,8 +384,6 @@ void enqueue_head(const wgpu::Device& device,
                            constraint_bytes, nullptr, nullptr});
         entries.push_back(
             {nullptr, 7, radial_low_buffer, 0, radial_bytes, nullptr, nullptr});
-        entries.push_back({nullptr, 8, rounding_buffer, 0,
-                           points * sizeof(std::uint32_t), nullptr, nullptr});
     }
     wgpu::BindGroupDescriptor bind_descriptor{};
     bind_descriptor.layout = layout;
@@ -542,7 +536,7 @@ void enqueue_tail(const wgpu::Device& device,
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                     "constraint tail params");
     wgpu::Buffer force_low_buffer, geometry_low_buffer, constraint_low_buffer,
-        radial_low_buffer, rounding_buffer;
+        radial_low_buffer;
     if (in.double_single) {
         force_low_buffer =
             make_buffer(device, force_bytes,
@@ -560,9 +554,6 @@ void enqueue_tail(const wgpu::Device& device,
             make_buffer(device, radial_bytes,
                         wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                         "constraint sqrt s low");
-        rounding_buffer = make_buffer(device, points * sizeof(std::uint32_t),
-                                      wgpu::BufferUsage::Storage,
-                                      "constraint tail double-single rounding");
     }
     const auto& pipeline = detail::cached_compute_pipeline(
         device,
@@ -611,8 +602,6 @@ void enqueue_tail(const wgpu::Device& device,
                            constraint_bytes, nullptr, nullptr});
         entries.push_back(
             {nullptr, 9, radial_low_buffer, 0, radial_bytes, nullptr, nullptr});
-        entries.push_back({nullptr, 10, rounding_buffer, 0,
-                           points * sizeof(std::uint32_t), nullptr, nullptr});
     }
     wgpu::BindGroupDescriptor bind_descriptor{};
     bind_descriptor.layout = layout;
