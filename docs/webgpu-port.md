@@ -801,6 +801,85 @@ independent direct sample is `../tmp/w7x-deep-direct-*`. The timing summaries
 use `-summary.json`; `-cpu-symbolized.cpuprofile` can be imported into Chrome
 DevTools. These local artifacts are not required by the application.
 
+### Host data-path optimization after profiling (2026-09-06)
+
+`30418b8` caches immutable embedded shader text (including paired-precision
+prelude assembly) and populates constraint input buffers plane by plane from
+their actual host/device owners. Previously, large zero-filled placeholders
+were uploaded and then immediately overwritten with device copies. Removing
+those transfers saves **5,987,520 upload bytes per ns=99 iteration**. The
+f32 bandpass output's low plane is explicitly cleared on the GPU; no shader
+arithmetic or reduction order changes.
+
+`31e0d69` skips duplicate host input construction while consuming already
+collected iteration results. The primary inverse geometry, base geometry, and
+magnetic arrays remain available for finite/Jacobian checks, force
+normalization, and final output. The original validation/controller callback
+chain remains in order. Accepted constraint arrays are moved into their host
+owner rather than copied. Sequential/conformance paths still construct their
+ordinary inputs, and rejected-pass/preconditioner ownership is unchanged.
+
+An uninstrumented A/B/B/A comparison used the retained `0c19912` executable
+and the optimized executable in the same foreground Chrome/RTX 3060 Ti
+session. Each launch warmed 250 controller records and measured the same
+next 256 intervals. No timestamp/API/CPU profiling hooks were installed in
+these four runs; `trace=1` was enabled identically for timing and equivalence.
+
+| Run | Before, ms/iteration | Optimized, ms/iteration |
+| --- | ---: | ---: |
+| First sample | 49.899 | 35.111 |
+| Second sample | 48.895 | 35.610 |
+| **Mean** | **49.397** | **35.361** |
+
+This is **28.4% less elapsed time per iteration** (1.40x throughput). Every
+sampled controller record, including state fingerprints, matched between
+builds. `scripts/webgpu_compare_builds.mjs` reproduces this probe, saves its
+records, and closes only its own test tab:
+
+```sh
+node scripts/webgpu_compare_builds.mjs OLD_BUILD_URL NEW_BUILD_URL \
+  ../tmp/w7x-opt-abba.json
+```
+
+The full optimized direct solve with a short GPU sample and a separate CPU
+sample completed in **99.7 s**, retaining 2812 effective iterations and the
+entire saved 2817-record trajectory. Its final residuals remain
+`(9.985159710508547e-13, 2.1300946362442957e-13, 1.9552385266042975e-13)`.
+The 11,809,091-byte output file before/after the host-copy change was
+byte-identical, including derived fields (SHA-256
+`435743355022d3919e8ef1db33240c2cc2e52c16835d017c7724f6a0e749ed4d`;
+these captures had identical build-provenance strings).
+
+The optimized FFT solve completed in **113.8 s** without profiling hooks,
+retaining 3091 effective iterations, all 3096 saved controller records, and
+final residuals
+`(9.987756002533206e-13, 2.0790797273186487e-13, 1.725519314229383e-13)`.
+The full trace matched the previously qualified FFT trajectory exactly.
+
+The warmed instrumented sample measured **4.37 MB uploads/iteration**, down
+from 10.36 MB, while readback remains about 36.90 MB. Vector assignment/
+insertion self time fell from 29.49% to 15.53% of a separate 10-second CPU
+sample; `writeBuffer` self time fell from 11.94% to 4.69%. Shader-source I/O
+no longer appeared in the warmed CPU sample. These percentages include idle
+time and use separate sampling windows; use the A/B/B/A timings above for the
+performance claim. Unchanged shader execution times varied substantially
+between captures, so the earlier standalone profile times are not substituted
+for a contemporaneous baseline. The longer map wait in the optimized sample
+does not imply a regression: the CPU reaches its one fence sooner.
+
+The native shader-cache test checks exact text/prelude assembly, cache object
+identity, and failed-load retry. The full Chrome conformance suite with FFT
+enabled passed, including the paired W7-X slice and the 327-iteration Solovev
+regression. The browser artifact CTest gate passed as well. Captures are saved
+under `../tmp/w7x-opt-transfer-cache-*`, `../tmp/w7x-opt-host-copies-*`,
+`../tmp/w7x-opt-abba.json`, `../tmp/w7x-opt-fft-*`, and
+`../tmp/w7x-opt-conformance.json`.
+
+Further work remains: reducing full-field readback, retaining persistent
+constraint/descent data on the device, and accelerating the serial current
+integral. This change does not claim full residency or change paired
+arithmetic to ordinary f32.
+
 The WebGPU implementation lives under these paths:
 
 ```text

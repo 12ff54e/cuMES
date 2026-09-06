@@ -96,8 +96,11 @@ Converged runs expose both a poloidal cut and an interactive 3-D flux-surface
 mesh reconstructed in the frontend from the solver's six Fourier parity
 families; drag to orbit and use the wheel to zoom.
 Resident 3-D solves batch iteration reads into one mapping; on the tested
-Chrome/RTX 3060 Ti, single-grid W7-X fell from 260 s to 141 s with the same
-2812 iterations and `1e-12` convergence. See the [WebGPU measurements](docs/webgpu-port.md#one-readback-mapping-per-production-3-d-iteration).
+Chrome/RTX 3060 Ti, batching reduced single-grid W7-X from 260 s to 141 s;
+subsequent host-copy/upload optimization completed a profiled run in 99.7 s,
+retaining 2812 iterations and `1e-12` convergence. An alternating old/new
+benchmark measured a further 28.4% reduction in iteration time. See the
+[WebGPU measurements](docs/webgpu-port.md#host-data-path-optimization-after-profiling-2026-09-06).
 
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
