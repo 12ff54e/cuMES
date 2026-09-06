@@ -1,6 +1,8 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_NUMERICS_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_NUMERICS_HPP_
 
+#include "cumes/webgpu/device_fields.hpp"
+
 #include <array>
 #include <functional>
 #include <string>
@@ -11,6 +13,7 @@
 namespace cumes::webgpu {
 
 struct ResidualDecompositionCase {
+    DeviceFields device_residual;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -24,6 +27,9 @@ struct ResidualDecompositionCase {
 };
 
 struct ResidualDecompositionResult {
+    // Original high-word checks deferred from a resident forward projection.
+    bool source_finite = true;
+    bool source_nonzero = true;
     std::vector<float> residual;
     std::vector<float> residual_lo;
     std::array<double, 3> raw_norm{};

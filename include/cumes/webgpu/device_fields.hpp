@@ -28,6 +28,25 @@ inline bool field_shape(const std::vector<float>& host,
 // A device-to-device copy also handles unaligned sub-plane offsets, which
 // cannot be used directly as storage bindings on all WebGPU implementations.
 inline void transfer_fields(const wgpu::Device& device,
+                            const wgpu::CommandEncoder& encoder,
+                            const wgpu::Buffer& destination,
+                            const std::vector<float>& host,
+                            const DeviceFields& source,
+                            bool low = false) {
+    if (!source) {
+        device.GetQueue().WriteBuffer(destination, 0, host.data(),
+                                      host.size() * sizeof(float));
+        return;
+    }
+    if (source.values * sizeof(float) < destination.GetSize()) {
+        encoder.ClearBuffer(destination);
+    }
+    encoder.CopyBufferToBuffer(source.buffer,
+                               low ? source.low_offset : source.high_offset,
+                               destination, 0, source.values * sizeof(float));
+}
+
+inline void transfer_fields(const wgpu::Device& device,
                             const wgpu::Buffer& destination,
                             const std::vector<float>& host,
                             const DeviceFields& source,
@@ -38,12 +57,7 @@ inline void transfer_fields(const wgpu::Device& device,
         return;
     }
     const auto encoder = device.CreateCommandEncoder();
-    if (source.values * sizeof(float) < destination.GetSize()) {
-        encoder.ClearBuffer(destination);
-    }
-    encoder.CopyBufferToBuffer(source.buffer,
-                               low ? source.low_offset : source.high_offset,
-                               destination, 0, source.values * sizeof(float));
+    transfer_fields(device, encoder, destination, host, source, low);
     const auto commands = encoder.Finish();
     device.GetQueue().Submit(1, &commands);
 }

@@ -49,6 +49,7 @@ int requested_generic_fft();
 int requested_canonical_zeta();
 int requested_solver_trace();
 int requested_compare_fft();
+int requested_spectral_fences();
 void publish_browser_diagnostic(const char* json);
 int requested_app_mode();
 int requested_app_run();
@@ -1211,7 +1212,83 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  complete 3-D preconditioner: PASS "
                     "(max scaled |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
-                self->run_w7x_initialization();
+                self->run_resident_residual_tests();
+            });
+    }
+
+    void run_resident_residual_tests(int variant = 0) {
+        if (variant == 4) {
+            std::printf(
+                "  resident spectral handoff (f32, paired, zero, NaN): PASS\n");
+            run_w7x_initialization();
+            return;
+        }
+        cumes::webgpu::ResidualDecompositionCase input;
+        input.ns = 3;
+        input.mpol = 2;
+        input.ntor = 1;
+        input.double_single = variant != 0;
+        input.sqrt_s_f = {0.0F, 0.5F, 1.0F};
+        input.sqrt_s_f_lo.assign(3, 0.0F);
+        input.residual.resize(72);
+        input.residual_lo.assign(72, 0.0F);
+        for (std::size_t i = 0; i < input.residual.size(); ++i) {
+            input.residual[i] = variant == 2 ? 0.0F : 0.125F * (int(i % 9) - 4);
+            if (variant == 1)
+                input.residual_lo[i] = 1.0e-10F * (int(i % 7) - 3);
+        }
+        if (variant == 3)
+            input.residual[0] = std::numeric_limits<float>::quiet_NaN();
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_residual_decomposition(
+            device_, input,
+            [self, input, variant](
+                std::string error,
+                cumes::webgpu::ResidualDecompositionResult expected) mutable {
+                if (!error.empty()) {
+                    self->finish(false, error);
+                    return;
+                }
+                const auto count = input.residual.size();
+                // Non-storage-aligned high/low offsets exercise the copy path.
+                std::vector<float> storage(7 + 2 * count, 47.0F);
+                std::copy(input.residual.begin(), input.residual.end(),
+                          storage.begin() + 4);
+                std::copy(input.residual_lo.begin(), input.residual_lo.end(),
+                          storage.begin() + 7 + count);
+                wgpu::BufferDescriptor descriptor{};
+                descriptor.size = storage.size() * sizeof(float);
+                descriptor.usage =
+                    wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc;
+                const auto buffer = self->device_.CreateBuffer(&descriptor);
+                self->device_.GetQueue().WriteBuffer(buffer, 0, storage.data(),
+                                                     descriptor.size);
+                input.device_residual = {buffer, count, 4 * sizeof(float),
+                                         (7 + count) * sizeof(float)};
+                input.residual.clear();
+                input.residual_lo.clear();
+                cumes::webgpu::enqueue_residual_decomposition(
+                    self->device_, input,
+                    [self, buffer, expected = std::move(expected), variant](
+                        std::string error,
+                        cumes::webgpu::ResidualDecompositionResult actual) {
+                        const bool equal =
+                            variant == 3 ||
+                            (actual.residual == expected.residual &&
+                             actual.residual_lo == expected.residual_lo &&
+                             actual.raw_norm == expected.raw_norm);
+                        buffer.Destroy();
+                        if (!error.empty() || !equal ||
+                            actual.source_finite != (variant != 3) ||
+                            actual.source_nonzero != (variant != 2)) {
+                            self->finish(
+                                false,
+                                "resident residual/validation mismatch: " +
+                                    error);
+                            return;
+                        }
+                        self->run_resident_residual_tests(variant + 1);
+                    });
             });
     }
 
@@ -2575,6 +2652,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             solver_toroidal_forward_case_.ns = initialized_stage_.ns;
             solver_toroidal_forward_case_.device_fields = device_force_fields_;
             solver_toroidal_forward_case_.use_fft = requested_direct_dft() == 0;
+            solver_toroidal_forward_case_.readback = !resident_spectral_path();
             solver_toroidal_forward_case_.optimized_fft =
                 !requested_generic_fft();
             solver_toroidal_forward_case_.canonical_zeta =
@@ -2619,6 +2697,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     }
                     self->stage_spectral_residual_lo_ =
                         std::move(actual.residual_lo);
+                    self->residual_case_.device_residual =
+                        actual.device_residual;
+                    if (actual.device_residual) {
+                        self->run_residual_decomposition({});
+                        return;
+                    }
                     self->finish_stage_forward(
                         std::move(actual.residual),
                         self->production_solve_
@@ -2694,6 +2778,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_residual_decomposition(std::vector<float> residual) {
+        if (!resident_spectral_path()) residual_case_.device_residual = {};
         residual_case_.ns = initialized_stage_.ns;
         residual_case_.mpol = initialized_stage_.mpol;
         residual_case_.ntor = initialized_stage_.ntor;
@@ -2711,6 +2796,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                    cumes::webgpu::ResidualDecompositionResult actual) {
                 if (!error.empty()) {
                     self->finish(false, std::move(error));
+                    return;
+                }
+                if (!actual.source_finite || !actual.source_nonzero) {
+                    self->finish(false,
+                                 "stage forward residual is nonfinite or zero");
                     return;
                 }
                 const auto expected =
@@ -3199,6 +3289,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 device_constraint_fields_;
             constraint_toroidal_forward_case_.use_fft =
                 requested_direct_dft() == 0;
+            constraint_toroidal_forward_case_.readback =
+                !resident_spectral_path();
             constraint_toroidal_forward_case_.optimized_fft =
                 !requested_generic_fft();
             constraint_toroidal_forward_case_.canonical_zeta =
@@ -3225,6 +3317,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     }
                     self->constraint_spectral_residual_lo_ =
                         std::move(actual.residual_lo);
+                    self->constraint_residual_case_.device_residual =
+                        actual.device_residual;
+                    if (actual.device_residual) {
+                        self->run_constraint_residual_decomposition({});
+                        return;
+                    }
                     self->finish_constraint_forward(
                         std::move(actual.residual),
                         self->production_solve_
@@ -3290,6 +3388,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_constraint_residual_decomposition(std::vector<float> residual) {
+        if (!resident_spectral_path())
+            constraint_residual_case_.device_residual = {};
         constraint_residual_case_.ns = initialized_stage_.ns;
         constraint_residual_case_.mpol = initialized_stage_.mpol;
         constraint_residual_case_.ntor = initialized_stage_.ntor;
@@ -3336,9 +3436,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 if (self->production_solve_ &&
-                    !std::all_of(
-                        actual.residual.begin(), actual.residual.end(),
-                        [](float value) { return std::isfinite(value); })) {
+                    (!actual.source_finite ||
+                     !std::all_of(
+                         actual.residual.begin(), actual.residual.end(),
+                         [](float value) { return std::isfinite(value); }))) {
                     self->finish(false, "constrained residual is nonfinite");
                     return;
                 }
@@ -4109,6 +4210,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     bool resident_path() const {
         return initialized_stage_.ntor > 0 &&
                requested_reference_transfers() == 0;
+    }
+    bool resident_spectral_path() const {
+        return production_solve_ && resident_path() &&
+               !requested_spectral_fences() && !requested_compare_fft();
     }
     cumes::webgpu::DeviceFields device_geometry_, device_base_geometry_,
         device_magnetic_field_, device_force_fields_, device_constraint_fields_;

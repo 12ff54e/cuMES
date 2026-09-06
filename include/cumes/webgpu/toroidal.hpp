@@ -50,6 +50,7 @@ struct ToroidalForwardCase {
     bool double_single = false;
     bool use_fft = true;
     bool optimized_fft = true;
+    bool readback = true;
     // Diagnostic/reference option: split double-precision zeta roots directly.
     // The poloidal basis and inverse transform remain unchanged.
     bool canonical_zeta = false;
@@ -61,6 +62,7 @@ struct ToroidalForwardCase {
 };
 
 struct ToroidalForwardResult {
+    DeviceFields device_residual;
     std::vector<float> residual;
     std::vector<float> residual_lo;
 };

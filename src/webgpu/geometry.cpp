@@ -454,11 +454,12 @@ void enqueue_base_geometry(const wgpu::Device& device,
                               delta_s.lo,
                               {0, 0}};
     const wgpu::Queue queue = device.GetQueue();
-    transfer_fields(device, input_buffer, input.geometry,
+    const auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, input_buffer, input.geometry,
                     input.device_geometry);
     queue.WriteBuffer(radial_buffer, 0, radial.data(), radial_bytes);
     if (input.double_single) {
-        transfer_fields(device, input_lo_buffer, input.geometry_lo,
+        transfer_fields(device, encoder, input_lo_buffer, input.geometry_lo,
                         input.device_geometry, true);
         queue.WriteBuffer(radial_lo_buffer, 0, radial_lo.data(), radial_bytes);
     }
@@ -483,7 +484,6 @@ void enqueue_base_geometry(const wgpu::Device& device,
     bind_group_descriptor.entries = entries.data();
     const wgpu::BindGroup bind_group =
         device.CreateBindGroup(&bind_group_descriptor);
-    const wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     const wgpu::ComputePassEncoder pass =
         encoder.BeginComputePass(&pass_descriptor);

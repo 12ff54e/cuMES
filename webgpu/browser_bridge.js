@@ -58,6 +58,9 @@ mergeInto(LibraryManager.library, {
   requested_compare_fft: function() {
     return new URLSearchParams(window.location.search).get('compare_fft') === '1';
   },
+  requested_spectral_fences: function() {
+    return new URLSearchParams(window.location.search).get('fences') === '1';
+  },
   publish_browser_diagnostic__deps: ['$UTF8ToString'],
   publish_browser_diagnostic: function(json) {
     (window.cumesDiagnostics ||= []).push({milliseconds: performance.now(),

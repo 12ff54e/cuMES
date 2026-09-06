@@ -10,6 +10,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <span>
 #include <sstream>
 #include <utility>
 
@@ -28,11 +29,12 @@ std::string validate(const ResidualDecompositionCase& in) {
         static_cast<std::size_t>(in.mpol) * (in.ntor + 1);
     const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
     if (n > std::numeric_limits<std::uint32_t>::max() ||
-        in.residual.size() != 6 * n ||
+        !field_shape(in.residual, in.device_residual, 6 * n) ||
         in.sqrt_s_f.size() != static_cast<std::size_t>(in.ns))
         return "residual decomposition input shape mismatch";
-    if (in.double_single && (in.residual_lo.size() != in.residual.size() ||
-                             in.sqrt_s_f_lo.size() != in.sqrt_s_f.size()))
+    if (in.double_single &&
+        (!field_shape(in.residual_lo, in.device_residual, 6 * n) ||
+         in.sqrt_s_f_lo.size() != in.sqrt_s_f.size()))
         return "double-single residual decomposition input shape mismatch";
     return {};
 }
@@ -95,6 +97,7 @@ struct Dispatch {
     int ns = 0, mode_count = 0;
     bool include_edge = false;
     bool double_single = false;
+    bool source_check = false;
 };
 }  // namespace
 
@@ -267,8 +270,10 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
     }
     const int mode_count = in.mpol * (in.ntor + 1);
     const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
-    const auto input_bytes = in.residual.size() * sizeof(float);
+    const auto input_bytes = 6 * n * sizeof(float);
     const auto output_bytes = input_bytes * (in.double_single ? 2 : 1);
+    const auto readback_bytes =
+        output_bytes + (in.device_residual ? input_bytes : 0);
     const auto radial_bytes = in.sqrt_s_f.size() * sizeof(float);
     auto input =
         make_buffer(device, input_bytes,
@@ -283,7 +288,7 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                     "decomposed residual");
     auto readback =
-        make_buffer(device, output_bytes,
+        make_buffer(device, readback_bytes,
                     wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
                     "decomposed readback");
     auto uniform =
@@ -314,10 +319,12 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
                   in.zero_m1_z ? 1U : 0U,
                   {0, 0, 0, 0}};
     auto queue = device.GetQueue();
-    queue.WriteBuffer(input, 0, in.residual.data(), input_bytes);
+    auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, input, in.residual, in.device_residual);
     queue.WriteBuffer(radial, 0, in.sqrt_s_f.data(), radial_bytes);
     if (in.double_single) {
-        queue.WriteBuffer(input_lo, 0, in.residual_lo.data(), input_bytes);
+        transfer_fields(device, encoder, input_lo, in.residual_lo,
+                        in.device_residual, true);
         queue.WriteBuffer(radial_lo, 0, in.sqrt_s_f_lo.data(), radial_bytes);
     }
     queue.WriteBuffer(uniform, 0, &params, sizeof(params));
@@ -338,7 +345,6 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
     bd.entryCount = entries.size();
     bd.entries = entries.data();
     auto group = device.CreateBindGroup(&bd);
-    auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pdesc{};
     auto pass = encoder.BeginComputePass(&pdesc);
     pass.SetPipeline(pipeline);
@@ -347,20 +353,25 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
         (static_cast<std::uint32_t>(n) + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
     pass.End();
     encoder.CopyBufferToBuffer(output, 0, readback, 0, output_bytes);
+    if (in.device_residual)
+        encoder.CopyBufferToBuffer(in.device_residual.buffer,
+                                   in.device_residual.high_offset, readback,
+                                   output_bytes, input_bytes);
     auto commands = encoder.Finish();
     queue.Submit(1, &commands);
     auto d = std::make_shared<Dispatch>();
     d->callback = std::move(callback);
     d->output = output;
     d->readback = readback;
-    d->count = in.residual.size();
-    d->bytes = output_bytes;
+    d->count = 6 * n;
+    d->bytes = readback_bytes;
+    d->source_check = static_cast<bool>(in.device_residual);
     d->ns = in.ns;
     d->mode_count = mode_count;
     d->include_edge = in.include_edge_rz;
     d->double_single = in.double_single;
     readback.MapAsync(
-        wgpu::MapMode::Read, 0, output_bytes,
+        wgpu::MapMode::Read, 0, readback_bytes,
         wgpu::CallbackMode::AllowSpontaneous,
         [d](wgpu::MapAsyncStatus status, wgpu::StringView message) {
             if (status != wgpu::MapAsyncStatus::Success) {
@@ -380,6 +391,16 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
             if (d->double_single)
                 out.residual_lo.assign(values + d->count,
                                        values + 2 * d->count);
+            if (d->source_check) {
+                const std::span<const float> original(
+                    values + d->count * (d->double_single ? 2 : 1), d->count);
+                out.source_finite = std::all_of(
+                    original.begin(), original.end(),
+                    [](float value) { return std::isfinite(value); });
+                out.source_nonzero =
+                    std::any_of(original.begin(), original.end(),
+                                [](float value) { return value != 0.0F; });
+            }
             d->readback.Unmap();
             accumulate_norms(out, d->ns, d->mode_count, d->include_edge);
             d->callback({}, std::move(out));

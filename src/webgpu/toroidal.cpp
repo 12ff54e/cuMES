@@ -1061,9 +1061,11 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         split(std::sqrt(2.0)).hi,
         split(std::sqrt(2.0)).lo};
     const auto queue = device.GetQueue();
-    transfer_fields(device, fields_buffer, input.fields, input.device_fields);
+    const auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, fields_buffer, input.fields,
+                    input.device_fields);
     if (input.double_single)
-        transfer_fields(device, fields_low_buffer, input.fields_lo,
+        transfer_fields(device, encoder, fields_low_buffer, input.fields_lo,
                         input.device_fields, true);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
@@ -1106,7 +1108,6 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
     poloidal_bind_descriptor.entries = poloidal_entries.data();
     const auto poloidal_bind_group =
         device.CreateBindGroup(&poloidal_bind_descriptor);
-    const auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     const std::uint32_t toroidal_sequences =
         static_cast<std::uint32_t>(20 * static_cast<std::size_t>(input.ns) *
@@ -1189,6 +1190,15 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         (static_cast<std::uint32_t>(input.ns * mnmax) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    if (!input.readback) {
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        ToroidalForwardResult result;
+        result.device_residual = {result_buffer, result_values, 0,
+                                  result_values * sizeof(float)};
+        callback({}, std::move(result));
+        return;
+    }
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);
     const auto commands = encoder.Finish();

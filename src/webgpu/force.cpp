@@ -332,16 +332,19 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
                         in.double_single ? in.lamscale : 0.0F,
                         in.double_single ? in.lamscale_lo : 0.0F};
     auto q = device.GetQueue();
-    transfer_fields(device, gbuf, in.geometry, in.device_geometry);
-    transfer_fields(device, hbuf, in.base_geometry, in.device_base_geometry);
-    transfer_fields(device, bbuf, in.magnetic_field, in.device_magnetic_field);
+    auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, gbuf, in.geometry, in.device_geometry);
+    transfer_fields(device, encoder, hbuf, in.base_geometry,
+                    in.device_base_geometry);
+    transfer_fields(device, encoder, bbuf, in.magnetic_field,
+                    in.device_magnetic_field);
     q.WriteBuffer(rbuf, 0, radial.data(), rb);
     if (in.double_single) {
-        transfer_fields(device, glbuf, in.geometry_lo, in.device_geometry,
-                        true);
-        transfer_fields(device, hlbuf, in.base_geometry_lo,
+        transfer_fields(device, encoder, glbuf, in.geometry_lo,
+                        in.device_geometry, true);
+        transfer_fields(device, encoder, hlbuf, in.base_geometry_lo,
                         in.device_base_geometry, true);
-        transfer_fields(device, blbuf, in.magnetic_field_lo,
+        transfer_fields(device, encoder, blbuf, in.magnetic_field_lo,
                         in.device_magnetic_field, true);
         q.WriteBuffer(rlbuf, 0, radial_lo.data(), rb);
     }
@@ -365,7 +368,6 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     bd.entryCount = entries.size();
     bd.entries = entries.data();
     auto group = device.CreateBindGroup(&bd);
-    auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor passd{};
     auto pass = encoder.BeginComputePass(&passd);
     pass.SetPipeline(pipeline);

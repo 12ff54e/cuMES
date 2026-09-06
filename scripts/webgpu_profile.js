@@ -20,6 +20,13 @@
     return result;
   };
   const map = GPUBuffer.prototype.mapAsync;
+  const submit = GPUQueue.prototype.submit;
+  GPUQueue.prototype.submit = function(commands) {
+    const start = performance.now();
+    const result = submit.apply(this, arguments);
+    add('submit', 'queue', 0, performance.now() - start);
+    return result;
+  };
   GPUBuffer.prototype.mapAsync = function(mode, offset = 0, size = this.size - offset) {
     const start = performance.now();
     return map.apply(this, arguments).then(result => {
@@ -39,6 +46,7 @@
     stop: () => {
       GPUQueue.prototype.writeBuffer = write;
       GPUBuffer.prototype.mapAsync = map;
+      GPUQueue.prototype.submit = submit;
       GPUCommandEncoder.prototype.copyBufferToBuffer = copy;
     }
   };

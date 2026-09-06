@@ -359,12 +359,14 @@ void enqueue_head(const wgpu::Device& device,
                             tcon_multiplier(in),
                             {0, 0}};
     auto queue = device.GetQueue();
-    transfer_fields(device, geometry_buffer, in.geometry, in.device_geometry);
+    auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, geometry_buffer, in.geometry,
+                    in.device_geometry);
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, radial.data(), radial_bytes);
     if (in.double_single) {
-        transfer_fields(device, geometry_low_buffer, in.geometry_lo,
+        transfer_fields(device, encoder, geometry_low_buffer, in.geometry_lo,
                         in.device_geometry, true);
         queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
                           constraint_bytes);
@@ -391,7 +393,6 @@ void enqueue_head(const wgpu::Device& device,
     bind_descriptor.entryCount = entries.size();
     bind_descriptor.entries = entries.data();
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
-    auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(pipeline);
@@ -572,17 +573,19 @@ void enqueue_tail(const wgpu::Device& device,
                             static_cast<std::uint32_t>(output_fields),
                             {0, 0, 0}};
     auto queue = device.GetQueue();
-    transfer_fields(device, force_buffer, in.force_fields,
+    auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, force_buffer, in.force_fields,
                     in.device_force_fields);
     if (in.double_single)
-        transfer_fields(device, force_low_buffer, in.force_fields_lo,
+        transfer_fields(device, encoder, force_low_buffer, in.force_fields_lo,
                         in.device_force_fields, true);
-    transfer_fields(device, geometry_buffer, in.geometry, in.device_geometry);
+    transfer_fields(device, encoder, geometry_buffer, in.geometry,
+                    in.device_geometry);
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, in.sqrt_s_f.data(), radial_bytes);
     if (in.double_single) {
-        transfer_fields(device, geometry_low_buffer, in.geometry_lo,
+        transfer_fields(device, encoder, geometry_low_buffer, in.geometry_lo,
                         in.device_geometry, true);
         queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
                           constraint_bytes);
@@ -613,7 +616,6 @@ void enqueue_tail(const wgpu::Device& device,
     bind_descriptor.entryCount = entries.size();
     bind_descriptor.entries = entries.data();
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
-    auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(pipeline);

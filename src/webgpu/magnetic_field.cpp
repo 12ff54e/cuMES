@@ -536,15 +536,16 @@ void enqueue_magnetic_field(const wgpu::Device& device,
                               input.double_single ? input.lamscale_lo : 0.0F,
                               {0, 0}};
     const auto queue = device.GetQueue();
-    transfer_fields(device, geometry_buffer, input.geometry,
+    const auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, geometry_buffer, input.geometry,
                     input.device_geometry);
-    transfer_fields(device, base_buffer, input.base_geometry,
+    transfer_fields(device, encoder, base_buffer, input.base_geometry,
                     input.device_base_geometry);
     queue.WriteBuffer(profile_buffer, 0, profiles.data(), profile_bytes);
     if (input.double_single) {
-        transfer_fields(device, geometry_lo_buffer, input.geometry_lo,
+        transfer_fields(device, encoder, geometry_lo_buffer, input.geometry_lo,
                         input.device_geometry, true);
-        transfer_fields(device, base_lo_buffer, input.base_geometry_lo,
+        transfer_fields(device, encoder, base_lo_buffer, input.base_geometry_lo,
                         input.device_base_geometry, true);
         queue.WriteBuffer(profile_lo_buffer, 0, profiles_lo.data(),
                           profile_bytes);
@@ -600,7 +601,6 @@ void enqueue_magnetic_field(const wgpu::Device& device,
         finalize_fields_bind_group =
             device.CreateBindGroup(&bind_group_descriptor);
     }
-    const auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     const auto field_pass = encoder.BeginComputePass(&pass_descriptor);
     field_pass.SetPipeline(pipeline);
