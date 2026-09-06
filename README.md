@@ -101,6 +101,12 @@ subsequent host-copy/upload optimization completed a profiled run in 99.7 s,
 retaining 2812 iterations and `1e-12` convergence. An alternating old/new
 benchmark measured a further 28.4% reduction in iteration time. See the
 [WebGPU measurements](docs/webgpu-port.md#host-data-path-optimization-after-profiling-2026-09-06).
+Persistent GPU constraint/preconditioner/descent state now reduces warmed
+uploads from 4.37 MB to about 20 KB per iteration. Opt-in `&gpu_norms=1`
+also moves residual reductions to the GPU; qualified direct/FFT W7-X runs
+took 92.3/104.0 s with unchanged state hashes and `1e-12` convergence.
+Iteration control remains on the CPU; see the
+[residency and reduction qualification](docs/webgpu-port.md#persistent-iteration-state-and-gpu-residual-norms-2026-09-06).
 
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from

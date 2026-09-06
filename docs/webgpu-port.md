@@ -880,6 +880,71 @@ constraint/descent data on the device, and accelerating the serial current
 integral. This change does not claim full residency or change paired
 arithmetic to ordinary f32.
 
+## Persistent iteration state and GPU residual norms (2026-09-06)
+
+The next two residency changes remove **99.5% of the remaining warmed
+uploads**, from 4,373,773 to **19,933 bytes/iteration** on the same Chrome /
+RTX 3060 Ti, ns=99 W7-X case:
+
+- `9357194`: accepted constraint references and preconditioner caches have
+  independent GPU snapshots. A speculative refresh can overwrite operator
+  scratch without corrupting the accepted version on a rejected Jacobian.
+- `0b3906f`: descent consumes device state, velocity and preconditioned
+  directions. Paired state axis extrapolation matches the existing host
+  operation, and an f32 direction's correction plane is cleared on-device.
+  Checkpoint restores still use the host snapshot; the reduction above is
+  for warmed steady-state passes, not initialization/restarts.
+
+All 2817 direct W7-X controller records, including state/low-word hashes,
+residuals and restart decisions, matched the prior CPU-controller trajectory
+exactly. The profiled full run took **95.6 s** and 2812 effective iterations,
+reaching the unchanged residual triple
+`(9.985159710508547e-13, 2.1300946362442957e-13, 1.9552385266042975e-13)`.
+These wall times are observations, not a new controlled A/B speedup claim.
+
+`893d02b` adds deterministic two-dispatch paired GPU residual norms. Add
+`&gpu_norms=shadow` to compare every reduction against the host double
+reference without changing controller inputs. The FFT shadow run's maximum
+relative difference was **3.158034e-14**. Shadow mode retained every direct
+and FFT controller record exactly. `norm-shadow` diagnostics retain the
+maximum error independently of the UI's progress-log filtering.
+
+Add **`&gpu_norms=1`** to use GPU norms and omit the decomposed-residual vector
+readbacks/CPU reductions. This remains opt-in; omission or `gpu_norms=0`
+retains the reference CPU reductions. Qualification results:
+
+| Path | Observed time | Effective iterations | Qualification |
+| --- | ---: | ---: | --- |
+| Direct, GPU norms (profiled) | 92.3 s | 2812 | All state hashes, restart decisions and f32 shader control parameters unchanged |
+| FFT, GPU norms | 104.0 s | 3091 | Same state/decision gate against the qualified FFT trajectory |
+
+Both paths reach `1e-12`. Direct normalized residual differences were at most
+`2.679e-14` relative. Full host-double telemetry is not bit-identical when
+GPU reductions are authoritative; this is not a Class-A reduction change.
+The direct profile measured **19,981 upload bytes** and **35.42 MB readback**
+per iteration (down from 36.90 MB). The reduction result retains a validity
+flag: nonfinite inputs, overflow and complete squared-norm underflow must not
+be classified as convergence. Original forward-input validity checks remain.
+
+Browser conformance covers device-only descent with unaligned source planes,
+paired/f32 directions, axis remapping, snapshot isolation, and residual norms
+with awkward sizes, zero inputs, both LCFS policies and invalid/range cases.
+`scripts/webgpu_validate_run.mjs URL PREFIX BASELINE_TRACE` requires exact
+controller records; its explicit `paired-reductions` comparison instead
+requires identical state hashes, integer decisions and f32 control parameters
+plus a `2e-12` relative residual bound. It never treats a mere iteration-count
+match as trajectory equivalence.
+
+**The controller is still on the CPU.** GPU geometry/validity reductions and
+force normalization, persistent GPU checkpoint/rollback, shader damping and
+restart control, then bounded multi-iteration dispatch batches remain to be
+implemented. Most full-field readbacks and the per-iteration host fence have
+not yet been removed. The scalar radial/profile/parameter uploads also remain.
+
+Evidence: `../tmp/w7x-resident-caches-*`, `w7x-resident-descent-*`,
+`resident-descent-conformance-*`, `w7x-gpu-norm-shadow-*`, `w7x-gpu-norm-fft-*`,
+`gpu-norm-conformance-*`, `w7x-device-norms-*` and `w7x-device-norms-fft-*`.
+
 The WebGPU implementation lives under these paths:
 
 ```text
