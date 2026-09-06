@@ -476,6 +476,30 @@ __global__ void radius_reference_kernel(
 }
 
 template <typename T>
+void cumes::ToroidalFftOperator<T>::prepare_radius_reference(
+    SpectralView<const T, PhysicalStateDomain> coeff,
+    cudaStream_t stream) {
+    reference_ready_ = false;
+    if (!rs_->d_r_reference) return;
+    radius_reference_kernel<T><<<(p_.nzeta + 127) / 128, 128, 0, stream>>>(
+        coeff, rs_->d_r_reference, p_.ntor, p_.ntheta, p_.nzeta);
+    check_cuda(cudaGetLastError(), "prepare radius reference");
+    reference_coeff_ = coeff;
+    reference_ready_ = true;
+}
+
+template <typename T>
+bool cumes::ToroidalFftOperator<T>::use_radius_reference_cache(
+    SpectralView<const T, PhysicalStateDomain> coeff,
+    T* d_reference) {
+    if (!reference_ready_ || d_reference != rs_->d_r_reference) return false;
+    // A fallback inverse into the cached buffer overwrites it: invalidate the
+    // binding so switching back cannot accidentally reuse another reference.
+    reference_ready_ = coeff.shares_radius_reference(reference_coeff_);
+    return reference_ready_;
+}
+
+template <typename T>
 __global__ void inverse_pack_kernel(
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
     const int* __restrict__ xm,
@@ -802,12 +826,13 @@ static void inverse_pipeline(
     T* zv_real,
     T* lv_real,
     cumes::OddGeometryOperator<cumes::FloatFloat>* odd_float_float,
-    cumes::OddGeometryOperator<double>* odd_double) {
+    cumes::OddGeometryOperator<double>* odd_double,
+    bool reference_is_cached) {
     int total = p.ns * p.mnmax;
     inverse_pack_kernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
         coeff, xm, xn, p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1,
         p.radius_reference != 0.0, d_zeta_spectra);
-    if (geom.r_reference.data())
+    if (geom.r_reference.data() && !reference_is_cached)
         radius_reference_kernel<T><<<(p.nzeta + 127) / 128, 128, 0, stream>>>(
             coeff, geom.r_reference.data(), p.ntor, p.ntheta, p.nzeta);
     cumes::check_cufft(
@@ -907,7 +932,8 @@ void cumes::ToroidalFftOperator<T>::inverse_impl(
         d_zeta_spectra_, d_zeta_real_, d_cos_th_, d_sin_th_, d_mcos_th_,
         d_msin_th_, plan_z2d_, rs.d_r_real, rs.d_z_real, rs.d_l_real,
         rs.d_ru_real, rs.d_zu_real, rs.d_lu_real, rs.d_rv_real, rs.d_zv_real,
-        rs.d_lv_real, odd_float_float_.get(), odd_double_.get());
+        rs.d_lv_real, odd_float_float_.get(), odd_double_.get(),
+        use_radius_reference_cache(coeff, rs.d_r_reference));
 }
 
 // Public snapshot: refresh the 9 combined arrays from the CURRENT parity
@@ -1554,7 +1580,8 @@ void cumes::ToroidalFftOperator<T>::enqueue_inverse(
         geometry, mt_->d_xm, mt_->d_xn, d_zeta_spectra_, d_zeta_real_,
         d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, plan_z2d_, nullptr,
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        odd_float_float_.get(), odd_double_.get());
+        odd_float_float_.get(), odd_double_.get(),
+        use_radius_reference_cache(coeff, geometry.r_reference.data()));
 }
 
 template <typename T>

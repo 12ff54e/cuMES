@@ -64,6 +64,15 @@ class ToroidalFftOperator : public SpectralOperator<T> {
     // before any transform runs; keeps the plan handles out of the solver.
     void bind_stream(cudaStream_t stream);
 
+    // Build the immutable angular radius reference once, before graph capture.
+    // Subsequent inverse calls on this storage reuse it while the reference
+    // identity matches. The reference owner must outlive its cached use;
+    // rebind here when replacing that owner. Call on the inverse's stream (or
+    // establish an explicit dependency before using it from another stream).
+    void prepare_radius_reference(
+        SpectralView<const T, PhysicalStateDomain> coeff,
+        cudaStream_t stream = 0);
+
     // ---- transform primitives (were the fourier.cuh free functions) --------
     // Plain inverse DFT: spectral coefficients -> parity-split geometry (+ the
     // combined e+o buffers when do_combine is true). The geometry views alias
@@ -130,6 +139,10 @@ class ToroidalFftOperator : public SpectralOperator<T> {
                               cudaStream_t stream);
 
    private:
+    bool use_radius_reference_cache(
+        SpectralView<const T, PhysicalStateDomain> coeff,
+        T* d_reference);
+
     template <bool FuseRzCon>
     void inverse_impl(SpectralView<const T, PhysicalStateDomain> coeff,
                       bool do_combine,
@@ -171,6 +184,8 @@ class ToroidalFftOperator : public SpectralOperator<T> {
 
     std::unique_ptr<OddGeometryOperator<FloatFloat>> odd_float_float_;
     std::unique_ptr<OddGeometryOperator<double>> odd_double_;
+    SpectralView<const T, PhysicalStateDomain> reference_coeff_;
+    bool reference_ready_ = false;
     DeviceParams<T> p_{};
     RealSpaceStorage<T>* rs_ = nullptr;  // non-owning (stage-owned)
     const DeviceModeTable* mt_ =

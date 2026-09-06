@@ -67,6 +67,13 @@ class SpectralView {
         return mode < reference_modes_ ? d_radius_reference_[mode] : 0.0;
     }
 
+    // Reference coefficients are immutable for the lifetime of their owner.
+    // Geometry caches compare reference identity without reading device data.
+    __host__ bool shares_radius_reference(const SpectralView& other) const {
+        return d_radius_reference_ == other.d_radius_reference_ &&
+               reference_modes_ == other.reference_modes_;
+    }
+
     __host__ __device__ T& operator()(SpectralComponent c,
                                       int mode,
                                       int surface) {

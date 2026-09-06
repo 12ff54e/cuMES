@@ -99,6 +99,8 @@ int main(int argc, char** argv) {
         stage_detail::ScopedModeTable<float> mt(p, std::nullopt);
         ToroidalFftOperator<float> transform(p, *rs, mt.get());
         transform.bind_stream(stream.get());
+        transform.prepare_radius_reference(state.physical_const(),
+                                           stream.get());
         transform.inverse(state.physical_const(), true, stream.get());
         cumes::check_cuda(cudaStreamSynchronize(stream.get()),
                           "odd geometry initial inverse");

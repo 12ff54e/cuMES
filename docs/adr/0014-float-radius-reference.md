@@ -48,6 +48,53 @@ reference run's checkpoint and final-stage telemetry byte-for-byte; its
 iteration counts remain 149 → 277 → 322. Tests cover the explicit opt-out and
 unchanged double, axisymmetric and 3-D free-boundary defaults.
 
+## Cache the fixed reference (2026-09-07)
+
+The angular radius-reference Fourier sum is now evaluated once per stage,
+before iteration graph capture. Its existing real-space buffer is reused,
+with no new device allocation. The transform's explicit
+`prepare_radius_reference` setup method binds the immutable reference;
+regular inverse calls still work without preparation. A different reference
+invalidates the binding when it overwrites the owned buffer, and caller-owned
+reference outputs are populated separately.
+
+The prepared reference owner must remain alive through its use. As with other
+captured graph inputs, its contents must remain valid during replay: if an
+intervening operation writes a different reference into the shared output,
+reprepare the original reference before replaying its cached graph. Setup and
+inverse use the same stream, or the caller must provide a stream dependency.
+The solver satisfies these conditions by binding one immutable state reference
+per stage before capturing any iteration graphs.
+
+Absolute radius is still needed every iteration in the Jacobian, metric and
+force equations. Those kernels add the cached reference to the evolving
+displacement locally. Only restoring the stored Fourier coefficients can be
+deferred entirely to output, and snapshot export already does that. This
+optimization moves the constant Fourier sum, not nonlinear physical work.
+
+A repeated TITAN Xp benchmark, using the same 300-warmup/500-measured-pass
+method and alternating executable order, gives these medians of three runs:
+
+| Representation / reconstruction | Before caching | After caching |
+| --- | ---: | ---: |
+| Reference, native float | 541.90 µs | 525.55 µs |
+| Reference, poloidal float-float | 559.29 µs | 543.02 µs |
+
+The absolute-coefficient control measured 526.46 µs in the same comparison.
+Thus caching removes approximately 3% of pass time and makes the remaining
+reference-only cost indistinguishable from the absolute control at this
+measurement's variability. The earlier 3.4% overhead included the unnecessary
+per-iteration reconstruction. Records and the executable comparison script
+are under `w7x-float-investigation/reference-cache/` beside the prior artifacts.
+
+The cache test verifies a one-node reduction in the captured inverse graph,
+bit-identical output, reference switching/invalidation and non-aliasing output
+views. The cached W7-X float solve retains 149 → 277 → 322 iterations, with
+byte-identical checkpoint and final-stage telemetry. The float suite passes
+64/64 and the six selected verify reference/odd-geometry tests pass, including
+both memcheck and initcheck variants. Double W7-X retains its checkpoint
+and final-stage telemetry byte-for-byte as well.
+
 ## Evidence and limits
 
 The first two W7-X grids now converge at `1e-5` in 149 and 278 effective

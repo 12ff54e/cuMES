@@ -3,6 +3,7 @@
 #include "cumes/io/snapshot_bridge.cuh"
 #include "cumes/numerics/descent_operator.hpp"
 #include "cumes/numerics/prolongation.hpp"
+#include "cumes/runtime/stream.hpp"
 #include "cumes/solver/equilibrium_solver.hpp"
 #include "cumes/solver/stage_solver.hpp"
 #include "cumes/state/seed_state.hpp"
@@ -179,8 +180,99 @@ static void test_seed_restart() {
                   "state");
 }
 
+static void test_reference_cache() {
+    auto vp = load_validated("inputs/w7x.json");
+    auto p = init_params<float>(vp);
+    p.ns = 9;
+    auto state = init_state(p, vp, false, false);
+    stage_detail::ScopedRealSpace<float> rs(p, std::nullopt);
+    stage_detail::ScopedModeTable<float> mt(p, std::nullopt);
+    ToroidalFftOperator<float> transform(p, *rs, mt.get());
+    Stream stream;
+    transform.bind_stream(stream.get());
+    auto read_radius = [&]() {
+        stream.synchronize();
+        std::vector<float> values(p.ns * p.nZnT);
+        cumes::check_cuda(
+            cudaMemcpy(values.data(), rs->d_r_real,
+                       values.size() * sizeof(float), cudaMemcpyDeviceToHost),
+            "read cached R");
+        return values;
+    };
+    auto capture = [&]() {
+        cudaGraph_t graph{};
+        cumes::check_cuda(
+            cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeGlobal),
+            "capture reference inverse");
+        transform.inverse(state.physical_const(), true, stream.get());
+        cumes::check_cuda(cudaStreamEndCapture(stream.get(), &graph),
+                          "end reference inverse capture");
+        return graph;
+    };
+    transform.inverse(state.physical_const(), true, stream.get());
+    auto expected = read_radius();
+    cudaGraph_t uncached = capture();
+    transform.prepare_radius_reference(state.physical_const(), stream.get());
+    cudaGraph_t cached = capture();
+    std::size_t uncached_nodes = 0, cached_nodes = 0;
+    cumes::check_cuda(cudaGraphGetNodes(uncached, nullptr, &uncached_nodes),
+                      "count uncached nodes");
+    cumes::check_cuda(cudaGraphGetNodes(cached, nullptr, &cached_nodes),
+                      "count cached nodes");
+    check(cached_nodes + 1 == uncached_nodes,
+          "reference cache removes reconstruction from the iteration graph");
+    cudaGraphExec_t executable{};
+    cumes::check_cuda(
+        cudaGraphInstantiate(&executable, cached, nullptr, nullptr, 0),
+        "instantiate cached inverse");
+    cumes::check_cuda(cudaGraphLaunch(executable, stream.get()),
+                      "replay cached inverse");
+    check(read_radius() == expected, "reference cache preserves inverse bits");
+    cumes::check_cuda(cudaGraphExecDestroy(executable),
+                      "destroy cached executable");
+    cumes::check_cuda(cudaGraphDestroy(cached), "destroy cached graph");
+    cumes::check_cuda(cudaGraphDestroy(uncached), "destroy uncached graph");
+
+    // A different immutable reference must not reuse the prepared one, even
+    // if its displacement coefficients are identical. Switching back must
+    // reconstruct the original reference after that fallback overwrites it.
+    std::vector<double> reference(state.radius_references().begin(),
+                                  state.radius_references().end());
+    reference[1] += 0.125;
+    SpectralStorage<float> other(p.ns, p.mnmax, reference);
+    cumes::check_cuda(cudaMemcpy(other.state_slab(), state.state_slab(),
+                                 6 * p.ns * p.mnmax * sizeof(float),
+                                 cudaMemcpyDeviceToDevice),
+                      "copy displacement state");
+    transform.inverse(other.physical_const(), true, stream.get());
+    check(read_radius() != expected, "different reference bypasses cache");
+    transform.inverse(state.physical_const(), true, stream.get());
+    check(read_radius() == expected, "fallback invalidates overwritten cache");
+
+    // Caller-owned reference output must still be populated by the view API.
+    transform.prepare_radius_reference(state.physical_const(), stream.get());
+    DeviceBuffer<float> d_reference(p.nZnT);
+    auto geom = geometry_parity_views(*rs, p);
+    geom.r_reference =
+        RealFieldView<float>(d_reference.data(), 1, p.ntheta, p.nzeta);
+    transform.enqueue_inverse(state.physical_const(), geom, {}, {},
+                              stream.get());
+    stream.synchronize();
+    std::vector<float> own(p.nZnT), alternate(p.nZnT);
+    cumes::check_cuda(
+        cudaMemcpy(own.data(), rs->d_r_reference, own.size() * sizeof(float),
+                   cudaMemcpyDeviceToHost),
+        "read owned reference");
+    cumes::check_cuda(
+        cudaMemcpy(alternate.data(), d_reference.data(),
+                   alternate.size() * sizeof(float), cudaMemcpyDeviceToHost),
+        "read alternate reference");
+    check(own == alternate, "reference cache honors non-aliasing output views");
+}
+
 int main() {
     test_small_radial_variation();
     test_seed_restart();
+    test_reference_cache();
     return summary();
 }

@@ -118,6 +118,12 @@ float output rounding floor; it is unnecessary for this `1e-5` target.
 
 ## Timing
 
+The values in this section precede caching of the fixed radius reference.
+The [subsequent cache measurement](adr/0014-float-radius-reference.md#cache-the-fixed-reference-2026-09-07)
+reduces native-reference passes from 541.90 to 525.55 µs and poloidal
+float-float passes from 559.29 to 543.02 µs, preserving the numerical results.
+
+
 The final-grid fixed-iteration harness starts from the same tight checkpoint,
 uses `ftol=0` to prevent early termination, discards 300 warmup passes and times
 500 passes. Three repetitions use different ordering; the table gives the

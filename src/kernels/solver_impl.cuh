@@ -1040,6 +1040,7 @@ SolverResult<T> solver_run(
     // (blueprint §6.6). Plans are created once per stage; the operator binds
     // its own plans here, before any transform runs.
     transform.bind_stream(stream);
+    transform.prepare_radius_reference(storage.physical_const(), stream);
 
     // ---- env-gated knobs for convergence experiments (defaults = input
     // values; set via CUMES_MAX_ITER, CUMES_DELT0, CUMES_DTAU_FLOOR) ----
