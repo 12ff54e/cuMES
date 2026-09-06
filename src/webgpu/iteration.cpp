@@ -1,5 +1,6 @@
 #include "cumes/webgpu/iteration.hpp"
 
+#include <limits>
 #include <utility>
 
 namespace cumes::webgpu {
@@ -178,6 +179,7 @@ class IterationDispatch
         in.double_single = input.double_single;
         in.device_residual = fields;
         in.zero_m1_z = index == 0 || input.zero_m1_z;
+        in.readback_values = !input.compact_norms;
         in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
         in.sqrt_s_f_lo = input.stage.profiles.sqrt_s_f_lo;
         const auto self = shared_from_this();
@@ -301,7 +303,7 @@ class IterationDispatch
     void norm(const DeviceFields& fields,
               int index,
               std::function<void()> next) {
-        if (!input.shadow_norms) {
+        if (!input.shadow_norms && !input.compact_norms) {
             next();
             return;
         }
@@ -312,13 +314,22 @@ class IterationDispatch
         in.include_edge_rz = index == 2;
         in.readback = {
             batch, [next = std::move(next)](ResidualNormResult) { next(); }};
-        enqueue_residual_norm(device, in,
-                              [self = shared_from_this(), index](
-                                  std::string error, ResidualNormResult value) {
-                                  if (!error.empty())
-                                      self->error = std::move(error);
-                                  self->result.norms[index] = std::move(value);
-                              });
+        enqueue_residual_norm(
+            device, in,
+            [self = shared_from_this(), index](std::string error,
+                                               ResidualNormResult value) {
+                if (!error.empty()) self->error = std::move(error);
+                if (self->input.compact_norms) {
+                    if (!value.finite)
+                        value.raw.fill(
+                            std::numeric_limits<double>::quiet_NaN());
+                    if (index == 2)
+                        self->result.preconditioned.raw_norm = value.raw;
+                    else
+                        self->result.residual[index].raw_norm = value.raw;
+                }
+                self->result.norms[index] = std::move(value);
+            });
     }
 };
 

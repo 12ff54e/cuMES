@@ -58,6 +58,9 @@ mergeInto(LibraryManager.library, {
   requested_shadow_norms: function() {
     return new URLSearchParams(window.location.search).get('gpu_norms') === 'shadow';
   },
+  requested_device_norms: function() {
+    return new URLSearchParams(window.location.search).get('gpu_norms') === '1';
+  },
   requested_compare_fft: function() {
     return new URLSearchParams(window.location.search).get('compare_fft') === '1';
   },

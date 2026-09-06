@@ -51,6 +51,7 @@ int requested_generic_fft();
 int requested_canonical_zeta();
 int requested_solver_trace();
 int requested_shadow_norms();
+int requested_device_norms();
 int requested_compare_fft();
 int requested_spectral_fences();
 void publish_browser_diagnostic(const char* json);
@@ -1499,10 +1500,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_device_norm_test(int variant = 0) {
         using namespace cumes::webgpu;
-        if (variant == 6) {
+        if (variant == 7) {
             std::printf(
                 "  paired GPU norms: f32/paired, edge masks, awkward "
-                "sizes, zeros, nonfinite/overflow guards: PASS\n");
+                "sizes, zeros, nonfinite/range guards: PASS\n");
             run_w7x_initialization();
             return;
         }
@@ -1521,6 +1522,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             values[3 * points] = std::numeric_limits<float>::infinity();
         }
         if (variant == 5) values[1] = 1.0e30F;
+        if (variant == 6) {
+            std::fill(values.begin(), values.end(), 0.0F);
+            values[1] = 1.0e-30F;
+        }
         wgpu::BufferDescriptor descriptor{};
         descriptor.size = values.size() * sizeof(float);
         descriptor.usage =
@@ -1534,6 +1539,23 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         input.paired = variant != 0;
         input.include_edge_rz = variant == 2;
         input.readback.batch = std::make_shared<ReadbackBatch>(device_, 40);
+        for (const bool bad_offset : {false, true}) {
+            auto malformed = input;
+            if (bad_offset)
+                malformed.residual.high_offset = source.GetSize();
+            else
+                --malformed.residual.values;
+            bool rejected = false;
+            enqueue_residual_norm(
+                device_, malformed,
+                [&rejected](std::string error, ResidualNormResult) {
+                    rejected = !error.empty();
+                });
+            if (!rejected) {
+                finish(false, "GPU norm accepted a malformed device plane");
+                return;
+            }
+        }
         auto result = std::make_shared<ResidualNormResult>();
         auto error = std::make_shared<std::string>();
         enqueue_residual_norm(
@@ -2569,6 +2591,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             input.optimized_fft = !requested_generic_fft();
             input.canonical_zeta = requested_canonical_zeta();
             input.shadow_norms = requested_shadow_norms();
+            input.compact_norms = requested_device_norms();
             input.elements = preconditioner_elements_;
             input.matrix = preconditioner_matrix_;
             input.device_r_con0 = device_constraint_r_con0_;
@@ -4088,10 +4111,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->invariant_raw_[2] * plain *
                         self->force_normalization_.f_norm_l};
                 const auto preconditioned_raw =
-                    cumes::webgpu::residual_raw_norms(
-                        actual.residual, self->initialized_stage_.ns,
-                        self->initialized_stage_.mpol,
-                        self->initialized_stage_.ntor, true);
+                    self->resident_spectral_path() && requested_device_norms()
+                        ? actual.raw_norm
+                        : cumes::webgpu::residual_raw_norms(
+                              actual.residual, self->initialized_stage_.ns,
+                              self->initialized_stage_.mpol,
+                              self->initialized_stage_.ntor, true);
                 self->preconditioned_normalized_ = {
                     preconditioned_raw[0] * plain *
                         self->force_normalization_.f_norm_1,

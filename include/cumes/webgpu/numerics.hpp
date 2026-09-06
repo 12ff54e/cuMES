@@ -23,6 +23,8 @@ struct ResidualDecompositionCase {
     bool include_edge_rz = false;
     bool zero_m1_z = false;
     bool double_single = false;
+    // The orchestrator supplies GPU norms when these vectors are omitted.
+    bool readback_values = true;
     std::vector<float> residual;
     std::vector<float> residual_lo;
     std::vector<float> sqrt_s_f;

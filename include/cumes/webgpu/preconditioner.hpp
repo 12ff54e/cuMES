@@ -3,6 +3,7 @@
 
 #include "cumes/webgpu/device_fields.hpp"
 
+#include <array>
 #include <functional>
 #include <string>
 #include <vector>
@@ -118,6 +119,7 @@ struct AxisymmetricPreconditionerApplyCase {
 
 struct AxisymmetricPreconditionerApplyResult {
     DeviceFields device_residual;
+    std::array<double, 3> raw_norm{};
     std::vector<float> residual;
     int breakdown_count = 0;
 };

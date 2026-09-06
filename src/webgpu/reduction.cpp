@@ -3,8 +3,6 @@
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
-#include <limits>
-
 namespace cumes::webgpu {
 
 void enqueue_residual_norm(
@@ -14,7 +12,7 @@ void enqueue_residual_norm(
     const auto count = input.residual.values;
     if (!input.residual || !input.readback.batch || input.ns < 2 ||
         count == 0 || count % (6 * std::size_t(input.ns)) != 0 ||
-        count / 6 > std::numeric_limits<std::uint32_t>::max()) {
+        count / 6 > (1U << 24)) {
         callback("invalid device residual norm shape or readback", {});
         return;
     }
@@ -26,6 +24,16 @@ void enqueue_residual_norm(
                         input.paired ? 1U : 0U,
                         input.include_edge_rz ? 1U : 0U};
     const auto bytes = count * sizeof(float);
+    const auto fits = [&](std::uint64_t offset) {
+        return offset % sizeof(float) == 0 &&
+               offset <= input.residual.buffer.GetSize() &&
+               bytes <= input.residual.buffer.GetSize() - offset;
+    };
+    if (!fits(input.residual.high_offset) ||
+        (input.paired && !fits(input.residual.low_offset))) {
+        callback("device residual norm plane exceeds its buffer", {});
+        return;
+    }
     const auto blocks = (params.points + 255) / 256;
     const auto storage =
         wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;

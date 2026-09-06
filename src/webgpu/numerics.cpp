@@ -371,15 +371,19 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
                 });
         }
         in.readback.batch->append(
-            encoder, output, 0, output_bytes,
+            encoder, output, 0,
+            in.readback_values ? output_bytes : sizeof(float),
             [callback = std::move(callback), result, count = 6 * n, ns = in.ns,
-             mode_count, edge = in.include_edge_rz,
-             paired = in.double_single](std::span<const float> values) {
-                result->residual.assign(values.begin(), values.begin() + count);
-                if (paired)
-                    result->residual_lo.assign(values.begin() + count,
-                                               values.end());
-                accumulate_norms(*result, ns, mode_count, edge);
+             mode_count, edge = in.include_edge_rz, paired = in.double_single,
+             read_values = in.readback_values](std::span<const float> values) {
+                if (read_values) {
+                    result->residual.assign(values.begin(),
+                                            values.begin() + count);
+                    if (paired)
+                        result->residual_lo.assign(values.begin() + count,
+                                                   values.end());
+                    accumulate_norms(*result, ns, mode_count, edge);
+                }
                 callback({}, std::move(*result));
             });
         const auto commands = encoder.Finish();

@@ -3,7 +3,7 @@
 struct FF { hi: f32, lo: f32, };
 struct Params { points: u32, ns: u32, paired: u32, edge: u32, };
 struct Values { data: array<f32>, };
-struct Part { sum: FF, bad: u32, padding: u32, };
+struct Part { sum: FF, bad: u32, nonzero: u32, };
 struct Partials { data: array<Part>, };
 @group(0) @binding(0) var<storage, read> source_hi: Values;
 @group(0) @binding(1) var<storage, read> source_lo: Values;
@@ -13,6 +13,7 @@ struct Partials { data: array<Part>, };
 var<workgroup> rounding: array<atomic<u32>, 64>;
 var<workgroup> sums: array<FF, 64>;
 var<workgroup> bad: array<u32, 64>;
+var<workgroup> nonzero: array<u32, 64>;
 
 fn round32(x: f32, lane: u32) -> f32 {
     atomicStore(&rounding[lane], bitcast<u32>(x));
@@ -49,6 +50,7 @@ fn reduce(lane: u32) {
         if (lane < stride) {
             sums[lane] = add(sums[lane], sums[lane + stride], lane);
             bad[lane] |= bad[lane + stride];
+            nonzero[lane] |= nonzero[lane + stride];
         }
         workgroupBarrier();
     }
@@ -59,6 +61,7 @@ fn partial(@builtin(local_invocation_index) lane: u32,
     let blocks = (params.points + 255u) / 256u;
     var sum = FF(0.0, 0.0);
     var invalid = 0u;
+    var populated = 0u;
     for (var offset = lane; offset < 256u; offset += 64u) {
         let i = group.x * 256u + offset;
         if (i >= params.points) { continue; }
@@ -67,14 +70,16 @@ fn partial(@builtin(local_invocation_index) lane: u32,
         let ok = finite(a.hi) && finite(a.lo) && finite(b.hi) && finite(b.lo);
         invalid |= select(1u, 0u, ok);
         if (ok && (group.y == 2u || params.edge != 0u || i % params.ns != params.ns - 1u)) {
+            populated |= select(0u, 1u, a.hi != -a.lo || b.hi != -b.lo);
             sum = add(sum, add(square(a, lane), square(b, lane), lane), lane);
         }
     }
     sums[lane] = sum;
     bad[lane] = invalid;
+    nonzero[lane] = populated;
     reduce(lane);
     if (lane == 0u) {
-        partials.data[group.y * blocks + group.x] = Part(sums[0], bad[0], 0u);
+        partials.data[group.y * blocks + group.x] = Part(sums[0], bad[0], nonzero[0]);
     }
 }
 @compute @workgroup_size(64)
@@ -83,13 +88,16 @@ fn finalize(@builtin(local_invocation_index) lane: u32,
     let blocks = (params.points + 255u) / 256u;
     var sum = FF(0.0, 0.0);
     var invalid = 0u;
+    var populated = 0u;
     for (var i = lane; i < blocks; i += 64u) {
         let p = partials.data[group.x * blocks + i];
         sum = add(sum, p.sum, lane);
         invalid |= p.bad;
+        populated |= p.nonzero;
     }
     sums[lane] = sum;
     bad[lane] = invalid;
+    nonzero[lane] = populated;
     reduce(lane);
     if (lane == 0u) {
         let divisor = f32(params.points);
@@ -99,6 +107,9 @@ fn finalize(@builtin(local_invocation_index) lane: u32,
         let mean = normalize(hi, lo, lane);
         output.data[group.x] = mean.hi;
         output.data[group.x + 3u] = mean.lo;
-        output.data[group.x + 6u] = f32(bad[0] | select(1u, 0u, finite(mean.hi) && finite(mean.lo)));
+        // Do not mistake paired-f32 underflow for a zero residual.
+        let underflow = nonzero[0] != 0u && mean.hi == 0.0 && mean.lo == 0.0;
+        output.data[group.x + 6u] = f32(bad[0] | select(1u, 0u,
+            finite(mean.hi) && finite(mean.lo) && !underflow));
     }
 }

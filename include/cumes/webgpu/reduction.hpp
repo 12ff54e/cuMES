@@ -22,7 +22,9 @@ struct ResidualNormCase {
 };
 
 // GPU-only input; two dispatches reduce all six parity families to a paired
-// triple. The compact readback is appended to the caller's existing fence.
+// triple. At most 2^24 samples/family keeps the f32 divisor exact. The compact
+// readback is appended to the caller's existing fence. Nonfinite inputs and
+// unrepresentable squared norms are invalid, never a convergence signal.
 void enqueue_residual_norm(
     const wgpu::Device& device,
     const ResidualNormCase& input,

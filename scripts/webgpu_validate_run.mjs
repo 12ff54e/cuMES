@@ -4,8 +4,10 @@
 import {readFile, writeFile} from 'node:fs/promises';
 import {isDeepStrictEqual} from 'node:util';
 
-const [url, prefix, baselinePath] = process.argv.slice(2);
+const [url, prefix, baselinePath, comparison = 'exact'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
+if (!['exact', 'paired-reductions'].includes(comparison))
+  throw Error('Comparison must be exact or paired-reductions');
 const base = 'http://127.0.0.1:9333';
 const page = await (await fetch(`${base}/json/new?about:blank`, {method: 'PUT'})).json();
 const ws = new WebSocket(page.webSocketDebuggerUrl);
@@ -55,9 +57,21 @@ try {
         const expected = states(baseline), actual = states(trace);
         if (!expected.length || expected.length !== actual.length)
           throw Error(`Controller trace length: ${actual.length}/${expected.length}`);
-        const mismatch = actual.findIndex((row, i) => !isDeepStrictEqual(row, expected[i]));
+        const equivalent = (a, b) => {
+          if (comparison === 'exact') return isDeepStrictEqual(a, b);
+          const reduced = row => {
+            const {fsq, preconditioned, delta, b1, fac, ...rest} = row;
+            return {...rest, delta: Math.fround(delta), b1: Math.fround(b1), fac: Math.fround(fac)};
+          };
+          const close = (x, y) => Number.isFinite(x) && Number.isFinite(y) &&
+            Math.abs(x - y) <= 2e-12 * Math.max(Math.abs(x), Math.abs(y));
+          return isDeepStrictEqual(reduced(a), reduced(b)) &&
+            ['fsq', 'preconditioned'].every(key => a[key].length === b[key].length &&
+              a[key].every((value, i) => close(value, b[key][i])));
+        };
+        const mismatch = actual.findIndex((row, i) => !equivalent(row, expected[i]));
         if (mismatch >= 0) throw Error(`Controller trace mismatch at record ${mismatch}`);
-        console.log(`Exact controller trace: PASS (${actual.length} records)`);
+        console.log(`${comparison} controller trace: PASS (${actual.length} records)`);
       }
       console.log(JSON.stringify(result.dataset));
       finished = true;
