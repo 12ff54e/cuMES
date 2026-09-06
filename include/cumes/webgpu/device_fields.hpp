@@ -21,6 +21,42 @@ struct DeviceFields {
     explicit operator bool() const { return static_cast<bool>(buffer); }
 };
 
+// A committed copy, independent of operator scratch. Capture only after the
+// candidate has passed its validity gates; rejected candidates leave it intact.
+// One allocation per shape, reused for subsequent commits.
+class FieldSnapshot {
+   public:
+    DeviceFields capture(const wgpu::Device& device,
+                         const DeviceFields& source,
+                         bool paired,
+                         const char* label) {
+        if (!source) return {};
+        const auto bytes = source.values * sizeof(float);
+        const auto size = bytes * (paired ? 2 : 1);
+        if (!buffer_ || buffer_.GetSize() != size) {
+            wgpu::BufferDescriptor descriptor{};
+            descriptor.label = label;
+            descriptor.size = size;
+            descriptor.usage = wgpu::BufferUsage::Storage |
+                               wgpu::BufferUsage::CopySrc |
+                               wgpu::BufferUsage::CopyDst;
+            buffer_ = device.CreateBuffer(&descriptor);
+        }
+        const auto encoder = device.CreateCommandEncoder();
+        encoder.CopyBufferToBuffer(source.buffer, source.high_offset, buffer_,
+                                   0, bytes);
+        if (paired)
+            encoder.CopyBufferToBuffer(source.buffer, source.low_offset,
+                                       buffer_, bytes, bytes);
+        const auto commands = encoder.Finish();
+        device.GetQueue().Submit(1, &commands);
+        return {buffer_, source.values, 0, paired ? bytes : 0};
+    }
+
+   private:
+    wgpu::Buffer buffer_;
+};
+
 inline DeviceFields field_slice(const DeviceFields& fields,
                                 std::size_t offset,
                                 std::size_t count) {

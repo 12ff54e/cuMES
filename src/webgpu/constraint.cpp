@@ -68,7 +68,8 @@ std::string validate_case(const AxisymmetricConstraintCase& in) {
                      GEOMETRY_PARITY_FIELD_COUNT * points) ||
         !field_shape(in.r_con, in.device_r_con, points) ||
         !field_shape(in.z_con, in.device_z_con, points) ||
-        in.r_con0.size() != points || in.z_con0.size() != points ||
+        !field_shape(in.r_con0, in.device_r_con0, points) ||
+        !field_shape(in.z_con0, in.device_z_con0, points) ||
         in.tcon.size() != static_cast<std::size_t>(in.ns) ||
         (!in.device_elements &&
          (in.ard.size() != 2 * static_cast<std::size_t>(in.ns) ||
@@ -380,9 +381,11 @@ void enqueue_head(const wgpu::Device& device,
                                   low ? in.z_con_lo : in.z_con, in.device_z_con,
                                   low);
         transfer_constraint_plane(device, encoder, target, 2, points,
-                                  low ? in.r_con0_lo : in.r_con0, {}, low);
+                                  low ? in.r_con0_lo : in.r_con0,
+                                  in.device_r_con0, low);
         transfer_constraint_plane(device, encoder, target, 3, points,
-                                  low ? in.z_con0_lo : in.z_con0, {}, low);
+                                  low ? in.z_con0_lo : in.z_con0,
+                                  in.device_z_con0, low);
     };
     copy_constraints(constraint_buffer, false);
     if (in.device_elements) {
@@ -836,6 +839,10 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
             dealias.nzeta = in.nzeta;
             const auto points =
                 static_cast<std::size_t>(in.ns) * in.ntheta * in.nzeta;
+            result->device_r_con0 =
+                field_slice(head.device_fields, points, points);
+            result->device_z_con0 =
+                field_slice(head.device_fields, 2 * points, points);
             dealias.device_g_con_eff =
                 field_slice(head.device_fields, 0, points);
             dealias.device_tcon = head.device_tcon;

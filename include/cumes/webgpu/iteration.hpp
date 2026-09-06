@@ -14,6 +14,7 @@ namespace cumes::webgpu {
 
 struct IterationCase {
     DeviceFields device_state;
+    DeviceFields device_r_con0, device_z_con0;
     AxisymmetricStageData stage;
     bool double_single = false;
     bool refresh_preconditioner = false;

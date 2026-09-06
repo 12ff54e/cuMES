@@ -2387,10 +2387,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             input.canonical_zeta = requested_canonical_zeta();
             input.elements = preconditioner_elements_;
             input.matrix = preconditioner_matrix_;
-            // A speculative refresh on a rejected Jacobian must not replace
-            // the accepted caches. These small caches retain host ownership.
-            input.elements.device_elements = {};
-            input.matrix.device_matrix = {};
+            input.device_r_con0 = device_constraint_r_con0_;
+            input.device_z_con0 = device_constraint_z_con0_;
             input.r_con0 = constraint_r_con0_;
             input.r_con0_lo = constraint_r_con0_lo_;
             input.z_con0 = constraint_z_con0_;
@@ -3218,6 +3216,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->active_case_name_.c_str(),
                         static_cast<double>(max_scaled_error));
                 }
+                actual.device_elements = self->accepted_elements_.capture(
+                    self->device_, actual.device_elements, false,
+                    "accepted preconditioner elements");
                 self->preconditioner_elements_ = std::move(actual);
                 self->run_preconditioner_matrix();
             });
@@ -3304,6 +3305,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->active_case_name_.c_str(),
                         static_cast<double>(max_scaled_error));
                 }
+                actual.device_matrix = self->accepted_matrix_.capture(
+                    self->device_, actual.device_matrix, false,
+                    "accepted preconditioner matrix");
                 self->preconditioner_matrix_ = std::move(actual);
                 self->run_axisymmetric_constraint();
             });
@@ -3401,6 +3405,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                      "constraint produced nonfinite fields");
                         return;
                     }
+                    self->device_constraint_r_con0_ =
+                        self->accepted_r_con0_.capture(
+                            self->device_, actual.device_r_con0,
+                            self->double_single_solve_,
+                            "accepted constraint R");
+                    self->device_constraint_z_con0_ =
+                        self->accepted_z_con0_.capture(
+                            self->device_, actual.device_z_con0,
+                            self->double_single_solve_,
+                            "accepted constraint Z");
                     self->constraint_r_con0_ = std::move(actual.r_con0);
                     self->constraint_r_con0_lo_ = std::move(actual.r_con0_lo);
                     self->constraint_z_con0_ = std::move(actual.z_con0);
@@ -4079,6 +4093,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void reset_stage_state() {
+        device_constraint_r_con0_ = {};
+        device_constraint_z_con0_ = {};
         controller_.emplace(cumes::IterationController<double>::Options{
             static_cast<double>(initialized_stage_.delta_t),
             initialized_stage_.tolerance, 0.0, false});
@@ -4569,6 +4585,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::optional<cumes::webgpu::IterationResult> iteration_results_;
     std::size_t iteration_forward_index_ = 0, iteration_residual_index_ = 0;
     cumes::webgpu::DeviceFields device_iteration_state_;
+    cumes::webgpu::DeviceFields device_constraint_r_con0_,
+        device_constraint_z_con0_;
+    cumes::webgpu::FieldSnapshot accepted_elements_, accepted_matrix_,
+        accepted_r_con0_, accepted_z_con0_;
     cumes::webgpu::AxisymmetricDescentCallback deferred_descent_callback_;
     cumes::webgpu::AxisymmetricDescentResult deferred_descent_result_;
     bool committing_descent_ = false;

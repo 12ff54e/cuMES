@@ -252,6 +252,8 @@ class IterationDispatch
         in.device_z_con = inverse_.device_z_con;
         in.device_force_fields = force_.device_fields;
         in.device_elements = elements_.device_elements;
+        in.device_r_con0 = input.device_r_con0;
+        in.device_z_con0 = input.device_z_con0;
         in.ard = elements_.ard;
         in.azd = elements_.azd;
         in.r_con0 = input.r_con0;
