@@ -72,8 +72,10 @@ std::string validate_case(const ToroidalInverseCase& input) {
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
     const std::size_t total_points =
         static_cast<std::size_t>(input.ns) * n_z_n_t;
-    if (input.state.size() != SPECTRAL_COMPONENT_COUNT * mnmax * input.ns ||
-        (input.double_single && input.state_lo.size() != input.state.size())) {
+    if (!field_shape(input.state, input.device_state,
+                     SPECTRAL_COMPONENT_COUNT * mnmax * input.ns) ||
+        (!input.device_state && input.double_single &&
+         input.state_lo.size() != input.state.size())) {
         return "toroidal state size does not match 6*mnmax*ns";
     }
     if (total_points > std::numeric_limits<std::uint32_t>::max() ||
@@ -190,8 +192,9 @@ std::string validate_case(const ToroidalDealiasCase& input) {
     const std::size_t points =
         static_cast<std::size_t>(input.ns) * input.ntheta * input.nzeta;
     if (points > std::numeric_limits<std::uint32_t>::max() ||
-        input.g_con_eff.size() != points ||
-        input.tcon.size() != static_cast<std::size_t>(input.ns) ||
+        !field_shape(input.g_con_eff, input.device_g_con_eff, points) ||
+        !field_shape(input.tcon, input.device_tcon,
+                     static_cast<std::size_t>(input.ns)) ||
         input.faccon.size() != static_cast<std::size_t>(input.mpol)) {
         return "toroidal dealias input shape mismatch";
     }
@@ -528,6 +531,7 @@ ToroidalInverseResult toroidal_inverse_double_single_reference(
 
 ToroidalInverseResult toroidal_inverse_reference(
     const ToroidalInverseCase& input) {
+    if (input.device_state) return {};
     if (!validate_case(input).empty()) return {};
     if (input.double_single) {
         return toroidal_inverse_double_single_reference(input);
@@ -628,7 +632,9 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t result_values =
         RESULT_FIELD_COUNT * total_points * (input.double_single ? 2 : 1);
-    const std::size_t state_bytes = input.state.size() * sizeof(float);
+    const std::size_t state_bytes =
+        SPECTRAL_COMPONENT_COUNT * static_cast<std::size_t>(input.ns) *
+        input.mpol * (input.ntor + 1) * sizeof(float);
     const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t result_bytes = result_values * sizeof(float);
     const std::size_t intermediate_points =
@@ -680,9 +686,11 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         create_buffer(device, intermediate_bytes, wgpu::BufferUsage::Storage,
                       "cuMES toroidal inverse intermediate");
     const auto readback_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                      "cuMES toroidal inverse readback");
+        input.readback.batch ? wgpu::Buffer{}
+                             : create_buffer(device, result_bytes,
+                                             wgpu::BufferUsage::CopyDst |
+                                                 wgpu::BufferUsage::MapRead,
+                                             "cuMES toroidal inverse readback");
     const auto params_buffer =
         create_buffer(device, sizeof(ShaderParams),
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -715,15 +723,17 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                               static_cast<std::uint32_t>(input.nfp),
                               static_cast<std::uint32_t>(n_z_n_t),
                               static_cast<std::uint32_t>(total_points),
-                              0.0F,
+                              input.device_state ? 1.0F : 0.0F,
                               0.0F,
                               0.0F,
                               0.0F};
     const auto queue = device.GetQueue();
-    queue.WriteBuffer(state_buffer, 0, input.state.data(), state_bytes);
+    const auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, state_buffer, input.state,
+                    input.device_state);
     if (input.double_single) {
-        queue.WriteBuffer(state_lo_buffer, 0, input.state_lo.data(),
-                          state_bytes);
+        transfer_fields(device, encoder, state_lo_buffer, input.state_lo,
+                        input.device_state, true);
         const std::size_t radial_scale_bytes =
             radial_scale_hi.size() * sizeof(float);
         queue.WriteBuffer(radial_scale_hi_buffer, 0, radial_scale_hi.data(),
@@ -779,7 +789,6 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     poloidal_bind_descriptor.entries = poloidal_entries.data();
     const auto poloidal_bind_group =
         device.CreateBindGroup(&poloidal_bind_descriptor);
-    const auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     const auto toroidal_pass = encoder.BeginComputePass(&pass_descriptor);
     toroidal_pass.SetPipeline(toroidal_pipeline);
@@ -796,6 +805,41 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         (static_cast<std::uint32_t>(total_points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     poloidal_pass.End();
+    if (input.readback.batch) {
+        ToroidalInverseResult resident;
+        const auto fields = GEOMETRY_PARITY_FIELD_COUNT * total_points;
+        const auto high_values = RESULT_FIELD_COUNT * total_points;
+        resident.device_geometry = {result_buffer, fields, 0,
+                                    high_values * sizeof(float)};
+        resident.device_r_con =
+            field_slice(resident.device_geometry, fields, total_points);
+        resident.device_z_con = field_slice(
+            resident.device_geometry, fields + total_points, total_points);
+        input.readback.batch->append(
+            encoder, result_buffer, 0, result_bytes,
+            [callback = std::move(callback), resident, fields, high_values,
+             total_points, paired = input.double_single](
+                std::span<const float> values) mutable {
+                const auto hi = values.begin();
+                resident.geometry.assign(hi, hi + fields);
+                resident.r_con.assign(hi + fields, hi + fields + total_points);
+                resident.z_con.assign(hi + fields + total_points,
+                                      hi + high_values);
+                if (paired) {
+                    const auto lo = hi + high_values;
+                    resident.geometry_lo.assign(lo, lo + fields);
+                    resident.r_con_lo.assign(lo + fields,
+                                             lo + fields + total_points);
+                    resident.z_con_lo.assign(lo + fields + total_points,
+                                             lo + high_values);
+                }
+                callback({}, std::move(resident));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        input.readback.publish_device(std::move(resident));
+        return;
+    }
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);
     const auto commands = encoder.Finish();
@@ -1020,9 +1064,11 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         create_buffer(device, intermediate_bytes, wgpu::BufferUsage::Storage,
                       "cuMES toroidal forward intermediate");
     const auto readback_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                      "cuMES toroidal residual readback");
+        !input.readback ? wgpu::Buffer{}
+                        : create_buffer(device, result_bytes,
+                                        wgpu::BufferUsage::CopyDst |
+                                            wgpu::BufferUsage::MapRead,
+                                        "cuMES toroidal residual readback");
     const auto params_buffer =
         create_buffer(device, sizeof(ShaderParams),
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -1242,6 +1288,10 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
 
 ToroidalDealiasResult toroidal_dealias_reference(
     const ToroidalDealiasCase& input) {
+    if (input.g_con_eff.size() !=
+            static_cast<std::size_t>(input.ns) * input.ntheta * input.nzeta ||
+        input.tcon.size() != static_cast<std::size_t>(input.ns))
+        return {};
     if (!validate_case(input).empty()) return {};
     const int band_modes = input.mpol - 2;
     const int n_z_n_t = input.ntheta * input.nzeta;
@@ -1311,6 +1361,7 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
     std::vector<float> profiles;
     profiles.reserve(input.tcon.size() + input.faccon.size());
     profiles.insert(profiles.end(), input.tcon.begin(), input.tcon.end());
+    if (input.device_tcon) profiles.resize(input.ns, 0.0F);
     profiles.insert(profiles.end(), input.faccon.begin(), input.faccon.end());
     const std::size_t n_z_n_t =
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
@@ -1318,7 +1369,7 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
     const std::size_t band_modes = static_cast<std::size_t>(input.mpol - 2);
     const std::size_t coefficient_values =
         2 * input.ns * band_modes * (input.ntor + 1);
-    const std::size_t input_bytes = input.g_con_eff.size() * sizeof(float);
+    const std::size_t input_bytes = points * sizeof(float);
     const std::size_t profile_bytes = profiles.size() * sizeof(float);
     const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t coefficient_bytes = coefficient_values * sizeof(float);
@@ -1350,9 +1401,12 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                       "cuMES toroidal dealiased constraint");
     const auto readback_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                      "cuMES toroidal constraint readback");
+        input.readback.batch
+            ? wgpu::Buffer{}
+            : create_buffer(
+                  device, result_bytes,
+                  wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
+                  "cuMES toroidal constraint readback");
     const auto params_buffer =
         create_buffer(device, sizeof(DealiasParams),
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -1381,7 +1435,6 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
                                static_cast<std::uint32_t>(band_modes),
                                static_cast<std::uint32_t>(points)};
     const auto queue = device.GetQueue();
-    queue.WriteBuffer(input_buffer, 0, input.g_con_eff.data(), input_bytes);
     queue.WriteBuffer(profile_buffer, 0, profiles.data(), profile_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     const auto toroidal_analyze_layout =
@@ -1456,6 +1509,12 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
     const auto poloidal_synthesize_bind_group =
         device.CreateBindGroup(&poloidal_synthesize_descriptor);
     const auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, input_buffer, input.g_con_eff,
+                    input.device_g_con_eff);
+    if (input.device_tcon)
+        encoder.CopyBufferToBuffer(input.device_tcon.buffer,
+                                   input.device_tcon.high_offset,
+                                   profile_buffer, 0, input.ns * sizeof(float));
     wgpu::ComputePassDescriptor pass_descriptor{};
     const auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(toroidal_analyze_pipeline);
@@ -1482,6 +1541,21 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    if (input.readback.batch) {
+        ToroidalDealiasResult resident;
+        resident.device_g_con = {result_buffer, points, 0, 0};
+        input.readback.batch->append(
+            encoder, result_buffer, 0, result_bytes,
+            [callback = std::move(callback),
+             resident](std::span<const float> values) mutable {
+                resident.g_con.assign(values.begin(), values.end());
+                callback({}, std::move(resident));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        input.readback.publish_device(std::move(resident));
+        return;
+    }
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);
     const auto commands = encoder.Finish();

@@ -245,10 +245,12 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         make_buffer(device, output_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                     "descent output");
-    auto readback =
-        make_buffer(device, output_bytes,
-                    wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                    "descent readback");
+    auto readback = input.readback.batch
+                        ? wgpu::Buffer{}
+                        : make_buffer(device, output_bytes,
+                                      wgpu::BufferUsage::CopyDst |
+                                          wgpu::BufferUsage::MapRead,
+                                      "descent readback");
     auto params_buffer =
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -321,6 +323,32 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    if (input.readback.batch) {
+        AxisymmetricDescentResult resident;
+        const auto count = 6 * points;
+        resident.device_state = {output_buffer, count, 0,
+                                 count * sizeof(float)};
+        input.readback.batch->append(
+            encoder, output_buffer, 0, output_bytes,
+            [callback = std::move(callback), resident, count,
+             paired =
+                 input.double_single](std::span<const float> values) mutable {
+                const auto hi = values.begin();
+                resident.state.assign(hi, hi + count);
+                if (paired) {
+                    resident.state_lo.assign(hi + count, hi + 2 * count);
+                    resident.velocity.assign(hi + 2 * count, hi + 3 * count);
+                    resident.velocity_lo.assign(hi + 3 * count, hi + 4 * count);
+                } else {
+                    resident.velocity.assign(hi + count, hi + 2 * count);
+                }
+                callback({}, std::move(resident));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        input.readback.publish_device(std::move(resident));
+        return;
+    }
     encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
     auto commands = encoder.Finish();
     queue.Submit(1, &commands);

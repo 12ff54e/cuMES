@@ -50,9 +50,11 @@ std::string validate_case(const AxisymmetricPreconditionerElementCase& in) {
     const std::size_t full = static_cast<std::size_t>(in.ns) * n_z_n_t;
     const std::size_t half = static_cast<std::size_t>(in.ns - 1) * n_z_n_t;
     if (full > std::numeric_limits<std::uint32_t>::max() ||
-        in.geometry.size() != GEOMETRY_PARITY_FIELD_COUNT * full ||
-        in.base_geometry.size() != BASE_GEOMETRY_FIELD_COUNT * half ||
-        in.magnetic_field.size() != 5 * half ||
+        !field_shape(in.geometry, in.device_geometry,
+                     GEOMETRY_PARITY_FIELD_COUNT * full) ||
+        !field_shape(in.base_geometry, in.device_base_geometry,
+                     BASE_GEOMETRY_FIELD_COUNT * half) ||
+        !field_shape(in.magnetic_field, in.device_magnetic_field, 5 * half) ||
         in.sqrt_s_f.size() != static_cast<std::size_t>(in.ns) ||
         in.sqrt_s_h.size() != static_cast<std::size_t>(in.ns - 1)) {
         return "axisymmetric preconditioner element input shape mismatch";
@@ -226,6 +228,13 @@ struct Dispatch {
 AxisymmetricPreconditionerElements
 axisymmetric_preconditioner_element_reference(
     const AxisymmetricPreconditionerElementCase& input) {
+    const auto angular = static_cast<std::size_t>(input.ntheta) * input.nzeta;
+    if (input.geometry.size() !=
+            GEOMETRY_PARITY_FIELD_COUNT * input.ns * angular ||
+        input.base_geometry.size() !=
+            BASE_GEOMETRY_FIELD_COUNT * (input.ns - 1) * angular ||
+        input.magnetic_field.size() != 5 * (input.ns - 1) * angular)
+        return {};
     if (!validate_case(input).empty()) return {};
     AxisymmetricPreconditionerElements out;
     out.ard.resize(2 * input.ns);
@@ -285,9 +294,10 @@ void enqueue_axisymmetric_preconditioner_elements(
     const std::size_t half = static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
     std::vector<float> radial = input.sqrt_s_f;
     radial.insert(radial.end(), input.sqrt_s_h.begin(), input.sqrt_s_h.end());
-    const auto geometry_bytes = input.geometry.size() * sizeof(float);
-    const auto base_bytes = input.base_geometry.size() * sizeof(float);
-    const auto magnetic_bytes = input.magnetic_field.size() * sizeof(float);
+    const auto geometry_bytes =
+        GEOMETRY_PARITY_FIELD_COUNT * full * sizeof(float);
+    const auto base_bytes = BASE_GEOMETRY_FIELD_COUNT * half * sizeof(float);
+    const auto magnetic_bytes = 5 * half * sizeof(float);
     const auto radial_bytes = radial.size() * sizeof(float);
     const auto output_values = 9 * static_cast<std::size_t>(input.ns) +
                                8 * static_cast<std::size_t>(input.ns - 1);
@@ -312,10 +322,12 @@ void enqueue_axisymmetric_preconditioner_elements(
         make_buffer(device, output_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                     "preconditioner elements");
-    auto readback =
-        make_buffer(device, output_bytes,
-                    wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                    "preconditioner element readback");
+    auto readback = input.readback.batch
+                        ? wgpu::Buffer{}
+                        : make_buffer(device, output_bytes,
+                                      wgpu::BufferUsage::CopyDst |
+                                          wgpu::BufferUsage::MapRead,
+                                      "preconditioner element readback");
     auto params_buffer =
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -332,11 +344,13 @@ void enqueue_axisymmetric_preconditioner_elements(
                         0,
                         0};
     auto queue = device.GetQueue();
-    queue.WriteBuffer(geometry_buffer, 0, input.geometry.data(),
-                      geometry_bytes);
-    queue.WriteBuffer(base_buffer, 0, input.base_geometry.data(), base_bytes);
-    queue.WriteBuffer(magnetic_buffer, 0, input.magnetic_field.data(),
-                      magnetic_bytes);
+    auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, geometry_buffer, input.geometry,
+                    input.device_geometry);
+    transfer_fields(device, encoder, base_buffer, input.base_geometry,
+                    input.device_base_geometry);
+    transfer_fields(device, encoder, magnetic_buffer, input.magnetic_field,
+                    input.device_magnetic_field);
     queue.WriteBuffer(radial_buffer, 0, radial.data(), radial_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     auto layout = pipeline.GetBindGroupLayout(0);
@@ -352,7 +366,6 @@ void enqueue_axisymmetric_preconditioner_elements(
     bind_descriptor.entryCount = std::size(entries);
     bind_descriptor.entries = entries;
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
-    auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(pipeline);
@@ -361,6 +374,32 @@ void enqueue_axisymmetric_preconditioner_elements(
         (static_cast<std::uint32_t>(input.ns) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    if (input.readback.batch) {
+        AxisymmetricPreconditionerElements resident;
+        resident.device_elements = {output_buffer, output_values, 0, 0};
+        input.readback.batch->append(
+            encoder, output_buffer, 0, output_bytes,
+            [callback = std::move(callback), resident,
+             ns = input.ns](std::span<const float> values) mutable {
+                const auto hi = values.begin();
+                const std::size_t pairs = 2 * ns, half = 2 * (ns - 1);
+                resident.ard.assign(hi, hi + pairs);
+                resident.brd.assign(hi + pairs, hi + 2 * pairs);
+                resident.azd.assign(hi + 2 * pairs, hi + 3 * pairs);
+                resident.bzd.assign(hi + 3 * pairs, hi + 4 * pairs);
+                resident.cxd.assign(hi + 4 * pairs, hi + 4 * pairs + ns);
+                const auto h = hi + 4 * pairs + ns;
+                resident.arm.assign(h, h + half);
+                resident.brm.assign(h + half, h + 2 * half);
+                resident.azm.assign(h + 2 * half, h + 3 * half);
+                resident.bzm.assign(h + 3 * half, h + 4 * half);
+                callback({}, std::move(resident));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        input.readback.publish_device(std::move(resident));
+        return;
+    }
     encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
     auto commands = encoder.Finish();
     queue.Submit(1, &commands);

@@ -11,6 +11,7 @@
 #include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
+#include "cumes/webgpu/iteration.hpp"
 #include "cumes/webgpu/numerics.hpp"
 #include "cumes/webgpu/preconditioner.hpp"
 #include "cumes/webgpu/prolongation.hpp"
@@ -30,6 +31,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -1216,13 +1218,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
-    void run_resident_residual_tests(int variant = 0) {
-        if (variant == 4) {
+    void run_resident_residual_tests(int test = 0) {
+        if (test == 8) {
             std::printf(
-                "  resident spectral handoff (f32, paired, zero, NaN): PASS\n");
-            run_w7x_initialization();
+                "  resident and batched spectral handoff (f32, paired, zero, "
+                "NaN): PASS\n");
+            run_readback_batch_test();
             return;
         }
+        const int variant = test % 4;
         cumes::webgpu::ResidualDecompositionCase input;
         input.ns = 3;
         input.mpol = 2;
@@ -1242,7 +1246,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_residual_decomposition(
             device_, input,
-            [self, input, variant](
+            [self, input, variant, test](
                 std::string error,
                 cumes::webgpu::ResidualDecompositionResult expected) mutable {
                 if (!error.empty()) {
@@ -1273,11 +1277,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         false, "CPU reference accepted a device-only residual");
                     return;
                 }
-                cumes::webgpu::enqueue_residual_decomposition(
-                    self->device_, input,
-                    [self, buffer, expected = std::move(expected), variant](
-                        std::string error,
-                        cumes::webgpu::ResidualDecompositionResult actual) {
+                const auto check =
+                    [self, buffer, expected = std::move(expected), variant,
+                     test](std::string error,
+                           cumes::webgpu::ResidualDecompositionResult actual) {
                         const bool equal =
                             variant == 3 ||
                             (actual.residual == expected.residual &&
@@ -1293,8 +1296,103 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                     error);
                             return;
                         }
-                        self->run_resident_residual_tests(variant + 1);
+                        self->run_resident_residual_tests(test + 1);
+                    };
+                if (test < 4) {
+                    cumes::webgpu::enqueue_residual_decomposition(self->device_,
+                                                                  input, check);
+                    return;
+                }
+                auto batch = std::make_shared<cumes::webgpu::ReadbackBatch>(
+                    self->device_, 4096);
+                auto result = std::make_shared<
+                    cumes::webgpu::ResidualDecompositionResult>();
+                input.readback = {
+                    batch, [](cumes::webgpu::ResidualDecompositionResult) {}};
+                cumes::webgpu::enqueue_residual_decomposition(
+                    self->device_, input,
+                    [self, result](
+                        std::string error,
+                        cumes::webgpu::ResidualDecompositionResult value) {
+                        if (!error.empty()) {
+                            self->finish(false, error);
+                            return;
+                        }
+                        *result = std::move(value);
                     });
+                batch->map([check, result](std::string error) {
+                    check(std::move(error), std::move(*result));
+                });
+            });
+    }
+
+    void run_readback_batch_test(
+        int cycle = 0,
+        std::shared_ptr<cumes::webgpu::ReadbackBatch> batch = {}) {
+        if (!batch)
+            batch = std::make_shared<cumes::webgpu::ReadbackBatch>(device_, 24);
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = 16;
+        descriptor.usage =
+            wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+        const auto source = device_.CreateBuffer(&descriptor);
+        auto valid = std::make_shared<bool>(true);
+        auto decoded = std::make_shared<int>(0);
+        const auto encoder = device_.CreateCommandEncoder();
+        bool empty_rejected = false, overflow_rejected = false;
+        batch->map([&empty_rejected](std::string error) {
+            empty_rejected = !error.empty();
+        });
+        batch->append(encoder, source, 0, 28, [](std::span<const float>) {});
+        batch->map([&overflow_rejected](std::string error) {
+            overflow_rejected = !error.empty();
+        });
+        if (!empty_rejected || !overflow_rejected) {
+            finish(false,
+                   "readback batch accepted an empty map or overflowing slice");
+            return;
+        }
+        const std::array<float, 4> first{1.0F, -2.0F, float(cycle), 4.0F};
+        device_.GetQueue().WriteBuffer(source, 0, first.data(), sizeof(first));
+        batch->append(encoder, source, 0, 12,
+                      [valid, decoded, first](std::span<const float> values) {
+                          *valid &= std::equal(values.begin(), values.end(),
+                                               first.begin());
+                          ++*decoded;
+                      });
+        const auto commands = encoder.Finish();
+        device_.GetQueue().Submit(1, &commands);
+        // Reuse the producer before mapping; its first snapshot must survive.
+        const std::array<float, 4> second{17.0F, 19.0F, 23.0F, 29.0F};
+        device_.GetQueue().WriteBuffer(source, 0, second.data(),
+                                       sizeof(second));
+        const auto next_encoder = device_.CreateCommandEncoder();
+        batch->append(next_encoder, source, 4, 4,
+                      [valid, decoded](std::span<const float> values) {
+                          *valid &= values.size() == 1 && values[0] == 19.0F;
+                          ++*decoded;
+                      });
+        const auto next_commands = next_encoder.Finish();
+        device_.GetQueue().Submit(1, &next_commands);
+        const auto self = shared_from_this();
+        batch->map(
+            [self, batch, source, valid, decoded, cycle](std::string error) {
+                source.Destroy();
+                if (!error.empty() || !*valid || *decoded != 2) {
+                    self->finish(
+                        false,
+                        "readback batch snapshot/alignment/reuse mismatch: " +
+                            error);
+                    return;
+                }
+                if (cycle == 0)
+                    self->run_readback_batch_test(1, batch);
+                else {
+                    std::printf(
+                        "  batched readback snapshots, alignment, reuse, "
+                        "guards: PASS\n");
+                    self->run_w7x_initialization();
+                }
             });
     }
 
@@ -2114,24 +2212,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
     }
 
-    void run_stage_inverse() {
-        if (attempted_passes_ >= initialized_stage_.max_iterations) {
-            finish(false,
-                   active_case_name_ +
-                       " stage exhausted its iteration limit at iter=" +
-                       std::to_string(controller_->effective_iteration()) +
-                       " FSQR=" + std::to_string(invariant_normalized_[0]));
-            return;
-        }
-        ++attempted_passes_;
-        if (controller_->next_schedule()) {
-            restore_checkpoint();
-            std::printf(
-                "  controller maintenance restore: iter=%d delta=%.3e\n",
-                controller_->effective_iteration(), controller_->delta_t());
-            run_stage_inverse();
-            return;
-        }
+    void extrapolate_stage_axis() {
         // CUDA's extrapolateTowardsAxis mutates the physical state immediately
         // before every inverse pass.
         const int mode_count =
@@ -2153,7 +2234,96 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
             }
         }
+    }
+
+    void run_stage_inverse() {
+        iteration_results_.reset();
+        if (attempted_passes_ >= initialized_stage_.max_iterations) {
+            if (deferred_descent_callback_) {
+                const auto self = shared_from_this();
+                iteration_readback_->map([self](std::string error) {
+                    if (!error.empty()) {
+                        self->finish(false, error);
+                        return;
+                    }
+                    self->commit_deferred_descent();
+                    self->run_stage_inverse();
+                });
+                return;
+            }
+            finish(false,
+                   active_case_name_ +
+                       " stage exhausted its iteration limit at iter=" +
+                       std::to_string(controller_->effective_iteration()) +
+                       " FSQR=" + std::to_string(invariant_normalized_[0]));
+            return;
+        }
+        ++attempted_passes_;
+        if (controller_->next_schedule()) {
+            restore_checkpoint();
+            std::printf(
+                "  controller maintenance restore: iter=%d delta=%.3e\n",
+                controller_->effective_iteration(), controller_->delta_t());
+            run_stage_inverse();
+            return;
+        }
+        if (!device_iteration_state_) extrapolate_stage_axis();
         const auto self = shared_from_this();
+        if (resident_spectral_path()) {
+            cumes::webgpu::IterationCase input;
+            input.stage = initialized_stage_;
+            input.device_state = device_iteration_state_;
+            input.stage.state_lo = stage_state_lo_;
+            input.double_single = double_single_solve_;
+            input.refresh_preconditioner =
+                controller_->refresh_preconditioner() ||
+                preconditioner_elements_.ard.empty();
+            input.reset_reference = controller_->reset_constraint_reference();
+            input.zero_m1_z = controller_->effective_iteration() < 2 ||
+                              controller_->fsqz_prev() < 1.0e-6;
+            input.use_fft = requested_direct_dft() == 0;
+            input.optimized_fft = !requested_generic_fft();
+            input.canonical_zeta = requested_canonical_zeta();
+            input.elements = preconditioner_elements_;
+            input.matrix = preconditioner_matrix_;
+            // A speculative refresh on a rejected Jacobian must not replace
+            // the accepted caches. These small caches retain host ownership.
+            input.elements.device_elements = {};
+            input.matrix.device_matrix = {};
+            input.r_con0 = constraint_r_con0_;
+            input.r_con0_lo = constraint_r_con0_lo_;
+            input.z_con0 = constraint_z_con0_;
+            input.z_con0_lo = constraint_z_con0_lo_;
+            input.tcon = constraint_tcon_;
+            const auto capacity =
+                cumes::webgpu::iteration_readback_capacity(input.stage);
+            if (!iteration_readback_ ||
+                iteration_readback_capacity_ != capacity) {
+                iteration_readback_ =
+                    std::make_shared<cumes::webgpu::ReadbackBatch>(device_,
+                                                                   capacity);
+                iteration_readback_capacity_ = capacity;
+            }
+            cumes::webgpu::enqueue_iteration(
+                device_, std::move(input), iteration_readback_,
+                [self](std::string error,
+                       cumes::webgpu::IterationResult result) {
+                    if (!error.empty()) {
+                        self->finish(false, std::move(error));
+                        return;
+                    }
+                    if (self->deferred_descent_callback_) {
+                        self->commit_deferred_descent();
+                        self->extrapolate_stage_axis();
+                    }
+                    self->iteration_forward_index_ = 0;
+                    self->iteration_residual_index_ = 0;
+                    self->iteration_results_ = std::move(result);
+                    self->finish_stage_inverse(
+                        std::move(self->iteration_results_->inverse), {});
+                });
+            return;
+        }
         if (initialized_stage_.ntor == 0) {
             cumes::webgpu::AxisymmetricInverseCase inverse;
             inverse.ns = initialized_stage_.ns;
@@ -2267,8 +2437,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         base_geometry_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
         base_geometry_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_base_geometry(
-            device_, base_geometry_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_base_geometry, base_geometry_case_,
             [self](std::string error,
                    cumes::webgpu::BaseGeometryResult actual) {
                 if (!error.empty()) {
@@ -2405,8 +2575,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         magnetic_field_case_.iota_h = initialized_stage_.profiles.iota_h;
         magnetic_field_case_.iota_h_lo = initialized_stage_.profiles.iota_h_lo;
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_magnetic_field(
-            device_, magnetic_field_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_magnetic_field, magnetic_field_case_,
             [self](std::string error,
                    cumes::webgpu::MagneticFieldResult actual) {
                 if (!error.empty()) {
@@ -2580,8 +2750,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.phip_f = initialized_stage_.profiles.phip_f;
         force_case_.phip_f_lo = initialized_stage_.profiles.phip_f_lo;
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_axisymmetric_force(
-            device_, force_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_force, force_case_,
             [self](std::string error,
                    cumes::webgpu::AxisymmetricForceResult actual) {
                 if (!error.empty()) {
@@ -2796,8 +2966,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         residual_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
         residual_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_residual_decomposition(
-            device_, residual_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_residual_decomposition, residual_case_,
             [self](std::string error,
                    cumes::webgpu::ResidualDecompositionResult actual) {
                 if (!error.empty()) {
@@ -2874,8 +3044,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
         preconditioner_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_axisymmetric_preconditioner_elements(
-            device_, preconditioner_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_preconditioner_elements,
+            preconditioner_case_,
             [self](std::string error,
                    cumes::webgpu::AxisymmetricPreconditionerElements actual) {
                 if (!error.empty()) {
@@ -2957,8 +3128,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             initialized_stage_.profiles.sqrt_s_f;
         preconditioner_matrix_case_.phip_h = initialized_stage_.profiles.phip_h;
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_axisymmetric_preconditioner_matrix(
-            device_, preconditioner_matrix_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_preconditioner_matrix,
+            preconditioner_matrix_case_,
             [self](std::string error,
                    cumes::webgpu::AxisymmetricPreconditionerMatrix actual) {
                 if (!error.empty()) {
@@ -3084,8 +3256,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             constraint_case_.force_fields_lo.clear();
         }
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_axisymmetric_constraint(
-            device_, constraint_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_constraint, constraint_case_,
             [self](std::string error,
                    cumes::webgpu::AxisymmetricConstraintResult actual) {
                 if (!error.empty()) {
@@ -3172,6 +3344,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const cumes::webgpu::ToroidalForwardCase& input,
         std::string label,
         cumes::webgpu::ToroidalForwardCallback callback) {
+        if (iteration_results_) {
+            callback({}, std::move(iteration_results_->forward.at(
+                             iteration_forward_index_++)));
+            return;
+        }
         const int iteration = controller_->effective_iteration();
         if (!input.double_single || !requested_compare_fft() ||
             (iteration > 3 && iteration % 100 != 0)) {
@@ -3412,8 +3589,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_residual_case_.sqrt_s_f_lo =
             initialized_stage_.profiles.sqrt_s_f_lo;
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_residual_decomposition(
-            device_, constraint_residual_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_residual_decomposition,
+            constraint_residual_case_,
             [self](std::string error,
                    cumes::webgpu::ResidualDecompositionResult actual) {
                 if (!error.empty()) {
@@ -3465,8 +3643,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_apply_case_.matrix = preconditioner_matrix_;
         preconditioner_apply_case_.residual = std::move(residual);
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_axisymmetric_preconditioner_apply(
-            device_, preconditioner_apply_case_,
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_preconditioner_apply,
+            preconditioner_apply_case_,
             [self](
                 std::string error,
                 cumes::webgpu::AxisymmetricPreconditionerApplyResult actual) {
@@ -3605,6 +3784,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_descent(std::vector<float> residual) {
+        iteration_results_.reset();
         descent_case_.ns = initialized_stage_.ns;
         descent_case_.mpol = initialized_stage_.mpol;
         descent_case_.ntor = initialized_stage_.ntor;
@@ -3636,8 +3816,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             descent_case_.residual_lo.clear();
         }
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_axisymmetric_descent(
-            device_, descent_case_,
+        enqueue_descent_result(
+            descent_case_,
             [self](std::string error,
                    cumes::webgpu::AxisymmetricDescentResult actual) {
                 if (!error.empty()) {
@@ -3743,8 +3923,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                             std::move(actual.velocity_lo);
                     }
                 }
-                self->controller_->after_descent(self->pending_decision_);
-                ++self->completed_passes_;
+                if (!self->committing_descent_) {
+                    self->controller_->after_descent(self->pending_decision_);
+                    ++self->completed_passes_;
+                }
                 const int iteration = self->controller_->effective_iteration();
                 if (!self->production_solve_ || iteration <= 3 ||
                     iteration % 25 == 0) {
@@ -3764,11 +3946,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->run_solovev_initialization();
                     return;
                 }
+                if (self->committing_descent_) return;
                 self->run_stage_inverse();
             });
     }
 
     void restore_checkpoint() {
+        device_iteration_state_ = {};
         initialized_stage_.state = checkpoint_state_;
         stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
         if (double_single_solve_) {
@@ -4220,6 +4404,100 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     bool resident_spectral_path() const {
         return production_solve_ && resident_path() &&
                !requested_spectral_fences() && !requested_compare_fft();
+    }
+    // Feed collected values through the same validation/controller chain as
+    // the reference path. No operator is resubmitted while consuming a batch.
+    template <typename Input, typename Result, typename Callback>
+    void enqueue_evaluated(
+        void (*enqueue)(const wgpu::Device&,
+                        const Input&,
+                        std::function<void(std::string, Result)>),
+        const Input& input,
+        Callback callback) {
+        if (!iteration_results_) {
+            enqueue(device_, input, std::move(callback));
+            return;
+        }
+        using namespace cumes::webgpu;
+        Result value;
+        auto& r = *iteration_results_;
+        if constexpr (std::is_same_v<Result, BaseGeometryResult>)
+            value = std::move(r.geometry);
+        else if constexpr (std::is_same_v<Result, MagneticFieldResult>)
+            value = std::move(r.magnetic);
+        else if constexpr (std::is_same_v<Result, AxisymmetricForceResult>)
+            value = std::move(r.force);
+        else if constexpr (std::is_same_v<Result, ResidualDecompositionResult>)
+            value = std::move(r.residual.at(iteration_residual_index_++));
+        else if constexpr (std::is_same_v<Result,
+                                          AxisymmetricPreconditionerElements>)
+            value = std::move(r.elements);
+        else if constexpr (std::is_same_v<Result,
+                                          AxisymmetricPreconditionerMatrix>)
+            value = std::move(r.matrix);
+        else if constexpr (std::is_same_v<Result, AxisymmetricConstraintResult>)
+            value = std::move(r.constraint);
+        else if constexpr (std::is_same_v<
+                               Result, AxisymmetricPreconditionerApplyResult>)
+            value = std::move(r.preconditioned);
+        else
+            static_assert(!sizeof(Result), "unhandled iteration result");
+        callback({}, std::move(value));
+    }
+    std::shared_ptr<cumes::webgpu::ReadbackBatch> iteration_readback_;
+    std::uint64_t iteration_readback_capacity_ = 0;
+    std::optional<cumes::webgpu::IterationResult> iteration_results_;
+    std::size_t iteration_forward_index_ = 0, iteration_residual_index_ = 0;
+    cumes::webgpu::DeviceFields device_iteration_state_;
+    cumes::webgpu::AxisymmetricDescentCallback deferred_descent_callback_;
+    cumes::webgpu::AxisymmetricDescentResult deferred_descent_result_;
+    bool committing_descent_ = false;
+
+    void commit_deferred_descent() {
+        auto callback = std::move(deferred_descent_callback_);
+        deferred_descent_callback_ = {};
+        committing_descent_ = true;
+        callback({}, std::move(deferred_descent_result_));
+        committing_descent_ = false;
+        device_iteration_state_ = {};
+    }
+
+    void enqueue_descent_result(
+        const cumes::webgpu::AxisymmetricDescentCase& input,
+        cumes::webgpu::AxisymmetricDescentCallback callback) {
+        if (!resident_spectral_path()) {
+            cumes::webgpu::enqueue_axisymmetric_descent(device_, input,
+                                                        std::move(callback));
+            return;
+        }
+        deferred_descent_callback_ = std::move(callback);
+        auto batched = input;
+        const auto self = shared_from_this();
+        batched.readback = {
+            iteration_readback_,
+            [self](cumes::webgpu::AxisymmetricDescentResult result) {
+                self->device_iteration_state_ = result.device_state;
+                // Refresh and restart are mutually exclusive controller
+                // decisions. A restart consumes the last accepted host
+                // checkpoint; a normal pass consumes the pending device state
+                // without waiting for it.
+                if (self->pending_decision_.reason !=
+                    cumes::RestartReason::NONE)
+                    self->restore_checkpoint();
+                self->controller_->after_descent(self->pending_decision_);
+                ++self->completed_passes_;
+                self->run_stage_inverse();
+            }};
+        cumes::webgpu::enqueue_axisymmetric_descent(
+            device_, batched,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricDescentResult result) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                self->deferred_descent_result_ = std::move(result);
+            });
     }
     cumes::webgpu::DeviceFields device_geometry_, device_base_geometry_,
         device_magnetic_field_, device_force_fields_, device_constraint_fields_;

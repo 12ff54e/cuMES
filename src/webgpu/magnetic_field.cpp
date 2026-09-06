@@ -49,8 +49,10 @@ std::string validate_case(const MagneticFieldCase& input) {
         return "magnetic field exceeds WebGPU indexing limits";
     }
     const auto half_surfaces = static_cast<std::size_t>(input.ns - 1);
-    if (input.geometry.size() != FULL_GEOMETRY_FIELD_COUNT * full_points ||
-        input.base_geometry.size() != BASE_GEOMETRY_FIELD_COUNT * half_points ||
+    if (!field_shape(input.geometry, input.device_geometry,
+                     FULL_GEOMETRY_FIELD_COUNT * full_points) ||
+        !field_shape(input.base_geometry, input.device_base_geometry,
+                     BASE_GEOMETRY_FIELD_COUNT * half_points) ||
         (input.double_single &&
          (input.geometry_lo.size() != input.geometry.size() ||
           input.base_geometry_lo.size() != input.base_geometry.size() ||
@@ -262,6 +264,12 @@ MagneticFieldResult magnetic_field_double_single_reference(
 }  // namespace
 
 MagneticFieldResult magnetic_field_reference(const MagneticFieldCase& input) {
+    const auto angular = static_cast<std::size_t>(input.ntheta) * input.nzeta;
+    if (input.geometry.size() !=
+            FULL_GEOMETRY_FIELD_COUNT * input.ns * angular ||
+        input.base_geometry.size() !=
+            BASE_GEOMETRY_FIELD_COUNT * (input.ns - 1) * angular)
+        return {};
     if (!validate_case(input).empty()) return {};
     if (input.double_single) {
         return magnetic_field_double_single_reference(input);
@@ -449,8 +457,10 @@ void enqueue_magnetic_field(const wgpu::Device& device,
         profiles_lo.insert(profiles_lo.end(), input.iota_h_lo.begin(),
                            input.iota_h_lo.end());
     }
-    const std::size_t geometry_bytes = input.geometry.size() * sizeof(float);
-    const std::size_t base_bytes = input.base_geometry.size() * sizeof(float);
+    const std::size_t geometry_bytes =
+        FULL_GEOMETRY_FIELD_COUNT * full_points * sizeof(float);
+    const std::size_t base_bytes =
+        BASE_GEOMETRY_FIELD_COUNT * half_points * sizeof(float);
     const std::size_t profile_bytes = profiles.size() * sizeof(float);
     const std::size_t field_values = MAGNETIC_FIELD_COUNT * half_points;
     const std::size_t result_values = field_values + 2 * half_surfaces;
@@ -490,9 +500,11 @@ void enqueue_magnetic_field(const wgpu::Device& device,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                       "cuMES magnetic field");
     const auto readback_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                      "cuMES magnetic field readback");
+        input.readback.batch ? wgpu::Buffer{}
+                             : create_buffer(device, result_bytes,
+                                             wgpu::BufferUsage::CopyDst |
+                                                 wgpu::BufferUsage::MapRead,
+                                             "cuMES magnetic field readback");
     const auto params_buffer =
         create_buffer(device, sizeof(ShaderParams),
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -623,6 +635,37 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             (static_cast<std::uint32_t>(half_points) + WORKGROUP_SIZE - 1) /
             WORKGROUP_SIZE);
         finalize_pass.End();
+    }
+    if (input.readback.batch) {
+        MagneticFieldResult resident;
+        const auto fields = result_values - 2 * half_surfaces;
+        resident.device_fields = {result_buffer, fields, 0,
+                                  result_values * sizeof(float)};
+        input.readback.batch->append(
+            encoder, result_buffer, 0, result_bytes,
+            [callback = std::move(callback), resident, fields, half_surfaces,
+             result_values, paired = input.double_single](
+                std::span<const float> values) mutable {
+                const auto hi = values.begin();
+                resident.fields.assign(hi, hi + fields);
+                resident.chip_h.assign(hi + fields,
+                                       hi + fields + half_surfaces);
+                resident.iota_h.assign(hi + fields + half_surfaces,
+                                       hi + result_values);
+                if (paired) {
+                    const auto lo = hi + result_values;
+                    resident.fields_lo.assign(lo, lo + fields);
+                    resident.chip_h_lo.assign(lo + fields,
+                                              lo + fields + half_surfaces);
+                    resident.iota_h_lo.assign(lo + fields + half_surfaces,
+                                              lo + result_values);
+                }
+                callback({}, std::move(resident));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        input.readback.publish_device(std::move(resident));
+        return;
     }
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);

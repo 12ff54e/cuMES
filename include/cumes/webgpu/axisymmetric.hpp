@@ -24,6 +24,8 @@ struct AxisymmetricInverseCase {
 };
 
 struct AxisymmetricInverseResult {
+    DeviceFields device_r_con;
+    DeviceFields device_z_con;
     DeviceFields device_geometry;
     // Field-major real-space layout: [field][surface][theta]. Field order is
     // r/z/l, ru/zu/lu even; r/z/l, ru/zu/lu odd; then the six zero toroidal

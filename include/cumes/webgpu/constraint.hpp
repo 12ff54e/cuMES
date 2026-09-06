@@ -10,7 +10,13 @@
 
 namespace cumes::webgpu {
 
+struct AxisymmetricConstraintResult;
+
 struct AxisymmetricConstraintCase {
+    BatchedReadback<AxisymmetricConstraintResult> batched_readback;
+    DeviceFields device_r_con;
+    DeviceFields device_z_con;
+    DeviceFields device_elements;
     DeviceFields device_geometry;
     DeviceFields device_force_fields;
     bool readback = true;

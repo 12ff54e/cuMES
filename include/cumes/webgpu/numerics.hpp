@@ -12,7 +12,10 @@
 
 namespace cumes::webgpu {
 
+struct ResidualDecompositionResult;
+
 struct ResidualDecompositionCase {
+    BatchedReadback<ResidualDecompositionResult> readback;
     DeviceFields device_residual;
     int ns = 0;
     int mpol = 0;
@@ -27,6 +30,7 @@ struct ResidualDecompositionCase {
 };
 
 struct ResidualDecompositionResult {
+    DeviceFields device_residual;
     // Original high-word checks deferred from a resident forward projection.
     // Host-input callers retain their own original-input validation.
     bool source_finite = true;

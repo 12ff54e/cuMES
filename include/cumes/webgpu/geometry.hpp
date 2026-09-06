@@ -13,7 +13,10 @@ namespace cumes::webgpu {
 
 inline constexpr std::size_t BASE_GEOMETRY_FIELD_COUNT = 10;
 
+struct BaseGeometryResult;
+
 struct BaseGeometryCase {
+    BatchedReadback<BaseGeometryResult> readback;
     DeviceFields device_geometry;
     int ns = 0;
     int ntheta = 0;
@@ -46,7 +49,10 @@ BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input);
 
 inline constexpr std::size_t MAGNETIC_FIELD_COUNT = 5;
 
+struct MagneticFieldResult;
+
 struct MagneticFieldCase {
+    BatchedReadback<MagneticFieldResult> readback;
     DeviceFields device_geometry;
     DeviceFields device_base_geometry;
     int ns = 0;

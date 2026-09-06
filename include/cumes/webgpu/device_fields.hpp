@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cumes/webgpu/readback_batch.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -18,6 +20,13 @@ struct DeviceFields {
     std::uint64_t low_offset = 0;
     explicit operator bool() const { return static_cast<bool>(buffer); }
 };
+
+inline DeviceFields field_slice(const DeviceFields& fields,
+                                std::size_t offset,
+                                std::size_t count) {
+    return {fields.buffer, count, fields.high_offset + offset * sizeof(float),
+            fields.low_offset + offset * sizeof(float)};
+}
 
 inline bool field_shape(const std::vector<float>& host,
                         const DeviceFields& device,

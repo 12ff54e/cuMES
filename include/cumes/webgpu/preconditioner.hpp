@@ -1,6 +1,8 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_PRECONDITIONER_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_PRECONDITIONER_HPP_
 
+#include "cumes/webgpu/device_fields.hpp"
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -9,7 +11,13 @@
 
 namespace cumes::webgpu {
 
+struct AxisymmetricPreconditionerElements;
+
 struct AxisymmetricPreconditionerElementCase {
+    BatchedReadback<AxisymmetricPreconditionerElements> readback;
+    DeviceFields device_geometry;
+    DeviceFields device_base_geometry;
+    DeviceFields device_magnetic_field;
     int ns = 0;
     int ntheta = 0;
     int nzeta = 1;
@@ -23,6 +31,7 @@ struct AxisymmetricPreconditionerElementCase {
 };
 
 struct AxisymmetricPreconditionerElements {
+    DeviceFields device_elements;
     // Surface-major [surface][even, odd].
     std::vector<float> ard;
     std::vector<float> brd;
@@ -48,7 +57,11 @@ AxisymmetricPreconditionerElements
 axisymmetric_preconditioner_element_reference(
     const AxisymmetricPreconditionerElementCase& input);
 
+struct AxisymmetricPreconditionerMatrix;
+
 struct AxisymmetricPreconditionerMatrixCase {
+    BatchedReadback<AxisymmetricPreconditionerMatrix> readback;
+    DeviceFields device_base_geometry;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -64,6 +77,7 @@ struct AxisymmetricPreconditionerMatrixCase {
 };
 
 struct AxisymmetricPreconditionerMatrix {
+    DeviceFields device_matrix;
     // Mode-major radial systems.
     std::vector<float> upper_r;
     std::vector<float> diagonal_r;
@@ -87,7 +101,11 @@ void enqueue_axisymmetric_preconditioner_matrix(
 AxisymmetricPreconditionerMatrix axisymmetric_preconditioner_matrix_reference(
     const AxisymmetricPreconditionerMatrixCase& input);
 
+struct AxisymmetricPreconditionerApplyResult;
+
 struct AxisymmetricPreconditionerApplyCase {
+    BatchedReadback<AxisymmetricPreconditionerApplyResult> readback;
+    DeviceFields device_residual;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;

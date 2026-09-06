@@ -17,6 +17,7 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/geometry.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/force.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/initialization.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/iteration.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/main.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/magnetic_field.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/numerics.cpp

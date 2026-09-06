@@ -26,15 +26,22 @@ int mode_count(const AxisymmetricPreconditionerApplyCase& in) {
     return in.mpol * (in.ntor + 1);
 }
 
-bool valid_elements(const AxisymmetricPreconditionerApplyCase& in) {
+bool valid_elements(const AxisymmetricPreconditionerApplyCase& in,
+                    bool allow_device = true) {
+    if (allow_device && in.elements.device_elements)
+        return in.elements.device_elements.values ==
+               9 * static_cast<std::size_t>(in.ns) + 8 * (in.ns - 1);
     const std::size_t pairs = 2 * static_cast<std::size_t>(in.ns);
     return in.elements.ard.size() == pairs && in.elements.brd.size() == pairs &&
            in.elements.azd.size() == pairs && in.elements.bzd.size() == pairs;
 }
 
-bool valid_matrix(const AxisymmetricPreconditionerApplyCase& in) {
+bool valid_matrix(const AxisymmetricPreconditionerApplyCase& in,
+                  bool allow_device = true) {
     const int modes = mode_count(in);
     const std::size_t points = static_cast<std::size_t>(in.ns) * modes;
+    if (allow_device && in.matrix.device_matrix)
+        return in.matrix.device_matrix.values == 7 * points + modes;
     const auto has_points = [points](const auto& values) {
         return values.size() == points;
     };
@@ -52,7 +59,7 @@ std::string validate_case(const AxisymmetricPreconditionerApplyCase& in) {
     }
     const std::size_t points = static_cast<std::size_t>(in.ns) * mode_count(in);
     if (!valid_elements(in) || !valid_matrix(in) ||
-        in.residual.size() != 6 * points) {
+        !field_shape(in.residual, in.device_residual, 6 * points)) {
         return "axisymmetric preconditioner apply input shape mismatch";
     }
     return {};
@@ -230,6 +237,10 @@ struct Dispatch {
 AxisymmetricPreconditionerApplyResult
 axisymmetric_preconditioner_apply_reference(
     const AxisymmetricPreconditionerApplyCase& input) {
+    if (!valid_elements(input, false) || !valid_matrix(input, false) ||
+        input.residual.size() !=
+            6 * static_cast<std::size_t>(input.ns) * mode_count(input))
+        return {};
     if (!validate_case(input).empty()) return {};
     const int modes = mode_count(input);
     const std::size_t points = static_cast<std::size_t>(input.ns) * modes;
@@ -304,9 +315,10 @@ void enqueue_axisymmetric_preconditioner_apply(
     const std::size_t points = static_cast<std::size_t>(input.ns) * modes;
     auto matrix = flatten_matrix(input.matrix);
     auto elements = flatten_elements(input.elements);
-    const auto matrix_bytes = matrix.size() * sizeof(float);
-    const auto element_bytes = elements.size() * sizeof(float);
-    const auto input_bytes = input.residual.size() * sizeof(float);
+    const auto matrix_bytes = (7 * points + modes) * sizeof(float);
+    const auto element_bytes =
+        8 * static_cast<std::size_t>(input.ns) * sizeof(float);
+    const auto input_bytes = 6 * points * sizeof(float);
     const auto result_values = 6 * points + modes;
     const auto result_bytes = result_values * sizeof(float);
     // PCR keeps two five-plane banks in storage. Unlike CUDA dynamic shared
@@ -330,10 +342,12 @@ void enqueue_axisymmetric_preconditioner_apply(
         make_buffer(device, storage_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                     "preconditioned residual");
-    auto readback =
-        make_buffer(device, result_bytes,
-                    wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                    "preconditioned residual readback");
+    auto readback = input.readback.batch
+                        ? wgpu::Buffer{}
+                        : make_buffer(device, result_bytes,
+                                      wgpu::BufferUsage::CopyDst |
+                                          wgpu::BufferUsage::MapRead,
+                                      "preconditioned residual readback");
     auto params_buffer =
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -349,9 +363,16 @@ void enqueue_axisymmetric_preconditioner_apply(
                             input.include_lcfs ? input.ns : input.ns - 1),
                         {0, 0, 0}};
     auto queue = device.GetQueue();
-    queue.WriteBuffer(matrix_buffer, 0, matrix.data(), matrix_bytes);
-    queue.WriteBuffer(element_buffer, 0, elements.data(), element_bytes);
-    queue.WriteBuffer(input_buffer, 0, input.residual.data(), input_bytes);
+    auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, matrix_buffer, matrix,
+                    input.matrix.device_matrix);
+    transfer_fields(
+        device, encoder, element_buffer, elements,
+        input.elements.device_elements
+            ? field_slice(input.elements.device_elements, 0, 8 * input.ns)
+            : DeviceFields{});
+    transfer_fields(device, encoder, input_buffer, input.residual,
+                    input.device_residual);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     auto layout = pipeline.GetBindGroupLayout(0);
     const wgpu::BindGroupEntry entries[] = {
@@ -365,13 +386,30 @@ void enqueue_axisymmetric_preconditioner_apply(
     bind_descriptor.entryCount = std::size(entries);
     bind_descriptor.entries = entries;
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
-    auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(pipeline);
     pass.SetBindGroup(0, bind_group);
     pass.DispatchWorkgroups(static_cast<std::uint32_t>(modes));
     pass.End();
+    if (input.readback.batch) {
+        input.readback.batch->append(
+            encoder, output_buffer, 0, result_bytes,
+            [callback = std::move(callback), points,
+             modes](std::span<const float> values) {
+                AxisymmetricPreconditionerApplyResult out;
+                out.residual.assign(values.begin(),
+                                    values.begin() + 6 * points);
+                for (int mode = 0; mode < modes; ++mode)
+                    out.breakdown_count +=
+                        values[6 * points + mode] != 0.0F ? 1 : 0;
+                callback({}, std::move(out));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        input.readback.publish_device({});
+        return;
+    }
     encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, result_bytes);
     auto commands = encoder.Finish();
     queue.Submit(1, &commands);

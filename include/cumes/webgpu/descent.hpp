@@ -1,6 +1,8 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_DESCENT_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_DESCENT_HPP_
 
+#include "cumes/webgpu/device_fields.hpp"
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -9,7 +11,10 @@
 
 namespace cumes::webgpu {
 
+struct AxisymmetricDescentResult;
+
 struct AxisymmetricDescentCase {
+    BatchedReadback<AxisymmetricDescentResult> readback;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -27,6 +32,7 @@ struct AxisymmetricDescentCase {
 };
 
 struct AxisymmetricDescentResult {
+    DeviceFields device_state;
     std::vector<float> state;
     std::vector<float> state_lo;
     std::vector<float> velocity;

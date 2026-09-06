@@ -47,7 +47,8 @@ std::string validate_case(const BaseGeometryCase& input) {
         half_points > std::numeric_limits<std::uint32_t>::max()) {
         return "base geometry exceeds WebGPU indexing limits";
     }
-    if (input.geometry.size() != GEOMETRY_INPUT_FIELD_COUNT * full_points ||
+    if (!field_shape(input.geometry, input.device_geometry,
+                     GEOMETRY_INPUT_FIELD_COUNT * full_points) ||
         (input.double_single &&
          input.geometry_lo.size() != input.geometry.size()) ||
         input.sqrt_s_f.size() != static_cast<std::size_t>(input.ns) ||
@@ -224,6 +225,10 @@ BaseGeometryResult base_geometry_double_single_reference(
 }  // namespace
 
 BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input) {
+    if (input.geometry.size() != GEOMETRY_INPUT_FIELD_COUNT *
+                                     static_cast<std::size_t>(input.ns) *
+                                     input.ntheta * input.nzeta)
+        return {};
     if (!validate_case(input).empty()) return {};
     if (input.double_single) {
         return base_geometry_double_single_reference(input);
@@ -397,7 +402,8 @@ void enqueue_base_geometry(const wgpu::Device& device,
         radial.insert(radial.end(), input.sqrt_s_h.begin(),
                       input.sqrt_s_h.end());
     }
-    const std::size_t input_bytes = input.geometry.size() * sizeof(float);
+    const std::size_t input_bytes =
+        GEOMETRY_INPUT_FIELD_COUNT * full_points * sizeof(float);
     const std::size_t radial_bytes = radial.size() * sizeof(float);
     const std::size_t result_values = BASE_GEOMETRY_FIELD_COUNT * half_points;
     const std::size_t result_bytes =
@@ -427,9 +433,12 @@ void enqueue_base_geometry(const wgpu::Device& device,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                       "cuMES half-grid base geometry");
     const wgpu::Buffer readback_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                      "cuMES half-grid geometry readback");
+        input.readback.batch
+            ? wgpu::Buffer{}
+            : create_buffer(
+                  device, result_bytes,
+                  wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
+                  "cuMES half-grid geometry readback");
     const wgpu::Buffer params_buffer =
         create_buffer(device, sizeof(ShaderParams),
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -493,6 +502,27 @@ void enqueue_base_geometry(const wgpu::Device& device,
         (static_cast<std::uint32_t>(half_points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    if (input.readback.batch) {
+        BaseGeometryResult resident;
+        resident.device_fields = {result_buffer, result_values, 0,
+                                  result_values * sizeof(float)};
+        input.readback.batch->append(
+            encoder, result_buffer, 0, result_bytes,
+            [callback = std::move(callback), resident,
+             paired =
+                 input.double_single](std::span<const float> values) mutable {
+                const auto count = resident.device_fields.values;
+                resident.fields.assign(values.begin(), values.begin() + count);
+                if (paired)
+                    resident.fields_lo.assign(values.begin() + count,
+                                              values.end());
+                callback({}, std::move(resident));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        input.readback.publish_device(std::move(resident));
+        return;
+    }
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);
     const wgpu::CommandBuffer commands = encoder.Finish();

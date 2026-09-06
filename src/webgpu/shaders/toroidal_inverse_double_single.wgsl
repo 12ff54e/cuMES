@@ -7,6 +7,7 @@ struct Params {
     nfp: u32,
     n_z_n_t: u32,
     total_points: u32,
+    extrapolate_axis: f32,
 };
 
 struct Values { data: array<f32>, };
@@ -81,7 +82,10 @@ fn ff_strict_sub(a: FF, b: FF, slot: u32) -> FF {
 fn coefficient(component: u32, m: u32, n: u32, surface: u32) -> FF {
     let mnmax = params.mpol * (params.ntor + 1u);
     let mode = m * (params.ntor + 1u) + n;
-    let index = (component * mnmax + mode) * params.ns + surface;
+    let extrapolate = params.extrapolate_axis != 0.0 && surface == 0u &&
+        (m == 1u || (m == 0u && component == 5u));
+    let radial = select(surface, 1u, extrapolate);
+    let index = (component * mnmax + mode) * params.ns + radial;
     return FF(state_hi.data[index], state_lo.data[index]);
 }
 

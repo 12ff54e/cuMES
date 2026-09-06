@@ -291,10 +291,12 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
         make_buffer(device, output_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                     "decomposed residual");
-    auto readback =
-        make_buffer(device, readback_bytes,
-                    wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                    "decomposed readback");
+    auto readback = in.readback.batch
+                        ? wgpu::Buffer{}
+                        : make_buffer(device, readback_bytes,
+                                      wgpu::BufferUsage::CopyDst |
+                                          wgpu::BufferUsage::MapRead,
+                                      "decomposed readback");
     auto uniform =
         make_buffer(device, sizeof(Params),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -356,6 +358,39 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
     pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(n) + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
     pass.End();
+    if (in.readback.batch) {
+        auto result = std::make_shared<ResidualDecompositionResult>();
+        result->device_residual = {output, 6 * n, 0, input_bytes};
+        if (in.device_residual) {
+            in.readback.batch->append(
+                encoder, in.device_residual.buffer,
+                in.device_residual.high_offset, input_bytes,
+                [result](std::span<const float> original) {
+                    result->source_finite = std::all_of(
+                        original.begin(), original.end(),
+                        [](float value) { return std::isfinite(value); });
+                    result->source_nonzero =
+                        std::any_of(original.begin(), original.end(),
+                                    [](float value) { return value != 0.0F; });
+                });
+        }
+        in.readback.batch->append(
+            encoder, output, 0, output_bytes,
+            [callback = std::move(callback), result, count = 6 * n, ns = in.ns,
+             mode_count, edge = in.include_edge_rz,
+             paired = in.double_single](std::span<const float> values) {
+                result->residual.assign(values.begin(), values.begin() + count);
+                if (paired)
+                    result->residual_lo.assign(values.begin() + count,
+                                               values.end());
+                accumulate_norms(*result, ns, mode_count, edge);
+                callback({}, std::move(*result));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        in.readback.publish_device(*result);
+        return;
+    }
     encoder.CopyBufferToBuffer(output, 0, readback, 0, output_bytes);
     if (in.device_residual)
         encoder.CopyBufferToBuffer(in.device_residual.buffer,

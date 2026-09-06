@@ -1,0 +1,55 @@
+#pragma once
+
+#include "cumes/webgpu/constraint.hpp"
+#include "cumes/webgpu/force.hpp"
+#include "cumes/webgpu/geometry.hpp"
+#include "cumes/webgpu/initialization.hpp"
+#include "cumes/webgpu/numerics.hpp"
+#include "cumes/webgpu/preconditioner.hpp"
+#include "cumes/webgpu/toroidal.hpp"
+
+#include <array>
+
+namespace cumes::webgpu {
+
+struct IterationCase {
+    DeviceFields device_state;
+    AxisymmetricStageData stage;
+    bool double_single = false;
+    bool refresh_preconditioner = false;
+    bool reset_reference = false;
+    bool zero_m1_z = false;
+    bool use_fft = false;
+    bool optimized_fft = true;
+    bool canonical_zeta = false;
+    AxisymmetricPreconditionerElements elements;
+    AxisymmetricPreconditionerMatrix matrix;
+    std::vector<float> r_con0, r_con0_lo, z_con0, z_con0_lo, tcon;
+};
+
+// Speculative force evaluation only: no controller, checkpoint, or persistent
+// constraint state is committed until the host accepts the Jacobian. Results
+// retain the original CPU reduction order and validation inputs.
+struct IterationResult {
+    ToroidalInverseResult inverse;
+    BaseGeometryResult geometry;
+    MagneticFieldResult magnetic;
+    AxisymmetricForceResult force;
+    std::array<ToroidalForwardResult, 2> forward;
+    std::array<ResidualDecompositionResult, 2> residual;
+    AxisymmetricPreconditionerElements elements;
+    AxisymmetricPreconditionerMatrix matrix;
+    AxisymmetricConstraintResult constraint;
+    AxisymmetricPreconditionerApplyResult preconditioned;
+};
+
+using IterationCallback = std::function<void(std::string, IterationResult)>;
+
+std::uint64_t iteration_readback_capacity(const AxisymmetricStageData& stage);
+
+void enqueue_iteration(const wgpu::Device& device,
+                       IterationCase input,
+                       const std::shared_ptr<ReadbackBatch>& batch,
+                       IterationCallback callback);
+
+}  // namespace cumes::webgpu

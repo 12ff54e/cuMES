@@ -7,6 +7,7 @@
 #include "pipeline_cache.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -38,6 +39,8 @@ struct TailParams {
 static_assert(sizeof(TailParams) == 32);
 
 struct HeadResult {
+    DeviceFields device_fields;
+    DeviceFields device_tcon;
     std::vector<float> g_con_eff;
     std::vector<float> g_con_eff_lo;
     std::vector<float> r_con0;
@@ -60,12 +63,15 @@ std::string validate_case(const AxisymmetricConstraintCase& in) {
     const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
     const std::size_t force_fields = in.ntor == 0 ? 10 : FORCE_FIELD_COUNT;
     if (points > std::numeric_limits<std::uint32_t>::max() ||
-        in.geometry.size() != GEOMETRY_PARITY_FIELD_COUNT * points ||
-        in.r_con.size() != points || in.z_con.size() != points ||
+        !field_shape(in.geometry, in.device_geometry,
+                     GEOMETRY_PARITY_FIELD_COUNT * points) ||
+        !field_shape(in.r_con, in.device_r_con, points) ||
+        !field_shape(in.z_con, in.device_z_con, points) ||
         in.r_con0.size() != points || in.z_con0.size() != points ||
         in.tcon.size() != static_cast<std::size_t>(in.ns) ||
-        in.ard.size() != 2 * static_cast<std::size_t>(in.ns) ||
-        in.azd.size() != 2 * static_cast<std::size_t>(in.ns) ||
+        (!in.device_elements &&
+         (in.ard.size() != 2 * static_cast<std::size_t>(in.ns) ||
+          in.azd.size() != 2 * static_cast<std::size_t>(in.ns))) ||
         in.sqrt_s_f.size() != static_cast<std::size_t>(in.ns) ||
         !field_shape(in.force_fields, in.device_force_fields,
                      force_fields * points)) {
@@ -256,7 +262,8 @@ struct HeadDispatch {
 
 void enqueue_head(const wgpu::Device& device,
                   const AxisymmetricConstraintCase& in,
-                  std::function<void(std::string, HeadResult)> callback) {
+                  std::function<void(std::string, HeadResult)> callback,
+                  BatchedReadback<HeadResult> batched = {}) {
     const auto shader_text = load_shader(
         in.double_single ? "/shaders/constraint_head_double_single.wgsl"
                          : "/shaders/axisymmetric_constraint_head.wgsl");
@@ -270,6 +277,7 @@ void enqueue_head(const wgpu::Device& device,
     constraint.reserve(4 * points);
     constraint.insert(constraint.end(), in.r_con.begin(), in.r_con.end());
     constraint.insert(constraint.end(), in.z_con.begin(), in.z_con.end());
+    if (in.device_r_con) constraint.resize(2 * points, 0.0F);
     constraint.insert(constraint.end(), in.r_con0.begin(), in.r_con0.end());
     constraint.insert(constraint.end(), in.z_con0.begin(), in.z_con0.end());
     std::vector<float> constraint_lo;
@@ -279,6 +287,7 @@ void enqueue_head(const wgpu::Device& device,
                              in.r_con_lo.end());
         constraint_lo.insert(constraint_lo.end(), in.z_con_lo.begin(),
                              in.z_con_lo.end());
+        if (in.device_r_con) constraint_lo.resize(2 * points, 0.0F);
         constraint_lo.insert(constraint_lo.end(), in.r_con0_lo.begin(),
                              in.r_con0_lo.end());
         constraint_lo.insert(constraint_lo.end(), in.z_con0_lo.begin(),
@@ -290,6 +299,7 @@ void enqueue_head(const wgpu::Device& device,
     radial.insert(radial.end(), in.tcon.begin(), in.tcon.end());
     radial.insert(radial.end(), in.ard.begin(), in.ard.end());
     radial.insert(radial.end(), in.azd.begin(), in.azd.end());
+    if (in.device_elements) radial.resize(6 * in.ns, 0.0F);
     std::vector<float> radial_lo;
     if (in.double_single) {
         radial_lo.assign(radial.size(), 0.0F);
@@ -298,7 +308,8 @@ void enqueue_head(const wgpu::Device& device,
     }
     const std::size_t output_values =
         (in.double_single ? 6 : 3) * points + in.ns;
-    const auto geometry_bytes = in.geometry.size() * sizeof(float);
+    const auto geometry_bytes =
+        GEOMETRY_PARITY_FIELD_COUNT * points * sizeof(float);
     const auto constraint_bytes = constraint.size() * sizeof(float);
     const auto radial_bytes = radial.size() * sizeof(float);
     const auto output_bytes = output_values * sizeof(float);
@@ -318,10 +329,11 @@ void enqueue_head(const wgpu::Device& device,
         make_buffer(device, output_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                     "constraint head output");
-    auto readback =
-        make_buffer(device, output_bytes,
-                    wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                    "constraint head readback");
+    auto readback = batched.batch ? wgpu::Buffer{}
+                                  : make_buffer(device, output_bytes,
+                                                wgpu::BufferUsage::CopyDst |
+                                                    wgpu::BufferUsage::MapRead,
+                                                "constraint head readback");
     auto params_buffer =
         make_buffer(device, sizeof(HeadParams),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -365,11 +377,33 @@ void enqueue_head(const wgpu::Device& device,
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, radial.data(), radial_bytes);
+    const auto copy_constraints = [&](const wgpu::Buffer& target, bool low) {
+        for (const auto& [source, offset] :
+             {std::pair{in.device_r_con, std::size_t{0}},
+              std::pair{in.device_z_con, points}})
+            if (source)
+                encoder.CopyBufferToBuffer(
+                    source.buffer, low ? source.low_offset : source.high_offset,
+                    target, offset * sizeof(float), points * sizeof(float));
+    };
+    copy_constraints(constraint_buffer, false);
+    if (in.device_elements) {
+        encoder.CopyBufferToBuffer(in.device_elements.buffer,
+                                   in.device_elements.high_offset,
+                                   radial_buffer, 2 * in.ns * sizeof(float),
+                                   2 * in.ns * sizeof(float));
+        encoder.CopyBufferToBuffer(
+            in.device_elements.buffer,
+            in.device_elements.high_offset + 4 * in.ns * sizeof(float),
+            radial_buffer, 4 * in.ns * sizeof(float),
+            2 * in.ns * sizeof(float));
+    }
     if (in.double_single) {
         transfer_fields(device, encoder, geometry_low_buffer, in.geometry_lo,
                         in.device_geometry, true);
         queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
                           constraint_bytes);
+        copy_constraints(constraint_low_buffer, true);
         queue.WriteBuffer(radial_low_buffer, 0, radial_lo.data(), radial_bytes);
     }
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
@@ -401,6 +435,35 @@ void enqueue_head(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    if (batched.batch) {
+        HeadResult resident;
+        resident.device_fields = {output_buffer, 3 * points, 0,
+                                  3 * points * sizeof(float)};
+        const auto tcon_offset = (in.double_single ? 6 : 3) * points;
+        resident.device_tcon = {output_buffer, static_cast<std::size_t>(in.ns),
+                                tcon_offset * sizeof(float), 0};
+        batched.batch->append(
+            encoder, output_buffer, 0, output_bytes,
+            [callback = std::move(callback), resident, points, tcon_offset,
+             paired = in.double_single](std::span<const float> values) mutable {
+                const auto hi = values.begin();
+                resident.g_con_eff.assign(hi, hi + points);
+                resident.r_con0.assign(hi + points, hi + 2 * points);
+                resident.z_con0.assign(hi + 2 * points, hi + 3 * points);
+                if (paired) {
+                    resident.g_con_eff_lo.assign(hi + 3 * points,
+                                                 hi + 4 * points);
+                    resident.r_con0_lo.assign(hi + 4 * points, hi + 5 * points);
+                    resident.z_con0_lo.assign(hi + 5 * points, hi + 6 * points);
+                }
+                resident.tcon.assign(hi + tcon_offset, values.end());
+                callback({}, std::move(resident));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        batched.publish_device(std::move(resident));
+        return;
+    }
     encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
     auto commands = encoder.Finish();
     queue.Submit(1, &commands);
@@ -469,7 +532,8 @@ void enqueue_tail(const wgpu::Device& device,
                   const AxisymmetricConstraintCase& in,
                   HeadResult head,
                   std::vector<float> g_con,
-                  AxisymmetricConstraintCallback callback) {
+                  AxisymmetricConstraintCallback callback,
+                  DeviceFields device_g_con = {}) {
     const auto shader_text = load_shader(
         in.double_single ? "/shaders/constraint_tail_double_single.wgsl"
                          : "/shaders/axisymmetric_constraint_tail.wgsl");
@@ -486,6 +550,7 @@ void enqueue_tail(const wgpu::Device& device,
     constraint.insert(constraint.end(), head.r_con0.begin(), head.r_con0.end());
     constraint.insert(constraint.end(), head.z_con0.begin(), head.z_con0.end());
     constraint.insert(constraint.end(), g_con.begin(), g_con.end());
+    if (device_g_con) constraint.resize(5 * points, 0.0F);
     std::vector<float> constraint_lo;
     if (in.double_single) {
         constraint_lo.reserve(5 * points);
@@ -498,12 +563,14 @@ void enqueue_tail(const wgpu::Device& device,
         constraint_lo.insert(constraint_lo.end(), head.z_con0_lo.begin(),
                              head.z_con0_lo.end());
         constraint_lo.insert(constraint_lo.end(), points, 0.0F);
+        if (device_g_con) constraint_lo.resize(5 * points, 0.0F);
     }
     const auto force_bytes =
         (in.device_force_fields ? in.device_force_fields.values
                                 : in.force_fields.size()) *
         sizeof(float);
-    const auto geometry_bytes = in.geometry.size() * sizeof(float);
+    const auto geometry_bytes =
+        GEOMETRY_PARITY_FIELD_COUNT * points * sizeof(float);
     const auto constraint_bytes = constraint.size() * sizeof(float);
     const auto radial_bytes = in.sqrt_s_f.size() * sizeof(float);
     const std::size_t force_fields = in.ntor == 0 ? 10 : FORCE_FIELD_COUNT;
@@ -532,10 +599,11 @@ void enqueue_tail(const wgpu::Device& device,
         make_buffer(device, output_bytes,
                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                     "constraint force output");
-    auto readback =
-        make_buffer(device, output_bytes,
-                    wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                    "constraint force readback");
+    auto readback = !in.readback ? wgpu::Buffer{}
+                                 : make_buffer(device, output_bytes,
+                                               wgpu::BufferUsage::CopyDst |
+                                                   wgpu::BufferUsage::MapRead,
+                                               "constraint force readback");
     auto params_buffer =
         make_buffer(device, sizeof(TailParams),
                     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -583,12 +651,32 @@ void enqueue_tail(const wgpu::Device& device,
                     in.device_geometry);
     queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
                       constraint_bytes);
+    const auto copy_constraint_planes = [&](const wgpu::Buffer& target,
+                                            bool low) {
+        if (!device_g_con) return;
+        const std::array<DeviceFields, 4> sources = {
+            in.device_r_con, in.device_z_con,
+            field_slice(head.device_fields, points, points),
+            field_slice(head.device_fields, 2 * points, points)};
+        for (std::size_t plane = 0; plane < sources.size(); ++plane) {
+            const auto& source = sources[plane];
+            encoder.CopyBufferToBuffer(
+                source.buffer, low ? source.low_offset : source.high_offset,
+                target, plane * points * sizeof(float), points * sizeof(float));
+        }
+        if (!low)
+            encoder.CopyBufferToBuffer(
+                device_g_con.buffer, device_g_con.high_offset, target,
+                4 * points * sizeof(float), points * sizeof(float));
+    };
+    copy_constraint_planes(constraint_buffer, false);
     queue.WriteBuffer(radial_buffer, 0, in.sqrt_s_f.data(), radial_bytes);
     if (in.double_single) {
         transfer_fields(device, encoder, geometry_low_buffer, in.geometry_lo,
                         in.device_geometry, true);
         queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
                           constraint_bytes);
+        copy_constraint_planes(constraint_low_buffer, true);
         queue.WriteBuffer(radial_low_buffer, 0, in.sqrt_s_f_lo.data(),
                           radial_bytes);
     }
@@ -687,6 +775,15 @@ struct ConstraintChain {
 
 AxisymmetricConstraintResult axisymmetric_constraint_reference(
     const AxisymmetricConstraintCase& input) {
+    const auto points =
+        static_cast<std::size_t>(input.ns) * input.ntheta * input.nzeta;
+    if (input.geometry.size() != GEOMETRY_PARITY_FIELD_COUNT * points ||
+        input.r_con.size() != points || input.z_con.size() != points ||
+        input.ard.size() != 2 * static_cast<std::size_t>(input.ns) ||
+        input.azd.size() != 2 * static_cast<std::size_t>(input.ns) ||
+        input.force_fields.size() !=
+            (input.ntor == 0 ? 10 : FORCE_FIELD_COUNT) * points)
+        return {};
     if (!validate_case(input).empty()) return {};
     auto head = head_reference(input);
     std::vector<float> g_con;
@@ -744,6 +841,76 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
     chain->device = device;
     chain->input = input;
     chain->callback = std::move(callback);
+    if (input.batched_readback.batch) {
+        if (input.ntor == 0 || input.readback) {
+            chain->callback("batched constraint requires resident 3-D output",
+                            {});
+            return;
+        }
+        auto result = std::make_shared<AxisymmetricConstraintResult>();
+        BatchedReadback<HeadResult> head_readback;
+        head_readback.batch = input.batched_readback.batch;
+        head_readback.device_ready = [chain, result](HeadResult head) {
+            const auto& in = chain->input;
+            ToroidalDealiasCase dealias;
+            dealias.ns = in.ns;
+            dealias.mpol = in.mpol;
+            dealias.ntor = in.ntor;
+            dealias.ntheta = in.ntheta;
+            dealias.nzeta = in.nzeta;
+            const auto points =
+                static_cast<std::size_t>(in.ns) * in.ntheta * in.nzeta;
+            dealias.device_g_con_eff =
+                field_slice(head.device_fields, 0, points);
+            dealias.device_tcon = head.device_tcon;
+            dealias.faccon.assign(in.mpol, 0.0F);
+            for (int m = 1; m < in.mpol; ++m) {
+                const float xmpq = static_cast<float>((m + 1) * m);
+                dealias.faccon[m] = 0.25F / (xmpq * xmpq);
+            }
+            dealias.readback.batch = in.batched_readback.batch;
+            dealias.readback.device_ready =
+                [chain, result, head](ToroidalDealiasResult filtered) {
+                    enqueue_tail(
+                        chain->device, chain->input, head, {},
+                        [chain, result](std::string error,
+                                        AxisymmetricConstraintResult tail) {
+                            if (!error.empty()) {
+                                chain->callback(std::move(error), {});
+                                return;
+                            }
+                            result->device_fields = tail.device_fields;
+                            chain->input.batched_readback.publish_device(
+                                std::move(tail));
+                        },
+                        filtered.device_g_con);
+                };
+            enqueue_toroidal_dealias(
+                chain->device, dealias,
+                [chain, result](std::string error,
+                                ToroidalDealiasResult filtered) {
+                    result->g_con = std::move(filtered.g_con);
+                    chain->callback(std::move(error), std::move(*result));
+                });
+        };
+        enqueue_head(
+            device, input,
+            [chain, result](std::string error, HeadResult head) {
+                if (!error.empty()) {
+                    chain->callback(std::move(error), {});
+                    return;
+                }
+                result->r_con0 = std::move(head.r_con0);
+                result->r_con0_lo = std::move(head.r_con0_lo);
+                result->z_con0 = std::move(head.z_con0);
+                result->z_con0_lo = std::move(head.z_con0_lo);
+                result->tcon = std::move(head.tcon);
+                result->g_con_eff = std::move(head.g_con_eff);
+                result->g_con_eff_lo = std::move(head.g_con_eff_lo);
+            },
+            std::move(head_readback));
+        return;
+    }
     enqueue_head(
         device, chain->input, [chain](std::string error, HeadResult head) {
             if (!error.empty()) {

@@ -34,9 +34,12 @@ std::string validate_case(const AxisymmetricForceCase& in) {
     if (nf > std::numeric_limits<std::uint32_t>::max() ||
         nh > std::numeric_limits<std::uint32_t>::max())
         return "axisymmetric force exceeds WebGPU indexing limits";
-    if (in.geometry.size() != GEOMETRY_PARITY_FIELD_COUNT * nf ||
-        in.base_geometry.size() != BASE_GEOMETRY_FIELD_COUNT * nh ||
-        in.magnetic_field.size() != MAGNETIC_FIELD_COUNT * nh ||
+    if (!field_shape(in.geometry, in.device_geometry,
+                     GEOMETRY_PARITY_FIELD_COUNT * nf) ||
+        !field_shape(in.base_geometry, in.device_base_geometry,
+                     BASE_GEOMETRY_FIELD_COUNT * nh) ||
+        !field_shape(in.magnetic_field, in.device_magnetic_field,
+                     MAGNETIC_FIELD_COUNT * nh) ||
         in.sqrt_s_f.size() != static_cast<std::size_t>(in.ns) ||
         in.sqrt_s_h.size() != static_cast<std::size_t>(in.ns - 1) ||
         in.phip_f.size() != static_cast<std::size_t>(in.ns))
@@ -77,6 +80,13 @@ struct Dispatch {
 
 AxisymmetricForceResult axisymmetric_force_reference(
     const AxisymmetricForceCase& in) {
+    const auto angular = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+    if (in.geometry.size() != GEOMETRY_PARITY_FIELD_COUNT * in.ns * angular ||
+        in.base_geometry.size() !=
+            BASE_GEOMETRY_FIELD_COUNT * (in.ns - 1) * angular ||
+        in.magnetic_field.size() !=
+            MAGNETIC_FIELD_COUNT * (in.ns - 1) * angular)
+        return {};
     if (!validate_case(in).empty()) return {};
     const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
     const std::size_t nf = static_cast<std::size_t>(in.ns) * n_z_n_t;
@@ -276,9 +286,9 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
             radial_lo.push_back(inverse.lo);
         }
     }
-    const auto gb = in.geometry.size() * sizeof(float);
-    const auto hb = in.base_geometry.size() * sizeof(float);
-    const auto bb = in.magnetic_field.size() * sizeof(float);
+    const auto gb = GEOMETRY_PARITY_FIELD_COUNT * nf * sizeof(float);
+    const auto hb = BASE_GEOMETRY_FIELD_COUNT * nh * sizeof(float);
+    const auto bb = MAGNETIC_FIELD_COUNT * nh * sizeof(float);
     const auto rb = radial.size() * sizeof(float);
     const auto values = FORCE_FIELD_COUNT * nf;
     const auto ob = values * sizeof(float) * (in.double_single ? 2 : 1);
@@ -297,9 +307,12 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     auto obuf = buffer(device, ob,
                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                        "force output");
-    auto read = buffer(device, ob,
-                       wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                       "force readback");
+    auto read =
+        !in.readback
+            ? wgpu::Buffer{}
+            : buffer(device, ob,
+                     wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
+                     "force readback");
     auto pbuf = buffer(device, sizeof(ShaderParams),
                        wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
                        "force params");

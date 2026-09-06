@@ -11,7 +11,13 @@
 
 namespace cumes::webgpu {
 
+using ToroidalInverseResult = AxisymmetricInverseResult;
+
 struct ToroidalInverseCase {
+    // A pending descent state is consumed without mapping. Axis extrapolation
+    // is applied by index selection; the host mirror is updated at the fence.
+    DeviceFields device_state;
+    BatchedReadback<ToroidalInverseResult> readback;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -25,7 +31,6 @@ struct ToroidalInverseCase {
     std::vector<float> state_lo;
 };
 
-using ToroidalInverseResult = AxisymmetricInverseResult;
 using ToroidalInverseCallback =
     std::function<void(std::string, ToroidalInverseResult)>;
 
@@ -77,7 +82,12 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
 ToroidalForwardResult toroidal_forward_reference(
     const ToroidalForwardCase& input);
 
+struct ToroidalDealiasResult;
+
 struct ToroidalDealiasCase {
+    BatchedReadback<ToroidalDealiasResult> readback;
+    DeviceFields device_g_con_eff;
+    DeviceFields device_tcon;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -89,6 +99,7 @@ struct ToroidalDealiasCase {
 };
 
 struct ToroidalDealiasResult {
+    DeviceFields device_g_con;
     std::vector<float> g_con;
 };
 
