@@ -114,6 +114,14 @@ See the [compact-field measurements](docs/webgpu-port.md#compact-magnetic-readba
 Iteration control remains on the CPU; see the
 [residency and reduction qualification](docs/webgpu-port.md#persistent-iteration-state-and-gpu-residual-norms-2026-09-06).
 
+Opt-in `&gpu_control=jacobian` moves the geometry acceptance/restart gate into
+shaders. With `&gpu_norms=1`, readbacks fall further to 6.15 MB/iteration;
+an alternating benchmark measured another 24.6% lower iteration time. The
+qualified direct/FFT runs took 54.9/58.0 s with identical per-route trajectories
+and output.
+Damping, convergence classification and checkpoint rollback remain on the CPU.
+See [shader-control qualification](docs/webgpu-port.md#shader-jacobian-control-2026-09-06).
+
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
 `deps/magnetic-coordinate`. `--output PATH` writes the native PEST-like result;

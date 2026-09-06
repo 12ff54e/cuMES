@@ -1073,6 +1073,24 @@ for the two new shaders. Mean profiled interval was 20.76 ms (previous capture
 The host controller regression and full browser conformance suite passed.
 Evidence: `../tmp/w7x-gpu-jacobian-refined-*`, `gpu-jacobian-conformance-*`.
 
+A visible, uninstrumented same-build A/B/B/A comparison (GPU norms enabled,
+only `gpu_control=jacobian` toggled) measured host-gate runs of 23.791/22.207
+ms and shader-gate runs of 16.986/17.718 ms per warmed iteration. The averages
+are **22.999 → 17.352 ms**, a **24.55% reduction**, with exact sampled
+controller-record equality (`../tmp/w7x-gpu-jacobian-abba.json`). Timestamp
+instrumentation adds overhead; these values should not be mixed with the
+profiled 20.76 ms interval when computing a speedup.
+
+An additional full-readback run compared GPU min/max values, earliest indices
+and decisions with the CPU scan on **every pass**, not only refreshes: all
+2,821 passed, with zero fallbacks and exact 2,817-record trajectory equality
+(`../tmp/w7x-gpu-jacobian-full-check-*`). The host controller suite also passed
+with ASan/UBSan enabled.
+
+The FFT route qualified in **58.00 s**, retaining 3,091 effective iterations,
+all 3,096 exact controller records and the original spectral/derived-field
+digests (`../tmp/w7x-gpu-jacobian-fft-*`).
+
 The WebGPU implementation lives under these paths:
 
 ```text
