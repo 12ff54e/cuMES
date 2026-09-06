@@ -27,6 +27,9 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/prolongation.cpp)
 target_sources(cumes_webgpu PRIVATE
   ${PROJECT_SOURCE_DIR}/src/webgpu/toroidal.cpp)
+target_sources(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/src/webgpu/reduction.cpp)
+target_link_options(cumes_webgpu PRIVATE
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_norm.wgsl@/shaders/residual_norm.wgsl")
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
 if(NOT EXISTS "${PROJECT_SOURCE_DIR}/deps/webgpu-fft/CMakeLists.txt")

@@ -6,6 +6,7 @@
 #include "cumes/webgpu/initialization.hpp"
 #include "cumes/webgpu/numerics.hpp"
 #include "cumes/webgpu/preconditioner.hpp"
+#include "cumes/webgpu/reduction.hpp"
 #include "cumes/webgpu/toroidal.hpp"
 
 #include <array>
@@ -23,6 +24,7 @@ struct IterationCase {
     bool use_fft = false;
     bool optimized_fft = true;
     bool canonical_zeta = false;
+    bool shadow_norms = false;
     AxisymmetricPreconditionerElements elements;
     AxisymmetricPreconditionerMatrix matrix;
     std::vector<float> r_con0, r_con0_lo, z_con0, z_con0_lo, tcon;
@@ -44,6 +46,7 @@ struct IterationResult {
     AxisymmetricPreconditionerMatrix matrix;
     AxisymmetricConstraintResult constraint;
     AxisymmetricPreconditionerApplyResult preconditioned;
+    std::array<ResidualNormResult, 3> norms;
 };
 
 using IterationCallback = std::function<void(std::string, IterationResult)>;

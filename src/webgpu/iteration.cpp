@@ -182,10 +182,14 @@ class IterationDispatch
         in.sqrt_s_f_lo = input.stage.profiles.sqrt_s_f_lo;
         const auto self = shared_from_this();
         in.readback = {batch, [self, index](ResidualDecompositionResult value) {
-                           if (index == 0)
-                               self->elements();
-                           else
-                               self->apply(value.device_residual);
+                           self->norm(
+                               value.device_residual, index,
+                               [self, index, fields = value.device_residual] {
+                                   if (index == 0)
+                                       self->elements();
+                                   else
+                                       self->apply(fields);
+                               });
                        }};
         enqueue_residual_decomposition(
             device, in,
@@ -286,9 +290,35 @@ class IterationDispatch
         in.elements = elements_;
         in.matrix = matrix_;
         in.device_residual = residual;
-        in.readback = {batch, [](AxisymmetricPreconditionerApplyResult) {}};
+        in.readback = {batch, [self = shared_from_this()](
+                                  AxisymmetricPreconditionerApplyResult value) {
+                           self->norm(value.device_residual, 2, [] {});
+                       }};
         enqueue_axisymmetric_preconditioner_apply(
             device, in, collect(&IterationResult::preconditioned));
+    }
+
+    void norm(const DeviceFields& fields,
+              int index,
+              std::function<void()> next) {
+        if (!input.shadow_norms) {
+            next();
+            return;
+        }
+        ResidualNormCase in;
+        in.residual = fields;
+        in.ns = input.stage.ns;
+        in.paired = index != 2 && input.double_single;
+        in.include_edge_rz = index == 2;
+        in.readback = {
+            batch, [next = std::move(next)](ResidualNormResult) { next(); }};
+        enqueue_residual_norm(device, in,
+                              [self = shared_from_this(), index](
+                                  std::string error, ResidualNormResult value) {
+                                  if (!error.empty())
+                                      self->error = std::move(error);
+                                  self->result.norms[index] = std::move(value);
+                              });
     }
 };
 

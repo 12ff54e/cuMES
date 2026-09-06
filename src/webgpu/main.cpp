@@ -50,6 +50,7 @@ int requested_direct_dft();
 int requested_generic_fft();
 int requested_canonical_zeta();
 int requested_solver_trace();
+int requested_shadow_norms();
 int requested_compare_fft();
 int requested_spectral_fences();
 void publish_browser_diagnostic(const char* json);
@@ -1402,7 +1403,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             std::printf(
                 "  device-only descent, axis remap, f32 direction, "
                 "accepted snapshot isolation: PASS\n");
-            run_w7x_initialization();
+            run_device_norm_test();
             return;
         }
         AxisymmetricDescentCase input;
@@ -1493,6 +1494,88 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             self->run_device_descent_test(variant + 1);
+        });
+    }
+
+    void run_device_norm_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 6) {
+            std::printf(
+                "  paired GPU norms: f32/paired, edge masks, awkward "
+                "sizes, zeros, nonfinite/overflow guards: PASS\n");
+            run_w7x_initialization();
+            return;
+        }
+        const int ns = variant == 1 ? 99 : 3;
+        const std::size_t points = ns * (variant == 1 ? 156 : 7);
+        std::vector<float> values(12 * points, 0.0F);
+        for (std::size_t i = 0; i < 6 * points; ++i) {
+            values[i] = float(int(i % 113) - 56) * (i % 2 ? 1.0e-6F : 0.125F);
+            if (variant != 0) values[6 * points + i] = values[i] * 1.0e-8F;
+        }
+        if (variant == 3) std::fill(values.begin(), values.end(), 0.0F);
+        if (variant == 4) {
+            // Include a NaN in an otherwise excluded LCFS correction word.
+            values[6 * points + ns - 1] =
+                std::numeric_limits<float>::quiet_NaN();
+            values[3 * points] = std::numeric_limits<float>::infinity();
+        }
+        if (variant == 5) values[1] = 1.0e30F;
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = values.size() * sizeof(float);
+        descriptor.usage =
+            wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+        const auto source = device_.CreateBuffer(&descriptor);
+        device_.GetQueue().WriteBuffer(source, 0, values.data(),
+                                       descriptor.size);
+        ResidualNormCase input;
+        input.residual = {source, 6 * points, 0, 6 * points * sizeof(float)};
+        input.ns = ns;
+        input.paired = variant != 0;
+        input.include_edge_rz = variant == 2;
+        input.readback.batch = std::make_shared<ReadbackBatch>(device_, 40);
+        auto result = std::make_shared<ResidualNormResult>();
+        auto error = std::make_shared<std::string>();
+        enqueue_residual_norm(
+            device_, input,
+            [result, error](std::string message, ResidualNormResult value) {
+                *result = std::move(value);
+                *error = std::move(message);
+            });
+        const auto self = shared_from_this();
+        input.readback.batch->map([self, input, values = std::move(values),
+                                   result, error, points,
+                                   variant](std::string message) {
+            bool valid = message.empty() && error->empty() &&
+                         result->finite == (variant < 4);
+            if (variant < 4) {
+                for (int family = 0; family < 3; ++family) {
+                    double sum = 0.0;
+                    for (std::size_t i = 0; i < points; ++i) {
+                        if (family != 2 && !input.include_edge_rz &&
+                            i % input.ns == std::size_t(input.ns - 1))
+                            continue;
+                        const auto a_index = family * points + i;
+                        const auto b_index = (family + 3) * points + i;
+                        const double a = double(values[a_index]) +
+                                         values[6 * points + a_index];
+                        const double b = double(values[b_index]) +
+                                         values[6 * points + b_index];
+                        sum += a * a + b * b;
+                    }
+                    const double expected = sum / double(points);
+                    valid &= std::isfinite(result->raw[family]) &&
+                             std::abs(result->raw[family] - expected) <=
+                                 2.0e-12 * std::abs(expected);
+                }
+            }
+            if (!valid) {
+                self->finish(false, "GPU norm conformance mismatch variant=" +
+                                        std::to_string(variant) + ": " +
+                                        message + *error);
+                return;
+            }
+            self->run_device_norm_test(variant + 1);
         });
     }
 
@@ -2485,6 +2568,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             input.use_fft = requested_direct_dft() == 0;
             input.optimized_fft = !requested_generic_fft();
             input.canonical_zeta = requested_canonical_zeta();
+            input.shadow_norms = requested_shadow_norms();
             input.elements = preconditioner_elements_;
             input.matrix = preconditioner_matrix_;
             input.device_r_con0 = device_constraint_r_con0_;
@@ -2517,6 +2601,38 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     }
                     self->iteration_forward_index_ = 0;
                     self->iteration_residual_index_ = 0;
+                    if (requested_shadow_norms()) {
+                        const auto prec = cumes::webgpu::residual_raw_norms(
+                            result.preconditioned.residual,
+                            self->initialized_stage_.ns,
+                            self->initialized_stage_.mpol,
+                            self->initialized_stage_.ntor, true);
+                        for (int index = 0; index < 3; ++index) {
+                            const auto& cpu =
+                                index == 2 ? prec
+                                           : result.residual[index].raw_norm;
+                            for (int family = 0; family < 3; ++family) {
+                                if (!std::isfinite(cpu[family])) continue;
+                                const double relative =
+                                    std::abs(cpu[family] -
+                                             result.norms[index].raw[family]) /
+                                    std::max(std::abs(cpu[family]), 1.0e-290);
+                                if (!result.norms[index].finite ||
+                                    !std::isfinite(relative) ||
+                                    relative > 2.0e-12) {
+                                    self->finish(
+                                        false, "GPU norm shadow mismatch: " +
+                                                   std::to_string(index) + "/" +
+                                                   std::to_string(family) +
+                                                   " relative=" +
+                                                   std::to_string(relative));
+                                    return;
+                                }
+                                self->shadow_norm_error_ = std::max(
+                                    self->shadow_norm_error_, relative);
+                            }
+                        }
+                    }
                     self->iteration_results_ = std::move(result);
                     self->finish_stage_inverse(
                         std::move(self->iteration_results_->inverse), {});
@@ -4236,6 +4352,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void complete_stage() {
+        if (requested_shadow_norms()) {
+            std::printf("  GPU norm shadow: PASS (max relative error=%.6e)\n",
+                        shadow_norm_error_);
+            std::ostringstream diagnostic;
+            diagnostic << std::setprecision(17)
+                       << "{\"kind\":\"norm-shadow\",\"max_relative_error\":"
+                       << shadow_norm_error_ << '}';
+            publish_browser_diagnostic(diagnostic.str().c_str());
+        }
         const int stage_iterations = controller_->effective_iteration();
         stage_iterations_.push_back(stage_iterations);
         total_iterations_ += stage_iterations;
@@ -4695,6 +4820,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::uint64_t iteration_readback_capacity_ = 0;
     std::optional<cumes::webgpu::IterationResult> iteration_results_;
     std::size_t iteration_forward_index_ = 0, iteration_residual_index_ = 0;
+    double shadow_norm_error_ = 0.0;
     cumes::webgpu::DeviceFields device_iteration_state_;
     cumes::webgpu::DeviceFields device_descent_state_, device_descent_velocity_,
         device_descent_residual_;

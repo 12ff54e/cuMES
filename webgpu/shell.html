@@ -258,7 +258,7 @@
           (w7xSolve&&(Number(progress[1])<=3||Number(progress[1])%50===0))||(!appMode&&!w7xSolve))append(line);return}
       const stage=line.match(/stage (\d+)\/(\d+) converged/);if(stage)document.body.dataset.cumesStage=stage[1];
       if((appMode&&/running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))||
-        (!appMode&&!w7xSolve)||(w7xSolve&&/running W7-X|stage .*converged|stage prolongation|published|self-test|FATAL/.test(line)))append(line)}
+        (!appMode&&!w7xSolve)||(w7xSolve&&/running W7-X|stage .*converged|stage prolongation|GPU norm shadow|published|self-test|FATAL/.test(line)))append(line)}
     function equilibriumMesh(fourier){const{mpol,ntor,nfp,ns}=fourier,mnmax=mpol*(ntor+1),thetaSegments=40,
       phiSegments=ntor?Math.max(64,nfp*16):64,surfaces=[];
       for(const source of fourier.surfaces){const points=new Float32Array((phiSegments+1)*(thetaSegments+1)*3),c=source.coefficients;

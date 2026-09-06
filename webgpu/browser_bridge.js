@@ -55,6 +55,9 @@ mergeInto(LibraryManager.library, {
   requested_solver_trace: function() {
     return new URLSearchParams(window.location.search).get('trace') === '1';
   },
+  requested_shadow_norms: function() {
+    return new URLSearchParams(window.location.search).get('gpu_norms') === 'shadow';
+  },
   requested_compare_fft: function() {
     return new URLSearchParams(window.location.search).get('compare_fft') === '1';
   },
