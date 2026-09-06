@@ -16,6 +16,7 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/real_space_storage.hpp"
 #include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/odd_geometry_operator.hpp"
 #include "cumes/transforms/spectral_operator.hpp"
 #include "fft_traits.h"
 #include "vmec_types.h"
@@ -24,6 +25,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 
 namespace cumes {
@@ -167,6 +169,8 @@ class ToroidalFftOperator : public SpectralOperator<T> {
     void* d_cufft_work_c_ = nullptr;
     std::size_t cufft_work_bytes_c_ = 0;
 
+    std::unique_ptr<OddGeometryOperator<FloatFloat>> odd_float_float_;
+    std::unique_ptr<OddGeometryOperator<double>> odd_double_;
     DeviceParams<T> p_{};
     RealSpaceStorage<T>* rs_ = nullptr;  // non-owning (stage-owned)
     const DeviceModeTable* mt_ =

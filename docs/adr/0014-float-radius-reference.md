@@ -44,3 +44,12 @@ and initcheck variants. The new reference test also passes a separate float
 Compute Sanitizer memcheck run. Measurements, reproduction instructions,
 and the remaining limitations are in the
 [investigation](../w7x-float-convergence.md).
+
+## Diagnostic follow-up
+
+A subsequent [stage-substitution investigation](../w7x-float-inverse-diagnostic.md)
+identifies odd R/Z inverse reconstruction as the remaining float bottleneck.
+A double-arithmetic GPU oracle correcting only `r_o` and `z_o`, with float
+state and float outputs, completes cold-start convergence at `1e-5`. This
+does not change the opt-in policy here: the oracle remains a separate
+diagnostic pending a production implementation and its qualification.

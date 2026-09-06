@@ -18,6 +18,16 @@ tolerance. They show that the baseline representation loses enough precision
 to spoil a converged double equilibrium, and that the tested float iterations
 stall above the requested tolerance.
 
+## Follow-up: remaining cause isolated
+
+The subsequent [inverse-transform diagnostic](w7x-float-inverse-diagnostic.md)
+locates the remaining bottleneck in the odd R/Z inverse reconstruction.
+Correcting only `r_o` and `z_o` with double GPU arithmetic while retaining
+float state and float output fields gives cold-start convergence at `1e-5`
+on all three grids (`148 → 202 → 313`, final FSQR `4.6679e-6`). The exported
+state also passes an exact-state double evaluation. This corrective oracle
+is diagnostic; the normal opt-in reference implementation below is unchanged.
+
 ## Reference-plus-displacement implementation
 
 `CUMES_RADIUS_REFERENCE=1` enables the experiment in the CLI. Embedding

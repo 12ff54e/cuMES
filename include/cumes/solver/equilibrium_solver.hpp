@@ -7,6 +7,7 @@
 #ifndef CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_SOLVER_HPP_
 #define CUMES_INCLUDE_CUMES_SOLVER_EQUILIBRIUM_SOLVER_HPP_
 
+#include "cumes/config/odd_geometry_precision.hpp"
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/io/equilibrium_profiles.hpp"
 #include "cumes/io/equilibrium_snapshot.hpp"
@@ -49,6 +50,9 @@ struct SolveRequest {
     // boundary radius separate from its evolving radial displacement.
     // Ignored for double, axisymmetric and free-boundary solves.
     bool use_radius_reference = false;
+
+    // Opt-in reconstruction experiment, applied only to fixed 3-D float.
+    OddGeometryPrecision odd_geometry = OddGeometryPrecision::NATIVE;
 };
 
 struct SolveTimings {

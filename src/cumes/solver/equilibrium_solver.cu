@@ -35,12 +35,18 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
     const auto solve_start = std::chrono::steady_clock::now();
 
     bool use_radius_reference = request.use_radius_reference;
+    auto odd_geometry = request.odd_geometry;
     if (request.use_process_environment) {
+        if (const char* e = std::getenv("CUMES_ODD_GEOMETRY"))
+            odd_geometry = parse_odd_geometry_precision(e);
         if (const char* e = std::getenv("CUMES_RADIUS_REFERENCE"))
             use_radius_reference = std::atoi(e) != 0;
     }
     DeviceParams<Real> params =
         init_params<Real>(problem, use_radius_reference);
+    if constexpr (sizeof(Real) == sizeof(float))
+        if (params.ntor > 0 && !problem.spec().free_boundary.lfreeb)
+            params.odd_geometry = odd_geometry;
     const StageRequest& first_stage = problem.spec().stages.front();
     params.ns = static_cast<int>(first_stage.radial_surfaces);
     params.max_iter = static_cast<int>(first_stage.max_iterations);

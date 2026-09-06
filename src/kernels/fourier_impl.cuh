@@ -32,6 +32,7 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/real_space_storage.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
+#include "odd_geometry_impl.cuh"
 
 #include <cmath>
 #include <cstdio>
@@ -98,6 +99,17 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     const cumes::DeviceModeTable& mt,
     const std::optional<std::reference_wrapper<cumes::DeviceArena>>& arena)
     : p_(p), rs_(&rs), mt_(&mt) {
+    if constexpr (std::is_same_v<T, float>) {
+        if (p.odd_geometry == cumes::OddGeometryPrecision::DOUBLE)
+            odd_double_ =
+                std::make_unique<cumes::OddGeometryOperator<double>>(p);
+        else if (p.odd_geometry ==
+                     cumes::OddGeometryPrecision::POLOIDAL_SCALE ||
+                 p.odd_geometry == cumes::OddGeometryPrecision::FLOAT_FLOAT)
+            odd_float_float_ =
+                std::make_unique<cumes::OddGeometryOperator<cumes::FloatFloat>>(
+                    p);
+    }
     // The mode table (d_xm/d_xn) is built by cumes::mode_table_create
     // (resolution metadata, not transform scratch); the real-space
     // geometry/force/combined arrays live in the stage-owned RealSpaceStorage
@@ -566,27 +578,29 @@ __global__ void inverse_pack_kernel(
 //      vv = c2*sin + c3*cos
 //   λ: v = c0*sin + c1*cos      vu = c0*mcos + c1*msin
 //      vv = -(c2*sin + c3*cos)
-template <typename T, bool FuseRzCon = false>
-__global__ void inverse_accumulate_kernel(const T* __restrict__ zeta_real,
-                                          const T* __restrict__ cos_th,
-                                          const T* __restrict__ sin_th,
-                                          const T* __restrict__ mcos_th,
-                                          const T* __restrict__ msin_th,
-                                          int ns,
-                                          int mpol,
-                                          int ntheta,
-                                          int nzeta,
-                                          int nZnT,
-                                          int slot0,
-                                          T* __restrict__ e0,
-                                          T* __restrict__ e1,
-                                          T* __restrict__ e2,
-                                          T* __restrict__ o0,
-                                          T* __restrict__ o1,
-                                          T* __restrict__ o2,
-                                          int k_tile,
-                                          T* __restrict__ rCon,
-                                          T* __restrict__ zCon) {
+template <typename T, bool FuseRzCon = false, int OddPrecision = 0>
+__global__ void inverse_accumulate_kernel(
+    const T* __restrict__ zeta_real,
+    const T* __restrict__ cos_th,
+    const T* __restrict__ sin_th,
+    const T* __restrict__ mcos_th,
+    const T* __restrict__ msin_th,
+    int ns,
+    int mpol,
+    int ntheta,
+    int nzeta,
+    int nZnT,
+    int slot0,
+    T* __restrict__ e0,
+    T* __restrict__ e1,
+    T* __restrict__ e2,
+    T* __restrict__ o0,
+    T* __restrict__ o1,
+    T* __restrict__ o2,
+    int k_tile,
+    T* __restrict__ rCon,
+    T* __restrict__ zCon,
+    const cumes::FloatFloat* d_odd_scale = nullptr) {
     // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
     // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
@@ -626,6 +640,7 @@ __global__ void inverse_accumulate_kernel(const T* __restrict__ zeta_real,
     size_t mstride = (size_t)mpol * k_tile;
     T v0e = T(0), v1e = T(0), v2e = T(0);
     T v0o = T(0), v1o = T(0), v2o = T(0);
+    cumes::FloatFloat odd_sum;
     T rcon = T(0), zcon = T(0);
     for (int m = 0; m < mpol; ++m) {
         const T* sm = sh + m * k_tile;
@@ -648,7 +663,19 @@ __global__ void inverse_accumulate_kernel(const T* __restrict__ zeta_real,
             zcon += xmpq * (c0 * sinm + c1 * cosm);
         }
         if (m % 2 == 1) {
-            v0o += v0;
+            // Only the odd position sum changes. Derivatives, even modes,
+            // lambda and constraint arithmetic keep their native path.
+            if constexpr (OddPrecision == 1) {
+                v0o += c0 * t0 + c1 * t1;
+            } else if constexpr (OddPrecision == 2) {
+                odd_sum = odd_sum + cumes::FloatFloat(c0 * t0 + c1 * t1);
+            } else if constexpr (OddPrecision >= 3) {
+                using cumes::FloatFloat;
+                odd_sum = odd_sum + (FloatFloat(c0) * FloatFloat(t0) +
+                                     FloatFloat(c1) * FloatFloat(t1));
+            } else {
+                v0o += v0;
+            }
             v1o += v1;
             v2o += v2;
         } else {
@@ -661,7 +688,17 @@ __global__ void inverse_accumulate_kernel(const T* __restrict__ zeta_real,
     e0[idx] = v0e;
     e1[idx] = v1e;
     e2[idx] = v2e;
-    o0[idx] = v0o;
+    if constexpr (OddPrecision == 1)
+        o0[idx] = v0o * facO;
+    else if constexpr (OddPrecision >= 2) {
+        cumes::FloatFloat scale;
+        if constexpr (OddPrecision == 4)
+            scale = d_odd_scale[j];
+        else
+            scale = cumes::FloatFloat(facO);
+        o0[idx] = float(odd_sum * scale);
+    } else
+        o0[idx] = v0o;
     o1[idx] = v1o;
     o2[idx] = v2o;
     if constexpr (FuseRzCon) {
@@ -763,7 +800,9 @@ static void inverse_pipeline(
     T* lu_real,
     T* rv_real,
     T* zv_real,
-    T* lv_real) {
+    T* lv_real,
+    cumes::OddGeometryOperator<cumes::FloatFloat>* odd_float_float,
+    cumes::OddGeometryOperator<double>* odd_double) {
     int total = p.ns * p.mnmax;
     inverse_pack_kernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
         coeff, xm, xn, p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1,
@@ -783,21 +822,57 @@ static void inverse_pipeline(
     size_t inv_smem = 4 * p.mpol * k_tile * sizeof(T);
     // R slots 0-3 -> r/ru/rv (and fused rCon), Z slots 4-7 -> z/zu/zv (and
     // fused zCon), λ slots 8-11 -> l/lu/lv.
-    inverse_accumulate_kernel<T, FuseRzCon><<<grd, blk, inv_smem, stream>>>(
-        d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns, p.mpol,
-        p.ntheta, p.nzeta, p.nZnT, 0, geom.r_e.data(), geom.ru_e.data(),
-        geom.rv_e.data(), geom.r_o.data(), geom.ru_o.data(), geom.rv_o.data(),
-        k_tile, rCon, nullptr);
-    inverse_accumulate_kernel<T, FuseRzCon><<<grd, blk, inv_smem, stream>>>(
-        d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns, p.mpol,
-        p.ntheta, p.nzeta, p.nZnT, 4, geom.z_e.data(), geom.zu_e.data(),
-        geom.zv_e.data(), geom.z_o.data(), geom.zu_o.data(), geom.zv_o.data(),
-        k_tile, nullptr, zCon);
+    auto positions = [&]<int OddPrecision>() {
+        const cumes::FloatFloat* d_scale =
+            odd_float_float ? odd_float_float->scale() : nullptr;
+        inverse_accumulate_kernel<T, FuseRzCon, OddPrecision>
+            <<<grd, blk, inv_smem, stream>>>(
+                d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns,
+                p.mpol, p.ntheta, p.nzeta, p.nZnT, 0, geom.r_e.data(),
+                geom.ru_e.data(), geom.rv_e.data(), geom.r_o.data(),
+                geom.ru_o.data(), geom.rv_o.data(), k_tile, rCon, nullptr,
+                d_scale);
+        inverse_accumulate_kernel<T, FuseRzCon, OddPrecision>
+            <<<grd, blk, inv_smem, stream>>>(
+                d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns,
+                p.mpol, p.ntheta, p.nzeta, p.nZnT, 4, geom.z_e.data(),
+                geom.zu_e.data(), geom.zv_e.data(), geom.z_o.data(),
+                geom.zu_o.data(), geom.zv_o.data(), k_tile, nullptr, zCon,
+                d_scale);
+    };
+    if constexpr (std::is_same_v<T, float>) {
+        using cumes::OddGeometryPrecision;
+        switch (p.odd_geometry) {
+            case OddGeometryPrecision::FLOAT_ORDER:
+                positions.template operator()<1>();
+                break;
+            case OddGeometryPrecision::SUM:
+                positions.template operator()<2>();
+                break;
+            case OddGeometryPrecision::POLOIDAL:
+                positions.template operator()<3>();
+                break;
+            case OddGeometryPrecision::POLOIDAL_SCALE:
+                positions.template operator()<4>();
+                break;
+            default:
+                positions.template operator()<0>();
+                break;
+        }
+    } else {
+        positions.template operator()<0>();
+    }
     inverse_accumulate_kernel<T, FuseRzCon><<<grd, blk, inv_smem, stream>>>(
         d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns, p.mpol,
         p.ntheta, p.nzeta, p.nZnT, 8, geom.l_e.data(), geom.lu_e.data(),
         geom.lv_e.data(), geom.l_o.data(), geom.lu_o.data(), geom.lv_o.data(),
         k_tile, nullptr, nullptr);
+    if constexpr (std::is_same_v<T, float>) {
+        if (odd_float_float &&
+            p.odd_geometry == cumes::OddGeometryPrecision::FLOAT_FLOAT)
+            odd_float_float->enqueue(coeff, geom, stream);
+        if (odd_double) odd_double->enqueue(coeff, geom, stream);
+    }
     if (do_combine) {
         dim3 cblk(32), cgrd((p.nZnT + 31) / 32, p.ns);
         combine_parity_kernel<T><<<cgrd, cblk, 0, stream>>>(
@@ -832,7 +907,7 @@ void cumes::ToroidalFftOperator<T>::inverse_impl(
         d_zeta_spectra_, d_zeta_real_, d_cos_th_, d_sin_th_, d_mcos_th_,
         d_msin_th_, plan_z2d_, rs.d_r_real, rs.d_z_real, rs.d_l_real,
         rs.d_ru_real, rs.d_zu_real, rs.d_lu_real, rs.d_rv_real, rs.d_zv_real,
-        rs.d_lv_real);
+        rs.d_lv_real, odd_float_float_.get(), odd_double_.get());
 }
 
 // Public snapshot: refresh the 9 combined arrays from the CURRENT parity
@@ -1478,7 +1553,8 @@ void cumes::ToroidalFftOperator<T>::enqueue_inverse(
         coeff, /*do_combine=*/false, rCon.data(), zCon.data(), stream, p,
         geometry, mt_->d_xm, mt_->d_xn, d_zeta_spectra_, d_zeta_real_,
         d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, plan_z2d_, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        odd_float_float_.get(), odd_double_.get());
 }
 
 template <typename T>
