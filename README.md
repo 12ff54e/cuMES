@@ -119,6 +119,11 @@ shaders. With `&gpu_norms=1`, readbacks fall further to 6.15 MB/iteration;
 an alternating benchmark measured another 24.6% lower iteration time. The
 qualified direct/FFT runs took 54.9/58.0 s with identical per-route trajectories
 and output.
+Further compact validation keeps velocity and constraint intermediates on
+device: readbacks are now 1.69 MB/iteration, with another 14.8% measured
+iteration-time reduction. The webpage log now ends with min/max/median/average
+host, readback-wait and GPU-compute timings (when timestamps are supported).
+Use `&timing=0` to disable measurement overhead.
 Damping, convergence classification and checkpoint rollback remain on the CPU.
 See [shader-control qualification](docs/webgpu-port.md#shader-jacobian-control-2026-09-06).
 

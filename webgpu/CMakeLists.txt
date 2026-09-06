@@ -58,6 +58,7 @@ target_link_options(cumes_webgpu PRIVATE
   -sASSERTIONS=1
   "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
   "--js-library=${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js"
+  "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/solovev.json@/inputs/solovev.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/w7x.json@/inputs/w7x.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl@/shaders/base_geometry.wgsl"
@@ -101,6 +102,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js
   ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
   ${PROJECT_SOURCE_DIR}/inputs/solovev.json
   ${PROJECT_SOURCE_DIR}/inputs/w7x.json

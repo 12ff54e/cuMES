@@ -51,6 +51,7 @@ try {
   await call('Page.addScriptToEvaluateOnNewDocument', {source});
   const url = new URL(appUrl);
   url.searchParams.set('solve', 'w7x'); url.searchParams.set('trace', '1');
+  url.searchParams.set('timing', '0'); // This capture owns timestamp queries.
   console.log(JSON.stringify({target: page.id, url: url.href}));
   await call('Page.navigate', {url: url.href});
   await call('Page.bringToFront');

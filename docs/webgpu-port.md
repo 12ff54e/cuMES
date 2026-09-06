@@ -1112,6 +1112,41 @@ An uninstrumented visible A/B/B/A comparison measured **17.326 → 14.767 ms**
 per warmed iteration (**14.77% lower**), with exact sampled trajectories.
 Evidence: `../tmp/w7x-compact-control-*`, `compact-control-conformance-*`.
 
+The follow-up 256-pass profile measured **1.692 MB/readback per iteration**,
+down from 6.151 MB. The new validity scans cost 0.063 ms/pass in total;
+Emdawn mapped-data copying dropped to 0.84% of the separate CPU sample.
+Evidence: `../tmp/w7x-compact-control-profile-*`.
+
+## Iteration statistics in the webpage log (2026-09-06)
+
+Production runs append minimum, maximum, median and average iteration times
+to the end of the solver log, with sample counts. This includes all attempted
+passes (cold compilation, refreshes and rejected candidates), not only the
+effective iteration counter. Startup before the first pass and final output
+publication are excluded.
+
+- **Wall / iteration:** the host-observed iteration interval.
+- **Host non-wait elapsed:** JavaScript/Wasm orchestration and callback
+  scheduling, excluding time awaiting `mapAsync`; not sampled CPU execution.
+- **Readback wait:** elapsed mapping wait, which overlaps GPU execution.
+- **Device compute:** sum of compute-pass GPU timestamp intervals, excluding
+  GPU copies and gaps between passes. It is not added to host/wait time.
+
+`timestamp-query` is requested when the adapter supports it. Query results
+share each existing mapping's reserved tail: no extra map or host fence.
+Unavailable or incomplete device samples are reported as unavailable, never
+estimated from wall time. Statistics, raw samples and availability are also
+accessible through `cumesIterationTiming.report()` in the browser console.
+All frontend instrumentation lives in `webgpu/iteration_timing.js`, with only
+iteration-boundary notifications in C++; no `EM_JS` is used.
+
+Use `&timing=0` for uninstrumented throughput measurements. The deep-profile
+and A/B harnesses set this themselves to avoid stacking timestamp hooks.
+`node scripts/test_webgpu_iteration_timing.mjs` tests exact host/wait timing,
+timestamp decoding, median calculation, unsupported adapters, reset and opt-out.
+The Chrome GPU run retained all 2,817 controller records and produced timing
+samples for all 2,821 passes (`../tmp/w7x-iteration-timing-*`).
+
 The WebGPU implementation lives under these paths:
 
 ```text

@@ -252,6 +252,7 @@
     value('run')?.addEventListener('click',()=>{localStorage.setItem('cumes.input.v1',inputJSON());location.search='?run=1'});
     value('reset')?.addEventListener('click',()=>{localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');location.href=location.pathname});
     function append(line){output.append(document.createTextNode(line+'\n'));output.scrollTop=output.scrollHeight}
+    window.cumesAppendLog = append;
     function publishLine(line){const progress=line.match(/host controller: PASS \(iter=(\d+), FSQR=([^,]+)/);
       if(progress){document.body.dataset.cumesIteration=progress[1];document.body.dataset.cumesFsqr=progress[2];if(appMode){value('iteration').textContent=progress[1];value('fsqr').textContent=progress[2]}
         if((appMode&&(Number(progress[1])<=3||Number(progress[1])%25===0))||

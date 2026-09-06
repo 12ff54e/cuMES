@@ -3,11 +3,16 @@
 mergeInto(LibraryManager.library, {
   publish_browser_result__deps: ['$UTF8ToString'],
   publish_browser_result: function(success, detail) {
+    window.cumesIterationTiming?.finish();
     document.body.dataset.cumesWebgpu = success ? 'pass' : 'fail';
     document.body.dataset.cumesDetail = UTF8ToString(detail);
     document.body.dataset.cumesFinishedMilliseconds = String(performance.now());
     clearTimeout(window.cumesDeadline);
     clearInterval(window.cumesKeepAlive);
+  },
+
+  publish_browser_iteration_timing: function(kind, stage) {
+    window.cumesIterationTiming?.event(kind, stage);
   },
 
   publish_browser_output__deps: ['$FS', '$UTF8ToString'],

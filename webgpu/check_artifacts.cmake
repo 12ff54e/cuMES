@@ -32,7 +32,8 @@ foreach(marker IN ITEMS
 endforeach()
 
 file(READ "${ARTIFACT_BASE}.js" javascript)
-foreach(marker IN ITEMS "publish_browser_equilibrium" "requested_app_mode")
+foreach(marker IN ITEMS "publish_browser_equilibrium" "requested_app_mode"
+    "cumesIterationTiming" "Device compute (GPU)" "Host non-wait elapsed")
   string(FIND "${javascript}" "${marker}" marker_offset)
   if(marker_offset EQUAL -1)
     message(FATAL_ERROR

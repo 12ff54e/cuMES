@@ -35,6 +35,7 @@ try {
     const url = new URL(source);
     url.searchParams.set('solve', 'w7x');
     url.searchParams.set('trace', '1');
+    url.searchParams.set('timing', '0'); // Compare uninstrumented throughput.
     if (!url.searchParams.has('fft')) url.searchParams.set('fft', '0');
     await call('Page.navigate', {url: 'about:blank'});
     await call('Page.navigate', {url: url.href});

@@ -53,6 +53,7 @@ int requested_solver_trace();
 int requested_shadow_norms();
 int requested_device_norms();
 int requested_full_field_readbacks();
+void publish_browser_iteration_timing(int kind, int stage);
 int requested_geometry_control();
 int requested_compare_fft();
 int requested_spectral_fences();
@@ -1994,6 +1995,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
             problem_.emplace(std::move(validated.value()));
             production_solve_ = true;
+            publish_browser_iteration_timing(0, 0);
             double_single_solve_ = true;
             active_case_name_ = "W7-X";
             active_input_path_ = problem_->stage_shapes().size() == 1
@@ -2048,6 +2050,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             problem_.emplace(std::move(validated.value()));
             production_solve_ = true;
             double_single_solve_ = false;
+            publish_browser_iteration_timing(0, 0);
             active_case_name_ = "Interactive equilibrium";
             active_input_path_ = "browser boundary editor";
             stage_index_ = 0;
@@ -2809,6 +2812,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_stage_inverse() {
+        if (production_solve_)
+            publish_browser_iteration_timing(2, stage_index_ + 1);
         iteration_results_.reset();
         if (attempted_passes_ >= initialized_stage_.max_iterations) {
             if (deferred_descent_callback_) {
@@ -2839,6 +2844,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             run_stage_inverse();
             return;
         }
+        if (production_solve_)
+            publish_browser_iteration_timing(1, stage_index_ + 1);
         if (!device_iteration_state_) extrapolate_stage_axis();
         const auto self = shared_from_this();
         if (resident_spectral_path()) {
@@ -4690,6 +4697,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void complete_stage() {
+        if (production_solve_)
+            publish_browser_iteration_timing(2, stage_index_ + 1);
         // Resident iterations return validity flags for large fields. Read
         // the accepted final fields once for derived fields and publication;
         // do not rerun physics or advance the controller to obtain a snapshot.
