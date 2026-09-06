@@ -3,6 +3,7 @@
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/force.hpp"
+#include "cumes/webgpu/reduction.hpp"
 #include "cumes/webgpu/toroidal.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
@@ -42,6 +43,7 @@ static_assert(sizeof(TailParams) == 32);
 struct HeadResult {
     DeviceFields device_fields;
     DeviceFields device_tcon;
+    bool finite = true;
     std::vector<float> g_con_eff;
     std::vector<float> g_con_eff_lo;
     std::vector<float> r_con0;
@@ -441,6 +443,25 @@ void enqueue_head(const wgpu::Device& device,
         const auto tcon_offset = (in.double_single ? 6 : 3) * points;
         resident.device_tcon = {output_buffer, static_cast<std::size_t>(in.ns),
                                 tcon_offset * sizeof(float), 0};
+        if (!in.readback_intermediates) {
+            auto result = std::make_shared<HeadResult>(resident);
+            batched.batch->append(
+                encoder, output_buffer, tcon_offset * sizeof(float),
+                in.ns * sizeof(float), [result](std::span<const float> values) {
+                    result->tcon.assign(values.begin(), values.end());
+                });
+            const auto commands = encoder.Finish();
+            queue.Submit(1, &commands);
+            enqueue_field_finite(
+                device, {output_buffer, tcon_offset, 0, 0}, batched.batch,
+                [callback = std::move(callback), result](std::string error,
+                                                         bool finite) {
+                    result->finite = finite;
+                    callback(std::move(error), std::move(*result));
+                });
+            batched.publish_device(std::move(resident));
+            return;
+        }
         batched.batch->append(
             encoder, output_buffer, 0, output_bytes,
             [callback = std::move(callback), resident, points, tcon_offset,
@@ -846,6 +867,7 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
             dealias.device_g_con_eff =
                 field_slice(head.device_fields, 0, points);
             dealias.device_tcon = head.device_tcon;
+            dealias.readback_values = in.readback_intermediates;
             dealias.faccon.assign(in.mpol, 0.0F);
             for (int m = 1; m < in.mpol; ++m) {
                 const float xmpq = static_cast<float>((m + 1) * m);
@@ -873,6 +895,7 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
                 [chain, result](std::string error,
                                 ToroidalDealiasResult filtered) {
                     result->g_con = std::move(filtered.g_con);
+                    result->intermediates_finite &= filtered.finite;
                     chain->callback(std::move(error), std::move(*result));
                 });
         };
@@ -884,6 +907,7 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
                     return;
                 }
                 result->r_con0 = std::move(head.r_con0);
+                result->intermediates_finite = head.finite;
                 result->r_con0_lo = std::move(head.r_con0_lo);
                 result->z_con0 = std::move(head.z_con0);
                 result->z_con0_lo = std::move(head.z_con0_lo);

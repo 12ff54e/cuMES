@@ -1,6 +1,7 @@
 #include "cumes/webgpu/descent.hpp"
 
 #include "cumes/webgpu/float_float.hpp"
+#include "cumes/webgpu/reduction.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
@@ -353,6 +354,32 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         resident.device_velocity = {output_buffer, count,
                                     velocity_offset * sizeof(float),
                                     (velocity_offset + count) * sizeof(float)};
+        if (!input.readback_velocity) {
+            auto result = std::make_shared<AxisymmetricDescentResult>(resident);
+            input.readback.batch->append(
+                encoder, output_buffer, 0, velocity_offset * sizeof(float),
+                [result, count,
+                 paired = input.double_single](std::span<const float> values) {
+                    result->state.assign(values.begin(),
+                                         values.begin() + count);
+                    if (paired)
+                        result->state_lo.assign(values.begin() + count,
+                                                values.end());
+                });
+            const auto commands = encoder.Finish();
+            queue.Submit(1, &commands);
+            DeviceFields velocity = resident.device_velocity;
+            velocity.values *= input.double_single ? 2 : 1;
+            enqueue_field_finite(device, velocity, input.readback.batch,
+                                 [callback = std::move(callback), result](
+                                     std::string error, bool finite) {
+                                     result->velocity_finite = finite;
+                                     callback(std::move(error),
+                                              std::move(*result));
+                                 });
+            input.readback.publish_device(std::move(resident));
+            return;
+        }
         input.readback.batch->append(
             encoder, output_buffer, 0, output_bytes,
             [callback = std::move(callback), resident, count,

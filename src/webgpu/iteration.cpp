@@ -289,6 +289,7 @@ class IterationDispatch
     void constraint() {
         AxisymmetricConstraintCase in;
         shape(in);
+        in.readback_intermediates = !input.compact_fields;
         in.delta_s = input.stage.profiles.delta_s;
         in.tcon0 = input.stage.tcon0;
         in.double_single = input.double_single;
@@ -311,7 +312,7 @@ class IterationDispatch
         in.tcon = input.tcon;
         const auto points =
             static_cast<std::size_t>(in.ns) * in.ntheta * in.nzeta;
-        if (in.r_con0.empty()) {
+        if (in.r_con0.empty() && !in.device_r_con0) {
             in.r_con0.assign(points, 0.0F);
             in.z_con0.assign(points, 0.0F);
             in.r_con0_lo.assign(points, 0.0F);

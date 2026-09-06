@@ -88,6 +88,7 @@ struct ToroidalDealiasResult;
 
 struct ToroidalDealiasCase {
     BatchedReadback<ToroidalDealiasResult> readback;
+    bool readback_values = true;
     DeviceFields device_g_con_eff;
     DeviceFields device_tcon;
     int ns = 0;
@@ -102,6 +103,7 @@ struct ToroidalDealiasCase {
 
 struct ToroidalDealiasResult {
     DeviceFields device_g_con;
+    bool finite = true;
     std::vector<float> g_con;
 };
 

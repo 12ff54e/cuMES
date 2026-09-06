@@ -107,6 +107,18 @@ void enqueue_field_finite(const wgpu::Device& device,
                           const DeviceFields& fields,
                           const std::shared_ptr<ReadbackBatch>& batch,
                           std::function<void(std::string, bool)> callback) {
+    enqueue_field_status(device, fields, batch,
+                         [callback = std::move(callback)](std::string error,
+                                                          FieldStatus status) {
+                             callback(std::move(error), status.finite);
+                         });
+}
+
+void enqueue_field_status(
+    const wgpu::Device& device,
+    const DeviceFields& fields,
+    const std::shared_ptr<ReadbackBatch>& batch,
+    std::function<void(std::string, FieldStatus)> callback) {
     const auto offset = fields.high_offset;
     const auto size = fields ? fields.buffer.GetSize() : 0;
     if (!fields || !batch || fields.values == 0 ||
@@ -114,7 +126,7 @@ void enqueue_field_finite(const wgpu::Device& device,
         offset % sizeof(float) != 0 || offset > size ||
         fields.values > (size - offset) / sizeof(float) ||
         fields.values > 65535U * 256U) {
-        callback("invalid finite-scan field range or readback", false);
+        callback("invalid finite-scan field range or readback", {false, false});
         return;
     }
     struct Params {
@@ -154,8 +166,13 @@ void enqueue_field_finite(const wgpu::Device& device,
     batch->append(
         encoder, output, 0, bytes,
         [callback = std::move(callback)](std::span<const float> flags) {
-            callback({}, std::all_of(flags.begin(), flags.end(),
-                                     [](float flag) { return flag == 0.0F; }));
+            FieldStatus status;
+            for (const auto flag : flags) {
+                const auto bits = static_cast<std::uint32_t>(flag);
+                status.finite &= (bits & 1U) == 0;
+                status.nonzero |= (bits & 2U) != 0;
+            }
+            callback({}, status);
         });
     const auto commands = encoder.Finish();
     device.GetQueue().Submit(1, &commands);

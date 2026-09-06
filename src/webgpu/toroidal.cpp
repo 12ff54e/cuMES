@@ -1540,6 +1540,19 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
     if (input.readback.batch) {
         ToroidalDealiasResult resident;
         resident.device_g_con = {result_buffer, points, 0, 0};
+        if (!input.readback_values) {
+            const auto commands = encoder.Finish();
+            queue.Submit(1, &commands);
+            enqueue_field_finite(
+                device, resident.device_g_con, input.readback.batch,
+                [callback = std::move(callback), resident](
+                    std::string error, bool finite) mutable {
+                    resident.finite = finite;
+                    callback(std::move(error), std::move(resident));
+                });
+            input.readback.publish_device(std::move(resident));
+            return;
+        }
         input.readback.batch->append(
             encoder, result_buffer, 0, result_bytes,
             [callback = std::move(callback),

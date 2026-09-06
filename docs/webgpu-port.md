@@ -1091,6 +1091,27 @@ The FFT route qualified in **58.00 s**, retaining 3,091 effective iterations,
 all 3,096 exact controller records and the original spectral/derived-field
 digests (`../tmp/w7x-gpu-jacobian-fft-*`).
 
+## Compact validation and retained velocity (2026-09-06)
+
+The resident route now keeps descent velocity and constraint intermediates on
+device. Only the radial constraint coefficient vector is downloaded; accepted
+constraint-reference snapshots remain independent of speculative scratch.
+Finite scans replace velocity/intermediate downloads. Original spectral-force
+validation uses a compact finite/nonzero flag instead of downloading both
+source arrays. Integer magnitude tests distinguish signed zero from subnormal
+nonzero values even on flush-to-zero GPUs. Copy-only input buffers retain the
+reference download path. `field_readbacks=full` retains velocity/constraint
+snapshots for diagnostics.
+
+Chrome/RTX 3060 Ti: single-grid direct W7-X with GPU norms and the GPU Jacobian
+gate converged in **42.74 s**, with all **2,817 controller records** and both
+scientific-output SHA-256 digests exactly unchanged. Full browser conformance
+passed, including compact velocity versus full device snapshots, copy-only
+and storage-backed residual validation, and signed-zero/subnormal flag cases.
+An uninstrumented visible A/B/B/A comparison measured **17.326 → 14.767 ms**
+per warmed iteration (**14.77% lower**), with exact sampled trajectories.
+Evidence: `../tmp/w7x-compact-control-*`, `compact-control-conformance-*`.
+
 The WebGPU implementation lives under these paths:
 
 ```text

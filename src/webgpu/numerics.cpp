@@ -1,6 +1,7 @@
 #include "cumes/webgpu/numerics.hpp"
 
 #include "cumes/webgpu/float_float.hpp"
+#include "cumes/webgpu/reduction.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
@@ -357,7 +358,16 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
     if (in.readback.batch) {
         auto result = std::make_shared<ResidualDecompositionResult>();
         result->device_residual = {output, 6 * n, 0, input_bytes};
-        if (in.device_residual) {
+        if (in.device_residual &&
+            (in.device_residual.buffer.GetUsage() &
+             wgpu::BufferUsage::Storage) != wgpu::BufferUsage::None) {
+            enqueue_field_status(
+                device, in.device_residual, in.readback.batch,
+                [result](std::string error, FieldStatus status) {
+                    result->source_finite = error.empty() && status.finite;
+                    result->source_nonzero = status.nonzero;
+                });
+        } else if (in.device_residual) {
             in.readback.batch->append(
                 encoder, in.device_residual.buffer,
                 in.device_residual.high_offset, input_bytes,

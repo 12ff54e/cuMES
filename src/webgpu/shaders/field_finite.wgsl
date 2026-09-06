@@ -16,8 +16,12 @@ fn main(@builtin(local_invocation_index) lane: u32,
     for (var j = 0u; j < 4u; j++) {
         let index = group.x * 256u + lane + j * 64u;
         if (index < params.count) {
-            let exponent = words[params.offset + index] & 0x7f800000u;
+            let word = words[params.offset + index];
+            let exponent = word & 0x7f800000u;
             invalid |= select(0u, 1u, exponent == 0x7f800000u);
+            // Integer magnitude preserves subnormals on flush-to-zero GPUs;
+            // both signs of zero remain zero.
+            invalid |= select(0u, 2u, (word & 0x7fffffffu) != 0u);
         }
     }
     bad[lane] = invalid;

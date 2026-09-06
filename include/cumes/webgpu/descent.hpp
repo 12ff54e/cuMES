@@ -19,6 +19,7 @@ struct AxisymmetricDescentCase {
     // A paired descent may consume an ordinary-f32 preconditioned direction.
     bool residual_is_f32 = false;
     bool extrapolate_axis = false;
+    bool readback_velocity = true;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -38,6 +39,7 @@ struct AxisymmetricDescentCase {
 struct AxisymmetricDescentResult {
     DeviceFields device_state;
     DeviceFields device_velocity;
+    bool velocity_finite = true;
     std::vector<float> state;
     std::vector<float> state_lo;
     std::vector<float> velocity;

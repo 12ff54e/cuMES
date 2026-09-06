@@ -1265,7 +1265,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_resident_residual_tests(int test = 0) {
-        if (test == 8) {
+        if (test == 12) {
             std::printf(
                 "  resident and batched spectral handoff (f32, paired, zero, "
                 "NaN): PASS\n");
@@ -1310,6 +1310,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 descriptor.size = storage.size() * sizeof(float);
                 descriptor.usage =
                     wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc;
+                if (test >= 8) descriptor.usage |= wgpu::BufferUsage::Storage;
                 const auto buffer = self->device_.CreateBuffer(&descriptor);
                 self->device_.GetQueue().WriteBuffer(buffer, 0, storage.data(),
                                                      descriptor.size);
@@ -1511,8 +1512,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         resident.velocity_lo.clear();
         resident.residual.clear();
         resident.residual_lo.clear();
-        auto batch =
-            std::make_shared<ReadbackBatch>(device_, 8 * count * sizeof(float));
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_, 10 * count * sizeof(float));
         input.readback.batch = batch;
         resident.readback.batch = batch;
         auto results =
@@ -1526,25 +1527,49 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             };
         };
         enqueue_axisymmetric_descent(device_, input, collect(0));
+        resident.readback_velocity = false;
+        // Snapshot the retained velocity solely for this comparison; the
+        // production compact route downloads only its finite flag.
+        auto velocity = std::make_shared<std::vector<float>>();
+        resident.readback.device_ready = [self = shared_from_this(), batch,
+                                          velocity, count,
+                                          paired = input.double_single](
+                                             AxisymmetricDescentResult out) {
+            const auto encoder = self->device_.CreateCommandEncoder();
+            batch->append(encoder, out.device_velocity.buffer,
+                          out.device_velocity.high_offset,
+                          count * (paired ? 2 : 1) * sizeof(float),
+                          [velocity](std::span<const float> values) {
+                              velocity->assign(values.begin(), values.end());
+                          });
+            const auto commands = encoder.Finish();
+            self->device_.GetQueue().Submit(1, &commands);
+        };
         enqueue_axisymmetric_descent(device_, resident, collect(1));
         const auto self = shared_from_this();
-        batch->map([self, results, errors, variant](std::string error) {
-            const auto& a = (*results)[0];
-            const auto& b = (*results)[1];
-            if (!error.empty() || !errors->empty() || a.state.empty() ||
-                a.state != b.state || a.state_lo != b.state_lo ||
-                a.velocity != b.velocity || a.velocity_lo != b.velocity_lo) {
-                self->finish(false, "device descent snapshot mismatch: " +
-                                        error + *errors);
-                return;
-            }
-            self->run_device_descent_test(variant + 1);
-        });
+        batch->map(
+            [self, results, errors, velocity, variant](std::string error) {
+                const auto& a = (*results)[0];
+                const auto& b = (*results)[1];
+                auto expected_velocity = a.velocity;
+                expected_velocity.insert(expected_velocity.end(),
+                                         a.velocity_lo.begin(),
+                                         a.velocity_lo.end());
+                if (!error.empty() || !errors->empty() || a.state.empty() ||
+                    a.state != b.state || a.state_lo != b.state_lo ||
+                    !b.velocity.empty() || !b.velocity_lo.empty() ||
+                    !b.velocity_finite || expected_velocity != *velocity) {
+                    self->finish(false, "device descent snapshot mismatch: " +
+                                            error + *errors);
+                    return;
+                }
+                self->run_device_descent_test(variant + 1);
+            });
     }
 
     void run_field_finite_test(int variant = 0) {
         using namespace cumes::webgpu;
-        if (variant == 12) {
+        if (variant == 14) {
             std::printf(
                 "  GPU field finite scan: offsets, partial blocks, "
                 "NaN/Inf, signed zero, subnormals, range guards: PASS\n");
@@ -1571,6 +1596,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::numeric_limits<float>::signaling_NaN()};
             values[variant % 2 ? count : 1] = nonfinite[variant - 5];
         }
+        if (variant == 12)
+            std::fill(values.begin() + 1, values.end() - 1, -0.0F);
+        if (variant == 13) {
+            std::fill(values.begin() + 1, values.end() - 1, 0.0F);
+            values[count] = std::numeric_limits<float>::denorm_min();
+        }
+        const bool expected_nonzero =
+            std::any_of(values.begin() + 1, values.end() - 1,
+                        [](float value) { return value != 0.0F; });
         wgpu::BufferDescriptor descriptor{};
         descriptor.size = values.size() * sizeof(float);
         descriptor.usage =
@@ -1590,7 +1624,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                  *result = finite;
                                  *error = std::move(message);
                              });
-        if (variant >= 9) {
+        if (variant >= 9 && variant <= 11) {
             if (error->empty() || *result) {
                 finish(false, "GPU field finite scan accepted invalid range");
                 return;
@@ -1598,10 +1632,20 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             run_field_finite_test(variant + 1);
             return;
         }
+        const auto status = std::make_shared<FieldStatus>();
+        enqueue_field_status(
+            device_, fields, batch,
+            [status, error](std::string message, FieldStatus value) {
+                *status = value;
+                if (!message.empty()) *error = std::move(message);
+            });
         const auto self = shared_from_this();
-        batch->map([self, variant, buffer, result, error](std::string message) {
+        batch->map([self, variant, buffer, result, error, status,
+                    expected_nonzero](std::string message) {
             if (!message.empty() || !error->empty() ||
-                *result != (variant < 5)) {
+                *result != (variant < 5 || variant >= 12) ||
+                status->finite != *result ||
+                status->nonzero != expected_nonzero) {
                 self->finish(false, "GPU field finite scan mismatch: " +
                                         std::to_string(variant) + " " +
                                         message + *error);
@@ -3892,9 +3936,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->resident_path() ? actual.device_fields
                                           : cumes::webgpu::DeviceFields{};
                 if (self->production_solve_) {
-                    bool finite = std::all_of(
-                        actual.fields.begin(), actual.fields.end(),
-                        [](float value) { return std::isfinite(value); });
+                    bool finite =
+                        actual.intermediates_finite &&
+                        std::all_of(
+                            actual.fields.begin(), actual.fields.end(),
+                            [](float value) { return std::isfinite(value); });
                     if (self->double_single_solve_)
                         finite &=
                             actual.fields_lo.size() == actual.fields.size() &&
@@ -4437,6 +4483,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         descent_case_.device_residual = device_descent_residual_;
         descent_case_.residual_is_f32 = true;
         descent_case_.extrapolate_axis = bool(device_descent_state_);
+        descent_case_.readback_velocity =
+            !resident_spectral_path() || requested_full_field_readbacks();
         descent_case_.state = initialized_stage_.state;
         descent_case_.velocity = stage_velocity_;
         if (double_single_solve_) {
@@ -4488,6 +4536,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     compare(actual.velocity, expected.velocity);
                 } else {
                     valid =
+                        actual.velocity_finite &&
                         std::all_of(
                             actual.state.begin(), actual.state.end(),
                             [](float value) { return std::isfinite(value); }) &&

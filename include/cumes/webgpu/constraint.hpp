@@ -21,6 +21,7 @@ struct AxisymmetricConstraintCase {
     DeviceFields device_force_fields;
     DeviceFields device_r_con0, device_z_con0;
     bool readback = true;
+    bool readback_intermediates = true;
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
@@ -63,6 +64,7 @@ struct AxisymmetricConstraintCase {
 struct AxisymmetricConstraintResult {
     DeviceFields device_fields;
     DeviceFields device_r_con0, device_z_con0;
+    bool intermediates_finite = true;
     // Forward-transform fields: 14 for axisymmetry or 20 for 3-D, with
     // frcon/fzcon occupying the final four fields.
     std::vector<float> fields;
