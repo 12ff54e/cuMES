@@ -1135,6 +1135,13 @@ records. The complete direct W7-X solve took **38.92 s**, preserving all
 2,817 controller records, `1e-12` convergence and both scientific-output
 digests. Evidence: `../tmp/w7x-parallel-current-*`.
 
+A theta-contiguous invocation mapping was also tested for direct toroidal
+projections. It retained the sampled trajectory but showed no useful speedup:
+12.901 ms baseline versus 12.947 ms candidate in A/B/B/A. The experiment was
+reverted (`../tmp/w7x-forward-layout-abba.json`). The profiled remaining device
+leaders are forward projections (3.63 ms), inverse transforms (1.48 ms), and
+preconditioner application (0.61 ms); this is not a claim of global optimality.
+
 ## Iteration statistics in the webpage log (2026-09-06)
 
 Production runs append minimum, maximum, median and average iteration times
@@ -1164,6 +1171,10 @@ and A/B harnesses set this themselves to avoid stacking timestamp hooks.
 timestamp decoding, median calculation, unsupported adapters, reset and opt-out.
 The Chrome GPU run retained all 2,817 controller records and produced timing
 samples for all 2,821 passes (`../tmp/w7x-iteration-timing-*`).
+Conformance exposed and now guards against the reserved timestamp tail
+enlarging the logical payload capacity. `ReadbackBatch` enforces its declared
+payload budget independently of physical buffer size. Full conformance passed
+with instrumentation enabled (`../tmp/timing-capacity-conformance-*`).
 
 The WebGPU implementation lives under these paths:
 

@@ -124,6 +124,10 @@ device: readbacks are now 1.69 MB/iteration, with another 14.8% measured
 iteration-time reduction. The webpage log now ends with min/max/median/average
 host, readback-wait and GPU-compute timings (when timestamps are supported).
 Use `&timing=0` to disable measurement overhead.
+Parallel current integrands preserve the ordered sums and reduce iteration
+time by a further 9.9% in A/B testing; the qualified optimized direct W7-X run
+took 38.9 s with the same trajectory and output. These timings are from the
+user's Chrome/RTX 3060 Ti, not a cross-device performance guarantee.
 Damping, convergence classification and checkpoint rollback remain on the CPU.
 See [shader-control qualification](docs/webgpu-port.md#shader-jacobian-control-2026-09-06).
 
