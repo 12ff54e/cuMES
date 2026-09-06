@@ -398,6 +398,12 @@ Chrome background-tab timer throttling can dominate small-grid callback chains.
 
 ### FFT trajectory diagnostics
 
+The later [causal convergence audit](webgpu-fft-convergence-audit.md) includes
+a reproducible one-iteration FFT intervention (2812 → 3100 iterations), sham
+controls, late route switches, and identical-input 113-bit projection oracles.
+It establishes sensitivity experimentally rather than attributing iteration
+counts to transform accuracy alone.
+
 `&trace=1` records per-pass residuals, search-direction and state fingerprints,
 damping, restart anchors, and refresh decisions in `window.cumesDiagnostics`.
 `&compare_fft=1` additionally runs shadow forward transforms on **identical
