@@ -104,7 +104,13 @@ benchmark measured a further 28.4% reduction in iteration time. See the
 Persistent GPU constraint/preconditioner/descent state now reduces warmed
 uploads from 4.37 MB to about 20 KB per iteration. Opt-in `&gpu_norms=1`
 also moves residual reductions to the GPU; qualified direct/FFT W7-X runs
-took 92.3/104.0 s with unchanged state hashes and `1e-12` convergence.
+took 92.3/104.0 s before field-readback compaction. GPU finite scans now keep
+inverse geometry and most magnetic fields on device, reducing readbacks from
+35.42 to 14.29 MB/iteration. Latest direct/FFT GPU-norm runs took 64.8/74.0 s
+with identical per-route controller trajectories, exported fields and `1e-12`
+convergence.
+An alternating full/compact benchmark measured 31.9% lower iteration time.
+See the [compact-field measurements](docs/webgpu-port.md#compact-magnetic-readbacks-2026-09-06).
 Iteration control remains on the CPU; see the
 [residency and reduction qualification](docs/webgpu-port.md#persistent-iteration-state-and-gpu-residual-norms-2026-09-06).
 

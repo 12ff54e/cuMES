@@ -784,8 +784,50 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  3-D prescribed-current magnetic field+pressure: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
-                self->run_toroidal_force(std::move(actual.fields));
+                self->check_compact_magnetic(
+                    self->toroidal_magnetic_case_, std::move(actual),
+                    [self](cumes::webgpu::MagneticFieldResult checked) {
+                        self->run_toroidal_force(std::move(checked.fields));
+                    });
             });
+    }
+
+    void check_compact_magnetic(
+        cumes::webgpu::MagneticFieldCase input,
+        cumes::webgpu::MagneticFieldResult expected,
+        std::function<void(cumes::webgpu::MagneticFieldResult)> next) {
+        using namespace cumes::webgpu;
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_,
+            2 * expected.fields.size() * sizeof(float) + 64 * input.ns);
+        input.readback_values = false;
+        input.readback = {batch, {}};
+        auto actual = std::make_shared<MagneticFieldResult>();
+        auto errors = std::make_shared<std::string>();
+        enqueue_magnetic_field(
+            device_, input,
+            [actual, errors](std::string error, MagneticFieldResult result) {
+                *actual = std::move(result);
+                *errors = std::move(error);
+            });
+        const auto self = shared_from_this();
+        batch->map([self, actual, errors, expected = std::move(expected),
+                    next = std::move(next)](std::string error) mutable {
+            if (!error.empty() || !errors->empty() || !actual->fields_finite ||
+                !actual->fields.empty() || !actual->fields_lo.empty() ||
+                !actual->device_fields ||
+                actual->device_fields.values != expected.fields.size() ||
+                actual->chip_h != expected.chip_h ||
+                actual->chip_h_lo != expected.chip_h_lo ||
+                actual->iota_h != expected.iota_h ||
+                actual->iota_h_lo != expected.iota_h_lo) {
+                self->finish(false, "compact magnetic snapshot mismatch: " +
+                                        error + *errors);
+                return;
+            }
+            std::printf("  compact magnetic readback: PASS\n");
+            next(std::move(expected));
+        });
     }
 
     void run_toroidal_force(std::vector<float> magnetic_field) {
@@ -2207,8 +2249,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  W7-X double-single prescribed-current magnetic field: "
                     "PASS (max reconstructed |GPU-CPU| = %.3e)\n",
                     max_reconstructed_error);
-                self->w7x_magnetic_field_lo_ = std::move(actual.fields_lo);
-                self->run_w7x_force(std::move(actual.fields));
+                self->check_compact_magnetic(
+                    self->w7x_magnetic_case_, std::move(actual),
+                    [self](cumes::webgpu::MagneticFieldResult checked) {
+                        self->w7x_magnetic_field_lo_ =
+                            std::move(checked.fields_lo);
+                        self->run_w7x_force(std::move(checked.fields));
+                    });
             });
     }
 
@@ -3010,7 +3057,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 float max_error = 0.0F;
-                bool finite = true;
+                bool finite = actual.fields_finite;
                 for (std::size_t i = 0; i < actual.fields.size(); ++i) {
                     if (!self->production_solve_) {
                         max_error = std::max(
@@ -4449,26 +4496,37 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void complete_stage() {
-        // Resident iterations only return the inverse's validity flags. Read
-        // the accepted final geometry once for derived fields and publication;
+        // Resident iterations return validity flags for large fields. Read
+        // the accepted final fields once for derived fields and publication;
         // do not rerun physics or advance the controller to obtain a snapshot.
-        if (base_geometry_case_.geometry.empty() &&
+        if ((base_geometry_case_.geometry.empty() ||
+             force_case_.magnetic_field.empty()) &&
             stage_index_ + 1 == problem_->stage_shapes().size()) {
             const auto fields = device_geometry_;
-            if (!fields) {
-                finish(false, "missing resident geometry for final output");
+            const auto magnetic = device_magnetic_field_;
+            if (!fields || !magnetic) {
+                finish(false, "missing resident fields for final output");
                 return;
             }
             const auto bytes = fields.values * sizeof(float);
-            auto batch =
-                std::make_shared<cumes::webgpu::ReadbackBatch>(device_, bytes);
+            const auto magnetic_bytes = magnetic.values * sizeof(float);
+            auto batch = std::make_shared<cumes::webgpu::ReadbackBatch>(
+                device_, bytes + magnetic_bytes + 8);
             const auto encoder = device_.CreateCommandEncoder();
             const auto self = shared_from_this();
-            batch->append(encoder, fields.buffer, fields.high_offset, bytes,
-                          [self](std::span<const float> values) {
-                              self->base_geometry_case_.geometry.assign(
-                                  values.begin(), values.end());
-                          });
+            if (base_geometry_case_.geometry.empty())
+                batch->append(encoder, fields.buffer, fields.high_offset, bytes,
+                              [self](std::span<const float> values) {
+                                  self->base_geometry_case_.geometry.assign(
+                                      values.begin(), values.end());
+                              });
+            if (force_case_.magnetic_field.empty())
+                batch->append(encoder, magnetic.buffer, magnetic.high_offset,
+                              magnetic_bytes,
+                              [self](std::span<const float> values) {
+                                  self->force_case_.magnetic_field.assign(
+                                      values.begin(), values.end());
+                              });
             const auto commands = encoder.Finish();
             device_.GetQueue().Submit(1, &commands);
             batch->map([self](std::string error) {

@@ -88,6 +88,9 @@ class IterationDispatch
 
     void magnetic() {
         MagneticFieldCase in;
+        // CPU force normalization only consumes fields on refresh passes.
+        in.readback_values =
+            !input.compact_fields || input.refresh_preconditioner;
         shape(in);
         const auto& p = input.stage.profiles;
         in.lamscale = p.lamscale;

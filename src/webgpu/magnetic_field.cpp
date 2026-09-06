@@ -1,5 +1,6 @@
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/geometry.hpp"
+#include "cumes/webgpu/reduction.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
@@ -635,6 +636,44 @@ void enqueue_magnetic_field(const wgpu::Device& device,
         const auto fields = result_values - 2 * half_surfaces;
         resident.device_fields = {result_buffer, fields, 0,
                                   result_values * sizeof(float)};
+        if (!input.readback_values) {
+            auto host = std::make_shared<MagneticFieldResult>(resident);
+            const auto profile_bytes = 2 * half_surfaces * sizeof(float);
+            input.readback.batch->append(
+                encoder, result_buffer, fields * sizeof(float), profile_bytes,
+                [host, half_surfaces](std::span<const float> values) {
+                    host->chip_h.assign(values.begin(),
+                                        values.begin() + half_surfaces);
+                    host->iota_h.assign(values.begin() + half_surfaces,
+                                        values.end());
+                });
+            if (input.double_single) {
+                input.readback.batch->append(
+                    encoder, result_buffer,
+                    (result_values + fields) * sizeof(float), profile_bytes,
+                    [host, half_surfaces](std::span<const float> values) {
+                        host->chip_h_lo.assign(values.begin(),
+                                               values.begin() + half_surfaces);
+                        host->iota_h_lo.assign(values.begin() + half_surfaces,
+                                               values.end());
+                    });
+            }
+            const auto commands = encoder.Finish();
+            queue.Submit(1, &commands);
+            const DeviceFields all{result_buffer, result_bytes / sizeof(float),
+                                   0, 0};
+            enqueue_field_finite(device, all, input.readback.batch,
+                                 [callback = std::move(callback), host](
+                                     std::string error, bool finite) {
+                                     // Profile slices decode before this final
+                                     // status slice.
+                                     host->fields_finite = finite;
+                                     callback(std::move(error),
+                                              std::move(*host));
+                                 });
+            input.readback.publish_device(std::move(resident));
+            return;
+        }
         input.readback.batch->append(
             encoder, result_buffer, 0, result_bytes,
             [callback = std::move(callback), resident, fields, half_surfaces,

@@ -968,6 +968,64 @@ scan cases covering unaligned binding offsets, partial blocks, signed zeros,
 subnormals, maximal finite values, NaNs/infinities and malformed ranges.
 Evidence: `../tmp/w7x-compact-inverse-*`, `compact-inverse-conformance-*`.
 
+### Compact magnetic readbacks (2026-09-06)
+
+Between preconditioner refreshes, magnetic fields now stay on device too. A
+bitwise finite scan checks every high/low field and radial profile; only the
+small `chip_h`/`iota_h` profile vectors and scan flags return to the CPU. Full
+fields still return on refresh passes for the unchanged CPU force-normalization
+reduction. Final output downloads any missing fields in one additional batch,
+without advancing the controller. The `field_readbacks=full` diagnostic switch
+disables both inverse and magnetic compaction; the optimization is otherwise
+enabled for resident production solves, independent of `gpu_norms`.
+
+The direct GPU-norm W7-X run completed in **64.79 s**, with all 2,817 controller
+records exactly matching the prior GPU-norm baseline, including both state
+hashes, residual triples and control parameters. Spectral and derived-field
+SHA-256 digests also match. A sequential 256-iteration GPU timestamp window
+and separate 10-second CPU profile measured:
+
+| Measurement | Before field compaction | After |
+| --- | ---: | ---: |
+| Readback bytes/iteration | 35.42 MB | 14.29 MB |
+| Mean iteration interval | 33.00 ms | 22.46 ms |
+| Compute shader sum | 8.727 ms | 8.987 ms |
+| GPU batch span | 13.314 ms | 12.014 ms |
+| Between GPU batches | 19.708 ms | 10.440 ms |
+| Map wait (overlaps GPU execution) | 17.110 ms | 13.226 ms |
+
+The new finite scans together cost **0.035 ms/iteration**. Shader arithmetic
+and the costly direct forward projections/current solve remain unchanged.
+The total scan-parameter upload is only 31 bytes/iteration amortized. Base
+geometry/Jacobian checks still download full fields, and GPU checkpointing,
+controller logic and multi-iteration batching remain follow-on work.
+Evidence: `../tmp/w7x-compact-fields-{gpu,cpu,windows,result,trace,summary}.json`.
+
+An uninstrumented, visible A/B/B/A benchmark used the **same build**, toggling
+only `field_readbacks=full` with `gpu_norms=1` held constant. Each run warmed
+250 controller records then measured 256 intervals:
+
+| Run | Mean iteration time |
+| --- | ---: |
+| Full readbacks A1 | 34.827 ms |
+| Compact readbacks B1 | 23.441 ms |
+| Compact readbacks B2 | 23.295 ms |
+| Full readbacks A2 | 33.805 ms |
+
+The two-run averages are **34.316 → 23.368 ms**, a **31.90% reduction**.
+All sampled controller records match exactly. The benchmark now preserves
+feature flags from its input URLs instead of silently dropping them.
+`../tmp/w7x-compact-fields-abba.json` contains the samples and trajectories.
+The complete conformance suite passed in 90.74 s, including dedicated f32 and
+paired comparisons of compact radial profiles against full readbacks
+(`../tmp/compact-fields-conformance-*`).
+
+The FFT route also passed: **73.98 s**, 3,091 effective iterations and all
+3,096 controller records exactly equal to its qualified GPU-norm baseline.
+Its spectral and derived-field digests are unchanged too
+(`../tmp/w7x-compact-fields-fft-*`). These changes accelerate each route
+without trying to make the direct and FFT convergence trajectories equal.
+
 The WebGPU implementation lives under these paths:
 
 ```text

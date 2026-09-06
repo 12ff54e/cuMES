@@ -52,6 +52,8 @@ inline constexpr std::size_t MAGNETIC_FIELD_COUNT = 5;
 struct MagneticFieldResult;
 
 struct MagneticFieldCase {
+    // Keep radial profiles but replace full-field vectors with a finite flag.
+    bool readback_values = true;
     BatchedReadback<MagneticFieldResult> readback;
     DeviceFields device_geometry;
     DeviceFields device_base_geometry;
@@ -83,6 +85,7 @@ struct MagneticFieldCase {
 };
 
 struct MagneticFieldResult {
+    bool fields_finite = true;
     DeviceFields device_fields;
     // Field-major half-grid order: B^theta, B^zeta, B_theta, B_zeta,
     // total pressure.

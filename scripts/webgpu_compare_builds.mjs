@@ -1,4 +1,5 @@
-// Uninstrumented warmed direct-W7-X A/B/B/A comparison. Uses and closes only
+// Uninstrumented warmed W7-X A/B/B/A comparison. Preserves URL feature flags.
+// Uses and closes only
 // its own test tab; do not run another solve concurrently.
 // Usage: node scripts/webgpu_compare_builds.mjs BASE_URL NEW_URL OUTPUT_JSON [PORT]
 import {writeFile} from 'node:fs/promises';
@@ -32,7 +33,9 @@ try {
   for (const [kind, source] of [['baseline', baseline], ['candidate', candidate],
     ['candidate', candidate], ['baseline', baseline]]) {
     const url = new URL(source);
-    url.search = new URLSearchParams({solve: 'w7x', trace: '1', fft: '0'}).toString();
+    url.searchParams.set('solve', 'w7x');
+    url.searchParams.set('trace', '1');
+    if (!url.searchParams.has('fft')) url.searchParams.set('fft', '0');
     await call('Page.navigate', {url: 'about:blank'});
     await call('Page.navigate', {url: url.href});
     await call('Page.bringToFront');
