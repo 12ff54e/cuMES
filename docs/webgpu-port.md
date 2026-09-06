@@ -539,6 +539,46 @@ hooks. No shadow dispatches were enabled in these three complete timings.
 
 ## Backend boundary
 
+### Reducing queue gaps without changing arithmetic
+
+The resident production 3-D path now passes both forward-projection outputs
+directly to residual decomposition on the device. The original high words
+are copied alongside the decomposed output into one combined readback, so the
+original finite/nonzero guards are still checked before the controller or
+state update. This removes two readback/upload fences per iteration without
+changing WGSL arithmetic or the host double-norm accumulation order.
+`&fences=1` restores the original spectral readbacks for comparison;
+`&compare_fft=1` also retains them for the same-input transform diagnostics.
+
+Resident field copies in geometry, magnetic field, force, constraint, and
+forward projection are encoded with their consuming compute pass instead of
+being submitted individually. This eliminates 22 copy-only submissions per
+ordinary W7-X pass. Copies still handle non-storage-aligned high/low offsets.
+This is not full residency: Jacobian checks, profiles, norms, constraint
+references, and state updates still require host interaction.
+
+The full direct-projection `ns=99` run on the same foreground Chrome /
+RTX 3060 Ti completed in **259.9 seconds**, versus **291.9 seconds** before
+this change (11.0% less wall time). It retained 2812 effective iterations,
+`FSQR=9.985159710508547e-13`, and the same final residual triple. All 2817
+recorded controller records and state fingerprints matched the original
+trace; this improvement does not rely on a different convergence trajectory.
+
+A warmed 1178-pass profile measured 93.1 ms/iteration, 13.09 explicit queue
+submissions, and 9.09 map completions per iteration (fractional counts include
+periodic preconditioner refresh and sample boundaries). Uploads were about
+12.66 MB/pass. Relative to the previous spectral handoffs, exactly 1,482,624
+upload bytes and 741,312 readback bytes per ordinary pass are eliminated.
+The browser profiler now counts explicit `GPUQueue.submit` calls as well.
+
+Full conformance and the 327-iteration Solovev regression passed. New resident
+residual tests compare both words and host norms against the host-fed GPU path
+for f32 and paired inputs, exercise unaligned source offsets, and verify zero
+and NaN original-input guards. The user's utilization reading motivated this
+work; no new Windows GPU-utilization percentage was measured from DevTools.
+Remaining readback boundaries are a further optimization target, not evidence
+of a guaranteed speedup proportional to the reported idle percentage.
+
 The WebGPU implementation lives under these paths:
 
 ```text

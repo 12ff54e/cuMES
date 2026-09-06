@@ -28,6 +28,7 @@ struct ResidualDecompositionCase {
 
 struct ResidualDecompositionResult {
     // Original high-word checks deferred from a resident forward projection.
+    // Host-input callers retain their own original-input validation.
     bool source_finite = true;
     bool source_nonzero = true;
     std::vector<float> residual;

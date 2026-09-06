@@ -106,6 +106,10 @@ ResidualDecompositionResult residual_decomposition_reference(
     if (!validate(in).empty()) return {};
     const int mode_count = in.mpol * (in.ntor + 1);
     const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
+    // The CPU reference cannot dereference a device-only input.
+    if (in.residual.size() != 6 * n ||
+        (in.double_single && in.residual_lo.size() != 6 * n))
+        return {};
     ResidualDecompositionResult out;
     out.residual = in.residual;
     if (in.double_single) out.residual_lo = in.residual_lo;

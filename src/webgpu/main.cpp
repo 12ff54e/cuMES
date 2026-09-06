@@ -1267,6 +1267,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                          (7 + count) * sizeof(float)};
                 input.residual.clear();
                 input.residual_lo.clear();
+                if (!cumes::webgpu::residual_decomposition_reference(input)
+                         .residual.empty()) {
+                    self->finish(
+                        false, "CPU reference accepted a device-only residual");
+                    return;
+                }
                 cumes::webgpu::enqueue_residual_decomposition(
                     self->device_, input,
                     [self, buffer, expected = std::move(expected), variant](
