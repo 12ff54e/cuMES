@@ -33,10 +33,11 @@ namespace cumes {
 
 // DeviceParams<T> from ValidatedProblem. lamscale is set later by
 // profilesCreate; ns/max_iter/ftol carry stage 0 (the stage loop overwrites
-// them per stage).
+// them per stage). Fixed-boundary 3-D float defaults to radius displacements;
+// pass false to reproduce the absolute-coefficient representation.
 template <typename T>
 DeviceParams<T> init_params(const ValidatedProblem& vp,
-                            bool use_radius_reference = false) {
+                            bool use_radius_reference = true) {
     const ProblemSpec& s = vp.spec();
     DeviceParams<T> p;
     p.ns = static_cast<int>(s.stages.front().radial_surfaces);

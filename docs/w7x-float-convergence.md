@@ -1,5 +1,10 @@
 # W7-X float convergence investigation
 
+Policy update (2026-09-07): radius-reference storage is now the default for
+fixed-boundary 3-D float solves, with `CUMES_RADIUS_REFERENCE=0` as an opt-out.
+See [ADR-0014](adr/0014-float-radius-reference.md) for the decision and cost.
+The opt-in descriptions below record the original experiment.
+
 Measured 2026-09-06 at source revision `750d6a4`, NVIDIA TITAN Xp (sm_61),
 driver 580.173.02, CUDA Toolkit 12.1.105. Both `verify` and `float` executables
 were rebuilt from that revision for the baseline. The opt-in implementation

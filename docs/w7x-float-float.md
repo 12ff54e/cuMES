@@ -13,14 +13,16 @@ this `poloidal` option. The default remains `native`.
 Set **every** W7-X `ftol_array` entry to `1e-5`, then run:
 
 ```sh
-CUMES_RADIUS_REFERENCE=1 CUMES_ODD_GEOMETRY=poloidal \
+CUMES_ODD_GEOMETRY=poloidal \
   ./build-float/cumes w7x-1e-5.json --checkpoint w7x.ckpt --output w7x.bin
 ```
 
 `SolveRequest::odd_geometry` exposes the same choice to embedding callers.
 Environment parsing is enabled only when `use_process_environment` is true.
 The solver applies it only to fixed-boundary 3-D float runs. Reference storage
-is a separate option and must also be enabled for the results reported here.
+is enabled by default for these solves; `CUMES_RADIUS_REFERENCE=0` or
+`SolveRequest::use_radius_reference=false` restores absolute coefficients.
+The measurements below were taken with reference storage enabled.
 Checkpoint replay must use the same options.
 
 | Option | Extra precision in the two odd position fields |

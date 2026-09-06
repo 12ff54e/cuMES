@@ -3,6 +3,7 @@
 #include "cumes/io/snapshot_bridge.cuh"
 #include "cumes/numerics/descent_operator.hpp"
 #include "cumes/numerics/prolongation.hpp"
+#include "cumes/solver/equilibrium_solver.hpp"
 #include "cumes/solver/stage_solver.hpp"
 #include "cumes/state/seed_state.hpp"
 #include "cumes_test_cuda_helper.cuh"
@@ -140,14 +141,30 @@ static void test_small_radial_variation() {
 
 static void test_seed_restart() {
     auto vp = load_validated("inputs/w7x.json");
-    auto p = init_params<float>(vp, true);
-    check(init_params<float>(vp).radius_reference == 0.0,
-          "reference: float policy is opt-in");
-    check(init_params<double>(vp, true).radius_reference == 0.0,
+    auto p = init_params<float>(vp);
+    check(SolveRequest{}.use_radius_reference,
+          "reference: public solver request enables reference by default");
+    check(p.radius_reference == vp.boundary().rbcc[0],
+          "reference: fixed 3D float enables reference by default");
+    check(init_params<float>(vp, false).radius_reference == 0.0,
+          "reference: explicit opt-out restores absolute coefficients");
+    check(init_params<double>(vp).radius_reference == 0.0,
           "reference: double policy unchanged");
     auto axisymmetric = load_validated("inputs/solovev.json");
-    check(init_params<float>(axisymmetric, true).radius_reference == 0.0,
+    check(init_params<float>(axisymmetric).radius_reference == 0.0,
           "reference: axisymmetric policy unchanged");
+    auto free_boundary =
+        load_validated("inputs/free_bdy/solovev_free_bdy_embedded.json");
+    auto free_spec = free_boundary.spec();
+    free_spec.ntor = 1;
+    free_spec.raxis_c.resize(2, 0.0);
+    free_spec.zaxis_s.resize(2, 0.0);
+    free_spec.angular.nzeta = 6;
+    auto free_3d = validate(std::move(free_spec), free_boundary.options());
+    check(free_3d.has_value(), "reference: 3D free-boundary fixture validates");
+    if (free_3d.has_value())
+        check(init_params<float>(free_3d.value()).radius_reference == 0.0,
+              "reference: free-boundary default remains absolute coefficients");
     auto seeded = init_state(p, vp, false, false);
     auto snapshot = snapshot_from_device(seeded);
     auto replay = restart_state(p, vp, snapshot, false);

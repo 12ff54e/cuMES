@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     const char* config = "solovev";
     const char* restart_path = nullptr;
     const char* out_path = nullptr;
-    bool radius_reference = false;
+    bool radius_reference = true;
     auto odd_geometry = cumes::OddGeometryPrecision::NATIVE;
     int warmup = 10;
     int passes = 100;
