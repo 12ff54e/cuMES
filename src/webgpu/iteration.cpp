@@ -24,6 +24,7 @@ class IterationDispatch
         inverse.state = input.stage.state;
         inverse.state_lo = input.stage.state_lo;
         inverse.device_state = input.device_state;
+        inverse.readback_values = !input.compact_fields;
         inverse.readback = {
             batch, [self = shared_from_this()](ToroidalInverseResult value) {
                 self->inverse_ = std::move(value);

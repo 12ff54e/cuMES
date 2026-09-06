@@ -945,6 +945,29 @@ Evidence: `../tmp/w7x-resident-caches-*`, `w7x-resident-descent-*`,
 `resident-descent-conformance-*`, `w7x-gpu-norm-shadow-*`, `w7x-gpu-norm-fft-*`,
 `gpu-norm-conformance-*`, `w7x-device-norms-*` and `w7x-device-norms-fft-*`.
 
+### Compact inverse readbacks (2026-09-06)
+
+Resident production iterations now scan the inverse geometry's high words on
+GPU instead of downloading all 20 high/low planes. The integer exponent scan
+preserves the existing finite gate, including NaN and infinity rejection,
+without changing transform arithmetic. It returns one flag per 256 values.
+Geometry is downloaded once at final convergence for derived-field output;
+the controller and physics are not advanced to construct that snapshot.
+`field_readbacks=full` restores the full-field diagnostic path.
+
+On the same Chrome/RTX 3060 Ti, single-grid paired W7-X with `gpu_norms=1`
+completed in **71.27 s**, versus the preceding **91.92 s** observation. All
+2,817 controller records (including raw control values and state hashes) were
+exactly identical. This is an observed whole-run comparison, not a controlled
+multi-trial benchmark. SHA-256 hashes of both the spectral payload and all 13
+derived fields were unchanged; `scripts/webgpu_output_digest.js` computes
+these independently of revision/provenance metadata in retained result tabs.
+
+The full browser conformance suite passed (90.74 s), including twelve finite
+scan cases covering unaligned binding offsets, partial blocks, signed zeros,
+subnormals, maximal finite values, NaNs/infinities and malformed ranges.
+Evidence: `../tmp/w7x-compact-inverse-*`, `compact-inverse-conformance-*`.
+
 The WebGPU implementation lives under these paths:
 
 ```text

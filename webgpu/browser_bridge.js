@@ -61,6 +61,9 @@ mergeInto(LibraryManager.library, {
   requested_device_norms: function() {
     return new URLSearchParams(window.location.search).get('gpu_norms') === '1';
   },
+  requested_full_field_readbacks: function() {
+    return new URLSearchParams(window.location.search).get('field_readbacks') === 'full';
+  },
   requested_compare_fft: function() {
     return new URLSearchParams(window.location.search).get('compare_fft') === '1';
   },

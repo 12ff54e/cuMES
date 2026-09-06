@@ -52,6 +52,7 @@ int requested_canonical_zeta();
 int requested_solver_trace();
 int requested_shadow_norms();
 int requested_device_norms();
+int requested_full_field_readbacks();
 int requested_compare_fft();
 int requested_spectral_fences();
 void publish_browser_diagnostic(const char* json);
@@ -1498,13 +1499,82 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         });
     }
 
+    void run_field_finite_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 12) {
+            std::printf(
+                "  GPU field finite scan: offsets, partial blocks, "
+                "NaN/Inf, signed zero, subnormals, range guards: PASS\n");
+            run_w7x_initialization();
+            return;
+        }
+        const std::size_t counts[] = {1, 255, 256, 257, 1001};
+        const auto count = counts[variant % 5];
+        std::vector<float> values(count + 2, 0.0F);
+        values.front() = values.back() =
+            std::numeric_limits<float>::quiet_NaN();
+        for (std::size_t i = 1; i <= count; ++i) {
+            const float finite[] = {0.0F, -0.0F,
+                                    std::numeric_limits<float>::denorm_min(),
+                                    std::numeric_limits<float>::max(),
+                                    -std::numeric_limits<float>::max()};
+            values[i] = finite[i % 5];
+        }
+        if (variant >= 5 && variant <= 8) {
+            const float nonfinite[] = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::infinity(),
+                -std::numeric_limits<float>::infinity(),
+                std::numeric_limits<float>::signaling_NaN()};
+            values[variant % 2 ? count : 1] = nonfinite[variant - 5];
+        }
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = values.size() * sizeof(float);
+        descriptor.usage =
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
+        const auto buffer = device_.CreateBuffer(&descriptor);
+        device_.GetQueue().WriteBuffer(buffer, 0, values.data(),
+                                       descriptor.size);
+        DeviceFields fields{buffer, count, sizeof(float), 0};
+        if (variant == 9) fields.high_offset = 1;
+        if (variant == 10) fields.values = values.size();
+        if (variant == 11) fields.values = 0;
+        auto batch = std::make_shared<ReadbackBatch>(device_, 64);
+        const auto result = std::make_shared<bool>(false);
+        const auto error = std::make_shared<std::string>();
+        enqueue_field_finite(device_, fields, batch,
+                             [result, error](std::string message, bool finite) {
+                                 *result = finite;
+                                 *error = std::move(message);
+                             });
+        if (variant >= 9) {
+            if (error->empty() || *result) {
+                finish(false, "GPU field finite scan accepted invalid range");
+                return;
+            }
+            run_field_finite_test(variant + 1);
+            return;
+        }
+        const auto self = shared_from_this();
+        batch->map([self, variant, buffer, result, error](std::string message) {
+            if (!message.empty() || !error->empty() ||
+                *result != (variant < 5)) {
+                self->finish(false, "GPU field finite scan mismatch: " +
+                                        std::to_string(variant) + " " +
+                                        message + *error);
+                return;
+            }
+            self->run_field_finite_test(variant + 1);
+        });
+    }
+
     void run_device_norm_test(int variant = 0) {
         using namespace cumes::webgpu;
         if (variant == 7) {
             std::printf(
                 "  paired GPU norms: f32/paired, edge masks, awkward "
                 "sizes, zeros, nonfinite/range guards: PASS\n");
-            run_w7x_initialization();
+            run_field_finite_test();
             return;
         }
         const int ns = variant == 1 ? 99 : 3;
@@ -2592,6 +2662,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             input.canonical_zeta = requested_canonical_zeta();
             input.shadow_norms = requested_shadow_norms();
             input.compact_norms = requested_device_norms();
+            input.compact_fields = !requested_full_field_readbacks();
             input.elements = preconditioner_elements_;
             input.matrix = preconditioner_matrix_;
             input.device_r_con0 = device_constraint_r_con0_;
@@ -2736,6 +2807,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             compare(actual.z_con, expected.z_con);
         } else {
             valid &=
+                actual.geometry_finite &&
                 std::all_of(actual.geometry.begin(), actual.geometry.end(),
                             [](float value) { return std::isfinite(value); });
         }
@@ -4377,6 +4449,36 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void complete_stage() {
+        // Resident iterations only return the inverse's validity flags. Read
+        // the accepted final geometry once for derived fields and publication;
+        // do not rerun physics or advance the controller to obtain a snapshot.
+        if (base_geometry_case_.geometry.empty() &&
+            stage_index_ + 1 == problem_->stage_shapes().size()) {
+            const auto fields = device_geometry_;
+            if (!fields) {
+                finish(false, "missing resident geometry for final output");
+                return;
+            }
+            const auto bytes = fields.values * sizeof(float);
+            auto batch =
+                std::make_shared<cumes::webgpu::ReadbackBatch>(device_, bytes);
+            const auto encoder = device_.CreateCommandEncoder();
+            const auto self = shared_from_this();
+            batch->append(encoder, fields.buffer, fields.high_offset, bytes,
+                          [self](std::span<const float> values) {
+                              self->base_geometry_case_.geometry.assign(
+                                  values.begin(), values.end());
+                          });
+            const auto commands = encoder.Finish();
+            device_.GetQueue().Submit(1, &commands);
+            batch->map([self](std::string error) {
+                if (!error.empty())
+                    self->finish(false, std::move(error));
+                else
+                    self->complete_stage();
+            });
+            return;
+        }
         if (requested_shadow_norms()) {
             std::printf("  GPU norm shadow: PASS (max relative error=%.6e)\n",
                         shadow_norm_error_);

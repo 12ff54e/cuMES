@@ -24,6 +24,7 @@ struct AxisymmetricInverseCase {
 };
 
 struct AxisymmetricInverseResult {
+    bool geometry_finite = true;
     DeviceFields device_r_con;
     DeviceFields device_z_con;
     DeviceFields device_geometry;

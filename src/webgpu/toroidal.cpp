@@ -1,6 +1,7 @@
 #include "cumes/webgpu/toroidal.hpp"
 
 #include "cumes/webgpu/float_float.hpp"
+#include "cumes/webgpu/reduction.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
@@ -797,6 +798,19 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
             field_slice(resident.device_geometry, fields, total_points);
         resident.device_z_con = field_slice(
             resident.device_geometry, fields + total_points, total_points);
+        if (!input.readback_values) {
+            const auto commands = encoder.Finish();
+            queue.Submit(1, &commands);
+            enqueue_field_finite(
+                device, resident.device_geometry, input.readback.batch,
+                [callback = std::move(callback), resident](
+                    std::string error, bool finite) mutable {
+                    resident.geometry_finite = finite;
+                    callback(std::move(error), std::move(resident));
+                });
+            input.readback.publish_device(std::move(resident));
+            return;
+        }
         input.readback.batch->append(
             encoder, result_buffer, 0, result_bytes,
             [callback = std::move(callback), resident, fields, high_values,

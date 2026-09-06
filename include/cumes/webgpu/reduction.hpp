@@ -7,6 +7,14 @@
 
 namespace cumes::webgpu {
 
+// Scan one f32 plane without downloading it. Integer exponent tests also catch
+// NaNs on backends whose floating-point optimizations assume finite operands.
+// The callback is deferred until batch->map(), like other batched operators.
+void enqueue_field_finite(const wgpu::Device& device,
+                          const DeviceFields& fields,
+                          const std::shared_ptr<ReadbackBatch>& batch,
+                          std::function<void(std::string, bool)> callback);
+
 struct ResidualNormResult {
     DeviceFields device_norm;
     std::array<double, 3> raw{};

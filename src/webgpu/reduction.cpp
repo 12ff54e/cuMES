@@ -3,7 +3,68 @@
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
+#include <algorithm>
+#include <limits>
+
 namespace cumes::webgpu {
+
+void enqueue_field_finite(const wgpu::Device& device,
+                          const DeviceFields& fields,
+                          const std::shared_ptr<ReadbackBatch>& batch,
+                          std::function<void(std::string, bool)> callback) {
+    const auto offset = fields.high_offset;
+    const auto size = fields ? fields.buffer.GetSize() : 0;
+    if (!fields || !batch || fields.values == 0 ||
+        size / sizeof(float) > std::numeric_limits<std::uint32_t>::max() ||
+        offset % sizeof(float) != 0 || offset > size ||
+        fields.values > (size - offset) / sizeof(float) ||
+        fields.values > 65535U * 256U) {
+        callback("invalid finite-scan field range or readback", false);
+        return;
+    }
+    struct Params {
+        std::uint32_t offset, count, pad0 = 0, pad1 = 0;
+    };
+    const Params params{static_cast<std::uint32_t>(offset / sizeof(float)),
+                        static_cast<std::uint32_t>(fields.values)};
+    const auto blocks = (params.count + 255) / 256;
+    const auto bytes = blocks * sizeof(float);
+    auto output = detail::cached_buffer(
+        device, bytes, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
+        "field finite flags");
+    auto uniform = detail::cached_buffer(
+        device, sizeof(params),
+        wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+        "field finite params");
+    device.GetQueue().WriteBuffer(uniform, 0, &params, sizeof(params));
+    const auto& pipeline = detail::cached_compute_pipeline(
+        device, "field-finite",
+        detail::cached_shader_source("/shaders/field_finite.wgsl"),
+        "cuMES field finite scan");
+    const wgpu::BindGroupEntry entries[] = {
+        {nullptr, 0, fields.buffer, 0, size, nullptr, nullptr},
+        {nullptr, 1, output, 0, bytes, nullptr, nullptr},
+        {nullptr, 2, uniform, 0, sizeof(params), nullptr, nullptr}};
+    wgpu::BindGroupDescriptor descriptor{};
+    descriptor.layout = pipeline.GetBindGroupLayout(0);
+    descriptor.entries = entries;
+    descriptor.entryCount = 3;
+    const auto group = device.CreateBindGroup(&descriptor);
+    const auto encoder = device.CreateCommandEncoder();
+    auto pass = encoder.BeginComputePass();
+    pass.SetPipeline(pipeline);
+    pass.SetBindGroup(0, group);
+    pass.DispatchWorkgroups(blocks);
+    pass.End();
+    batch->append(
+        encoder, output, 0, bytes,
+        [callback = std::move(callback)](std::span<const float> flags) {
+            callback({}, std::all_of(flags.begin(), flags.end(),
+                                     [](float flag) { return flag == 0.0F; }));
+        });
+    const auto commands = encoder.Finish();
+    device.GetQueue().Submit(1, &commands);
+}
 
 void enqueue_residual_norm(
     const wgpu::Device& device,

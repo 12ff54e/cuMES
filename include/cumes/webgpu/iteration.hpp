@@ -26,6 +26,7 @@ struct IterationCase {
     bool canonical_zeta = false;
     bool shadow_norms = false;
     bool compact_norms = false;
+    bool compact_fields = false;
     AxisymmetricPreconditionerElements elements;
     AxisymmetricPreconditionerMatrix matrix;
     std::vector<float> r_con0, r_con0_lo, z_con0, z_con0_lo, tcon;

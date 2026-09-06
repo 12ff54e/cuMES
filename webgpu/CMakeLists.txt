@@ -29,6 +29,7 @@ target_sources(cumes_webgpu PRIVATE
   ${PROJECT_SOURCE_DIR}/src/webgpu/toroidal.cpp)
 target_sources(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/src/webgpu/reduction.cpp)
 target_link_options(cumes_webgpu PRIVATE
+  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl@/shaders/field_finite.wgsl"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_norm.wgsl@/shaders/residual_norm.wgsl")
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
@@ -95,6 +96,7 @@ add_custom_command(
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
   COMMENT "Adding content versions to the WebGPU runtime artifacts")
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
+  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
   ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
