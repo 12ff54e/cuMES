@@ -3,6 +3,7 @@
 (() => {
   const enabled = new URLSearchParams(location.search).get('timing') !== '0';
   const rows = [], errors = [];
+  const warn = message => { if (!errors.includes(message)) errors.push(message); };
   let current = null, waiting = 0, lastTick = performance.now();
   let deviceAvailable = false;
   const tick = () => {
@@ -106,6 +107,8 @@
     if (!current || !state) return original.call(this, descriptor);
     if (descriptor.timestampWrites || state.pending.length * 2 + 2 > CAPACITY) {
       current.gpuMissing = true;
+      warn(descriptor.timestampWrites ? 'Another profiler owns some compute timestamps.'
+        : 'Timestamp capacity exceeded; incomplete device samples are omitted.');
       return original.call(this, descriptor);
     }
     const index = state.pending.length * 2;
@@ -121,6 +124,7 @@
       pending = state.pending.splice(0);
       if (offset !== 0 || size > info.tail || mode !== GPUMapMode.READ) {
         for (const row of pending) row.gpuMissing = true;
+        warn('Unsupported mapping range; incomplete device samples are omitted.');
         pending = [];
       } else {
         tail = Math.ceil(size / 8) * 8;
@@ -137,12 +141,19 @@
     return promise.then(value => {
       tick(); --waiting;
       if (pending.length) {
-        const times = new BigUint64Array(this.getMappedRange(tail, pending.length * 16));
-        for (let i = 0; i < pending.length; ++i) {
-          const begin = times[2 * i], end = times[2 * i + 1], row = pending[i];
-          if (end < begin) { row.gpuMissing = true; continue; }
-          row.device += Number(end - begin) / 1e6;
-          ++row.gpuPasses;
+        try {
+          const times = new BigUint64Array(this.getMappedRange(tail, pending.length * 16));
+          for (let i = 0; i < pending.length; ++i) {
+            const begin = times[2 * i], end = times[2 * i + 1], row = pending[i];
+            if (end < begin) {
+              row.gpuMissing = true; warn('Invalid device timestamp pair; sample omitted.'); continue;
+            }
+            row.device += Number(end - begin) / 1e6;
+            ++row.gpuPasses;
+          }
+        } catch (error) {
+          for (const row of pending) row.gpuMissing = true;
+          warn(`Timestamp decoding failed: ${error}`);
         }
       }
       return value;

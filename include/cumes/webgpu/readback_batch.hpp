@@ -26,7 +26,8 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
     ReadbackBatch(const wgpu::Device& device, std::uint64_t capacity) {
         wgpu::BufferDescriptor descriptor{};
         descriptor.label = "cuMES iteration readback batch";
-        descriptor.size = (capacity + 7) & ~std::uint64_t{7};
+        capacity_ = (capacity + 7) & ~std::uint64_t{7};
+        descriptor.size = capacity_;
         descriptor.usage =
             wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
         buffer_ = device.CreateBuffer(&descriptor);
@@ -38,8 +39,8 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
                 std::uint64_t bytes,
                 Decode decode) {
         if (mapping_ || bytes == 0 || bytes % sizeof(float) != 0 ||
-            source_offset % sizeof(float) != 0 || used_ > buffer_.GetSize() ||
-            bytes > buffer_.GetSize() - used_) {
+            source_offset % sizeof(float) != 0 || used_ > capacity_ ||
+            bytes > capacity_ - used_) {
             error_ = "invalid iteration readback slice";
             return;
         }
@@ -102,6 +103,9 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
         Decode decode;
     };
     wgpu::Buffer buffer_;
+    // Instrumentation may reserve an inaccessible timestamp tail in the
+    // physical allocation. It must not enlarge the caller's payload budget.
+    std::uint64_t capacity_ = 0;
     std::vector<Slice> slices_;
     std::uint64_t used_ = 0;
     bool mapping_ = false;
