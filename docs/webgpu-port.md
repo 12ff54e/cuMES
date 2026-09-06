@@ -1142,6 +1142,56 @@ reverted (`../tmp/w7x-forward-layout-abba.json`). The profiled remaining device
 leaders are forward projections (3.63 ms), inverse transforms (1.48 ms), and
 preconditioner application (0.61 ms); this is not a claim of global optimality.
 
+## Standalone FFT optimization integrated into W7-X (2026-09-06)
+
+The browser build now uses `webgpu-fft` revision `c985220`, including
+whole-butterfly ownership for the paired N=36 transform. No solver physics,
+controller settings, transform grid or tolerance changed. The larger-length
+FFT improvements are also available but do not apply to this N=36 case.
+
+Fresh visible Chrome/RTX 3060 Ti full solves, in FFT/direct/direct/FFT order,
+used `solve=w7x&trace=1&gpu_norms=1&gpu_control=jacobian&timing=0` with
+`fft=1` or `fft=0`. Profiling timestamps were disabled; controller tracing
+was enabled identically for both routes. Times include startup and output:
+
+| Route | Full solve seconds | Mean seconds | Effective iterations |
+| --- | --- | ---: | ---: |
+| New optimized FFT | 41.094, 41.566 | 41.330 | 3091 |
+| Direct projection | 37.775, 37.771 | 37.773 | 2812 |
+
+FFT remains **9.4% slower end-to-end** in this comparison. Mean intervals
+between recorded controller entries were nearly equal: 12.892 ms FFT versus
+12.921 ms direct. FFT still requires 9.9% more effective iterations, so a
+faster standalone FFT does not establish a faster complete equilibrium solve.
+Direct projection remains the default.
+
+Both FFT runs exactly matched all 3096 controller records in the previously
+qualified FFT trace; both direct runs matched their own 2817-record trace.
+Final FFT residuals were `(9.988e-13, 2.079e-13, 1.726e-13)`; direct retained
+`(9.985e-13, 2.130e-13, 1.955e-13)`. The old/new FFT scientific-output SHA-256
+digests were identical (provenance excluded):
+
+```text
+state  06df977e16ba76b510af822498b29574630d111a7dfb1b235176d0797b3fbb5e
+fields 7bc4e3e710c5036e09bec954bbfcf66be8ac467830b5f6e55262a3d9cc656259
+```
+
+The preserved old build's first full solve took 62.975 s, but its first
+controller record appeared only at 18.469 s and its warmed controller sample
+was 13.810 ms/iteration. Do not use that cold full-run outlier against the new
+runs to claim a kernel speedup. A separate warmed old/new/new/old comparison
+(256 controller intervals per run) measured **13.870 → 12.698 ms/iteration**,
+an **8.45% reduction** in FFT-route iteration time, with exact sampled
+controller records. Evidence: `../tmp/w7x-fft-owner-abba.json` and
+`../tmp/w7x-fft-owner-{old,new-1,new-2,direct-1,direct-2}-{result,trace}.json`.
+
+Full browser conformance with `mode=test&fft=1&gpu_norms=1&gpu_control=jacobian`
+passed, including all three Solovev stages with timing instrumentation
+enabled (`../tmp/fft-owner-integration-conformance-*`). Artifact CTest and
+the frontend iteration/timestamp tests also passed. The served
+`../tmp/cumes-build-webgpu-ds/webgpu/cumes_webgpu.html` was rebuilt with this
+dependency revision; `fft=1` selects it without changing the direct default.
+
 ## Iteration statistics in the webpage log (2026-09-06)
 
 Production runs append minimum, maximum, median and average iteration times
