@@ -336,6 +336,8 @@ Producer buffers remain live until consumers are submitted on the same queue.
 
 This is partial residency: geometry/Jacobian validation, host norm calculation,
 constraint reference maintenance, and spectral updates still use readbacks.
+Production 3-D iterations now collect these reads in one shared mapping,
+including the preceding descent update (see the batching measurements below).
 The explicit switches are `&resident=0` to restore host transfers and `&fft=1`
 to select FFT (`&fft=0` selects direct projection). Residency is enabled by
 default; the W7-X example defaults to direct projection based on the complete
@@ -539,9 +541,9 @@ hooks. No shadow dispatches were enabled in these three complete timings.
 
 ## Backend boundary
 
-### Reducing queue gaps without changing arithmetic
+### Earlier queue-gap reduction without changing arithmetic
 
-The resident production 3-D path now passes both forward-projection outputs
+The first resident production 3-D optimization passed both forward-projection outputs
 directly to residual decomposition on the device. The original high words
 are copied alongside the decomposed output into one combined readback, so the
 original finite/nonzero guards are still checked before the controller or
@@ -576,8 +578,77 @@ residual tests compare both words and host norms against the host-fed GPU path
 for f32 and paired inputs, exercise unaligned source offsets, and verify zero
 and NaN original-input guards. The user's utilization reading motivated this
 work; no new Windows GPU-utilization percentage was measured from DevTools.
-Remaining readback boundaries are a further optimization target, not evidence
-of a guaranteed speedup proportional to the reported idle percentage.
+The remaining readback boundaries motivated the next change below; these
+measurements do not imply a speedup proportional to the reported idle percentage.
+
+### One readback mapping per production 3-D iteration
+
+`ReadbackBatch` collects all force-evaluation readbacks in a reusable mapped
+buffer. Each producer copies its output into a disjoint, eight-byte-aligned
+slice before another pass can overwrite its scratch. Geometry, magnetic
+fields, preconditioner elements/matrices, constraint head/filter/tail, and
+decomposed residuals now feed dependent kernels through device handles.
+Periodic preconditioner refreshes add slices, not mappings. Unused individual
+readback buffers are not allocated on this path.
+
+The descent update depends on the host damping decision. Its results therefore
+join the **next** iteration's batch, while the inverse transform immediately
+consumes its device state. Axis extrapolation is implemented by selecting the
+same neighboring coefficient bits on device and updating the host mirror at
+the fence; no floating-point operation is introduced by this handoff.
+
+```text
+descent(k-1) -> inverse / force evaluation(k) -> one map
+                                              -> checks / controller(k)
+                                              -> enqueue descent(k)
+```
+
+Force evaluation is speculative with respect to the Jacobian gate. The host
+still processes the collected results through the original checks, double
+reductions, checkpoint rules, and controller in their original order. Invalid
+Jacobian attempts discard the remaining evaluation results. Accepted host
+preconditioner caches prevent a speculative refresh from replacing a valid
+cache on rollback. Pending descent state is validated and committed before
+checking the next Jacobian. A terminal iteration-limit stop drains pending
+descent reads; a normally converged run needs no extra descent mapping.
+
+The foreground Chrome / RTX 3060 Ti direct W7-X `ns=99` run completed in
+**141.1 seconds**, versus **259.9 seconds** before iteration batching
+(45.7% less elapsed time, about 1.84x faster). All 2817 recorded controller
+entries matched the previous run, including both state-word fingerprints,
+restart/checkpoint decisions, and normalized residuals. It retained 2812
+effective iterations and the final residual triple
+`(9.985159710508547e-13, 2.1300946362442957e-13, 1.9552385266042975e-13)`.
+The complete schema-v8 output remained 11,809,091 bytes.
+
+A late-run profile captured 731 mappings, **all** labelled
+`cuMES iteration readback batch`: one per evaluated pass, with no separate
+descent mapping. The corresponding 730 controller intervals averaged
+49.56 ms. Submissions remained about 13.08/pass; uploads were about
+10.36 MB/pass and batched readback copies 36.90 MB/pass. This change reduces
+sequential host waits, not the readback payload itself. Map-wait measurements
+include queued GPU work and are not isolated copy or kernel timings.
+These are observations from the user's PC, not a multi-device confidence
+interval or a new GPU-utilization percentage.
+
+FFT mode also completed with the one-map pipeline: **173.1 seconds**, retaining
+its previously qualified 3091 iterations and final residual triple
+`(9.987756002533206e-13, 2.0790797273186487e-13, 1.725519314229383e-13)`.
+All 3096 recorded controller entries matched the saved optimized-FFT trace.
+The earlier fully timed FFT run was 311.8 seconds, before both this batching
+change and the preceding spectral-handoff optimization. Direct projection
+remains the default; batching does not change either transform's trajectory.
+
+Conformance covers f32/paired residual batches, original zero/NaN guards,
+non-storage-aligned source offsets, snapshot survival across producer reuse,
+mapped-buffer reuse, device-state axis extrapolation in both precisions, and
+empty/overflow batch errors. Error reporting uses
+callbacks and does not require Wasm C++ exception catching. The complete
+conformance suite and 327-iteration Solovev regression passed.
+
+`&fences=1`, `&resident=0`, and `&compare_fft=1` retain sequential diagnostic
+paths. Axisymmetric solves and operator conformance also retain their existing
+readbacks; this optimization targets resident production 3-D solves.
 
 The WebGPU implementation lives under these paths:
 
@@ -599,10 +670,9 @@ source-level macro layer.
 The following are follow-on optimizations or optional backend expansions, not
 completion gates for the fixed-boundary WebGPU port:
 
-1. retain spectral/real-space fields on device across adjacent operators and
-   batch each device-only segment into one command submission (buffers and
-   pipelines are persistent today, but mapped host results still connect the
-   operator APIs);
+1. reduce the remaining host validation/reduction payload and combine the
+   individual operator submissions (production 3-D operator dependencies now
+   stay on device, with one batched mapping per evaluated pass);
 2. port the optional free-boundary/NESTOR dependency as a separate WebGPU
    project if browser free-boundary equilibria are required.
 

@@ -17,6 +17,7 @@ namespace cumes::webgpu {
 // disjoint slice before its scratch can be reused. Decode callbacks must only
 // collect results: the completion callback runs after every slice is decoded
 // and the buffer is unmapped, and may start the next iteration.
+// Construct with std::make_shared. A decode span is valid only in its callback.
 class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
    public:
     using Decode = std::function<void(std::span<const float>)>;

@@ -30,6 +30,8 @@ struct IterationCase {
 // Speculative force evaluation only: no controller, checkpoint, or persistent
 // constraint state is committed until the host accepts the Jacobian. Results
 // retain the original CPU reduction order and validation inputs.
+// Forward/residual device handles alias reusable intra-iteration scratch;
+// only their host vectors are snapshots, not those transient handles.
 struct IterationResult {
     ToroidalInverseResult inverse;
     BaseGeometryResult geometry;

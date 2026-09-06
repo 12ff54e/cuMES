@@ -1391,8 +1391,109 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     std::printf(
                         "  batched readback snapshots, alignment, reuse, "
                         "guards: PASS\n");
-                    self->run_w7x_initialization();
+                    self->run_device_inverse_test();
                 }
+            });
+    }
+
+    void run_device_inverse_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 2) {
+            std::printf(
+                "  batched device-state inverse and axis extrapolation (f32, "
+                "paired): PASS\n");
+            run_w7x_initialization();
+            return;
+        }
+        ToroidalInverseCase input;
+        input.ns = 3;
+        input.mpol = 3;
+        input.ntor = 2;
+        input.ntheta = 8;
+        input.nzeta = 6;
+        input.nfp = 5;
+        input.double_single = variant == 1;
+        const std::size_t count = 6 * input.ns * input.mpol * (input.ntor + 1);
+        input.state.resize(count);
+        input.state_lo.resize(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            input.state[i] = 0.03125F * (int(i % 17) - 8);
+            input.state_lo[i] = 1.0e-11F * (int(i % 7) - 3);
+        }
+        // The device input is deliberately not extrapolated and its word
+        // planes do not meet storage-binding alignment.
+        std::vector<float> storage(5 + 2 * count, 0.0F);
+        std::copy(input.state.begin(), input.state.end(), storage.begin() + 4);
+        std::copy(input.state_lo.begin(), input.state_lo.end(),
+                  storage.begin() + 5 + count);
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = storage.size() * sizeof(float);
+        descriptor.usage =
+            wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+        const auto source = device_.CreateBuffer(&descriptor);
+        device_.GetQueue().WriteBuffer(source, 0, storage.data(),
+                                       descriptor.size);
+        const int modes = input.mpol * (input.ntor + 1);
+        for (int mode = 0; mode < modes; ++mode) {
+            const int m = mode / (input.ntor + 1);
+            for (int component = 0; component < 6; ++component) {
+                if (m != 1 && !(m == 0 && component == 5)) continue;
+                const auto axis = (component * modes + mode) * input.ns;
+                input.state[axis] = input.state[axis + 1];
+                input.state_lo[axis] = input.state_lo[axis + 1];
+            }
+        }
+        const auto self = shared_from_this();
+        enqueue_toroidal_inverse(
+            device_, input,
+            [self, input, source, count, variant](
+                std::string error, ToroidalInverseResult expected) mutable {
+                if (!error.empty()) {
+                    self->finish(false, error);
+                    return;
+                }
+                input.device_state = {source, count, 4 * sizeof(float),
+                                      (5 + count) * sizeof(float)};
+                input.state.clear();
+                input.state_lo.clear();
+                if (!toroidal_inverse_reference(input).geometry.empty()) {
+                    self->finish(false,
+                                 "CPU inverse accepted a device-only state");
+                    return;
+                }
+                auto batch = std::make_shared<ReadbackBatch>(
+                    self->device_,
+                    40 * input.ns * input.ntheta * input.nzeta * sizeof(float));
+                auto actual = std::make_shared<ToroidalInverseResult>();
+                input.readback.batch = batch;
+                enqueue_toroidal_inverse(
+                    self->device_, input,
+                    [self, actual](std::string error,
+                                   ToroidalInverseResult value) {
+                        if (!error.empty()) {
+                            self->finish(false, error);
+                            return;
+                        }
+                        *actual = std::move(value);
+                    });
+                batch->map([self, source, actual,
+                            expected = std::move(expected),
+                            variant](std::string error) {
+                    source.Destroy();
+                    if (!error.empty() ||
+                        actual->geometry != expected.geometry ||
+                        actual->geometry_lo != expected.geometry_lo ||
+                        actual->r_con != expected.r_con ||
+                        actual->z_con != expected.z_con ||
+                        actual->r_con_lo != expected.r_con_lo ||
+                        actual->z_con_lo != expected.z_con_lo) {
+                        self->finish(
+                            false,
+                            "batched device-state inverse mismatch: " + error);
+                        return;
+                    }
+                    self->run_device_inverse_test(variant + 1);
+                });
             });
     }
 

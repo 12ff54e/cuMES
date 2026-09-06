@@ -34,7 +34,7 @@ class IterationDispatch
         // All device-ready callbacks above are synchronous. The whole DAG is
         // submitted before this single map; decode callbacks only store values.
         batch->map([self](std::string mapping_error) {
-            if (!mapping_error.empty()) self->error = std::move(mapping_error);
+            if (self->error.empty()) self->error = std::move(mapping_error);
             self->callback(std::move(self->error), std::move(self->result));
         });
     }
