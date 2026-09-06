@@ -390,11 +390,13 @@ void enqueue_axisymmetric_preconditioner_apply(
     pass.DispatchWorkgroups(static_cast<std::uint32_t>(modes));
     pass.End();
     if (input.readback.batch) {
+        AxisymmetricPreconditionerApplyResult resident;
+        resident.device_residual = {output_buffer, 6 * points, 0, 0};
         input.readback.batch->append(
             encoder, output_buffer, 0, result_bytes,
-            [callback = std::move(callback), points,
+            [callback = std::move(callback), points, resident,
              modes](std::span<const float> values) {
-                AxisymmetricPreconditionerApplyResult out;
+                auto out = resident;
                 out.residual.assign(values.begin(),
                                     values.begin() + 6 * points);
                 for (int mode = 0; mode < modes; ++mode)
@@ -404,7 +406,7 @@ void enqueue_axisymmetric_preconditioner_apply(
             });
         const auto commands = encoder.Finish();
         queue.Submit(1, &commands);
-        input.readback.publish_device({});
+        input.readback.publish_device(std::move(resident));
         return;
     }
     encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, result_bytes);

@@ -6,7 +6,7 @@ struct Params {
     delta_t: f32,
     damping_b1: f32,
     damping_fac: f32,
-    _padding0: f32,
+    extrapolate_axis: u32,
 };
 struct Values { data: array<f32>, };
 @group(0) @binding(0) var<storage, read> state: Values;
@@ -32,7 +32,10 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (point >= params.points) { return; }
     for (var component = 0u; component < 6u; component++) {
         let i = index(component, point);
-        output.data[i] = state.data[i];
+        let m = point / params.ns / params.ntor_plus_one;
+        let axis_copy = params.extrapolate_axis != 0u && point % params.ns == 0u &&
+            (m == 1u || (m == 0u && component == 5u));
+        output.data[i] = state.data[select(i, i + 1u, axis_copy)];
         output.data[6u * params.points + i] = velocity.data[i];
     }
     let mode = point / params.ns;

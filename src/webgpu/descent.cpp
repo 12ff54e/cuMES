@@ -21,7 +21,8 @@ constexpr std::uint32_t WORKGROUP_SIZE = 256;
 
 struct Params {
     std::uint32_t ns, ntor_plus_one, points, move_lcfs;
-    float delta_t, damping_b1, damping_fac, padding;
+    float delta_t, damping_b1, damping_fac;
+    std::uint32_t extrapolate_axis;
 };
 static_assert(sizeof(Params) == 32);
 
@@ -33,11 +34,14 @@ std::string validate_case(const AxisymmetricDescentCase& in) {
     const std::size_t points =
         static_cast<std::size_t>(in.ns) * in.mpol * (in.ntor + 1);
     if (points > std::numeric_limits<std::uint32_t>::max() ||
-        in.state.size() != 6 * points || in.velocity.size() != 6 * points ||
-        in.residual.size() != 6 * points ||
-        (in.double_single && (in.state_lo.size() != 6 * points ||
-                              in.velocity_lo.size() != 6 * points ||
-                              in.residual_lo.size() != 6 * points))) {
+        !field_shape(in.state, in.device_state, 6 * points) ||
+        !field_shape(in.velocity, in.device_velocity, 6 * points) ||
+        !field_shape(in.residual, in.device_residual, 6 * points) ||
+        (in.double_single &&
+         (!field_shape(in.state_lo, in.device_state, 6 * points) ||
+          !field_shape(in.velocity_lo, in.device_velocity, 6 * points) ||
+          (!in.residual_is_f32 &&
+           !field_shape(in.residual_lo, in.device_residual, 6 * points))))) {
         return "axisymmetric descent input shape mismatch";
     }
     return {};
@@ -71,12 +75,31 @@ AxisymmetricDescentResult axisymmetric_descent_reference(
     if (!validate_case(input).empty()) return {};
     const int mode_count = input.mpol * (input.ntor + 1);
     const std::size_t points = static_cast<std::size_t>(input.ns) * mode_count;
+    if (input.state.size() != 6 * points ||
+        input.velocity.size() != 6 * points ||
+        input.residual.size() != 6 * points ||
+        (input.double_single &&
+         (input.state_lo.size() != 6 * points ||
+          input.velocity_lo.size() != 6 * points ||
+          (!input.residual_is_f32 && input.residual_lo.size() != 6 * points))))
+        return {};
     AxisymmetricDescentResult out;
     out.state = input.state;
     out.velocity = input.velocity;
     if (input.double_single) {
         out.state_lo = input.state_lo;
         out.velocity_lo = input.velocity_lo;
+    }
+    if (input.extrapolate_axis) {
+        for (int mode = 0; mode < mode_count; ++mode) {
+            const int m = mode / (input.ntor + 1);
+            for (int component = 0; component < 6; ++component) {
+                if (m != 1 && !(m == 0 && component == 5)) continue;
+                const auto i = component * points + mode * input.ns;
+                out.state[i] = out.state[i + 1];
+                if (input.double_single) out.state_lo[i] = out.state_lo[i + 1];
+            }
+        }
     }
     const auto index = [points, &input](int component, int mode, int surface) {
         return static_cast<std::size_t>(component) * points +
@@ -90,7 +113,9 @@ AxisymmetricDescentResult axisymmetric_descent_reference(
     const auto update_velocity_ds = [&](int component, int mode, int surface) {
         const auto i = index(component, mode, surface);
         const FloatFloat velocity{input.velocity[i], input.velocity_lo[i]};
-        const FloatFloat residual{input.residual[i], input.residual_lo[i]};
+        const FloatFloat residual{
+            input.residual[i],
+            input.residual_is_f32 ? 0.0F : input.residual_lo[i]};
         return multiply(add(multiply(velocity, input.damping_b1),
                             multiply(residual, input.delta_t)),
                         input.damping_fac);
@@ -199,7 +224,7 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
     }
     const std::size_t points =
         static_cast<std::size_t>(input.ns) * input.mpol * (input.ntor + 1);
-    const auto input_bytes = input.state.size() * sizeof(float);
+    const auto input_bytes = 6 * points * sizeof(float);
     const auto output_values = (input.double_single ? 24 : 12) * points;
     const auto output_bytes = output_values * sizeof(float);
     auto state_buffer =
@@ -260,19 +285,26 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
                         input.delta_t,
                         input.damping_b1,
                         input.damping_fac,
-                        0.0F};
+                        input.extrapolate_axis ? 1U : 0U};
     auto queue = device.GetQueue();
-    queue.WriteBuffer(state_buffer, 0, input.state.data(), input_bytes);
-    queue.WriteBuffer(velocity_buffer, 0, input.velocity.data(), input_bytes);
+    auto encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, state_buffer, input.state,
+                    input.device_state);
+    transfer_fields(device, encoder, velocity_buffer, input.velocity,
+                    input.device_velocity);
     if (input.double_single) {
-        queue.WriteBuffer(state_lo_buffer, 0, input.state_lo.data(),
-                          input_bytes);
-        queue.WriteBuffer(velocity_lo_buffer, 0, input.velocity_lo.data(),
-                          input_bytes);
-        queue.WriteBuffer(residual_lo_buffer, 0, input.residual_lo.data(),
-                          input_bytes);
+        transfer_fields(device, encoder, state_lo_buffer, input.state_lo,
+                        input.device_state, true);
+        transfer_fields(device, encoder, velocity_lo_buffer, input.velocity_lo,
+                        input.device_velocity, true);
+        if (input.residual_is_f32)
+            encoder.ClearBuffer(residual_lo_buffer);
+        else
+            transfer_fields(device, encoder, residual_lo_buffer,
+                            input.residual_lo, input.device_residual, true);
     }
-    queue.WriteBuffer(residual_buffer, 0, input.residual.data(), input_bytes);
+    transfer_fields(device, encoder, residual_buffer, input.residual,
+                    input.device_residual);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
     auto layout = pipeline.GetBindGroupLayout(0);
     std::array<wgpu::BindGroupEntry, 9> entries{};
@@ -304,7 +336,6 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
     bind_descriptor.entryCount = input.double_single ? 8 : 5;
     bind_descriptor.entries = entries.data();
     auto bind_group = device.CreateBindGroup(&bind_descriptor);
-    auto encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     auto pass = encoder.BeginComputePass(&pass_descriptor);
     pass.SetPipeline(pipeline);
@@ -318,6 +349,10 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         const auto count = 6 * points;
         resident.device_state = {output_buffer, count, 0,
                                  count * sizeof(float)};
+        const auto velocity_offset = (input.double_single ? 2 : 1) * count;
+        resident.device_velocity = {output_buffer, count,
+                                    velocity_offset * sizeof(float),
+                                    (velocity_offset + count) * sizeof(float)};
         input.readback.batch->append(
             encoder, output_buffer, 0, output_bytes,
             [callback = std::move(callback), resident, count,

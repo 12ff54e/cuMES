@@ -117,6 +117,7 @@ struct AxisymmetricPreconditionerApplyCase {
 };
 
 struct AxisymmetricPreconditionerApplyResult {
+    DeviceFields device_residual;
     std::vector<float> residual;
     int breakdown_count = 0;
 };

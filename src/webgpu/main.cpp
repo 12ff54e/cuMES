@@ -1396,13 +1396,113 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
+    void run_device_descent_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 3) {
+            std::printf(
+                "  device-only descent, axis remap, f32 direction, "
+                "accepted snapshot isolation: PASS\n");
+            run_w7x_initialization();
+            return;
+        }
+        AxisymmetricDescentCase input;
+        input.ns = 3;
+        input.mpol = 3;
+        input.ntor = 2;
+        input.delta_t = 0.03125F;
+        input.damping_b1 = 0.875F;
+        input.damping_fac = 0.9375F;
+        input.double_single = variant != 0;
+        input.residual_is_f32 = variant == 1;
+        input.extrapolate_axis = true;
+        const std::size_t count = 6 * input.ns * input.mpol * (input.ntor + 1);
+        input.state.resize(count);
+        input.velocity.resize(count);
+        input.residual.resize(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            input.state[i] = 1.0F + float(i) / 128.0F;
+            input.velocity[i] = float(int(i % 7) - 3) / 1024.0F;
+            input.residual[i] = float(int(i % 11) - 5) / 512.0F;
+        }
+        if (input.double_single) {
+            input.state_lo.assign(count, 1.0e-8F);
+            input.velocity_lo.assign(count, -1.0e-12F);
+            if (!input.residual_is_f32)
+                input.residual_lo.assign(count, 2.0e-11F);
+        }
+        const auto upload = [&](const std::vector<float>& hi,
+                                const std::vector<float>& lo) {
+            // Deliberately unaligned storage-binding offsets, with sentinel
+            // padding and low words not immediately following high words.
+            std::vector<float> packed(2 * count + 7, 91.0F);
+            std::copy(hi.begin(), hi.end(), packed.begin() + 1);
+            std::copy(lo.begin(), lo.end(), packed.begin() + count + 4);
+            wgpu::BufferDescriptor descriptor{};
+            descriptor.size = packed.size() * sizeof(float);
+            descriptor.usage =
+                wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+            auto buffer = device_.CreateBuffer(&descriptor);
+            device_.GetQueue().WriteBuffer(buffer, 0, packed.data(),
+                                           descriptor.size);
+            return DeviceFields{buffer, count, sizeof(float),
+                                (count + 4) * sizeof(float)};
+        };
+        auto resident = input;
+        const auto candidate = upload(input.state, input.state_lo);
+        FieldSnapshot checkpoint;
+        resident.device_state = checkpoint.capture(
+            device_, candidate, input.double_single, "test accepted state");
+        // A subsequent rejected candidate must not modify the accepted copy.
+        auto clear = device_.CreateCommandEncoder();
+        clear.ClearBuffer(candidate.buffer);
+        const auto clear_commands = clear.Finish();
+        device_.GetQueue().Submit(1, &clear_commands);
+        resident.device_velocity = upload(input.velocity, input.velocity_lo);
+        resident.device_residual = upload(input.residual, input.residual_lo);
+        resident.state.clear();
+        resident.state_lo.clear();
+        resident.velocity.clear();
+        resident.velocity_lo.clear();
+        resident.residual.clear();
+        resident.residual_lo.clear();
+        auto batch =
+            std::make_shared<ReadbackBatch>(device_, 8 * count * sizeof(float));
+        input.readback.batch = batch;
+        resident.readback.batch = batch;
+        auto results =
+            std::make_shared<std::array<AxisymmetricDescentResult, 2>>();
+        auto errors = std::make_shared<std::string>();
+        const auto collect = [results, errors](int index) {
+            return [results, errors, index](std::string error,
+                                            AxisymmetricDescentResult out) {
+                if (!error.empty()) *errors = std::move(error);
+                (*results)[index] = std::move(out);
+            };
+        };
+        enqueue_axisymmetric_descent(device_, input, collect(0));
+        enqueue_axisymmetric_descent(device_, resident, collect(1));
+        const auto self = shared_from_this();
+        batch->map([self, results, errors, variant](std::string error) {
+            const auto& a = (*results)[0];
+            const auto& b = (*results)[1];
+            if (!error.empty() || !errors->empty() || a.state.empty() ||
+                a.state != b.state || a.state_lo != b.state_lo ||
+                a.velocity != b.velocity || a.velocity_lo != b.velocity_lo) {
+                self->finish(false, "device descent snapshot mismatch: " +
+                                        error + *errors);
+                return;
+            }
+            self->run_device_descent_test(variant + 1);
+        });
+    }
+
     void run_device_inverse_test(int variant = 0) {
         using namespace cumes::webgpu;
         if (variant == 2) {
             std::printf(
                 "  batched device-state inverse and axis extrapolation (f32, "
                 "paired): PASS\n");
-            run_w7x_initialization();
+            run_device_descent_test();
             return;
         }
         ToroidalInverseCase input;
@@ -3910,6 +4010,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->active_case_name_.c_str(),
                         static_cast<double>(max_scaled_error));
                 }
+                self->device_descent_residual_ = actual.device_residual;
                 self->run_descent(std::move(actual.residual));
             });
     }
@@ -3926,6 +4027,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         descent_case_.damping_fac =
             static_cast<float>(pending_decision_.damping.fac);
         descent_case_.double_single = double_single_solve_;
+        descent_case_.device_state = device_descent_state_;
+        descent_case_.device_velocity = device_descent_velocity_;
+        descent_case_.device_residual = device_descent_residual_;
+        descent_case_.residual_is_f32 = true;
+        descent_case_.extrapolate_axis = bool(device_descent_state_);
         descent_case_.state = initialized_stage_.state;
         descent_case_.velocity = stage_velocity_;
         if (double_single_solve_) {
@@ -3941,8 +4047,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             // not the paired invariant used for convergence. Preserve the
             // paired descent contract; a later paired preconditioner can
             // populate these correction words directly.
-            descent_case_.residual_lo.assign(descent_case_.residual.size(),
-                                             0.0F);
+            descent_case_.residual_lo.clear();
         } else {
             descent_case_.residual_lo.clear();
         }
@@ -4084,6 +4189,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void restore_checkpoint() {
         device_iteration_state_ = {};
+        device_descent_state_ = {};
+        device_descent_velocity_ = {};
         initialized_stage_.state = checkpoint_state_;
         stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
         if (double_single_solve_) {
@@ -4093,6 +4200,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void reset_stage_state() {
+        device_iteration_state_ = {};
+        device_descent_state_ = {};
+        device_descent_velocity_ = {};
+        device_descent_residual_ = {};
         device_constraint_r_con0_ = {};
         device_constraint_z_con0_ = {};
         controller_.emplace(cumes::IterationController<double>::Options{
@@ -4585,6 +4696,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::optional<cumes::webgpu::IterationResult> iteration_results_;
     std::size_t iteration_forward_index_ = 0, iteration_residual_index_ = 0;
     cumes::webgpu::DeviceFields device_iteration_state_;
+    cumes::webgpu::DeviceFields device_descent_state_, device_descent_velocity_,
+        device_descent_residual_;
     cumes::webgpu::DeviceFields device_constraint_r_con0_,
         device_constraint_z_con0_;
     cumes::webgpu::FieldSnapshot accepted_elements_, accepted_matrix_,
@@ -4617,6 +4730,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             iteration_readback_,
             [self](cumes::webgpu::AxisymmetricDescentResult result) {
                 self->device_iteration_state_ = result.device_state;
+                self->device_descent_state_ = result.device_state;
+                self->device_descent_velocity_ = result.device_velocity;
                 // Refresh and restart are mutually exclusive controller
                 // decisions. A restart consumes the last accepted host
                 // checkpoint; a normal pass consumes the pending device state

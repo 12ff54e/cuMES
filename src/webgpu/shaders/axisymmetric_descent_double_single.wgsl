@@ -6,7 +6,7 @@ struct Params {
     delta_t: f32,
     damping_b1: f32,
     damping_fac: f32,
-    _padding0: f32,
+    extrapolate_axis: u32,
 };
 struct Values { data: array<f32>, };
 @group(0) @binding(0) var<storage, read> state_hi: Values;
@@ -68,7 +68,13 @@ fn index(component: u32, point: u32) -> u32 {
 }
 
 fn state_at(i: u32) -> FF {
-    return FF(state_hi.data[i], state_lo.data[i]);
+    let point = i % params.points;
+    let m = point / params.ns / params.ntor_plus_one;
+    let component = i / params.points;
+    let axis_copy = params.extrapolate_axis != 0u && point % params.ns == 0u &&
+        (m == 1u || (m == 0u && component == 5u));
+    let source = select(i, i + 1u, axis_copy);
+    return FF(state_hi.data[source], state_lo.data[source]);
 }
 
 fn velocity_at(i: u32) -> FF {
