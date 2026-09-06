@@ -707,6 +707,100 @@ CPU sample percentages**. CPU percentages use the entire sampled interval,
 including renderer idle, and concern the renderer thread, not Chrome's GPU
 process or driver threads.
 
+### Measured GPU/CPU profile (2026-09-06)
+
+The user's foreground Windows Chrome 152 / RTX 3060 Ti / Dawn D3D12 device
+reported driver `32.0.16.1047`. The solver was the unchanged `0c19912` build;
+profiling code is separate JavaScript, not part of that executable. An
+`--emit-symbol-map` relink produced byte-identical Wasm (SHA-256
+`49d7d3bb3a545aa00aa825c703d156db019714522094a669c11401486a86b81d`),
+allowing the sampled Wasm function indices to be assigned verified C++ names.
+
+The finalized direct-path capture contains 256 visible iteration batches:
+
+| GPU compute work | Mean ms/iteration |
+| --- | ---: |
+| Toroidal forward projections, both force evaluations | 3.705 |
+| Prescribed-current surface reduction | 2.161 |
+| Poloidal inverse synthesis | 1.586 |
+| Poloidal forward projections, both evaluations | 1.195 |
+| Preconditioner apply | 0.832 |
+| MHD force | 0.639 |
+| Base geometry | 0.520 |
+| Toroidal inverse synthesis | 0.419 |
+| Other passes, including amortized preconditioner refresh | 0.622 |
+| **All compute passes** | **11.679** |
+
+The mean completion-to-completion iteration interval was **50.459 ms**
+(median 46.365, p95 71.435). First-to-last compute timestamps spanned
+19.059 ms; the gap from the previous batch's final compute timestamp to the
+next batch's first was 31.407 ms. Thus compute-pass execution accounts for
+about 23% of the iteration interval, **not a measurement of SM occupancy or
+Windows Task Manager's utilization counter**. Copies, uploads, host work,
+and scheduling occupy or overlap the remaining time. Mean map wait was
+10.979 ms and must not be added to those intervals.
+
+The separate 10-second renderer CPU sample attributed:
+
+| Sampled host activity | Share of sampled interval, including idle |
+| --- | ---: |
+| Float-vector assignment/insertion, self time | 29.49% |
+| `GPUQueue.writeBuffer`, self time | 11.94% |
+| Emdawn mapped-range handling / copy into Wasm, self time | 8.97% |
+| Shader-source loading, identified inclusive stacks | 3.35% |
+| Other host work | 23.77% |
+| Renderer idle | 22.49% |
+
+The hot vector-assignment callers are the host geometry/magnetic/constraint
+handoffs and the readback slice decoders. This is repeated materialization of
+large arrays, not mainly scalar convergence checks. The four constraint
+state/filter high/low uploads alone accounted for **7.50 ms/iteration** of
+host `writeBuffer` call time and 7.70 MB/iteration. Such API time can include
+staging or backpressure; it is not isolated PCIe transfer duration. There were
+about 36.90 MB of readback copies and 151.94 MB of device copies per iteration.
+Submission calls themselves took only about 0.175 ms/iteration, including the
+profiler's extra submission, so API call count alone is not the dominant
+measured CPU cost. It does not capture all submission/driver scheduling costs.
+
+Source inspection identifies another GPU optimization candidate:
+`magnetic_field_double_single.wgsl::finalize_current` assigns one invocation
+to each of 98 half-surfaces and launches just **two 64-thread workgroups**.
+Each invocation performs a serial angular integral. Parallelizing its
+integrand evaluation is worth testing, but changing the reduction order could
+change paired-precision results and requires renewed trajectory qualification.
+Shader sources are also loaded before cached-pipeline lookup; cached pipeline
+creation does not eliminate this warmed-up host cost.
+
+A separate FFT capture measured 11.646 ms of compute and 49.550 ms/iteration.
+Its two FFT executions took 4.360 ms/iteration, packing/unpacking 0.233 ms,
+and poloidal forward projection 1.056 ms: **5.649 ms for the forward path**,
+versus 4.900 ms for the direct path in the repeated direct sample. Shared
+kernels ran somewhat faster in the FFT capture too, so these sequential
+captures are **not** a controlled clock-matched A/B comparison. They establish
+that host data handling remains important in both paths, not a new winner
+for total solve time. The preliminary FFT harness mapped unused batch capacity
+as well as the timestamp tail; the finalized direct harness avoids this extra
+mapping. Treat FFT's host/map timings as instrumented observations only.
+
+Both transform modes retained their previously qualified convergence traces:
+2812 direct / 3091 FFT effective iterations at `1e-12`, with matching residuals,
+controller decisions, and high/low state fingerprints against their respective
+saved runs. Deterministic profiler tests cover feature negotiation, query reuse,
+single-map behavior, disjoint mapped ranges, unchanged payload, and hook
+restoration. These are profiling findings, **not solver optimizations**.
+
+Prioritize removing redundant host vector copies and constraint round trips,
+then reducing full-field readback to genuinely needed control/output data.
+Cache shader-source construction outside the loop. GPU kernel work should
+target the current reduction and forward transforms after those host costs
+are addressed, with precision/convergence checks maintained.
+
+Raw captures and Chrome-importable symbolized CPU profiles are saved under
+`../tmp/w7x-deep-direct-final-*` and `../tmp/w7x-deep-fft-*`; the earlier
+independent direct sample is `../tmp/w7x-deep-direct-*`. The timing summaries
+use `-summary.json`; `-cpu-symbolized.cpuprofile` can be imported into Chrome
+DevTools. These local artifacts are not required by the application.
+
 The WebGPU implementation lives under these paths:
 
 ```text
