@@ -146,7 +146,32 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
         }
     }
     store(0u, point, bsupu); store(1u, point, bsupv);
-    if (params.prescribed_current != 0u) { return; }
+    if (params.prescribed_current != 0u) {
+        // Evaluate the expensive paired integrands in parallel. Fields 2/3
+        // are scratch until finalize_fields overwrites them. Keep the exact
+        // original normalization and arithmetic, including field_at's
+        // renormalization of the stored contravariant fields.
+        let reduced_ntheta = params.ntheta / 2u + 1u;
+        let itheta = angular % params.ntheta;
+        if (itheta < reduced_ntheta) {
+            var weight = ff_reciprocal(
+                FF(f32(params.nzeta * (reduced_ntheta - 1u)), 0.0), point);
+            if (itheta == 0u || itheta == reduced_ntheta - 1u) {
+                weight = ff_mul_f32(weight, 0.5, point);
+            }
+            let integrand = ff_add(
+                ff_mul(half(7u, point, point), field_at(0u, point, point), point),
+                ff_mul(half(8u, point, point), field_at(1u, point, point), point), point);
+            store(2u, point, ff_mul(integrand, weight, point));
+            var average_term = FF(0.0, 0.0);
+            if (abs(gsqrt.hi) > 1.0e-30 && abs(gsqrt.hi) <= 3.402823e38) {
+                average_term = ff_mul(
+                    ff_div(half(7u, point, point), gsqrt, point), weight, point);
+            }
+            store(3u, point, average_term);
+        }
+        return;
+    }
     let bsubu = ff_add(ff_mul(half(7u, point, point), bsupu, point),
                        ff_mul(half(8u, point, point), bsupv, point), point);
     let bsubv = ff_add(ff_mul(half(8u, point, point), bsupu, point),
@@ -158,7 +183,9 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     store(4u, point, pressure);
 }
 
-@compute @workgroup_size(64)
+// One workgroup per surface distributes the ordered reductions across SMs;
+// 64 surfaces in one group would leave almost the entire W7-X GPU idle.
+@compute @workgroup_size(1)
 fn finalize_current(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let surface = invocation.x;
     let half_count = params.ns - 1u;
@@ -178,26 +205,21 @@ fn finalize_current(@builtin(global_invocation_id) invocation: vec3<u32>) {
         return;
     }
     let reduced_ntheta = params.ntheta / 2u + 1u;
-    let normalization = ff_reciprocal(
-        FF(f32(params.nzeta * (reduced_ntheta - 1u)), 0.0), surface);
     let base_point = surface * params.n_z_n_t;
     var jv = FF(0.0, 0.0);
     var average = FF(0.0, 0.0);
     for (var izeta = 0u; izeta < params.nzeta; izeta++) {
         for (var itheta = 0u; itheta < reduced_ntheta; itheta++) {
             let point = base_point + izeta * params.ntheta + itheta;
-            var weight = normalization;
-            if (itheta == 0u || itheta == reduced_ntheta - 1u) {
-                weight = ff_mul_f32(weight, 0.5, surface);
-            }
             let gsqrt = half(6u, point, surface);
-            let integrand = ff_add(
-                ff_mul(half(7u, point, surface), field_at(0u, point, surface), surface),
-                ff_mul(half(8u, point, surface), field_at(1u, point, surface), surface), surface);
-            jv = ff_add(jv, ff_mul(integrand, weight, surface), surface);
+            // Read the exact precomputed words, without an extra ff_norm.
+            let jv_index = 2u * params.half_points + point;
+            let average_index = 3u * params.half_points + point;
+            jv = ff_add(jv, FF(field.data[jv_index],
+                field.data[result_values() + jv_index]), surface);
             if (abs(gsqrt.hi) > 1.0e-30 && abs(gsqrt.hi) <= 3.402823e38) {
-                average = ff_add(average, ff_mul(
-                    ff_div(half(7u, point, surface), gsqrt, surface), weight, surface), surface);
+                average = ff_add(average, FF(field.data[average_index],
+                    field.data[result_values() + average_index]), surface);
             }
         }
     }

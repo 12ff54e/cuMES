@@ -1117,6 +1117,24 @@ down from 6.151 MB. The new validity scans cost 0.063 ms/pass in total;
 Emdawn mapped-data copying dropped to 0.84% of the separate CPU sample.
 Evidence: `../tmp/w7x-compact-control-profile-*`.
 
+## Parallel current integrands with ordered sums (2026-09-06)
+
+The paired prescribed-current path evaluates its expensive angular integrands
+in the existing point-parallel magnetic pass. Two otherwise-unused field
+planes hold the exact terms until field finalization overwrites them. The
+surface reduction retains the original zeta/theta summation order, including
+the invalid-Jacobian skip; raw term words are loaded without an additional
+normalization. One workgroup per surface distributes those ordered sums
+across the GPU instead of packing 64 surfaces into each of only two W7-X
+workgroups. No reduction tree or tolerance change is introduced.
+
+The serial-current kernel fell from **1.689 to 0.380 ms/iteration** in separate
+256-pass captures. A visible uninstrumented A/B/B/A test measured
+**14.232 → 12.817 ms/iteration (9.94% lower)** with exact sampled controller
+records. The complete direct W7-X solve took **38.92 s**, preserving all
+2,817 controller records, `1e-12` convergence and both scientific-output
+digests. Evidence: `../tmp/w7x-parallel-current-*`.
+
 ## Iteration statistics in the webpage log (2026-09-06)
 
 Production runs append minimum, maximum, median and average iteration times

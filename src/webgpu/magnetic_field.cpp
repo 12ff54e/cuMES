@@ -620,7 +620,9 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     current_pass.SetPipeline(finalize_pipeline);
     current_pass.SetBindGroup(0, finalize_bind_group);
     current_pass.DispatchWorkgroups(
-        (static_cast<std::uint32_t>(half_surfaces) + 63U) / 64U);
+        input.double_single
+            ? static_cast<std::uint32_t>(half_surfaces)
+            : (static_cast<std::uint32_t>(half_surfaces) + 63U) / 64U);
     current_pass.End();
     if (input.double_single) {
         const auto finalize_pass = encoder.BeginComputePass(&pass_descriptor);
