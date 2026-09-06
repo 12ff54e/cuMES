@@ -650,6 +650,63 @@ conformance suite and 327-iteration Solovev regression passed.
 paths. Axisymmetric solves and operator conformance also retain their existing
 readbacks; this optimization targets resident production 3-D solves.
 
+### Per-pass GPU timestamps and CPU sampling
+
+For deeper profiling, `scripts/webgpu_deep_profile.mjs` creates its own
+foreground Chrome target and injects `scripts/webgpu_timestamps.js` before
+the application requests its device. It requests the optional `timestamp-query`
+feature and records beginning/end timestamps for each compute pass. A pass
+containing multiple pipelines (currently constraint de-aliasing) is reported
+as one combined interval, not as individually timed dispatches.
+
+```sh
+node scripts/test_webgpu_timestamps.mjs
+node scripts/webgpu_deep_profile.mjs \
+  'http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu-ds/webgpu/cumes_webgpu.html' \
+  ../tmp/w7x-deep-direct
+# Add ?fft=1 to the URL and choose a different output prefix for FFT.
+node scripts/webgpu_profile_summary.mjs ../tmp/w7x-deep-direct
+```
+
+Use the production resident single-grid path, not `resident=0`, `fences=1`,
+axisymmetric mode, or conformance. The probe assumes cuMES's one-device,
+single-flight, submitted-before-map ordering. It warms 250 controller records,
+times 256 iteration batches, restores API hooks, and then collects a separate
+10-second CPU sample at 1 ms sampling intervals. It waits for convergence,
+saves the full controller trace, and preserves its result tab. Failed diagnostic
+solves are navigated to a blank page so they do not continue consuming the GPU.
+Keep the test tab visible and do not run concurrent GPU work.
+
+Timestamp results are copied immediately after the used payload in the same
+iteration readback buffer; its allocation reserves 32 KiB for profiling.
+There is **no additional map or host fence**. Profiling adds one query-resolve
+submission per sampled iteration. It also adds timestamp writes, API wrappers,
+and decoding work, so captured elapsed times are not uninstrumented benchmarks.
+Buffers and shaders in the normal served build are unchanged. The final harness
+maps only the used payload plus timestamps, not the batch's unused capacity.
+
+Enable Chrome's `chrome://flags/#enable-webgpu-developer-features` in the test
+profile for unquantized timestamps. Ordinary timestamps are rounded to 100 us;
+the developer flag removes that rounding, not hardware timestamp granularity.
+Restore the flag afterward because finer timing has privacy implications.
+See [Chrome's developer-feature documentation](https://developer.chrome.com/docs/web-platform/webgpu/developer-features).
+
+The capture writes `-gpu.json`, `-cpu.json`, `-windows.json`, `-result.json`, and
+`-trace.json`. The summarizer writes `-summary.json`. Supplying an Emscripten
+`--emit-symbol-map` file as its second argument additionally writes a
+`-cpu-symbolized.cpuprofile` that Chrome DevTools can import. Generate the map
+with the same link inputs/options and verify that its Wasm binary is
+**byte-identical** to the captured build before assigning function names.
+
+GPU pass sums measure compute execution only. First-to-last GPU timestamp spans
+also include intervening commands and scheduling gaps; between-batch gaps
+include host work and transfers outside those timestamps. Neither spans nor
+renderer idle samples measure hardware occupancy. Map waits include queued GPU
+work and overlap host submission/execution; **do not add them to pass sums or
+CPU sample percentages**. CPU percentages use the entire sampled interval,
+including renderer idle, and concern the renderer thread, not Chrome's GPU
+process or driver threads.
+
 The WebGPU implementation lives under these paths:
 
 ```text
