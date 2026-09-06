@@ -1,6 +1,7 @@
 #include "cumes/webgpu/axisymmetric.hpp"
 
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -48,13 +49,8 @@ std::string validate_case(const AxisymmetricInverseCase& input) {
     return {};
 }
 
-std::string load_shader() {
-    std::ifstream stream("/shaders/axisymmetric_inverse.wgsl",
-                         std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
+const std::string& load_shader() {
+    return detail::cached_shader_source("/shaders/axisymmetric_inverse.wgsl");
 }
 
 wgpu::Buffer create_buffer(const wgpu::Device& device,
@@ -173,7 +169,7 @@ void enqueue_axisymmetric_inverse(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text = load_shader();
+    const auto& shader_text = load_shader();
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/axisymmetric_inverse.wgsl", {});
         return;

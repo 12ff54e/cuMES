@@ -1,6 +1,7 @@
 #include "cumes/webgpu/prolongation.hpp"
 
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -55,12 +56,8 @@ std::string validate_case(const ProlongationCase& input) {
     return {};
 }
 
-std::string load_shader() {
-    std::ifstream stream("/shaders/prolongation.wgsl", std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
+const std::string& load_shader() {
+    return detail::cached_shader_source("/shaders/prolongation.wgsl");
 }
 
 float scalxc(int j, int ns) {
@@ -155,7 +152,7 @@ void enqueue_prolongation(const wgpu::Device& device,
         return;
     }
 
-    const std::string shader_text = load_shader();
+    const auto& shader_text = load_shader();
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/prolongation.wgsl", {});
         return;

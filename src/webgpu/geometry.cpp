@@ -2,6 +2,7 @@
 
 #include "cumes/webgpu/float_float.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <array>
 #include <cmath>
@@ -58,21 +59,11 @@ std::string validate_case(const BaseGeometryCase& input) {
     return {};
 }
 
-std::string read_shader(const char* path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
-}
-
-std::string load_shader(bool double_single) {
-    if (!double_single) return read_shader("/shaders/base_geometry.wgsl");
-    const std::string prelude = read_shader("/shaders/float_float.wgsl");
-    const std::string kernel =
-        read_shader("/shaders/base_geometry_double_single.wgsl");
-    if (prelude.empty() || kernel.empty()) return {};
-    return prelude + '\n' + kernel;
+const std::string& load_shader(bool double_single) {
+    return detail::cached_shader_source(
+        double_single ? "/shaders/base_geometry_double_single.wgsl"
+                      : "/shaders/base_geometry.wgsl",
+        double_single ? "/shaders/float_float.wgsl" : "");
 }
 
 wgpu::Buffer create_buffer(const wgpu::Device& device,
@@ -362,7 +353,7 @@ void enqueue_base_geometry(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text = load_shader(input.double_single);
+    const auto& shader_text = load_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/base_geometry.wgsl", {});
         return;

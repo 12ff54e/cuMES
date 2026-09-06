@@ -4,6 +4,7 @@
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -55,14 +56,10 @@ std::string validate_case(const AxisymmetricForceCase& in) {
         return "double-single force input shape mismatch";
     return {};
 }
-std::string load_shader(bool double_single) {
-    std::ifstream f(double_single ? "/shaders/force_double_single.wgsl"
-                                  : "/shaders/axisymmetric_force.wgsl",
-                    std::ios::binary);
-    if (!f) return {};
-    std::ostringstream s;
-    s << f.rdbuf();
-    return s.str();
+const std::string& load_shader(bool double_single) {
+    return detail::cached_shader_source(
+        double_single ? "/shaders/force_double_single.wgsl"
+                      : "/shaders/axisymmetric_force.wgsl");
 }
 wgpu::Buffer buffer(const wgpu::Device& d,
                     std::uint64_t n,
@@ -258,7 +255,7 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
         callback(err, {});
         return;
     }
-    const auto shader_text = load_shader(in.double_single);
+    const auto& shader_text = load_shader(in.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded WebGPU force shader", {});
         return;

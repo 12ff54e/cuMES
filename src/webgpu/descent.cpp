@@ -2,6 +2,7 @@
 
 #include "cumes/webgpu/float_float.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <array>
 #include <cmath>
@@ -42,22 +43,11 @@ std::string validate_case(const AxisymmetricDescentCase& in) {
     return {};
 }
 
-std::string read_shader(const char* path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
-}
-
-std::string load_shader(bool double_single) {
-    if (!double_single)
-        return read_shader("/shaders/axisymmetric_descent.wgsl");
-    const std::string prelude = read_shader("/shaders/float_float.wgsl");
-    const std::string kernel =
-        read_shader("/shaders/axisymmetric_descent_double_single.wgsl");
-    if (prelude.empty() || kernel.empty()) return {};
-    return prelude + '\n' + kernel;
+const std::string& load_shader(bool double_single) {
+    return detail::cached_shader_source(
+        double_single ? "/shaders/axisymmetric_descent_double_single.wgsl"
+                      : "/shaders/axisymmetric_descent.wgsl",
+        double_single ? "/shaders/float_float.wgsl" : "");
 }
 
 wgpu::Buffer make_buffer(const wgpu::Device& device,
@@ -202,7 +192,7 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         callback(error, {});
         return;
     }
-    const auto shader_text = load_shader(input.double_single);
+    const auto& shader_text = load_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load axisymmetric descent shader", {});
         return;

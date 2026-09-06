@@ -1,5 +1,6 @@
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -63,12 +64,8 @@ std::string validate_dealias_case(const AxisymmetricDealiasCase& input) {
     return {};
 }
 
-std::string load_shader(const char* path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
+const std::string& load_shader(const char* path) {
+    return detail::cached_shader_source(path);
 }
 
 wgpu::Buffer create_buffer(const wgpu::Device& device,
@@ -208,8 +205,7 @@ void enqueue_axisymmetric_forward(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text =
-        load_shader("/shaders/axisymmetric_forward.wgsl");
+    const auto& shader_text = load_shader("/shaders/axisymmetric_forward.wgsl");
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/axisymmetric_forward.wgsl", {});
         return;
@@ -381,8 +377,7 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text =
-        load_shader("/shaders/axisymmetric_dealias.wgsl");
+    const auto& shader_text = load_shader("/shaders/axisymmetric_dealias.wgsl");
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/axisymmetric_dealias.wgsl", {});
         return;

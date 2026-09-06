@@ -3,6 +3,7 @@
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -200,13 +201,9 @@ Diagonal diagonal(const AxisymmetricPreconditionerElementCase& in,
     return out;
 }
 
-std::string load_shader() {
-    std::ifstream stream("/shaders/axisymmetric_preconditioner_elements.wgsl",
-                         std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
+const std::string& load_shader() {
+    return detail::cached_shader_source(
+        "/shaders/axisymmetric_preconditioner_elements.wgsl");
 }
 
 wgpu::Buffer make_buffer(const wgpu::Device& device,
@@ -283,7 +280,7 @@ void enqueue_axisymmetric_preconditioner_elements(
         callback(error, {});
         return;
     }
-    const auto shader_text = load_shader();
+    const auto& shader_text = load_shader();
     if (shader_text.empty()) {
         callback("cannot load axisymmetric preconditioner-element shader", {});
         return;

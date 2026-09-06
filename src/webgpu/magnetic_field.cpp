@@ -1,6 +1,7 @@
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/geometry.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -75,17 +76,10 @@ std::string validate_case(const MagneticFieldCase& input) {
     return {};
 }
 
-std::string read_shader(const char* path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
-}
-
-std::string load_shader(bool double_single) {
-    if (!double_single) return read_shader("/shaders/magnetic_field.wgsl");
-    return read_shader("/shaders/magnetic_field_double_single.wgsl");
+const std::string& load_shader(bool double_single) {
+    return detail::cached_shader_source(
+        double_single ? "/shaders/magnetic_field_double_single.wgsl"
+                      : "/shaders/magnetic_field.wgsl");
 }
 
 wgpu::Buffer create_buffer(const wgpu::Device& device,
@@ -399,7 +393,7 @@ void enqueue_magnetic_field(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text = load_shader(input.double_single);
+    const auto& shader_text = load_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/magnetic_field.wgsl", {});
         return;

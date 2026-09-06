@@ -5,6 +5,7 @@
 #include "cumes/webgpu/force.hpp"
 #include "cumes/webgpu/toroidal.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <algorithm>
 #include <array>
@@ -89,12 +90,8 @@ std::string validate_case(const AxisymmetricConstraintCase& in) {
     return {};
 }
 
-std::string load_shader(const char* path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
+const std::string& load_shader(const char* path) {
+    return detail::cached_shader_source(path);
 }
 
 wgpu::Buffer make_buffer(const wgpu::Device& device,
@@ -102,6 +99,26 @@ wgpu::Buffer make_buffer(const wgpu::Device& device,
                          wgpu::BufferUsage usage,
                          const char* label) {
     return detail::cached_buffer(device, size, usage, label);
+}
+
+// Populate each plane from its actual owner. Do not upload zero placeholders
+// for resident data only to overwrite them with GPU copies in the same pass.
+void transfer_constraint_plane(const wgpu::Device& device,
+                               const wgpu::CommandEncoder& encoder,
+                               const wgpu::Buffer& target,
+                               std::size_t plane,
+                               std::size_t points,
+                               const std::vector<float>& host,
+                               const DeviceFields& source,
+                               bool low) {
+    const auto bytes = points * sizeof(float);
+    if (source)
+        encoder.CopyBufferToBuffer(source.buffer,
+                                   low ? source.low_offset : source.high_offset,
+                                   target, plane * bytes, bytes);
+    else
+        device.GetQueue().WriteBuffer(target, plane * bytes, host.data(),
+                                      bytes);
 }
 
 float tcon_multiplier(const AxisymmetricConstraintCase& in) {
@@ -264,7 +281,7 @@ void enqueue_head(const wgpu::Device& device,
                   const AxisymmetricConstraintCase& in,
                   std::function<void(std::string, HeadResult)> callback,
                   BatchedReadback<HeadResult> batched = {}) {
-    const auto shader_text = load_shader(
+    const auto& shader_text = load_shader(
         in.double_single ? "/shaders/constraint_head_double_single.wgsl"
                          : "/shaders/axisymmetric_constraint_head.wgsl");
     if (shader_text.empty()) {
@@ -273,26 +290,6 @@ void enqueue_head(const wgpu::Device& device,
     }
     const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
     const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
-    std::vector<float> constraint;
-    constraint.reserve(4 * points);
-    constraint.insert(constraint.end(), in.r_con.begin(), in.r_con.end());
-    constraint.insert(constraint.end(), in.z_con.begin(), in.z_con.end());
-    if (in.device_r_con) constraint.resize(2 * points, 0.0F);
-    constraint.insert(constraint.end(), in.r_con0.begin(), in.r_con0.end());
-    constraint.insert(constraint.end(), in.z_con0.begin(), in.z_con0.end());
-    std::vector<float> constraint_lo;
-    if (in.double_single) {
-        constraint_lo.reserve(4 * points);
-        constraint_lo.insert(constraint_lo.end(), in.r_con_lo.begin(),
-                             in.r_con_lo.end());
-        constraint_lo.insert(constraint_lo.end(), in.z_con_lo.begin(),
-                             in.z_con_lo.end());
-        if (in.device_r_con) constraint_lo.resize(2 * points, 0.0F);
-        constraint_lo.insert(constraint_lo.end(), in.r_con0_lo.begin(),
-                             in.r_con0_lo.end());
-        constraint_lo.insert(constraint_lo.end(), in.z_con0_lo.begin(),
-                             in.z_con0_lo.end());
-    }
     std::vector<float> radial;
     radial.reserve(6 * static_cast<std::size_t>(in.ns));
     radial.insert(radial.end(), in.sqrt_s_f.begin(), in.sqrt_s_f.end());
@@ -310,7 +307,7 @@ void enqueue_head(const wgpu::Device& device,
         (in.double_single ? 6 : 3) * points + in.ns;
     const auto geometry_bytes =
         GEOMETRY_PARITY_FIELD_COUNT * points * sizeof(float);
-    const auto constraint_bytes = constraint.size() * sizeof(float);
+    const auto constraint_bytes = 4 * points * sizeof(float);
     const auto radial_bytes = radial.size() * sizeof(float);
     const auto output_bytes = output_values * sizeof(float);
     auto geometry_buffer =
@@ -374,17 +371,18 @@ void enqueue_head(const wgpu::Device& device,
     auto encoder = device.CreateCommandEncoder();
     transfer_fields(device, encoder, geometry_buffer, in.geometry,
                     in.device_geometry);
-    queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
-                      constraint_bytes);
     queue.WriteBuffer(radial_buffer, 0, radial.data(), radial_bytes);
     const auto copy_constraints = [&](const wgpu::Buffer& target, bool low) {
-        for (const auto& [source, offset] :
-             {std::pair{in.device_r_con, std::size_t{0}},
-              std::pair{in.device_z_con, points}})
-            if (source)
-                encoder.CopyBufferToBuffer(
-                    source.buffer, low ? source.low_offset : source.high_offset,
-                    target, offset * sizeof(float), points * sizeof(float));
+        transfer_constraint_plane(device, encoder, target, 0, points,
+                                  low ? in.r_con_lo : in.r_con, in.device_r_con,
+                                  low);
+        transfer_constraint_plane(device, encoder, target, 1, points,
+                                  low ? in.z_con_lo : in.z_con, in.device_z_con,
+                                  low);
+        transfer_constraint_plane(device, encoder, target, 2, points,
+                                  low ? in.r_con0_lo : in.r_con0, {}, low);
+        transfer_constraint_plane(device, encoder, target, 3, points,
+                                  low ? in.z_con0_lo : in.z_con0, {}, low);
     };
     copy_constraints(constraint_buffer, false);
     if (in.device_elements) {
@@ -401,8 +399,6 @@ void enqueue_head(const wgpu::Device& device,
     if (in.double_single) {
         transfer_fields(device, encoder, geometry_low_buffer, in.geometry_lo,
                         in.device_geometry, true);
-        queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
-                          constraint_bytes);
         copy_constraints(constraint_low_buffer, true);
         queue.WriteBuffer(radial_low_buffer, 0, radial_lo.data(), radial_bytes);
     }
@@ -534,7 +530,7 @@ void enqueue_tail(const wgpu::Device& device,
                   std::vector<float> g_con,
                   AxisymmetricConstraintCallback callback,
                   DeviceFields device_g_con = {}) {
-    const auto shader_text = load_shader(
+    const auto& shader_text = load_shader(
         in.double_single ? "/shaders/constraint_tail_double_single.wgsl"
                          : "/shaders/axisymmetric_constraint_tail.wgsl");
     if (shader_text.empty()) {
@@ -543,35 +539,13 @@ void enqueue_tail(const wgpu::Device& device,
     }
     const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
     const std::size_t points = static_cast<std::size_t>(in.ns) * n_z_n_t;
-    std::vector<float> constraint;
-    constraint.reserve(5 * points);
-    constraint.insert(constraint.end(), in.r_con.begin(), in.r_con.end());
-    constraint.insert(constraint.end(), in.z_con.begin(), in.z_con.end());
-    constraint.insert(constraint.end(), head.r_con0.begin(), head.r_con0.end());
-    constraint.insert(constraint.end(), head.z_con0.begin(), head.z_con0.end());
-    constraint.insert(constraint.end(), g_con.begin(), g_con.end());
-    if (device_g_con) constraint.resize(5 * points, 0.0F);
-    std::vector<float> constraint_lo;
-    if (in.double_single) {
-        constraint_lo.reserve(5 * points);
-        constraint_lo.insert(constraint_lo.end(), in.r_con_lo.begin(),
-                             in.r_con_lo.end());
-        constraint_lo.insert(constraint_lo.end(), in.z_con_lo.begin(),
-                             in.z_con_lo.end());
-        constraint_lo.insert(constraint_lo.end(), head.r_con0_lo.begin(),
-                             head.r_con0_lo.end());
-        constraint_lo.insert(constraint_lo.end(), head.z_con0_lo.begin(),
-                             head.z_con0_lo.end());
-        constraint_lo.insert(constraint_lo.end(), points, 0.0F);
-        if (device_g_con) constraint_lo.resize(5 * points, 0.0F);
-    }
     const auto force_bytes =
         (in.device_force_fields ? in.device_force_fields.values
                                 : in.force_fields.size()) *
         sizeof(float);
     const auto geometry_bytes =
         GEOMETRY_PARITY_FIELD_COUNT * points * sizeof(float);
-    const auto constraint_bytes = constraint.size() * sizeof(float);
+    const auto constraint_bytes = 5 * points * sizeof(float);
     const auto radial_bytes = in.sqrt_s_f.size() * sizeof(float);
     const std::size_t force_fields = in.ntor == 0 ? 10 : FORCE_FIELD_COUNT;
     const std::size_t output_fields =
@@ -649,33 +623,35 @@ void enqueue_tail(const wgpu::Device& device,
                         in.device_force_fields, true);
     transfer_fields(device, encoder, geometry_buffer, in.geometry,
                     in.device_geometry);
-    queue.WriteBuffer(constraint_buffer, 0, constraint.data(),
-                      constraint_bytes);
     const auto copy_constraint_planes = [&](const wgpu::Buffer& target,
                                             bool low) {
-        if (!device_g_con) return;
-        const std::array<DeviceFields, 4> sources = {
-            in.device_r_con, in.device_z_con,
-            field_slice(head.device_fields, points, points),
-            field_slice(head.device_fields, 2 * points, points)};
-        for (std::size_t plane = 0; plane < sources.size(); ++plane) {
-            const auto& source = sources[plane];
-            encoder.CopyBufferToBuffer(
-                source.buffer, low ? source.low_offset : source.high_offset,
-                target, plane * points * sizeof(float), points * sizeof(float));
-        }
-        if (!low)
-            encoder.CopyBufferToBuffer(
-                device_g_con.buffer, device_g_con.high_offset, target,
-                4 * points * sizeof(float), points * sizeof(float));
+        transfer_constraint_plane(device, encoder, target, 0, points,
+                                  low ? in.r_con_lo : in.r_con, in.device_r_con,
+                                  low);
+        transfer_constraint_plane(device, encoder, target, 1, points,
+                                  low ? in.z_con_lo : in.z_con, in.device_z_con,
+                                  low);
+        transfer_constraint_plane(
+            device, encoder, target, 2, points,
+            low ? head.r_con0_lo : head.r_con0,
+            field_slice(head.device_fields, points, points), low);
+        transfer_constraint_plane(
+            device, encoder, target, 3, points,
+            low ? head.z_con0_lo : head.z_con0,
+            field_slice(head.device_fields, 2 * points, points), low);
+        // The bandpass filter is f32; its paired low plane is exactly zero.
+        if (low)
+            encoder.ClearBuffer(target, 4 * points * sizeof(float),
+                                points * sizeof(float));
+        else
+            transfer_constraint_plane(device, encoder, target, 4, points, g_con,
+                                      device_g_con, false);
     };
     copy_constraint_planes(constraint_buffer, false);
     queue.WriteBuffer(radial_buffer, 0, in.sqrt_s_f.data(), radial_bytes);
     if (in.double_single) {
         transfer_fields(device, encoder, geometry_low_buffer, in.geometry_lo,
                         in.device_geometry, true);
-        queue.WriteBuffer(constraint_low_buffer, 0, constraint_lo.data(),
-                          constraint_bytes);
         copy_constraint_planes(constraint_low_buffer, true);
         queue.WriteBuffer(radial_low_buffer, 0, in.sqrt_s_f_lo.data(),
                           radial_bytes);

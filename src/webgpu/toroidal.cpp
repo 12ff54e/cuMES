@@ -2,6 +2,7 @@
 
 #include "cumes/webgpu/float_float.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <algorithm>
 #include <array>
@@ -205,40 +206,21 @@ const std::vector<float>& make_basis(const ToroidalDealiasCase& input) {
     return cached_basis(input.mpol, input.ntor, input.ntheta, input.nzeta);
 }
 
-std::string read_shader(const char* path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
+const std::string& load_shader(bool double_single) {
+    return detail::cached_shader_source(
+        double_single ? "/shaders/toroidal_inverse_double_single.wgsl"
+                      : "/shaders/toroidal_inverse.wgsl",
+        double_single ? "/shaders/float_float.wgsl" : "");
 }
 
-std::string load_shader(bool double_single) {
-    if (!double_single) return read_shader("/shaders/toroidal_inverse.wgsl");
-    const std::string prelude = read_shader("/shaders/float_float.wgsl");
-    const std::string kernel =
-        read_shader("/shaders/toroidal_inverse_double_single.wgsl");
-    if (prelude.empty() || kernel.empty()) return {};
-    return prelude + '\n' + kernel;
+const std::string& load_forward_shader(bool double_single) {
+    return detail::cached_shader_source(
+        double_single ? "/shaders/toroidal_forward_double_single.wgsl"
+                      : "/shaders/toroidal_forward.wgsl");
 }
 
-std::string load_forward_shader(bool double_single) {
-    std::ifstream stream(double_single
-                             ? "/shaders/toroidal_forward_double_single.wgsl"
-                             : "/shaders/toroidal_forward.wgsl",
-                         std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
-}
-
-std::string load_dealias_shader() {
-    std::ifstream stream("/shaders/toroidal_dealias.wgsl", std::ios::binary);
-    if (!stream) return {};
-    std::ostringstream text;
-    text << stream.rdbuf();
-    return text.str();
+const std::string& load_dealias_shader() {
+    return detail::cached_shader_source("/shaders/toroidal_dealias.wgsl");
 }
 
 wgpu::Buffer create_uncached_buffer(const wgpu::Device& device,
@@ -619,7 +601,7 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text = load_shader(input.double_single);
+    const auto& shader_text = load_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/toroidal_inverse.wgsl", {});
         return;
@@ -1028,7 +1010,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text = load_forward_shader(input.double_single);
+    const auto& shader_text = load_forward_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/toroidal_forward.wgsl", {});
         return;
@@ -1171,8 +1153,8 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         const auto fft_output =
             create_buffer(device, complex_bytes, wgpu::BufferUsage::Storage,
                           "cuMES forward FFT output");
-        std::ifstream file("/shaders/toroidal_fft_transfer.wgsl");
-        const std::string transfer((std::istreambuf_iterator<char>(file)), {});
+        const auto& transfer =
+            detail::cached_shader_source("/shaders/toroidal_fft_transfer.wgsl");
         const auto& pack = detail::cached_compute_pipeline(
             device, "forward-fft-pack", transfer, "cuMES FFT pack", "pack");
         const auto& unpack = detail::cached_compute_pipeline(
@@ -1351,7 +1333,7 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const std::string shader_text = load_dealias_shader();
+    const auto& shader_text = load_dealias_shader();
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/toroidal_dealias.wgsl", {});
         return;

@@ -2,6 +2,7 @@
 
 #include "cumes/webgpu/float_float.hpp"
 #include "pipeline_cache.hpp"
+#include "shader_source.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -38,15 +39,10 @@ std::string validate(const ResidualDecompositionCase& in) {
         return "double-single residual decomposition input shape mismatch";
     return {};
 }
-std::string shader_source(bool double_single) {
-    std::ifstream f(double_single
-                        ? "/shaders/residual_decompose_double_single.wgsl"
-                        : "/shaders/residual_decompose.wgsl",
-                    std::ios::binary);
-    if (!f) return {};
-    std::ostringstream s;
-    s << f.rdbuf();
-    return s.str();
+const std::string& shader_source(bool double_single) {
+    return detail::cached_shader_source(
+        double_single ? "/shaders/residual_decompose_double_single.wgsl"
+                      : "/shaders/residual_decompose.wgsl");
 }
 wgpu::Buffer make_buffer(const wgpu::Device& d,
                          std::uint64_t size,
@@ -267,7 +263,7 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
         callback(error, {});
         return;
     }
-    const auto source = shader_source(in.double_single);
+    const auto& source = shader_source(in.double_single);
     if (source.empty()) {
         callback("cannot load embedded /shaders/residual_decompose.wgsl", {});
         return;
