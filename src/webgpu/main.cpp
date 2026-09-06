@@ -2530,7 +2530,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         base_geometry_case_.delta_s = initialized_stage_.profiles.delta_s;
         base_geometry_case_.double_single = double_single_solve_;
         base_geometry_case_.geometry = std::move(geometry);
-        if (double_single_solve_) {
+        if (double_single_solve_ && !iteration_results_) {
             base_geometry_case_.geometry_lo = stage_geometry_lo_;
         } else {
             base_geometry_case_.geometry_lo.clear();
@@ -2656,10 +2656,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         magnetic_field_case_.prescribed_current =
             initialized_stage_.prescribed_current;
         magnetic_field_case_.double_single = double_single_solve_;
-        magnetic_field_case_.geometry = base_geometry_case_.geometry;
-        magnetic_field_case_.geometry_lo = base_geometry_case_.geometry_lo;
+        if (!iteration_results_) {
+            magnetic_field_case_.geometry = base_geometry_case_.geometry;
+            magnetic_field_case_.geometry_lo = base_geometry_case_.geometry_lo;
+        }
         magnetic_field_case_.base_geometry = std::move(base_geometry);
-        magnetic_field_case_.base_geometry_lo = stage_base_geometry_lo_;
+        if (!iteration_results_) {
+            magnetic_field_case_.base_geometry_lo = stage_base_geometry_lo_;
+        }
         magnetic_field_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
         magnetic_field_case_.sqrt_s_h_lo =
             initialized_stage_.profiles.sqrt_s_h_lo;
@@ -2838,12 +2842,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.lamscale = initialized_stage_.profiles.lamscale;
         force_case_.lamscale_lo = initialized_stage_.profiles.lamscale_lo;
         force_case_.double_single = double_single_solve_;
-        force_case_.geometry = magnetic_field_case_.geometry;
-        force_case_.geometry_lo = stage_geometry_lo_;
-        force_case_.base_geometry = magnetic_field_case_.base_geometry;
-        force_case_.base_geometry_lo = stage_base_geometry_lo_;
+        if (!iteration_results_) {
+            force_case_.geometry = magnetic_field_case_.geometry;
+            force_case_.geometry_lo = stage_geometry_lo_;
+            force_case_.base_geometry = magnetic_field_case_.base_geometry;
+            force_case_.base_geometry_lo = stage_base_geometry_lo_;
+        }
         force_case_.magnetic_field = std::move(magnetic_field);
-        force_case_.magnetic_field_lo = stage_magnetic_field_lo_;
+        if (!iteration_results_) {
+            force_case_.magnetic_field_lo = stage_magnetic_field_lo_;
+        }
         force_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
         force_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
         force_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
@@ -3139,9 +3147,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_case_.nzeta = initialized_stage_.nzeta;
         preconditioner_case_.delta_s = initialized_stage_.profiles.delta_s;
         preconditioner_case_.free_boundary = false;
-        preconditioner_case_.geometry = base_geometry_case_.geometry;
-        preconditioner_case_.base_geometry = magnetic_field_case_.base_geometry;
-        preconditioner_case_.magnetic_field = force_case_.magnetic_field;
+        if (!iteration_results_) {
+            preconditioner_case_.geometry = base_geometry_case_.geometry;
+            preconditioner_case_.base_geometry =
+                magnetic_field_case_.base_geometry;
+            preconditioner_case_.magnetic_field = force_case_.magnetic_field;
+        }
         preconditioner_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
         preconditioner_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
         const auto self = shared_from_this();
@@ -3223,8 +3234,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             initialized_stage_.profiles.delta_s;
         preconditioner_matrix_case_.free_boundary = false;
         preconditioner_matrix_case_.elements = preconditioner_elements_;
-        preconditioner_matrix_case_.base_geometry =
-            magnetic_field_case_.base_geometry;
+        if (!iteration_results_) {
+            preconditioner_matrix_case_.base_geometry =
+                magnetic_field_case_.base_geometry;
+        }
         preconditioner_matrix_case_.sqrt_s_f =
             initialized_stage_.profiles.sqrt_s_f;
         preconditioner_matrix_case_.phip_h = initialized_stage_.profiles.phip_h;
@@ -3312,49 +3325,52 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.refresh_preconditioner =
             controller_->refresh_preconditioner();
         constraint_case_.double_single = double_single_solve_;
-        constraint_case_.geometry = base_geometry_case_.geometry;
-        constraint_case_.geometry_lo = stage_geometry_lo_;
-        constraint_case_.r_con = stage_r_con_;
-        constraint_case_.r_con_lo = stage_r_con_lo_;
-        constraint_case_.z_con = stage_z_con_;
-        constraint_case_.z_con_lo = stage_z_con_lo_;
-        const std::size_t points =
-            static_cast<std::size_t>(constraint_case_.ns) *
-            constraint_case_.ntheta * constraint_case_.nzeta;
-        if (constraint_r_con0_.empty()) {
-            constraint_r_con0_.assign(points, 0.0F);
-            constraint_z_con0_.assign(points, 0.0F);
-            constraint_r_con0_lo_.assign(points, 0.0F);
-            constraint_z_con0_lo_.assign(points, 0.0F);
-            constraint_tcon_.assign(constraint_case_.ns, 0.0F);
-        }
-        constraint_case_.r_con0 = constraint_r_con0_;
-        constraint_case_.r_con0_lo = constraint_r_con0_lo_;
-        constraint_case_.z_con0 = constraint_z_con0_;
-        constraint_case_.z_con0_lo = constraint_z_con0_lo_;
-        constraint_case_.tcon = constraint_tcon_;
-        constraint_case_.ard = preconditioner_elements_.ard;
-        constraint_case_.azd = preconditioner_elements_.azd;
-        constraint_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
-        constraint_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
-        const std::size_t force_field_count =
-            initialized_stage_.ntor == 0 ? 10
-                                         : cumes::webgpu::FORCE_FIELD_COUNT;
-        if (!device_force_fields_ || !production_solve_) {
-            constraint_case_.force_fields.assign(
-                stage_force_fields_.begin(),
-                stage_force_fields_.begin() + force_field_count * points);
-            if (double_single_solve_) {
-                constraint_case_.force_fields_lo.assign(
-                    stage_force_fields_lo_.begin(),
-                    stage_force_fields_lo_.begin() +
-                        force_field_count * points);
+        if (!iteration_results_) {
+            constraint_case_.geometry = base_geometry_case_.geometry;
+            constraint_case_.geometry_lo = stage_geometry_lo_;
+            constraint_case_.r_con = stage_r_con_;
+            constraint_case_.r_con_lo = stage_r_con_lo_;
+            constraint_case_.z_con = stage_z_con_;
+            constraint_case_.z_con_lo = stage_z_con_lo_;
+            const std::size_t points =
+                static_cast<std::size_t>(constraint_case_.ns) *
+                constraint_case_.ntheta * constraint_case_.nzeta;
+            if (constraint_r_con0_.empty()) {
+                constraint_r_con0_.assign(points, 0.0F);
+                constraint_z_con0_.assign(points, 0.0F);
+                constraint_r_con0_lo_.assign(points, 0.0F);
+                constraint_z_con0_lo_.assign(points, 0.0F);
+                constraint_tcon_.assign(constraint_case_.ns, 0.0F);
+            }
+            constraint_case_.r_con0 = constraint_r_con0_;
+            constraint_case_.r_con0_lo = constraint_r_con0_lo_;
+            constraint_case_.z_con0 = constraint_z_con0_;
+            constraint_case_.z_con0_lo = constraint_z_con0_lo_;
+            constraint_case_.tcon = constraint_tcon_;
+            constraint_case_.ard = preconditioner_elements_.ard;
+            constraint_case_.azd = preconditioner_elements_.azd;
+            constraint_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+            constraint_case_.sqrt_s_f_lo =
+                initialized_stage_.profiles.sqrt_s_f_lo;
+            const std::size_t force_field_count =
+                initialized_stage_.ntor == 0 ? 10
+                                             : cumes::webgpu::FORCE_FIELD_COUNT;
+            if (!device_force_fields_ || !production_solve_) {
+                constraint_case_.force_fields.assign(
+                    stage_force_fields_.begin(),
+                    stage_force_fields_.begin() + force_field_count * points);
+                if (double_single_solve_) {
+                    constraint_case_.force_fields_lo.assign(
+                        stage_force_fields_lo_.begin(),
+                        stage_force_fields_lo_.begin() +
+                            force_field_count * points);
+                } else {
+                    constraint_case_.force_fields_lo.clear();
+                }
             } else {
+                constraint_case_.force_fields.clear();
                 constraint_case_.force_fields_lo.clear();
             }
-        } else {
-            constraint_case_.force_fields.clear();
-            constraint_case_.force_fields_lo.clear();
         }
         const auto self = shared_from_this();
         enqueue_evaluated(
@@ -3385,11 +3401,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                      "constraint produced nonfinite fields");
                         return;
                     }
-                    self->constraint_r_con0_ = actual.r_con0;
-                    self->constraint_r_con0_lo_ = actual.r_con0_lo;
-                    self->constraint_z_con0_ = actual.z_con0;
-                    self->constraint_z_con0_lo_ = actual.z_con0_lo;
-                    self->constraint_tcon_ = actual.tcon;
+                    self->constraint_r_con0_ = std::move(actual.r_con0);
+                    self->constraint_r_con0_lo_ = std::move(actual.r_con0_lo);
+                    self->constraint_z_con0_ = std::move(actual.z_con0);
+                    self->constraint_z_con0_lo_ = std::move(actual.z_con0_lo);
+                    self->constraint_tcon_ = std::move(actual.tcon);
                     self->constraint_fields_lo_ = std::move(actual.fields_lo);
                     self->run_constraint_forward(std::move(actual.fields));
                     return;
@@ -3429,11 +3445,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "(max scaled |GPU-CPU| = %.3e)\n",
                     self->active_case_name_.c_str(),
                     static_cast<double>(max_error));
-                self->constraint_r_con0_ = actual.r_con0;
-                self->constraint_r_con0_lo_ = actual.r_con0_lo;
-                self->constraint_z_con0_ = actual.z_con0;
-                self->constraint_z_con0_lo_ = actual.z_con0_lo;
-                self->constraint_tcon_ = actual.tcon;
+                self->constraint_r_con0_ = std::move(actual.r_con0);
+                self->constraint_r_con0_lo_ = std::move(actual.r_con0_lo);
+                self->constraint_z_con0_ = std::move(actual.z_con0);
+                self->constraint_z_con0_lo_ = std::move(actual.z_con0_lo);
+                self->constraint_tcon_ = std::move(actual.tcon);
                 self->constraint_fields_lo_ = std::move(actual.fields_lo);
                 self->run_constraint_forward(std::move(actual.fields));
             });
@@ -4508,6 +4524,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
     // Feed collected values through the same validation/controller chain as
     // the reference path. No operator is resubmitted while consuming a batch.
+    // In that path, callers need not materialize duplicate input arrays. Keep
+    // the primary inverse/base/magnetic results for checks, normalization and
+    // output; populate reference/dispatch-only copies only without a batch.
     template <typename Input, typename Result, typename Callback>
     void enqueue_evaluated(
         void (*enqueue)(const wgpu::Device&,
