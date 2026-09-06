@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <utility>
@@ -33,7 +34,13 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
 
     const auto solve_start = std::chrono::steady_clock::now();
 
-    DeviceParams<Real> params = init_params<Real>(problem);
+    bool use_radius_reference = request.use_radius_reference;
+    if (request.use_process_environment) {
+        if (const char* e = std::getenv("CUMES_RADIUS_REFERENCE"))
+            use_radius_reference = std::atoi(e) != 0;
+    }
+    DeviceParams<Real> params =
+        init_params<Real>(problem, use_radius_reference);
     const StageRequest& first_stage = problem.spec().stages.front();
     params.ns = static_cast<int>(first_stage.radial_surfaces);
     params.max_iter = static_cast<int>(first_stage.max_iterations);

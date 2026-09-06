@@ -325,6 +325,8 @@ __global__ void rz_norm_kernel(
         // decomposed = physical/(ms*ns): the squared term picks up 1/(ms*ns)^2
         T inv2 = T(1.0) / (mfac * nfac * mfac * nfac);
         T rcc = st(cumes::SpectralComponent::Rcc, m, j);
+        if constexpr (sizeof(T) == sizeof(float))
+            rcc += T(st.radius_reference(m));
         T zsc = st(cumes::SpectralComponent::Zsc, m, j);
         T rss = st(cumes::SpectralComponent::Rss, m, j);
         T zcs = st(cumes::SpectralComponent::Zcs, m, j);
@@ -593,6 +595,8 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
             return cumes::RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta);
         };
         geom_views_.r_e = geom(rs.d_r_e);
+        geom_views_.r_reference =
+            cumes::RealFieldView<T>(rs.d_r_reference, 1, p.ntheta, p.nzeta);
         geom_views_.z_e = geom(rs.d_z_e);
         geom_views_.l_e = geom(rs.d_l_e);
         geom_views_.ru_e = geom(rs.d_ru_e);
@@ -1122,6 +1126,8 @@ SolverResult<T> solver_run(
     auto axis_r_at_zeta_0 = [&]() {
         T h = T(0.0);
         for (int n = 0; n <= p.ntor; ++n) h += h_axis_pin.data()[n];
+        if constexpr (sizeof(T) == sizeof(float))
+            for (double ref : storage.radius_references()) h += T(ref);
         return h;
     };
 
@@ -1152,6 +1158,8 @@ SolverResult<T> solver_run(
         // plan step 3.3) — no per-print device copy or synchronization.
         T h_rmncc_axis = axis_r_at_zeta_0();
         T h_rmncc_bnd = h_axis_pin.data()[p.ntor + 1];
+        if constexpr (sizeof(T) == sizeof(float))
+            h_rmncc_bnd += T(p.radius_reference);
         printf(" | Rax=%.4f Rbnd=%.4f\n", (double)h_rmncc_axis,
                (double)h_rmncc_bnd);
     };

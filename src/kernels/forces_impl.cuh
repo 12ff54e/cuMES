@@ -66,7 +66,8 @@ __global__ void forces_kernel(cumes::GeometryParityViews<T> full,
                               T lamscale,
                               int ns,
                               int nZnT,
-                              T delta_s) {
+                              T delta_s,
+                              double radius_reference) {
     // Status guard (completion plan step 1.4): no force buffers are written
     // on an invalid-Jacobian pass (the host gate restores before anything
     // consumes them).
@@ -131,6 +132,10 @@ __global__ void forces_kernel(cumes::GeometryParityViews<T> full,
 
     // Full-grid geometry at this surface
     T re_j = r_e[idx_f], ro_j = r_o[idx_f];
+    if constexpr (sizeof(T) == sizeof(float)) {
+        re_j += T(radius_reference);
+        if (full.r_reference.data()) re_j += full.r_reference.data()[k];
+    }
     T zo_j = z_o[idx_f];
     T rue_j = ru_e[idx_f], ruo_j = ru_o[idx_f];
     T zue_j = zu_e[idx_f], zuo_j = zu_o[idx_f];
@@ -340,7 +345,7 @@ void cumes::ForceOperator<T>::enqueue(
     forces_kernel<T><<<grid, block, 0, stream>>>(
         geometry_parity_views(rs, p), base, field, rpv,
         force_parity_views(rs, p), status, p.lamscale, p.ns, p.nZnT,
-        T(1.0) / T(p.ns - 1));
+        T(1.0) / T(p.ns - 1), p.radius_reference);
     cumes::check_cuda(cudaGetLastError(), "forces kernel");
 }
 

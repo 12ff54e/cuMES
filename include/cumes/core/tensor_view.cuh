@@ -50,8 +50,22 @@ class SpectralView {
     using val_type = T;
 
     __host__ __device__ SpectralView() = default;
-    __host__ __device__ SpectralView(T* data, int ns, int mnmax)
-        : data_(data), ns_(ns), mnmax_(mnmax) {}
+    __host__ __device__ SpectralView(T* data,
+                                     int ns,
+                                     int mnmax,
+                                     const double* d_radius_reference = nullptr,
+                                     int reference_modes = 0)
+        : data_(data),
+          ns_(ns),
+          mnmax_(mnmax),
+          d_radius_reference_(d_radius_reference),
+          reference_modes_(reference_modes) {}
+
+    // Physical-state Rcc coefficients may store displacements of the m=0
+    // modes. This fixed reference is not part of velocity/residual slabs.
+    __device__ double radius_reference(int mode) const {
+        return mode < reference_modes_ ? d_radius_reference_[mode] : 0.0;
+    }
 
     __host__ __device__ T& operator()(SpectralComponent c,
                                       int mode,
@@ -72,6 +86,8 @@ class SpectralView {
     T* data_ = nullptr;
     int ns_ = 0;
     int mnmax_ = 0;
+    const double* d_radius_reference_ = nullptr;
+    int reference_modes_ = 0;
 };
 
 // Real-space view over [surface][zeta][theta] (theta contiguous). `surfaces` is

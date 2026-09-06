@@ -285,6 +285,7 @@ class StageSolver {
         // constructed twice. The retry loop below only grows the budget when
         // the seed underestimates (an ArenaOverflow aborts the attempt and
         // the scope exit destroys the partial modules).
+        p.radius_reference = state.radius_reference();
         const auto stage_start = std::chrono::steady_clock::now();
         auto setup_end = stage_start;
         auto iteration_end = stage_start;

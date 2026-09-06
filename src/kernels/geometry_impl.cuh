@@ -139,7 +139,8 @@ __global__ void base_geometry_kernel(cumes::GeometryParityViews<T> full,
                                      cumes::BaseGeometryHalfViews<T> half,
                                      int ns,
                                      int nZnT,
-                                     T delta_s) {
+                                     T delta_s,
+                                     double radius_reference) {
     // Full-grid geometry, even/odd parity (R/Z only — λ enters the field
     // kernel)
     const T* r_e = full.r_e.data();
@@ -183,8 +184,16 @@ __global__ void base_geometry_kernel(cumes::GeometryParityViews<T> full,
     T sF_o = sqrtS_F[jH + 1];  // full-grid sqrt(s) at jH+1
 
     // ---- half-grid interpolation with parity mixing --------------------
-    T r12_v =
-        T(0.5) * ((r_e[i_in] + r_e[i_out]) + sH * (r_o[i_in] + r_o[i_out]));
+    T re_i = r_e[i_in], re_o = r_e[i_out];
+    if constexpr (sizeof(T) == sizeof(float)) {
+        re_i += T(radius_reference);
+        re_o += T(radius_reference);
+        if (full.r_reference.data()) {
+            re_i += full.r_reference.data()[k];
+            re_o += full.r_reference.data()[k];
+        }
+    }
+    T r12_v = T(0.5) * ((re_i + re_o) + sH * (r_o[i_in] + r_o[i_out]));
     T ru12_v =
         T(0.5) * ((ru_e[i_in] + ru_e[i_out]) + sH * (ru_o[i_in] + ru_o[i_out]));
     T zu12_v =
@@ -225,10 +234,10 @@ __global__ void base_geometry_kernel(cumes::GeometryParityViews<T> full,
         sH * ((ru_e[i_in] * ru_o[i_in] + zu_e[i_in] * zu_o[i_in]) +
               (ru_e[i_out] * ru_o[i_out] + zu_e[i_out] * zu_o[i_out]));
 
-    T gvv_v = T(0.5) * (r_e[i_in] * r_e[i_in] + r_e[i_out] * r_e[i_out] +
-                        sFi_sq * r_o[i_in] * r_o[i_in] +
-                        sFo_sq * r_o[i_out] * r_o[i_out]) +
-              sH * (r_e[i_in] * r_o[i_in] + r_e[i_out] * r_o[i_out]);
+    T gvv_v =
+        T(0.5) * (re_i * re_i + re_o * re_o + sFi_sq * r_o[i_in] * r_o[i_in] +
+                  sFo_sq * r_o[i_out] * r_o[i_out]) +
+        sH * (re_i * r_o[i_in] + re_o * r_o[i_out]);
 
     // 3D toroidal coupling (rv/zv = R_ζ/Z_ζ): guv and the 3D part of gvv
     // (vmecpp metric_kernel.h ComputeMetricElements, lthreed block).
@@ -752,7 +761,7 @@ void cumes::GeometryOperator<T>::enqueue(
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     base_geometry_kernel<T><<<grid, block, 0, stream>>>(
         geometry_parity_views(rs, p), rpv, base_geometry_views(p), p.ns, p.nZnT,
-        T(1.0) / T(p.ns - 1));
+        T(1.0) / T(p.ns - 1), p.radius_reference);
     cumes::check_cuda(cudaGetLastError(), "base geometry kernel");
 }
 

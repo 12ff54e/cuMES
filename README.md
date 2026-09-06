@@ -265,9 +265,12 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 ### Precision
 
 - The default build is double (`Real = double`); residuals reach ~1e-14.
-- Single precision (`float` preset) stalls at ~1e-7 (the float rounding floor):
-  the double-tuned stage ftols can never be met, so float builds hard-error at
-  startup unless the `ftol_array` entries are relaxed to ≥ 1e-6.
+- Single precision (`float` preset) is experimental. Startup requires every
+  `ftol_array` entry to be ≥ 1e-6; this is an input restriction, not a
+  convergence guarantee. W7-X fails even at 1e-5 with the default float state
+  and geometry representation. `CUMES_RADIUS_REFERENCE=1` enables an experiment
+  that converges the first two grids, but still stalls on ns=99; see the
+  [GPU investigation](docs/w7x-float-convergence.md).
 - On-disk state files stay double regardless of `T`; dump files are `T`-native.
 - The per-pass control record (residuals, Jacobian stats, force-norm factors)
   is double in both builds; the device norm reductions accumulate in double.
@@ -279,6 +282,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
 | `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects four-point Catmull-Rom coarse-to-fine transfer (the previous fixed-boundary default) |
 | `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer (default for axisymmetric free-boundary and float runs) |
+| `CUMES_RADIUS_REFERENCE` | `=1` enables experimental reference-plus-displacement storage for fixed-boundary 3-D float runs; default off, ignored for double/axisymmetric/free-boundary runs |
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |

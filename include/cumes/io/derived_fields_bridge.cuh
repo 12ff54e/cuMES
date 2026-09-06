@@ -79,6 +79,14 @@ Status capture_derived_fields(const DeviceParams<T>& p,
         copy_to_double(radial.sqrtS_H, p.ns - 1, "copy output sqrtS_H");
 
     in.r_e = copy_to_double(geometry_full.r_e.data(), *full, "copy output r_e");
+    if (p.radius_reference != 0.0)
+        for (double& r : in.r_e) r += p.radius_reference;
+    if (rs.d_r_reference) {
+        const auto reference = copy_to_double(rs.d_r_reference, *points,
+                                              "copy output R reference");
+        for (std::size_t i = 0; i < *full; ++i)
+            in.r_e[i] += reference[i % *points];
+    }
     in.r_o = copy_to_double(geometry_full.r_o.data(), *full, "copy output r_o");
     in.z_e = copy_to_double(geometry_full.z_e.data(), *full, "copy output z_e");
     in.z_o = copy_to_double(geometry_full.z_o.data(), *full, "copy output z_o");

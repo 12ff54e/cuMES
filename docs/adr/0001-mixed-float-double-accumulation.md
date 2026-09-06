@@ -2,6 +2,14 @@
 
 Status: accepted and active (blueprint §8.8/§8.12)
 
+Qualification update (2026-09-06): the successful float smoke below was
+Solovev. Its observed residual scale does not establish a universal float
+floor. W7-X fails at `ftol=1e-5` on the tested GPU; checkpoint experiments
+isolate substantial error from storing the large `R_00` coefficient in float
+and from the float transform/geometry path. The double-accumulation decision
+remains valid, but it does not address those errors. See
+[W7-X float convergence](../w7x-float-convergence.md) for measurements.
+
 ## Context
 
 The float build (`CUMES_USE_FLOAT=ON`) stalls at a ~1e-7 residual floor. The

@@ -44,6 +44,11 @@ struct SolveRequest {
     // An embedding application can select a retained transfer explicitly for
     // a configuration whose multigrid path has been qualified separately.
     RadialTransferPolicy radial_transfer = RadialTransferPolicy::AUTOMATIC;
+
+    // Experimental fixed-boundary 3-D float representation. Keep the m=0
+    // boundary radius separate from its evolving radial displacement.
+    // Ignored for double, axisymmetric and free-boundary solves.
+    bool use_radius_reference = false;
 };
 
 struct SolveTimings {

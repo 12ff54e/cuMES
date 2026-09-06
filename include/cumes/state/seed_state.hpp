@@ -35,7 +35,8 @@ namespace cumes {
 // profilesCreate; ns/max_iter/ftol carry stage 0 (the stage loop overwrites
 // them per stage).
 template <typename T>
-DeviceParams<T> init_params(const ValidatedProblem& vp) {
+DeviceParams<T> init_params(const ValidatedProblem& vp,
+                            bool use_radius_reference = false) {
     const ProblemSpec& s = vp.spec();
     DeviceParams<T> p;
     p.ns = static_cast<int>(s.stages.front().radial_surfaces);
@@ -52,6 +53,10 @@ DeviceParams<T> init_params(const ValidatedProblem& vp) {
     p.max_iter = static_cast<int>(s.stages.front().max_iterations);
     p.tcon0 = T(s.physical.tcon0);  // constraint-force multiplier
     p.lamscale = T(0.0);            // set by profilesCreate
+    if constexpr (sizeof(T) == sizeof(float)) {
+        if (use_radius_reference && p.ntor > 0 && !s.free_boundary.lfreeb)
+            p.radius_reference = vp.boundary().rbcc[0];
+    }
     return p;
 }
 
@@ -61,7 +66,8 @@ DeviceParams<T> init_params(const ValidatedProblem& vp) {
 //   m>0: s^(m/2) radial envelope so higher modes vanish faster near the axis.
 // cuMES stores the plain physical coefficients (vmecpp's internal state
 // divides by mscale*nscale, but its mscale'd basis makes the real-space
-// reconstruction identical).
+// reconstruction identical). The experimental float radius reference stores
+// m=0 Rcc displacements instead; snapshot export restores physical values.
 template <typename T>
 SpectralStorage<T> init_state(const DeviceParams<T>& p,
                               const ValidatedProblem& vp,
@@ -72,7 +78,11 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     const int ntorp1 = p.ntor + 1;
     const size_t one = (size_t)p.ns * p.mnmax;
     const size_t nb = one * sizeof(T);
-    SpectralStorage<T> storage(p.ns, p.mnmax);
+    SpectralStorage<T> storage(
+        p.ns, p.mnmax,
+        p.radius_reference != 0.0
+            ? std::span<const double>(b.rbcc).first(ntorp1)
+            : std::span<const double>{});
     T envelope_correction =
         T(default_seed_envelope(p.ntor, sp.free_boundary.lfreeb, p.ns,
                                 static_cast<int>(sp.stages.size())));
@@ -132,6 +142,15 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
             }
         }
     }
+    if (p.radius_reference != 0.0) {
+        // Subtract before conversion to float, including the cold seed.
+        for (int n = 0; n < ntorp1; ++n) {
+            const double axis_delta = sp.raxis_c[n] - b.rbcc[n];
+            for (int j = 0; j < p.ns; ++j)
+                h_c[n * p.ns + j] =
+                    T((1.0 - double(j) / (p.ns - 1)) * axis_delta);
+        }
+    }
     double lambda_seed_scale =
         default_axisymmetric_lambda_seed(p.ntor, sp.free_boundary.lfreeb);
     if (use_process_environment) {
@@ -176,7 +195,11 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
     const int ntorp1 = p.ntor + 1;
     const size_t one = (size_t)p.ns * p.mnmax;
     const size_t nb = one * sizeof(T);
-    SpectralStorage<T> storage(p.ns, p.mnmax);
+    SpectralStorage<T> storage(
+        p.ns, p.mnmax,
+        p.radius_reference != 0.0
+            ? std::span<const double>(b.rbcc).first(ntorp1)
+            : std::span<const double>{});
 
     // One staging buffer in the exact state_slab() order
     // (Rcc Zsc Lsc Rss Zcs Lcs — spectral_storage.hpp), so the six per-family
@@ -199,6 +222,15 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
         h_lcs[i] = T(snap.families[EquilibriumSnapshot::LMNCS][i]);
     }
 
+    if (p.radius_reference != 0.0) {
+        for (int n = 0; n < ntorp1; ++n)
+            for (int j = 0; j < p.ns; ++j) {
+                int i = n * p.ns + j;
+                h_c[i] =
+                    T(snap.families[EquilibriumSnapshot::RMNCC][i] - b.rbcc[n]);
+            }
+    }
+
     // vmecpp stores boundary values separately (not in the spectral state);
     // cuMES embeds the boundary in the spectral coefficients at j=ns-1. Patch
     // the LCFS values to match the folded boundary; also zero m>0 modes at the
@@ -214,6 +246,8 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
                 int mn = m * (p.ntor + 1) + n;
                 if (patch_lcfs) {
                     h_c[jB + mn * p.ns] = T(b.rbcc[m * ntorp1 + n]);
+                    if (m == 0 && p.radius_reference != 0.0)
+                        h_c[jB + mn * p.ns] = T(0);
                     h_s[jB + mn * p.ns] = T(b.rbss[m * ntorp1 + n]);
                     h_zsc[jB + mn * p.ns] = T(b.zbsc[m * ntorp1 + n]);
                     h_zcs[jB + mn * p.ns] = T(b.zbcs[m * ntorp1 + n]);

@@ -316,6 +316,13 @@ cumes::RealSpaceStorage<T> real_space_create(
         else
             cumes::check_cuda(cudaMalloc(&q, nbytes_real), n);
     };
+    if (p.radius_reference != 0.0) {
+        if (arena)
+            rs.d_r_reference = arena->get().alloc_span<T>("r_reference", nZnT);
+        else
+            cumes::check_cuda(cudaMalloc(&rs.d_r_reference, nZnT * sizeof(T)),
+                              "r_reference");
+    }
     am(rs.d_r_e, "r_e");
     am(rs.d_z_e, "z_e");
     am(rs.d_l_e, "l_e");
@@ -384,6 +391,7 @@ template <typename T>
 void real_space_free(cumes::RealSpaceStorage<T>& rs) {
     if (!rs.arena_backed) {
         auto cu_free = [](T* p) { cudaFree(p); };
+        cu_free(rs.d_r_reference);
         cu_free(rs.d_r_e);
         cu_free(rs.d_z_e);
         cu_free(rs.d_l_e);
@@ -437,6 +445,24 @@ void real_space_free(cumes::RealSpaceStorage<T>& rs) {
 // direct basis-table sum. All nine real-space outputs (r/z/l, their θ and ζ
 // derivatives) come from the 12 slots; the m-parity split into e/o arrays and
 // the odd-m scalxc division (maxsc) happen on the target side, as in vmecpp.
+// The fixed-boundary m=0 reference is common to every radial surface.
+// Its subtraction in coefficient space avoids rounding a large toroidal
+// wobble into each independently transformed radial surface.
+template <typename T>
+__global__ void radius_reference_kernel(
+    cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
+    T* d_reference,
+    int ntor,
+    int ntheta,
+    int nzeta) {
+    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= nzeta) return;
+    double r = 0.0;
+    for (int n = 1; n <= ntor; ++n)
+        r += coeff.radius_reference(n) * cos(2.0 * M_PI * n * k / nzeta);
+    for (int l = 0; l < ntheta; ++l) d_reference[k * ntheta + l] = T(r);
+}
+
 template <typename T>
 __global__ void inverse_pack_kernel(
     cumes::SpectralView<const T, cumes::PhysicalStateDomain> coeff,
@@ -447,6 +473,7 @@ __global__ void inverse_pack_kernel(
     int ntor,
     int nfp,
     int nz2,
+    bool relative_radius,
     typename FftTraits<T>::Complex* __restrict__ spectra) {
     using Complex = typename FftTraits<T>::Complex;
     int t = blockIdx.x * blockDim.x + threadIdx.x;
@@ -473,6 +500,11 @@ __global__ void inverse_pack_kernel(
     size_t step = (size_t)mpol * ns * nz2;
     Complex* slot = spectra + ((size_t)m * ns + j) * nz2 + n;
     slot[0 * step] = Complex{rc * half, T(0.0)};
+    if constexpr (sizeof(T) == sizeof(float)) {
+        if (relative_radius && m == 0 && n > 0)
+            rc +=
+                T(coeff.radius_reference(mode));  // zeta derivative is physical
+    }
     slot[1 * step] = Complex{T(0.0), -rs * shalf};
     slot[2 * step] = Complex{T(0.0), +rc * dhalf};
     slot[3 * step] = Complex{+rs * dhalf, T(0.0)};
@@ -669,11 +701,16 @@ __global__ void combine_parity_kernel(const T* __restrict__ r_e,
                                       T* __restrict__ lu_real,
                                       T* __restrict__ rv_real,
                                       T* __restrict__ zv_real,
-                                      T* __restrict__ lv_real) {
+                                      T* __restrict__ lv_real,
+                                      double radius_reference,
+                                      const T* d_radius_reference) {
     int j = blockIdx.y, k = blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= nZnT) return;
     int idx = k + j * nZnT;
     r_real[idx] = r_e[idx] + r_o[idx];
+    if constexpr (sizeof(T) == sizeof(float))
+        r_real[idx] += T(radius_reference);
+    if (d_radius_reference) r_real[idx] += d_radius_reference[k];
     z_real[idx] = z_e[idx] + z_o[idx];
     l_real[idx] = l_e[idx] + l_o[idx];
     ru_real[idx] = ru_e[idx] + ru_o[idx];
@@ -730,7 +767,10 @@ static void inverse_pipeline(
     int total = p.ns * p.mnmax;
     inverse_pack_kernel<T><<<(total + 255) / 256, 256, 0, stream>>>(
         coeff, xm, xn, p.ns, p.mpol, p.ntor, p.nfp, p.nzeta / 2 + 1,
-        d_zeta_spectra);
+        p.radius_reference != 0.0, d_zeta_spectra);
+    if (geom.r_reference.data())
+        radius_reference_kernel<T><<<(p.nzeta + 127) / 128, 128, 0, stream>>>(
+            coeff, geom.r_reference.data(), p.ntor, p.ntheta, p.nzeta);
     cumes::check_cufft(
         FftTraits<T>::exec_inverse(plan_z2d, d_zeta_spectra, d_zeta_real),
         "inv z2d");
@@ -767,7 +807,8 @@ static void inverse_pipeline(
             geom.z_o.data(), geom.l_o.data(), geom.ru_o.data(),
             geom.zu_o.data(), geom.lu_o.data(), geom.rv_o.data(),
             geom.zv_o.data(), geom.lv_o.data(), p.nZnT, p.ns, r_real, z_real,
-            l_real, ru_real, zu_real, lu_real, rv_real, zv_real, lv_real);
+            l_real, ru_real, zu_real, lu_real, rv_real, zv_real, lv_real,
+            p.radius_reference, geom.r_reference.data());
     }
     cumes::check_cuda(cudaGetLastError(), "inv cuFFT");
 }
@@ -807,7 +848,8 @@ void cumes::ToroidalFftOperator<T>::combine_parity(cudaStream_t stream) {
         rs.d_rv_e, rs.d_zv_e, rs.d_lv_e, rs.d_r_o, rs.d_z_o, rs.d_l_o,
         rs.d_ru_o, rs.d_zu_o, rs.d_lu_o, rs.d_rv_o, rs.d_zv_o, rs.d_lv_o,
         p.nZnT, p.ns, rs.d_r_real, rs.d_z_real, rs.d_l_real, rs.d_ru_real,
-        rs.d_zu_real, rs.d_lu_real, rs.d_rv_real, rs.d_zv_real, rs.d_lv_real);
+        rs.d_zu_real, rs.d_lu_real, rs.d_rv_real, rs.d_zv_real, rs.d_lv_real,
+        p.radius_reference, rs.d_r_reference);
     cumes::check_cuda(cudaGetLastError(), "combine parity");
 }
 

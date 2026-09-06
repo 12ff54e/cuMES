@@ -46,6 +46,11 @@ struct DeviceParams {
                           // tcon0; scales the tcon profile in constraint.cu)
     T lamscale = T(0.0);  // sqrt(deltaS * sum phipH^2), vmecpp constants_,
                           // set by profilesCreate
+    // Scalar part of the optional, radially constant m=0 Rcc reference.
+    // Nonzero enables displacement storage; SpectralStorage holds all its
+    // Fourier modes. Absolute-radius terms restore the reference, while
+    // radial differences operate directly on the small displacement.
+    double radius_reference = 0.0;
     static constexpr int SIGN_JACOBIAN = -1;
     static constexpr T MU_0 = 4.0 * M_PI * 1.0e-7;  // exact, = vmecpp MU_0
 };
