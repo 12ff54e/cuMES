@@ -1,11 +1,32 @@
 #pragma once
 
+#include "cumes/solver/control_record.hpp"
 #include "cumes/webgpu/device_fields.hpp"
 
 #include <array>
 #include <functional>
 
 namespace cumes::webgpu {
+
+struct GeometryControlResult {
+    JacobianStatus<double> jacobian;
+    bool guards_valid = true;
+    bool invalid = false;
+    bool fallback = false;
+    bool present = false;
+};
+
+// Reduce the ten base-geometry fields and execute the oriented-Jacobian gate.
+// Ambiguous ordering/range cases request full host validation, never
+// acceptance.
+void enqueue_geometry_control(
+    const wgpu::Device& device,
+    const DeviceFields& fields,
+    bool paired,
+    bool axisymmetric,
+    int axis_points,
+    const std::shared_ptr<ReadbackBatch>& batch,
+    std::function<void(std::string, GeometryControlResult)> callback);
 
 // Scan one f32 plane without downloading it. Integer exponent tests also catch
 // NaNs on backends whose floating-point optimizations assume finite operands.

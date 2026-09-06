@@ -8,6 +8,101 @@
 
 namespace cumes::webgpu {
 
+void enqueue_geometry_control(
+    const wgpu::Device& device,
+    const DeviceFields& fields,
+    bool paired,
+    bool axisymmetric,
+    int axis_points,
+    const std::shared_ptr<ReadbackBatch>& batch,
+    std::function<void(std::string, GeometryControlResult)> callback) {
+    const auto size = fields ? fields.buffer.GetSize() : 0;
+    const auto fits = [&](std::uint64_t offset) {
+        return offset % sizeof(float) == 0 && offset <= size &&
+               fields.values <= (size - offset) / sizeof(float);
+    };
+    if (!fields || !batch || fields.values == 0 || fields.values % 10 != 0 ||
+        fields.values / 10 > 65535U * 256U || axis_points <= 0 ||
+        size / sizeof(float) > std::numeric_limits<std::uint32_t>::max() ||
+        !fits(fields.high_offset) || (paired && !fits(fields.low_offset))) {
+        callback("invalid GPU geometry control shape or field range", {});
+        return;
+    }
+    struct Params {
+        std::uint32_t points, high, low, paired, axisymmetric, axis_points;
+        float threshold =
+            static_cast<float>(control_policy::JACOBIAN_RELATIVE_THRESHOLD);
+        std::uint32_t pad = 0;
+    };
+    const Params params{static_cast<std::uint32_t>(fields.values / 10),
+                        static_cast<std::uint32_t>(fields.high_offset / 4),
+                        static_cast<std::uint32_t>(fields.low_offset / 4),
+                        paired ? 1U : 0U,
+                        axisymmetric ? 1U : 0U,
+                        static_cast<std::uint32_t>(axis_points)};
+    const auto blocks = (params.points + 255) / 256;
+    auto parts =
+        detail::cached_buffer(device, blocks * 32, wgpu::BufferUsage::Storage,
+                              "geometry control partials");
+    auto output = detail::cached_buffer(
+        device, 32, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
+        "geometry control result");
+    auto uniform = detail::cached_buffer(
+        device, sizeof(params),
+        wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+        "geometry control params");
+    device.GetQueue().WriteBuffer(uniform, 0, &params, sizeof(params));
+    const auto encoder = device.CreateCommandEncoder();
+    const auto& source =
+        detail::cached_shader_source("/shaders/geometry_control.wgsl");
+    for (bool final : {false, true}) {
+        const auto& pipeline = detail::cached_compute_pipeline(
+            device,
+            final ? "geometry-control-final" : "geometry-control-partial",
+            source,
+            final ? "cuMES geometry control final"
+                  : "cuMES geometry control partial",
+            final ? "finalize" : "partial");
+        std::vector<wgpu::BindGroupEntry> entries;
+        if (!final)
+            entries.push_back(
+                {nullptr, 0, fields.buffer, 0, size, nullptr, nullptr});
+        entries.push_back(
+            {nullptr, 1, parts, 0, blocks * 32, nullptr, nullptr});
+        if (final)
+            entries.push_back({nullptr, 2, output, 0, 32, nullptr, nullptr});
+        entries.push_back(
+            {nullptr, 3, uniform, 0, sizeof(params), nullptr, nullptr});
+        wgpu::BindGroupDescriptor descriptor{};
+        descriptor.layout = pipeline.GetBindGroupLayout(0);
+        descriptor.entries = entries.data();
+        descriptor.entryCount = entries.size();
+        const auto group = device.CreateBindGroup(&descriptor);
+        auto pass = encoder.BeginComputePass();
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, group);
+        pass.DispatchWorkgroups(final ? 1 : blocks);
+        pass.End();
+    }
+    batch->append(
+        encoder, output, 0, 32,
+        [callback = std::move(callback)](std::span<const float> values) {
+            GeometryControlResult result;
+            result.present = true;
+            result.jacobian.min_oriented = double(values[0]) + values[1];
+            result.jacobian.max_abs = double(values[2]) + values[3];
+            result.jacobian.min_index = static_cast<int>(values[4]);
+            result.jacobian.nonfinite_count = values[5];
+            const auto flags = static_cast<unsigned>(values[6]);
+            result.guards_valid = (flags & 7U) == 0;
+            result.fallback = (flags & 8U) != 0;
+            result.invalid = values[7] != 0.0F;
+            callback({}, result);
+        });
+    const auto commands = encoder.Finish();
+    device.GetQueue().Submit(1, &commands);
+}
+
 void enqueue_field_finite(const wgpu::Device& device,
                           const DeviceFields& fields,
                           const std::shared_ptr<ReadbackBatch>& batch,

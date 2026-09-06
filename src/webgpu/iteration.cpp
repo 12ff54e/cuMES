@@ -37,11 +37,45 @@ class IterationDispatch
         // submitted before this single map; decode callbacks only store values.
         batch->map([self](std::string mapping_error) {
             if (self->error.empty()) self->error = std::move(mapping_error);
-            self->callback(std::move(self->error), std::move(self->result));
+            self->complete();
         });
     }
 
    private:
+    void complete() {
+        auto& geometry = result.geometry;
+        if (error.empty() && geometry.control.present &&
+            geometry.control.fallback) {
+            // Rare ambiguous ordering/range: preserve the complete host gate.
+            geometry.control.present = false;
+            if (geometry.fields.empty()) {
+                const auto fields = geometry.device_fields;
+                const auto bytes = fields.values * sizeof(float);
+                const auto encoder = device.CreateCommandEncoder();
+                const auto self = shared_from_this();
+                batch->append(encoder, fields.buffer, fields.high_offset, bytes,
+                              [self](std::span<const float> values) {
+                                  self->result.geometry.fields.assign(
+                                      values.begin(), values.end());
+                              });
+                if (input.double_single)
+                    batch->append(encoder, fields.buffer, fields.low_offset,
+                                  bytes, [self](std::span<const float> values) {
+                                      self->result.geometry.fields_lo.assign(
+                                          values.begin(), values.end());
+                                  });
+                const auto commands = encoder.Finish();
+                device.GetQueue().Submit(1, &commands);
+                batch->map([self](std::string message) {
+                    self->error = std::move(message);
+                    self->complete();
+                });
+                return;
+            }
+        }
+        callback(std::move(error), std::move(result));
+    }
+
     ToroidalInverseResult inverse_;
     BaseGeometryResult geometry_;
     MagneticFieldResult magnetic_;
@@ -72,6 +106,10 @@ class IterationDispatch
 
     void geometry() {
         BaseGeometryCase in;
+        in.device_control = input.geometry_control;
+        in.axisymmetric = input.stage.ntor == 0;
+        in.readback_values = !input.geometry_control || !input.compact_fields ||
+                             input.refresh_preconditioner;
         shape(in);
         in.delta_s = input.stage.profiles.delta_s;
         in.double_single = input.double_single;

@@ -144,13 +144,18 @@ class IterationController {
             (s.min_oriented <
                  T(control_policy::JACOBIAN_RELATIVE_THRESHOLD) * s.max_abs &&
              s.min_index >= nZnT)) {
-            delt_ *= T(control_policy::RESTART_STEP_FACTOR);
-            iter1_ = iter2_;
-            log_anchor_ = iter2_;
-            restart_events_.push_back(RestartEvent{iter2_});
+            reject_jacobian();
             return true;
         }
         return false;
+    }
+
+    // Apply an already classified device verdict without repeating the gate.
+    void reject_jacobian() {
+        delt_ *= T(control_policy::RESTART_STEP_FACTOR);
+        iter1_ = iter2_;
+        log_anchor_ = iter2_;
+        restart_events_.push_back(RestartEvent{iter2_});
     }
 
     // Classify the invariant (unpreconditioned, normalized) residual triple:

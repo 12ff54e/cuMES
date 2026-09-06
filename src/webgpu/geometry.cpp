@@ -497,20 +497,33 @@ void enqueue_base_geometry(const wgpu::Device& device,
         BaseGeometryResult resident;
         resident.device_fields = {result_buffer, result_values, 0,
                                   result_values * sizeof(float)};
-        input.readback.batch->append(
-            encoder, result_buffer, 0, result_bytes,
-            [callback = std::move(callback), resident,
-             paired =
-                 input.double_single](std::span<const float> values) mutable {
-                const auto count = resident.device_fields.values;
-                resident.fields.assign(values.begin(), values.begin() + count);
-                if (paired)
-                    resident.fields_lo.assign(values.begin() + count,
-                                              values.end());
-                callback({}, std::move(resident));
-            });
+        auto host = std::make_shared<BaseGeometryResult>(resident);
+        if (input.readback_values || !input.device_control) {
+            input.readback.batch->append(
+                encoder, result_buffer, 0, result_bytes,
+                [host, callback, control = input.device_control,
+                 paired = input.double_single](
+                    std::span<const float> values) mutable {
+                    const auto count = host->device_fields.values;
+                    host->fields.assign(values.begin(), values.begin() + count);
+                    if (paired)
+                        host->fields_lo.assign(values.begin() + count,
+                                               values.end());
+                    if (!control) callback({}, std::move(*host));
+                });
+        }
         const auto commands = encoder.Finish();
         queue.Submit(1, &commands);
+        if (input.device_control) {
+            enqueue_geometry_control(
+                device, resident.device_fields, input.double_single,
+                input.axisymmetric, input.ntheta, input.readback.batch,
+                [callback = std::move(callback), host](
+                    std::string error, GeometryControlResult control) {
+                    host->control = control;
+                    callback(std::move(error), std::move(*host));
+                });
+        }
         input.readback.publish_device(std::move(resident));
         return;
     }

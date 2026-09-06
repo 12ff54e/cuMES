@@ -53,6 +53,7 @@ int requested_solver_trace();
 int requested_shadow_norms();
 int requested_device_norms();
 int requested_full_field_readbacks();
+int requested_geometry_control();
 int requested_compare_fft();
 int requested_spectral_fences();
 void publish_browser_diagnostic(const char* json);
@@ -1547,7 +1548,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             std::printf(
                 "  GPU field finite scan: offsets, partial blocks, "
                 "NaN/Inf, signed zero, subnormals, range guards: PASS\n");
-            run_w7x_initialization();
+            run_geometry_control_test();
             return;
         }
         const std::size_t counts[] = {1, 255, 256, 257, 1001};
@@ -1607,6 +1608,110 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             self->run_field_finite_test(variant + 1);
+        });
+    }
+
+    void run_geometry_control_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 16) {
+            std::printf(
+                "  GPU Jacobian control: sign/zero/nonfinite, ties, "
+                "axis exemption, threshold/range fallback: PASS\n");
+            run_w7x_initialization();
+            return;
+        }
+        constexpr std::size_t POINTS = 513;
+        constexpr std::size_t VALUES = 10 * POINTS;
+        const bool paired = variant != 1;
+        std::vector<float> data(1 + 2 * VALUES, 0.0F);
+        auto hi = std::span(data).subspan(1, VALUES);
+        auto lo = std::span(data).subspan(1 + VALUES, VALUES);
+        std::fill(hi.begin() + 6 * POINTS, hi.begin() + 7 * POINTS, -1.0F);
+        if (variant == 2) hi[6 * POINTS] = 1.0F;
+        if (variant == 3) hi[6 * POINTS + 512] = 2.0F;
+        if (variant == 4) hi[6 * POINTS] = 0.0F;
+        if (variant == 5)
+            lo[VALUES - 1] = std::numeric_limits<float>::quiet_NaN();
+        if (variant == 6)
+            hi[6 * POINTS + 256] = std::numeric_limits<float>::infinity();
+        if (variant == 7) hi[8 * POINTS + 512] = 0.1F;
+        if (variant == 8 || variant == 9)
+            hi[6 * POINTS + (variant == 8 ? 0 : 32)] = -1.0e-15F;
+        if (variant == 10) {
+            const auto value =
+                split(-cumes::control_policy::JACOBIAN_RELATIVE_THRESHOLD);
+            hi[6 * POINTS + 32] = value.hi;
+            lo[6 * POINTS + 32] = value.lo;
+        }
+        if (variant == 11) lo[7 * POINTS - 1] = 0x1p-27F;
+        if (variant == 12)
+            hi[6 * POINTS] = -std::numeric_limits<float>::denorm_min();
+        if (variant == 13) lo[7 * POINTS - 1] = 1.0e-20F;
+        cumes::JacobianStatus<double> expected;
+        expected.min_oriented = std::numeric_limits<double>::infinity();
+        expected.min_index = -1;
+        for (std::size_t i = 0; i < POINTS; ++i) {
+            const double value = double(hi[6 * POINTS + i]) +
+                                 (paired ? lo[6 * POINTS + i] : 0.0F);
+            if (!std::isfinite(value)) {
+                ++expected.nonfinite_count;
+                continue;
+            }
+            if (-value < expected.min_oriented) {
+                expected.min_oriented = -value;
+                expected.min_index = static_cast<int>(i);
+            }
+            expected.max_abs = std::max(expected.max_abs, std::abs(value));
+        }
+        cumes::IterationController<double> reference({});
+        const bool invalid = reference.jacobian_invalid(expected, 30);
+        const bool guards = variant < 4 || variant > 7;
+        const bool fallback = variant == 10 || variant == 12 || variant == 13;
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = data.size() * sizeof(float);
+        descriptor.usage =
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
+        const auto buffer = device_.CreateBuffer(&descriptor);
+        device_.GetQueue().WriteBuffer(buffer, 0, data.data(), descriptor.size);
+        DeviceFields fields{buffer, VALUES, 4, (1 + VALUES) * sizeof(float)};
+        if (variant == 14) fields.high_offset = 1;
+        if (variant == 15) fields.low_offset += 4;
+        auto batch = std::make_shared<ReadbackBatch>(device_, 32);
+        auto actual = std::make_shared<GeometryControlResult>();
+        auto errors = std::make_shared<std::string>();
+        enqueue_geometry_control(
+            device_, fields, paired, true, 30, batch,
+            [actual, errors](std::string error, GeometryControlResult result) {
+                *actual = result;
+                *errors = std::move(error);
+            });
+        if (variant >= 14) {
+            if (errors->empty()) {
+                finish(false, "GPU Jacobian accepted malformed range");
+                return;
+            }
+            run_geometry_control_test(variant + 1);
+            return;
+        }
+        const auto self = shared_from_this();
+        batch->map([self, buffer, actual, errors, expected, invalid, guards,
+                    fallback, variant](std::string error) {
+            const auto& s = actual->jacobian;
+            if (!error.empty() || !errors->empty() || !actual->present ||
+                actual->guards_valid != guards ||
+                actual->fallback != fallback ||
+                (!fallback && guards &&
+                 (s.min_oriented != expected.min_oriented ||
+                  s.max_abs != expected.max_abs ||
+                  s.min_index != expected.min_index ||
+                  s.nonfinite_count != expected.nonfinite_count ||
+                  actual->invalid != invalid))) {
+                self->finish(false, "GPU Jacobian control mismatch variant=" +
+                                        std::to_string(variant) + " " + error +
+                                        *errors);
+                return;
+            }
+            self->run_geometry_control_test(variant + 1);
         });
     }
 
@@ -2710,6 +2815,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             input.shadow_norms = requested_shadow_norms();
             input.compact_norms = requested_device_norms();
             input.compact_fields = !requested_full_field_readbacks();
+            input.geometry_control = requested_geometry_control();
             input.elements = preconditioner_elements_;
             input.matrix = preconditioner_matrix_;
             input.device_r_con0 = device_constraint_r_con0_;
@@ -2924,57 +3030,96 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     static_cast<std::size_t>(self->base_geometry_case_.ns - 1) *
                     self->base_geometry_case_.ntheta *
                     self->base_geometry_case_.nzeta;
-                const auto guv = actual.fields.begin() + 8 * half_points;
-                const bool axisymmetric_guv_zero =
-                    self->initialized_stage_.ntor != 0 ||
-                    std::all_of(guv, guv + half_points,
-                                [](float value) { return value == 0.0F; });
-                const auto gsqrt = actual.fields.begin() + 6 * half_points;
-                const bool finite_jacobian =
-                    std::all_of(gsqrt, gsqrt + half_points, [](float value) {
-                        return std::isfinite(value) && value != 0.0F;
-                    });
-                const bool precision_valid =
-                    !self->double_single_solve_ ||
-                    (actual.fields_lo.size() == actual.fields.size() &&
-                     std::all_of(
-                         actual.fields_lo.begin(), actual.fields_lo.end(),
-                         [](float value) { return std::isfinite(value); }));
-                if (max_error > 2.0e-4F || !axisymmetric_guv_zero ||
-                    !finite_jacobian || !precision_valid) {
-                    self->finish(
-                        false, "base geometry mismatch: max_error=" +
-                                   std::to_string(max_error) + " guv_zero=" +
-                                   (axisymmetric_guv_zero ? "true" : "false") +
-                                   " finite_jacobian=" +
-                                   (finite_jacobian ? "true" : "false"));
-                    return;
-                }
-                cumes::JacobianStatus<double> jacobian;
-                jacobian.min_oriented = std::numeric_limits<double>::infinity();
-                jacobian.max_abs = 0.0;
-                jacobian.min_index = -1;
-                jacobian.nonfinite_count = 0.0;
-                for (std::size_t i = 0; i < half_points; ++i) {
-                    const std::size_t gsqrt_index = 6 * half_points + i;
-                    const double value = static_cast<double>(gsqrt[i]) +
-                                         (self->double_single_solve_
-                                              ? actual.fields_lo[gsqrt_index]
-                                              : 0.0);
-                    if (!std::isfinite(value)) {
-                        jacobian.nonfinite_count += 1.0;
-                        continue;
+                auto jacobian = actual.control.jacobian;
+                if (actual.control.present) {
+                    ++self->geometry_control_passes_;
+                    if (!actual.control.guards_valid) {
+                        self->finish(false,
+                                     "GPU geometry validity guard failed");
+                        return;
                     }
-                    const double oriented = -value;
-                    if (oriented < jacobian.min_oriented) {
-                        jacobian.min_oriented = oriented;
-                        jacobian.min_index = static_cast<int>(i);
-                    }
-                    jacobian.max_abs =
-                        std::max(jacobian.max_abs, std::abs(value));
+                } else if (actual.control.fallback) {
+                    ++self->geometry_control_fallbacks_;
                 }
-                if (self->controller_->jacobian_invalid(
-                        jacobian, self->initialized_stage_.ntheta)) {
+                if (!actual.control.present || !actual.fields.empty()) {
+                    const auto guv = actual.fields.begin() + 8 * half_points;
+                    const bool axisymmetric_guv_zero =
+                        self->initialized_stage_.ntor != 0 ||
+                        std::all_of(guv, guv + half_points,
+                                    [](float value) { return value == 0.0F; });
+                    const auto gsqrt = actual.fields.begin() + 6 * half_points;
+                    const bool finite_jacobian = std::all_of(
+                        gsqrt, gsqrt + half_points, [](float value) {
+                            return std::isfinite(value) && value != 0.0F;
+                        });
+                    const bool precision_valid =
+                        !self->double_single_solve_ ||
+                        (actual.fields_lo.size() == actual.fields.size() &&
+                         std::all_of(
+                             actual.fields_lo.begin(), actual.fields_lo.end(),
+                             [](float value) { return std::isfinite(value); }));
+                    if (max_error > 2.0e-4F || !axisymmetric_guv_zero ||
+                        !finite_jacobian || !precision_valid) {
+                        self->finish(
+                            false,
+                            "base geometry mismatch: max_error=" +
+                                std::to_string(max_error) + " guv_zero=" +
+                                (axisymmetric_guv_zero ? "true" : "false") +
+                                " finite_jacobian=" +
+                                (finite_jacobian ? "true" : "false"));
+                        return;
+                    }
+                    jacobian.min_oriented =
+                        std::numeric_limits<double>::infinity();
+                    jacobian.max_abs = 0.0;
+                    jacobian.min_index = -1;
+                    jacobian.nonfinite_count = 0.0;
+                    for (std::size_t i = 0; i < half_points; ++i) {
+                        const std::size_t gsqrt_index = 6 * half_points + i;
+                        const double value =
+                            static_cast<double>(gsqrt[i]) +
+                            (self->double_single_solve_
+                                 ? actual.fields_lo[gsqrt_index]
+                                 : 0.0);
+                        if (!std::isfinite(value)) {
+                            jacobian.nonfinite_count += 1.0;
+                            continue;
+                        }
+                        const double oriented = -value;
+                        if (oriented < jacobian.min_oriented) {
+                            jacobian.min_oriented = oriented;
+                            jacobian.min_index = static_cast<int>(i);
+                        }
+                        jacobian.max_abs =
+                            std::max(jacobian.max_abs, std::abs(value));
+                    }
+                }
+                bool invalid;
+                if (actual.control.present) {
+                    const auto& gpu = actual.control.jacobian;
+                    const bool host_invalid =
+                        gpu.nonfinite_count > 0 || gpu.max_abs <= 0 ||
+                        gpu.min_oriented <= 0 ||
+                        (gpu.min_oriented <
+                             cumes::control_policy::
+                                     JACOBIAN_RELATIVE_THRESHOLD *
+                                 gpu.max_abs &&
+                         gpu.min_index >= self->initialized_stage_.ntheta);
+                    if (host_invalid != actual.control.invalid ||
+                        gpu.min_oriented != jacobian.min_oriented ||
+                        gpu.max_abs != jacobian.max_abs ||
+                        gpu.min_index != jacobian.min_index) {
+                        self->finish(false,
+                                     "GPU Jacobian control/reference mismatch");
+                        return;
+                    }
+                    invalid = actual.control.invalid;
+                    if (invalid) self->controller_->reject_jacobian();
+                } else {
+                    invalid = self->controller_->jacobian_invalid(
+                        jacobian, self->initialized_stage_.ntheta);
+                }
+                if (invalid) {
                     self->restore_checkpoint();
                     std::printf(
                         "  invalid Jacobian restore: iter=%d min=%.3e "
@@ -4500,18 +4645,21 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         // the accepted final fields once for derived fields and publication;
         // do not rerun physics or advance the controller to obtain a snapshot.
         if ((base_geometry_case_.geometry.empty() ||
+             magnetic_field_case_.base_geometry.empty() ||
              force_case_.magnetic_field.empty()) &&
             stage_index_ + 1 == problem_->stage_shapes().size()) {
             const auto fields = device_geometry_;
             const auto magnetic = device_magnetic_field_;
-            if (!fields || !magnetic) {
+            const auto base = device_base_geometry_;
+            if (!fields || !magnetic || !base) {
                 finish(false, "missing resident fields for final output");
                 return;
             }
             const auto bytes = fields.values * sizeof(float);
             const auto magnetic_bytes = magnetic.values * sizeof(float);
+            const auto base_bytes = base.values * sizeof(float);
             auto batch = std::make_shared<cumes::webgpu::ReadbackBatch>(
-                device_, bytes + magnetic_bytes + 8);
+                device_, bytes + magnetic_bytes + base_bytes + 16);
             const auto encoder = device_.CreateCommandEncoder();
             const auto self = shared_from_this();
             if (base_geometry_case_.geometry.empty())
@@ -4527,6 +4675,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                   self->force_case_.magnetic_field.assign(
                                       values.begin(), values.end());
                               });
+            if (magnetic_field_case_.base_geometry.empty())
+                batch->append(
+                    encoder, base.buffer, base.high_offset, base_bytes,
+                    [self](std::span<const float> values) {
+                        self->magnetic_field_case_.base_geometry.assign(
+                            values.begin(), values.end());
+                    });
             const auto commands = encoder.Finish();
             device_.GetQueue().Submit(1, &commands);
             batch->map([self](std::string error) {
@@ -4536,6 +4691,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->complete_stage();
             });
             return;
+        }
+        if (requested_geometry_control()) {
+            std::ostringstream diagnostic;
+            diagnostic << "{\"kind\":\"geometry-control\",\"gpu_passes\":"
+                       << geometry_control_passes_
+                       << ",\"fallback_passes\":" << geometry_control_fallbacks_
+                       << '}';
+            publish_browser_diagnostic(diagnostic.str().c_str());
         }
         if (requested_shadow_norms()) {
             std::printf("  GPU norm shadow: PASS (max relative error=%.6e)\n",
@@ -5067,6 +5230,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
     cumes::webgpu::DeviceFields device_geometry_, device_base_geometry_,
         device_magnetic_field_, device_force_fields_, device_constraint_fields_;
+    int geometry_control_passes_ = 0;
+    int geometry_control_fallbacks_ = 0;
     std::vector<float> stage_geometry_lo_;
     std::vector<float> stage_base_geometry_lo_;
     std::vector<float> stage_magnetic_field_lo_;

@@ -64,6 +64,9 @@ mergeInto(LibraryManager.library, {
   requested_full_field_readbacks: function() {
     return new URLSearchParams(window.location.search).get('field_readbacks') === 'full';
   },
+  requested_geometry_control: function() {
+    return new URLSearchParams(window.location.search).get('gpu_control') === 'jacobian';
+  },
   requested_compare_fft: function() {
     return new URLSearchParams(window.location.search).get('compare_fft') === '1';
   },

@@ -1026,6 +1026,53 @@ Its spectral and derived-field digests are unchanged too
 (`../tmp/w7x-compact-fields-fft-*`). These changes accelerate each route
 without trying to make the direct and FFT convergence trajectories equal.
 
+### Shader Jacobian control (2026-09-06)
+
+`gpu_control=jacobian` opts resident production solves into the first
+shader-controlled acceptance gate. A two-pass reduction scans the ten base
+geometry fields, checks the existing high-Jacobian/low-word/axisymmetric
+validity guards, and classifies the oriented-Jacobian restart predicate. It
+returns a **32-byte status record**, including min/max pairs, the earliest
+minimum index, guard flags and the restart verdict. The relative threshold
+comes from the host policy constant; the existing browser axis-exemption
+cutoff is preserved. No transform or force arithmetic changes.
+
+Ordinary passes retain base geometry on device. Refresh passes still download
+it for unchanged CPU force normalization and check the reduced statistics
+against the full CPU scan. `field_readbacks=full&gpu_control=jacobian` retains
+this full comparison on every pass. The compact scalar predicate is checked
+on every GPU-controlled pass before its verdict is applied; disagreement is
+an error, never silent acceptance. Accepted final fields are downloaded once
+for publication without advancing physics or the controller.
+
+Near-threshold, underflow/overflow and ambiguous earliest-index comparisons
+fall back to the original full host gate. Only ambiguity in the surviving
+minimum propagates; maximum-value ordering is monotone under double rounding
+and needs no tie-index fallback. A fallback can add a second map to that
+pass. Completion diagnostics report GPU-controlled and fallback pass counts.
+
+This is **partial controller migration**, not a shader-resident iteration
+loop: damping/log history, residual convergence classification, restart
+counters and checkpoint restore still run on the CPU, and there is still a
+host fence per iteration. Moving those requires persistent device controller
+and checkpoint state before multi-iteration dispatch can be enabled safely.
+
+Host controller tests verify exact restart bookkeeping for a device verdict.
+Browser conformance includes 16 geometry-control cases: f32/paired data,
+unaligned plane offsets, partial blocks, first/interior sign flips, zero and
+nonfinite guards, axis exemption, low-word minima, ambiguous ties, threshold
+and subnormal fallback, and malformed buffer ranges.
+
+Chrome/RTX 3060 Ti qualification: the refined direct GPU-norm run reached
+`1e-12` in **54.92 s**, with all 2,817 controller records and scientific-output
+SHA-256 digests identical to the preceding compact-field baseline. All 2,821
+attempted passes used the GPU gate (zero fallbacks). The 256-iteration profile
+measured **6.15 MB readbacks/pass**, down from 14.29 MB, and **0.0205 ms/pass**
+for the two new shaders. Mean profiled interval was 20.76 ms (previous capture
+22.46 ms); whole-run timing is observational, not a controlled speedup claim.
+The host controller regression and full browser conformance suite passed.
+Evidence: `../tmp/w7x-gpu-jacobian-refined-*`, `gpu-jacobian-conformance-*`.
+
 The WebGPU implementation lives under these paths:
 
 ```text

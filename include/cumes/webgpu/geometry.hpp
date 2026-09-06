@@ -1,6 +1,7 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_GEOMETRY_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_GEOMETRY_HPP_
 #include "cumes/webgpu/device_fields.hpp"
+#include "cumes/webgpu/reduction.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -16,6 +17,9 @@ inline constexpr std::size_t BASE_GEOMETRY_FIELD_COUNT = 10;
 struct BaseGeometryResult;
 
 struct BaseGeometryCase {
+    bool device_control = false;
+    bool readback_values = true;
+    bool axisymmetric = false;
     BatchedReadback<BaseGeometryResult> readback;
     DeviceFields device_geometry;
     int ns = 0;
@@ -31,6 +35,7 @@ struct BaseGeometryCase {
 };
 
 struct BaseGeometryResult {
+    GeometryControlResult control;
     DeviceFields device_fields;
     // Field-major half-grid order: r12, ru12, zu12, rs, zs, tau, gsqrt,
     // guu, guv, gvv.
