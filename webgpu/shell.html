@@ -179,6 +179,7 @@
     <section class="panel legacy-viewer" id="legacy-viewer" hidden><div class="panel-head"><h2>3D equilibrium</h2><span class="tag">Drag to orbit · wheel to zoom</span></div>
       <div class="plot-wrap"><canvas class="equilibrium-3d" id="legacy-result-3d" aria-label="Interactive three-dimensional equilibrium"></canvas></div></section>
   </div>
+  <script src="browser_ui.js"></script>
   <script>
     const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x',w7xMultigrid=query.get('grids')==='3';
     const appMode=query.get('mode')!=='test'&&!w7xSolve,running=appMode&&query.get('run')==='1';
@@ -305,7 +306,9 @@
       const next=new URL(location.href);next.searchParams.set('run','1');location.assign(next.href)});
     value('reset')?.addEventListener('click',()=>{localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
       const next=new URL(location.href);next.searchParams.delete('run');location.assign(next.href)});
-    function append(line){output.append(document.createTextNode(line+'\n'));output.scrollTop=output.scrollHeight}
+    const logBuffer=createCumesLogBuffer(output);
+    function append(line){logBuffer.append(line)}
+    window.cumesFlushLog=()=>logBuffer.flush();
     window.cumesAppendLog = append;
     function publishLine(line){const progress=line.match(/host controller: PASS \(iter=(\d+), FSQR=([^,]+)/);
       if(progress){document.body.dataset.cumesIteration=progress[1];document.body.dataset.cumesFsqr=progress[2];if(appMode){value('iteration').textContent=progress[1];value('fsqr').textContent=progress[2]}
@@ -375,7 +378,9 @@
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
     function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,.mode-switch button:not([id^="editor-precision-"]),#reset-contour').forEach(control=>control.disabled=disabled);
       value('reset').disabled=disabled}
-    function updateStatus(){if(!appMode)return;const state=document.body.dataset.cumesWebgpu;
+    function updateStatus(){const state=document.body.dataset.cumesWebgpu;
+      if(state==='pass'||state==='fail')logBuffer.flush();
+      if(!appMode)return;
       if(state==='pass'){document.body.classList.remove('busy');value('status').textContent='Converged';value('run').disabled=false;value('run').textContent='Run again';
         setEditorDisabled(false)}
       else if(state==='fail'){document.body.classList.remove('busy');value('status').textContent='Solve failed';value('result-empty').innerHTML='<strong>Could not converge</strong><span>Open the solver log for details.</span>';

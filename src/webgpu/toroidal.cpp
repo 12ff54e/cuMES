@@ -1382,27 +1382,38 @@ ToroidalDealiasResult toroidal_dealias_reference(
     };
     ToroidalDealiasResult result;
     result.g_con.assign(static_cast<std::size_t>(input.ns) * n_z_n_t, 0.0F);
+    std::vector<std::array<float, 2>> coefficients(mnmax);
     for (int surface = 1; surface < input.ns; ++surface) {
+        // Analysis depends on the surface and mode, not the output point.
+        // Retain the original compensated source order and unscaled sums so
+        // the synthesis below has exactly the same floating-point operations.
+        for (int m = 1; m <= band_modes; ++m) {
+            for (int n = 0; n <= input.ntor; ++n) {
+                const int mode = m * (input.ntor + 1) + n;
+                float sum_sc = 0.0F;
+                float sum_cs = 0.0F;
+                float correction_sc = 0.0F;
+                float correction_cs = 0.0F;
+                for (int source = 0; source < n_z_n_t; ++source) {
+                    const float g =
+                        input.g_con_eff[static_cast<std::size_t>(surface) *
+                                            n_z_n_t +
+                                        source];
+                    compensated_add(sum_sc, correction_sc,
+                                    g * table(2, mode, source));
+                    compensated_add(sum_cs, correction_cs,
+                                    g * table(3, mode, source));
+                }
+                coefficients[mode] = {sum_sc, sum_cs};
+            }
+        }
         for (int angular = 0; angular < n_z_n_t; ++angular) {
             float value = 0.0F;
             float correction = 0.0F;
             for (int m = 1; m <= band_modes; ++m) {
                 for (int n = 0; n <= input.ntor; ++n) {
                     const int mode = m * (input.ntor + 1) + n;
-                    float sum_sc = 0.0F;
-                    float sum_cs = 0.0F;
-                    float correction_sc = 0.0F;
-                    float correction_cs = 0.0F;
-                    for (int source = 0; source < n_z_n_t; ++source) {
-                        const float g =
-                            input.g_con_eff[static_cast<std::size_t>(surface) *
-                                                n_z_n_t +
-                                            source];
-                        compensated_add(sum_sc, correction_sc,
-                                        g * table(2, mode, source));
-                        compensated_add(sum_cs, correction_cs,
-                                        g * table(3, mode, source));
-                    }
+                    const auto [sum_sc, sum_cs] = coefficients[mode];
                     const float norm = n == 0
                                            ? 2.0F / static_cast<float>(n_z_n_t)
                                            : 4.0F / static_cast<float>(n_z_n_t);

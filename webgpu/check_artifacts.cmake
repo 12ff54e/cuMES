@@ -9,6 +9,11 @@ foreach(extension IN ITEMS html js wasm)
   endif()
 endforeach()
 
+get_filename_component(artifact_dir "${ARTIFACT_BASE}" DIRECTORY)
+if(NOT EXISTS "${artifact_dir}/browser_ui.js")
+  message(FATAL_ERROR "missing WebGPU frontend: browser_ui.js")
+endif()
+
 file(READ "${ARTIFACT_BASE}.html" html)
 if(NOT html MATCHES "src=\\\"cumes_webgpu\\.js\\?v=[0-9a-f]+\\\"")
   message(FATAL_ERROR

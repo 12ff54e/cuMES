@@ -96,12 +96,14 @@ add_custom_command(
   TARGET cumes_webgpu POST_BUILD
   COMMAND ${CMAKE_COMMAND}
           -DARTIFACT_BASE=$<TARGET_FILE_DIR:cumes_webgpu>/cumes_webgpu
+          -DFRONTEND_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
   COMMENT "Adding content versions to the WebGPU runtime artifacts")
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/geometry_control.wgsl
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
+  ${CMAKE_CURRENT_SOURCE_DIR}/browser_ui.js
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
   ${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js
   ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
@@ -153,4 +155,8 @@ if(CUMES_WEBGPU_NODE)
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_precision_switch.mjs)
   set_tests_properties(webgpu_precision_switch PROPERTIES LABELS "unit;webgpu")
+  add_test(NAME webgpu_log_buffer
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_log_buffer.mjs)
+  set_tests_properties(webgpu_log_buffer PROPERTIES LABELS "unit;webgpu")
 endif()
