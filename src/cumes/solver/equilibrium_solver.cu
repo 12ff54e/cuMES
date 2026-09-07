@@ -53,9 +53,8 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
     }
     DeviceParams<Real> params =
         init_params<Real>(problem, use_radius_reference);
-    if constexpr (sizeof(Real) == sizeof(float))
-        if (params.ntor > 0 && !problem.spec().free_boundary.lfreeb)
-            params.odd_geometry = odd_geometry;
+    if (params.ntor > 0 && !problem.spec().free_boundary.lfreeb)
+        params.odd_geometry = odd_geometry;
     const StageRequest& first_stage = problem.spec().stages.front();
     params.ns = static_cast<int>(first_stage.radial_surfaces);
     params.max_iter = static_cast<int>(first_stage.max_iterations);

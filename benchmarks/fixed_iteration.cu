@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
 
     // Single stage at the config's FINAL radial grid.
     DeviceParams<Real> p = cumes::init_params<Real>(vp, radius_reference);
-    if constexpr (sizeof(Real) == sizeof(float)) p.odd_geometry = odd_geometry;
+    p.odd_geometry = odd_geometry;
     p.ns = static_cast<int>(spec.stages.back().radial_surfaces);
     p.max_iter = warmup + passes;
     p.ftol = Real(0.0);  // never converge: run exactly warmup+passes passes

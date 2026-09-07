@@ -52,7 +52,9 @@ struct SolveRequest {
     // axisymmetric and free-boundary solves.
     bool use_radius_reference = true;
 
-    // Opt-in reconstruction experiment, applied only to fixed 3-D float.
+    // Opt-in reconstruction experiment for fixed-boundary 3-D solves.
+    // POLOIDAL uses paired values of the state scalar type; the other
+    // diagnostic corrections apply only to float.
     OddGeometryPrecision odd_geometry = OddGeometryPrecision::NATIVE;
 };
 

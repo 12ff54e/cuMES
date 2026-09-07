@@ -6,6 +6,8 @@
 
 namespace cumes {
 // Experimental accuracy scopes for the odd R/Z position reconstruction.
+// POLOIDAL compensates in the state scalar type (float-float or double-double).
+// Other non-native scopes are float-only diagnostic controls.
 enum class OddGeometryPrecision {
     NATIVE,
     FLOAT_ORDER,

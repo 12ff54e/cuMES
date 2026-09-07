@@ -9,7 +9,9 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 using namespace cumes;
@@ -25,11 +27,13 @@ std::vector<T> download(const T* d_data, std::size_t size) {
 }
 
 // Independent host direct product-basis sum, retaining extra precision through
-// both angular directions and the odd normalization. Input is exactly float.
-std::array<std::vector<double>, 2> reference(
-    const DeviceParams<float>& p,
+// both angular directions and the odd normalization. Input is the exact stored
+// scalar; retain long double outputs to diagnose double reconstruction too.
+template <class T>
+std::array<std::vector<long double>, 2> reference(
+    const DeviceParams<T>& p,
     const EquilibriumSnapshot& snapshot) {
-    std::array<std::vector<double>, 2> result;
+    std::array<std::vector<long double>, 2> result;
     for (auto& field : result) field.resize(p.ns * p.nZnT);
     const long double pi = std::acos(-1.0L);
     for (int k = 0; k < p.nzeta; ++k)
@@ -60,17 +64,43 @@ std::array<std::vector<double>, 2> reference(
                 long double scale = std::sqrt(
                     static_cast<long double>(p.ns - 1) / std::max(j, 1));
                 int i = j * p.nZnT + k * p.ntheta + l;
-                result[0][i] = double(r * scale);
-                result[1][i] = double(z * scale);
+                result[0][i] = r * scale;
+                result[1][i] = z * scale;
             }
         }
     return result;
 }
 
-int main(int argc, char** argv) {
-    bool benchmark = argc > 1 && std::string_view(argv[1]) == "--benchmark";
+template <class T>
+__global__ void cancellation_kernel(T* d_out, T small, T step) {
+    using A = Compensated<T>;
+    d_out[0] = T((A(T(1)) + A(small)) + A(T(-1)));
+    d_out[1] = T(A(T(1) + step) * A(T(1) - step) + A(T(-1)));
+    d_out[2] = T(A(T(1) + T(2) * small));
+}
+
+template <class T>
+void test_cancellation() {
+    T small = std::ldexp(T(1), -std::numeric_limits<T>::digits);
+    T step = std::ldexp(T(1), -(std::numeric_limits<T>::digits / 2 + 1));
+    DeviceBuffer<T> result(3);
+    cancellation_kernel<<<1, 1>>>(result.data(), small, step);
+    auto values = download(result.data(), 3);
+    check(values[0] == small,
+          "compensation preserves sum cancellation residual");
+    check(values[1] == -step * step,
+          "compensation preserves product cancellation residual");
+    check(values[2] == T(1) + T(2) * small,
+          "compensation does not narrow its scalar input or output");
+}
+
+template <class T>
+int test_reconstruction(int argc, char** argv) {
+    bool benchmark = argc > 1;
+    std::printf("scalar=%s\n", std::is_same_v<T, float> ? "float" : "double");
+    test_cancellation<T>();
     auto vp = load_validated("inputs/w7x.json");
-    auto p = init_params<float>(vp, true);
+    auto p = init_params<T>(vp, true);
     p.ns = benchmark ? 99 : 9;
     auto state = init_state(p, vp, false, false);
     if (argc > 2) {
@@ -85,24 +115,35 @@ int main(int argc, char** argv) {
         }
     }
     auto expected = reference(p, snapshot_from_device(state));
-    constexpr std::array policies{OddGeometryPrecision::NATIVE,
-                                  OddGeometryPrecision::FLOAT_ORDER,
-                                  OddGeometryPrecision::SUM,
-                                  OddGeometryPrecision::POLOIDAL,
-                                  OddGeometryPrecision::POLOIDAL_SCALE,
-                                  OddGeometryPrecision::FLOAT_FLOAT,
-                                  OddGeometryPrecision::DOUBLE};
-    constexpr std::array names{"native",   "float-order",    "sum",
-                               "poloidal", "poloidal-scale", "float-float",
-                               "double"};
-    std::vector<float> baseline_ru;
-    std::array<double, 2> baseline_radial{};
+    constexpr auto policies = [] {
+        if constexpr (std::is_same_v<T, double>)
+            return std::array{OddGeometryPrecision::NATIVE,
+                              OddGeometryPrecision::POLOIDAL};
+        else
+            return std::array{OddGeometryPrecision::NATIVE,
+                              OddGeometryPrecision::FLOAT_ORDER,
+                              OddGeometryPrecision::SUM,
+                              OddGeometryPrecision::POLOIDAL,
+                              OddGeometryPrecision::POLOIDAL_SCALE,
+                              OddGeometryPrecision::FLOAT_FLOAT,
+                              OddGeometryPrecision::DOUBLE};
+    }();
+    constexpr auto names = [] {
+        if constexpr (std::is_same_v<T, double>)
+            return std::array{"native", "compensated"};
+        else
+            return std::array{"native",   "float-order",    "sum",
+                              "poloidal", "poloidal-scale", "float-float",
+                              "double"};
+    }();
+    std::vector<T> baseline_ru;
+    std::array<long double, 2> baseline_radial{};
     Stream stream;
     for (std::size_t v = 0; v < policies.size(); ++v) {
         p.odd_geometry = policies[v];
-        stage_detail::ScopedRealSpace<float> rs(p, std::nullopt);
-        stage_detail::ScopedModeTable<float> mt(p, std::nullopt);
-        ToroidalFftOperator<float> transform(p, *rs, mt.get());
+        stage_detail::ScopedRealSpace<T> rs(p, std::nullopt);
+        stage_detail::ScopedModeTable<T> mt(p, std::nullopt);
+        ToroidalFftOperator<T> transform(p, *rs, mt.get());
         transform.bind_stream(stream.get());
         transform.prepare_radius_reference(state.physical_const(),
                                            stream.get());
@@ -117,32 +158,38 @@ int main(int argc, char** argv) {
                           download(rs->d_z_o, p.ns * p.nZnT)};
         std::printf("%s", names[v]);
         for (int c = 0; c < 2; ++c) {
-            double error2 = 0, radial2 = 0, worst = 0;
+            long double error2 = 0, radial2 = 0, worst = 0;
             int differing = 0;
             for (int i = 0; i < p.ns * p.nZnT; ++i) {
-                double error = fields[c][i] - expected[c][i];
+                long double error = fields[c][i] - expected[c][i];
                 error2 += error * error;
                 worst = std::max(worst, std::abs(error));
                 differing += std::abs(expected[c][i]) > 1e-12 &&
-                             fields[c][i] != float(expected[c][i]);
+                             fields[c][i] != T(expected[c][i]);
                 if (i >= p.nZnT) {
-                    double radial = (error - (fields[c][i - p.nZnT] -
-                                              expected[c][i - p.nZnT])) *
-                                    (p.ns - 1);
+                    long double radial = (error - (fields[c][i - p.nZnT] -
+                                                   expected[c][i - p.nZnT])) *
+                                         (p.ns - 1);
                     radial2 += radial * radial;
                 }
             }
             if (v == 0) baseline_radial[c] = radial2;
-            if (policies[v] == OddGeometryPrecision::POLOIDAL ||
-                policies[v] == OddGeometryPrecision::POLOIDAL_SCALE)
+            if ((std::is_same_v<T, float> || !benchmark) &&
+                (policies[v] == OddGeometryPrecision::POLOIDAL ||
+                 policies[v] == OddGeometryPrecision::POLOIDAL_SCALE))
                 check(radial2 < 0.95 * baseline_radial[c],
                       "poloidal compensation reduces radial difference error");
             std::printf(
                 " %c_rms=%.9g %c_radial_rms=%.9g %c_max=%.9g "
                 "rounded_mismatch=%d",
-                c == 0 ? 'r' : 'z', std::sqrt(error2 / fields[c].size()),
-                c == 0 ? 'r' : 'z', std::sqrt(radial2 / ((p.ns - 1) * p.nZnT)),
-                c == 0 ? 'r' : 'z', worst, differing);
+                c == 0 ? 'r' : 'z',
+                double(std::sqrt(error2 / fields[c].size())),
+                c == 0 ? 'r' : 'z',
+                double(std::sqrt(radial2 / ((p.ns - 1) * p.nZnT))),
+                c == 0 ? 'r' : 'z', double(worst), differing);
+            if constexpr (std::is_same_v<T, double>)
+                check(worst < 1e-13L,
+                      "double positions agree with long double reference");
             if (policies[v] == OddGeometryPrecision::FLOAT_FLOAT ||
                 policies[v] == OddGeometryPrecision::DOUBLE) {
                 check(
@@ -201,4 +248,19 @@ int main(int argc, char** argv) {
         cumes::check_cuda(cudaGraphDestroy(graph), "odd destroy graph");
     }
     return summary();
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1) {
+        if (std::string_view(argv[1]) == "--benchmark-double")
+            return test_reconstruction<double>(argc, argv);
+        if (std::string_view(argv[1]) == "--benchmark")
+            return test_reconstruction<float>(argc, argv);
+        std::fprintf(
+            stderr,
+            "expected --benchmark or --benchmark-double [checkpoint]\n");
+        return 1;
+    }
+    test_reconstruction<float>(argc, argv);
+    return test_reconstruction<double>(argc, argv);
 }

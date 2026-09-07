@@ -664,7 +664,8 @@ __global__ void inverse_accumulate_kernel(
     size_t mstride = (size_t)mpol * k_tile;
     T v0e = T(0), v1e = T(0), v2e = T(0);
     T v0o = T(0), v1o = T(0), v2o = T(0);
-    cumes::FloatFloat odd_sum;
+    using Accumulator = cumes::Compensated<T>;
+    Accumulator odd_sum;
     T rcon = T(0), zcon = T(0);
     for (int m = 0; m < mpol; ++m) {
         const T* sm = sh + m * k_tile;
@@ -692,11 +693,10 @@ __global__ void inverse_accumulate_kernel(
             if constexpr (OddPrecision == 1) {
                 v0o += c0 * t0 + c1 * t1;
             } else if constexpr (OddPrecision == 2) {
-                odd_sum = odd_sum + cumes::FloatFloat(c0 * t0 + c1 * t1);
+                odd_sum = odd_sum + Accumulator(c0 * t0 + c1 * t1);
             } else if constexpr (OddPrecision >= 3) {
-                using cumes::FloatFloat;
-                odd_sum = odd_sum + (FloatFloat(c0) * FloatFloat(t0) +
-                                     FloatFloat(c1) * FloatFloat(t1));
+                odd_sum = odd_sum + (Accumulator(c0) * Accumulator(t0) +
+                                     Accumulator(c1) * Accumulator(t1));
             } else {
                 v0o += v0;
             }
@@ -715,12 +715,12 @@ __global__ void inverse_accumulate_kernel(
     if constexpr (OddPrecision == 1)
         o0[idx] = v0o * facO;
     else if constexpr (OddPrecision >= 2) {
-        cumes::FloatFloat scale;
+        Accumulator scale;
         if constexpr (OddPrecision == 4)
             scale = d_odd_scale[j];
         else
-            scale = cumes::FloatFloat(facO);
-        o0[idx] = float(odd_sum * scale);
+            scale = Accumulator(facO);
+        o0[idx] = T(odd_sum * scale);
     } else
         o0[idx] = v0o;
     o1[idx] = v1o;
@@ -884,6 +884,8 @@ static void inverse_pipeline(
                 positions.template operator()<0>();
                 break;
         }
+    } else if (p.odd_geometry == cumes::OddGeometryPrecision::POLOIDAL) {
+        positions.template operator()<3>();
     } else {
         positions.template operator()<0>();
     }
