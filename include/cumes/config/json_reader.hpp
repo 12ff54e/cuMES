@@ -13,6 +13,7 @@
 #include "cumes/config/validated_problem.hpp"
 
 #include <string>
+#include <string_view>
 
 namespace cumes {
 
@@ -25,6 +26,12 @@ struct ParsedProblem {
 // a JSON syntax error; records semantic/type findings in `report`.
 ParsedProblem read_problem_spec(const std::string& path,
                                 const SolverOptions& options);
+
+// Parse + map an in-memory JSON document. This is the embedding counterpart
+// to read_problem_spec: optimizers can keep a baseline configuration in
+// memory and need not manufacture a temporary file.
+ParsedProblem parse_problem_spec(std::string_view document,
+                                 const SolverOptions& options);
 
 // parse + validate in one call (the CLI entry point). Throws std::runtime_error
 // (path-prefixed) on JSON syntax/file errors; returns the immutable model, or

@@ -309,9 +309,11 @@ struct FreeBoundaryOperator<T>::Impl {
                 "mirror bridge assumes it)");
         }
         nvacskip = params.nvacskip;
-        if (const char* value =
-                std::getenv("CUMES_VACUUM_ACTIVATION_THRESHOLD")) {
-            activation_threshold = std::atof(value);
+        if (params.use_process_environment) {
+            if (const char* value =
+                    std::getenv("CUMES_VACUUM_ACTIVATION_THRESHOLD")) {
+                activation_threshold = std::atof(value);
+            }
         }
         if (params.hot_start) state = VacuumState::INITIALIZED;
     }

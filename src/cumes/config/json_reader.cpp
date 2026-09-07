@@ -342,13 +342,12 @@ MakegridParametersSpec read_makegrid_parameters(const json::Value& value,
 
 }  // namespace
 
-ParsedProblem read_problem_spec(const std::string& path,
-                                const SolverOptions& options) {
+static ParsedProblem map_problem_spec(json::Value root,
+                                      const SolverOptions& options) {
     ParsedProblem parsed;
     ValidationReport& report = parsed.report;
     ProblemSpec& p = parsed.spec;
 
-    const json::Value root = json::parse_file(path);
     if (!root.is_object()) {
         throw std::runtime_error("top-level JSON value must be an object");
     }
@@ -617,6 +616,16 @@ ParsedProblem read_problem_spec(const std::string& path,
     }
 
     return parsed;
+}
+
+ParsedProblem read_problem_spec(const std::string& path,
+                                const SolverOptions& options) {
+    return map_problem_spec(json::parse_file(path), options);
+}
+
+ParsedProblem parse_problem_spec(std::string_view document,
+                                 const SolverOptions& options) {
+    return map_problem_spec(json::parse(std::string(document)), options);
 }
 
 ValidationResult read_and_validate(const std::string& path,

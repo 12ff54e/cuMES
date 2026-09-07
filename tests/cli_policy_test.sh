@@ -86,6 +86,10 @@ check "native and Boozer outputs are mutually exclusive" 22       "mutually excl
 
 check "calculate-only Boozer option is rejected" 22       "unrecognized option '--boozer'" ""       "$BIN" in_clean.json --boozer
 
+check "invalid geometry precision reports a clean error" 1 \
+  "CUMES_GEOMETRY_PRECISION: expected native or compensated" "terminate called" \
+  env CUMES_GEOMETRY_PRECISION=invalid "$BIN" in_clean.json --output out.bin
+
 if [ "$fail" -ne 0 ]; then
   echo "cli_policy_test: FAILED"
   exit 1

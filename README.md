@@ -131,6 +131,65 @@ user's Chrome/RTX 3060 Ti, not a cross-device performance guarantee.
 Damping, convergence classification and checkpoint rollback remain on the CPU.
 See [shader-control qualification](docs/webgpu-port.md#shader-jacobian-control-2026-09-06).
 
+### In-process library
+
+The supported embedding API is `cumes::EquilibriumSolver`. It consumes an
+immutable validated problem and returns a complete host equilibrium without
+writing an output file or exposing CUDA objects:
+
+```cpp
+#include <cumes/config/json_reader.hpp>
+#include <cumes/solver/equilibrium_linearization.hpp>
+#include <cumes/solver/equilibrium_solver.hpp>
+
+cumes::SolverOptions config_options;
+auto parsed = cumes::read_problem_spec("inputs/solovev.json", config_options);
+parsed.spec.rbc.front().value += 1.0e-4;  // optimizer-owned boundary update
+
+auto validated = cumes::validate(std::move(parsed.spec), config_options);
+cumes::EquilibriumSolver solver;
+cumes::SolveOutcome solved = solver.solve(validated.value());
+
+cumes::EquilibriumLinearization linearization(validated.value(),
+                                              solved.equilibrium);
+auto direction = cumes::BoundaryTangent::zero(validated.value());
+direction.rbcc[1] = 1.0;  // embedding-owned optimizer direction
+auto spectral_tangent = linearization.solve_boundary_tangent(direction);
+auto tangent = linearization.materialize_tangent(
+    spectral_tangent.state_tangent, solved.equilibrium, solved.profiles);
+```
+
+Library solves are quiet and ignore the CLI's process-global `CUMES_*`
+controls by default. `SolveRequest` can opt into those controls or provide an
+in-memory restart snapshot. Installed consumers use
+`find_package(cuMES CONFIG REQUIRED)` and link `cumes::solver`.
+
+Optimization targets and integration applications are maintained in the meow
+repository. A source-tree integration build remains available by configuring
+cuMES with `-DCUMES_MEOW_SOURCE_DIR=/path/to/meow`; this asks meow to build its
+cuMES-backed examples without making cuMES depend on optimizer policy. See
+[`docs/library-api.md`](docs/library-api.md) for the ownership and
+data-publication contract.
+
+`SolveOutcome` carries the complete equilibrium snapshot plus converged
+half-grid toroidal/poloidal flux derivatives, rotational transform, and the
+covariant flux functions `I(s)` and `G(s)`. cuMES publishes these physical
+quantities but does not choose target surfaces, interpolation, norms, weights,
+or target values.
+
+`EquilibriumLinearization` retains the converged final-grid CUDA operators and
+applies analytic residual JVPs without rerunning the nonlinear equilibrium.
+`solve_boundary_tangent()` solves `F_u du = -F_x dx` with right-preconditioned
+restarted GMRES; repeated directions reuse the same session. The qualified
+scope is precise-double, stellarator-symmetric, fixed-boundary equilibrium.
+Materialized tangents include spectral, magnetic-field, geometry, and profile
+derivatives; current-density derivatives are not part of the qualified API.
+Constructing `EquilibriumLinearization` in a mixed-float build throws
+`CumesError` with that unsupported-precision context.
+Optimizer parameterization, QS/aspect/iota target derivatives, and dense
+Jacobian assembly remain in meow. See
+[`docs/adr/0013-equilibrium-forward-tangents.md`](docs/adr/0013-equilibrium-forward-tangents.md).
+
 The default build also links the `magnetic_coordinate` library into cuMES and
 produces the standalone `cumes-boozer` converter from
 `deps/magnetic-coordinate`. `--output PATH` writes the native PEST-like result;
@@ -185,10 +244,12 @@ kernels live directly in operator classes that own their device buffers (RAII
   `double`/`float` instantiation TUs (`src/<mod>_{double,float}.cu`): `fourier`
   (`ToroidalFftOperator`), `geometry` (`GeometryOperator`/`MagneticFieldOperator`),
   `forces` (`ForceOperator`), `solver` (`EquilibriumOperator`), `profiles`,
-  `precon`, `constraint`, `prolongation`, `axisymmetric`.
+  `precon`, `constraint`, `prolongation`, `axisymmetric`, and `tangent`
+  (`EquilibriumLinearization`).
 - **Host-side `cumes` namespace** — `include/cumes/*` + `src/cumes/*`: config
   validation, RAII CUDA runtime, typed non-owning views, the I/O stack, and the
-  host orchestration (`MultigridSolver`, `StageSolver`, `IterationController`).
+  host orchestration (`EquilibriumSolver`, `MultigridSolver`, `StageSolver`,
+  `IterationController`).
 
 All GPU allocations happen at startup; there are zero `cudaMalloc` calls in the
 hot loop. See [`docs/architecture.md`](docs/architecture.md) for the full shape.
@@ -245,7 +306,7 @@ the convergence decision.
 | preset | policy | notes |
 | ------ | ------ | ----- |
 | `verify` (default) | verify-double | precise double, NetCDF+HDF5, `-Werror` |
-| `float` | mixed-float | float state/FFT + documented double reductions |
+| `float` | mixed-float | float device arithmetic + float-float norm sums; double host controller |
 | `fast` | fast-double | opt-in `--use_fast_math`, dump machinery compiled out |
 | `debug` | debug-double | precise + `-G` |
 | `sanitizer` | verify-double | compute-sanitizer memcheck/initcheck/racecheck/synccheck + ASan/UBSan host twins |
@@ -300,12 +361,24 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 ### Precision
 
 - The default build is double (`Real = double`); residuals reach ~1e-14.
-- Single precision (`float` preset) stalls at ~1e-7 (the float rounding floor):
-  the double-tuned stage ftols can never be met, so float builds hard-error at
-  startup unless the `ftol_array` entries are relaxed to ≥ 1e-6.
+- Single precision (`float` preset) is experimental. Startup requires every
+  `ftol_array` entry to be ≥ 1e-6; this is an input restriction, not a
+  convergence guarantee. Fixed-boundary 3-D float runs use reference-plus-
+  displacement radius storage by default. This converges the first two W7-X
+  grids at 1e-5 but still stalls on ns=99. Adding
+  `CUMES_GEOMETRY_PRECISION=compensated` converges W7-X at 1e-5 by compensating
+  only the odd R/Z position reconstruction; see the
+  [precision and timing experiment](docs/w7x-float-float.md).
+- `CUMES_GEOMETRY_PRECISION=compensated` also supports fixed-boundary 3-D
+  double solves, using double-double arithmetic in the same reconstruction.
+  It improves local reconstruction accuracy but did not reduce the tested
+  W7-X iteration counts; see the [double experiment](docs/w7x-double-compensation.md).
 - On-disk state files stay double regardless of `T`; dump files are `T`-native.
 - The per-pass control record (residuals, Jacobian stats, force-norm factors)
-  is double in both builds; the device norm reductions accumulate in double.
+  uses the state scalar on device. Float norm reductions accumulate in float-float,
+  then store float results; the host widens them to double after transfer.
+  The compiled float kernels are checked for FP64 instructions by CTest; see
+  [ADR-0015](docs/adr/0015-float-only-device-arithmetic.md).
 
 ### Environment variables
 
@@ -314,6 +387,8 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
 | `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects four-point Catmull-Rom coarse-to-fine transfer (the previous fixed-boundary default) |
 | `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer (default for axisymmetric free-boundary and float runs) |
+| `CUMES_RADIUS_REFERENCE` | `=0` restores absolute radius coefficients; reference-plus-displacement is the default for fixed-boundary 3-D float runs, ignored for double/axisymmetric/free-boundary runs |
+| `CUMES_GEOMETRY_PRECISION` | `native` (default) or `compensated` for selective float-float/double-double geometry reconstruction; fixed-boundary 3-D solves only. See [float](docs/w7x-float-float.md) and [double](docs/w7x-double-compensation.md) measurements. |
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |

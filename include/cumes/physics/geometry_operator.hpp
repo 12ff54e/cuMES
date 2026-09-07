@@ -47,12 +47,12 @@ class GeometryOperator {
                  cudaStream_t stream);
 
     // Oriented-Jacobian statistics into the typed control record's four
-    // jacobian_* slots (DOUBLE in both builds — ADR-0001 control-record
-    // follow-up). The finalize step that turns the stats into
-    // status.jacobian_valid lives with the solver (jacobian_finalize_kernel in
-    // kernels/solver_impl.cuh); both use the shared control-policy threshold.
+    // jacobian_* slots (T values and an integer argmin). The finalize step that
+    // turns the stats into status.jacobian_valid lives with the solver
+    // (jacobian_finalize_kernel in kernels/solver_impl.cuh); both use the
+    // shared control-policy threshold.
     void jacobian_stats(const DeviceParams<T>& p,
-                        ControlRecord* rec,
+                        DeviceControlRecord<T>* rec,
                         cudaStream_t stream) const;
 
     // Force-norm partial sums (dVdsH + psum) for the residual normalization.

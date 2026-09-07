@@ -26,6 +26,7 @@ namespace cumes {
 
 inline bool dump_enabled() {
 #ifdef DUMP_CUMES_VERIFY
+    if (!dump_process_environment_enabled) return false;
     // Read the env var once per process (the old form re-read it at every
     // one of the ~6 dump-window entry points per iteration).
     static const bool enabled = [] {
@@ -146,10 +147,27 @@ static const DumpKnobs& dump_knobs() {
 }
 
 static int dump_max_iter(int default_max_iter) {
+    if (!dump_process_environment_enabled) return default_max_iter;
     static const bool has_override = getenv("CUMES_MAX_ITER") != nullptr;
     static const int override =
         has_override ? atoi(getenv("CUMES_MAX_ITER")) : 0;
     return has_override ? override : default_max_iter;
+}
+
+// Physical offset at theta=zeta=0 for the console diagnostics below. Array
+// dumps retain raw displacements and carry separate reference metadata.
+template <typename T>
+double dump_radius_offset(const DeviceParams<T>& p,
+                          const RealSpaceStorage<T>& rs) {
+    double offset = p.radius_reference;
+    if (rs.d_r_reference) {
+        T h_reference{};
+        check_cuda(cudaMemcpy(&h_reference, rs.d_r_reference, sizeof(T),
+                              cudaMemcpyDeviceToHost),
+                   "diag radius reference");
+        offset += static_cast<double>(h_reference);
+    }
+    return offset;
 }
 
 // Iter-0 loop diagnostic: print + dump the LCFS real-space R right after the
@@ -162,13 +180,16 @@ void dump_iter0_loop_diag(int iter,
     if (iter != 0 || !dump_enabled()) return;
     dump_device_array("dump/cuMES/iter0_diag_r_e.bin", rs.d_r_e,
                       (size_t)p.nZnT * (size_t)p.ns);
+    if (rs.d_r_reference)
+        dump_device_array("dump/cuMES/r_reference.bin", rs.d_r_reference,
+                          p.nZnT);
     auto* h_test = new T[p.nZnT * p.ns];
     check_cuda(cudaMemcpy(h_test, rs.d_r_e, p.nZnT * p.ns * sizeof(T),
                           cudaMemcpyDeviceToHost),
                "loop test");
     int j_b = p.ns - 1;
     printf("  [loop diag] LCFS theta=0: r_e=%.4f (expect ~3.93)\n",
-           (double)h_test[0 + j_b * p.nZnT]);
+           (double)h_test[0 + j_b * p.nZnT] + dump_radius_offset(p, rs));
     delete[] h_test;
 }
 
@@ -674,7 +695,7 @@ void dump_inverse_diag(ToroidalFftOperator<T>& transform,
     // Check surface j=ns-1 (LCFS): r_e should be rbc[0]*cos(0)=3.999, r_o
     // should be sum of odd m
     int j_b = p.ns - 1;
-    double re_lcfs = h_re[0 + j_b * p.nZnT];  // theta=0
+    double re_lcfs = h_re[0 + j_b * p.nZnT] + dump_radius_offset(p, rs);
     double ro_lcfs = h_ro[0 + j_b * p.nZnT];
     printf(
         "  [diag] LCFS theta=0: r_e=%.4f r_o=%.4f r_total=%.4f (expect "
@@ -698,6 +719,18 @@ void dump_step_0(const DeviceParams<T>& p,
 #ifdef DUMP_CUMES_VERIFY
     const RadialProfileViews<T> rpv = profiles.profile_views();
     dump_ensure_dir();
+    if (dump_enabled()) {
+        // Always overwrite, including an empty reference, so a reused dump
+        // directory cannot apply an old offset to an uncentered run.
+        FILE* fp = fopen("dump/cuMES/rbcc_reference.bin", "wb");
+        if (fp) {
+            const auto reference = storage.radius_references();
+            const uint64_t n = reference.size();
+            fwrite(&n, sizeof(n), 1, fp);
+            if (n) fwrite(reference.data(), sizeof(double), n, fp);
+            fclose(fp);
+        }
+    }
     size_t n_spec = (size_t)p.ns * (size_t)p.mnmax;
     dump_device_array("dump/cuMES/init_rmncc.bin",
                       storage.family_ptr(SpectralComponent::Rcc), n_spec);

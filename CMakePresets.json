@@ -24,7 +24,7 @@
     {
       "name": "float",
       "displayName": "Float \u2014 mixed-float (experimental)",
-      "description": "Mixed-float policy: float state/FFT with the documented double reductions (CUMES_PRECISION_POLICY=mixed-float implies CUMES_USE_FLOAT). Float stalls at ~1e-7; relax ftol_array entries to >= 1e-6.",
+      "description": "Experimental mixed-float policy: float state/FFT with double reductions (CUMES_PRECISION_POLICY=mixed-float implies CUMES_USE_FLOAT). ftol_array entries must be >= 1e-6; convergence is case-dependent and W7-X remains unqualified.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-float",
       "cacheVariables": {

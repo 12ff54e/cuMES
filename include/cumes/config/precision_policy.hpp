@@ -17,14 +17,13 @@ enum class PrecisionPolicy : std::uint8_t {
     VERIFY_DOUBLE = 0,  // double state/geometry/FFT/reduction, precise math
     FAST_DOUBLE = 1,    // double + selected fast intrinsics (opt-in)
     MIXED_FLOAT =
-        2,  // float state/geometry/FFT, double reductions (experimental)
+        2,  // float device arithmetic, float-float sums, double host control
     DEBUG_DOUBLE = 3,  // double + precise + device checks
 };
 
 // The lowest tolerance a policy can meaningfully meet. Double reaches the
 // ~1e-16 residual floor (the shipped configs request 1e-16 and converge);
-// float stalls at ~1e-7, and the legacy float gate used 1e-6 as a safety
-// margin.
+// float keeps the 1e-6 input floor; convergence is case-dependent.
 inline double tolerance_floor(PrecisionPolicy policy) {
     switch (policy) {
         case PrecisionPolicy::VERIFY_DOUBLE:

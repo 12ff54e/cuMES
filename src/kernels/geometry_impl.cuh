@@ -21,6 +21,7 @@
 
 #include "cumes/state/real_space_storage.hpp"
 
+#include <cmath>
 #include <cstdio>
 
 #include <math_constants.h>
@@ -42,6 +43,8 @@
 
 #include <functional>
 #include <optional>
+
+using std::isfinite;
 
 // The geometry_parity_views factory (typed real-space view bundle over the
 // workspace structs) is the single shared inline definition in
@@ -136,7 +139,8 @@ __global__ void base_geometry_kernel(cumes::GeometryParityViews<T> full,
                                      cumes::BaseGeometryHalfViews<T> half,
                                      int ns,
                                      int nZnT,
-                                     T delta_s) {
+                                     T delta_s,
+                                     T radius_reference) {
     // Full-grid geometry, even/odd parity (R/Z only — λ enters the field
     // kernel)
     const T* r_e = full.r_e.data();
@@ -180,8 +184,16 @@ __global__ void base_geometry_kernel(cumes::GeometryParityViews<T> full,
     T sF_o = sqrtS_F[jH + 1];  // full-grid sqrt(s) at jH+1
 
     // ---- half-grid interpolation with parity mixing --------------------
-    T r12_v =
-        T(0.5) * ((r_e[i_in] + r_e[i_out]) + sH * (r_o[i_in] + r_o[i_out]));
+    T re_i = r_e[i_in], re_o = r_e[i_out];
+    if constexpr (sizeof(T) == sizeof(float)) {
+        re_i += T(radius_reference);
+        re_o += T(radius_reference);
+        if (full.r_reference.data()) {
+            re_i += full.r_reference.data()[k];
+            re_o += full.r_reference.data()[k];
+        }
+    }
+    T r12_v = T(0.5) * ((re_i + re_o) + sH * (r_o[i_in] + r_o[i_out]));
     T ru12_v =
         T(0.5) * ((ru_e[i_in] + ru_e[i_out]) + sH * (ru_o[i_in] + ru_o[i_out]));
     T zu12_v =
@@ -222,10 +234,10 @@ __global__ void base_geometry_kernel(cumes::GeometryParityViews<T> full,
         sH * ((ru_e[i_in] * ru_o[i_in] + zu_e[i_in] * zu_o[i_in]) +
               (ru_e[i_out] * ru_o[i_out] + zu_e[i_out] * zu_o[i_out]));
 
-    T gvv_v = T(0.5) * (r_e[i_in] * r_e[i_in] + r_e[i_out] * r_e[i_out] +
-                        sFi_sq * r_o[i_in] * r_o[i_in] +
-                        sFo_sq * r_o[i_out] * r_o[i_out]) +
-              sH * (r_e[i_in] * r_o[i_in] + r_e[i_out] * r_o[i_out]);
+    T gvv_v =
+        T(0.5) * (re_i * re_i + re_o * re_o + sFi_sq * r_o[i_in] * r_o[i_in] +
+                  sFo_sq * r_o[i_out] * r_o[i_out]) +
+        sH * (re_i * r_o[i_in] + re_o * r_o[i_out]);
 
     // 3D toroidal coupling (rv/zv = R_ζ/Z_ζ): guv and the 3D part of gvv
     // (vmecpp metric_kernel.h ComputeMetricElements, lthreed block).
@@ -343,7 +355,7 @@ __global__ void magnetic_field_kernel(
     T guu_v = guu[idx], guv_v = guv[idx], gvv_v = gvv[idx];
 
     T bsupv_v, bsupu_v;
-    if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+    if (isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
         bsupv_v = (lamscale * lu_h + phipF_avg) / gsqrt_v;
         // the χ' part (chipH) is added below (ncurr=1) or taken from the
         // fixed profile (ncurr=0).
@@ -359,7 +371,7 @@ __global__ void magnetic_field_kernel(
     if (ncurr == 0) {
         // Fixed iota profile: chipH is precomputed in profiles.
         // (chip_H[jH] / gsqrt_v — the same validity branch as above.)
-        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+        if (isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
             bsupu_v += chip_H[jH] / gsqrt_v;
         }
         bsupu[idx] = bsupu_v;
@@ -433,7 +445,7 @@ __global__ void ncurr1_finalize_kernel(
         // Same degenerate-√g guard as geometryKernel: a non-finite or ~zero
         // √g would otherwise make the surface average NaN and the chipH
         // solve below degenerate before the jacobian-stats check runs.
-        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+        if (isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
             avg += guu_v / gsqrt_v * w;
         }
     }
@@ -462,7 +474,7 @@ __global__ void ncurr1_finalize_kernel(
         T gsqrt_v = gsqrt[idx];
         // Same validity branch as geometryKernel (chip / √g exactly).
         T bsupu_v = bsupu[idx];
-        if (std::isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
+        if (isfinite(gsqrt_v) && fabs(gsqrt_v) > T(1e-30)) {
             bsupu_v += chip / gsqrt_v;
         }
         T bsubu_v = guu[idx] * bsupu_v + guv[idx] * bsupv[idx];
@@ -647,7 +659,7 @@ __global__ void jacobian_stats_partials_kernel(const T* __restrict__ gsqrt,
     int grid_stride = blockDim.x * gridDim.x;
     for (int i = global_tid; i < nHalf; i += grid_stride) {
         T g = gsqrt[i];
-        if (!std::isfinite(g)) {
+        if (!isfinite(g)) {
             vbad += T(1.0);
             continue;
         }
@@ -697,7 +709,7 @@ __global__ void jacobian_stats_finalize_kernel(
     const int* __restrict__ partial_arg,
     const int* __restrict__ partial_seen,
     int nPartials,
-    cumes::ControlRecord* __restrict__ rec) {
+    cumes::DeviceControlRecord<T>* __restrict__ rec) {
     const T INF =
         (sizeof(T) == sizeof(double)) ? T(CUDART_INF) : T(CUDART_INF_F);
     int tid = threadIdx.x;
@@ -731,7 +743,7 @@ __global__ void jacobian_stats_finalize_kernel(
         rec->jacobian_min_oriented = s_seen[0] ? s_min[0] : INF;
         rec->jacobian_max_abs = s_max[0];
         rec->jacobian_nonfinite_count = s_bad[0];
-        rec->jacobian_min_index = static_cast<double>(s_arg[0]);
+        rec->jacobian_min_index = s_arg[0];
     }
 }
 
@@ -749,14 +761,15 @@ void cumes::GeometryOperator<T>::enqueue(
     dim3 grid((p.nZnT + 127) / 128, p.ns - 1);
     base_geometry_kernel<T><<<grid, block, 0, stream>>>(
         geometry_parity_views(rs, p), rpv, base_geometry_views(p), p.ns, p.nZnT,
-        T(1.0) / T(p.ns - 1));
+        T(1.0) / T(p.ns - 1), p.radius_reference);
     cumes::check_cuda(cudaGetLastError(), "base geometry kernel");
 }
 
 template <typename T>
-void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p,
-                                                cumes::ControlRecord* rec,
-                                                cudaStream_t stream) const {
+void cumes::GeometryOperator<T>::jacobian_stats(
+    const DeviceParams<T>& p,
+    cumes::DeviceControlRecord<T>* rec,
+    cudaStream_t stream) const {
     const int nHalf = (p.ns - 1) * p.nZnT;
     jacobian_stats_partials_kernel<T><<<jacobian_blocks_, 256, 0, stream>>>(
         d_gsqrt_, nHalf, T(p.SIGN_JACOBIAN), d_jacobian_min_, d_jacobian_max_,

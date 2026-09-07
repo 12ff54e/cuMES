@@ -76,6 +76,7 @@ struct GeometryParityViews {
     using val_type = T;
 
     RealFieldView<T> r_e, z_e, l_e;
+    RealFieldView<T> r_reference;  // optional (1, ntheta, nzeta) offset
     RealFieldView<T> ru_e, zu_e, lu_e;
     RealFieldView<T> r_o, z_o, l_o;
     RealFieldView<T> ru_o, zu_o, lu_o;
@@ -96,6 +97,7 @@ inline GeometryParityViews<T> geometry_parity_views(
     auto f = [&](T* d) { return RealFieldView<T>(d, p.ns, p.ntheta, p.nzeta); };
     GeometryParityViews<T> v;
     v.r_e = f(rs.d_r_e);
+    v.r_reference = RealFieldView<T>(rs.d_r_reference, 1, p.ntheta, p.nzeta);
     v.z_e = f(rs.d_z_e);
     v.l_e = f(rs.d_l_e);
     v.ru_e = f(rs.d_ru_e);

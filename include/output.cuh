@@ -1,21 +1,18 @@
-// output.cuh — copy results from GPU to host and print the console summary.
+// output.cuh — print the CLI console summary from a host snapshot.
 #ifndef CUMES_INCLUDE_OUTPUT_CUH_
 #define CUMES_INCLUDE_OUTPUT_CUH_
-#include "solver.cuh"  // SolverResult<T>
-#include "vmec_types.h"
-// (no include cycle: nothing in the input/solver/geometry/forces chain
-//  includes output.cuh; only main.cu and output.cpp include this header)
+#include "cumes/io/equilibrium_snapshot.hpp"
 
-// The console printout of the converged state (status, residuals, axis +
-// boundary coefficients).
-template <typename T>
-void output_print(const cumes::SpectralStorage<T>& storage,
-                  const DeviceParams<T>& p,
+// The console printout of the final state (status, residuals, axis + boundary
+// coefficients). The solver facade has already performed the single D2H state
+// transfer; printing must not retain a device-storage escape hatch.
+void output_print(const cumes::EquilibriumSnapshot& snapshot,
+                  int ntor,
                   int niter,
                   bool converged,
-                  T fsqr,
-                  T fsqz,
-                  T fsql);
+                  double fsqr,
+                  double fsqz,
+                  double fsql);
 
 // The on-disk writers are GONE from this header (completion plan steps
 // 2.1/2.2): the CLI resolves a typed OutputSpec (cumes/io/output_spec.hpp)

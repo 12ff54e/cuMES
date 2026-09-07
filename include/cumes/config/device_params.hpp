@@ -18,6 +18,8 @@
 // it) need it visible here before any other header includes <cmath>. The
 // fallback is glibc's exact double value, so MU_0 is bit-identical on every
 // toolchain.
+#include "cumes/config/odd_geometry_precision.hpp"
+
 #include <cmath>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -46,6 +48,13 @@ struct DeviceParams {
                           // tcon0; scales the tcon profile in constraint.cu)
     T lamscale = T(0.0);  // sqrt(deltaS * sum phipH^2), vmecpp constants_,
                           // set by profilesCreate
+    // Scalar part of the optional, radially constant m=0 Rcc reference.
+    // Nonzero enables displacement storage; SpectralStorage holds all its
+    // Fourier modes. Absolute-radius terms restore the reference, while
+    // radial differences operate directly on the small displacement.
+    T radius_reference = T(0);
+    cumes::OddGeometryPrecision odd_geometry =
+        cumes::OddGeometryPrecision::NATIVE;
     static constexpr int SIGN_JACOBIAN = -1;
     static constexpr T MU_0 = 4.0 * M_PI * 1.0e-7;  // exact, = vmecpp MU_0
 };

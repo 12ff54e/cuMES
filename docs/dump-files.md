@@ -49,12 +49,27 @@ nelem × sizeof(T) elements     (device-major layout: point + surface*nZnT
 ```
 
 **B. Host scalar/row arrays** (`precon_jmin_iter_1.bin`,
-`precon_sizes_iter_1.bin` — written by `dump_step_precon` directly):
+`precon_sizes_iter_1.bin`, and `rbcc_reference.bin`):
 
 ```
 uint64_t n
 n × double
 ```
+
+With `CUMES_RADIUS_REFERENCE=1`, `rbcc_reference.bin` contains the fixed
+`ntor+1` m=0 Rcc coefficients, ordered n=0 through ntor. Add each reference
+to its radial column in raw `init_rmncc`, `state_rmncc`, and
+`constraint_rmncc` dumps to recover physical coefficients. Velocity and
+force dumps need no offset. An uncentered run writes an empty reference
+file, replacing any previous run's metadata.
+
+The corresponding `r_e` dumps also contain displacements. Add reference
+coefficient 0 plus `r_reference.bin` (layout A, T-native, one angular surface
+containing the n>0 reference synthesis) at every radial surface to recover
+the physical even-parity R field. Use the latter file only when
+`rbcc_reference.bin` is nonempty. Both are overwritten each stage.
+Stable state/checkpoint containers already restore physical coefficients;
+they require no offset or format change.
 
 **C. Text** (`force_norms_iter_<n>.txt`): ten `key value` lines at `%.17e`
 precision — `magneticEnergy`, `thermalEnergy`, `plasmaVolume`,

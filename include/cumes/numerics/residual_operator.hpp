@@ -1,17 +1,10 @@
 // residual_operator.hpp — invariant/preconditioned residual boundary
 // (blueprint §6.9).
 //
-// Reduces the six spectral-force families to the invariant (FSQR/FSQZ/FSQL) and
-// preconditioned (FSQR1/FSQZ1/FSQL1) triples. The legacy
-// compute_residuals_kernel
-// + host scaling are the reference implementation; the device-only
-// ControlRecord with double accumulation (§6.9) is a later refactor.
-//
-// Strangler-fig form: a stateless thin wrapper over compute_residuals_kernel
-// (verbatim — migration step 8). It reduces the decomposed residual into the
-// caller's 3-element device `sq_out` (ΣF²/(mnmax·ns) per group); the invariant
-// vs preconditioned distinction is only the host-side scaling (fNormRZ/fNormL
-// vs fNorm1/delta_s), which stays with the solver.
+// Reduces decomposed spectral forces to raw group sums. Both device inputs
+// and outputs use T; float sums use float-float accumulation before rounding
+// to float. Normalization and terminal predicates share the typed device
+// control record, which the host widens only after the single control fence.
 #ifndef CUMES_INCLUDE_CUMES_NUMERICS_RESIDUAL_OPERATOR_HPP_
 #define CUMES_INCLUDE_CUMES_NUMERICS_RESIDUAL_OPERATOR_HPP_
 
@@ -27,16 +20,13 @@ class ResidualOperator {
    public:
     using val_type = T;
 
-    // Reduce the decomposed residual into `sq_out` (3 elements: the fsqr/fsqz/
-    // fsql group sums, ΣF²/(mnmax·ns)). One kernel, three output groups. The
-    // output is DOUBLE in both builds (ADR-0001 follow-up): the kernel
-    // accumulates in NormAccum<T>::type (double for mixed-float) and stores
-    // without rounding to T.
+    // Three T outputs: group sums divided by mnmax*ns. Float-float retains
+    // small summands without introducing FP64 operations in float kernels.
     void enqueue(SpectralView<const T, DecomposedResidualDomain> residual,
                  int ns,
                  int mnmax,
                  bool include_edge_rz,
-                 double* sq_out,
+                 T* sq_out,
                  cudaStream_t stream) const;
 
     // Preconditioned-residual reduction with the device terminal gate
@@ -48,7 +38,7 @@ class ResidualOperator {
         SpectralView<const T, DecomposedResidualDomain> residual,
         int ns,
         int mnmax,
-        ControlRecord* rec,
+        DeviceControlRecord<T>* rec,
         cudaStream_t stream) const;
 };
 

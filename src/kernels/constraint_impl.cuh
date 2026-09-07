@@ -37,7 +37,6 @@ template <typename T>
 cumes::ConstraintOperator<T>::ConstraintOperator(
     const DeviceParams<T>& p,
     const std::optional<std::reference_wrapper<DeviceArena>>& arena) {
-    using Complex = typename FftTraits<T>::Complex;
     size_t nF = p.ns * p.nZnT * sizeof(T);
     size_t nFull = p.ns * p.nZnT;
 

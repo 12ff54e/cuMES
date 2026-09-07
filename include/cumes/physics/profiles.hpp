@@ -28,7 +28,8 @@ class Profiles {
 
     Profiles(DeviceParams<T>& p,
              const ValidatedProblem& vp,
-             const std::optional<std::reference_wrapper<DeviceArena>>& arena);
+             const std::optional<std::reference_wrapper<DeviceArena>>& arena,
+             bool verbose = true);
     ~Profiles();
 
     // Non-movable: the destructor frees the owned radial arrays without

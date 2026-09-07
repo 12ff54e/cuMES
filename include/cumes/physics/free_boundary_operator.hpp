@@ -51,6 +51,7 @@ class FreeBoundaryOperator {
         int nvacskip = 1;            // vacuum full-update cadence
         bool hot_start = false;      // restart from a checkpoint: state starts
                                      // INITIALIZED (vmecpp hot-restart rule)
+        bool use_process_environment = true;
     };
 
     // Loads or generates the response table and builds the persistent vacuum

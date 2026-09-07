@@ -10,6 +10,8 @@ inline constexpr double DEFAULT_3D_SEED_ENVELOPE = 0.12;
 inline constexpr double DEFAULT_SINGLE_GRID_3D_SEED_ENVELOPE = 0.129;
 inline constexpr double DEFAULT_FREE_3D_FINE_SEED_ENVELOPE = 0.03;
 inline constexpr int FREE_3D_COARSE_SEED_MAX_NS = 25;
+inline constexpr int FIXED_3D_VERY_COARSE_SEED_MAX_NS = 12;
+inline constexpr double DEFAULT_FIXED_3D_VERY_COARSE_SEED_ENVELOPE = -0.10;
 inline constexpr double DEFAULT_AXISYMMETRIC_COARSE_SEED_ENVELOPE = -0.07;
 
 constexpr double default_seed_envelope(int ntor,
@@ -23,6 +25,9 @@ constexpr double default_seed_envelope(int ntor,
                    : DEFAULT_FREE_3D_FINE_SEED_ENVELOPE;
     }
     if (ntor > 0) {
+        if (stage_count > 1 && initial_ns <= FIXED_3D_VERY_COARSE_SEED_MAX_NS) {
+            return DEFAULT_FIXED_3D_VERY_COARSE_SEED_ENVELOPE;
+        }
         return stage_count == 1 ? DEFAULT_SINGLE_GRID_3D_SEED_ENVELOPE
                                 : DEFAULT_3D_SEED_ENVELOPE;
     }

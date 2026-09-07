@@ -24,6 +24,8 @@
 namespace cumes {
 namespace axisym_detail {
 
+using std::sqrt;
+
 // --- inverse -------------------------------------------------------------
 // One thread per (surface j, theta l). Sums the poloidal basis over m in
 // ascending order. Odd-m contributions are divided by maxsc (vmecpp scalxc
@@ -176,7 +178,7 @@ __global__ void forward_kernel(
         v4 += tempZ * sinm + bzmn[idx] * mcos;
         v8 += blmn[idx] * mcos;
     }
-    const T mscale = (m == 0) ? T(1.0) : std::sqrt(T(2.0));
+    const T mscale = (m == 0) ? T(1.0) : sqrt(T(2.0));
     if (j == 0) {
         // axis: m=0 keeps frcc only (nf=0 drops the fzcs term); all else zero.
         f_spec(SpectralComponent::Rcc, m, j) = (m == 0) ? mscale * v0 : T(0);

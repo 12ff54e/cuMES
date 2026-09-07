@@ -20,6 +20,7 @@
 #include <cuda_runtime.h>  // __host__/__device__ (this header is included by
                            // host-only .cpp TUs, e.g. the output writers)
 #include <cstdint>
+#include <type_traits>
 
 namespace cumes {
 
@@ -50,8 +51,31 @@ class SpectralView {
     using val_type = T;
 
     __host__ __device__ SpectralView() = default;
-    __host__ __device__ SpectralView(T* data, int ns, int mnmax)
-        : data_(data), ns_(ns), mnmax_(mnmax) {}
+    __host__ __device__
+    SpectralView(T* data,
+                 int ns,
+                 int mnmax,
+                 const std::remove_const_t<T>* d_radius_reference = nullptr,
+                 int reference_modes = 0)
+        : data_(data),
+          ns_(ns),
+          mnmax_(mnmax),
+          d_radius_reference_(d_radius_reference),
+          reference_modes_(reference_modes) {}
+
+    // Physical-state Rcc coefficients may store displacements of the m=0
+    // modes. This fixed reference is not part of velocity/residual slabs.
+    __device__ std::remove_const_t<T> radius_reference(int mode) const {
+        return mode < reference_modes_ ? d_radius_reference_[mode]
+                                       : std::remove_const_t<T>(0);
+    }
+
+    // Reference coefficients are immutable for the lifetime of their owner.
+    // Geometry caches compare reference identity without reading device data.
+    __host__ bool shares_radius_reference(const SpectralView& other) const {
+        return d_radius_reference_ == other.d_radius_reference_ &&
+               reference_modes_ == other.reference_modes_;
+    }
 
     __host__ __device__ T& operator()(SpectralComponent c,
                                       int mode,
@@ -72,6 +96,8 @@ class SpectralView {
     T* data_ = nullptr;
     int ns_ = 0;
     int mnmax_ = 0;
+    const std::remove_const_t<T>* d_radius_reference_ = nullptr;
+    int reference_modes_ = 0;
 };
 
 // Real-space view over [surface][zeta][theta] (theta contiguous). `surfaces` is

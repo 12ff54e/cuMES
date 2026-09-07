@@ -23,15 +23,10 @@
 #include "cumes/io/checkpoint.hpp"
 #include "cumes/io/output_spec.hpp"
 #include "cumes/io/run_report.hpp"
-#include "cumes/io/snapshot_bridge.cuh"
 #include "cumes/io/writer.hpp"
 #include "cumes/runtime/cuda_status.hpp"
-#include "cumes/runtime/stream.hpp"
-#include "cumes/solver/multigrid_solver.hpp"
-#include "cumes/state/seed_state.hpp"
-#include "cumes/state/spectral_storage.hpp"
+#include "cumes/solver/equilibrium_solver.hpp"
 #include "output.cuh"
-#include "solver.cuh"
 #include "vmec_types.h"
 
 #ifdef CUMES_HAVE_MAGNETIC_COORDINATE
@@ -322,14 +317,17 @@ int main(int argc, char** argv) {
     const cumes::ProblemSpec& spec = vp.spec();
     const int n_grids = static_cast<int>(spec.stages.size());
 
-    DeviceParams<Real> p = cumes::init_params<Real>(vp);
+    const cumes::GridShape& shape = vp.shape();
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
     printf("input: %s\n", input_path.c_str());
     printf("precision: %s\n",
            sizeof(Real) == sizeof(double) ? "double" : "float");
-    printf("mpol=%d ntor=%d nfp=%d ntheta=%d nzeta=%d nZnT=%d ncurr=%d\n",
-           p.mpol, p.ntor, p.nfp, p.ntheta, p.nzeta, p.nZnT, p.ncurr);
+    printf(
+        "mpol=%d ntor=%d nfp=%d ntheta=%d nzeta=%d nZnT=%d ncurr=%d\n",
+        shape.mpol, shape.ntor, shape.nfp, shape.ntheta, shape.nzeta,
+        shape.ntheta * shape.nzeta,
+        spec.current_model == cumes::CurrentModel::PRESCRIBED_CURRENT ? 1 : 0);
     // Multi-radial-grid stage sequence (vmecpp ns_array/niter_array/ftol_array)
     printf("grids=%d: ns", n_grids);
     for (int g = 0; g < n_grids; ++g)
@@ -341,19 +339,12 @@ int main(int argc, char** argv) {
     for (int g = 0; g < n_grids; ++g) printf(" %.0e", spec.stages[g].tolerance);
     printf(")\n");
 
-    // ---- Multi-radial-grid stage loop (delegated to MultigridSolver) ----
-    cumes::SpectralStorage<Real> storage;
-    SolverResult<Real> result{false,     0,         Real(1.0), Real(1.0),
-                              Real(1.0), Real(0.9), {}};
-    int total_iter = 0;
-
+    // ---- In-process solver facade ----------------------------------------
     try {
-        // Stage-0 seed on ns_array[0]: a checkpoint restart, or the
-        // interpFromBoundaryAndAxis cold start.
-        p.ns = static_cast<int>(spec.stages[0].radial_surfaces);
-        p.max_iter = static_cast<int>(spec.stages[0].max_iterations);
-        p.ftol = Real(spec.stages[0].tolerance);
-        cumes::SpectralStorage<Real> seed;
+        std::optional<cumes::EquilibriumSnapshot> restart_snapshot;
+        cumes::SolveRequest solve_request;
+        solve_request.verbose = true;
+        solve_request.use_process_environment = true;
         if (!restart_path.empty()) {
             auto ck = cumes::read_checkpoint(restart_path);
             if (!ck.has_value()) {
@@ -362,30 +353,20 @@ int main(int argc, char** argv) {
             }
             const auto& snap = ck.value();
             if (snap.ns != static_cast<int>(spec.stages[0].radial_surfaces) ||
-                snap.mnmax != p.mnmax) {
+                snap.mnmax != static_cast<int>(shape.modes())) {
                 fprintf(stderr,
                         "cuMES: restart checkpoint (ns=%d, mnmax=%d) "
                         "does not match stage-0 grid (ns=%zu, mnmax=%d)\n",
                         snap.ns, snap.mnmax, spec.stages[0].radial_surfaces,
-                        p.mnmax);
+                        static_cast<int>(shape.modes()));
                 return EXIT_FAILURE;
             }
-            seed = cumes::restart_state<Real>(p, vp, snap);
-        } else {
-            seed = cumes::init_state<Real>(p, vp);
+            restart_snapshot = std::move(ck.value());
+            solve_request.restart = std::cref(*restart_snapshot);
         }
 
-        // One explicit nonblocking compute stream owns the whole run: the
-        // stage setup (synchronous default-stream copies) completes before the
-        // solve, and every hot-loop kernel / cuFFT transform / D2H transfer is
-        // enqueued on this stream (Phase 6A explicit-stream scheduling).
-        cumes::Stream compute_stream;
-        auto outcome = cumes::MultigridSolver<Real>::run(
-            p, vp, std::move(seed), compute_stream.get(),
-            /*hot_start=*/!restart_path.empty());
-        storage = std::move(outcome.state);
-        result = outcome.result;
-        total_iter = outcome.total_iterations;
+        cumes::EquilibriumSolver solver;
+        cumes::SolveOutcome outcome = solver.solve(vp, solve_request);
         printf("total device time: %.3f ms\n", outcome.total_device_time_ms);
 
         // vmecpp semantics (vmec.cc:367-392): a stage that exhausts its
@@ -397,9 +378,12 @@ int main(int argc, char** argv) {
                     "FATAL: grid stage %d/%d (ns=%d) completed %d/%d "
                     "iterations without meeting ftol=%.0e; final "
                     "residuals fsqr=%.3e fsqz=%.3e fsql=%.3e\n",
-                    g + 1, n_grids, p.ns, result.iterations, p.max_iter,
-                    (double)p.ftol, (double)result.fsqr, (double)result.fsqz,
-                    (double)result.fsql);
+                    g + 1, n_grids,
+                    static_cast<int>(spec.stages[g].radial_surfaces),
+                    outcome.iterations,
+                    static_cast<int>(spec.stages[g].max_iterations),
+                    spec.stages[g].tolerance, outcome.fsqr, outcome.fsqz,
+                    outcome.fsql);
             return EXIT_FAILURE;
         }
 
@@ -415,12 +399,7 @@ int main(int argc, char** argv) {
         bool native_output_failed = false;
         bool checkpoint_failed = false;
         bool boozer_output_failed = false;
-        cumes::EquilibriumSnapshot snapshot = std::move(outcome.snapshot);
-        cumes::populate_snapshot_state_from_device(storage, snapshot);
-        // The embedded normalized-input record: every output container
-        // (including the checkpoint below) carries it, so consumers can
-        // reconstruct the equilibrium without the input JSON.
-        outcome.report.input_params = cumes::make_input_params(vp);
+        cumes::EquilibriumSnapshot& snapshot = outcome.equilibrium;
         if (!boozer_output_requested) {
             auto writer = cumes::make_writer(output_spec.format);
             if (!writer) {
@@ -489,11 +468,11 @@ int main(int argc, char** argv) {
         }
 #endif
 
-        output_print<Real>(storage, p, result.iterations, result.converged,
-                           result.fsqr, result.fsqz, result.fsql);
+        output_print(snapshot, spec.ntor, outcome.iterations, outcome.converged,
+                     outcome.fsqr, outcome.fsqz, outcome.fsql);
         if (n_grids > 1)
             printf("multigrid: total effective iterations over %d grids = %d\n",
-                   n_grids, total_iter);
+                   n_grids, outcome.total_iterations);
         printf("\nDone.\n");
         if (!output_ok) {
             if (native_output_failed) {
@@ -510,7 +489,7 @@ int main(int argc, char** argv) {
             }
             return EXIT_FAILURE;
         }
-        return result.converged ? 0 : 1;
+        return outcome.converged ? 0 : 1;
     } catch (const cumes::CumesError& e) {
         fprintf(stderr, "cuMES: %s\n", e.what());
         return EXIT_FAILURE;

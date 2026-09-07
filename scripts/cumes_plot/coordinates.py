@@ -1,13 +1,15 @@
-"""Read Boozer-v2 containers and construct magnetic-coordinate plot grids.
+"""Read Boozer-v3 containers and construct magnetic-coordinate plot grids.
 
 The public Boozer format stores geometry as six real Fourier families on the
-mixed ``(s, theta_b, zeta)`` grid.  The source toroidal angle is unchanged and
+mixed ``(s, theta_b, alpha)`` grid. The source field-period angle is unchanged,
+``nu`` is in physical toroidal radians, and
 
-    theta_b = theta_p + iota * nu.
+    alpha_b = alpha + nfp * nu.
 
-The stored spectra are sufficient for the Boozer plots. Exact PEST plots use
-the native cuMES state instead: reconstructing them from these already
-transformed and truncated spectra would only produce an approximation.
+The stored spectra and field grid are remapped to a grid uniform in both
+Boozer angles for plotting. Exact PEST plots use the native cuMES state
+instead: reconstructing them from these already transformed and truncated
+spectra would only produce an approximation.
 """
 
 from dataclasses import dataclass
@@ -16,29 +18,30 @@ import struct
 import numpy as np
 
 
-MAGIC = b"MCBOOZ02"
-VERSION = 2
+MAGIC = b"MCBOOZ03"
+VERSION = 3
 PERIOD = 2.0 * np.pi
 FAMILY_NAMES = (
     "rmncc", "rmnss", "zmnsc", "zmncs", "numnsc", "numncs",
 )
-SCHEMA = "magnetic-coordinate-boozer-v2"
+SCHEMA = "magnetic-coordinate-boozer-v3"
 COORDINATE_CONVENTION = (
-    "mixed-grid-v1: theta_b uniform; zeta is the unchanged source toroidal "
-    "angle; zeta_b=zeta+nu"
+    "mixed-grid-v2: theta_b uniform; alpha=nfp*zeta is the unchanged source "
+    "field-period angle; alpha_b=alpha+nfp*nu; nu is in physical toroidal "
+    "radians"
 )
 FOURIER_CONVENTION = (
-    "real-parity-v2: f=sum[cc*cos(m*theta_b)*cos(n*zeta) + "
-    "ss*sin(m*theta_b)*sin(n*zeta)] for even fields and "
-    "f=sum[sc*sin(m*theta_b)*cos(n*zeta) + "
-    "cs*cos(m*theta_b)*sin(n*zeta)] for odd fields; m,n are nonnegative "
-    "and n is a field-period mode"
+    "real-parity-v3: f=sum[cc*cos(m*theta_b)*cos(n*alpha) + "
+    "ss*sin(m*theta_b)*sin(n*alpha)] for even fields and "
+    "f=sum[sc*sin(m*theta_b)*cos(n*alpha) + "
+    "cs*cos(m*theta_b)*sin(n*alpha)] for odd fields; m,n are nonnegative "
+    "and alpha is a field-period angle"
 )
 
 
 @dataclass(frozen=True)
 class BoozerData:
-    """Validated, backend-independent Boozer-v2 data."""
+    """Validated, backend-independent Boozer-v3 data."""
 
     source_path: str
     source_ns: int
@@ -62,8 +65,13 @@ class BoozerData:
         return PERIOD * np.arange(self.ntheta) / self.ntheta
 
     @property
-    def zeta(self):
+    def alpha(self):
         return PERIOD * np.arange(self.nzeta) / self.nzeta
+
+    @property
+    def zeta(self):
+        """Alias for the stored field-period angle, retained for callers."""
+        return self.alpha
 
 
 @dataclass(frozen=True)
@@ -72,6 +80,7 @@ class CoordinateGrid:
 
     coordinate: str
     angle_label: str
+    toroidal_label: str
     s: np.ndarray
     theta: np.ndarray
     zeta: np.ndarray
@@ -252,7 +261,7 @@ def _validate(data, path):
 
 
 def load_boozer(path):
-    """Read a binary, NetCDF, or HDF5 Boozer-v2 result container."""
+    """Read a binary, NetCDF, or HDF5 Boozer-v3 result container."""
     try:
         with open(path, "rb") as stream:
             magic = stream.read(8)
@@ -270,10 +279,10 @@ def load_boozer(path):
     return _validate(data, path)
 
 
-def _synthesize_boozer_geometry(data, theta, zeta):
-    """Synthesize R and Z on a requested uniform mixed grid."""
+def _synthesize_mixed_fields(data, theta, alpha):
+    """Synthesize R, Z, and physical-angle nu on a uniform mixed grid."""
     mt = data.mode_m[:, None] * theta[None, :]
-    nz = data.mode_n[:, None] * zeta[None, :]
+    nz = data.mode_n[:, None] * alpha[None, :]
     cos_mt, sin_mt = np.cos(mt), np.sin(mt)
     cos_nz, sin_nz = np.cos(nz), np.sin(nz)
 
@@ -285,7 +294,8 @@ def _synthesize_boozer_geometry(data, theta, zeta):
 
     r = combine("rmncc", cos_mt, cos_nz, "rmnss", sin_mt, sin_nz)
     z = combine("zmnsc", sin_mt, cos_nz, "zmncs", cos_mt, sin_nz)
-    return r, z
+    nu = combine("numnsc", sin_mt, cos_nz, "numncs", cos_mt, sin_nz)
+    return r, z, nu
 
 
 def _resample_uniform_axis(values, target_count, axis):
@@ -319,18 +329,54 @@ def _periodic_interp(target, source, values):
     return np.interp(target, source, values, period=PERIOD)
 
 
+def _remap_mixed_to_uniform_boozer(
+        source_alpha, target_alpha_b, nfp, nu, *fields):
+    """Invert ``alpha_b=alpha+nfp*nu`` at fixed ``(s, theta_b)``."""
+    source_alpha = np.asarray(source_alpha, dtype=float)
+    target_alpha_b = np.asarray(target_alpha_b, dtype=float)
+    nu = np.asarray(nu, dtype=float)
+    fields = tuple(np.asarray(field, dtype=float) for field in fields)
+    if nfp < 1 or source_alpha.ndim != 1 or target_alpha_b.ndim != 1 or \
+            source_alpha.size < 1 or target_alpha_b.size < 1 or nu.ndim != 3 or \
+            nu.shape[1] != source_alpha.size or any(
+                field.shape != nu.shape for field in fields):
+        raise ValueError(
+            "mixed-to-Boozer remap arrays have inconsistent extents")
+    if source_alpha.size == 1:
+        return [np.repeat(field, target_alpha_b.size, axis=1)
+                for field in fields]
+
+    outputs = [np.empty((nu.shape[0], target_alpha_b.size, nu.shape[2]))
+               for _ in fields]
+    for surface in range(nu.shape[0]):
+        for poloidal in range(nu.shape[2]):
+            mapped = source_alpha + nfp * nu[surface, :, poloidal]
+            closed = np.unwrap(np.append(mapped, mapped[0] + PERIOD))
+            if np.any(np.diff(closed) <= 0.0) or not np.all(
+                    np.isfinite(closed)):
+                raise ValueError(
+                    "source-alpha to Boozer-alpha map is not orientation "
+                    "preserving")
+            for output, field in zip(outputs, fields):
+                output[surface, :, poloidal] = _periodic_interp(
+                    target_alpha_b, mapped, field[surface, :, poloidal])
+    return outputs
+
+
 def make_boozer_grid(data, ntheta=None, nzeta=None):
-    """Return geometry and |B| on the regular mixed Boozer grid."""
+    """Return geometry and |B| on a grid uniform in both Boozer angles."""
     ntheta = data.ntheta if ntheta is None else int(ntheta)
     nzeta = data.nzeta if nzeta is None else int(nzeta)
     if ntheta < 4 or nzeta < 1:
         raise ValueError("coordinate-grid angular dimensions are invalid")
     theta = PERIOD * np.arange(ntheta) / ntheta
-    zeta = PERIOD * np.arange(nzeta) / nzeta
-    r, z = _synthesize_boozer_geometry(data, theta, zeta)
-    b = _resample_field(data, ntheta, nzeta)
-    return CoordinateGrid("Boozer", r"$\theta_b$", data.s.copy(),
-                          theta, zeta, r, z, b)
+    alpha = PERIOD * np.arange(nzeta) / nzeta
+    r_mixed, z_mixed, nu = _synthesize_mixed_fields(data, theta, alpha)
+    b_mixed = _resample_field(data, ntheta, nzeta)
+    r, z, b = _remap_mixed_to_uniform_boozer(
+        alpha, alpha, data.nfp, nu, r_mixed, z_mixed, b_mixed)
+    return CoordinateGrid("Boozer", r"$\theta_b$", r"$\alpha_b$",
+                          data.s.copy(), theta, alpha, r, z, b)
 
 
 def make_pest_grid(s, theta, zeta, r, z, b, lambda_physical):
@@ -374,8 +420,8 @@ def make_pest_grid(s, theta, zeta, r, z, b, lambda_physical):
                 target, theta_p, z[surface, toroidal])
             b_p[surface, toroidal] = _periodic_interp(
                 target, theta_p, b[surface, toroidal])
-    return CoordinateGrid("PEST", r"$\theta_p$", s.copy(), target,
-                          zeta, r_p, z_p, b_p)
+    return CoordinateGrid("PEST", r"$\theta_p$", r"$\alpha$", s.copy(),
+                          target, zeta, r_p, z_p, b_p)
 
 
 def interpolate_zeta(values, zeta):

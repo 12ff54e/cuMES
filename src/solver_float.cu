@@ -13,6 +13,8 @@ template SolverResult<float> solver_run<float>(
     std::optional<std::reference_wrapper<cumes::SolverBench>>,
     std::optional<std::reference_wrapper<cumes::SpectralOperator<float>>>,
     std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<float>>>,
+    bool,
+    bool,
     bool);
 
 // Stateless operators (migration steps 8/10): linkable from tests.

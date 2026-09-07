@@ -138,11 +138,12 @@ class IterationController {
     // Jacobian left running would poison the force/constraint/preconditioner
     // kernels' 1/√g divisions (kernels/geometry_impl.cuh documents the
     // inv_gsqrt guards that keep the buffers finite in the interim).
-    bool jacobian_invalid(const JacobianStatus<T>& s, int nZnT) {
-        if (s.nonfinite_count > T(0) || s.max_abs <= T(0) ||
-            s.min_oriented <= T(0) ||
+    template <class S>
+    bool jacobian_invalid(const JacobianStatus<S>& s, int nZnT) {
+        if (s.nonfinite_count > S(0) || s.max_abs <= S(0) ||
+            s.min_oriented <= S(0) ||
             (s.min_oriented <
-                 T(control_policy::JACOBIAN_RELATIVE_THRESHOLD) * s.max_abs &&
+                 S(control_policy::JACOBIAN_RELATIVE_THRESHOLD) * s.max_abs &&
              s.min_index >= nZnT)) {
             reject_jacobian();
             return true;

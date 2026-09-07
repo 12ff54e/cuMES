@@ -82,20 +82,20 @@ struct ControlStatus {
     std::uint32_t reserved = 0;                  // explicit tail for growth
 };
 
-// The trivially-copyable record the per-pass DAG reduces into and the host
-// controller consumes after the single control fence. The numeric field order
-// is the frozen 16-slot telemetry contract: Jacobian stats [0..3], invariant
-// raw sums [4..6], preconditioned raw sums [7..9], force-norm partials
-// [10..15]. One cudaMemcpyAsync of sizeof(ControlRecord) delivers the whole
-// struct; the status bits travel with the numbers they describe.
-struct ControlRecord {
-    double jacobian_min_oriented = 0.0;         // min(signJ·√g)
-    double jacobian_max_abs = 0.0;              // max |√g|
-    double jacobian_nonfinite_count = 0.0;      // non-finite entry count
-    double jacobian_min_index = 0.0;            // flat argmin index (as double)
-    double invariant_raw[3] = {0.0, 0.0, 0.0};  // ΣF²/(mnmax·ns) per group
-    double preconditioned_raw[3] = {0.0, 0.0, 0.0};  // after the preconditioner
-    double force_norms[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+// Trivially-copyable device record transferred at the single control fence.
+// Floating slots use the kernel scalar; the argmin remains an exact integer.
+// ControlRecord is its double host form. Widening after transfer does not add
+// precision, but retains the existing double host controller and telemetry.
+template <class T>
+struct DeviceControlRecord {
+    using val_type = T;
+    T jacobian_min_oriented = T(0);     // min(signJ·√g)
+    T jacobian_max_abs = T(0);          // max |√g|
+    T jacobian_nonfinite_count = T(0);  // non-finite entry count
+    int jacobian_min_index = 0;  // exact flat argmin index in either precision
+    T invariant_raw[3] = {};     // ΣF²/(mnmax·ns) per group
+    T preconditioned_raw[3] = {};  // after the preconditioner
+    T force_norms[6] = {};
     // {sRZ, sL, sMag, eTherm, vol, rzNorm} (before the deltaS scaling)
     // Device-finalized force-norm factors (completion-plan follow-up §2.3):
     // force_norm_finalize_kernel fills them from force_norms on refresh passes
@@ -104,12 +104,38 @@ struct ControlRecord {
     // SAME fields at the fence instead of recomputing — the two decisions then
     // share bit-identical inputs, so a converged refresh pass no-ops the
     // in-place preconditioner exactly like any other terminal pass.
-    double final_f_norm_rz = 0.0;
-    double final_f_norm_l = 0.0;
-    double final_f_norm1 = 0.0;
+    T final_f_norm_rz = T(0);
+    T final_f_norm_l = T(0);
+    T final_f_norm1 = T(0);
+    // Device-normalized values are also the host convergence inputs. This
+    // keeps both gates identical when the device scalar is float.
+    T invariant_scaled[3] = {};
     ControlStatus status;
+
+    template <class U>
+    DeviceControlRecord<U> cast() const {
+        DeviceControlRecord<U> result;
+        result.jacobian_min_oriented = U(jacobian_min_oriented);
+        result.jacobian_max_abs = U(jacobian_max_abs);
+        result.jacobian_nonfinite_count = U(jacobian_nonfinite_count);
+        result.jacobian_min_index = jacobian_min_index;
+        for (int i = 0; i < 3; ++i) {
+            result.invariant_raw[i] = U(invariant_raw[i]);
+            result.preconditioned_raw[i] = U(preconditioned_raw[i]);
+            result.invariant_scaled[i] = U(invariant_scaled[i]);
+        }
+        for (int i = 0; i < 6; ++i) result.force_norms[i] = U(force_norms[i]);
+        result.final_f_norm_rz = U(final_f_norm_rz);
+        result.final_f_norm_l = U(final_f_norm_l);
+        result.final_f_norm1 = U(final_f_norm1);
+        result.status = status;
+        return result;
+    }
 };
 
+using ControlRecord = DeviceControlRecord<double>;
+
+static_assert(std::is_trivially_copyable_v<DeviceControlRecord<float>>);
 static_assert(std::is_trivially_copyable<ControlRecord>::value,
               "ControlRecord must be trivially copyable for the single D2H "
               "control transfer");
