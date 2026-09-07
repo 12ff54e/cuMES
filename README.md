@@ -211,7 +211,7 @@ the convergence decision.
 | preset | policy | notes |
 | ------ | ------ | ----- |
 | `verify` (default) | verify-double | precise double, NetCDF+HDF5, `-Werror` |
-| `float` | mixed-float | float state/FFT + documented double reductions |
+| `float` | mixed-float | float device arithmetic + float-float norm sums; double host controller |
 | `fast` | fast-double | opt-in `--use_fast_math`, dump machinery compiled out |
 | `debug` | debug-double | precise + `-G` |
 | `sanitizer` | verify-double | compute-sanitizer memcheck/initcheck/racecheck/synccheck + ASan/UBSan host twins |
@@ -279,7 +279,10 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
   W7-X iteration counts; see the [double experiment](docs/w7x-double-compensation.md).
 - On-disk state files stay double regardless of `T`; dump files are `T`-native.
 - The per-pass control record (residuals, Jacobian stats, force-norm factors)
-  is double in both builds; the device norm reductions accumulate in double.
+  uses the state scalar on device. Float norm reductions accumulate in float-float,
+  then store float results; the host widens them to double after transfer.
+  The compiled float kernels are checked for FP64 instructions by CTest; see
+  [ADR-0015](docs/adr/0015-float-only-device-arithmetic.md).
 
 ### Environment variables
 

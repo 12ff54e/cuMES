@@ -12,6 +12,10 @@ angular derivatives, even modes, lambda, constraints and downstream physics
 retain their existing arithmetic. The solver enables the setting only for
 fixed-boundary 3-D problems. `native` remains the default in both builds.
 
+The later [float-only device policy](adr/0015-float-only-device-arithmetic.md)
+changes float reduction/control precision and its trajectory. The float
+byte-identity checks below apply to this double-compensation experiment.
+
 ## Accuracy
 
 NVIDIA TITAN Xp, CUDA 12.1, precise verify-double build, W7-X `mpol=12`,

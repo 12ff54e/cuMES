@@ -102,8 +102,9 @@ enqueued on one compute stream until a single deliberate control fence:
    `brmn`/`bzmn`;
 9. `ToroidalFftOperator::forward` — six spectral-force families;
 10. odd-m decomposition + the `m=1` mixed gauge;
-11. invariant + preconditioned residual reductions into one `ControlRecord`
-    D2H copy, then the single host fence;
+11. invariant + preconditioned residual reductions into one
+    `DeviceControlRecord<T>` D2H copy, then the single host fence and host
+    widening to `ControlRecord` (double);
 12. the pure `IterationController::advance` decision, then ordered apply
     (descent → post-descent checkpoint capture → post-descent restore+zero).
 

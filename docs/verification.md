@@ -113,9 +113,12 @@ cross-architecture claim is made (see `docs/performance.md`).
   host-only libraries/tests (`asan_test_*`).
 - **Precision presets**: `verify-double` (default, precise), `fast-double`
   (opt-in `--use_fast_math`, dump machinery compiled out), `mixed-float`
-  (float state + documented double reductions; state floor ~1e-7,
+  (float device arithmetic, float-float norm sums, double host controller;
   `ftol_array` entries must be >= 1e-6), `debug-double` (precise + `-G`).
   The policy and its flags are recorded in every v1 output.
+  `float_kernel_types` uses `cuobjdump` to reject FP64 SASS instructions and
+  PTX `.f64` types in both cuMES and vacuum float libraries, across every
+  embedded architecture. It is registered when `cuobjdump` is available.
 - **Backend matrix**: verify (NetCDF+HDF5), netcdf-only, hdf5-only, and
   nobackend builds each run their suites — all four configurations exist
   as presets and as hosted CI matrix entries; the v1 containers round-trip

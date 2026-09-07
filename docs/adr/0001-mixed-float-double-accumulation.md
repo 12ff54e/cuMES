@@ -1,6 +1,8 @@
 # ADR-0001 — double accumulation for norm reductions (mixed-float)
 
-Status: accepted and active (blueprint §8.8/§8.12)
+Status: float policy superseded by [ADR-0015](0015-float-only-device-arithmetic.md)
+on 2026-09-07. Double accumulation remains native in double builds.
+The text below records the original decision and its historical validation.
 
 Qualification update (2026-09-06): the successful float smoke below was
 Solovev. Its observed residual scale does not establish a universal float

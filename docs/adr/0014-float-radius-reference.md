@@ -129,5 +129,6 @@ identifies odd R/Z inverse reconstruction as the remaining float bottleneck.
 A double-arithmetic GPU oracle correcting only `r_o` and `z_o`, with float
 state and float outputs, completes cold-start convergence at `1e-5`. This
 was followed by the retained [selective float-float implementation](../w7x-float-float.md).
-The full double oracle remains diagnostic; the minimal poloidal correction
+The full double oracle was subsequently removed from float dispatch by
+[ADR-0015](0015-float-only-device-arithmetic.md); the minimal poloidal correction
 converges with approximately 3.2% measured extra per-pass cost on TITAN Xp.

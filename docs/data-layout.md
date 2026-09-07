@@ -43,9 +43,9 @@ the forward quadrature projects onto the orthonormal basis with
 
 Fixed-boundary 3-D float state uses reference-plus-displacement storage by
 default: the `m=0` Rcc entries hold `Rcc(j,n) - rbcc(n)`, while an immutable
-double reference vector stores `rbcc(n)` for `n=0..ntor`. Physical-state views
-carry this reference metadata; copying only the raw slab does not recreate a
-complete physical state. The other families, velocities and residuals keep
+host double reference vector stores `rbcc(n)` for `n=0..ntor`. Physical-state
+views carry a device copy converted to T; copying only the raw slab does not
+recreate a complete physical state. The other families, velocities and residuals keep
 their existing interpretation. Snapshot/checkpoint export restores physical
 double coefficients; restart subtracts the reference before float conversion.
 `CUMES_RADIUS_REFERENCE=0` or `SolveRequest::use_radius_reference=false`
@@ -64,7 +64,9 @@ In that representation, the scalar mean is `DeviceParams::radius_reference`
 and the remaining angular reference is `r_reference[point]` (one surface,
 `nZnT` elements). Geometry and force kernels restore both locally for absolute
 radius terms; radial differences use the displacement arrays directly. The
-angular reference is computed once per stage before graph capture. See
+angular reference is computed once per stage before graph capture, using a
+host-prepared cosine table uploaded in T and float-float accumulation for
+float kernels. The scalar mean is also T. See
 [ADR-0014](adr/0014-float-radius-reference.md) for cache binding and replay
 requirements.
 

@@ -239,7 +239,11 @@ Catmull-Rom and linear transfers respectively.
 The exit gate for §8.10–§8.12 was *"measure, then adopt or remove."* Three
 experiments were run on the TITAN Xp; one was adopted.
 
-### 3.1 Mixed-float double accumulation — adopted (ADR-0001)
+### 3.1 Mixed-float double accumulation — historical adoption (ADR-0001)
+
+The float policy below was superseded by
+[ADR-0015](adr/0015-float-only-device-arithmetic.md), which uses float-float
+accumulation and float device records. These are the original measurements.
 
 `cumes::NormAccum<T>` (`float → double`, `double → double`) widened the
 accumulator of the three control-feeding reductions. **Class A** for the double

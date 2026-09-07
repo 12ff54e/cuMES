@@ -9,6 +9,11 @@ no additional launches, scratch arrays or hot-loop allocations are needed for
 this `compensated` setting (the diagnostic `poloidal` scope). The default
 remains `native`.
 
+The measurements below describe the original reconstruction experiment.
+The subsequent [float-only device policy](adr/0015-float-only-device-arithmetic.md)
+also replaces double norm accumulation/control records and reference arithmetic.
+Its current W7-X qualification is 149 → 278 → 314 iterations at all-stage `1e-5`.
+
 ## Usage and scope
 
 Set **every** W7-X `ftol_array` entry to `1e-5`, then run:
@@ -46,13 +51,12 @@ For diagnostic experiments, the library API and the benchmark's
 | `poloidal` | Float-float products, accumulation and final multiplication |
 | `poloidal-scale` | `poloidal`, plus a scale stored as a split float pair |
 | `float-float` | Additional direct toroidal/poloidal reconstruction using float-float throughout |
-| `double` | Same additional direct reconstruction using double as a comparison |
 
-The two full reconstruction controls calculate only odd R/Z positions, using
+The full `float-float` reconstruction calculates only odd R/Z positions, using
 four toroidal channels and a separable two-kernel reconstruction. Other outputs
-still require the existing cuFFT. They use identical algorithms and table values
-for a fair float-float versus double comparison. Their basis and scale constants
-are prepared in double on the host at setup; float-float stores high/low float
+still require the existing cuFFT. The historical `double` diagnostic used the
+same algorithm and tables; it has been removed to keep float kernels free of
+FP64. The basis and scale constants are prepared in double on the host at setup; float-float stores high/low float
 parts, and its new device arithmetic uses float instructions. The
 `poloidal-scale` option similarly prepares only the radial scale table at setup.
 
@@ -69,9 +73,11 @@ r_o or z_o = float(q * FF(facO))
 
 It does not first round each product pair or each scaled modal contribution to
 float. Even modes, angular derivatives, lambda and constraint arithmetic retain
-their existing expressions. Norm reductions, controller gates and tolerances
-are unchanged. This is an opt-in numerical experiment, not a frozen trajectory
-refactor or a guarantee for other configurations/tolerances.
+their existing expressions. The original reconstruction experiment left norm
+reductions and controller gates unchanged; ADR-0015 documents their subsequent
+precision change. Tolerances are unchanged. This is an opt-in numerical
+experiment, not a frozen trajectory refactor or a guarantee for other
+configurations/tolerances.
 
 ## Precision and convergence
 

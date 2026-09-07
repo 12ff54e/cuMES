@@ -34,7 +34,7 @@ ctest --test-dir build --output-on-failure
 cmake --preset sanitizer && cmake --build build-sanitize -j
 ctest --test-dir build-sanitize
 
-# single precision (mixed-float: float state + double reductions)
+# single precision (mixed-float: float device arithmetic + double host controller)
 cmake --preset float && cmake --build build-float -j
 # other presets: fast (fast-double, opt-in --use_fast_math, dump machinery
 # compiled out), debug (debug-double, precise + -G); optional-backend matrix:
@@ -95,9 +95,11 @@ runs hard-error at startup when any `ftol_array` entry is below 1e-6; this
 input floor is not a convergence guarantee. Fixed-boundary 3-D float defaults
 to radius-reference storage. W7-X at all-stage `1e-5` also needs the opt-in
 `CUMES_GEOMETRY_PRECISION=compensated` correction to converge on ns=99. The per-pass control
-record (residuals, Jacobian stats, force-norm factors) is DOUBLE in both builds
-(ADR-0001): device norm reductions accumulate in double and the host controller
-(`IterationController<double>`) sees them unrounded.
+record (residuals, Jacobian stats, force-norm factors) uses T on device. Float
+norm sums use float-float accumulation and store float results. The host widens
+the record after transfer; `IterationController<double>` consumes the same
+device-normalized residuals. CTest audits both float CUDA libraries for FP64
+instructions (ADR-0015, superseding the float policy in ADR-0001).
 
 ## Directory Structure
 
