@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 const source = await readFile(new URL('../webgpu/iteration_timing.js', import.meta.url), 'utf8');
-function fixture(supported = true, search = '') {
+function fixture(supported = true, search = '', worker = false) {
   let now = 0, gpuNow = 0n;
   const maps = [], log = [];
   class GPUBuffer {
@@ -40,7 +40,8 @@ function fixture(supported = true, search = '') {
     async requestDevice() { return new GPUDevice(); }
   }
   const context = vm.createContext({URLSearchParams, location: {search},
-    document: {visibilityState: 'visible'}, performance: {now: () => now},
+    ...(worker ? {cumesVisibility: 'visible', cumesSearch: search} : {document: {visibilityState: 'visible'}}),
+    performance: {now: () => now},
     GPUAdapter, GPUDevice, GPUCommandEncoder, GPUBuffer, BigUint64Array,
     GPUBufferUsage: {MAP_READ: 1, QUERY_RESOLVE: 2, COPY_SRC: 4}, GPUMapMode: {READ: 1},
     cumesAppendLog: line => log.push(line)});
@@ -74,6 +75,10 @@ const disabled = fixture(true, '?timing=0');
 disabled.api.event(1, 1);
 assert.equal(disabled.api.finish().iterations.length, 0);
 assert(disabled.log[0].includes('disabled'));
+const worker = fixture(true, '', true);
+worker.api.event(1, 1);worker.time(12);worker.api.event(2, 1);
+assert.equal(worker.api.report().iterations[0].visible, 'visible');
+assert.equal(worker.api.finish().stats.wall.average, 12);
 const overflow = fixture(), device = await overflow.adapter.requestDevice();
 overflow.api.event(1, 1);
 for (let i = 0; i < 514; ++i) device.createCommandEncoder().beginComputePass();

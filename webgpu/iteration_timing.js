@@ -1,7 +1,7 @@
 // Frontend-only iteration timing. GPU timestamps share the solver's existing
 // mapAsync: no additional map or host fence. ?timing=0 disables instrumentation.
 (() => {
-  const enabled = new URLSearchParams(location.search).get('timing') !== '0';
+  const enabled = new URLSearchParams(globalThis.cumesSearch ?? location.search).get('timing') !== '0';
   const rows = [], errors = [];
   const warn = message => { if (!errors.includes(message)) errors.push(message); };
   let current = null, waiting = 0, lastTick = performance.now();
@@ -38,7 +38,7 @@
         end();
         current = {stage, start: performance.now(), host: 0, wait: 0,
           device: 0, gpuPasses: 0, gpuMissing: false,
-          visible: document.visibilityState};
+          visible: globalThis.cumesVisibility ?? globalThis.document?.visibilityState ?? 'unknown'};
         lastTick = current.start;
         rows.push(current);
       }

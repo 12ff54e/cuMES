@@ -28,7 +28,7 @@ try{
   const evaluate=async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true},session)).result.value;
   await call('Network.enable',{},session);
   // Only the frontend is in scope: keep verification/W7-X from starting a solve.
-  await call('Network.setBlockedURLs',{urls:['*cumes_webgpu.js*']},session);
+  await call('Network.setBlockedURLs',{urls:['*cumes_webgpu.js*','*verification_worker.js*']},session);
   await call('Page.enable',{},session);
   for(const width of [1280,390]){
     await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false},session);

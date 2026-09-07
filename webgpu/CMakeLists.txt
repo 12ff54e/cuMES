@@ -104,6 +104,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_ui.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/verification_worker.js
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
   ${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js
   ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
@@ -159,4 +160,12 @@ if(CUMES_WEBGPU_NODE)
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_log_buffer.mjs)
   set_tests_properties(webgpu_log_buffer PROPERTIES LABELS "unit;webgpu")
+  add_test(NAME webgpu_worker
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_worker.mjs)
+  set_tests_properties(webgpu_worker PROPERTIES LABELS "unit;webgpu")
+  add_test(NAME webgpu_runtime_loader
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_runtime_loader.mjs)
+  set_tests_properties(webgpu_runtime_loader PROPERTIES LABELS "unit;webgpu")
 endif()

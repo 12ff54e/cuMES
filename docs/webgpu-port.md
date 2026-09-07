@@ -248,7 +248,16 @@ the canvas to orbit and use the wheel to zoom. The W7-X route presents the same
 3-D viewer below its solver log.
 
 Append `?mode=test` for the full GPU/CPU operator conformance suite and
-stricter Solovev convergence gate. A successful run finishes with:
+stricter Solovev convergence gate. Verification runs in a dedicated Web Worker:
+Wasm, CPU references, and the WebGPU device stay off the UI thread. The page
+receives batched logs/diagnostics and final timing/output messages; it retains
+the downloadable output after terminating the worker. Leaving the page also
+terminates the worker. Editor and W7-X solves keep their existing main-thread
+orchestration. `?mode=test&worker=0` is a diagnostic opt-out, and
+`data-cumes-execution="worker|main"` identifies the selected path.
+Serve `browser_ui.js` and `verification_worker.js` alongside the generated
+HTML/JS/Wasm files; the build copies and content-versions these assets.
+A successful run finishes with:
 
 ```text
 cuMES WebGPU self-test: PASS
@@ -394,6 +403,54 @@ constraints, and descent. Constraint planes are remapped from the compact
 axisymmetric layout to the shared paired projection layout without rounding.
 
 ## Browser performance
+
+### Verification responsiveness
+
+Chrome on the user's RTX 3060 Ti exposed two main-thread bottlenecks in
+verification: synchronous log append/scroll on every line, and a CPU constraint
+de-aliasing reference that repeated analysis for each synthesis point. Logs now
+flush at most every 100 ms (plus a final flush), keeping all lines in one text
+node. The CPU reference computes each surface/mode projection once, then reuses
+the unscaled sums, retaining the original compensated accumulation and synthesis
+order. No GPU shader or solver arithmetic changed.
+
+The same default `?mode=test` route, with Chrome CPU sampling and frame/long-task
+observation enabled in both captures, measured:
+
+| Measurement | Before | Batched logs + cached reference + worker |
+| --- | ---: | ---: |
+| Completion time | 99.6 s | 17.5 s |
+| Renderer layout time | 42.50 s | 0.324 s |
+| Renderer layouts | 3685 | 117 |
+| Main-thread tasks over 50 ms | 17 | 0 |
+| Worst main-thread task | 14.4 s | None over 50 ms |
+
+These are individual local captures, not cross-device guarantees. The page had
+no Wasm heap in the worker capture, and no animation-frame gaps over 50 ms were
+observed. The unchanged 3684 printed lines were retained. All 3677 PASS lines
+match the earlier conformance output, and the worker/main-thread controller
+traces match exactly across 329 records (327 effective Solovev iterations).
+The 118736-byte output remains readable from its blob URL after worker exit.
+Both editor precision modes were rechecked: 507 paired and 73 scalar iterations,
+with the same final residuals and boundary retained across precision switches.
+
+Reproduce the worker/main-thread numerical comparison on the exposed Chrome:
+
+```bash
+node scripts/webgpu_validate_run.mjs \
+  'http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu-ds/webgpu/cumes_webgpu.html?mode=test&worker=0&trace=1' \
+  ../tmp/verification-main
+node scripts/webgpu_validate_run.mjs \
+  'http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu-ds/webgpu/cumes_webgpu.html?mode=test&trace=1' \
+  ../tmp/verification-worker ../tmp/verification-main-trace.json
+```
+
+Local profiling evidence: `../tmp/verification-lag-{result,cpu}.json` (before)
+and `../tmp/verification-lag-worker-{result,cpu}.json` (after). Node tests cover
+batched log ordering/final flush, DOM-free worker messages, transferred output
+ownership, query propagation, runtime selection, errors, and worker cleanup.
+
+### W7-X shader performance history
 
 Profiling the `ns=99` W7-X hot loop on Chrome/Dawn D3D12 and an RTX 3060 Ti
 identified global atomic rounding barriers and the prescribed-current field
