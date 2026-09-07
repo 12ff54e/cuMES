@@ -62,6 +62,13 @@ target_include_directories(test_solver_api PRIVATE
 target_link_libraries(test_solver_api PRIVATE cumes::solver)
 cumes_enable_warnings(test_solver_api)
 
+if(CUMES_USE_FLOAT)
+  add_executable(test_w7x_float_convergence test_w7x_float_convergence.cpp)
+  target_link_libraries(test_w7x_float_convergence PRIVATE cumes::solver)
+  cumes_enable_warnings(test_w7x_float_convergence)
+  cumes_add_test(test_w7x_float_convergence "solver;precision;regression")
+endif()
+
 add_executable(test_equilibrium_tangent test_equilibrium_tangent.cpp)
 target_include_directories(test_equilibrium_tangent PRIVATE
   ${PROJECT_SOURCE_DIR}/include)

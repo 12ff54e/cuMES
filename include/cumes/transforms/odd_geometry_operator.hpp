@@ -18,6 +18,12 @@ class OddGeometryOperator {
                  GeometryParityViews<float> geometry,
                  cudaStream_t stream);
 
+    // COMPENSATED: four m=1 channel sums; FLOAT_FLOAT: all odd m. The
+    // scratch retains paired values for consumption by the poloidal kernel.
+    void enqueue_toroidal(SpectralView<const float, PhysicalStateDomain> coeff,
+                          cudaStream_t stream);
+    const A* toroidal() const { return d_scratch_.data(); }
+
     const A* scale() const { return d_scale_.data(); }
 
    private:
