@@ -5,7 +5,9 @@ mergeInto(LibraryManager.library, {
     return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('precision') === 'float' ? 1 : 0;
   },
   requested_double_solve: function() {
-    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('precision') === 'double' ? 1 : 0;
+    const query = new URLSearchParams(globalThis.cumesSearch ?? location.search);
+    const free = query.get('boundary') === 'free' && query.get('mode') !== 'test' && query.get('solve') !== 'w7x';
+    return query.get('precision') === 'double' || (free && !query.has('precision')) ? 1 : 0;
   },
   requested_float_radius_reference: function() {
     return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('radius_reference') === '0' ? 0 : 1;

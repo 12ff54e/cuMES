@@ -184,7 +184,7 @@
               <button type="button" id="editor-precision-double" aria-pressed="false">Double · paired f32</button>
             </div>
             <span class="tag" id="editor-precision-tolerance"></span>
-            <p>Double uses two f32 words, not native IEEE fp64. Changing precision during a solve restarts it; your boundary is retained.</p>
+            <p>Double uses two f32 words, not native IEEE fp64. Changing precision during a solve restarts it; your setup is retained.</p><p id="free-precision-note" hidden>Paired precision is recommended for free-boundary solves. Single precision is experimental and can stall on W7-X.</p>
           </section>
           <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="reset">Reset</button><button class="secondary" id="stop-run" hidden>Stop and edit</button></div>
         </div>
@@ -243,6 +243,7 @@
     const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x',w7xMultigrid=query.get('grids')==='3';
     const appMode=query.get('mode')!=='test'&&!w7xSolve,running=appMode&&query.get('run')==='1';
     const boundaryMode=installCumesBoundaryMode();
+    document.getElementById('free-precision-note').hidden=!boundaryMode.free;
     const activeView=w7xSolve?'w7x':appMode?'editor':'verification';
     document.querySelector(`nav [data-view="${activeView}"]`).setAttribute('aria-current','page');
     const app=document.getElementById('app'),legacy=document.getElementById('legacy');
@@ -254,7 +255,7 @@
     if((appMode||w7xSolve)&&query.get('residual_plot')!=='0'){
       const panel=document.getElementById('residual-panel-template').content.firstElementChild.cloneNode(true);
       document.getElementById(w7xSolve?'w7x-residual-host':'editor-residual-host').append(panel);
-      const paired=query.get('precision')==='double'||(w7xSolve&&query.get('precision')!=='float');
+      const paired=query.get('precision')==='double'||((w7xSolve||boundaryMode.free)&&query.get('precision')!=='float');
       window.cumesResidualPlot=createCumesResidualPlot(panel,paired?1e-12:1e-5);
     }
     // Precision switch: kept in the frontend; URL remains the solver contract.
@@ -262,9 +263,10 @@
       const current=new URL(location.href);
       const w7x=current.searchParams.get('solve')==='w7x';
       if(!w7x&&current.searchParams.get('mode')==='test')return;
+      const free=!w7x&&current.searchParams.get('boundary')==='free';
       const prefix=w7x?'':'editor-';
       const selected=current.searchParams.get('precision')==='float'?'float':
-        current.searchParams.get('precision')==='double'?'double':w7x?'double':'float';
+        current.searchParams.get('precision')==='double'?'double':(w7x||free)?'double':'float';
       document.getElementById(prefix+'precision-control').hidden=false;
       document.body.dataset.cumesPrecision=selected;
       document.getElementById(prefix+'precision-tolerance').textContent=

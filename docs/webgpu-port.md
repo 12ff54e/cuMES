@@ -12,7 +12,8 @@ axisymmetric boundary editor.
 ### Free-boundary browser setup
 
 Choose **Fixed boundary** or **Free boundary** above the editor. Free-boundary
-setup offers Solovev, W7-X (vacuum), and cth_like coil configurations, plus
+setup defaults to paired precision and offers Solovev, W7-X (vacuum), and
+cth_like coil configurations, plus
 MAKEGRID coils-dot / cumes-coils-v1 JSON uploads. Currents, grid parameters, and
 initial equilibrium JSON are editable. Uploaded geometry stays in IndexedDB;
 setup choices stay in localStorage. Switching modes or **Stop and edit** ends
@@ -30,11 +31,15 @@ fixed-boundary resident/batched execution is unchanged. CPU vacuum work runs
 in the solver worker so the UI remains responsive.
 
 Vacuum activation, edge force/preconditioning, constraint decay, soft restarts,
-and multigrid persistence follow the CUDA coupling. Solovev has passed a full
-paired-precision browser solve. Broader 3-D and scalar-float equilibrium
-qualification is still in progress; vacuum-field's 18 operator/reference tests
-pass under WebAssembly, native HOST, and CUDA. Preset provenance is recorded in
-`webgpu/presets/README.md`.
+and multigrid persistence follow the CUDA coupling. The three bundled presets
+pass full paired-precision solves in Chrome, including the 3-D W7-X vacuum
+and cth_like cases. The shared bridge has analytic CUDA/WebAssembly tests for
+pressure symmetry, surface averages, and boundary-only force updates;
+vacuum-field's 18 operator/reference tests also pass under WebAssembly, native
+HOST, and CUDA. Headless Firefox also passes the full paired Solovev solve.
+Scalar-float Solovev works, but W7-X can stall above its tolerance; single
+precision remains experimental for free-boundary work. Preset provenance is
+recorded in `webgpu/presets/README.md`.
 
 The current WebGPU correctness milestones are implemented and
 browser-validated:

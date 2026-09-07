@@ -60,3 +60,9 @@ for(const search of ['?mode=test']){
   assert.equal(nodes.get('precision-single').click,undefined);
 }
 console.log('Precision switch: PASS (defaults, both directions, active no-op, URL preservation, scope)');
+
+for(const search of ['?boundary=free','?boundary=free&run=1','?boundary=free&precision=float']){
+  const f=setup(search);
+  assert.equal(f.document.body.dataset.cumesPrecision,search.includes('float')?'float':'double');
+}
+console.log('PASS: free boundary defaults to paired precision and honors an explicit float selection');

@@ -66,3 +66,10 @@ assert.equal(written.size,2);
 assert.deepEqual([...written.get('/inputs/coils.upload')],[1,2,3]);
 assert.equal(files.library.requested_app_mode(),true);
 console.log('PASS: interactive input and coil bytes reach the worker filesystem');
+
+assert.equal(files.library.requested_double_solve(),1);
+files.context.cumesSearch='?boundary=free&run=1&precision=float';
+assert.equal(files.library.requested_double_solve(),0);
+files.context.cumesSearch='?run=1';
+assert.equal(files.library.requested_double_solve(),0);
+console.log('PASS: worker precision agrees with free-boundary paired and fixed-boundary float defaults');
