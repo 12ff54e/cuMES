@@ -25,6 +25,11 @@ struct Compensated {
     }
     __device__ explicit operator T() const { return add(hi, lo); }
 
+    __device__ Compensated& operator+=(Compensated other) {
+        *this = *this + other;
+        return *this;
+    }
+
     __device__ static T add(T a, T b) {
         if constexpr (std::is_same_v<T, float>)
             return __fadd_rn(a, b);

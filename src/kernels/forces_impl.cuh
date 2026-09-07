@@ -67,7 +67,7 @@ __global__ void forces_kernel(cumes::GeometryParityViews<T> full,
                               int ns,
                               int nZnT,
                               T delta_s,
-                              double radius_reference) {
+                              T radius_reference) {
     // Status guard (completion plan step 1.4): no force buffers are written
     // on an invalid-Jacobian pass (the host gate restores before anything
     // consumes them).

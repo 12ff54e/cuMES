@@ -38,86 +38,69 @@
 // controller applies (IterationController::jacobian_invalid + the shared
 // Jacobian threshold).
 // The bit gates every downstream 1/√g consumer, cache mutation, and force.
+template <class T>
 static __global__ void jacobian_finalize_kernel(
-    cumes::ControlRecord* __restrict__ rec,
+    cumes::DeviceControlRecord<T>* __restrict__ rec,
     int nZnT) {
-    const double eps = cumes::control_policy::JACOBIAN_RELATIVE_THRESHOLD;
+    const T eps = T(cumes::control_policy::JACOBIAN_RELATIVE_THRESHOLD);
     const bool invalid =
-        rec->jacobian_nonfinite_count > 0.0 || rec->jacobian_max_abs <= 0.0 ||
-        rec->jacobian_min_oriented <= 0.0 ||
+        rec->jacobian_nonfinite_count > T(0.0) ||
+        rec->jacobian_max_abs <= T(0.0) ||
+        rec->jacobian_min_oriented <= T(0.0) ||
         (rec->jacobian_min_oriented < eps * rec->jacobian_max_abs &&
-         rec->jacobian_min_index >= (double)nZnT);
+         rec->jacobian_min_index >= nZnT);
     rec->status.jacobian_valid = invalid ? 0u : 1u;
 }
 
-// Finalize the force-norm factors ON DEVICE from the just-reduced partials
-// (completion-plan follow-up §2.3). Runs on preconditioner-refresh passes,
-// ordered after force_norm_reduce_kernel/rz_norm_kernel on the compute stream,
-// so the required normalization IS available before the device terminal
-// predicate — convergence classification is no longer structurally disabled
-// on refresh passes. The expressions below are EXACTLY the host-side
-// finalizeForceNorms rules (src/kernels/solver_impl.cuh), operator for
-// operator: fabs, *, /, max and the ternary are all correctly-rounded IEEE
-// double operations and contain no multiply-add pattern, so the device-computed
-// factors are BIT-IDENTICAL to the previous host-side computation in every
-// build. max is written as the std::max comparison form (a < b ? b : a), NOT
-// fmax — fmax returns the non-NaN operand for (NaN, finite), which would
-// diverge from the host on a pathological pass. Gated on force_norms_
-// evaluated: on an invalid-Jacobian refresh pass the fields stay at the
-// deterministic zero sentinel and the predicate skips convergence
-// classification (see below).
+// Finalize force-norm factors in the state scalar on refresh passes. The
+// host consumes these values after the fence; it does not recompute them in
+// a different precision. Keep std::max comparison semantics for NaN inputs.
+// Unevaluated fields retain the zero sentinel from the pass-start reset.
+template <class T>
 static __global__ void force_norm_finalize_kernel(
-    cumes::ControlRecord* __restrict__ rec,
-    double delta_s,
-    double lamscale) {
+    cumes::DeviceControlRecord<T>* __restrict__ rec,
+    T delta_s,
+    T lamscale) {
     if (!rec->status.force_norms_evaluated) return;
-    const double sRZ = rec->force_norms[0];
-    const double sL = rec->force_norms[1];
-    const double sMag = rec->force_norms[2];
-    double eTherm = rec->force_norms[3];
-    double vol = rec->force_norms[4];
-    const double h_rz = rec->force_norms[5];
-    const double eMag = fabs(sMag) * delta_s;
+    const T sRZ = rec->force_norms[0];
+    const T sL = rec->force_norms[1];
+    const T sMag = rec->force_norms[2];
+    T eTherm = rec->force_norms[3];
+    T vol = rec->force_norms[4];
+    const T h_rz = rec->force_norms[5];
+    const T eMag = fabs(sMag) * delta_s;
     eTherm *= delta_s;
     vol *= delta_s;
-    const double energyDensity = ((eMag < eTherm) ? eTherm : eMag) / vol;
+    const T energyDensity = ((eMag < eTherm) ? eTherm : eMag) / vol;
     // Scale-free-division guards (identical to the host): degenerate
-    // denominators produce the 1.0 fallback instead of inf/NaN factors.
-    const double denomRZ = sRZ * energyDensity * energyDensity;
-    rec->final_f_norm_rz = denomRZ > 0.0 ? (1.0 / denomRZ) : 1.0;
-    const double denomL = sL * lamscale * lamscale;
-    rec->final_f_norm_l = denomL > 0.0 ? (1.0 / denomL) : 1.0;
-    rec->final_f_norm1 = h_rz > 0.0 ? (1.0 / h_rz) : 1.0;
+    // denominators produce the unit fallback instead of inf/NaN factors.
+    const T denomRZ = sRZ * energyDensity * energyDensity;
+    rec->final_f_norm_rz = denomRZ > T(0.0) ? (T(1.0) / denomRZ) : T(1.0);
+    const T denomL = sL * lamscale * lamscale;
+    rec->final_f_norm_l = denomL > T(0.0) ? (T(1.0) / denomL) : T(1.0);
+    rec->final_f_norm1 = h_rz > T(0.0) ? (T(1.0) / h_rz) : T(1.0);
 }
 
-// Classify the invariant (unpreconditioned) residual ON DEVICE before the
-// in-place preconditioner (blueprint §6.9/§7 "Terminal"). The normalized
-// triples are formed with the exact host expressions, so the bits agree with
-// IterationController::classify_invariant bit-for-bit. Factor source:
-//   use_record_factors == 0: the host's cached f_norm_rz/f_norm_l (non-refresh
-//     passes — passed by value, identical to what the host will use);
-//   use_record_factors != 0: the record's final_f_norm_* fields, finalized on
-//     device from THIS pass's force norms on refresh passes (completion-plan
-//     follow-up §2.3). The host consumes the same record fields at the fence,
-//     so device and host classification share bit-identical inputs and a
-//     converged refresh pass no-ops preconditioning like any terminal pass.
-//     When the factors were not evaluated (invalid-Jacobian refresh pass, zero
-//     sentinel) convergence classification is skipped: the host's Jacobian
-//     gate restores before reading these bits anyway, and the guarded
-//     preconditioner would no-op regardless.
-// Nonfinite classification is factor-independent and always runs.
+// Normalize and classify before in-place preconditioning. Publish the same
+// normalized T values to the host so both comparisons use identical inputs.
+// Refresh passes use this record's new factors; other passes use the cached
+// factors. The host Jacobian gate skips unevaluated refresh records.
+template <class T>
 static __global__ void invariant_predicate_kernel(
-    cumes::ControlRecord* __restrict__ rec,
-    double f_norm_rz,
-    double f_norm_l,
-    double plain_per_el,
-    double ftol,
+    cumes::DeviceControlRecord<T>* __restrict__ rec,
+    T f_norm_rz,
+    T f_norm_l,
+    T plain_per_el,
+    T ftol,
     int use_record_factors) {
-    const double f_rz = use_record_factors ? rec->final_f_norm_rz : f_norm_rz;
-    const double f_l = use_record_factors ? rec->final_f_norm_l : f_norm_l;
-    const double fsqr_i = rec->invariant_raw[0] * plain_per_el * f_rz * 0.25;
-    const double fsqz_i = rec->invariant_raw[1] * plain_per_el * f_rz * 0.25;
-    const double fsql_i = rec->invariant_raw[2] * plain_per_el * f_l;
+    const T f_rz = use_record_factors ? rec->final_f_norm_rz : f_norm_rz;
+    const T f_l = use_record_factors ? rec->final_f_norm_l : f_norm_l;
+    const T fsqr_i = rec->invariant_raw[0] * plain_per_el * f_rz * T(0.25);
+    const T fsqz_i = rec->invariant_raw[1] * plain_per_el * f_rz * T(0.25);
+    const T fsql_i = rec->invariant_raw[2] * plain_per_el * f_l;
+    rec->invariant_scaled[0] = fsqr_i;
+    rec->invariant_scaled[1] = fsqz_i;
+    rec->invariant_scaled[2] = fsql_i;
     const bool nonfinite =
         !(isfinite(fsqr_i) && isfinite(fsqz_i) && isfinite(fsql_i));
     const bool can_classify =
@@ -141,14 +124,14 @@ __global__ void compute_residuals_preconditioned_kernel(
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> f_spec,
     int ns,
     int mnmax,
-    cumes::ControlRecord* __restrict__ rec) {
-    using A = typename cumes::NormAccum<T>::type;  // double for mixed-float
+    cumes::DeviceControlRecord<T>* __restrict__ rec) {
+    using A = typename cumes::NormAccum<T>::type;  // float-float for float
     int comp = blockIdx.x;
     if (comp >= 3) return;
     const bool terminal = rec->status.invariant_nonfinite != 0 ||
                           rec->status.invariant_converged != 0;
     if (terminal) {
-        if (threadIdx.x == 0) rec->preconditioned_raw[comp] = 0.0;
+        if (threadIdx.x == 0) rec->preconditioned_raw[comp] = T(0.0);
         return;
     }
     A sum = A(0);
@@ -157,7 +140,7 @@ __global__ void compute_residuals_preconditioned_kernel(
         int mode = i / ns, j = i % ns;
         T a = f_spec(static_cast<cumes::SpectralComponent>(comp), mode, j);
         T b = f_spec(static_cast<cumes::SpectralComponent>(comp + 3), mode, j);
-        sum += a * a + b * b;
+        sum += A(a * a + b * b);
     }
     __shared__ A s_sum[256];
     int tid = threadIdx.x;
@@ -168,7 +151,7 @@ __global__ void compute_residuals_preconditioned_kernel(
         __syncthreads();
     }
     if (tid == 0) {
-        rec->preconditioned_raw[comp] = s_sum[0] / (mnmax * ns);
+        rec->preconditioned_raw[comp] = T(s_sum[0]) / T(mnmax * ns);
         rec->status.preconditioned_evaluated = 1;  // idempotent (3 blocks)
     }
 }

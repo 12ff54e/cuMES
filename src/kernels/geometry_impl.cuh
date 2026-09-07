@@ -140,7 +140,7 @@ __global__ void base_geometry_kernel(cumes::GeometryParityViews<T> full,
                                      int ns,
                                      int nZnT,
                                      T delta_s,
-                                     double radius_reference) {
+                                     T radius_reference) {
     // Full-grid geometry, even/odd parity (R/Z only — λ enters the field
     // kernel)
     const T* r_e = full.r_e.data();
@@ -709,7 +709,7 @@ __global__ void jacobian_stats_finalize_kernel(
     const int* __restrict__ partial_arg,
     const int* __restrict__ partial_seen,
     int nPartials,
-    cumes::ControlRecord* __restrict__ rec) {
+    cumes::DeviceControlRecord<T>* __restrict__ rec) {
     const T INF =
         (sizeof(T) == sizeof(double)) ? T(CUDART_INF) : T(CUDART_INF_F);
     int tid = threadIdx.x;
@@ -743,7 +743,7 @@ __global__ void jacobian_stats_finalize_kernel(
         rec->jacobian_min_oriented = s_seen[0] ? s_min[0] : INF;
         rec->jacobian_max_abs = s_max[0];
         rec->jacobian_nonfinite_count = s_bad[0];
-        rec->jacobian_min_index = static_cast<double>(s_arg[0]);
+        rec->jacobian_min_index = s_arg[0];
     }
 }
 
@@ -766,9 +766,10 @@ void cumes::GeometryOperator<T>::enqueue(
 }
 
 template <typename T>
-void cumes::GeometryOperator<T>::jacobian_stats(const DeviceParams<T>& p,
-                                                cumes::ControlRecord* rec,
-                                                cudaStream_t stream) const {
+void cumes::GeometryOperator<T>::jacobian_stats(
+    const DeviceParams<T>& p,
+    cumes::DeviceControlRecord<T>* rec,
+    cudaStream_t stream) const {
     const int nHalf = (p.ns - 1) * p.nZnT;
     jacobian_stats_partials_kernel<T><<<jacobian_blocks_, 256, 0, stream>>>(
         d_gsqrt_, nHalf, T(p.SIGN_JACOBIAN), d_jacobian_min_, d_jacobian_max_,

@@ -37,12 +37,17 @@ class SpectralStorage {
         : radius_reference_(radius_reference.begin(), radius_reference.end()),
           d_radius_reference_(radius_reference.size()) {
         allocate(ns, mnmax);
-        if (!radius_reference.empty())
+        if (!radius_reference.empty()) {
+            std::vector<T> native_reference;
+            native_reference.reserve(radius_reference.size());
+            for (double value : radius_reference)
+                native_reference.push_back(T(value));
             check_cuda(
-                cudaMemcpy(d_radius_reference_.data(), radius_reference.data(),
-                           radius_reference.size_bytes(),
+                cudaMemcpy(d_radius_reference_.data(), native_reference.data(),
+                           native_reference.size() * sizeof(T),
                            cudaMemcpyHostToDevice),
                 "upload radius reference");
+        }
     }
 
     SpectralStorage(SpectralStorage&&) noexcept = default;
@@ -134,7 +139,7 @@ class SpectralStorage {
     DeviceBuffer<T> state_;
     DeviceBuffer<T> velocity_;
     std::vector<double> radius_reference_;
-    DeviceBuffer<double> d_radius_reference_;
+    DeviceBuffer<T> d_radius_reference_;
     int ns_ = 0;
     int mnmax_ = 0;
 };

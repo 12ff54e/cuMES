@@ -52,7 +52,7 @@ struct DeviceParams {
     // Nonzero enables displacement storage; SpectralStorage holds all its
     // Fourier modes. Absolute-radius terms restore the reference, while
     // radial differences operate directly on the small displacement.
-    double radius_reference = 0.0;
+    T radius_reference = T(0);
     cumes::OddGeometryPrecision odd_geometry =
         cumes::OddGeometryPrecision::NATIVE;
     static constexpr int SIGN_JACOBIAN = -1;

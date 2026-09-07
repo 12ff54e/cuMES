@@ -19,8 +19,7 @@
 //   5. an end-to-end collapsed-state EquilibriumOperator::enqueue reports
 //      jacobian_valid == 0 and performs no forbidden cache mutation.
 //
-// Both double and float instantiate every case (the predicate math itself is
-// double in both builds — ADR-0001).
+// Both double and float instantiate every case with scalar-typed predicates.
 #include "cumes/numerics/device_predicates.cuh"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/physics/constraint_operator.hpp"
@@ -45,6 +44,7 @@ using namespace cumes::test;
 // ---------------------------------------------------------------------------
 // 1. Jacobian finalize rule == host controller rule
 // ---------------------------------------------------------------------------
+template <class T>
 static void test_jacobian_finalize_rules() {
     const int nZnT = 18;
     // {min_oriented, max_abs, nonfinite, min_index} + expected host decision.
@@ -63,9 +63,9 @@ static void test_jacobian_finalize_rules() {
         {0.9, 1.0, 0.0, 0.0, "min at first point (valid)"},
     };
 
-    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    cumes::DeviceBuffer<cumes::DeviceControlRecord<T>> d_rec(1);
     for (const Case& c : cases) {
-        cumes::ControlRecord h;
+        cumes::DeviceControlRecord<T> h;
         h.jacobian_min_oriented = c.min_o;
         h.jacobian_max_abs = c.max_a;
         h.jacobian_nonfinite_count = c.nf;
@@ -77,7 +77,7 @@ static void test_jacobian_finalize_rules() {
         // Host decision: the controller's own gate (fresh controller per case).
         cumes::IterationController<double> ctl(
             cumes::IterationController<double>::Options{});
-        cumes::JacobianStatus<double> js;
+        cumes::JacobianStatus<T> js;
         js.min_oriented = c.min_o;
         js.max_abs = c.max_a;
         js.nonfinite_count = c.nf;
@@ -106,6 +106,7 @@ static void test_jacobian_finalize_rules() {
 // 1 = the record's device-finalized final_f_norm_* fields (refresh passes).
 // The host consumes the same record fields on refresh passes, so the device
 // bits and the host verdict must agree bit-for-bit on EVERY pass.
+template <class T>
 static void test_invariant_predicate_rules() {
     struct Case {
         double raw[3];
@@ -117,6 +118,42 @@ static void test_invariant_predicate_rules() {
         const char* label;
     };
     const Case cases[] = {
+        {{T(4) * T(1e-5), 0, 0},
+         1,
+         1,
+         1,
+         T(1e-5),
+         0,
+         0,
+         1,
+         0,
+         false,
+         true,
+         "exactly at tolerance"},
+        {{std::nextafter(T(4) * T(1e-5), T(INFINITY)), 0, 0},
+         1,
+         1,
+         1,
+         T(1e-5),
+         0,
+         0,
+         1,
+         0,
+         false,
+         false,
+         "one scalar ULP above tolerance"},
+        {{std::nextafter(T(4) * T(1e-5), T(0)), 0, 0},
+         1,
+         1,
+         1,
+         T(1e-5),
+         0,
+         0,
+         1,
+         0,
+         false,
+         true,
+         "one scalar ULP below tolerance"},
         {{1e-10, 2e-10, 3e-10},
          1.0,
          1.0,
@@ -203,9 +240,9 @@ static void test_invariant_predicate_rules() {
          "zero fNormRZ collapses fsqr/fsqz (converged)"},
     };
 
-    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    cumes::DeviceBuffer<cumes::DeviceControlRecord<T>> d_rec(1);
     for (const Case& c : cases) {
-        cumes::ControlRecord h = {};
+        cumes::DeviceControlRecord<T> h = {};
         h.invariant_raw[0] = c.raw[0];
         h.invariant_raw[1] = c.raw[1];
         h.invariant_raw[2] = c.raw[2];
@@ -215,7 +252,7 @@ static void test_invariant_predicate_rules() {
         check_cuda(
             cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
             "rec up (pred)");
-        invariant_predicate_kernel<<<1, 1>>>(
+        invariant_predicate_kernel<T><<<1, 1>>>(
             d_rec.data(), c.f_rz, c.f_l, c.plain, c.ftol, c.use_record_factors);
         cc(cudaDeviceSynchronize(), "predicate sync");
         check_cuda(
@@ -223,17 +260,27 @@ static void test_invariant_predicate_rules() {
             "rec down (pred)");
 
         // Host classification with the identical expressions and factor source.
-        const double f_rz = c.use_record_factors ? c.rec_f_rz : c.f_rz;
-        const double f_l = c.use_record_factors ? c.rec_f_l : c.f_l;
-        const double fsqr_i = c.raw[0] * c.plain * f_rz * 0.25;
-        const double fsqz_i = c.raw[1] * c.plain * f_rz * 0.25;
-        const double fsql_i = c.raw[2] * c.plain * f_l;
+        const T f_rz = T(c.use_record_factors ? c.rec_f_rz : c.f_rz);
+        const T f_l = T(c.use_record_factors ? c.rec_f_l : c.f_l);
+        const T fsqr_i = T(c.raw[0]) * T(c.plain) * f_rz * T(0.25);
+        const T fsqz_i = T(c.raw[1]) * T(c.plain) * f_rz * T(0.25);
+        const T fsql_i = T(c.raw[2]) * T(c.plain) * f_l;
         const bool host_nf = !(std::isfinite(fsqr_i) && std::isfinite(fsqz_i) &&
                                std::isfinite(fsql_i));
         const bool host_cv =
             !host_nf && (!c.use_record_factors || c.evaluated != 0) &&
-            fsqr_i <= c.ftol && fsqz_i <= c.ftol && fsql_i <= c.ftol;
+            fsqr_i <= T(c.ftol) && fsqz_i <= T(c.ftol) && fsql_i <= T(c.ftol);
 
+        auto received = h.template cast<double>();
+        cumes::IterationController<double>::Options options;
+        options.ftol = double(T(c.ftol));
+        cumes::IterationController<double> controller(options);
+        auto verdict = controller.classify_invariant(received.invariant_scaled);
+        check(verdict.nonfinite == host_nf &&
+                  (c.use_record_factors && !c.evaluated
+                       ? true
+                       : verdict.converged == host_cv),
+              "host controller consumes the same normalized scalar values");
         check(
             (h.status.invariant_nonfinite != 0) == host_nf &&
                 (h.status.invariant_converged != 0) == host_cv,
@@ -247,6 +294,7 @@ static void test_invariant_predicate_rules() {
 // ---------------------------------------------------------------------------
 // 2b. Device force-norm finalize == the host's finalizeForceNorms expressions
 // ---------------------------------------------------------------------------
+template <class T>
 static void test_force_norm_finalize_rules() {
     struct Case {
         double norms[6];
@@ -265,34 +313,34 @@ static void test_force_norm_finalize_rules() {
          "zero deltaS -> NaN density -> fallback 1"},
     };
 
-    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
+    cumes::DeviceBuffer<cumes::DeviceControlRecord<T>> d_rec(1);
     for (const Case& c : cases) {
-        cumes::ControlRecord h = {};
+        cumes::DeviceControlRecord<T> h = {};
         for (int i = 0; i < 6; ++i) h.force_norms[i] = c.norms[i];
         h.status.force_norms_evaluated = 1;
         check_cuda(
             cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
             "rec up (fnfinalize)");
-        force_norm_finalize_kernel<<<1, 1>>>(d_rec.data(), c.delta_s,
-                                             c.lamscale);
+        force_norm_finalize_kernel<T>
+            <<<1, 1>>>(d_rec.data(), c.delta_s, c.lamscale);
         cc(cudaDeviceSynchronize(), "fnfinalize sync");
         check_cuda(
             cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
             "rec down (fnfinalize)");
 
         // Host reference: the exact finalizeForceNorms expressions. Every op
-        // is correctly-rounded IEEE double, so the device result must match
+        // is evaluated in T, so the device result must match
         // BIT-FOR-BIT (the solver relies on this for host/device agreement).
-        const double sRZ = c.norms[0], sL = c.norms[1], sMag = c.norms[2];
-        const double eTherm = c.norms[3] * c.delta_s;
-        const double vol = c.norms[4] * c.delta_s;
-        const double eMag = fabs(sMag) * c.delta_s;
-        const double energyDensity = std::max(eMag, eTherm) / vol;
-        const double denomRZ = sRZ * energyDensity * energyDensity;
-        const double fRZ = denomRZ > 0.0 ? (1.0 / denomRZ) : 1.0;
-        const double denomL = sL * c.lamscale * c.lamscale;
-        const double fL = denomL > 0.0 ? (1.0 / denomL) : 1.0;
-        const double f1 = c.norms[5] > 0.0 ? (1.0 / c.norms[5]) : 1.0;
+        const T sRZ = T(c.norms[0]), sL = T(c.norms[1]), sMag = T(c.norms[2]);
+        const T eTherm = T(c.norms[3]) * T(c.delta_s);
+        const T vol = T(c.norms[4]) * T(c.delta_s);
+        const T eMag = std::fabs(sMag) * T(c.delta_s);
+        const T energyDensity = std::max(eMag, eTherm) / vol;
+        const T denomRZ = sRZ * energyDensity * energyDensity;
+        const T fRZ = denomRZ > T(0.0) ? (T(1.0) / denomRZ) : T(1.0);
+        const T denomL = sL * T(c.lamscale) * T(c.lamscale);
+        const T fL = denomL > T(0.0) ? (T(1.0) / denomL) : T(1.0);
+        const T f1 = T(c.norms[5]) > T(0.0) ? (T(1.0) / T(c.norms[5])) : T(1.0);
 
         check(h.final_f_norm_rz == fRZ && h.final_f_norm_l == fL &&
                   h.final_f_norm1 == f1,
@@ -301,11 +349,11 @@ static void test_force_norm_finalize_rules() {
 
     // Not evaluated (invalid-Jacobian refresh pass): the fields keep the
     // deterministic zero sentinel the pass-start control reset wrote.
-    cumes::ControlRecord h = {};
+    cumes::DeviceControlRecord<T> h = {};
     for (int i = 0; i < 6; ++i) h.force_norms[i] = 1.0;
     check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
                "rec up (fnfinalize skip)");
-    force_norm_finalize_kernel<<<1, 1>>>(d_rec.data(), 0.5, 2.0);
+    force_norm_finalize_kernel<T><<<1, 1>>>(d_rec.data(), 0.5, 2.0);
     cc(cudaDeviceSynchronize(), "fnfinalize skip sync");
     check_cuda(cudaMemcpy(&h, d_rec.data(), sizeof(h), cudaMemcpyDeviceToHost),
                "rec down (fnfinalize skip)");
@@ -384,8 +432,8 @@ static void run_guard_noop(T label) {
     cumes::Preconditioner<T> precon(p, std::nullopt);
     cumes::ConstraintOperator<T> constraint(p, std::nullopt);
 
-    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
-    cumes::ControlRecord h_rec = {};
+    cumes::DeviceBuffer<cumes::DeviceControlRecord<T>> d_rec(1);
+    cumes::DeviceControlRecord<T> h_rec = {};
     h_rec.status.jacobian_valid = 1;
 
     const size_t nField = (size_t)(p.ns - 1) * p.nZnT;  // half-grid fields
@@ -500,8 +548,8 @@ static void run_preconditioned_gate(T label) {
     cumes::SpectralView<const T, cumes::DecomposedResidualDomain> view(
         d_f.data(), ns, mnmax);
 
-    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
-    cumes::ControlRecord h = {};
+    cumes::DeviceBuffer<cumes::DeviceControlRecord<T>> d_rec(1);
+    cumes::DeviceControlRecord<T> h = {};
 
     // Terminal (converged): zero sentinel + not_evaluated.
     h.status.invariant_converged = 1;
@@ -519,7 +567,7 @@ static void run_preconditioned_gate(T label) {
           "evaluated");
 
     // Continuing: real reduction + evaluated bit.
-    h = cumes::ControlRecord{};
+    h = cumes::DeviceControlRecord<T>{};
     check_cuda(cudaMemcpy(d_rec.data(), &h, sizeof(h), cudaMemcpyHostToDevice),
                "rec up (continue)");
     compute_residuals_preconditioned_kernel<T>
@@ -607,7 +655,7 @@ static void run_collapsed_dag(T label) {
     // A valid pass first: real caches, real jacobian validity.
     equilibrium.enqueue(0, 1, schedule, 0, 1.0, 1.0);
     cc(cudaDeviceSynchronize(), "valid dag sync");
-    cumes::ControlRecord h_rec;
+    cumes::DeviceControlRecord<T> h_rec;
     check_cuda(cudaMemcpy(&h_rec, equilibrium.control_device(), sizeof(h_rec),
                           cudaMemcpyDeviceToHost),
                "rec down (valid dag)");
@@ -702,8 +750,8 @@ static void run_sign_flip_stats(T label) {
     const size_t nHalf = (size_t)(p.ns - 1) * p.nZnT;  // 288 half-grid entries
     const size_t nFull = (size_t)p.ns * p.nZnT;
 
-    cumes::DeviceBuffer<cumes::ControlRecord> d_rec(1);
-    cumes::ControlRecord h_rec = {};
+    cumes::DeviceBuffer<cumes::DeviceControlRecord<T>> d_rec(1);
+    cumes::DeviceControlRecord<T> h_rec = {};
     h_rec.status.jacobian_valid = 1;
 
     // Seed a valid pass (the fused inverse + base geometry), then OVERWRITE
@@ -825,9 +873,12 @@ static void run_sign_flip_stats(T label) {
 }
 
 int main() {
-    test_jacobian_finalize_rules();
-    test_invariant_predicate_rules();
-    test_force_norm_finalize_rules();
+    test_jacobian_finalize_rules<double>();
+    test_jacobian_finalize_rules<float>();
+    test_invariant_predicate_rules<double>();
+    test_invariant_predicate_rules<float>();
+    test_force_norm_finalize_rules<double>();
+    test_force_norm_finalize_rules<float>();
     run_guard_noop(double(0));
     run_guard_noop(float(0));
     run_sign_flip_stats(double(0));

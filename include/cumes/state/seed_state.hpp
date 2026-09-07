@@ -56,7 +56,7 @@ DeviceParams<T> init_params(const ValidatedProblem& vp,
     p.lamscale = T(0.0);            // set by profilesCreate
     if constexpr (sizeof(T) == sizeof(float)) {
         if (use_radius_reference && p.ntor > 0 && !s.free_boundary.lfreeb)
-            p.radius_reference = vp.boundary().rbcc[0];
+            p.radius_reference = T(vp.boundary().rbcc[0]);
     }
     return p;
 }

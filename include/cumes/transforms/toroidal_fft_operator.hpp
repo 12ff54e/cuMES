@@ -183,7 +183,7 @@ class ToroidalFftOperator : public SpectralOperator<T> {
     std::size_t cufft_work_bytes_c_ = 0;
 
     std::unique_ptr<OddGeometryOperator<FloatFloat>> odd_float_float_;
-    std::unique_ptr<OddGeometryOperator<double>> odd_double_;
+    DeviceBuffer<T> d_reference_cos_;
     SpectralView<const T, PhysicalStateDomain> reference_coeff_;
     bool reference_ready_ = false;
     DeviceParams<T> p_{};

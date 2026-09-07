@@ -129,16 +129,15 @@ static void run_geometry(int ns,
         check(all_zero, "ncurr=1 curtor=0 publishes zero current profile");
     }
     // Jacobian stats must be finite and the max nonzero. computeJacobianStats
-    // is device-only (Phase 6A one-fence path) and writes DOUBLE stats in
-    // both builds (ADR-0001); the stats now land in the typed ControlRecord
-    // (completion plan step 1.3), copied out of a RAII buffer here.
-    cumes::DeviceBuffer<cumes::ControlRecord> rec(1);
+    // is device-only and writes T stats plus an integer argmin into the typed
+    // control record, copied out of a RAII buffer here.
+    cumes::DeviceBuffer<cumes::DeviceControlRecord<T>> rec(1);
     // Zero the whole record first: jacobian_stats writes only its four slots,
     // and initcheck flags a D2H copy of any byte no kernel produced.
-    check_cuda(cudaMemset(rec.data(), 0, sizeof(cumes::ControlRecord)),
+    check_cuda(cudaMemset(rec.data(), 0, sizeof(cumes::DeviceControlRecord<T>)),
                "rec zero");
     geometry.jacobian_stats(p, rec.data(), 0);
-    cumes::ControlRecord h_rec;
+    cumes::DeviceControlRecord<T> h_rec;
     check_cuda(
         cudaMemcpy(&h_rec, rec.data(), sizeof(h_rec), cudaMemcpyDeviceToHost),
         "rec cpy");

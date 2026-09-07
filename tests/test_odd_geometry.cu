@@ -125,16 +125,14 @@ int test_reconstruction(int argc, char** argv) {
                               OddGeometryPrecision::SUM,
                               OddGeometryPrecision::POLOIDAL,
                               OddGeometryPrecision::POLOIDAL_SCALE,
-                              OddGeometryPrecision::FLOAT_FLOAT,
-                              OddGeometryPrecision::DOUBLE};
+                              OddGeometryPrecision::FLOAT_FLOAT};
     }();
     constexpr auto names = [] {
         if constexpr (std::is_same_v<T, double>)
             return std::array{"native", "compensated"};
         else
             return std::array{"native",   "float-order",    "sum",
-                              "poloidal", "poloidal-scale", "float-float",
-                              "double"};
+                              "poloidal", "poloidal-scale", "float-float"};
     }();
     std::vector<T> baseline_ru;
     std::array<long double, 2> baseline_radial{};
@@ -190,8 +188,7 @@ int test_reconstruction(int argc, char** argv) {
             if constexpr (std::is_same_v<T, double>)
                 check(worst < 1e-13L,
                       "double positions agree with long double reference");
-            if (policies[v] == OddGeometryPrecision::FLOAT_FLOAT ||
-                policies[v] == OddGeometryPrecision::DOUBLE) {
+            if (policies[v] == OddGeometryPrecision::FLOAT_FLOAT) {
                 check(
                     worst < 1e-7,
                     "accurate odd positions agree with host direct reference");

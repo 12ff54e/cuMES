@@ -145,7 +145,7 @@ static void test_seed_restart() {
     auto p = init_params<float>(vp);
     check(SolveRequest{}.use_radius_reference,
           "reference: public solver request enables reference by default");
-    check(p.radius_reference == vp.boundary().rbcc[0],
+    check(p.radius_reference == float(vp.boundary().rbcc[0]),
           "reference: fixed 3D float enables reference by default");
     check(init_params<float>(vp, false).radius_reference == 0.0,
           "reference: explicit opt-out restores absolute coefficients");

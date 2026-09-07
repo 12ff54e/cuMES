@@ -334,3 +334,19 @@ if(CUMES_ENABLE_SANITIZER_TESTS AND CUMES_COMPUTE_SANITIZER)
       LABELS "sanitizer;initcheck" TIMEOUT 600 RUN_SERIAL TRUE
       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endif()
+
+# cuMES's float library and its vacuum dependency must not acquire FP64
+# instructions through implicit promotion or diagnostic dispatch.
+find_program(CUMES_CUOBJDUMP NAMES cuobjdump HINTS "${CUDAToolkit_BIN_DIR}")
+if(CUMES_CUOBJDUMP)
+  set(cumes_float_audit_vacuum "")
+  if(TARGET vfield_cuda_float)
+    set(cumes_float_audit_vacuum "$<TARGET_FILE:vfield_cuda_float>")
+  endif()
+  add_test(NAME float_kernel_types
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/check_float_kernels.sh
+      "${CUMES_CUOBJDUMP}" "$<TARGET_FILE:cumes_cuda_float>"
+      "${cumes_float_audit_vacuum}")
+  set_tests_properties(float_kernel_types PROPERTIES
+    LABELS "precision;verification" TIMEOUT 120)
+endif()

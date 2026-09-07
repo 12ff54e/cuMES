@@ -92,8 +92,7 @@ template <class A>
 OddGeometryOperator<A>::OddGeometryOperator(const DeviceParams<float>& p)
     : p_(p) {
     using namespace odd_geometry_detail;
-    bool full = p.odd_geometry == OddGeometryPrecision::FLOAT_FLOAT ||
-                p.odd_geometry == OddGeometryPrecision::DOUBLE;
+    bool full = p.odd_geometry == OddGeometryPrecision::FLOAT_FLOAT;
     std::vector<A> scale(p.ns);
     for (int j = 0; j < p.ns; ++j)
         scale[j] =

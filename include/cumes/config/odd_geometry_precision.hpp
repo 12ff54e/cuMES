@@ -15,7 +15,6 @@ enum class OddGeometryPrecision {
     POLOIDAL,
     POLOIDAL_SCALE,
     FLOAT_FLOAT,
-    DOUBLE,
 };
 
 inline OddGeometryPrecision parse_odd_geometry_precision(
@@ -26,10 +25,9 @@ inline OddGeometryPrecision parse_odd_geometry_precision(
     if (name == "poloidal") return OddGeometryPrecision::POLOIDAL;
     if (name == "poloidal-scale") return OddGeometryPrecision::POLOIDAL_SCALE;
     if (name == "float-float") return OddGeometryPrecision::FLOAT_FLOAT;
-    if (name == "double") return OddGeometryPrecision::DOUBLE;
     throw std::invalid_argument(
         "odd geometry precision: expected native, float-order, sum, poloidal, "
-        "poloidal-scale, float-float or double");
+        "poloidal-scale or float-float");
 }
 }  // namespace cumes
 #endif
