@@ -168,4 +168,8 @@ if(CUMES_WEBGPU_NODE)
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_runtime_loader.mjs)
   set_tests_properties(webgpu_runtime_loader PROPERTIES LABELS "unit;webgpu")
+  add_test(NAME webgpu_verification_log
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_verification_log.mjs)
+  set_tests_properties(webgpu_verification_log PROPERTIES LABELS "unit;webgpu")
 endif()

@@ -48,7 +48,7 @@ try {
     })()`);
     if (status === 'pass' || status === 'fail') {
       const result = await evaluate(`({dataset: {...document.body.dataset},
-        log: document.getElementById('log')?.textContent || document.body.innerText})`);
+        log: window.cumesVerificationLog?.text() || document.getElementById('log')?.textContent || document.body.innerText})`);
       const trace = await evaluate('window.cumesDiagnostics || []');
       await writeFile(`${prefix}-result.json`, JSON.stringify(result));
       await writeFile(`${prefix}-trace.json`, JSON.stringify(trace));

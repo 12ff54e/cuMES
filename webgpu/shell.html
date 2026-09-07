@@ -100,6 +100,7 @@
     .legacy { max-width:960px; } .legacy h2 { font-size:24px; }
     .legacy-viewer { margin-top:18px; }
     .legacy .actions { margin:0 0 18px; }
+    .verification-summary { max-height:none; padding:12px 0; }
     .precision-control { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:18px 0; }
     .precision-control p { flex-basis:100%; margin:0; color:var(--muted); font-size:12px; }
     .legacy-viewer .plot-wrap { min-height:560px; }
@@ -177,7 +178,10 @@
       <p>Switching precision returns to setup and keeps grid/FFT settings. Double uses two f32 words, not native IEEE fp64.</p>
     </section>
     <div class="actions" id="w7x-actions" hidden><button class="primary" id="w7x-start" type="button">Start</button><span class="subtitle" id="w7x-status" role="status">Choose precision, then start the solve.</span></div>
-    <pre id="legacy-output">Loading WebAssembly and requesting WebGPU…\n</pre>
+    <p class="subtitle" id="verification-progress" role="status" hidden>Checking GPU operators…</p>
+    <pre id="legacy-output">Loading WebAssembly and requesting WebGPU…
+</pre>
+    <details id="verification-details" hidden><summary>Detailed log</summary><pre id="verification-full-output"></pre></details>
     <section class="panel legacy-viewer" id="legacy-viewer" hidden><div class="panel-head"><h2>3D equilibrium</h2><span class="tag">Drag to orbit · wheel to zoom</span></div>
       <div class="plot-wrap"><canvas class="equilibrium-3d" id="legacy-result-3d" aria-label="Interactive three-dimensional equilibrium"></canvas></div></section>
   </div>
@@ -310,7 +314,11 @@
       const next=new URL(location.href);next.searchParams.set('run','1');location.assign(next.href)});
     value('reset')?.addEventListener('click',()=>{localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
       const next=new URL(location.href);next.searchParams.delete('run');location.assign(next.href)});
-    const logBuffer=createCumesLogBuffer(output);
+    const verificationMode=!appMode&&!w7xSolve;
+    if(verificationMode){output.textContent='Requesting WebGPU…\n';output.classList.add('verification-summary');
+      value('verification-progress').hidden=false;value('verification-details').hidden=false}
+    const logBuffer=verificationMode?createCumesVerificationLog(output,value('verification-details'),value('verification-progress')):createCumesLogBuffer(output);
+    if(verificationMode)window.cumesVerificationLog=logBuffer;
     function append(line){logBuffer.append(line)}
     window.cumesFlushLog=()=>logBuffer.flush();
     window.cumesAppendLog = append;
@@ -384,6 +392,7 @@
       value('reset').disabled=disabled}
     function updateStatus(){const state=document.body.dataset.cumesWebgpu;
       if(state==='pass'||state==='fail')logBuffer.flush();
+      if(verificationMode&&(state==='pass'||state==='fail'))logBuffer.finish(state==='pass',document.body.dataset.cumesDetail||'');
       if(w7xSolve&&(state==='pass'||state==='fail')){
         value('w7x-start').disabled=false;value('w7x-start').textContent='Reset run';
         value('w7x-status').textContent=(state==='pass'?'Converged.':'Solve failed.')+' Reset to prepare another run.';

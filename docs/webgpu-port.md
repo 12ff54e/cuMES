@@ -265,6 +265,15 @@ A successful run finishes with:
 cuMES WebGPU self-test: PASS
 ```
 
+The verification page shows a compact summary: GPU setup, operator and W7-X
+integration results, one convergence line per Solovev grid, output checks, and
+the final result. A live status line replaces per-iteration log spam. Warnings
+and failures are always shown. Expand **Detailed log** for every original
+comparison and error value; collapsed details are buffered in memory without
+rendering thousands of lines. Browser automation can read the unchanged full
+stream using `window.cumesVerificationLog.text()` (the validation script does
+this automatically). Editor and W7-X solver logs are unchanged.
+
 Append `?solve=w7x` to open the fixed-boundary W7-X example. Choose precision
 and click **Start** to load Wasm, request the GPU, and start solving. Opening or
 refreshing this tab never auto-runs, even with `run=1` in a saved URL. Precision

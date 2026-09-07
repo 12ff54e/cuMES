@@ -20,6 +20,80 @@ function createCumesLogBuffer(output, schedule = setTimeout, cancel = clearTimeo
   };
 }
 
+function createCumesVerificationLog(output, details, progress) {
+  const summary = createCumesLogBuffer(output);
+  const full = createCumesLogBuffer(details.querySelector('pre'));
+  const label = details.querySelector('summary');
+  const lines = [];
+  let cursor = 0, timer = null, phase = 'operators', grid = 1, terminal = false;
+  function flushDetails() {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    label.textContent = `Detailed log (${lines.length} lines)`;
+    if (details.open && cursor < lines.length) {
+      full.append(lines.slice(cursor).join('\n'));
+      cursor = lines.length;
+      full.flush();
+    }
+  }
+  details.addEventListener('toggle', flushDetails);
+  return {
+    append(raw) {
+      lines.push(raw);
+      if (timer === null) timer = setTimeout(flushDetails, 100);
+      const line = raw.trim();
+      const result = line.match(/^cuMES WebGPU self-test: (PASS|FAIL)(.*)$/);
+      if (result) {
+        terminal = true;
+        summary.append(`Verification: ${result[1]}${result[2]}`);
+        progress.textContent = result[1] === 'PASS' ? 'All checks passed.' : 'Verification failed.';
+        return;
+      }
+      if (/\b(FAIL|FATAL|ERROR|WARNING)\b/i.test(line)) { summary.append(line); return; }
+      if (line.startsWith('adapter selected:')) {
+        summary.append(line.replace('adapter selected:', 'GPU:')); return;
+      }
+      if (line.startsWith('parsed W7-X 3-D cold start: PASS')) {
+        phase = 'w7x';
+        summary.append('GPU operator checks: PASS');
+        progress.textContent = 'Checking W7-X initialization, paired precision, and solver integration…';
+        return;
+      }
+      if (line.startsWith('W7-X controller-complete two-pass slice: PASS')) {
+        phase = 'solovev';
+        summary.append('W7-X integration: PASS (two solver passes)');
+        progress.textContent = 'Solovev convergence check · grid 1/3';
+        return;
+      }
+      const stage = line.match(/^Solovev stage (\d+)\/(\d+) converged: iter=(\d+) residual=\(([^,]+),/);
+      if (stage) {
+        summary.append(`Solovev grid ${stage[1]}/${stage[2]}: PASS — ${stage[3]} iterations, FSQR ${stage[4]}`);
+        grid = Math.min(Number(stage[1]) + 1, Number(stage[2]));
+        return;
+      }
+      const iteration = line.match(/^host controller: PASS \(iter=(\d+), FSQR=([^,]+)/);
+      if (iteration) {
+        progress.textContent = `${phase === 'solovev' ? 'Solovev · grid ' + grid + '/3' : 'W7-X'} · iteration ${iteration[1]} · FSQR ${iteration[2]}`;
+        return;
+      }
+      if (line.startsWith('published schema-')) { summary.append('Output serialization checks: PASS'); return; }
+      // Repeated per-operator comparisons stay in the expandable detailed log.
+      if (/: PASS\b/.test(line) || /^(cuMES WebGPU milestone:|adapter\/device ready;|.*stage prolongation)/.test(line)) return;
+      if (line) summary.append(line);
+    },
+    flush() { summary.flush(); flushDetails(); },
+    finish(success, detail) {
+      if (!terminal) {
+        terminal = true;
+        summary.append(`Verification: ${success ? 'PASS' : 'FAIL'} — ${detail}`);
+      }
+      progress.textContent = success ? 'All checks passed.' : 'Verification failed.';
+      this.flush();
+    },
+    text() { return lines.length ? lines.join('\n') + '\n' : ''; }
+  };
+}
+
 function installCumesBrowser() {
   globalThis.cumesBrowser = {
     result(success, detail, timing) {
