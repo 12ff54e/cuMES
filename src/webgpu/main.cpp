@@ -17,6 +17,7 @@
 #include "cumes/webgpu/prolongation.hpp"
 #include "cumes/webgpu/toroidal.hpp"
 #include "float_geometry_tests.hpp"
+#include "rounding_tests.hpp"
 
 #include <algorithm>
 #include <array>
@@ -225,7 +226,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "adapter/device ready; running %zu radial-transfer "
                     "cases\n",
                     self->cases_.size());
-                self->run_next();
+                cumes::webgpu::run_rounding_tests(
+                    self->device_, [self](std::string error) {
+                        if (!error.empty()) {
+                            self->finish(false, std::move(error));
+                            return;
+                        }
+                        self->run_next();
+                    });
             });
     }
 

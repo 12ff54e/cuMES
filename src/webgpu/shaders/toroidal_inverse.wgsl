@@ -28,8 +28,10 @@ struct Values { data: array<f32>, };
 // the product and sum residuals. Each invocation owns its atomic scratch slot.
 var<workgroup> rounding: array<atomic<u32>, 128>;
 fn rounded(value: f32, slot: u32) -> f32 {
-    atomicStore(&rounding[slot % 128u], bitcast<u32>(value));
-    return bitcast<f32>(atomicLoad(&rounding[slot % 128u]));
+    // RMW on both sides preserves rounding and ordering on Firefox/SPIR-V,
+    // including single-invocation workgroups used by the current integral.
+    atomicExchange(&rounding[slot % 128u], bitcast<u32>(value));
+    return bitcast<f32>(atomicAdd(&rounding[slot % 128u], 0u));
 }
 fn pair_sum(a: f32, b: f32, slot: u32) -> vec2<f32> {
     let s = rounded(a + b, slot);

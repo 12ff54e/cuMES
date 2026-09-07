@@ -11,6 +11,7 @@
 #include <cmath>
 #include <memory>
 #include <numbers>
+#include <sstream>
 #include <utility>
 
 namespace cumes::webgpu {
@@ -122,12 +123,19 @@ class FloatGeometryTest
                 }
                 constexpr std::size_t POINTS = 4 * 128;
                 bool valid = value.geometry.size() == 18 * POINTS;
+                std::string mismatch;
                 for (std::size_t field = 0; field < 18 && valid; ++field)
                     for (std::size_t p = 0; p < POINTS; ++p) {
                         const auto i = field * POINTS + p;
                         if (field != 6 && field != 7) {
-                            valid &=
-                                value.geometry[i] == self->native_.geometry[i];
+                            if (value.geometry[i] !=
+                                self->native_.geometry[i]) {
+                                valid = false;
+                                mismatch = "uncompensated field=" +
+                                           std::to_string(field) +
+                                           " point=" + std::to_string(p);
+                                break;
+                            }
                             continue;
                         }
                         const int j = int(p / 128), t = int(p % 16);
@@ -151,9 +159,19 @@ class FloatGeometryTest
                         const float expected = static_cast<float>(sum * scale);
                         const float ulp = std::abs(
                             std::nextafter(expected, INFINITY) - expected);
-                        valid &= std::isfinite(value.geometry[i]) &&
-                                 std::abs(value.geometry[i] - expected) <=
-                                     2.0F * ulp;
+                        if (!std::isfinite(value.geometry[i]) ||
+                            std::abs(value.geometry[i] - expected) >
+                                2.0F * ulp) {
+                            valid = false;
+                            std::ostringstream detail;
+                            detail.precision(9);
+                            detail << "field=" << field << " point=" << p
+                                   << " actual=" << value.geometry[i]
+                                   << " expected=" << expected
+                                   << " ULP=" << ulp;
+                            mismatch = detail.str();
+                            break;
+                        }
                     }
                 valid &= value.r_con == self->native_.r_con &&
                          value.z_con == self->native_.z_con;
@@ -167,7 +185,8 @@ class FloatGeometryTest
                 if (!valid) {
                     self->callback(
                         "float compensated inverse/reference isolation "
-                        "mismatch");
+                        "mismatch: " +
+                        mismatch);
                     return;
                 }
                 self->geometry_.ns = 4;

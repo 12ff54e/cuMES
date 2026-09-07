@@ -18,8 +18,10 @@ var<workgroup> rounding: array<atomic<u32>, 128>;
 
 fn rnd(value: f32, slot: u32) -> f32 {
     let local_slot = slot % 128u;
-    atomicStore(&rounding[local_slot], bitcast<u32>(value));
-    return bitcast<f32>(atomicLoad(&rounding[local_slot]));
+    // RMW on both sides preserves rounding and ordering on Firefox/SPIR-V,
+    // including single-invocation workgroups used by the current integral.
+    atomicExchange(&rounding[local_slot], bitcast<u32>(value));
+    return bitcast<f32>(atomicAdd(&rounding[local_slot], 0u));
 }
 fn qts(a: f32, b: f32, slot: u32) -> FF {
     let s = rnd(a + b, slot); let v = rnd(s - a, slot);

@@ -16,8 +16,10 @@ var<workgroup> bad: array<u32, 64>;
 var<workgroup> nonzero: array<u32, 64>;
 
 fn round32(x: f32, lane: u32) -> f32 {
-    atomicStore(&rounding[lane], bitcast<u32>(x));
-    return bitcast<f32>(atomicLoad(&rounding[lane]));
+    // RMW on both sides preserves rounding and ordering on Firefox/SPIR-V,
+    // including single-invocation workgroups used by the current integral.
+    atomicExchange(&rounding[lane], bitcast<u32>(x));
+    return bitcast<f32>(atomicAdd(&rounding[lane], 0u));
 }
 fn normalize(a: f32, b: f32, lane: u32) -> FF {
     let hi = round32(a + b, lane);

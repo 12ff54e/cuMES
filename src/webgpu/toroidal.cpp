@@ -2,6 +2,7 @@
 
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/reduction.hpp"
+#include "fft_shader.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
@@ -16,8 +17,6 @@
 #include <numbers>
 #include <sstream>
 #include <utility>
-
-#include <webgpu_fft/shader.hpp>
 
 namespace cumes::webgpu {
 namespace {
@@ -1261,8 +1260,8 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         static std::map<std::string, std::string> fft_shaders;
         auto [source, inserted] = fft_shaders.try_emplace(fft_key);
         if (inserted)
-            source->second = webgpu_fft::shader(input.nzeta, true, false,
-                                                input.optimized_fft);
+            source->second =
+                detail::fft_shader(input.nzeta, input.optimized_fft);
         const auto& fft = detail::cached_compute_pipeline(
             device, fft_key, source->second, "cuMES mixed radix FFT");
         const auto dispatch_pass =

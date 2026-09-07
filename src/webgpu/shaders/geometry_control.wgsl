@@ -11,8 +11,10 @@ struct Stat { minimum: vec2<f32>, maximum: vec2<f32>,
 var<workgroup> stats: array<Stat, 64>;
 var<workgroup> rounding: array<atomic<u32>, 64>;
 fn round32(x: f32, lane: u32) -> f32 {
-    atomicStore(&rounding[lane], bitcast<u32>(x));
-    return bitcast<f32>(atomicLoad(&rounding[lane]));
+    // RMW on both sides preserves rounding and ordering on Firefox/SPIR-V,
+    // including single-invocation workgroups used by the current integral.
+    atomicExchange(&rounding[lane], bitcast<u32>(x));
+    return bitcast<f32>(atomicAdd(&rounding[lane], 0u));
 }
 fn finite(x: u32) -> bool { return (x & 0x7f800000u) != 0x7f800000u; }
 fn subnormal(x: u32) -> bool {
