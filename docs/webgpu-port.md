@@ -312,6 +312,25 @@ iterations (1053 total), final residual `(9.316e-6, 4.295e-6, 2.119e-9)`.
 Both prolongation comparisons pass with maximum absolute GPU/CPU difference
 `1.192e-7`; the independently checked rendered LCFS is unchanged.
 
+Single-grid opt-outs, same `1e-5` tolerance and 5000 attempted-pass budget:
+
+| Float geometry options | Outcome |
+| --- | --- |
+| Neither fix | Exhausted budget; best FSQR `6.185e-4`, final `1.300e-3` |
+| Radius reference only (`geometry=native`) | 2969 effective iterations; FSQR `9.694e-6` |
+| Radius reference + compensation | 1256 effective iterations; FSQR `9.946e-6` |
+
+Thus reference-only also converges on this Chrome backend, unlike the
+qualified CUDA experiment; the two backends do not share identical f32
+rounding or convergence trajectories. Compensation is beneficial here, not
+a universal requirement inferred from the CUDA result.
+
+The existing paired-f32 direct route, tested with its matching baseline
+options `trace=1&gpu_norms=1&gpu_control=jacobian&timing=0`, retains all **2817
+controller records exactly**, including state hashes and controller decisions.
+It converges in 2812 effective iterations with residual
+`(9.985e-13, 2.130e-13, 1.955e-13)`.
+
 The conformance suite includes cancellation-sensitive odd reconstruction,
 bit-identical untouched inverse fields, nonconstant-reference toroidal
 derivatives, sub-ULP radial differences, absolute metric/force terms, and
