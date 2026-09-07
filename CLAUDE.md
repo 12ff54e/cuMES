@@ -75,6 +75,8 @@ Environment variables:
 | `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
 | `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects the previous four-point Catmull-Rom coarse-to-fine transfer |
 | `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer |
+| `CUMES_RADIUS_REFERENCE` | `=0` opts out of default reference-plus-displacement storage for fixed-boundary 3-D float solves |
+| `CUMES_ODD_GEOMETRY` | Opt-in odd R/Z precision scopes; `poloidal` compensates products/sums and final scaling, `native` is the default (see `docs/w7x-float-float.md`) |
 | `CUMES_MAX_ITER` | iteration cap; overrides every stage's cap in a multigrid run |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
@@ -89,8 +91,10 @@ Environment variables:
 `Real` (include/vmec_types.h) is the compile-time switch
 (`-DCUMES_USE_FLOAT=ON`). Tests instantiate both types in every build. On-disk
 state stays double (Python scripts unaffected); dump files are T-native. Float
-runs stall at ~1e-7 and hard-error at startup when any `ftol_array` entry is
-below 1e-6 — relax the stage ftols for float experiments. The per-pass control
+runs hard-error at startup when any `ftol_array` entry is below 1e-6; this
+input floor is not a convergence guarantee. Fixed-boundary 3-D float defaults
+to radius-reference storage. W7-X at all-stage `1e-5` also needs the opt-in
+`CUMES_ODD_GEOMETRY=poloidal` correction to converge on ns=99. The per-pass control
 record (residuals, Jacobian stats, force-norm factors) is DOUBLE in both builds
 (ADR-0001): device norm reductions accumulate in double and the host controller
 (`IterationController<double>`) sees them unrounded.
@@ -187,8 +191,8 @@ workspace structs remain.
 - **Host checks convergence** — residual reduction runs on GPU; the scalar
   comparison `fsq < ftol` happens on host.
 - **Precision via templates** — `T` = double (verified default; residuals to
-  ~1e-14) or float (stalls at ~1e-7; relax ftols). cuFFT dispatches through
-  `FftTraits<T>`.
+  ~1e-14) or experimental float (ftols >= 1e-6; convergence is case-dependent).
+  cuFFT dispatches through `FftTraits<T>`.
 - **Explicit instantiation split** — each operator's kernels live in
   `src/kernels/<mod>_impl.cuh`, included only by its `_double.cu`/`_float.cu` TUs (one
   scalar type per TU), so kernels may declare dynamic shared memory directly
@@ -286,9 +290,10 @@ Known issues:
    the j=1 values (vmecpp keeps them 0). The real-space axis geometry agrees
    (1e-15) and axis coefficients do not enter the forces — this shows up only
    when diffing state files / wout axis rows.
-2. **Float builds reject impossible tolerances.** Float stalls at ~1e-7, so
-   double-tuned stage ftols (1e-16/1e-12) can never be met — relax
-   `ftol_array` entries to >= 1e-6 for float experiments.
+2. **Float builds require relaxed tolerances.** Stage ftols below 1e-6 are
+   rejected. W7-X at 1e-5 needs both the default radius reference and opt-in
+   poloidal float-float reconstruction; broader float qualification remains
+   open. Measurements and commands: `docs/w7x-float-float.md`.
 
 ## Scope (vs VMEC++)
 

@@ -36,17 +36,37 @@ the six views carved from each contiguous state, velocity, residual, or
 checkpoint slab. The retired `SpectralState` pointer bundle is not part of the
 current API.
 
-The physical amplitude convention: the state stores plain physical Fourier
-amplitudes; the forward quadrature projects onto the orthonormal basis with
+The physical amplitude convention uses plain physical Fourier amplitudes;
+the forward quadrature projects onto the orthonormal basis with
 `mscale`/`nscale` (`√2` for `m>0` / `n>0`), and the descent step re-applies
 `S_mn = mscale * nscale`.
+
+Fixed-boundary 3-D float state uses reference-plus-displacement storage by
+default: the `m=0` Rcc entries hold `Rcc(j,n) - rbcc(n)`, while an immutable
+double reference vector stores `rbcc(n)` for `n=0..ntor`. Physical-state views
+carry this reference metadata; copying only the raw slab does not recreate a
+complete physical state. The other families, velocities and residuals keep
+their existing interpretation. Snapshot/checkpoint export restores physical
+double coefficients; restart subtracts the reference before float conversion.
+`CUMES_RADIUS_REFERENCE=0` or `SolveRequest::use_radius_reference=false`
+selects absolute coefficients. Double, axisymmetric and free-boundary defaults
+are unchanged.
 
 ## 3. Real-space fields (parity-split, point contiguous)
 
 Real space is split by **m parity**, not by trig factor (mathematics.md §2):
 
 - even `m` → `*_e` arrays, odd `m` → `*_o` arrays;
-- each parity array carries the full mode contribution.
+- each parity array carries the full mode contribution, except that `r_e`
+  excludes the fixed radius reference when displacement storage is enabled.
+
+In that representation, the scalar mean is `DeviceParams::radius_reference`
+and the remaining angular reference is `r_reference[point]` (one surface,
+`nZnT` elements). Geometry and force kernels restore both locally for absolute
+radius terms; radial differences use the displacement arrays directly. The
+angular reference is computed once per stage before graph capture. See
+[ADR-0014](adr/0014-float-radius-reference.md) for cache binding and replay
+requirements.
 
 Full-grid real layout is `[surface][zeta][theta]`, theta (point) contiguous:
 
