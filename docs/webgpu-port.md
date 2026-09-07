@@ -333,6 +333,96 @@ Long W7-X runs additionally publish the current stage, iteration, FSQR, and
 last-progress timestamp as `data-cumes-stage`, `data-cumes-iteration`,
 `data-cumes-fsqr`, and `data-cumes-last-progress-at`.
 
+## Headless Firefox qualification (2026-09-07)
+
+The local Firefox 155.0.1 / Linux / NVIDIA TITAN Xp configuration requires
+`dom.webgpu.enabled=true` and `gfx.webgpu.ignore-blocklist=true` to expose a
+WebGPU adapter. With default preferences `navigator.gpu` is absent; enabling
+only `dom.webgpu.enabled` still returns no adapter. These are browser/driver
+availability restrictions that application code cannot change. The test
+harness sets preferences only in a disposable profile.
+
+Two compatibility fixes address failures after an adapter is available:
+
+- The scalar forward shader uses named accumulators instead of passing
+  pointers into local arrays. The latter crashed Firefox during compilation
+  of `poloidal_stage`, despite WGSL validation succeeding.
+- Precision kernels use `atomicExchange` followed by `atomicAdd(..., 0u)`
+  for their f32 rounding boundary. The original store/load sequence lost
+  low-word corrections on this configuration; changing only the read was
+  insufficient for single-invocation workgroups. The pinned FFT generator
+  receives the same fix through `src/webgpu/fft_shader.hpp`; the wrapper
+  checks the expected upstream helper before replacing it.
+
+The single-grid W7-X shortcut also retains the input's total iteration
+budget (`3000 + 4000 + 5000 = 12000` attempts). Starting cold at `ns=99` had
+kept only the 5000-attempt allowance intended for the final multigrid stage;
+with corrected arithmetic this adapter reached `FSQR=1.088294e-12` before
+that limit, still above the required `1e-12`. Chromium matched Firefox's first
+3805 controller records exactly, including state hashes. Keeping the skipped
+stages' budget allows the cold start to finish without changing the tolerance,
+arithmetic, or restart policy. The three-grid route keeps its original stage
+budgets. Startup logs report the active budget, and exhausted-limit errors
+print residuals in scientific notation instead of rounding them to zero.
+
+Verification now tests the actual embedded rounding functions from twelve
+solver shaders and the generated FFT. It checks 128 exact f64-reference
+sum/product cases per shader with both 1 and 32 invocations per workgroup,
+including nonzero low words and cancellation, before operator conformance.
+The existing operator tolerances and solver convergence targets are unchanged.
+
+The full operator/Solovev gate passes in both the diagnostic main-thread path
+and the default worker path with timing enabled. Both converge in
+`72 → 32 → 247` effective iterations (351 total), final residuals
+`(9.725e-7, 2.053e-7, 3.624e-10)`, and publish a 118,736-byte result.
+Their 353 controller trace records match exactly. The default worker run takes
+about 480 seconds on this headless setup; this is a correctness qualification,
+not a cross-browser performance benchmark.
+
+The default paired W7-X single-grid solve, with tracing and timing enabled,
+converges in **5167 effective iterations / 5176 attempts**, final residuals
+`(9.974830e-13, 2.089052e-13, 1.551586e-13)`, and publishes an
+11,809,155-byte result in about 521 seconds. All 4996 controller records from
+the earlier capped run are retained exactly; the additional 176 attempts
+complete convergence. Timing records cover all attempts with no timing errors.
+Median device compute is 14.882 ms/attempt and median readback wait is
+71.600 ms/attempt on this setup.
+
+The default float boundary editor also passes with timing enabled in
+`54 → 17 → 2` iterations (73 total), with residuals
+`(8.300579e-6, 4.700206e-6, 3.305034e-8)` and a 118,877-byte result in about
+98 seconds. Its controller trace matches the pre-fix Firefox editor exactly.
+Chromium 152.0.7977.64 on the same adapter passes the final conformance build
+in about 15 seconds; all 353 controller records match Firefox. All seven
+browser artifact/frontend CTest checks pass.
+
+Start the installed geckodriver with a profile directory accessible to Firefox
+(use a directory under `~/snap/firefox/common` for Snap Firefox):
+
+```bash
+mkdir -p ~/snap/firefox/common/cumes-test-profiles
+geckodriver --host 127.0.0.1 --port 4445 \
+  --profile-root ~/snap/firefox/common/cumes-test-profiles
+```
+
+In another terminal, run the gates sequentially, substituting the served build
+URL. Node.js 22 or newer is sufficient; no browser automation package is needed.
+
+```bash
+cumes_test_url=http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu-firefox/webgpu/cumes_webgpu.html
+cumes_test_prefs='{"dom.webgpu.enabled":true,"gfx.webgpu.ignore-blocklist":true}'
+node scripts/webgpu_firefox_validate.mjs "$cumes_test_url?mode=test" \
+  ../tmp/firefox/conformance "$cumes_test_prefs"
+node scripts/webgpu_firefox_validate.mjs "$cumes_test_url?solve=w7x&trace=1" \
+  ../tmp/firefox/w7x "$cumes_test_prefs"
+```
+
+The harness checks the terminal result and plotted convergence, records browser
+capabilities, preferences, logs, residuals, timing, trace, and a screenshot,
+and closes its own session on completion or failure. `GECKODRIVER_URL`
+overrides the endpoint; `CUMES_FIREFOX_TIMEOUT_MS` overrides the 30-minute gate
+limit. Omitting the preference argument tests an unmodified Firefox profile.
+
 ## Precision policy
 
 ### Scalar-f32 radius reference and selective geometry correction
@@ -397,7 +487,8 @@ iterations (1053 total), final residual `(9.316e-6, 4.295e-6, 2.119e-9)`.
 Both prolongation comparisons pass with maximum absolute GPU/CPU difference
 `1.192e-7`; the independently checked rendered LCFS is unchanged.
 
-Single-grid opt-outs, same `1e-5` tolerance and 5000 attempted-pass budget:
+Initial single-grid opt-outs, measured at `1e-5` with the original
+5000 attempted-pass budget:
 
 | Float geometry options | Outcome |
 | --- | --- |
