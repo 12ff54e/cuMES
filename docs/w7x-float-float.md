@@ -6,18 +6,25 @@ products, accumulation and final odd-scale multiplication of `r_o` and `z_o`.
 It retains the float cuFFT, float basis tables and float scale value, along with
 float state and downstream geometry. It is fused into the existing R/Z kernels:
 no additional launches, scratch arrays or hot-loop allocations are needed for
-this `poloidal` option. The default remains `native`.
+this `compensated` setting (the diagnostic `poloidal` scope). The default
+remains `native`.
 
 ## Usage and scope
 
 Set **every** W7-X `ftol_array` entry to `1e-5`, then run:
 
 ```sh
-CUMES_ODD_GEOMETRY=poloidal \
+CUMES_GEOMETRY_PRECISION=compensated \
   ./build-float/cumes w7x-1e-5.json --checkpoint w7x.ckpt --output w7x.bin
 ```
 
-`SolveRequest::odd_geometry` exposes the same choice to embedding callers.
+`CUMES_GEOMETRY_PRECISION` accepts `native` (default) or `compensated`.
+Compensation improves the odd R/Z position reconstruction with selective
+float-float arithmetic; it does not change the precision of every geometry
+operation.
+
+Embedding callers select the same correction with
+`SolveRequest::odd_geometry = OddGeometryPrecision::POLOIDAL`.
 Environment parsing is enabled only when `use_process_environment` is true.
 The solver applies it only to fixed-boundary 3-D float runs. Reference storage
 is enabled by default for these solves; `CUMES_RADIUS_REFERENCE=0` or
@@ -25,7 +32,10 @@ is enabled by default for these solves; `CUMES_RADIUS_REFERENCE=0` or
 The measurements below were taken with reference storage enabled.
 Checkpoint replay must use the same options.
 
-| Option | Extra precision in the two odd position fields |
+For diagnostic experiments, the library API and the benchmark's
+`--odd-geometry` option retain these detailed scopes:
+
+| Diagnostic option | Extra precision in the two odd position fields |
 | --- | --- |
 | `native` | None; existing transform |
 | `float-order` | None; diagnostic control moving scaling after the sum |

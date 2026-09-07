@@ -270,7 +270,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
   convergence guarantee. Fixed-boundary 3-D float runs use reference-plus-
   displacement radius storage by default. This converges the first two W7-X
   grids at 1e-5 but still stalls on ns=99. Adding
-  `CUMES_ODD_GEOMETRY=poloidal` converges W7-X at 1e-5 by compensating
+  `CUMES_GEOMETRY_PRECISION=compensated` converges W7-X at 1e-5 by compensating
   only the odd R/Z position reconstruction; see the
   [precision and timing experiment](docs/w7x-float-float.md).
 - On-disk state files stay double regardless of `T`; dump files are `T`-native.
@@ -285,7 +285,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects four-point Catmull-Rom coarse-to-fine transfer (the previous fixed-boundary default) |
 | `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer (default for axisymmetric free-boundary and float runs) |
 | `CUMES_RADIUS_REFERENCE` | `=0` restores absolute radius coefficients; reference-plus-displacement is the default for fixed-boundary 3-D float runs, ignored for double/axisymmetric/free-boundary runs |
-| `CUMES_ODD_GEOMETRY` | Experimental odd R/Z reconstruction: `native` (default), `float-order`, `sum`, `poloidal`, `poloidal-scale`, `float-float`, or `double`; fixed-boundary 3-D float only. See [scope and measurements](docs/w7x-float-float.md). |
+| `CUMES_GEOMETRY_PRECISION` | `native` (default) or `compensated` to improve geometry reconstruction with selective float-float arithmetic; fixed-boundary 3-D float only. See [scope and measurements](docs/w7x-float-float.md). |
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |

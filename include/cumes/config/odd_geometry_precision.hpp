@@ -26,7 +26,7 @@ inline OddGeometryPrecision parse_odd_geometry_precision(
     if (name == "float-float") return OddGeometryPrecision::FLOAT_FLOAT;
     if (name == "double") return OddGeometryPrecision::DOUBLE;
     throw std::invalid_argument(
-        "CUMES_ODD_GEOMETRY: expected native, float-order, sum, poloidal, "
+        "odd geometry precision: expected native, float-order, sum, poloidal, "
         "poloidal-scale, float-float or double");
 }
 }  // namespace cumes

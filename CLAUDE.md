@@ -76,7 +76,7 @@ Environment variables:
 | `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects the previous four-point Catmull-Rom coarse-to-fine transfer |
 | `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer |
 | `CUMES_RADIUS_REFERENCE` | `=0` opts out of default reference-plus-displacement storage for fixed-boundary 3-D float solves |
-| `CUMES_ODD_GEOMETRY` | Opt-in odd R/Z precision scopes; `poloidal` compensates products/sums and final scaling, `native` is the default (see `docs/w7x-float-float.md`) |
+| `CUMES_GEOMETRY_PRECISION` | `compensated` improves float geometry reconstruction using selective float-float arithmetic; `native` is the default (see `docs/w7x-float-float.md`) |
 | `CUMES_MAX_ITER` | iteration cap; overrides every stage's cap in a multigrid run |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
@@ -94,7 +94,7 @@ state stays double (Python scripts unaffected); dump files are T-native. Float
 runs hard-error at startup when any `ftol_array` entry is below 1e-6; this
 input floor is not a convergence guarantee. Fixed-boundary 3-D float defaults
 to radius-reference storage. W7-X at all-stage `1e-5` also needs the opt-in
-`CUMES_ODD_GEOMETRY=poloidal` correction to converge on ns=99. The per-pass control
+`CUMES_GEOMETRY_PRECISION=compensated` correction to converge on ns=99. The per-pass control
 record (residuals, Jacobian stats, force-norm factors) is DOUBLE in both builds
 (ADR-0001): device norm reductions accumulate in double and the host controller
 (`IterationController<double>`) sees them unrounded.

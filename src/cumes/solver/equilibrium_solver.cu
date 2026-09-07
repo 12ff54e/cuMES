@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace cumes {
@@ -37,8 +38,16 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
     bool use_radius_reference = request.use_radius_reference;
     auto odd_geometry = request.odd_geometry;
     if (request.use_process_environment) {
-        if (const char* e = std::getenv("CUMES_ODD_GEOMETRY"))
-            odd_geometry = parse_odd_geometry_precision(e);
+        if (const char* e = std::getenv("CUMES_GEOMETRY_PRECISION")) {
+            const std::string_view precision(e);
+            if (precision == "native")
+                odd_geometry = OddGeometryPrecision::NATIVE;
+            else if (precision == "compensated")
+                odd_geometry = OddGeometryPrecision::POLOIDAL;
+            else
+                throw CumesError(
+                    "CUMES_GEOMETRY_PRECISION: expected native or compensated");
+        }
         if (const char* e = std::getenv("CUMES_RADIUS_REFERENCE"))
             use_radius_reference = std::atoi(e) != 0;
     }
