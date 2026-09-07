@@ -45,4 +45,20 @@ for(const cause of ['pagehide','error','messageerror','unexpected']){
   if(cause!=='pagehide')assert.equal(f.results[0][0],false);
 }
 const missing=fixture('?mode=test',true);assert.equal(missing.results[0][0],false);assert.equal(missing.scripts.length,0);
+for(const search of ['?mode=test','?mode=test&worker=0','?solve=w7x','?mode=test&solve=w7x','?run=1']){
+  const verification=search.includes('mode=test')&&!search.includes('solve=w7x');
+  const appMode=!search.includes('mode=test')&&!search.includes('solve=w7x');
+  const nodes={app:{hidden:!appMode},download:{hidden:true},'legacy-download':{hidden:true}};
+  let blobs=0;
+  const document={body:{dataset:{}},getElementById:id=>nodes[id]};
+  const context=vm.createContext({document,location:{search},URLSearchParams,
+    Blob:class{},URL:{createObjectURL(){blobs++;return 'blob:output'},revokeObjectURL(){}}});
+  vm.runInContext(source,context);context.installCumesBrowser();
+  context.cumesBrowser.output(new Uint8Array(32));
+  assert.equal(document.body.dataset.cumesOutputBytes,'32');
+  assert.equal(blobs,verification?0:1);
+  assert.equal(nodes[appMode?'download':'legacy-download'].hidden,verification);
+  if(verification)assert.equal(nodes['legacy-download'].href,undefined);
+}
 console.log('PASS: verification-only worker, versioned URLs, main-thread opt-out, messages, errors, navigation cleanup');
+console.log('PASS: verification checks output without a download; editor and W7-X retain downloads');

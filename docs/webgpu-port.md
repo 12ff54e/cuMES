@@ -250,8 +250,10 @@ the canvas to orbit and use the wheel to zoom. The W7-X route presents the same
 Append `?mode=test` for the full GPU/CPU operator conformance suite and
 stricter Solovev convergence gate. Verification runs in a dedicated Web Worker:
 Wasm, CPU references, and the WebGPU device stay off the UI thread. The page
-receives batched logs/diagnostics and final timing/output messages; it retains
-the downloadable output after terminating the worker. Leaving the page also
+receives batched logs/diagnostics and final timing/output messages. Verification
+still checks output serialization and reports its byte count, but does not
+create a download link. Downloads are only offered for editor and W7-X solves.
+Leaving the page also
 terminates the worker. Editor and W7-X solves keep their existing main-thread
 orchestration. `?mode=test&worker=0` is a diagnostic opt-out, and
 `data-cumes-execution="worker|main"` identifies the selected path.
@@ -430,7 +432,8 @@ no Wasm heap in the worker capture, and no animation-frame gaps over 50 ms were
 observed. The unchanged 3684 printed lines were retained. All 3677 PASS lines
 match the earlier conformance output, and the worker/main-thread controller
 traces match exactly across 329 records (327 effective Solovev iterations).
-The 118736-byte output remains readable from its blob URL after worker exit.
+The output checks retain the same 118736-byte result; verification no longer
+exposes that test artifact as a download.
 Both editor precision modes were rechecked: 507 paired and 73 scalar iterations,
 with the same final residuals and boundary retained across precision switches.
 

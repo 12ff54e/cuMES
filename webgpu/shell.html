@@ -407,8 +407,6 @@
   <template id="cumes-runtime">{{{ SCRIPT }}}</template>
   <script>
     startCumesRuntime();
-    new MutationObserver(()=>{const link=document.getElementById('download'),legacyLink=document.getElementById('legacy-download');
-      if(link?.href&&legacyLink){legacyLink.href=link.href;legacyLink.download=link.download;legacyLink.hidden=false}}).observe(document.getElementById('download'),{attributes:true});
   </script>
 </body>
 </html>
