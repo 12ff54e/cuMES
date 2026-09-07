@@ -273,6 +273,27 @@ last-progress timestamp as `data-cumes-stage`, `data-cumes-iteration`,
 
 ### Scalar-f32 radius reference and selective geometry correction
 
+The W7-X page has a **Single / Double** precision switch above the log;
+the boundary editor has the same switch alongside its run controls.
+Single selects scalar f32 (`1e-5`); Double selects the existing paired-f32
+mode (`1e-12`), not native IEEE fp64. Switching restarts an existing solve
+(an idle editor stays idle) and preserves the other URL options, including
+radial grids and FFT selection.
+The current precision is also published as `data-cumes-precision` on the
+page body. The boundary editor defaults to Single and W7-X defaults to Double.
+Editor harmonics and contour points are retained when switching precision.
+For the default editor boundary, Chrome qualification gives 507 effective
+iterations in Double with final FSQR `9.375e-13`, and 73 in Single with FSQR
+`8.515e-6`. These use different tolerances and are not a speed comparison.
+The isolated end-to-end test changes precision using the actual buttons,
+checks both converged results, and verifies that saved boundary data is intact:
+
+```bash
+node scripts/webgpu_editor_precision_smoke.mjs \
+  'http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu-ds/webgpu/cumes_webgpu.html?timing=0&trace=1' \
+  ../tmp/editor-precision
+```
+
 `?solve=w7x&precision=float` runs the single-grid example with scalar-f32
 state and `ftol=1e-5`. It ports main's [radius-reference
 representation](adr/0014-float-radius-reference.md) and [selective odd R/Z
@@ -365,8 +386,12 @@ cases compare reconstructed `hi + lo` values against double references. The
 host reconstructs paired spectral residuals in `double` before accumulating
 the invariant norms. This supports the input's original `1e-12` tolerance,
 where scalar-f32 W7-X previously stalled near its float floor. Interactive
-axisymmetric solves intentionally remain scalar-f32 at their responsive
-`1e-5` tolerance.
+axisymmetric solves default to scalar-f32 at their responsive `1e-5`
+tolerance; the precision switch enables paired-f32 at `1e-12`. The paired
+axisymmetric path uses the same separable transforms with `ntor=0, nzeta=1`
+(no toroidal FFT is needed), retaining low words through geometry, forces,
+constraints, and descent. Constraint planes are remapped from the compact
+axisymmetric layout to the shared paired projection layout without rounding.
 
 ## Browser performance
 

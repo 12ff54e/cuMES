@@ -4,6 +4,9 @@ mergeInto(LibraryManager.library, {
   requested_float_solve: function() {
     return new URLSearchParams(location.search).get('precision') === 'float' ? 1 : 0;
   },
+  requested_double_solve: function() {
+    return new URLSearchParams(location.search).get('precision') === 'double' ? 1 : 0;
+  },
   requested_float_radius_reference: function() {
     return new URLSearchParams(location.search).get('radius_reference') === '0' ? 0 : 1;
   },

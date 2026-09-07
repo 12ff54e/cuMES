@@ -47,6 +47,7 @@ int publish_browser_output(const char* path);
 int requested_w7x_solve();
 int requested_w7x_multigrid();
 int requested_float_solve();
+int requested_double_solve();
 int requested_float_radius_reference();
 int requested_compensated_geometry();
 int requested_reference_transfers();
@@ -1869,10 +1870,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_device_inverse_test(int variant = 0) {
         using namespace cumes::webgpu;
-        if (variant == 2) {
+        if (variant == 3) {
             std::printf(
                 "  batched device-state inverse and axis extrapolation (f32, "
-                "paired): PASS\n");
+                "paired, axisymmetric paired): PASS\n");
             const auto self = shared_from_this();
             run_float_geometry_tests(device_, [self](std::string error) {
                 if (!error.empty()) {
@@ -1882,18 +1883,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  float radius reference, sub-ULP radial derivative, "
                     "selective compensation, absolute force: PASS\n");
-                self->run_device_descent_test();
+                self->run_paired_axisymmetric_forward_test();
             });
             return;
         }
         ToroidalInverseCase input;
         input.ns = 3;
         input.mpol = 3;
-        input.ntor = 2;
+        input.ntor = variant == 2 ? 0 : 2;
         input.ntheta = 8;
-        input.nzeta = 6;
+        input.nzeta = variant == 2 ? 1 : 6;
         input.nfp = 5;
-        input.double_single = variant == 1;
+        input.double_single = variant != 0;
         const std::size_t count = 6 * input.ns * input.mpol * (input.ntor + 1);
         input.state.resize(count);
         input.state_lo.resize(count);
@@ -1978,6 +1979,60 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
+    void run_paired_axisymmetric_forward_test(int variant = 0) {
+        if (variant == 2) {
+            std::printf(
+                "  axisymmetric paired forward, constraint planes, LCFS masks: "
+                "PASS\n");
+            run_device_descent_test();
+            return;
+        }
+        cumes::webgpu::ToroidalForwardCase input;
+        input.ns = 3;
+        input.mpol = 5;
+        input.ntor = 0;
+        input.ntheta = 16;
+        input.nzeta = 1;
+        input.nfp = 1;
+        input.double_single = true;
+        input.use_fft = false;
+        input.include_lcfs = variant != 0;
+        input.fields.resize(20 * input.ns * input.ntheta);
+        input.fields_lo.resize(input.fields.size());
+        for (std::size_t i = 0; i < input.fields.size(); ++i) {
+            input.fields[i] = 0.03125F * float(int(i % 19) - 9);
+            input.fields_lo[i] = 1.0e-10F * float(int(i % 7) - 3);
+        }
+        const auto expected = cumes::webgpu::toroidal_forward_reference(input);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, input,
+            [self, expected, variant](
+                std::string error,
+                cumes::webgpu::ToroidalForwardResult actual) {
+                bool valid =
+                    error.empty() &&
+                    actual.residual.size() == expected.residual.size() &&
+                    actual.residual_lo.size() == expected.residual_lo.size();
+                for (std::size_t i = 0; i < actual.residual.size() && valid;
+                     ++i) {
+                    const double a =
+                        double(actual.residual[i]) + actual.residual_lo[i];
+                    const double b =
+                        double(expected.residual[i]) + expected.residual_lo[i];
+                    valid &= std::isfinite(a) &&
+                             std::abs(a - b) < 5.0e-12 * (1.0 + std::abs(b));
+                }
+                if (!valid) {
+                    self->finish(
+                        false,
+                        "paired axisymmetric forward mismatch: " + error);
+                    return;
+                }
+                self->run_paired_axisymmetric_forward_test(variant + 1);
+            });
+    }
+
     void run_selected_w7x_solver() {
         try {
             const bool float_solve = requested_float_solve() != 0;
@@ -2053,8 +2108,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_interactive_solver() {
         try {
+            const bool paired = requested_double_solve() != 0;
             cumes::SolverOptions options;
-            options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+            options.precision = paired ? cumes::PrecisionPolicy::VERIFY_DOUBLE
+                                       : cumes::PrecisionPolicy::MIXED_FLOAT;
             auto parsed =
                 cumes::read_problem_spec("/inputs/interactive.json", options);
             if (parsed.report.has_errors()) {
@@ -2064,8 +2121,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             for (auto& stage : parsed.spec.stages) {
-                stage.tolerance = std::max(
-                    stage.tolerance, cumes::tolerance_floor(options.precision));
+                stage.tolerance = paired ? 1.0e-12 : 1.0e-5;
             }
             auto validated = cumes::validate(std::move(parsed.spec), options);
             if (!validated.has_value()) {
@@ -2077,7 +2133,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
             problem_.emplace(std::move(validated.value()));
             production_solve_ = true;
-            double_single_solve_ = false;
+            double_single_solve_ = paired;
             publish_browser_iteration_timing(0, 0);
             active_case_name_ = "Interactive equilibrium";
             active_input_path_ = "browser boundary editor";
@@ -2090,8 +2146,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             reset_stage_state();
             std::printf(
                 "running interactive fixed-boundary multigrid solve "
-                "(%zu stages)\n",
-                problem_->stage_shapes().size());
+                "(%zu stages, %s ftol=%.0e)\n",
+                problem_->stage_shapes().size(),
+                paired ? "double-single" : "float",
+                initialized_stage_.tolerance);
             run_stage_inverse();
         } catch (const std::exception& error) {
             finish(false, "Interactive solver startup failed: " +
@@ -2965,7 +3023,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 });
             return;
         }
-        if (initialized_stage_.ntor == 0) {
+        if (initialized_stage_.ntor == 0 && !double_single_solve_) {
             cumes::webgpu::AxisymmetricInverseCase inverse;
             inverse.ns = initialized_stage_.ns;
             inverse.mpol = initialized_stage_.mpol;
@@ -3520,10 +3578,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_solovev_forward(std::vector<float> force_fields) {
-        if (initialized_stage_.ntor != 0) {
+        if (initialized_stage_.ntor != 0 || double_single_solve_) {
             solver_toroidal_forward_case_.ns = initialized_stage_.ns;
             solver_toroidal_forward_case_.device_fields = device_force_fields_;
-            solver_toroidal_forward_case_.use_fft = requested_direct_dft() == 0;
+            solver_toroidal_forward_case_.use_fft =
+                initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
             solver_toroidal_forward_case_.readback = !resident_spectral_path();
             solver_toroidal_forward_case_.optimized_fft =
                 !requested_generic_fft();
@@ -4188,12 +4247,29 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_constraint_forward(std::vector<float> fields) {
-        if (initialized_stage_.ntor != 0) {
+        if (initialized_stage_.ntor != 0 || double_single_solve_) {
+            if (initialized_stage_.ntor == 0) {
+                // Axisymmetric constraint output is [10 force, 4 constraint]
+                // planes. The paired separable projector expects [16, 4].
+                const std::size_t points =
+                    static_cast<std::size_t>(initialized_stage_.ns) *
+                    initialized_stage_.ntheta;
+                const auto expand = [points](std::vector<float>& values) {
+                    values.resize(20 * points, 0.0F);
+                    std::copy_backward(values.begin() + 10 * points,
+                                       values.begin() + 14 * points,
+                                       values.end());
+                    std::fill(values.begin() + 10 * points,
+                              values.begin() + 16 * points, 0.0F);
+                };
+                expand(fields);
+                expand(constraint_fields_lo_);
+            }
             constraint_toroidal_forward_case_.ns = initialized_stage_.ns;
             constraint_toroidal_forward_case_.device_fields =
                 device_constraint_fields_;
             constraint_toroidal_forward_case_.use_fft =
-                requested_direct_dft() == 0;
+                initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
             constraint_toroidal_forward_case_.readback =
                 !resident_spectral_path();
             constraint_toroidal_forward_case_.optimized_fft =
@@ -5020,7 +5096,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         report.build.scalar_type = "float";
         report.build.precision_policy = CUMES_PRECISION_POLICY_NAME;
         report.build.compile_flags = CUMES_PRECISION_FLAGS;
-        if (production_solve_ && initialized_stage_.ntor > 0) {
+        if (production_solve_) {
             report.build.compile_flags += double_single_solve_
                                               ? "; webgpu-state=paired-f32"
                                               : "; webgpu-state=f32";

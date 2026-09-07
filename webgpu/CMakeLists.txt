@@ -147,3 +147,10 @@ add_test(
           -DARTIFACT_BASE=$<TARGET_FILE_DIR:cumes_webgpu>/cumes_webgpu
           -P ${CMAKE_CURRENT_SOURCE_DIR}/check_artifacts.cmake)
 set_tests_properties(webgpu_artifacts PROPERTIES LABELS "unit;webgpu")
+find_program(CUMES_WEBGPU_NODE NAMES node nodejs)
+if(CUMES_WEBGPU_NODE)
+  add_test(NAME webgpu_precision_switch
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_precision_switch.mjs)
+  set_tests_properties(webgpu_precision_switch PROPERTIES LABELS "unit;webgpu")
+endif()

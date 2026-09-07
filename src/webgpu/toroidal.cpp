@@ -67,10 +67,11 @@ std::string validate_case(const ToroidalInverseCase& input) {
         (input.radius_reference || input.compensated_geometry)) {
         return "float geometry options cannot be used with paired state";
     }
-    if (input.ns < 2 || input.mpol <= 0 || input.ntor < 1 || input.ntheta < 2 ||
-        input.ntheta % 2 != 0 || input.nzeta < 2 || input.nfp < 1) {
-        return "toroidal inverse requires ns>=2, mpol>0, ntor>=1, even "
-               "ntheta>=2, nzeta>=2, and nfp>=1";
+    if (input.ns < 2 || input.mpol <= 0 || input.ntor < 0 || input.ntheta < 2 ||
+        input.ntheta % 2 != 0 || input.nzeta < 1 || input.nfp < 1 ||
+        ((input.ntor == 0) != (input.nzeta == 1))) {
+        return "separable inverse requires ns>=2, mpol>0, even ntheta>=2, "
+               "nfp>=1, and ntor=0 exactly when nzeta=1";
     }
     const std::size_t mnmax =
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
@@ -160,10 +161,11 @@ const std::vector<float>& make_basis(const ToroidalInverseCase& input) {
 }
 
 std::string validate_case(const ToroidalForwardCase& input) {
-    if (input.ns < 2 || input.mpol <= 0 || input.ntor < 1 || input.ntheta < 2 ||
-        input.ntheta % 2 != 0 || input.nzeta < 2 || input.nfp < 1) {
-        return "toroidal forward requires ns>=2, mpol>0, ntor>=1, even "
-               "ntheta>=2, nzeta>=2, and nfp>=1";
+    if (input.ns < 2 || input.mpol <= 0 || input.ntor < 0 || input.ntheta < 2 ||
+        input.ntheta % 2 != 0 || input.nzeta < 1 || input.nfp < 1 ||
+        ((input.ntor == 0) != (input.nzeta == 1))) {
+        return "separable forward requires ns>=2, mpol>0, even ntheta>=2, "
+               "nfp>=1, and ntor=0 exactly when nzeta=1";
     }
     const std::size_t mnmax =
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
