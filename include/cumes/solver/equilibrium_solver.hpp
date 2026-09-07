@@ -53,8 +53,9 @@ struct SolveRequest {
     bool use_radius_reference = true;
 
     // Opt-in reconstruction experiment for fixed-boundary 3-D solves.
-    // POLOIDAL uses paired values of the state scalar type; the other
-    // diagnostic corrections apply only to float.
+    // COMPENSATED uses selective float-float reconstruction for float and
+    // poloidal double-double reconstruction for double. POLOIDAL retains
+    // the previous poloidal-only scope for diagnostics.
     OddGeometryPrecision odd_geometry = OddGeometryPrecision::NATIVE;
 };
 

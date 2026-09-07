@@ -118,23 +118,27 @@ int test_reconstruction(int argc, char** argv) {
     constexpr auto policies = [] {
         if constexpr (std::is_same_v<T, double>)
             return std::array{OddGeometryPrecision::NATIVE,
-                              OddGeometryPrecision::POLOIDAL};
+                              OddGeometryPrecision::POLOIDAL,
+                              OddGeometryPrecision::COMPENSATED};
         else
             return std::array{OddGeometryPrecision::NATIVE,
                               OddGeometryPrecision::FLOAT_ORDER,
                               OddGeometryPrecision::SUM,
                               OddGeometryPrecision::POLOIDAL,
                               OddGeometryPrecision::POLOIDAL_SCALE,
+                              OddGeometryPrecision::COMPENSATED,
                               OddGeometryPrecision::FLOAT_FLOAT};
     }();
     constexpr auto names = [] {
         if constexpr (std::is_same_v<T, double>)
-            return std::array{"native", "compensated"};
+            return std::array{"native", "poloidal", "compensated"};
         else
-            return std::array{"native",   "float-order",    "sum",
-                              "poloidal", "poloidal-scale", "float-float"};
+            return std::array{"native",     "float-order",    "sum",
+                              "poloidal",   "poloidal-scale", "compensated",
+                              "float-float"};
     }();
-    std::vector<T> baseline_ru;
+    std::array<std::vector<T>, 10> baseline_fields;
+    std::array<std::vector<T>, 2> poloidal_fields;
     std::array<long double, 2> baseline_radial{};
     Stream stream;
     for (std::size_t v = 0; v < policies.size(); ++v) {
@@ -148,12 +152,43 @@ int test_reconstruction(int argc, char** argv) {
         transform.inverse(state.physical_const(), true, stream.get());
         cumes::check_cuda(cudaStreamSynchronize(stream.get()),
                           "odd geometry initial inverse");
-        auto ru = download(rs->d_ru_o, p.ns * p.nZnT);
-        if (v == 0) baseline_ru = ru;
-        check(ru == baseline_ru,
-              "odd geometry leaves angular derivatives unchanged");
+        std::array<const T*, 10> native_fields{
+            rs->d_ru_o, rs->d_zu_o, rs->d_rv_o, rs->d_zv_o, rs->d_r_e,
+            rs->d_z_e,  rs->d_l_e,  rs->d_l_o,  rs->d_ru_e, rs->d_zu_e};
+        for (std::size_t f = 0; f < native_fields.size(); ++f) {
+            auto values = download(native_fields[f], p.ns * p.nZnT);
+            if (v == 0) baseline_fields[f] = values;
+            bool preserved = values == baseline_fields[f];
+            if constexpr (std::is_same_v<T, float>) {
+                if (policies[v] == OddGeometryPrecision::COMPENSATED && f < 4) {
+                    // The m=1 branch changes compiler unrolling/FMA
+                    // contraction, not the native derivative expressions.
+                    // Allow a few float ULPs in those four outputs only.
+                    T scale = T(1), error = T(0);
+                    for (std::size_t i = 0; i < values.size(); ++i) {
+                        scale =
+                            std::max(scale, std::abs(baseline_fields[f][i]));
+                        error = std::max(
+                            error, std::abs(values[i] - baseline_fields[f][i]));
+                    }
+                    preserved =
+                        error <=
+                        T(4) * std::numeric_limits<T>::epsilon() * scale;
+                }
+            }
+            check(preserved,
+                  "odd compensation preserves native derivatives/even/lambda "
+                  "fields");
+        }
         std::array fields{download(rs->d_r_o, p.ns * p.nZnT),
                           download(rs->d_z_o, p.ns * p.nZnT)};
+        if (policies[v] == OddGeometryPrecision::POLOIDAL)
+            poloidal_fields = fields;
+        if constexpr (std::is_same_v<T, double>) {
+            if (policies[v] == OddGeometryPrecision::COMPENSATED)
+                check(fields == poloidal_fields,
+                      "double compensated retains the poloidal-only path");
+        }
         std::printf("%s", names[v]);
         for (int c = 0; c < 2; ++c) {
             long double error2 = 0, radial2 = 0, worst = 0;
@@ -174,7 +209,8 @@ int test_reconstruction(int argc, char** argv) {
             if (v == 0) baseline_radial[c] = radial2;
             if ((std::is_same_v<T, float> || !benchmark) &&
                 (policies[v] == OddGeometryPrecision::POLOIDAL ||
-                 policies[v] == OddGeometryPrecision::POLOIDAL_SCALE))
+                 policies[v] == OddGeometryPrecision::POLOIDAL_SCALE ||
+                 policies[v] == OddGeometryPrecision::COMPENSATED))
                 check(radial2 < 0.95 * baseline_radial[c],
                       "poloidal compensation reduces radial difference error");
             std::printf(

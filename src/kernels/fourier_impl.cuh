@@ -102,7 +102,8 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     : p_(p), rs_(&rs), mt_(&mt) {
     if constexpr (std::is_same_v<T, float>) {
         if (p.odd_geometry == cumes::OddGeometryPrecision::POLOIDAL_SCALE ||
-            p.odd_geometry == cumes::OddGeometryPrecision::FLOAT_FLOAT)
+            p.odd_geometry == cumes::OddGeometryPrecision::FLOAT_FLOAT ||
+            p.odd_geometry == cumes::OddGeometryPrecision::COMPENSATED)
             odd_float_float_ =
                 std::make_unique<cumes::OddGeometryOperator<cumes::FloatFloat>>(
                     p);
@@ -636,7 +637,8 @@ __global__ void inverse_accumulate_kernel(
     int k_tile,
     T* __restrict__ rCon,
     T* __restrict__ zCon,
-    const cumes::FloatFloat* d_odd_scale = nullptr) {
+    const cumes::FloatFloat* d_odd_scale = nullptr,
+    const cumes::FloatFloat* d_odd_toroidal = nullptr) {
     // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
     // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
@@ -706,6 +708,25 @@ __global__ void inverse_accumulate_kernel(
                 v0o += c0 * t0 + c1 * t1;
             } else if constexpr (OddPrecision == 2) {
                 odd_sum = odd_sum + Accumulator(c0 * t0 + c1 * t1);
+            } else if constexpr (OddPrecision == 5) {
+                // m=1 dominates odd positions. Keep its compensated toroidal
+                // sums through this product/sum and the odd normalization;
+                // rounding the intermediate back to T loses radial detail.
+                // Derivatives still consume the unmodified cuFFT outputs.
+                if (m == 1) {
+                    int count = nzeta * ns;
+                    int q = k * ns + j;
+                    int channel = isR ? 0 : 2;
+                    odd_sum +=
+                        d_odd_toroidal[channel * count + q] * Accumulator(t0) +
+                        d_odd_toroidal[(channel + 1) * count + q] *
+                            Accumulator(t1);
+                } else {
+                    // Keep native inputs visibly single-word here so the
+                    // compiler can eliminate unnecessary cross-products.
+                    odd_sum += Accumulator(c0) * Accumulator(t0) +
+                               Accumulator(c1) * Accumulator(t1);
+                }
             } else if constexpr (OddPrecision >= 3) {
                 odd_sum = odd_sum + (Accumulator(c0) * Accumulator(t0) +
                                      Accumulator(c1) * Accumulator(t1));
@@ -728,7 +749,7 @@ __global__ void inverse_accumulate_kernel(
         o0[idx] = v0o * facO;
     else if constexpr (OddPrecision >= 2) {
         Accumulator scale;
-        if constexpr (OddPrecision == 4)
+        if constexpr (OddPrecision >= 4)
             scale = d_odd_scale[j];
         else
             scale = Accumulator(facO);
@@ -860,23 +881,29 @@ static void inverse_pipeline(
     size_t inv_smem = 4 * p.mpol * k_tile * sizeof(T);
     // R slots 0-3 -> r/ru/rv (and fused rCon), Z slots 4-7 -> z/zu/zv (and
     // fused zCon), λ slots 8-11 -> l/lu/lv.
+    if constexpr (std::is_same_v<T, float>) {
+        if (p.odd_geometry == cumes::OddGeometryPrecision::COMPENSATED)
+            odd_float_float->enqueue_toroidal(coeff, stream);
+    }
     auto positions = [&]<int OddPrecision>() {
         const cumes::FloatFloat* d_scale =
             odd_float_float ? odd_float_float->scale() : nullptr;
+        const cumes::FloatFloat* d_toroidal =
+            odd_float_float ? odd_float_float->toroidal() : nullptr;
         inverse_accumulate_kernel<T, FuseRzCon, OddPrecision>
             <<<grd, blk, inv_smem, stream>>>(
                 d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns,
                 p.mpol, p.ntheta, p.nzeta, p.nZnT, 0, geom.r_e.data(),
                 geom.ru_e.data(), geom.rv_e.data(), geom.r_o.data(),
                 geom.ru_o.data(), geom.rv_o.data(), k_tile, rCon, nullptr,
-                d_scale);
+                d_scale, d_toroidal);
         inverse_accumulate_kernel<T, FuseRzCon, OddPrecision>
             <<<grd, blk, inv_smem, stream>>>(
                 d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns,
                 p.mpol, p.ntheta, p.nzeta, p.nZnT, 4, geom.z_e.data(),
                 geom.zu_e.data(), geom.zv_e.data(), geom.z_o.data(),
                 geom.zu_o.data(), geom.zv_o.data(), k_tile, nullptr, zCon,
-                d_scale);
+                d_scale, d_toroidal);
     };
     if constexpr (std::is_same_v<T, float>) {
         using cumes::OddGeometryPrecision;
@@ -890,6 +917,9 @@ static void inverse_pipeline(
             case OddGeometryPrecision::POLOIDAL:
                 positions.template operator()<3>();
                 break;
+            case OddGeometryPrecision::COMPENSATED:
+                positions.template operator()<5>();
+                break;
             case OddGeometryPrecision::POLOIDAL_SCALE:
                 positions.template operator()<4>();
                 break;
@@ -897,7 +927,8 @@ static void inverse_pipeline(
                 positions.template operator()<0>();
                 break;
         }
-    } else if (p.odd_geometry == cumes::OddGeometryPrecision::POLOIDAL) {
+    } else if (p.odd_geometry == cumes::OddGeometryPrecision::POLOIDAL ||
+               p.odd_geometry == cumes::OddGeometryPrecision::COMPENSATED) {
         positions.template operator()<3>();
     } else {
         positions.template operator()<0>();

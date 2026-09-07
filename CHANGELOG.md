@@ -5,6 +5,22 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.4.1] - 2026-09-07
+
+### Changed
+
+- Float `compensated` geometry now includes four m=1 toroidal R/Z sums and
+  split odd scaling. Higher toroidal modes retain the native FFT path;
+  double compensated reconstruction keeps its existing arithmetic.
+
+### Fixed
+
+- W7-X float ns=99 single-grid cold starts converge at `1e-5` with compensated
+  geometry in 1,354 effective iterations (FSQR `9.785e-6`). The multigrid case
+  converges in 149 → 277 → 311 iterations; both checkpoints converge again on
+  their first replay iteration. A cold-start/replay regression test covers
+  the single-grid case.
+
 ## [1.4.0] - 2026-09-07
 
 ### Added

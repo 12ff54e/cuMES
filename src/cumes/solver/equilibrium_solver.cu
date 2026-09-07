@@ -43,7 +43,7 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
             if (precision == "native")
                 odd_geometry = OddGeometryPrecision::NATIVE;
             else if (precision == "compensated")
-                odd_geometry = OddGeometryPrecision::POLOIDAL;
+                odd_geometry = OddGeometryPrecision::COMPENSATED;
             else
                 throw CumesError(
                     "CUMES_GEOMETRY_PRECISION: expected native or compensated");
