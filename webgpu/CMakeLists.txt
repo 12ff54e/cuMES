@@ -21,6 +21,7 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/initialization.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/iteration.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/main.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/vacuum.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/magnetic_field.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/numerics.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/preconditioner.cpp
@@ -41,7 +42,13 @@ if(NOT EXISTS "${PROJECT_SOURCE_DIR}/deps/webgpu-fft/CMakeLists.txt")
 endif()
 add_subdirectory(${PROJECT_SOURCE_DIR}/deps/webgpu-fft ${CMAKE_CURRENT_BINARY_DIR}/fft)
 target_link_libraries(cumes_webgpu PRIVATE webgpu_fft)
-target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_FIELD_DISABLED)
+set(VFIELD_BACKEND HOST CACHE STRING "vacuum-field execution backend" FORCE)
+set(VFIELD_USE_NETCDF OFF CACHE BOOL "Browser uses in-memory coil grids" FORCE)
+set(VFIELD_BUILD_TESTS OFF CACHE BOOL "Test vacuum-field separately" FORCE)
+set(VFIELD_BUILD_TOOLS OFF CACHE BOOL "No vacuum command-line tools" FORCE)
+add_subdirectory(${PROJECT_SOURCE_DIR}/deps/vacuum-field ${CMAKE_CURRENT_BINARY_DIR}/vacuum)
+target_link_libraries(cumes_webgpu PRIVATE vfield_cuda_double vfield::makegrid)
+target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_HOST)
 target_compile_definitions(cumes_webgpu PRIVATE
   CUMES_GIT_REVISION="${CUMES_GIT_REVISION}"
   CUMES_GIT_DIRTY=${CUMES_GIT_DIRTY}
@@ -105,6 +112,10 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_ui.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/free_boundary.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/presets/solovev.json
+  ${CMAKE_CURRENT_SOURCE_DIR}/presets/w7x.json
+  ${CMAKE_CURRENT_SOURCE_DIR}/presets/cth_like.json
   ${CMAKE_CURRENT_SOURCE_DIR}/residual_plot.js
   ${CMAKE_CURRENT_SOURCE_DIR}/verification_worker.js
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js

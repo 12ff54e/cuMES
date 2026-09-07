@@ -1,4 +1,4 @@
-// Owns verification's Wasm, WebGPU device, CPU references, and virtual files.
+// Owns the solver Wasm, WebGPU device, CPU references, and virtual files.
 // Only logs, status, diagnostics, timing, and final output cross to the UI.
 let started = false, finished = false, logs = [], diagnostics = [], timer = null;
 function flush() {
@@ -42,10 +42,22 @@ globalThis.onmessage = ({data}) => {
   globalThis.cumesVisibility = data.visibility;
   const runtime = new URL(data.runtimeUrl);
   globalThis.Module = {
-    locateFile(path) { const url = new URL(path, runtime); url.search = runtime.search; return url.href; },
-    print: (...args) => append(args.join(' ')),
-    printErr: (...args) => append('ERROR: ' + args.join(' ')),
-    onAbort: reason => result(false, 'WebAssembly aborted: ' + reason)
+      preRun: [() => {
+          for (const file of data.files || []) {
+              if (!file.path.startsWith('/inputs/') || file.path.includes('..'))
+                  throw Error('Invalid solver input path');
+              FS.mkdirTree('/inputs');
+              FS.writeFile(file.path, file.bytes);
+          }
+      }],
+      locateFile(path) {
+          const url = new URL(path, runtime);
+          url.search = runtime.search;
+          return url.href;
+      },
+      print: (...args) => append(args.join(' ')),
+      printErr: (...args) => append('ERROR: ' + args.join(' ')),
+      onAbort: reason => result(false, 'WebAssembly aborted: ' + reason)
   };
   try { importScripts(runtime.href); }
   catch (error) { result(false, 'Verification runtime failed: ' + error); }

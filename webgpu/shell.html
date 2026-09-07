@@ -121,6 +121,10 @@
     .precision-control p { flex-basis:100%; margin:0; color:var(--muted); font-size:12px; }
     .legacy-viewer .plot-wrap { min-height:560px; }
     .legacy-viewer .equilibrium-3d { height:528px; }
+    .boundary-choice { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin:0 0 20px; }
+    body[data-boundary-mode="free"] .fixed-input { display:none!important; }
+    #free-boundary-controls textarea { box-sizing:border-box; width:100%; padding:10px; margin:8px 0; color:var(--text); background:#0b1420; border:1px solid var(--line); border-radius:6px; font:12px/1.5 monospace; }
+    #free-boundary-controls select { margin:12px; padding:8px; color:var(--text); background:#0b1420; border:1px solid var(--line); border-radius:6px; }
     [hidden] { display:none!important; }
     @media(max-width:920px){ .page{width:min(100% - 22px,700px)} .workspace{grid-template-columns:1fr}
       .site-header{flex-direction:column;align-items:flex-start;gap:16px}.plot-wrap{min-height:390px}svg{min-height:358px}.equilibrium-3d{height:358px} }
@@ -134,26 +138,45 @@
       <nav aria-label="Main navigation"><a href="?" data-view="editor">Boundary editor</a><a href="?mode=test" data-view="verification">GPU verification</a><a href="?solve=w7x" data-view="w7x">W7-X</a></nav>
     </header>
   <div class="page" id="app">
+    <section class="boundary-choice" aria-label="Equilibrium boundary condition">
+      <span>Boundary condition</span><div class="mode-switch" role="group">
+        <button id="boundary-fixed" type="button">Fixed boundary</button>
+        <button id="boundary-free" type="button">Free boundary</button>
+      </div><span class="subtitle">Switching modes stops the current run and keeps your setup.</span>
+    </section>
     <main class="workspace">
       <section class="panel editor">
-        <div class="panel-head"><h2>Input boundary</h2><div class="mode-switch" role="tablist" aria-label="Boundary editor mode">
+        <div class="panel-head fixed-input"><h2>Input boundary</h2><div class="mode-switch" role="tablist" aria-label="Boundary editor mode">
           <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div></div>
-        <div class="plot-wrap"><svg id="boundary-plot" viewBox="0 0 600 520" aria-label="Editable plasma boundary"></svg>
+        <section id="free-boundary-controls" class="controls" hidden>
+          <h2>Coils and initial plasma</h2>
+          <p class="subtitle">The boundary moves to balance plasma and vacuum pressure. Coil fields are generated locally when you run.</p>
+          <label>Coil configuration <select id="coil-preset"><option value="solovev">Solovev</option><option value="w7x">W7-X · vacuum</option><option value="cth_like">cth_like</option><option value="upload">Uploaded coils</option></select></label>
+          <button id="coil-upload-button" class="secondary" type="button">Upload coil file</button>
+          <input id="coil-upload" type="file" hidden>
+          <p id="coil-description" class="subtitle"></p>
+          <p class="subtitle">Accepts MAKEGRID coils-dot and cumes-coils-v1 JSON. Currents are in amperes, in circuit order.</p>
+          <label>Coil currents (A)<textarea id="coil-currents" rows="3" spellcheck="false"></textarea></label>
+          <details><summary>Field grid bounds and resolution</summary><p class="subtitle">R and Z are in meters. The grid must cover the plasma throughout the solve; field periods must match the equilibrium.</p><textarea id="coil-grid" rows="14" aria-label="Field grid parameters JSON" spellcheck="false"></textarea></details>
+          <details><summary>Initial boundary and plasma profiles</summary><p class="subtitle">VMEC input JSON: Fourier boundary, profiles, field periods, resolution, and iteration budget.</p><textarea id="coil-equilibrium" rows="18" aria-label="Equilibrium input JSON" spellcheck="false"></textarea></details>
+          <p id="coil-status" class="subtitle" role="status"></p>
+        </section>
+        <div class="plot-wrap fixed-input"><svg id="boundary-plot" viewBox="0 0 600 520" aria-label="Editable plasma boundary"></svg>
           <div class="hint" id="editor-hint">Tune the Fourier harmonics below</div></div>
         <div class="controls">
-          <div id="fourier-editor">
+          <div id="fourier-editor" class="fixed-input">
             <div class="coefficient-columns">
               <section class="harmonic-group"><h3>R cosine coefficients <span>R(θ) = Σ RBC(0,m) cos(mθ)</span></h3><div class="harmonic-controls" id="rbc-controls"></div></section>
               <section class="harmonic-group"><h3>Z sine coefficients <span>Z(θ) = Σ ZBS(0,m) sin(mθ)</span></h3><div class="harmonic-controls" id="zbs-controls"></div></section>
             </div>
             <div class="formula">VMEC stellarator-symmetric boundary harmonics; toroidal mode n = 0.</div>
           </div>
-          <div class="contour-editor" id="contour-editor" hidden>
+          <div class="contour-editor fixed-input" id="contour-editor" hidden>
             <p>Move any contour point freely. Its opposite point is mirrored to preserve the solver's stellarator symmetry. A periodic cubic contour is transformed continuously into coefficients capped at <strong>m = 5</strong>.</p>
             <div class="contour-legend"><span><i class="swatch target"></i>free contour</span><span><i class="swatch"></i>m ≤ 5 Fourier fit</span><span class="fit-error" id="fit-error"></span></div>
             <button class="secondary" id="reset-contour">Reset points from Fourier fit</button>
           </div>
-          <label class="pressure-control">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
+          <label class="pressure-control fixed-input">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
           <section class="precision-control" id="editor-precision-control" aria-label="Solver precision" hidden>
             <span>Precision</span>
             <div class="mode-switch" role="group" aria-label="Select precision">
@@ -163,7 +186,7 @@
             <span class="tag" id="editor-precision-tolerance"></span>
             <p>Double uses two f32 words, not native IEEE fp64. Changing precision during a solve restarts it; your boundary is retained.</p>
           </section>
-          <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="reset">Reset</button></div>
+          <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="reset">Reset</button><button class="secondary" id="stop-run" hidden>Stop and edit</button></div>
         </div>
       </section>
       <div class="result-column">
@@ -214,10 +237,12 @@
   </section></template>
   <script src="browser_ui.js"></script>
   <script src="residual_plot.js"></script>
+  <script src="free_boundary.js"></script>
   <script>
     installCumesBrowser();
     const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x',w7xMultigrid=query.get('grids')==='3';
     const appMode=query.get('mode')!=='test'&&!w7xSolve,running=appMode&&query.get('run')==='1';
+    const boundaryMode=installCumesBoundaryMode();
     const activeView=w7xSolve?'w7x':appMode?'editor':'verification';
     document.querySelector(`nav [data-view="${activeView}"]`).setAttribute('aria-current','page');
     const app=document.getElementById('app'),legacy=document.getElementById('legacy');
@@ -340,12 +365,12 @@
     value('mode-fourier')?.addEventListener('click',()=>setEditorMode('fourier'));
     value('mode-contour')?.addEventListener('click',()=>setEditorMode('contour'));
     value('reset-contour')?.addEventListener('click',()=>{resetContourFromFourier();drawBoundary()});
-    function inputJSON(){const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
+    function inputJSON(){if(boundaryMode.free)return JSON.stringify(boundaryMode.input());const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
       return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,ns_array:[5,11,55],niter_array:[1200,2500,3000],
         ftol_array:Array(3).fill(query.get('precision')==='double'?1e-12:1e-5),am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
-    value('run')?.addEventListener('click',()=>{localStorage.setItem('cumes.input.v1',inputJSON());
-      const next=new URL(location.href);next.searchParams.set('run','1');location.assign(next.href)});
+    value('run')?.addEventListener('click',async()=>{try{await boundaryMode.ready;localStorage.setItem('cumes.input.v1',inputJSON());
+      const next=new URL(location.href);next.searchParams.set('run','1');location.assign(next.href)}catch(error){value('coil-status').textContent=error.message}});
     value('reset')?.addEventListener('click',()=>{localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
       const next=new URL(location.href);next.searchParams.delete('run');location.assign(next.href)});
     const verificationMode=!appMode&&!w7xSolve;
@@ -361,7 +386,7 @@
         if((appMode&&(Number(progress[1])<=3||Number(progress[1])%25===0))||
           (w7xSolve&&(Number(progress[1])<=3||Number(progress[1])%50===0))||(!appMode&&!w7xSolve))append(line);return}
       const stage=line.match(/stage (\d+)\/(\d+) converged/);if(stage)document.body.dataset.cumesStage=stage[1];
-      if((appMode&&/running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))||
+      if((appMode&&/Generating the coil|Coil field|vacuum pressure|Vacuum update|running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))||
         (!appMode&&!w7xSolve)||(w7xSolve&&/running W7-X|stage .*converged|stage prolongation|GPU norm shadow|published|self-test|FATAL/.test(line)))append(line)}
     function equilibriumMesh(fourier){const{mpol,ntor,nfp,ns}=fourier,mnmax=mpol*(ntor+1),thetaSegments=40,
       phiSegments=ntor?Math.max(64,nfp*16):64,surfaces=[];
@@ -464,7 +489,18 @@
   </script>
   <template id="cumes-runtime">{{{ SCRIPT }}}</template>
   <script>
-    startCumesRuntime();
+    (async()=>{try{
+      if(appMode&&boundaryMode.free){
+        await boundaryMode.ready;
+        if(running){
+          const files=await boundaryMode.files();
+          const source=inputJSON();
+          files.push({path:'/inputs/interactive.json',bytes:new TextEncoder().encode(source)});
+          globalThis.cumesRuntimeFiles=files;
+        }
+      }
+      startCumesRuntime();
+    }catch(error){globalThis.cumesBrowser.result(false,error.message)}})();
   </script>
 </body>
 </html>

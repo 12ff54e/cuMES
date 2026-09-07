@@ -19,7 +19,7 @@ string(SUBSTRING "${asset_hash}" 0 16 asset_version)
 
 file(READ "${html}" contents)
 get_filename_component(artifact_dir "${ARTIFACT_BASE}" DIRECTORY)
-foreach(asset IN ITEMS browser_ui.js verification_worker.js residual_plot.js)
+foreach(asset IN ITEMS browser_ui.js verification_worker.js residual_plot.js free_boundary.js)
   configure_file("${FRONTEND_SOURCE_DIR}/${asset}" "${artifact_dir}/${asset}" COPYONLY)
   file(SHA256 "${artifact_dir}/${asset}" frontend_hash)
   string(REPLACE "src=\"${asset}\"" "src=\"${asset}?v=${frontend_hash}\"" contents "${contents}")
@@ -37,3 +37,9 @@ string(REPLACE "src=\"cumes_webgpu.js\""
                "src=\"cumes_webgpu.js?v=${asset_version}\""
                contents "${contents}")
 file(WRITE "${html}" "${contents}")
+
+file(COPY "${FRONTEND_SOURCE_DIR}/presets/" DESTINATION "${artifact_dir}/presets")
+foreach(preset IN ITEMS solovev cth_like)
+  configure_file("${FRONTEND_SOURCE_DIR}/../deps/vacuum-field/tests/data/coils.${preset}"
+                 "${artifact_dir}/presets/coils.${preset}" COPYONLY)
+endforeach()

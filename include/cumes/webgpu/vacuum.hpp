@@ -1,0 +1,29 @@
+#ifndef CUMES_WEBGPU_VACUUM_HPP_
+#define CUMES_WEBGPU_VACUUM_HPP_
+
+#include "cumes/physics/free_boundary_operator.hpp"
+#include "cumes/webgpu/force.hpp"
+#include "cumes/webgpu/initialization.hpp"
+
+#include <span>
+
+namespace cumes::webgpu {
+
+std::unique_ptr<FreeBoundaryOperator<double>> create_vacuum(
+    const ValidatedProblem& problem,
+    const AxisymmetricStageData& stage);
+void prepare_vacuum_stage(FreeBoundaryOperator<double>& vacuum,
+                          const ValidatedProblem& problem,
+                          const AxisymmetricStageData& stage);
+void update_vacuum(FreeBoundaryOperator<double>& vacuum,
+                   const AxisymmetricStageData& stage,
+                   std::span<const float> state_lo,
+                   const AxisymmetricForceCase& fields);
+void apply_vacuum_force(FreeBoundaryOperator<double>& vacuum,
+                        const AxisymmetricStageData& stage,
+                        const AxisymmetricForceCase& fields,
+                        AxisymmetricForceResult& force);
+void decay_vacuum_reference(std::vector<float>& high, std::vector<float>& low);
+
+}  // namespace cumes::webgpu
+#endif  // CUMES_WEBGPU_VACUUM_HPP_

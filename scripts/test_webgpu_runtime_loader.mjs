@@ -34,6 +34,14 @@ for(const query of ['?solve=w7x','?solve=w7x&precision=float','?solve=w7x&run=1'
   f.context.startCumesRuntime(true);f.context.startCumesRuntime();
   assert.equal(f.scripts.length,1,'duplicate calls must not start another solve');
 }
+for(const query of ['?boundary=free&run=1', '?boundary=free&run=1&worker=0']){
+  const f=fixture(query);
+  assert.equal(f.document.body.dataset.cumesExecution,'worker');
+  assert.equal(f.scripts.length,0);
+  f.listeners.get('pagehide')();
+  assert(f.worker.stopped,'switching modes must stop the solver worker');
+}
+assert.equal(fixture('?boundary=free').document.body.dataset.cumesExecution,'idle');
 const f=fixture('?mode=test&trace=1');
 assert.equal(f.scripts.length,0);assert.equal(f.document.body.dataset.cumesExecution,'worker');
 assert.equal(f.worker.url,'https://example.test/app/verification_worker.js?v=abc');
@@ -68,5 +76,5 @@ for(const search of ['?mode=test','?mode=test&worker=0','?solve=w7x','?mode=test
   assert.equal(nodes[appMode?'download':'legacy-download'].hidden,verification);
   if(verification)assert.equal(nodes['legacy-download'].href,undefined);
 }
-console.log('PASS: verification-only worker, versioned URLs, main-thread opt-out, messages, errors, navigation cleanup');
+console.log('PASS: verification and free-boundary worker, versioned URLs, main-thread opt-out, messages, errors, navigation cleanup');
 console.log('PASS: verification checks output without a download; editor and W7-X retain downloads');

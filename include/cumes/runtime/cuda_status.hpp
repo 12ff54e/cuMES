@@ -8,6 +8,7 @@
 #ifndef CUMES_INCLUDE_CUMES_RUNTIME_CUDA_STATUS_HPP_
 #define CUMES_INCLUDE_CUMES_RUNTIME_CUDA_STATUS_HPP_
 
+#include "cumes/core/error.hpp"
 #include "cumes/core/result.hpp"
 
 #include <cuda_runtime.h>
@@ -18,11 +19,6 @@
 #include <string_view>
 
 namespace cumes {
-
-class CumesError : public std::runtime_error {
-   public:
-    using std::runtime_error::runtime_error;
-};
 
 inline std::string cuda_error_string(cudaError_t err) {
     return std::string(cudaGetErrorString(err));

@@ -19,7 +19,11 @@
 #include "cumes/config/device_params.hpp"
 #include "cumes/config/problem_spec.hpp"
 
+#ifdef CUMES_VACUUM_HOST
+#include <cstddef>
+#else
 #include <cuda_runtime.h>
+#endif
 
 #include <memory>
 #include <optional>
@@ -27,6 +31,12 @@
 #include <vector>
 
 namespace cumes {
+
+#ifdef CUMES_VACUUM_HOST
+using VacuumStream = std::nullptr_t;
+#else
+using VacuumStream = cudaStream_t;
+#endif
 
 // vmecpp VacuumPressureState: the vacuum pressure ramps up through
 // OFF -> INITIALIZING -> INITIALIZED -> ACTIVE.
@@ -84,7 +94,7 @@ class FreeBoundaryOperator {
                          const T* d_lcfs_repacked,
                          const T* d_r_axis,
                          const T* d_z_axis,
-                         cudaStream_t stream);
+                         VacuumStream stream);
     bool soft_restart_requested() const;
     // The vacuum edge-force gate (state in {INITIALIZED, ACTIVE} after the
     // update) — distinct from the block gate; also gates the forward-DFT
@@ -123,7 +133,7 @@ class FreeBoundaryOperator {
                                   int ns,
                                   int ntheta,
                                   int nzeta,
-                                  cudaStream_t stream) const;
+                                  VacuumStream stream) const;
     // LCFS repack: the four spectral families at j=ns-1, divided by
     // mscale*nscale, transposed to n-major. d_repacked holds 4 contiguous
     // mnsize blocks (rCC/rSS/zSC/zCS).
@@ -136,14 +146,14 @@ class FreeBoundaryOperator {
                              int mnmax,
                              int mpol,
                              int ntor,
-                             cudaStream_t stream) const;
+                             VacuumStream stream) const;
     // Axis extraction: r_axis[k] = R(j=0, l=0, k), z_axis[k] = Z(j=0, l=0, k).
     void enqueue_axis_extract(const T* d_r_e,
                               const T* d_z_e,
                               T* d_axis,
                               int ntheta,
                               int nzeta,
-                              cudaStream_t stream) const;
+                              VacuumStream stream) const;
     // rBSq at the LCFS (reduced-grid mirror of the vacuum pressure) plus the
     // delBSq surface-mean diagnostic scalar.
     void enqueue_rbsq(const T* d_r_e,
@@ -156,7 +166,7 @@ class FreeBoundaryOperator {
                       int nzeta,
                       int nZnT,
                       T delta_s,
-                      cudaStream_t stream) const;
+                      VacuumStream stream) const;
     // The vacuum edge force (vmecpp assembleTotalForces) added to the LCFS
     // row of the parity-split force arrays.
     void enqueue_edge_force(T* d_armn_e,
@@ -171,14 +181,14 @@ class FreeBoundaryOperator {
                             int ns,
                             int ntheta,
                             int nzeta,
-                            cudaStream_t stream) const;
+                            VacuumStream stream) const;
     // rCon0/zCon0 decay (x0.9, every surface) on vacuum-active passes.
     void enqueue_rcon_decay(T* d_rcon0,
                             T* d_zcon0,
                             int ns,
                             int ntheta,
                             int nzeta,
-                            cudaStream_t stream) const;
+                            VacuumStream stream) const;
 
    private:
     struct Impl;

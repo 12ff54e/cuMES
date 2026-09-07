@@ -144,21 +144,24 @@ function startCumesRuntime(userStarted = false) {
   // Template contents have an inert owner document; resolve against the page.
   const runtimeUrl = new URL(runtime.getAttribute('src'), location.href);
   const query = new URLSearchParams(location.search);
-  if (query.get('solve') === 'w7x' && !userStarted) {
-    document.body.dataset.cumesExecution = 'idle';
-    globalThis.cumesBrowser.ready();
-    return;
+  const free = query.get('boundary') === 'free' && query.get('mode') !== 'test';
+  if ((query.get('solve') === 'w7x' && !userStarted) ||
+      (free && query.get('run') !== '1')) {
+      document.body.dataset.cumesExecution = 'idle';
+      globalThis.cumesBrowser.ready();
+      return;
   }
   globalThis.cumesRuntimeStarted = true;
   const verification = query.get('mode') === 'test' && query.get('solve') !== 'w7x';
   // Diagnostic opt-out permits exact main-thread/worker trajectory comparisons.
-  if (!verification || query.get('worker') === '0') {
-    document.body.dataset.cumesExecution = 'main';
-    const script = document.createElement('script');
-    script.src = runtimeUrl.href;
-    script.onerror = () => globalThis.cumesBrowser.result(false, 'Could not load WebAssembly runtime script');
-    document.body.append(script);
-    return;
+  if ((!verification && !free) || (!free && query.get('worker') === '0')) {
+      document.body.dataset.cumesExecution = 'main';
+      const script = document.createElement('script');
+      script.src = runtimeUrl.href;
+      script.onerror = () => globalThis.cumesBrowser.result(
+          false, 'Could not load WebAssembly runtime script');
+      document.body.append(script);
+      return;
   }
   document.body.dataset.cumesExecution = 'worker';
   const workerUrl = new URL('verification_worker.js', runtimeUrl);
@@ -200,6 +203,11 @@ function startCumesRuntime(userStarted = false) {
   worker.onmessageerror = () => { fail('Could not decode verification worker message'); stop(); };
   document.addEventListener('visibilitychange', visibility);
   globalThis.addEventListener('pagehide', stop);
-  worker.postMessage({kind: 'start', runtimeUrl: runtimeUrl.href,
-    search: location.search, visibility: document.visibilityState});
+  worker.postMessage({
+      kind: 'start',
+      runtimeUrl: runtimeUrl.href,
+      search: location.search,
+      visibility: document.visibilityState,
+      files: globalThis.cumesRuntimeFiles
+  });
 }

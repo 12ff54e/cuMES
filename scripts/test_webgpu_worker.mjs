@@ -52,3 +52,17 @@ for(const failure of ['import','abort','rejection']){
   assert.equal(f.messages.at(-1).kind,'result');assert.equal(f.messages.at(-1).args[0],false);
 }
 console.log('PASS: DOM-free worker bridge, query propagation, batched messages, final flush, output transfer, errors');
+
+const files=fixture();
+const written=new Map();
+files.context.FS.mkdirTree=()=>{};
+files.context.FS.writeFile=(path,bytes)=>written.set(path,bytes);
+files.context.onmessage({data:{kind:'start',runtimeUrl:'https://example.test/cumes_webgpu.js',
+  search:'?boundary=free&run=1',visibility:'visible',files:[
+    {path:'/inputs/interactive.json',bytes:new Uint8Array([123,125])},
+    {path:'/inputs/coils.upload',bytes:new Uint8Array([1,2,3])}]}});
+for(const preRun of files.context.Module.preRun)preRun();
+assert.equal(written.size,2);
+assert.deepEqual([...written.get('/inputs/coils.upload')],[1,2,3]);
+assert.equal(files.library.requested_app_mode(),true);
+console.log('PASS: interactive input and coil bytes reach the worker filesystem');

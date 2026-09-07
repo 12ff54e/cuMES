@@ -16,6 +16,7 @@
 #include "cumes/webgpu/preconditioner.hpp"
 #include "cumes/webgpu/prolongation.hpp"
 #include "cumes/webgpu/toroidal.hpp"
+#include "cumes/webgpu/vacuum.hpp"
 #include "float_geometry_tests.hpp"
 #include "rounding_tests.hpp"
 
@@ -2179,8 +2180,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 cumes::webgpu::initialize_stage(*problem_, stage_index_);
             reset_stage_state();
             std::printf(
-                "running interactive fixed-boundary multigrid solve "
+                "running interactive %s-boundary multigrid solve "
                 "(%zu stages, %s ftol=%.0e)\n",
+                initialized_stage_.free_boundary ? "free" : "fixed",
                 problem_->stage_shapes().size(),
                 paired ? "double-single" : "float",
                 initialized_stage_.tolerance);
@@ -2980,6 +2982,23 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
         if (production_solve_)
             publish_browser_iteration_timing(1, stage_index_ + 1);
+        if (vacuum_) {
+            vacuum_->advance(controller_->effective_iteration(),
+                             controller_->restart_anchor(),
+                             invariant_normalized_[0],
+                             invariant_normalized_[1]);
+            const bool almost =
+                invariant_normalized_[0] + invariant_normalized_[1] <
+                cumes::control_policy::VACUUM_ALMOST_CONVERGED_RESIDUAL;
+            const bool hot =
+                controller_->effective_iteration() == 1 &&
+                vacuum_->state() == cumes::VacuumState::INITIALIZED;
+            include_edge_invariant_ =
+                controller_->effective_iteration() -
+                        controller_->restart_anchor() <
+                    cumes::control_policy::VACUUM_EDGE_INVARIANT_WINDOW &&
+                (almost || hot);
+        }
         if (!device_iteration_state_) extrapolate_stage_axis();
         const auto self = shared_from_this();
         if (resident_spectral_path()) {
@@ -3551,6 +3570,21 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.sqrt_s_h_lo = initialized_stage_.profiles.sqrt_s_h_lo;
         force_case_.phip_f = initialized_stage_.profiles.phip_f;
         force_case_.phip_f_lo = initialized_stage_.profiles.phip_f_lo;
+        if (vacuum_ && vacuum_->run_vacuum_block()) {
+            try {
+                const auto before = vacuum_->state();
+                cumes::webgpu::update_vacuum(*vacuum_, initialized_stage_,
+                                             stage_state_lo_, force_case_);
+                if (before != vacuum_->state()) {
+                    std::printf("  vacuum pressure activated: iter=%d\n",
+                                controller_->effective_iteration());
+                }
+            } catch (const std::exception& error) {
+                finish(false,
+                       std::string("Vacuum update failed: ") + error.what());
+                return;
+            }
+        }
         const auto self = shared_from_this();
         enqueue_evaluated(
             cumes::webgpu::enqueue_axisymmetric_force, force_case_,
@@ -3616,6 +3650,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->active_case_name_.c_str(),
                         static_cast<double>(max_error));
                 }
+                if (self->vacuum_ && self->vacuum_->apply_edge_force()) {
+                    try {
+                        cumes::webgpu::apply_vacuum_force(
+                            *self->vacuum_, self->initialized_stage_,
+                            self->force_case_, actual);
+                    } catch (const std::exception& error) {
+                        self->finish(false, error.what());
+                        return;
+                    }
+                }
                 self->device_force_fields_ =
                     self->resident_path() ? actual.device_fields
                                           : cumes::webgpu::DeviceFields{};
@@ -3641,7 +3685,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             solver_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
             solver_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
             solver_toroidal_forward_case_.nfp = initialized_stage_.nfp;
-            solver_toroidal_forward_case_.include_lcfs = false;
+            solver_toroidal_forward_case_.include_lcfs =
+                vacuum_ && vacuum_->apply_edge_force();
             solver_toroidal_forward_case_.double_single = double_single_solve_;
             const std::size_t points =
                 static_cast<std::size_t>(initialized_stage_.ns) *
@@ -3695,7 +3740,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         solver_forward_case_.ns = initialized_stage_.ns;
         solver_forward_case_.mpol = initialized_stage_.mpol;
         solver_forward_case_.ntheta = initialized_stage_.ntheta;
-        solver_forward_case_.include_lcfs = false;
+        solver_forward_case_.include_lcfs =
+            vacuum_ && vacuum_->apply_edge_force();
         const std::size_t points =
             static_cast<std::size_t>(solver_forward_case_.ns) *
             solver_forward_case_.ntheta;
@@ -3761,7 +3807,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         residual_case_.ns = initialized_stage_.ns;
         residual_case_.mpol = initialized_stage_.mpol;
         residual_case_.ntor = initialized_stage_.ntor;
-        residual_case_.include_edge_rz = false;
+        residual_case_.include_edge_rz = include_edge_invariant_;
         residual_case_.zero_m1_z = true;
         residual_case_.double_single = double_single_solve_;
         residual_case_.residual = std::move(residual);
@@ -3840,7 +3886,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_case_.ntheta = initialized_stage_.ntheta;
         preconditioner_case_.nzeta = initialized_stage_.nzeta;
         preconditioner_case_.delta_s = initialized_stage_.profiles.delta_s;
-        preconditioner_case_.free_boundary = false;
+        preconditioner_case_.free_boundary =
+            vacuum_ && vacuum_->apply_edge_force();
         if (!iteration_results_) {
             preconditioner_case_.geometry = base_geometry_case_.geometry;
             preconditioner_case_.base_geometry =
@@ -3929,7 +3976,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_matrix_case_.nfp = initialized_stage_.nfp;
         preconditioner_matrix_case_.delta_s =
             initialized_stage_.profiles.delta_s;
-        preconditioner_matrix_case_.free_boundary = false;
+        preconditioner_matrix_case_.free_boundary =
+            vacuum_ && vacuum_->apply_edge_force();
         preconditioner_matrix_case_.elements = preconditioner_elements_;
         if (!iteration_results_) {
             preconditioner_matrix_case_.base_geometry =
@@ -4021,7 +4069,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.delta_s = initialized_stage_.profiles.delta_s;
         constraint_case_.tcon0 = initialized_stage_.tcon0;
         constraint_case_.reset_reference =
-            controller_->reset_constraint_reference();
+            controller_->reset_constraint_reference() &&
+            (!vacuum_ || !vacuum_->apply_edge_force());
+        if (vacuum_ && vacuum_->decay_rcon0_zcon0()) {
+            cumes::webgpu::decay_vacuum_reference(constraint_r_con0_,
+                                                  constraint_r_con0_lo_);
+            cumes::webgpu::decay_vacuum_reference(constraint_z_con0_,
+                                                  constraint_z_con0_lo_);
+        }
         constraint_case_.refresh_preconditioner =
             controller_->refresh_preconditioner();
         constraint_case_.double_single = double_single_solve_;
@@ -4339,7 +4394,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 initialized_stage_.ntheta;
             constraint_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
             constraint_toroidal_forward_case_.nfp = initialized_stage_.nfp;
-            constraint_toroidal_forward_case_.include_lcfs = false;
+            constraint_toroidal_forward_case_.include_lcfs =
+                vacuum_ && vacuum_->apply_edge_force();
             constraint_toroidal_forward_case_.double_single =
                 double_single_solve_;
             constraint_toroidal_forward_case_.fields = std::move(fields);
@@ -4374,7 +4430,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_forward_case_.ns = initialized_stage_.ns;
         constraint_forward_case_.mpol = initialized_stage_.mpol;
         constraint_forward_case_.ntheta = initialized_stage_.ntheta;
-        constraint_forward_case_.include_lcfs = false;
+        constraint_forward_case_.include_lcfs =
+            vacuum_ && vacuum_->apply_edge_force();
         constraint_forward_case_.fields = std::move(fields);
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_forward(
@@ -4431,7 +4488,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_residual_case_.ns = initialized_stage_.ns;
         constraint_residual_case_.mpol = initialized_stage_.mpol;
         constraint_residual_case_.ntor = initialized_stage_.ntor;
-        constraint_residual_case_.include_edge_rz = false;
+        constraint_residual_case_.include_edge_rz = include_edge_invariant_;
         constraint_residual_case_.zero_m1_z =
             controller_->effective_iteration() < 2 ||
             controller_->fsqz_prev() < 1.0e-6;
@@ -4493,7 +4550,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_apply_case_.ns = initialized_stage_.ns;
         preconditioner_apply_case_.mpol = initialized_stage_.mpol;
         preconditioner_apply_case_.ntor = initialized_stage_.ntor;
-        preconditioner_apply_case_.include_lcfs = false;
+        preconditioner_apply_case_.include_lcfs =
+            vacuum_ && vacuum_->apply_edge_force();
         preconditioner_apply_case_.elements = preconditioner_elements_;
         preconditioner_apply_case_.matrix = preconditioner_matrix_;
         preconditioner_apply_case_.residual = std::move(residual);
@@ -4620,6 +4678,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->force_normalization_.f_norm_1,
                     preconditioned_raw[2] * plain *
                         self->initialized_stage_.profiles.delta_s};
+                if (self->vacuum_ && self->vacuum_->soft_restart_requested()) {
+                    self->restore_checkpoint();
+                    self->controller_->vacuum_soft_restart();
+                }
                 const auto verdict = self->controller_->classify_invariant(
                     self->invariant_normalized_.data());
                 if (verdict.nonfinite) {
@@ -4631,7 +4693,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->run_stage_inverse();
                     return;
                 }
-                if (verdict.converged) {
+                if (verdict.converged &&
+                    (!self->vacuum_ || self->vacuum_->apply_edge_force())) {
                     self->trace_controller(actual.residual, true);
                     self->complete_stage();
                     return;
@@ -4657,7 +4720,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         descent_case_.ns = initialized_stage_.ns;
         descent_case_.mpol = initialized_stage_.mpol;
         descent_case_.ntor = initialized_stage_.ntor;
-        descent_case_.move_lcfs = false;
+        descent_case_.move_lcfs = bool(vacuum_);
         descent_case_.delta_t = static_cast<float>(controller_->delta_t());
         descent_case_.damping_b1 =
             static_cast<float>(pending_decision_.damping.b1);
@@ -4769,7 +4832,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         }
                     }
                 }
-                if (!valid || !fixed_lcfs || max_scaled_error > 2.0e-5F) {
+                if (!valid || (!self->vacuum_ && !fixed_lcfs) ||
+                    max_scaled_error > 2.0e-5F) {
                     self->finish(false, "descent mismatch: " +
                                             std::to_string(max_scaled_error));
                     return;
@@ -4803,6 +4867,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->controller_->after_descent(self->pending_decision_);
                     ++self->completed_passes_;
                 }
+                if (self->vacuum_) self->vacuum_->on_iteration_end();
                 const int iteration = self->controller_->effective_iteration();
                 if (!self->production_solve_ || iteration <= 3 ||
                     iteration % 25 == 0) {
@@ -4840,6 +4905,20 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void reset_stage_state() {
+        if (initialized_stage_.free_boundary) {
+            if (!vacuum_) {
+                std::printf("Generating the coil field grid in memory...\n");
+                vacuum_ =
+                    cumes::webgpu::create_vacuum(*problem_, initialized_stage_);
+                std::printf("Coil field grid ready.\n");
+            }
+            cumes::webgpu::prepare_vacuum_stage(*vacuum_, *problem_,
+                                                initialized_stage_);
+        } else {
+            vacuum_.reset();
+        }
+        include_edge_invariant_ = false;
+        invariant_normalized_ = {1.0, 1.0, 1.0};
         device_iteration_state_ = {};
         device_descent_state_ = {};
         device_descent_velocity_ = {};
@@ -4877,6 +4956,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void complete_stage() {
+        if (vacuum_) vacuum_->on_stage_end();
         if (production_solve_)
             publish_browser_iteration_timing(2, stage_index_ + 1);
         // Resident iterations return validity flags for large fields. Read
@@ -5026,6 +5106,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                             std::to_string(max_error));
                     return;
                 }
+                if (self->vacuum_)
+                    self->vacuum_->on_stage_transition(transfer.ns_old,
+                                                       transfer.ns_new);
                 self->stage_index_ = next_stage;
                 std::vector<float> prolonged_lo;
                 if (self->double_single_solve_) {
@@ -5359,6 +5442,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricPreconditionerApplyCase
         preconditioner_apply_case_;
     cumes::webgpu::AxisymmetricDescentCase descent_case_;
+    std::unique_ptr<cumes::FreeBoundaryOperator<double>> vacuum_;
+    bool include_edge_invariant_ = false;
     std::optional<cumes::IterationController<double>> controller_;
     std::optional<cumes::ValidatedProblem> problem_;
     std::optional<cumes::ValidatedProblem> w7x_problem_;
@@ -5382,7 +5467,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_r_con_;
     std::vector<float> stage_z_con_;
     bool resident_path() const {
-        return initialized_stage_.ntor > 0 &&
+        return !initialized_stage_.free_boundary &&
+               initialized_stage_.ntor > 0 &&
                requested_reference_transfers() == 0;
     }
     bool resident_spectral_path() const {

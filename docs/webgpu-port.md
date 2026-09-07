@@ -2,12 +2,38 @@
 
 ## Status
 
-The WebGPU backend is an additive browser backend. CUDA remains the default
-and the only backend with the optional free-boundary coupling. The WebGPU port
+The WebGPU backend is an additive browser backend. CUDA remains the default. Free-boundary browser solves combine WebGPU plasma
+operators with the existing vacuum-field library compiled to WebAssembly. The WebGPU port
 of cuMES's fixed-boundary solver is complete: it implements and hardware-
 qualifies the entire iteration DAG for axisymmetric and folded 3-D equilibria,
 multigrid control, native binary result publication, and an interactive
 axisymmetric boundary editor.
+
+### Free-boundary browser setup
+
+Choose **Fixed boundary** or **Free boundary** above the editor. Free-boundary
+setup offers Solovev, W7-X (vacuum), and cth_like coil configurations, plus
+MAKEGRID coils-dot / cumes-coils-v1 JSON uploads. Currents, grid parameters, and
+initial equilibrium JSON are editable. Uploaded geometry stays in IndexedDB;
+setup choices stay in localStorage. Switching modes or **Stop and edit** ends
+an active worker and returns to setup. Precision changes restart the solve.
+
+The build links vacuum-field's HOST backend in double precision with NetCDF
+disabled. It shares the numerical kernel bodies with CUDA, including coil
+parsing, MAKEGRID generation, and NESTOR. Only coil geometry and small input
+JSON files are served as lazy preset assets; no field grids are shipped.
+`src/webgpu/vacuum.cpp` compiles the existing cuMES vacuum state machine and
+bridge kernels for Wasm memory and converts WebGPU high/low words at the
+handover. Free-boundary iterations use the existing mapped operator path;
+fixed-boundary resident/batched execution is unchanged. CPU vacuum work runs
+in the solver worker so the UI remains responsive.
+
+Vacuum activation, edge force/preconditioning, constraint decay, soft restarts,
+and multigrid persistence follow the CUDA coupling. Solovev has passed a full
+paired-precision browser solve. Broader 3-D and scalar-float equilibrium
+qualification is still in progress; vacuum-field's 18 operator/reference tests
+pass under WebAssembly, native HOST, and CUDA. Preset provenance is recorded in
+`webgpu/presets/README.md`.
 
 The current WebGPU correctness milestones are implemented and
 browser-validated:
