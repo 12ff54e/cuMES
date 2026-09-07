@@ -212,6 +212,15 @@ workspace structs remain.
 
 ## Coding Conventions
 
+### Commits
+
+- Commit meaningful, coherent coding steps progressively as they are completed
+  and validated; do not wait until the entire task is finished. Keep each
+  commit focused and reviewable.
+- Keep routine test logs, benchmark captures, and progress notes local. Do not
+  create commits solely to record them; include relevant validation summaries
+  with the associated implementation commit.
+
 ### Naming
 
 - **Types:** `PascalCase` (e.g., `DeviceParams`, `ToroidalFftOperator`)
