@@ -35,7 +35,7 @@ function installCumesBoundaryMode() {
   get('free-boundary-controls').hidden = !free;
   let saved;
   try { saved = JSON.parse(localStorage.getItem('cumes.free.v1')); } catch (_) {}
-  let config = saved || null;
+  let config = saved || null, selection = 0;
   function show(data) {
     get('coil-preset').value = data.preset;
     get('coil-description').textContent = data.coilName || `coils.${data.preset}`;
@@ -64,11 +64,14 @@ function installCumesBoundaryMode() {
   }
   function error(message) { get('coil-status').textContent = message; }
   async function preset(name) {
+    const token = ++selection;
     error('Loading coil setup…');
     try {
       const response = await fetch(new URL(`presets/${name}.json`, location.href));
       if (!response.ok) throw Error(`Could not load ${name} setup (${response.status}).`);
-      config = {preset: name, input: await response.json()};
+      const input = await response.json();
+      if (token !== selection) return;
+      config = {preset: name, input};
       show(config); save(); error('Coil geometry will load when you run.');
     } catch (failure) { error(failure.message); throw failure; }
   }
@@ -78,7 +81,7 @@ function installCumesBoundaryMode() {
   };
   get('coil-upload').onchange = async event => {
     const file = event.target.files[0];
-    if (!file) return;
+    if (!file) { if(config)get('coil-preset').value=config.preset; return; }
     try {
       if (!config) await preset('solovev');
       const name = file.name.toLowerCase().endsWith('.json') ? 'coils.json' : 'coils.upload';

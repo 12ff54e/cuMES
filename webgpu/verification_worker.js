@@ -8,7 +8,13 @@ function flush() {
   if (diagnostics.length) { postMessage({kind: 'diagnostics', rows: diagnostics}); diagnostics = []; }
 }
 function schedule() { if (timer === null) timer = setTimeout(flush, 100); }
-function append(line) { if (!finished) { logs.push(line); schedule(); } }
+function append(line) {
+  if (finished) return;
+  logs.push(line);
+  // Deliver setup progress before synchronous Wasm grid generation blocks timers.
+  if (line.startsWith('Generating the coil') || line.startsWith('Coil field grid ready')) flush();
+  else schedule();
+}
 function result(success, detail, timing) {
   if (finished) return;
   flush();

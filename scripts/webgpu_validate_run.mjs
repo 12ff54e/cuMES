@@ -9,7 +9,7 @@ const [url, prefix, baselinePath, comparison = 'exact'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
 if (!['exact', 'paired-reductions'].includes(comparison))
   throw Error('Comparison must be exact or paired-reductions');
-const base = 'http://127.0.0.1:9333';
+const base = 'http://127.0.0.1:' + (process.env.CUMES_CDP_PORT || '9333');
 const page = await (await fetch(`${base}/json/new?about:blank`, {method: 'PUT'})).json();
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => {ws.onopen = resolve; ws.onerror = reject;});
@@ -73,12 +73,20 @@ try {
             // carry a nonzero decision in the independent controller trace.
             for (let attempt = previousAttempt + 1; attempt < row.attempt; ++attempt)
               expectedRestarts.push({stage, attempt});
-            if (states[i].restart) expectedRestarts.push({stage, attempt: row.attempt});
+            if (states[i].restart || states[i].vacuum_restart) expectedRestarts.push({stage, attempt: row.attempt});
             previousAttempt = row.attempt;
           });
           assert.deepEqual(result.plot.restarts.map(({stage, attempt}) => ({stage, attempt})), expectedRestarts);
         }
         console.log(`Residual plot: PASS (${samples.length} samples; ${result.plot.restarts.length} restart markers; ${result.plot.drawMilliseconds.toFixed(1)} ms drawing)`);
+      }
+      if (new URL(url).searchParams.get('boundary') === 'free') {
+        assert.equal(result.dataset.cumesExecution, 'worker');
+        const states = trace.filter(row => row.kind === 'controller');
+        if (states.length) {
+          assert.ok(states.some(row => row.vacuum_restart), 'vacuum activation must request a restart');
+          assert.equal(states.at(-1).vacuum_state, 2, 'vacuum pressure must be active at convergence');
+        }
       }
       if (baselinePath) {
         const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
@@ -112,5 +120,6 @@ try {
   if (!finished) throw Error('Browser gate timed out');
 } finally {
   if (!finished) await call('Page.navigate', {url: 'about:blank'}).catch(() => {});
+  if (process.env.CUMES_CLOSE_TEST_TAB === '1') await fetch(`${base}/json/close/${page.id}`);
   ws.close();
 }

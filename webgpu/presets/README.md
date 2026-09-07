@@ -10,6 +10,9 @@ comes from vmecpp/src/vmecpp/cpp/vmecpp/test_data/cth_like_free_bdy.json.
 W7-X geometry comes from vmecpp/src/vmecpp/cpp/vmecpp_large_cpp_tests/test_data/coils.w7x;
 its currents and initial boundary are from examples/data/w7x_free_bdy_vac.json.
 The W7-X preset is the vacuum case (zero pressure and plasma current).
+Its current signs are reversed relative to the mgrid-based reference input:
+the coils-dot winding direction generates the opposite toroidal field sign.
+This matches the shipped negative phiedge without altering user inputs.
 
 Source: https://github.com/proximafusion/vmecpp at
 335ef66441d82980331d0062ab8d0398eff50818; MIT license in LICENSE.vmecpp.

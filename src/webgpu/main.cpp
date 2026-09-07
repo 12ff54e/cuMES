@@ -4353,8 +4353,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
              << ",\"converged\":" << int(converged)
              << ",\"state_hash\":" << fingerprint(initialized_stage_.state)
              << ",\"state_low_hash\":" << fingerprint(stage_state_lo_)
-             << ",\"preconditioned_hash\":" << fingerprint(preconditioned)
-             << '}';
+             << ",\"preconditioned_hash\":" << fingerprint(preconditioned);
+        if (vacuum_) {
+            json << ",\"vacuum_state\":" << int(vacuum_->state())
+                 << ",\"vacuum_restart\":"
+                 << int(vacuum_->soft_restart_requested());
+        }
+        json << '}';
         publish_browser_diagnostic(json.str().c_str());
     }
 

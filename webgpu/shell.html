@@ -371,7 +371,7 @@
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
     value('run')?.addEventListener('click',async()=>{try{await boundaryMode.ready;localStorage.setItem('cumes.input.v1',inputJSON());
       const next=new URL(location.href);next.searchParams.set('run','1');location.assign(next.href)}catch(error){value('coil-status').textContent=error.message}});
-    value('reset')?.addEventListener('click',()=>{localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
+    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
       const next=new URL(location.href);next.searchParams.delete('run');location.assign(next.href)});
     const verificationMode=!appMode&&!w7xSolve;
     if(verificationMode){output.textContent='Requesting WebGPU…\n';output.classList.add('verification-summary');
@@ -382,6 +382,8 @@
     window.cumesFlushLog=()=>logBuffer.flush();
     window.cumesAppendLog = append;
     function publishLine(line){const progress=line.match(/host controller: PASS \(iter=(\d+), FSQR=([^,]+)/);
+      if(appMode&&line.startsWith('Generating the coil'))value('status').textContent='Generating coil field grid';
+      if(appMode&&line.startsWith('Coil field grid ready'))value('status').textContent='Solving equilibrium';
       if(progress){document.body.dataset.cumesIteration=progress[1];document.body.dataset.cumesFsqr=progress[2];if(appMode){value('iteration').textContent=progress[1];value('fsqr').textContent=progress[2]}
         if((appMode&&(Number(progress[1])<=3||Number(progress[1])%25===0))||
           (w7xSolve&&(Number(progress[1])<=3||Number(progress[1])%50===0))||(!appMode&&!w7xSolve))append(line);return}
@@ -447,7 +449,8 @@
       value('result-3d').hidden=true;value('result-switch').hidden=true;value('result-empty').hidden=false;
       value('result-empty').innerHTML='<strong>Boundary changed</strong><span>Run again to update the equilibrium.</span>';value('download').hidden=true}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
-    function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,.mode-switch button:not([id^="editor-precision-"]),#reset-contour').forEach(control=>control.disabled=disabled);
+    function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
+      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload').forEach(control=>control.disabled=disabled);
       value('reset').disabled=disabled}
     function updateStatus(){const state=document.body.dataset.cumesWebgpu;
       if(state==='pass'||state==='fail')logBuffer.flush();
@@ -459,14 +462,14 @@
       if(!appMode)return;
       if(state==='pass'){document.body.classList.remove('busy');value('status').textContent='Converged';value('run').disabled=false;value('run').textContent='Run again';
         setEditorDisabled(false)}
-      else if(state==='fail'){document.body.classList.remove('busy');value('status').textContent='Solve failed';value('result-empty').innerHTML='<strong>Could not converge</strong><span>Open the solver log for details.</span>';
+      else if(state==='fail'){document.body.classList.remove('busy');value('run').disabled=false;value('run').textContent='Run again';value('status').textContent='Solve failed';value('result-empty').innerHTML='<strong>Could not converge</strong><span>Open the solver log for details.</span>';
         setEditorDisabled(false)}
       const adapter=document.body.dataset.cumesAdapter;if(adapter&&document.body.classList.contains('busy'))value('status').textContent='Solving on '+adapter}
     new MutationObserver(updateStatus).observe(document.body,{attributes:true,attributeFilter:['data-cumes-webgpu','data-cumes-adapter']});
     if(appMode){buildHarmonicControls();value('pressure').addEventListener('input',()=>{shape.pressure=Number(value('pressure').value);drawBoundary();syncControls();invalidateResult()});
       syncControls();setEditorMode(editorMode,true);setEditorDisabled(running);
       if(running){document.body.classList.add('busy');value('run').disabled=true;value('run').textContent='Solving…';value('status').textContent='Requesting GPU';
-        value('result-empty').innerHTML='<strong>Computing equilibrium…</strong><span>All numerical operators are running locally via WebGPU.</span>'}}
+        value('result-empty').innerHTML='<strong>Computing equilibrium…</strong><span>The equilibrium is computed locally on your machine.</span>'}}
     function versionedAsset(path,prefix){
       const runtime=document.getElementById('cumes-runtime').content.querySelector('script');
       const version=runtime?new URL(runtime.src,location.href).search:'';
