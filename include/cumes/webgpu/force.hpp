@@ -1,6 +1,7 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_FORCE_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_FORCE_HPP_
 #include "cumes/webgpu/device_fields.hpp"
+#include "cumes/webgpu/float_geometry.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -26,6 +27,7 @@ struct AxisymmetricForceCase {
     float lamscale = 0.0F;
     float lamscale_lo = 0.0F;
     bool double_single = false;
+    FloatRadiusReferencePtr radius_reference;
     std::vector<float> geometry;
     std::vector<float> geometry_lo;
     std::vector<float> base_geometry;

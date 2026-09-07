@@ -1,6 +1,8 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_INITIALIZATION_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_INITIALIZATION_HPP_
 
+#include "cumes/webgpu/float_geometry.hpp"
+
 #include <cstddef>
 #include <vector>
 
@@ -55,6 +57,8 @@ struct AxisymmetricStageData {
     float tcon0 = 1.0F;
     bool free_boundary = false;
     bool prescribed_current = false;
+    FloatRadiusReferencePtr radius_reference;
+    bool compensated_geometry = false;
     std::vector<float> state;
     // Low words for precision-selective WebGPU solves. Ordinary mixed-float
     // callers ignore this vector and retain the existing fast path.
@@ -67,7 +71,9 @@ struct AxisymmetricStageData {
 // Constructs the same f32 cold-start state and immutable radial profiles as
 // the CUDA stage setup for either axisymmetric or folded 3-D modes.
 AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
-                                       std::size_t stage_index);
+                                       std::size_t stage_index,
+                                       bool float_radius_reference = false,
+                                       bool compensated_geometry = false);
 
 AxisymmetricStageData initialize_axisymmetric_stage(
     const ValidatedProblem& problem,

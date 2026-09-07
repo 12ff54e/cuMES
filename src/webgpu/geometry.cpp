@@ -27,7 +27,8 @@ struct ShaderParams {
     std::uint32_t half_points;
     float delta_s;
     float delta_s_lo;
-    std::uint32_t padding[2];
+    float radius_mean;
+    std::uint32_t radius_reference;
 };
 static_assert(sizeof(ShaderParams) == 32);
 
@@ -44,6 +45,9 @@ std::string validate_case(const BaseGeometryCase& input) {
         static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t half_points =
         static_cast<std::size_t>(input.ns - 1) * n_z_n_t;
+    if (input.radius_reference &&
+        (input.double_single || !input.radius_reference->valid(n_z_n_t)))
+        return "base geometry has invalid scalar-float radius reference";
     if (full_points > std::numeric_limits<std::uint32_t>::max() ||
         half_points > std::numeric_limits<std::uint32_t>::max()) {
         return "base geometry exceeds WebGPU indexing limits";
@@ -238,6 +242,11 @@ BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input) {
     const auto store = [&](std::size_t field, std::size_t point, float value) {
         result.fields[field * half_points + point] = value;
     };
+    const auto radius = [&](std::size_t point) {
+        return input.radius_reference
+                   ? input.radius_reference->restore(full(0, point), point)
+                   : full(0, point);
+    };
 
     for (int surface = 0; surface < input.ns - 1; ++surface) {
         const float sqrt_h = input.sqrt_s_h[surface];
@@ -251,7 +260,7 @@ BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input) {
             const std::size_t inside = point;
             const std::size_t outside = point + n_z_n_t;
             const float r12 =
-                0.5F * ((full(0, inside) + full(0, outside)) +
+                0.5F * ((radius(inside) + radius(outside)) +
                         sqrt_h * (full(6, inside) + full(6, outside)));
             const float ru12 =
                 0.5F * ((full(3, inside) + full(3, outside)) +
@@ -292,12 +301,12 @@ BaseGeometryResult base_geometry_reference(const BaseGeometryCase& input) {
                           full(3, outside) * full(9, outside) +
                           full(4, outside) * full(10, outside));
             float gvv =
-                0.5F * (full(0, inside) * full(0, inside) +
-                        full(0, outside) * full(0, outside) +
+                0.5F * (radius(inside) * radius(inside) +
+                        radius(outside) * radius(outside) +
                         sqrt_i_squared * full(6, inside) * full(6, inside) +
                         sqrt_o_squared * full(6, outside) * full(6, outside)) +
-                sqrt_h * (full(0, inside) * full(6, inside) +
-                          full(0, outside) * full(6, outside));
+                sqrt_h * (radius(inside) * full(6, inside) +
+                          radius(outside) * full(6, outside));
             const float guv =
                 0.5F *
                 (full(3, inside) * full(12, inside) +
@@ -395,6 +404,9 @@ void enqueue_base_geometry(const wgpu::Device& device,
     }
     const std::size_t input_bytes =
         GEOMETRY_INPUT_FIELD_COUNT * full_points * sizeof(float);
+    if (input.radius_reference)
+        radial.insert(radial.end(), input.radius_reference->angular.begin(),
+                      input.radius_reference->angular.end());
     const std::size_t radial_bytes = radial.size() * sizeof(float);
     const std::size_t result_values = BASE_GEOMETRY_FIELD_COUNT * half_points;
     const std::size_t result_bytes =
@@ -446,13 +458,17 @@ void enqueue_base_geometry(const wgpu::Device& device,
     const FloatFloat delta_s =
         input.double_single ? split(1.0 / static_cast<double>(input.ns - 1))
                             : FloatFloat{input.delta_s, 0.0F};
-    const ShaderParams params{static_cast<std::uint32_t>(input.ns),
-                              static_cast<std::uint32_t>(n_z_n_t),
-                              static_cast<std::uint32_t>(full_points),
-                              static_cast<std::uint32_t>(half_points),
-                              delta_s.hi,
-                              delta_s.lo,
-                              {0, 0}};
+    const ShaderParams params{
+        static_cast<std::uint32_t>(input.ns),
+        static_cast<std::uint32_t>(n_z_n_t),
+        static_cast<std::uint32_t>(full_points),
+        static_cast<std::uint32_t>(half_points),
+        delta_s.hi,
+        delta_s.lo,
+        input.radius_reference
+            ? static_cast<float>(input.radius_reference->coefficients[0])
+            : 0.0F,
+        input.radius_reference ? 1U : 0U};
     const wgpu::Queue queue = device.GetQueue();
     const auto encoder = device.CreateCommandEncoder();
     transfer_fields(device, encoder, input_buffer, input.geometry,

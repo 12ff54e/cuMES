@@ -21,6 +21,8 @@ class IterationDispatch
         shape(inverse);
         inverse.nfp = input.stage.nfp;
         inverse.double_single = input.double_single;
+        inverse.radius_reference = input.stage.radius_reference;
+        inverse.compensated_geometry = input.stage.compensated_geometry;
         inverse.state = input.stage.state;
         inverse.state_lo = input.stage.state_lo;
         inverse.device_state = input.device_state;
@@ -106,6 +108,7 @@ class IterationDispatch
 
     void geometry() {
         BaseGeometryCase in;
+        in.radius_reference = input.stage.radius_reference;
         in.device_control = input.geometry_control;
         in.axisymmetric = input.stage.ntor == 0;
         in.readback_values = !input.geometry_control || !input.compact_fields ||
@@ -161,6 +164,7 @@ class IterationDispatch
 
     void force() {
         AxisymmetricForceCase in;
+        in.radius_reference = input.stage.radius_reference;
         shape(in);
         const auto& p = input.stage.profiles;
         in.delta_s = p.delta_s;

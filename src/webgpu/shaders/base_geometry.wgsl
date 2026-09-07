@@ -5,8 +5,8 @@ struct Params {
     half_points: u32,
     delta_s: f32,
     _padding0: u32,
-    _padding1: u32,
-    _padding2: u32,
+    radius_mean: f32,
+    radius_reference: u32,
 };
 
 struct Values {
@@ -21,6 +21,13 @@ struct Values {
 
 fn full(field: u32, point: u32) -> f32 {
     return geometry.data[field * params.full_points + point];
+}
+
+fn radius(point: u32) -> f32 {
+    let displacement = full(0u, point);
+    if (params.radius_reference == 0u) { return displacement; }
+    return (displacement + params.radius_mean) +
+        radial.data[2u * params.ns - 1u + point % params.n_z_n_t];
 }
 
 fn store(field: u32, point: u32, value: f32) {
@@ -41,7 +48,7 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let sqrt_i = radial.data[surface];
     let sqrt_o = radial.data[surface + 1u];
 
-    let r12 = 0.5 * ((full(0u, inside) + full(0u, outside)) +
+    let r12 = 0.5 * ((radius(inside) + radius(outside)) +
                      sqrt_h * (full(6u, inside) + full(6u, outside)));
     let ru12 = 0.5 * ((full(3u, inside) + full(3u, outside)) +
                       sqrt_h * (full(9u, inside) + full(9u, outside)));
@@ -89,13 +96,13 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
 
     var gvv =
         0.5 *
-            (full(0u, inside) * full(0u, inside) +
-             full(0u, outside) * full(0u, outside) +
+            (radius(inside) * radius(inside) +
+             radius(outside) * radius(outside) +
              sqrt_i_squared * full(6u, inside) * full(6u, inside) +
              sqrt_o_squared * full(6u, outside) * full(6u, outside)) +
         sqrt_h *
-            (full(0u, inside) * full(6u, inside) +
-             full(0u, outside) * full(6u, outside));
+            (radius(inside) * full(6u, inside) +
+             radius(outside) * full(6u, outside));
 
     let guv =
         0.5 *

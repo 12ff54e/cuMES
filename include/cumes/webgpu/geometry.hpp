@@ -1,6 +1,7 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_GEOMETRY_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_GEOMETRY_HPP_
 #include "cumes/webgpu/device_fields.hpp"
+#include "cumes/webgpu/float_geometry.hpp"
 #include "cumes/webgpu/reduction.hpp"
 
 #include <cstddef>
@@ -27,6 +28,7 @@ struct BaseGeometryCase {
     int nzeta = 1;
     float delta_s = 0.0F;
     bool double_single = false;
+    FloatRadiusReferencePtr radius_reference;
     // The 18 field-major full-grid fields produced by the inverse transform.
     std::vector<float> geometry;
     std::vector<float> geometry_lo;

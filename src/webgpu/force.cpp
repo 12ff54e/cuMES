@@ -32,6 +32,9 @@ std::string validate_case(const AxisymmetricForceCase& in) {
     const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
     const std::size_t nf = static_cast<std::size_t>(in.ns) * n_z_n_t;
     const std::size_t nh = static_cast<std::size_t>(in.ns - 1) * n_z_n_t;
+    if (in.radius_reference &&
+        (in.double_single || !in.radius_reference->valid(n_z_n_t)))
+        return "force has invalid scalar-float radius reference";
     if (nf > std::numeric_limits<std::uint32_t>::max() ||
         nh > std::numeric_limits<std::uint32_t>::max())
         return "axisymmetric force exceeds WebGPU indexing limits";
@@ -188,7 +191,10 @@ AxisymmetricForceResult axisymmetric_force_reference(
             const double sf = paired(in.sqrt_s_f, in.sqrt_s_f_lo, j,
                                      in.double_single),
                          s = sf * sf;
-            const double re = fg(0, p), ro = fg(6, p), zo = fg(7, p);
+            const double re = in.radius_reference
+                                  ? in.radius_reference->restore(fg(0, p), p)
+                                  : fg(0, p);
+            const double ro = fg(6, p), zo = fg(7, p);
             const double rue = fg(3, p), ruo = fg(9, p);
             const double zue = fg(4, p), zuo = fg(10, p);
             const double rve = fg(12, p), rvo = fg(15, p);
@@ -267,6 +273,9 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     radial.insert(radial.end(), in.sqrt_s_f.begin(), in.sqrt_s_f.end());
     radial.insert(radial.end(), in.sqrt_s_h.begin(), in.sqrt_s_h.end());
     radial.insert(radial.end(), in.phip_f.begin(), in.phip_f.end());
+    if (in.radius_reference)
+        radial.insert(radial.end(), in.radius_reference->angular.begin(),
+                      in.radius_reference->angular.end());
     std::vector<float> radial_lo;
     if (in.double_single) {
         radial_lo.insert(radial_lo.end(), in.sqrt_s_f_lo.begin(),
@@ -333,14 +342,20 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
         shader_text,
         in.double_single ? "cuMES double-single MHD force pipeline"
                          : "cuMES MHD force pipeline");
-    ShaderParams params{static_cast<std::uint32_t>(in.ns),
-                        static_cast<std::uint32_t>(n_z_n_t),
-                        static_cast<std::uint32_t>(nf),
-                        static_cast<std::uint32_t>(nh),
-                        in.delta_s,
-                        in.double_single ? in.delta_s_lo : in.lamscale,
-                        in.double_single ? in.lamscale : 0.0F,
-                        in.double_single ? in.lamscale_lo : 0.0F};
+    ShaderParams params{
+        static_cast<std::uint32_t>(in.ns),
+        static_cast<std::uint32_t>(n_z_n_t),
+        static_cast<std::uint32_t>(nf),
+        static_cast<std::uint32_t>(nh),
+        in.delta_s,
+        in.double_single ? in.delta_s_lo : in.lamscale,
+        in.double_single
+            ? in.lamscale
+            : (in.radius_reference
+                   ? static_cast<float>(in.radius_reference->coefficients[0])
+                   : 0.0F),
+        in.double_single ? in.lamscale_lo
+                         : (in.radius_reference ? 1.0F : 0.0F)};
     auto q = device.GetQueue();
     auto encoder = device.CreateCommandEncoder();
     transfer_fields(device, encoder, gbuf, in.geometry, in.device_geometry);

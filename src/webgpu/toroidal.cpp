@@ -63,6 +63,10 @@ struct DealiasParams {
 static_assert(sizeof(DealiasParams) == 32);
 
 std::string validate_case(const ToroidalInverseCase& input) {
+    if (input.double_single &&
+        (input.radius_reference || input.compensated_geometry)) {
+        return "float geometry options cannot be used with paired state";
+    }
     if (input.ns < 2 || input.mpol <= 0 || input.ntor < 1 || input.ntheta < 2 ||
         input.ntheta % 2 != 0 || input.nzeta < 2 || input.nfp < 1) {
         return "toroidal inverse requires ns>=2, mpol>0, ntor>=1, even "
@@ -72,6 +76,11 @@ std::string validate_case(const ToroidalInverseCase& input) {
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
     const std::size_t n_z_n_t =
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
+    if (input.radius_reference &&
+        (!input.radius_reference->valid(n_z_n_t) ||
+         input.radius_reference->coefficients.size() !=
+             static_cast<std::size_t>(input.ntor + 1)))
+        return "toroidal inverse has invalid scalar-float radius reference";
     const std::size_t total_points =
         static_cast<std::size_t>(input.ns) * n_z_n_t;
     if (!field_shape(input.state, input.device_state,
@@ -580,7 +589,13 @@ ToroidalInverseResult toroidal_inverse_reference(
                 add(parity + 3, -mf * rc * sc + mf * rs * cs);
                 add(parity + 4, mf * zs * cc - mf * zc * ss);
                 add(parity + 5, mf * ls * cc - mf * lc * ss);
-                add(12 + (m % 2 == 1 ? 3 : 0), -nf * rc * cs + nf * rs * sc);
+                const float derivative_rc =
+                    input.radius_reference && m == 0 && n > 0
+                        ? rc + static_cast<float>(
+                                   input.radius_reference->coefficients[n])
+                        : rc;
+                add(12 + (m % 2 == 1 ? 3 : 0),
+                    -nf * derivative_rc * cs + nf * rs * sc);
                 add(13 + (m % 2 == 1 ? 3 : 0), -nf * zs * ss + nf * zc * cc);
                 add(14 + (m % 2 == 1 ? 3 : 0), nf * ls * ss - nf * lc * cc);
                 const float xmpq = mf * (mf - 1.0F);
@@ -588,6 +603,55 @@ ToroidalInverseResult toroidal_inverse_reference(
                                 xmpq * (rc * cc + rs * ss));
                 compensated_add(result.z_con[point], z_con_correction,
                                 xmpq * (zs * sc + zc * cs));
+            }
+        }
+    }
+    if (input.compensated_geometry) {
+        // Mirror the selective contract: scalar toroidal intermediates and
+        // basis, wide poloidal products/sums, then one scalar radial scaling.
+        // Double is a setup/test oracle here, never GPU arithmetic.
+        std::vector<double> odd_r(total_points), odd_z(total_points);
+        for (int surface = 0; surface < input.ns; ++surface) {
+            for (int zeta = 0; zeta < input.nzeta; ++zeta) {
+                const float angle = 2.0F * std::numbers::pi_v<float> *
+                                    float(zeta) / float(input.nzeta);
+                for (int m = 1; m < input.mpol; m += 2) {
+                    std::array<float, 4> sums{}, corrections{};
+                    for (int n = 0; n <= input.ntor; ++n) {
+                        const int mode = m * (input.ntor + 1) + n;
+                        const float cn = std::cos(float(n) * angle);
+                        const float sn = std::sin(float(n) * angle);
+                        compensated_add(sums[0], corrections[0],
+                                        coeff(0, mode, surface) * cn);
+                        compensated_add(sums[1], corrections[1],
+                                        coeff(3, mode, surface) * sn);
+                        compensated_add(sums[2], corrections[2],
+                                        coeff(1, mode, surface) * cn);
+                        compensated_add(sums[3], corrections[3],
+                                        coeff(4, mode, surface) * sn);
+                    }
+                    for (int theta = 0; theta < input.ntheta; ++theta) {
+                        const float u = 2.0F * std::numbers::pi_v<float> *
+                                        float(theta) / float(input.ntheta);
+                        const float cm = std::cos(float(m) * u),
+                                    sm = std::sin(float(m) * u);
+                        const auto p =
+                            (surface * input.nzeta + zeta) * input.ntheta +
+                            theta;
+                        odd_r[p] += double(sums[0]) * cm + double(sums[1]) * sm;
+                        odd_z[p] += double(sums[2]) * sm + double(sums[3]) * cm;
+                    }
+                }
+            }
+            const float scale =
+                1.0F / std::max(std::sqrt(float(surface) / float(input.ns - 1)),
+                                std::sqrt(1.0F / float(input.ns - 1)));
+            for (int angular = 0; angular < n_z_n_t; ++angular) {
+                const auto p = surface * n_z_n_t + angular;
+                result.geometry[6 * total_points + p] =
+                    static_cast<float>(odd_r[p] * scale);
+                result.geometry[7 * total_points + p] =
+                    static_cast<float>(odd_z[p] * scale);
             }
         }
     }
@@ -707,8 +771,8 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                               static_cast<std::uint32_t>(n_z_n_t),
                               static_cast<std::uint32_t>(total_points),
                               input.device_state ? 1.0F : 0.0F,
-                              0.0F,
-                              0.0F,
+                              input.radius_reference ? 1.0F : 0.0F,
+                              input.compensated_geometry ? 1.0F : 0.0F,
                               0.0F};
     const auto queue = device.GetQueue();
     const auto encoder = device.CreateCommandEncoder();
@@ -726,6 +790,19 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     }
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
 
+    wgpu::Buffer radius_buffer;
+    const auto radius_bytes = (input.ntor + 1) * sizeof(float);
+    if (!input.double_single) {
+        std::vector<float> coefficients(input.ntor + 1, 0.0F);
+        if (input.radius_reference)
+            coefficients.assign(input.radius_reference->coefficients.begin(),
+                                input.radius_reference->coefficients.end());
+        radius_buffer = create_buffer(
+            device, radius_bytes,
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            "cuMES float radius reference coefficients");
+        queue.WriteBuffer(radius_buffer, 0, coefficients.data(), radius_bytes);
+    }
     const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
     std::vector<wgpu::BindGroupEntry> toroidal_entries = {
         {nullptr, 0, state_buffer, 0, state_bytes, nullptr, nullptr},
@@ -734,6 +811,9 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
          nullptr},
     };
+    if (!input.double_single)
+        toroidal_entries.push_back(
+            {nullptr, 6, radius_buffer, 0, radius_bytes, nullptr, nullptr});
     if (input.double_single) {
         toroidal_entries.push_back(
             {nullptr, 5, state_lo_buffer, 0, state_bytes, nullptr, nullptr});

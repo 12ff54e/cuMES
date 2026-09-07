@@ -16,6 +16,7 @@
 #include "cumes/webgpu/preconditioner.hpp"
 #include "cumes/webgpu/prolongation.hpp"
 #include "cumes/webgpu/toroidal.hpp"
+#include "float_geometry_tests.hpp"
 
 #include <algorithm>
 #include <array>
@@ -45,6 +46,9 @@ void publish_browser_result(int success, const char* detail);
 int publish_browser_output(const char* path);
 int requested_w7x_solve();
 int requested_w7x_multigrid();
+int requested_float_solve();
+int requested_float_radius_reference();
+int requested_compensated_geometry();
 int requested_reference_transfers();
 int requested_direct_dft();
 int requested_generic_fft();
@@ -1869,7 +1873,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             std::printf(
                 "  batched device-state inverse and axis extrapolation (f32, "
                 "paired): PASS\n");
-            run_device_descent_test();
+            const auto self = shared_from_this();
+            run_float_geometry_tests(device_, [self](std::string error) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                std::printf(
+                    "  float radius reference, sub-ULP radial derivative, "
+                    "selective compensation, absolute force: PASS\n");
+                self->run_device_descent_test();
+            });
             return;
         }
         ToroidalInverseCase input;
@@ -1966,6 +1980,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_selected_w7x_solver() {
         try {
+            const bool float_solve = requested_float_solve() != 0;
             cumes::SolverOptions options;
             // The WebGPU solver stores precision-critical values as paired
             // binary32 words, so validate against the double-precision
@@ -1976,6 +1991,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 const auto errors = parsed.report.errors();
                 finish(false, "W7-X JSON mapping failed: " + errors.front());
                 return;
+            }
+            if (float_solve) {
+                options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+                for (auto& stage : parsed.spec.stages) stage.tolerance = 1.0e-5;
             }
             // The public W7-X example starts directly on the final radial
             // resolution to avoid making a browser user wait through three
@@ -1996,7 +2015,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             problem_.emplace(std::move(validated.value()));
             production_solve_ = true;
             publish_browser_iteration_timing(0, 0);
-            double_single_solve_ = true;
+            double_single_solve_ = !float_solve;
             active_case_name_ = "W7-X";
             active_input_path_ = problem_->stage_shapes().size() == 1
                                      ? "inputs/w7x.json (browser single-grid)"
@@ -2005,17 +2024,26 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             total_iterations_ = 0;
             stage_iterations_.clear();
             stage_reports_.clear();
-            initialized_stage_ =
-                cumes::webgpu::initialize_stage(*problem_, stage_index_);
+            initialized_stage_ = cumes::webgpu::initialize_stage(
+                *problem_, stage_index_,
+                float_solve && requested_float_radius_reference() != 0,
+                float_solve && requested_compensated_geometry() != 0);
             reset_stage_state();
             std::printf(
                 "running W7-X fixed-boundary %s solve "
-                "(%zu stage%s, double-single ftol=%.0e)\n",
+                "(%zu stage%s, %s ftol=%.0e)\n",
                 problem_->stage_shapes().size() == 1 ? "single-grid"
                                                      : "multigrid",
                 problem_->stage_shapes().size(),
                 problem_->stage_shapes().size() == 1 ? "" : "s",
+                float_solve ? "float" : "double-single",
                 initialized_stage_.tolerance);
+            if (float_solve)
+                std::printf(
+                    "  float geometry: radius-reference=%s, odd-R/Z=%s\n",
+                    initialized_stage_.radius_reference ? "on" : "off",
+                    initialized_stage_.compensated_geometry ? "compensated"
+                                                            : "native");
             run_stage_inverse();
         } catch (const std::exception& error) {
             finish(false,
@@ -2968,6 +2996,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         stage_toroidal_inverse_case_.nzeta = initialized_stage_.nzeta;
         stage_toroidal_inverse_case_.nfp = initialized_stage_.nfp;
         stage_toroidal_inverse_case_.double_single = double_single_solve_;
+        stage_toroidal_inverse_case_.radius_reference =
+            initialized_stage_.radius_reference;
+        stage_toroidal_inverse_case_.compensated_geometry =
+            initialized_stage_.compensated_geometry;
         stage_toroidal_inverse_case_.state = initialized_stage_.state;
         if (double_single_solve_) {
             stage_toroidal_inverse_case_.state_lo = stage_state_lo_;
@@ -3042,6 +3074,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         base_geometry_case_.nzeta = initialized_stage_.nzeta;
         base_geometry_case_.delta_s = initialized_stage_.profiles.delta_s;
         base_geometry_case_.double_single = double_single_solve_;
+        base_geometry_case_.radius_reference =
+            initialized_stage_.radius_reference;
         base_geometry_case_.geometry = std::move(geometry);
         if (double_single_solve_ && !iteration_results_) {
             base_geometry_case_.geometry_lo = stage_geometry_lo_;
@@ -3394,6 +3428,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.lamscale = initialized_stage_.profiles.lamscale;
         force_case_.lamscale_lo = initialized_stage_.profiles.lamscale_lo;
         force_case_.double_single = double_single_solve_;
+        force_case_.radius_reference = initialized_stage_.radius_reference;
         if (!iteration_results_) {
             force_case_.geometry = magnetic_field_case_.geometry;
             force_case_.geometry_lo = stage_geometry_lo_;
@@ -4407,6 +4442,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     norm_case.lamscale =
                         self->initialized_stage_.profiles.lamscale;
                     norm_case.state = self->initialized_stage_.state;
+                    if (const auto& reference =
+                            self->initialized_stage_.radius_reference) {
+                        for (int n = 0; n <= norm_case.ntor; ++n)
+                            for (int j = 0; j < norm_case.ns; ++j)
+                                norm_case.state[n * norm_case.ns + j] =
+                                    static_cast<float>(
+                                        static_cast<double>(
+                                            norm_case
+                                                .state[n * norm_case.ns + j]) +
+                                        reference->coefficients[n]);
+                    }
                     norm_case.base_geometry =
                         self->magnetic_field_case_.base_geometry;
                     norm_case.magnetic_field = self->force_case_.magnetic_field;
@@ -4861,7 +4907,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     }
                 }
                 self->initialized_stage_ = cumes::webgpu::initialize_stage(
-                    *self->problem_, next_stage);
+                    *self->problem_, next_stage,
+                    static_cast<bool>(
+                        self->initialized_stage_.radius_reference),
+                    self->initialized_stage_.compensated_geometry);
                 self->initialized_stage_.state = std::move(prolonged.state);
                 self->stage_state_lo_ = std::move(prolonged_lo);
                 self->reset_stage_state();
@@ -4896,6 +4945,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
         }
 
+        if (const auto& reference = initialized_stage_.radius_reference) {
+            for (int n = 0; n <= initialized_stage_.ntor; ++n)
+                for (int j = 0; j < snapshot.ns; ++j)
+                    snapshot.families[0][n * snapshot.ns + j] +=
+                        reference->coefficients[n];
+        }
+
         cumes::DerivedFieldInputs fields;
         fields.ns = initialized_stage_.ns;
         fields.ntheta = initialized_stage_.ntheta;
@@ -4919,6 +4975,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         };
         const auto& full = base_geometry_case_.geometry;
         fields.r_e = copy_field(full, 0, full_points);
+        if (const auto& reference = initialized_stage_.radius_reference)
+            for (std::size_t i = 0; i < full_points; ++i)
+                fields.r_e[i] +=
+                    reference->coefficients[0] +
+                    reference->angular[i % reference->angular.size()];
         fields.z_e = copy_field(full, 1, full_points);
         fields.ru_e = copy_field(full, 3, full_points);
         fields.zu_e = copy_field(full, 4, full_points);
@@ -4959,6 +5020,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         report.build.scalar_type = "float";
         report.build.precision_policy = CUMES_PRECISION_POLICY_NAME;
         report.build.compile_flags = CUMES_PRECISION_FLAGS;
+        if (production_solve_ && initialized_stage_.ntor > 0) {
+            report.build.compile_flags += double_single_solve_
+                                              ? "; webgpu-state=paired-f32"
+                                              : "; webgpu-state=f32";
+            report.build.compile_flags += initialized_stage_.radius_reference
+                                              ? "; radius-reference=on"
+                                              : "; radius-reference=off";
+            report.build.compile_flags +=
+                initialized_stage_.compensated_geometry
+                    ? "; geometry=compensated"
+                    : "; geometry=native";
+        }
         report.input.source_path = active_input_path_;
         report.runtime.gpu_name = "WebGPU adapter";
         report.runtime.runtime = "emdawnwebgpu";
@@ -5026,17 +5099,19 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 (static_cast<std::size_t>(family) * mnmax + mode) * ns +
                 surface;
             double value = state[offset];
+            if (initialized_stage_.radius_reference && family == 0 &&
+                mode <= ntor)
+                value +=
+                    initialized_stage_.radius_reference->coefficients[mode];
             if (double_single_solve_ && offset < stage_state_lo_.size()) {
                 value += static_cast<double>(stage_state_lo_[offset]);
             }
             const int m = mode / (ntor + 1);
-            if (m % 2 != 0) {
-                const double maxsc =
-                    std::max(std::sqrt(static_cast<double>(surface) /
-                                       static_cast<double>(ns - 1)),
-                             std::sqrt(1.0 / static_cast<double>(ns - 1)));
-                value /= maxsc;
-            }
+            // State coefficients already contain their physical radial
+            // dependence. Only inverse-work odd fields are divided by sqrt(s),
+            // then multiplied back when assembling physical R/Z. The copied
+            // m=1 axis row is a derivative aid, not a finite-radius surface.
+            if (surface == 0 && m % 2 != 0) return 0.0;
             return value;
         };
 

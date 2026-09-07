@@ -2,6 +2,7 @@
 #define CUMES_INCLUDE_CUMES_WEBGPU_TOROIDAL_HPP_
 
 #include "cumes/webgpu/axisymmetric.hpp"
+#include "cumes/webgpu/float_geometry.hpp"
 
 #include <functional>
 #include <string>
@@ -27,6 +28,8 @@ struct ToroidalInverseCase {
     int nzeta = 0;
     int nfp = 0;
     bool double_single = false;
+    FloatRadiusReferencePtr radius_reference;
+    bool compensated_geometry = false;
     // Component-major [component][mode][surface], with
     // mode=m*(ntor+1)+n.
     std::vector<float> state;

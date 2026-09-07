@@ -108,7 +108,7 @@
   <div class="page" id="app">
     <header>
       <div class="brand"><span class="mark"></span><div><h1>cuMES</h1><div class="subtitle">Magnetic equilibrium · WebGPU</div></div></div>
-      <nav><a href="?">Boundary editor</a><a href="?mode=test">GPU verification</a><a href="?solve=w7x">W7-X single-grid</a></nav>
+      <nav><a href="?">Boundary editor</a><a href="?mode=test">GPU verification</a><a href="?solve=w7x">W7-X (1e-12)</a><a href="?solve=w7x&amp;precision=float">W7-X float (1e-5)</a></nav>
     </header>
     <main class="workspace">
       <section class="panel editor">
@@ -150,7 +150,7 @@
   </div>
   <div class="page legacy" id="legacy" hidden>
     <h2 id="legacy-title">cuMES WebGPU verification</h2>
-    <p><a href="?">Open boundary editor</a> · <a href="?mode=test">Run conformance suite</a> · <a href="?solve=w7x">Run W7-X single-grid example</a> · <a id="legacy-download" hidden>Download output</a></p>
+    <p><a href="?">Open boundary editor</a> · <a href="?mode=test">Run conformance suite</a> · <a href="?solve=w7x">W7-X paired (1e-12)</a> · <a href="?solve=w7x&amp;precision=float">W7-X float (1e-5)</a> · <a id="legacy-download" hidden>Download output</a></p>
     <pre id="legacy-output">Loading WebAssembly and requesting WebGPU…\n</pre>
     <section class="panel legacy-viewer" id="legacy-viewer" hidden><div class="panel-head"><h2>3D equilibrium</h2><span class="tag">Drag to orbit · wheel to zoom</span></div>
       <div class="plot-wrap"><canvas class="equilibrium-3d" id="legacy-result-3d" aria-label="Interactive three-dimensional equilibrium"></canvas></div></section>
@@ -162,7 +162,7 @@
     const output=appMode?document.getElementById('output'):document.getElementById('legacy-output');
     app.hidden=!appMode;legacy.hidden=appMode;
     if(w7xSolve)document.getElementById('legacy-title').textContent=
-      `cuMES WebGPU · W7-X ${w7xMultigrid?'multigrid benchmark':'single-grid example'}`;
+      `cuMES WebGPU · W7-X ${w7xMultigrid?'multigrid':'single-grid'} · ${query.get('precision')==='float'?'float (1e-5)':'paired (1e-12)'}`;
     const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
     const saved=(()=>{try{return JSON.parse(localStorage.getItem('cumes.editor.v1'))}catch(_){return null}})();

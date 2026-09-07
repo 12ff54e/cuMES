@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <span>
 #include <stdexcept>
 
@@ -156,7 +157,9 @@ RadialProfiles initialize_profiles(const ProblemSpec& spec, int ns) {
 }  // namespace
 
 AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
-                                       std::size_t stage_index) {
+                                       std::size_t stage_index,
+                                       bool float_radius_reference,
+                                       bool compensated_geometry) {
     if (stage_index >= problem.stage_shapes().size()) {
         throw std::runtime_error("WebGPU stage index is out of range");
     }
@@ -259,6 +262,46 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
             stage.lambda_seed_scale)) {
         stage.lambda_seed_scale = 0.0F;
         std::fill(lsc.begin(), lsc.end(), 0.0F);
+    }
+    if ((float_radius_reference || compensated_geometry) &&
+        (shape.ntor == 0 || spec.free_boundary.lfreeb)) {
+        throw std::runtime_error(
+            "float geometry fixes require fixed-boundary 3-D geometry");
+    }
+    stage.compensated_geometry = compensated_geometry;
+    if (float_radius_reference) {
+        auto reference = std::make_shared<FloatRadiusReference>();
+        reference->coefficients.assign(boundary.rbcc.begin(),
+                                       boundary.rbcc.begin() + shape.ntor + 1);
+        reference->angular.resize(shape.ntheta * shape.nzeta);
+        for (int zeta = 0; zeta < shape.nzeta; ++zeta) {
+            const float angle = 2.0F * std::numbers::pi_v<float> *
+                                static_cast<float>(zeta) /
+                                static_cast<float>(shape.nzeta);
+            // Setup-only wide accumulation of the same f32 products as the
+            // inverse basis. No double arithmetic is sent to the GPU.
+            double angular = 0.0;
+            for (int n = 1; n <= shape.ntor; ++n) {
+                angular += static_cast<double>(
+                               static_cast<float>(reference->coefficients[n])) *
+                           std::cos(static_cast<float>(n) * angle);
+            }
+            for (int theta = 0; theta < shape.ntheta; ++theta)
+                reference->angular[zeta * shape.ntheta + theta] =
+                    static_cast<float>(angular);
+        }
+        for (int n = 0; n <= shape.ntor; ++n) {
+            for (int surface = 0; surface < shape.ns; ++surface) {
+                const double s = static_cast<double>(surface) / (shape.ns - 1);
+                const auto index = n * shape.ns + surface;
+                // Subtract before conversion; subtracting two rounded radii
+                // would already have lost the small displacement.
+                stage.state[index] = static_cast<float>(
+                    (1.0 - s) * (spec.raxis_c[n] - boundary.rbcc[n]));
+                stage.state_lo[index] = 0.0F;
+            }
+        }
+        stage.radius_reference = std::move(reference);
     }
     stage.profiles = initialize_profiles(spec, shape.ns);
     return stage;

@@ -5,8 +5,8 @@ struct Params {
     half_points: u32,
     delta_s: f32,
     lamscale: f32,
-    _padding0: u32,
-    _padding1: u32,
+    radius_mean: f32,
+    radius_reference: f32,
 };
 
 struct Values { data: array<f32>, };
@@ -100,7 +100,12 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let gbubv_avg = 0.5 * (gbubv_o + gbubv_i);
     let gbubv_wavg = 0.5 * (gbubv_o * sqrt_h_o + gbubv_i * sqrt_h_i);
 
-    let r_e = full(0u, point); let r_o = full(6u, point);
+    var r_e = full(0u, point);
+    if (params.radius_reference != 0.0) {
+        r_e = (r_e + params.radius_mean) +
+            radial.data[3u * params.ns - 1u + angular];
+    }
+    let r_o = full(6u, point);
     let z_o = full(7u, point);
     let ru_e = full(3u, point); let ru_o = full(9u, point);
     let zu_e = full(4u, point); let zu_o = full(10u, point);

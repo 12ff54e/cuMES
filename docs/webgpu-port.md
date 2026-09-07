@@ -271,6 +271,66 @@ last-progress timestamp as `data-cumes-stage`, `data-cumes-iteration`,
 
 ## Precision policy
 
+### Scalar-f32 radius reference and selective geometry correction
+
+`?solve=w7x&precision=float` runs the single-grid example with scalar-f32
+state and `ftol=1e-5`. It ports main's [radius-reference
+representation](adr/0014-float-radius-reference.md) and [selective odd R/Z
+reconstruction](w7x-float-float.md). Both are enabled for this explicit float
+example; `&radius_reference=0` and `&geometry=native` independently disable
+them for diagnostics. `&grids=3` retains the three radial grids. This is not
+a scalar-f32 `1e-12` claim; the ordinary `?solve=w7x` paired-f32 route keeps
+that tolerance and is unchanged numerically.
+
+The float state stores all m=0 Rcc coefficients as small displacements from
+the immutable double-precision boundary coefficients. Cold-start subtraction
+happens before conversion to f32. The inverse retains displaced even radius,
+but restores the reference before toroidal differentiation. Geometry and
+forces restore absolute radius where needed; radial differences never
+subtract two large reconstructed radii. Refinement and controller rollback
+keep the displacement representation. Force normalization, downloaded
+coefficients, derived fields, and both visualizations restore physical radius.
+
+Only odd R/Z poloidal products, sums, and final radial scaling use compensated
+pairs. Scalar toroidal intermediates, basis, angular derivatives, lambda,
+constraints, and state storage retain their previous precision. Workgroup
+atomic rounding boundaries prevent backend optimization from erasing the
+compensation. Host setup caches the immutable angular reference in f32; no
+f64 shader arithmetic is introduced. This ports the geometry ideas, not the
+entire CUDA float controller/reduction policy, so CUDA trajectory identity
+is not expected.
+
+On the exposed Chrome/RTX 3060 Ti, the initial single-grid qualification
+converged in **1256 effective iterations**, final residual
+`(9.946e-6, 4.505e-6, 1.773e-9)`. Three runs reproduced the trajectory.
+Instrumented page completion was about **13.7–14.4 s**, including startup
+and output; these timings are not an equal-tolerance comparison with the
+paired-f32 solver.
+
+The three-grid float run also passes: **148 → 280 → 625** effective
+iterations (1053 total), final residual `(9.316e-6, 4.295e-6, 2.119e-9)`.
+Both prolongation comparisons pass with maximum absolute GPU/CPU difference
+`1.192e-7`; the independently checked rendered LCFS is unchanged.
+
+The conformance suite includes cancellation-sensitive odd reconstruction,
+bit-identical untouched inverse fields, nonconstant-reference toroidal
+derivatives, sub-ULP radial differences, absolute metric/force terms, and
+all-stage seed/LCFS invariants. The rendered W7-X LCFS is independently
+checked against the signed input harmonics, and the axis must collapse to
+a curve:
+
+```bash
+node scripts/webgpu_validate_geometry.mjs CHROME_TARGET_ID ../tmp/w7x-render.png
+```
+
+The renderer uses physical state coefficients directly: the inverse-work
+`1/sqrt(s)` odd regularization must not be applied to plotted coefficients.
+The extrapolated odd axis row is omitted from the physical axis. With both
+rendering corrections, the tested LCFS error is `2.561e-7 m` and poloidal
+axis spread is zero.
+
+### Paired-f32 path
+
 Core WGSL exposes `f32` but not `f64`. The WebGPU preset therefore keeps
 `CUMES_USE_FLOAT=ON`, while the selected W7-X solver uses a double-single
 representation for its precision-critical path. Each logical value is the

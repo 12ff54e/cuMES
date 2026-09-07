@@ -1,6 +1,15 @@
 // Emscripten library boundary between the solver and the browser application.
 // All DOM, URL, and virtual-filesystem policy stays on the JavaScript side.
 mergeInto(LibraryManager.library, {
+  requested_float_solve: function() {
+    return new URLSearchParams(location.search).get('precision') === 'float' ? 1 : 0;
+  },
+  requested_float_radius_reference: function() {
+    return new URLSearchParams(location.search).get('radius_reference') === '0' ? 0 : 1;
+  },
+  requested_compensated_geometry: function() {
+    return new URLSearchParams(location.search).get('geometry') === 'native' ? 0 : 1;
+  },
   publish_browser_result__deps: ['$UTF8ToString'],
   publish_browser_result: function(success, detail) {
     window.cumesIterationTiming?.finish();

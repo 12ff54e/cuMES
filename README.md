@@ -70,7 +70,12 @@ ctest --test-dir build --output-on-failure
 ```
 
 The current WebGPU milestone builds separately. WGSL arithmetic remains
-`f32`, with paired words used by the strict W7-X path:
+`f32`, with paired words used by the strict W7-X path.
+
+The explicit `?solve=w7x&precision=float` example uses main's radius-reference
+storage and selective odd R/Z compensation at `ftol=1e-5`. It converges the
+single-grid browser test in 1256 iterations. The default `?solve=w7x` retains
+paired-f32 arithmetic and `1e-12`; see the [WebGPU precision notes](docs/webgpu-port.md#scalar-f32-radius-reference-and-selective-geometry-correction).
 
 ```bash
 source "/lustre/qzhong/emsdk/emsdk_env.sh"

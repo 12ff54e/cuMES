@@ -8,6 +8,8 @@ struct Params {
     n_z_n_t: u32,
     total_points: u32,
     extrapolate_axis: f32,
+    radius_reference: f32,
+    compensated_geometry: f32,
 };
 
 struct Values { data: array<f32>, };
@@ -20,6 +22,34 @@ struct Values { data: array<f32>, };
 @group(0) @binding(3) var<uniform> params: Params;
 // Twelve toroidally synthesized coefficient/derivative planes.
 @group(0) @binding(4) var<storage, read_write> intermediate: Values;
+@group(0) @binding(6) var<storage, read> radius_reference: Values;
+
+// Explicit rounding prevents backend contraction/reassociation from erasing
+// the product and sum residuals. Each invocation owns its atomic scratch slot.
+var<workgroup> rounding: array<atomic<u32>, 128>;
+fn rounded(value: f32, slot: u32) -> f32 {
+    atomicStore(&rounding[slot % 128u], bitcast<u32>(value));
+    return bitcast<f32>(atomicLoad(&rounding[slot % 128u]));
+}
+fn pair_sum(a: f32, b: f32, slot: u32) -> vec2<f32> {
+    let s = rounded(a + b, slot);
+    let bv = rounded(s - a, slot);
+    let av = rounded(s - bv, slot);
+    let ae = rounded(a - av, slot);
+    let be = rounded(b - bv, slot);
+    return vec2<f32>(s, rounded(ae + be, slot));
+}
+fn pair_add(a: vec2<f32>, b: vec2<f32>, slot: u32) -> vec2<f32> {
+    let s = pair_sum(a.x, b.x, slot);
+    let low = rounded(rounded(s.y + a.y, slot) + b.y, slot);
+    return pair_sum(s.x, low, slot);
+}
+fn pair_scale(a: vec2<f32>, b: f32, slot: u32) -> vec2<f32> {
+    let p = rounded(a.x * b, slot);
+    let e = rounded(fma(a.x, b, -p), slot);
+    let low = rounded(a.y * b, slot);
+    return pair_sum(p, rounded(e + low, slot), slot);
+}
 
 fn coefficient(component: u32, m: u32, n: u32, surface: u32) -> f32 {
     let mnmax = params.mpol * (params.ntor + 1u);
@@ -110,7 +140,11 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         sum3 = compensated_add(sum3, zc * sn);
         sum4 = compensated_add(sum4, ls * cn);
         sum5 = compensated_add(sum5, lc * sn);
-        sum6 = compensated_add(sum6, -nf * rc * sn);
+        var derivative_rc = rc;
+        if (params.radius_reference != 0.0 && m == 0u && n > 0u) {
+            derivative_rc += radius_reference.data[n];
+        }
+        sum6 = compensated_add(sum6, -nf * derivative_rc * sn);
         sum7 = compensated_add(sum7, nf * rs * cn);
         sum8 = compensated_add(sum8, -nf * zs * sn);
         sum9 = compensated_add(sum9, nf * zc * cn);
@@ -164,6 +198,8 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var value17 = vec2<f32>(0.0, 0.0);
     var r_con = vec2<f32>(0.0, 0.0);
     var z_con = vec2<f32>(0.0, 0.0);
+    var odd_r = vec2<f32>(0.0);
+    var odd_z = vec2<f32>(0.0);
     for (var m = 0u; m < params.mpol; m++) {
         let cm = theta_basis(false, m, theta);
         let sm = theta_basis(true, m, theta);
@@ -189,8 +225,17 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let lv = scale * (intermediate_at(10u, surface, m, zeta) * sm +
                           intermediate_at(11u, surface, m, zeta) * cm);
         if (odd) {
-            value6 = compensated_add(value6, scale * r);
-            value7 = compensated_add(value7, scale * z);
+            if (params.compensated_geometry != 0.0) {
+                odd_r = pair_add(odd_r, pair_add(
+                    pair_scale(vec2<f32>(a0, 0.0), cm, point),
+                    pair_scale(vec2<f32>(a1, 0.0), sm, point), point), point);
+                odd_z = pair_add(odd_z, pair_add(
+                    pair_scale(vec2<f32>(a2, 0.0), sm, point),
+                    pair_scale(vec2<f32>(a3, 0.0), cm, point), point), point);
+            } else {
+                value6 = compensated_add(value6, scale * r);
+                value7 = compensated_add(value7, scale * z);
+            }
             value8 = compensated_add(value8, scale * lambda);
             value9 = compensated_add(value9, ru);
             value10 = compensated_add(value10, zu);
@@ -212,6 +257,12 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let xmpq = mf * (mf - 1.0);
         r_con = compensated_add(r_con, xmpq * r);
         z_con = compensated_add(z_con, xmpq * z);
+    }
+    if (params.compensated_geometry != 0.0) {
+        let r = pair_scale(odd_r, odd_scale, point);
+        let z = pair_scale(odd_z, odd_scale, point);
+        value6.x = rounded(r.x + r.y, point);
+        value7.x = rounded(z.x + z.y, point);
     }
     store(0u, point, value0.x);
     store(1u, point, value1.x);
