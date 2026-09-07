@@ -2073,7 +2073,23 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             // grids. Keep the qualified multigrid route available explicitly.
             if (requested_w7x_multigrid() == 0 &&
                 parsed.spec.stages.size() > 1) {
-                const auto final_stage = parsed.spec.stages.back();
+                auto final_stage = parsed.spec.stages.back();
+                // A cold final-grid start also needs the work budget of the
+                // skipped coarse grids. Keeping only the warm final-stage
+                // cap can stop a valid solve just above tolerance.
+                final_stage.max_iterations = 0;
+                constexpr auto MAX_ITERATIONS =
+                    static_cast<std::size_t>(std::numeric_limits<int>::max());
+                for (const auto& stage : parsed.spec.stages) {
+                    if (stage.max_iterations >
+                        MAX_ITERATIONS - final_stage.max_iterations) {
+                        finish(false,
+                               "W7-X single-grid iteration budget exceeds "
+                               "controller range");
+                        return;
+                    }
+                    final_stage.max_iterations += stage.max_iterations;
+                }
                 parsed.spec.stages.assign(1, final_stage);
             }
             auto validated = cumes::validate(std::move(parsed.spec), options);
@@ -2103,13 +2119,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             reset_stage_state();
             std::printf(
                 "running W7-X fixed-boundary %s solve "
-                "(%zu stage%s, %s ftol=%.0e)\n",
+                "(%zu stage%s, %s ftol=%.0e, max_iter=%d)\n",
                 problem_->stage_shapes().size() == 1 ? "single-grid"
                                                      : "multigrid",
                 problem_->stage_shapes().size(),
                 problem_->stage_shapes().size() == 1 ? "" : "s",
                 float_solve ? "float" : "double-single",
-                initialized_stage_.tolerance);
+                initialized_stage_.tolerance,
+                initialized_stage_.max_iterations);
             if (float_solve)
                 std::printf(
                     "  float geometry: radius-reference=%s, odd-R/Z=%s\n",
@@ -2943,11 +2960,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 });
                 return;
             }
-            finish(false,
-                   active_case_name_ +
-                       " stage exhausted its iteration limit at iter=" +
-                       std::to_string(controller_->effective_iteration()) +
-                       " FSQR=" + std::to_string(invariant_normalized_[0]));
+            std::ostringstream detail;
+            detail << active_case_name_
+                   << " stage exhausted its iteration limit at iter="
+                   << controller_->effective_iteration()
+                   << " FSQR=" << std::scientific << std::setprecision(6)
+                   << invariant_normalized_[0];
+            finish(false, detail.str());
             return;
         }
         ++attempted_passes_;
