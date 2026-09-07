@@ -99,6 +99,7 @@
       white-space:pre-wrap; font:11px/1.55 ui-monospace,SFMono-Regular,monospace; }
     .legacy { max-width:960px; } .legacy h2 { font-size:24px; }
     .legacy-viewer { margin-top:18px; }
+    .legacy .actions { margin:0 0 18px; }
     .precision-control { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:18px 0; }
     .precision-control p { flex-basis:100%; margin:0; color:var(--muted); font-size:12px; }
     .legacy-viewer .plot-wrap { min-height:560px; }
@@ -173,8 +174,9 @@
         <button type="button" id="precision-double" aria-pressed="false">Double · paired f32</button>
       </div>
       <span class="tag" id="precision-tolerance"></span>
-      <p>Switching restarts the solve and keeps grid/FFT settings. Double uses two f32 words, not native IEEE fp64.</p>
+      <p>Switching precision returns to setup and keeps grid/FFT settings. Double uses two f32 words, not native IEEE fp64.</p>
     </section>
+    <div class="actions" id="w7x-actions" hidden><button class="primary" id="w7x-start" type="button">Start</button><span class="subtitle" id="w7x-status" role="status">Choose precision, then start the solve.</span></div>
     <pre id="legacy-output">Loading WebAssembly and requesting WebGPU…\n</pre>
     <section class="panel legacy-viewer" id="legacy-viewer" hidden><div class="panel-head"><h2>3D equilibrium</h2><span class="tag">Drag to orbit · wheel to zoom</span></div>
       <div class="plot-wrap"><canvas class="equilibrium-3d" id="legacy-result-3d" aria-label="Interactive three-dimensional equilibrium"></canvas></div></section>
@@ -191,6 +193,7 @@
     app.hidden=!appMode;legacy.hidden=appMode;
     if(w7xSolve)document.getElementById('legacy-title').textContent=
       `cuMES WebGPU · W7-X ${w7xMultigrid?'multigrid':'single-grid'} · ${query.get('precision')==='float'?'float (1e-5)':'paired (1e-12)'}`;
+    if(w7xSolve){document.getElementById('w7x-actions').hidden=false;output.textContent='Ready. Click Start to load WebAssembly and request WebGPU.\n'}
     // Precision switch: kept in the frontend; URL remains the solver contract.
     function installPrecisionSwitch(document,location,beforeSwitch=()=>{}){
       const current=new URL(location.href);
@@ -381,6 +384,10 @@
       value('reset').disabled=disabled}
     function updateStatus(){const state=document.body.dataset.cumesWebgpu;
       if(state==='pass'||state==='fail')logBuffer.flush();
+      if(w7xSolve&&(state==='pass'||state==='fail')){
+        value('w7x-start').disabled=false;value('w7x-start').textContent='Reset run';
+        value('w7x-status').textContent=(state==='pass'?'Converged.':'Solve failed.')+' Reset to prepare another run.';
+      }
       if(!appMode)return;
       if(state==='pass'){document.body.classList.remove('busy');value('status').textContent='Converged';value('run').disabled=false;value('run').textContent='Run again';
         setEditorDisabled(false)}
@@ -399,8 +406,16 @@
     }
     var Module={locateFile:versionedAsset,preRun:[()=>{if(running){FS.mkdirTree('/inputs');const source=localStorage.getItem('cumes.input.v1')||inputJSON();FS.writeFile('/inputs/interactive.json',source)}}],
       print:(...args)=>publishLine(args.join(' ')),printErr:(...args)=>append('ERROR: '+args.join(' '))};
-    if(!appMode||running){window.cumesKeepAlive=setInterval(()=>{},50);window.cumesDeadline=setTimeout(()=>{window.cumesVerificationWorker?.terminate();if(!document.body.dataset.cumesWebgpu){document.body.dataset.cumesWebgpu='fail';
+    function armSolverDeadline(){window.cumesKeepAlive=setInterval(()=>{},50);window.cumesDeadline=setTimeout(()=>{window.cumesVerificationWorker?.terminate();if(!['pass','fail'].includes(document.body.dataset.cumesWebgpu)){document.body.dataset.cumesWebgpu='fail';
       document.body.dataset.cumesDetail='WebGPU run timed out';append('ERROR: WebGPU run timed out')}clearInterval(window.cumesKeepAlive)},w7xSolve?21600000:1800000)}
+    if((!appMode&&!w7xSolve)||running)armSolverDeadline();
+    value('w7x-start').addEventListener('click',()=>{
+      if(!w7xSolve)return;
+      if(window.cumesRuntimeStarted){if(['pass','fail'].includes(document.body.dataset.cumesWebgpu))location.reload();return}
+      value('w7x-start').disabled=true;value('w7x-start').textContent='Solving…';value('w7x-status').textContent='Running on your GPU…';
+      document.body.dataset.cumesWebgpu='running';append('Loading WebAssembly and requesting WebGPU…');
+      armSolverDeadline();startCumesRuntime(true);
+    });
     window.addEventListener('error',event=>{document.body.dataset.cumesWebgpu='fail';document.body.dataset.cumesDetail=event.message;append('ERROR: '+event.message)});
     window.addEventListener('unhandledrejection',event=>{document.body.dataset.cumesWebgpu='fail';document.body.dataset.cumesDetail=String(event.reason);append('ERROR: '+event.reason)});
   </script>

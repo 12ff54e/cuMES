@@ -56,6 +56,9 @@ try{
       assert.deepEqual(state.active,[view]);
       if(expectedStyle)assert.deepEqual(state.styles,expectedStyle);else expectedStyle=state.styles;
       if(view==='w7x')assert.equal(state.precision,search.includes('float')?'float':'double');
+      if(view==='w7x')assert.equal(await evaluate(`document.body.dataset.cumesExecution==='idle'&&
+        !document.getElementById('w7x-start').disabled&&!document.getElementById('w7x-actions').hidden&&
+        !window.cumesKeepAlive&&typeof HEAPU8==='undefined'`),true);
       if(prefix&&!search.includes('float')){
         const shot=await call('Page.captureScreenshot',{format:'png'},session);
         await writeFile(`${prefix}-${view}-${width}.png`,Buffer.from(shot.data,'base64'));

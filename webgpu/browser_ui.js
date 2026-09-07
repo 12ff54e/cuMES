@@ -61,11 +61,18 @@ function installCumesBrowser() {
   };
 }
 
-function startCumesRuntime() {
+function startCumesRuntime(userStarted = false) {
+  if (globalThis.cumesRuntimeStarted) return;
   const runtime = document.getElementById('cumes-runtime').content.querySelector('script');
   // Template contents have an inert owner document; resolve against the page.
   const runtimeUrl = new URL(runtime.getAttribute('src'), location.href);
   const query = new URLSearchParams(location.search);
+  if (query.get('solve') === 'w7x' && !userStarted) {
+    document.body.dataset.cumesExecution = 'idle';
+    globalThis.cumesBrowser.ready();
+    return;
+  }
+  globalThis.cumesRuntimeStarted = true;
   const verification = query.get('mode') === 'test' && query.get('solve') !== 'w7x';
   // Diagnostic opt-out permits exact main-thread/worker trajectory comparisons.
   if (!verification || query.get('worker') === '0') {

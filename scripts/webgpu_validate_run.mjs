@@ -42,7 +42,10 @@ try {
   console.log(JSON.stringify({target: page.id, url}));
   const deadline = Date.now() + 600000;
   while (Date.now() < deadline) {
-    const status = await evaluate('document.body?.dataset.cumesWebgpu');
+    const status = await evaluate(`(()=>{
+      if(document.body?.dataset.cumesExecution==='idle')document.getElementById('w7x-start')?.click();
+      return document.body?.dataset.cumesWebgpu;
+    })()`);
     if (status === 'pass' || status === 'fail') {
       const result = await evaluate(`({dataset: {...document.body.dataset},
         log: document.getElementById('log')?.textContent || document.body.innerText})`);

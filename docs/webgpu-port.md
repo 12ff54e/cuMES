@@ -265,7 +265,13 @@ A successful run finishes with:
 cuMES WebGPU self-test: PASS
 ```
 
-Append `?solve=w7x` to run the fixed-boundary W7-X example directly on its
+Append `?solve=w7x` to open the fixed-boundary W7-X example. Choose precision
+and click **Start** to load Wasm, request the GPU, and start solving. Opening or
+refreshing this tab never auto-runs, even with `run=1` in a saved URL. Precision
+changes return to idle setup; after completion or failure, **Reset run** reloads
+the idle page. The run deadline starts on the button click, not when opening the
+tab. Browser validation/profiling tools explicitly click Start for automated
+runs. The default example solves directly on its
 final `ns=99` radial grid instead of the conformance suite. This avoids the two
 coarser browser stages while retaining the input's `1e-12` tolerance. Append
 `&grids=3` to retain the complete `33 -> 66 -> 99` integration route. Either
@@ -287,9 +293,9 @@ last-progress timestamp as `data-cumes-stage`, `data-cumes-iteration`,
 The W7-X page has a **Single / Double** precision switch above the log;
 the boundary editor has the same switch alongside its run controls.
 Single selects scalar f32 (`1e-5`); Double selects the existing paired-f32
-mode (`1e-12`), not native IEEE fp64. Switching restarts an existing solve
-(an idle editor stays idle) and preserves the other URL options, including
-radial grids and FFT selection.
+mode (`1e-12`), not native IEEE fp64. Switching restarts an existing editor solve
+(an idle editor stays idle); W7-X returns to setup and waits for **Start**.
+Both preserve the other URL options, including radial grids and FFT selection.
 The current precision is also published as `data-cumes-precision` on the
 page body. The boundary editor defaults to Single and W7-X defaults to Double.
 Editor harmonics and contour points are retained when switching precision.

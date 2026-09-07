@@ -37,6 +37,7 @@ let succeeded = false;
 async function until(expression, label) {
   const deadline = Date.now() + 600000;
   while (Date.now() < deadline) {
+    await evaluate(`document.body?.dataset.cumesExecution==='idle'&&document.getElementById('w7x-start')?.click()`);
     const status = await evaluate(`({ready: Boolean(${expression}),
       status: document.body?.dataset.cumesWebgpu, detail: document.body?.dataset.cumesDetail})`);
     if (status.status === 'fail') throw Error(status.detail);

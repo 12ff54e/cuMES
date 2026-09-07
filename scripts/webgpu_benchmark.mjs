@@ -38,6 +38,7 @@ try {
     // Wait for the new document, then warm the real full-size solver.
     await new Promise(resolve => setTimeout(resolve, 500));
     await evaluate(`new Promise((resolve,reject)=>{const t=setInterval(()=>{
+      if(document.body.dataset.cumesExecution==='idle')document.getElementById('w7x-start')?.click();
       if(document.body.dataset.cumesWebgpu==='fail'){clearInterval(t);reject(Error(document.body.dataset.cumesDetail));}
       else if(document.body.innerText.includes('iter=100')){clearInterval(t);resolve(true);}
     },100)})`);

@@ -20,11 +20,19 @@ function fixture(search,unavailable=false){
   vm.runInContext(source,context);context.startCumesRuntime();
   return{context,document,worker,sent,scripts,logs,results,listeners};
 }
-for(const query of ['', '?run=1&precision=double', '?solve=w7x', '?mode=test&solve=w7x', '?mode=test&worker=0']){
+for(const query of ['', '?run=1&precision=double', '?mode=test&worker=0']){
   const f=fixture(query);
   assert.equal(f.document.body.dataset.cumesExecution,'main');assert.equal(f.worker,undefined);
   assert.equal(f.scripts.length,1);assert.equal(f.scripts[0].src,'https://example.test/app/cumes_webgpu.js?v=abc');
   f.scripts[0].onerror();assert.equal(f.results[0][0],false);
+}
+for(const query of ['?solve=w7x','?solve=w7x&precision=float','?solve=w7x&run=1','?mode=test&solve=w7x']){
+  const f=fixture(query);
+  assert.equal(f.document.body.dataset.cumesExecution,'idle');assert.equal(f.scripts.length,0);assert.equal(f.worker,undefined);
+  f.context.startCumesRuntime(true);
+  assert.equal(f.document.body.dataset.cumesExecution,'main');assert.equal(f.scripts.length,1);
+  f.context.startCumesRuntime(true);f.context.startCumesRuntime();
+  assert.equal(f.scripts.length,1,'duplicate calls must not start another solve');
 }
 const f=fixture('?mode=test&trace=1');
 assert.equal(f.scripts.length,0);assert.equal(f.document.body.dataset.cumesExecution,'worker');
