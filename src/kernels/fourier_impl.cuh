@@ -713,15 +713,20 @@ __global__ void inverse_accumulate_kernel(
                 // sums through this product/sum and the odd normalization;
                 // rounding the intermediate back to T loses radial detail.
                 // Derivatives still consume the unmodified cuFFT outputs.
-                Accumulator q0(c0), q1(c1);
                 if (m == 1) {
                     int count = nzeta * ns;
                     int q = k * ns + j;
                     int channel = isR ? 0 : 2;
-                    q0 = d_odd_toroidal[channel * count + q];
-                    q1 = d_odd_toroidal[(channel + 1) * count + q];
+                    odd_sum +=
+                        d_odd_toroidal[channel * count + q] * Accumulator(t0) +
+                        d_odd_toroidal[(channel + 1) * count + q] *
+                            Accumulator(t1);
+                } else {
+                    // Keep native inputs visibly single-word here so the
+                    // compiler can eliminate unnecessary cross-products.
+                    odd_sum += Accumulator(c0) * Accumulator(t0) +
+                               Accumulator(c1) * Accumulator(t1);
                 }
-                odd_sum += q0 * Accumulator(t0) + q1 * Accumulator(t1);
             } else if constexpr (OddPrecision >= 3) {
                 odd_sum = odd_sum + (Accumulator(c0) * Accumulator(t0) +
                                      Accumulator(c1) * Accumulator(t1));
