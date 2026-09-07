@@ -20,20 +20,23 @@ CUMES_GEOMETRY_PRECISION=compensated \
 
 `CUMES_GEOMETRY_PRECISION` accepts `native` (default) or `compensated`.
 Compensation improves the odd R/Z position reconstruction with selective
-float-float arithmetic; it does not change the precision of every geometry
-operation.
+paired-scalar arithmetic: float-float in float builds, double-double in double
+builds. It does not change the precision of every geometry operation. This
+document reports the float experiment; see the separate
+[double measurements](w7x-double-compensation.md).
 
 Embedding callers select the same correction with
 `SolveRequest::odd_geometry = OddGeometryPrecision::POLOIDAL`.
 Environment parsing is enabled only when `use_process_environment` is true.
-The solver applies it only to fixed-boundary 3-D float runs. Reference storage
-is enabled by default for these solves; `CUMES_RADIUS_REFERENCE=0` or
+The solver applies it only to fixed-boundary 3-D runs. Reference storage
+is enabled by default for float solves; `CUMES_RADIUS_REFERENCE=0` or
 `SolveRequest::use_radius_reference=false` restores absolute coefficients.
 The measurements below were taken with reference storage enabled.
 Checkpoint replay must use the same options.
 
 For diagnostic experiments, the library API and the benchmark's
-`--odd-geometry` option retain these detailed scopes:
+`--odd-geometry` option retain these detailed float scopes. Double supports
+`native` and `poloidal` (the compensated mode).
 
 | Diagnostic option | Extra precision in the two odd position fields |
 | --- | --- |
@@ -53,7 +56,8 @@ are prepared in double on the host at setup; float-float stores high/low float
 parts, and its new device arithmetic uses float instructions. The
 `poloidal-scale` option similarly prepares only the radial scale table at setup.
 
-`FloatFloat` carries an unevaluated `hi + lo` sum. Explicit rounded CUDA
+`Compensated<T>` carries an unevaluated `hi + lo` sum; `FloatFloat` names its
+float specialization. Explicit rounded CUDA
 addition/subtraction and FMA product residuals protect its compensation from
 compiler contraction. Both words are retained until the final float output.
 The minimal successful path evaluates

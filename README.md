@@ -273,6 +273,10 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
   `CUMES_GEOMETRY_PRECISION=compensated` converges W7-X at 1e-5 by compensating
   only the odd R/Z position reconstruction; see the
   [precision and timing experiment](docs/w7x-float-float.md).
+- `CUMES_GEOMETRY_PRECISION=compensated` also supports fixed-boundary 3-D
+  double solves, using double-double arithmetic in the same reconstruction.
+  It improves local reconstruction accuracy but did not reduce the tested
+  W7-X iteration counts; see the [double experiment](docs/w7x-double-compensation.md).
 - On-disk state files stay double regardless of `T`; dump files are `T`-native.
 - The per-pass control record (residuals, Jacobian stats, force-norm factors)
   is double in both builds; the device norm reductions accumulate in double.
@@ -285,7 +289,7 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
 | `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects four-point Catmull-Rom coarse-to-fine transfer (the previous fixed-boundary default) |
 | `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer (default for axisymmetric free-boundary and float runs) |
 | `CUMES_RADIUS_REFERENCE` | `=0` restores absolute radius coefficients; reference-plus-displacement is the default for fixed-boundary 3-D float runs, ignored for double/axisymmetric/free-boundary runs |
-| `CUMES_GEOMETRY_PRECISION` | `native` (default) or `compensated` to improve geometry reconstruction with selective float-float arithmetic; fixed-boundary 3-D float only. See [scope and measurements](docs/w7x-float-float.md). |
+| `CUMES_GEOMETRY_PRECISION` | `native` (default) or `compensated` for selective float-float/double-double geometry reconstruction; fixed-boundary 3-D solves only. See [float](docs/w7x-float-float.md) and [double](docs/w7x-double-compensation.md) measurements. |
 | `CUMES_MAX_ITER` | iteration cap (overrides every stage's cap in a multigrid run) |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery (diagnostic reference trajectory) |

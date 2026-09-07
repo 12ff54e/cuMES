@@ -76,7 +76,7 @@ Environment variables:
 | `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects the previous four-point Catmull-Rom coarse-to-fine transfer |
 | `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer |
 | `CUMES_RADIUS_REFERENCE` | `=0` opts out of default reference-plus-displacement storage for fixed-boundary 3-D float solves |
-| `CUMES_GEOMETRY_PRECISION` | `compensated` improves float geometry reconstruction using selective float-float arithmetic; `native` is the default (see `docs/w7x-float-float.md`) |
+| `CUMES_GEOMETRY_PRECISION` | `compensated` uses selective float-float/double-double geometry reconstruction in fixed-boundary 3-D solves; `native` is the default (see `docs/w7x-float-float.md` and `docs/w7x-double-compensation.md`) |
 | `CUMES_MAX_ITER` | iteration cap; overrides every stage's cap in a multigrid run |
 | `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
 | `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
