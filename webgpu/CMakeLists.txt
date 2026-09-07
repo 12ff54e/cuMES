@@ -46,6 +46,8 @@ set(VFIELD_BACKEND HOST CACHE STRING "vacuum-field execution backend" FORCE)
 set(VFIELD_USE_NETCDF OFF CACHE BOOL "Browser uses in-memory coil grids" FORCE)
 set(VFIELD_BUILD_TESTS OFF CACHE BOOL "Test vacuum-field separately" FORCE)
 set(VFIELD_BUILD_TOOLS OFF CACHE BOOL "No vacuum command-line tools" FORCE)
+set(VFIELD_BUILD_MAKEGRID ON CACHE BOOL "Generate browser coil grids in memory" FORCE)
+set(VFIELD_WARNINGS_AS_ERRORS ${CUMES_WARNINGS_AS_ERRORS} CACHE BOOL "Vacuum warnings policy" FORCE)
 add_subdirectory(${PROJECT_SOURCE_DIR}/deps/vacuum-field ${CMAKE_CURRENT_BINARY_DIR}/vacuum)
 target_link_libraries(cumes_webgpu PRIVATE vfield_cuda_double vfield::makegrid)
 target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_HOST)
@@ -177,6 +179,10 @@ if(CUMES_WEBGPU_NODE)
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_log_buffer.mjs)
   set_tests_properties(webgpu_log_buffer PROPERTIES LABELS "unit;webgpu")
+  add_test(NAME webgpu_free_boundary
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_free_boundary.mjs)
+  set_tests_properties(webgpu_free_boundary PROPERTIES LABELS "unit;webgpu")
   add_test(NAME webgpu_worker
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_worker.mjs)
@@ -190,3 +196,13 @@ if(CUMES_WEBGPU_NODE)
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_verification_log.mjs)
   set_tests_properties(webgpu_verification_log PROPERTIES LABELS "unit;webgpu")
 endif()
+
+# The CUDA and Wasm vacuum bridges share these analytic contracts.
+add_executable(test_webgpu_vacuum_bridge
+  ${PROJECT_SOURCE_DIR}/tests/test_vacuum_bridge.cpp)
+target_include_directories(test_webgpu_vacuum_bridge PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(test_webgpu_vacuum_bridge PRIVATE CUMES_VACUUM_HOST)
+target_link_libraries(test_webgpu_vacuum_bridge PRIVATE vfield_cuda_double vfield::makegrid)
+cumes_enable_warnings(test_webgpu_vacuum_bridge)
+add_test(NAME webgpu_vacuum_bridge COMMAND test_webgpu_vacuum_bridge)
+set_tests_properties(webgpu_vacuum_bridge PROPERTIES LABELS "unit;webgpu")

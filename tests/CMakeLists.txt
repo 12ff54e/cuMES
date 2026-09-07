@@ -350,3 +350,12 @@ if(CUMES_CUOBJDUMP)
   set_tests_properties(float_kernel_types PROPERTIES
     LABELS "precision;verification" TIMEOUT 120)
 endif()
+
+if(TARGET vfield_cuda_double AND TARGET vfield::makegrid)
+  set_source_files_properties(test_vacuum_bridge.cpp PROPERTIES LANGUAGE CUDA)
+  add_executable(test_vacuum_bridge test_vacuum_bridge.cpp)
+  target_include_directories(test_vacuum_bridge PRIVATE ${PROJECT_SOURCE_DIR}/include)
+  target_link_libraries(test_vacuum_bridge PRIVATE vfield_cuda_double vfield::makegrid)
+  cumes_enable_warnings(test_vacuum_bridge)
+  cumes_add_test(test_vacuum_bridge "unit;cuda;vacuum")
+endif()

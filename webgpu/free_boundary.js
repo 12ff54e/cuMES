@@ -29,13 +29,16 @@ function installCumesBoundaryMode() {
       const next = new URL(location.href);
       next.searchParams.set('boundary', mode);
       next.searchParams.delete('run');
+      next.searchParams.delete('coils');
       location.assign(next.href);
     };
   }
   get('free-boundary-controls').hidden = !free;
   let saved;
   try { saved = JSON.parse(localStorage.getItem('cumes.free.v1')); } catch (_) {}
-  let config = saved || null, selection = 0;
+  const requested = query.get('coils');
+  const namedPreset = ['solovev', 'w7x', 'cth_like'].includes(requested) ? requested : null;
+  let config = namedPreset ? null : saved || null, selection = 0;
   function show(data) {
     get('coil-preset').value = data.preset;
     get('coil-description').textContent = data.coilName || `coils.${data.preset}`;
@@ -95,7 +98,7 @@ function installCumesBoundaryMode() {
   get('coil-upload-button').onclick = () => get('coil-upload').click();
   for (const id of ['coil-currents', 'coil-grid', 'coil-equilibrium']) get(id).addEventListener('change', save);
   if (free && config) show(config);
-  const ready = free && !config ? preset('solovev') : Promise.resolve();
+  const ready = free && !config ? preset(namedPreset || 'solovev') : Promise.resolve();
   // Reloading stops an active worker and returns to an editable setup.
   get('stop-run').onclick = () => {
     const next = new URL(location.href); next.searchParams.delete('run'); location.assign(next.href);

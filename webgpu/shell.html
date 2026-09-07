@@ -277,6 +277,7 @@
           if(precision===selected)return;
           const next=new URL(location.href);
           next.searchParams.set('precision',precision);
+          next.searchParams.delete('coils');
           beforeSwitch();
           location.assign(next.href);
         });
@@ -370,7 +371,7 @@
         ftol_array:Array(3).fill(query.get('precision')==='double'?1e-12:1e-5),am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
     value('run')?.addEventListener('click',async()=>{try{await boundaryMode.ready;localStorage.setItem('cumes.input.v1',inputJSON());
-      const next=new URL(location.href);next.searchParams.set('run','1');location.assign(next.href)}catch(error){value('coil-status').textContent=error.message}});
+      const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('coil-status').textContent=error.message}});
     value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
       const next=new URL(location.href);next.searchParams.delete('run');location.assign(next.href)});
     const verificationMode=!appMode&&!w7xSolve;

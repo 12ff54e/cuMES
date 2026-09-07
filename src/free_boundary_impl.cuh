@@ -36,11 +36,13 @@
 #include "vfield/makegrid/makegrid.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace cumes {
 namespace {
@@ -158,7 +160,9 @@ VFIELD_KERNEL void rbsq_kernel(const T* __restrict__ b_sq_vac,
     const int iz = i / ntheta;
     const int nred = ntheta / 2 + 1;
     const int l_red = (it < nred) ? it : (ntheta - it);
-    const T outside = b_sq_vac[l_red * nzeta + iz] + edge_pressure;
+    // Stellarator symmetry is (theta, zeta) -> (-theta, -zeta).
+    const int k_red = (it < nred) ? iz : (nzeta - iz) % nzeta;
+    const T outside = b_sq_vac[l_red * nzeta + k_red] + edge_pressure;
     const int base = (ns - 1) * nZnT + i;
     rbsq[i] = outside * (r_e[base] + r_o[base]) / delta_s;
     const T inside = T(1.5) * total_pressure[(ns - 2) * nZnT + i] -
@@ -334,10 +338,31 @@ struct FreeBoundaryOperator<T>::Impl {
     }
 };
 
-// Launch helper: the six bridge kernels take plain scalar/pointer argument
-// lists; each launch checks the launch error through the centralized
-// boundary. (cudaLaunchKernel is used rather than <<< >>> so the pointer
-// arithmetic stays uniform; bit-identical launch configs either way.)
+// The same typed bridge kernels operate on CUDA or Wasm memory. Keeping
+// execution in one helper also avoids compiler-specific launch syntax here.
+template <class Kernel, class... Args>
+void launch_vacuum_kernel(Kernel kernel,
+                          int count,
+                          [[maybe_unused]] VacuumStream stream,
+                          Args... args) {
+#ifdef CUMES_VACUUM_HOST
+    for (int index = 0; index < count; ++index) kernel(args..., index);
+#else
+    auto values = std::tuple{args..., 0};
+    std::apply(
+        [&](auto&... value) {
+            std::array<void*, sizeof...(Args) + 1> arguments{
+                static_cast<void*>(&value)...};
+            check_cuda(
+                cudaLaunchKernel(reinterpret_cast<const void*>(kernel),
+                                 dim3(grid_size(count)), dim3(BLOCK_SIZE),
+                                 arguments.data(), 0, stream),
+                "vacuum bridge kernel");
+        },
+        values);
+#endif
+}
+
 template <class T>
 void launch_surface_averages(const T* bsubu,
                              const T* bsubv,
@@ -346,16 +371,8 @@ void launch_surface_averages(const T* bsubu,
                              int ntheta,
                              int nzeta,
                              VacuumStream stream) {
-#ifdef CUMES_VACUUM_HOST
-    (void)stream;
-    for (int index = 0; index < ns - 1; ++index) {
-        surface_averages_kernel<T>(bsubu, bsubv, out, ns, ntheta, nzeta, index);
-    }
-#else
-    surface_averages_kernel<T><<<grid_size(ns - 1), BLOCK_SIZE, 0, stream> > >(
-        bsubu, bsubv, out, ns, ntheta, nzeta, 0);
-    check_cuda(cudaGetLastError(), "surface averages");
-#endif
+    launch_vacuum_kernel(&surface_averages_kernel<T>, ns - 1, stream, bsubu,
+                         bsubv, out, ns, ntheta, nzeta);
 }
 
 template <class T>
@@ -368,17 +385,8 @@ void launch_lcfs_repack(const T* rcc,
                         int mpol,
                         int ntor,
                         VacuumStream stream) {
-#ifdef CUMES_VACUUM_HOST
-    (void)stream;
-    for (int index = 0; index < mpol * (ntor + 1); ++index) {
-        lcfs_repack_kernel<T>(rcc, rss, zsc, zcs, out, ns, mpol, ntor, index);
-    }
-#else
-    lcfs_repack_kernel<T>
-        <<<grid_size(mpol * (ntor + 1)), BLOCK_SIZE, 0, stream> > >(
-            rcc, rss, zsc, zcs, out, ns, mpol, ntor, 0);
-    check_cuda(cudaGetLastError(), "lcfs repack");
-#endif
+    launch_vacuum_kernel(&lcfs_repack_kernel<T>, mpol * (ntor + 1), stream, rcc,
+                         rss, zsc, zcs, out, ns, mpol, ntor);
 }
 
 template <class T>
@@ -388,16 +396,8 @@ void launch_axis_extract(const T* r_e,
                          int ntheta,
                          int nzeta,
                          VacuumStream stream) {
-#ifdef CUMES_VACUUM_HOST
-    (void)stream;
-    for (int index = 0; index < nzeta; ++index) {
-        axis_extract_kernel<T>(r_e, z_e, out, ntheta, nzeta, index);
-    }
-#else
-    axis_extract_kernel<T><<<grid_size(nzeta), BLOCK_SIZE, 0, stream> > >(
-        r_e, z_e, out, ntheta, nzeta, 0);
-    check_cuda(cudaGetLastError(), "axis extract");
-#endif
+    launch_vacuum_kernel(&axis_extract_kernel<T>, nzeta, stream, r_e, z_e, out,
+                         ntheta, nzeta);
 }
 
 template <class T>
@@ -414,18 +414,9 @@ void launch_rbsq(const T* b_sq_vac,
                  T edge_pressure,
                  T delta_s,
                  VacuumStream stream) {
-#ifdef CUMES_VACUUM_HOST
-    (void)stream;
-    for (int index = 0; index < nZnT; ++index) {
-        rbsq_kernel<T>(b_sq_vac, r_e, r_o, total_pressure, rbsq, delbsq_sum, ns,
-                       ntheta, nzeta, nZnT, edge_pressure, delta_s, index);
-    }
-#else
-    rbsq_kernel<T><<<grid_size(nZnT), BLOCK_SIZE, 0, stream> > >(
-        b_sq_vac, r_e, r_o, total_pressure, rbsq, delbsq_sum, ns, ntheta, nzeta,
-        nZnT, edge_pressure, delta_s, 0);
-    check_cuda(cudaGetLastError(), "rbsq");
-#endif
+    launch_vacuum_kernel(&rbsq_kernel<T>, nZnT, stream, b_sq_vac, r_e, r_o,
+                         total_pressure, rbsq, delbsq_sum, ns, ntheta, nzeta,
+                         nZnT, edge_pressure, delta_s);
 }
 
 template <class T>
@@ -441,18 +432,9 @@ void launch_edge_force(T* armn_e,
                        int ns,
                        int nZnT,
                        VacuumStream stream) {
-#ifdef CUMES_VACUUM_HOST
-    (void)stream;
-    for (int index = 0; index < nZnT; ++index) {
-        vacuum_edge_force_kernel<T>(armn_e, armn_o, azmn_e, azmn_o, zu_e, zu_o,
-                                    ru_e, ru_o, rbsq, ns, nZnT, index);
-    }
-#else
-    vacuum_edge_force_kernel<T><<<grid_size(nZnT), BLOCK_SIZE, 0, stream> > >(
-        armn_e, armn_o, azmn_e, azmn_o, zu_e, zu_o, ru_e, ru_o, rbsq, ns, nZnT,
-        0);
-    check_cuda(cudaGetLastError(), "vacuum edge force");
-#endif
+    launch_vacuum_kernel(&vacuum_edge_force_kernel<T>, nZnT, stream, armn_e,
+                         armn_o, azmn_e, azmn_o, zu_e, zu_o, ru_e, ru_o, rbsq,
+                         ns, nZnT);
 }
 
 template <class T>
@@ -462,17 +444,8 @@ void launch_rcon_decay(T* rcon0,
                        int ntheta,
                        int nzeta,
                        VacuumStream stream) {
-#ifdef CUMES_VACUUM_HOST
-    (void)stream;
-    for (int index = 0; index < ns * ntheta * nzeta; ++index) {
-        rcon_decay_kernel<T>(rcon0, zcon0, ns * ntheta * nzeta, index);
-    }
-#else
-    rcon_decay_kernel<T>
-        <<<grid_size(ns * ntheta * nzeta), BLOCK_SIZE, 0, stream> > >(
-            rcon0, zcon0, ns * ntheta * nzeta, 0);
-    check_cuda(cudaGetLastError(), "rcon decay");
-#endif
+    launch_vacuum_kernel(&rcon_decay_kernel<T>, ns * ntheta * nzeta, stream,
+                         rcon0, zcon0, ns * ntheta * nzeta);
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ MAKEGRID coils-dot / cumes-coils-v1 JSON uploads. Currents, grid parameters, and
 initial equilibrium JSON are editable. Uploaded geometry stays in IndexedDB;
 setup choices stay in localStorage. Switching modes or **Stop and edit** ends
 an active worker and returns to setup. Precision changes restart the solve.
+`?boundary=free&coils=w7x` opens a named preset; append `&run=1` to run it.
 
 The build links vacuum-field's HOST backend in double precision with NetCDF
 disabled. It shares the numerical kernel bodies with CUDA, including coil
@@ -1592,9 +1593,8 @@ completion gates for the fixed-boundary WebGPU port:
 2. port the optional free-boundary/NESTOR dependency as a separate WebGPU
    project if browser free-boundary equilibria are required.
 
-`deps/vacuum-field` is itself a CUDA solver and is intentionally outside the
-CUDA-free browser target; inputs with `lfreeb=true` therefore fail validation
-instead of silently using fixed-boundary physics. NetCDF/HDF5 and the
+`deps/vacuum-field` is compiled through its HOST backend for browser free-boundary
+solves. The CUDA and WebAssembly builds share the numerical kernel bodies. NetCDF/HDF5 and the
 magnetic-coordinate CUDA postprocessor are likewise host/native extensions,
 not browser solver requirements. The browser publishes the complete native
 binary schema through MEMFS and a JavaScript Blob download adapter, including
