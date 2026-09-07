@@ -108,12 +108,20 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let xmpq = mf * (mf - 1.0);
     let theta_reduced = params.ntheta / 2u + 1u;
     let norm = 1.0 / (f32(params.nzeta) * f32(theta_reduced - 1u));
-    var sums: array<f32, 6>;
-    var corrections: array<f32, 6>;
-    for (var component = 0u; component < 6u; component++) {
-        sums[component] = 0.0;
-        corrections[component] = 0.0;
-    }
+    // Named accumulators avoid a Firefox/NVIDIA pipeline compiler crash when
+    // compensated_add receives pointers to elements of function-local arrays.
+    var sum0 = 0.0;
+    var sum1 = 0.0;
+    var sum2 = 0.0;
+    var sum3 = 0.0;
+    var sum4 = 0.0;
+    var sum5 = 0.0;
+    var correction0 = 0.0;
+    var correction1 = 0.0;
+    var correction2 = 0.0;
+    var correction3 = 0.0;
+    var correction4 = 0.0;
+    var correction5 = 0.0;
     for (var theta = 0u; theta < theta_reduced; theta++) {
         var weight = norm;
         if (theta == 0u || theta + 1u == theta_reduced) { weight *= 0.5; }
@@ -139,22 +147,23 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let cz_sin = projected(1u, 12u + parity, surface, theta, n);
         let cl_cos = projected(0u, 14u + parity, surface, theta, n);
         let cl_sin = projected(1u, 14u + parity, surface, theta, n);
-        compensated_add(&sums[0], &corrections[0], weight *
+        compensated_add(&sum0, &correction0, weight *
             (temp_r_cos * cm - mf * br_cos * sm + nf * cr_sin * cm));
-        compensated_add(&sums[3], &corrections[3], weight *
+        compensated_add(&sum3, &correction3, weight *
             (temp_r_sin * sm + mf * br_sin * cm - nf * cr_cos * sm));
-        compensated_add(&sums[1], &corrections[1], weight *
+        compensated_add(&sum1, &correction1, weight *
             (temp_z_cos * sm + mf * bz_cos * cm + nf * cz_sin * sm));
-        compensated_add(&sums[4], &corrections[4], weight *
+        compensated_add(&sum4, &correction4, weight *
             (temp_z_sin * cm - mf * bz_sin * sm - nf * cz_cos * cm));
-        compensated_add(&sums[2], &corrections[2], weight *
+        compensated_add(&sum2, &correction2, weight *
             (mf * bl_cos * cm + nf * cl_sin * sm));
-        compensated_add(&sums[5], &corrections[5], weight *
+        compensated_add(&sum5, &correction5, weight *
             (-mf * bl_sin * sm - nf * cl_cos * cm));
     }
     let mscale = select(sqrt(2.0), 1.0, m == 0u);
     let nscale = select(sqrt(2.0), 1.0, n == 0u);
     let scale = mscale * nscale;
+    let sums = array<f32, 6>(sum0, sum1, sum2, sum3, sum4, sum5);
     for (var component = 0u; component < 6u; component++) {
         var value = scale * sums[component];
         if (surface == 0u) {
