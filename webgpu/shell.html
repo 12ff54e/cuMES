@@ -22,8 +22,12 @@
     .mark::after { content:''; width:18px; height:8px; border:2px solid var(--cyan); border-radius:50%; }
     h1 { font-size:18px; margin:0; letter-spacing:.02em; }
     .subtitle { color:var(--muted); font-size:12px; }
-    nav { display:flex; gap:18px; font-size:13px; }
-    nav a { color:var(--muted); text-decoration:none; } nav a:hover { color:var(--ink); }
+    .site-header { padding-bottom:0; margin-bottom:0; }
+    nav { display:flex; flex-wrap:wrap; gap:6px; font-size:13px; }
+    nav a { color:var(--muted); text-decoration:none; padding:8px 12px; border-radius:8px; }
+    nav a:hover { color:var(--ink); background:#ffffff08; }
+    nav a[aria-current=page] { color:var(--cyan); background:#55d6d014; }
+    nav a:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
     .workspace { display:grid; grid-template-columns:minmax(340px,.82fr) minmax(500px,1.3fr); gap:18px; }
     .panel { border:1px solid var(--line); border-radius:16px; background:#101a27e8;
       box-shadow:0 18px 60px #0005; overflow:hidden; }
@@ -93,7 +97,7 @@
     summary { cursor:pointer; color:var(--muted); padding:11px 15px; }
     pre { max-height:280px; overflow:auto; margin:0; padding:0 15px 15px; color:#a9b8ca;
       white-space:pre-wrap; font:11px/1.55 ui-monospace,SFMono-Regular,monospace; }
-    .legacy { max-width:960px; margin:70px auto 0; } .legacy h2 { font-size:24px; }
+    .legacy { max-width:960px; } .legacy h2 { font-size:24px; }
     .legacy-viewer { margin-top:18px; }
     .precision-control { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:18px 0; }
     .precision-control p { flex-basis:100%; margin:0; color:var(--muted); font-size:12px; }
@@ -101,17 +105,17 @@
     .legacy-viewer .equilibrium-3d { height:528px; }
     [hidden] { display:none!important; }
     @media(max-width:920px){ .page{width:min(100% - 22px,700px)} .workspace{grid-template-columns:1fr}
-      nav{display:none}.plot-wrap{min-height:390px}svg{min-height:358px}.equilibrium-3d{height:358px} }
+      .site-header{flex-direction:column;align-items:flex-start;gap:16px}.plot-wrap{min-height:390px}svg{min-height:358px}.equilibrium-3d{height:358px} }
     @media(max-width:520px){ .coefficient-columns{grid-template-columns:1fr}.pressure-control{max-width:none}.status-strip{grid-template-columns:1fr}
       .metric{border-right:0;border-bottom:1px solid var(--line)} }
   </style>
 </head>
 <body>
-  <div class="page" id="app">
-    <header>
+    <header class="page site-header">
       <div class="brand"><span class="mark"></span><div><h1>cuMES</h1><div class="subtitle">Magnetic equilibrium · WebGPU</div></div></div>
-      <nav><a href="?">Boundary editor</a><a href="?mode=test">GPU verification</a><a href="?solve=w7x">W7-X (1e-12)</a><a href="?solve=w7x&amp;precision=float">W7-X float (1e-5)</a></nav>
+      <nav aria-label="Main navigation"><a href="?" data-view="editor">Boundary editor</a><a href="?mode=test" data-view="verification">GPU verification</a><a href="?solve=w7x" data-view="w7x">W7-X</a></nav>
     </header>
+  <div class="page" id="app">
     <main class="workspace">
       <section class="panel editor">
         <div class="panel-head"><h2>Input boundary</h2><div class="mode-switch" role="tablist" aria-label="Boundary editor mode">
@@ -161,7 +165,7 @@
   </div>
   <div class="page legacy" id="legacy" hidden>
     <h2 id="legacy-title">cuMES WebGPU verification</h2>
-    <p><a href="?">Open boundary editor</a> · <a href="?mode=test">Run conformance suite</a> · <a href="?solve=w7x">W7-X paired (1e-12)</a> · <a href="?solve=w7x&amp;precision=float">W7-X float (1e-5)</a> · <a id="legacy-download" hidden>Download output</a></p>
+    <a class="tag" id="legacy-download" hidden>Download .bin</a>
     <section class="precision-control" id="precision-control" aria-label="W7-X solver precision" hidden>
       <span>Precision</span>
       <div class="mode-switch" role="group" aria-label="Select precision">
@@ -178,6 +182,8 @@
   <script>
     const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x',w7xMultigrid=query.get('grids')==='3';
     const appMode=query.get('mode')!=='test'&&!w7xSolve,running=appMode&&query.get('run')==='1';
+    const activeView=w7xSolve?'w7x':appMode?'editor':'verification';
+    document.querySelector(`nav [data-view="${activeView}"]`).setAttribute('aria-current','page');
     const app=document.getElementById('app'),legacy=document.getElementById('legacy');
     const output=appMode?document.getElementById('output'):document.getElementById('legacy-output');
     app.hidden=!appMode;legacy.hidden=appMode;
