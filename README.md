@@ -270,9 +270,9 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
   convergence guarantee. Fixed-boundary 3-D float runs use reference-plus-
   displacement radius storage by default. This converges the first two W7-X
   grids at 1e-5 but still stalls on ns=99. Adding
-  `CUMES_GEOMETRY_PRECISION=compensated` converges W7-X at 1e-5 by compensating
-  only the odd R/Z position reconstruction; see the
-  [precision and timing experiment](docs/w7x-float-float.md).
+  `CUMES_GEOMETRY_PRECISION=compensated` converges both multigrid and single-grid
+  W7-X at 1e-5 by compensating m=1 toroidal sums and odd R/Z poloidal position
+  reconstruction; see the [single-grid investigation](docs/w7x-single-grid-float.md).
 - `CUMES_GEOMETRY_PRECISION=compensated` also supports fixed-boundary 3-D
   double solves, using double-double arithmetic in the same reconstruction.
   It improves local reconstruction accuracy but did not reduce the tested

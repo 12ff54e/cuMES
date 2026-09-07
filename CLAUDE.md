@@ -294,8 +294,10 @@ Known issues:
    when diffing state files / wout axis rows.
 2. **Float builds require relaxed tolerances.** Stage ftols below 1e-6 are
    rejected. W7-X at 1e-5 needs both the default radius reference and opt-in
-   poloidal float-float reconstruction; broader float qualification remains
-   open. Measurements and commands: `docs/w7x-float-float.md`.
+   compensated odd-position reconstruction (m=1 toroidal sums plus poloidal
+   products/sums and scaling), including single-grid cold starts. Broader float
+   qualification remains open. Measurements and commands:
+   `docs/w7x-single-grid-float.md`.
 
 ## Scope (vs VMEC++)
 
