@@ -18,6 +18,9 @@
 #include "vmec_types.h"
 
 #include <cstddef>
+#include <span>
+#include <type_traits>
+#include <vector>
 
 namespace cumes {
 
@@ -28,7 +31,24 @@ class SpectralStorage {
 
     SpectralStorage() = default;
 
-    explicit SpectralStorage(int ns, int mnmax) { allocate(ns, mnmax); }
+    explicit SpectralStorage(int ns,
+                             int mnmax,
+                             std::span<const double> radius_reference = {})
+        : radius_reference_(radius_reference.begin(), radius_reference.end()),
+          d_radius_reference_(radius_reference.size()) {
+        allocate(ns, mnmax);
+        if (!radius_reference.empty()) {
+            std::vector<T> native_reference;
+            native_reference.reserve(radius_reference.size());
+            for (double value : radius_reference)
+                native_reference.push_back(T(value));
+            check_cuda(
+                cudaMemcpy(d_radius_reference_.data(), native_reference.data(),
+                           native_reference.size() * sizeof(T),
+                           cudaMemcpyHostToDevice),
+                "upload radius reference");
+        }
+    }
 
     SpectralStorage(SpectralStorage&&) noexcept = default;
     SpectralStorage& operator=(SpectralStorage&&) noexcept = default;
@@ -37,6 +57,12 @@ class SpectralStorage {
     ~SpectralStorage() = default;
 
     void allocate(int ns, int mnmax) {
+        if (!radius_reference_.empty() &&
+            (!std::is_same_v<T, float> || radius_reference_.front() == 0.0 ||
+             radius_reference_.size() > static_cast<std::size_t>(mnmax)))
+            throw CumesError(
+                "radius reference requires float storage, a "
+                "nonzero mean and at most mnmax coefficients");
         ns_ = ns;
         mnmax_ = mnmax;
         const std::size_t count = static_cast<std::size_t>(6) * ns * mnmax;
@@ -48,6 +74,14 @@ class SpectralStorage {
         velocity_.zero();
     }
 
+    // Raw state/view m=0 Rcc is relative to this fixed Fourier reference.
+    // Snapshot export restores physical coefficients in double.
+    double radius_reference() const {
+        return radius_reference_.empty() ? 0.0 : radius_reference_.front();
+    }
+    std::span<const double> radius_references() const {
+        return radius_reference_;
+    }
     int ns() const { return ns_; }
     int mnmax() const { return mnmax_; }
     bool empty() const { return state_.empty(); }
@@ -77,7 +111,9 @@ class SpectralStorage {
     }
 
     SpectralView<T, PhysicalStateDomain> physical() const {
-        return SpectralView<T, PhysicalStateDomain>(state_.data(), ns_, mnmax_);
+        return SpectralView<T, PhysicalStateDomain>(
+            state_.data(), ns_, mnmax_, d_radius_reference_.data(),
+            static_cast<int>(radius_reference_.size()));
     }
 
     SpectralView<T, DecomposedVelocityDomain> velocity() const {
@@ -89,8 +125,9 @@ class SpectralStorage {
     // boundaries). `data()` returns T* even on a const DeviceBuffer, so these
     // bind T* to the const view's `const T*` constructor directly.
     SpectralView<const T, PhysicalStateDomain> physical_const() const {
-        return SpectralView<const T, PhysicalStateDomain>(state_.data(), ns_,
-                                                          mnmax_);
+        return SpectralView<const T, PhysicalStateDomain>(
+            state_.data(), ns_, mnmax_, d_radius_reference_.data(),
+            static_cast<int>(radius_reference_.size()));
     }
 
     SpectralView<const T, DecomposedVelocityDomain> velocity_const() const {
@@ -101,6 +138,8 @@ class SpectralStorage {
    private:
     DeviceBuffer<T> state_;
     DeviceBuffer<T> velocity_;
+    std::vector<double> radius_reference_;
+    DeviceBuffer<T> d_radius_reference_;
     int ns_ = 0;
     int mnmax_ = 0;
 };

@@ -72,6 +72,15 @@ reference configurations, so the frozen trajectory baseline stands unchanged.
 
 ## 3. Production per-iteration pipeline
 
+For radius-reference float state, stage setup calls
+`ToroidalFftOperator::prepare_radius_reference` before CUDA Graph capture.
+It reconstructs the immutable angular reference once into the existing
+real-space reference buffer. The inverse reuses this field while the reference
+identity and output buffer match; other references or caller-owned output
+buffers retain the uncached reconstruction path. Physical radius additions
+remain local to the geometry/force equations, while spectral state restoration
+is deferred to snapshot export.
+
 The regular iteration (blueprint §7) remains mathematically sequential and is
 enqueued on one compute stream until a single deliberate control fence:
 
@@ -93,8 +102,9 @@ enqueued on one compute stream until a single deliberate control fence:
    `brmn`/`bzmn`;
 9. `ToroidalFftOperator::forward` — six spectral-force families;
 10. odd-m decomposition + the `m=1` mixed gauge;
-11. invariant + preconditioned residual reductions into one `ControlRecord`
-    D2H copy, then the single host fence;
+11. invariant + preconditioned residual reductions into one
+    `DeviceControlRecord<T>` D2H copy, then the single host fence and host
+    widening to `ControlRecord` (double);
 12. the pure `IterationController::advance` decision, then ordered apply
     (descent → post-descent checkpoint capture → post-descent restore+zero).
 

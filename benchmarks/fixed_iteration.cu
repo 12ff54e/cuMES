@@ -71,6 +71,8 @@ int main(int argc, char** argv) {
     const char* config = "solovev";
     const char* restart_path = nullptr;
     const char* out_path = nullptr;
+    bool radius_reference = true;
+    auto odd_geometry = cumes::OddGeometryPrecision::NATIVE;
     int warmup = 10;
     int passes = 100;
 
@@ -82,6 +84,10 @@ int main(int argc, char** argv) {
             restart_path = v;
         else if (const char* v = args.need(i, "out"))
             out_path = v;
+        else if (const char* v = args.need(i, "radius-reference"))
+            radius_reference = atoi(v) != 0;
+        else if (const char* v = args.need(i, "odd-geometry"))
+            odd_geometry = cumes::parse_odd_geometry_precision(v);
         else if (const char* v = args.need(i, "warmup"))
             warmup = atoi(v);
         else if (const char* v = args.need(i, "passes"))
@@ -109,7 +115,8 @@ int main(int argc, char** argv) {
     const cumes::ProblemSpec& spec = vp.spec();
 
     // Single stage at the config's FINAL radial grid.
-    DeviceParams<Real> p = cumes::init_params<Real>(vp);
+    DeviceParams<Real> p = cumes::init_params<Real>(vp, radius_reference);
+    p.odd_geometry = odd_geometry;
     p.ns = static_cast<int>(spec.stages.back().radial_surfaces);
     p.max_iter = warmup + passes;
     p.ftol = Real(0.0);  // never converge: run exactly warmup+passes passes

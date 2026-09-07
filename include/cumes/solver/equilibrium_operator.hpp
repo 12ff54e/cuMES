@@ -108,10 +108,8 @@ class EquilibriumOperator {
 
     // The reduced control record: Jacobian stats + status, invariant /
     // preconditioned raw sums, force-norm partials (completion plan step 1.3).
-    // DOUBLE numeric slots in both builds (ADR-0001 follow-up): the double
-    // accumulations reach the host controller unrounded; the double build is
-    // identical by construction.
-    ControlRecord* control_device() { return d_control_.data(); }
+    // Numeric slots use T; the host widens them after the control fence.
+    DeviceControlRecord<T>* control_device() { return d_control_.data(); }
 
     // The decomposed residual slab (for the solver's descent + dump machinery).
     SpectralView<T, DecomposedResidualDomain> residual() {
@@ -160,7 +158,7 @@ class EquilibriumOperator {
     MagneticFieldViews<T> field_views_;
     RadialProfileViews<T> rpv_;
     DeviceBuffer<T> d_f_spec_;
-    DeviceBuffer<ControlRecord> d_control_;
+    DeviceBuffer<DeviceControlRecord<T>> d_control_;
     DeviceBuffer<T> d_psum_;
 
     SpectralView<T, PhysicalStateDomain> state_view_;

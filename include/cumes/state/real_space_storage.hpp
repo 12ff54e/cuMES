@@ -28,6 +28,9 @@ struct RealSpaceStorage {
     using val_type = T;
 
     // Parity-split geometry (full grid, inverse-DFT output).
+    // Optional fixed m=0, n>0 boundary reference, one angular surface.
+    // It is subtracted only from R synthesis, not from its zeta derivative.
+    T* d_r_reference = nullptr;
     T* d_r_e = nullptr;
     T* d_z_e = nullptr;
     T* d_l_e = nullptr;
@@ -85,6 +88,7 @@ struct RealSpaceStorage {
         };
         GeometryParityViews<T> v;
         v.r_e = f(d_r_e);
+        v.r_reference = RealFieldView<T>(d_r_reference, 1, p.ntheta, p.nzeta);
         v.z_e = f(d_z_e);
         v.l_e = f(d_l_e);
         v.ru_e = f(d_ru_e);

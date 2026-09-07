@@ -219,8 +219,8 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     bytes += (10 * ns * nZnT + ns + mnmax) * szT;
     // solver: f_spec + control + psum (6.4 — carved from the stage arena;
     // the control span is the typed ControlRecord).
-    bytes +=
-        (6 * mnmax * ns + 4 * (ns - 1)) * szT + sizeof(cumes::ControlRecord);
+    bytes += (6 * mnmax * ns + 4 * (ns - 1)) * szT +
+             sizeof(cumes::DeviceControlRecord<T>);
     // Alignment slack for the ~110 subspans (each padded to alignof <= 16).
     bytes += 64 * 1024;
     return bytes;
@@ -285,6 +285,7 @@ class StageSolver {
         // constructed twice. The retry loop below only grows the budget when
         // the seed underestimates (an ArenaOverflow aborts the attempt and
         // the scope exit destroys the partial modules).
+        p.radius_reference = state.radius_reference();
         const auto stage_start = std::chrono::steady_clock::now();
         auto setup_end = stage_start;
         auto iteration_end = stage_start;

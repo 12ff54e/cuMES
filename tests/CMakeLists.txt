@@ -72,12 +72,14 @@ foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
                    test_tridiagonal test_cuda_graph test_safety_predicates
-                   test_event_dag test_free_boundary_seed test_prolongation)
+                   test_event_dag test_free_boundary_seed test_prolongation test_radius_reference test_odd_geometry)
   add_executable(${t} ${t}.cu)
   target_include_directories(${t} PRIVATE ${PROJECT_SOURCE_DIR}/include)
   target_link_libraries(${t} PRIVATE cumes_config_json cumes_cuda_double cumes_cuda_float)
   cumes_enable_warnings(${t})
 endforeach()
+
+target_link_libraries(test_odd_geometry PRIVATE cumes_io_host)
 
 add_executable(test_output_failure test_output_failure.cu)
 target_include_directories(test_output_failure PRIVATE ${PROJECT_SOURCE_DIR}/include)
@@ -301,6 +303,8 @@ cumes_add_test(test_axisym_backend   unit;fourier)
 cumes_add_test(test_tridiagonal      unit;precon)
 cumes_add_test(test_cuda_graph       unit;runtime)
 cumes_add_test(test_prolongation     unit;numerics)
+cumes_add_test(test_radius_reference unit;numerics)
+cumes_add_test(test_odd_geometry unit;numerics)
 
 # Compute Sanitizer memcheck variants of the kernel-driving tests only
 # (test_input_json is host-only and compute-sanitizer refuses to profile it).
@@ -309,7 +313,8 @@ cumes_register_sanitizer_variants(
     test_regression_kernels test_runtime test_arena test_operator_views
     test_accumulation test_forward_dual test_dual_spectral_operator
     test_axisym_backend test_tridiagonal
-    test_cuda_graph test_safety_predicates test_prolongation)
+    test_cuda_graph test_safety_predicates test_prolongation test_radius_reference
+    test_odd_geometry)
 # test_event_dag registers its sanitizer variants manually: the deliberate
 # pending-event API-error probes are skipped under the sanitizers (they count
 # the intended cudaErrorNotReady return as a sanitizer error).
@@ -328,4 +333,20 @@ if(CUMES_ENABLE_SANITIZER_TESTS AND CUMES_COMPUTE_SANITIZER)
   set_tests_properties(initcheck_test_event_dag PROPERTIES
       LABELS "sanitizer;initcheck" TIMEOUT 600 RUN_SERIAL TRUE
       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+endif()
+
+# cuMES's float library and its vacuum dependency must not acquire FP64
+# instructions through implicit promotion or diagnostic dispatch.
+find_program(CUMES_CUOBJDUMP NAMES cuobjdump HINTS "${CUDAToolkit_BIN_DIR}")
+if(CUMES_CUOBJDUMP)
+  set(cumes_float_audit_vacuum "")
+  if(TARGET vfield_cuda_float)
+    set(cumes_float_audit_vacuum "$<TARGET_FILE:vfield_cuda_float>")
+  endif()
+  add_test(NAME float_kernel_types
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/check_float_kernels.sh
+      "${CUMES_CUOBJDUMP}" "$<TARGET_FILE:cumes_cuda_float>"
+      "${cumes_float_audit_vacuum}")
+  set_tests_properties(float_kernel_types PROPERTIES
+    LABELS "precision;verification" TIMEOUT 120)
 endif()

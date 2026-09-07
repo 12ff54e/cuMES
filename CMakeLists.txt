@@ -15,7 +15,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # default only when CMAKE_CUDA_ARCHITECTURES was not already provided.
 include(CumesCudaArchitectures)
 
-project(cuMES VERSION 1.3.0 LANGUAGES CXX CUDA)
+project(cuMES VERSION 1.4.0 LANGUAGES CXX CUDA)
 
 include(CumesOptions)
 include(CumesDependencies)
@@ -481,6 +481,16 @@ if(CUMES_BUILD_BENCHMARKS)
   cumes_enable_warnings(cumes_benchmark_fixed_iteration)
   cumes_apply_policy_flags(cumes_benchmark_fixed_iteration)
   cumes_add_precision_provenance(cumes_benchmark_fixed_iteration)
+
+  if(CUMES_USE_FLOAT)
+    add_executable(cumes_benchmark_fixed_iteration_float benchmarks/fixed_iteration.cu)
+    target_include_directories(cumes_benchmark_fixed_iteration_float PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(cumes_benchmark_fixed_iteration_float PRIVATE CUMES_USE_FLOAT)
+    target_link_libraries(cumes_benchmark_fixed_iteration_float PRIVATE cumes_config_json cumes_io_host cumes_cuda_float)
+    cumes_enable_warnings(cumes_benchmark_fixed_iteration_float)
+    cumes_apply_policy_flags(cumes_benchmark_fixed_iteration_float)
+    cumes_add_precision_provenance(cumes_benchmark_fixed_iteration_float)
+  endif()
 
   add_executable(cumes_benchmark_graph_overhead benchmarks/graph_overhead.cu)
   target_include_directories(cumes_benchmark_graph_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -65,6 +65,9 @@ void populate_snapshot_state_from_device(const SpectralStorage<T>& storage,
         const T* src = buf.data() + static_cast<std::size_t>(c) * *one;
         for (std::size_t i = 0; i < *one; ++i) {
             snap.families[c][i] = static_cast<double>(src[i]);
+            if (c == EquilibriumSnapshot::RMNCC &&
+                i / snap.ns < storage.radius_references().size())
+                snap.families[c][i] += storage.radius_references()[i / snap.ns];
         }
     }
 }

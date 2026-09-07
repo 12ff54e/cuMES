@@ -16,6 +16,7 @@
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/real_space_storage.hpp"
 #include "cumes/state/spectral_storage.hpp"
+#include "cumes/transforms/odd_geometry_operator.hpp"
 #include "cumes/transforms/spectral_operator.hpp"
 #include "fft_traits.h"
 #include "vmec_types.h"
@@ -24,6 +25,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 
 namespace cumes {
@@ -61,6 +63,15 @@ class ToroidalFftOperator : public SpectralOperator<T> {
     // the explicit compute stream (blueprint §6.6). Called once per stage
     // before any transform runs; keeps the plan handles out of the solver.
     void bind_stream(cudaStream_t stream);
+
+    // Build the immutable angular radius reference once, before graph capture.
+    // Subsequent inverse calls on this storage reuse it while the reference
+    // identity matches. The reference owner must outlive its cached use;
+    // rebind here when replacing that owner. Call on the inverse's stream (or
+    // establish an explicit dependency before using it from another stream).
+    void prepare_radius_reference(
+        SpectralView<const T, PhysicalStateDomain> coeff,
+        cudaStream_t stream = 0);
 
     // ---- transform primitives (were the fourier.cuh free functions) --------
     // Plain inverse DFT: spectral coefficients -> parity-split geometry (+ the
@@ -128,6 +139,10 @@ class ToroidalFftOperator : public SpectralOperator<T> {
                               cudaStream_t stream);
 
    private:
+    bool use_radius_reference_cache(
+        SpectralView<const T, PhysicalStateDomain> coeff,
+        T* d_reference);
+
     template <bool FuseRzCon>
     void inverse_impl(SpectralView<const T, PhysicalStateDomain> coeff,
                       bool do_combine,
@@ -167,6 +182,10 @@ class ToroidalFftOperator : public SpectralOperator<T> {
     void* d_cufft_work_c_ = nullptr;
     std::size_t cufft_work_bytes_c_ = 0;
 
+    std::unique_ptr<OddGeometryOperator<FloatFloat>> odd_float_float_;
+    DeviceBuffer<T> d_reference_cos_;
+    SpectralView<const T, PhysicalStateDomain> reference_coeff_;
+    bool reference_ready_ = false;
     DeviceParams<T> p_{};
     RealSpaceStorage<T>* rs_ = nullptr;  // non-owning (stage-owned)
     const DeviceModeTable* mt_ =

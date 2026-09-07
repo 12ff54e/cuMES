@@ -5,6 +5,42 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-09-07
+
+### Added
+
+- `CUMES_GEOMETRY_PRECISION=native|compensated` and library controls for
+  selective odd R/Z reconstruction using float-float or double-double
+  arithmetic in fixed-boundary three-dimensional solves. Native reconstruction
+  remains the default.
+- Precision and timing diagnostics for radius storage and odd R/Z
+  reconstruction, with independent long-double references.
+- A CTest audit that rejects FP64 instructions and PTX types in the cuMES and
+  vacuum float CUDA libraries across all compiled GPU architectures.
+
+### Changed
+
+- Fixed-boundary three-dimensional float solves now use reference-plus-
+  displacement radius storage by default, preserving small radial variations.
+  The immutable angular reference is reconstructed once per stage before
+  CUDA Graph capture. `CUMES_RADIUS_REFERENCE=0` restores absolute storage;
+  checkpoints and output retain physical double coefficients.
+- Float GPU kernels use float or float-float arithmetic throughout, including
+  norm reductions, reference reconstruction, device control records, validity
+  gates, and the vacuum dependency. The host controller and file formats
+  retain double precision. Host and device convergence checks consume the
+  same device-normalized residuals.
+
+### Fixed
+
+- W7-X float convergence at all-stage `1e-5` with the default radius reference
+  and opt-in compensated reconstruction: the tested 33/66/99-grid case
+  converges in 149 → 278 → 314 effective iterations, with final FSQR
+  `9.288e-6`; checkpoint replay converges on its first iteration. Native double
+  W7-X and Solovev retain their qualified checkpoints and telemetry unchanged.
+- Restart imports reject inconsistent grid dimensions and spectral-family
+  sizes before uploading state to the GPU.
+
 ## [1.3.0] - 2026-09-05
 
 ### Added

@@ -1,15 +1,6 @@
-// test_accumulation.cu — differential test for the mixed-float
-// double-accumulation norm policy (blueprint §8.8, §8.12).
-//
-// The solver's control-feeding reductions (compute_residuals_kernel,
-// rz_norm_kernel, force_norm_reduce_kernel) accumulate in NormAccum<T>::type —
-// double for float state, double for double state. This test pins that trait
-// contract and demonstrates the numerical benefit: summing a large array of
-// squares whose terms span a wide dynamic range in float accumulation silently
-// drops the small terms, while double accumulation tracks the CPU double
-// reference. The crafted input has one 1e4 term (square 1e8) plus a million 0.1
-// terms (square 1e-2): at 1e8 the float ulp is 8, so every small add vanishes
-// in float but survives in double.
+// A float-float reduction must retain small summands lost by ordinary float
+// accumulation. The input spans 1e8 down to 1e-2 in its squared terms; compare
+// both GPU reductions with an extended-precision host reference.
 #include "cumes/numerics/accumulation.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_buffer.cuh"
@@ -42,7 +33,8 @@ __global__ void sum_squares_kernel(const T* __restrict__ x,
 
 int main() {
     // Trait contract (the production kernels rely on these).
-    static_assert(std::is_same_v<cumes::NormAccum<float>::type, double>);
+    static_assert(
+        std::is_same_v<cumes::NormAccum<float>::type, cumes::FloatFloat>);
     static_assert(std::is_same_v<cumes::NormAccum<double>::type, double>);
 
     const int n = 1 << 20;  // 1M terms
@@ -58,33 +50,37 @@ int main() {
                                  cudaMemcpyHostToDevice),
                       "cpy x");
 
-    float f_acc = 0.0f, d_acc = 0.0f;
+    float f_acc = 0.0f, ff_acc = 0.0f;
     sum_squares_kernel<float, float><<<1, 256>>>(d_x.data(), n, d_out.data());
     cumes::check_cuda(
         cudaMemcpy(&f_acc, d_out.data(), sizeof(float), cudaMemcpyDeviceToHost),
         "cpy float out");
-    sum_squares_kernel<float, double><<<1, 256>>>(d_x.data(), n, d_out.data());
-    cumes::check_cuda(
-        cudaMemcpy(&d_acc, d_out.data(), sizeof(float), cudaMemcpyDeviceToHost),
-        "cpy double out");
+    sum_squares_kernel<float, cumes::FloatFloat>
+        <<<1, 256>>>(d_x.data(), n, d_out.data());
+    cumes::check_cuda(cudaMemcpy(&ff_acc, d_out.data(), sizeof(float),
+                                 cudaMemcpyDeviceToHost),
+                      "cpy float-float out");
 
     const double ref = (double)cpu_ref;
     const double ferr = std::fabs((double)f_acc - ref);
-    const double derr = std::fabs((double)d_acc - ref);
+    const double fferr = std::fabs((double)ff_acc - ref);
 
     std::cout << format("sum-of-squares reference  = {:.6f}\n", ref);
     std::cout << format("  float accumulation      = {:.6f} (abs err {:.3e})\n",
                         (double)f_acc, ferr);
-    std::cout << format("  double accumulation     = {:.6f} (abs err {:.3e})\n",
-                        (double)d_acc, derr);
+    std::cout << format(
+        "  float-float accumulation     = {:.6f} (abs err {:.3e})\n",
+        (double)ff_acc, fferr);
 
-    // double accumulation must be decisively better than float accumulation on
-    // this dynamic-range case, and stay within a generous relative band of the
-    // extended-precision reference (the GPU reduction uses a different order,
-    // so a ~1e-8 relative deviation from the exact sum is expected).
-    check(derr < ferr,
-          "double accumulation not better than float accumulation");
-    check(derr < 1e-6 * ref, "double accumulation too far from reference");
+    // float-float accumulation must be decisively better than float
+    // accumulation on this dynamic-range case, and stay within a generous
+    // relative band of the extended-precision reference (the GPU reduction uses
+    // a different order, so a ~1e-8 relative deviation from the exact sum is
+    // expected).
+    check(fferr < ferr,
+          "float-float accumulation not better than float accumulation");
+    check(fferr < 1e-6 * ref,
+          "float-float accumulation too far from reference");
 
     return summary();
 }

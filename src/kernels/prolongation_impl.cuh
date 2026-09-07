@@ -202,7 +202,8 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
 
     // New grid's contiguous slabs; the ctor zeroes both (velocities are never
     // interpolated — vmecpp zeroes them per stage).
-    cumes::SpectralStorage<T> st_new(p_new.ns, p_new.mnmax);
+    cumes::SpectralStorage<T> st_new(p_new.ns, p_new.mnmax,
+                                     st_old.radius_references());
 
     dim3 bd(256), gd((p_new.ns * p_new.mnmax + 255) / 256);
     // The coarse state (st_old) is written by the previous stage's kernels on
