@@ -192,9 +192,16 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
                                  const ValidatedProblem& vp,
                                  const EquilibriumSnapshot& snap,
                                  bool verbose = true) {
+    // Direct diagnostic callers also use this bridge; do not rely solely on
+    // the public solver facade to validate dimensions before indexing families.
+    if (snap.ns != p.ns || snap.mnmax != p.mnmax)
+        throw CumesError("restart_state: snapshot shape does not match stage");
+    const size_t one = (size_t)p.ns * p.mnmax;
+    for (const auto& family : snap.families)
+        if (family.size() != one)
+            throw CumesError("restart_state: invalid snapshot family size");
     const FoldedBoundary& b = vp.boundary();
     const int ntorp1 = p.ntor + 1;
-    const size_t one = (size_t)p.ns * p.mnmax;
     const size_t nb = one * sizeof(T);
     SpectralStorage<T> storage(
         p.ns, p.mnmax,

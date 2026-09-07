@@ -168,6 +168,22 @@ static void test_seed_restart() {
               "reference: free-boundary default remains absolute coefficients");
     auto seeded = init_state(p, vp, false, false);
     auto snapshot = snapshot_from_device(seeded);
+    for (int invalid_case = 0; invalid_case < 3; ++invalid_case) {
+        auto invalid = snapshot;
+        if (invalid_case == 0)
+            --invalid.ns;
+        else if (invalid_case == 1)
+            --invalid.mnmax;
+        else
+            invalid.families[EquilibriumSnapshot::RMNCC].pop_back();
+        bool rejected = false;
+        try {
+            auto unused = restart_state(p, vp, invalid, false);
+        } catch (const CumesError&) { rejected = true; }
+        check(
+            rejected,
+            "reference: reject mismatched or incomplete restart before upload");
+    }
     auto replay = restart_state(p, vp, snapshot, false);
     auto restored = snapshot_from_device(replay);
     check(seeded.radius_references().size() == std::size_t(p.ntor + 1),

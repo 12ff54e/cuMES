@@ -77,7 +77,12 @@ int main(int argc, char** argv) {
         auto checkpoint = read_checkpoint(argv[2]);
         check(checkpoint.has_value(), "odd geometry checkpoint readable");
         if (!checkpoint.has_value()) return 1;
-        state = restart_state(p, vp, checkpoint.value(), false);
+        try {
+            state = restart_state(p, vp, checkpoint.value(), false);
+        } catch (const CumesError& error) {
+            std::fprintf(stderr, "odd geometry benchmark: %s\n", error.what());
+            return 1;
+        }
     }
     auto expected = reference(p, snapshot_from_device(state));
     constexpr std::array policies{OddGeometryPrecision::NATIVE,
