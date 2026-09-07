@@ -62,13 +62,23 @@ try {
         assert.ok(samples.at(-1).fsq.every(value => value < samples.at(-1).tolerance));
         if (states.length) {
           assert.equal(samples.length, states.length);
+          const expectedRestarts = [];
+          let stage = 0, previousAttempt = 0;
           samples.forEach((row, i) => {
             assert.deepEqual(row.fsq, states[i].fsq);
             assert.equal(row.attempt, states[i].attempt);
             assert.equal(row.iteration, states[i].iter);
+            if (row.stage !== stage) { stage = row.stage; previousAttempt = 0; }
+            // Early rejected passes have no residual; post-descent restores
+            // carry a nonzero decision in the independent controller trace.
+            for (let attempt = previousAttempt + 1; attempt < row.attempt; ++attempt)
+              expectedRestarts.push({stage, attempt});
+            if (states[i].restart) expectedRestarts.push({stage, attempt: row.attempt});
+            previousAttempt = row.attempt;
           });
+          assert.deepEqual(result.plot.restarts.map(({stage, attempt}) => ({stage, attempt})), expectedRestarts);
         }
-        console.log(`Residual plot: PASS (${samples.length} samples; ${result.plot.drawMilliseconds.toFixed(1)} ms drawing)`);
+        console.log(`Residual plot: PASS (${samples.length} samples; ${result.plot.restarts.length} restart markers; ${result.plot.drawMilliseconds.toFixed(1)} ms drawing)`);
       }
       if (baselinePath) {
         const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));

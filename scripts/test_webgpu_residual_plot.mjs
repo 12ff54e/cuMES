@@ -8,7 +8,7 @@ let id=0,resize;
 const context=new Proxy({}, {get:(_,method)=>(...args)=>{
   for(const arg of args)if(typeof arg==='number')assert.ok(Number.isFinite(arg),`${method}: ${arg}`);
   calls.push([method,...args]);
-},set:()=>true});
+},set:(_,key,value)=>{calls.push([key,value]);return true}});
 const canvas={width:0,height:0,getContext:()=>context,getBoundingClientRect:()=>({width:640,height:250}),setAttribute(){}};
 const caption={textContent:''};
 const doc={visibilityState:'visible',addEventListener(name,fn){events[name]=fn}};
@@ -64,10 +64,41 @@ assert.equal(jobs.size,0);doc.visibilityState='visible';events.visibilitychange(
 assert.match(caption.textContent,/Converged · grid 2/);assert.equal(plot.report().drawCount,before+1);
 resize();assert.equal(jobs.size,1);plot.finish(false);
 assert.equal(jobs.size,0);assert.equal(frames.size,0);assert.match(caption.textContent,/Stopped/);
+assert.equal(plot.report().restarts.length,0,'iteration/grid changes alone are not restart events');
+// Explicit events can precede any residual or follow the last residual in a grid.
+const restartPlot=sandbox.createCumesResidualPlot(panel,1e-12);
+restartPlot.restart({stage:1,attempt:1,iteration:1});
+restartPlot.append(sample(2));
+restartPlot.restart({stage:1,attempt:2,iteration:2});
+restartPlot.append(sample(3));
+restartPlot.restart({stage:1,attempt:4,iteration:3});
+restartPlot.restart({stage:2,attempt:1,iteration:1});
+restartPlot.append(sample(2,undefined,2));
+restartPlot.restart({stage:2,attempt:2,iteration:2});
+restartPlot.restart({stage:2,attempt:2,iteration:2}); // duplicate deferred callback
+restartPlot.restart({stage:1,attempt:4,iteration:3}); // stale grid
+restartPlot.restart({stage:2,attempt:0,iteration:1}); // invalid position
+restartPlot.append(sample(999)); // stale sample after a newer grid's event
+calls.length=0;restartPlot.finish(true);
+assert.deepEqual(Array.from(restartPlot.report().restarts,r=>r.x),[1,2,4,5,6]);
+assert.deepEqual(Array.from(restartPlot.report().samples,r=>r.x),[2,3,6]);
+assert.deepEqual(Array.from(restartPlot.report().stages,r=>r.x),[1,5]);
+assert.match(caption.textContent,/5 restarts/);assert.match(caption.textContent,/Pink vertical lines: restarts/);
+// The marker segment is solid, full-height, and independent of residual sampling.
+const markerStart=calls.findIndex(c=>c[0]==='strokeStyle'&&c[1]==='#ed88b8');
+assert.ok(markerStart>=0);
+const markerCalls=calls.slice(markerStart,markerStart+22);
+assert.deepEqual(Array.from(markerCalls[1][1]),[]);
+assert.deepEqual(markerCalls.filter(c=>c[0]==='moveTo').map(c=>c.slice(1)),[1,2,4,5,6].map(x=>[62+x/10*560,30]));
+assert.deepEqual(markerCalls.filter(c=>c[0]==='lineTo').map(c=>c.slice(1)),[1,2,4,5,6].map(x=>[62+x/10*560,212]));
+const restartReport=restartPlot.report();restartReport.restarts[0].x=999;
+assert.equal(restartPlot.report().restarts[0].x,1);
 // Exercise the actual Emscripten scalar import and its payload (not log parsing).
 const library={};let emitted;
 vm.runInNewContext(readFileSync(new URL('../webgpu/browser_bridge.js',import.meta.url),'utf8'),{
-  LibraryManager:{library},mergeInto:Object.assign,cumesBrowser:{residual:row=>{emitted=row}}});
+  LibraryManager:{library},mergeInto:Object.assign,cumesBrowser:{residual:row=>{emitted=row},restart:row=>{emitted=row}}});
 library.publish_browser_residual(2,19,17,1e-13,2e-14,3e-15,1e-12,1);
 assert.deepEqual(JSON.parse(JSON.stringify(emitted)),{stage:2,attempt:19,iteration:17,fsq:[1e-13,2e-14,3e-15],tolerance:1e-12,converged:true});
-console.log('PASS: log coordinates, scalar bridge, exact samples, spikes/gaps, stage/restart axes, coalesced/hidden/final redraws');
+library.publish_browser_restart(3,40,37);
+assert.deepEqual(JSON.parse(JSON.stringify(emitted)),{stage:3,attempt:40,iteration:37});
+console.log('PASS: log coordinates, scalar bridge, exact samples, spikes/gaps, explicit restart markers, coalesced/hidden/final redraws');

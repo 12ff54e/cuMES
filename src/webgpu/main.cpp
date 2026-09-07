@@ -59,6 +59,7 @@ int requested_shadow_norms();
 int requested_device_norms();
 int requested_full_field_readbacks();
 void publish_browser_iteration_timing(int kind, int stage);
+void publish_browser_restart(int stage, int attempt, int iteration);
 void publish_browser_residual(int stage,
                               int attempt,
                               int iteration,
@@ -2906,6 +2907,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_stage_inverse() {
+        // Observe completed controller events before advancing the attempt.
+        // This also covers early Jacobian/nonfinite/maintenance restores,
+        // which have no residual sample, without duplicating deferred commits.
+        if (production_solve_) {
+            const auto& restarts = controller_->restart_events();
+            for (; published_restart_count_ < restarts.size();
+                 ++published_restart_count_) {
+                publish_browser_restart(
+                    static_cast<int>(stage_index_ + 1), attempted_passes_,
+                    restarts[published_restart_count_].iteration);
+            }
+        }
         if (production_solve_)
             publish_browser_iteration_timing(2, stage_index_ + 1);
         iteration_results_.reset();
@@ -4833,6 +4846,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_norm_ready_ = false;
         completed_passes_ = 0;
         attempted_passes_ = 0;
+        published_restart_count_ = 0;
     }
 
     void complete_stage() {
@@ -5492,6 +5506,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> checkpoint_state_lo_;
     int completed_passes_ = 0;
     int attempted_passes_ = 0;
+    std::size_t published_restart_count_ = 0;
     std::size_t stage_index_ = 0;
     int total_iterations_ = 0;
     std::vector<int> stage_iterations_;

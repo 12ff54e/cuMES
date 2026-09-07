@@ -48,6 +48,7 @@ try{
     await evaluate(`document.getElementById('w7x-start').click();document.getElementById('w7x-start').click()`);
     await wait(`document.body?.dataset.cumesExecution==='main'&&window.cumesResidualPlot?.report().samples.length>=3&&document.querySelector('.residual-caption')?.textContent.startsWith('Live')`);
     assert.equal(await evaluate(`window.cumesResidualPlot.report().samples.every(row=>row.fsq.length===3&&row.tolerance===${precision==='double'?'1e-12':'1e-5'})`),true);
+    await wait(`window.cumesResidualPlot.report().restarts.length>0`);
     assert.equal(await evaluate(`document.getElementById('w7x-start').disabled&&document.querySelectorAll('script[src*="cumes_webgpu.js"]').length===1`),true);
     console.log(`PASS: ${precision} idle without GPU/Wasm, precision setup, explicit Start, live residual plot without tracing, duplicate click guarded`);
     await call('Page.reload',{},session);await wait(idle);

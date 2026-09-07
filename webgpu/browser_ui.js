@@ -124,6 +124,7 @@ function installCumesBrowser() {
     error(key, message) { document.body.dataset[key] = message; },
     diagnostic(row) { (globalThis.cumesDiagnostics ||= []).push(row); },
     residual(row) { globalThis.cumesResidualPlot?.append(row); },
+    restart(row) { globalThis.cumesResidualPlot?.restart(row); },
     ready() {
       document.body.dataset.cumesWebgpu = 'ready';
       globalThis.cumesAppReady?.();
@@ -186,6 +187,7 @@ function startCumesRuntime(userStarted = false) {
         case 'output': globalThis.cumesBrowser.output(data.bytes); break;
         case 'diagnostics': for (const row of data.rows) globalThis.cumesBrowser.diagnostic(row); break;
         case 'residual': globalThis.cumesBrowser.residual(data.value); break;
+        case 'restart': globalThis.cumesBrowser.restart(data.value); break;
         case 'adapter': globalThis.cumesBrowser.adapter(...data.args); break;
         case 'ready': globalThis.cumesBrowser.ready(); break;
         case 'equilibrium': globalThis.cumesBrowser.equilibrium(data.value); break;

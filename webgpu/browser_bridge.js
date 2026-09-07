@@ -28,6 +28,10 @@ mergeInto(LibraryManager.library, {
       tolerance, converged: Boolean(converged)});
   },
 
+  publish_browser_restart: function(stage, attempt, iteration) {
+    globalThis.cumesBrowser.restart({stage, attempt, iteration});
+  },
+
   publish_browser_output__deps: ['$FS', '$UTF8ToString'],
   publish_browser_output: function(path) {
     try {

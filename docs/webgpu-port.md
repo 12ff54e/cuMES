@@ -252,7 +252,15 @@ FSQR, FSQZ, and FSQL on a logarithmic vertical axis and the current tolerance
 as a dashed horizontal line. The horizontal axis counts attempted iterations
 cumulatively across grids; the caption also shows the controller's effective
 iteration, which can reset. Vertical dashed lines separate grids, without
-connecting their curves. Nonpositive/nonfinite values remain in the diagnostic
+connecting their curves. Pink solid vertical lines mark actual controller
+restarts, including early Jacobian/nonfinite and maintenance restores that
+produce no residual sample; the caption gives the restart count. These come
+from the controller's restart-event history, not residual spikes or inferred
+counter changes, and remain visible without `trace=1`.
+The markers are also available as `window.cumesResidualPlot.report().restarts`.
+Both W7-X precisions retain their exact qualified controller traces with nine
+markers: five post-descent restarts and four early rejected passes.
+Nonpositive/nonfinite values remain in the diagnostic
 history but are omitted from the log plot, not clamped to a false residual floor.
 
 The scalar progress hook reuses normalized residuals already available to the

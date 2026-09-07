@@ -31,12 +31,23 @@ function createCumesResidualPlot(panel, tolerance) {
   const outputs = [...panel.querySelectorAll('[data-residual-value]')];
   const caption = panel.querySelector('.residual-caption');
   const doc = panel.ownerDocument;
-  const rows = [], stages = [];
+  const rows = [], stages = [], restarts = [];
   const colors = ['#55d6d0', '#7ca4ff', '#ffb65d'], dashes = [[], [6, 3], [2, 3]];
-  let offset = 0, timer = null, frame = null, dirty = true, finished = null;
+  let offset = 0, extent = 0, timer = null, frame = null, dirty = true, finished = null;
   let minLog = Math.floor(Math.log10(tolerance)) - 1, maxLog = 0;
   let drawCount = 0, drawMilliseconds = 0;
   const positive = value => value > 0 && Number.isFinite(value);
+  const validPosition = row => Number.isInteger(row.stage) && row.stage > 0 && Number.isInteger(row.attempt) && row.attempt > 0;
+  function position(row) {
+    const last = stages.at(-1);
+    if (last && row.stage < last.stage) return null;
+    if (!last || row.stage !== last.stage) {
+      offset = extent; stages.push({stage: row.stage, x: offset + row.attempt});
+    }
+    const x = offset + row.attempt;
+    extent = Math.max(extent, x);
+    return x;
+  }
   function include(value) {
     if (!positive(value)) return;
     minLog = Math.min(minLog, Math.floor(Math.log10(value)));
@@ -54,8 +65,8 @@ function createCumesResidualPlot(panel, tolerance) {
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
     const left = 62, right = width - 18, top = 30, bottom = height - 38;
-    const last = rows.at(-1), extent = Math.max(10, last?.x || 0);
-    const x = value => left + value / extent * (right - left);
+    const last = rows.at(-1), limit = Math.max(10, extent);
+    const x = value => left + value / limit * (right - left);
     const y = value => bottom - (Math.log10(value) - minLog) / (maxLog - minLog) * (bottom - top);
     context.font = '11px ui-monospace, monospace';
     context.lineWidth = 1; context.setLineDash([]);
@@ -70,7 +81,7 @@ function createCumesResidualPlot(panel, tolerance) {
     const ticks = width < 450 ? 2 : 4;
     context.textAlign = 'center';
     for (let tick = 0; tick <= ticks; ++tick) {
-      const value = Math.round(extent * tick / ticks), xx = x(value);
+      const value = Math.round(limit * tick / ticks), xx = x(value);
       context.beginPath(); context.moveTo(xx, top); context.lineTo(xx, bottom); context.stroke();
       context.fillText(String(value), xx, bottom + 17);
     }
@@ -87,6 +98,10 @@ function createCumesResidualPlot(panel, tolerance) {
     for (const stage of stages.slice(1)) {
       context.beginPath(); context.moveTo(x(stage.x), top); context.lineTo(x(stage.x), bottom); context.stroke();
     }
+    context.strokeStyle = '#ed88b8'; context.setLineDash([]);
+    for (const restart of restarts) {
+      context.beginPath(); context.moveTo(x(restart.x), top); context.lineTo(x(restart.x), bottom); context.stroke();
+    }
     for (let family = 0; family < 3; ++family) {
       context.strokeStyle = colors[family]; context.lineWidth = 1.6; context.setLineDash(dashes[family]);
       context.beginPath(); let connected = false;
@@ -102,8 +117,8 @@ function createCumesResidualPlot(panel, tolerance) {
     context.restore(); context.setLineDash([]);
     if (last) {
       for (let i = 0; i < 3; ++i) outputs[i].textContent = last.fsq[i].toExponential(3);
-      caption.textContent = `${finished === null ? 'Live' : finished ? 'Converged' : 'Stopped'} · grid ${last.stage} · solver iteration ${last.iteration}. Dashed vertical lines mark grid changes; nonpositive/nonfinite values are omitted.`;
-      canvas.setAttribute('aria-label', `Residual history, logarithmic scale. ${last.x} attempted iterations. FSQR ${last.fsq[0]}, FSQZ ${last.fsq[1]}, FSQL ${last.fsq[2]}.`);
+      caption.textContent = `${finished === null ? 'Live' : finished ? 'Converged' : 'Stopped'} · grid ${stages.at(-1).stage} · solver iteration ${last.iteration} · ${restarts.length} restarts. Pink vertical lines: restarts; gray dashed: grid changes. Nonpositive/nonfinite values are omitted.`;
+      canvas.setAttribute('aria-label', `Residual history, logarithmic scale. ${extent} attempted iterations; ${restarts.length} restarts. FSQR ${last.fsq[0]}, FSQZ ${last.fsq[1]}, FSQL ${last.fsq[2]}.`);
     } else {
       context.fillStyle = '#9aa9bb'; context.textAlign = 'center';
       context.fillText('Residuals will appear when the solve starts.', (left + right) / 2, (top + bottom) / 2);
@@ -125,15 +140,22 @@ function createCumesResidualPlot(panel, tolerance) {
   schedule();
   return {
     append(sample) {
-      if (!Number.isInteger(sample.stage) || !Number.isInteger(sample.attempt) || sample.attempt < 1 || sample.stage < 1 || sample.fsq?.length !== 3 || !sample.fsq.every(value => typeof value === 'number')) return;
+      if (!validPosition(sample) || sample.fsq?.length !== 3 || !sample.fsq.every(value => typeof value === 'number')) return;
       const last = rows.at(-1);
       if (last && (sample.stage < last.stage || sample.stage === last.stage && sample.attempt <= last.attempt)) return;
-      if (!last || sample.stage !== last.stage) { offset = last?.x || 0; stages.push({stage: sample.stage, x: offset + sample.attempt}); }
-      rows.push({...sample, fsq: [...sample.fsq], x: offset + sample.attempt});
+      const x = position(sample); if (x === null) return;
+      rows.push({...sample, fsq: [...sample.fsq], x});
       for (const value of sample.fsq) include(value);
       include(sample.tolerance); schedule();
     },
+    restart(event) {
+      if (!validPosition(event)) return;
+      const last = restarts.at(-1);
+      if (last && (event.stage < last.stage || event.stage === last.stage && event.attempt <= last.attempt)) return;
+      const x = position(event); if (x === null) return;
+      restarts.push({...event, x}); schedule();
+    },
     finish(success) { finished = success; dirty = true; flush(); },
-    report() { return {samples: rows.map(row => ({...row, fsq: [...row.fsq]})), stages: stages.map(row => ({...row})), minLog, maxLog, drawCount, drawMilliseconds}; }
+    report() { return {samples: rows.map(row => ({...row, fsq: [...row.fsq]})), stages: stages.map(row => ({...row})), restarts: restarts.map(row => ({...row})), minLog, maxLog, drawCount, drawMilliseconds}; }
   };
 }
