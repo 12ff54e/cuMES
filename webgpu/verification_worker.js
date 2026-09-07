@@ -25,6 +25,7 @@ globalThis.cumesBrowser = {
     return size;
   },
   diagnostic(row) { diagnostics.push(row); schedule(); },
+  residual(value) { postMessage({kind: 'residual', value}); },
   error(...args) { postMessage({kind: 'error', args}); },
   ready() { postMessage({kind: 'ready'}); },
   equilibrium(value) { postMessage({kind: 'equilibrium', value}); },

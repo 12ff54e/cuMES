@@ -23,6 +23,11 @@ mergeInto(LibraryManager.library, {
     globalThis.cumesIterationTiming?.event(kind, stage);
   },
 
+  publish_browser_residual: function(stage, attempt, iteration, fsqr, fsqz, fsql, tolerance, converged) {
+    globalThis.cumesBrowser.residual({stage, attempt, iteration, fsq: [fsqr, fsqz, fsql],
+      tolerance, converged: Boolean(converged)});
+  },
+
   publish_browser_output__deps: ['$FS', '$UTF8ToString'],
   publish_browser_output: function(path) {
     try {

@@ -36,6 +36,7 @@ try{
     const next=new URL(url);next.search=new URLSearchParams({solve:'w7x',precision,run:'1',timing:'0'});
     await call('Page.navigate',{url:next.href},session);await call('Page.bringToFront',{},session);
     await wait(idle+`&&document.body.dataset.cumesPrecision==='${precision}'`);
+    assert.equal(await evaluate('window.cumesResidualPlot.report().samples.length'),0);
     await new Promise(resolve=>setTimeout(resolve,1000));
     assert.equal(await evaluate(`!window.cumesRuntimeStarted&&!window.cumesKeepAlive&&!document.body.dataset.cumesAdapter&&typeof HEAPU8==='undefined'`),true);
     // Precision changes must remain idle, even with a historical run=1 URL.
@@ -45,9 +46,10 @@ try{
     await evaluate(`document.getElementById('precision-${precision==='double'?'double':'single'}').click()`);
     await wait(idle+`&&document.body.dataset.cumesPrecision==='${precision}'`);
     await evaluate(`document.getElementById('w7x-start').click();document.getElementById('w7x-start').click()`);
-    await wait(`document.body?.dataset.cumesExecution==='main'&&Number(document.body.dataset.cumesIteration)>=2`);
+    await wait(`document.body?.dataset.cumesExecution==='main'&&window.cumesResidualPlot?.report().samples.length>=3&&document.querySelector('.residual-caption')?.textContent.startsWith('Live')`);
+    assert.equal(await evaluate(`window.cumesResidualPlot.report().samples.every(row=>row.fsq.length===3&&row.tolerance===${precision==='double'?'1e-12':'1e-5'})`),true);
     assert.equal(await evaluate(`document.getElementById('w7x-start').disabled&&document.querySelectorAll('script[src*="cumes_webgpu.js"]').length===1`),true);
-    console.log(`PASS: ${precision} idle without GPU/Wasm, precision setup, explicit Start, real solver progress, duplicate click guarded`);
+    console.log(`PASS: ${precision} idle without GPU/Wasm, precision setup, explicit Start, live residual plot without tracing, duplicate click guarded`);
     await call('Page.reload',{},session);await wait(idle);
     assert.equal(await evaluate('!document.body.dataset.cumesAdapter'),true);
   }

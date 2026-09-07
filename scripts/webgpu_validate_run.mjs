@@ -3,6 +3,7 @@
 // APP_URL chooses the solve/conformance mode. Never runs concurrent GPU solves.
 import {readFile, writeFile} from 'node:fs/promises';
 import {isDeepStrictEqual} from 'node:util';
+import assert from 'node:assert/strict';
 
 const [url, prefix, baselinePath, comparison = 'exact'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
@@ -48,11 +49,27 @@ try {
     })()`);
     if (status === 'pass' || status === 'fail') {
       const result = await evaluate(`({dataset: {...document.body.dataset},
+        plot: window.cumesResidualPlot?.report(),
         log: window.cumesVerificationLog?.text() || document.getElementById('log')?.textContent || document.body.innerText})`);
       const trace = await evaluate('window.cumesDiagnostics || []');
       await writeFile(`${prefix}-result.json`, JSON.stringify(result));
       await writeFile(`${prefix}-trace.json`, JSON.stringify(trace));
       if (status === 'fail') throw Error(result.dataset.cumesDetail);
+      if (result.plot) {
+        const samples = result.plot.samples, states = trace.filter(row => row.kind === 'controller');
+        assert.ok(samples.length > 0);
+        assert.equal(samples.at(-1).converged, true);
+        assert.ok(samples.at(-1).fsq.every(value => value < samples.at(-1).tolerance));
+        if (states.length) {
+          assert.equal(samples.length, states.length);
+          samples.forEach((row, i) => {
+            assert.deepEqual(row.fsq, states[i].fsq);
+            assert.equal(row.attempt, states[i].attempt);
+            assert.equal(row.iteration, states[i].iter);
+          });
+        }
+        console.log(`Residual plot: PASS (${samples.length} samples; ${result.plot.drawMilliseconds.toFixed(1)} ms drawing)`);
+      }
       if (baselinePath) {
         const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
         const states = rows => rows.filter(row => row.kind === 'controller')

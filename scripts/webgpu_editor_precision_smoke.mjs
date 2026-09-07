@@ -47,15 +47,28 @@ try{
   assert.equal(await evaluate(`localStorage.getItem('cumes.editor.v1')`),boundary);
   await evaluate(`document.getElementById('run').click()`);
   for(const precision of ['double','float']){
+    await wait(`document.body?.dataset.cumesPrecision==='${precision}'&&window.cumesResidualPlot?.report().samples.length>=3`);
+    assert.equal(await evaluate(`document.body.dataset.cumesWebgpu==='pass'`),false,'residuals should be published before completion');
+    await wait(`document.querySelector('.residual-caption')?.textContent.startsWith('Live')`);
     await wait(`document.body?.dataset.cumesPrecision==='${precision}'&&['pass','fail'].includes(document.body.dataset.cumesWebgpu)`);
     const result=await evaluate(`({dataset:{...document.body.dataset},url:location.href,
       boundary:localStorage.getItem('cumes.editor.v1'),log:document.getElementById('output').textContent,
-      trace:window.cumesDiagnostics||[]})`);
+      trace:window.cumesDiagnostics||[],plot:window.cumesResidualPlot.report()})`);
     await writeFile(`${prefix}-${precision}.json`,JSON.stringify(result));
     assert.equal(result.dataset.cumesWebgpu,'pass',result.dataset.cumesDetail);
     assert.equal(result.boundary,boundary,'precision switch changed boundary');
     assert.match(result.log,new RegExp(precision==='double'?'double-single ftol=1e-12':'float ftol=1e-05'));
-    console.log(JSON.stringify({precision,...result.dataset}));
+    const samples=result.plot.samples,trace=result.trace.filter(row=>row.kind==='controller');
+    assert.ok(samples.length>=Number(result.dataset.cumesIteration));
+    assert.equal(samples.at(-1).converged,true);
+    assert.ok(samples.at(-1).fsq.every(value=>value<samples.at(-1).tolerance));
+    if(trace.length){
+      assert.equal(samples.length,trace.length,'every classified iteration is plotted');
+      for(let i=0;i<trace.length;i++)assert.deepEqual(samples[i].fsq,trace[i].fsq,'plotted values match controller scalars exactly');
+    }
+    const shot=await call('Page.captureScreenshot',{format:'png'},session);
+    await writeFile(`${prefix}-${precision}.png`,Buffer.from(shot.data,'base64'));
+    console.log(JSON.stringify({precision,...result.dataset,samples:samples.length,draws:result.plot.drawCount,drawMilliseconds:result.plot.drawMilliseconds}));
     if(precision==='double')await evaluate(`document.getElementById('editor-precision-single').click()`);
   }
   console.log('Editor precision switching: PASS (paired and scalar convergence, retained boundary, selected tolerance)');

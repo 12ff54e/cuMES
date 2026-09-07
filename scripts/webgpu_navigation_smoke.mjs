@@ -33,7 +33,7 @@ try{
   for(const width of [1280,390]){
     await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false},session);
     let expectedStyle;
-    for(const [search,view] of [['','editor'],['?mode=test','verification'],['?solve=w7x','w7x'],['?solve=w7x&precision=float','w7x']]){
+    for(const [search,view] of [['','editor'],['?mode=test','verification'],['?solve=w7x','w7x'],['?solve=w7x&precision=float','w7x'],['?residual_plot=0','editor']]){
       const next=new URL(url);next.search=search;
       await call('Page.navigate',{url:next.href},session);
       let ready=false;
@@ -49,17 +49,21 @@ try{
           links:links.map(link=>[link.textContent,link.getAttribute('href')]),styles,
           visible:links.every(link=>{const r=link.getBoundingClientRect();return r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight}),
           active:links.filter(link=>link.getAttribute('aria-current')==='page').map(link=>link.dataset.view),
-          precision:document.body.dataset.cumesPrecision};
+          precision:document.body.dataset.cumesPrecision,
+          plots:document.querySelectorAll('.residual-panel').length,
+          plotFits:[...document.querySelectorAll('.residual-canvas')].every(canvas=>{const r=canvas.getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth})};
       })()`);
       assert.equal(state.navCount,1);assert(state.shared);assert(state.visible);
       assert.deepEqual(state.links,[['Boundary editor','?'],['GPU verification','?mode=test'],['W7-X','?solve=w7x']]);
       assert.deepEqual(state.active,[view]);
+      assert.equal(state.plots,view==='verification'||search.includes('residual_plot=0')?0:1);
+      assert.ok(state.plotFits,'residual plot must fit the viewport');
       if(expectedStyle)assert.deepEqual(state.styles,expectedStyle);else expectedStyle=state.styles;
       if(view==='w7x')assert.equal(state.precision,search.includes('float')?'float':'double');
       if(view==='w7x')assert.equal(await evaluate(`document.body.dataset.cumesExecution==='idle'&&
         !document.getElementById('w7x-start').disabled&&!document.getElementById('w7x-actions').hidden&&
         !window.cumesKeepAlive&&typeof HEAPU8==='undefined'`),true);
-      if(prefix&&!search.includes('float')){
+      if(prefix&&!search.includes('float')&&!search.includes('residual_plot=0')){
         const shot=await call('Page.captureScreenshot',{format:'png'},session);
         await writeFile(`${prefix}-${view}-${width}.png`,Buffer.from(shot.data,'base64'));
       }

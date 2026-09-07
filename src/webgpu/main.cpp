@@ -59,6 +59,14 @@ int requested_shadow_norms();
 int requested_device_norms();
 int requested_full_field_readbacks();
 void publish_browser_iteration_timing(int kind, int stage);
+void publish_browser_residual(int stage,
+                              int attempt,
+                              int iteration,
+                              double fsqr,
+                              double fsqz,
+                              double fsql,
+                              double tolerance,
+                              int converged);
 int requested_geometry_control();
 int requested_compare_fft();
 int requested_spectral_fences();
@@ -4213,6 +4221,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void trace_controller(std::span<const float> preconditioned,
                           bool converged) {
+        // Reuse the controller's host scalars; plotting adds no GPU readback
+        // and does not require the full state-fingerprint diagnostic trace.
+        if (production_solve_) {
+            publish_browser_residual(
+                static_cast<int>(stage_index_ + 1), attempted_passes_,
+                controller_->effective_iteration(), invariant_normalized_[0],
+                invariant_normalized_[1], invariant_normalized_[2],
+                initialized_stage_.tolerance, converged ? 1 : 0);
+        }
         if (!requested_solver_trace()) return;
         const auto fingerprint = [](std::span<const float> values) {
             std::uint32_t hash = 2166136261U;

@@ -247,6 +247,36 @@ the selected nested surfaces as all six physical Fourier parity families plus
 the canvas to orbit and use the wheel to zoom. The W7-X route presents the same
 3-D viewer below its solver log.
 
+Both the boundary editor and W7-X show a live **Residual history** canvas with
+FSQR, FSQZ, and FSQL on a logarithmic vertical axis and the current tolerance
+as a dashed horizontal line. The horizontal axis counts attempted iterations
+cumulatively across grids; the caption also shows the controller's effective
+iteration, which can reset. Vertical dashed lines separate grids, without
+connecting their curves. Nonpositive/nonfinite values remain in the diagnostic
+history but are omitted from the log plot, not clamped to a false residual floor.
+
+The scalar progress hook reuses normalized residuals already available to the
+host controller: no extra GPU readback, numerical change, `EM_JS`, or full
+state-fingerprint tracing is needed. JavaScript retains every sample and
+coalesces drawing to at most 10 Hz (plus the final flush); per-pixel
+first/min/max/last envelopes preserve spikes. Hidden tabs skip rendering.
+`window.cumesResidualPlot.report()` exposes samples and cumulative canvas-draw
+time for diagnostics; `residual_plot=0` disables the chart. Verification keeps
+its compact check summary instead of plotting its diagnostic solver run.
+
+`ctest` includes canvas/scalar-bridge tests for log coordinates, zeros/nonfinite
+values, stage changes, controller restarts, and coalesced/final rendering.
+The editor precision and W7-X Start browser smoke tests check live plotting
+before completion; the validation harness checks every plotted residual against
+the controller trace when `trace=1` is requested.
+
+Chrome/RTX 3060 Ti qualification retained exact pre-chart controller traces:
+editor paired/single 507/73 records, W7-X paired/single 2817/1261 records
+(2812/1256 effective iterations), and verification 329 records. In the paired
+W7-X run, cumulative canvas drawing took 379 ms over 39.8 s page elapsed time;
+single took 116 ms over 14.7 s. These are drawing costs, not an end-to-end
+on/off slowdown measurement.
+
 Append `?mode=test` for the full GPU/CPU operator conformance suite and
 stricter Solovev convergence gate. Verification runs in a dedicated Web Worker:
 Wasm, CPU references, and the WebGPU device stay off the UI thread. The page

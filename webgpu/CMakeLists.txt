@@ -104,6 +104,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_ui.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/residual_plot.js
   ${CMAKE_CURRENT_SOURCE_DIR}/verification_worker.js
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
   ${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js
@@ -152,6 +153,10 @@ add_test(
 set_tests_properties(webgpu_artifacts PROPERTIES LABELS "unit;webgpu")
 find_program(CUMES_WEBGPU_NODE NAMES node nodejs)
 if(CUMES_WEBGPU_NODE)
+  add_test(NAME webgpu_residual_plot
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_residual_plot.mjs)
+  set_tests_properties(webgpu_residual_plot PROPERTIES LABELS "unit;webgpu")
   add_test(NAME webgpu_precision_switch
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_precision_switch.mjs)

@@ -97,6 +97,7 @@ function createCumesVerificationLog(output, details, progress) {
 function installCumesBrowser() {
   globalThis.cumesBrowser = {
     result(success, detail, timing) {
+      globalThis.cumesResidualPlot?.finish(success);
       if (timing && globalThis.cumesVerificationWorker) {
         globalThis.cumesIterationTiming = {report: () => timing};
       }
@@ -122,6 +123,7 @@ function installCumesBrowser() {
     },
     error(key, message) { document.body.dataset[key] = message; },
     diagnostic(row) { (globalThis.cumesDiagnostics ||= []).push(row); },
+    residual(row) { globalThis.cumesResidualPlot?.append(row); },
     ready() {
       document.body.dataset.cumesWebgpu = 'ready';
       globalThis.cumesAppReady?.();
@@ -183,6 +185,7 @@ function startCumesRuntime(userStarted = false) {
         case 'result': globalThis.cumesBrowser.result(...data.args); stop(); break;
         case 'output': globalThis.cumesBrowser.output(data.bytes); break;
         case 'diagnostics': for (const row of data.rows) globalThis.cumesBrowser.diagnostic(row); break;
+        case 'residual': globalThis.cumesBrowser.residual(data.value); break;
         case 'adapter': globalThis.cumesBrowser.adapter(...data.args); break;
         case 'ready': globalThis.cumesBrowser.ready(); break;
         case 'equilibrium': globalThis.cumesBrowser.equilibrium(data.value); break;
