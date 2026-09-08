@@ -19,6 +19,14 @@ and result download. Historical `?solve=w7x` links open the fixed W7-X editor;
 The fixed W7-X preset keeps its single-grid default and combined iteration
 budget; **Resolution, profiles and input JSON** also offers multigrid.
 
+Run, Stop and edit, Reset, and Download share a toolbar above the workspace
+that remains visible while scrolling. During a solve it shows recent completed
+iterations per second, updated about twice per second from the existing pass
+timing events. The rate includes GPU waits and vacuum work, counts completed
+passes through restarts, and resets at each grid so startup, MAKEGRID, and grid
+setup do not enter the estimate. It remains available with `timing=0` and adds
+no GPU readbacks. Completion, failure, and returning to setup clear the rate.
+
 For 3-D boundaries and free-boundary initial guesses, select a signed toroidal
 mode `n` and edit the RBC/ZBS coefficients by poloidal mode `m`. A toroidal-angle
 slider sweeps one field period. The R-Z cross-section and orange section on the

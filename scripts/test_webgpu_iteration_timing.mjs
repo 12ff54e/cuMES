@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../webgpu/iteration_timing.js', import.meta.url), 'utf8');
 function fixture(supported = true, search = '', worker = false) {
   let now = 0, gpuNow = 0n;
-  const maps = [], log = [];
+  const maps = [], log = [], speeds = [];
   class GPUBuffer {
     constructor(d) { this.size = d.size; this.data = new ArrayBuffer(d.size); }
     mapAsync() { return new Promise(resolve => maps.push(resolve)); }
@@ -44,9 +44,9 @@ function fixture(supported = true, search = '', worker = false) {
     performance: {now: () => now},
     GPUAdapter, GPUDevice, GPUCommandEncoder, GPUBuffer, BigUint64Array,
     GPUBufferUsage: {MAP_READ: 1, QUERY_RESOLVE: 2, COPY_SRC: 4}, GPUMapMode: {READ: 1},
-    cumesAppendLog: line => log.push(line)});
+    cumesAppendLog: line => log.push(line), cumesBrowser: {speed: value => speeds.push(value)}});
   vm.runInContext(source, context);
-  return {api: context.cumesIterationTiming, adapter: new GPUAdapter(), log,
+  return {api: context.cumesIterationTiming, adapter: new GPUAdapter(), log, speeds,
     time: t => { now = t; }, resolve: () => maps.shift()()};
 }
 for (const supported of [true, false]) {
@@ -89,3 +89,23 @@ overflow.api.event(2, 1);
 assert.equal(overflow.api.report().stats.device, null);
 assert.equal(overflow.api.report().errors.length, 1);
 console.log('Frontend iteration timing: PASS (host/wait, timestamps, unsupported, reset, median, disabled)');
+
+// The live rate uses completed-pass wall time even with profiling disabled.
+const speed = fixture(true, '?timing=0');
+speed.time(10000); speed.api.event(0, 0);
+speed.api.event(2, 1); // no pass has started
+const pass = (start, end, stage = 1) => {
+  speed.time(start); speed.api.event(1, stage);
+  speed.time(end); speed.api.event(2, stage);
+  speed.api.event(2, stage); // duplicate final/maintenance callback
+};
+for (let i = 0; i < 25; i++) pass(20000 + i * 20, 20020 + i * 20);
+assert.deepEqual(speed.speeds, [null, null, 50], 'exclude startup and publish once per half second');
+pass(20500, 20800); pass(20800, 21100);
+assert.equal(speed.speeds.at(-1), 2 / .6, 'follow recent throughput, including slow vacuum/refresh passes');
+pass(100000, 100200, 2); pass(100200, 100500, 2);
+assert.deepEqual(speed.speeds.slice(-2), [null, 4], 'reset at a new grid and exclude grid setup');
+speed.time(200000); speed.api.event(0, 0); pass(300000, 301000);
+assert.deepEqual(speed.speeds.slice(-3), [null, null, 1], 'new runs cannot inherit previous samples');
+assert.equal(speed.api.report().iterations.length, 0, 'live speed must not enable detailed profiling');
+console.log('Live iteration speed: PASS (wall time, recent windows, restarts, grids, setup exclusion, profiling disabled)');

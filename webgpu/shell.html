@@ -78,6 +78,8 @@
       align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; margin-bottom:18px;
       border:1px solid var(--line); border-radius:12px; background:#101a27f5; box-shadow:0 8px 24px #0003; }
     .solver-toolbar .actions { margin:0; }
+    .solver-speed { color:var(--muted); font-size:13px; white-space:nowrap; }
+    .solver-speed output { margin-right:.35em; color:var(--cyan); font-variant-numeric:tabular-nums; }
     .primary { border:0; border-radius:9px; color:#061313; background:linear-gradient(135deg,#69e7dc,#64a5ff);
       padding:10px 18px; font-weight:700; cursor:pointer; box-shadow:0 8px 24px #55d6d028; }
     .primary:hover { filter:brightness(1.08); } .primary:disabled { filter:grayscale(.7); cursor:wait; opacity:.7; }
@@ -171,6 +173,7 @@
     </section>
     <section class="solver-toolbar" aria-label="Solver actions">
       <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="stop-run" hidden>Stop and edit</button><button class="secondary" id="reset">Reset</button><a class="secondary" id="download" hidden>Download .bin</a></div>
+      <span class="solver-speed" id="iteration-speed" title="Recent completed solver iterations per second" hidden><output id="iteration-rate" aria-label="Solver iterations per second">—</output> iter/s</span>
     </section>
     <main class="workspace">
       <section class="panel editor">
@@ -467,7 +470,7 @@
       const dc=document.querySelector('#boundary-coefficients input[data-family="zbs"][data-m="0"][data-n="0"]');if(dc)dc.disabled=true;
       value('reset').disabled=disabled}
     function updateStatus(){const state=document.body.dataset.cumesWebgpu;
-      if(state==='pass'||state==='fail')logBuffer.flush();
+      if(state==='pass'||state==='fail'){cumesBrowser.speed(null);logBuffer.flush()}
       if(verificationMode&&(state==='pass'||state==='fail'))logBuffer.finish(state==='pass',document.body.dataset.cumesDetail||'');
       if(!appMode)return;
       if(state==='pass'){document.body.classList.remove('busy');value('status').textContent='Converged';value('run').disabled=false;value('run').textContent='Run again';

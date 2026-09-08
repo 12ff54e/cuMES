@@ -4,9 +4,9 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../webgpu/verification_worker.js',import.meta.url),'utf8');
 const librarySource=readFileSync(new URL('../webgpu/browser_bridge.js',import.meta.url),'utf8');
 function fixture(failImport=false){
-  const messages=[],jobs=new Map(),listeners={},library={};let id=0,imports=0;
+  const messages=[],jobs=new Map(),listeners={},library={};let id=0,imports=0,now=123;
   const context=vm.createContext({URL,URLSearchParams,location:{search:'?wrong=worker-script-url'},
-    performance:{now:()=>123},
+    performance:{now:()=>now},
     setTimeout(fn){jobs.set(++id,fn);return id},clearTimeout(id){jobs.delete(id)},
     postMessage(message,transfer=[]){messages.push(structuredClone(message,{transfer}))},
     addEventListener(name,handler){listeners[name]=handler},
@@ -16,7 +16,7 @@ function fixture(failImport=false){
   vm.runInContext(source,context);vm.runInContext(librarySource,context);
   const start=()=>context.onmessage({data:{kind:'start',runtimeUrl:'https://example.test/cumes_webgpu.js?v=abc',
     search:'?mode=test&precision=double&trace=1&timing=0',visibility:'visible'}});
-  return{context,messages,jobs,listeners,library,start,imports:()=>imports};
+  return{context,messages,jobs,listeners,library,start,imports:()=>imports,time:value=>{now=value}};
 }
 const f=fixture();f.start();f.start();
 assert.equal(f.imports(),1);
@@ -73,3 +73,11 @@ assert.equal(files.library.requested_double_solve(),0);
 files.context.cumesSearch='?run=1';
 assert.equal(files.library.requested_double_solve(),0);
 console.log('PASS: worker precision agrees with free-boundary paired and fixed-boundary float defaults');
+
+const speed=fixture();speed.start();
+vm.runInContext(readFileSync(new URL('../webgpu/iteration_timing.js',import.meta.url),'utf8'),speed.context);
+speed.time(10000);speed.library.publish_browser_iteration_timing(1,1);
+speed.time(10500);speed.library.publish_browser_iteration_timing(2,1);
+assert.deepEqual(speed.messages,[{kind:'speed',value:null},{kind:'speed',value:2}]);
+assert.equal(speed.context.cumesIterationTiming.report().enabled,false);
+console.log('PASS: live speed crosses the worker bridge with detailed profiling disabled');

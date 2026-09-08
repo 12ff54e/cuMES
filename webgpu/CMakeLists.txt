@@ -189,6 +189,10 @@ if(CUMES_WEBGPU_NODE)
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_residual_plot.mjs)
   set_tests_properties(webgpu_residual_plot PROPERTIES LABELS "unit;webgpu")
+  add_test(NAME webgpu_iteration_timing
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_iteration_timing.mjs)
+  set_tests_properties(webgpu_iteration_timing PROPERTIES LABELS "unit;webgpu")
   add_test(NAME webgpu_precision_switch
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_precision_switch.mjs)

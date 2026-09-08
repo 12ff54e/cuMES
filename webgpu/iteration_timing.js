@@ -1,7 +1,27 @@
 // Frontend-only iteration timing. GPU timestamps share the solver's existing
-// mapAsync: no additional map or host fence. ?timing=0 disables instrumentation.
+// mapAsync: no additional map or host fence. ?timing=0 disables detailed
+// profiling; the lightweight live iteration rate remains available.
 (() => {
   const enabled = new URLSearchParams(globalThis.cumesSearch ?? location.search).get('timing') !== '0';
+  let speedStage = 0, speedStart = 0, speedCount = 0, speedActive = false;
+  function updateSpeed(kind, stage) {
+    const now = performance.now();
+    if (kind === 0 || (kind === 1 && stage !== speedStage)) {
+      speedStage = stage; speedStart = now; speedCount = 0; speedActive = false;
+      globalThis.cumesBrowser?.speed?.(null);
+    }
+    if (kind === 1) speedActive = true;
+    // An end event can occur without a started pass (maintenance or a final
+    // stage callback). Count actual completed passes, including restarts.
+    if (kind === 2 && speedActive) {
+      speedActive = false; speedCount++;
+      const elapsed = now - speedStart;
+      if (elapsed >= 500) {
+        globalThis.cumesBrowser?.speed?.(1000 * speedCount / elapsed);
+        speedStart = now; speedCount = 0;
+      }
+    }
+  }
   const rows = [], errors = [];
   const warn = message => { if (!errors.includes(message)) errors.push(message); };
   let current = null, waiting = 0, lastTick = performance.now();
@@ -31,6 +51,7 @@
         (key !== 'device' || row.gpuPasses > 0 && !row.gpuMissing)).map(row => row[key]))]))});
   globalThis.cumesIterationTiming = {
     event(kind, stage) {
+      updateSpeed(kind, stage);
       if (!enabled) return;
       if (kind === 0) { end(); rows.length = 0; errors.length = 0; }
       if (kind === 2) end();
