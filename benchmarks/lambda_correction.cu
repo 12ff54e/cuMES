@@ -8,8 +8,10 @@
 #include "frozen_lambda.cuh"
 
 #include <array>
+#include <charconv>
 #include <iomanip>
 #include <iostream>
+#include <string_view>
 
 namespace {
 
@@ -62,7 +64,8 @@ __global__ void update_lambda(double* d_state,
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < 2 * family_size)
         d_state[(i < family_size ? 2 : 4) * family_size + i] =
-            d_base[i] + scale * d_direction[i];
+            d_direction[i] == 0.0 ? d_base[i]
+                                  : d_base[i] + scale * d_direction[i];
 }
 
 __global__ void make_direction(int ns,
@@ -104,10 +107,20 @@ double merit(const cumes::ControlRecord& rec) {
            rec.invariant_scaled[2];
 }
 
+void print_number(double value) {
+    if (std::isfinite(value))
+        std::cout << value;
+    else
+        std::cout << "null";
+}
+
 void print_record(const cumes::ControlRecord& rec) {
-    std::cout << '[' << rec.invariant_scaled[0] << ','
-              << rec.invariant_scaled[1] << ',' << rec.invariant_scaled[2]
-              << ']';
+    std::cout << '[';
+    for (int i = 0; i < 3; ++i) {
+        if (i) std::cout << ',';
+        print_number(rec.invariant_scaled[i]);
+    }
+    std::cout << ']';
 }
 
 }  // namespace
@@ -122,9 +135,15 @@ int main(int argc, char** argv) {
                 input = v;
             else if (const char* v = args.need(i, "restart"))
                 restart = v;
-            else if (const char* v = args.need(i, "iterations"))
-                iterations = std::atoi(v);
-            else
+            else if (const char* v = args.need(i, "iterations")) {
+                const std::string_view text(v);
+                const auto parsed = std::from_chars(
+                    text.data(), text.data() + text.size(), iterations);
+                if (parsed.ec != std::errc{} ||
+                    parsed.ptr != text.data() + text.size())
+                    throw cumes::CumesError(
+                        "--iterations requires an integer in [1,256]");
+            } else
                 throw cumes::CumesError("unknown lambda-correction option");
         }
         if (restart.empty() || iterations < 1 || iterations > 256)
@@ -142,6 +161,13 @@ int main(int argc, char** argv) {
         p.ftol = 0.0;
         if (p.mnmax != checkpoint.value().mnmax)
             throw cumes::CumesError("checkpoint mode count mismatch");
+        const bool configured_stage = std::any_of(
+            vp.spec().stages.begin(), vp.spec().stages.end(),
+            [&](const auto& stage) {
+                return stage.radial_surfaces == static_cast<std::size_t>(p.ns);
+            });
+        if (!configured_stage)
+            throw cumes::CumesError("checkpoint grid not configured");
         auto storage = cumes::restart_state<double>(p, vp, checkpoint.value());
         cumes::Stream stream;
         const int family_size = p.ns * p.mnmax;
@@ -228,12 +254,14 @@ int main(int argc, char** argv) {
             frozen.enqueue_jvp(d_second.data(), d_jvp.data(), stream.get());
             const double u_jv = stats(d_direction.data(), d_jvp.data())[3];
             std::cout << "{\"ns\":" << p.ns << ",\"iterations\":" << iterations
-                      << ",\"map_relative_error\":" << relative_error
-                      << ",\"affine_relative_error\":" << affine_error
-                      << ",\"symmetry_relative_error\":"
-                      << std::abs(v_ju - u_jv) /
-                             std::max({std::abs(v_ju), std::abs(u_jv), 1e-300})
-                      << ",\"base\":";
+                      << ",\"map_relative_error\":";
+            print_number(relative_error);
+            std::cout << ",\"affine_relative_error\":";
+            print_number(affine_error);
+            std::cout << ",\"symmetry_relative_error\":";
+            print_number(std::abs(v_ju - u_jv) /
+                         std::max({std::abs(v_ju), std::abs(u_jv), 1e-300}));
+            std::cout << ",\"base\":";
             print_record(base);
             if (!(relative_error < 1e-5 && affine_error < 1e-7)) {
                 std::cout << ",\"operator_gate\":false}\n";
@@ -251,10 +279,11 @@ int main(int argc, char** argv) {
             const double correction_ms = timer.stop(stream.get());
             apply(d_delta.data(), d_result.data(), stream.get());
             const auto linear = stats(d_rhs.data(), d_result.data());
-            std::cout << ",\"operator_gate\":true,\"correction_ms\":"
-                      << correction_ms << ",\"linear_relative_residual\":"
-                      << std::sqrt(linear[2] / std::max(linear[0], 1e-300))
-                      << ",\"trials\":[";
+            std::cout << ",\"operator_gate\":true,\"correction_ms\":";
+            print_number(correction_ms);
+            std::cout << ",\"linear_relative_residual\":";
+            print_number(std::sqrt(linear[2] / std::max(linear[0], 1e-300)));
+            std::cout << ",\"trials\":[";
             bool first = true;
             for (const double scale : {1.0, 0.5, 0.25, 0.125}) {
                 update_lambda<<<blocks, 256, 0, stream.get()>>>(
@@ -267,16 +296,36 @@ int main(int argc, char** argv) {
                 first = false;
                 std::cout << "{\"scale\":" << scale << ",\"residual\":";
                 print_record(trial);
-                std::cout << ",\"merit_ratio\":" << merit(trial) / merit(base)
-                          << ",\"evaluation_ms\":" << evaluation_ms << '}';
+                std::cout << ",\"merit_ratio\":";
+                print_number(merit(trial) / merit(base));
+                std::cout << ",\"evaluation_ms\":";
+                print_number(evaluation_ms);
+                std::cout << '}';
             }
-            update_lambda<<<blocks, 256, 0, stream.get()>>>(
-                storage.state_slab(), d_base.data(), d_delta.data(), 0.0,
-                family_size);
+            // Copy the saved coefficients directly: base + 0 * delta would
+            // retain NaNs from a failed correction and change signed zeros.
+            const std::size_t family_bytes =
+                static_cast<std::size_t>(family_size) * sizeof(double);
+            cumes::check_cuda(
+                cudaMemcpyAsync(storage.family_ptr(SpectralComponent::Lsc),
+                                d_base.data(), family_bytes,
+                                cudaMemcpyDeviceToDevice, stream.get()),
+                "restore lambda sine family");
+            cumes::check_cuda(
+                cudaMemcpyAsync(storage.family_ptr(SpectralComponent::Lcs),
+                                d_base.data() + family_size, family_bytes,
+                                cudaMemcpyDeviceToDevice, stream.get()),
+                "restore lambda cosine family");
             const auto restored = evaluate();
-            std::cout << "],\"restored_merit_ratio\":"
-                      << merit(restored) / merit(base) << "}\n";
-            return 0;
+            bool restored_exact = true;
+            for (int i = 0; i < 3; ++i)
+                restored_exact &=
+                    restored.invariant_scaled[i] == base.invariant_scaled[i];
+            std::cout << "],\"restored_merit_ratio\":";
+            print_number(merit(restored) / merit(base));
+            std::cout << ",\"restored_residual_exact\":"
+                      << (restored_exact ? "true" : "false") << "}\n";
+            return restored_exact ? 0 : 1;
         });
     } catch (const std::exception& e) {
         std::cerr << "lambda-correction: " << e.what() << '\n';

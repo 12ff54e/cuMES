@@ -256,7 +256,7 @@ class FrozenLambdaOperator {
    private:
     static DeviceParams<T> check_params(DeviceParams<T> p,
                                         const cumes::ValidatedProblem& vp) {
-        if (p.ns < 3 || p.mnmax != p.mpol * (p.ntor + 1) ||
+        if (p.ns < 3 || p.ns > 512 || p.mnmax != p.mpol * (p.ntor + 1) ||
             vp.spec().free_boundary.lfreeb)
             throw cumes::CumesError(
                 "frozen lambda requires a fixed-boundary stage");

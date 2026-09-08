@@ -76,6 +76,25 @@ value exactly; unpaired inner-solve times decrease from 1.772 to 1.631 ms for
 Solovev and 45.047 to 41.653 ms for W7-X. These timings establish prototype
 cost, not a solver speedup.
 
+Independent Ada checks cover all 13 captured states: the physical
+preconditioned lambda map matches the full production map with zero relative
+error, affinity errors are 5.48e-12–3.40e-11, and every restored residual
+triple is exactly equal to its baseline. The two final-grid reference states
+above use 16 inner steps; the other 11 use eight. Coarse Solovev states show
+80.4–86.0% one-shot reductions in total residual, and W7-X ns=99 at pass 100
+shows 83.0%. Later W7-X ns=99 states at passes 500/1000 instead increase it
+4.42%/3.95%. These frozen-state observations do not establish a faster full
+solve or include the cost of reaching each state.
+
+Ada memcheck, initcheck and synccheck of the eight-step probe at Solovev ns=5,
+pass 100 all report zero errors. Thirteen malformed input cases reject with
+exit 2: seven invalid iteration strings, checkpoint grids 1/2/3/513/65536,
+and a mode-count mismatch. The harness checks configured-stage membership
+before device-state construction and parses iteration counts as complete
+integers. Restoration copies saved coefficients directly, verifies the actual
+residual triple, and fails on disagreement; nonfinite diagnostics serialize
+as JSON `null`.
+
 An isolated full-solver prototype also tested periodic corrections, including
 their setup, two maps per inner step, full residual reevaluation and lambda
 velocity reset. With the correction disabled, both original checkpoints are
@@ -121,6 +140,8 @@ The session archive is
 `../tmp/cumes-block-20260908/` relative to the repository. `states/manifest.json`
 records capture provenance and SHA256 checksums; `ada-diagnostics/README.md`
 records the remote toolchain, commands, exact tested source copies and logs.
+`ada-lambda/README.md` and its JSON/log files retain all 13 map checks,
+invalid-input results and the three targeted sanitizer runs.
 `rz-results/`, the `lambda-*-force-only.log` files and `live-results/` contain
 the measurements above. `live-source/` preserves the rejected full-solver
 lambda hook. These large local artifacts are not repository fixtures.
