@@ -554,6 +554,21 @@ The qualified axisymmetric forward32 policy is available through the explicit
 `--newton` flag; [ADR-0016](adr/0016-opt-in-newton-corrections.md) records its
 promotion checks. The default remains unchanged.
 
+### 3.9 Free-boundary vacuum kernels and transfers (2026-09-09)
+
+The [free-boundary qualification](free-boundary-performance.md) measures
+complete configured Solovev, CTH and W7-X solves against `bcdd3da` on both GPUs.
+Parallel axisymmetric source terms retain the original ordered sum; smaller
+blocks distribute small singular RHS systems across the GPU; pinned bridge
+copies join existing fences. The split-graph experiment was discarded.
+
+Seven paired runs give solver-interval reductions of 37.01% / 29.69% for
+precomputed-grid Solovev and 6.77% / 23.70% for positive-flux W7-X on TITAN Xp /
+RTX 4090. Coefficients, fields and numerical stage reports remain bit identical
+within each architecture. All configured stages, tolerances, caps and vacuum
+update decisions are preserved. The report includes confidence intervals,
+process-wall results, retained failures, float limitations and raw data.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
