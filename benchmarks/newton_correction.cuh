@@ -42,8 +42,8 @@ __global__ void difference_scale(int size,
     }
 }
 
-__global__ void check_probe(const cumes::ControlStatus* d_status,
-                            int* d_valid) {
+static __global__ void check_probe(const cumes::ControlStatus* d_status,
+                                   int* d_valid) {
     if (threadIdx.x == 0)
         d_valid[0] &= d_status->jacobian_valid &&
                       !d_status->invariant_nonfinite &&
