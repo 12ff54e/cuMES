@@ -17,10 +17,9 @@ The first four cases were selected from source/data inspection before timing.
 The fifth was separately declared before its own runs to reproduce the earlier
 cuMES W7-X convention. It changes only `phiedge` from `-1.74` to `+1.74` and is
 always reported separately; the original negative-flux input and its failures
-remain in the matrix. Artifact-copy approval delayed the tracked generator and
-manifest until initial runs had started. Those runs used immutable materialized
-inputs whose hashes are recorded in their protocols; the manifest does not
-claim to predate them.
+remain in the matrix. Initial runs used immutable materialized inputs before
+this manifest was committed. Their hashes are recorded in the run protocols;
+the manifest does not claim to predate them.
 
 `sources/` retains the byte-for-byte input sources. The manifest records source
 revisions and hashes, every adaptation, all stage controls, and field-data hashes.
