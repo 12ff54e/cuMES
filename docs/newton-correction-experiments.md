@@ -9,6 +9,13 @@ and full-solver patch remain experiments, with production defaults unchanged.
 The separate [FAS experiment](coarse-correction-experiments.md) completes the
 other remaining proposal.
 
+The subsequent [19-case axisymmetric qualification](axisymmetric-newton-qualification.md)
+tests the same fixed forward32 policy on both GPUs, including shape,
+resolution and finite-pressure variations. It confirms larger gains for the
+prescribed-current fixture and regressions for some circular/low-resolution
+Ada workloads; all cases converge through every configured stage. Its complete
+timing and solution checks refine the scope of the axisymmetric opportunity.
+
 ## Operator and coordinates
 
 For a fixed production preconditioner epoch, write

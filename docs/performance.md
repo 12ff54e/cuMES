@@ -543,6 +543,14 @@ below the adoption gate. W7-X showed no reliable benefit across architectures.
 FAS increased solver wall time in both full-solve screens. Reproducible private
 patches and diagnostics are retained; these experiments do not change defaults.
 
+The [broader axisymmetric study](axisymmetric-newton-qualification.md) tests
+that same Newton policy on 19 inputs and both GPUs. All configured solves
+converge. The adapted prescribed-current case improves scoped solver time by
+19.21% on TITAN Xp and 14.51% on RTX 4090, while fresh measurements confirm
+Ada regressions for circular, low-resolution and one finite-pressure case.
+Axisymmetry alone therefore does not qualify a default policy. The report
+retains every initial pair, uncertainty-selected follow-up and solution check.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target

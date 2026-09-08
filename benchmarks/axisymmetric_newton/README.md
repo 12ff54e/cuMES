@@ -6,9 +6,12 @@ regressions. The matrix is not a collection selected for Newton successes.
 
 The fixed candidate policy uses forward differences, 32 Krylov vectors and a
 32-vector basis, every 100 effective iterations starting at 100, epsilon
-`1e-6`, and an acceptance merit ratio of `0.95`. The runner owns the existing
-validity, epoch and residual guards. This directory contains inputs and
-provenance; it does not change production policy.
+`1e-6`, and an acceptance merit ratio of `0.95`. The private solver hook owns
+the existing validity, epoch and residual guards. This directory contains
+inputs, execution/validation tools and provenance; it does not change
+production policy. The completed [qualification report](../../docs/axisymmetric-newton-qualification.md)
+and [timing summaries](results-20260908.json) retain all 19 outcomes on both GPUs,
+including the separately declared pressure supplement below.
 
 All cases are fixed-boundary, stellarator symmetric, axisymmetric and double
 precision. Every case retains three configured stages with iteration caps
@@ -130,3 +133,73 @@ python3 benchmarks/axisymmetric_newton/generate_pressure.py --check
 The supplemental generator refuses to proceed if the original manifest or
 pinned Solovev source has changed, and writes only IDs 16–18 and the separate
 pressure manifest. It performs no solver or GPU work.
+
+## Execute and validate
+
+Use Python 3 with NumPy; the optional VMEC++ HDF5 comparison also requires
+`h5py`. First build the private hook in a disposable worktree following the
+[Newton reproduction instructions](../../docs/newton-correction-experiments.md#reproduction-and-artifacts).
+Initialize submodules recursively before CMake so the build uses the same
+B-spline prolongation backend. The unmodified production executable does not
+emit the private experiment records required by the runner.
+
+From that worktree, choose unused output directories:
+
+```sh
+python3 benchmarks/axisymmetric_newton/run.py --exe build/cumes \
+  --manifest benchmarks/axisymmetric_newton/manifest.json \
+  --out /tmp/axisym-screen --phase screen --gpu 0 --cpu 8
+python3 benchmarks/axisymmetric_newton/run.py --exe build/cumes \
+  --manifest benchmarks/axisymmetric_newton/manifest.json \
+  --out /tmp/axisym-paired --phase paired --gpu 0 --cpu 8
+python3 benchmarks/axisymmetric_newton/run.py --exe build/cumes \
+  --manifest benchmarks/axisymmetric_newton/pressure_manifest.json \
+  --out /tmp/axisym-pressure-screen --phase screen --gpu 0 --cpu 8
+python3 benchmarks/axisymmetric_newton/run.py --exe build/cumes \
+  --manifest benchmarks/axisymmetric_newton/pressure_manifest.json \
+  --out /tmp/axisym-pressure-paired --phase paired --gpu 0 --cpu 8
+```
+
+`paired` defaults to two warmups per variant and five alternating-order pairs.
+`--pairs 15` creates the fresh timing follow-up; `--cases ID ...` restricts it
+to a declared selection. Use separate directories and keep the original
+samples. Failures and malformed diagnostic markers remain recorded. Native
+RunReport convergence must agree with the private stage records; all input
+hashes, stage controls, three residual components and iteration caps are
+checked. `--resume` continues a saved phase without replacing completed runs.
+
+Replay both variants of every converged case with Newton disabled:
+
+```sh
+python3 benchmarks/axisymmetric_newton/replay.py --exe build/cumes \
+  --manifest benchmarks/axisymmetric_newton/manifest.json \
+  --samples /tmp/axisym-paired/samples.json --out /tmp/axisym-replay \
+  --gpu 0 --cpu 8
+```
+
+Repeat with the pressure manifest and its paired sample directory. The replay
+driver derives final-grid inputs only to match checkpoint shape and retains
+all physical parameters and the original final tolerance/cap. Replays are
+fixed-point diagnostics, not timing workloads. They require convergence at
+iteration 1 and exact coefficient bits, except signed zeros in dependent
+`m>0` axis coefficients. The raw bit-exact and numerical-exact results remain
+visible separately.
+
+`validate.py` checks a saved baseline/candidate pair and optionally its
+checkpoints, actual replay outputs and an independently converged VMEC++
+HDF5 reference. For example:
+
+```sh
+python3 benchmarks/axisymmetric_newton/validate.py \
+  --input benchmarks/axisymmetric_newton/inputs/00_solovev_reference.json \
+  --baseline /tmp/axisym-paired/00_solovev_reference-pair0-baseline.bin \
+  --candidate /tmp/axisym-paired/00_solovev_reference-pair0-newton.bin \
+  --baseline-checkpoint /tmp/axisym-paired/00_solovev_reference-pair0-baseline.ckpt \
+  --candidate-checkpoint /tmp/axisym-paired/00_solovev_reference-pair0-newton.ckpt \
+  --output /tmp/axisym-validation.json
+```
+
+The report records exact-state, boundary/parity, geometry validity and input
+provenance checks separately from physical differences. R/Z, lambda and B²
+differences are diagnostics at equal native coordinates, not a substituted
+convergence oracle or an automatically imposed equivalence threshold.
