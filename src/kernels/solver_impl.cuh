@@ -1102,6 +1102,8 @@ SolverResult<T> solver_run(
     cumes::PinnedBuffer<T> h_axis_pin(static_cast<std::size_t>(p.ntor) + 2);
     cumes::PinnedBuffer<T> h_buco_bvco(
         vacuum ? 2 * static_cast<std::size_t>(p.ns - 1) : 0);
+    cumes::PinnedBuffer<T> h_delbsq_pin(vacuum ? 1 : 0);
+    if (vacuum) h_delbsq_pin.data()[0] = T(0);
     double previous_fsqr = 1.0;
     double previous_fsqz = 1.0;
 
@@ -1314,12 +1316,13 @@ SolverResult<T> solver_run(
         } else {
             equilibrium.enqueue_prefix(iter, iter2, schedule, stream, fNormRZ,
                                        fNormL);
-            cumes::check_cuda(cudaStreamSynchronize(stream), "vacuum fence");
             cumes::check_cuda(
-                cudaMemcpy(h_buco_bvco.data(), equilibrium.buco_bvco_device(),
-                           2 * static_cast<std::size_t>(p.ns - 1) * sizeof(T),
-                           cudaMemcpyDeviceToHost),
+                cudaMemcpyAsync(
+                    h_buco_bvco.data(), equilibrium.buco_bvco_device(),
+                    2 * static_cast<std::size_t>(p.ns - 1) * sizeof(T),
+                    cudaMemcpyDeviceToHost, stream),
                 "copy buco/bvco");
+            cumes::check_cuda(cudaStreamSynchronize(stream), "vacuum fence");
             vacuum->get().run_host_update(
                 p.ns, h_buco_bvco.data(), h_buco_bvco.data() + (p.ns - 1),
                 equilibrium.repack_device(), equilibrium.axis_device(),
@@ -1355,14 +1358,18 @@ SolverResult<T> solver_run(
                 storage.family_ptr(cumes::SpectralComponent::Rcc) + (p.ns - 1),
                 sizeof(T), cudaMemcpyDeviceToHost, stream),
             "cpy Rbnd mirror");
-        cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
-        if (vacuum) {
-            T delbsq = T(0);
-            cumes::check_cuda(cudaMemcpy(&delbsq, equilibrium.delbsq_device(),
-                                         sizeof(T), cudaMemcpyDeviceToHost),
-                              "copy delbsq");
-            vacuum->get().set_delbsq(delbsq);
+        // The pressure mismatch exists only after an edge-force evaluation.
+        // Before activation its diagnostic is zero; later inactive passes
+        // retain the last sample without reading an unwritten device slot.
+        if (vacuum && schedule.apply_vacuum_edge_force) {
+            cumes::check_cuda(
+                cudaMemcpyAsync(h_delbsq_pin.data(),
+                                equilibrium.delbsq_device(), sizeof(T),
+                                cudaMemcpyDeviceToHost, stream),
+                "copy delbsq");
         }
+        cumes::check_cuda(cudaStreamSynchronize(stream), "control sync");
+        if (vacuum) vacuum->get().set_delbsq(h_delbsq_pin.data()[0]);
         if (bench && bench->get().enabled) {
             auto bench_now = std::chrono::steady_clock::now();
             bench->get().pass_wall_us.push_back(
