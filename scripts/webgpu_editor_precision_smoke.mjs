@@ -1,4 +1,4 @@
-// End-to-end precision switching in isolated storage, preserving user edits.
+// End-to-end precision switching with tab-scoped settings, preserving user edits.
 // Usage: node scripts/webgpu_editor_precision_smoke.mjs APP_URL OUTPUT_PREFIX
 import {writeFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
@@ -19,11 +19,12 @@ function call(method,params={},sessionId){return new Promise((resolve,reject)=>{
   const current=++id,timer=setTimeout(()=>reject(Error(`CDP timeout: ${method}`)),30000);
   pending.set(current,{resolve,reject,timer});ws.send(JSON.stringify({id:current,method,params,sessionId}));
 })}
-let context;
+let target;
 try{
-  context=(await call('Target.createBrowserContext',{disposeOnDetach:true})).browserContextId;
-  const target=(await call('Target.createTarget',{url:'about:blank',browserContextId:context})).targetId;
+  target=(await call('Target.createTarget',{url:'about:blank',newWindow:false})).targetId;
   const session=(await call('Target.attachToTarget',{targetId:target,flatten:true})).sessionId;
+  await call('Page.addScriptToEvaluateOnNewDocument',{source:
+    `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});`},session);
   const evaluate=async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true},session)).result.value;
   const wait=async(expression,timeout=600000)=>{
     const deadline=Date.now()+timeout;
@@ -38,7 +39,7 @@ try{
   await call('Page.enable',{},session);
   await call('Page.navigate',{url},session);
   await call('Page.bringToFront',{},session);
-  console.log(JSON.stringify({target,url,isolated:true}));
+  console.log(JSON.stringify({target,url,storage:'session'}));
   await wait(`document.body?.dataset.cumesWebgpu==='ready'`,30000);
   assert.equal(await evaluate('document.body.dataset.cumesPrecision'),'float');
   const boundary=await evaluate(`localStorage.getItem('cumes.editor.v1')`);
@@ -73,6 +74,6 @@ try{
   }
   console.log('Editor precision switching: PASS (paired and scalar convergence, retained boundary, selected tolerance)');
 }finally{
-  if(context)await call('Target.disposeBrowserContext',{browserContextId:context});
+  if(target)await call('Target.closeTarget',{targetId:target});
   ws.close();
 }

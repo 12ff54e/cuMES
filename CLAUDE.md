@@ -230,10 +230,12 @@ Preserve these contracts unless the task intentionally changes them:
   `scripts/webgpu_firefox_validate.mjs` uses local headless Firefox through
   geckodriver. Follow `docs/webgpu-port.md` for setup and numerical gates.
 - Run GPU solves/benchmarks serially on each adapter. With the user's forwarded
-  Chrome at `localhost:9333`, create and target your own tabs; preserve the
-  user's tabs and settings. Use `CUMES_CLOSE_TEST_TAB=1` with the Chrome
-  validator for cleanup. Apply Firefox test preferences only to a disposable
-  profile. An empty adapter name does not itself mean WebGPU is unavailable.
+  Chrome at `localhost:9333`, create tabs in the existing window, not new
+  windows or isolated browser contexts. Preserve the user's tabs and settings;
+  the browser gates redirect test setup to their tab's session storage.
+  Use `CUMES_CLOSE_TEST_TAB=1` with the Chrome validator for cleanup. Apply
+  Firefox test preferences only to a disposable profile. An empty adapter
+  name does not itself mean WebGPU is unavailable.
 - Once the relevant checks pass, broaden testing when shared-code impact,
   failures, unresolved concerns, or qualification requirements justify it.
   Report unavailable checks explicitly rather than implying they passed.

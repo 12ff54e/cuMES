@@ -1,4 +1,4 @@
-// Run a browser correctness gate with isolated storage; preserve a successful result.
+// Run a browser correctness gate in a new tab with tab-scoped test settings.
 // Usage: node scripts/webgpu_validate_run.mjs APP_URL OUTPUT_PREFIX [BASELINE_TRACE]
 // APP_URL chooses the solve/conformance mode. Never runs concurrent GPU solves.
 import {readFile, writeFile} from 'node:fs/promises';
@@ -12,7 +12,7 @@ if (!['exact', 'paired-reductions'].includes(comparison))
 const base = 'http://127.0.0.1:' + (process.env.CUMES_CDP_PORT || '9333');
 const browser = await (await fetch(`${base}/json/version`)).json();
 const ws = new WebSocket(browser.webSocketDebuggerUrl);
-let context, session, page;
+let session, page;
 await new Promise((resolve, reject) => {ws.onopen = resolve; ws.onerror = reject;});
 let nextId = 0;
 const pending = new Map();
@@ -38,10 +38,11 @@ const evaluate = async expression => (await call('Runtime.evaluate', {
   expression, returnByValue: true})).result.value;
 let finished = false;
 try {
-  context = (await call('Target.createBrowserContext')).browserContextId;
-  page = {id: (await call('Target.createTarget', {url: 'about:blank', browserContextId: context})).targetId};
+  page = {id: (await call('Target.createTarget', {url: 'about:blank', newWindow: false})).targetId};
   session = (await call('Target.attachToTarget', {targetId: page.id, flatten: true})).sessionId;
   await call('Page.enable');
+  await call('Page.addScriptToEvaluateOnNewDocument', {source:
+    `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});`});
   await call('Page.navigate', {url});
   await call('Page.bringToFront');
   console.log(JSON.stringify({target: page.id, url}));
@@ -124,7 +125,7 @@ try {
   if (!finished) throw Error('Browser gate timed out');
 } finally {
   if (!finished) await call('Page.navigate', {url: 'about:blank'}).catch(() => {});
-  if (context && (!finished || process.env.CUMES_CLOSE_TEST_TAB === '1'))
-    await call('Target.disposeBrowserContext', {browserContextId: context});
+  if (page && (!finished || process.env.CUMES_CLOSE_TEST_TAB === '1'))
+    await call('Target.closeTarget', {targetId: page.id});
   ws.close();
 }

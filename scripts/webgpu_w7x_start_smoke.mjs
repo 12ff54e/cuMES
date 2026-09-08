@@ -1,5 +1,5 @@
 // Exercise W7-X setup/start/reset without completing a long equilibrium run.
-// Uses isolated storage and closes only its own browser context.
+// Uses tab-scoped settings and closes only its own tab.
 // Usage: node scripts/webgpu_w7x_start_smoke.mjs APP_URL
 import assert from 'node:assert/strict';
 const [url]=process.argv.slice(2);
@@ -17,10 +17,9 @@ function call(method,params={},sessionId){return new Promise((resolve,reject)=>{
   const current=++id,timer=setTimeout(()=>{pending.delete(current);reject(Error(`CDP timeout: ${method}`))},30000);
   pending.set(current,{resolve,reject,timer});ws.send(JSON.stringify({id:current,method,params,sessionId}));
 })}
-let context;
+let target;
 try{
-  context=(await call('Target.createBrowserContext',{disposeOnDetach:true})).browserContextId;
-  const target=(await call('Target.createTarget',{url:'about:blank',browserContextId:context})).targetId;
+  target=(await call('Target.createTarget',{url:'about:blank',newWindow:false})).targetId;
   const session=(await call('Target.attachToTarget',{targetId:target,flatten:true})).sessionId;
   const evaluate=async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true},session)).result.value;
   const wait=async expression=>{
@@ -32,6 +31,8 @@ try{
   };
   const idle=`document.body?.dataset.cumesExecution==='idle'&&document.body.dataset.cumesWebgpu==='ready'`;
   await call('Page.enable',{},session);await call('Network.enable',{},session);
+  await call('Page.addScriptToEvaluateOnNewDocument',{source:
+    `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});`},session);
   for(const precision of ['double','float']){
     const next=new URL(url);next.search=new URLSearchParams({solve:'w7x',precision,grids:'3',run:'1',timing:'0'});
     await call('Page.navigate',{url:next.href},session);await call('Page.bringToFront',{},session);
@@ -81,6 +82,6 @@ try{
   await evaluate(`document.getElementById('stop-run').click()`);await wait(idle);
   console.log('PASS: runtime load failure and Stop return to editable setup');
 }finally{
-  if(context)await call('Target.disposeBrowserContext',{browserContextId:context});
+  if(target)await call('Target.closeTarget',{targetId:target});
   ws.close();
 }

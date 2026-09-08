@@ -20,16 +20,17 @@ function call(method,params={},sessionId){return new Promise((resolve,reject)=>{
   const current=++id,timer=setTimeout(()=>{pending.delete(current);reject(Error(`CDP timeout: ${method}`))},30000);
   pending.set(current,{resolve,reject,timer});ws.send(JSON.stringify({id:current,method,params,sessionId}));
 })}
-let context;
+let target;
 try{
-  context=(await call('Target.createBrowserContext',{disposeOnDetach:true})).browserContextId;
-  const target=(await call('Target.createTarget',{url:'about:blank',browserContextId:context})).targetId;
+  target=(await call('Target.createTarget',{url:'about:blank',newWindow:false})).targetId;
   const session=(await call('Target.attachToTarget',{targetId:target,flatten:true})).sessionId;
   const evaluate=async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true},session)).result.value;
   await call('Network.enable',{},session);
   // Only the frontend is in scope: keep verification/W7-X from starting a solve.
   await call('Network.setBlockedURLs',{urls:['*cumes_webgpu.js*','*verification_worker.js*']},session);
   await call('Page.enable',{},session);
+  await call('Page.addScriptToEvaluateOnNewDocument',{source:
+    `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});`},session);
   await call('Page.bringToFront',{},session);
   for(const width of [1280,390]){
     await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false},session);
@@ -77,6 +78,6 @@ try{
     }
   }
 }finally{
-  if(context)await call('Target.disposeBrowserContext',{browserContextId:context});
+  if(target)await call('Target.closeTarget',{targetId:target});
   ws.close();
 }
