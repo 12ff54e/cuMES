@@ -101,6 +101,11 @@ Axisymmetric constraint filtering retains its existing shader; buffer copies
 adapt its force-plane layout to the separable projector. Scalar axisymmetric
 solves retain their separate-dispatch path.
 
+Fixed-boundary paired axisymmetric solves also use the shared resident
+iteration pipeline, with one batched mapping per evaluated pass. They retain
+the same transforms, constraint filtering, and controller arithmetic as the
+separate-dispatch path; `&resident=0` restores that path for comparisons.
+
 Choose **Fixed boundary** or **Free boundary** above the editor. Free-boundary
 setup defaults to paired precision and offers Solovev, W7-X (vacuum), and
 cth_like coil configurations, plus

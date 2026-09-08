@@ -5405,7 +5405,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const bool free_batch =
             free && (initialized_stage_.ntor > 0 || double_single_solve_) &&
             !requested_spectral_fences() && !requested_compare_fft();
-        return ((!free && initialized_stage_.ntor > 0) || free_batch) &&
+        return ((!free &&
+                 (initialized_stage_.ntor > 0 || double_single_solve_)) ||
+                free_batch) &&
                requested_reference_transfers() == 0;
     }
     bool batched_free_boundary_path() const {
