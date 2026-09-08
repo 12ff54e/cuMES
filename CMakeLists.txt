@@ -504,6 +504,19 @@ if(CUMES_BUILD_BENCHMARKS)
   cumes_enable_warnings(cumes_benchmark_graph_realpass)
   cumes_apply_policy_flags(cumes_benchmark_graph_realpass)
   cumes_add_precision_provenance(cumes_benchmark_graph_realpass)
+
+  # Frozen-state diagnostics for experimental coupled corrections.
+  foreach(probe rz_coupling lambda_correction test_device_bicgstab)
+    add_executable(cumes_benchmark_${probe} benchmarks/${probe}.cu)
+    target_include_directories(cumes_benchmark_${probe} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(cumes_benchmark_${probe} PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
+    cumes_enable_warnings(cumes_benchmark_${probe})
+    cumes_apply_policy_flags(cumes_benchmark_${probe})
+  endforeach()
+  if(CUMES_BUILD_TESTS)
+    add_test(NAME experimental_device_bicgstab COMMAND cumes_benchmark_test_device_bicgstab)
+    set_tests_properties(experimental_device_bicgstab PROPERTIES LABELS "gpu;benchmark")
+  endif()
 endif()
 
 # CLI policy gate: strict-vs-compatibility schema
