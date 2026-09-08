@@ -178,6 +178,31 @@ def same_bits(a, b):
     return a.shape == b.shape and a.tobytes() == b.tobytes()
 
 
+def replay_state_comparison(original, replay, ntor):
+    """Only zero signs at the dependent m>0 axis may change on import.
+
+    This permits no ULP error: active coefficients, fixed boundaries and all
+    nonzero values retain their exact bits. The raw bit result remains visible.
+    """
+    if original.shape != replay.shape:
+        return dict(passed=False, bit_exact=False, numeric_exact=False,
+                    dependent_axis_zero_sign_changes=[], other_bit_changes=None)
+    changed = original.view("<u8") != replay.view("<u8")
+    allowed = np.zeros(original.shape, dtype=bool)
+    allowed[:, ntor + 1:, 0] = True
+    allowed &= (original == 0) & (replay == 0)
+    locations = []
+    for family, mode, surface in np.argwhere(changed & allowed):
+        locations.append(dict(family=FAMILIES[family], mode=int(mode),
+            m=int(mode // (ntor + 1)), n=int(mode % (ntor + 1)), surface=int(surface),
+            original_negative_zero=bool(np.signbit(original[family, mode, surface])),
+            replay_negative_zero=bool(np.signbit(replay[family, mode, surface]))))
+    other = int(np.count_nonzero(changed & ~allowed))
+    return dict(passed=other == 0, bit_exact=not bool(np.any(changed)),
+                numeric_exact=bool(np.array_equal(original, replay)),
+                dependent_axis_zero_sign_changes=locations, other_bit_changes=other)
+
+
 def metrics(candidate, baseline):
     if candidate.shape != baseline.shape:
         raise ValueError(f"comparison shape mismatch: {candidate.shape}, {baseline.shape}")
@@ -225,12 +250,22 @@ def output_checks(input_path, native, checkpoint_path=None, replay_path=None):
         len(native["half_fields"]) == 7 and len(native["full_fields"]) == 6 and
         all(np.all(np.isfinite(a)) for group in ("half_fields", "full_fields")
             for a in native[group].values()))
+    checks["positive_oriented_half_grid_jacobian"] = False
+    checks["nonnegative_magnetic_energy"] = False
+    if checks["scientific_fields_complete_finite"]:
+        fields = native["half_fields"]
+        checks["positive_oriented_half_grid_jacobian"] = bool(np.all(-fields["sqrtg"] > 0))
+        b_squared = sum(fields[contra] * fields[covar] for contra, covar in
+                        zip(("bsups", "bsupu", "bsupv"), ("bsubs", "bsubu", "bsubv")))
+        checks["nonnegative_magnetic_energy"] = bool(
+            np.all(np.isfinite(b_squared)) and np.all(b_squared >= 0))
     boundary = np.stack([np.asarray(params[name]) for name in ("rbcc", "zbsc", "rbss", "zbcs")])
     checks["fixed_boundary_exact"] = same_bits(state[[0, 1, 3, 4], :, -1], boundary)
     if params["ntor"] == 0:
         checks["null_parities_zero"] = bool(np.all(state[3:] == 0) and
                                                   np.all(state[1:3, 0] == 0))
         checks["dependent_m1_axis_exact"] = params["mpol"] < 2 or same_bits(state[:, 1, 0], state[:, 1, 1])
+        checks["higher_modes_axis_zero"] = bool(np.all(state[:, 2:, 0] == 0))
     if "bsups" in native["half_fields"]:
         checks["radial_magnetic_field_zero"] = bool(np.all(native["half_fields"]["bsups"] == 0))
     optional = {"checkpoint": None, "replay": None}
@@ -245,6 +280,7 @@ def output_checks(input_path, native, checkpoint_path=None, replay_path=None):
         stages = replay["stages"]
         same_physics = all(value == replay["params"].get(key)
                            for key, value in params.items() if key != "stages")
+        state_comparison = replay_state_comparison(state, replay["state"], params["ntor"])
         valid = (not replay["checkpoint"] and replay["status"] == 0 and
                  replay["precision"] == 0 and len(stages) == 1 and
                  replay["total_iterations"] == 1 and same_physics and
@@ -253,9 +289,10 @@ def output_checks(input_path, native, checkpoint_path=None, replay_path=None):
                  stages[0]["converged"] and not stages[0]["restarts"] and
                  all(math.isfinite(x) and 0 <= x < params["stages"][-1]["ftol"]
                      for x in stages[0]["residual"]) and
-                 same_bits(state, replay["state"]))
-        checks["replay_iteration1_original_tolerance_state_exact"] = valid
+                 state_comparison["passed"])
+        checks["replay_iteration1_original_tolerance_state_preserved"] = valid
         optional["replay"] = dict(path=replay["path"], stages=stages, passed=valid,
+            state_comparison=state_comparison,
             # A fresh checkpoint epoch can recompute norm factors differently;
             # its own original-tolerance convergence is the required check.
             residual_triple_exact=bool(stages and
@@ -382,9 +419,15 @@ def read_vmecpp(path):
             physics["rbcc"] = np.asarray(indata["rbc"][()]).reshape(mpol).tolist()
             physics["zbsc"] = np.asarray(indata["zbs"][()]).reshape(mpol).tolist()
         metadata["input_physics"] = physics
+        metadata["input_controls"] = {key: np.asarray(indata[key][()]).tolist()
+            for key in ("ns_array", "niter_array", "ftol_array", "ntheta", "nzeta")}
         for name in ("ier_flag", "fsqr", "fsqz", "fsql"):
             if name in wout:
                 metadata[name] = np.asarray(wout[name][()]).item()
+        reference_ftol = metadata["input_controls"]["ftol_array"][-1]
+        metadata["converged_at_input_tolerance"] = bool(metadata.get("ier_flag") == 0 and
+            all(math.isfinite(metadata.get(key, math.nan)) and
+                0 <= metadata[key] < reference_ftol for key in ("fsqr", "fsqz", "fsql")))
     if not np.all(np.isfinite(state)):
         raise ValueError(f"{path}: nonfinite VMEC++ state")
     return state, metadata
@@ -428,6 +471,7 @@ def validate_pair(input_path, baseline_path, candidate_path, *, baseline_checkpo
                for key, value in metadata["input_physics"].items()):
             raise ValueError(f"{vmecpp_path}: VMEC++ and cuMES physical inputs differ")
         result["vmecpp_diagnostic"] = dict(metadata=metadata,
+            reference_valid=metadata["converged_at_input_tolerance"],
             baseline=compare_states(baseline["state"], vmec_state),
             candidate=compare_states(candidate["state"], vmec_state),
             convergence_oracle=False)
