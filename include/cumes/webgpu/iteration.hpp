@@ -28,6 +28,8 @@ struct IterationCase {
     bool compact_norms = false;
     bool compact_fields = false;
     bool geometry_control = false;
+    bool include_lcfs = false;
+    bool include_edge_invariant = false;
     AxisymmetricPreconditionerElements elements;
     AxisymmetricPreconditionerMatrix matrix;
     std::vector<float> r_con0, r_con0_lo, z_con0, z_con0_lo, tcon;
@@ -53,6 +55,11 @@ struct IterationResult {
 };
 
 using IterationCallback = std::function<void(std::string, IterationResult)>;
+// Resume after the caller accepts the geometry and updates the vacuum force.
+using ResumeIteration =
+    std::function<void(IterationCase, DeviceFields, IterationCallback)>;
+using IterationPrefixCallback =
+    std::function<void(std::string, IterationResult, ResumeIteration)>;
 
 std::uint64_t iteration_readback_capacity(const AxisymmetricStageData& stage);
 
@@ -60,5 +67,10 @@ void enqueue_iteration(const wgpu::Device& device,
                        IterationCase input,
                        const std::shared_ptr<ReadbackBatch>& batch,
                        IterationCallback callback);
+
+void enqueue_iteration_prefix(const wgpu::Device& device,
+                              IterationCase input,
+                              const std::shared_ptr<ReadbackBatch>& batch,
+                              IterationPrefixCallback callback);
 
 }  // namespace cumes::webgpu

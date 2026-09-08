@@ -19,7 +19,8 @@ void update_vacuum(FreeBoundaryOperator<double>& vacuum,
                    const AxisymmetricStageData& stage,
                    std::span<const float> state_lo,
                    const AxisymmetricForceCase& fields);
-void apply_vacuum_force(FreeBoundaryOperator<double>& vacuum,
+void apply_vacuum_force(const wgpu::Device& device,
+                        FreeBoundaryOperator<double>& vacuum,
                         const AxisymmetricStageData& stage,
                         const AxisymmetricForceCase& fields,
                         AxisymmetricForceResult& force);

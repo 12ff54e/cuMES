@@ -15,6 +15,26 @@ class IterationDispatch
     IterationCallback callback;
     IterationResult result;
     std::string error;
+    bool prefix_only = false;
+
+    void resume(IterationCase next,
+                DeviceFields force,
+                IterationCallback complete) {
+        input = std::move(next);
+        callback = std::move(complete);
+        prefix_only = false;
+        force_.device_fields = std::move(force);
+        forward(force_.device_fields, 0);
+        map();
+    }
+
+    void map() {
+        const auto self = shared_from_this();
+        batch->map([self](std::string mapping_error) {
+            if (self->error.empty()) self->error = std::move(mapping_error);
+            self->complete();
+        });
+    }
 
     void start() {
         ToroidalInverseCase inverse;
@@ -34,13 +54,9 @@ class IterationDispatch
             }};
         enqueue_toroidal_inverse(device, inverse,
                                  collect(&IterationResult::inverse));
-        const auto self = shared_from_this();
         // All device-ready callbacks above are synchronous. The whole DAG is
         // submitted before this single map; decode callbacks only store values.
-        batch->map([self](std::string mapping_error) {
-            if (self->error.empty()) self->error = std::move(mapping_error);
-            self->complete();
-        });
+        map();
     }
 
    private:
@@ -75,7 +91,8 @@ class IterationDispatch
                 return;
             }
         }
-        callback(std::move(error), std::move(result));
+        auto done = std::move(callback);
+        done(std::move(error), std::move(result));
     }
 
     ToroidalInverseResult inverse_;
@@ -183,6 +200,15 @@ class IterationDispatch
         in.phip_f = p.phip_f;
         in.phip_f_lo = p.phip_f_lo;
         const auto self = shared_from_this();
+        if (prefix_only) {
+            in.batched_readback = {batch,
+                                   [self](AxisymmetricForceResult value) {
+                                       self->force_ = std::move(value);
+                                   }};
+            enqueue_axisymmetric_force(device, in,
+                                       collect(&IterationResult::force));
+            return;
+        }
         enqueue_axisymmetric_force(
             device, in,
             [self](std::string error, AxisymmetricForceResult value) {
@@ -204,6 +230,7 @@ class IterationDispatch
         in.use_fft = input.use_fft;
         in.optimized_fft = input.optimized_fft;
         in.canonical_zeta = input.canonical_zeta;
+        in.include_lcfs = input.include_lcfs;
         in.readback = false;
         in.device_fields = fields;
         const auto self = shared_from_this();
@@ -225,6 +252,7 @@ class IterationDispatch
         in.double_single = input.double_single;
         in.device_residual = fields;
         in.zero_m1_z = index == 0 || input.zero_m1_z;
+        in.include_edge_rz = input.include_edge_invariant;
         in.readback_values = !input.compact_norms;
         in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
         in.sqrt_s_f_lo = input.stage.profiles.sqrt_s_f_lo;
@@ -258,6 +286,7 @@ class IterationDispatch
         AxisymmetricPreconditionerElementCase in;
         shape(in);
         in.delta_s = input.stage.profiles.delta_s;
+        in.free_boundary = input.include_lcfs;
         in.device_geometry = inverse_.device_geometry;
         in.device_base_geometry = geometry_.device_fields;
         in.device_magnetic_field = magnetic_.device_fields;
@@ -277,6 +306,7 @@ class IterationDispatch
         shape(in);
         in.nfp = input.stage.nfp;
         in.delta_s = input.stage.profiles.delta_s;
+        in.free_boundary = input.include_lcfs;
         in.elements = elements_;
         in.device_base_geometry = geometry_.device_fields;
         in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
@@ -339,6 +369,7 @@ class IterationDispatch
         in.elements = elements_;
         in.matrix = matrix_;
         in.device_residual = residual;
+        in.include_lcfs = input.include_lcfs;
         in.readback = {batch, [self = shared_from_this()](
                                   AxisymmetricPreconditionerApplyResult value) {
                            self->norm(value.device_residual, 2, [] {});
@@ -358,7 +389,7 @@ class IterationDispatch
         in.residual = fields;
         in.ns = input.stage.ns;
         in.paired = index != 2 && input.double_single;
-        in.include_edge_rz = index == 2;
+        in.include_edge_rz = index == 2 || input.include_edge_invariant;
         in.readback = {
             batch, [next = std::move(next)](ResidualNormResult) { next(); }};
         enqueue_residual_norm(
@@ -388,7 +419,9 @@ std::uint64_t iteration_readback_capacity(const AxisymmetricStageData& stage) {
         std::uint64_t(stage.ns) * stage.mpol * (stage.ntor + 1);
     // Paired inverse (40), geometry (20), magnetic (10), constraint (7),
     // two residual snapshots (36 spectral), preconditioner and descent slack.
-    return sizeof(float) * (80 * points + 80 * spectral + 32 * stage.ns) + 256;
+    return sizeof(float) * ((stage.free_boundary ? 112 : 80) * points +
+                            80 * spectral + 32 * stage.ns) +
+           256;
 }
 
 void enqueue_iteration(const wgpu::Device& device,
@@ -400,6 +433,31 @@ void enqueue_iteration(const wgpu::Device& device,
     dispatch->input = std::move(input);
     dispatch->batch = batch;
     dispatch->callback = std::move(callback);
+    dispatch->start();
+}
+
+void enqueue_iteration_prefix(const wgpu::Device& device,
+                              IterationCase input,
+                              const std::shared_ptr<ReadbackBatch>& batch,
+                              IterationPrefixCallback callback) {
+    auto dispatch = std::make_shared<IterationDispatch>();
+    dispatch->device = device;
+    dispatch->input = std::move(input);
+    dispatch->batch = batch;
+    dispatch->prefix_only = true;
+    // The continuation retains the device views while the host checks the
+    // Jacobian and performs NESTOR. It is discarded on a rejected geometry.
+    const std::weak_ptr<IterationDispatch> weak = dispatch;
+    dispatch->callback = [weak, callback = std::move(callback)](
+                             std::string error, IterationResult result) {
+        auto pending = weak.lock();
+        callback(std::move(error), std::move(result),
+                 [pending](IterationCase next, DeviceFields force,
+                           IterationCallback complete) {
+                     pending->resume(std::move(next), std::move(force),
+                                     std::move(complete));
+                 });
+    };
     dispatch->start();
 }
 

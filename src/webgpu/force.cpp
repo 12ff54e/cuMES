@@ -311,10 +311,11 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
                        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
                        "force radial profiles");
     auto obuf = buffer(device, ob,
-                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
+                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc |
+                           wgpu::BufferUsage::CopyDst,
                        "force output");
     auto read =
-        !in.readback
+        !in.readback || in.batched_readback.batch
             ? wgpu::Buffer{}
             : buffer(device, ob,
                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
@@ -400,6 +401,25 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(nf) + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
     pass.End();
+    if (in.batched_readback.batch) {
+        AxisymmetricForceResult ready;
+        ready.device_fields = {obuf, values, 0, values * sizeof(float)};
+        in.batched_readback.batch->append(
+            encoder, obuf, 0, ob,
+            [callback = std::move(callback), ready, paired = in.double_single,
+             values](std::span<const float> words) mutable {
+                auto result = ready;
+                result.fields.assign(words.begin(), words.begin() + values);
+                if (paired)
+                    result.fields_lo.assign(words.begin() + values,
+                                            words.end());
+                callback({}, std::move(result));
+            });
+        const auto commands = encoder.Finish();
+        q.Submit(1, &commands);
+        in.batched_readback.publish_device(std::move(ready));
+        return;
+    }
     if (!in.readback) {
         const auto commands = encoder.Finish();
         q.Submit(1, &commands);

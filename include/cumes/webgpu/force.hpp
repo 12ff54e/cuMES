@@ -2,6 +2,7 @@
 #define CUMES_INCLUDE_CUMES_WEBGPU_FORCE_HPP_
 #include "cumes/webgpu/device_fields.hpp"
 #include "cumes/webgpu/float_geometry.hpp"
+#include "cumes/webgpu/readback_batch.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -14,7 +15,9 @@ namespace cumes::webgpu {
 
 inline constexpr std::size_t FORCE_FIELD_COUNT = 16;
 
+struct AxisymmetricForceResult;
 struct AxisymmetricForceCase {
+    BatchedReadback<AxisymmetricForceResult> batched_readback;
     DeviceFields device_geometry;
     DeviceFields device_base_geometry;
     DeviceFields device_magnetic_field;

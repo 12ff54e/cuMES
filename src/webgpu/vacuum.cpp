@@ -8,15 +8,22 @@ template class cumes::FreeBoundaryOperator<double>;
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/vacuum.hpp"
 
+#include <algorithm>
+#include <array>
+
 namespace cumes::webgpu {
 namespace {
 std::vector<double> reconstruct(std::span<const float> high,
-                                std::span<const float> low) {
-    std::vector<double> values(high.begin(), high.end());
+                                std::span<const float> low,
+                                std::size_t offset,
+                                std::size_t count) {
+    const auto selected = high.subspan(offset, count);
+    std::vector<double> values(selected.begin(), selected.end());
     if (!low.empty()) {
         if (low.size() != high.size())
             throw CumesError("vacuum precision shape mismatch");
-        for (std::size_t i = 0; i < values.size(); ++i) values[i] += low[i];
+        for (std::size_t i = 0; i < values.size(); ++i)
+            values[i] += low[offset + i];
     }
     return values;
 }
@@ -63,66 +70,117 @@ void update_vacuum(FreeBoundaryOperator<double>& vacuum,
                    const AxisymmetricStageData& stage,
                    std::span<const float> state_lo,
                    const AxisymmetricForceCase& fields) {
-    auto state = reconstruct(stage.state, state_lo);
-    const auto geometry = reconstruct(fields.geometry, fields.geometry_lo);
-    const auto magnetic =
-        reconstruct(fields.magnetic_field, fields.magnetic_field_lo);
     const int angular = stage.ntheta * stage.nzeta;
     const int points = stage.ns * angular;
     const int half = (stage.ns - 1) * angular;
     const int modes = stage.mpol * (stage.ntor + 1);
     const int family = modes * stage.ns;
+    // NESTOR consumes only the outer two half-grid averages, the LCFS
+    // coefficients and the magnetic axis. Reconstruct those slices only.
+    const auto field = [&](int offset, int count) {
+        return reconstruct(fields.magnetic_field, fields.magnetic_field_lo,
+                           offset, count);
+    };
+    const auto bu = field(3 * half - 2 * angular, 2 * angular);
+    const auto bv = field(4 * half - 2 * angular, 2 * angular);
+    std::array<double, 4> edge_averages{};
+    vacuum.enqueue_surface_averages(bu.data(), bv.data(), edge_averages.data(),
+                                    3, stage.ntheta, stage.nzeta, nullptr);
     std::vector<double> averages(2 * (stage.ns - 1));
-    std::vector<double> lcfs(4 * modes);
+    std::copy_n(edge_averages.begin(), 2, averages.end() - stage.ns - 1);
+    std::copy_n(edge_averages.begin() + 2, 2, averages.end() - 2);
+    std::vector<double> boundary(4 * modes), lcfs(4 * modes);
+    constexpr std::array<int, 4> FAMILIES{0, 3, 1, 4};
+    for (int field_index = 0; field_index < 4; ++field_index) {
+        for (int mode = 0; mode < modes; ++mode) {
+            const auto index =
+                FAMILIES[field_index] * family + (mode + 1) * stage.ns - 1;
+            double value = stage.state[index];
+            if (!state_lo.empty()) value += state_lo[index];
+            boundary[field_index * modes + mode] = value;
+        }
+    }
+    vacuum.enqueue_lcfs_repack(boundary.data(), boundary.data() + modes,
+                               boundary.data() + 2 * modes,
+                               boundary.data() + 3 * modes, lcfs.data(), 1,
+                               modes, stage.mpol, stage.ntor, nullptr);
+    const auto geometry = [&](int offset) {
+        return reconstruct(fields.geometry, fields.geometry_lo, offset,
+                           angular);
+    };
+    const auto r_axis = geometry(0), z_axis = geometry(points);
     std::vector<double> axis(2 * stage.nzeta);
-    vacuum.enqueue_surface_averages(
-        magnetic.data() + 2 * half, magnetic.data() + 3 * half, averages.data(),
-        stage.ns, stage.ntheta, stage.nzeta, nullptr);
-    vacuum.enqueue_lcfs_repack(state.data(), state.data() + 3 * family,
-                               state.data() + family, state.data() + 4 * family,
-                               lcfs.data(), stage.ns, modes, stage.mpol,
-                               stage.ntor, nullptr);
-    vacuum.enqueue_axis_extract(geometry.data(), geometry.data() + points,
-                                axis.data(), stage.ntheta, stage.nzeta,
-                                nullptr);
+    vacuum.enqueue_axis_extract(r_axis.data(), z_axis.data(), axis.data(),
+                                stage.ntheta, stage.nzeta, nullptr);
     vacuum.run_host_update(stage.ns, averages.data(),
                            averages.data() + stage.ns - 1, lcfs.data(),
                            axis.data(), axis.data() + stage.nzeta, nullptr);
 }
 
-void apply_vacuum_force(FreeBoundaryOperator<double>& vacuum,
+void apply_vacuum_force(const wgpu::Device& device,
+                        FreeBoundaryOperator<double>& vacuum,
                         const AxisymmetricStageData& stage,
                         const AxisymmetricForceCase& fields,
                         AxisymmetricForceResult& force) {
-    const auto geometry = reconstruct(fields.geometry, fields.geometry_lo);
-    const auto magnetic =
-        reconstruct(fields.magnetic_field, fields.magnetic_field_lo);
-    auto values = reconstruct(force.fields, force.fields_lo);
     const int angular = stage.ntheta * stage.nzeta;
     const int points = stage.ns * angular;
     const int half = (stage.ns - 1) * angular;
-    std::vector<double> rbsq(angular);
+    const auto geometry = [&](int field, int surfaces) {
+        const int offset = (field + 1) * points - surfaces * angular;
+        return reconstruct(fields.geometry, fields.geometry_lo, offset,
+                           surfaces * angular);
+    };
+    // The shared rBSq kernel needs the last three full-grid rows and two
+    // half-grid rows. The edge-force kernel needs only the LCFS row.
+    const auto r_e = geometry(0, 3), r_o = geometry(6, 3);
+    const auto pressure =
+        reconstruct(fields.magnetic_field, fields.magnetic_field_lo,
+                    5 * half - 2 * angular, 2 * angular);
+    std::vector<double> values(4 * angular), rbsq(angular);
+    for (int field = 0; field < 4; ++field) {
+        for (int point = 0; point < angular; ++point) {
+            const int index = (field + 1) * points - angular + point;
+            double value = force.fields[index];
+            if (!force.fields_lo.empty()) value += force.fields_lo[index];
+            values[field * angular + point] = value;
+        }
+    }
     double delbsq = 0;
-    vacuum.enqueue_rbsq(geometry.data(), geometry.data() + 6 * points,
-                        magnetic.data() + 4 * half, rbsq.data(), &delbsq,
-                        stage.ns, stage.ntheta, stage.nzeta, angular,
+    vacuum.enqueue_rbsq(r_e.data(), r_o.data(), pressure.data(), rbsq.data(),
+                        &delbsq, 3, stage.ntheta, stage.nzeta, angular,
                         1.0 / (stage.ns - 1), nullptr);
+    const auto zu_e = geometry(4, 1), zu_o = geometry(10, 1);
+    const auto ru_e = geometry(3, 1), ru_o = geometry(9, 1);
     vacuum.enqueue_edge_force(
-        values.data(), values.data() + points, values.data() + 2 * points,
-        values.data() + 3 * points, geometry.data() + 4 * points,
-        geometry.data() + 10 * points, geometry.data() + 3 * points,
-        geometry.data() + 9 * points, rbsq.data(), stage.ns, stage.ntheta,
-        stage.nzeta, nullptr);
+        values.data(), values.data() + angular, values.data() + 2 * angular,
+        values.data() + 3 * angular, zu_e.data(), zu_o.data(), ru_e.data(),
+        ru_o.data(), rbsq.data(), 1, stage.ntheta, stage.nzeta, nullptr);
     // Only the LCFS force changes; preserve every interior GPU result word.
     for (int field = 0; field < 4; ++field) {
-        for (int point = points - angular; point < points; ++point) {
-            const int index = field * points + point;
-            const auto pair = split(values[index]);
+        for (int point = 0; point < angular; ++point) {
+            const int index = (field + 1) * points - angular + point;
+            const auto pair = split(values[field * angular + point]);
             force.fields[index] = pair.hi;
             if (!force.fields_lo.empty()) force.fields_lo[index] = pair.lo;
         }
     }
-    force.device_fields = {};
+    if (device && force.device_fields) {
+        const auto queue = device.GetQueue();
+        const auto& fields = force.device_fields;
+        for (int field = 0; field < 4; ++field) {
+            const std::size_t first = (field + 1) * points - angular;
+            const auto offset = first * sizeof(float);
+            queue.WriteBuffer(fields.buffer, fields.high_offset + offset,
+                              force.fields.data() + first,
+                              angular * sizeof(float));
+            if (!force.fields_lo.empty())
+                queue.WriteBuffer(fields.buffer, fields.low_offset + offset,
+                                  force.fields_lo.data() + first,
+                                  angular * sizeof(float));
+        }
+    } else {
+        force.device_fields = {};
+    }
     vacuum.set_delbsq(delbsq);
 }
 

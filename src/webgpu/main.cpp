@@ -2873,6 +2873,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         if (production_solve_)
             publish_browser_iteration_timing(2, stage_index_ + 1);
         iteration_results_.reset();
+        resume_vacuum_iteration_ = {};
         if (attempted_passes_ >= initialized_stage_.max_iterations) {
             if (deferred_descent_callback_) {
                 const auto self = shared_from_this();
@@ -2925,34 +2926,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
         if (!device_iteration_state_) extrapolate_stage_axis();
         const auto self = shared_from_this();
-        if (resident_spectral_path()) {
-            cumes::webgpu::IterationCase input;
-            input.stage = initialized_stage_;
-            input.device_state = device_iteration_state_;
-            input.stage.state_lo = stage_state_lo_;
-            input.double_single = double_single_solve_;
-            input.refresh_preconditioner =
-                controller_->refresh_preconditioner() ||
-                preconditioner_elements_.ard.empty();
-            input.reset_reference = controller_->reset_constraint_reference();
-            input.zero_m1_z = controller_->effective_iteration() < 2 ||
-                              controller_->fsqz_prev() < 1.0e-6;
-            input.use_fft = requested_direct_dft() == 0;
-            input.optimized_fft = !requested_generic_fft();
-            input.canonical_zeta = requested_canonical_zeta();
-            input.shadow_norms = requested_shadow_norms();
-            input.compact_norms = requested_device_norms();
-            input.compact_fields = !requested_full_field_readbacks();
-            input.geometry_control = requested_geometry_control();
-            input.elements = preconditioner_elements_;
-            input.matrix = preconditioner_matrix_;
-            input.device_r_con0 = device_constraint_r_con0_;
-            input.device_z_con0 = device_constraint_z_con0_;
-            input.r_con0 = constraint_r_con0_;
-            input.r_con0_lo = constraint_r_con0_lo_;
-            input.z_con0 = constraint_z_con0_;
-            input.z_con0_lo = constraint_z_con0_lo_;
-            input.tcon = constraint_tcon_;
+        if (resident_spectral_path() || batched_free_boundary_path()) {
+            auto input = make_iteration_case();
             const auto capacity =
                 cumes::webgpu::iteration_readback_capacity(input.stage);
             if (!iteration_readback_ ||
@@ -2962,56 +2937,67 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                                                    capacity);
                 iteration_readback_capacity_ = capacity;
             }
-            cumes::webgpu::enqueue_iteration(
-                device_, std::move(input), iteration_readback_,
-                [self](std::string error,
-                       cumes::webgpu::IterationResult result) {
-                    if (!error.empty()) {
-                        self->finish(false, std::move(error));
-                        return;
-                    }
-                    if (self->deferred_descent_callback_) {
-                        self->commit_deferred_descent();
-                        self->extrapolate_stage_axis();
-                    }
-                    self->iteration_forward_index_ = 0;
-                    self->iteration_residual_index_ = 0;
-                    if (requested_shadow_norms()) {
-                        const auto prec = cumes::webgpu::residual_raw_norms(
-                            result.preconditioned.residual,
-                            self->initialized_stage_.ns,
-                            self->initialized_stage_.mpol,
-                            self->initialized_stage_.ntor, true);
-                        for (int index = 0; index < 3; ++index) {
-                            const auto& cpu =
-                                index == 2 ? prec
-                                           : result.residual[index].raw_norm;
-                            for (int family = 0; family < 3; ++family) {
-                                if (!std::isfinite(cpu[family])) continue;
-                                const double relative =
-                                    std::abs(cpu[family] -
-                                             result.norms[index].raw[family]) /
-                                    std::max(std::abs(cpu[family]), 1.0e-290);
-                                if (!result.norms[index].finite ||
-                                    !std::isfinite(relative) ||
-                                    relative > 2.0e-12) {
-                                    self->finish(
-                                        false, "GPU norm shadow mismatch: " +
-                                                   std::to_string(index) + "/" +
-                                                   std::to_string(family) +
-                                                   " relative=" +
-                                                   std::to_string(relative));
-                                    return;
-                                }
-                                self->shadow_norm_error_ = std::max(
-                                    self->shadow_norm_error_, relative);
+            auto receive = [self](std::string error,
+                                  cumes::webgpu::IterationResult result) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                if (self->deferred_descent_callback_) {
+                    self->commit_deferred_descent();
+                    self->extrapolate_stage_axis();
+                }
+                self->iteration_forward_index_ = 0;
+                self->iteration_residual_index_ = 0;
+                if (requested_shadow_norms() && !self->vacuum_) {
+                    const auto prec = cumes::webgpu::residual_raw_norms(
+                        result.preconditioned.residual,
+                        self->initialized_stage_.ns,
+                        self->initialized_stage_.mpol,
+                        self->initialized_stage_.ntor, true);
+                    for (int index = 0; index < 3; ++index) {
+                        const auto& cpu =
+                            index == 2 ? prec : result.residual[index].raw_norm;
+                        for (int family = 0; family < 3; ++family) {
+                            if (!std::isfinite(cpu[family])) continue;
+                            const double relative =
+                                std::abs(cpu[family] -
+                                         result.norms[index].raw[family]) /
+                                std::max(std::abs(cpu[family]), 1.0e-290);
+                            if (!result.norms[index].finite ||
+                                !std::isfinite(relative) ||
+                                relative > 2.0e-12) {
+                                self->finish(false,
+                                             "GPU norm shadow mismatch: " +
+                                                 std::to_string(index) + "/" +
+                                                 std::to_string(family) +
+                                                 " relative=" +
+                                                 std::to_string(relative));
+                                return;
                             }
+                            self->shadow_norm_error_ =
+                                std::max(self->shadow_norm_error_, relative);
                         }
                     }
-                    self->iteration_results_ = std::move(result);
-                    self->finish_stage_inverse(
-                        std::move(self->iteration_results_->inverse), {});
-                });
+                }
+                self->iteration_results_ = std::move(result);
+                self->finish_stage_inverse(
+                    std::move(self->iteration_results_->inverse), {});
+            };
+            if (batched_free_boundary_path()) {
+                cumes::webgpu::enqueue_iteration_prefix(
+                    device_, std::move(input), iteration_readback_,
+                    [self, receive](std::string error,
+                                    cumes::webgpu::IterationResult result,
+                                    cumes::webgpu::ResumeIteration resume) {
+                        self->resume_vacuum_iteration_ = std::move(resume);
+                        receive(std::move(error), std::move(result));
+                    });
+            } else {
+                cumes::webgpu::enqueue_iteration(device_, std::move(input),
+                                                 iteration_readback_,
+                                                 std::move(receive));
+            }
             return;
         }
         if (initialized_stage_.ntor == 0 && !double_single_solve_) {
@@ -3126,7 +3112,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         base_geometry_case_.radius_reference =
             initialized_stage_.radius_reference;
         base_geometry_case_.geometry = std::move(geometry);
-        if (double_single_solve_ && !iteration_results_) {
+        if (double_single_solve_ && (!iteration_results_ || vacuum_)) {
             base_geometry_case_.geometry_lo = stage_geometry_lo_;
         } else {
             base_geometry_case_.geometry_lo.clear();
@@ -3291,12 +3277,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         magnetic_field_case_.prescribed_current =
             initialized_stage_.prescribed_current;
         magnetic_field_case_.double_single = double_single_solve_;
-        if (!iteration_results_) {
+        if (!iteration_results_ || vacuum_) {
             magnetic_field_case_.geometry = base_geometry_case_.geometry;
             magnetic_field_case_.geometry_lo = base_geometry_case_.geometry_lo;
         }
         magnetic_field_case_.base_geometry = std::move(base_geometry);
-        if (!iteration_results_) {
+        if (!iteration_results_ || vacuum_) {
             magnetic_field_case_.base_geometry_lo = stage_base_geometry_lo_;
         }
         magnetic_field_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
@@ -3478,14 +3464,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.lamscale_lo = initialized_stage_.profiles.lamscale_lo;
         force_case_.double_single = double_single_solve_;
         force_case_.radius_reference = initialized_stage_.radius_reference;
-        if (!iteration_results_) {
+        if (!iteration_results_ || vacuum_) {
             force_case_.geometry = magnetic_field_case_.geometry;
             force_case_.geometry_lo = stage_geometry_lo_;
             force_case_.base_geometry = magnetic_field_case_.base_geometry;
             force_case_.base_geometry_lo = stage_base_geometry_lo_;
         }
         force_case_.magnetic_field = std::move(magnetic_field);
-        if (!iteration_results_) {
+        if (!iteration_results_ || vacuum_) {
             force_case_.magnetic_field_lo = stage_magnetic_field_lo_;
         }
         force_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
@@ -3577,6 +3563,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 if (self->vacuum_ && self->vacuum_->apply_edge_force()) {
                     try {
                         cumes::webgpu::apply_vacuum_force(
+                            self->resident_path() ? self->device_
+                                                  : wgpu::Device{},
                             *self->vacuum_, self->initialized_stage_,
                             self->force_case_, actual);
                     } catch (const std::exception& error) {
@@ -3594,6 +3582,22 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_solovev_forward(std::vector<float> force_fields) {
+        if (resume_vacuum_iteration_) {
+            auto resume = std::move(resume_vacuum_iteration_);
+            resume_vacuum_iteration_ = {};
+            const auto self = shared_from_this();
+            resume(make_iteration_case(), device_force_fields_,
+                   [self](std::string error,
+                          cumes::webgpu::IterationResult result) {
+                       if (!error.empty()) {
+                           self->finish(false, std::move(error));
+                           return;
+                       }
+                       self->iteration_results_ = std::move(result);
+                       self->run_solovev_forward({});
+                   });
+            return;
+        }
         if (initialized_stage_.ntor != 0 || double_single_solve_) {
             solver_toroidal_forward_case_.ns = initialized_stage_.ns;
             solver_toroidal_forward_case_.device_fields = device_force_fields_;
@@ -3995,7 +3999,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.reset_reference =
             controller_->reset_constraint_reference() &&
             (!vacuum_ || !vacuum_->apply_edge_force());
-        if (vacuum_ && vacuum_->decay_rcon0_zcon0()) {
+        if (!iteration_results_ && vacuum_ && vacuum_->decay_rcon0_zcon0()) {
             cumes::webgpu::decay_vacuum_reference(constraint_r_con0_,
                                                   constraint_r_con0_lo_);
             cumes::webgpu::decay_vacuum_reference(constraint_z_con0_,
@@ -5371,6 +5375,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::AxisymmetricPreconditionerApplyCase
         preconditioner_apply_case_;
     cumes::webgpu::AxisymmetricDescentCase descent_case_;
+    cumes::webgpu::ResumeIteration resume_vacuum_iteration_;
     std::unique_ptr<cumes::FreeBoundaryOperator<double>> vacuum_;
     bool include_edge_invariant_ = false;
     std::optional<cumes::IterationController<double>> controller_;
@@ -5396,14 +5401,69 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_r_con_;
     std::vector<float> stage_z_con_;
     bool resident_path() const {
-        return !initialized_stage_.free_boundary &&
-               initialized_stage_.ntor > 0 &&
+        const bool free = initialized_stage_.free_boundary;
+        const bool free_batch = free && initialized_stage_.ntor > 0 &&
+                                !requested_spectral_fences() &&
+                                !requested_compare_fft();
+        return ((!free && initialized_stage_.ntor > 0) || free_batch) &&
                requested_reference_transfers() == 0;
     }
-    bool resident_spectral_path() const {
-        return production_solve_ && resident_path() &&
-               !requested_spectral_fences() && !requested_compare_fft();
+    bool batched_free_boundary_path() const {
+        return production_solve_ && initialized_stage_.free_boundary &&
+               resident_path();
     }
+    bool resident_spectral_path() const {
+        return !initialized_stage_.free_boundary && production_solve_ &&
+               resident_path() && !requested_spectral_fences() &&
+               !requested_compare_fft();
+    }
+    cumes::webgpu::IterationCase make_iteration_case() const {
+        cumes::webgpu::IterationCase input;
+        input.stage = initialized_stage_;
+        input.device_state = device_iteration_state_;
+        input.stage.state_lo = stage_state_lo_;
+        input.double_single = double_single_solve_;
+        input.refresh_preconditioner = controller_->refresh_preconditioner() ||
+                                       preconditioner_elements_.ard.empty();
+        input.reset_reference = controller_->reset_constraint_reference();
+        input.zero_m1_z = controller_->effective_iteration() < 2 ||
+                          controller_->fsqz_prev() < 1.0e-6;
+        input.use_fft = requested_direct_dft() == 0;
+        input.optimized_fft = !requested_generic_fft();
+        input.canonical_zeta = requested_canonical_zeta();
+        input.shadow_norms = requested_shadow_norms();
+        input.compact_norms = requested_device_norms();
+        input.compact_fields = !requested_full_field_readbacks();
+        input.geometry_control = requested_geometry_control();
+        input.elements = preconditioner_elements_;
+        input.matrix = preconditioner_matrix_;
+        input.device_r_con0 = device_constraint_r_con0_;
+        input.device_z_con0 = device_constraint_z_con0_;
+        input.r_con0 = constraint_r_con0_;
+        input.r_con0_lo = constraint_r_con0_lo_;
+        input.z_con0 = constraint_z_con0_;
+        input.z_con0_lo = constraint_z_con0_lo_;
+        input.tcon = constraint_tcon_;
+        if (vacuum_) {
+            // Free-boundary norms retain the original host summation order.
+            input.compact_norms = false;
+            input.compact_fields = false;
+            input.geometry_control = false;
+            input.include_lcfs = vacuum_->apply_edge_force();
+            input.include_edge_invariant = include_edge_invariant_;
+            input.reset_reference &= !input.include_lcfs;
+            input.device_r_con0 = {};
+            input.device_z_con0 = {};
+            if (vacuum_->decay_rcon0_zcon0()) {
+                cumes::webgpu::decay_vacuum_reference(input.r_con0,
+                                                      input.r_con0_lo);
+                cumes::webgpu::decay_vacuum_reference(input.z_con0,
+                                                      input.z_con0_lo);
+            }
+        }
+        return input;
+    }
+
     // Feed collected values through the same validation/controller chain as
     // the reference path. No operator is resubmitted while consuming a batch.
     // In that path, callers need not materialize duplicate input arrays. Keep

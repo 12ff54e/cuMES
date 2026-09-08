@@ -47,6 +47,15 @@ comparisons; other positive counts are capped at the available pool size.
 Fixed-boundary runs do not create MAKEGRID workers. Coil sums retain their
 original order within each grid point, independent of the thread count.
 
+Free-boundary 3-D solves reuse the resident plasma operators in two batches:
+inverse/geometry/magnetic/MHD force, then projection/constraint/preconditioning.
+Between them the host accepts the geometry, updates the existing double NESTOR
+solve, and uploads only the four corrected LCFS force rows. Rejected geometry
+discards the pending continuation before the vacuum state can change. The
+coupling reconstructs only the axis, boundary coefficients and outer rows it
+needs; it retains the native bridge kernels and reduction order. `&resident=0`
+selects the original separate-dispatch path for trajectory comparisons.
+
 Choose **Fixed boundary** or **Free boundary** above the editor. Free-boundary
 setup defaults to paired precision and offers Solovev, W7-X (vacuum), and
 cth_like coil configurations, plus
