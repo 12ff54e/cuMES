@@ -10,7 +10,7 @@ foreach(extension IN ITEMS html js wasm)
 endforeach()
 
 get_filename_component(artifact_dir "${ARTIFACT_BASE}" DIRECTORY)
-foreach(asset IN ITEMS browser_ui.js verification_worker.js residual_plot.js equilibrium_view.js orbit_renderer.js boundary_editor.js)
+foreach(asset IN ITEMS browser_ui.js verification_worker.js residual_plot.js free_boundary.js coil_geometry.js equilibrium_view.js orbit_renderer.js boundary_editor.js cumes_coils.mjs cumes_coils.wasm)
   if(NOT EXISTS "${artifact_dir}/${asset}")
     message(FATAL_ERROR "missing WebGPU frontend: ${asset}")
   endif()

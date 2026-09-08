@@ -68,9 +68,23 @@ in the view; 2-D cuts remain available. Device loss releases the renderer and
 asks for a reload or browser restart, since Firefox can stop delivering
 animation callbacks even after a replacement device has been initialized.
 
-The same position/index line layer can accept coil polylines. Opaque meshes
-and volume passes can share the camera and depth target, but coil visualization
-and volume rendering are not yet implemented. Display geometry uses WGSL f32;
+Free-boundary views draw the selected coils in copper around both the initial
+boundary and solved flux surfaces. The **Coils** toggle above the 3-D view
+retains its setting across reloads and remains available during a solve. Coil
+positions and indices use the same resident line layer as the surfaces;
+toggling visibility reuses those buffers and preserves the camera framing.
+Solovev's effectively infinite central conductor is clipped for display so
+its remote return path does not shrink the plasma out of view. Full-device
+coil files are drawn once, without replication by field period.
+
+`webgpu/coil_geometry.js` loads a small Wasm build of vacuum-field's existing
+`coils-convert` tool to normalize both preset and uploaded geometry. This
+reuses the solver's coils-dot and JSON parsing and validation. The preview
+and solver share the original selected coil bytes; MAKEGRID runs only when
+the solve starts. Fixed-boundary setup does not load the coil parser or assets.
+
+Opaque meshes and volume passes can share the camera and depth target;
+volume rendering is not yet implemented. Display geometry uses WGSL f32;
 this does not change equilibrium arithmetic or downloaded scientific data.
 CPU Fourier evaluation remains only for the 2-D cuts and section highlight.
 The production 3-D path performs no GPU readback; the geometry validation

@@ -47,7 +47,9 @@
     .equilibrium-3d { height:448px; cursor:grab; background:radial-gradient(ellipse at 52% 44%,#13263a,#07101a); }
     .equilibrium-3d:active { cursor:grabbing; }
     .equilibrium-3d[hidden] + .orbit-hint { display:none; }
-    .result-head-actions { display:flex; align-items:center; gap:10px; }
+    .result-head-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; }
+    #show-coils[aria-pressed="true"] { color:#ff9d72; border-color:#ab6242; background:#ff9d7212; }
+    #coil-view-note { margin:0; padding:8px 20px; }
     .axis-label { fill:#7f90a6; font-size:12px; }
     .grid-line { stroke:#29394c; stroke-width:1; }
     .boundary { fill:#55d6d012; stroke:var(--cyan); stroke-width:2.5; filter:drop-shadow(0 0 5px #55d6d055); }
@@ -241,7 +243,8 @@
       </section>
       <div class="result-column">
       <section class="panel results">
-        <div class="panel-head"><h2 id="result-title">Flux surfaces</h2><div class="result-head-actions"><span class="tag" id="preview-label" hidden>Boundary preview</span><div class="mode-switch" id="result-switch" hidden>
+        <div class="panel-head"><h2 id="result-title">Flux surfaces</h2><div class="result-head-actions"><span class="tag" id="preview-label" hidden>Boundary preview</span>
+          <button id="show-coils" class="secondary" type="button" aria-pressed="true" title="Show or hide coil geometry" hidden>Coils</button><div class="mode-switch" id="result-switch" hidden>
           <button id="mode-result-2d">2D cut</button><button id="mode-result-3d" class="active">3D view</button></div></div></div>
         <div class="plot-wrap"><svg id="result-plot" viewBox="0 0 700 520" aria-label="Converged flux-surface cross-section"></svg>
           <canvas class="equilibrium-3d" id="result-3d" aria-label="Interactive three-dimensional equilibrium" hidden></canvas>
@@ -250,6 +253,7 @@
         <div class="slice-control" id="result-slice-control" hidden><label for="result-slice-angle">Toroidal cross-section ζ <output id="result-slice-angle-value"></output></label>
           <input id="result-slice-angle" type="range" min="0" max="100" step="0.25" value="0" aria-label="Flux-surface toroidal angle within one field period">
         </div>
+        <p class="subtitle" id="coil-view-note" hidden>Distant conductor return paths are clipped to keep the plasma in view.</p>
         <div class="status-strip">
           <div class="metric"><small>Status</small><span><i class="status-dot"></i><b id="status">Editor ready</b></span></div>
           <div class="metric"><small>Iteration</small><span id="iteration">—</span></div>
@@ -279,6 +283,7 @@
   </section></template>
   <script src="browser_ui.js"></script>
   <script src="residual_plot.js"></script>
+  <script src="coil_geometry.js"></script>
   <script src="free_boundary.js"></script>
   <script src="equilibrium_view.js"></script>
   <script src="orbit_renderer.js"></script>
@@ -441,10 +446,19 @@
         if(!appMode||Number(progress[1])<=3||Number(progress[1])%25===0)append(line);return}
       const stage=line.match(/stage (\d+)\/(\d+) converged/);if(stage)document.body.dataset.cumesStage=stage[1];
       if(!appMode||/adapter selected|MAKEGRID using|Generating the coil|Coil field|vacuum pressure|Vacuum update|running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))append(line)}
+    let showCoils=localStorage.getItem('cumes.coils.visible')!=='false';
+    function updateCoils(){const canvas=value('result-3d'),state=canvas.cumesOrbit,geometry=boundaryMode.geometry();
+      const available=!!geometry&&!canvas.hidden;
+      value('show-coils').hidden=!available;value('show-coils').setAttribute('aria-pressed',String(showCoils));
+      if(state){if(state.coilGeometry!==geometry){state.coilGeometry=geometry;state.coils=coilLines(geometry,state.fourier)}
+        state.showCoils=showCoils;queueOrbitDraw(canvas)}
+      value('coil-view-note').hidden=!(available&&showCoils&&state?.coils?.clipped)}
+    window.cumesCoilsChanged=updateCoils;
+    value('show-coils').addEventListener('click',()=>{showCoils=!showCoils;localStorage.setItem('cumes.coils.visible',String(showCoils));updateCoils()});
     let resultMode='3d',resultData=null;function showResultMode(mode){resultMode=mode;const svg=value('result-plot'),canvas=value('result-3d');if(!svg||!canvas)return;
       svg.toggleAttribute('hidden',mode==='3d');canvas.hidden=mode!=='3d';for(const candidate of ['2d','3d'])value(`mode-result-${candidate}`)?.classList.toggle('active',candidate===mode);
       value('result-slice-control').hidden=mode!=='2d'||!resultData?.fourier?.ntor;
-      if(mode==='3d')queueOrbitDraw(canvas)}
+      updateCoils();if(mode==='3d')queueOrbitDraw(canvas)}
     value('mode-result-2d')?.addEventListener('click',()=>showResultMode('2d'));value('mode-result-3d')?.addEventListener('click',()=>showResultMode('3d'));
     function drawResultSlice(){if(!resultData)return;const fourier=resultData.fourier,phi=fourier?Number(value('result-slice-angle').value)/100*2*Math.PI/fourier.nfp:0;
       const surfaces=fourier?.ntor?fourierSections(fourier,phi):resultData.surfaces,svg=value('result-plot');
@@ -455,13 +469,14 @@
     value('result-slice-angle').addEventListener('input',drawResultSlice);
     function drawResult(data){if(!data.surfaces?.length)return;resultData=data;value('result-slice-angle').value=0;
       value('result-title').textContent='Flux surfaces';value('preview-label').hidden=true;drawResultSlice();
-      if(data.fourier&&appMode){value('result-switch').hidden=false;showResultMode('3d');installOrbitRenderer(value('result-3d'),data.fourier);value('result-3d').cumesOrbit.section=null}
+      if(data.fourier&&appMode){value('result-switch').hidden=false;showResultMode('3d');installOrbitRenderer(value('result-3d'),data.fourier);value('result-3d').cumesOrbit.section=null;updateCoils()}
       else{value('result-switch').hidden=true;showResultMode('2d')}
       if(appMode){value('result-empty').hidden=true;value('iteration').textContent=String(data.iterations);value('fsqr').textContent=Number(data.residual[0]).toExponential(3)}}
     function invalidateResult(){if(document.body.dataset.cumesWebgpu!=='pass'&&document.body.dataset.cumesWebgpu!=='fail')return;
       document.body.dataset.cumesWebgpu='ready';value('status').textContent='Boundary changed';value('run').textContent='Run updated boundary';
       value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-plot').removeAttribute('hidden');
       resultData=null;value('result-slice-control').hidden=true;value('result-3d').hidden=true;value('result-switch').hidden=true;value('result-empty').hidden=false;
+      updateCoils();
       value('result-empty').innerHTML='<strong>Boundary changed</strong><span>Run again to update the equilibrium.</span>';value('download').hidden=true;
       if(advancedEditor)showBoundaryPreview()}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
@@ -517,7 +532,7 @@
       value('result-switch').hidden=true;value('result-slice-control').hidden=true;value('result-plot').setAttribute('hidden','');canvas.hidden=false;value('result-empty').hidden=true;
       if(canvas.cumesOrbit?.fourier!==fourier)installOrbitRenderer(canvas,fourier);
       canvas.cumesOrbit.section=fourierSections(fourier,phi)[0].flatMap(([r,z])=>[r*Math.cos(phi),r*Math.sin(phi),z]);
-      queueOrbitDraw(canvas);
+      updateCoils();queueOrbitDraw(canvas);
     }
     async function prepareEditor(){
       if(!appMode)return;

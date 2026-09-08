@@ -1,5 +1,5 @@
 // Rendering owns its device and buffers; it never uses the solver's device.
-// Positions and line indices stay resident. Orbiting uploads only the camera.
+// Surfaces, coils, and line indices stay resident. Orbiting uploads only the camera.
 const ORBIT_RENDER_SHADER = `
 struct Camera { rotation: vec4f, viewport: vec4f }
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -8,7 +8,7 @@ struct Camera { rotation: vec4f, viewport: vec4f }
 @group(1) @binding(1) var<storage, read> indices: array<u32>;
 
 fn project(point: vec3f) -> vec4f {
-  let radius = max(1.0, bitcast<f32>(radius_bits[0]));
+  let radius = max(1.0, max(bitcast<f32>(radius_bits[0]), bitcast<f32>(radius_bits[1])));
   let rotation = camera.rotation;
   let x = rotation.x * point.x - rotation.y * point.y;
   let y = rotation.y * point.x + rotation.x * point.y;
@@ -34,12 +34,14 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) color: vec4f }
   let corner = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u)[vertex];
   var position = select(a, b, corner >= 2u);
   let radial = first.w;
-  let width = select(0.6 + 0.75 * radial, 2.5, radial < 0.0) * camera.viewport.w;
+  let width = select(select(0.6 + 0.75 * radial, 2.5, radial < 0.0),
+                     1.8, radial < -1.5) * camera.viewport.w;
   position = vec4f(position.xy + normal * select(-1.0, 1.0, (corner & 1u) != 0u) *
                    width / camera.viewport.xy * position.w, position.zw);
   let color = mix(vec3f(0.22, 0.84, 0.88), vec3f(0.52, 0.71, 1.0), radial);
   let alpha = select(0.12 + 0.35 * radial, 0.78, radial >= 1.0);
-  return Vertex(position, select(vec4f(color, alpha), vec4f(1.0, 0.714, 0.365, 1.0), radial < 0.0));
+  let line_color = select(vec4f(color, alpha), vec4f(1.0, 0.714, 0.365, 1.0), radial < 0.0);
+  return Vertex(position, select(line_color, vec4f(1.0, 0.49, 0.29, 0.9), radial < -1.5));
 }
 @fragment fn fragment_main(vertex: Vertex) -> @location(0) vec4f { return vertex.color; }
 `;
@@ -141,7 +143,8 @@ class CumesOrbitRenderer {
     this.cameraGroup = device.createBindGroup({layout: this.pipeline.getBindGroupLayout(0), entries: [
       {binding: 0, resource: {buffer: this.cameraBuffer}}, {binding: 1, resource: {buffer: this.radiusBuffer}}
     ]});
-    this.surface = {}; this.section = {}; this.layers.push(this.surface, this.section);
+    this.surface = {}; this.section = {}; this.coils = {};
+    this.layers.push(this.surface, this.coils, this.section);
     const geometry = device.createShaderModule({code: ORBIT_SURFACE_SHADER, label: 'cuMES Fourier surface geometry'});
     this.surfacePipeline = await device.createComputePipelineAsync({
       label: 'cuMES Fourier surface generation', layout: 'auto', compute: {module: geometry, entryPoint: 'build_surfaces'}
@@ -203,7 +206,7 @@ class CumesOrbitRenderer {
       {binding: 0, resource: {buffer: this.meshParams}}, {binding: 1, resource: {buffer: this.coefficients}},
       {binding: 2, resource: {buffer: this.surface.positions}}, {binding: 3, resource: {buffer: this.radiusBuffer}}
     ]});
-    encoder.clearBuffer(this.radiusBuffer);
+    encoder.clearBuffer(this.radiusBuffer, 0, 4);
     const pass = encoder.beginComputePass({label: 'build Fourier surfaces'});
     pass.setPipeline(this.surfacePipeline); pass.setBindGroup(0, group);
     pass.dispatchWorkgroups(Math.ceil(vertices / 64), surfaces.length); pass.end();
@@ -219,6 +222,13 @@ class CumesOrbitRenderer {
       if (i + 1 < count) { indices[2 * i] = i; indices[2 * i + 1] = i + 1; }
     }
     this.setLines(this.section, positions, indices); this.sectionSource = section;
+  }
+
+  setCoils(coils) {
+    if (coils?.indices.length) this.setLines(this.coils, coils.positions, coils.indices);
+    else this.coils.count = 0;
+    this.device.queue.writeBuffer(this.radiusBuffer, 4, new Float32Array([coils?.radius || 0]));
+    this.coilSource = coils;
   }
 
   resize(width, height) {
@@ -237,6 +247,7 @@ class CumesOrbitRenderer {
     const encoder = this.device.createCommandEncoder({label: 'orbit frame'});
     if (this.fourier !== state.fourier) this.setFourier(state.fourier, encoder);
     if (this.sectionSource !== state.section) this.setSection(state.section);
+    if (this.coilSource !== state.coils) this.setCoils(state.coils);
     const limit = this.device.limits.maxTextureDimension2D;
     const dpr = Math.min(2, devicePixelRatio || 1, limit / rect.width, limit / rect.height);
     const width = Math.max(1, Math.round(rect.width * dpr)), height = Math.max(1, Math.round(rect.height * dpr));
@@ -249,7 +260,7 @@ class CumesOrbitRenderer {
       depthStencilAttachment: {view: this.depthView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard'}
     });
     pass.setPipeline(this.pipeline); pass.setBindGroup(0, this.cameraGroup);
-    for (const layer of this.layers) if (layer.count) {
+    for (const layer of this.layers) if (layer.count && (layer !== this.coils || state.showCoils)) {
       pass.setBindGroup(1, layer.group); pass.draw(6, layer.count);
     }
     pass.end(); this.device.queue.submit([encoder.finish()]);

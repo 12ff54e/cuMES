@@ -52,6 +52,21 @@ set(VFIELD_BUILD_MAKEGRID ON CACHE BOOL "Generate browser coil grids in memory" 
 set(VFIELD_WARNINGS_AS_ERRORS ${CUMES_WARNINGS_AS_ERRORS} CACHE BOOL "Vacuum warnings policy" FORCE)
 add_subdirectory(${PROJECT_SOURCE_DIR}/deps/vacuum-field ${CMAKE_CURRENT_BINARY_DIR}/vacuum)
 target_link_libraries(cumes_webgpu PRIVATE vfield_cuda_double vfield::makegrid)
+
+# Reuse vacuum-field's converter for previews without loading the solver or
+# maintaining another coils-dot/JSON parser in JavaScript.
+add_executable(cumes_coils
+  ${PROJECT_SOURCE_DIR}/deps/vacuum-field/tools/coils_convert.cpp)
+target_link_libraries(cumes_coils PRIVATE vfield::makegrid)
+target_link_options(cumes_coils PRIVATE
+  -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0
+  -sPTHREAD_POOL_SIZE=0
+  "-sEXPORTED_RUNTIME_METHODS=['FS','callMain']"
+  "-sINCOMING_MODULE_JS_API=['locateFile','print','printErr']")
+set_target_properties(cumes_coils PROPERTIES SUFFIX ".mjs")
+add_dependencies(cumes_webgpu cumes_coils)
+set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
+  $<TARGET_FILE:cumes_coils>)
 target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_HOST)
 target_compile_definitions(cumes_webgpu PRIVATE
   CUMES_GIT_REVISION="${CUMES_GIT_REVISION}"
@@ -124,6 +139,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/orbit_renderer.js
   ${CMAKE_CURRENT_SOURCE_DIR}/boundary_editor.js
   ${CMAKE_CURRENT_SOURCE_DIR}/free_boundary.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/coil_geometry.js
   ${CMAKE_CURRENT_SOURCE_DIR}/presets/solovev.json
   ${CMAKE_CURRENT_SOURCE_DIR}/presets/w7x.json
   ${CMAKE_CURRENT_SOURCE_DIR}/presets/cth_like.json
@@ -204,6 +220,11 @@ if(CUMES_WEBGPU_NODE)
   add_test(NAME webgpu_free_boundary
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_free_boundary.mjs)
+  add_test(NAME webgpu_coils
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_coils.mjs
+            $<TARGET_FILE:cumes_coils>)
+  set_tests_properties(webgpu_coils PROPERTIES LABELS "unit;webgpu")
   set_tests_properties(webgpu_free_boundary PROPERTIES LABELS "unit;webgpu")
   add_test(NAME webgpu_worker
     COMMAND ${CUMES_WEBGPU_NODE}
