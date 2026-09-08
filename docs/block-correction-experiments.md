@@ -106,6 +106,15 @@ stage also exhausts the original 5000-pass cap, including the gentler
 four-step, scale-0.1 variant. This implementation is rejected: lowering
 lambda's residual alone does not improve the coupled descent.
 
+The early ns=99/pass-100 probe showed a much larger immediate residual drop,
+so a separate full-solve test applied a correction **only once**, at that
+point. Eight inner steps at scale 0.25 give W7-X 1315/1419/1315; eight at
+scale 1 give 1315/1419/1375; sixteen at scale 1 give 1315/1419/1306. The best
+saves 66 outer passes, only 1.61% of the complete solve before accounting for
+32 inner map applications and the extra full evaluation. Solovev worsens to
+235/193/367 or 235/193/394. This narrowly positive W7-X iteration result does
+not justify a default change or wider timing qualification.
+
 The manufactured BiCGStab test uses a nonsymmetric 4099-row tridiagonal
 system, exact diagonal systems at 513 and 1 rows, and zero-RHS reuse in both
 precisions. Double's true relative residual is 6.60e-13; float's is 1.03e-6.
@@ -134,6 +143,58 @@ start from the same state with a fresh controller; they are not continuations
 of the captured production trajectory. This rejects the small smooth basis
 as a correction space. It does not rule out coupling the radial preconditioner.
 
+## Coupled radial preconditioner
+
+A second R/Z prototype retained every legacy diagonal coefficient and added
+the principal radial cross terms for Rcc/Zsc, m>=1. The Jacobian's radial
+sensitivities are proportional to (-Zu, Ru); their mixed outer product must
+be projected against both Fourier basis functions. An unweighted Ru*Zu
+average can vanish by symmetry. The normalized Rcc/Zsc product is
+sin(2m theta) for n=0 and sin(2m theta)*(1+cos(2n zeta)) otherwise. The
+staggered odd-mode factors and m=1 axis elimination follow the existing
+preconditioner, including distinct off-diagonal entries after axis merging.
+
+Cross coefficients and 2x2 block-Thomas factors are cached at the existing
+25-pass refresh. For this prototype, applying the old diagonal matrix to the
+already preconditioned direction recovers its RHS before the coupled solve.
+This adds work to the existing preconditioner. A failed factorization or
+nonfinite solve leaves that mode's original direction intact. Scratch plus
+basis tables add about 3 MiB for W7-X in double. The original graph cadence
+and single control fence are preserved; the controller receives the actual
+modified preconditioned residuals.
+
+Precise-double TITAN Xp complete solves:
+
+| Cross-term strength | Solovev effective passes | W7-X effective passes | W7-X solve interval, ms |
+| ---: | --- | --- | ---: |
+| disabled | 235/193/326 | 1315/1419/1372 | 4589.8 |
+| 1e-20, arithmetic/overhead control | 235/193/326 | 1315/1419/1372 | 6426.9 |
+| 0.1 | 246/195/345 | 1314/1423/1475 | 6665.3 |
+| 0.25 | 248/191/340 | 1308/1448/1434 | 6634.6 |
+| 0.5 | 239/191/339 | 1296/1439/1445 | 6657.6 |
+
+All runs meet the unchanged residual tolerances. Disabled checkpoints are
+byte-identical to the preserved baseline. The negligible-cross control
+retains baseline iteration counts while exposing the substantial cost of the
+prototype's extra solve. These are exploratory, unpaired timings. Even
+before its added GPU work, every tested non-negligible coupling strength
+increases total iterations in both cases. This approximation is rejected.
+
+Independent manufactured tests check the block solution against a known
+solution and dense residual, a closed-form Fourier projection, asymmetric
+axis elimination, single-interior-row grids, protected families/boundaries,
+and singular/nonfinite fallback in both precisions. Maximum solution errors
+are 1.11e-16 double and 5.96e-8 float. Pascal memcheck, initcheck and synccheck
+report zero errors; the four float kernels contain no FP64 arithmetic or
+comparison instructions. The rejected operator, tests and live hook are
+archived rather than added to the production library.
+
+The finite-difference probes also show substantial response in *other*
+Fourier modes. Neither a lambda-only solve nor the tested same-mode radial
+blocks address the complete coupling among geometry, lambda and Fourier
+modes. A future coupled Newton/Krylov experiment should measure that full
+response rather than infer solver progress from one component's residual.
+
 ## Artifacts
 
 The session archive is
@@ -145,3 +206,7 @@ invalid-input results and the three targeted sanitizer runs.
 `rz-results/`, the `lambda-*-force-only.log` files and `live-results/` contain
 the measurements above. `live-source/` preserves the rejected full-solver
 lambda hook. These large local artifacts are not repository fixtures.
+`once/` records the single early lambda correction. `coupled-rz-prototype/`
+contains the rejected radial operator, manufactured tests, executable,
+sanitizer logs and build commands; `rz-live-source/`, `prepare_rz_live.py`,
+`build_rz_live.py` and `rz-live-results/` preserve its full-solver experiment.

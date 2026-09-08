@@ -529,6 +529,11 @@ control/axis/boundary copies in the graph and omitting unused transform timing
 events were also tested and removed because they showed no reliable gain.
 They are excluded from the reported candidate.
 
+The subsequent [block-correction experiments](block-correction-experiments.md)
+retain every configured multigrid stage and tolerance. Lambda inner solves
+and a coupled radial R/Z prototype did not qualify a further default speedup;
+the report records their complete-solve results and numerical validation.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
