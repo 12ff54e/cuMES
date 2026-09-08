@@ -231,6 +231,12 @@ optional-backend presets. Every computation is `template<typename T>`; `Real`
   writes `$PWD/cumes-output.bin`.
 - Every backend writes the schema-v1 container — a versioned state payload with
   full provenance for binary, NetCDF and HDF5.
+- `--single-grid` solves directly on the final radial grid, retaining its
+  configured tolerance and iteration cap. It selects the existing single-grid
+  cold-start policy and accepts a final-grid `--restart` checkpoint. For example:
+  `./build/cumes inputs/w7x.json --single-grid --output w7x-single.bin`.
+  This can shorten a solve and change its convergence trajectory; see the
+  [measurements and state comparisons](docs/aggressive-optimization-study.md).
 - `--restart <checkpoint>` / `-r <checkpoint>` and `--checkpoint <path>` /
   `-c <path>` read/write a v6 checkpoint; v1–v5 remain readable.
 - Strict schema-v1 behavior is the **default**: unknown input keys are errors,

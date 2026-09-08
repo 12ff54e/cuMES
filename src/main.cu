@@ -36,6 +36,7 @@
 #include <magnetic_coordinate/transform.hpp>
 #endif
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -130,6 +131,7 @@ int main(int argc, char** argv) {
         int boozer_radial_order;
         double boozer_resonance_tolerance;
         bool compatibility;
+        bool single_grid;
     };
 
     CLAP_BEGIN(CliInput)
@@ -166,6 +168,9 @@ int main(int argc, char** argv) {
     CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
         compatibility, "--compatibility",
         "warn and ignore unknown input keys instead of rejecting them")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        single_grid, "--single-grid",
+        "solve only the final radial grid at its configured tolerance and cap")
     CLAP_END(CliInput)
 
     CliInput cli{};
@@ -292,6 +297,29 @@ int main(int argc, char** argv) {
         fprintf(stderr, "cuMES: error loading input file: %s\n", e.what());
         return EXIT_FAILURE;
     }
+    // Validate the complete input before selecting a schedule. This explicit
+    // override preserves the final stage's resolution, tolerance and cap, and
+    // lets the existing single-grid seed/step policy handle the cold start.
+    if (cli.single_grid && vr.has_value() &&
+        vr.value().spec().stages.size() > 1) {
+        auto selected_spec = vr.value().spec();
+        selected_spec.stages.erase(selected_spec.stages.begin(),
+                                   selected_spec.stages.end() - 1);
+        auto selected = cumes::validate(std::move(selected_spec), opts);
+        if (selected.has_value()) {
+            for (const auto& issue : vr.value().warnings().issues()) {
+                const auto& warnings = selected.value().warnings().issues();
+                if (std::none_of(warnings.begin(), warnings.end(),
+                                 [&](const auto& existing) {
+                                     return existing.key == issue.key &&
+                                            existing.message == issue.message;
+                                 })) {
+                    selected.value().add_warning(issue.key, issue.message);
+                }
+            }
+        }
+        vr = std::move(selected);
+    }
     if (!vr.has_value()) {
         fprintf(stderr, "cuMES: input validation failed:\n");
         for (const auto& issue : vr.error().issues()) {
@@ -328,6 +356,8 @@ int main(int argc, char** argv) {
         shape.mpol, shape.ntor, shape.nfp, shape.ntheta, shape.nzeta,
         shape.ntheta * shape.nzeta,
         spec.current_model == cumes::CurrentModel::PRESCRIBED_CURRENT ? 1 : 0);
+    if (cli.single_grid)
+        printf("schedule: final radial grid selected by --single-grid\n");
     // Multi-radial-grid stage sequence (vmecpp ns_array/niter_array/ftol_array)
     printf("grids=%d: ns", n_grids);
     for (int g = 0; g < n_grids; ++g)

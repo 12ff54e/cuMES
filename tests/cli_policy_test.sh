@@ -90,6 +90,32 @@ check "invalid geometry precision reports a clean error" 1 \
   "CUMES_GEOMETRY_PRECISION: expected native or compensated" "terminate called" \
   env CUMES_GEOMETRY_PRECISION=invalid "$BIN" in_clean.json --output out.bin
 
+# Distinct stage caps/tolerances prove --single-grid selects the whole final
+# StageRequest. A one-pass cap keeps this independent of convergence tuning.
+cat > in_multigrid.json <<'EOF'
+{"mpol": 2, "ntor": 0, "nfp": 1, "am": [1.0], "aphi": [1.0], "ai": [0.5],
+ "rbc": [{"n": 0, "m": 1, "value": 1.0}],
+ "zbs": [{"n": 0, "m": 1, "value": 0.5}],
+ "ns_array": [5, 9], "niter_array": [2, 1], "ftol_array": [1e-5, 1e-6]}
+EOF
+check "single-grid retains the final stage controls" 1 \
+  "grids=1: ns9 (niter 1, ftol 1e-06)" "ns5->9" \
+  "$BIN" in_multigrid.json --single-grid --output single.bin --checkpoint single.ckpt
+check "single-grid restart uses the final grid" 1 \
+  "grids=1: ns9" "does not match stage-0 grid" \
+  "$BIN" in_multigrid.json --single-grid --restart single.ckpt --output replay.bin
+check "single-grid still rejects invalid input" 1 \
+  "unknown input key 'n_theta'" "WARNING: unknown input key" \
+  "$BIN" in_unknown.json --single-grid --output single.bin
+sed 's/"mpol": 2/"n_theta": 6, "mpol": 2/' in_multigrid.json > in_multigrid_unknown.json
+check "single-grid preserves compatibility warnings" 1 \
+  "WARNING: unknown input key" "input validation failed" \
+  "$BIN" in_multigrid_unknown.json --single-grid --compatibility --output single.bin
+sed 's/\[2, 1\]/[0, 1]/' in_multigrid.json > in_multigrid_invalid.json
+check "single-grid validates discarded stages" 1 \
+  "niter_array entries must be >= 1" "grids=1" \
+  "$BIN" in_multigrid_invalid.json --single-grid --output single.bin
+
 if [ "$fail" -ne 0 ]; then
   echo "cli_policy_test: FAILED"
   exit 1
