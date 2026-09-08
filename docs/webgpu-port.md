@@ -39,7 +39,11 @@ Boundary previews are labeled separately from converged flux surfaces. The
 result's **2D cut** view has its own toroidal-angle slider for 3-D equilibria,
 covering `0–360°/NFP`. It reconstructs cuts from the returned Fourier coefficients
 without another solve and keeps the angle when switching between 2D and 3D.
-Axisymmetric results do not show the angle control.
+A small 3-D inset in the top-right corner highlights the selected cut in orange
+and displays its zeta angle. It reuses the full view's WebGPU canvas, geometry
+buffers, camera, and coil visibility; the slider updates only the section line.
+The inset can still be orbited and zoomed. Axisymmetric results show the inset
+at zero degrees and do not show the angle control.
 
 The JSON panel retains access to profiles, field periods, angular/radial resolution,
 and iteration budgets. W7-X fixed-boundary edits and free-boundary setups are

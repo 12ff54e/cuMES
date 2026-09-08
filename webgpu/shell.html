@@ -47,6 +47,15 @@
     .equilibrium-3d { height:448px; cursor:grab; background:radial-gradient(ellipse at 52% 44%,#13263a,#07101a); }
     .equilibrium-3d:active { cursor:grabbing; }
     .equilibrium-3d[hidden] + .orbit-hint { display:none; }
+    .orbit-view { position:relative; }
+    .orbit-view .orbit-hint { left:14px; bottom:11px; }
+    .orbit-view.orbit-inset { position:absolute; top:26px; right:26px; width:clamp(140px,32%,210px);
+      border:1px solid var(--line); border-radius:10px; overflow:hidden; box-shadow:0 6px 24px #0006; }
+    .orbit-inset .equilibrium-3d { height:auto; aspect-ratio:4/3; border-radius:0; }
+    .orbit-inset .orbit-hint { display:none; }
+    .orbit-inset [data-renderer-error] + .orbit-hint { display:block; left:8px; right:8px; bottom:6px; font-size:10px; }
+    .inset-angle { position:absolute; top:7px; right:8px; color:var(--orange); background:#07101acc;
+      border-radius:4px; padding:2px 5px; font-size:11px; font-variant-numeric:tabular-nums; pointer-events:none; }
     .result-head-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; }
     #show-coils[aria-pressed="true"] { color:#ff9d72; border-color:#ab6242; background:#ff9d7212; }
     #coil-view-note { margin:0; padding:8px 20px; }
@@ -247,8 +256,11 @@
           <button id="show-coils" class="secondary" type="button" aria-pressed="true" title="Show or hide coil geometry" hidden>Coils</button><div class="mode-switch" id="result-switch" hidden>
           <button id="mode-result-2d">2D cut</button><button id="mode-result-3d" class="active">3D view</button></div></div></div>
         <div class="plot-wrap"><svg id="result-plot" viewBox="0 0 700 520" aria-label="Converged flux-surface cross-section"></svg>
-          <canvas class="equilibrium-3d" id="result-3d" aria-label="Interactive three-dimensional equilibrium" hidden></canvas>
-          <div class="hint orbit-hint" role="status" hidden>Preparing 3D view…</div>
+          <div class="orbit-view">
+            <canvas class="equilibrium-3d" id="result-3d" aria-label="Interactive three-dimensional equilibrium" title="Drag to orbit · wheel to zoom" hidden></canvas>
+            <div class="hint orbit-hint" role="status" hidden>Preparing 3D view…</div>
+            <output class="inset-angle" id="result-inset-angle" hidden></output>
+          </div>
           <div class="result-empty" id="result-empty"><strong>Ready to solve</strong><span>Shape the boundary, then run it on your GPU.</span></div></div>
         <div class="slice-control" id="result-slice-control" hidden><label for="result-slice-angle">Toroidal cross-section ζ <output id="result-slice-angle-value"></output></label>
           <input id="result-slice-angle" type="range" min="0" max="100" step="0.25" value="0" aria-label="Flux-surface toroidal angle within one field period">
@@ -455,28 +467,34 @@
       value('coil-view-note').hidden=!(available&&showCoils&&state?.coils?.clipped)}
     window.cumesCoilsChanged=updateCoils;
     value('show-coils').addEventListener('click',()=>{showCoils=!showCoils;localStorage.setItem('cumes.coils.visible',String(showCoils));updateCoils()});
-    let resultMode='3d',resultData=null;function showResultMode(mode){resultMode=mode;const svg=value('result-plot'),canvas=value('result-3d');if(!svg||!canvas)return;
-      svg.toggleAttribute('hidden',mode==='3d');canvas.hidden=mode!=='3d';for(const candidate of ['2d','3d'])value(`mode-result-${candidate}`)?.classList.toggle('active',candidate===mode);
+    let resultMode='3d',resultData=null,resultSection=null;function showResultMode(mode){resultMode=mode;const svg=value('result-plot'),canvas=value('result-3d');if(!svg||!canvas)return;
+      const inset=mode==='2d'&&appMode&&!!resultData?.fourier;
+      svg.toggleAttribute('hidden',mode==='3d');canvas.hidden=mode!=='3d'&&!inset;
+      canvas.parentElement.classList.toggle('orbit-inset',inset);value('result-inset-angle').hidden=!inset;
+      if(canvas.cumesOrbit)canvas.cumesOrbit.section=inset?resultSection:null;
+      for(const candidate of ['2d','3d'])value(`mode-result-${candidate}`)?.classList.toggle('active',candidate===mode);
       value('result-slice-control').hidden=mode!=='2d'||!resultData?.fourier?.ntor;
-      updateCoils();if(mode==='3d')queueOrbitDraw(canvas)}
+      updateCoils();queueOrbitDraw(canvas)}
     value('mode-result-2d')?.addEventListener('click',()=>showResultMode('2d'));value('mode-result-3d')?.addEventListener('click',()=>showResultMode('3d'));
     function drawResultSlice(){if(!resultData)return;const fourier=resultData.fourier,phi=fourier?Number(value('result-slice-angle').value)/100*2*Math.PI/fourier.nfp:0;
       const surfaces=fourier?.ntor?fourierSections(fourier,phi):resultData.surfaces,svg=value('result-plot');
       value('result-slice-angle-value').textContent=`${(phi*180/Math.PI).toFixed(1)}° / ${(360/(fourier?.nfp||1)).toFixed(1)}°`;
+      value('result-inset-angle').textContent=`3D · ζ = ${(phi*180/Math.PI).toFixed(1)}°`;
+      resultSection=fourier?surfaces.at(-1).flatMap(([r,z])=>[r*Math.cos(phi),r*Math.sin(phi),z]):null;
+      const canvas=value('result-3d');if(canvas.cumesOrbit){canvas.cumesOrbit.section=resultMode==='2d'?resultSection:null;queueOrbitDraw(canvas)}
       svg.setAttribute('aria-label',`Converged flux-surface cross-section at ζ = ${(phi*180/Math.PI).toFixed(1)} degrees`);svg.replaceChildren();
       const p=projection(surfaces.flat(),700,520,55);drawGrid(svg,700,520);surfaces.forEach((surface,i)=>{const d=surface.map((v,j)=>`${j?'L':'M'}${p.map(v).join(',')}`).join(' '),
         t=surfaces.length<2?1:i/(surfaces.length-1);svg.append(node('path',{d,fill:'none',stroke:`hsl(${188+32*t} 78% ${55+16*t}%)`,'stroke-width':i===surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))})}
     value('result-slice-angle').addEventListener('input',drawResultSlice);
     function drawResult(data){if(!data.surfaces?.length)return;resultData=data;value('result-slice-angle').value=0;
       value('result-title').textContent='Flux surfaces';value('preview-label').hidden=true;drawResultSlice();
-      if(data.fourier&&appMode){value('result-switch').hidden=false;showResultMode('3d');installOrbitRenderer(value('result-3d'),data.fourier);value('result-3d').cumesOrbit.section=null;updateCoils()}
+      if(data.fourier&&appMode){value('result-switch').hidden=false;installOrbitRenderer(value('result-3d'),data.fourier);showResultMode('3d')}
       else{value('result-switch').hidden=true;showResultMode('2d')}
       if(appMode){value('result-empty').hidden=true;value('iteration').textContent=String(data.iterations);value('fsqr').textContent=Number(data.residual[0]).toExponential(3)}}
     function invalidateResult(){if(document.body.dataset.cumesWebgpu!=='pass'&&document.body.dataset.cumesWebgpu!=='fail')return;
       document.body.dataset.cumesWebgpu='ready';value('status').textContent='Boundary changed';value('run').textContent='Run updated boundary';
       value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-plot').removeAttribute('hidden');
-      resultData=null;value('result-slice-control').hidden=true;value('result-3d').hidden=true;value('result-switch').hidden=true;value('result-empty').hidden=false;
-      updateCoils();
+      resultData=null;resultSection=null;showResultMode('2d');value('result-switch').hidden=true;value('result-empty').hidden=false;
       value('result-empty').innerHTML='<strong>Boundary changed</strong><span>Run again to update the equilibrium.</span>';value('download').hidden=true;
       if(advancedEditor)showBoundaryPreview()}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
@@ -529,7 +547,7 @@
       const canvas=value('result-3d'),fourier=surfaceEditor.fourier,phi=surfaceEditor.phi;
       value('result-title').textContent=boundaryMode.free?'Initial plasma boundary':'Input boundary';
       value('preview-label').hidden=false;value('preview-label').textContent=boundaryMode.free?'Initial guess':'3-D preview';
-      value('result-switch').hidden=true;value('result-slice-control').hidden=true;value('result-plot').setAttribute('hidden','');canvas.hidden=false;value('result-empty').hidden=true;
+      value('result-switch').hidden=true;showResultMode('3d');value('result-empty').hidden=true;
       if(canvas.cumesOrbit?.fourier!==fourier)installOrbitRenderer(canvas,fourier);
       canvas.cumesOrbit.section=fourierSections(fourier,phi)[0].flatMap(([r,z])=>[r*Math.cos(phi),r*Math.sin(phi),z]);
       updateCoils();queueOrbitDraw(canvas);
