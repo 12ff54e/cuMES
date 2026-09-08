@@ -43,11 +43,3 @@ function fourierSections(fourier, phi, segments = 160) {
   return fourier.surfaces.map(surface => Array.from({length: segments + 1}, (_, i) =>
     fourierPoint(fourier, surface.coefficients, 2 * Math.PI * i / segments, phi)));
 }
-
-function equilibriumMesh(fourier){const{ntor,nfp,ns}=fourier,thetaSegments=40,
-  phiSegments=ntor?Math.min(256,Math.max(64,nfp*16)):64,surfaces=[];
-  for(const source of fourier.surfaces){const points=new Float32Array((phiSegments+1)*(thetaSegments+1)*3),c=source.coefficients;
-      for(let p=0;p<=phiSegments;p++){const phi=2*Math.PI*p/phiSegments,cp=Math.cos(phi),sp=Math.sin(phi);
-        for(let t=0;t<=thetaSegments;t++){const [r,z]=fourierPoint(fourier,c,2*Math.PI*t/thetaSegments,phi);
-        const i=(p*(thetaSegments+1)+t)*3;points[i]=r*cp;points[i+1]=r*sp;points[i+2]=z}}
-    surfaces.push({radial:source.index/(ns-1),points})}return{surfaces,thetaSegments,phiSegments}}

@@ -22,11 +22,9 @@ for(const name of ['w7x','cth_like','solovev']){
   }
   const section=context.fourierSections(fourier,.2)[0];
   close(section[0][0],section.at(-1)[0]);close(section[0][1],section.at(-1)[1]);
-  const mesh=context.equilibriumMesh(fourier);
-  assert(mesh.surfaces[0].points.every(Number.isFinite));
 }
 assert.throws(()=>context.boundaryFourier({mpol:1e9}),/valid mpol/);
-console.log('PASS: VMEC signed-n geometry, stellarator symmetry, field periodicity, closed sections and finite meshes');
+console.log('PASS: VMEC signed-n geometry, stellarator symmetry, field periodicity and closed sections');
 vm.runInContext(readFileSync(new URL('../webgpu/boundary_editor.js',import.meta.url),'utf8'),context);
 context.URL=URL;
 let migrated;

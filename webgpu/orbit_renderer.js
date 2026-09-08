@@ -44,6 +44,55 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) color: vec4f }
 @fragment fn fragment_main(vertex: Vertex) -> @location(0) vec4f { return vertex.color; }
 `;
 
+// Same six real Fourier families used by the 2D view and solver output.
+// Geometry and its bounding radius are produced once per changed input, with
+// no GPU-to-CPU transfer. The render pass reads both buffers directly.
+const ORBIT_SURFACE_SHADER = `
+struct Mesh { mpol: u32, ntor: u32, nfp: u32, ns: u32,
+              theta_segments: u32, phi_segments: u32, vertices: u32, padding: u32 }
+@group(0) @binding(0) var<uniform> mesh: Mesh;
+@group(0) @binding(1) var<storage, read> coefficients: array<f32>;
+@group(0) @binding(2) var<storage, read_write> points: array<vec4f>;
+@group(0) @binding(3) var<storage, read_write> radius_bits: atomic<u32>;
+var<workgroup> radii: array<u32, 64>;
+
+@compute @workgroup_size(64)
+fn build_surfaces(@builtin(global_invocation_id) id: vec3u,
+                  @builtin(local_invocation_index) lane: u32) {
+  var radius = 0.0;
+  if (id.x < mesh.vertices) {
+    let row = mesh.theta_segments + 1u;
+    let theta = 6.283185307179586 * f32(id.x % row) / f32(mesh.theta_segments);
+    let phi = 6.283185307179586 * f32(id.x / row) / f32(mesh.phi_segments);
+    let modes = mesh.mpol * (mesh.ntor + 1u);
+    let base = id.y * (6u * modes + 1u);
+    var r = 0.0;
+    var z = 0.0;
+    for (var m = 0u; m < mesh.mpol; m++) {
+      let cm = cos(f32(m) * theta);
+      let sm = sin(f32(m) * theta);
+      for (var n = 0u; n <= mesh.ntor; n++) {
+        let mode = m * (mesh.ntor + 1u) + n;
+        let cn = cos(f32(n * mesh.nfp) * phi);
+        let sn = sin(f32(n * mesh.nfp) * phi);
+        r += coefficients[base + mode] * cm * cn + coefficients[base + 3u * modes + mode] * sm * sn;
+        z += coefficients[base + modes + mode] * sm * cn + coefficients[base + 4u * modes + mode] * cm * sn;
+      }
+    }
+    let position = vec3f(r * cos(phi), r * sin(phi), z);
+    points[id.y * mesh.vertices + id.x] = vec4f(position, coefficients[base + 6u * modes]);
+    radius = length(position);
+  }
+  radii[lane] = bitcast<u32>(radius);
+  workgroupBarrier();
+  for (var stride = 32u; stride > 0u; stride >>= 1u) {
+    if (lane < stride) { radii[lane] = max(radii[lane], radii[lane + stride]); }
+    workgroupBarrier();
+  }
+  if (lane == 0u) { atomicMax(&radius_bits, radii[0]); }
+}
+`;
+
 class CumesOrbitRenderer {
   static async create(canvas) {
     const adapter = await navigator.gpu?.requestAdapter({powerPreference: 'high-performance'});
@@ -93,41 +142,72 @@ class CumesOrbitRenderer {
       {binding: 0, resource: {buffer: this.cameraBuffer}}, {binding: 1, resource: {buffer: this.radiusBuffer}}
     ]});
     this.surface = {}; this.section = {}; this.layers.push(this.surface, this.section);
+    const geometry = device.createShaderModule({code: ORBIT_SURFACE_SHADER, label: 'cuMES Fourier surface geometry'});
+    this.surfacePipeline = await device.createComputePipelineAsync({
+      label: 'cuMES Fourier surface generation', layout: 'auto', compute: {module: geometry, entryPoint: 'build_surfaces'}
+    });
+    this.meshParams = this.buffer(null, 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'orbit surface parameters');
   }
 
-  setLines(layer, positions, indices) {
+  reserveLines(layer, positionBytes, indexBytes) {
     const previousPositions = layer.positions, previousIndices = layer.indices;
-    layer.positions = this.buffer(layer.positions, positions.byteLength,
+    layer.positions = this.buffer(layer.positions, positionBytes,
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC, 'orbit positions');
-    layer.indices = this.buffer(layer.indices, indices.byteLength,
+    layer.indices = this.buffer(layer.indices, indexBytes,
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, 'orbit line indices');
-    this.device.queue.writeBuffer(layer.positions, 0, positions);
-    this.device.queue.writeBuffer(layer.indices, 0, indices);
-    layer.count = indices.length / 2;
+    layer.count = indexBytes / 8;
     if (previousPositions !== layer.positions || previousIndices !== layer.indices)
       layer.group = this.device.createBindGroup({layout: this.pipeline.getBindGroupLayout(1), entries: [
         {binding: 0, resource: {buffer: layer.positions}}, {binding: 1, resource: {buffer: layer.indices}}
       ]});
   }
 
-  setFourier(fourier) {
-    const mesh = equilibriumMesh(fourier), vertices = mesh.surfaces[0].points.length / 3;
-    const positions = new Float32Array(4 * vertices * mesh.surfaces.length), indices = [];
-    let radius = 1;
-    mesh.surfaces.forEach((surface, s) => {
-      for (let i = 0; i < vertices; i++) {
-        positions.set(surface.points.subarray(3 * i, 3 * i + 3), 4 * (s * vertices + i));
-        positions[4 * (s * vertices + i) + 3] = surface.radial;
-        radius = Math.max(radius, Math.hypot(...surface.points.subarray(3 * i, 3 * i + 3)));
+  setLines(layer, positions, indices) {
+    this.reserveLines(layer, positions.byteLength, indices.byteLength);
+    this.device.queue.writeBuffer(layer.positions, 0, positions);
+    this.device.queue.writeBuffer(layer.indices, 0, indices);
+  }
+
+  setFourier(fourier, encoder) {
+    const {mpol, ntor, nfp, ns, surfaces} = fourier, modes = mpol * (ntor + 1);
+    if (![mpol, ntor, nfp, ns].every(Number.isInteger) || mpol < 1 || ntor < 0 || nfp < 1 || ns < 2 || modes > 4096 ||
+        !surfaces.length || surfaces.length > this.device.limits.maxComputeWorkgroupsPerDimension)
+      throw Error('Invalid 3D surface dimensions');
+    const thetaSegments = 40, phiSegments = ntor ? Math.min(256, Math.max(64, nfp * 16)) : 64;
+    const row = thetaSegments + 1, vertices = row * (phiSegments + 1);
+    const indicesPerSurface = 2 * (Math.ceil(phiSegments / 4) * thetaSegments + Math.ceil(thetaSegments / 4) * phiSegments);
+    this.reserveLines(this.surface, 16 * vertices * surfaces.length, 4 * indicesPerSurface * surfaces.length);
+    const topology = `${thetaSegments}:${phiSegments}:${surfaces.length}`;
+    if (this.topology !== topology) {
+      const indices = new Uint32Array(indicesPerSurface * surfaces.length); let i = 0;
+      for (let s = 0; s < surfaces.length; s++) {
+        const offset = s * vertices;
+        for (let p = 0; p < phiSegments; p += 4)
+          for (let t = 0; t < thetaSegments; t++) { indices[i++] = offset + p * row + t; indices[i++] = offset + p * row + t + 1; }
+        for (let t = 0; t < thetaSegments; t += 4)
+          for (let p = 0; p < phiSegments; p++) { indices[i++] = offset + p * row + t; indices[i++] = offset + (p + 1) * row + t; }
       }
-      const row = mesh.thetaSegments + 1, offset = s * vertices;
-      for (let p = 0; p < mesh.phiSegments; p += 4)
-        for (let t = 0; t < mesh.thetaSegments; t++) indices.push(offset + p * row + t, offset + p * row + t + 1);
-      for (let t = 0; t < mesh.thetaSegments; t += 4)
-        for (let p = 0; p < mesh.phiSegments; p++) indices.push(offset + p * row + t, offset + (p + 1) * row + t);
+      this.device.queue.writeBuffer(this.surface.indices, 0, indices); this.topology = topology;
+    }
+    const coefficients = new Float32Array(surfaces.length * (6 * modes + 1));
+    surfaces.forEach((surface, s) => {
+      if (surface.coefficients.length !== 6 * modes || surface.index < 0 || surface.index >= ns) throw Error('Invalid 3D surface coefficients');
+      coefficients.set(surface.coefficients, s * (6 * modes + 1));
+      coefficients[s * (6 * modes + 1) + 6 * modes] = surface.index / (ns - 1);
     });
-    this.setLines(this.surface, positions, new Uint32Array(indices));
-    this.device.queue.writeBuffer(this.radiusBuffer, 0, new Float32Array([radius]));
+    if (!coefficients.every(Number.isFinite)) throw Error('3D surface coefficients exceed rendering precision');
+    this.coefficients = this.buffer(this.coefficients, coefficients.byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, 'orbit Fourier coefficients');
+    this.device.queue.writeBuffer(this.coefficients, 0, coefficients);
+    this.device.queue.writeBuffer(this.meshParams, 0, new Uint32Array([mpol, ntor, nfp, ns, thetaSegments, phiSegments, vertices, 0]));
+    const group = this.device.createBindGroup({layout: this.surfacePipeline.getBindGroupLayout(0), entries: [
+      {binding: 0, resource: {buffer: this.meshParams}}, {binding: 1, resource: {buffer: this.coefficients}},
+      {binding: 2, resource: {buffer: this.surface.positions}}, {binding: 3, resource: {buffer: this.radiusBuffer}}
+    ]});
+    encoder.clearBuffer(this.radiusBuffer);
+    const pass = encoder.beginComputePass({label: 'build Fourier surfaces'});
+    pass.setPipeline(this.surfacePipeline); pass.setBindGroup(0, group);
+    pass.dispatchWorkgroups(Math.ceil(vertices / 64), surfaces.length); pass.end();
+    this.mesh = {thetaSegments, phiSegments, vertices, surfaces: surfaces.length};
     this.fourier = fourier;
   }
 
@@ -154,7 +234,8 @@ class CumesOrbitRenderer {
   draw(state) {
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2 || this.canvas.hidden) return;
-    if (this.fourier !== state.fourier) this.setFourier(state.fourier);
+    const encoder = this.device.createCommandEncoder({label: 'orbit frame'});
+    if (this.fourier !== state.fourier) this.setFourier(state.fourier, encoder);
     if (this.sectionSource !== state.section) this.setSection(state.section);
     const limit = this.device.limits.maxTextureDimension2D;
     const dpr = Math.min(2, devicePixelRatio || 1, limit / rect.width, limit / rect.height);
@@ -162,7 +243,6 @@ class CumesOrbitRenderer {
     this.resize(width, height);
     this.camera.set([Math.cos(state.yaw), Math.sin(state.yaw), Math.cos(state.pitch), Math.sin(state.pitch), width, height, state.zoom, dpr]);
     this.device.queue.writeBuffer(this.cameraBuffer, 0, this.camera);
-    const encoder = this.device.createCommandEncoder({label: 'orbit frame'});
     const pass = encoder.beginRenderPass({
       colorAttachments: [{view: this.colorView, resolveTarget: this.context.getCurrentTexture().createView(),
         clearValue: {r: 0, g: 0, b: 0, a: 0}, loadOp: 'clear', storeOp: 'discard'}],
@@ -193,15 +273,20 @@ function startOrbitRenderer(canvas, state) {
   state.ready = CumesOrbitRenderer.create(canvas).then(renderer => {
     if (state.disposed) { renderer.destroy(); return; }
     state.renderer = renderer;
+    delete canvas.dataset.rendererError;
     renderer.device.addEventListener('uncapturederror', event => {
+      if (state.disposed || state.renderer !== renderer) return;
       canvas.dataset.rendererError = event.error.message;
       orbitMessage(canvas, '3D view unavailable. 2D cross-sections remain available.');
     });
     renderer.device.lost.then(() => {
       if (state.disposed || state.renderer !== renderer) return;
+      cancelAnimationFrame(state.frame); state.frame = 0;
       state.renderer = null; renderer.destroy();
-      if (state.recoveries++ === 0) startOrbitRenderer(canvas, state);
-      else orbitMessage(canvas, '3D device lost. Reload to restore the view.');
+      canvas.dataset.rendererError = 'WebGPU device lost';
+      // Firefox can stop delivering animation callbacks after device loss,
+      // even when a replacement device successfully submits new geometry.
+      orbitMessage(canvas, '3D device lost. Reload the page or restart the browser.');
     });
     orbitMessage(canvas, 'Drag to orbit · wheel to zoom');
     queueOrbitDraw(canvas);
@@ -214,7 +299,7 @@ function startOrbitRenderer(canvas, state) {
 function installOrbitRenderer(canvas, fourier) {
   if (!canvas || !fourier?.surfaces?.length) return;
   if (!canvas.cumesOrbit) {
-    const state = {yaw: -.55, pitch: .55, zoom: 1, drag: null, frame: 0, recoveries: 0};
+    const state = {yaw: -.55, pitch: .55, zoom: 1, drag: null, frame: 0};
     canvas.cumesOrbit = state;
     canvas.addEventListener('pointerdown', event => {
       state.drag = {id: event.pointerId, x: event.clientX, y: event.clientY, yaw: state.yaw, pitch: state.pitch};

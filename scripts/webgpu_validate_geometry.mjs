@@ -28,12 +28,25 @@ function call(method, params = {}) {
 }
 try {
   const {result} = await call('Runtime.evaluate', {
-    expression: `(() => {
+    expression: `(async () => {
       if (document.body.dataset.cumesWebgpu !== 'pass') throw Error('Solve has not passed');
-      const mesh = document.getElementById('legacy-result-3d').cumesOrbit.mesh;
-      return {...mesh, surfaces: mesh.surfaces.map(s => ({...s, points: [...s.points]}))};
-    })()`, returnByValue: true});
-  const mesh = result.value, edge = mesh.surfaces.at(-1).points, axis = mesh.surfaces[0].points;
+      const canvas = document.getElementById('result-3d'), state = canvas.cumesOrbit;
+      await state.ready;
+      showResultMode('3d'); drawOrbit(canvas, state);
+      const renderer = state.renderer, {device, mesh} = renderer;
+      const bytes = mesh.vertices * mesh.surfaces * 16;
+      const readback = device.createBuffer({size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ});
+      try {
+        const encoder = device.createCommandEncoder();
+        encoder.copyBufferToBuffer(renderer.surface.positions, 0, readback, 0, bytes);
+        device.queue.submit([encoder.finish()]);
+        await readback.mapAsync(GPUMapMode.READ);
+        if (canvas.dataset.rendererError) throw Error(canvas.dataset.rendererError);
+        return {...mesh, points: [...new Float32Array(readback.getMappedRange())]};
+      } finally { readback.unmap(); readback.destroy(); }
+    })()`, returnByValue: true, awaitPromise: true});
+  const mesh = result.value, edge = mesh.points.slice((mesh.surfaces - 1) * mesh.vertices * 4), axis = mesh.points;
+  if (!mesh.points.every(Number.isFinite)) throw Error('Nonfinite rendered surface geometry');
   const row = mesh.thetaSegments + 1;
   let edgeError = 0, axisSpread = 0;
   for (let p = 0; p <= mesh.phiSegments; ++p) {
@@ -44,17 +57,19 @@ try {
       const z = spec.zbs.reduce((sum, h) => sum + h.value * Math.sin(h.m * theta - h.n * spec.nfp * phi), 0);
       const expected = [r * Math.cos(phi), r * Math.sin(phi), z];
       for (let c = 0; c < 3; ++c) {
-        const i = (p * row + t) * 3 + c;
+        const i = (p * row + t) * 4 + c;
         edgeError = Math.max(edgeError, Math.abs(edge[i] - expected[c]));
-        axisSpread = Math.max(axisSpread, Math.abs(axis[i] - axis[p * row * 3 + c]));
+        axisSpread = Math.max(axisSpread, Math.abs(axis[i] - axis[p * row * 4 + c]));
       }
     }
   }
-  if (!(edgeError < 3e-6 && axisSpread < 3e-6))
+  // WGSL reconstructs display geometry in f32; this is well below a pixel at
+  // the viewer's maximum zoom. The equilibrium solve retains its own precision.
+  if (!(edgeError < 2e-5 && axisSpread < 2e-5))
     throw Error(`Rendered geometry mismatch: LCFS=${edgeError}, axis=${axisSpread}`);
   console.log(JSON.stringify({result: 'PASS', target, edgeError, axisSpread}));
   if (screenshot) {
-    await call('Runtime.evaluate', {expression: `document.getElementById('legacy-viewer').scrollIntoView()`});
+    await call('Runtime.evaluate', {expression: `document.getElementById('result-3d').scrollIntoView()`});
     const capture = await call('Page.captureScreenshot', {format: 'png'});
     await writeFile(screenshot, Buffer.from(capture.data, 'base64'));
   }

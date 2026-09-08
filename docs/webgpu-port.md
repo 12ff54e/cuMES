@@ -40,6 +40,34 @@ the existing interactive solver entry point for W7-X as well; its scalar
 radius-reference and compensated-geometry options are preserved for fixed 3-D
 inputs. The separate W7-X startup implementation has been removed.
 
+### 3-D rendering
+
+`webgpu/orbit_renderer.js` renders the boundary preview and solved flux
+surfaces with WebGPU. A compute shader reconstructs the full torus from the
+six physical Fourier families and reduces its bounding radius. Geometry,
+bounds, and line indices stay on the GPU; changing the camera uploads one
+32-byte uniform. Coefficient edits regenerate geometry, while moving the
+section slider updates only the highlighted line. Every supplied surface is
+drawn, without the previous CPU renderer's surface subsampling.
+
+Vertex and fragment shaders draw instanced line ribbons with consistent screen
+widths, transparent colors, and 4x multisampling. The view retains transparent
+wireframe semantics. Render targets, including a depth attachment, are reused
+until resize; buffers are reused until more capacity is needed. Frames are
+submitted only when the view changes. The renderer owns a separate device from
+the solver and releases resources on page exit. A renderer failure is reported
+in the view; 2-D cuts remain available. Device loss releases the renderer and
+asks for a reload or browser restart, since Firefox can stop delivering
+animation callbacks even after a replacement device has been initialized.
+
+The same position/index line layer can accept coil polylines. Opaque meshes
+and volume passes can share the camera and depth target, but coil visualization
+and volume rendering are not yet implemented. Display geometry uses WGSL f32;
+this does not change equilibrium arithmetic or downloaded scientific data.
+CPU Fourier evaluation remains only for the 2-D cuts and section highlight.
+The production 3-D path performs no GPU readback; the geometry validation
+script explicitly reads vertices to compare them with independent harmonics.
+
 ### Free-boundary browser setup
 
 The browser runtime is built with Emscripten pthreads. Serve it with
@@ -328,9 +356,9 @@ tolerance of `1e-5`.
 After convergence the result panel defaults to an interactive 3-D equilibrium
 view, with a **2D cut** toggle for the poloidal cross-section. The solver sends
 the selected nested surfaces as all six physical Fourier parity families plus
-`mpol`, `ntor`, and `nfp`; JavaScript reconstructs the full torus locally. Drag
-the canvas to orbit and use the wheel to zoom. The W7-X route presents the same
-3-D viewer below its solver log.
+`mpol`, `ntor`, and `nfp`; the renderer's compute shader reconstructs the full
+torus locally. Drag the canvas to orbit and use the wheel to zoom. W7-X uses
+the same result panel in the boundary editor.
 
 Both the boundary editor and W7-X show a live **Residual history** canvas with
 FSQR, FSQZ, and FSQL on a logarithmic vertical axis and the current tolerance
@@ -606,9 +634,9 @@ node scripts/webgpu_validate_geometry.mjs CHROME_TARGET_ID ../tmp/w7x-render.png
 
 The renderer uses physical state coefficients directly: the inverse-work
 `1/sqrt(s)` odd regularization must not be applied to plotted coefficients.
-The extrapolated odd axis row is omitted from the physical axis. With both
-rendering corrections, the tested LCFS error is `2.561e-7 m` and poloidal
-axis spread is zero.
+The extrapolated odd axis row is omitted from the physical axis. The geometry
+gate reads the shader-generated vertex buffer and checks both the LCFS and
+poloidal axis spread within `2e-5 m`, allowing for display-only f32 arithmetic.
 
 ### Paired-f32 path
 
