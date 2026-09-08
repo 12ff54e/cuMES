@@ -48,6 +48,7 @@ globalThis.onmessage = ({data}) => {
   globalThis.cumesVisibility = data.visibility;
   const runtime = new URL(data.runtimeUrl);
   globalThis.Module = {
+      mainScriptUrlOrBlob: runtime.href,
       preRun: [() => {
           for (const file of data.files || []) {
               if (!file.path.startsWith('/inputs/') || file.path.includes('..'))

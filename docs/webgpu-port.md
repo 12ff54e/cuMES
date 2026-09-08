@@ -37,6 +37,16 @@ inputs. The separate W7-X startup implementation has been removed.
 
 ### Free-boundary browser setup
 
+The browser runtime is built with Emscripten pthreads. Serve it with
+`Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` so shared Wasm memory is available.
+Free-boundary setup prewarms up to 16 CPU threads, bounded by the browser's
+reported concurrency, and uses the existing vacuum-field MAKEGRID parallel
+loop. `?boundary=free&makegrid_threads=1` retains sequential generation for
+comparisons; other positive counts are capped at the available pool size.
+Fixed-boundary runs do not create MAKEGRID workers. Coil sums retain their
+original order within each grid point, independent of the thread count.
+
 Choose **Fixed boundary** or **Free boundary** above the editor. Free-boundary
 setup defaults to paired precision and offers Solovev, W7-X (vacuum), and
 cth_like coil configurations, plus

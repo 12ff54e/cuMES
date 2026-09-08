@@ -1,6 +1,8 @@
 # Browser-facing WebGPU milestone. This target intentionally has no CUDA
 # includes or libraries; emdawnwebgpu is enabled for both compilation and the
 # final link as required by the Emscripten port contract.
+add_compile_options(-pthread)
+add_link_options(-pthread)
 add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/json_parser.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/config/json_reader.cpp
@@ -67,9 +69,13 @@ target_link_options(cumes_webgpu PRIVATE
   -sALLOW_MEMORY_GROWTH=1
   -sEXIT_RUNTIME=1
   -sASSERTIONS=1
+  "-sPTHREAD_POOL_SIZE=cumesThreadCount()-1"
+  -sPTHREAD_POOL_SIZE_STRICT=2
+  "-sINCOMING_MODULE_JS_API=['preRun','locateFile','print','printErr','onAbort','mainScriptUrlOrBlob']"
   "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
   "--js-library=${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js"
   "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js"
+  "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime_threads.js"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/solovev.json@/inputs/solovev.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/w7x.json@/inputs/w7x.json"
   "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl@/shaders/base_geometry.wgsl"
@@ -124,6 +130,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/verification_worker.js
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
   ${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/runtime_threads.js
   ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
   ${PROJECT_SOURCE_DIR}/inputs/solovev.json
   ${PROJECT_SOURCE_DIR}/inputs/w7x.json
@@ -169,6 +176,10 @@ add_test(
 set_tests_properties(webgpu_artifacts PROPERTIES LABELS "unit;webgpu")
 find_program(CUMES_WEBGPU_NODE NAMES node nodejs)
 if(CUMES_WEBGPU_NODE)
+  add_test(NAME webgpu_threads
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_threads.mjs)
+  set_tests_properties(webgpu_threads PROPERTIES LABELS "unit;webgpu")
   add_test(NAME webgpu_boundary_geometry
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_boundary_geometry.mjs)

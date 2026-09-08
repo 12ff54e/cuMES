@@ -425,7 +425,7 @@
       if(progress){document.body.dataset.cumesIteration=progress[1];document.body.dataset.cumesFsqr=progress[2];if(appMode){value('iteration').textContent=progress[1];value('fsqr').textContent=progress[2]}
         if(!appMode||Number(progress[1])<=3||Number(progress[1])%25===0)append(line);return}
       const stage=line.match(/stage (\d+)\/(\d+) converged/);if(stage)document.body.dataset.cumesStage=stage[1];
-      if(!appMode||/adapter selected|Generating the coil|Coil field|vacuum pressure|Vacuum update|running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))append(line)}
+      if(!appMode||/adapter selected|MAKEGRID using|Generating the coil|Coil field|vacuum pressure|Vacuum update|running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))append(line)}
     let resultMode='3d';function showResultMode(mode){resultMode=mode;const svg=value('result-plot'),canvas=value('result-3d');if(!svg||!canvas)return;
       svg.toggleAttribute('hidden',mode==='3d');canvas.hidden=mode!=='3d';for(const candidate of ['2d','3d'])value(`mode-result-${candidate}`)?.classList.toggle('active',candidate===mode);
       if(mode==='3d')queueOrbitDraw(canvas)}
