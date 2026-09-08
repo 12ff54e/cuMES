@@ -192,8 +192,11 @@ archived rather than added to the production library.
 The finite-difference probes also show substantial response in *other*
 Fourier modes. Neither a lambda-only solve nor the tested same-mode radial
 blocks address the complete coupling among geometry, lambda and Fourier
-modes. A future coupled Newton/Krylov experiment should measure that full
-response rather than infer solver progress from one component's residual.
+modes. The subsequent [fully coupled Newton–Krylov
+experiment](newton-correction-experiments.md) measured that response and ran
+complete original-schedule solves. A separate [FAS coarse
+correction](coarse-correction-experiments.md) was also tested through all
+configured stages. Both remaining proposals now have measured outcomes.
 
 ## Artifacts
 

@@ -534,6 +534,15 @@ retain every configured multigrid stage and tolerance. Lambda inner solves
 and a coupled radial R/Z prototype did not qualify a further default speedup;
 the report records their complete-solve results and numerical validation.
 
+The remaining [fully coupled Newton–Krylov](newton-correction-experiments.md)
+and [FAS coarse correction](coarse-correction-experiments.md) proposals were
+also tested through all original multigrid stages and tolerances. Newton's
+selected Solovev variant reduced scoped solver time by 10.05% on Pascal and
+4.16% on Ada in five paired runs; its Ada lower confidence bound was 2.28%,
+below the adoption gate. W7-X showed no reliable benefit across architectures.
+FAS increased solver wall time in both full-solve screens. Reproducible private
+patches and diagnostics are retained; these experiments do not change defaults.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target

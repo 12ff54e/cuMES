@@ -1,0 +1,134 @@
+--- a/src/kernels/solver_impl.cuh
++++ b/src/kernels/solver_impl.cuh
+@@ -38,6 +38,8 @@
+ #include "cumes/solver/solver_bench.hpp"
+ #include "cumes/transforms/axisymmetric_operator.hpp"
+ #include "cumes/transforms/toroidal_fft_operator.hpp"
++#include "../../benchmarks/newton_correction.cuh"
++#include "cumes/solver/stage_solver.hpp"
+ #include "dump_impl.cuh"
+ #include "solver.cuh"
+ 
+@@ -1025,6 +1027,8 @@
+     bool verbose,
+     bool use_process_environment) {
+     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt, {}};
++    cumes::stage_detail::ScopedDeviceTimer experiment_timer;
++    experiment_timer.start(stream);
+ 
+     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
+     // workspaces, views, residual/control buffers and the interleaved dump
+@@ -1211,6 +1215,28 @@
+         key |= s.apply_vacuum_edge_force ? 1u << 6 : 0;
+         return key;
+     };
++
++    int newton_period = 0, newton_steps = 32, newton_basis = 32;
++    int newton_start = 100, newton_end = 1000000000, newton_ns = 0;
++    double newton_epsilon = 1e-6, newton_ratio = 0.95;
++    bool newton_forward = false;
++    if (use_process_environment && !vacuum) {
++        if (const char* e = getenv("CUMES_NEWTON_FORWARD")) newton_forward = atoi(e) != 0;
++        if (const char* e = getenv("CUMES_NEWTON_PERIOD")) newton_period = atoi(e);
++        if (const char* e = getenv("CUMES_NEWTON_STEPS")) newton_steps = atoi(e);
++        if (const char* e = getenv("CUMES_NEWTON_BASIS")) newton_basis = atoi(e);
++        if (const char* e = getenv("CUMES_NEWTON_START")) newton_start = atoi(e);
++        if (const char* e = getenv("CUMES_NEWTON_END")) newton_end = atoi(e);
++        if (const char* e = getenv("CUMES_NEWTON_NS")) newton_ns = atoi(e);
++        if (const char* e = getenv("CUMES_NEWTON_EPSILON")) newton_epsilon = atof(e);
++        if (const char* e = getenv("CUMES_NEWTON_RATIO")) newton_ratio = atof(e);
++    }
++    std::optional<block_bench::NewtonCorrection<T>> newton;
++    if (newton_period > 0 && (newton_ns == 0 || newton_ns == p.ns))
++        newton.emplace(p, equilibrium, storage, newton_basis, newton_forward ? block_bench::DifferenceScheme::FORWARD : block_bench::DifferenceScheme::CENTRAL);
++    int newton_attempts = 0, newton_accepted = 0, newton_evaluations = 0;
++    double newton_time_ms = 0;
++    cumes::stage_detail::ScopedDeviceTimer correction_timer;
+ 
+     for (int iter = 0; iter < MAX_ITER_EFF; ++iter) {
+         // Snapshot of the controller's effective iteration for this pass's
+@@ -1346,7 +1372,58 @@
+                     .count());
+             bench_t_prev = bench_now;
+         }
+-        const auto rec = h_control_pin.data()->template cast<double>();
++        auto rec = h_control_pin.data()->template cast<double>();
++        if (newton && iter2 >= newton_start && iter2 <= newton_end &&
++            iter2 % newton_period == 0 && iter2 - controller.restart_anchor() > 20 &&
++            !schedule.refresh_preconditioner && !schedule.reset_constraint_reference &&
++            schedule.zero_z_force_m1 && rec.status.jacobian_valid &&
++            !rec.status.invariant_nonfinite && rec.status.preconditioned_evaluated &&
++            !rec.status.invariant_converged) {
++            correction_timer.start(stream);
++            ++newton_attempts;
++            const auto before = rec;
++            const double original = rec.invariant_scaled[0] + rec.invariant_scaled[1] + rec.invariant_scaled[2];
++            newton->prepare(schedule, fNormRZ, fNormL, stream);
++            newton->enqueue_solve(newton_steps, T(1e-3), T(newton_epsilon), stream);
++            newton_evaluations += newton->evaluations_per_jvp() * (newton_steps + (newton_steps + newton_basis - 1)/newton_basis);
++            block_bench::GmresControl<T> gmres;
++            cumes::check_cuda(cudaMemcpyAsync(&gmres, newton->control_device(), sizeof(gmres), cudaMemcpyDeviceToHost, stream), "Newton GMRES control");
++            cumes::check_cuda(cudaStreamSynchronize(stream), "Newton GMRES fence");
++            bool accepted = false;
++            double accepted_scale = 0;
++            for (double scale : {1.0, 0.5, 0.25, 0.125}) {
++                if (gmres.breakdown) break;
++                newton->enqueue_trial(T(scale), stream);
++                ++newton_evaluations;
++                cumes::check_cuda(cudaMemcpyAsync(h_control_pin.data(), equilibrium.control_device(), sizeof(cumes::DeviceControlRecord<T>), cudaMemcpyDeviceToHost, stream), "Newton trial control");
++                cumes::check_cuda(cudaStreamSynchronize(stream), "Newton trial fence");
++                rec = h_control_pin.data()->template cast<double>();
++                const double value = rec.invariant_scaled[0] + rec.invariant_scaled[1] + rec.invariant_scaled[2];
++                if (rec.status.jacobian_valid && !rec.status.invariant_nonfinite && std::isfinite(value) && value < newton_ratio * original) {
++                    accepted = true;
++                    accepted_scale = scale;
++                    ++newton_accepted;
++                    storage.velocity_buffer().zero_async(stream);
++                    controller.reset_correction_momentum();
++                    cumes::check_cuda(cudaMemcpy2DAsync(h_axis_pin.data(), sizeof(T), storage.family_ptr(cumes::SpectralComponent::Rcc), p.ns * sizeof(T), sizeof(T), p.ntor + 1, cudaMemcpyDeviceToHost, stream), "Newton axis copy");
++                    cumes::check_cuda(cudaStreamSynchronize(stream), "Newton axis fence");
++                    break;
++                }
++            }
++            if (!accepted) {
++                newton->enqueue_restore(stream);
++                ++newton_evaluations;
++                cumes::check_cuda(cudaMemcpyAsync(h_control_pin.data(), equilibrium.control_device(), sizeof(cumes::DeviceControlRecord<T>), cudaMemcpyDeviceToHost, stream), "Newton restore control");
++                cumes::check_cuda(cudaStreamSynchronize(stream), "Newton restore fence");
++                rec = h_control_pin.data()->template cast<double>();
++                for (int c=0;c<3;++c)
++                    if (rec.invariant_scaled[c] != before.invariant_scaled[c])
++                        throw cumes::CumesError("Newton rollback residual differs");
++            }
++            const double elapsed = correction_timer.stop(stream);
++            newton_time_ms += elapsed;
++            if (verbose) printf("EXPERIMENT_NEWTON {\"ns\":%d,\"iteration\":%d,\"accepted\":%d,\"scale\":%.17g,\"gmres_steps\":%d,\"gmres_breakdown\":%d,\"linear_relative_residual\":%.17g,\"merit_ratio\":%.17g,\"device_ms\":%.9g}\n", p.ns,iter2,int(accepted),accepted_scale,gmres.steps,gmres.breakdown,double(gmres.residual_norm/gmres.rhs_norm),(rec.invariant_scaled[0]+rec.invariant_scaled[1]+rec.invariant_scaled[2])/original,elapsed);
++        }
+         // Sample the transform-timing events at this fence (both transforms
+         // preceded it on the same stream).
+         // CUDA event timestamp queries for events recorded inside a captured
+@@ -1562,6 +1639,8 @@
+     // Drain the compute stream before destroying the stage's cuFFT plans (the
+     // last descent/backup enqueue may still be in flight when the loop exits).
+     cumes::check_cuda(cudaStreamSynchronize(stream), "solver end sync");
++    const double experiment_ms = experiment_timer.stop(stream);
++    if (verbose) printf("EXPERIMENT_STAGE {\"ns\":%d,\"iterations\":%d,\"converged\":%d,\"residual\":[%.17g,%.17g,%.17g],\"device_ms\":%.9g,\"attempts\":%d,\"accepted\":%d,\"extra_evaluations\":%d,\"correction_ms\":%.9g}\n",p.ns,res.iterations,int(res.converged),double(res.fsqr),double(res.fsqz),double(res.fsql),experiment_ms,newton_attempts,newton_accepted,newton_evaluations,newton_time_ms);
+     // precon/constraint/equilibrium are RAII (their destructors free the
+     // arena-backed workspaces and the transform-timing events); nothing else.
+     if (verbose && use_cuda_graphs) {
+--- a/include/cumes/solver/iteration_controller.hpp
++++ b/include/cumes/solver/iteration_controller.hpp
+@@ -90,6 +90,13 @@
+         return (iter2_ - iter1_) %
+                    control_policy::PRECONDITIONER_REFRESH_INTERVAL ==
+                0;
++    }
++
++    void reset_correction_momentum() {
++        res0_ = T(-1);
++        fsq_prev_ = T(1);
++        for (int i = 0; i < control_policy::DAMPING_HISTORY_LENGTH; ++i)
++            inv_tau_hist_[i] = T(control_policy::DAMPING_LOG_RATIO_LIMIT) / delt0_;
+     }
+ 
+     // ---- per-fence decisions ----

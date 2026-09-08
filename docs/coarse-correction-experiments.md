@@ -173,6 +173,7 @@ disposable worktree; the patch is not part of the production build:
 ```sh
 git worktree add --detach ../cumes-coarse-experiment HEAD
 cd ../cumes-coarse-experiment
+git submodule update --init --recursive
 git apply benchmarks/coarse_live.patch
 cmake --preset verify
 cmake --build build -j
