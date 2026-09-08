@@ -121,6 +121,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_ui.js
   ${CMAKE_CURRENT_SOURCE_DIR}/equilibrium_view.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/orbit_renderer.js
   ${CMAKE_CURRENT_SOURCE_DIR}/boundary_editor.js
   ${CMAKE_CURRENT_SOURCE_DIR}/free_boundary.js
   ${CMAKE_CURRENT_SOURCE_DIR}/presets/solovev.json

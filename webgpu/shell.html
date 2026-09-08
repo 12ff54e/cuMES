@@ -44,8 +44,9 @@
     svg,.equilibrium-3d { display:block; width:100%; border-radius:10px;
       background:linear-gradient(145deg,#0b1521,#0a121c); touch-action:none; }
     svg { height:100%; min-height:448px; }
-    .equilibrium-3d { height:448px; cursor:grab; }
+    .equilibrium-3d { height:448px; cursor:grab; background:radial-gradient(ellipse at 52% 44%,#13263a,#07101a); }
     .equilibrium-3d:active { cursor:grabbing; }
+    .equilibrium-3d[hidden] + .orbit-hint { display:none; }
     .result-head-actions { display:flex; align-items:center; gap:10px; }
     .axis-label { fill:#7f90a6; font-size:12px; }
     .grid-line { stroke:#29394c; stroke-width:1; }
@@ -235,6 +236,7 @@
           <button id="mode-result-2d">2D cut</button><button id="mode-result-3d" class="active">3D view</button></div><a class="tag" id="download" hidden>Download .bin</a></div></div>
         <div class="plot-wrap"><svg id="result-plot" viewBox="0 0 700 520" aria-label="Converged flux-surface cross-section"></svg>
           <canvas class="equilibrium-3d" id="result-3d" aria-label="Interactive three-dimensional equilibrium" hidden></canvas>
+          <div class="hint orbit-hint" role="status" hidden>Preparing 3D view…</div>
           <div class="result-empty" id="result-empty"><strong>Ready to solve</strong><span>Shape the boundary, then run it on your GPU.</span></div></div>
         <div class="slice-control" id="result-slice-control" hidden><label for="result-slice-angle">Toroidal cross-section ζ <output id="result-slice-angle-value"></output></label>
           <input id="result-slice-angle" type="range" min="0" max="100" step="0.25" value="0" aria-label="Flux-surface toroidal angle within one field period">
@@ -270,6 +272,7 @@
   <script src="residual_plot.js"></script>
   <script src="free_boundary.js"></script>
   <script src="equilibrium_view.js"></script>
+  <script src="orbit_renderer.js"></script>
   <script src="boundary_editor.js"></script>
   <script>
     migrateCumesEditorUrl(location,history);
