@@ -36,6 +36,21 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+For fixed-boundary axisymmetric inputs in a double build, opt into the tested
+Newton–Krylov correction policy with `--newton`:
+
+```bash
+./build/cumes inputs/solovev.json --newton --output out.bin
+```
+
+The flag retains every configured multigrid stage, tolerance and iteration cap.
+It changes the convergence trajectory and its speed benefit depends on the
+case and GPU; it is off by default. The qualified Solovev trajectory becomes
+`144 → 113 → 227` (484 effective iterations). See the
+[19-case qualification](docs/axisymmetric-newton-qualification.md) for both
+GPUs' gains and regressions. Float, free-boundary and nonaxisymmetric requests
+are rejected before GPU setup.
+
 ### In-process library
 
 The supported embedding API is `cumes::EquilibriumSolver`. It consumes an
@@ -68,6 +83,9 @@ Library solves are quiet and ignore the CLI's process-global `CUMES_*`
 controls by default. `SolveRequest` can opt into those controls or provide an
 in-memory restart snapshot. Installed consumers use
 `find_package(cuMES CONFIG REQUIRED)` and link `cumes::solver`.
+
+Set `cumes::SolveRequest::enable_newton = true` to select the same correction
+policy through the library API.
 
 Optimization targets and integration applications are maintained in the meow
 repository. A source-tree integration build remains available by configuring

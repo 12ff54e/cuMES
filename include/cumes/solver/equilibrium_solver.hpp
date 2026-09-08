@@ -57,6 +57,12 @@ struct SolveRequest {
     // poloidal double-double reconstruction for double. POLOIDAL retains
     // the previous poloidal-only scope for diagnostics.
     OddGeometryPrecision odd_geometry = OddGeometryPrecision::NATIVE;
+
+    // Opt-in Newton-Krylov corrections with the qualified fixed policy.
+    // Requires a double, fixed-boundary, axisymmetric (ntor=0, nzeta=1)
+    // solve. Corrections can change the convergence trajectory and may cost
+    // more than they save; the configured multigrid stages remain unchanged.
+    bool enable_newton = false;
 };
 
 struct SolveTimings {

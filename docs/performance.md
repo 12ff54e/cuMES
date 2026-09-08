@@ -550,6 +550,9 @@ converge. The adapted prescribed-current case improves scoped solver time by
 Ada regressions for circular, low-resolution and one finite-pressure case.
 Axisymmetry alone therefore does not qualify a default policy. The report
 retains every initial pair, uncertainty-selected follow-up and solution check.
+The qualified axisymmetric forward32 policy is available through the explicit
+`--newton` flag; [ADR-0016](adr/0016-opt-in-newton-corrections.md) records its
+promotion checks. The default remains unchanged.
 
 ## 4. Acceptance policy (verification.md §7)
 

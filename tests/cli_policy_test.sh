@@ -7,6 +7,7 @@
 #   - input is a mandatory positional argument;
 #   - output is an option and defaults to $PWD/cumes-output.bin;
 #   - native and Boozer result outputs are mutually exclusive;
+#   - --newton is explicit and rejects unsupported shapes before CUDA work;
 #   - strict rejects an unknown output suffix.
 #
 # Usage: cli_policy_test.sh <path-to-cuMES>
@@ -40,6 +41,9 @@ cat > in_clean.json <<'EOF'
  "ns_array": [5], "niter_array": [1], "ftol_array": [1e-6]}
 EOF
 
+sed 's/"ntor": 0/"ntor": 1/' in_clean.json > in_3d.json
+sed 's/"ntor": 0/"ntor": 0, "nzeta": 2/' in_clean.json > in_nzeta2.json
+
 check() { # name want_exit want_grep want_absent -- cmd...
   local name=$1 want_exit=$2 want_grep=$3 want_absent=$4
   shift 4
@@ -49,12 +53,12 @@ check() { # name want_exit want_grep want_absent -- cmd...
   if [ "$got" -ne "$want_exit" ]; then
     echo "FAIL $name (exit $got, wanted $want_exit)"
     fail=1
-  elif [ -n "$want_grep" ] && ! printf '%s' "$out" | grep -q "$want_grep"; then
+  elif [ -n "$want_grep" ] && ! printf '%s' "$out" | grep -q -- "$want_grep"; then
     echo "FAIL $name (missing '$want_grep')"
     printf '%s
 ' "$out" | tail -4
     fail=1
-  elif [ -n "$want_absent" ] && printf '%s' "$out" | grep -q "$want_absent"; then
+  elif [ -n "$want_absent" ] && printf '%s' "$out" | grep -q -- "$want_absent"; then
     echo "FAIL $name (unexpected '$want_absent')"
     printf '%s
 ' "$out" | tail -4
@@ -85,6 +89,19 @@ check "strict rejects unknown output suffix" 1       "unrecognized output suffix
 check "native and Boozer outputs are mutually exclusive" 22       "mutually exclusive" ""       "$BIN" in_clean.json --output out.bin --boozer-output boozer.bin
 
 check "calculate-only Boozer option is rejected" 22       "unrecognized option '--boozer'" ""       "$BIN" in_clean.json --boozer
+
+check "Newton opt-in is documented in help" 0 \
+  "enable Newton-Krylov corrections" "" "$BIN" --help
+
+# Hiding all devices proves that option eligibility is checked before CUDA
+# allocation. A float binary reports the precision restriction first.
+check "Newton rejects a 3-D request before CUDA allocation" 22 \
+  "--newton requires" "CUDA error" \
+  env CUDA_VISIBLE_DEVICES= "$BIN" in_3d.json --newton
+
+check "Newton rejects an unqualified toroidal grid before CUDA allocation" 22 \
+  "--newton requires" "CUDA error" \
+  env CUDA_VISIBLE_DEVICES= "$BIN" in_nzeta2.json --newton
 
 check "invalid geometry precision reports a clean error" 1 \
   "CUMES_GEOMETRY_PRECISION: expected native or compensated" "terminate called" \

@@ -12,6 +12,12 @@ configured stage and the original tolerances. This is an experimental Class C
 trajectory change; production defaults remain unchanged. The results below
 include the regressions and their uncertainty.
 
+The qualified policy is now exposed by the ordinary solver's opt-in
+`--newton` flag and `SolveRequest::enable_newton`. Its promotion reproduces
+every baseline and Newton result below exactly on both GPUs; see
+[ADR-0016](adr/0016-opt-in-newton-corrections.md). This report preserves the
+original experiment's measurements and limitations.
+
 ## Fixed experiment
 
 The [input matrix](../benchmarks/axisymmetric_newton/README.md) fixes geometry,

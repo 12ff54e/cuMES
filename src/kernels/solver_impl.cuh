@@ -20,6 +20,7 @@
 #include "cumes/numerics/accumulation.hpp"
 #include "cumes/numerics/descent_operator.hpp"
 #include "cumes/numerics/device_predicates.cuh"
+#include "cumes/numerics/newton_correction.hpp"
 #include "cumes/numerics/preconditioner.hpp"
 #include "cumes/numerics/residual_operator.hpp"
 #include "cumes/physics/constraint_operator.hpp"
@@ -1023,7 +1024,14 @@ SolverResult<T> solver_run(
         vacuum,
     bool enable_step_recovery,
     bool verbose,
-    bool use_process_environment) {
+    bool use_process_environment,
+    bool enable_newton) {
+    if (enable_newton && (sizeof(T) != sizeof(double) || p.ntor != 0 ||
+                          p.nzeta != 1 || vacuum)) {
+        throw cumes::CumesError(
+            "Newton corrections require fixed-boundary axisymmetric double "
+            "stages (ntor=0, nzeta=1)");
+    }
     SolverResult<T> res{false, 0, T(1.0), T(1.0), T(1.0), p.delt, {}};
 
     // The per-iteration DAG (blueprint §6.11/§7): owns the operators,
@@ -1212,6 +1220,23 @@ SolverResult<T> solver_run(
         return key;
     };
 
+    // Allocate the complete correction workspace before iteration. The
+    // disabled path retains its original allocations and launch sequence.
+    std::optional<cumes::NewtonCorrection<T>> newton;
+    cumes::PinnedBuffer<cumes::GmresControl<T>> h_newton_pin;
+    if (enable_newton) {
+        newton.emplace(p, equilibrium, storage,
+                       cumes::control_policy::NEWTON_KRYLOV_BASIS,
+                       cumes::DifferenceScheme::FORWARD);
+        h_newton_pin.allocate(1);
+        if (verbose) {
+            printf(
+                "Newton: forward32 corrections every 100 iterations "
+                "(epsilon=1e-6, acceptance=0.95)\n");
+        }
+    }
+    int newton_attempts = 0, newton_accepted = 0, newton_evaluations = 0;
+
     for (int iter = 0; iter < MAX_ITER_EFF; ++iter) {
         // Snapshot of the controller's effective iteration for this pass's
         // dump windows (constant until after_descent at the end of the body;
@@ -1346,7 +1371,96 @@ SolverResult<T> solver_run(
                     .count());
             bench_t_prev = bench_now;
         }
-        const auto rec = h_control_pin.data()->template cast<double>();
+        auto rec = h_control_pin.data()->template cast<double>();
+        if (newton && iter2 >= cumes::control_policy::NEWTON_START_ITERATION &&
+            iter2 % cumes::control_policy::NEWTON_PERIOD == 0 &&
+            iter2 - controller.restart_anchor() >
+                cumes::control_policy::NEWTON_MIN_EPOCH_AGE &&
+            !schedule.refresh_preconditioner &&
+            !schedule.reset_constraint_reference && schedule.zero_z_force_m1 &&
+            rec.status.jacobian_valid && !rec.status.invariant_nonfinite &&
+            rec.status.preconditioned_evaluated &&
+            !rec.status.invariant_converged) {
+            ++newton_attempts;
+            const auto before = rec;
+            const double original = rec.invariant_scaled[0] +
+                                    rec.invariant_scaled[1] +
+                                    rec.invariant_scaled[2];
+            newton->prepare(schedule, fNormRZ, fNormL, stream);
+            constexpr int STEPS = cumes::control_policy::NEWTON_KRYLOV_STEPS;
+            constexpr int BASIS = cumes::control_policy::NEWTON_KRYLOV_BASIS;
+            newton->enqueue_solve(
+                STEPS, T(cumes::control_policy::NEWTON_INNER_TOLERANCE),
+                T(cumes::control_policy::NEWTON_DIFFERENCE_STEP), stream);
+            newton_evaluations += newton->evaluations_per_jvp() *
+                                  (STEPS + (STEPS + BASIS - 1) / BASIS);
+            cumes::check_cuda(
+                cudaMemcpyAsync(h_newton_pin.data(), newton->control_device(),
+                                sizeof(cumes::GmresControl<T>),
+                                cudaMemcpyDeviceToHost, stream),
+                "Newton GMRES control");
+            cumes::check_cuda(cudaStreamSynchronize(stream),
+                              "Newton GMRES fence");
+            const auto& gmres = *h_newton_pin.data();
+            bool accepted = false;
+            for (double scale : {1.0, 0.5, 0.25, 0.125}) {
+                if (gmres.breakdown) break;
+                newton->enqueue_trial(T(scale), stream);
+                ++newton_evaluations;
+                cumes::check_cuda(
+                    cudaMemcpyAsync(h_control_pin.data(),
+                                    equilibrium.control_device(),
+                                    sizeof(cumes::DeviceControlRecord<T>),
+                                    cudaMemcpyDeviceToHost, stream),
+                    "Newton trial control");
+                cumes::check_cuda(cudaStreamSynchronize(stream),
+                                  "Newton trial fence");
+                rec = h_control_pin.data()->template cast<double>();
+                const double value = rec.invariant_scaled[0] +
+                                     rec.invariant_scaled[1] +
+                                     rec.invariant_scaled[2];
+                if (rec.status.jacobian_valid &&
+                    !rec.status.invariant_nonfinite && std::isfinite(value) &&
+                    value < cumes::control_policy::NEWTON_ACCEPTANCE_RATIO *
+                                original) {
+                    accepted = true;
+                    ++newton_accepted;
+                    storage.velocity_buffer().zero_async(stream);
+                    controller.reset_correction_momentum();
+                    cumes::check_cuda(
+                        cudaMemcpy2DAsync(
+                            h_axis_pin.data(), sizeof(T),
+                            storage.family_ptr(cumes::SpectralComponent::Rcc),
+                            p.ns * sizeof(T), sizeof(T), p.ntor + 1,
+                            cudaMemcpyDeviceToHost, stream),
+                        "Newton axis copy");
+                    cumes::check_cuda(cudaStreamSynchronize(stream),
+                                      "Newton axis fence");
+                    break;
+                }
+            }
+            if (!accepted) {
+                // Probes also change derived fields and current closure.
+                // Re-evaluate the exact base state before normal
+                // classification.
+                newton->enqueue_restore(stream);
+                ++newton_evaluations;
+                cumes::check_cuda(
+                    cudaMemcpyAsync(h_control_pin.data(),
+                                    equilibrium.control_device(),
+                                    sizeof(cumes::DeviceControlRecord<T>),
+                                    cudaMemcpyDeviceToHost, stream),
+                    "Newton restore control");
+                cumes::check_cuda(cudaStreamSynchronize(stream),
+                                  "Newton restore fence");
+                rec = h_control_pin.data()->template cast<double>();
+                for (int c = 0; c < 3; ++c) {
+                    if (rec.invariant_scaled[c] != before.invariant_scaled[c])
+                        throw cumes::CumesError(
+                            "Newton rollback residual differs");
+                }
+            }
+        }
         // Sample the transform-timing events at this fence (both transforms
         // preceded it on the same stream).
         // CUDA event timestamp queries for events recorded inside a captured
@@ -1562,6 +1676,12 @@ SolverResult<T> solver_run(
     // Drain the compute stream before destroying the stage's cuFFT plans (the
     // last descent/backup enqueue may still be in flight when the loop exits).
     cumes::check_cuda(cudaStreamSynchronize(stream), "solver end sync");
+    if (verbose && newton) {
+        printf(
+            "Newton: %d/%d corrections accepted, "
+            "%d extra equilibrium evaluations\n",
+            newton_accepted, newton_attempts, newton_evaluations);
+    }
     // precon/constraint/equilibrium are RAII (their destructors free the
     // arena-backed workspaces and the transform-timing events); nothing else.
     if (verbose && use_cuda_graphs) {

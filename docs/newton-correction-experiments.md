@@ -9,6 +9,12 @@ and full-solver patch remain experiments, with production defaults unchanged.
 The separate [FAS experiment](coarse-correction-experiments.md) completes the
 other remaining proposal.
 
+The tested axisymmetric forward32 policy is now available in the ordinary
+solver through `--newton` or `SolveRequest::enable_newton`, off by default.
+See [ADR-0016](adr/0016-opt-in-newton-corrections.md). The private patch and
+instrumented runs below remain the historical experiment, including the
+separate 3-D policies that are not exposed by this flag.
+
 The subsequent [19-case axisymmetric qualification](axisymmetric-newton-qualification.md)
 tests the same fixed forward32 policy on both GPUs, including shape,
 resolution and finite-pressure variations. It confirms larger gains for the
@@ -223,7 +229,7 @@ worktree and build the precise double preset. The patch and its environment
 controls are excluded from the normal solver build.
 
 ```sh
-git worktree add --detach ../cumes-newton-experiment HEAD
+git worktree add --detach ../cumes-newton-experiment ade135f
 cd ../cumes-newton-experiment
 git submodule update --init --recursive
 git apply benchmarks/newton_live.patch

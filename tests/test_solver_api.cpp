@@ -9,6 +9,7 @@
 #include <exception>
 #include <future>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 #include <unistd.h>
@@ -97,6 +98,64 @@ int main() {
         if (!validated.has_value()) return cumes::test::summary();
 
         cumes::EquilibriumSolver solver;
+        check(!cumes::SolveRequest{}.enable_newton,
+              "solver API: Newton corrections are disabled by default");
+        const auto rejects_newton = [&solver](
+                                        const cumes::ValidatedProblem& problem,
+                                        std::string_view diagnostic) {
+            cumes::SolveRequest request;
+            request.enable_newton = true;
+            try {
+                solver.solve(problem, request);
+            } catch (const std::exception& error) {
+                return std::string_view(error.what()).find(diagnostic) !=
+                       std::string_view::npos;
+            }
+            return false;
+        };
+#ifdef CUMES_USE_FLOAT
+        check(rejects_newton(validated.value(), "require a double build"),
+              "solver API: float Newton requests are rejected");
+#else
+        auto newton_3d_spec = validated.value().spec();
+        newton_3d_spec.ntor = 1;
+        newton_3d_spec.angular.nzeta = 0;
+        newton_3d_spec.raxis_c.resize(2, 0.0);
+        newton_3d_spec.zaxis_s.resize(2, 0.0);
+        auto newton_3d = cumes::validate(std::move(newton_3d_spec), options);
+        check(newton_3d.has_value(),
+              "solver API: 3-D Newton fixture validates");
+        if (newton_3d.has_value()) {
+            check(rejects_newton(newton_3d.value(),
+                                 "fixed-boundary axisymmetric"),
+                  "solver API: 3-D Newton requests are rejected");
+        }
+        auto newton_nzeta_spec = validated.value().spec();
+        newton_nzeta_spec.angular.nzeta = 2;
+        auto newton_nzeta =
+            cumes::validate(std::move(newton_nzeta_spec), options);
+        check(newton_nzeta.has_value(),
+              "solver API: repeated-toroidal-grid Newton fixture validates");
+        if (newton_nzeta.has_value()) {
+            check(rejects_newton(newton_nzeta.value(), "ntor=0, nzeta=1"),
+                  "solver API: Newton requires one toroidal grid point");
+        }
+#ifndef CUMES_VACUUM_FIELD_DISABLED
+        auto newton_free_spec = validated.value().spec();
+        newton_free_spec.free_boundary.lfreeb = true;
+        newton_free_spec.free_boundary.mgrid_file = "unused-newton-test.nc";
+        newton_free_spec.free_boundary.extcur = {1.0};
+        auto newton_free =
+            cumes::validate(std::move(newton_free_spec), options);
+        check(newton_free.has_value(),
+              "solver API: free-boundary Newton fixture validates");
+        if (newton_free.has_value()) {
+            check(rejects_newton(newton_free.value(),
+                                 "fixed-boundary axisymmetric"),
+                  "solver API: free-boundary Newton requests are rejected");
+        }
+#endif
+#endif
         // The embedding API is argument-deterministic by default even when
         // the surrounding process carries legacy CLI environment controls.
         setenv("CUMES_MAX_ITER", "0", 1);

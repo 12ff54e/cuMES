@@ -279,7 +279,8 @@ class StageSolver {
         bool verbose = true,
         bool use_process_environment = true,
         std::optional<std::reference_wrapper<StageWallTimings>> wall_timings =
-            std::nullopt) {
+            std::nullopt,
+        bool enable_newton = false) {
         // One arena allocation, one construction of every module, one solve
         // (completion plan step 3.2): the modules' alloc_span calls ARE the
         // plan — there is no temporary measuring arena and nothing is
@@ -356,7 +357,7 @@ class StageSolver {
                                  std::ref(*axisym))
                            : std::nullopt,
                     vacuum, enable_step_recovery, verbose,
-                    use_process_environment);
+                    use_process_environment, enable_newton);
                 const double elapsed_device_ms = device_timer.stop(stream);
                 iteration_end = std::chrono::steady_clock::now();
                 if (device_time_ms.has_value())

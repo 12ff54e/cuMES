@@ -13,6 +13,12 @@ production policy. The completed [qualification report](../../docs/axisymmetric-
 and [timing summaries](results-20260908.json) retain all 19 outcomes on both GPUs,
 including the separately declared pressure supplement below.
 
+The ordinary solver now exposes this policy as `--newton`; for example,
+`build/cumes inputs/solovev.json --newton --output out.bin`. The historical
+instrumented runner below still uses the private hook at revision `ade135f`
+to reproduce its original timing records. Production behavior and promotion
+checks are documented in [ADR-0016](../../docs/adr/0016-opt-in-newton-corrections.md).
+
 All cases are fixed-boundary, stellarator symmetric, axisymmetric and double
 precision. Every case retains three configured stages with iteration caps
 `[1000, 2000, 2000]` and tolerances `[1e-16, 1e-16, 1e-16]`. Radial grids are

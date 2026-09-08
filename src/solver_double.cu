@@ -15,6 +15,7 @@ template SolverResult<double> solver_run<double>(
     std::optional<std::reference_wrapper<cumes::FreeBoundaryOperator<double>>>,
     bool,
     bool,
+    bool,
     bool);
 
 // Stateless operators (migration steps 8/10): linkable from tests.

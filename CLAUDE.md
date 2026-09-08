@@ -60,6 +60,11 @@ point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
 - `--restart <checkpoint>` / `-r <checkpoint>` and `--checkpoint <path>` /
   `-c <path>` — read/write the v2
   checkpoint (`docs/output-formats.md` §4).
+- `--newton` opts fixed-boundary axisymmetric double solves (`ntor=0`,
+  `nzeta=1`) into guarded forward32 Newton–Krylov corrections every 100
+  effective iterations. Off by default; preserves all multigrid stages,
+  tolerances and caps. Library equivalent: `SolveRequest::enable_newton`.
+  Policy and evidence: `docs/adr/0016-opt-in-newton-corrections.md`.
 - Every backend writes the schema-v1 container (versioned binary/NetCDF/HDF5
   with full provenance; a `.nc`/`.h5` suffix dispatches to the host-only
   NetCDF/HDF5 writers when compiled in). Formats: `docs/output-formats.md`.
