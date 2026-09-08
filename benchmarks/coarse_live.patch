@@ -1,0 +1,145 @@
+--- a/src/kernels/solver_impl.cuh
++++ b/src/kernels/solver_impl.cuh
+@@ -33,6 +33,9 @@
+ #include "cumes/runtime/device_buffer.cuh"
+ #include "cumes/runtime/pinned_buffer.hpp"
+ #include "cumes/solver/equilibrium_operator.hpp"
++#include "../../benchmarks/coarse_correction.cuh"
++#include "cumes/config/json_reader.hpp"
++#include "cumes/config/solver_options.hpp"
+ #include "cumes/solver/iteration_controller.hpp"
+ #include "cumes/solver/pass_record.hpp"
+ #include "cumes/solver/solver_bench.hpp"
+@@ -1033,6 +1036,32 @@
+     cumes::EquilibriumOperator<T> equilibrium(p, storage, profiles, transform,
+                                               rs, geometry, arena, op, vacuum);
+
++    std::unique_ptr<block_bench::CoarseCorrection<T>> coarse_correction;
++    int coarse_period = 0, coarse_start = 100, coarse_cycles = 0;
++    int coarse_accepts = 0, coarse_trials = 0, coarse_failed = 0;
++    int fine_passes = 0;
++    const char* coarse_input = getenv("CUMES_COARSE_INPUT");
++    const bool force_coarse_reject = getenv("CUMES_COARSE_FORCE_REJECT") != nullptr;
++    if constexpr (std::is_same_v<T, double>) {
++        if (!vacuum && coarse_input && p.ns > 5) {
++            coarse_period = getenv("CUMES_COARSE_PERIOD") ? atoi(getenv("CUMES_COARSE_PERIOD")) : 100;
++            coarse_start = getenv("CUMES_COARSE_START") ? atoi(getenv("CUMES_COARSE_START")) : 100;
++            const int ns_filter = getenv("CUMES_COARSE_NS") ? atoi(getenv("CUMES_COARSE_NS")) : 0;
++            if (coarse_period > 0 && (!ns_filter || ns_filter == p.ns)) {
++                auto vr = cumes::read_and_validate(coarse_input, cumes::SolverOptions{});
++                if (!vr.has_value()) throw cumes::CumesError("coarse private input validation failed");
++                const int steps = getenv("CUMES_COARSE_STEPS") ? atoi(getenv("CUMES_COARSE_STEPS")) : 8;
++                const int coarse_ns = getenv("CUMES_COARSE_GRID") ? atoi(getenv("CUMES_COARSE_GRID")) : (p.ns + 1) / 2;
++                const T delta = getenv("CUMES_COARSE_DELTA") ? T(atof(getenv("CUMES_COARSE_DELTA"))) : T(0.5);
++                coarse_correction = std::make_unique<block_bench::CoarseCorrection<T>>(p, vr.value(), coarse_ns, steps, delta);
++            }
++        }
++    }
++    const int coarse_size = coarse_correction ? 6 * p.ns * p.mnmax : 0;
++    cumes::DeviceBuffer<T> coarse_base(coarse_size), coarse_residual(coarse_size);
++    cumes::DeviceBuffer<cumes::DeviceControlRecord<T>> coarse_control(coarse_correction ? 1 : 0);
++    const auto coarse_loop_start = std::chrono::steady_clock::now();
++
+     // Stateless descent operator (the DAG's field/force/residual operators live
+     // inside the EquilibriumOperator; descent stays with the solver).
+     cumes::DescentOperator<T> descent_op;
+@@ -1346,7 +1375,68 @@
+                     .count());
+             bench_t_prev = bench_now;
+         }
+-        const auto rec = h_control_pin.data()->template cast<double>();
++        ++fine_passes;
++        auto rec = h_control_pin.data()->template cast<double>();
++        if (coarse_correction && !schedule.refresh_preconditioner &&
++            !schedule.reset_constraint_reference && schedule.zero_z_force_m1 &&
++            rec.status.jacobian_valid && !rec.status.invariant_nonfinite &&
++            !rec.status.invariant_converged && rec.status.preconditioned_evaluated &&
++            rec.invariant_scaled[1] < 1e-6 && iter2 >= coarse_start &&
++            iter2 - controller.restart_anchor() > 50 &&
++            (iter2 - coarse_start) % coarse_period == 0) {
++            coarse_base.copy_from_async(storage.state_buffer(), stream);
++            cumes::check_cuda(cudaMemcpyAsync(coarse_residual.data(), equilibrium.residual().data(),
++                std::size_t(coarse_size) * sizeof(T), cudaMemcpyDeviceToDevice, stream), "coarse fallback force");
++            cumes::check_cuda(cudaMemcpyAsync(coarse_control.data(), equilibrium.control_device(),
++                sizeof(cumes::DeviceControlRecord<T>), cudaMemcpyDeviceToDevice, stream), "coarse fallback control");
++            coarse_correction->enqueue(coarse_base.data(), coarse_residual.data(), stream);
++            ++coarse_cycles;
++            int failed = 0;
++            cumes::check_cuda(cudaMemcpyAsync(&failed, coarse_correction->failed_device(), sizeof(int),
++                cudaMemcpyDeviceToHost, stream), "coarse failure download");
++            cumes::check_cuda(cudaStreamSynchronize(stream), "coarse proposal fence");
++            const auto base_rec = rec;
++            const double base_merit = rec.invariant_scaled[0] + rec.invariant_scaled[1] + rec.invariant_scaled[2];
++            bool accepted = false;
++            double accepted_alpha = 0.0;
++            if (failed) ++coarse_failed;
++            else for (double alpha : {1.0, 0.5, 0.25}) {
++                coarse_correction->enqueue_trial(coarse_base.data(), storage.state_slab(), T(alpha), stream);
++                equilibrium.enqueue(iter, iter2, schedule, stream, fNormRZ, fNormL);
++                cumes::check_cuda(cudaMemcpyAsync(h_control_pin.data(), equilibrium.control_device(),
++                    sizeof(cumes::DeviceControlRecord<T>), cudaMemcpyDeviceToHost, stream), "coarse fine trial control");
++                cumes::check_cuda(cudaStreamSynchronize(stream), "coarse fine trial fence");
++                ++coarse_trials;
++                const auto trial = h_control_pin.data()->template cast<double>();
++                const double trial_merit = trial.invariant_scaled[0] + trial.invariant_scaled[1] + trial.invariant_scaled[2];
++                if (!force_coarse_reject && trial.status.jacobian_valid && !trial.status.invariant_nonfinite &&
++                    std::isfinite(trial_merit) && trial_merit < 0.995 * base_merit) {
++                    accepted = true;
++                    accepted_alpha = alpha;
++                    rec = trial;
++                    storage.velocity_buffer().zero_async(stream);
++                    controller.reset_correction_momentum();
++                    cumes::check_cuda(cudaMemcpy2DAsync(h_axis_pin.data(), sizeof(T),
++                        storage.family_ptr(cumes::SpectralComponent::Rcc), std::size_t(p.ns) * sizeof(T),
++                        sizeof(T), std::size_t(p.ntor) + 1, cudaMemcpyDeviceToHost, stream), "coarse accepted axis mirror");
++                    cumes::check_cuda(cudaStreamSynchronize(stream), "coarse accepted telemetry fence");
++                    ++coarse_accepts;
++                    break;
++                }
++            }
++            if (!accepted) {
++                storage.state_buffer().copy_from_async(coarse_base, stream);
++                cumes::check_cuda(cudaMemcpyAsync(equilibrium.residual().data(), coarse_residual.data(),
++                    std::size_t(coarse_size) * sizeof(T), cudaMemcpyDeviceToDevice, stream), "coarse restore force");
++                cumes::check_cuda(cudaMemcpyAsync(equilibrium.control_device(), coarse_control.data(),
++                    sizeof(cumes::DeviceControlRecord<T>), cudaMemcpyDeviceToDevice, stream), "coarse restore control");
++                *h_control_pin.data() = base_rec.template cast<T>();
++            }
++            fprintf(stderr, "COARSE_CYCLE {\"ns\":%d,\"iter\":%d,\"failed_pass\":%d,\"accepted\":%s,\"alpha\":%.17g,\"ratio\":%.17g}\n",
++                p.ns, iter2, failed, accepted ? "true" : "false", accepted_alpha,
++                (rec.invariant_scaled[0] + rec.invariant_scaled[1] + rec.invariant_scaled[2]) / base_merit);
++        }
++
+         // Sample the transform-timing events at this fence (both transforms
+         // preceded it on the same stream).
+         // CUDA event timestamp queries for events recorded inside a captured
+@@ -1577,6 +1667,13 @@
+     }
+     // Restart history for the stage report (v1 container): every pass that
+     // restored state and re-anchored, with the effective iteration.
++    const double coarse_elapsed_ms = std::chrono::duration<double, std::milli>(
++        std::chrono::steady_clock::now() - coarse_loop_start).count();
++    fprintf(stderr, "EXPERIMENT_STAGE {\"ns\":%d,\"converged\":%s,\"iterations\":%d,\"fine_passes\":%d,\"fsqr\":%.17g,\"fsqz\":%.17g,\"fsql\":%.17g,\"ftol\":%.17g,\"max_iter\":%d,\"elapsed_ms\":%.17g,\"coarse_cycles\":%d,\"coarse_passes\":%d,\"fine_trials\":%d,\"accepted\":%d,\"failed\":%d}\n",
++        p.ns, res.converged ? "true" : "false", res.iterations, fine_passes,
++        double(res.fsqr), double(res.fsqz), double(res.fsql), double(p.ftol), MAX_ITER_EFF,
++        coarse_elapsed_ms, coarse_cycles, coarse_cycles * (coarse_correction ? coarse_correction->coarse_passes() : 0),
++        coarse_trials, coarse_accepts, coarse_failed);
+     res.restarts = controller.restart_events();
+     return res;
+ }
+--- a/include/cumes/solver/iteration_controller.hpp
++++ b/include/cumes/solver/iteration_controller.hpp
+@@ -90,6 +90,13 @@
+         return (iter2_ - iter1_) %
+                    control_policy::PRECONDITIONER_REFRESH_INTERVAL ==
+                0;
++    }
++
++    void reset_correction_momentum() {
++        res0_ = T(-1);
++        fsq_prev_ = T(1);
++        for (int i = 0; i < control_policy::DAMPING_HISTORY_LENGTH; ++i)
++            inv_tau_hist_[i] = T(control_policy::DAMPING_LOG_RATIO_LIMIT) / delt0_;
+     }
+
+     // ---- per-fence decisions ----

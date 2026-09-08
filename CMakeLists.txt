@@ -506,7 +506,7 @@ if(CUMES_BUILD_BENCHMARKS)
   cumes_add_precision_provenance(cumes_benchmark_graph_realpass)
 
   # Frozen-state diagnostics for experimental coupled corrections.
-  foreach(probe rz_coupling lambda_correction newton_correction test_device_bicgstab test_device_gmres test_correction_coordinates)
+  foreach(probe rz_coupling lambda_correction newton_correction coarse_correction test_device_bicgstab test_device_gmres test_correction_coordinates)
     add_executable(cumes_benchmark_${probe} benchmarks/${probe}.cu)
     target_include_directories(cumes_benchmark_${probe} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(cumes_benchmark_${probe} PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
