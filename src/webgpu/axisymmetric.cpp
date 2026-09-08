@@ -1,33 +1,18 @@
 #include "cumes/webgpu/axisymmetric.hpp"
 
-#include "pipeline_cache.hpp"
-#include "shader_source.hpp"
+#include "cumes/webgpu/toroidal.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
-#include <iterator>
 #include <limits>
-#include <memory>
 #include <numbers>
-#include <sstream>
 #include <utility>
 
 namespace cumes::webgpu {
 namespace {
 
-constexpr std::uint32_t WORKGROUP_SIZE = 256;
 constexpr std::size_t RESULT_FIELD_COUNT = GEOMETRY_PARITY_FIELD_COUNT + 2;
-
-struct ShaderParams {
-    std::uint32_t ns;
-    std::uint32_t mpol;
-    std::uint32_t ntheta;
-    std::uint32_t points;
-    std::uint32_t padding[4];
-};
-static_assert(sizeof(ShaderParams) == 32);
 
 std::string validate_case(const AxisymmetricInverseCase& input) {
     if (input.ns < 2 || input.mpol <= 0 || input.ntheta < 2 ||
@@ -48,25 +33,6 @@ std::string validate_case(const AxisymmetricInverseCase& input) {
     }
     return {};
 }
-
-const std::string& load_shader() {
-    return detail::cached_shader_source("/shaders/axisymmetric_inverse.wgsl");
-}
-
-wgpu::Buffer create_buffer(const wgpu::Device& device,
-                           std::uint64_t size,
-                           wgpu::BufferUsage usage,
-                           const char* label) {
-    return detail::cached_buffer(device, size, usage, label);
-}
-
-struct DispatchState {
-    AxisymmetricInverseCallback callback;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t points = 0;
-    std::size_t result_bytes = 0;
-};
 
 }  // namespace
 
@@ -169,135 +135,14 @@ void enqueue_axisymmetric_inverse(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const auto& shader_text = load_shader();
-    if (shader_text.empty()) {
-        callback("cannot load embedded /shaders/axisymmetric_inverse.wgsl", {});
-        return;
-    }
-
-    const std::size_t points =
-        static_cast<std::size_t>(input.ns) * input.ntheta;
-    const std::size_t input_bytes = input.state.size() * sizeof(float);
-    std::vector<float> basis(2 * static_cast<std::size_t>(input.mpol) *
-                             input.ntheta);
-    for (int mode = 0; mode < input.mpol; ++mode) {
-        for (int theta_index = 0; theta_index < input.ntheta; ++theta_index) {
-            const float theta = 2.0F * std::numbers::pi_v<float> *
-                                static_cast<float>(theta_index) /
-                                static_cast<float>(input.ntheta);
-            const auto offset =
-                static_cast<std::size_t>(mode) * input.ntheta + theta_index;
-            basis[offset] = std::cos(static_cast<float>(mode) * theta);
-            basis[static_cast<std::size_t>(input.mpol) * input.ntheta +
-                  offset] = std::sin(static_cast<float>(mode) * theta);
-        }
-    }
-    const std::size_t basis_bytes = basis.size() * sizeof(float);
-    const std::size_t result_bytes =
-        RESULT_FIELD_COUNT * points * sizeof(float);
-    const wgpu::Buffer input_buffer =
-        create_buffer(device, input_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-                      "cuMES axisymmetric spectral state");
-    const wgpu::Buffer basis_buffer =
-        create_buffer(device, basis_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-                      "cuMES axisymmetric Fourier basis");
-    const wgpu::Buffer result_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
-                      "cuMES axisymmetric inverse result");
-    const wgpu::Buffer readback_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                      "cuMES axisymmetric inverse readback");
-    const wgpu::Buffer params_buffer =
-        create_buffer(device, sizeof(ShaderParams),
-                      wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
-                      "cuMES axisymmetric inverse parameters");
-
-    const auto& pipeline = detail::cached_compute_pipeline(
-        device, "axisymmetric-inverse", shader_text,
-        "cuMES axisymmetric inverse pipeline");
-
-    const ShaderParams params{static_cast<std::uint32_t>(input.ns),
-                              static_cast<std::uint32_t>(input.mpol),
-                              static_cast<std::uint32_t>(input.ntheta),
-                              static_cast<std::uint32_t>(points),
-                              {0, 0, 0, 0}};
-    const wgpu::Queue queue = device.GetQueue();
-    queue.WriteBuffer(input_buffer, 0, input.state.data(), input_bytes);
-    queue.WriteBuffer(basis_buffer, 0, basis.data(), basis_bytes);
-    queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
-
-    const wgpu::BindGroupLayout layout = pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry entries[] = {
-        {nullptr, 0, input_buffer, 0, input_bytes, nullptr, nullptr},
-        {nullptr, 1, basis_buffer, 0, basis_bytes, nullptr, nullptr},
-        {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
-        {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
-    };
-    wgpu::BindGroupDescriptor bind_group_descriptor{};
-    bind_group_descriptor.label = "cuMES axisymmetric inverse bindings";
-    bind_group_descriptor.layout = layout;
-    bind_group_descriptor.entryCount = std::size(entries);
-    bind_group_descriptor.entries = entries;
-    const wgpu::BindGroup bind_group =
-        device.CreateBindGroup(&bind_group_descriptor);
-
-    const wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-    wgpu::ComputePassDescriptor pass_descriptor{};
-    const wgpu::ComputePassEncoder pass =
-        encoder.BeginComputePass(&pass_descriptor);
-    pass.SetPipeline(pipeline);
-    pass.SetBindGroup(0, bind_group);
-    pass.DispatchWorkgroups(
-        (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
-        WORKGROUP_SIZE);
-    pass.End();
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
-    const wgpu::CommandBuffer commands = encoder.Finish();
-    queue.Submit(1, &commands);
-
-    auto dispatch = std::make_shared<DispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->points = points;
-    dispatch->result_bytes = result_bytes;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback(
-                    "WebGPU axisymmetric result mapping failed: " + detail, {});
-                return;
-            }
-            const void* mapped = dispatch->readback_buffer.GetConstMappedRange(
-                0, dispatch->result_bytes);
-            if (mapped == nullptr) {
-                dispatch->callback("WebGPU returned a null mapped range", {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(mapped);
-            const std::size_t geometry_values =
-                GEOMETRY_PARITY_FIELD_COUNT * dispatch->points;
-            AxisymmetricInverseResult result;
-            result.geometry.assign(values, values + geometry_values);
-            result.r_con.assign(values + geometry_values,
-                                values + geometry_values + dispatch->points);
-            result.z_con.assign(
-                values + geometry_values + dispatch->points,
-                values + geometry_values + 2 * dispatch->points);
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
-        });
+    ToroidalInverseCase shared;
+    shared.ns = input.ns;
+    shared.mpol = input.mpol;
+    shared.ntheta = input.ntheta;
+    shared.nzeta = 1;
+    shared.nfp = 1;
+    shared.state = input.state;
+    enqueue_toroidal_inverse(device, shared, std::move(callback));
 }
 
 }  // namespace cumes::webgpu

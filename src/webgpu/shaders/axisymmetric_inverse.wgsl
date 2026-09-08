@@ -1,12 +1,16 @@
+// Same parameter and binding contract as the separable 3-D inverse.
 struct Params {
     ns: u32,
     mpol: u32,
+    ntor: u32,
     ntheta: u32,
+    nzeta: u32,
+    nfp: u32,
+    n_z_n_t: u32,
     points: u32,
-    _padding0: u32,
-    _padding1: u32,
-    _padding2: u32,
-    _padding3: u32,
+    extrapolate_axis: f32,
+    radius_reference: f32,
+    compensated_geometry: f32,
 };
 
 struct Values {
@@ -22,7 +26,10 @@ struct Values {
 @group(0) @binding(3) var<uniform> params: Params;
 
 fn coefficient(component: u32, mode: u32, surface: u32) -> f32 {
-    return state.data[(component * params.mpol + mode) * params.ns + surface];
+    let extrapolate = params.extrapolate_axis != 0.0 && surface == 0u &&
+        (mode == 1u || (mode == 0u && component == 5u));
+    let radial = select(surface, 1u, extrapolate);
+    return state.data[(component * params.mpol + mode) * params.ns + radial];
 }
 
 fn store(field: u32, point: u32, value: f32) {
@@ -33,8 +40,8 @@ fn basis_value(kind: u32, mode: u32, theta_index: u32) -> f32 {
     return basis.data[(kind * params.mpol + mode) * params.ntheta + theta_index];
 }
 
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
+@compute @workgroup_size(128)
+fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let point = invocation.x;
     if (point >= params.points) {
         return;

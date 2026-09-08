@@ -1,12 +1,17 @@
+// Same parameter, field layout, and binding contract as the 3-D projector.
 struct Params {
     ns: u32,
     mpol: u32,
+    ntor: u32,
     ntheta: u32,
-    points: u32,
+    nzeta: u32,
+    nfp: u32,
+    n_z_n_t: u32,
     include_lcfs: u32,
-    _padding0: u32,
-    _padding1: u32,
-    _padding2: u32,
+    norm: f32,
+    norm_lo: f32,
+    sqrt2_hi: f32,
+    sqrt2_lo: f32,
 };
 
 struct Values {
@@ -14,28 +19,29 @@ struct Values {
 };
 
 // Input field order: armn e/o, azmn e/o, brmn e/o, bzmn e/o, blmn e/o,
-// frcon e/o, fzcon e/o.
+// crmn e/o, czmn e/o, clmn e/o, frcon e/o, fzcon e/o.
 @group(0) @binding(0) var<storage, read> fields: Values;
-// Host-generated cos, sin, m*cos, and -m*sin tables.
+// Shared separable basis, followed by the cached m*cos and -m*sin tables.
 @group(0) @binding(1) var<storage, read> basis: Values;
-@group(0) @binding(2) var<storage, read> weights: Values;
-@group(0) @binding(3) var<storage, read_write> residual: Values;
-@group(0) @binding(4) var<uniform> params: Params;
+@group(0) @binding(2) var<storage, read_write> residual: Values;
+@group(0) @binding(3) var<uniform> params: Params;
 
 fn field_value(field: u32, surface: u32, theta: u32) -> f32 {
-    return fields.data[field * params.points + surface * params.ntheta + theta];
+    return fields.data[field * params.ns * params.ntheta + surface * params.ntheta + theta];
 }
 
 fn basis_value(kind: u32, mode: u32, theta: u32) -> f32 {
-    return basis.data[(kind * params.mpol + mode) * params.ntheta + theta];
+    // The two n=0 zeta entries separate the cosine/sine and derivative tables.
+    let offset = select(0u, 2u, kind >= 2u);
+    return basis.data[(kind * params.mpol + mode) * params.ntheta + theta + offset];
 }
 
 fn store(component: u32, mode: u32, surface: u32, value: f32) {
     residual.data[(component * params.mpol + mode) * params.ns + surface] = value;
 }
 
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
+@compute @workgroup_size(128)
+fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let projection = invocation.x;
     let projection_count = params.ns * params.mpol;
     if (projection >= projection_count) {
@@ -53,15 +59,16 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var z_value = 0.0;
     var l_value = 0.0;
     for (var theta = 0u; theta < reduced_theta; theta++) {
-        let weight = weights.data[theta];
+        let weight = select(params.norm, params.norm * 0.5,
+                            theta == 0u || theta == reduced_theta - 1u);
         let cosine = weight * basis_value(0u, mode, theta);
         let sine = weight * basis_value(1u, mode, theta);
         let mcosine = weight * basis_value(2u, mode, theta);
         let msine = weight * basis_value(3u, mode, theta);
         let force_r = field_value(parity, surface, theta) +
-                      xmpq * field_value(10u + parity, surface, theta);
+                      xmpq * field_value(16u + parity, surface, theta);
         let force_z = field_value(2u + parity, surface, theta) +
-                      xmpq * field_value(12u + parity, surface, theta);
+                      xmpq * field_value(18u + parity, surface, theta);
         r_value += force_r * cosine +
                    field_value(4u + parity, surface, theta) * msine;
         z_value += force_z * sine +

@@ -1898,10 +1898,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_device_inverse_test(int variant = 0) {
         using namespace cumes::webgpu;
-        if (variant == 3) {
+        if (variant == 4) {
             std::printf(
                 "  batched device-state inverse and axis extrapolation (f32, "
-                "paired, axisymmetric paired): PASS\n");
+                "paired, axisymmetric f32/paired): PASS\n");
             const auto self = shared_from_this();
             run_float_geometry_tests(device_, [self](std::string error) {
                 if (!error.empty()) {
@@ -1911,18 +1911,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  float radius reference, sub-ULP radial derivative, "
                     "selective compensation, absolute force: PASS\n");
-                self->run_paired_axisymmetric_forward_test();
+                self->run_axisymmetric_projection_test();
             });
             return;
         }
         ToroidalInverseCase input;
         input.ns = 3;
         input.mpol = 3;
-        input.ntor = variant == 2 ? 0 : 2;
+        input.ntor = variant >= 2 ? 0 : 2;
         input.ntheta = 8;
-        input.nzeta = variant == 2 ? 1 : 6;
+        input.nzeta = variant >= 2 ? 1 : 6;
         input.nfp = 5;
-        input.double_single = variant != 0;
+        input.double_single = variant == 1 || variant == 2;
         const std::size_t count = 6 * input.ns * input.mpol * (input.ntor + 1);
         input.state.resize(count);
         input.state_lo.resize(count);
@@ -2007,10 +2007,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
-    void run_paired_axisymmetric_forward_test(int variant = 0) {
-        if (variant == 2) {
+    void run_axisymmetric_projection_test(int variant = 0) {
+        if (variant == 4) {
             std::printf(
-                "  axisymmetric paired forward, constraint planes, LCFS masks: "
+                "  axisymmetric f32/paired forward, constraint planes, LCFS "
+                "masks: "
                 "PASS\n");
             run_device_descent_test();
             return;
@@ -2022,9 +2023,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         input.ntheta = 16;
         input.nzeta = 1;
         input.nfp = 1;
-        input.double_single = true;
+        input.double_single = variant < 2;
         input.use_fft = false;
-        input.include_lcfs = variant != 0;
+        input.include_lcfs = (variant & 1) != 0;
         input.fields.resize(20 * input.ns * input.ntheta);
         input.fields_lo.resize(input.fields.size());
         for (std::size_t i = 0; i < input.fields.size(); ++i) {
@@ -2045,19 +2046,22 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 for (std::size_t i = 0; i < actual.residual.size() && valid;
                      ++i) {
                     const double a =
-                        double(actual.residual[i]) + actual.residual_lo[i];
+                        double(actual.residual[i]) +
+                        (variant < 2 ? actual.residual_lo[i] : 0.0F);
                     const double b =
-                        double(expected.residual[i]) + expected.residual_lo[i];
-                    valid &= std::isfinite(a) &&
-                             std::abs(a - b) < 5.0e-12 * (1.0 + std::abs(b));
+                        double(expected.residual[i]) +
+                        (variant < 2 ? expected.residual_lo[i] : 0.0F);
+                    valid &=
+                        std::isfinite(a) &&
+                        std::abs(a - b) < (variant < 2 ? 5.0e-12 : 5.0e-6) *
+                                              (1.0 + std::abs(b));
                 }
                 if (!valid) {
-                    self->finish(
-                        false,
-                        "paired axisymmetric forward mismatch: " + error);
+                    self->finish(false,
+                                 "axisymmetric forward mismatch: " + error);
                     return;
                 }
-                self->run_paired_axisymmetric_forward_test(variant + 1);
+                self->run_axisymmetric_projection_test(variant + 1);
             });
     }
 
@@ -3000,30 +3004,6 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
             return;
         }
-        if (initialized_stage_.ntor == 0 && !double_single_solve_) {
-            cumes::webgpu::AxisymmetricInverseCase inverse;
-            inverse.ns = initialized_stage_.ns;
-            inverse.mpol = initialized_stage_.mpol;
-            inverse.ntheta = initialized_stage_.ntheta;
-            inverse.state = initialized_stage_.state;
-            cumes::webgpu::enqueue_axisymmetric_inverse(
-                device_, inverse,
-                [self, inverse](
-                    std::string error,
-                    cumes::webgpu::AxisymmetricInverseResult actual) {
-                    if (!error.empty()) {
-                        self->finish(false, std::move(error));
-                        return;
-                    }
-                    self->finish_stage_inverse(
-                        std::move(actual),
-                        self->production_solve_
-                            ? cumes::webgpu::ToroidalInverseResult{}
-                            : cumes::webgpu::axisymmetric_inverse_reference(
-                                  inverse));
-                });
-            return;
-        }
         stage_toroidal_inverse_case_.ns = initialized_stage_.ns;
         stage_toroidal_inverse_case_.mpol = initialized_stage_.mpol;
         stage_toroidal_inverse_case_.ntor = initialized_stage_.ntor;
@@ -3598,101 +3578,65 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                    });
             return;
         }
-        if (initialized_stage_.ntor != 0 || double_single_solve_) {
-            solver_toroidal_forward_case_.ns = initialized_stage_.ns;
-            solver_toroidal_forward_case_.device_fields = device_force_fields_;
-            solver_toroidal_forward_case_.use_fft =
-                initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
-            solver_toroidal_forward_case_.readback = !resident_spectral_path();
-            solver_toroidal_forward_case_.optimized_fft =
-                !requested_generic_fft();
-            solver_toroidal_forward_case_.canonical_zeta =
-                requested_canonical_zeta();
-            solver_toroidal_forward_case_.mpol = initialized_stage_.mpol;
-            solver_toroidal_forward_case_.ntor = initialized_stage_.ntor;
-            solver_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
-            solver_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
-            solver_toroidal_forward_case_.nfp = initialized_stage_.nfp;
-            solver_toroidal_forward_case_.include_lcfs =
-                vacuum_ && vacuum_->apply_edge_force();
-            solver_toroidal_forward_case_.double_single = double_single_solve_;
-            const std::size_t points =
-                static_cast<std::size_t>(initialized_stage_.ns) *
-                initialized_stage_.ntheta * initialized_stage_.nzeta;
-            if (!device_force_fields_ || !production_solve_) {
-                solver_toroidal_forward_case_.fields.assign(
+        solver_toroidal_forward_case_.ns = initialized_stage_.ns;
+        solver_toroidal_forward_case_.device_fields = device_force_fields_;
+        solver_toroidal_forward_case_.use_fft =
+            initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
+        solver_toroidal_forward_case_.readback = !resident_spectral_path();
+        solver_toroidal_forward_case_.optimized_fft = !requested_generic_fft();
+        solver_toroidal_forward_case_.canonical_zeta =
+            requested_canonical_zeta();
+        solver_toroidal_forward_case_.mpol = initialized_stage_.mpol;
+        solver_toroidal_forward_case_.ntor = initialized_stage_.ntor;
+        solver_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
+        solver_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
+        solver_toroidal_forward_case_.nfp = initialized_stage_.nfp;
+        solver_toroidal_forward_case_.include_lcfs =
+            vacuum_ && vacuum_->apply_edge_force();
+        solver_toroidal_forward_case_.double_single = double_single_solve_;
+        const std::size_t points =
+            static_cast<std::size_t>(initialized_stage_.ns) *
+            initialized_stage_.ntheta * initialized_stage_.nzeta;
+        if (!device_force_fields_ || !production_solve_) {
+            solver_toroidal_forward_case_.fields.assign(
+                cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+            std::copy(force_fields.begin(), force_fields.end(),
+                      solver_toroidal_forward_case_.fields.begin());
+            if (double_single_solve_) {
+                solver_toroidal_forward_case_.fields_lo.assign(
                     cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
-                std::copy(force_fields.begin(), force_fields.end(),
-                          solver_toroidal_forward_case_.fields.begin());
-                if (double_single_solve_) {
-                    solver_toroidal_forward_case_.fields_lo.assign(
-                        cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points,
-                        0.0F);
-                    std::copy(stage_force_fields_lo_.begin(),
-                              stage_force_fields_lo_.end(),
-                              solver_toroidal_forward_case_.fields_lo.begin());
-                } else {
-                    solver_toroidal_forward_case_.fields_lo.clear();
-                }
+                std::copy(stage_force_fields_lo_.begin(),
+                          stage_force_fields_lo_.end(),
+                          solver_toroidal_forward_case_.fields_lo.begin());
             } else {
-                solver_toroidal_forward_case_.fields.clear();
                 solver_toroidal_forward_case_.fields_lo.clear();
             }
-            const auto self = shared_from_this();
-            enqueue_checked_forward(
-                solver_toroidal_forward_case_, "force",
-                [self](std::string error,
-                       cumes::webgpu::ToroidalForwardResult actual) {
-                    if (!error.empty()) {
-                        self->finish(false, std::move(error));
-                        return;
-                    }
-                    self->stage_spectral_residual_lo_ =
-                        std::move(actual.residual_lo);
-                    self->residual_case_.device_residual =
-                        actual.device_residual;
-                    if (actual.device_residual) {
-                        self->run_residual_decomposition({});
-                        return;
-                    }
-                    self->finish_stage_forward(
-                        std::move(actual.residual),
-                        self->production_solve_
-                            ? std::vector<float>{}
-                            : cumes::webgpu::toroidal_forward_reference(
-                                  self->solver_toroidal_forward_case_)
-                                  .residual);
-                });
-            return;
+        } else {
+            solver_toroidal_forward_case_.fields.clear();
+            solver_toroidal_forward_case_.fields_lo.clear();
         }
-        solver_forward_case_.ns = initialized_stage_.ns;
-        solver_forward_case_.mpol = initialized_stage_.mpol;
-        solver_forward_case_.ntheta = initialized_stage_.ntheta;
-        solver_forward_case_.include_lcfs =
-            vacuum_ && vacuum_->apply_edge_force();
-        const std::size_t points =
-            static_cast<std::size_t>(solver_forward_case_.ns) *
-            solver_forward_case_.ntheta;
-        solver_forward_case_.fields.assign(
-            cumes::webgpu::FORWARD_INPUT_FIELD_COUNT * points, 0.0F);
-        std::copy_n(force_fields.begin(),
-                    cumes::webgpu::FORWARD_INPUT_FIELD_COUNT * points,
-                    solver_forward_case_.fields.begin());
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_axisymmetric_forward(
-            device_, solver_forward_case_,
+        enqueue_checked_forward(
+            solver_toroidal_forward_case_, "force",
             [self](std::string error,
-                   cumes::webgpu::AxisymmetricForwardResult actual) {
+                   cumes::webgpu::ToroidalForwardResult actual) {
                 if (!error.empty()) {
                     self->finish(false, std::move(error));
+                    return;
+                }
+                self->stage_spectral_residual_lo_ =
+                    std::move(actual.residual_lo);
+                self->residual_case_.device_residual = actual.device_residual;
+                if (actual.device_residual) {
+                    self->run_residual_decomposition({});
                     return;
                 }
                 self->finish_stage_forward(
                     std::move(actual.residual),
                     self->production_solve_
                         ? std::vector<float>{}
-                        : cumes::webgpu::axisymmetric_forward_reference(
-                              self->solver_forward_case_)
+                        : cumes::webgpu::toroidal_forward_reference(
+                              self->solver_toroidal_forward_case_)
                               .residual);
             });
     }
@@ -4292,95 +4236,65 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_constraint_forward(std::vector<float> fields) {
-        if (initialized_stage_.ntor != 0 || double_single_solve_) {
-            if (initialized_stage_.ntor == 0 && !iteration_results_) {
-                // Axisymmetric constraint output is [10 force, 4 constraint]
-                // planes. The paired separable projector expects [16, 4].
-                const std::size_t points =
-                    static_cast<std::size_t>(initialized_stage_.ns) *
-                    initialized_stage_.ntheta;
-                const auto expand = [points](std::vector<float>& values) {
-                    values.resize(20 * points, 0.0F);
-                    std::copy_backward(values.begin() + 10 * points,
-                                       values.begin() + 14 * points,
-                                       values.end());
-                    std::fill(values.begin() + 10 * points,
-                              values.begin() + 16 * points, 0.0F);
-                };
-                expand(fields);
-                expand(constraint_fields_lo_);
-            }
-            constraint_toroidal_forward_case_.ns = initialized_stage_.ns;
-            constraint_toroidal_forward_case_.device_fields =
-                device_constraint_fields_;
-            constraint_toroidal_forward_case_.use_fft =
-                initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
-            constraint_toroidal_forward_case_.readback =
-                !resident_spectral_path();
-            constraint_toroidal_forward_case_.optimized_fft =
-                !requested_generic_fft();
-            constraint_toroidal_forward_case_.canonical_zeta =
-                requested_canonical_zeta();
-            constraint_toroidal_forward_case_.mpol = initialized_stage_.mpol;
-            constraint_toroidal_forward_case_.ntor = initialized_stage_.ntor;
-            constraint_toroidal_forward_case_.ntheta =
+        if (initialized_stage_.ntor == 0 && !iteration_results_) {
+            // Axisymmetric constraint output is [10 force, 4 constraint]
+            // planes. The shared projector expects [16, 4].
+            const std::size_t points =
+                static_cast<std::size_t>(initialized_stage_.ns) *
                 initialized_stage_.ntheta;
-            constraint_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
-            constraint_toroidal_forward_case_.nfp = initialized_stage_.nfp;
-            constraint_toroidal_forward_case_.include_lcfs =
-                vacuum_ && vacuum_->apply_edge_force();
-            constraint_toroidal_forward_case_.double_single =
-                double_single_solve_;
-            constraint_toroidal_forward_case_.fields = std::move(fields);
-            constraint_toroidal_forward_case_.fields_lo = constraint_fields_lo_;
-            const auto self = shared_from_this();
-            enqueue_checked_forward(
-                constraint_toroidal_forward_case_, "constraint",
-                [self](std::string error,
-                       cumes::webgpu::ToroidalForwardResult actual) {
-                    if (!error.empty()) {
-                        self->finish(false, std::move(error));
-                        return;
-                    }
-                    self->constraint_spectral_residual_lo_ =
-                        std::move(actual.residual_lo);
-                    self->constraint_residual_case_.device_residual =
-                        actual.device_residual;
-                    if (actual.device_residual) {
-                        self->run_constraint_residual_decomposition({});
-                        return;
-                    }
-                    self->finish_constraint_forward(
-                        std::move(actual.residual),
-                        self->production_solve_
-                            ? std::vector<float>{}
-                            : cumes::webgpu::toroidal_forward_reference(
-                                  self->constraint_toroidal_forward_case_)
-                                  .residual);
-                });
-            return;
+            const auto expand = [points](std::vector<float>& values) {
+                values.resize(20 * points, 0.0F);
+                std::copy_backward(values.begin() + 10 * points,
+                                   values.begin() + 14 * points, values.end());
+                std::fill(values.begin() + 10 * points,
+                          values.begin() + 16 * points, 0.0F);
+            };
+            expand(fields);
+            if (double_single_solve_) expand(constraint_fields_lo_);
         }
-        constraint_forward_case_.ns = initialized_stage_.ns;
-        constraint_forward_case_.mpol = initialized_stage_.mpol;
-        constraint_forward_case_.ntheta = initialized_stage_.ntheta;
-        constraint_forward_case_.include_lcfs =
+        constraint_toroidal_forward_case_.ns = initialized_stage_.ns;
+        constraint_toroidal_forward_case_.device_fields =
+            device_constraint_fields_;
+        constraint_toroidal_forward_case_.use_fft =
+            initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
+        constraint_toroidal_forward_case_.readback = !resident_spectral_path();
+        constraint_toroidal_forward_case_.optimized_fft =
+            !requested_generic_fft();
+        constraint_toroidal_forward_case_.canonical_zeta =
+            requested_canonical_zeta();
+        constraint_toroidal_forward_case_.mpol = initialized_stage_.mpol;
+        constraint_toroidal_forward_case_.ntor = initialized_stage_.ntor;
+        constraint_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
+        constraint_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
+        constraint_toroidal_forward_case_.nfp = initialized_stage_.nfp;
+        constraint_toroidal_forward_case_.include_lcfs =
             vacuum_ && vacuum_->apply_edge_force();
-        constraint_forward_case_.fields = std::move(fields);
+        constraint_toroidal_forward_case_.double_single = double_single_solve_;
+        constraint_toroidal_forward_case_.fields = std::move(fields);
+        constraint_toroidal_forward_case_.fields_lo = constraint_fields_lo_;
         const auto self = shared_from_this();
-        cumes::webgpu::enqueue_axisymmetric_forward(
-            device_, constraint_forward_case_,
+        enqueue_checked_forward(
+            constraint_toroidal_forward_case_, "constraint",
             [self](std::string error,
-                   cumes::webgpu::AxisymmetricForwardResult actual) {
+                   cumes::webgpu::ToroidalForwardResult actual) {
                 if (!error.empty()) {
                     self->finish(false, std::move(error));
+                    return;
+                }
+                self->constraint_spectral_residual_lo_ =
+                    std::move(actual.residual_lo);
+                self->constraint_residual_case_.device_residual =
+                    actual.device_residual;
+                if (actual.device_residual) {
+                    self->run_constraint_residual_decomposition({});
                     return;
                 }
                 self->finish_constraint_forward(
                     std::move(actual.residual),
                     self->production_solve_
                         ? std::vector<float>{}
-                        : cumes::webgpu::axisymmetric_forward_reference(
-                              self->constraint_forward_case_)
+                        : cumes::webgpu::toroidal_forward_reference(
+                              self->constraint_toroidal_forward_case_)
                               .residual);
             });
     }
@@ -5360,11 +5274,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     cumes::webgpu::BaseGeometryCase base_geometry_case_;
     cumes::webgpu::MagneticFieldCase magnetic_field_case_;
     cumes::webgpu::AxisymmetricForceCase force_case_;
-    cumes::webgpu::AxisymmetricForwardCase solver_forward_case_;
     cumes::webgpu::ToroidalForwardCase solver_toroidal_forward_case_;
     cumes::webgpu::ResidualDecompositionCase residual_case_;
     cumes::webgpu::AxisymmetricConstraintCase constraint_case_;
-    cumes::webgpu::AxisymmetricForwardCase constraint_forward_case_;
     cumes::webgpu::ToroidalForwardCase constraint_toroidal_forward_case_;
     cumes::webgpu::AxisymmetricPreconditionerElementCase preconditioner_case_;
     cumes::webgpu::AxisymmetricPreconditionerElements preconditioner_elements_;
@@ -5401,14 +5313,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_r_con_;
     std::vector<float> stage_z_con_;
     bool resident_path() const {
-        const bool free = initialized_stage_.free_boundary;
-        const bool free_batch =
-            free && (initialized_stage_.ntor > 0 || double_single_solve_) &&
-            !requested_spectral_fences() && !requested_compare_fft();
-        return ((!free &&
-                 (initialized_stage_.ntor > 0 || double_single_solve_)) ||
-                free_batch) &&
-               requested_reference_transfers() == 0;
+        if (requested_reference_transfers()) return false;
+        if ((initialized_stage_.free_boundary ||
+             initialized_stage_.ntor == 0) &&
+            (requested_spectral_fences() || requested_compare_fft()))
+            return false;
+        return initialized_stage_.ntor > 0 || production_solve_;
     }
     bool batched_free_boundary_path() const {
         return production_solve_ && initialized_stage_.free_boundary &&

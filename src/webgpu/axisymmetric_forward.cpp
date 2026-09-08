@@ -1,4 +1,5 @@
 #include "cumes/webgpu/axisymmetric.hpp"
+#include "cumes/webgpu/toroidal.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
@@ -107,14 +108,6 @@ std::vector<float> make_forward_weights(int ntheta) {
     return weights;
 }
 
-struct ForwardDispatchState {
-    AxisymmetricForwardCallback callback;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t result_values = 0;
-    std::size_t result_bytes = 0;
-};
-
 struct DealiasDispatchState {
     AxisymmetricDealiasCallback callback;
     wgpu::Buffer result_buffer;
@@ -206,127 +199,23 @@ void enqueue_axisymmetric_forward(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const auto& shader_text = load_shader("/shaders/axisymmetric_forward.wgsl");
-    if (shader_text.empty()) {
-        callback("cannot load embedded /shaders/axisymmetric_forward.wgsl", {});
-        return;
-    }
-
-    const std::size_t points =
-        static_cast<std::size_t>(input.ns) * input.ntheta;
-    const auto basis = make_forward_basis(input.mpol, input.ntheta);
-    const auto weights = make_forward_weights(input.ntheta);
-    const std::size_t input_bytes = input.fields.size() * sizeof(float);
-    const std::size_t basis_bytes = basis.size() * sizeof(float);
-    const std::size_t weight_bytes = weights.size() * sizeof(float);
-    const std::size_t result_values = SPECTRAL_COMPONENT_COUNT *
-                                      static_cast<std::size_t>(input.mpol) *
-                                      input.ns;
-    const std::size_t result_bytes = result_values * sizeof(float);
-    const wgpu::Buffer input_buffer =
-        create_buffer(device, input_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-                      "cuMES axisymmetric force fields");
-    const wgpu::Buffer basis_buffer =
-        create_buffer(device, basis_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-                      "cuMES axisymmetric forward basis");
-    const wgpu::Buffer weight_buffer =
-        create_buffer(device, weight_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-                      "cuMES axisymmetric forward weights");
-    const wgpu::Buffer result_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
-                      "cuMES axisymmetric residual");
-    const wgpu::Buffer readback_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                      "cuMES axisymmetric residual readback");
-    const wgpu::Buffer params_buffer =
-        create_buffer(device, sizeof(ShaderParams),
-                      wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
-                      "cuMES axisymmetric forward parameters");
-
-    const auto& pipeline = detail::cached_compute_pipeline(
-        device, "axisymmetric-forward", shader_text,
-        "cuMES axisymmetric forward pipeline");
-
-    const ShaderParams params{static_cast<std::uint32_t>(input.ns),
-                              static_cast<std::uint32_t>(input.mpol),
-                              static_cast<std::uint32_t>(input.ntheta),
-                              static_cast<std::uint32_t>(points),
-                              input.include_lcfs ? 1U : 0U,
-                              {0, 0, 0}};
-    const wgpu::Queue queue = device.GetQueue();
-    queue.WriteBuffer(input_buffer, 0, input.fields.data(), input_bytes);
-    queue.WriteBuffer(basis_buffer, 0, basis.data(), basis_bytes);
-    queue.WriteBuffer(weight_buffer, 0, weights.data(), weight_bytes);
-    queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
-
-    const wgpu::BindGroupLayout layout = pipeline.GetBindGroupLayout(0);
-    const wgpu::BindGroupEntry entries[] = {
-        {nullptr, 0, input_buffer, 0, input_bytes, nullptr, nullptr},
-        {nullptr, 1, basis_buffer, 0, basis_bytes, nullptr, nullptr},
-        {nullptr, 2, weight_buffer, 0, weight_bytes, nullptr, nullptr},
-        {nullptr, 3, result_buffer, 0, result_bytes, nullptr, nullptr},
-        {nullptr, 4, params_buffer, 0, sizeof(params), nullptr, nullptr},
-    };
-    wgpu::BindGroupDescriptor bind_group_descriptor{};
-    bind_group_descriptor.label = "cuMES axisymmetric forward bindings";
-    bind_group_descriptor.layout = layout;
-    bind_group_descriptor.entryCount = std::size(entries);
-    bind_group_descriptor.entries = entries;
-    const wgpu::BindGroup bind_group =
-        device.CreateBindGroup(&bind_group_descriptor);
-
-    const wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-    wgpu::ComputePassDescriptor pass_descriptor{};
-    const wgpu::ComputePassEncoder pass =
-        encoder.BeginComputePass(&pass_descriptor);
-    pass.SetPipeline(pipeline);
-    pass.SetBindGroup(0, bind_group);
-    const auto projection_count = static_cast<std::uint32_t>(input.ns) *
-                                  static_cast<std::uint32_t>(input.mpol);
-    pass.DispatchWorkgroups((projection_count + WORKGROUP_SIZE - 1) /
-                            WORKGROUP_SIZE);
-    pass.End();
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
-    const wgpu::CommandBuffer commands = encoder.Finish();
-    queue.Submit(1, &commands);
-
-    auto dispatch = std::make_shared<ForwardDispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->result_values = result_values;
-    dispatch->result_bytes = result_bytes;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback(
-                    "WebGPU axisymmetric residual mapping failed: " + detail,
-                    {});
-                return;
-            }
-            const void* mapped = dispatch->readback_buffer.GetConstMappedRange(
-                0, dispatch->result_bytes);
-            if (mapped == nullptr) {
-                dispatch->callback("WebGPU returned a null mapped range", {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(mapped);
-            AxisymmetricForwardResult result;
-            result.residual.assign(values, values + dispatch->result_values);
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
+    ToroidalForwardCase shared;
+    shared.ns = input.ns;
+    shared.mpol = input.mpol;
+    shared.ntheta = input.ntheta;
+    shared.nzeta = 1;
+    shared.nfp = 1;
+    shared.include_lcfs = input.include_lcfs;
+    const auto points = static_cast<std::size_t>(input.ns) * input.ntheta;
+    shared.fields.resize(TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+    std::copy_n(input.fields.begin(), 10 * points, shared.fields.begin());
+    std::copy_n(input.fields.begin() + 10 * points, 4 * points,
+                shared.fields.begin() + 16 * points);
+    enqueue_toroidal_forward(
+        device, shared,
+        [callback = std::move(callback)](std::string error,
+                                         ToroidalForwardResult result) {
+            callback(std::move(error), {std::move(result.residual)});
         });
 }
 

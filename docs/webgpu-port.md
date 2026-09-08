@@ -88,8 +88,8 @@ comparisons; other positive counts are capped at the available pool size.
 Fixed-boundary runs do not create MAKEGRID workers. Coil sums retain their
 original order within each grid point, independent of the thread count.
 
-Free-boundary 3-D and paired axisymmetric solves reuse the resident plasma
-operators in two batches:
+Free-boundary 3-D and axisymmetric solves in both precisions reuse the resident
+plasma operators in two batches:
 inverse/geometry/magnetic/MHD force, then projection/constraint/preconditioning.
 Between them the host accepts the geometry, updates the existing double NESTOR
 solve, and uploads only the four corrected LCFS force rows. Rejected geometry
@@ -98,13 +98,16 @@ coupling reconstructs only the axis, boundary coefficients and outer rows it
 needs; it retains the native bridge kernels and reduction order. `&resident=0`
 selects the original separate-dispatch path for trajectory comparisons.
 Axisymmetric constraint filtering retains its existing shader; buffer copies
-adapt its force-plane layout to the separable projector. Scalar axisymmetric
-solves retain their separate-dispatch path.
+adapt its force-plane layout to the shared projector.
 
-Fixed-boundary paired axisymmetric solves also use the shared resident
-iteration pipeline, with one batched mapping per evaluated pass. They retain
-the same transforms, constraint filtering, and controller arithmetic as the
-separate-dispatch path; `&resident=0` restores that path for comparisons.
+Fixed-boundary 3-D and axisymmetric solves use the same resident iteration
+pipeline, with one batched mapping per evaluated pass. The transform layer
+shares cached basis tables, buffers, device-state handoffs, and readback
+handling. Scalar axisymmetric transforms select the existing direct poloidal
+shaders, skipping the toroidal pass and its scratch allocation. Their original
+summation order and host-rounded derivative tables are preserved. Paired
+axisymmetric transforms retain the separable shaders with `ntor=0, nzeta=1`.
+`&resident=0` restores separate dispatches for trajectory comparisons.
 
 Choose **Fixed boundary** or **Free boundary** above the editor. Free-boundary
 setup defaults to paired precision and offers Solovev, W7-X (vacuum), and
@@ -673,7 +676,7 @@ tolerance; the precision switch enables paired-f32 at `1e-12`. The paired
 axisymmetric path uses the same separable transforms with `ntor=0, nzeta=1`
 (no toroidal FFT is needed), retaining low words through geometry, forces,
 constraints, and descent. Constraint planes are remapped from the compact
-axisymmetric layout to the shared paired projection layout without rounding.
+axisymmetric layout to the shared projection layout without rounding.
 
 ## Browser performance
 
@@ -1022,7 +1025,7 @@ work; no new Windows GPU-utilization percentage was measured from DevTools.
 The remaining readback boundaries motivated the next change below; these
 measurements do not imply a speedup proportional to the reported idle percentage.
 
-### One readback mapping per production 3-D iteration
+### One readback mapping per production fixed-boundary iteration
 
 `ReadbackBatch` collects all force-evaluation readbacks in a reusable mapped
 buffer. Each producer copies its output into a disjoint, eight-byte-aligned
@@ -1088,8 +1091,8 @@ callbacks and does not require Wasm C++ exception catching. The complete
 conformance suite and 327-iteration Solovev regression passed.
 
 `&fences=1`, `&resident=0`, and `&compare_fft=1` retain sequential diagnostic
-paths. Axisymmetric solves and operator conformance also retain their existing
-readbacks; this optimization targets resident production 3-D solves.
+paths. Operator conformance retains its individual readbacks; production
+axisymmetric and 3-D solves share the batched pipeline in both precisions.
 
 ### Per-pass GPU timestamps and CPU sampling
 

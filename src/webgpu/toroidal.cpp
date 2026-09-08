@@ -273,6 +273,13 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
                                      nzeta);
         std::vector<float> basis_lo(basis.size());
         const std::size_t theta_plane = static_cast<std::size_t>(mpol) * ntheta;
+        // The direct scalar axisymmetric projection keeps its original
+        // host-rounded derivative tables in the shared basis cache.
+        const auto derivative_start = basis.size();
+        if (ntor == 0) {
+            basis.resize(derivative_start + 2 * theta_plane);
+            basis_lo.resize(basis.size());
+        }
         for (int m = 0; m < mpol; ++m) {
             for (int theta_index = 0; theta_index < ntheta; ++theta_index) {
                 const float theta = 2.0F * std::numbers::pi_v<float> *
@@ -283,6 +290,12 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
                 basis[index] = std::cos(static_cast<float>(m) * theta);
                 basis[theta_plane + index] =
                     std::sin(static_cast<float>(m) * theta);
+                if (ntor == 0) {
+                    basis[derivative_start + index] =
+                        static_cast<float>(m) * basis[index];
+                    basis[derivative_start + theta_plane + index] =
+                        -static_cast<float>(m) * basis[theta_plane + index];
+                }
                 const double exact_theta = 2.0 * std::numbers::pi *
                                            static_cast<double>(theta_index) /
                                            static_cast<double>(ntheta);
@@ -529,6 +542,10 @@ ToroidalInverseResult toroidal_inverse_reference(
     if (input.double_single) {
         return toroidal_inverse_double_single_reference(input);
     }
+    if (input.ntor == 0 && !input.radius_reference &&
+        !input.compensated_geometry)
+        return axisymmetric_inverse_reference(
+            {input.ns, input.mpol, input.ntheta, input.state});
     const int mnmax = input.mpol * (input.ntor + 1);
     const int n_z_n_t = input.ntheta * input.nzeta;
     const std::size_t total_points =
@@ -667,7 +684,13 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const auto& shader_text = load_shader(input.double_single);
+    const bool axisymmetric = input.ntor == 0 && !input.double_single &&
+                              !input.radius_reference &&
+                              !input.compensated_geometry;
+    const auto& shader_text =
+        axisymmetric
+            ? detail::cached_shader_source("/shaders/axisymmetric_inverse.wgsl")
+            : load_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/toroidal_inverse.wgsl", {});
         return;
@@ -731,8 +754,10 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                       "cuMES toroidal inverse result");
     const auto intermediate_buffer =
-        create_buffer(device, intermediate_bytes, wgpu::BufferUsage::Storage,
-                      "cuMES toroidal inverse intermediate");
+        axisymmetric ? wgpu::Buffer{}
+                     : create_buffer(device, intermediate_bytes,
+                                     wgpu::BufferUsage::Storage,
+                                     "cuMES toroidal inverse intermediate");
     const auto readback_buffer =
         input.readback.batch ? wgpu::Buffer{}
                              : create_buffer(device, result_bytes,
@@ -747,7 +772,8 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     const char* toroidal_key = input.double_single
                                    ? "toroidal-inverse-double-single-toroidal"
                                    : "toroidal-inverse-toroidal";
-    const char* poloidal_key = input.double_single
+    const char* poloidal_key = axisymmetric ? "axisymmetric-inverse"
+                               : input.double_single
                                    ? "toroidal-inverse-double-single-poloidal"
                                    : "toroidal-inverse-poloidal";
     const char* toroidal_label =
@@ -758,8 +784,11 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         input.double_single
             ? "cuMES double-single separable poloidal inverse pipeline"
             : "cuMES separable poloidal inverse pipeline";
-    const auto& toroidal_pipeline = detail::cached_compute_pipeline(
-        device, toroidal_key, shader_text, toroidal_label, "toroidal_stage");
+    const auto toroidal_pipeline =
+        axisymmetric
+            ? wgpu::ComputePipeline{}
+            : detail::cached_compute_pipeline(device, toroidal_key, shader_text,
+                                              toroidal_label, "toroidal_stage");
     const auto& poloidal_pipeline = detail::cached_compute_pipeline(
         device, poloidal_key, shader_text, poloidal_label, "poloidal_stage");
 
@@ -793,7 +822,7 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
 
     wgpu::Buffer radius_buffer;
     const auto radius_bytes = (input.ntor + 1) * sizeof(float);
-    if (!input.double_single) {
+    if (!input.double_single && !axisymmetric) {
         std::vector<float> coefficients(input.ntor + 1, 0.0F);
         if (input.radius_reference)
             coefficients.assign(input.radius_reference->coefficients.begin(),
@@ -804,38 +833,45 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
             "cuMES float radius reference coefficients");
         queue.WriteBuffer(radius_buffer, 0, coefficients.data(), radius_bytes);
     }
-    const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
-    std::vector<wgpu::BindGroupEntry> toroidal_entries = {
-        {nullptr, 0, state_buffer, 0, state_bytes, nullptr, nullptr},
-        {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
-        {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
-        {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
-         nullptr},
-    };
-    if (!input.double_single)
-        toroidal_entries.push_back(
-            {nullptr, 6, radius_buffer, 0, radius_bytes, nullptr, nullptr});
-    if (input.double_single) {
-        toroidal_entries.push_back(
-            {nullptr, 5, state_lo_buffer, 0, state_bytes, nullptr, nullptr});
-        toroidal_entries.push_back({nullptr, 9, gpu_basis.low_buffer, 0,
-                                    basis_bytes, nullptr, nullptr});
+    wgpu::BindGroup toroidal_bind_group;
+    if (!axisymmetric) {
+        const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
+        std::vector<wgpu::BindGroupEntry> toroidal_entries = {
+            {nullptr, 0, state_buffer, 0, state_bytes, nullptr, nullptr},
+            {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
+            {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
+            {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
+             nullptr},
+        };
+        if (!input.double_single)
+            toroidal_entries.push_back(
+                {nullptr, 6, radius_buffer, 0, radius_bytes, nullptr, nullptr});
+        if (input.double_single) {
+            toroidal_entries.push_back({nullptr, 5, state_lo_buffer, 0,
+                                        state_bytes, nullptr, nullptr});
+            toroidal_entries.push_back({nullptr, 9, gpu_basis.low_buffer, 0,
+                                        basis_bytes, nullptr, nullptr});
+        }
+        wgpu::BindGroupDescriptor toroidal_bind_descriptor{};
+        toroidal_bind_descriptor.label =
+            "cuMES toroidal inverse first bindings";
+        toroidal_bind_descriptor.layout = toroidal_layout;
+        toroidal_bind_descriptor.entryCount = toroidal_entries.size();
+        toroidal_bind_descriptor.entries = toroidal_entries.data();
+        toroidal_bind_group = device.CreateBindGroup(&toroidal_bind_descriptor);
     }
-    wgpu::BindGroupDescriptor toroidal_bind_descriptor{};
-    toroidal_bind_descriptor.label = "cuMES toroidal inverse first bindings";
-    toroidal_bind_descriptor.layout = toroidal_layout;
-    toroidal_bind_descriptor.entryCount = toroidal_entries.size();
-    toroidal_bind_descriptor.entries = toroidal_entries.data();
-    const auto toroidal_bind_group =
-        device.CreateBindGroup(&toroidal_bind_descriptor);
     const auto poloidal_layout = poloidal_pipeline.GetBindGroupLayout(0);
     std::vector<wgpu::BindGroupEntry> poloidal_entries = {
         {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
-        {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
-         nullptr},
     };
+    if (axisymmetric)
+        poloidal_entries.push_back(
+            {nullptr, 0, state_buffer, 0, state_bytes, nullptr, nullptr});
+    else
+        poloidal_entries.push_back({nullptr, 4, intermediate_buffer, 0,
+                                    intermediate_bytes, nullptr, nullptr});
     if (input.double_single) {
         const std::size_t radial_scale_bytes =
             radial_scale_hi.size() * sizeof(float);
@@ -854,14 +890,17 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     const auto poloidal_bind_group =
         device.CreateBindGroup(&poloidal_bind_descriptor);
     wgpu::ComputePassDescriptor pass_descriptor{};
-    const auto toroidal_pass = encoder.BeginComputePass(&pass_descriptor);
-    toroidal_pass.SetPipeline(toroidal_pipeline);
-    toroidal_pass.SetBindGroup(0, toroidal_bind_group);
-    const std::uint32_t intermediate_dispatch_points =
-        static_cast<std::uint32_t>(intermediate_points);
-    toroidal_pass.DispatchWorkgroups(
-        (intermediate_dispatch_points + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
-    toroidal_pass.End();
+    if (!axisymmetric) {
+        const auto toroidal_pass = encoder.BeginComputePass(&pass_descriptor);
+        toroidal_pass.SetPipeline(toroidal_pipeline);
+        toroidal_pass.SetBindGroup(0, toroidal_bind_group);
+        const std::uint32_t intermediate_dispatch_points =
+            static_cast<std::uint32_t>(intermediate_points);
+        toroidal_pass.DispatchWorkgroups(
+            (intermediate_dispatch_points + WORKGROUP_SIZE - 1) /
+            WORKGROUP_SIZE);
+        toroidal_pass.End();
+    }
     const auto poloidal_pass = encoder.BeginComputePass(&pass_descriptor);
     poloidal_pass.SetPipeline(poloidal_pipeline);
     poloidal_pass.SetBindGroup(0, poloidal_bind_group);
@@ -981,7 +1020,24 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
 
 ToroidalForwardResult toroidal_forward_reference(
     const ToroidalForwardCase& input) {
+    if (input.device_fields && input.fields.empty()) return {};
     if (!validate_case(input).empty()) return {};
+    if (input.ntor == 0 && !input.double_single) {
+        AxisymmetricForwardCase axisymmetric;
+        axisymmetric.ns = input.ns;
+        axisymmetric.mpol = input.mpol;
+        axisymmetric.ntheta = input.ntheta;
+        axisymmetric.include_lcfs = input.include_lcfs;
+        const auto points = static_cast<std::size_t>(input.ns) * input.ntheta;
+        axisymmetric.fields.assign(input.fields.begin(),
+                                   input.fields.begin() + 10 * points);
+        axisymmetric.fields.insert(axisymmetric.fields.end(),
+                                   input.fields.begin() + 16 * points,
+                                   input.fields.end());
+        ToroidalForwardResult result;
+        result.residual = axisymmetric_forward_reference(axisymmetric).residual;
+        return result;
+    }
     const int mnmax = input.mpol * (input.ntor + 1);
     const int n_z_n_t = input.ntheta * input.nzeta;
     const int theta_reduced = input.ntheta / 2 + 1;
@@ -1105,7 +1161,11 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const auto& shader_text = load_forward_shader(input.double_single);
+    const bool axisymmetric = input.ntor == 0 && !input.double_single;
+    const auto& shader_text =
+        axisymmetric
+            ? detail::cached_shader_source("/shaders/axisymmetric_forward.wgsl")
+            : load_forward_shader(input.double_single);
     if (shader_text.empty()) {
         callback("cannot load embedded /shaders/toroidal_forward.wgsl", {});
         return;
@@ -1138,8 +1198,10 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                       "cuMES toroidal residual");
     const auto intermediate_buffer =
-        create_buffer(device, intermediate_bytes, wgpu::BufferUsage::Storage,
-                      "cuMES toroidal forward intermediate");
+        axisymmetric ? wgpu::Buffer{}
+                     : create_buffer(device, intermediate_bytes,
+                                     wgpu::BufferUsage::Storage,
+                                     "cuMES toroidal forward intermediate");
     const auto readback_buffer =
         !input.readback ? wgpu::Buffer{}
                         : create_buffer(device, result_bytes,
@@ -1158,16 +1220,21 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
             "cuMES toroidal forces low");
     }
 
-    const auto& toroidal_pipeline = detail::cached_compute_pipeline(
-        device,
-        input.double_single ? "toroidal-forward-toroidal-double-single"
-                            : "toroidal-forward-toroidal",
-        shader_text, "cuMES separable toroidal forward pipeline",
-        "toroidal_stage");
+    const auto toroidal_pipeline =
+        axisymmetric
+            ? wgpu::ComputePipeline{}
+            : detail::cached_compute_pipeline(
+                  device,
+                  input.double_single
+                      ? "toroidal-forward-toroidal-double-single"
+                      : "toroidal-forward-toroidal",
+                  shader_text, "cuMES separable toroidal forward pipeline",
+                  "toroidal_stage");
     const auto& poloidal_pipeline = detail::cached_compute_pipeline(
         device,
-        input.double_single ? "toroidal-forward-poloidal-double-single"
-                            : "toroidal-forward-poloidal",
+        axisymmetric          ? "axisymmetric-forward"
+        : input.double_single ? "toroidal-forward-poloidal-double-single"
+                              : "toroidal-forward-poloidal",
         shader_text, "cuMES separable poloidal forward pipeline",
         "poloidal_stage");
     const ShaderParams params{
@@ -1191,35 +1258,42 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         transfer_fields(device, encoder, fields_low_buffer, input.fields_lo,
                         input.device_fields, true);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
-    const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
-    std::vector<wgpu::BindGroupEntry> toroidal_entries = {
-        {nullptr, 0, fields_buffer, 0, fields_bytes, nullptr, nullptr},
-        {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
-        {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
-        {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
-         nullptr},
-    };
-    if (input.double_single) {
-        toroidal_entries.push_back(
-            {nullptr, 5, fields_low_buffer, 0, fields_bytes, nullptr, nullptr});
-        toroidal_entries.push_back({nullptr, 6, gpu_basis.low_buffer, 0,
-                                    basis_bytes, nullptr, nullptr});
+    wgpu::BindGroup toroidal_bind_group;
+    if (!axisymmetric) {
+        const auto toroidal_layout = toroidal_pipeline.GetBindGroupLayout(0);
+        std::vector<wgpu::BindGroupEntry> toroidal_entries = {
+            {nullptr, 0, fields_buffer, 0, fields_bytes, nullptr, nullptr},
+            {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
+            {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
+            {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
+             nullptr},
+        };
+        if (input.double_single) {
+            toroidal_entries.push_back({nullptr, 5, fields_low_buffer, 0,
+                                        fields_bytes, nullptr, nullptr});
+            toroidal_entries.push_back({nullptr, 6, gpu_basis.low_buffer, 0,
+                                        basis_bytes, nullptr, nullptr});
+        }
+        wgpu::BindGroupDescriptor toroidal_bind_descriptor{};
+        toroidal_bind_descriptor.label =
+            "cuMES toroidal forward first bindings";
+        toroidal_bind_descriptor.layout = toroidal_layout;
+        toroidal_bind_descriptor.entryCount = toroidal_entries.size();
+        toroidal_bind_descriptor.entries = toroidal_entries.data();
+        toroidal_bind_group = device.CreateBindGroup(&toroidal_bind_descriptor);
     }
-    wgpu::BindGroupDescriptor toroidal_bind_descriptor{};
-    toroidal_bind_descriptor.label = "cuMES toroidal forward first bindings";
-    toroidal_bind_descriptor.layout = toroidal_layout;
-    toroidal_bind_descriptor.entryCount = toroidal_entries.size();
-    toroidal_bind_descriptor.entries = toroidal_entries.data();
-    const auto toroidal_bind_group =
-        device.CreateBindGroup(&toroidal_bind_descriptor);
     const auto poloidal_layout = poloidal_pipeline.GetBindGroupLayout(0);
     std::vector<wgpu::BindGroupEntry> poloidal_entries = {
         {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
-        {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
-         nullptr},
     };
+    if (axisymmetric)
+        poloidal_entries.push_back(
+            {nullptr, 0, fields_buffer, 0, fields_bytes, nullptr, nullptr});
+    else
+        poloidal_entries.push_back({nullptr, 4, intermediate_buffer, 0,
+                                    intermediate_bytes, nullptr, nullptr});
     if (input.double_single) {
         poloidal_entries.push_back({nullptr, 6, gpu_basis.low_buffer, 0,
                                     basis_bytes, nullptr, nullptr});
@@ -1298,7 +1372,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
              {nullptr, 4, intermediate_buffer, 0, intermediate_bytes, nullptr,
               nullptr}},
             (toroidal_sequences + 127) / 128);
-    } else {
+    } else if (!axisymmetric) {
         const auto toroidal_pass = encoder.BeginComputePass(&pass_descriptor);
         toroidal_pass.SetPipeline(toroidal_pipeline);
         toroidal_pass.SetBindGroup(0, toroidal_bind_group);
