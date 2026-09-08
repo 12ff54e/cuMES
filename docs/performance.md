@@ -446,6 +446,89 @@ objective change; both remain within meow's 0.1% quality gate. The standard
 Solovev `235 -> 193 -> 326` and W7-X `1315 -> 1419 -> 1372` trajectories remain
 unchanged because their start geometries do not enter the new policy branch.
 
+### 3.8 Reuse forward weights and remove unused inverse work (2026-09-08)
+
+Two transform changes reduce repeated work relative to `f0c17f7` (v1.4.1).
+The inverse accumulator specializes which constraint output is needed: R/Z
+each compute one sum, and lambda computes neither. Basis and derivative-sign
+selection remain runtime expressions to preserve the baseline's floating-point
+contraction order. The forward transform caches its four weighted poloidal
+tables once per stage, using device arithmetic to preserve the original
+T-rounded products. The compact W7-X double cache adds 6,144 arena bytes and
+removes four multiplications and one weight load per theta contribution.
+
+The cache kernel and its completion fence run only during stage construction.
+Per-iteration launch count, graph topology, control fences, controller
+decisions, allocation count, and cuFFT workspace are unchanged. No new tuning
+option is exposed.
+
+Both architectures use precise double math and native code: TITAN Xp `sm_61`
+with CUDA 12.1, and RTX 4090 `sm_89` with CUDA 12.9. With production graphs
+enabled and the host pinned to CPU 8, each workload is measured in 16
+baseline/candidate pairs with alternating order. Each binary first receives
+1,000 warm-up plus 1,000 timed preheat passes; measured runs then use 100
+warm-up and 500 timed passes. The table reports medians of per-run median/p95
+latencies. Gains are medians of paired percentage reductions, with percentile
+95% confidence intervals from 20,000 paired bootstrap resamples; setup and
+output are excluded.
+
+| GPU / shape | median baseline → candidate (µs/iter) | p95 baseline → candidate (µs/iter) | paired reduction, 95% CI |
+| ----------- | -----------------------------------: | --------------------------------: | ------------------------: |
+| TITAN Xp / W7-X `ns=99` | 1584.330 → 1501.220 | 1735.455 → 1652.895 | 5.1905% [5.1588%, 5.2391%] |
+| TITAN Xp / Solovev `ns=55` | 124.565 → 124.335 | 193.810 → 193.985 | 0.3346% [-0.1685%, 0.5740%] |
+| RTX 4090 / W7-X `ns=99` | 535.545 → 500.770 | 622.805 → 588.895 | 6.4963% [6.4732%, 6.5137%] |
+| RTX 4090 / Solovev `ns=55` | 83.950 → 83.935 | 128.340 → 127.200 | 0.0179% [-0.0119%, 0.1303%] |
+
+The W7-X lower confidence bound clears 5% on both GPUs; the Solovev upper
+regression bounds are 0.169% and 0.012%. The noise estimate, median absolute
+deviation of run medians divided by their median, was 0.337%/0.429%
+(baseline/candidate) for Pascal W7-X and 0.265%/0.269% for Pascal Solovev;
+Ada gave 0.0065%/0.0070% and 0.0298%/0.0357%, respectively.
+
+Clocks were unlocked. Pascal post-run samples were P0, 1518–1873 MHz core,
+5702 MHz memory, 56–68 °C and 69–89 W; W7-X core samples stayed within
+1847–1873 MHz. Ada active samples were 2520–2760 MHz core, 10501 MHz memory,
+35–46 °C and 55–169 W. Drivers were 580.173.02 and 570.169, respectively.
+The Ada build used CUDA 12.9.41/GCC 12.4; its Debian 13 host required six
+`noexcept(true)` declaration fixes in a scratch copy of CUDA headers, applied
+identically to both builds. No math implementation or compiler precision flag
+was changed.
+
+Median stage setup increased from 3.844 to 4.587 ms for Pascal W7-X and
+3.422 to 4.184 ms for Pascal Solovev; Ada measured 1.695 to 1.941 ms and
+1.791 to 2.221 ms. Output is not part of the fixed-iteration harness.
+The W7-X arena grows from 69,318,752 to 69,324,896 bytes, and Solovev from
+704,456 to 706,376 bytes. cuFFT workspace remains 4,105,728/63,424 bytes
+for Pascal W7-X/Solovev and zero for both Ada cases. The graph DAG and scratch
+layouts are unchanged. Pascal fused R/Z inverse register use falls from 56 to
+48, while lambda uses 64; forward reduction remains at 72. Ada uses 48/56/72
+registers for these kernels. Neither build introduces spills.
+
+The weighted tables add a measured 1.59% W7-X reduction beyond the inverse
+change on RTX 4090. Every fixed-window final-state hash matches its baseline.
+All 65 verify and 66 float tests pass, including the float FP64-instruction
+audit and compensated W7-X cold-start/replay regression. Complete default
+multigrid dump manifests are byte-identical on both architectures: 241
+Solovev files and 472 W7-X files. The diagnostic opt-outs also retain the
+frozen trajectories. Pascal Fourier memcheck/initcheck/racecheck/synccheck,
+compensated-geometry memcheck/initcheck, and Ada Fourier memcheck pass.
+These are comparisons within each architecture, preserving the respective
+baseline's cuFFT results.
+
+These percentages qualify steady-iteration latency. Full-process Ada timings
+were too noisy for a separate end-to-end speedup claim: Nsight located a
+653 ms outlier in the first `cudaMalloc`, and an A/A comparison of the same
+baseline executable through a symlink reproduced the order-dependent startup
+delays. Full graph solves still produced identical checkpoints.
+
+The broader inverse specialization was rejected: making the basis compile-time
+changed which product the compiler fused in `c0*sin + c1*cos` and the R
+poloidal derivative, failing first-pass bitwise comparisons. Restricting
+specialization to unused constraint work restored Class A. Capturing the
+control/axis/boundary copies in the graph and omitting unused transform timing
+events were also tested and removed because they showed no reliable gain.
+They are excluded from the reported candidate.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
@@ -463,15 +546,12 @@ memory benefit justifies it. Requirements:
 - the old backend is retained until the new one passes both numerical and
   performance gates.
 
-**Modern-GPU validation status:** the 2026 RTX 4090 tuning run validates the
-retained optimizations on the modern target and includes bitwise final-state
-gates. A same-code-state Pascal re-run is still outstanding, so the complete
-two-architecture acceptance matrix remains open. That run must use the same
-commit, precision policy, toolkit provenance, warm-up, and measurement method
-as the TITAN Xp baseline; record GPU model, compute capability, driver/toolkit,
-clocks, power/thermal state, arena/cuFFT/graph memory, setup/output time,
-median, p95, measured noise floor, and a 95% confidence interval; re-run the
-complete numerical trajectory/state gate afterwards.
+**Current two-architecture validation:** §3.8 qualifies the current transform
+changes against the same `f0c17f7` source baseline on TITAN Xp and RTX 4090,
+using each machine's identical baseline/candidate toolchain. The fixed-boundary
+double W7-X and Solovev iteration-latency gates and numerical comparisons pass
+on both architectures. This does not turn historical timings into same-code
+measurements or extend the timing claim to free-boundary or float solves.
 
 Equivalence class precedes any timing claim: Class A requires bitwise equality;
 Class B requires per-operator ULP bounds and identical controller decisions;
