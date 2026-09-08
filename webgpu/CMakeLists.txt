@@ -114,6 +114,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_ui.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/equilibrium_view.js
   ${CMAKE_CURRENT_SOURCE_DIR}/free_boundary.js
   ${CMAKE_CURRENT_SOURCE_DIR}/presets/solovev.json
   ${CMAKE_CURRENT_SOURCE_DIR}/presets/w7x.json
@@ -167,6 +168,10 @@ add_test(
 set_tests_properties(webgpu_artifacts PROPERTIES LABELS "unit;webgpu")
 find_program(CUMES_WEBGPU_NODE NAMES node nodejs)
 if(CUMES_WEBGPU_NODE)
+  add_test(NAME webgpu_boundary_geometry
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_boundary_geometry.mjs)
+  set_tests_properties(webgpu_boundary_geometry PROPERTIES LABELS "unit;webgpu")
   add_test(NAME webgpu_residual_plot
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_residual_plot.mjs)

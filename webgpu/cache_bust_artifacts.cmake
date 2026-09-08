@@ -19,7 +19,7 @@ string(SUBSTRING "${asset_hash}" 0 16 asset_version)
 
 file(READ "${html}" contents)
 get_filename_component(artifact_dir "${ARTIFACT_BASE}" DIRECTORY)
-foreach(asset IN ITEMS browser_ui.js verification_worker.js residual_plot.js free_boundary.js)
+foreach(asset IN ITEMS browser_ui.js verification_worker.js residual_plot.js free_boundary.js equilibrium_view.js)
   configure_file("${FRONTEND_SOURCE_DIR}/${asset}" "${artifact_dir}/${asset}" COPYONLY)
   file(SHA256 "${artifact_dir}/${asset}" frontend_hash)
   string(REPLACE "src=\"${asset}\"" "src=\"${asset}?v=${frontend_hash}\"" contents "${contents}")
