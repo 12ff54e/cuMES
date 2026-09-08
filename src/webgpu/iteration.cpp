@@ -104,6 +104,25 @@ class IterationDispatch
     AxisymmetricPreconditionerElements elements_;
     AxisymmetricPreconditionerMatrix matrix_;
 
+    void snapshot_fields(const DeviceFields& fields,
+                         std::vector<float>& high,
+                         std::vector<float>& low) {
+        if (!input.readback_intermediates) return;
+        const auto encoder = device.CreateCommandEncoder();
+        const auto bytes = fields.values * sizeof(float);
+        for (int word = 0; word < (input.double_single ? 2 : 1); ++word) {
+            auto& destination = word ? low : high;
+            // Result members remain alive until map() has decoded every slice.
+            batch->append(encoder, fields.buffer,
+                          word ? fields.low_offset : fields.high_offset, bytes,
+                          [&destination](std::span<const float> values) {
+                              destination.assign(values.begin(), values.end());
+                          });
+        }
+        const auto commands = encoder.Finish();
+        device.GetQueue().Submit(1, &commands);
+    }
+
     template <typename Case>
     void shape(Case& value) const {
         value.ns = input.stage.ns;
@@ -220,6 +239,9 @@ class IterationDispatch
                 }
                 self->force_ = value;
                 self->result.force = value;
+                self->snapshot_fields(value.device_fields,
+                                      self->result.force.fields,
+                                      self->result.force.fields_lo);
                 self->forward(value.device_fields, 0);
             });
     }
@@ -271,6 +293,9 @@ class IterationDispatch
                     return;
                 }
                 self->result.forward[index] = value;
+                self->snapshot_fields(value.device_residual,
+                                      self->result.forward[index].residual,
+                                      self->result.forward[index].residual_lo);
                 self->decompose(value.device_residual, index);
             });
     }
@@ -388,10 +413,14 @@ class IterationDispatch
         }
         in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
         in.sqrt_s_f_lo = input.stage.profiles.sqrt_s_f_lo;
-        in.batched_readback = {batch, [self = shared_from_this()](
-                                          AxisymmetricConstraintResult value) {
-                                   self->forward(value.device_fields, 1);
-                               }};
+        in.batched_readback = {
+            batch,
+            [self = shared_from_this()](AxisymmetricConstraintResult value) {
+                self->snapshot_fields(value.device_fields,
+                                      self->result.constraint.fields,
+                                      self->result.constraint.fields_lo);
+                self->forward(value.device_fields, 1);
+            }};
         enqueue_axisymmetric_constraint(device, in,
                                         collect(&IterationResult::constraint));
     }
@@ -446,14 +475,23 @@ class IterationDispatch
 
 }  // namespace
 
-std::uint64_t iteration_readback_capacity(const AxisymmetricStageData& stage) {
+std::uint64_t iteration_readback_capacity(const AxisymmetricStageData& stage,
+                                          bool readback_intermediates) {
     const auto points = std::uint64_t(stage.ns) * stage.ntheta * stage.nzeta;
     const auto spectral =
         std::uint64_t(stage.ns) * stage.mpol * (stage.ntor + 1);
     // Paired inverse (40), geometry (20), magnetic (10), constraint (7),
     // two residual snapshots (36 spectral), preconditioner and descent slack.
-    return sizeof(float) * ((stage.free_boundary ? 112 : 80) * points +
-                            80 * spectral + 32 * stage.ns) +
+    // Verification also snapshots paired forces, constraint fields, and both
+    // projections before their shared scratch is overwritten.
+    const int extra_fields =
+        readback_intermediates
+            ? 2 * (FORCE_FIELD_COUNT + TOROIDAL_FORWARD_FIELD_COUNT)
+            : 0;
+    const int extra_spectral = readback_intermediates ? 24 : 0;
+    return sizeof(float) *
+               (((stage.free_boundary ? 112 : 80) + extra_fields) * points +
+                (80 + extra_spectral) * spectral + 32 * stage.ns) +
            256;
 }
 

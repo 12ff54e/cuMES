@@ -2930,10 +2930,33 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
         if (!device_iteration_state_) extrapolate_stage_axis();
         const auto self = shared_from_this();
-        if (resident_spectral_path() || batched_free_boundary_path()) {
+        const bool batched =
+            resident_spectral_path() || batched_free_boundary_path() ||
+            (!production_solve_ && !requested_reference_transfers() &&
+             !requested_spectral_fences() && !requested_compare_fft());
+        if (!batched || !production_solve_) {
+            stage_toroidal_inverse_case_.ns = initialized_stage_.ns;
+            stage_toroidal_inverse_case_.mpol = initialized_stage_.mpol;
+            stage_toroidal_inverse_case_.ntor = initialized_stage_.ntor;
+            stage_toroidal_inverse_case_.ntheta = initialized_stage_.ntheta;
+            stage_toroidal_inverse_case_.nzeta = initialized_stage_.nzeta;
+            stage_toroidal_inverse_case_.nfp = initialized_stage_.nfp;
+            stage_toroidal_inverse_case_.double_single = double_single_solve_;
+            stage_toroidal_inverse_case_.radius_reference =
+                initialized_stage_.radius_reference;
+            stage_toroidal_inverse_case_.compensated_geometry =
+                initialized_stage_.compensated_geometry;
+            stage_toroidal_inverse_case_.state = initialized_stage_.state;
+            if (double_single_solve_) {
+                stage_toroidal_inverse_case_.state_lo = stage_state_lo_;
+            } else {
+                stage_toroidal_inverse_case_.state_lo.clear();
+            }
+        }
+        if (batched) {
             auto input = make_iteration_case();
-            const auto capacity =
-                cumes::webgpu::iteration_readback_capacity(input.stage);
+            const auto capacity = cumes::webgpu::iteration_readback_capacity(
+                input.stage, input.readback_intermediates);
             if (!iteration_readback_ ||
                 iteration_readback_capacity_ != capacity) {
                 iteration_readback_ =
@@ -2986,7 +3009,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 self->iteration_results_ = std::move(result);
                 self->finish_stage_inverse(
-                    std::move(self->iteration_results_->inverse), {});
+                    std::move(self->iteration_results_->inverse));
             };
             if (batched_free_boundary_path()) {
                 cumes::webgpu::enqueue_iteration_prefix(
@@ -3004,23 +3027,6 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
             return;
         }
-        stage_toroidal_inverse_case_.ns = initialized_stage_.ns;
-        stage_toroidal_inverse_case_.mpol = initialized_stage_.mpol;
-        stage_toroidal_inverse_case_.ntor = initialized_stage_.ntor;
-        stage_toroidal_inverse_case_.ntheta = initialized_stage_.ntheta;
-        stage_toroidal_inverse_case_.nzeta = initialized_stage_.nzeta;
-        stage_toroidal_inverse_case_.nfp = initialized_stage_.nfp;
-        stage_toroidal_inverse_case_.double_single = double_single_solve_;
-        stage_toroidal_inverse_case_.radius_reference =
-            initialized_stage_.radius_reference;
-        stage_toroidal_inverse_case_.compensated_geometry =
-            initialized_stage_.compensated_geometry;
-        stage_toroidal_inverse_case_.state = initialized_stage_.state;
-        if (double_single_solve_) {
-            stage_toroidal_inverse_case_.state_lo = stage_state_lo_;
-        } else {
-            stage_toroidal_inverse_case_.state_lo.clear();
-        }
         cumes::webgpu::enqueue_toroidal_inverse(
             device_, stage_toroidal_inverse_case_,
             [self](std::string error,
@@ -3029,18 +3035,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->finish(false, std::move(error));
                     return;
                 }
-                self->finish_stage_inverse(
-                    std::move(actual),
-                    self->production_solve_
-                        ? cumes::webgpu::ToroidalInverseResult{}
-                        : cumes::webgpu::toroidal_inverse_reference(
-                              self->stage_toroidal_inverse_case_));
+                self->finish_stage_inverse(std::move(actual));
             });
     }
 
-    void finish_stage_inverse(
-        cumes::webgpu::ToroidalInverseResult actual,
-        const cumes::webgpu::ToroidalInverseResult& expected) {
+    void finish_stage_inverse(cumes::webgpu::ToroidalInverseResult actual) {
+        const auto expected = production_solve_
+                                  ? cumes::webgpu::ToroidalInverseResult{}
+                                  : cumes::webgpu::toroidal_inverse_reference(
+                                        stage_toroidal_inverse_case_);
         float max_error = 0.0F;
         bool valid = production_solve_ || !expected.geometry.empty();
         const auto compare = [&max_error, &valid](const auto& gpu,
@@ -3092,7 +3095,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         base_geometry_case_.radius_reference =
             initialized_stage_.radius_reference;
         base_geometry_case_.geometry = std::move(geometry);
-        if (double_single_solve_ && (!iteration_results_ || vacuum_)) {
+        if (double_single_solve_ &&
+            (!iteration_results_ || !production_solve_ || vacuum_)) {
             base_geometry_case_.geometry_lo = stage_geometry_lo_;
         } else {
             base_geometry_case_.geometry_lo.clear();
@@ -3257,12 +3261,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         magnetic_field_case_.prescribed_current =
             initialized_stage_.prescribed_current;
         magnetic_field_case_.double_single = double_single_solve_;
-        if (!iteration_results_ || vacuum_) {
+        if (!iteration_results_ || !production_solve_ || vacuum_) {
             magnetic_field_case_.geometry = base_geometry_case_.geometry;
             magnetic_field_case_.geometry_lo = base_geometry_case_.geometry_lo;
         }
         magnetic_field_case_.base_geometry = std::move(base_geometry);
-        if (!iteration_results_ || vacuum_) {
+        if (!iteration_results_ || !production_solve_ || vacuum_) {
             magnetic_field_case_.base_geometry_lo = stage_base_geometry_lo_;
         }
         magnetic_field_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
@@ -3444,14 +3448,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.lamscale_lo = initialized_stage_.profiles.lamscale_lo;
         force_case_.double_single = double_single_solve_;
         force_case_.radius_reference = initialized_stage_.radius_reference;
-        if (!iteration_results_ || vacuum_) {
+        if (!iteration_results_ || !production_solve_ || vacuum_) {
             force_case_.geometry = magnetic_field_case_.geometry;
             force_case_.geometry_lo = stage_geometry_lo_;
             force_case_.base_geometry = magnetic_field_case_.base_geometry;
             force_case_.base_geometry_lo = stage_base_geometry_lo_;
         }
         force_case_.magnetic_field = std::move(magnetic_field);
-        if (!iteration_results_ || vacuum_) {
+        if (!iteration_results_ || !production_solve_ || vacuum_) {
             force_case_.magnetic_field_lo = stage_magnetic_field_lo_;
         }
         force_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
@@ -3627,7 +3631,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 self->stage_spectral_residual_lo_ =
                     std::move(actual.residual_lo);
                 self->residual_case_.device_residual = actual.device_residual;
-                if (actual.device_residual) {
+                if (actual.device_residual && self->production_solve_) {
                     self->run_residual_decomposition({});
                     return;
                 }
@@ -3760,7 +3764,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_case_.delta_s = initialized_stage_.profiles.delta_s;
         preconditioner_case_.free_boundary =
             vacuum_ && vacuum_->apply_edge_force();
-        if (!iteration_results_) {
+        if (!iteration_results_ || !production_solve_) {
             preconditioner_case_.geometry = base_geometry_case_.geometry;
             preconditioner_case_.base_geometry =
                 magnetic_field_case_.base_geometry;
@@ -3851,7 +3855,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         preconditioner_matrix_case_.free_boundary =
             vacuum_ && vacuum_->apply_edge_force();
         preconditioner_matrix_case_.elements = preconditioner_elements_;
-        if (!iteration_results_) {
+        if (!iteration_results_ || !production_solve_) {
             preconditioner_matrix_case_.base_geometry =
                 magnetic_field_case_.base_geometry;
         }
@@ -3952,7 +3956,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.refresh_preconditioner =
             controller_->refresh_preconditioner();
         constraint_case_.double_single = double_single_solve_;
-        if (!iteration_results_) {
+        if (!iteration_results_ || !production_solve_) {
             constraint_case_.geometry = base_geometry_case_.geometry;
             constraint_case_.geometry_lo = stage_geometry_lo_;
             constraint_case_.r_con = stage_r_con_;
@@ -4236,7 +4240,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_constraint_forward(std::vector<float> fields) {
-        if (initialized_stage_.ntor == 0 && !iteration_results_) {
+        if (initialized_stage_.ntor == 0 &&
+            (!iteration_results_ || !production_solve_)) {
             // Axisymmetric constraint output is [10 force, 4 constraint]
             // planes. The shared projector expects [16, 4].
             const std::size_t points =
@@ -4285,7 +4290,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     std::move(actual.residual_lo);
                 self->constraint_residual_case_.device_residual =
                     actual.device_residual;
-                if (actual.device_residual) {
+                if (actual.device_residual && self->production_solve_) {
                     self->run_constraint_residual_decomposition({});
                     return;
                 }
@@ -5345,9 +5350,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         input.optimized_fft = !requested_generic_fft();
         input.canonical_zeta = requested_canonical_zeta();
         input.shadow_norms = requested_shadow_norms();
-        input.compact_norms = requested_device_norms();
-        input.compact_fields = !requested_full_field_readbacks();
-        input.geometry_control = requested_geometry_control();
+        input.compact_norms = production_solve_ && requested_device_norms();
+        input.compact_fields =
+            production_solve_ && !requested_full_field_readbacks();
+        input.readback_intermediates = !production_solve_;
+        input.geometry_control =
+            production_solve_ && requested_geometry_control();
         input.elements = preconditioner_elements_;
         input.matrix = preconditioner_matrix_;
         input.device_r_con0 = device_constraint_r_con0_;

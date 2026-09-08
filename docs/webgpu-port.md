@@ -445,6 +445,16 @@ orchestration. `?mode=test&worker=0` is a diagnostic opt-out, and
 `data-cumes-execution="worker|main"` identifies the selected path.
 Serve `browser_ui.js` and `verification_worker.js` alongside the generated
 HTML/JS/Wasm files; the build copies and content-versions these assets.
+
+The W7-X integration passes and Solovev convergence loop reuse the solver's
+batched iteration dispatch. Verification snapshots every force, projection,
+and constraint intermediate before its GPU scratch is reused, then runs all
+the original CPU comparisons after one batch readback. Descent retains its
+separate readback and comparison. This preserves the checked values,
+tolerances, controller decisions, and full log while reducing GPU/host waits.
+`?mode=test&resident=0` retains separate dispatches for comparison. Normal
+solves keep their compact readbacks and do not collect these extra snapshots.
+
 A successful run finishes with:
 
 ```text
