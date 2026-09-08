@@ -33,10 +33,36 @@ add_executable(cumes_webgpu
 target_sources(cumes_webgpu PRIVATE
   ${PROJECT_SOURCE_DIR}/src/webgpu/toroidal.cpp)
 target_sources(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/src/webgpu/reduction.cpp)
+
+# Preprocess shared precision templates with Node before Emscripten embeds the
+# generated WGSL. Browser compilation receives ordinary WGSL, with no runtime
+# substitution or precision branches. Output names preserve the C++ bindings.
+find_program(CUMES_WEBGPU_NODE NAMES node nodejs REQUIRED)
+set(CUMES_SHADER_COMPILER ${PROJECT_SOURCE_DIR}/scripts/compile_webgpu_shaders.mjs)
+set(CUMES_SHADER_DIR ${PROJECT_SOURCE_DIR}/src/webgpu/shaders)
+set(CUMES_GENERATED_SHADERS ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${CUMES_SHADER_COMPILER} ${CUMES_SHADER_DIR}/templates.json)
+file(GLOB_RECURSE CUMES_SHADER_SOURCES CONFIGURE_DEPENDS
+  ${CUMES_SHADER_DIR}/*.wgsl ${CUMES_SHADER_DIR}/*.wgsl.in)
+execute_process(COMMAND ${CUMES_WEBGPU_NODE} ${CUMES_SHADER_COMPILER} --list
+  OUTPUT_VARIABLE CUMES_SHADER_NAMES COMMAND_ERROR_IS_FATAL ANY)
+set(CUMES_SHADER_OUTPUTS)
+foreach(shader IN LISTS CUMES_SHADER_NAMES)
+  list(APPEND CUMES_SHADER_OUTPUTS ${CUMES_GENERATED_SHADERS}/${shader})
+endforeach()
+add_custom_command(OUTPUT ${CUMES_SHADER_OUTPUTS}
+  COMMAND ${CUMES_WEBGPU_NODE} ${CUMES_SHADER_COMPILER} ${CUMES_GENERATED_SHADERS}
+  DEPENDS ${CUMES_SHADER_SOURCES} ${CUMES_SHADER_COMPILER}
+          ${PROJECT_SOURCE_DIR}/webgpu/shader_template.mjs
+          ${CUMES_SHADER_DIR}/templates.json
+  COMMENT "Generating single and pair-single WGSL from shared templates"
+  VERBATIM)
+add_custom_target(cumes_webgpu_shaders DEPENDS ${CUMES_SHADER_OUTPUTS})
+add_dependencies(cumes_webgpu cumes_webgpu_shaders)
 target_link_options(cumes_webgpu PRIVATE
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/geometry_control.wgsl@/shaders/geometry_control.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl@/shaders/field_finite.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_norm.wgsl@/shaders/residual_norm.wgsl")
+  "--embed-file=${CUMES_GENERATED_SHADERS}@/shaders")
+set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS ${CUMES_SHADER_OUTPUTS})
 
 target_include_directories(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/include)
 if(NOT EXISTS "${PROJECT_SOURCE_DIR}/deps/webgpu-fft/CMakeLists.txt")
@@ -78,7 +104,6 @@ cumes_enable_warnings(cumes_webgpu)
 
 target_compile_options(cumes_webgpu PRIVATE --use-port=emdawnwebgpu)
 target_link_options(cumes_webgpu PRIVATE
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_fft_transfer.wgsl@/shaders/toroidal_fft_transfer.wgsl"
   --use-port=emdawnwebgpu
   -sASYNCIFY=1
   -sALLOW_MEMORY_GROWTH=1
@@ -92,35 +117,7 @@ target_link_options(cumes_webgpu PRIVATE
   "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js"
   "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime_threads.js"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/solovev.json@/inputs/solovev.json"
-  "--embed-file=${PROJECT_SOURCE_DIR}/inputs/w7x.json@/inputs/w7x.json"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl@/shaders/base_geometry.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry_double_single.wgsl@/shaders/base_geometry_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_force.wgsl@/shaders/axisymmetric_force.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/force_double_single.wgsl@/shaders/force_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_head.wgsl@/shaders/axisymmetric_constraint_head.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/constraint_head_double_single.wgsl@/shaders/constraint_head_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_tail.wgsl@/shaders/axisymmetric_constraint_tail.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/constraint_tail_double_single.wgsl@/shaders/constraint_tail_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_descent.wgsl@/shaders/axisymmetric_descent.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_descent_double_single.wgsl@/shaders/axisymmetric_descent_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/float_float.wgsl@/shaders/float_float.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl@/shaders/magnetic_field.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field_double_single.wgsl@/shaders/magnetic_field_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose.wgsl@/shaders/residual_decompose.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose_double_single.wgsl@/shaders/residual_decompose_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_elements.wgsl@/shaders/axisymmetric_preconditioner_elements.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_apply.wgsl@/shaders/axisymmetric_preconditioner_apply.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_matrix.wgsl@/shaders/axisymmetric_preconditioner_matrix.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl@/shaders/axisymmetric_dealias.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl@/shaders/axisymmetric_forward.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl@/shaders/axisymmetric_inverse.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl@/shaders/prolongation.wgsl")
-target_link_options(cumes_webgpu PRIVATE
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse.wgsl@/shaders/toroidal_inverse.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse_double_single.wgsl@/shaders/toroidal_inverse_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl@/shaders/toroidal_forward.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward_double_single.wgsl@/shaders/toroidal_forward_double_single.wgsl"
-  "--embed-file=${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_dealias.wgsl@/shaders/toroidal_dealias.wgsl")
+  "--embed-file=${PROJECT_SOURCE_DIR}/inputs/w7x.json@/inputs/w7x.json")
 
 set_target_properties(cumes_webgpu PROPERTIES SUFFIX ".html")
 add_custom_command(
@@ -131,8 +128,6 @@ add_custom_command(
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
   COMMENT "Adding content versions to the WebGPU runtime artifacts")
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/geometry_control.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/field_finite.wgsl
   ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_ui.js
   ${CMAKE_CURRENT_SOURCE_DIR}/equilibrium_view.js
@@ -150,36 +145,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/runtime_threads.js
   ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
   ${PROJECT_SOURCE_DIR}/inputs/solovev.json
-  ${PROJECT_SOURCE_DIR}/inputs/w7x.json
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_dealias.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_forward.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_inverse.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_force.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/force_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_head.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/constraint_head_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_constraint_tail.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/constraint_tail_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_descent.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_descent_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/float_float.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/residual_decompose_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_elements.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_apply.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/axisymmetric_preconditioner_matrix.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/base_geometry_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/magnetic_field_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/prolongation.wgsl)
-set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_inverse_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_forward_double_single.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_fft_transfer.wgsl
-  ${PROJECT_SOURCE_DIR}/src/webgpu/shaders/toroidal_dealias.wgsl)
+  ${PROJECT_SOURCE_DIR}/inputs/w7x.json)
 
 # CTest cannot provide a browser WebGPU implementation, but it can guard the
 # complete browser artifact set. Emscripten 6 embeds the preloaded shader in
@@ -191,8 +157,11 @@ add_test(
           -DARTIFACT_BASE=$<TARGET_FILE_DIR:cumes_webgpu>/cumes_webgpu
           -P ${CMAKE_CURRENT_SOURCE_DIR}/check_artifacts.cmake)
 set_tests_properties(webgpu_artifacts PROPERTIES LABELS "unit;webgpu")
-find_program(CUMES_WEBGPU_NODE NAMES node nodejs)
 if(CUMES_WEBGPU_NODE)
+  add_test(NAME webgpu_shader_templates
+    COMMAND ${CUMES_WEBGPU_NODE}
+            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_shader_templates.mjs)
+  set_tests_properties(webgpu_shader_templates PROPERTIES LABELS "unit;webgpu")
   add_test(NAME webgpu_threads
     COMMAND ${CUMES_WEBGPU_NODE}
             ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_threads.mjs)

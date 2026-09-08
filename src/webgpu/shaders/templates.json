@@ -1,0 +1,17 @@
+[
+  {
+    "template": "templates/constraint_head.wgsl.in",
+    "single": "axisymmetric_constraint_head.wgsl",
+    "paired": "constraint_head_double_single.wgsl"
+  },
+  {
+    "template": "templates/constraint_tail.wgsl.in",
+    "single": "axisymmetric_constraint_tail.wgsl",
+    "paired": "constraint_tail_double_single.wgsl"
+  },
+  {
+    "template": "templates/residual_decompose.wgsl.in",
+    "single": "residual_decompose.wgsl",
+    "paired": "residual_decompose_double_single.wgsl"
+  }
+]

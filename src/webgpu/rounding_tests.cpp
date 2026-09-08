@@ -27,10 +27,10 @@ constexpr std::array CASES = {
     RoundingCase{"base_geometry_double_single", "ff_strict_round"},
     RoundingCase{"magnetic_field_double_single", "ff_strict_round"},
     RoundingCase{"force_double_single", "rnd"},
-    RoundingCase{"constraint_head_double_single", "rnd"},
-    RoundingCase{"constraint_tail_double_single", "rnd"},
+    RoundingCase{"constraint_head_double_single", "compensate_round"},
+    RoundingCase{"constraint_tail_double_single", "compensate_round"},
     RoundingCase{"axisymmetric_descent_double_single", "ff_strict_round"},
-    RoundingCase{"residual_decompose_double_single", "rnd"},
+    RoundingCase{"residual_decompose_double_single", "compensate_round"},
     RoundingCase{"residual_norm", "round32"},
     RoundingCase{"geometry_control", "round32"},
     RoundingCase{"fft", "rnd"}};
