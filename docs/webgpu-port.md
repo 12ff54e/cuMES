@@ -1704,7 +1704,7 @@ The WebGPU implementation lives under these paths:
 ```text
 include/cumes/webgpu/          public WebGPU operator contracts
 src/webgpu/                    emdawnwebgpu host implementation
-src/webgpu/shaders/            WGSL compute kernels
+src/webgpu/shaders/            WGSL kernels and shared precision templates
 webgpu/                        Emscripten target, browser bridge, and webapp
 ```
 
@@ -1713,6 +1713,16 @@ objects rather than emulated pointers, work is recorded into command encoders,
 and completion is callback-driven. This makes synchronization and ownership
 visible instead of attempting to reproduce CUDA stream behavior through a
 source-level macro layer.
+
+Numerical shader families use shared `.wgsl.in` templates. CMake runs a small
+JavaScript preprocessor before embedding the generated WGSL: `Real` types,
+arithmetic intrinsics, split constants, and optional low-word bindings select
+scalar or pair-single precision. Explicit `Pair` operations retain compensated
+geometry and norm accumulation inside scalar solves. The evaluation order is
+shared across precisions; scalar rounding trajectories can therefore differ
+from the earlier separate shaders. See
+[`src/webgpu/shaders/README.md`](../src/webgpu/shaders/README.md) for syntax and
+[ADR-0016](adr/0016-webgpu-precision-templates.md) for numerical qualification.
 
 ## Capability boundary and future optimization
 

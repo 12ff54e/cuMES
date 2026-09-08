@@ -1,4 +1,4 @@
-import {readFile, readdir, mkdir, writeFile} from 'node:fs/promises';
+import {readFile, readdir, mkdir, writeFile, rm} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {preprocess} from '../webgpu/shader_template.mjs';
@@ -21,6 +21,9 @@ if (process.argv[2] === '--list') {
   if (!destination) throw new Error('Usage: node compile_webgpu_shaders.mjs OUTPUT_DIR | --list');
   const library = await readFile(path.join(source_dir, 'templates/compensated.wgsl'), 'utf8');
   await mkdir(destination, {recursive: true});
+  for (const name of await readdir(destination)) {
+    if (name.endsWith('.wgsl') && !outputs.has(name)) await rm(path.join(destination, name));
+  }
   // Resolve includes once before the synchronous substitution pass.
   const includes = new Map();
   async function read_source(file) {

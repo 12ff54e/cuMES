@@ -157,57 +157,55 @@ add_test(
           -DARTIFACT_BASE=$<TARGET_FILE_DIR:cumes_webgpu>/cumes_webgpu
           -P ${CMAKE_CURRENT_SOURCE_DIR}/check_artifacts.cmake)
 set_tests_properties(webgpu_artifacts PROPERTIES LABELS "unit;webgpu")
-if(CUMES_WEBGPU_NODE)
-  add_test(NAME webgpu_shader_templates
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_shader_templates.mjs)
-  set_tests_properties(webgpu_shader_templates PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_threads
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_threads.mjs)
-  set_tests_properties(webgpu_threads PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_boundary_geometry
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_boundary_geometry.mjs)
-  set_tests_properties(webgpu_boundary_geometry PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_residual_plot
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_residual_plot.mjs)
-  set_tests_properties(webgpu_residual_plot PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_iteration_timing
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_iteration_timing.mjs)
-  set_tests_properties(webgpu_iteration_timing PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_precision_switch
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_precision_switch.mjs)
-  set_tests_properties(webgpu_precision_switch PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_log_buffer
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_log_buffer.mjs)
-  set_tests_properties(webgpu_log_buffer PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_free_boundary
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_free_boundary.mjs)
-  add_test(NAME webgpu_coils
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_coils.mjs
-            $<TARGET_FILE:cumes_coils>)
-  set_tests_properties(webgpu_coils PROPERTIES LABELS "unit;webgpu")
-  set_tests_properties(webgpu_free_boundary PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_worker
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_worker.mjs)
-  set_tests_properties(webgpu_worker PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_runtime_loader
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_runtime_loader.mjs)
-  set_tests_properties(webgpu_runtime_loader PROPERTIES LABELS "unit;webgpu")
-  add_test(NAME webgpu_verification_log
-    COMMAND ${CUMES_WEBGPU_NODE}
-            ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_verification_log.mjs)
-  set_tests_properties(webgpu_verification_log PROPERTIES LABELS "unit;webgpu")
-endif()
+add_test(NAME webgpu_shader_templates
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_shader_templates.mjs)
+set_tests_properties(webgpu_shader_templates PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_threads
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_threads.mjs)
+set_tests_properties(webgpu_threads PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_boundary_geometry
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_boundary_geometry.mjs)
+set_tests_properties(webgpu_boundary_geometry PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_residual_plot
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_residual_plot.mjs)
+set_tests_properties(webgpu_residual_plot PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_iteration_timing
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_iteration_timing.mjs)
+set_tests_properties(webgpu_iteration_timing PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_precision_switch
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_precision_switch.mjs)
+set_tests_properties(webgpu_precision_switch PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_log_buffer
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_log_buffer.mjs)
+set_tests_properties(webgpu_log_buffer PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_free_boundary
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_free_boundary.mjs)
+add_test(NAME webgpu_coils
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_coils.mjs
+          $<TARGET_FILE:cumes_coils>)
+set_tests_properties(webgpu_coils PROPERTIES LABELS "unit;webgpu")
+set_tests_properties(webgpu_free_boundary PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_worker
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_worker.mjs)
+set_tests_properties(webgpu_worker PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_runtime_loader
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_runtime_loader.mjs)
+set_tests_properties(webgpu_runtime_loader PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_verification_log
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_verification_log.mjs)
+set_tests_properties(webgpu_verification_log PROPERTIES LABELS "unit;webgpu")
 
 # The CUDA and Wasm vacuum bridges share these analytic contracts.
 add_executable(test_webgpu_vacuum_bridge

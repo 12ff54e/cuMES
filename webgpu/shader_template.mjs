@@ -3,13 +3,13 @@
 const BINARY = {add: '+', sub: '-', mul: '*', div: '/', greater: '>'};
 const ARITY = {
   add: 2, sub: 2, mul: 2, div: 2, scale: 2, greater: 2,
-  neg: 1, reciprocal: 1, normalize: 1, round: 1,
+  neg: 1, reciprocal: 1, normalize: 1, round: 1, square: 1,
   real: 1, words: 2, literal: 1, hi: 1, lo: 1, scalar: 1,
 };
 
 // Keep comments opaque, including WGSL's nested block comments. The same lexer
 // is used for argument balancing, so commas inside calls/types are not split.
-export function tokenize(source) {
+function tokenize(source) {
   const tokens = [];
   for (let i = 0; i < source.length;) {
     const start = i;
@@ -44,7 +44,7 @@ function float_literal(value) {
 
 function expand(name, args, paired) {
   const count = ARITY[name];
-  const has_slot = ['add', 'sub', 'mul', 'div', 'scale', 'reciprocal', 'normalize', 'round'].includes(name);
+  const has_slot = ['add', 'sub', 'mul', 'div', 'scale', 'reciprocal', 'normalize', 'round', 'square'].includes(name);
   if (args.length !== count && !(has_slot && args.length === count + 1)) {
     throw new Error(`${name} expects ${count}${has_slot ? ` or ${count + 1}` : ''} arguments`);
   }
@@ -64,12 +64,13 @@ function expand(name, args, paired) {
   if (name === 'words') return paired ? `FF(${a}, ${b})` : `(${a})`;
   if (name === 'hi') return paired ? `(${a}).hi` : `(${a})`;
   if (name === 'lo') return paired ? `(${a}).lo` : '0.0';
-  if (name === 'scalar') return paired ? `((${a}).hi + (${a}).lo)` : `(${a})`;
+  if (name === 'scalar') return paired ? `compensate_scalar(${a})` : `(${a})`;
   if (!paired) {
     if (BINARY[name]) return `((${a}) ${BINARY[name]} (${b}))`;
     if (name === 'scale') return `((${a}) * (${b}))`;
     if (name === 'neg') return `(-(${a}))`;
     if (name === 'reciprocal') return `(1.0 / (${a}))`;
+    if (name === 'square') return `((${a}) * (${a}))`;
     return `(${a})`; // normalize/round are identities for scalar arithmetic.
   }
   if (name === 'neg' || name === 'greater') {
@@ -88,7 +89,7 @@ export function preprocess(source, {precision, filename = '<shader>', include} =
     const stack = [];
     let active = true;
     let offset = 0;
-    return text.split(/(?<=\n)/).map((line, index) => {
+    const result = text.split(/(?<=\n)/).map((line, index) => {
       const start = offset; offset += line.length;
       const hash = start + line.search(/\S/);
       const match = /^\s*#(\w+)\s*(.*?)\s*$/.exec(line);
@@ -115,14 +116,19 @@ export function preprocess(source, {precision, filename = '<shader>', include} =
         }
       } else fail(`Unknown directive #${op}`);
       return '\n';
-    }).join('') + (() => {
-      if (stack.length) throw new Error(`${file}: Missing #endif`);
-      return '';
-    })();
+    }).join('');
+    if (stack.length) throw new Error(`${file}: Missing #endif`);
+    return result;
   }
   const tokens = tokenize(directives(source, filename));
   let needs_pair = false;
   const next = i => { while (tokens[i]?.trivia) i++; return i; };
+  const previous = [];
+  let last = '';
+  for (const token of tokens) {
+    previous.push(last);
+    if (!token.trivia) last = token.text;
+  }
   function substitute(begin, end) {
     let result = '';
     for (let i = begin; i < end; i++) {
@@ -139,7 +145,7 @@ export function preprocess(source, {precision, filename = '<shader>', include} =
       if (!Object.hasOwn(ARITY, name)) { result += token.text; continue; }
       const open = next(i + 1);
       if (tokens[open]?.text !== '(') { result += token.text; continue; }
-      if (tokens.slice(0, i).findLast(t => !t.trivia)?.text === 'fn') {
+      if (previous[i] === 'fn') {
         throw new Error(`${filename}: ${token.text} is a reserved template intrinsic`);
       }
       let arg_start = open + 1;
@@ -149,11 +155,10 @@ export function preprocess(source, {precision, filename = '<shader>', include} =
       for (; j < end; j++) {
         if (tokens[j].trivia) continue;
         const t = tokens[j].text;
-        const previous = tokens.slice(open + 1, j).findLast(t => !t.trivia)?.text ?? '';
         if (t === '(') stack.push(')');
         else if (t === '[') stack.push(']');
         else if (t === '{') stack.push('}');
-        else if (t === '<' && /^(?:array|vec[234]|mat[234]x[234]|bitcast|ptr|atomic)$/.test(previous)) stack.push('>');
+        else if (t === '<' && /^(?:array|vec[234]|mat[234]x[234]|bitcast|ptr|atomic)$/.test(previous[j])) stack.push('>');
         else if (t === stack.at(-1)) {
           stack.pop();
           if (!stack.length) { args.push(substitute(arg_start, j).trim()); break; }

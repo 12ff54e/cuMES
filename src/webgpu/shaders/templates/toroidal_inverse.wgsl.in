@@ -1,0 +1,319 @@
+#include "accumulator.wgsl.in"
+
+struct Params {
+    ns: u32,
+    mpol: u32,
+    ntor: u32,
+    ntheta: u32,
+    nzeta: u32,
+    nfp: u32,
+    n_z_n_t: u32,
+    total_points: u32,
+    extrapolate_axis: f32,
+#if !PAIRED
+    radius_reference: f32,
+    compensated_geometry: f32,
+#endif
+};
+
+struct Values { data: array<f32>, };
+
+@group(0) @binding(0) var<storage, read> state_hi: Values;
+@group(0) @binding(1) var<storage, read> basis: Values;
+// Twenty high planes followed by twenty low planes.
+@group(0) @binding(2) var<storage, read_write> output: Values;
+@group(0) @binding(3) var<uniform> params: Params;
+// Twelve high planes followed by twelve low planes.
+@group(0) @binding(4) var<storage, read_write> intermediate: Values;
+#if PAIRED
+@group(0) @binding(5) var<storage, read> state_lo: Values;
+@group(0) @binding(7) var<storage, read> radial_scale_hi: Values;
+@group(0) @binding(8) var<storage, read> radial_scale_lo: Values;
+@group(0) @binding(9) var<storage, read> basis_lo: Values;
+#else
+@group(0) @binding(6) var<storage, read> radius_reference: Values;
+#endif
+
+fn coefficient(component: u32, m: u32, n: u32, surface: u32) -> Real {
+    let mnmax = params.mpol * (params.ntor + 1u);
+    let mode = m * (params.ntor + 1u) + n;
+    let extrapolate = params.extrapolate_axis != 0.0 && surface == 0u &&
+        (m == 1u || (m == 0u && component == 5u));
+    let radial = select(surface, 1u, extrapolate);
+    let index = (component * mnmax + mode) * params.ns + radial;
+    return words(state_hi.data[index], state_lo.data[index]);
+}
+
+fn theta_basis(sine: bool, m: u32, theta: u32, slot: u32) -> Real {
+    let plane = select(0u, 1u, sine);
+    let index = plane * params.mpol * params.ntheta +
+                m * params.ntheta + theta;
+    return normalize(words(basis.data[index], basis_lo.data[index]),
+                               slot);
+}
+
+fn zeta_basis(sine: bool, n: u32, zeta: u32, slot: u32) -> Real {
+    let theta_values = 2u * params.mpol * params.ntheta;
+    let plane = select(0u, 1u, sine);
+    let index = theta_values +
+                plane * (params.ntor + 1u) * params.nzeta +
+                n * params.nzeta + zeta;
+    return normalize(words(basis.data[index], basis_lo.data[index]),
+                               slot);
+}
+
+fn intermediate_index(field: u32, surface: u32, m: u32, zeta: u32) -> u32 {
+    let plane_size = params.ns * params.mpol * params.nzeta;
+    return field * plane_size +
+           (surface * params.mpol + m) * params.nzeta + zeta;
+}
+
+fn intermediate_at(field: u32, surface: u32, m: u32, zeta: u32) -> Real {
+    let plane_size = params.ns * params.mpol * params.nzeta;
+    let index = intermediate_index(field, surface, m, zeta);
+    return words(intermediate.data[index],
+              intermediate.data[12u * plane_size + index]);
+}
+
+fn put_intermediate(field: u32, surface: u32, m: u32, zeta: u32, value: Real) {
+    let plane_size = params.ns * params.mpol * params.nzeta;
+    let index = intermediate_index(field, surface, m, zeta);
+    intermediate.data[index] = hi(value);
+#if PAIRED
+    intermediate.data[12u * plane_size + index] = lo(value);
+#endif
+}
+
+fn put_output(field: u32, point: u32, value: Real) {
+    let index = field * params.total_points + point;
+    output.data[index] = hi(value);
+#if PAIRED
+    output.data[20u * params.total_points + index] = lo(value);
+#endif
+}
+
+@compute @workgroup_size(128)
+fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let count = params.ns * params.mpol * params.nzeta;
+    let index = invocation.x;
+    if (index >= count) { return; }
+    let zeta = index % params.nzeta;
+    let surface_m = index / params.nzeta;
+    let m = surface_m % params.mpol;
+    let surface = surface_m / params.mpol;
+    // Keep these accumulators named. Chrome/Dawn's D3D12 DXC path can
+    // miscompile a dynamically indexed function-local array here to zeros.
+    var sum0 = empty_accumulator();
+    var sum1 = empty_accumulator();
+    var sum2 = empty_accumulator();
+    var sum3 = empty_accumulator();
+    var sum4 = empty_accumulator();
+    var sum5 = empty_accumulator();
+    var sum6 = empty_accumulator();
+    var sum7 = empty_accumulator();
+    var sum8 = empty_accumulator();
+    var sum9 = empty_accumulator();
+    var sum10 = empty_accumulator();
+    var sum11 = empty_accumulator();
+    for (var n = 0u; n <= params.ntor; n++) {
+        let cn = zeta_basis(false, n, zeta, index);
+        let sn = zeta_basis(true, n, zeta, index);
+        let nf = f32(n * params.nfp);
+        let rc = coefficient(0u, m, n, surface);
+        let zs = coefficient(1u, m, n, surface);
+        let ls = coefficient(2u, m, n, surface);
+        let rs = coefficient(3u, m, n, surface);
+        let zc = coefficient(4u, m, n, surface);
+        let lc = coefficient(5u, m, n, surface);
+        sum0 = accumulate(sum0, mul(rc, cn, index), index);
+        sum1 = accumulate(sum1, mul(rs, sn, index), index);
+        sum2 = accumulate(sum2, mul(zs, cn, index), index);
+        sum3 = accumulate(sum3, mul(zc, sn, index), index);
+        sum4 = accumulate(sum4, mul(ls, cn, index), index);
+        sum5 = accumulate(sum5, mul(lc, sn, index), index);
+        var derivative_rc = rc;
+#if !PAIRED
+        if (params.radius_reference != 0.0 && m == 0u && n > 0u) {
+            derivative_rc += radius_reference.data[n];
+        }
+#endif
+        sum6 = accumulate(sum6, mul(
+            scale(derivative_rc, -nf, index), sn, index), index);
+        sum7 = accumulate(sum7, mul(
+            scale(rs, nf, index), cn, index), index);
+        sum8 = accumulate(sum8, mul(
+            scale(zs, -nf, index), sn, index), index);
+        sum9 = accumulate(sum9, mul(
+            scale(zc, nf, index), cn, index), index);
+        sum10 = accumulate(sum10, mul(
+            scale(ls, nf, index), sn, index), index);
+        sum11 = accumulate(sum11, mul(
+            scale(lc, -nf, index), cn, index), index);
+    }
+    put_intermediate(0u, surface, m, zeta, accumulated(sum0));
+    put_intermediate(1u, surface, m, zeta, accumulated(sum1));
+    put_intermediate(2u, surface, m, zeta, accumulated(sum2));
+    put_intermediate(3u, surface, m, zeta, accumulated(sum3));
+    put_intermediate(4u, surface, m, zeta, accumulated(sum4));
+    put_intermediate(5u, surface, m, zeta, accumulated(sum5));
+    put_intermediate(6u, surface, m, zeta, accumulated(sum6));
+    put_intermediate(7u, surface, m, zeta, accumulated(sum7));
+    put_intermediate(8u, surface, m, zeta, accumulated(sum8));
+    put_intermediate(9u, surface, m, zeta, accumulated(sum9));
+    put_intermediate(10u, surface, m, zeta, accumulated(sum10));
+    put_intermediate(11u, surface, m, zeta, accumulated(sum11));
+}
+
+@compute @workgroup_size(128)
+fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let point = invocation.x;
+    if (point >= params.total_points) { return; }
+    let surface = point / params.n_z_n_t;
+    let angular = point % params.n_z_n_t;
+    let theta = angular % params.ntheta;
+    let zeta = angular / params.ntheta;
+#if PAIRED
+    let odd_scale = words(radial_scale_hi.data[surface], radial_scale_lo.data[surface]);
+#else
+    let maxsc = max(sqrt(f32(surface) / f32(params.ns - 1u)),
+                    sqrt(1.0 / f32(params.ns - 1u)));
+    let odd_scale = 1.0 / maxsc;
+    // These are true pair-single products/sums inside the scalar shader.
+    var odd_r: Pair = pair_real(0.0);
+    var odd_z: Pair = pair_real(0.0);
+#endif
+    // See the D3D12 portability note in toroidal_stage.
+    var value0 = empty_accumulator();
+    var value1 = empty_accumulator();
+    var value2 = empty_accumulator();
+    var value3 = empty_accumulator();
+    var value4 = empty_accumulator();
+    var value5 = empty_accumulator();
+    var value6 = empty_accumulator();
+    var value7 = empty_accumulator();
+    var value8 = empty_accumulator();
+    var value9 = empty_accumulator();
+    var value10 = empty_accumulator();
+    var value11 = empty_accumulator();
+    var value12 = empty_accumulator();
+    var value13 = empty_accumulator();
+    var value14 = empty_accumulator();
+    var value15 = empty_accumulator();
+    var value16 = empty_accumulator();
+    var value17 = empty_accumulator();
+    var r_con = empty_accumulator();
+    var z_con = empty_accumulator();
+    for (var m = 0u; m < params.mpol; m++) {
+        let cm = theta_basis(false, m, theta, point);
+        let sm = theta_basis(true, m, theta, point);
+        let mf = f32(m);
+        let odd = (m & 1u) == 1u;
+        var scale = real(1.0);
+        if (odd) { scale = odd_scale; }
+        let a0 = intermediate_at(0u, surface, m, zeta);
+        let a1 = intermediate_at(1u, surface, m, zeta);
+        let a2 = intermediate_at(2u, surface, m, zeta);
+        let a3 = intermediate_at(3u, surface, m, zeta);
+        let a4 = intermediate_at(4u, surface, m, zeta);
+        let a5 = intermediate_at(5u, surface, m, zeta);
+        let r = add(mul(a0, cm, point),
+                              mul(a1, sm, point), point);
+        let z = add(mul(a2, sm, point),
+                              mul(a3, cm, point), point);
+        let lambda = add(mul(a4, sm, point),
+                                   mul(a5, cm, point), point);
+        let ru = add(mul(a0, neg(sm), point),
+                               mul(a1, cm, point), point);
+        let zu = sub(mul(a2, cm, point),
+                               mul(a3, sm, point), point);
+        let lu = sub(mul(a4, cm, point),
+                               mul(a5, sm, point), point);
+        let derivative_scale = scale(scale, mf, point);
+        let rv = add(
+            mul(intermediate_at(6u, surface, m, zeta), cm, point),
+            mul(intermediate_at(7u, surface, m, zeta), sm, point),
+            point);
+        let zv = add(
+            mul(intermediate_at(8u, surface, m, zeta), sm, point),
+            mul(intermediate_at(9u, surface, m, zeta), cm, point),
+            point);
+        let lv = add(
+            mul(intermediate_at(10u, surface, m, zeta), sm, point),
+            mul(intermediate_at(11u, surface, m, zeta), cm, point),
+            point);
+        let scaled_r = mul(r, scale, point);
+        let scaled_z = mul(z, scale, point);
+        let scaled_lambda = mul(lambda, scale, point);
+        let scaled_ru = mul(ru, derivative_scale, point);
+        let scaled_zu = mul(zu, derivative_scale, point);
+        let scaled_lu = mul(lu, derivative_scale, point);
+        let scaled_rv = mul(rv, scale, point);
+        let scaled_zv = mul(zv, scale, point);
+        let scaled_lv = mul(lv, scale, point);
+        if (odd) {
+#if !PAIRED
+            if (params.compensated_geometry != 0.0) {
+                odd_r = pair_add(odd_r, pair_add(
+                    pair_scale(pair_real(a0), cm, point),
+                    pair_scale(pair_real(a1), sm, point), point), point);
+                odd_z = pair_add(odd_z, pair_add(
+                    pair_scale(pair_real(a2), sm, point),
+                    pair_scale(pair_real(a3), cm, point), point), point);
+            } else {
+#endif
+                value6 = accumulate(value6, scaled_r, point);
+                value7 = accumulate(value7, scaled_z, point);
+#if !PAIRED
+            }
+#endif
+            value8 = accumulate(value8, scaled_lambda, point);
+            value9 = accumulate(value9, scaled_ru, point);
+            value10 = accumulate(value10, scaled_zu, point);
+            value11 = accumulate(value11, scaled_lu, point);
+            value15 = accumulate(value15, scaled_rv, point);
+            value16 = accumulate(value16, scaled_zv, point);
+            value17 = accumulate(value17, scaled_lv, point);
+        } else {
+            value0 = accumulate(value0, scaled_r, point);
+            value1 = accumulate(value1, scaled_z, point);
+            value2 = accumulate(value2, scaled_lambda, point);
+            value3 = accumulate(value3, scaled_ru, point);
+            value4 = accumulate(value4, scaled_zu, point);
+            value5 = accumulate(value5, scaled_lu, point);
+            value12 = accumulate(value12, scaled_rv, point);
+            value13 = accumulate(value13, scaled_zv, point);
+            value14 = accumulate(value14, scaled_lv, point);
+        }
+        let xmpq = round(mf * round(mf - 1.0, point), point);
+        r_con = accumulate(r_con, scale(r, xmpq, point), point);
+        z_con = accumulate(z_con, scale(z, xmpq, point), point);
+    }
+#if !PAIRED
+    if (params.compensated_geometry != 0.0) {
+        let r = pair_scale(odd_r, odd_scale, point);
+        let z = pair_scale(odd_z, odd_scale, point);
+        value6.x = pair_round(pair_scalar(r), point);
+        value7.x = pair_round(pair_scalar(z), point);
+    }
+#endif
+    put_output(0u, point, accumulated(value0));
+    put_output(1u, point, accumulated(value1));
+    put_output(2u, point, accumulated(value2));
+    put_output(3u, point, accumulated(value3));
+    put_output(4u, point, accumulated(value4));
+    put_output(5u, point, accumulated(value5));
+    put_output(6u, point, accumulated(value6));
+    put_output(7u, point, accumulated(value7));
+    put_output(8u, point, accumulated(value8));
+    put_output(9u, point, accumulated(value9));
+    put_output(10u, point, accumulated(value10));
+    put_output(11u, point, accumulated(value11));
+    put_output(12u, point, accumulated(value12));
+    put_output(13u, point, accumulated(value13));
+    put_output(14u, point, accumulated(value14));
+    put_output(15u, point, accumulated(value15));
+    put_output(16u, point, accumulated(value16));
+    put_output(17u, point, accumulated(value17));
+    put_output(18u, point, accumulated(r_con));
+    put_output(19u, point, accumulated(z_con));
+}

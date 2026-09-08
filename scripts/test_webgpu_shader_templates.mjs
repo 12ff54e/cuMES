@@ -25,6 +25,9 @@ assert.match(scalar.source, /compensate_add\(sum, FF\(x, 0.0\), lane\)/);
 assert.equal(compile('var x: Real = add(a, b);').needs_pair, false);
 assert.match(compile('var x: array<Real, 4>;', 'paired').source, /array<FF, 4>/);
 assert.equal(compile('words(buffer_hi[i], buffer_lo[i])').source, '(buffer_hi[i])');
+assert.equal(compile('pair_scalar(pair_add(a, b, lane))').source,
+  'compensate_scalar(compensate_add(a, b, lane))');
+assert.equal(compile('pair_square(value, lane)').source, 'compensate_square(value, lane)');
 
 // Decimal constants are split once at build time, without rounding their low
 // word away. Test known mathematical constants against independently given words.

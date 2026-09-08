@@ -1,0 +1,19 @@
+// A scalar Fourier sum uses a Kahan correction; a paired sum carries both
+// arithmetic words. Keep this policy explicit without duplicating the series.
+#if PAIRED
+alias Accumulator = Real;
+fn empty_accumulator() -> Accumulator { return real(0.0); }
+fn accumulate(sum: Accumulator, term: Real, slot: u32) -> Accumulator {
+    return add(sum, term, slot);
+}
+fn accumulated(sum: Accumulator) -> Real { return sum; }
+#else
+alias Accumulator = vec2<f32>;
+fn empty_accumulator() -> Accumulator { return vec2<f32>(0.0); }
+fn accumulate(sum: Accumulator, term: Real, slot: u32) -> Accumulator {
+    let adjusted = term - sum.y;
+    let next = sum.x + adjusted;
+    return vec2<f32>(next, (next - sum.x) - adjusted);
+}
+fn accumulated(sum: Accumulator) -> Real { return sum.x; }
+#endif

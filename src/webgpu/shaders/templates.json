@@ -33,5 +33,19 @@
     "template": "templates/magnetic_field.wgsl.in",
     "single": "magnetic_field.wgsl",
     "paired": "magnetic_field_double_single.wgsl"
+  },
+  {
+    "template": "templates/toroidal_inverse.wgsl.in",
+    "single": "toroidal_inverse.wgsl",
+    "paired": "toroidal_inverse_double_single.wgsl"
+  },
+  {
+    "template": "templates/toroidal_forward.wgsl.in",
+    "single": "toroidal_forward.wgsl",
+    "paired": "toroidal_forward_double_single.wgsl"
+  },
+  {
+    "template": "templates/residual_norm.wgsl.in",
+    "single": "residual_norm.wgsl"
   }
 ]

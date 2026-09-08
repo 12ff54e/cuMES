@@ -220,8 +220,7 @@ const std::vector<float>& make_basis(const ToroidalDealiasCase& input) {
 const std::string& load_shader(bool double_single) {
     return detail::cached_shader_source(
         double_single ? "/shaders/toroidal_inverse_double_single.wgsl"
-                      : "/shaders/toroidal_inverse.wgsl",
-        double_single ? "/shaders/float_float.wgsl" : "");
+                      : "/shaders/toroidal_inverse.wgsl");
 }
 
 const std::string& load_forward_shader(bool double_single) {

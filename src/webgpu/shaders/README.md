@@ -2,7 +2,7 @@
 
 Edit `templates/*.wgsl.in` for precision-dependent kernels. `templates.json`
 maps each template to its scalar and pair-single output names. CMake runs
-`scripts/compile_webgpu_shaders.mjs` with Node before embedding the generated
+`scripts/compile_webgpu_shaders.mjs` with Node (18 or later) before embedding the generated
 files from the build directory. Generated WGSL is not checked into git.
 The browser receives ordinary WGSL; preprocessing adds no solver-loop work.
 Kernels with only one arithmetic variant remain ordinary `.wgsl` files.
@@ -14,7 +14,7 @@ fn example(a: Real, b: Real, slot: u32) -> Real {
 ```
 
 `Real` becomes `f32` or the two-word `FF` struct. `add`, `sub`, `mul`, `div`,
-`neg`, and `reciprocal` become parenthesized scalar expressions or calls into
+`neg`, `square`, and `reciprocal` become parenthesized scalar expressions or calls into
 `templates/compensated.wgsl`. `scale(a, b, slot)` multiplies a `Real` by an
 explicitly scalar `f32`. A rounding slot can be omitted when the enclosing
 function already has a variable named `slot`. Slots must be unique within the
@@ -37,6 +37,13 @@ var sum: Pair = pair_real(0.0);
 sum = pair_add(sum, pair_real(value), slot);
 let rounded_sum: f32 = pair_scalar(sum);
 ```
+
+The Fourier templates share `accumulator.wgsl.in`: scalar sums retain their
+Kahan correction, while paired sums retain both arithmetic words. The scalar
+inverse transform's selective geometry correction uses explicit `Pair`
+products and sums. `residual_norm.wgsl.in` is instantiated once and always uses
+paired sums and squares, including the low-low product, for either solver mode.
+The generated precision library is included only where needed.
 
 Use `#if PAIRED` / `#else` / `#endif` (or `#if !PAIRED`) for different buffer
 layouts or precision-specific algorithms, and `#include "relative/path"` for

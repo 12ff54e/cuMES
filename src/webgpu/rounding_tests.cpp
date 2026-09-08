@@ -21,9 +21,9 @@ struct RoundingCase {
     std::string_view function;
 };
 constexpr std::array CASES = {
-    RoundingCase{"toroidal_inverse", "rounded"},
-    RoundingCase{"toroidal_inverse_double_single", "ff_strict_round"},
-    RoundingCase{"toroidal_forward_double_single", "rnd"},
+    RoundingCase{"toroidal_inverse", "compensate_round"},
+    RoundingCase{"toroidal_inverse_double_single", "compensate_round"},
+    RoundingCase{"toroidal_forward_double_single", "compensate_round"},
     RoundingCase{"base_geometry_double_single", "compensate_round"},
     RoundingCase{"magnetic_field_double_single", "compensate_round"},
     RoundingCase{"force_double_single", "compensate_round"},
@@ -31,7 +31,7 @@ constexpr std::array CASES = {
     RoundingCase{"constraint_tail_double_single", "compensate_round"},
     RoundingCase{"axisymmetric_descent_double_single", "compensate_round"},
     RoundingCase{"residual_decompose_double_single", "compensate_round"},
-    RoundingCase{"residual_norm", "round32"},
+    RoundingCase{"residual_norm", "compensate_round"},
     RoundingCase{"geometry_control", "round32"},
     RoundingCase{"fft", "rnd"}};
 constexpr std::size_t COUNT = 128;

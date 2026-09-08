@@ -30,7 +30,6 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (index >= params.ns * params.mode_count) { return; }
     let mode = index / params.ns; let surface = index % params.ns;
     let m = mode / params.ntor_plus_one;
-#if PAIRED
     var scale = words(1.0, 0.0);
     if ((m & 1u) == 1u) {
         let current = normalize(words(sqrt_hi.data[surface], sqrt_lo.data[surface]), index);
@@ -39,11 +38,6 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
         if (greater(current, first)) { chosen = current; }
         scale = reciprocal(chosen, index);
     }
-#else
-    let scale = select(1.0, 1.0 / max(sqrt_hi.data[surface],
-                                      sqrt_hi.data[1u]),
-                       (m & 1u) == 1u);
-#endif
     for (var component = 0u; component < 6u; component++) {
         put(component, mode, surface,
             mul(at(component, mode, surface, index), scale, index));

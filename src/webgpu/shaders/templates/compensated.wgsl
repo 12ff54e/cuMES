@@ -58,6 +58,16 @@ fn compensate_div(a: FF, b: FF, slot: u32) -> FF {
 }
 
 fn compensate_neg(a: FF) -> FF { return FF(-a.hi, -a.lo); }
+fn compensate_scalar(a: FF) -> f32 { return a.hi + a.lo; }
+// Norms retain the low-low product as well as the two cross products.
+fn compensate_square(a: FF, slot: u32) -> FF {
+    let hi = compensate_round(a.hi * a.hi, slot);
+    let e = compensate_round(fma(a.hi, a.hi, -hi), slot);
+    let cross = compensate_round(compensate_round(a.hi * a.lo, slot) * 2.0, slot);
+    let lo = compensate_round(compensate_round(e + cross, slot) +
+                              compensate_round(a.lo * a.lo, slot), slot);
+    return compensate_normalize(FF(hi, lo), slot);
+}
 fn compensate_greater(a: FF, b: FF) -> bool {
     return a.hi > b.hi || (a.hi == b.hi && a.lo > b.lo);
 }
