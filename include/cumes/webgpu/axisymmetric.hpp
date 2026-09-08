@@ -74,7 +74,10 @@ void enqueue_axisymmetric_forward(const wgpu::Device& device,
 AxisymmetricForwardResult axisymmetric_forward_reference(
     const AxisymmetricForwardCase& input);
 
+struct AxisymmetricDealiasResult;
 struct AxisymmetricDealiasCase {
+    DeviceFields device_g_con_eff, device_tcon;
+    BatchedReadback<AxisymmetricDealiasResult> readback;
     int ns = 0;
     int mpol = 0;
     int ntheta = 0;
@@ -84,6 +87,8 @@ struct AxisymmetricDealiasCase {
 };
 
 struct AxisymmetricDealiasResult {
+    DeviceFields device_g_con;
+    bool finite = true;
     std::vector<float> g_con;
 };
 

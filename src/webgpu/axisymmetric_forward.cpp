@@ -56,8 +56,9 @@ std::string validate_dealias_case(const AxisymmetricDealiasCase& input) {
     if (points > std::numeric_limits<std::uint32_t>::max()) {
         return "axisymmetric dealias input exceeds WebGPU indexing limits";
     }
-    if (input.g_con_eff.size() != points ||
-        input.tcon.size() != static_cast<std::size_t>(input.ns) ||
+    if (!field_shape(input.g_con_eff, input.device_g_con_eff, points) ||
+        !field_shape(input.tcon, input.device_tcon,
+                     static_cast<std::size_t>(input.ns)) ||
         input.faccon.size() != static_cast<std::size_t>(input.mpol)) {
         return "axisymmetric dealias input shape mismatch";
     }
@@ -390,11 +391,11 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
         static_cast<std::size_t>(input.mpol) * input.ntheta;
     std::vector<float> sine_basis(forward_basis.begin() + table_size,
                                   forward_basis.begin() + 2 * table_size);
-    std::vector<float> profiles;
-    profiles.reserve(input.tcon.size() + input.faccon.size());
-    profiles.insert(profiles.end(), input.tcon.begin(), input.tcon.end());
+    std::vector<float> profiles(input.ns, 0.0F);
+    if (!input.device_tcon)
+        std::copy(input.tcon.begin(), input.tcon.end(), profiles.begin());
     profiles.insert(profiles.end(), input.faccon.begin(), input.faccon.end());
-    const std::size_t input_bytes = input.g_con_eff.size() * sizeof(float);
+    const std::size_t input_bytes = points * sizeof(float);
     const std::size_t profile_bytes = profiles.size() * sizeof(float);
     const std::size_t basis_bytes = sine_basis.size() * sizeof(float);
     const std::size_t result_bytes = points * sizeof(float);
@@ -415,9 +416,12 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
                       wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
                       "cuMES axisymmetric dealiased constraint");
     const wgpu::Buffer readback_buffer =
-        create_buffer(device, result_bytes,
-                      wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
-                      "cuMES axisymmetric dealiased constraint readback");
+        input.readback.batch
+            ? wgpu::Buffer{}
+            : create_buffer(
+                  device, result_bytes,
+                  wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
+                  "cuMES axisymmetric dealiased constraint readback");
     const wgpu::Buffer params_buffer =
         create_buffer(device, sizeof(ShaderParams),
                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -434,8 +438,14 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
                               0,
                               {0, 0, 0}};
     const wgpu::Queue queue = device.GetQueue();
-    queue.WriteBuffer(input_buffer, 0, input.g_con_eff.data(), input_bytes);
+    const wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    transfer_fields(device, encoder, input_buffer, input.g_con_eff,
+                    input.device_g_con_eff);
     queue.WriteBuffer(profile_buffer, 0, profiles.data(), profile_bytes);
+    if (input.device_tcon)
+        encoder.CopyBufferToBuffer(input.device_tcon.buffer,
+                                   input.device_tcon.high_offset,
+                                   profile_buffer, 0, input.ns * sizeof(float));
     queue.WriteBuffer(basis_buffer, 0, sine_basis.data(), basis_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
 
@@ -455,7 +465,6 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
     const wgpu::BindGroup bind_group =
         device.CreateBindGroup(&bind_group_descriptor);
 
-    const wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
     wgpu::ComputePassDescriptor pass_descriptor{};
     const wgpu::ComputePassEncoder pass =
         encoder.BeginComputePass(&pass_descriptor);
@@ -465,6 +474,25 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    if (input.readback.batch) {
+        AxisymmetricDealiasResult ready;
+        ready.device_g_con = {result_buffer, points, 0, 0};
+        input.readback.batch->append(
+            encoder, result_buffer, 0, result_bytes,
+            [callback = std::move(callback),
+             ready](std::span<const float> values) mutable {
+                auto result = ready;
+                result.g_con.assign(values.begin(), values.end());
+                result.finite = std::all_of(
+                    values.begin(), values.end(),
+                    [](float value) { return std::isfinite(value); });
+                callback({}, std::move(result));
+            });
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        input.readback.publish_device(std::move(ready));
+        return;
+    }
     encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
                                result_bytes);
     const wgpu::CommandBuffer commands = encoder.Finish();
@@ -498,7 +526,12 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
             }
             const auto* values = static_cast<const float*>(mapped);
             AxisymmetricDealiasResult result;
+            result.device_g_con = {dispatch->result_buffer,
+                                   dispatch->result_values, 0, 0};
             result.g_con.assign(values, values + dispatch->result_values);
+            result.finite =
+                std::all_of(result.g_con.begin(), result.g_con.end(),
+                            [](float value) { return std::isfinite(value); });
             dispatch->readback_buffer.Unmap();
             dispatch->callback({}, std::move(result));
         });

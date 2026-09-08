@@ -842,9 +842,8 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
     chain->input = input;
     chain->callback = std::move(callback);
     if (input.batched_readback.batch) {
-        if (input.ntor == 0 || input.readback) {
-            chain->callback("batched constraint requires resident 3-D output",
-                            {});
+        if (input.readback) {
+            chain->callback("batched constraint requires resident output", {});
             return;
         }
         auto result = std::make_shared<AxisymmetricConstraintResult>();
@@ -852,30 +851,34 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
         head_readback.batch = input.batched_readback.batch;
         head_readback.device_ready = [chain, result](HeadResult head) {
             const auto& in = chain->input;
-            ToroidalDealiasCase dealias;
-            dealias.ns = in.ns;
-            dealias.mpol = in.mpol;
-            dealias.ntor = in.ntor;
-            dealias.ntheta = in.ntheta;
-            dealias.nzeta = in.nzeta;
             const auto points =
                 static_cast<std::size_t>(in.ns) * in.ntheta * in.nzeta;
             result->device_r_con0 =
                 field_slice(head.device_fields, points, points);
             result->device_z_con0 =
                 field_slice(head.device_fields, 2 * points, points);
-            dealias.device_g_con_eff =
-                field_slice(head.device_fields, 0, points);
-            dealias.device_tcon = head.device_tcon;
-            dealias.readback_values = in.readback_intermediates;
-            dealias.faccon.assign(in.mpol, 0.0F);
-            for (int m = 1; m < in.mpol; ++m) {
-                const float xmpq = static_cast<float>((m + 1) * m);
-                dealias.faccon[m] = 0.25F / (xmpq * xmpq);
-            }
-            dealias.readback.batch = in.batched_readback.batch;
-            dealias.readback.device_ready =
-                [chain, result, head](ToroidalDealiasResult filtered) {
+            const auto filter = [chain, result, head, points](auto dealias,
+                                                              auto enqueue) {
+                const auto& in = chain->input;
+                dealias.ns = in.ns;
+                dealias.mpol = in.mpol;
+                dealias.ntheta = in.ntheta;
+                if constexpr (requires { dealias.ntor; }) {
+                    dealias.ntor = in.ntor;
+                    dealias.nzeta = in.nzeta;
+                    dealias.readback_values = in.readback_intermediates;
+                }
+                dealias.device_g_con_eff =
+                    field_slice(head.device_fields, 0, points);
+                dealias.device_tcon = head.device_tcon;
+                dealias.faccon.assign(in.mpol, 0.0F);
+                for (int m = 1; m < in.mpol; ++m) {
+                    const float xmpq = static_cast<float>((m + 1) * m);
+                    dealias.faccon[m] = 0.25F / (xmpq * xmpq);
+                }
+                dealias.readback.batch = in.batched_readback.batch;
+                dealias.readback.device_ready = [chain, result,
+                                                 head](auto filtered) {
                     enqueue_tail(
                         chain->device, chain->input, head, {},
                         [chain, result](std::string error,
@@ -890,14 +893,18 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
                         },
                         filtered.device_g_con);
                 };
-            enqueue_toroidal_dealias(
-                chain->device, dealias,
-                [chain, result](std::string error,
-                                ToroidalDealiasResult filtered) {
-                    result->g_con = std::move(filtered.g_con);
-                    result->intermediates_finite &= filtered.finite;
-                    chain->callback(std::move(error), std::move(*result));
-                });
+                enqueue(chain->device, dealias,
+                        [chain, result](std::string error, auto filtered) {
+                            result->g_con = std::move(filtered.g_con);
+                            result->intermediates_finite &= filtered.finite;
+                            chain->callback(std::move(error),
+                                            std::move(*result));
+                        });
+            };
+            if (in.ntor == 0)
+                filter(AxisymmetricDealiasCase{}, enqueue_axisymmetric_dealias);
+            else
+                filter(ToroidalDealiasCase{}, enqueue_toroidal_dealias);
         };
         enqueue_head(
             device, input,

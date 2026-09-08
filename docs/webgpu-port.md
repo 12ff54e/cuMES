@@ -47,7 +47,8 @@ comparisons; other positive counts are capped at the available pool size.
 Fixed-boundary runs do not create MAKEGRID workers. Coil sums retain their
 original order within each grid point, independent of the thread count.
 
-Free-boundary 3-D solves reuse the resident plasma operators in two batches:
+Free-boundary 3-D and paired axisymmetric solves reuse the resident plasma
+operators in two batches:
 inverse/geometry/magnetic/MHD force, then projection/constraint/preconditioning.
 Between them the host accepts the geometry, updates the existing double NESTOR
 solve, and uploads only the four corrected LCFS force rows. Rejected geometry
@@ -55,6 +56,9 @@ discards the pending continuation before the vacuum state can change. The
 coupling reconstructs only the axis, boundary coefficients and outer rows it
 needs; it retains the native bridge kernels and reduction order. `&resident=0`
 selects the original separate-dispatch path for trajectory comparisons.
+Axisymmetric constraint filtering retains its existing shader; buffer copies
+adapt its force-plane layout to the separable projector. Scalar axisymmetric
+solves retain their separate-dispatch path.
 
 Choose **Fixed boundary** or **Free boundary** above the editor. Free-boundary
 setup defaults to paired precision and offers Solovev, W7-X (vacuum), and
@@ -71,9 +75,8 @@ parsing, MAKEGRID generation, and NESTOR. Only coil geometry and small input
 JSON files are served as lazy preset assets; no field grids are shipped.
 `src/webgpu/vacuum.cpp` compiles the existing cuMES vacuum state machine and
 bridge kernels for Wasm memory and converts WebGPU high/low words at the
-handover. Free-boundary iterations use the existing mapped operator path;
-fixed-boundary resident/batched execution is unchanged. CPU vacuum work runs
-in the solver worker so the UI remains responsive.
+handover. Fixed-boundary resident/batched execution is unchanged. CPU vacuum
+work runs in the solver worker so the UI remains responsive.
 
 Vacuum activation, edge force/preconditioning, constraint decay, soft restarts,
 and multigrid persistence follow the CUDA coupling. The three bundled presets

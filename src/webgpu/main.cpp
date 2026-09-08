@@ -4293,7 +4293,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_constraint_forward(std::vector<float> fields) {
         if (initialized_stage_.ntor != 0 || double_single_solve_) {
-            if (initialized_stage_.ntor == 0) {
+            if (initialized_stage_.ntor == 0 && !iteration_results_) {
                 // Axisymmetric constraint output is [10 force, 4 constraint]
                 // planes. The paired separable projector expects [16, 4].
                 const std::size_t points =
@@ -5402,9 +5402,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::vector<float> stage_z_con_;
     bool resident_path() const {
         const bool free = initialized_stage_.free_boundary;
-        const bool free_batch = free && initialized_stage_.ntor > 0 &&
-                                !requested_spectral_fences() &&
-                                !requested_compare_fft();
+        const bool free_batch =
+            free && (initialized_stage_.ntor > 0 || double_single_solve_) &&
+            !requested_spectral_fences() && !requested_compare_fft();
         return ((!free && initialized_stage_.ntor > 0) || free_batch) &&
                requested_reference_transfers() == 0;
     }
@@ -5428,7 +5428,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         input.reset_reference = controller_->reset_constraint_reference();
         input.zero_m1_z = controller_->effective_iteration() < 2 ||
                           controller_->fsqz_prev() < 1.0e-6;
-        input.use_fft = requested_direct_dft() == 0;
+        input.use_fft =
+            initialized_stage_.ntor > 0 && requested_direct_dft() == 0;
         input.optimized_fft = !requested_generic_fft();
         input.canonical_zeta = requested_canonical_zeta();
         input.shadow_norms = requested_shadow_norms();

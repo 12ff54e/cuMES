@@ -1,5 +1,7 @@
 #include "cumes/webgpu/iteration.hpp"
 
+#include "pipeline_cache.hpp"
+
 #include <limits>
 #include <utility>
 
@@ -233,6 +235,33 @@ class IterationDispatch
         in.include_lcfs = input.include_lcfs;
         in.readback = false;
         in.device_fields = fields;
+        if (index == 1 && input.stage.ntor == 0) {
+            // Axisymmetric constraints append four planes after ten forces;
+            // the separable projector consumes sixteen force planes first.
+            const auto plane = static_cast<std::uint64_t>(input.stage.ns) *
+                               input.stage.ntheta * sizeof(float);
+            const auto bytes = 20 * plane;
+            const auto expanded = detail::cached_buffer(
+                device, bytes * (input.double_single ? 2 : 1),
+                wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst,
+                "axisymmetric constraint projector fields");
+            const auto encoder = device.CreateCommandEncoder();
+            encoder.ClearBuffer(expanded);
+            for (int word = 0; word < (input.double_single ? 2 : 1); ++word) {
+                const auto source =
+                    word ? fields.low_offset : fields.high_offset;
+                encoder.CopyBufferToBuffer(fields.buffer, source, expanded,
+                                           word * bytes, 10 * plane);
+                encoder.CopyBufferToBuffer(fields.buffer, source + 10 * plane,
+                                           expanded, word * bytes + 16 * plane,
+                                           4 * plane);
+            }
+            const auto commands = encoder.Finish();
+            device.GetQueue().Submit(1, &commands);
+            in.device_fields = {expanded,
+                                static_cast<std::size_t>(bytes / sizeof(float)),
+                                0, bytes};
+        }
         const auto self = shared_from_this();
         enqueue_toroidal_forward(
             device, in,
@@ -334,6 +363,10 @@ class IterationDispatch
         in.device_r_con = inverse_.device_r_con;
         in.device_z_con = inverse_.device_z_con;
         in.device_force_fields = force_.device_fields;
+        if (input.stage.ntor == 0)
+            in.device_force_fields =
+                field_slice(force_.device_fields, 0,
+                            10 * static_cast<std::size_t>(in.ns) * in.ntheta);
         in.device_elements = elements_.device_elements;
         in.device_r_con0 = input.device_r_con0;
         in.device_z_con0 = input.device_z_con0;
