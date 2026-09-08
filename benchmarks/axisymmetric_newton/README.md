@@ -88,3 +88,45 @@ resolved angular resolution; it is not an expected success result. Runners
 must check input hashes, keep baseline and candidate inputs identical, and
 retain outcomes for all 16 IDs. Results and timing reports belong outside the
 input manifest.
+
+## Finite-pressure supplement: IDs 16–18
+
+After the original 16-case screen, code inspection confirmed that `am` is a
+pressure polynomial in SI Pa: `eval_mass_profile` in
+`include/cumes/config/profile_functions.hpp` multiplies it by
+`DeviceParams<T>::MU_0 * pres_scale`, and
+`src/kernels/profiles_impl.cuh` uploads the result to `pres_H`. The original
+Solovev central pressure is only 0.125 Pa, so its half/double and profile
+variations cover a physically small pressure range.
+
+The following three supplemental cases were declared before their own runs
+to address that units-based coverage gap. They were added after observing the
+original screen, not presented as part of its initial predeclaration, and
+were not selected from timing or convergence results for these new inputs.
+Keep all three outcomes, including failures and regressions.
+
+| ID | Pressure polynomial in Pa | Changed field |
+|---|---|---|
+| 16_solovev_pressure1000_linear | 1000(1-s) | am = [1000, -1000] |
+| 17_solovev_pressure5000_linear | 5000(1-s) | am = [5000, -5000] |
+| 18_solovev_pressure1000_quadratic | 1000(1-s)^2 | am = [1000, -2000, 1000] |
+
+Only `am` changes from the pinned cuMES Solovev source. Geometry, flux, fixed
+iota, axis seed, step, `mpol=6`, angular resolution, grids `[5,11,55]`, caps
+`[1000,2000,2000]`, and all three `1e-16` tolerances are retained. The same
+fixed Newton policy applies to all three cases.
+
+The separate `pressure_manifest.json` follows the same runner schema and
+records the relationship to the original manifest. The original
+`manifest.json` and its 16 input files are unchanged. Its SHA-256 remains
+`90f28299f35d97d577873620e030f2b88facf9eaa08114ba0aca981f9f90f776`.
+Regenerate or check the supplement independently:
+
+```sh
+python3 benchmarks/axisymmetric_newton/generate_pressure.py
+python3 benchmarks/axisymmetric_newton/generate_pressure.py --check
+```
+
+The supplemental generator refuses to proceed if the original manifest or
+pinned Solovev source has changed, and writes only IDs 16–18 and the separate
+pressure manifest. It performs no solver or GPU work.
