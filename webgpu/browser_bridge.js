@@ -1,13 +1,10 @@
 // Emscripten library boundary between the solver and the browser application.
 // No DOM dependencies: the frontend installs a page or worker event sink.
 mergeInto(LibraryManager.library, {
-  requested_float_solve: function() {
-    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('precision') === 'float' ? 1 : 0;
-  },
   requested_double_solve: function() {
     const query = new URLSearchParams(globalThis.cumesSearch ?? location.search);
-    const free = query.get('boundary') === 'free' && query.get('mode') !== 'test' && query.get('solve') !== 'w7x';
-    return query.get('precision') === 'double' || (free && !query.has('precision')) ? 1 : 0;
+    const free = query.get('boundary') === 'free' && query.get('mode') !== 'test';
+    return query.get('precision') === 'double' || ((free || query.get('preset') === 'w7x') && !query.has('precision')) ? 1 : 0;
   },
   requested_float_radius_reference: function() {
     return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('radius_reference') === '0' ? 0 : 1;
@@ -47,13 +44,6 @@ mergeInto(LibraryManager.library, {
     }
   },
 
-  requested_w7x_solve: function() {
-    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('solve') === 'w7x';
-  },
-
-  requested_w7x_multigrid: function() {
-    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('grids') === '3';
-  },
   requested_reference_transfers: function() {
     return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('resident') === '0';
   },
@@ -98,7 +88,7 @@ mergeInto(LibraryManager.library, {
 
   requested_app_mode: function() {
     const query = new URLSearchParams(globalThis.cumesSearch ?? location.search);
-    return query.get('mode') !== 'test' && query.get('solve') !== 'w7x';
+    return query.get('mode') !== 'test';
   },
 
   requested_app_run: function() {

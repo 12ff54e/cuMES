@@ -79,7 +79,7 @@
     .secondary { border:1px solid var(--line); border-radius:9px; color:var(--muted); background:transparent;
       padding:9px 13px; cursor:pointer; text-decoration:none; }
     .results { display:grid; grid-template-rows:auto 1fr auto; }
-    .result-column { display:grid; grid-template-rows:auto minmax(0,1fr); gap:18px; min-width:0; }
+    .result-column { display:grid; grid-template-rows:auto auto; align-content:start; gap:18px; min-width:0; }
     .residual-panel { margin:0; }
     .residual-panel .panel-head { flex-wrap:wrap; gap:10px; }
     .residual-panel .panel-head h2 { font-size:14px; }
@@ -94,7 +94,6 @@
     .residual-legend span:nth-child(3)::before { border-top-style:dotted; }
     .residual-canvas { display:block; width:100%; height:250px; }
     .residual-caption { margin:0; padding:8px 18px 14px; color:var(--muted); font-size:11px; }
-    #w7x-residual-host:not(:empty) { margin-bottom:18px; }
     .result-empty { position:absolute; inset:0; display:grid; place-content:center; text-align:center;
       color:var(--muted); pointer-events:none; }
     .result-empty strong { color:#dce5f0; font-size:17px; margin-bottom:5px; }
@@ -114,17 +113,38 @@
     pre { max-height:280px; overflow:auto; margin:0; padding:0 15px 15px; color:#a9b8ca;
       white-space:pre-wrap; font:11px/1.55 ui-monospace,SFMono-Regular,monospace; }
     .legacy { max-width:960px; } .legacy h2 { font-size:24px; }
-    .legacy-viewer { margin-top:18px; }
     .legacy .actions { margin:0 0 18px; }
     .verification-summary { max-height:none; padding:12px 0; }
     .precision-control { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:18px 0; }
     .precision-control p { flex-basis:100%; margin:0; color:var(--muted); font-size:12px; }
-    .legacy-viewer .plot-wrap { min-height:560px; }
-    .legacy-viewer .equilibrium-3d { height:528px; }
     .boundary-choice { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin:0 0 20px; }
-    body[data-boundary-mode="free"] .fixed-input { display:none!important; }
-    #free-boundary-controls textarea { box-sizing:border-box; width:100%; padding:10px; margin:8px 0; color:var(--text); background:#0b1420; border:1px solid var(--line); border-radius:6px; font:12px/1.5 monospace; }
-    #free-boundary-controls select { margin:12px; padding:8px; color:var(--text); background:#0b1420; border:1px solid var(--line); border-radius:6px; }
+    body[data-boundary-mode="free"] .fixed-configuration,
+    body[data-surface-editor="true"] .axisymmetric-input { display:none!important; }
+    #free-boundary-controls textarea { box-sizing:border-box; width:100%; padding:10px; margin:8px 0; color:var(--ink); background:#0b1420; border:1px solid var(--line); border-radius:6px; font:12px/1.5 monospace; }
+    #free-boundary-controls label { display:block; }
+    #free-boundary-controls select { margin:8px 0; padding:8px; color:var(--ink); background:#0b1420; border:1px solid var(--line); border-radius:6px; }
+    select,textarea,input[type=number] { font:inherit; color:var(--ink); background:#0b1420;
+      border:1px solid var(--line); border-radius:6px; padding:7px 9px; min-width:0; }
+    textarea { width:100%; font:12px/1.5 ui-monospace,monospace; resize:vertical; }
+    #free-boundary-controls p { margin:8px 0; }
+    #free-boundary-controls details { margin-top:10px; padding:0 10px 10px; }
+    .setup-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 20px; border-bottom:1px solid var(--line); }
+    .setup-row label { color:var(--muted); font-size:12px; }
+    .setup-row select { max-width:100%; }
+    .slice-control { padding:0 20px 14px; }
+    .slice-control label { display:flex; justify-content:space-between; gap:12px; font-size:12px; color:var(--muted); }
+    .slice-control input { width:100%; accent-color:var(--orange); }
+    .mode-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
+    .mode-table th { text-align:left; color:var(--muted); font-weight:500; padding:6px; }
+    .mode-table th:first-child { width:42px; }
+    .mode-table td { padding:4px; }
+    .mode-table input { width:100%; font:12px ui-monospace,monospace; }
+    .coefficient-scroll { max-height:300px; overflow:auto; }
+    .surface-toolbar { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+    .surface-toolbar label { color:var(--muted); font-size:12px; }
+    #boundary-error { color:var(--danger); font-size:12px; }
+    #equilibrium-settings { padding:0 12px 12px; }
+    #equilibrium-settings p { color:var(--muted); font-size:12px; }
     [hidden] { display:none!important; }
     @media(max-width:920px){ .page{width:min(100% - 22px,700px)} .workspace{grid-template-columns:1fr}
       .site-header{flex-direction:column;align-items:flex-start;gap:16px}.plot-wrap{min-height:390px}svg{min-height:358px}.equilibrium-3d{height:358px} }
@@ -135,7 +155,7 @@
 <body>
     <header class="page site-header">
       <div class="brand"><span class="mark"></span><div><h1>cuMES</h1><div class="subtitle">Magnetic equilibrium · WebGPU</div></div></div>
-      <nav aria-label="Main navigation"><a href="?" data-view="editor">Boundary editor</a><a href="?mode=test" data-view="verification">GPU verification</a><a href="?solve=w7x" data-view="w7x">W7-X</a></nav>
+      <nav aria-label="Main navigation"><a href="?" data-view="editor">Boundary editor</a><a href="?mode=test" data-view="verification">GPU verification</a></nav>
     </header>
   <div class="page" id="app">
     <section class="boundary-choice" aria-label="Equilibrium boundary condition">
@@ -146,37 +166,57 @@
     </section>
     <main class="workspace">
       <section class="panel editor">
-        <div class="panel-head fixed-input"><h2>Input boundary</h2><div class="mode-switch" role="tablist" aria-label="Boundary editor mode">
+        <div class="panel-head"><h2 id="boundary-title">Input boundary</h2><div class="mode-switch axisymmetric-input" role="tablist" aria-label="Boundary editor mode">
           <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div></div>
+        <div class="setup-row fixed-configuration">
+          <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option></select>
+          <span class="subtitle" id="fixed-preset-description"></span>
+        </div>
         <section id="free-boundary-controls" class="controls" hidden>
-          <h2>Coils and initial plasma</h2>
           <p class="subtitle">The boundary moves to balance plasma and vacuum pressure. Coil fields are generated locally when you run.</p>
           <label>Coil configuration <select id="coil-preset"><option value="solovev">Solovev</option><option value="w7x">W7-X · vacuum</option><option value="cth_like">cth_like</option><option value="upload">Uploaded coils</option></select></label>
           <button id="coil-upload-button" class="secondary" type="button">Upload coil file</button>
           <input id="coil-upload" type="file" hidden>
           <p id="coil-description" class="subtitle"></p>
+          <details><summary>Coil currents and field grid</summary>
           <p class="subtitle">Accepts MAKEGRID coils-dot and cumes-coils-v1 JSON. Currents are in amperes, in circuit order.</p>
           <label>Coil currents (A)<textarea id="coil-currents" rows="3" spellcheck="false"></textarea></label>
           <details><summary>Field grid bounds and resolution</summary><p class="subtitle">R and Z are in meters. The grid must cover the plasma throughout the solve; field periods must match the equilibrium.</p><textarea id="coil-grid" rows="14" aria-label="Field grid parameters JSON" spellcheck="false"></textarea></details>
-          <details><summary>Initial boundary and plasma profiles</summary><p class="subtitle">VMEC input JSON: Fourier boundary, profiles, field periods, resolution, and iteration budget.</p><textarea id="coil-equilibrium" rows="18" aria-label="Equilibrium input JSON" spellcheck="false"></textarea></details>
+          </details>
           <p id="coil-status" class="subtitle" role="status"></p>
         </section>
-        <div class="plot-wrap fixed-input"><svg id="boundary-plot" viewBox="0 0 600 520" aria-label="Editable plasma boundary"></svg>
+        <div class="plot-wrap"><svg id="boundary-plot" viewBox="0 0 600 520" aria-label="Editable plasma boundary"></svg>
           <div class="hint" id="editor-hint">Tune the Fourier harmonics below</div></div>
+        <div class="slice-control" id="slice-control" hidden><label for="slice-angle">Toroidal cross-section φ <output id="slice-angle-value"></output></label>
+          <input id="slice-angle" type="range" min="0" max="100" step="0.25" value="0" aria-label="Toroidal angle within one field period">
+          <span class="subtitle">The orange section is highlighted in the 3-D preview.</span></div>
         <div class="controls">
-          <div id="fourier-editor" class="fixed-input">
+          <section id="surface-editor" hidden>
+            <div class="surface-toolbar"><label for="toroidal-mode">Toroidal mode <select id="toroidal-mode"></select></label><span class="subtitle" id="boundary-dimensions"></span></div>
+            <div class="coefficient-scroll"><table class="mode-table"><thead><tr><th scope="col">m</th><th scope="col">RBC(n,m) · m</th><th scope="col">ZBS(n,m) · m</th></tr></thead><tbody id="boundary-coefficients"></tbody></table></div>
+            <p class="subtitle">Edit one toroidal mode at a time. Both views update together; coefficients retain stellarator symmetry.</p>
+            <div class="formula">R = Σ RBC(n,m) cos(mθ − n·NFP·φ)<br>Z = Σ ZBS(n,m) sin(mθ − n·NFP·φ)</div>
+          </section>
+          <details id="equilibrium-settings" hidden><summary>Resolution, profiles and input JSON</summary>
+            <div class="setup-row fixed-configuration"><label for="grid-sequence">Radial grids</label><select id="grid-sequence"><option value="1">Single grid · 99 surfaces</option><option value="3">Multigrid · 33 → 66 → 99</option><option value="custom" hidden>Custom input</option></select></div>
+            <p>VMEC input: boundary coefficients, profiles, field periods, resolution and iteration budget. Apply JSON updates the preview; Run uses the edited input.</p>
+            <textarea id="coil-equilibrium" rows="14" aria-label="Equilibrium input JSON" spellcheck="false"></textarea>
+            <button id="apply-equilibrium" class="secondary" type="button">Apply JSON</button>
+          </details>
+          <p id="boundary-error" role="status"></p>
+          <div id="fourier-editor" class="axisymmetric-input">
             <div class="coefficient-columns">
               <section class="harmonic-group"><h3>R cosine coefficients <span>R(θ) = Σ RBC(0,m) cos(mθ)</span></h3><div class="harmonic-controls" id="rbc-controls"></div></section>
               <section class="harmonic-group"><h3>Z sine coefficients <span>Z(θ) = Σ ZBS(0,m) sin(mθ)</span></h3><div class="harmonic-controls" id="zbs-controls"></div></section>
             </div>
             <div class="formula">VMEC stellarator-symmetric boundary harmonics; toroidal mode n = 0.</div>
           </div>
-          <div class="contour-editor fixed-input" id="contour-editor" hidden>
+          <div class="contour-editor axisymmetric-input" id="contour-editor" hidden>
             <p>Move any contour point freely. Its opposite point is mirrored to preserve the solver's stellarator symmetry. A periodic cubic contour is transformed continuously into coefficients capped at <strong>m = 5</strong>.</p>
             <div class="contour-legend"><span><i class="swatch target"></i>free contour</span><span><i class="swatch"></i>m ≤ 5 Fourier fit</span><span class="fit-error" id="fit-error"></span></div>
             <button class="secondary" id="reset-contour">Reset points from Fourier fit</button>
           </div>
-          <label class="pressure-control fixed-input">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
+          <label class="pressure-control axisymmetric-input">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
           <section class="precision-control" id="editor-precision-control" aria-label="Solver precision" hidden>
             <span>Precision</span>
             <div class="mode-switch" role="group" aria-label="Select precision">
@@ -190,9 +230,8 @@
         </div>
       </section>
       <div class="result-column">
-      <div id="editor-residual-host"></div>
       <section class="panel results">
-        <div class="panel-head"><h2>Flux surfaces</h2><div class="result-head-actions"><div class="mode-switch" id="result-switch" hidden>
+        <div class="panel-head"><h2 id="result-title">Flux surfaces</h2><div class="result-head-actions"><span class="tag" id="preview-label" hidden>Boundary preview</span><div class="mode-switch" id="result-switch" hidden>
           <button id="mode-result-2d">2D cut</button><button id="mode-result-3d" class="active">3D view</button></div><a class="tag" id="download" hidden>Download .bin</a></div></div>
         <div class="plot-wrap"><svg id="result-plot" viewBox="0 0 700 520" aria-label="Converged flux-surface cross-section"></svg>
           <canvas class="equilibrium-3d" id="result-3d" aria-label="Interactive three-dimensional equilibrium" hidden></canvas>
@@ -203,6 +242,7 @@
           <div class="metric"><small>FSQR</small><span id="fsqr">—</span></div>
         </div>
       </section>
+      <div id="editor-residual-host"></div>
       </div>
     </main>
     <details><summary>Solver log</summary><pre id="output"></pre></details>
@@ -210,23 +250,11 @@
   <div class="page legacy" id="legacy" hidden>
     <h2 id="legacy-title">cuMES WebGPU verification</h2>
     <a class="tag" id="legacy-download" hidden>Download .bin</a>
-    <section class="precision-control" id="precision-control" aria-label="W7-X solver precision" hidden>
-      <span>Precision</span>
-      <div class="mode-switch" role="group" aria-label="Select precision">
-        <button type="button" id="precision-single" aria-pressed="false">Single · f32</button>
-        <button type="button" id="precision-double" aria-pressed="false">Double · paired f32</button>
-      </div>
-      <span class="tag" id="precision-tolerance"></span>
-      <p>Switching precision returns to setup and keeps grid/FFT settings. Double uses two f32 words, not native IEEE fp64.</p>
-    </section>
-    <div class="actions" id="w7x-actions" hidden><button class="primary" id="w7x-start" type="button">Start</button><span class="subtitle" id="w7x-status" role="status">Choose precision, then start the solve.</span></div>
-    <div id="w7x-residual-host"></div>
     <p class="subtitle" id="verification-progress" role="status" hidden>Checking GPU operators…</p>
     <pre id="legacy-output">Loading WebAssembly and requesting WebGPU…
 </pre>
     <details id="verification-details" hidden><summary>Detailed log</summary><pre id="verification-full-output"></pre></details>
-    <section class="panel legacy-viewer" id="legacy-viewer" hidden><div class="panel-head"><h2>3D equilibrium</h2><span class="tag">Drag to orbit · wheel to zoom</span></div>
-      <div class="plot-wrap"><canvas class="equilibrium-3d" id="legacy-result-3d" aria-label="Interactive three-dimensional equilibrium"></canvas></div></section>
+
   </div>
   <template id="residual-panel-template"><section class="panel residual-panel" aria-label="Live residual history">
     <div class="panel-head"><h2>Residual history</h2><div class="residual-legend">
@@ -239,33 +267,32 @@
   <script src="residual_plot.js"></script>
   <script src="free_boundary.js"></script>
   <script src="equilibrium_view.js"></script>
+  <script src="boundary_editor.js"></script>
   <script>
+    migrateCumesEditorUrl(location,history);
     installCumesBrowser();
-    const query=new URLSearchParams(location.search),w7xSolve=query.get('solve')==='w7x',w7xMultigrid=query.get('grids')==='3';
-    const appMode=query.get('mode')!=='test'&&!w7xSolve,running=appMode&&query.get('run')==='1';
+    const query=new URLSearchParams(location.search),w7xPreset=query.get('preset')==='w7x';
+    const appMode=query.get('mode')!=='test',running=appMode&&query.get('run')==='1';
     const boundaryMode=installCumesBoundaryMode();
     document.getElementById('free-precision-note').hidden=!boundaryMode.free;
-    const activeView=w7xSolve?'w7x':appMode?'editor':'verification';
+    const activeView=appMode?'editor':'verification';
     document.querySelector(`nav [data-view="${activeView}"]`).setAttribute('aria-current','page');
     const app=document.getElementById('app'),legacy=document.getElementById('legacy');
     const output=appMode?document.getElementById('output'):document.getElementById('legacy-output');
     app.hidden=!appMode;legacy.hidden=appMode;
-    if(w7xSolve)document.getElementById('legacy-title').textContent=
-      `cuMES WebGPU · W7-X ${w7xMultigrid?'multigrid':'single-grid'} · ${query.get('precision')==='float'?'float (1e-5)':'paired (1e-12)'}`;
-    if(w7xSolve){document.getElementById('w7x-actions').hidden=false;output.textContent='Ready. Click Start to load WebAssembly and request WebGPU.\n'}
-    if((appMode||w7xSolve)&&query.get('residual_plot')!=='0'){
+    if(appMode&&query.get('residual_plot')!=='0'){
       const panel=document.getElementById('residual-panel-template').content.firstElementChild.cloneNode(true);
-      document.getElementById(w7xSolve?'w7x-residual-host':'editor-residual-host').append(panel);
-      const paired=query.get('precision')==='double'||((w7xSolve||boundaryMode.free)&&query.get('precision')!=='float');
+      document.getElementById('editor-residual-host').append(panel);
+      const paired=query.get('precision')==='double'||((w7xPreset||boundaryMode.free)&&query.get('precision')!=='float');
       window.cumesResidualPlot=createCumesResidualPlot(panel,paired?1e-12:1e-5);
     }
     // Precision switch: kept in the frontend; URL remains the solver contract.
     function installPrecisionSwitch(document,location,beforeSwitch=()=>{}){
       const current=new URL(location.href);
-      const w7x=current.searchParams.get('solve')==='w7x';
-      if(!w7x&&current.searchParams.get('mode')==='test')return;
-      const free=!w7x&&current.searchParams.get('boundary')==='free';
-      const prefix=w7x?'':'editor-';
+      if(current.searchParams.get('mode')==='test')return;
+      const w7x=current.searchParams.get('preset')==='w7x';
+      const free=current.searchParams.get('boundary')==='free';
+      const prefix='editor-';
       const selected=current.searchParams.get('precision')==='float'?'float':
         current.searchParams.get('precision')==='double'?'double':(w7x||free)?'double':'float';
       document.getElementById(prefix+'precision-control').hidden=false;
@@ -286,7 +313,7 @@
         });
       }
     }
-    installPrecisionSwitch(document,location,()=>{if(appMode)localStorage.setItem('cumes.input.v1',inputJSON())});
+    installPrecisionSwitch(document,location,()=>{if(appMode){saveSurfaceInput();localStorage.setItem('cumes.input.v1',inputJSON())}});
     const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
     const saved=(()=>{try{return JSON.parse(localStorage.getItem('cumes.editor.v1'))}catch(_){return null}})();
@@ -296,7 +323,9 @@
       saved.contour.map(point=>point.map(Number)):null;
     const shape={r:defaults.r.map((v,m)=>finite(saved?.r?.[m],v)),z:defaults.z.map((v,m)=>finite(saved?.z?.[m],v)),
       pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier'};
-    let editorMode=shape.mode;
+    let editorMode=shape.mode,surfaceEditor=null;
+    const advancedEditor=appMode&&(boundaryMode.free||w7xPreset);
+    document.body.dataset.surfaceEditor=String(advancedEditor);
     const value=id=>document.getElementById(id);
     const harmonicSpecs=[...Array.from({length:6},(_,m)=>({family:'r',m,id:`rbc-${m}`})),
       ...Array.from({length:5},(_,i)=>({family:'z',m:i+1,id:`zbs-${i+1}`}))];
@@ -342,7 +371,7 @@
       const zl=node('text',{x:18,y:31,class:'axis-label'});zl.textContent='Z (m)';group.append(zl);svg.append(group)}
     function pathData(points,project){return points.map((point,i)=>`${i?'L':'M'}${project(point).join(',')}`).join(' ')+' Z'}
     let boundaryProjection;
-    function drawBoundary(){const svg=value('boundary-plot');if(!svg)return;svg.replaceChildren();
+    function drawBoundary(){if(advancedEditor){drawSurfaceBoundary();return}const svg=value('boundary-plot');if(!svg)return;svg.replaceChildren();
       const fit=Array.from({length:161},(_,i)=>pointAt(2*Math.PI*i/160)),target=editorMode==='contour'?
         Array.from({length:161},(_,i)=>contourAt(2*Math.PI*i/160)):fit;
       boundaryProjection=projection([...fit,...target],600,520,65);drawGrid(svg,600,520);
@@ -369,15 +398,20 @@
     value('mode-fourier')?.addEventListener('click',()=>setEditorMode('fourier'));
     value('mode-contour')?.addEventListener('click',()=>setEditorMode('contour'));
     value('reset-contour')?.addEventListener('click',()=>{resetContourFromFourier();drawBoundary()});
-    function inputJSON(){if(boundaryMode.free)return JSON.stringify(boundaryMode.input());const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
+    function inputJSON(){if(advancedEditor){const input=boundaryMode.free?boundaryMode.input():readSurfaceInput();
+      input.lfreeb=boundaryMode.free;input.ftol_array=input.ns_array.map(()=>document.body.dataset.cumesPrecision==='double'?1e-12:1e-5);return JSON.stringify(input)}const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
       return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,ns_array:[5,11,55],niter_array:[1200,2500,3000],
         ftol_array:Array(3).fill(query.get('precision')==='double'?1e-12:1e-5),am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
-    value('run')?.addEventListener('click',async()=>{try{await boundaryMode.ready;localStorage.setItem('cumes.input.v1',inputJSON());
-      const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('coil-status').textContent=error.message}});
-    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
-      const next=new URL(location.href);next.searchParams.delete('run');location.assign(next.href)});
-    const verificationMode=!appMode&&!w7xSolve;
+    value('run')?.addEventListener('click',async()=>{if(value('run').disabled)return;try{await editorReady;
+      if(advancedEditor){for(const control of document.querySelectorAll('#boundary-coefficients input:not(:disabled)')){if(control.value===''||!control.validity.valid)throw Error('Enter finite boundary coefficients before running.')}saveSurfaceInput()}
+      localStorage.setItem('cumes.input.v1',inputJSON());value('run').disabled=true;
+      const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('boundary-error').textContent=error.message}});
+    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(w7xPreset)localStorage.removeItem('cumes.fixed.w7x.v1');else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
+      const next=new URL(location.href);next.searchParams.delete('run');
+      if(boundaryMode.free)next.searchParams.set('coils',value('coil-preset').value==='upload'?'solovev':value('coil-preset').value);
+      location.assign(next.href)});
+    const verificationMode=!appMode;
     if(verificationMode){output.textContent='Requesting WebGPU…\n';output.classList.add('verification-summary');
       value('verification-progress').hidden=false;value('verification-details').hidden=false}
     const logBuffer=verificationMode?createCumesVerificationLog(output,value('verification-details'),value('verification-progress')):createCumesLogBuffer(output);
@@ -389,37 +423,32 @@
       if(appMode&&line.startsWith('Generating the coil'))value('status').textContent='Generating coil field grid';
       if(appMode&&line.startsWith('Coil field grid ready'))value('status').textContent='Solving equilibrium';
       if(progress){document.body.dataset.cumesIteration=progress[1];document.body.dataset.cumesFsqr=progress[2];if(appMode){value('iteration').textContent=progress[1];value('fsqr').textContent=progress[2]}
-        if((appMode&&(Number(progress[1])<=3||Number(progress[1])%25===0))||
-          (w7xSolve&&(Number(progress[1])<=3||Number(progress[1])%50===0))||(!appMode&&!w7xSolve))append(line);return}
+        if(!appMode||Number(progress[1])<=3||Number(progress[1])%25===0)append(line);return}
       const stage=line.match(/stage (\d+)\/(\d+) converged/);if(stage)document.body.dataset.cumesStage=stage[1];
-      if((appMode&&/Generating the coil|Coil field|vacuum pressure|Vacuum update|running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))||
-        (!appMode&&!w7xSolve)||(w7xSolve&&/running W7-X|stage .*converged|stage prolongation|GPU norm shadow|published|self-test|FATAL/.test(line)))append(line)}
+      if(!appMode||/adapter selected|Generating the coil|Coil field|vacuum pressure|Vacuum update|running interactive|stage .*converged|stage prolongation|published|restore|self-test|FATAL/.test(line))append(line)}
     let resultMode='3d';function showResultMode(mode){resultMode=mode;const svg=value('result-plot'),canvas=value('result-3d');if(!svg||!canvas)return;
-      svg.hidden=mode==='3d';canvas.hidden=mode!=='3d';for(const candidate of ['2d','3d'])value(`mode-result-${candidate}`)?.classList.toggle('active',candidate===mode);
+      svg.toggleAttribute('hidden',mode==='3d');canvas.hidden=mode!=='3d';for(const candidate of ['2d','3d'])value(`mode-result-${candidate}`)?.classList.toggle('active',candidate===mode);
       if(mode==='3d')queueOrbitDraw(canvas)}
     value('mode-result-2d')?.addEventListener('click',()=>showResultMode('2d'));value('mode-result-3d')?.addEventListener('click',()=>showResultMode('3d'));
-    function drawResult(data){if(!data.surfaces?.length)return;const svg=value('result-plot');if(svg){svg.replaceChildren();
+    function drawResult(data){if(!data.surfaces?.length)return;value('result-title').textContent='Flux surfaces';value('preview-label').hidden=true;const svg=value('result-plot');if(svg){svg.replaceChildren();
         const p=projection(data.surfaces.flat(),700,520,55);drawGrid(svg,700,520);data.surfaces.forEach((surface,i)=>{const d=surface.map((v,j)=>`${j?'L':'M'}${p.map(v).join(',')}`).join(' '),
           t=data.surfaces.length<2?1:i/(data.surfaces.length-1);svg.append(node('path',{d,fill:'none',stroke:`hsl(${188+32*t} 78% ${55+16*t}%)`,'stroke-width':i===data.surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))})}
-      if(data.fourier){if(appMode){value('result-switch').hidden=false;showResultMode('3d');installOrbitRenderer(value('result-3d'),data.fourier)}
-        else if(w7xSolve){value('legacy-viewer').hidden=false;installOrbitRenderer(value('legacy-result-3d'),data.fourier)}}
+      if(data.fourier&&appMode){value('result-switch').hidden=false;showResultMode('3d');installOrbitRenderer(value('result-3d'),data.fourier);value('result-3d').cumesOrbit.section=null}
       if(appMode){value('result-empty').hidden=true;value('iteration').textContent=String(data.iterations);value('fsqr').textContent=Number(data.residual[0]).toExponential(3)}}
     function invalidateResult(){if(document.body.dataset.cumesWebgpu!=='pass'&&document.body.dataset.cumesWebgpu!=='fail')return;
       document.body.dataset.cumesWebgpu='ready';value('status').textContent='Boundary changed';value('run').textContent='Run updated boundary';
-      value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-plot').hidden=false;
+      value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-plot').removeAttribute('hidden');
       value('result-3d').hidden=true;value('result-switch').hidden=true;value('result-empty').hidden=false;
-      value('result-empty').innerHTML='<strong>Boundary changed</strong><span>Run again to update the equilibrium.</span>';value('download').hidden=true}
+      value('result-empty').innerHTML='<strong>Boundary changed</strong><span>Run again to update the equilibrium.</span>';value('download').hidden=true;
+      if(advancedEditor)showBoundaryPreview()}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
     function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
-      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload').forEach(control=>control.disabled=disabled);
+      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#coil-equilibrium,#apply-equilibrium,#grid-sequence,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
+      const dc=document.querySelector('#boundary-coefficients input[data-family="zbs"][data-m="0"][data-n="0"]');if(dc)dc.disabled=true;
       value('reset').disabled=disabled}
     function updateStatus(){const state=document.body.dataset.cumesWebgpu;
       if(state==='pass'||state==='fail')logBuffer.flush();
       if(verificationMode&&(state==='pass'||state==='fail'))logBuffer.finish(state==='pass',document.body.dataset.cumesDetail||'');
-      if(w7xSolve&&(state==='pass'||state==='fail')){
-        value('w7x-start').disabled=false;value('w7x-start').textContent='Reset run';
-        value('w7x-status').textContent=(state==='pass'?'Converged.':'Solve failed.')+' Reset to prepare another run.';
-      }
       if(!appMode)return;
       if(state==='pass'){document.body.classList.remove('busy');value('status').textContent='Converged';value('run').disabled=false;value('run').textContent='Run again';
         setEditorDisabled(false)}
@@ -427,33 +456,92 @@
         setEditorDisabled(false)}
       const adapter=document.body.dataset.cumesAdapter;if(adapter&&document.body.classList.contains('busy'))value('status').textContent='Solving on '+adapter}
     new MutationObserver(updateStatus).observe(document.body,{attributes:true,attributeFilter:['data-cumes-webgpu','data-cumes-adapter']});
-    if(appMode){buildHarmonicControls();value('pressure').addEventListener('input',()=>{shape.pressure=Number(value('pressure').value);drawBoundary();syncControls();invalidateResult()});
-      syncControls();setEditorMode(editorMode,true);setEditorDisabled(running);
+    if(appMode){if(!advancedEditor){buildHarmonicControls();value('pressure').addEventListener('input',()=>{shape.pressure=Number(value('pressure').value);drawBoundary();syncControls();invalidateResult()});
+      syncControls();setEditorMode(editorMode,true)}setEditorDisabled(running);
       if(running){document.body.classList.add('busy');value('run').disabled=true;value('run').textContent='Solving…';value('status').textContent='Requesting GPU';
         value('result-empty').innerHTML='<strong>Computing equilibrium…</strong><span>The equilibrium is computed locally on your machine.</span>'}}
+    function readSurfaceInput(){return JSON.parse(value('coil-equilibrium').value)}
+    function writeSurfaceInput(input){value('coil-equilibrium').value=JSON.stringify(input,null,2);saveSurfaceInput()}
+    function saveSurfaceInput(){if(!advancedEditor)return;if(boundaryMode.free)boundaryMode.save();
+      else localStorage.setItem('cumes.fixed.w7x.v1',JSON.stringify(readSurfaceInput()))}
+    let w7xGridInput;
+    function selectW7xGrids(input,grids){
+      if(grids==='3'){input.ns_array=[...w7xGridInput.ns_array];input.niter_array=[...w7xGridInput.niter_array]}
+      else{input.ns_array=[w7xGridInput.ns_array.at(-1)];input.niter_array=[w7xGridInput.niter_array.reduce((sum,n)=>sum+n,0)]}
+      input.ftol_array=input.ns_array.map(()=>document.body.dataset.cumesPrecision==='double'?1e-12:1e-5);
+    }
+    value('fixed-preset').value=w7xPreset?'w7x':'solovev';
+    value('fixed-preset-description').textContent=w7xPreset?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
+    value('fixed-preset').addEventListener('change',()=>{saveSurfaceInput();const next=new URL(location.href);
+      next.searchParams.set('preset',value('fixed-preset').value);next.searchParams.delete('run');next.searchParams.delete('grids');location.assign(next.href)});
+    value('grid-sequence').addEventListener('change',()=>{const grids=value('grid-sequence').value;if(grids==='custom')return;
+      const input=readSurfaceInput();selectW7xGrids(input,grids);writeSurfaceInput(input);
+      invalidateResult()});
+    function syncGridSequence(){if(boundaryMode.free||!w7xGridInput)return;const grids=readSurfaceInput().ns_array.join(',');
+      value('grid-sequence').value=grids===String(w7xGridInput.ns_array.at(-1))?'1':grids===w7xGridInput.ns_array.join(',')?'3':'custom'}
+    function drawSurfaceBoundary(){if(!surfaceEditor?.fourier)return;
+      const section=fourierSections(surfaceEditor.fourier,surfaceEditor.phi)[0],svg=value('boundary-plot');svg.replaceChildren();
+      const p=projection(section,600,520,65);drawGrid(svg,600,520);
+      svg.append(node('path',{d:pathData(section,p.map),class:'boundary',style:'stroke:var(--orange)'}));
+      value('editor-hint').textContent=`φ = ${(surfaceEditor.phi*180/Math.PI).toFixed(1)}° · R–Z cross-section`;
+      if(value('preview-label').hidden&&['pass','fail'].includes(document.body.dataset.cumesWebgpu))return;
+      showBoundaryPreview();
+    }
+    function showBoundaryPreview(){if(!surfaceEditor?.fourier)return;
+      const canvas=value('result-3d'),fourier=surfaceEditor.fourier,phi=surfaceEditor.phi;
+      value('result-title').textContent=boundaryMode.free?'Initial plasma boundary':'Input boundary';
+      value('preview-label').hidden=false;value('preview-label').textContent=boundaryMode.free?'Initial guess':'3-D preview';
+      value('result-switch').hidden=true;value('result-plot').setAttribute('hidden','');canvas.hidden=false;value('result-empty').hidden=true;
+      if(canvas.cumesOrbit?.fourier!==fourier)installOrbitRenderer(canvas,fourier);
+      canvas.cumesOrbit.section=fourierSections(fourier,phi)[0].flatMap(([r,z])=>[r*Math.cos(phi),r*Math.sin(phi),z]);
+      queueOrbitDraw(canvas);
+    }
+    async function prepareEditor(){
+      if(!appMode)return;
+      value('surface-editor').hidden=!advancedEditor;value('slice-control').hidden=!advancedEditor;
+      value('equilibrium-settings').hidden=!advancedEditor;
+      value('boundary-title').textContent=boundaryMode.free?'Initial plasma boundary':'Input boundary';
+      if(!advancedEditor)return;
+      value('run').disabled=true;
+      if(boundaryMode.free)await boundaryMode.ready;
+      else{
+        const response=await fetch(new URL('presets/fixed-w7x.json',location.href));
+        if(!response.ok)throw Error('Could not load the W7-X boundary preset.');
+        w7xGridInput=await response.json();let input;
+        try{input=JSON.parse(localStorage.getItem('cumes.fixed.w7x.v1'))}catch(_){}
+        if(!input){input=structuredClone(w7xGridInput);selectW7xGrids(input,query.get('grids')||'1')}
+        else if(query.has('grids'))selectW7xGrids(input,query.get('grids'));
+        writeSurfaceInput(input);syncGridSequence();
+        // Grid query parameters initialize setup once; subsequent JSON edits remain authoritative.
+        if(query.has('grids')){const next=new URL(location.href);next.searchParams.delete('grids');history.replaceState(null,'',next.href)}
+      }
+      surfaceEditor=installCumesSurfaceEditor(readSurfaceInput,writeSurfaceInput,changed=>{
+        if(changed)invalidateResult();drawSurfaceBoundary();
+      });
+      window.cumesBoundaryChanged=()=>{if(surfaceEditor.refresh()){invalidateResult();drawSurfaceBoundary();setEditorDisabled(running&&document.body.classList.contains('busy'))}};
+      value('apply-equilibrium').addEventListener('click',()=>{if(surfaceEditor.refresh()){saveSurfaceInput();syncGridSequence();invalidateResult();drawSurfaceBoundary()}});
+      if(!surfaceEditor.refresh())throw Error(value('boundary-error').textContent);
+      setEditorDisabled(running);value('run').disabled=running;
+    }
+    for(const id of ['coil-equilibrium','coil-currents','coil-grid'])value(id).addEventListener('input',invalidateResult);
+    const editorReady=prepareEditor();
     function versionedAsset(path,prefix){
       const runtime=document.getElementById('cumes-runtime').content.querySelector('script');
       const version=runtime?new URL(runtime.src,location.href).search:'';
       return prefix+path+version
     }
-    var Module={locateFile:versionedAsset,preRun:[()=>{if(running){FS.mkdirTree('/inputs');const source=localStorage.getItem('cumes.input.v1')||inputJSON();FS.writeFile('/inputs/interactive.json',source)}}],
+    var Module={locateFile:versionedAsset,preRun:[()=>{if(running){FS.mkdirTree('/inputs');FS.writeFile('/inputs/interactive.json',inputJSON())}}],
       print:(...args)=>publishLine(args.join(' ')),printErr:(...args)=>append('ERROR: '+args.join(' '))};
     function armSolverDeadline(){window.cumesKeepAlive=setInterval(()=>{},50);window.cumesDeadline=setTimeout(()=>{window.cumesVerificationWorker?.terminate();if(!['pass','fail'].includes(document.body.dataset.cumesWebgpu)){document.body.dataset.cumesWebgpu='fail';
-      document.body.dataset.cumesDetail='WebGPU run timed out';append('ERROR: WebGPU run timed out')}clearInterval(window.cumesKeepAlive)},w7xSolve?21600000:1800000)}
-    if((!appMode&&!w7xSolve)||running)armSolverDeadline();
-    value('w7x-start').addEventListener('click',()=>{
-      if(!w7xSolve)return;
-      if(window.cumesRuntimeStarted){if(['pass','fail'].includes(document.body.dataset.cumesWebgpu))location.reload();return}
-      value('w7x-start').disabled=true;value('w7x-start').textContent='Solving…';value('w7x-status').textContent='Running on your GPU…';
-      document.body.dataset.cumesWebgpu='running';append('Loading WebAssembly and requesting WebGPU…');
-      armSolverDeadline();startCumesRuntime(true);
-    });
+      document.body.dataset.cumesDetail='WebGPU run timed out';append('ERROR: WebGPU run timed out')}clearInterval(window.cumesKeepAlive)},21600000)}
+    if(!appMode||running)armSolverDeadline();
     window.addEventListener('error',event=>{document.body.dataset.cumesWebgpu='fail';document.body.dataset.cumesDetail=event.message;append('ERROR: '+event.message)});
     window.addEventListener('unhandledrejection',event=>{document.body.dataset.cumesWebgpu='fail';document.body.dataset.cumesDetail=String(event.reason);append('ERROR: '+event.reason)});
   </script>
   <template id="cumes-runtime">{{{ SCRIPT }}}</template>
   <script>
     (async()=>{try{
+      await editorReady;
       if(appMode&&boundaryMode.free){
         await boundaryMode.ready;
         if(running){

@@ -1,4 +1,4 @@
-// Run a browser correctness gate in its own tab; preserve a successful result.
+// Run a browser correctness gate with isolated storage; preserve a successful result.
 // Usage: node scripts/webgpu_validate_run.mjs APP_URL OUTPUT_PREFIX [BASELINE_TRACE]
 // APP_URL chooses the solve/conformance mode. Never runs concurrent GPU solves.
 import {readFile, writeFile} from 'node:fs/promises';
@@ -10,8 +10,9 @@ if (!url || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
 if (!['exact', 'paired-reductions'].includes(comparison))
   throw Error('Comparison must be exact or paired-reductions');
 const base = 'http://127.0.0.1:' + (process.env.CUMES_CDP_PORT || '9333');
-const page = await (await fetch(`${base}/json/new?about:blank`, {method: 'PUT'})).json();
-const ws = new WebSocket(page.webSocketDebuggerUrl);
+const browser = await (await fetch(`${base}/json/version`)).json();
+const ws = new WebSocket(browser.webSocketDebuggerUrl);
+let context, session, page;
 await new Promise((resolve, reject) => {ws.onopen = resolve; ws.onerror = reject;});
 let nextId = 0;
 const pending = new Map();
@@ -30,13 +31,16 @@ function call(method, params = {}) {
       pending.delete(id); reject(Error(`CDP timeout: ${method}`));
     }, 30000);
     pending.set(id, {resolve, reject, timer});
-    ws.send(JSON.stringify({id, method, params}));
+    ws.send(JSON.stringify({id, method, params, sessionId: method.startsWith('Target.') ? undefined : session}));
   });
 }
 const evaluate = async expression => (await call('Runtime.evaluate', {
   expression, returnByValue: true})).result.value;
 let finished = false;
 try {
+  context = (await call('Target.createBrowserContext')).browserContextId;
+  page = {id: (await call('Target.createTarget', {url: 'about:blank', browserContextId: context})).targetId};
+  session = (await call('Target.attachToTarget', {targetId: page.id, flatten: true})).sessionId;
   await call('Page.enable');
   await call('Page.navigate', {url});
   await call('Page.bringToFront');
@@ -44,7 +48,7 @@ try {
   const deadline = Date.now() + 600000;
   while (Date.now() < deadline) {
     const status = await evaluate(`(()=>{
-      if(document.body?.dataset.cumesExecution==='idle')document.getElementById('w7x-start')?.click();
+      if(document.body?.dataset.cumesExecution==='idle')(document.getElementById('w7x-actions')?.hidden===false?document.getElementById('w7x-start'):document.getElementById('run'))?.click();
       return document.body?.dataset.cumesWebgpu;
     })()`);
     if (status === 'pass' || status === 'fail') {
@@ -120,6 +124,7 @@ try {
   if (!finished) throw Error('Browser gate timed out');
 } finally {
   if (!finished) await call('Page.navigate', {url: 'about:blank'}).catch(() => {});
-  if (process.env.CUMES_CLOSE_TEST_TAB === '1') await fetch(`${base}/json/close/${page.id}`);
+  if (context && (!finished || process.env.CUMES_CLOSE_TEST_TAB === '1'))
+    await call('Target.disposeBrowserContext', {browserContextId: context});
   ws.close();
 }

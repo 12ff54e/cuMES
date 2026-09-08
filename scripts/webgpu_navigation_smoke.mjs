@@ -30,15 +30,16 @@ try{
   // Only the frontend is in scope: keep verification/W7-X from starting a solve.
   await call('Network.setBlockedURLs',{urls:['*cumes_webgpu.js*','*verification_worker.js*']},session);
   await call('Page.enable',{},session);
+  await call('Page.bringToFront',{},session);
   for(const width of [1280,390]){
     await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false},session);
     let expectedStyle;
-    for(const [search,view] of [['','editor'],['?mode=test','verification'],['?solve=w7x','w7x'],['?solve=w7x&precision=float','w7x'],['?residual_plot=0','editor']]){
+    for(const [search,view] of [['','editor'],['?mode=test','verification'],['?solve=w7x','editor'],['?preset=w7x&precision=float','editor'],['?boundary=free&coils=w7x','editor'],['?boundary=free&coils=cth_like','editor'],['?residual_plot=0','editor']]){
       const next=new URL(url);next.search=search;
       await call('Page.navigate',{url:next.href},session);
       let ready=false;
       for(let attempt=0;attempt<100&&!ready;++attempt){
-        try{ready=await evaluate(`location.search===${JSON.stringify(search)}&&document.querySelector('nav [aria-current="page"]')?.dataset.view===${JSON.stringify(view)}&&!!window.cumesAppReady`)}catch{}
+        try{ready=await evaluate(`document.querySelector('nav [aria-current="page"]')?.dataset.view===${JSON.stringify(view)}&&!!window.cumesAppReady&&(${JSON.stringify(view)}==='verification'||document.body.dataset.cumesExecution==='idle')`)}catch{}
         if(!ready)await new Promise(resolve=>setTimeout(resolve,100));
       }
       assert(ready,`frontend did not initialize: ${search}`);
@@ -54,18 +55,23 @@ try{
           plotFits:[...document.querySelectorAll('.residual-canvas')].every(canvas=>{const r=canvas.getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth})};
       })()`);
       assert.equal(state.navCount,1);assert(state.shared);assert(state.visible);
-      assert.deepEqual(state.links,[['Boundary editor','?'],['GPU verification','?mode=test'],['W7-X','?solve=w7x']]);
+      assert.deepEqual(state.links,[['Boundary editor','?'],['GPU verification','?mode=test']]);
       assert.deepEqual(state.active,[view]);
       assert.equal(state.plots,view==='verification'||search.includes('residual_plot=0')?0:1);
       assert.ok(state.plotFits,'residual plot must fit the viewport');
       if(expectedStyle)assert.deepEqual(state.styles,expectedStyle);else expectedStyle=state.styles;
-      if(view==='w7x')assert.equal(state.precision,search.includes('float')?'float':'double');
-      if(view==='w7x')assert.equal(await evaluate(`document.body.dataset.cumesExecution==='idle'&&
-        !document.getElementById('w7x-start').disabled&&!document.getElementById('w7x-actions').hidden&&
+      if(search.includes('w7x'))assert.equal(state.precision,search.includes('float')?'float':'double');
+      if(search.includes('w7x'))assert.equal(await evaluate(`document.body.dataset.cumesExecution==='idle'&&
+        !document.getElementById('run').disabled&&!document.getElementById('surface-editor').hidden&&
         !window.cumesKeepAlive&&typeof HEAPU8==='undefined'`),true);
+      if(search.includes('w7x')||search.includes('cth_like')){
+        assert.equal(await evaluate(`document.getElementById('result-plot').getBoundingClientRect().height`),0,'3-D preview must hide the SVG, not merely set an expando property');
+        if(width>920)assert.equal(await evaluate(`document.getElementById('result-3d').getBoundingClientRect().top<innerHeight`),true,'preview must be visible beside the editor');
+      }
       if(prefix&&!search.includes('float')&&!search.includes('residual_plot=0')){
+        await new Promise(resolve=>setTimeout(resolve,150));
         const shot=await call('Page.captureScreenshot',{format:'png'},session);
-        await writeFile(`${prefix}-${view}-${width}.png`,Buffer.from(shot.data,'base64'));
+        await writeFile(`${prefix}-${search.includes('w7x')?'w7x':search.includes('cth_like')?'cth_like':view}-${width}.png`,Buffer.from(shot.data,'base64'));
       }
       console.log(`PASS: ${view} ${width}px ${state.precision||''}`);
     }

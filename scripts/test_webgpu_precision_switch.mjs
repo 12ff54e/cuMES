@@ -24,17 +24,17 @@ function setup(search){
   return{nodes,document,location};
 }
 for(const initial of ['', '&precision=double','&precision=float']){
-  const {nodes,document,location}=setup(`?solve=w7x&grids=3&fft=1&gpu_norms=1${initial}#result`);
+  const {nodes,document,location}=setup(`?preset=w7x&grids=3&fft=1&gpu_norms=1${initial}#result`);
   const single=initial.endsWith('float');
-  assert.equal(nodes.get('precision-control').hidden,false);
+  assert.equal(nodes.get('editor-precision-control').hidden,false);
   assert.equal(document.body.dataset.cumesPrecision,single?'float':'double');
-  assert.equal(nodes.get('precision-tolerance').textContent,`Tolerance: ${single?'1e-5':'1e-12'}`);
-  for(const id of ['precision-single','precision-double'])
-    assert.equal(nodes.get(id).attributes['aria-pressed'],String((id==='precision-single')===single));
-  nodes.get(single?'precision-single':'precision-double').click();
+  assert.equal(nodes.get('editor-precision-tolerance').textContent,`Tolerance: ${single?'1e-5':'1e-12'}`);
+  for(const id of ['editor-precision-single','editor-precision-double'])
+    assert.equal(nodes.get(id).attributes['aria-pressed'],String((id==='editor-precision-single')===single));
+  nodes.get(single?'editor-precision-single':'editor-precision-double').click();
   assert.equal(location.assigned,undefined,'active mode must not restart');
   assert.equal(location.prepared,undefined,'active mode must not rewrite input');
-  nodes.get(single?'precision-double':'precision-single').click();
+  nodes.get(single?'editor-precision-double':'editor-precision-single').click();
   const next=new URL(location.assigned);
   assert.equal(location.prepared,true,'save current input before navigating');
   assert.equal(next.searchParams.get('precision'),single?'double':'float');

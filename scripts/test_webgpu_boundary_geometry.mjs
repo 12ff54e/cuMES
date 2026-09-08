@@ -27,3 +27,14 @@ for(const name of ['w7x','cth_like','solovev']){
 }
 assert.throws(()=>context.boundaryFourier({mpol:1e9}),/valid mpol/);
 console.log('PASS: VMEC signed-n geometry, stellarator symmetry, field periodicity, closed sections and finite meshes');
+vm.runInContext(readFileSync(new URL('../webgpu/boundary_editor.js',import.meta.url),'utf8'),context);
+context.URL=URL;
+let migrated;
+context.migrateCumesEditorUrl({href:'https://example.test/app?solve=w7x&grids=3&precision=float&fft=1&run=1#result'},
+  {replaceState(_state,_title,url){migrated=new URL(url)}});
+assert.equal(migrated.searchParams.get('preset'),'w7x');
+assert.equal(migrated.searchParams.get('boundary'),'fixed');
+assert(!migrated.searchParams.has('solve'));assert(!migrated.searchParams.has('run'));
+assert.equal(migrated.searchParams.get('grids'),'3');assert.equal(migrated.searchParams.get('fft'),'1');
+assert.equal(migrated.searchParams.get('precision'),'float');assert.equal(migrated.hash,'#result');
+console.log('PASS: legacy W7-X links enter the editor without losing precision/grid/FFT settings or starting a solve');

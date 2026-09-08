@@ -102,8 +102,9 @@ after rebuilding; cached HTML can still select an older versioned runtime.
 
 - Default page: boundary setup/editor; users can switch fixed/free modes.
 - `?mode=test`: numerical verification in a worker.
-- `?solve=w7x`: W7-X example, started by its Start button; `&grids=3` selects
-  multigrid.
+- `?preset=w7x`: W7-X in the fixed-boundary editor; `&grids=3` selects
+  multigrid. Historical `?solve=w7x` links open this setup without starting a
+  solve. All equilibria use the same Run button.
 - `?boundary=free&coils=solovev` (or `w7x`, `cth_like`): free-boundary preset;
   `&run=1` starts it.
 - `precision=float|double` selects scalar-f32 or paired-f32 plasma arithmetic.

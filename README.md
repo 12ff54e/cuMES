@@ -11,8 +11,11 @@ iteration DAG for both axisymmetric and folded 3-D equilibria: transforms,
 half-grid geometry, fixed-iota and prescribed-current magnetic closure,
 radial/poloidal/toroidal force, spectral-condensation constraint, full `(m,n)`
 preconditioner, accelerated descent, controller recovery, and multigrid
-transfer. The default browser page is an interactive application with two
-boundary modes. **Fourier** adjusts the active `RBC(0,m)` and `ZBS(0,m)`
+transfer. The default browser page is a shared fixed/free-boundary editor. Fixed
+boundaries offer Solovev and W7-X presets; free boundaries offer coil presets
+and uploads. Three-dimensional boundaries have a signed Fourier-mode editor
+with a linked toroidal cross-section and orbitable preview. For axisymmetric
+Solovev shapes, **Fourier** adjusts the active `RBC(0,m)` and `ZBS(0,m)`
 coefficients directly; **Contour** moves periodic control points and projects
 the free contour into the supported Fourier basis, capped at `m=5`. Both modes
 update a live R-Z preview before running a three-grid equilibrium locally on
@@ -25,7 +28,7 @@ iterations.
 The shipped W7-X case executes the same integrated path in the browser,
 including its prescribed-current closure; its iteration-3 residual triple
 matches native CUDA mixed-float at `(1.141e+01, 7.079e+00, 1.012e-01)`. A
-dedicated `?solve=w7x` browser entry point runs all three W7-X stages; the
+`?preset=w7x&grids=3` editor setup runs all three W7-X stages; the
 precision-critical state, transforms, geometry, magnetic field, force,
 constraint, residual, and descent values use paired `f32` words. On the
 NVIDIA TITAN Xp through Dawn's Vulkan backend, the hardware-qualified
@@ -72,9 +75,9 @@ ctest --test-dir build --output-on-failure
 The current WebGPU milestone builds separately. WGSL arithmetic remains
 `f32`, with paired words used by the strict W7-X path.
 
-The explicit `?solve=w7x&precision=float` example uses main's radius-reference
+The explicit `?preset=w7x&precision=float` example uses main's radius-reference
 storage and selective odd R/Z compensation at `ftol=1e-5`. It converges the
-single-grid browser test in 1256 iterations. The default `?solve=w7x` retains
+single-grid browser test in 1256 iterations. The default `?preset=w7x` retains
 paired-f32 arithmetic and `1e-12`; see the [WebGPU precision notes](docs/webgpu-port.md#scalar-f32-radius-reference-and-selective-geometry-correction).
 
 ```bash
@@ -87,8 +90,8 @@ ctest --preset webgpu
 # http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html
 # or run the numerical conformance/strict Solovev gate:
 # http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?mode=test
-# or run the folded W7-X single-grid example (ns=99):
-# http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?solve=w7x
+# or open the W7-X single-grid boundary editor (ns=99), then click Run:
+# http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?preset=w7x
 # retain the complete three-grid integration route with &grids=3
 ```
 

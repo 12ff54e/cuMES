@@ -43,7 +43,7 @@ try {
     const deadline = Date.now() + 180000;
     let ready = false;
     while (Date.now() < deadline) {
-      await evaluate(`document.body?.dataset.cumesExecution==='idle'&&document.getElementById('w7x-start')?.click()`);
+      await evaluate(`document.body?.dataset.cumesExecution==='idle'&&(document.getElementById('w7x-actions')?.hidden===false?document.getElementById('w7x-start'):document.getElementById('run'))?.click()`);
       const state = await evaluate(`({count: window.cumesDiagnostics?.length || 0,
         status: document.body?.dataset.cumesWebgpu, detail: document.body?.dataset.cumesDetail})`);
       if (state.status === 'fail') throw Error(state.detail);

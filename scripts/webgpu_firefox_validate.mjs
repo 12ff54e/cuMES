@@ -32,7 +32,7 @@ const save = () => writeFile(prefix + '-result.json', JSON.stringify(result, nul
 let interrupted = false;
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {interrupted = true;});
 try {
-  // This route stays idle until Start is clicked, so the probe starts no solver.
+  // This route stays idle until Run is clicked, so the probe starts no solver.
   const idle = new URL(url); idle.search = '?solve=w7x';
   await request(base + '/url', {url: idle.href});
   result.probe = await request(base + '/execute/async', {script: `
@@ -55,7 +55,8 @@ try {
   let lastReport = 0, terminal = false;
   while (!interrupted && Date.now() < deadline) {
     const status = await execute(`
-      if (document.body?.dataset.cumesExecution === 'idle') document.getElementById('w7x-start')?.click();
+      if (document.body?.dataset.cumesExecution === 'idle')
+        (document.getElementById('w7x-actions')?.hidden === false ? document.getElementById('w7x-start') : document.getElementById('run'))?.click();
       if (document.body?.dataset.cumesWebgpu === 'ready' && !new URLSearchParams(location.search).has('solve'))
         document.getElementById('run')?.click();
       return {dataset: {...document.body?.dataset},

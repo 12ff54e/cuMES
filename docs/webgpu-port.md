@@ -7,7 +7,33 @@ operators with the existing vacuum-field library compiled to WebAssembly. The We
 of cuMES's fixed-boundary solver is complete: it implements and hardware-
 qualifies the entire iteration DAG for axisymmetric and folded 3-D equilibria,
 multigrid control, native binary result publication, and an interactive
-axisymmetric boundary editor.
+fixed/free-boundary editor with axisymmetric and 3-D previews.
+
+### Unified boundary editor
+
+The Boundary editor handles both fixed and free equilibria. Select Solovev or
+W7-X under **Fixed boundary**, or select the coil configuration under **Free
+boundary**. There is one Run/Stop workflow, precision control, residual plot,
+and result download. Historical `?solve=w7x` links open the fixed W7-X editor;
+`?preset=w7x` is the current link. Neither starts a solve until Run is clicked.
+The fixed W7-X preset keeps its single-grid default and combined iteration
+budget; **Resolution, profiles and input JSON** also offers multigrid.
+
+For 3-D boundaries and free-boundary initial guesses, select a signed toroidal
+mode `n` and edit the RBC/ZBS coefficients by poloidal mode `m`. A toroidal-angle
+slider sweeps one field period. The R-Z cross-section and orange section on the
+orbitable boundary preview update together, using the solver's six-family
+Fourier convention. Coefficient edits update the input JSON directly; no
+projection or rounding to the axisymmetric editor's `m <= 5` basis is applied.
+The fixed Solovev editor retains its existing Fourier sliders and contour mode.
+
+Boundary previews are labeled separately from converged flux surfaces. The
+JSON panel retains access to profiles, field periods, angular/radial resolution,
+and iteration budgets. W7-X fixed-boundary edits and free-boundary setups are
+stored separately so mode/precision changes retain them. The browser now uses
+the existing interactive solver entry point for W7-X as well; its scalar
+radius-reference and compensated-geometry options are preserved for fixed 3-D
+inputs. The separate W7-X startup implementation has been removed.
 
 ### Free-boundary browser setup
 
@@ -344,13 +370,14 @@ rendering thousands of lines. Browser automation can read the unchanged full
 stream using `window.cumesVerificationLog.text()` (the validation script does
 this automatically). Editor and W7-X solver logs are unchanged.
 
-Append `?solve=w7x` to open the fixed-boundary W7-X example. Choose precision
-and click **Start** to load Wasm, request the GPU, and start solving. Opening or
-refreshing this tab never auto-runs, even with `run=1` in a saved URL. Precision
-changes return to idle setup; after completion or failure, **Reset run** reloads
-the idle page. The run deadline starts on the button click, not when opening the
-tab. Browser validation/profiling tools explicitly click Start for automated
-runs. The default example solves directly on its
+Append `?preset=w7x` to open the fixed-boundary W7-X editor. Choose precision
+and click **Run equilibrium** to load Wasm, request the GPU, and start solving.
+Opening setup does not request the GPU; `&run=1` starts the edited input.
+Historical `?solve=w7x` links migrate to setup and discard `run=1`.
+**Stop and edit** returns to setup with the input retained. Changing precision
+during a solve restarts it using the saved input, as in the other editor modes.
+The run deadline starts with the solve. Browser validation/profiling tools
+click Run for automated runs. The default example solves directly on its
 final `ns=99` radial grid instead of the conformance suite. This avoids the two
 coarser browser stages while retaining the input's `1e-12` tolerance. Append
 `&grids=3` to retain the complete `33 -> 66 -> 99` integration route. Either

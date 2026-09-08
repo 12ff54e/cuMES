@@ -33,33 +33,53 @@ try{
   const idle=`document.body?.dataset.cumesExecution==='idle'&&document.body.dataset.cumesWebgpu==='ready'`;
   await call('Page.enable',{},session);await call('Network.enable',{},session);
   for(const precision of ['double','float']){
-    const next=new URL(url);next.search=new URLSearchParams({solve:'w7x',precision,run:'1',timing:'0'});
+    const next=new URL(url);next.search=new URLSearchParams({solve:'w7x',precision,grids:'3',run:'1',timing:'0'});
     await call('Page.navigate',{url:next.href},session);await call('Page.bringToFront',{},session);
     await wait(idle+`&&document.body.dataset.cumesPrecision==='${precision}'`);
-    assert.equal(await evaluate('window.cumesResidualPlot.report().samples.length'),0);
-    await new Promise(resolve=>setTimeout(resolve,1000));
-    assert.equal(await evaluate(`!window.cumesRuntimeStarted&&!window.cumesKeepAlive&&!document.body.dataset.cumesAdapter&&typeof HEAPU8==='undefined'`),true);
-    // Precision changes must remain idle, even with a historical run=1 URL.
+    assert.equal(await evaluate(`!new URL(location.href).searchParams.has('solve')&&!new URL(location.href).searchParams.has('run')&&
+      document.querySelector('nav [aria-current=page]').dataset.view==='editor'&&typeof HEAPU8==='undefined'`),true);
+    const input=await evaluate('inputJSON()');
+    assert.deepEqual(JSON.parse(input).ns_array,[33,66,99]);
+    assert.equal(await evaluate(`new URL(location.href).searchParams.has('grids')`),false);
+    // A one-time grid URL must not overwrite subsequent JSON edits on reload.
+    const custom={...JSON.parse(input),ns_array:[55],niter_array:[123],ftol_array:[1e-5]};
+    await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(custom))};document.getElementById('apply-equilibrium').click()`);
+    assert.equal(await evaluate(`document.getElementById('grid-sequence').value`),'custom');
+    // A signed-n coefficient edit updates the exact solver input and both previews.
+    await evaluate(`document.getElementById('toroidal-mode').value='-1';document.getElementById('toroidal-mode').dispatchEvent(new Event('change'))`);
+    const edit=`document.querySelector('#boundary-coefficients input[data-family="rbc"][data-m="1"]')`;
+    const original=await evaluate(`${edit}.valueAsNumber`);
+    const before=await evaluate(`document.getElementById('boundary-plot').querySelector('path').getAttribute('d')`);
+    await evaluate(`${edit}.value=${original}+.0001;${edit}.dispatchEvent(new Event('input'))`);
+    assert.notEqual(await evaluate(`document.getElementById('boundary-plot').querySelector('path').getAttribute('d')`),before);
+    assert.equal(await evaluate(`JSON.parse(inputJSON()).rbc.find(e=>e.m===1&&e.n===-1).value`),original+.0001);
+    const changed=await evaluate('inputJSON()');
+    await evaluate(`document.getElementById('slice-angle').value='37';document.getElementById('slice-angle').dispatchEvent(new Event('input'))`);
+    assert.equal(await evaluate('inputJSON()'),changed,'view changes do not edit coefficients');
     const other=precision==='double'?'single':'double';
-    await evaluate(`document.getElementById('precision-${other}').click()`);
+    await evaluate(`document.getElementById('editor-precision-${other}').click()`);
     await wait(idle+`&&document.body.dataset.cumesPrecision!=='${precision}'`);
-    await evaluate(`document.getElementById('precision-${precision==='double'?'double':'single'}').click()`);
+    assert.deepEqual(JSON.parse(await evaluate('inputJSON()')).rbc,JSON.parse(changed).rbc);
+    assert.deepEqual(JSON.parse(await evaluate('inputJSON()')).ns_array,[55]);
+    assert.deepEqual(JSON.parse(await evaluate('inputJSON()')).niter_array,[123]);
+    assert.equal(await evaluate(`document.getElementById('grid-sequence').value`),'custom');
+    await evaluate(`document.getElementById('editor-precision-${precision==='double'?'double':'single'}').click()`);
     await wait(idle+`&&document.body.dataset.cumesPrecision==='${precision}'`);
-    await evaluate(`document.getElementById('w7x-start').click();document.getElementById('w7x-start').click()`);
-    await wait(`document.body?.dataset.cumesExecution==='main'&&window.cumesResidualPlot?.report().samples.length>=3&&document.querySelector('.residual-caption')?.textContent.startsWith('Live')`);
-    assert.equal(await evaluate(`window.cumesResidualPlot.report().samples.every(row=>row.fsq.length===3&&row.tolerance===${precision==='double'?'1e-12':'1e-5'})`),true);
-    await wait(`window.cumesResidualPlot.report().restarts.length>0`);
-    assert.equal(await evaluate(`document.getElementById('w7x-start').disabled&&document.querySelectorAll('script[src*="cumes_webgpu.js"]').length===1`),true);
-    console.log(`PASS: ${precision} idle without GPU/Wasm, precision setup, explicit Start, live residual plot without tracing, duplicate click guarded`);
-    await call('Page.reload',{},session);await wait(idle);
-    assert.equal(await evaluate('!document.body.dataset.cumesAdapter'),true);
+    // Restore the preset coefficient before testing startup.
+    await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(input)};document.getElementById('apply-equilibrium').click()`);
+    await evaluate(`document.getElementById('run').click();document.getElementById('run').click()`);
+    await wait(`document.body?.dataset.cumesExecution==='main'&&window.cumesResidualPlot?.report().samples.length>=3`);
+    assert.equal(await evaluate(`window.cumesResidualPlot.report().samples.every(row=>row.tolerance===${precision==='double'?'1e-12':'1e-5'})`),true);
+    assert.equal(await evaluate(`document.getElementById('run').disabled&&document.querySelectorAll('script[src*="cumes_webgpu.js"]').length===1`),true);
+    await evaluate(`document.getElementById('stop-run').click()`);await wait(idle);
+    assert.deepEqual(JSON.parse(await evaluate('inputJSON()')).rbc,JSON.parse(input).rbc);
+    console.log(`PASS: ${precision} unified W7-X setup, signed-n edit, linked previews, precision persistence, Run and Stop`);
   }
   await call('Network.setBlockedURLs',{urls:['*cumes_webgpu.js*']},session);
-  await evaluate(`document.getElementById('w7x-start').click()`);
-  await wait(`document.body?.dataset.cumesWebgpu==='fail'&&!document.getElementById('w7x-start').disabled`);
-  assert.equal(await evaluate(`document.getElementById('w7x-start').textContent`),'Reset run');
-  await evaluate(`document.getElementById('w7x-start').click()`);await wait(idle);
-  console.log('PASS: reload remains idle; load failure offers Reset run, which returns to idle setup');
+  await evaluate(`document.getElementById('run').click()`);
+  await wait(`document.body?.dataset.cumesWebgpu==='fail'&&!document.getElementById('run').disabled`);
+  await evaluate(`document.getElementById('stop-run').click()`);await wait(idle);
+  console.log('PASS: runtime load failure and Stop return to editable setup');
 }finally{
   if(context)await call('Target.disposeBrowserContext',{browserContextId:context});
   ws.close();

@@ -45,14 +45,15 @@ function fourierSections(fourier, phi, segments = 160) {
 }
 
 function equilibriumMesh(fourier){const{ntor,nfp,ns}=fourier,thetaSegments=40,
-  phiSegments=ntor?Math.max(64,nfp*16):64,surfaces=[];
+  phiSegments=ntor?Math.min(256,Math.max(64,nfp*16)):64,surfaces=[];
   for(const source of fourier.surfaces){const points=new Float32Array((phiSegments+1)*(thetaSegments+1)*3),c=source.coefficients;
       for(let p=0;p<=phiSegments;p++){const phi=2*Math.PI*p/phiSegments,cp=Math.cos(phi),sp=Math.sin(phi);
         for(let t=0;t<=thetaSegments;t++){const [r,z]=fourierPoint(fourier,c,2*Math.PI*t/thetaSegments,phi);
         const i=(p*(thetaSegments+1)+t)*3;points[i]=r*cp;points[i+1]=r*sp;points[i+2]=z}}
     surfaces.push({radial:source.index/(ns-1),points})}return{surfaces,thetaSegments,phiSegments}}
 function installOrbitRenderer(canvas,fourier){if(!canvas||!fourier?.surfaces?.length)return;const mesh=equilibriumMesh(fourier),
-  state={mesh,yaw:-.55,pitch:.55,zoom:1,drag:null,frame:0};canvas.cumesOrbit=state;
+  state=canvas.cumesOrbit||{yaw:-.55,pitch:.55,zoom:1,drag:null,frame:0};
+  state.mesh=mesh;state.fourier=fourier;canvas.cumesOrbit=state;
   let radius=1;for(const surface of mesh.surfaces)for(let i=0;i<surface.points.length;i+=3)radius=Math.max(radius,
     Math.hypot(surface.points[i],surface.points[i+1],surface.points[i+2]));state.radius=radius;
   if(!canvas.dataset.orbitReady){canvas.dataset.orbitReady='1';canvas.addEventListener('pointerdown',event=>{const s=canvas.cumesOrbit;
@@ -83,4 +84,5 @@ function drawOrbit(canvas,state){const rect=canvas.getBoundingClientRect();if(re
   curves.sort((a,b)=>b.depth-a.depth);ctx.lineJoin='round';for(const curve of curves){ctx.beginPath();curve.path.forEach((point,i)=>ctx[i?'lineTo':'moveTo'](point[0],point[1]));
     const light=55+curve.radial*18,alpha=curve.outer?.78:.12+.35*curve.radial;ctx.strokeStyle=`hsla(${186+35*curve.radial} 82% ${light}% / ${alpha})`;
     ctx.lineWidth=curve.outer?1.35:.6+.45*curve.radial;ctx.stroke()}
+  if(state.section){ctx.beginPath();for(let i=0;i<state.section.length;i+=3){const[x,y]=project(state.section,i);ctx[i?'lineTo':'moveTo'](x,y)}ctx.strokeStyle='#ffb65d';ctx.lineWidth=2.5;ctx.stroke()}
   ctx.fillStyle='#9aa9bb';ctx.font='12px system-ui,sans-serif';ctx.fillText('Drag to orbit · wheel to zoom',18,height-18)}

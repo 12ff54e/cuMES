@@ -10,7 +10,7 @@ foreach(extension IN ITEMS html js wasm)
 endforeach()
 
 get_filename_component(artifact_dir "${ARTIFACT_BASE}" DIRECTORY)
-foreach(asset IN ITEMS browser_ui.js verification_worker.js residual_plot.js equilibrium_view.js)
+foreach(asset IN ITEMS browser_ui.js verification_worker.js residual_plot.js equilibrium_view.js boundary_editor.js)
   if(NOT EXISTS "${artifact_dir}/${asset}")
     message(FATAL_ERROR "missing WebGPU frontend: ${asset}")
   endif()
@@ -29,7 +29,6 @@ foreach(marker IN ITEMS
     "RMS fit error"
     "Run equilibrium"
     "Flux surfaces"
-    "3D equilibrium"
     "Interactive three-dimensional equilibrium")
   string(FIND "${html}" "${marker}" marker_offset)
   if(marker_offset EQUAL -1)

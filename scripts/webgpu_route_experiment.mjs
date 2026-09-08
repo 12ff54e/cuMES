@@ -49,7 +49,7 @@ try{
   const deadline=Date.now()+900000;
   while(Date.now()<deadline){
     const status=await evaluate(`(()=>{
-      if(document.body?.dataset.cumesExecution==='idle')document.getElementById('w7x-start')?.click();
+      if(document.body?.dataset.cumesExecution==='idle')(document.getElementById('w7x-actions')?.hidden===false?document.getElementById('w7x-start'):document.getElementById('run'))?.click();
       return document.body?.dataset.cumesWebgpu;
     })()`);
     if(status==='pass'||status==='fail'){

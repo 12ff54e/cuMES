@@ -30,6 +30,7 @@ function installCumesBoundaryMode() {
       next.searchParams.set('boundary', mode);
       next.searchParams.delete('run');
       next.searchParams.delete('coils');
+      if(mode==='free')next.searchParams.delete('preset');
       location.assign(next.href);
     };
   }
@@ -46,6 +47,7 @@ function installCumesBoundaryMode() {
     get('coil-currents').value = JSON.stringify(extcur);
     get('coil-grid').value = JSON.stringify(makegrid_parameters, null, 2);
     get('coil-equilibrium').value = JSON.stringify(equilibrium, null, 2);
+    globalThis.cumesBoundaryChanged?.();
   }
   function read() {
     if (!config) throw Error('Choose a coil preset or upload a coil file first.');

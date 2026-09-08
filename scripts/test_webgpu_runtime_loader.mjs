@@ -20,20 +20,18 @@ function fixture(search,unavailable=false){
   vm.runInContext(source,context);context.startCumesRuntime();
   return{context,document,worker,sent,scripts,logs,results,listeners};
 }
-for(const query of ['', '?run=1&precision=double', '?mode=test&worker=0']){
+for(const query of ['?run=1&precision=double', '?preset=w7x&run=1', '?mode=test&worker=0']){
   const f=fixture(query);
   assert.equal(f.document.body.dataset.cumesExecution,'main');assert.equal(f.worker,undefined);
   assert.equal(f.scripts.length,1);assert.equal(f.scripts[0].src,'https://example.test/app/cumes_webgpu.js?v=abc');
   f.scripts[0].onerror();assert.equal(f.results[0][0],false);
 }
-for(const query of ['?solve=w7x','?solve=w7x&precision=float','?solve=w7x&run=1','?mode=test&solve=w7x']){
+for(const query of ['', '?preset=w7x','?preset=w7x&precision=float','?boundary=free']){
   const f=fixture(query);
   assert.equal(f.document.body.dataset.cumesExecution,'idle');assert.equal(f.scripts.length,0);assert.equal(f.worker,undefined);
-  f.context.startCumesRuntime(true);
-  assert.equal(f.document.body.dataset.cumesExecution,'main');assert.equal(f.scripts.length,1);
-  f.context.startCumesRuntime(true);f.context.startCumesRuntime();
-  assert.equal(f.scripts.length,1,'duplicate calls must not start another solve');
 }
+const once=fixture('?preset=w7x&run=1');once.context.startCumesRuntime();
+assert.equal(once.scripts.length,1,'duplicate calls must not start another solve');
 for(const query of ['?boundary=free&run=1', '?boundary=free&run=1&worker=0']){
   const f=fixture(query);
   assert.equal(f.document.body.dataset.cumesExecution,'worker');
@@ -61,9 +59,9 @@ for(const cause of ['pagehide','error','messageerror','unexpected']){
   if(cause!=='pagehide')assert.equal(f.results[0][0],false);
 }
 const missing=fixture('?mode=test',true);assert.equal(missing.results[0][0],false);assert.equal(missing.scripts.length,0);
-for(const search of ['?mode=test','?mode=test&worker=0','?solve=w7x','?mode=test&solve=w7x','?run=1']){
-  const verification=search.includes('mode=test')&&!search.includes('solve=w7x');
-  const appMode=!search.includes('mode=test')&&!search.includes('solve=w7x');
+for(const search of ['?mode=test','?mode=test&worker=0','?preset=w7x','?run=1']){
+  const verification=search.includes('mode=test');
+  const appMode=!search.includes('mode=test');
   const nodes={app:{hidden:!appMode},download:{hidden:true},'legacy-download':{hidden:true}};
   let blobs=0;
   const document={body:{dataset:{}},getElementById:id=>nodes[id]};

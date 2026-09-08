@@ -46,9 +46,6 @@ namespace {
 extern "C" {
 void publish_browser_result(int success, const char* detail);
 int publish_browser_output(const char* path);
-int requested_w7x_solve();
-int requested_w7x_multigrid();
-int requested_float_solve();
 int requested_double_solve();
 int requested_float_radius_reference();
 int requested_compensated_geometry();
@@ -231,10 +228,6 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 self->device_ = std::move(device);
-                if (requested_w7x_solve() != 0) {
-                    self->run_selected_w7x_solver();
-                    return;
-                }
                 if (requested_app_mode() != 0) {
                     self->run_interactive_solver();
                     return;
@@ -2068,96 +2061,6 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
     }
 
-    void run_selected_w7x_solver() {
-        try {
-            const bool float_solve = requested_float_solve() != 0;
-            cumes::SolverOptions options;
-            // The WebGPU solver stores precision-critical values as paired
-            // binary32 words, so validate against the double-precision
-            // tolerance contract even though WGSL has no scalar f64.
-            options.precision = cumes::PrecisionPolicy::VERIFY_DOUBLE;
-            auto parsed = cumes::read_problem_spec("/inputs/w7x.json", options);
-            if (parsed.report.has_errors()) {
-                const auto errors = parsed.report.errors();
-                finish(false, "W7-X JSON mapping failed: " + errors.front());
-                return;
-            }
-            if (float_solve) {
-                options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
-                for (auto& stage : parsed.spec.stages) stage.tolerance = 1.0e-5;
-            }
-            // The public W7-X example starts directly on the final radial
-            // resolution to avoid making a browser user wait through three
-            // grids. Keep the qualified multigrid route available explicitly.
-            if (requested_w7x_multigrid() == 0 &&
-                parsed.spec.stages.size() > 1) {
-                auto final_stage = parsed.spec.stages.back();
-                // A cold final-grid start also needs the work budget of the
-                // skipped coarse grids. Keeping only the warm final-stage
-                // cap can stop a valid solve just above tolerance.
-                final_stage.max_iterations = 0;
-                constexpr auto MAX_ITERATIONS =
-                    static_cast<std::size_t>(std::numeric_limits<int>::max());
-                for (const auto& stage : parsed.spec.stages) {
-                    if (stage.max_iterations >
-                        MAX_ITERATIONS - final_stage.max_iterations) {
-                        finish(false,
-                               "W7-X single-grid iteration budget exceeds "
-                               "controller range");
-                        return;
-                    }
-                    final_stage.max_iterations += stage.max_iterations;
-                }
-                parsed.spec.stages.assign(1, final_stage);
-            }
-            auto validated = cumes::validate(std::move(parsed.spec), options);
-            if (!validated.has_value()) {
-                const auto errors = validated.error().errors();
-                finish(false, "W7-X validation failed: " +
-                                  (errors.empty() ? std::string("unknown error")
-                                                  : errors.front()));
-                return;
-            }
-            problem_.emplace(std::move(validated.value()));
-            production_solve_ = true;
-            publish_browser_iteration_timing(0, 0);
-            double_single_solve_ = !float_solve;
-            active_case_name_ = "W7-X";
-            active_input_path_ = problem_->stage_shapes().size() == 1
-                                     ? "inputs/w7x.json (browser single-grid)"
-                                     : "inputs/w7x.json";
-            stage_index_ = 0;
-            total_iterations_ = 0;
-            stage_iterations_.clear();
-            stage_reports_.clear();
-            initialized_stage_ = cumes::webgpu::initialize_stage(
-                *problem_, stage_index_,
-                float_solve && requested_float_radius_reference() != 0,
-                float_solve && requested_compensated_geometry() != 0);
-            reset_stage_state();
-            std::printf(
-                "running W7-X fixed-boundary %s solve "
-                "(%zu stage%s, %s ftol=%.0e, max_iter=%d)\n",
-                problem_->stage_shapes().size() == 1 ? "single-grid"
-                                                     : "multigrid",
-                problem_->stage_shapes().size(),
-                problem_->stage_shapes().size() == 1 ? "" : "s",
-                float_solve ? "float" : "double-single",
-                initialized_stage_.tolerance,
-                initialized_stage_.max_iterations);
-            if (float_solve)
-                std::printf(
-                    "  float geometry: radius-reference=%s, odd-R/Z=%s\n",
-                    initialized_stage_.radius_reference ? "on" : "off",
-                    initialized_stage_.compensated_geometry ? "compensated"
-                                                            : "native");
-            run_stage_inverse();
-        } catch (const std::exception& error) {
-            finish(false,
-                   "W7-X solver startup failed: " + std::string(error.what()));
-        }
-    }
-
     void run_interactive_solver() {
         try {
             const bool paired = requested_double_solve() != 0;
@@ -2193,11 +2096,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             total_iterations_ = 0;
             stage_iterations_.clear();
             stage_reports_.clear();
-            initialized_stage_ =
-                cumes::webgpu::initialize_stage(*problem_, stage_index_);
+            const bool float_3d = !paired && problem_->spec().ntor > 0 &&
+                                  !problem_->spec().free_boundary.lfreeb;
+            initialized_stage_ = cumes::webgpu::initialize_stage(
+                *problem_, stage_index_,
+                float_3d && requested_float_radius_reference() != 0,
+                float_3d && requested_compensated_geometry() != 0);
             reset_stage_state();
             std::printf(
-                "running interactive %s-boundary multigrid solve "
+                "running interactive %s-boundary solve "
                 "(%zu stages, %s ftol=%.0e)\n",
                 initialized_stage_.free_boundary ? "free" : "fixed",
                 problem_->stage_shapes().size(),

@@ -111,7 +111,7 @@ function installCumesBrowser() {
     output(bytes) {
       document.body.dataset.cumesOutputBytes = String(bytes.length);
       const query = new URLSearchParams(location.search);
-      if (query.get('mode') === 'test' && query.get('solve') !== 'w7x') return;
+      if (query.get('mode') === 'test') return;
       const blob = new Blob([bytes], {type: 'application/octet-stream'});
       if (globalThis.cumesOutputUrl) URL.revokeObjectURL(globalThis.cumesOutputUrl);
       globalThis.cumesOutputUrl = URL.createObjectURL(blob);
@@ -138,21 +138,20 @@ function installCumesBrowser() {
   };
 }
 
-function startCumesRuntime(userStarted = false) {
+function startCumesRuntime() {
   if (globalThis.cumesRuntimeStarted) return;
   const runtime = document.getElementById('cumes-runtime').content.querySelector('script');
   // Template contents have an inert owner document; resolve against the page.
   const runtimeUrl = new URL(runtime.getAttribute('src'), location.href);
   const query = new URLSearchParams(location.search);
   const free = query.get('boundary') === 'free' && query.get('mode') !== 'test';
-  if ((query.get('solve') === 'w7x' && !userStarted) ||
-      (free && query.get('run') !== '1')) {
+  if (query.get('mode') !== 'test' && query.get('run') !== '1') {
       document.body.dataset.cumesExecution = 'idle';
       globalThis.cumesBrowser.ready();
       return;
   }
   globalThis.cumesRuntimeStarted = true;
-  const verification = query.get('mode') === 'test' && query.get('solve') !== 'w7x';
+  const verification = query.get('mode') === 'test';
   // Diagnostic opt-out permits exact main-thread/worker trajectory comparisons.
   if ((!verification && !free) || (!free && query.get('worker') === '0')) {
       document.body.dataset.cumesExecution = 'main';
