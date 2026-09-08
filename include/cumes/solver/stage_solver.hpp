@@ -202,14 +202,15 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     // mode table: 2 int arrays (d_xm/d_xn, resolution-scoped — blueprint §6.2).
     bytes += 2 * mnmax * szI;
     // fourier: 43 real arrays, zeta scratch (main + compact de-alias), 5
-    // poloidal tables.
+    // poloidal tables and their compact weighted forward cache.
     bytes += 43 * ns * nZnT * szT;
-    bytes += 12 * p.mpol * ns * nz2 * szC;      // d_zeta_spectra
-    bytes += 12 * p.mpol * ns * p.nzeta * szT;  // d_zeta_real
-    bytes += 4 * p.mpol * p.ntheta * szT;       // cos/sin/mcos/msin_th
-    bytes += (p.ntheta / 2 + 1) * szT;          // fwd_w
-    bytes += batch_da * p.nzeta * szT;          // d_zeta_real_c (de-alias)
-    bytes += batch_da * nz2 * szC;              // d_zeta_spectra_c (de-alias)
+    bytes += 12 * p.mpol * ns * nz2 * szC;           // d_zeta_spectra
+    bytes += 12 * p.mpol * ns * p.nzeta * szT;       // d_zeta_real
+    bytes += 4 * p.mpol * p.ntheta * szT;            // cos/sin/mcos/msin_th
+    bytes += (p.ntheta / 2 + 1) * szT;               // fwd_w
+    bytes += 4 * p.mpol * (p.ntheta / 2 + 1) * szT;  // weighted forward basis
+    bytes += batch_da * p.nzeta * szT;               // d_zeta_real_c (de-alias)
+    bytes += batch_da * nz2 * szC;  // d_zeta_spectra_c (de-alias)
     // preconditioner: 25*nH + 9*ns + 7*mnmax*ns + 3*(ns+1) + 1 T-elements,
     // plus the mnmax int jMin table.
     bytes += (25 * nH + 9 * ns + 7 * mnmax * ns + 3 * (ns + 1) + 1) * szT;
