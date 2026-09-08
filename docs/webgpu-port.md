@@ -28,7 +28,12 @@ projection or rounding to the axisymmetric editor's `m <= 5` basis is applied.
 The fixed Solovev editor retains its existing Fourier sliders and contour mode.
 
 Boundary previews are labeled separately from converged flux surfaces. The
-JSON panel retains access to profiles, field periods, angular/radial resolution,
+result's **2D cut** view has its own toroidal-angle slider for 3-D equilibria,
+covering `0–360°/NFP`. It reconstructs cuts from the returned Fourier coefficients
+without another solve and keeps the angle when switching between 2D and 3D.
+Axisymmetric results do not show the angle control.
+
+The JSON panel retains access to profiles, field periods, angular/radial resolution,
 and iteration budgets. W7-X fixed-boundary edits and free-boundary setups are
 stored separately so mode/precision changes retain them. The browser now uses
 the existing interactive solver entry point for W7-X as well; its scalar
