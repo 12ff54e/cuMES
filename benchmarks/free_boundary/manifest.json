@@ -1,0 +1,286 @@
+{
+  "schema": "cumes-free-boundary-matrix-v1",
+  "declared_date": "2026-09-09",
+  "selection": "Four primary cases selected by source/data inspection before timing. Positive-flux W7-X separately declared before its own runs to reproduce the historical cuMES convention; retain the original negative-flux case and its failures. Fixture files were committed after initial runs because artifact-copy approval delayed generation; run protocols pin the actual immutable inputs.",
+  "precision": "verify-double",
+  "sources": {
+    "solovev_mgrid": {
+      "file": "sources/solovev_free_bdy.json",
+      "repository": "cuMES",
+      "commit": "bcdd3dab5149dc0c5ec8608574f59f2d6932b398",
+      "original_path": "inputs/free_bdy/solovev_free_bdy.json",
+      "sha256": "dd01ef2b5fd9475057039e9e0c548b8766b6f68b0a83c511ec795cfebbf3c1dd"
+    },
+    "solovev_embedded": {
+      "file": "sources/solovev_free_bdy_embedded.json",
+      "repository": "cuMES",
+      "commit": "bcdd3dab5149dc0c5ec8608574f59f2d6932b398",
+      "original_path": "inputs/free_bdy/solovev_free_bdy_embedded.json",
+      "sha256": "ed3f7606fd5d61253c1cf24f1782957fa90e1797af188b9237ace969cd1f3638"
+    },
+    "cth_multigrid": {
+      "file": "sources/cth_like_free_bdy_multigrid.json",
+      "repository": "VMEC++",
+      "commit": "335ef66441d82980331d0062ab8d0398eff50818",
+      "original_path": "src/vmecpp/cpp/vmecpp/test_data/cth_like_free_bdy_multigrid.json",
+      "sha256": "336acb5b1bee6560dda675db596bda377d61bb890a73aa043642179c04800557",
+      "tag": "v0.7.0",
+      "license": "sources/VMECpp-LICENSE.txt",
+      "repository_url": "https://github.com/proximafusion/vmecpp"
+    },
+    "w7x_original": {
+      "file": "sources/w7x_free_bdy_vac.json",
+      "repository": "VMEC++",
+      "commit": "335ef66441d82980331d0062ab8d0398eff50818",
+      "original_path": "examples/data/w7x_free_bdy_vac.json",
+      "sha256": "87594b3f5beb38dd8f942abdff5da7530854fcbaa3f4d2f8f1cee27857ef7cff",
+      "tag": "v0.7.0",
+      "license": "sources/VMECpp-LICENSE.txt",
+      "repository_url": "https://github.com/proximafusion/vmecpp"
+    }
+  },
+  "data": {
+    "mgrid_solovev.nc": {
+      "bytes": 25215108,
+      "sha256": "f17260704b9f6ca96c0f7202cc99dbfe8bdb625d1103d4597fd8ca5197b96fb1",
+      "provenance": "VMEC++ v0.7.0 Git LFS object; src/vmecpp/cpp/vmecpp/test_data/mgrid_solovev.nc"
+    },
+    "mgrid_cth_like.nc": {
+      "bytes": 35255952,
+      "sha256": "41bb2cf388acbdee97d55bdcacd1ec373a0804f4a0cc2990081716326a95bfaa",
+      "provenance": "VMEC++ v0.7.0 Git LFS object; src/vmecpp/cpp/vmecpp/test_data/mgrid_cth_like.nc"
+    },
+    "mgrid_w7x.nc": {
+      "bytes": 88550256,
+      "sha256": "ad612cc77434345d8d3fcc3fd9236fd48cbc5cd855040efc1bc69e737d1f94f8",
+      "provenance": "Existing cuMES figure_data/w7x_free_boundary/mgrid_w7x.nc, dated 2026-08-31; generating binary revision unavailable, exact table pinned here.",
+      "generating_parameters": "sources/makegrid_parameters_w7x.json",
+      "generating_parameters_sha256": "dcad32ec1d0d79bc446011feefaeabfa59111d6281b9fe68558a62c8657b5d1a",
+      "generating_coils_sha256": "a1810c5f12e7ac37114b1593f5df0ef559ca7f6b82a592645d90851f28efcc3d"
+    },
+    "coils.solovev": {
+      "bytes": 985,
+      "sha256": "50f11371c1528722fd9c967f072c0ab95ce79211ef745a263a785f7d72529823",
+      "provenance": "VMEC++ v0.7.0 coils.solovev, vendored in vacuum-field edbbb2803203d9590af9d5444b1527078a0dc30e tests/data.",
+      "tracked_copy": "sources/coils.solovev"
+    }
+  },
+  "cases": [
+    {
+      "id": "solovev_mgrid",
+      "title": "Solovev with precomputed field table",
+      "input": "inputs/solovev_mgrid.json",
+      "sha256": "58123d34d2dd55796f295e877bf12209619788299d2946e0302d1da0c4180878",
+      "source": "solovev_mgrid",
+      "changes": [
+        {
+          "key": "mgrid_file",
+          "before": "deps/vacuum-field/tests/data/mgrid_solovev.nc",
+          "after": "mgrid_solovev.nc"
+        }
+      ],
+      "dependencies": {
+        "mgrid_file": "mgrid_solovev.nc"
+      },
+      "expected": {
+        "lfreeb": true,
+        "lasym": false,
+        "nfp": 1,
+        "mpol": 12,
+        "ntor": 0,
+        "ntheta": 0,
+        "nzeta": 1,
+        "ns_array": [
+          16,
+          32
+        ],
+        "ftol_array": [
+          1e-10,
+          1e-14
+        ],
+        "niter_array": [
+          10000,
+          20000
+        ],
+        "delt": 0.9,
+        "nvacskip": 6,
+        "phiedge": 1.0
+      },
+      "relationship": "Same Solovev physics as the other Solovev field-source variant; setup coverage, not an independent geometry."
+    },
+    {
+      "id": "solovev_embedded",
+      "title": "Solovev with embedded MAKEGRID parameters",
+      "input": "inputs/solovev_embedded.json",
+      "sha256": "88a81cdf6c33d2bb00dd32cffca9fe0a1b6d0d80e0b825976493dfeb644b85e9",
+      "source": "solovev_embedded",
+      "changes": [
+        {
+          "key": "coils_file",
+          "before": "deps/vacuum-field/tests/data/coils.solovev",
+          "after": "coils.solovev"
+        }
+      ],
+      "dependencies": {
+        "coils_file": "coils.solovev"
+      },
+      "expected": {
+        "lfreeb": true,
+        "lasym": false,
+        "nfp": 1,
+        "mpol": 12,
+        "ntor": 0,
+        "ntheta": 0,
+        "nzeta": 1,
+        "ns_array": [
+          16,
+          32
+        ],
+        "ftol_array": [
+          1e-10,
+          1e-14
+        ],
+        "niter_array": [
+          10000,
+          20000
+        ],
+        "delt": 0.9,
+        "nvacskip": 6,
+        "phiedge": 1.0
+      },
+      "relationship": "Same Solovev physics as the other Solovev field-source variant; setup coverage, not an independent geometry."
+    },
+    {
+      "id": "cth_multigrid",
+      "title": "CTH-like finite-pressure/current multigrid",
+      "input": "inputs/cth_multigrid.json",
+      "sha256": "941b4499c596714dc8908e216b749812cce2cff7b3b380e881ba7963326677da",
+      "source": "cth_multigrid",
+      "changes": [
+        {
+          "key": "mgrid_file",
+          "before": "vmecpp/test_data/mgrid_cth_like.nc",
+          "after": "mgrid_cth_like.nc"
+        }
+      ],
+      "dependencies": {
+        "mgrid_file": "mgrid_cth_like.nc"
+      },
+      "expected": {
+        "lfreeb": true,
+        "lasym": false,
+        "nfp": 5,
+        "mpol": 5,
+        "ntor": 4,
+        "ntheta": 0,
+        "nzeta": 36,
+        "ns_array": [
+          15,
+          25
+        ],
+        "ftol_array": [
+          1e-08,
+          1e-10
+        ],
+        "niter_array": [
+          2500,
+          2500
+        ],
+        "delt": 0.7,
+        "nvacskip": 9,
+        "phiedge": -0.035
+      },
+      "relationship": "Original upstream physical workload."
+    },
+    {
+      "id": "w7x_original",
+      "title": "W7-X original negative-flux input",
+      "input": "inputs/w7x_original.json",
+      "sha256": "9b88f0f221a4a7e943ccf420b46a58921375d2e7601c051612edb5db5c62b30d",
+      "source": "w7x_original",
+      "changes": [
+        {
+          "key": "free_boundary_method",
+          "before": "only_coils",
+          "after": null
+        }
+      ],
+      "dependencies": {
+        "mgrid_file": "mgrid_w7x.nc"
+      },
+      "expected": {
+        "lfreeb": true,
+        "lasym": false,
+        "nfp": 5,
+        "mpol": 7,
+        "ntor": 6,
+        "ntheta": 0,
+        "nzeta": 36,
+        "ns_array": [
+          51
+        ],
+        "ftol_array": [
+          1e-12
+        ],
+        "niter_array": [
+          50000
+        ],
+        "delt": 1.0,
+        "nvacskip": 6,
+        "phiedge": -1.74
+      },
+      "relationship": "Original upstream physical workload."
+    },
+    {
+      "id": "w7x_positive_flux",
+      "title": "W7-X separately labeled positive-flux adaptation",
+      "input": "inputs/w7x_positive_flux.json",
+      "sha256": "67e0e5756f5e0f21c0bec4ceb3fcc84b54b081192a7105c2b4abf1cab9d0d8b3",
+      "source": "w7x_original",
+      "changes": [
+        {
+          "key": "free_boundary_method",
+          "before": "only_coils",
+          "after": null
+        },
+        {
+          "key": "phiedge",
+          "before": -1.74,
+          "after": 1.74
+        }
+      ],
+      "dependencies": {
+        "mgrid_file": "mgrid_w7x.nc"
+      },
+      "expected": {
+        "lfreeb": true,
+        "lasym": false,
+        "nfp": 5,
+        "mpol": 7,
+        "ntor": 6,
+        "ntheta": 0,
+        "nzeta": 36,
+        "ns_array": [
+          51
+        ],
+        "ftol_array": [
+          1e-12
+        ],
+        "niter_array": [
+          50000
+        ],
+        "delt": 1.0,
+        "nvacskip": 6,
+        "phiedge": 1.74
+      },
+      "relationship": "Supplement selected separately before its own runs; only phiedge sign differs from w7x_original. Preserve both outcomes."
+    }
+  ],
+  "policy": {
+    "stages": "Preserve every source stage, cap and tolerance; W7-X's ns=51 is the source's native single stage.",
+    "physics": "Preserve every physical value except the explicitly separate w7x_positive_flux sign adaptation.",
+    "unsupported_selector": "Remove free_boundary_method=only_coils from W7-X. It is recognized but ignored by cuMES, which implements coil-only external fields.",
+    "paths": "Portable templates contain data filenames. Materialize only declared path keys against a chosen data root before running; record resulting input hashes.",
+    "failures": "Keep nonconvergence, invalid geometry, timeouts and regressions; do not alter inputs in response to outcomes."
+  }
+}
