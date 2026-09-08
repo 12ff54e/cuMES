@@ -112,7 +112,7 @@ endif()
 # The templated operator modules, each split into a *_double.cu and a
 # *_float.cu explicit-instantiation TU (one scalar type per TU). The CLI links
 # only the TU matching `Real`; the tests link both (they instantiate both).
-set(CUMES_CUDA_MODULES fourier geometry forces solver profiles precon constraint prolongation axisymmetric)
+set(CUMES_CUDA_MODULES fourier geometry forces solver profiles precon constraint prolongation axisymmetric newton)
 if(CUMES_USE_VACUUM_FIELD)
   list(APPEND CUMES_CUDA_MODULES free_boundary)
 else()
@@ -514,6 +514,7 @@ if(CUMES_BUILD_BENCHMARKS)
     cumes_apply_policy_flags(cumes_benchmark_${probe})
   endforeach()
   target_link_libraries(cumes_benchmark_test_correction_coordinates PRIVATE cumes_cuda_float)
+  target_link_libraries(cumes_benchmark_test_device_gmres PRIVATE cumes_cuda_float)
   if(CUMES_BUILD_TESTS)
     add_test(NAME experimental_device_bicgstab COMMAND cumes_benchmark_test_device_bicgstab)
     set_tests_properties(experimental_device_bicgstab PROPERTIES LABELS "gpu;benchmark")
