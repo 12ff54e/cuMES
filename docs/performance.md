@@ -529,51 +529,6 @@ control/axis/boundary copies in the graph and omitting unused transform timing
 events were also tested and removed because they showed no reliable gain.
 They are excluded from the reported candidate.
 
-### 3.9 Explicit final-grid solve — qualified option (ADR-0016)
-
-`--single-grid` selects the last configured radial stage and its unchanged
-iteration cap and tolerance, using the existing single-grid seed/step policy.
-The input's default multigrid behavior is unchanged. This is a trajectory
-choice: every final residual and geometry gate still applies, and W7-X's final
-interior coefficients differ measurably. See [ADR-0016](adr/0016-explicit-final-grid-solve.md)
-and the [numerical comparison](aggressive-optimization-study.md#explicit-final-grid-option-and-independent-comparison).
-
-Twelve alternating paired measurements after warmup, precise double, baseline
-`9316169`, compare the original multigrid schedule with the final-grid schedule:
-
-| GPU | Case | Median solve ms, multi / single | p95 ms, multi / single | Paired time reduction, 95% bootstrap CI |
-| --- | --- | --- | --- | --- |
-| TITAN Xp | W7-X | 4708.530 / 3856.034 | 4716.092 / 3862.529 | 18.09% [18.07%, 18.15%] |
-| TITAN Xp | Solovev | 102.819 / 51.661 | 103.210 / 51.939 | 49.67% [49.56%, 49.91%] |
-| RTX 4090 | W7-X | 1732.144 / 1277.595 | 1908.372 / 1360.115 | 25.59% [23.84%, 28.10%] |
-| RTX 4090 | Solovev | 67.925 / 33.805 | 285.335 / 33.884 | 50.29% [49.91%, 50.57%] |
-
-These are sums of CUDA-event stage solve intervals, including host submission
-gaps, excluding stage setup and output. They are not process-wall speedups.
-All samples are retained; Ada's Solovev multigrid p95 includes scheduling
-outliers. The Pascal run used the final CLI implementation and an additional
-unchanged-schedule comparison with the baseline: paired 95% intervals were
-[-0.009%, 0.041%] for W7-X and [-0.473%, 0.069%] for Solovev. The mode's gain
-comfortably exceeds that noise floor. Ada used the same baseline executable
-with explicitly collapsed JSON stage arrays; separate CLI runs reproduced
-those exact coefficients and stage reports.
-
-Toolchains/placement match section 3.8: TITAN Xp `sm_61`, CUDA 12.1, and RTX
-4090 `sm_89`, CUDA 12.9, NUMA-local CPU 8. Clocks were unlocked; Pascal ran in
-P2 at approximately 1822--1873 MHz SM / 5508 MHz memory during this study.
-Pascal bootstrap uses 10,000 paired resamples (seed 20260908); Ada uses 20,000
-(seed 8961), percentile intervals around the median paired percentage gain.
-
-W7-X requires 2465 effective iterations instead of 4106; Solovev requires 354
-instead of 754. The final tolerances remain 1e-12 and 1e-16 respectively.
-Checkpoints replay at iteration 1. The selected ns/cap/tolerance are verified
-exactly in the native output metadata, and the final double/float CTest suites
-pass 65/66 tests. No CUDA kernels or controller constants changed in this
-option. Fresh VMEC++ 0.7.0 comparisons and all rejected Pulay/controller/graph
-experiments are recorded in the linked study. Artifacts and scripts are in
-`../tmp/cumes-aggressive-20260908/`, especially `timing-pascal-final/` and
-`single-grid-qualified/`.
-
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target

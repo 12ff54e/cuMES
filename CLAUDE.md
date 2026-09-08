@@ -57,10 +57,6 @@ point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
   `.h5`, or `.hdf5` suffix selects the backend; every backend stores six real
   Fourier parity families and no complex values. The two result-output options
   are mutually exclusive.
-- `--single-grid` explicitly selects only the final configured radial stage,
-  retaining its tolerance and iteration cap. Uses the existing single-grid
-  seed/step policy; output provenance records the selected schedule. Final-grid
-  checkpoints can be replayed with this option and the original input file.
 - `--restart <checkpoint>` / `-r <checkpoint>` and `--checkpoint <path>` /
   `-c <path>` — read/write the v2
   checkpoint (`docs/output-formats.md` §4).
@@ -327,7 +323,6 @@ Known issues:
 | `docs/dump-files.md` | the `CUMES_DUMP` diagnostics: file manifest, formats, naming scheme |
 | `docs/verification.md` | verification tiers/gates, equivalence classes (Class A/B/C), review checklist |
 | `docs/performance.md` | measured performance + acceptance policy |
-| `docs/aggressive-optimization-study.md` | final-grid solve qualification, trajectory comparisons, rejected acceleration experiments |
 | `docs/library-api.md` | public solver/config API, packaging, and least-squares optimizer integration contract |
 | `docs/overhaul-history.md` | phase-by-phase overhaul record and closeout handovers |
 | `docs/cuda-overhaul-blueprint.md` | the original overhaul plan |

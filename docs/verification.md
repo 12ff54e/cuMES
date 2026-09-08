@@ -252,11 +252,7 @@ wout's signed-n VMEC convention into cuMES's product basis (including the
 `m=0` axis-displacement parity and the `n=0` odd-family zeros), skips the
 extrapolated axis row, and reports the max absolute/relative difference per
 family. The `wout` comparison reads the FULL-grid `lmns_full`, not the
-half-grid `lmns`. For current native snapshots, lambda also needs the
-`phipF/lamscale` conversion from flux-normalized wout amplitudes; the existing
-comparison tool does not apply it. The [September 2026 comparison](aggressive-optimization-study.md#explicit-final-grid-option-and-independent-comparison)
-records the conversion, its independent check against VMEC++ internal
-coefficients, and the resulting six-family differences.
+half-grid `lmns`.
 
 ## 7. Equilibrium-tangent branch qualification
 
