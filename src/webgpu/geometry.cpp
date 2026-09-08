@@ -66,8 +66,7 @@ std::string validate_case(const BaseGeometryCase& input) {
 const std::string& load_shader(bool double_single) {
     return detail::cached_shader_source(
         double_single ? "/shaders/base_geometry_double_single.wgsl"
-                      : "/shaders/base_geometry.wgsl",
-        double_single ? "/shaders/float_float.wgsl" : "");
+                      : "/shaders/base_geometry.wgsl");
 }
 
 wgpu::Buffer create_buffer(const wgpu::Device& device,

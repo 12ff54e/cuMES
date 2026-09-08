@@ -51,8 +51,7 @@ std::string validate_case(const AxisymmetricDescentCase& in) {
 const std::string& load_shader(bool double_single) {
     return detail::cached_shader_source(
         double_single ? "/shaders/axisymmetric_descent_double_single.wgsl"
-                      : "/shaders/axisymmetric_descent.wgsl",
-        double_single ? "/shaders/float_float.wgsl" : "");
+                      : "/shaders/axisymmetric_descent.wgsl");
 }
 
 wgpu::Buffer make_buffer(const wgpu::Device& device,

@@ -1,0 +1,224 @@
+struct Params {
+    ns: u32,
+    n_z_n_t: u32,
+    full_points: u32,
+    half_points: u32,
+    delta_s: f32,
+#if PAIRED
+    delta_s_lo: f32,
+    _padding1: u32,
+    _padding2: u32,
+#else
+    _padding0: u32,
+    radius_mean: f32,
+    radius_reference: u32,
+#endif
+};
+
+struct Values { data: array<f32>, };
+
+@group(0) @binding(0) var<storage, read> geometry_hi: Values;
+// sqrt_s_f[ns], sqrt_s_h[ns-1], inverse_sqrt_s_h[ns-1].
+@group(0) @binding(1) var<storage, read> radial_hi: Values;
+// Ten high planes followed by ten low planes.
+@group(0) @binding(2) var<storage, read_write> half: Values;
+@group(0) @binding(3) var<uniform> params: Params;
+#if PAIRED
+@group(0) @binding(4) var<storage, read> geometry_lo: Values;
+@group(0) @binding(5) var<storage, read> radial_lo: Values;
+#endif
+fn full(field: u32, point: u32, slot: u32) -> Real {
+    let index = field * params.full_points + point;
+    return normalize(
+        words(geometry_hi.data[index], geometry_lo.data[index]), slot);
+}
+
+fn radial(index: u32, slot: u32) -> Real {
+    return normalize(
+        words(radial_hi.data[index], radial_lo.data[index]), slot);
+}
+
+fn radius(point: u32, slot: u32) -> Real {
+    let displacement = full(0u, point, slot);
+#if !PAIRED
+    if (params.radius_reference != 0u) {
+        return (displacement + params.radius_mean) +
+            radial_hi.data[2u * params.ns - 1u + point % params.n_z_n_t];
+    }
+#endif
+    return displacement;
+}
+
+fn put(field: u32, point: u32, value: Real) {
+    let index = field * params.half_points + point;
+    half.data[index] = hi(value);
+#if PAIRED
+    half.data[10u * params.half_points + index] = lo(value);
+#endif
+}
+
+fn product_sum4(a0: Real, b0: Real, a1: Real, b1: Real,
+                a2: Real, b2: Real, a3: Real, b3: Real, slot: u32) -> Real {
+    var sum = mul(a0, b0, slot);
+    sum = add(sum, mul(a1, b1, slot), slot);
+    sum = add(sum, mul(a2, b2, slot), slot);
+    return add(sum, mul(a3, b3, slot), slot);
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let point = invocation.x;
+    if (point >= params.half_points) { return; }
+    let surface = point / params.n_z_n_t;
+    let angular = point % params.n_z_n_t;
+    let inside = surface * params.n_z_n_t + angular;
+    let outside = inside + params.n_z_n_t;
+    let sqrt_i = radial(surface, point);
+    let sqrt_o = radial(surface + 1u, point);
+    let sqrt_h = radial(params.ns + surface, point);
+    // Paired inputs contain the host-split reciprocal; scalar inputs contain
+    // only the square roots. Both variants multiply by this reciprocal below.
+#if PAIRED
+    let inverse_sqrt_h = radial(2u * params.ns - 1u + surface, point);
+#else
+    let inverse_sqrt_h = reciprocal(sqrt_h, point);
+#endif
+    let sqrt_i_squared = mul(sqrt_i, sqrt_i, point);
+    let sqrt_o_squared = mul(sqrt_o, sqrt_o, point);
+
+    let r12 = scale(add(
+        add(radius(inside, point), radius(outside, point), point),
+        mul(sqrt_h, add(
+            full(6u, inside, point), full(6u, outside, point), point), point),
+        point), 0.5, point);
+    let ru12 = scale(add(
+        add(full(3u, inside, point), full(3u, outside, point), point),
+        mul(sqrt_h, add(
+            full(9u, inside, point), full(9u, outside, point), point), point),
+        point), 0.5, point);
+    let zu12 = scale(add(
+        add(full(4u, inside, point), full(4u, outside, point), point),
+        mul(sqrt_h, add(
+            full(10u, inside, point), full(10u, outside, point), point), point),
+        point), 0.5, point);
+    let inverse_delta_s = f32(params.ns - 1u);
+    let rs = scale(add(
+        sub(full(0u, outside, point), full(0u, inside, point), point),
+        mul(sqrt_h, sub(
+            full(6u, outside, point), full(6u, inside, point), point), point),
+        point), inverse_delta_s, point);
+    let zs = scale(add(
+        sub(full(1u, outside, point), full(1u, inside, point), point),
+        mul(sqrt_h, sub(
+            full(7u, outside, point), full(7u, inside, point), point), point),
+        point), inverse_delta_s, point);
+
+    let tau1 = sub(mul(ru12, zs, point),
+                             mul(rs, zu12, point), point);
+    var tau2 = product_sum4(
+        full(9u, outside, point), full(7u, outside, point),
+        full(9u, inside, point), full(7u, inside, point),
+        neg(full(10u, outside, point)),
+        full(6u, outside, point),
+        neg(full(10u, inside, point)),
+        full(6u, inside, point), point);
+    var tau2_fraction = product_sum4(
+        full(3u, outside, point), full(7u, outside, point),
+        full(3u, inside, point), full(7u, inside, point),
+        neg(full(4u, outside, point)),
+        full(6u, outside, point),
+        neg(full(4u, inside, point)),
+        full(6u, inside, point), point);
+    tau2 = add(
+        tau2, mul(tau2_fraction, inverse_sqrt_h, point), point);
+    let tau = add(
+        tau1, scale(tau2, 0.25, point), point);
+    let gsqrt = mul(tau, r12, point);
+
+    var guu_base = product_sum4(
+        full(3u, inside, point), full(3u, inside, point),
+        full(4u, inside, point), full(4u, inside, point),
+        full(3u, outside, point), full(3u, outside, point),
+        full(4u, outside, point), full(4u, outside, point), point);
+    let guu_odd_i = mul(sqrt_i_squared, product_sum4(
+        full(9u, inside, point), full(9u, inside, point),
+        full(10u, inside, point), full(10u, inside, point),
+        real(0.0), real(0.0), real(0.0), real(0.0), point), point);
+    let guu_odd_o = mul(sqrt_o_squared, product_sum4(
+        full(9u, outside, point), full(9u, outside, point),
+        full(10u, outside, point), full(10u, outside, point),
+        real(0.0), real(0.0), real(0.0), real(0.0), point), point);
+    guu_base = add(guu_base, add(guu_odd_i, guu_odd_o, point), point);
+    let guu_cross = product_sum4(
+        full(3u, inside, point), full(9u, inside, point),
+        full(4u, inside, point), full(10u, inside, point),
+        full(3u, outside, point), full(9u, outside, point),
+        full(4u, outside, point), full(10u, outside, point), point);
+    let guu = add(scale(guu_base, 0.5, point),
+                            mul(sqrt_h, guu_cross, point), point);
+
+    var gvv_base = add(
+        mul(radius(inside, point), radius(inside, point), point),
+        mul(radius(outside, point), radius(outside, point), point), point);
+    gvv_base = add(gvv_base, mul(sqrt_i_squared,
+        mul(full(6u, inside, point), full(6u, inside, point), point), point), point);
+    gvv_base = add(gvv_base, mul(sqrt_o_squared,
+        mul(full(6u, outside, point), full(6u, outside, point), point), point), point);
+    let gvv_cross0 = add(
+        mul(radius(inside, point), full(6u, inside, point), point),
+        mul(radius(outside, point), full(6u, outside, point), point), point);
+    var gvv = add(scale(gvv_base, 0.5, point),
+                            mul(sqrt_h, gvv_cross0, point), point);
+
+    var guv_base = product_sum4(
+        full(3u, inside, point), full(12u, inside, point),
+        full(4u, inside, point), full(13u, inside, point),
+        full(3u, outside, point), full(12u, outside, point),
+        full(4u, outside, point), full(13u, outside, point), point);
+    let guv_odd_i = mul(sqrt_i_squared, add(
+        mul(full(9u, inside, point), full(15u, inside, point), point),
+        mul(full(10u, inside, point), full(16u, inside, point), point), point), point);
+    let guv_odd_o = mul(sqrt_o_squared, add(
+        mul(full(9u, outside, point), full(15u, outside, point), point),
+        mul(full(10u, outside, point), full(16u, outside, point), point), point), point);
+    guv_base = add(guv_base, add(guv_odd_i, guv_odd_o, point), point);
+    var guv_cross = product_sum4(
+        full(3u, inside, point), full(15u, inside, point),
+        full(4u, inside, point), full(16u, inside, point),
+        full(3u, outside, point), full(15u, outside, point),
+        full(4u, outside, point), full(16u, outside, point), point);
+    guv_cross = add(guv_cross, product_sum4(
+        full(12u, inside, point), full(9u, inside, point),
+        full(13u, inside, point), full(10u, inside, point),
+        full(12u, outside, point), full(9u, outside, point),
+        full(13u, outside, point), full(10u, outside, point), point), point);
+    let guv = scale(add(
+        guv_base, mul(sqrt_h, guv_cross, point), point), 0.5, point);
+
+    var gvv_toroidal = product_sum4(
+        full(12u, inside, point), full(12u, inside, point),
+        full(13u, inside, point), full(13u, inside, point),
+        full(12u, outside, point), full(12u, outside, point),
+        full(13u, outside, point), full(13u, outside, point), point);
+    let gvv_odd_i = mul(sqrt_i_squared, add(
+        mul(full(15u, inside, point), full(15u, inside, point), point),
+        mul(full(16u, inside, point), full(16u, inside, point), point), point), point);
+    let gvv_odd_o = mul(sqrt_o_squared, add(
+        mul(full(15u, outside, point), full(15u, outside, point), point),
+        mul(full(16u, outside, point), full(16u, outside, point), point), point), point);
+    gvv_toroidal = add(gvv_toroidal,
+        add(gvv_odd_i, gvv_odd_o, point), point);
+    let gvv_cross1 = product_sum4(
+        full(12u, inside, point), full(15u, inside, point),
+        full(13u, inside, point), full(16u, inside, point),
+        full(12u, outside, point), full(15u, outside, point),
+        full(13u, outside, point), full(16u, outside, point), point);
+    gvv = add(gvv, add(
+        scale(gvv_toroidal, 0.5, point),
+        mul(sqrt_h, gvv_cross1, point), point), point);
+
+    put(0u, point, r12); put(1u, point, ru12); put(2u, point, zu12);
+    put(3u, point, rs); put(4u, point, zs); put(5u, point, tau);
+    put(6u, point, gsqrt); put(7u, point, guu); put(8u, point, guv);
+    put(9u, point, gvv);
+}

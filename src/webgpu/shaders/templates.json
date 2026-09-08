@@ -13,5 +13,25 @@
     "template": "templates/residual_decompose.wgsl.in",
     "single": "residual_decompose.wgsl",
     "paired": "residual_decompose_double_single.wgsl"
+  },
+  {
+    "template": "templates/base_geometry.wgsl.in",
+    "single": "base_geometry.wgsl",
+    "paired": "base_geometry_double_single.wgsl"
+  },
+  {
+    "template": "templates/descent.wgsl.in",
+    "single": "axisymmetric_descent.wgsl",
+    "paired": "axisymmetric_descent_double_single.wgsl"
+  },
+  {
+    "template": "templates/force.wgsl.in",
+    "single": "axisymmetric_force.wgsl",
+    "paired": "force_double_single.wgsl"
+  },
+  {
+    "template": "templates/magnetic_field.wgsl.in",
+    "single": "magnetic_field.wgsl",
+    "paired": "magnetic_field_double_single.wgsl"
   }
 ]

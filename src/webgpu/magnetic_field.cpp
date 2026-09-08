@@ -512,7 +512,7 @@ void enqueue_magnetic_field(const wgpu::Device& device,
                                    : "magnetic-field-finalize-current";
     const char* finalize_fields_key =
         input.double_single ? "magnetic-field-double-single-finalize-fields"
-                            : nullptr;
+                            : "magnetic-field-finalize-fields";
     const char* pipeline_label =
         input.double_single ? "cuMES double-single magnetic field pipeline"
                             : "cuMES magnetic field pipeline";
@@ -524,13 +524,9 @@ void enqueue_magnetic_field(const wgpu::Device& device,
         device, pipeline_key, shader_text, pipeline_label);
     const auto& finalize_pipeline = detail::cached_compute_pipeline(
         device, finalize_key, shader_text, finalize_label, "finalize_current");
-    wgpu::ComputePipeline finalize_fields_pipeline;
-    if (input.double_single) {
-        finalize_fields_pipeline = detail::cached_compute_pipeline(
-            device, finalize_fields_key, shader_text,
-            "cuMES double-single prescribed-current field finalize pipeline",
-            "finalize_fields");
-    }
+    const auto& finalize_fields_pipeline = detail::cached_compute_pipeline(
+        device, finalize_fields_key, shader_text,
+        "cuMES prescribed-current field finalize pipeline", "finalize_fields");
     const ShaderParams params{static_cast<std::uint32_t>(input.ns),
                               static_cast<std::uint32_t>(n_z_n_t),
                               static_cast<std::uint32_t>(input.ntheta),
@@ -599,15 +595,12 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     bind_group_descriptor.entries = finalize_entries.data();
     const auto finalize_bind_group =
         device.CreateBindGroup(&bind_group_descriptor);
-    wgpu::BindGroup finalize_fields_bind_group;
-    if (input.double_single) {
-        bind_group_descriptor.label =
-            "cuMES prescribed-current field finalize bindings";
-        bind_group_descriptor.layout =
-            finalize_fields_pipeline.GetBindGroupLayout(0);
-        finalize_fields_bind_group =
-            device.CreateBindGroup(&bind_group_descriptor);
-    }
+    bind_group_descriptor.label =
+        "cuMES prescribed-current field finalize bindings";
+    bind_group_descriptor.layout =
+        finalize_fields_pipeline.GetBindGroupLayout(0);
+    const auto finalize_fields_bind_group =
+        device.CreateBindGroup(&bind_group_descriptor);
     wgpu::ComputePassDescriptor pass_descriptor{};
     const auto field_pass = encoder.BeginComputePass(&pass_descriptor);
     field_pass.SetPipeline(pipeline);
@@ -619,12 +612,9 @@ void enqueue_magnetic_field(const wgpu::Device& device,
     const auto current_pass = encoder.BeginComputePass(&pass_descriptor);
     current_pass.SetPipeline(finalize_pipeline);
     current_pass.SetBindGroup(0, finalize_bind_group);
-    current_pass.DispatchWorkgroups(
-        input.double_single
-            ? static_cast<std::uint32_t>(half_surfaces)
-            : (static_cast<std::uint32_t>(half_surfaces) + 63U) / 64U);
+    current_pass.DispatchWorkgroups(static_cast<std::uint32_t>(half_surfaces));
     current_pass.End();
-    if (input.double_single) {
+    if (input.prescribed_current) {
         const auto finalize_pass = encoder.BeginComputePass(&pass_descriptor);
         finalize_pass.SetPipeline(finalize_fields_pipeline);
         finalize_pass.SetBindGroup(0, finalize_fields_bind_group);
