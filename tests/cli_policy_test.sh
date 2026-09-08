@@ -104,6 +104,12 @@ check "single-grid retains the final stage controls" 1 \
 check "single-grid restart uses the final grid" 1 \
   "grids=1: ns9" "does not match stage-0 grid" \
   "$BIN" in_multigrid.json --single-grid --restart single.ckpt --output replay.bin
+if [ ! -f replay.bin ]; then
+  echo "FAIL single-grid restart reaches result publication"
+  fail=1
+else
+  echo "PASS single-grid restart reaches result publication"
+fi
 check "single-grid still rejects invalid input" 1 \
   "unknown input key 'n_theta'" "WARNING: unknown input key" \
   "$BIN" in_unknown.json --single-grid --output single.bin

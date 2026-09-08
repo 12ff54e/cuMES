@@ -44,6 +44,12 @@ pairs against `9316169`, following a warmup pair, yielded:
 | W7-X | 1315/1419/1372 | 2465 | 1732.144 / 1277.595 | 25.59% [23.84%, 28.10%] |
 | Solovev | 235/193/326 | 354 | 67.925 / 33.805 | 50.29% [49.91%, 50.57%] |
 
+A final twelve-pair TITAN Xp CLI comparison also passed: W7-X solve time fell
+18.09% [18.07%, 18.15%], and Solovev 49.67% [49.56%, 49.91%]. The additional
+unchanged-schedule A/A comparison was consistent with zero. Full timings,
+p95 values, noise measurements and toolchains are in
+[performance section 3.9](../performance.md#39-explicit-final-grid-solve--qualified-option-adr-0016).
+
 Times are CUDA-event stage solve intervals, including host submission gaps,
 excluding startup/output. Process startup is noisy even in identical-binary
 A/A trials, so these percentages must not be presented as process wall savings.

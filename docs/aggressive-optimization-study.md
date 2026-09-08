@@ -83,6 +83,80 @@ the second W7-X stage's configured iteration budget. The prototype is therefore
 excluded from the production solver, including its experimental environment
 variables and controller changes.
 
+## Explicit final-grid option and independent comparison
+
+`--single-grid` exposes the existing final-grid schedule without rewriting the
+input file. It keeps the final resolution, tolerance and cap, validates the
+whole original input, and records the selected schedule. The CLI result and
+its equivalent single-grid JSON produce identical coefficients, residuals,
+iteration counts and restart histories. See [ADR-0016](adr/0016-explicit-final-grid-solve.md)
+for the decision and twelve-pair Ada timings.
+
+Fresh CPU VMEC++ 0.7.0 runs converged with both original and single-grid inputs.
+Maximum absolute differences from the matching cuMES schedule, grouped across
+both parity families and excluding the dependent axis row, were:
+
+| Case/schedule | R | Z | Lambda |
+| --- | ---: | ---: | ---: |
+| Solovev multigrid | 2.144e-8 | 1.239e-8 | 3.483e-8 |
+| Solovev single-grid | 4.310e-8 | 1.662e-8 | 2.248e-7 |
+| W7-X multigrid | 9.563e-4 | 1.758e-3 | 5.740e-3 |
+| W7-X single-grid | 6.976e-4 | 7.689e-4 | 4.266e-3 |
+
+Lambda requires a convention correction before comparison. VMEC++ writes
+`lmns_full = native_lambda / phipF * lamscale`; cuMES snapshots retain native
+amplitudes. The existing `compare_wout` folds modes but omits that factor.
+Multiplying the folded reference by `phipF/lamscale` gives approximately -1
+for these Solovev inputs and +1 for W7-X. Without this conversion the tool
+reports a spurious Solovev lambda difference of 0.731 for both schedules.
+The corrected reference agrees with VMEC++'s separately serialized internal
+coefficients within 4.44e-16. The correction script and source-level derivation
+are archived under `vmecpp/`; production comparison code is unchanged.
+These diagnostic differences do not replace cuMES's convergence gates.
+
+## Controller sweeps
+
+Global initial-step overrides did not improve both shipped multigrid solves.
+Solovev's default 754 effective iterations increased to 998, 899, 793 and 851
+for steps 0.7, 0.8, 1.0 and 1.1. W7-X's default 4106 increased to 6536,
+4671, 4179 and 4114 for steps 0.5, 0.6, 0.7 and 0.8. Damping floors of
+0.01 through 0.1 offered no Solovev gain and exhausted W7-X's configured
+stage budgets.
+
+Isolating W7-X's final stage from the identical converged ns=66 checkpoint
+removed the earlier stages' trajectory effects. Step 1.1 reduced its 1372
+iterations to 1196, while 1.2/1.3/1.4 took 1204/1251/1362. Earlier stages did
+not share that improvement. These smaller, stage-dependent gains do not
+justify replacing the controller's qualified constants; the explicit grid
+selection provides the larger measured benefit.
+
+## Persistent graph normalization cache — rejected
+
+A Class-A prototype stored the two invariant normalization factors on device,
+allowing ordinary CUDA graphs to survive preconditioner refreshes instead of
+being recaptured roughly every 25 iterations. Manufactured float/double tests
+covered factor changes, invalid refreshes, nonfinite residuals and recovery.
+Default and diagnostic runs retained exact final state coefficients, stage
+residuals, iteration counts and restart histories; both complete test suites
+passed.
+
+Twelve paired multigrid solve measurements showed:
+
+| GPU/case | Paired median saving | 95% bootstrap CI |
+| --- | ---: | --- |
+| TITAN Xp, Solovev | 2.83% | [2.32%, 3.02%] |
+| TITAN Xp, W7-X | 0.53% | [0.48%, 0.54%] |
+| RTX 4090, Solovev | 2.53% | [1.92%, 3.84%] |
+| RTX 4090, W7-X | 2.64% | [-6.38%, 6.09%] |
+
+These fail the performance policy's lower-confidence-bound requirement of
+more than 5%. A further bounded Pascal probe captured the existing
+control/axis/boundary copies inside the same graph. It again showed no reliable
+additional benefit, consistent with the earlier rejection in performance.md
+section 3.8. Both changes, their tests, and their extra device allocation were
+removed. Their source patches, binaries and measurements remain archived for
+future investigation; the retained CLI feature needs no CUDA changes.
+
 ## Reproduction artifacts
 
 The local experiment directory is
