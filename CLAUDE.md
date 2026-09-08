@@ -1,336 +1,256 @@
-# CLAUDE.md — cuMES (CUDA Magnetic Equilibrium Solver)
+# cuMES agent guide
 
-## Project Overview
+`AGENTS.md` is a symlink to this file. Edit `CLAUDE.md` and keep the symlink;
+there should be one shared set of repository instructions.
 
-cuMES is a pure-CUDA, ground-up reimplementation of the core VMEC stellarator
-equilibrium algorithm. All computation runs on GPU; the CPU host is a thin
-orchestrator. This is a pedagogical / scaffolding project — not production-grade,
-but the architecture is real.
+## Project and scope
 
-Independent comparison implementation: `https://github.com/proximafusion/vmecpp`
-(CPU-based C++ VMEC solver) at tag 0.7.0. cuMES convergence is defined by its
-own discrete residuals and validity gates; vmecpp is a diagnostic cross-check,
-not the convergence oracle (see Status).
-The codebase is post-CUDA-overhaul (blueprint:
-`docs/cuda-overhaul-blueprint.md`); details live in `docs/` — see the
-[documentation map](#documentation-map).
+cuMES implements the core VMEC magnetic-equilibrium algorithm. The default
+native backend uses CUDA; the browser backend uses WebGPU and WebAssembly.
+Both support fixed and free boundaries. Host code handles configuration,
+iteration control, I/O, and parts of the vacuum solve. This is a research and
+scaffolding project; qualification is specific to the case, precision, and
+backend tested.
 
-## Build & Run
+Convergence means all configured cuMES discrete residuals satisfy their
+thresholds after finite/geometry/Jacobian validity gates. VMEC++ 0.7.0 is an
+independent diagnostic reference, not the convergence oracle. A fixed-point
+checkpoint replay is useful evidence; a small FSQR alone is insufficient.
+
+## Working approach and commits
+
+- Inspect `git status` and the relevant implementation before editing. Preserve
+  unrelated user changes and keep the patch focused on the requested result.
+- Carry authorized work through implementation, relevant checks, and commits.
+  Resolve routine choices from existing code; ask for clarification when a
+  missing requirement materially changes the result and cannot be inferred.
+- Read the relevant sections of the documents below as needed. Use code,
+  presets, and tests to establish current behavior; numerical and format
+  contracts still require deliberate, validated changes. Dated measurements
+  and overhaul histories are evidence for their recorded configurations, not
+  universal defaults or acceptance values for another backend.
+- Reuse existing operators and dependency APIs. Prefer a small integration
+  layer over a second implementation of the same mathematics. Avoid unrelated
+  refactors, new frameworks, and speculative generalization.
+- Commit meaningful, coherent steps progressively as they are completed and
+  validated. Keep each commit focused and reviewable; include its validation
+  summary. A small task may need only one implementation commit.
+- Keep routine logs, benchmark captures, build artifacts, and progress notes
+  outside the repository, normally in `../tmp/`. Do not make commits solely
+  to record them. Retain durable contracts, regression fixtures, and design
+  decisions in the repository when the change needs them.
+- Reuse a compatible build directory; use a separate directory when changing
+  backend/toolchain or comparing revisions. Check the cached source directory
+  before rebuilding, since sibling worktrees can share `../tmp/` paths.
+- Respect submodule boundaries. If a dependency needs changes, validate and
+  commit them in that submodule before committing the parent gitlink update.
+  Initialize pinned dependencies without updating them to unrelated revisions.
+
+## Build and run
+
+C++ and CUDA translation units use strict C++20, without GNU extensions.
+`CMakeLists.txt`, `CMakePresets.json`, and `cmake/` define the build options.
+Choose the backend affected by the task; the commands below are entry points,
+not a requirement to run every configuration for every edit.
+
+### Native CUDA
 
 ```bash
-# in folder cuMES
-cmake --preset verify          # verify-double: precise math, all backends, -Werror
-cmake --build build -j
-
-# INPUT_FILE is positional; native output defaults to $PWD/cumes-output.bin
+git submodule update --init --recursive
+cmake --preset verify
+cmake --build --preset verify -j
 ./build/cumes inputs/solovev.json --output out.bin
-# Alternative result form; never combine with --output
-./build/cumes inputs/solovev.json --boozer-output boozer.bin
-
-ctest --test-dir build --output-on-failure
-
-# sanitizer preset: compute-sanitizer memcheck/initcheck/racecheck/synccheck
-# variants of the kernel tests + ASan/UBSan host twins (racecheck RUN_SERIAL)
-cmake --preset sanitizer && cmake --build build-sanitize -j
-ctest --test-dir build-sanitize
-
-# single precision (mixed-float: float device arithmetic + double host controller)
-cmake --preset float && cmake --build build-float -j
-# other presets: fast (fast-double, opt-in --use_fast_math, dump machinery
-# compiled out), debug (debug-double, precise + -G); optional-backend matrix:
-# nobackend / netcdf-only / hdf5-only
+ctest --preset verify
 ```
 
-**Requirements:** CUDA Toolkit >= 11.8 (C++20 host/device support), CMake >= 3.20,
-GPU compute capability >= 6.1. The project-wide language standard is strict
-C++20 — no GNU extensions — for host C++ and CUDA TUs alike (root
-`CMakeLists.txt`). If the host gcc is > 12, `CMAKE_CUDA_HOST_COMPILER` must
-point to g++-12 (set in `CMakeLists.txt`). CUDA architectures: 61 (Pascal),
-75 (Turing), 80 (Ampere), 86, 89 (Ada).
+The `verify` preset selects precise double arithmetic and warnings as errors,
+with optional NetCDF/HDF5 output enabled when the libraries are available.
+Other configure/build presets include `float`, `debug`, `fast`, `sanitizer`,
+`fixed-only`, `nobackend`, `netcdf-only`, `hdf5-only`, and `profiling`.
+Use the sanitizer and optional-dependency matrices when the affected code
+requires them; GPU sanitizer runs are costly and racecheck is serialized.
 
-## CLI & Environment
+Use a CUDA toolkit/host compiler combination that supports the project's
+C++20 code. CMake defaults the CUDA host compiler to `/usr/bin/g++-12`; override
+`CMAKE_CUDA_HOST_COMPILER` for another supported toolchain. Architecture
+selection lives in `cmake/CumesCudaArchitectures.cmake` and accepts an explicit
+`CMAKE_CUDA_ARCHITECTURES` override. These CUDA settings do not apply to Wasm.
 
-- Positional `INPUT_FILE` is mandatory. `--output <path>` / `-o <path>`
-  writes the native PEST-like result and overrides the default
-  `$PWD/cumes-output.bin`. `--boozer-output <path>` instead writes the Boozer
-  result directly from the converged in-memory snapshot. Its `.bin`, `.nc`,
-  `.h5`, or `.hdf5` suffix selects the backend; every backend stores six real
-  Fourier parity families and no complex values. The two result-output options
-  are mutually exclusive.
-- `--restart <checkpoint>` / `-r <checkpoint>` and `--checkpoint <path>` /
-  `-c <path>` — read/write the v2
-  checkpoint (`docs/output-formats.md` §4).
-- Every backend writes the schema-v1 container (versioned binary/NetCDF/HDF5
-  with full provenance; a `.nc`/`.h5` suffix dispatches to the host-only
-  NetCDF/HDF5 writers when compiled in). Formats: `docs/output-formats.md`.
-- Strict behavior is the DEFAULT: unknown input keys are validation errors and
-  unknown suffixes are rejected. `--compatibility` restores vmecpp-style
-  warn-and-ignore for unknown input keys (input-side only; the output policy
-  stays strict). Warnings print as `cuMES: WARNING: ...` on stderr.
+### WebGPU / WebAssembly
 
-Environment variables:
+On this machine, the Emscripten SDK and shared cache can be used as follows:
 
-| Variable | Effect |
-| -------- | ------ |
-| `CUMES_FORCE_GENERIC` | `=1` forces the generic cuFFT backend on axisymmetric shapes (default: the axisymmetric direct-poloidal backend) |
-| `CUMES_FORCE_CATMULL_PROLONGATION` | `=1` selects the previous four-point Catmull-Rom coarse-to-fine transfer |
-| `CUMES_FORCE_LINEAR_PROLONGATION` | `=1` selects two-point linear coarse-to-fine transfer |
-| `CUMES_RADIUS_REFERENCE` | `=0` opts out of default reference-plus-displacement storage for fixed-boundary 3-D float solves |
-| `CUMES_GEOMETRY_PRECISION` | `compensated` uses selective float-float/double-double geometry reconstruction in fixed-boundary 3-D solves; `native` is the default (see `docs/w7x-float-float.md` and `docs/w7x-double-compensation.md`) |
-| `CUMES_MAX_ITER` | iteration cap; overrides every stage's cap in a multigrid run |
-| `CUMES_DELT0` | absolute initial time-step override (bypasses qualified axisymmetric/free-boundary stage scaling) |
-| `CUMES_DTAU_FLOOR` | floor on the damping parameter dtau |
-| `CUMES_DISABLE_STEP_RECOVERY` | `=1` disables qualified fixed-boundary time-step recovery and restores the reference controller trajectory |
-| `CUMES_SEED_ENVELOPE` | override cold-start shaping (fixed 3-D `0.12`, free 3-D coarse/fine `0.12`/`0.03`, coarse fixed-axisymmetric `-0.07`; `0` restores `s^(m/2)`) |
-| `CUMES_AXISYM_LAMBDA_SEED` | override the axisymmetric geometric lambda predictor scale (fixed/free defaults `0.65`/`1.0`; `0` restores zero lambda) |
-| `CUMES_VACUUM_ACTIVATION_THRESHOLD` | override the free-boundary vacuum handover residual sum (default `3e-2`; `1e-3` restores the reference gate) |
-| `CUMES_DUMP` | master switch for dump/debug output |
-| `CUMES_DUMP_ITER` / `CUMES_E2_START` | which iterations the windowed dump files fire on |
-
-**Precision:** every computation is `template<typename T>` (double or float);
-`Real` (include/vmec_types.h) is the compile-time switch
-(`-DCUMES_USE_FLOAT=ON`). Tests instantiate both types in every build. On-disk
-state stays double (Python scripts unaffected); dump files are T-native. Float
-runs hard-error at startup when any `ftol_array` entry is below 1e-6; this
-input floor is not a convergence guarantee. Fixed-boundary 3-D float defaults
-to radius-reference storage. W7-X at all-stage `1e-5` also needs the opt-in
-`CUMES_GEOMETRY_PRECISION=compensated` correction to converge on ns=99. The per-pass control
-record (residuals, Jacobian stats, force-norm factors) uses T on device. Float
-norm sums use float-float accumulation and store float results. The host widens
-the record after transfer; `IterationController<double>` consumes the same
-device-normalized residuals. CTest audits both float CUDA libraries for FP64
-instructions (ADR-0015, superseding the float policy in ADR-0001).
-
-## Directory Structure
-
-```
-cuMES/
-├── CMakeLists.txt          Library split + executable/tests (architecture.md §2)
-├── include/
-│   ├── vmec_types.h        `Real` alias + parity/basis convention comment
-│   ├── solver.cuh          SolverResult<T> + solver_run declaration (app shim)
-│   ├── output.cuh          output_print declaration (app shim)
-│   ├── fft_traits.h        FftTraits<T>: cuFFT type/enum/exec dispatch
-│   ├── JsonParser.h        The JSON engine of the input config parser (cumes_config_json)
-│   └── cumes/              The operator library (see below)
-├── src/
-│   ├── main.cu             Entry point: validate config → multigrid stage loop → output
-│   ├── kernels/            Templated kernel bodies (<mod>_impl.cuh), one file per operator
-│   ├── <mod>_{double,float}.cu   Explicit instantiation TUs (cumes_cuda_{double,float})
-│   │                       modules: fourier geometry forces solver profiles precon
-│   │                                constraint prolongation axisymmetric
-│   ├── cumes/              Host-side C++ (config, io, core, runtime)
-│   └── output*.cpp         Binary/NetCDF/HDF5 writers + format dispatcher
-├── tests/                  Standalone correctness tests (no framework) + support/
-├── benchmarks/             fixed_iteration + graph_overhead harnesses
-├── scripts/                four compare_*.cpp tools + standalone build script
-├── inputs/                 solovev.json, w7x.json (vmecpp indata schema)
-└── docs/                   See the documentation map below
+```bash
+source /lustre/qzhong/emsdk/emsdk_env.sh
+export EM_CACHE="$PWD/../tmp/cumes-emscripten-cache"
+git submodule update --init --recursive deps/webgpu-fft deps/vacuum-field
+emcmake cmake --preset webgpu
+cmake --build --preset webgpu -j
+ctest --preset webgpu
 ```
 
-`include/cumes/`: `config` (ProblemSpec → ValidatedProblem, DeviceParams<T>),
-`core` (GridShape, checked arithmetic), `io` (output specs, checkpoint,
-versioned containers), `runtime` (DeviceBuffer/DeviceArena/Stream), `state`
-(spectral/real-space storages, typed views), `transforms` (SpectralOperator +
-ToroidalFftOperator + AxisymmetricOperator), `physics`
-(Geometry/MagneticField/Force/Constraint/Profiles), `numerics`
-(Residual/Descent/Prolongation/Preconditioner + tridiagonal backends), `solver`
-(EquilibriumOperator, IterationController, StageSolver, MultigridSolver).
+The preset builds in `../tmp/cumes-build-webgpu`; an explicit `-B` can select
+an isolated directory. It sets `CUMES_BACKEND=WEBGPU`,
+`CUMES_PRECISION_POLICY=mixed-float`, and `CUMES_USE_FLOAT=ON`. The WebGPU build
+must not enable CUDA or require native NetCDF/HDF5 libraries.
 
-## Architecture: Data Flow per Iteration
+Serve the generated `webgpu/cumes_webgpu.html` over a secure context. The
+existing local nginx preview for the preset is:
+`http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html`.
+Use the URL matching the actual build directory and reload the generated HTML
+after rebuilding; cached HTML can still select an older versioned runtime.
 
-```
-Spectral coefs (rmnc, zmns, lmnc)              ← degrees of freedom
-         │
-         ▼  [ToroidalFftOperator::inverse_fused — inverse DFT + rCon/zCon]
-Real-space geometry R, Z, λ + derivatives      (ns × ntheta × nzeta)
-         │
-         ▼  [GeometryOperator / MagneticFieldOperator]
-Half-grid: √g, g_uu, g_uv, g_vv, B^θ, B^ζ    (ns-1 × ntheta × nzeta)
-         │
-         ▼  [FreeBoundaryOperator when lfreeb: device bridge + host NESTOR]
-Vacuum LCFS field / pressure jump               (fixed-boundary path bypasses)
-         │
-         ▼  [ForceOperator]
-Real-space forces F_R, F_Z, F_λ                (ns × ntheta × nzeta)
-         │
-         ▼  [ConstraintOperator (bandpass) + forward DFT]
-Spectral forces                                 (3, mnmax, ns)
-         │
-         ▼  [ResidualOperator + Preconditioner + DescentOperator]
-v = fac×(b1·v + delt·f) ,  x += delt·v        (Garabedian accelerated descent)
-```
+- Default page: boundary setup/editor; users can switch fixed/free modes.
+- `?mode=test`: numerical verification in a worker.
+- `?solve=w7x`: W7-X example, started by its Start button; `&grids=3` selects
+  multigrid.
+- `?boundary=free&coils=solovev` (or `w7x`, `cth_like`): free-boundary preset;
+  `&run=1` starts it.
+- `precision=float|double` selects scalar-f32 or paired-f32 plasma arithmetic.
+  Paired words provide higher precision; this is not native WGSL f64. The
+  fixed editor defaults to scalar, while free-boundary and W7-X examples
+  default to paired precision.
 
-The per-iteration DAG is composed in `EquilibriumOperator::enqueue`; the
-free-boundary path uses its `enqueue_prefix`/`enqueue_suffix` split around the
-host NESTOR update (`src/kernels/solver_impl.cuh`). Fixed-boundary execution
-retains one deliberate host fence per iteration; a scheduled vacuum block adds
-the fence needed to hand LCFS data to the host solver. The persistent vacuum
-solver and its OFF → INITIALIZING → INITIALIZED → ACTIVE state survive
-multigrid stages. All operators own their device buffers (directly or via one
-`DeviceArena` carved per stage) and expose typed view bundles; no legacy
-workspace structs remain.
+## Code map and architecture contracts
 
-## Key Design Decisions
+| Area | Implementation |
+| --- | --- |
+| Shared configuration, layout, I/O, host controller | `include/cumes/`, `src/cumes/` |
+| Native entry point / public embedding API | `src/main.cu`, `include/cumes/solver/equilibrium_solver.hpp` |
+| CUDA operators | `include/cumes/{transforms,physics,numerics,solver}/`, `src/kernels/`, `src/*_{double,float}.cu` |
+| WebGPU operators / shaders | `include/cumes/webgpu/`, `src/webgpu/`, `src/webgpu/shaders/` |
+| Browser UI, worker, Emscripten bridge, presets | `webgpu/` |
+| Shared vacuum library / browser coupling | `deps/vacuum-field/`, `src/free_boundary_impl.cuh`, `src/webgpu/vacuum.cpp` |
+| Native tests / browser harnesses | `tests/`, `scripts/test_webgpu_*.mjs`, `scripts/webgpu_*.mjs` |
 
-- **cuFFT transforms** — batched 1D real FFT in the toroidal (ζ) direction +
-  direct poloidal synthesis/reduction; the constraint module (rCon/zCon,
-  de-aliasing) reuses the same plans/scratch with compact sub-batch plans
-  (architecture.md §3).
-- **Column-major storage** — `array[point + surface*nZnT]` for real space,
-  `array[surface + mode*ns]` for spectral.
-- **Staggered half-grid** — dynamic variables on full grid (flux surfaces);
-  metric elements on half grid (between surfaces). Prevents checkerboard
-  instability. Matches VMEC convention.
-- **Free-boundary coupling** — a persistent `FreeBoundaryOperator` wraps the
-  CUDA NESTOR solver in `deps/vacuum-field`, schedules full/partial vacuum
-  updates with `nvacskip`, applies the LCFS vacuum-pressure force and the
-  free-boundary preconditioner pedestal, and performs the vmecpp-compatible
-  activation soft restart. Vacuum state and response data persist across
-  multigrid refinement; checkpoint restarts enter as hot vacuum starts.
-- **All GPU allocations at startup** — scratch arrays allocated once, reused
-  every iteration. Zero `cudaMalloc` calls in the hot loop.
-- **Host checks convergence** — residual reduction runs on GPU; the scalar
-  comparison `fsq < ftol` happens on host.
-- **Precision via templates** — `T` = double (verified default; residuals to
-  ~1e-14) or experimental float (ftols >= 1e-6; convergence is case-dependent).
-  cuFFT dispatches through `FftTraits<T>`.
-- **Explicit instantiation split** — each operator's kernels live in
-  `src/kernels/<mod>_impl.cuh`, included only by its `_double.cu`/`_float.cu` TUs (one
-  scalar type per TU), so kernels may declare dynamic shared memory directly
-  as `extern __shared__ T[]`.
-- **Config validation** — the JSON input is parsed and validated host-side into
-  a `ValidatedProblem` (`cumes-config-v1` schema, `configs/schema-v1.json`);
-  no solver code parses input.
-- **Class A / Class B changes** — Class A = bit-identical to cuMES's own frozen
-  trajectory (Solovev `251→199→456` FSQR 9.583e-17, W7-X `1877→1617→2011`
-  FSQR 9.778e-13) — the internal regression oracle for every refactor,
-  independent of any vmecpp bit-exactness target. Class B = ULP-equivalent
-  with identical controller decisions (iteration counts + restart sequence),
-  a deliberate re-freeze. Verify with `build/compare_runs` + CTest
-  (verification.md §6).
+Preserve these contracts unless the task intentionally changes them:
 
-## Coding Conventions
+- Per-pass mathematics: spectral state → inverse transforms → geometry and
+  magnetic field → scheduled vacuum update → MHD and constraint forces →
+  forward transforms → residuals, preconditioner, descent, and controller.
+- Six spectral families are ordered `Rcc, Zsc, Lsc, Rss, Zcs, Lcs`, with
+  `surface + mode * ns` within a family. Real-space arrays use
+  `point + surface * nZnT`, with theta contiguous. Full-grid state and
+  half-grid metric/field quantities are staggered. Follow
+  `docs/data-layout.md` and `docs/mathematics.md` for parity, normalization,
+  axis/LCFS, and radius-reference semantics; a raw displaced slab is not a
+  complete physical state.
+- CUDA operators own buffers through `DeviceBuffer`/`DeviceArena`, expose
+  typed views, and use centralized CUDA/cuFFT error checks. Allocate reusable
+  device scratch at stage setup, not in the iteration loop. Kernel modules
+  normally use `_impl.cuh` bodies and float/double instantiation TUs; follow
+  the existing module's placement rather than moving files for conformity.
+- WebGPU operators use WebGPU buffers, command encoders, and asynchronous
+  completion under `cumes::webgpu`. Preserve fixed-boundary residency and
+  batched readbacks. CUDA allocation, stream, cuFFT, and `.cu` conventions
+  apply to the native backend, not to the browser operators.
+- Free-boundary coupling retains vacuum activation/restart state, `nvacskip`
+  scheduling, LCFS pressure forces, preconditioner terms, and multigrid
+  persistence. Reuse `deps/vacuum-field` and the existing coupling. The browser
+  compiles its HOST backend to Wasm, sharing numerical kernels with CUDA;
+  vacuum work runs in the solver worker.
+- Browser free-boundary assets contain coil geometry and small configuration
+  files. Generate field grids in memory with the existing MAKEGRID code.
+  Preserve Solovev/W7-X/cth_like selection and coil uploads; do not ship field
+  grids or add NetCDF solely for the browser path.
+- Keep the dependency direction from cuMES to its libraries. Optimizer
+  objectives and policy belong to meow/integration code; use the public
+  `EquilibriumSolver` API for embedding rather than the CLI or output files.
 
-### Commits
+## Precision, inputs, and output
 
-- Commit meaningful, coherent coding steps progressively as they are completed
-  and validated; do not wait until the entire task is finished. Keep each
-  commit focused and reviewable.
-- Keep routine test logs, benchmark captures, and progress notes local. Do not
-  create commits solely to record them; include relevant validation summaries
-  with the associated implementation commit.
+- Native operators support float/double templates; `Real` selects the CLI's
+  type. CUDA float device arithmetic must remain free of FP64 instructions;
+  norm sums use float-float accumulation and the host controller uses double
+  (ADR-0015 supersedes ADR-0001). This restriction does not prohibit host/Wasm
+  double arithmetic, including the browser vacuum solve.
+- Native float inputs reject stage tolerances below `1e-6`; this is an input
+  floor, not a convergence guarantee. Fixed-boundary 3-D float uses radius
+  reference storage; the qualified W7-X `1e-5` case also uses compensated
+  geometry. Browser scalar/paired behavior has separate qualification;
+  scalar free-boundary W7-X can stall above tolerance.
+- Parse/validate input through the shared config API. Unknown keys are errors
+  by default; native `--compatibility` changes input handling only. Native
+  library solves ignore process-global `CUMES_*` controls unless requested.
+  See `README.md` for CLI controls and `webgpu/browser_bridge.js` for browser
+  options; do not assume a native environment variable configures the page.
+- Native `INPUT_FILE` is positional. `--output` defaults to
+  `$PWD/cumes-output.bin`; `--boozer-output` is an alternative, mutually
+  exclusive output. Known suffixes select compiled output backends; unknown
+  suffixes and unavailable backends are errors.
+- Configuration schema v1 is distinct from the native binary version (currently
+  8) and checkpoint version (currently 6). Spectral state remains double on
+  disk. Preserve reader compatibility and full provenance. Consult
+  `docs/output-formats.md`, `configs/schema-v1.json`, and the readers/writers
+  before changing serialization.
 
-### Naming
+## Coding conventions
 
-- **Types:** `PascalCase` (e.g., `DeviceParams`, `ToroidalFftOperator`)
-- **Functions:** `snake_case` (e.g., `solver_run`, `eval_two_power`)
-- **Variables:** `snake_case` (e.g., `d_rmnc`, `delta_s`, `nZnT`);
-  compact physics/Fortran-derived abbreviations are exempt and stay as-is
-  (`ns`, `mnmax`, `delt`, `dtau`, `fsqr`, `rmnc`, `nZnT`, `jF`-style index
-  names)
-- **Constants:** `CAPITAL_SNAKE_CASE` (e.g., `SIGN_JACOBIAN`, `MU_0`),
-  including scoped-enum values (`VERIFY_DOUBLE`, `NONE`, `OK`)
-- **Templated types:** every templated struct/class aliases its scalar type
-  parameter as `using val_type = T;` (first public member; secondary type
-  params get descriptive aliases like `error_type`)
-- **Host pointers:** raw pointers in host code only where absolutely
-  necessary (CUDA/C-library interop, `main(argc, argv)` plumbing,
-  `SpectralStorage::family_ptr()`/`state_slab()` device escape hatches, and
-  device-side kernel/operator members). Everything else: `std::vector`/
-  `std::span`/`std::string_view`, `std::optional<std::reference_wrapper<T>>`
-  for nullable params, `DeviceBuffer` for test-harness device allocations
-- **Device pointers:** `d_` prefix; **host pointers:** `h_` prefix
-- **Operators:** `cumes` namespace, RAII classes owning their buffers
+- Follow `.clang-format` for C++/CUDA and nearby conventions for JavaScript and
+  WGSL. Avoid reformatting unrelated code. The installed pre-commit hook
+  formats and re-stages whole staged C++/CUDA files; inspect the resulting
+  diff, especially when a file also contains unrelated unstaged changes.
+- Types: `PascalCase`; functions/variables: `snake_case`; constants and scoped
+  enum values: `CAPITAL_SNAKE_CASE`. Keep established physics abbreviations
+  such as `ns`, `mnmax`, `delt`, `fsqr`, `rmnc`, and `nZnT`.
+- Scalar-templated types expose `using val_type = T;` as their first public
+  member. Use descriptive aliases for secondary type parameters.
+- Prefer RAII, `std::vector`, `std::span`, `std::string_view`, and
+  `std::optional<std::reference_wrapper<T>>` for nullable borrowed values.
+  Raw pointers belong at necessary device/C-library interop boundaries and
+  existing device-view escape hatches. Use `d_`/`h_` for device/host pointers.
+- Keep numerical expressions and ownership visible. Share setup and scratch
+  when they are reused; add caching or abstraction to address a demonstrated
+  need, not a hypothetical one.
 
-### GPU Memory
+## Validation matched to the change
 
-- Column-major throughout: `index(point, surface) = point + surface * nZnT`
-- All device allocations via RAII (`DeviceBuffer`/`DeviceArena`), error-checked
-  through the centralized `cumes::check_cuda`/`check_cufft` in `cumes/runtime`
-- New device code belongs behind an operator class with typed views; kernel
-  bodies live in the module's `src/kernels/<mod>_impl.cuh`
+- Documentation-only changes: check accuracy, paths, commands, and the diff;
+  no solver rebuild is needed. For UI/bridge changes, run the relevant existing
+  Node checks and browser smoke test. For shader/operator/controller changes,
+  build the affected backend and run its relevant numerical gates. Shared
+  physics or vacuum changes need coverage of each affected backend and
+  precision.
+- Existing CTest and browser harnesses are the starting point. Add regression
+  tests for meaningful behavior or numerical defects, using analytic cases,
+  invariants, and independent scalar references. Avoid tests that only repeat
+  the implementation or pin incidental markup. Native tests are standalone
+  executables; shared CUDA helpers live in
+  `tests/include/cumes_test_cuda_helper.cuh`.
+- Classify numerical changes using `docs/verification.md` §6: Class A preserves
+  arithmetic and requires bitwise outputs/controller trajectories; Class B
+  uses justified numerical error bounds with unchanged classification and
+  controller decisions; Class C changes the algorithm and requires convergence,
+  invariants, robustness, independent comparison, and an ADR. Compare the
+  recorded baseline with matching inputs, flags, precision, and backend;
+  historical CUDA-double iteration counts are not browser-float targets.
+- Browser CTest checks do not replace executing WGSL on a real adapter.
+  `scripts/webgpu_validate_run.mjs` handles Chrome conformance/solve checks;
+  `scripts/webgpu_firefox_validate.mjs` uses local headless Firefox through
+  geckodriver. Follow `docs/webgpu-port.md` for setup and numerical gates.
+- Run GPU solves/benchmarks serially on each adapter. With the user's forwarded
+  Chrome at `localhost:9333`, create and target your own tabs; preserve the
+  user's tabs and settings. Use `CUMES_CLOSE_TEST_TAB=1` with the Chrome
+  validator for cleanup. Apply Firefox test preferences only to a disposable
+  profile. An empty adapter name does not itself mean WebGPU is unavailable.
+- Once the relevant checks pass, broaden testing when shared-code impact,
+  failures, unresolved concerns, or qualification requirements justify it.
+  Report unavailable checks explicitly rather than implying they passed.
+- For speed claims, compare warmed repeated runs on the same workload and
+  configuration, retain correctness checks, and separate setup, iteration,
+  and output time. State the hardware/browser and measurement variability.
+  Use `docs/performance.md` for full performance qualification; a result on
+  one adapter supports a claim for that measured setup only.
 
-### API pattern
+## Documentation to consult as needed
 
-- Each operator module has a `.hpp` header (types + declarations) under
-  `include/cumes/<area>/` and kernel bodies in `src/kernels/<mod>_impl.cuh`,
-  explicitly instantiated by `src/<mod>_{double,float}.cu`
-- Host-side modules are plain C++ under `src/cumes/`
-
-### Tests
-
-- Standalone executables, no framework dependency
-- CPU reference implementation mirrors GPU kernel logic
-- Pattern: create known input → run GPU → run CPU reference → compare
-- Shared builders live in `tests/support/cumes_test_support.cuh`
-
-## Status
-
-The CUDA overhaul is design-complete (phases 0–11 + the four closure steps +
-post-overhaul follow-up and reader-rank hardening, all re-verified Class A
-byte-identical against the frozen `dc0d0c4` baseline — full record in
-`docs/overhaul-history.md`). Current qualified results are below; both seed and
-controller diagnostic opt-outs retain cuMES's own audited frozen trajectories,
-independent of any vmecpp bit-exactness target:
-
-- Solovev: tuned axisymmetric cold start gives 235 → 193 → 387 effective
-  iters (815 total), final FSQR 9.792e-17. A final-grid checkpoint replay
-  converges at iteration 1 with the identical residual triple.
-  `CUMES_SEED_ENVELOPE=0 CUMES_AXISYM_LAMBDA_SEED=0 CUMES_DELT0=0.9`
-  restores the audited 251 → 199 → 456 trajectory and FSQR 9.583e-17.
-- W7-X: shaped cold start plus qualified recovery gives 1315 → 1559 → 1633
-  effective iters (total 4507), final FSQR 9.967e-13. Restarting the resulting
-  checkpoint on the final grid converges at iteration 1 with the same residual
-  triple. `CUMES_SEED_ENVELOPE=0` restores the recovery-only 4944-pass
-  trajectory. Disabling both seed shaping and recovery restores
-  1877 → 1617 → 2011 (total 5505), FSQR 9.778e-13.
-- Single-grid regression (`n_grids=1`, ns_array={99}): shaped cold start plus
-  step recovery converges in 2627 effective iters, FSQR 9.968e-13.
-  `CUMES_SEED_ENVELOPE=0` restores the 2711-iteration recovery-only result;
-  disabling both changes restores the 2953-iteration reference trajectory.
-- The multigrid final state is a different member of the (near-degenerate)
-  λ-gauge family than the single-grid and vmecpp trajectories. This does not
-  override cuMES's residual convergence criterion: restarting the recovered
-  multigrid checkpoint converges at iter 1 (a genuine fixed point).
-
-Known issues:
-
-1. **Axis representation (state-file only).** The dumped axis m>0 coefficients
-   are constant-extrapolated from j=1 (`extrapolate_axis_kernel`), so they equal
-   the j=1 values (vmecpp keeps them 0). The real-space axis geometry agrees
-   (1e-15) and axis coefficients do not enter the forces — this shows up only
-   when diffing state files / wout axis rows.
-2. **Float builds require relaxed tolerances.** Stage ftols below 1e-6 are
-   rejected. W7-X at 1e-5 needs both the default radius reference and opt-in
-   poloidal float-float reconstruction; broader float qualification remains
-   open. Measurements and commands: `docs/w7x-float-float.md`.
-
-## Scope (vs VMEC++)
-
-| Feature | Status |
-| ------- | ------ |
-| FFT-accelerated transforms | Implemented (cuFFT: batched 1D ζ-FFT + direct poloidal) |
-| Multigrid grid sequencing | Implemented (`ns_array`/`niter_array`/`ftol_array` stage loop + `Prolongation`) |
-| De-aliased constraint force | Implemented (bandpass inside `ConstraintOperator`, fused rCon/zCon in `inverse_fused`) |
-| Hot restart / checkpointing | Implemented (v2 checkpoint: `--checkpoint` / `--restart`) |
-| Adaptive time-step (Jacobian resets) | Implemented (restart/maintenance delt control, vmecpp VMEC_8_52) |
-| Free boundary / vacuum solver | Implemented: NESTOR vacuum field, LCFS edge force/preconditioner, activation state machine, multigrid persistence, and hot restart; double Solovev qualified, general 3-D/float qualification pending |
-| Mercier stability, jxbout, wout | Not implemented — post-processing, not needed for the core loop |
-| Python interface | Not implemented — C++/CUDA executable only |
-
-## Documentation Map
-
-| Document | Contents |
-| -------- | -------- |
-| `docs/architecture.md` | operator library, build/library split, per-iteration pipeline, dependency rules |
-| `docs/mathematics.md` | normative numerical contracts: coordinates, Fourier representation/quadrature, geometry, fields, force, constraint, preconditioner, damping/descent, prolongation |
-| `docs/data-layout.md` | storage/layout contracts (state, real-space, quadrature) |
-| `docs/output-formats.md` | on-disk containers: v1 binary/checkpoint/NetCDF/HDF5, Python reader |
-| `docs/dump-files.md` | the `CUMES_DUMP` diagnostics: file manifest, formats, naming scheme |
-| `docs/verification.md` | verification tiers/gates, equivalence classes (Class A/B/C), review checklist |
-| `docs/performance.md` | measured performance + acceptance policy |
-| `docs/library-api.md` | public solver/config API, packaging, and least-squares optimizer integration contract |
-| `docs/overhaul-history.md` | phase-by-phase overhaul record and closeout handovers |
-| `docs/cuda-overhaul-blueprint.md` | the original overhaul plan |
-| `docs/adr/` | architecture decision records |
+| Document | Use when working on |
+| --- | --- |
+| `docs/architecture.md`, `docs/library-api.md` | Operator ownership, dependency direction, embedding, tangents |
+| `docs/mathematics.md`, `docs/data-layout.md` | Numerical formulas, Fourier/parity conventions, storage |
+| `docs/output-formats.md`, `docs/dump-files.md` | Results, checkpoints, scientific fields, diagnostic dumps |
+| `docs/verification.md`, `docs/performance.md` | Numerical equivalence gates, qualification, benchmarks |
+| `docs/webgpu-port.md`, `webgpu/presets/README.md` | Browser integration, precision, browser testing, coil provenance |
+| `docs/adr/0012-bspline-fixed-boundary-transfer.md` | Native multigrid transfer and its diagnostic alternatives |
+| `docs/adr/0015-float-only-device-arithmetic.md`, `docs/w7x-float-float.md`, `docs/w7x-double-compensation.md` | Precision policy and qualified compensated geometry |
+| `docs/adr/`, `docs/overhaul-history.md`, `docs/cuda-overhaul-blueprint.md` | Design decisions and historical implementation evidence |
