@@ -615,7 +615,7 @@ __global__ void inverse_pack_kernel(
 //      vv = c2*sin + c3*cos
 //   λ: v = c0*sin + c1*cos      vu = c0*mcos + c1*msin
 //      vv = -(c2*sin + c3*cos)
-template <typename T, bool FuseRzCon = false, int OddPrecision = 0>
+template <typename T, int SLOT0, bool FuseRzCon = false, int OddPrecision = 0>
 __global__ void inverse_accumulate_kernel(
     const T* __restrict__ zeta_real,
     const T* __restrict__ cos_th,
@@ -639,7 +639,10 @@ __global__ void inverse_accumulate_kernel(
     T* __restrict__ zCon,
     const cumes::FloatFloat* d_odd_scale = nullptr,
     const cumes::FloatFloat* d_odd_toroidal = nullptr) {
-    // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
+    static_assert(SLOT0 == 0 || SLOT0 == 4 || SLOT0 == 8);
+    // SLOT0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11.
+    // Each launch has at most one constraint output. Specialize only that
+    // choice; keep the runtime basis expressions and their contraction order.
     // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
     // coalesce; the m-loop shared reads (sm[.. + k]) become broadcasts.
@@ -680,7 +683,7 @@ __global__ void inverse_accumulate_kernel(
     T v0o = T(0), v1o = T(0), v2o = T(0);
     using Accumulator = cumes::Compensated<T>;
     Accumulator odd_sum;
-    T rcon = T(0), zcon = T(0);
+    T con = T(0);
     for (int m = 0; m < mpol; ++m) {
         const T* sm = sh + m * k_tile;
         T c0 = sm[0 * mstride + k - k0], c1 = sm[1 * mstride + k - k0];
@@ -693,13 +696,15 @@ __global__ void inverse_accumulate_kernel(
         T v0 = fac * (c0 * t0 + c1 * t1);
         T v1 = fac * (c0 * u0 + c1 * u1);
         T v2 = signV * fac * (c2 * t0 + c3 * t1);
-        if constexpr (FuseRzCon) {
+        if constexpr (FuseRzCon && SLOT0 != 8) {
             // rCon from the R slots (c0=Rcc cos, c1=Rss sin), zCon from
             // the Z slots (c0=Zsc sin, c1=Zcs cos) — no fac/maxsc, the
             // full-field reconstruction.
             T xmpq = T(m) * T(m - 1);
-            rcon += xmpq * (c0 * cosm + c1 * sinm);
-            zcon += xmpq * (c0 * sinm + c1 * cosm);
+            if constexpr (SLOT0 == 0)
+                con += xmpq * (c0 * cosm + c1 * sinm);
+            else
+                con += xmpq * (c0 * sinm + c1 * cosm);
         }
         if (m % 2 == 1) {
             // Only the odd position sum changes. Derivatives, even modes,
@@ -758,10 +763,10 @@ __global__ void inverse_accumulate_kernel(
         o0[idx] = v0o;
     o1[idx] = v1o;
     o2[idx] = v2o;
-    if constexpr (FuseRzCon) {
-        if (rCon != nullptr) rCon[idx] = rcon;  // R-slot launch only
-        if (zCon != nullptr) zCon[idx] = zcon;  // Z-slot launch only
-    }
+    if constexpr (FuseRzCon && SLOT0 == 0)
+        if (rCon != nullptr) rCon[idx] = con;
+    if constexpr (FuseRzCon && SLOT0 == 4)
+        if (zCon != nullptr) zCon[idx] = con;
 }
 
 // The 9 combined (e+o) real-space arrays (used by the dump machinery and the
@@ -890,14 +895,14 @@ static void inverse_pipeline(
             odd_float_float ? odd_float_float->scale() : nullptr;
         const cumes::FloatFloat* d_toroidal =
             odd_float_float ? odd_float_float->toroidal() : nullptr;
-        inverse_accumulate_kernel<T, FuseRzCon, OddPrecision>
+        inverse_accumulate_kernel<T, 0, FuseRzCon, OddPrecision>
             <<<grd, blk, inv_smem, stream>>>(
                 d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns,
                 p.mpol, p.ntheta, p.nzeta, p.nZnT, 0, geom.r_e.data(),
                 geom.ru_e.data(), geom.rv_e.data(), geom.r_o.data(),
                 geom.ru_o.data(), geom.rv_o.data(), k_tile, rCon, nullptr,
                 d_scale, d_toroidal);
-        inverse_accumulate_kernel<T, FuseRzCon, OddPrecision>
+        inverse_accumulate_kernel<T, 4, FuseRzCon, OddPrecision>
             <<<grd, blk, inv_smem, stream>>>(
                 d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns,
                 p.mpol, p.ntheta, p.nzeta, p.nZnT, 4, geom.z_e.data(),
@@ -933,7 +938,7 @@ static void inverse_pipeline(
     } else {
         positions.template operator()<0>();
     }
-    inverse_accumulate_kernel<T, FuseRzCon><<<grd, blk, inv_smem, stream>>>(
+    inverse_accumulate_kernel<T, 8><<<grd, blk, inv_smem, stream>>>(
         d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns, p.mpol,
         p.ntheta, p.nzeta, p.nZnT, 8, geom.l_e.data(), geom.lu_e.data(),
         geom.lv_e.data(), geom.l_o.data(), geom.lu_o.data(), geom.lv_o.data(),
