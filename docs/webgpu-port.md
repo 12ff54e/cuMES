@@ -42,8 +42,9 @@ without another solve and keeps the angle when switching between 2D and 3D.
 A small 3-D inset in the top-right corner highlights the selected cut in orange
 and displays its zeta angle. It reuses the full view's WebGPU canvas, geometry
 buffers, camera, and coil visibility; the slider updates only the section line.
-The inset can still be orbited and zoomed. Axisymmetric results show the inset
-at zero degrees and do not show the angle control.
+The inset can still be orbited and zoomed. The **3D inset** button toggles it
+and remembers the choice across reloads. Axisymmetric results show neither
+the inset nor its toggle or angle control.
 
 The JSON panel retains access to profiles, field periods, angular/radial resolution,
 and iteration budgets. W7-X fixed-boundary edits and free-boundary setups are

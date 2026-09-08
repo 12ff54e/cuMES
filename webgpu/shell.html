@@ -57,7 +57,7 @@
     .inset-angle { position:absolute; top:7px; right:8px; color:var(--orange); background:#07101acc;
       border-radius:4px; padding:2px 5px; font-size:11px; font-variant-numeric:tabular-nums; pointer-events:none; }
     .result-head-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; }
-    #show-coils[aria-pressed="true"] { color:#ff9d72; border-color:#ab6242; background:#ff9d7212; }
+    .result-head-actions > button[aria-pressed="true"] { color:#ff9d72; border-color:#ab6242; background:#ff9d7212; }
     #coil-view-note { margin:0; padding:8px 20px; }
     .axis-label { fill:#7f90a6; font-size:12px; }
     .grid-line { stroke:#29394c; stroke-width:1; }
@@ -253,7 +253,8 @@
       <div class="result-column">
       <section class="panel results">
         <div class="panel-head"><h2 id="result-title">Flux surfaces</h2><div class="result-head-actions"><span class="tag" id="preview-label" hidden>Boundary preview</span>
-          <button id="show-coils" class="secondary" type="button" aria-pressed="true" title="Show or hide coil geometry" hidden>Coils</button><div class="mode-switch" id="result-switch" hidden>
+          <button id="show-coils" class="secondary" type="button" aria-pressed="true" title="Show or hide coil geometry" hidden>Coils</button>
+          <button id="show-inset" class="secondary" type="button" aria-pressed="true" aria-controls="result-3d" title="Show or hide the 3D inset" hidden>3D inset</button><div class="mode-switch" id="result-switch" hidden>
           <button id="mode-result-2d">2D cut</button><button id="mode-result-3d" class="active">3D view</button></div></div></div>
         <div class="plot-wrap"><svg id="result-plot" viewBox="0 0 700 520" aria-label="Converged flux-surface cross-section"></svg>
           <div class="orbit-view">
@@ -467,21 +468,24 @@
       value('coil-view-note').hidden=!(available&&showCoils&&state?.coils?.clipped)}
     window.cumesCoilsChanged=updateCoils;
     value('show-coils').addEventListener('click',()=>{showCoils=!showCoils;localStorage.setItem('cumes.coils.visible',String(showCoils));updateCoils()});
+    let showInset=localStorage.getItem('cumes.inset.visible')!=='false';
     let resultMode='3d',resultData=null,resultSection=null;function showResultMode(mode){resultMode=mode;const svg=value('result-plot'),canvas=value('result-3d');if(!svg||!canvas)return;
-      const inset=mode==='2d'&&appMode&&!!resultData?.fourier;
+      const slice=mode==='2d'&&appMode&&!!resultData?.fourier?.ntor,inset=slice&&showInset;
+      value('show-inset').hidden=!slice;value('show-inset').setAttribute('aria-pressed',String(showInset));
       svg.toggleAttribute('hidden',mode==='3d');canvas.hidden=mode!=='3d'&&!inset;
       canvas.parentElement.classList.toggle('orbit-inset',inset);value('result-inset-angle').hidden=!inset;
       if(canvas.cumesOrbit)canvas.cumesOrbit.section=inset?resultSection:null;
       for(const candidate of ['2d','3d'])value(`mode-result-${candidate}`)?.classList.toggle('active',candidate===mode);
-      value('result-slice-control').hidden=mode!=='2d'||!resultData?.fourier?.ntor;
+      value('result-slice-control').hidden=!slice;
       updateCoils();queueOrbitDraw(canvas)}
+    value('show-inset').addEventListener('click',()=>{showInset=!showInset;localStorage.setItem('cumes.inset.visible',String(showInset));showResultMode(resultMode)});
     value('mode-result-2d')?.addEventListener('click',()=>showResultMode('2d'));value('mode-result-3d')?.addEventListener('click',()=>showResultMode('3d'));
     function drawResultSlice(){if(!resultData)return;const fourier=resultData.fourier,phi=fourier?Number(value('result-slice-angle').value)/100*2*Math.PI/fourier.nfp:0;
       const surfaces=fourier?.ntor?fourierSections(fourier,phi):resultData.surfaces,svg=value('result-plot');
       value('result-slice-angle-value').textContent=`${(phi*180/Math.PI).toFixed(1)}° / ${(360/(fourier?.nfp||1)).toFixed(1)}°`;
       value('result-inset-angle').textContent=`3D · ζ = ${(phi*180/Math.PI).toFixed(1)}°`;
-      resultSection=fourier?surfaces.at(-1).flatMap(([r,z])=>[r*Math.cos(phi),r*Math.sin(phi),z]):null;
-      const canvas=value('result-3d');if(canvas.cumesOrbit){canvas.cumesOrbit.section=resultMode==='2d'?resultSection:null;queueOrbitDraw(canvas)}
+      resultSection=fourier?.ntor?surfaces.at(-1).flatMap(([r,z])=>[r*Math.cos(phi),r*Math.sin(phi),z]):null;
+      const canvas=value('result-3d');if(canvas.cumesOrbit){canvas.cumesOrbit.section=resultMode==='2d'&&showInset?resultSection:null;queueOrbitDraw(canvas)}
       svg.setAttribute('aria-label',`Converged flux-surface cross-section at ζ = ${(phi*180/Math.PI).toFixed(1)} degrees`);svg.replaceChildren();
       const p=projection(surfaces.flat(),700,520,55);drawGrid(svg,700,520);surfaces.forEach((surface,i)=>{const d=surface.map((v,j)=>`${j?'L':'M'}${p.map(v).join(',')}`).join(' '),
         t=surfaces.length<2?1:i/(surfaces.length-1);svg.append(node('path',{d,fill:'none',stroke:`hsl(${188+32*t} 78% ${55+16*t}%)`,'stroke-width':i===surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))})}
