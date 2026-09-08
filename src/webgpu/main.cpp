@@ -104,6 +104,19 @@ std::string message_text(wgpu::StringView message) {
                                : std::string(message.data, message.length);
 }
 
+std::string adapter_name(const wgpu::AdapterInfo& info) {
+    // The device field is an identifier (often a PCI ID), not the model name.
+    std::string name = message_text(info.description);
+    if (!name.empty()) return name;
+    for (const auto field : {info.vendor, info.architecture, info.device}) {
+        const std::string part = message_text(field);
+        if (part.empty()) continue;
+        if (!name.empty()) name += ' ';
+        name += part;
+    }
+    return name.empty() ? "GPU name unavailable" : name;
+}
+
 const char* adapter_type_name(wgpu::AdapterType type) {
     switch (type) {
         case wgpu::AdapterType::DiscreteGPU:
@@ -166,12 +179,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 self->adapter_ = std::move(adapter);
                 wgpu::AdapterInfo info{};
                 if (self->adapter_.GetInfo(&info)) {
-                    const std::string device_name = message_text(info.device);
+                    const std::string device_name = adapter_name(info);
                     const char* type_name = adapter_type_name(info.adapterType);
                     const char* backend_name =
                         backend_type_name(info.backendType);
-                    std::printf("adapter selected: %s (%s, %s)\n",
-                                device_name.c_str(), type_name, backend_name);
+                    std::string details = backend_name;
+                    if (info.adapterType != wgpu::AdapterType::Unknown) {
+                        details = std::string(type_name) + ", " + details;
+                    }
+                    std::printf("adapter selected: %s (%s)\n",
+                                device_name.c_str(), details.c_str());
                     publish_browser_adapter(device_name.c_str(), type_name,
                                             backend_name);
                 }
