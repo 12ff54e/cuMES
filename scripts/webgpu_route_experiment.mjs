@@ -2,6 +2,7 @@
 // state, damping or input changes. Successful result tabs remain inspectable.
 // Usage: node ... URL PREFIX '[{"after":1,"fft":1},{"after":2,"fft":0}]' [SETUP_JS]
 import {readFile, writeFile} from 'node:fs/promises';
+import {connectCdp} from './include/webgpu_cdp.mjs';
 const [url, prefix, scheduleText = '[]', setupPath] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass URL and output prefix');
 const schedule = JSON.parse(scheduleText);
@@ -9,19 +10,7 @@ if (!Array.isArray(schedule) || schedule.some(s => !Number.isInteger(s.after) ||
     s.after < 1 || ![0, 1].includes(s.fft))) throw Error('Invalid switch schedule');
 const base = 'http://127.0.0.1:9333';
 const page = await (await fetch(`${base}/json/new?about:blank`, {method:'PUT'})).json();
-const ws = new WebSocket(page.webSocketDebuggerUrl);
-await new Promise((resolve, reject) => {ws.onopen=resolve;ws.onerror=reject;});
-let nextId=0;const pending=new Map();
-ws.onmessage=event=>{
-  const reply=JSON.parse(event.data),r=pending.get(reply.id);if(!r)return;
-  pending.delete(reply.id);clearTimeout(r.timer);
-  if(reply.error||reply.result?.exceptionDetails)r.reject(Error(JSON.stringify(reply.error||reply.result.exceptionDetails)));
-  else r.resolve(reply.result);
-};
-function call(method,params={}){return new Promise((resolve,reject)=>{
-  const id=++nextId,timer=setTimeout(()=>{pending.delete(id);reject(Error(`CDP timeout: ${method}`));},60000);
-  pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));
-});}
+const {call, close} = await connectCdp(page.webSocketDebuggerUrl, 60000);
 const evaluate=async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true})).result.value;
 let finished=false;
 try{
@@ -80,5 +69,5 @@ try{
   if(!finished)throw Error('Experiment timed out');
 }finally{
   if(!finished)await call('Page.navigate',{url:'about:blank'}).catch(()=>{});
-  ws.close();
+  close();
 }

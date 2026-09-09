@@ -1,31 +1,13 @@
 // Validate the published W7-X mesh against the input harmonics, not a solver
 // residual. Usage: node scripts/webgpu_validate_geometry.mjs TARGET [SCREENSHOT]
 import {readFile, writeFile} from 'node:fs/promises';
+import {connectCdp} from './include/webgpu_cdp.mjs';
 const [target, screenshot] = process.argv.slice(2);
 const spec = JSON.parse(await readFile(new URL('../inputs/w7x.json', import.meta.url)));
 const pages = await (await fetch('http://127.0.0.1:9333/json/list')).json();
 const page = pages.find(p => p.id === target);
 if (!page) throw Error('Pass the ID of a completed W7-X browser tab');
-const ws = new WebSocket(page.webSocketDebuggerUrl);
-await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-let id = 0;
-const requests = new Map();
-ws.onmessage = event => {
-  const reply = JSON.parse(event.data), request = requests.get(reply.id);
-  if (!request) return;
-  requests.delete(reply.id); clearTimeout(request.timer);
-  if (reply.error || reply.result?.exceptionDetails)
-    request.reject(Error(JSON.stringify(reply.error || reply.result.exceptionDetails)));
-  else request.resolve(reply.result);
-};
-function call(method, params = {}) {
-  return new Promise((resolve, reject) => {
-    const current = ++id;
-    const timer = setTimeout(() => reject(Error(`Timeout: ${method}`)), 30000);
-    requests.set(current, {resolve, reject, timer});
-    ws.send(JSON.stringify({id: current, method, params}));
-  });
-}
+const {call, close} = await connectCdp(page.webSocketDebuggerUrl);
 try {
   const {result} = await call('Runtime.evaluate', {
     expression: `(async () => {
@@ -73,4 +55,4 @@ try {
     const capture = await call('Page.captureScreenshot', {format: 'png'});
     await writeFile(screenshot, Buffer.from(capture.data, 'base64'));
   }
-} finally { ws.close(); }
+} finally { close(); }

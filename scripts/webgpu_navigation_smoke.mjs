@@ -2,24 +2,11 @@
 // Usage: node scripts/webgpu_navigation_smoke.mjs APP_URL [SCREENSHOT_PREFIX]
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
+import {connectCdp} from './include/webgpu_cdp.mjs';
 const [url,prefix]=process.argv.slice(2);
 if(!url)throw Error('Pass APP_URL');
 const version=await(await fetch('http://127.0.0.1:9333/json/version')).json();
-const ws=new WebSocket(version.webSocketDebuggerUrl);
-await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=reject});
-let id=0;
-const pending=new Map();
-ws.onmessage=event=>{
-  const reply=JSON.parse(event.data),request=pending.get(reply.id);
-  if(!request)return;
-  pending.delete(reply.id);clearTimeout(request.timer);
-  if(reply.error||reply.result?.exceptionDetails)request.reject(Error(JSON.stringify(reply.error||reply.result.exceptionDetails)));
-  else request.resolve(reply.result);
-};
-function call(method,params={},sessionId){return new Promise((resolve,reject)=>{
-  const current=++id,timer=setTimeout(()=>{pending.delete(current);reject(Error(`CDP timeout: ${method}`))},30000);
-  pending.set(current,{resolve,reject,timer});ws.send(JSON.stringify({id:current,method,params,sessionId}));
-})}
+const {call, close} = await connectCdp(version.webSocketDebuggerUrl);
 let target;
 try{
   target=(await call('Target.createTarget',{url:'about:blank',newWindow:false})).targetId;
@@ -79,5 +66,5 @@ try{
   }
 }finally{
   if(target)await call('Target.closeTarget',{targetId:target});
-  ws.close();
+  close();
 }
