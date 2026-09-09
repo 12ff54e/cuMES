@@ -118,6 +118,7 @@ target_link_options(cumes_webgpu PRIVATE
   "-sINCOMING_MODULE_JS_API=['preRun','locateFile','print','printErr','onAbort','mainScriptUrlOrBlob']"
   "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
   "--js-library=${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js"
+  "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/timestamp_capture.js"
   "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js"
   "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime_threads.js"
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/solovev.json@/inputs/solovev.json"
@@ -145,6 +146,7 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/residual_plot.js
   ${CMAKE_CURRENT_SOURCE_DIR}/verification_worker.js
   ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/timestamp_capture.js
   ${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js
   ${CMAKE_CURRENT_SOURCE_DIR}/runtime_threads.js
   ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
@@ -162,7 +164,7 @@ add_test(
           -P ${CMAKE_CURRENT_SOURCE_DIR}/check_artifacts.cmake)
 set_tests_properties(webgpu_artifacts PROPERTIES LABELS "unit;webgpu")
 foreach(test IN ITEMS shader_templates threads pages boundary_geometry
-                      residual_plot iteration_timing precision_switch log_buffer
+                      residual_plot iteration_timing timestamps precision_switch log_buffer
                       free_boundary worker runtime_loader verification_log cdp)
   add_test(NAME webgpu_${test}
     COMMAND ${CUMES_WEBGPU_NODE}

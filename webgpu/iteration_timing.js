@@ -93,38 +93,14 @@
   };
   if (!enabled || !globalThis.GPUAdapter) return;
 
-  const CAPACITY = 1024, TAIL_BYTES = CAPACITY * 8;
-  const devices = new WeakMap(), buffers = new WeakMap(), encoders = new WeakMap();
-  const patch = (prototype, name, wrap) => { prototype[name] = wrap(prototype[name]); };
-  patch(GPUAdapter.prototype, 'requestDevice', original => async function(descriptor = {}) {
-    const supported = this.features.has('timestamp-query');
-    const device = await original.call(this, supported ? {...descriptor,
-      requiredFeatures: [...new Set([...(descriptor.requiredFeatures || []), 'timestamp-query'])]}
-      : descriptor);
-    if (supported) {
-      deviceAvailable = true;
-      devices.set(device, {device, pending: [], queries: device.createQuerySet({
-        label: 'cuMES iteration timestamps', type: 'timestamp', count: CAPACITY}),
-        resolve: device.createBuffer({label: 'cuMES iteration timestamp resolve', size: TAIL_BYTES,
-          usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC})});
-    }
-    return device;
-  });
-  patch(GPUDevice.prototype, 'createBuffer', original => function(descriptor) {
-    const state = devices.get(this);
-    const tail = Math.ceil(descriptor.size / 8) * 8;
-    const extend = state && (descriptor.usage & GPUBufferUsage.MAP_READ) && !descriptor.mappedAtCreation;
-    const buffer = original.call(this, extend ? {...descriptor, size: tail + TAIL_BYTES} : descriptor);
-    if (extend) buffers.set(buffer, {state, tail});
-    return buffer;
-  });
-  patch(GPUDevice.prototype, 'createCommandEncoder', original => function(...args) {
-    const encoder = original.apply(this, args);
-    encoders.set(encoder, devices.get(this));
-    return encoder;
-  });
+  const CAPACITY = 1024;
+  const capture = globalThis.createCumesTimestampCapture(CAPACITY, {
+    query: 'cuMES iteration timestamps', resolve: 'cuMES iteration timestamp resolve'
+  }, descriptor => descriptor.usage & GPUBufferUsage.MAP_READ,
+  (adapter, device, supported) => { deviceAvailable ||= supported; });
+  const {patch} = capture;
   patch(GPUCommandEncoder.prototype, 'beginComputePass', original => function(descriptor = {}) {
-    const state = encoders.get(this);
+    const state = capture.state(this);
     if (!current || !state) return original.call(this, descriptor);
     if (descriptor.timestampWrites || state.pending.length * 2 + 2 > CAPACITY) {
       current.gpuMissing = true;
@@ -132,13 +108,10 @@
         : 'Timestamp capacity exceeded; incomplete device samples are omitted.');
       return original.call(this, descriptor);
     }
-    const index = state.pending.length * 2;
-    state.pending.push(current);
-    return original.call(this, {...descriptor, timestampWrites: {
-      querySet: state.queries, beginningOfPassWriteIndex: index, endOfPassWriteIndex: index + 1}});
+    return original.call(this, {...descriptor, timestampWrites: capture.writes(state, current)});
   });
   patch(GPUBuffer.prototype, 'mapAsync', original => function(mode, offset = 0, size = this.size - offset) {
-    const info = buffers.get(this);
+    const info = capture.buffer(this);
     let pending = [], tail = 0;
     if (info?.state.pending.length) {
       const {state} = info;
@@ -148,11 +121,7 @@
         warn('Unsupported mapping range; incomplete device samples are omitted.');
         pending = [];
       } else {
-        tail = Math.ceil(size / 8) * 8;
-        const encoder = state.device.createCommandEncoder();
-        encoder.resolveQuerySet(state.queries, 0, pending.length * 2, state.resolve, 0);
-        encoder.copyBufferToBuffer(state.resolve, 0, this, tail, pending.length * 16);
-        state.device.queue.submit([encoder.finish()]);
+        ({tail} = capture.resolve(this, state, pending, size));
       }
     }
     tick(); ++waiting;

@@ -3,13 +3,23 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 const source = await readFile(new URL('../webgpu/iteration_timing.js', import.meta.url), 'utf8');
+const captureSource = await readFile(new URL('../webgpu/timestamp_capture.js', import.meta.url), 'utf8');
 function fixture(supported = true, search = '', worker = false) {
   let now = 0, gpuNow = 0n;
-  const maps = [], log = [], speeds = [];
+  const maps = [], log = [], speeds = [], requests = [];
+  let mapCalls = 0, submissions = 0;
   class GPUBuffer {
     constructor(d) { this.size = d.size; this.data = new ArrayBuffer(d.size); }
-    mapAsync() { return new Promise(resolve => maps.push(resolve)); }
-    getMappedRange(offset, bytes) { return this.data.slice(offset, offset + bytes); }
+    mapAsync(mode, offset, size) {
+      mapCalls++; this.mapped = [offset, offset + size]; this.ranges = [];
+      return new Promise(resolve => maps.push(resolve));
+    }
+    getMappedRange(offset, bytes) {
+      assert.ok(offset >= this.mapped[0] && offset + bytes <= this.mapped[1]);
+      assert.ok(!this.ranges.some(([a, b]) => offset < b && offset + bytes > a));
+      this.ranges.push([offset, offset + bytes]);
+      return this.data.slice(offset, offset + bytes);
+    }
   }
   class GPUCommandEncoder {
     beginComputePass(d = {}) {
@@ -30,14 +40,14 @@ function fixture(supported = true, search = '', worker = false) {
     finish() { return {}; }
   }
   class GPUDevice {
-    queue = {submit() {}};
+    queue = {submit() { submissions++; }};
     createBuffer(d) { return new GPUBuffer(d); }
     createCommandEncoder() { return new GPUCommandEncoder(); }
     createQuerySet(d) { return {data: new BigUint64Array(d.count)}; }
   }
   class GPUAdapter {
     features = new Set(supported ? ['timestamp-query'] : []);
-    async requestDevice() { return new GPUDevice(); }
+    async requestDevice(descriptor) { requests.push(descriptor); return new GPUDevice(); }
   }
   const context = vm.createContext({URLSearchParams, location: {search},
     ...(worker ? {cumesVisibility: 'visible', cumesSearch: search} : {document: {visibilityState: 'visible'}}),
@@ -45,24 +55,41 @@ function fixture(supported = true, search = '', worker = false) {
     GPUAdapter, GPUDevice, GPUCommandEncoder, GPUBuffer, BigUint64Array,
     GPUBufferUsage: {MAP_READ: 1, QUERY_RESOLVE: 2, COPY_SRC: 4}, GPUMapMode: {READ: 1},
     cumesAppendLog: line => log.push(line), cumesBrowser: {speed: value => speeds.push(value)}});
+  const hooks = () => [GPUAdapter.prototype.requestDevice, GPUDevice.prototype.createBuffer,
+    GPUDevice.prototype.createCommandEncoder, GPUCommandEncoder.prototype.beginComputePass, GPUBuffer.prototype.mapAsync];
+  const originals = hooks();
+  vm.runInContext(captureSource, context);
+  assert.deepEqual(hooks(), originals, 'loading the helper must install no hooks');
   vm.runInContext(source, context);
+  const installed = hooks(), helper = context.createCumesTimestampCapture;
+  vm.runInContext(captureSource, context);
+  assert.equal(context.createCumesTimestampCapture, helper, 'runtime reload retains an injected helper');
+  assert.deepEqual(hooks(), installed, 'loading the helper must not reset installed hooks');
   return {api: context.cumesIterationTiming, adapter: new GPUAdapter(), log, speeds,
+    requests, hooks, originals, counts: () => ({mapCalls, submissions}),
     time: t => { now = t; }, resolve: () => maps.shift()()};
 }
 for (const supported of [true, false]) {
-  const f = fixture(supported), device = await f.adapter.requestDevice();
+  const f = fixture(supported), descriptor = {requiredFeatures: ['timestamp-query', 'timestamp-query']};
+  const device = await f.adapter.requestDevice(descriptor);
+  assert.deepEqual([...f.requests[0].requiredFeatures], supported ? ['timestamp-query'] : descriptor.requiredFeatures);
+  assert.equal(descriptor.requiredFeatures.length, 2, 'feature negotiation must not mutate the request');
   const buffer = device.createBuffer({size: 32, usage: 1});
+  assert.equal(buffer.size, supported ? 32 + 1024 * 8 : 32);
+  new Uint8Array(buffer.data, 0, 16).fill(42);
   f.api.event(0, 0);
   f.time(10); f.api.event(1, 1);
   device.createCommandEncoder().beginComputePass();
   f.time(13); const mapped = buffer.mapAsync(1, 0, 16);
   f.time(20); f.resolve(); await mapped;
+  assert.deepEqual([...new Uint8Array(buffer.getMappedRange(0, 16))], Array(16).fill(42));
+  assert.deepEqual(f.counts(), {mapCalls: 1, submissions: supported ? 1 : 0});
   f.time(22); f.api.event(2, 1);
   const report = f.api.finish();
   assert.equal(report.stats.wall.average, 12);
   assert.equal(report.stats.host.average, 5);
   assert.equal(report.stats.wait.average, 7);
-  assert.equal(report.stats.device?.average ?? null, supported ? 2 : null);
+  assert.equal(report.stats.device?.average ?? null, supported ? 2 : null, 'zero beginning timestamps remain valid');
   assert(f.log.some(line => line.includes('median')));
   if (!supported) assert(f.log.some(line => line.includes('unavailable')));
   assert.equal(f.api.statistics([9, 1, 5]).median, 5);
@@ -72,6 +99,7 @@ for (const supported of [true, false]) {
   assert.equal(f.api.report().iterations.length, 0);
 }
 const disabled = fixture(true, '?timing=0');
+assert.deepEqual(disabled.hooks(), disabled.originals, 'disabled profiling must leave GPU methods untouched');
 disabled.api.event(1, 1);
 assert.equal(disabled.api.finish().iterations.length, 0);
 assert(disabled.log[0].includes('disabled'));
@@ -88,6 +116,25 @@ overflow.resolve(); await mapped;
 overflow.api.event(2, 1);
 assert.equal(overflow.api.report().stats.device, null);
 assert.equal(overflow.api.report().errors.length, 1);
+for (const [mode, offset, size] of [[1, 8, 16], [1, 0, 36], [2, 0, 16]]) {
+  const f = fixture(), device = await f.adapter.requestDevice();
+  const buffer = device.createBuffer({size: 32, usage: 1});
+  f.api.event(1, 1); device.createCommandEncoder().beginComputePass();
+  const mapped = buffer.mapAsync(mode, offset, size); f.resolve(); await mapped;
+  f.api.event(2, 1);
+  assert.match(f.api.report().errors[0], /Unsupported mapping range/);
+  assert.equal(f.api.report().stats.device, null);
+  assert.deepEqual(f.counts(), {mapCalls: 1, submissions: 0});
+}
+{
+  const f = fixture(), device = await f.adapter.requestDevice();
+  const external = {querySet: {data: new BigUint64Array(2)}, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1};
+  f.api.event(1, 1); device.createCommandEncoder().beginComputePass({timestampWrites: external});
+  f.api.event(2, 1);
+  assert.equal(external.querySet.data[1], 2000000n, 'the existing timestamp owner must be preserved');
+  assert.match(f.api.report().errors[0], /Another profiler owns/);
+  assert.equal(f.api.report().stats.device, null);
+}
 console.log('Frontend iteration timing: PASS (host/wait, timestamps, unsupported, reset, median, disabled)');
 
 // The live rate uses completed-pass wall time even with profiling disabled.

@@ -8,7 +8,8 @@ const [appUrl, prefix, port = '9333'] = process.argv.slice(2);
 if (!appUrl || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
 const base = `http://127.0.0.1:${port}`;
 const page = await (await fetch(`${base}/json/new?about:blank`, {method: 'PUT'})).json();
-const source = await readFile(new URL('./webgpu_timestamps.js', import.meta.url), 'utf8');
+const source = (await Promise.all(['../webgpu/timestamp_capture.js', './webgpu_timestamps.js']
+  .map(path => readFile(new URL(path, import.meta.url), 'utf8')))).join('\n');
 const {call, close} = await connectCdp(page.webSocketDebuggerUrl);
 const evaluate = async expression => (await call('Runtime.evaluate', {
   expression, returnByValue: true, awaitPromise: true})).result.value;
