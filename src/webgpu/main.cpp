@@ -1936,7 +1936,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             std::printf(
                 "  GPU Jacobian control: sign/zero/nonfinite, ties, "
                 "axis exemption, threshold/range fallback: PASS\n");
-            run_w7x_initialization();
+            run_geometry_axis_exemption_test();
             return;
         }
         constexpr std::size_t POINTS = 513;
@@ -2031,6 +2031,85 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             self->run_geometry_control_test(variant + 1);
+        });
+    }
+
+    void run_geometry_axis_exemption_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 8) {
+            std::printf(
+                "  3-D GPU Jacobian control: angular-plane exemption, "
+                "next surface, sign rejection, f32/paired: PASS\n");
+            run_w7x_initialization();
+            return;
+        }
+        constexpr int NTHETA = 18;
+        constexpr int NZETA = 4;
+        constexpr int ANGULAR = NTHETA * NZETA;
+        constexpr std::size_t FULL = 3 * ANGULAR;
+        constexpr std::size_t HALF = 2 * ANGULAR;
+        constexpr float SMALL = 0x1p-60F;
+        const bool paired = variant >= 4;
+        const int scenario = variant % 4;
+        const int min_index = std::array{18, 71, 72, 18}[scenario];
+        const float minimum = scenario == 3 ? -SMALL : SMALL;
+        const bool invalid = scenario >= 2;
+        BaseGeometryCase input;
+        input.ns = 3;
+        input.ntheta = NTHETA;
+        input.nzeta = NZETA;
+        input.delta_s = 0.5F;
+        input.device_control = true;
+        input.double_single = paired;
+        input.sqrt_s_f = {0.0F, std::sqrt(0.5F), 1.0F};
+        input.sqrt_s_h = {0.5F, std::sqrt(0.75F)};
+        input.geometry.resize(18 * FULL, 0.0F);
+        if (paired) input.geometry_lo.resize(input.geometry.size(), 0.0F);
+        // Manufactured fields give r12=1, ru12=-1, rs=zu12=tau2=0,
+        // hence gsqrt=-zs. Z=0 on the middle surface avoids cancellation
+        // when either half-grid surface has the very small Jacobian.
+        for (std::size_t point = 0; point < FULL; ++point) {
+            input.geometry[point] = 1.0F;
+            input.geometry[3 * FULL + point] = -1.0F;
+        }
+        for (int point = 0; point < ANGULAR; ++point) {
+            const float inner = point == min_index ? minimum : 1.0F;
+            const float outer = point + ANGULAR == min_index ? minimum : 1.0F;
+            input.geometry[FULL + point] = -0.5F * inner;
+            input.geometry[FULL + 2 * ANGULAR + point] = 0.5F * outer;
+        }
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_,
+            (2 * BASE_GEOMETRY_FIELD_COUNT * HALF + 8) * sizeof(float));
+        input.readback = {batch, {}};
+        auto actual = std::make_shared<BaseGeometryResult>();
+        auto errors = std::make_shared<std::string>();
+        enqueue_base_geometry(
+            device_, input,
+            [actual, errors](std::string error, BaseGeometryResult result) {
+                *actual = std::move(result);
+                *errors = std::move(error);
+            });
+        const auto self = shared_from_this();
+        batch->map([self, actual, errors, min_index, minimum, invalid,
+                    variant](std::string error) {
+            const auto& control = actual->control;
+            const auto& jacobian = control.jacobian;
+            cumes::IterationController<double> reference({});
+            if (!error.empty() || !errors->empty() || !control.present ||
+                !control.guards_valid || control.fallback ||
+                jacobian.min_index != min_index ||
+                jacobian.min_oriented != minimum || jacobian.max_abs != 1.0 ||
+                jacobian.nonfinite_count != 0.0 || control.invalid != invalid ||
+                reference.jacobian_invalid(jacobian, ANGULAR) != invalid) {
+                self->finish(false,
+                             "3-D Jacobian axis exemption mismatch "
+                             "variant=" +
+                                 std::to_string(variant) + " " + error +
+                                 *errors);
+                return;
+            }
+            self->run_geometry_axis_exemption_test(variant + 1);
         });
     }
 
@@ -3155,6 +3234,52 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
 
+            // A zero target current needs no edge normalization, regardless
+            // of whether the optional current profile is empty or nonzero.
+            for (const auto& coefficients :
+                 {std::vector<double>{}, std::vector<double>{0.0},
+                  std::vector<double>{1.0}}) {
+                auto current_spec = problem_->spec();
+                current_spec.current_model =
+                    cumes::CurrentModel::PRESCRIBED_CURRENT;
+                current_spec.physical.curtor = 0.0;
+                current_spec.current.coefficients = coefficients;
+                auto current_problem = cumes::validate(current_spec, options);
+                if (!current_problem.has_value()) {
+                    finish(false, "Zero-current profile validation failed");
+                    return;
+                }
+                const auto current_stage =
+                    cumes::webgpu::initialize_stage(current_problem.value(), 0);
+                const auto& current_profiles = current_stage.profiles;
+                const auto half_surfaces =
+                    static_cast<std::size_t>(current_stage.ns - 1);
+                const auto is_zero = [](float value) { return value == 0.0F; };
+                if (!current_stage.prescribed_current ||
+                    current_profiles.curr_h.size() != half_surfaces ||
+                    current_profiles.curr_h_lo.size() != half_surfaces ||
+                    !std::all_of(current_profiles.curr_h.begin(),
+                                 current_profiles.curr_h.end(), is_zero) ||
+                    !std::all_of(current_profiles.curr_h_lo.begin(),
+                                 current_profiles.curr_h_lo.end(), is_zero)) {
+                    finish(false,
+                           "Zero-current initialization published a "
+                           "nonzero or non-finite current profile");
+                    return;
+                }
+                if (coefficients.empty() || coefficients.front() == 0.0) {
+                    current_spec.physical.curtor = 1.0;
+                    if (cumes::validate(std::move(current_spec), options)
+                            .has_value()) {
+                        finish(false,
+                               "Nonzero current with zero edge "
+                               "integral passed validation");
+                        return;
+                    }
+                }
+            }
+            std::printf("  zero-current scalar/paired profiles: PASS\n");
+
             reset_stage_state();
             run_stage_inverse();
         } catch (const std::exception& error) {
@@ -3459,10 +3584,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                             std::abs(actual.fields[i] - expected.fields[i]));
                     }
                 }
+                const int angular_points = self->base_geometry_case_.ntheta *
+                                           self->base_geometry_case_.nzeta;
                 const std::size_t half_points =
                     static_cast<std::size_t>(self->base_geometry_case_.ns - 1) *
-                    self->base_geometry_case_.ntheta *
-                    self->base_geometry_case_.nzeta;
+                    angular_points;
                 auto jacobian = actual.control.jacobian;
                 if (actual.control.present) {
                     ++self->geometry_control_passes_;
@@ -3542,7 +3668,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                              cumes::control_policy::
                                      JACOBIAN_RELATIVE_THRESHOLD *
                                  gpu.max_abs &&
-                         gpu.min_index >= self->initialized_stage_.ntheta);
+                         gpu.min_index >= angular_points);
                     if (host_invalid != actual.control.invalid ||
                         gpu.min_oriented != jacobian.min_oriented ||
                         gpu.max_abs != jacobian.max_abs ||
@@ -3555,7 +3681,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     if (invalid) self->controller_->reject_jacobian();
                 } else {
                     invalid = self->controller_->jacobian_invalid(
-                        jacobian, self->initialized_stage_.ntheta);
+                        jacobian, angular_points);
                 }
                 if (invalid) {
                     self->restore_checkpoint();

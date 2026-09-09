@@ -173,7 +173,8 @@ class IterationDispatch
                     enqueue_geometry_control(
                         self->device, self->geometry_.device_fields,
                         self->input.double_single, true,
-                        self->input.stage.ntheta, self->batch,
+                        self->input.stage.ntheta * self->input.stage.nzeta,
+                        self->batch,
                         [self](std::string error, GeometryControlResult) {
                             if (!error.empty()) self->error = std::move(error);
                         },

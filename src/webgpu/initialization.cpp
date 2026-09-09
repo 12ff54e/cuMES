@@ -38,7 +38,8 @@ RadialProfiles initialize_profiles(const ProblemSpec& spec, int ns) {
 
     float current_scale = 0.0F;
     double exact_current_scale = 0.0;
-    if (spec.current_model == CurrentModel::PRESCRIBED_CURRENT) {
+    if (spec.current_model == CurrentModel::PRESCRIBED_CURRENT &&
+        spec.physical.curtor != 0.0) {
         const float edge_current = eval_curr_profile<float>(spec, 1.0F);
         if (edge_current == 0.0F) {
             throw std::runtime_error(

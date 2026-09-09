@@ -570,7 +570,8 @@ void enqueue_base_geometry(const wgpu::Device& device,
         if (input.device_control) {
             enqueue_geometry_control(
                 device, resident.device_fields, input.double_single,
-                input.axisymmetric, input.ntheta, input.readback.batch,
+                input.axisymmetric, static_cast<int>(n_z_n_t),
+                input.readback.batch,
                 [callback = std::move(callback), host](
                     std::string error, GeometryControlResult control) {
                     host->control = control;

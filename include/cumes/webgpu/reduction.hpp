@@ -17,6 +17,7 @@ struct GeometryControlResult {
 };
 
 // Reduce the ten base-geometry fields and execute the oriented-Jacobian gate.
+// axis_points is the full angular-plane size (ntheta * nzeta).
 // Ambiguous ordering/range cases request full host validation, never
 // acceptance.
 void enqueue_geometry_control(
