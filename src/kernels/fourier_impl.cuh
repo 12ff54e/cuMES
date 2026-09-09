@@ -94,6 +94,27 @@ cumes::DeviceModeTable cumes::mode_table_create(
 }
 
 template <typename T>
+__global__ void forward_basis_kernel(const T* d_cos_th,
+                                     const T* d_sin_th,
+                                     const T* d_mcos_th,
+                                     const T* d_msin_th,
+                                     const T* d_fwd_w,
+                                     int ntheta,
+                                     int ntheta_red,
+                                     int count,
+                                     T* d_basis) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    int l = i % ntheta_red;
+    int src = (i / ntheta_red) * ntheta + l;
+    T w = d_fwd_w[l];
+    d_basis[0 * count + i] = w * d_cos_th[src];
+    d_basis[1 * count + i] = w * d_sin_th[src];
+    d_basis[2 * count + i] = w * d_mcos_th[src];
+    d_basis[3 * count + i] = w * d_msin_th[src];
+}
+
+template <typename T>
 cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     const DeviceParams<T>& p,
     cumes::RealSpaceStorage<T>& rs,
@@ -159,6 +180,14 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     amt(d_mcos_th_, "mcosth", p.mpol * p.ntheta);
     amt(d_msin_th_, "msinth", p.mpol * p.ntheta);
     amt(d_fwd_w_, "fwdw", p.ntheta / 2 + 1);
+    const std::size_t forward_count =
+        4 * std::size_t(p.mpol) * (p.ntheta / 2 + 1);
+    if (arena)
+        d_forward_basis_ = DeviceBuffer<T>(
+            arena->get().alloc_span<T>("fourier/forward_basis", forward_count),
+            forward_count);
+    else
+        d_forward_basis_.allocate(forward_count);
 
     auto* h_cos_th = new T[p.mpol * p.ntheta];
     auto* h_sin_th = new T[p.mpol * p.ntheta];
@@ -202,6 +231,14 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
         cudaMemcpy(d_fwd_w_, h_fwd_w, (size_t)nThetaRed * sizeof(T),
                    cudaMemcpyHostToDevice),
         "cp fwdw");
+    // Preserve the forward kernel's T-rounded products on device, once per
+    // stage. Complete the cache before callers bind a nonblocking stream.
+    const int basis_count = p.mpol * nThetaRed;
+    forward_basis_kernel<T><<<(basis_count + 255) / 256, 256>>>(
+        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, d_fwd_w_, p.ntheta,
+        nThetaRed, basis_count, d_forward_basis_.data());
+    cumes::check_cuda(cudaGetLastError(), "forward basis");
+    cumes::check_cuda(cudaStreamSynchronize(0), "forward basis ready");
     delete[] h_cos_th;
     delete[] h_sin_th;
     delete[] h_mcos_th;
@@ -615,7 +652,7 @@ __global__ void inverse_pack_kernel(
 //      vv = c2*sin + c3*cos
 //   λ: v = c0*sin + c1*cos      vu = c0*mcos + c1*msin
 //      vv = -(c2*sin + c3*cos)
-template <typename T, bool FuseRzCon = false, int OddPrecision = 0>
+template <typename T, int SLOT0, bool FuseRzCon = false, int OddPrecision = 0>
 __global__ void inverse_accumulate_kernel(
     const T* __restrict__ zeta_real,
     const T* __restrict__ cos_th,
@@ -639,7 +676,10 @@ __global__ void inverse_accumulate_kernel(
     T* __restrict__ zCon,
     const cumes::FloatFloat* d_odd_scale = nullptr,
     const cumes::FloatFloat* d_odd_toroidal = nullptr) {
-    // slot0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11
+    static_assert(SLOT0 == 0 || SLOT0 == 4 || SLOT0 == 8);
+    // SLOT0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11.
+    // Each launch has at most one constraint output. Specialize only that
+    // choice; keep the runtime basis expressions and their contraction order.
     // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
     // coalesce; the m-loop shared reads (sm[.. + k]) become broadcasts.
@@ -680,7 +720,7 @@ __global__ void inverse_accumulate_kernel(
     T v0o = T(0), v1o = T(0), v2o = T(0);
     using Accumulator = cumes::Compensated<T>;
     Accumulator odd_sum;
-    T rcon = T(0), zcon = T(0);
+    T con = T(0);
     for (int m = 0; m < mpol; ++m) {
         const T* sm = sh + m * k_tile;
         T c0 = sm[0 * mstride + k - k0], c1 = sm[1 * mstride + k - k0];
@@ -693,13 +733,15 @@ __global__ void inverse_accumulate_kernel(
         T v0 = fac * (c0 * t0 + c1 * t1);
         T v1 = fac * (c0 * u0 + c1 * u1);
         T v2 = signV * fac * (c2 * t0 + c3 * t1);
-        if constexpr (FuseRzCon) {
+        if constexpr (FuseRzCon && SLOT0 != 8) {
             // rCon from the R slots (c0=Rcc cos, c1=Rss sin), zCon from
             // the Z slots (c0=Zsc sin, c1=Zcs cos) — no fac/maxsc, the
             // full-field reconstruction.
             T xmpq = T(m) * T(m - 1);
-            rcon += xmpq * (c0 * cosm + c1 * sinm);
-            zcon += xmpq * (c0 * sinm + c1 * cosm);
+            if constexpr (SLOT0 == 0)
+                con += xmpq * (c0 * cosm + c1 * sinm);
+            else
+                con += xmpq * (c0 * sinm + c1 * cosm);
         }
         if (m % 2 == 1) {
             // Only the odd position sum changes. Derivatives, even modes,
@@ -758,10 +800,10 @@ __global__ void inverse_accumulate_kernel(
         o0[idx] = v0o;
     o1[idx] = v1o;
     o2[idx] = v2o;
-    if constexpr (FuseRzCon) {
-        if (rCon != nullptr) rCon[idx] = rcon;  // R-slot launch only
-        if (zCon != nullptr) zCon[idx] = zcon;  // Z-slot launch only
-    }
+    if constexpr (FuseRzCon && SLOT0 == 0)
+        if (rCon != nullptr) rCon[idx] = con;
+    if constexpr (FuseRzCon && SLOT0 == 4)
+        if (zCon != nullptr) zCon[idx] = con;
 }
 
 // The 9 combined (e+o) real-space arrays (used by the dump machinery and the
@@ -890,14 +932,14 @@ static void inverse_pipeline(
             odd_float_float ? odd_float_float->scale() : nullptr;
         const cumes::FloatFloat* d_toroidal =
             odd_float_float ? odd_float_float->toroidal() : nullptr;
-        inverse_accumulate_kernel<T, FuseRzCon, OddPrecision>
+        inverse_accumulate_kernel<T, 0, FuseRzCon, OddPrecision>
             <<<grd, blk, inv_smem, stream>>>(
                 d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns,
                 p.mpol, p.ntheta, p.nzeta, p.nZnT, 0, geom.r_e.data(),
                 geom.ru_e.data(), geom.rv_e.data(), geom.r_o.data(),
                 geom.ru_o.data(), geom.rv_o.data(), k_tile, rCon, nullptr,
                 d_scale, d_toroidal);
-        inverse_accumulate_kernel<T, FuseRzCon, OddPrecision>
+        inverse_accumulate_kernel<T, 4, FuseRzCon, OddPrecision>
             <<<grd, blk, inv_smem, stream>>>(
                 d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns,
                 p.mpol, p.ntheta, p.nzeta, p.nZnT, 4, geom.z_e.data(),
@@ -933,7 +975,7 @@ static void inverse_pipeline(
     } else {
         positions.template operator()<0>();
     }
-    inverse_accumulate_kernel<T, FuseRzCon><<<grd, blk, inv_smem, stream>>>(
+    inverse_accumulate_kernel<T, 8><<<grd, blk, inv_smem, stream>>>(
         d_zeta_real, d_cos_th, d_sin_th, d_mcos_th, d_msin_th, p.ns, p.mpol,
         p.ntheta, p.nzeta, p.nZnT, 8, geom.l_e.data(), geom.lu_e.data(),
         geom.lv_e.data(), geom.l_o.data(), geom.lu_o.data(), geom.lv_o.data(),
@@ -1277,7 +1319,7 @@ void cumes::ToroidalFftOperator<T>::dealias_bandpass(const T* gConEff,
 //   rmkccN -= crmn*cos;  rmkssN -= crmn*sin
 //   zmkscN -= czmn*sin;  zmkcsN -= czmn*cos
 //   lmkscN -= clmn*sin;  lmkcsN -= clmn*cos
-// with the θ tables carrying the trapezoid weight (d_fwd_w, intNorm with
+// with the cached θ tables carrying the trapezoid weight (intNorm with
 // endpoint ½ — the θ > π points are not on vmecpp's reduced grid).
 template <typename T>
 __global__ void forward_reduce_kernel(const T* __restrict__ armn_e,
@@ -1304,7 +1346,6 @@ __global__ void forward_reduce_kernel(const T* __restrict__ armn_e,
                                       const T* __restrict__ sin_th,
                                       const T* __restrict__ mcos_th,
                                       const T* __restrict__ msin_th,
-                                      const T* __restrict__ fwd_w,
                                       int ns,
                                       int mpol,
                                       int ntheta,
@@ -1350,11 +1391,10 @@ __global__ void forward_reduce_kernel(const T* __restrict__ armn_e,
     if (k < nzeta) {
         for (int l = lane; l < nThetaRed; l += blockDim.x) {
             int idx = j * nZnT + k * ntheta + l;
-            T w = fwd_w[l];
-            T cosm = w * cos_th[m * ntheta + l],
-              sinm = w * sin_th[m * ntheta + l];
-            T mcos = w * mcos_th[m * ntheta + l],
-              msin = w * msin_th[m * ntheta + l];
+            T cosm = cos_th[m * nThetaRed + l],
+              sinm = sin_th[m * nThetaRed + l];
+            T mcos = mcos_th[m * nThetaRed + l],
+              msin = msin_th[m * nThetaRed + l];
             T tempR = armn[idx] + xmpq * frcon[idx];
             T tempZ = azmn[idx] + xmpq * fzcon[idx];
             T br = brmn[idx], bz = bzmn[idx];
@@ -1538,11 +1578,7 @@ static void forward_pipeline(
     const DeviceParams<T>& p,
     const int* xm,
     const int* xn,
-    const T* d_cos_th,
-    const T* d_sin_th,
-    const T* d_mcos_th,
-    const T* d_msin_th,
-    const T* d_fwd_w,
+    const T* d_forward_basis,
     T* d_zeta_real,
     typename FftTraits<T>::Complex* d_zeta_spectra,
     cufftHandle plan_d2z,
@@ -1555,15 +1591,18 @@ static void forward_pipeline(
     int n_k_tiles = (p.nzeta + k_tile - 1) / k_tile;
     dim3 blk(16, k_tile);  // x padded to 16 lanes (warp shuffle width)
     dim3 grd(p.mpol, p.ns, n_k_tiles);
+    const std::size_t basis_count = std::size_t(p.mpol) * (p.ntheta / 2 + 1);
     forward_reduce_kernel<T><<<grd, blk, 0, stream>>>(
         forces.armn_e.data(), forces.armn_o.data(), forces.azmn_e.data(),
         forces.azmn_o.data(), forces.brmn_e.data(), forces.brmn_o.data(),
         forces.bzmn_e.data(), forces.bzmn_o.data(), forces.crmn_e.data(),
         forces.crmn_o.data(), forces.czmn_e.data(), forces.czmn_o.data(),
         forces.blmn_e.data(), forces.blmn_o.data(), forces.clmn_e.data(),
-        forces.clmn_o.data(), frcon_e, frcon_o, fzcon_e, fzcon_o, d_cos_th,
-        d_sin_th, d_mcos_th, d_msin_th, d_fwd_w, p.ns, p.mpol, p.ntheta,
-        p.ntheta / 2 + 1, p.nzeta, p.nZnT, d_zeta_real, k_tile);
+        forces.clmn_o.data(), frcon_e, frcon_o, fzcon_e, fzcon_o,
+        d_forward_basis, d_forward_basis + basis_count,
+        d_forward_basis + 2 * basis_count, d_forward_basis + 3 * basis_count,
+        p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT, d_zeta_real,
+        k_tile);
     cumes::check_cufft(
         FftTraits<T>::exec_forward(plan_d2z, d_zeta_real, d_zeta_spectra),
         "fwd d2z");
@@ -1588,8 +1627,8 @@ void cumes::ToroidalFftOperator<T>::forward_impl(
     // see enqueue_forward for the view-honoring path).
     forward_pipeline<T>(f_spec, force_views_of(*rs_, p), frcon_e, frcon_o,
                         fzcon_e, fzcon_o, stream, p, mt_->d_xm, mt_->d_xn,
-                        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, d_fwd_w_,
-                        d_zeta_real_, d_zeta_spectra_, plan_d2z_, false);
+                        d_forward_basis_.data(), d_zeta_real_, d_zeta_spectra_,
+                        plan_d2z_, false);
 }
 
 template <typename T>
@@ -1642,12 +1681,12 @@ void cumes::ToroidalFftOperator<T>::enqueue_forward(
     // constraint force is read from the constraint_force views (the
     // constraint owns those buffers).
     const DeviceParams<T>& p = p_;
-    forward_pipeline<T>(
-        residual, real_force, constraint_force.frcon_e.data(),
-        constraint_force.frcon_o.data(), constraint_force.fzcon_e.data(),
-        constraint_force.fzcon_o.data(), stream, p, mt_->d_xm, mt_->d_xn,
-        d_cos_th_, d_sin_th_, d_mcos_th_, d_msin_th_, d_fwd_w_, d_zeta_real_,
-        d_zeta_spectra_, plan_d2z_, include_lcfs);
+    forward_pipeline<T>(residual, real_force, constraint_force.frcon_e.data(),
+                        constraint_force.frcon_o.data(),
+                        constraint_force.fzcon_e.data(),
+                        constraint_force.fzcon_o.data(), stream, p, mt_->d_xm,
+                        mt_->d_xn, d_forward_basis_.data(), d_zeta_real_,
+                        d_zeta_spectra_, plan_d2z_, include_lcfs);
 }
 
 template <typename T>

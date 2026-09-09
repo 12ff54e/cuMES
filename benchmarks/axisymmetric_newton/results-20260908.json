@@ -1,0 +1,3344 @@
+{
+  "date": "2026-09-08",
+  "scope": "sum of solver_run CUDA-event intervals, including operator/Newton setup, extra evaluations and host gaps; excludes outer stage setup, interstage transfer, process startup and output",
+  "gain": "median of 100*(1-newton_ms/baseline_ms) over paired measurements",
+  "interval": "95% paired percentile bootstrap, 20000 resamples, seed20260908; exploratory per-case intervals, not adjusted for multiple comparisons",
+  "followup_selection": "initial 95% interval width >10 percentage points, regardless of gain sign; 15 fresh pairs, separate from initial5",
+  "original_manifest_sha256": "90f28299f35d97d577873620e030f2b88facf9eaa08114ba0aca981f9f90f776",
+  "gpus": {
+    "pascal": {
+      "initial": {
+        "00_solovev_reference": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 98.46941000000001,
+              "p95_device_ms": 102.38961714,
+              "mad_device_ms": 0.7945919000000004,
+              "median_wall_seconds": 0.46080119349062443,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "fb2750f69dcb2a25b5ed4b99e8ada0902038bfbdf5e6e61441aceaeff84bddca"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 88.5474243,
+              "p95_device_ms": 91.63872606,
+              "mad_device_ms": 1.019361399999994,
+              "median_wall_seconds": 0.46145553700625896,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "5acac3331472b0f4ca548eca3598f9d8761b9e15357ace61ee122e1371012d4b"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.660416698418196,
+            10.39376267214931,
+            10.388302120626115,
+            9.72345523326198,
+            10.449346350303124
+          ],
+          "median_gain_percent": 10.39376267214931,
+          "bootstrap_ci95_percent": [
+            9.72345523326198,
+            10.660416698418196
+          ]
+        },
+        "01_solovev_circular": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 96.8939839,
+              "p95_device_ms": 109.62618792,
+              "mad_device_ms": 0.43081669999999406,
+              "median_wall_seconds": 0.4631235580891371,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "7df5594128f770848df8d09c63059e0bb3f0bcd1e7f48098dd06d98d0bc2ebd2"
+              ],
+              "iterations": [
+                241,
+                180,
+                315
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 94.02016069999999,
+              "p95_device_ms": 94.1197823,
+              "mad_device_ms": 0.11167910000000347,
+              "median_wall_seconds": 0.4609634354710579,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "43b9a74ed6c7ae687f06e4670fdfe969b36e13dd6a0142e570cea7b5d06a1df7"
+              ],
+              "iterations": [
+                154,
+                115,
+                257
+              ],
+              "extra_evaluations": 137
+            }
+          },
+          "paired_gain_percent": [
+            2.8591127205369604,
+            2.7504979123264772,
+            2.9129069591285583,
+            15.088048720571,
+            10.41255351245719
+          ],
+          "median_gain_percent": 2.9129069591285583,
+          "bootstrap_ci95_percent": [
+            2.7504979123264772,
+            15.088048720571
+          ]
+        },
+        "02_solovev_elongation_low": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 97.1060487,
+              "p95_device_ms": 97.32555806,
+              "mad_device_ms": 0.13785750000000974,
+              "median_wall_seconds": 0.4616751205176115,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "70d73400396f786689425c3b4a98bcb86fd8ed0a7bf5f6a63070ce8e81a8f473"
+              ],
+              "iterations": [
+                242,
+                188,
+                314
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 86.5765456,
+              "p95_device_ms": 86.84205442,
+              "mad_device_ms": 0.07046330000000012,
+              "median_wall_seconds": 0.46270311437547207,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "6c96615963137badb87b22ec2e09d7fa7370f88cdc315bdd75d0d121252eea55"
+              ],
+              "iterations": [
+                154,
+                118,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.776563274394324,
+            11.38060851773719,
+            10.843303008373773,
+            10.749818544619805,
+            10.24263677002063
+          ],
+          "median_gain_percent": 10.776563274394324,
+          "bootstrap_ci95_percent": [
+            10.24263677002063,
+            11.38060851773719
+          ]
+        },
+        "03_solovev_elongation_high": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 110.0222072,
+              "p95_device_ms": 111.15564842,
+              "mad_device_ms": 0.13359819999999445,
+              "median_wall_seconds": 0.4776587150990963,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "0e4ed0727207b5baa598ffbe73a6ded0c6b0d2ece4da8e931ff5ad6cb4a00be9"
+              ],
+              "iterations": [
+                246,
+                202,
+                407
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 104.5443534,
+              "p95_device_ms": 105.48802566,
+              "mad_device_ms": 0.09270490000000109,
+              "median_wall_seconds": 0.4600174352526665,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "f2ae0951a8b63a068e8cc7470f0db82c4d9d1fb514b574f03b65d8e064192976"
+              ],
+              "iterations": [
+                161,
+                116,
+                300
+              ],
+              "extra_evaluations": 170
+            }
+          },
+          "paired_gain_percent": [
+            4.795858797775576,
+            4.778976408737689,
+            5.181599160896799,
+            6.1732458068884055,
+            3.9277885892112785
+          ],
+          "median_gain_percent": 4.795858797775576,
+          "bootstrap_ci95_percent": [
+            3.9277885892112785,
+            6.1732458068884055
+          ]
+        },
+        "04_solovev_triangularity_stronger": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 115.086462,
+              "p95_device_ms": 115.57338904,
+              "mad_device_ms": 0.24485969999999213,
+              "median_wall_seconds": 0.5166401397436857,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "f7f83079d76b74cce6777465a4457d5922dffab0a626b0d35aea0682c8c10ad8"
+              ],
+              "iterations": [
+                244,
+                208,
+                438
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 103.5227833,
+              "p95_device_ms": 104.59937364,
+              "mad_device_ms": 0.10953719999999123,
+              "median_wall_seconds": 0.5116420183330774,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "bdad1e9a86cf2206fa443e21b28d57c65769bf46320e718553c7b3fbd5d17360"
+              ],
+              "iterations": [
+                151,
+                125,
+                331
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.019579815695645,
+            10.064026992158293,
+            8.716647625526907,
+            10.303829893833239,
+            10.402922405688997
+          ],
+          "median_gain_percent": 10.064026992158293,
+          "bootstrap_ci95_percent": [
+            8.716647625526907,
+            10.402922405688997
+          ]
+        },
+        "05_solovev_triangularity_reversed": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 91.8734398,
+              "p95_device_ms": 93.31016462000001,
+              "mad_device_ms": 0.12057490000000826,
+              "median_wall_seconds": 0.4621417988091707,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "0d74962574ecef9a6f86943bb14a30a331f2b71f89223a900028ded3e176ab4c"
+              ],
+              "iterations": [
+                240,
+                181,
+                291
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 84.09215929999999,
+              "p95_device_ms": 84.61371418,
+              "mad_device_ms": 0.2794570999999877,
+              "median_wall_seconds": 0.462820865213871,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "b0581d7b29c9c43822ff44c297f1bc160b0bdf684147033357474d9bac917f41"
+              ],
+              "iterations": [
+                152,
+                101,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.19556188636086,
+            8.646943627254611,
+            8.233655903672831,
+            8.78560915256903,
+            7.939751541248919
+          ],
+          "median_gain_percent": 8.646943627254611,
+          "bootstrap_ci95_percent": [
+            7.939751541248919,
+            10.19556188636086
+          ]
+        },
+        "06_solovev_pressure_half": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 98.8602238,
+              "p95_device_ms": 98.96318932,
+              "mad_device_ms": 0.12147520000000611,
+              "median_wall_seconds": 0.4609205536544323,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "23678ed931dc30311bfe92d36a42abe685cf4ac7adef664c6386401582a25faa"
+              ],
+              "iterations": [
+                235,
+                193,
+                327
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 88.8840313,
+              "p95_device_ms": 88.93850178000001,
+              "mad_device_ms": 0.021345199999998954,
+              "median_wall_seconds": 0.46052636951208115,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "f9d7c5dea21e341a9974b456191714d7abfbde93f871cda6b6dbbdcb9d4859eb"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            9.919265316244175,
+            10.138152811460632,
+            9.916067482115466,
+            10.11987041983955,
+            10.091209706527081
+          ],
+          "median_gain_percent": 10.091209706527081,
+          "bootstrap_ci95_percent": [
+            9.916067482115466,
+            10.138152811460632
+          ]
+        },
+        "07_solovev_pressure_double": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 99.1040326,
+              "p95_device_ms": 99.19256551999999,
+              "mad_device_ms": 0.06953420000000676,
+              "median_wall_seconds": 0.5087666530162096,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "be04ff93ecf428dbc5cbc38d8f15b817558b23549fba0536b4b1f096059be8f4"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 88.9635829,
+              "p95_device_ms": 89.0043529,
+              "mad_device_ms": 0.04940990000000056,
+              "median_wall_seconds": 0.4655151329934597,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "6c3790a18a7496a1d2bb59b0bac12e3dbffadb11408ecc99048966dc56105345"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.33193153837415,
+            10.31028095808787,
+            10.170172723033332,
+            10.29506574124749,
+            10.112161244778727
+          ],
+          "median_gain_percent": 10.29506574124749,
+          "bootstrap_ci95_percent": [
+            10.112161244778727,
+            10.33193153837415
+          ]
+        },
+        "08_solovev_pressure_quadratic": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 98.76655769999999,
+              "p95_device_ms": 99.0206382,
+              "mad_device_ms": 0.1705570000000023,
+              "median_wall_seconds": 0.5140190664678812,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "28b3fd2c29156b9c45039af50bc7e17497694d765aef2600fd8340a00a517fcf"
+              ],
+              "iterations": [
+                235,
+                193,
+                327
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 88.7963219,
+              "p95_device_ms": 88.97753598,
+              "mad_device_ms": 0.09993359999999996,
+              "median_wall_seconds": 0.4652123712003231,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "f8c1dedc5468763e94ea7a1cf748ed7f54b383d314c975aed228abec8690e7d0"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            9.783102141523404,
+            9.993567083689092,
+            10.001768154882162,
+            10.3368551641421,
+            10.433978361428375
+          ],
+          "median_gain_percent": 10.001768154882162,
+          "bootstrap_ci95_percent": [
+            9.783102141523404,
+            10.433978361428375
+          ]
+        },
+        "09_solovev_pressure_flatcore": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 98.5110073,
+              "p95_device_ms": 99.49534831999999,
+              "mad_device_ms": 0.08383940000000223,
+              "median_wall_seconds": 0.5100964996963739,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "ee9273555fe454666758c8710b740ac3e46c6be6fe06ab04216dbc96da859bfb"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 88.7241916,
+              "p95_device_ms": 89.10509914000001,
+              "mad_device_ms": 0.2646064999999993,
+              "median_wall_seconds": 0.46106819808483124,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "5761b0d966958d160660b635adb18627b1d988e953d59c8f880f96cd1a53421e"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.224463312334853,
+            9.4414923219588,
+            9.603477005836524,
+            11.195285121532372,
+            10.226567038513345
+          ],
+          "median_gain_percent": 10.224463312334853,
+          "bootstrap_ci95_percent": [
+            9.4414923219588,
+            11.195285121532372
+          ]
+        },
+        "10_solovev_mpol4": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 86.2148495,
+              "p95_device_ms": 86.38404434,
+              "mad_device_ms": 0.12854380000000276,
+              "median_wall_seconds": 0.46207768470048904,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "72ef7a02617bf62e57f29b04e0798fd605683b83e6014cfa33fc9d482a481f03"
+              ],
+              "iterations": [
+                240,
+                189,
+                277
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 82.70691120000001,
+              "p95_device_ms": 82.79724126,
+              "mad_device_ms": 0.03638470000001348,
+              "median_wall_seconds": 0.46082927100360394,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "247fbd34c18df8bda675788d485a91f279fa61516036707dc99e769815952b7e"
+              ],
+              "iterations": [
+                155,
+                103,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            3.946013963638584,
+            4.138093704234203,
+            4.253790197054963,
+            4.235467773625756,
+            3.903009257833223
+          ],
+          "median_gain_percent": 4.138093704234203,
+          "bootstrap_ci95_percent": [
+            3.903009257833223,
+            4.253790197054963
+          ]
+        },
+        "11_solovev_mpol10": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 122.0122242,
+              "p95_device_ms": 123.02799954000001,
+              "mad_device_ms": 0.810241700000006,
+              "median_wall_seconds": 0.5169399678707123,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "dd5c828c58e1a26dac9aba9a4ae30ea072f84dc56ea550732886e25f45aed899"
+              ],
+              "iterations": [
+                232,
+                205,
+                354
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 108.58681680000001,
+              "p95_device_ms": 109.50365334,
+              "mad_device_ms": 0.13683309999998983,
+              "median_wall_seconds": 0.5185910165309906,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "cd64e1d9bd34832cef0767abee6192490039330a7a9dca16747418f08c88e23e"
+              ],
+              "iterations": [
+                150,
+                122,
+                245
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.759029704815259,
+            11.811077103695744,
+            10.092078954167615,
+            10.744547136479454,
+            11.622638801986252
+          ],
+          "median_gain_percent": 10.759029704815259,
+          "bootstrap_ci95_percent": [
+            10.092078954167615,
+            11.811077103695744
+          ]
+        },
+        "12_solovev_radial99": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 138.4137917,
+              "p95_device_ms": 139.83798332,
+              "mad_device_ms": 0.2510776999999962,
+              "median_wall_seconds": 0.5119859855622053,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "d2dc353f497c03cd76a7b877d418609ff1e43f24ec84483488abead52d00b5e9"
+              ],
+              "iterations": [
+                235,
+                193,
+                597
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 122.2996483,
+              "p95_device_ms": 123.26175190000001,
+              "mad_device_ms": 0.2182406999999955,
+              "median_wall_seconds": 0.5160682778805494,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "26170ddc3a2e66d3f4c4432b43cf37d22a2d69e0aff90d5ee814fd1fc4d1cb36"
+              ],
+              "iterations": [
+                144,
+                113,
+                400
+              ],
+              "extra_evaluations": 170
+            }
+          },
+          "paired_gain_percent": [
+            12.54022041497096,
+            11.959382265858887,
+            10.764335758011633,
+            11.417237179132368,
+            11.64200705875178
+          ],
+          "median_gain_percent": 11.64200705875178,
+          "bootstrap_ci95_percent": [
+            10.764335758011633,
+            12.54022041497096
+          ]
+        },
+        "13_solovev_ntheta36": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 107.5959663,
+              "p95_device_ms": 107.8447995,
+              "mad_device_ms": 0.06630320000000722,
+              "median_wall_seconds": 0.5142999682575464,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "74d6de18ed8559cb126ccc9d3fc61d1f30742dcedfc281f9f303bf631b552945"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 96.3870716,
+              "p95_device_ms": 96.60570674,
+              "mad_device_ms": 0.13715170000000398,
+              "median_wall_seconds": 0.46550479531288147,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "848b38b9f041555fd27ab4883687984124dbf2c2e7916c7d40f091ea45937874"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.82857687386568,
+            10.195446053631475,
+            10.535113768811733,
+            10.363175684496307,
+            10.227027721463811
+          ],
+          "median_gain_percent": 10.363175684496307,
+          "bootstrap_ci95_percent": [
+            10.195446053631475,
+            10.82857687386568
+          ]
+        },
+        "14_vmecpp_circular": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 183.9991074,
+              "p95_device_ms": 184.14987184,
+              "mad_device_ms": 0.09973899999999958,
+              "median_wall_seconds": 0.5636259336024523,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "ac5b1983ed952cb720561aac49d1d1ef502d3661da232f5c57370a3575e2efdf"
+              ],
+              "iterations": [
+                310,
+                368,
+                649
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 178.7986222,
+              "p95_device_ms": 179.9163627,
+              "mad_device_ms": 0.2952958000000194,
+              "median_wall_seconds": 0.563086898997426,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "4fd0c9c4b88fa718822701edaad423b009a1c7dd58bc900feb0dafcb43807167"
+              ],
+              "iterations": [
+                200,
+                253,
+                476
+              ],
+              "extra_evaluations": 272
+            }
+          },
+          "paired_gain_percent": [
+            2.8263643631132096,
+            2.9661433346689026,
+            2.161952330408523,
+            2.9428615094014954,
+            2.570139919585679
+          ],
+          "median_gain_percent": 2.8263643631132096,
+          "bootstrap_ci95_percent": [
+            2.161952330408523,
+            2.9661433346689026
+          ]
+        },
+        "15_vmecpp_analytical_ncurr1": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 142.06077190000002,
+              "p95_device_ms": 142.73355408,
+              "mad_device_ms": 0.05871969999998328,
+              "median_wall_seconds": 0.5144323855638504,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "25ca2326e3d9d82c242916166c09069afd6b8d645ac44fbc719a789400543762"
+              ],
+              "iterations": [
+                249,
+                211,
+                344
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 114.82159809999999,
+              "p95_device_ms": 114.87372166,
+              "mad_device_ms": 0.06265820000001554,
+              "median_wall_seconds": 0.5145958866924047,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "24736bb24c1e21babfc4fb9bfa818cd7fa7673a9c8a104243649976aa7e9d060"
+              ],
+              "iterations": [
+                152,
+                103,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            19.2299492918636,
+            19.105256006673244,
+            19.63472738219364,
+            19.207705567108867,
+            19.153712957005208
+          ],
+          "median_gain_percent": 19.207705567108867,
+          "bootstrap_ci95_percent": [
+            19.105256006673244,
+            19.63472738219364
+          ]
+        },
+        "16_solovev_pressure1000_linear": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 94.5667515,
+              "p95_device_ms": 96.48409118,
+              "mad_device_ms": 0.21955119999999795,
+              "median_wall_seconds": 0.46925792656838894,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "257475d48b7254f5206cf8f9068541cf7e44a24a14af76e4380855173e143b06"
+              ],
+              "iterations": [
+                244,
+                192,
+                293
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 85.0031396,
+              "p95_device_ms": 92.41737176000001,
+              "mad_device_ms": 0.07219519999999591,
+              "median_wall_seconds": 0.464609919115901,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "58c6666b9029800f2c909b2093bd3a8282c37b586be24aafd0d3140a5a48085a"
+              ],
+              "iterations": [
+                160,
+                101,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.438209601818826,
+            10.18942381667831,
+            10.117146148234612,
+            2.8012907578009116,
+            9.449622958234194
+          ],
+          "median_gain_percent": 10.117146148234612,
+          "bootstrap_ci95_percent": [
+            2.8012907578009116,
+            10.438209601818826
+          ]
+        },
+        "17_solovev_pressure5000_linear": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 116.402626,
+              "p95_device_ms": 116.52867888,
+              "mad_device_ms": 0.13203049999999905,
+              "median_wall_seconds": 0.5166815556585789,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "d355b681e21cd13ec33f39c3333de1ea8e0ab7a544aaa1ed25eb52657ad8bec9"
+              ],
+              "iterations": [
+                249,
+                229,
+                421
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 110.3412151,
+              "p95_device_ms": 110.69662588,
+              "mad_device_ms": 0.255901300000005,
+              "median_wall_seconds": 0.5186700765043497,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "c1e80d639a31c07fbb584783342b0b661c216e36bf9cf81801d9a154b2f03c4c"
+              ],
+              "iterations": [
+                173,
+                143,
+                300
+              ],
+              "extra_evaluations": 170
+            }
+          },
+          "paired_gain_percent": [
+            4.89449026691201,
+            5.060131087906616,
+            5.039505393831057,
+            5.239530916072077,
+            5.290387152943355
+          ],
+          "median_gain_percent": 5.060131087906616,
+          "bootstrap_ci95_percent": [
+            4.89449026691201,
+            5.290387152943355
+          ]
+        },
+        "18_solovev_pressure1000_quadratic": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 98.63049699999999,
+              "p95_device_ms": 99.80563994,
+              "mad_device_ms": 0.08332630000001018,
+              "median_wall_seconds": 0.4724978655576706,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "5ee55bbe0d2c29a69de46c06697e90ea539b16bb02fd936c5ea24c8b13ff63f3"
+              ],
+              "iterations": [
+                248,
+                196,
+                312
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 86.67996980000001,
+              "p95_device_ms": 87.12696264,
+              "mad_device_ms": 0.12041670000000693,
+              "median_wall_seconds": 0.46488649025559425,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "0a01de2d4e52cbe83b322ae1a5bf1076873c97234b674f5b859df69e747d694b"
+              ],
+              "iterations": [
+                160,
+                110,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            11.887369042596585,
+            12.238551226199323,
+            12.10483972815588,
+            12.850959004429107,
+            12.070274191730778
+          ],
+          "median_gain_percent": 12.10483972815588,
+          "bootstrap_ci95_percent": [
+            11.887369042596585,
+            12.850959004429107
+          ]
+        }
+      },
+      "followup": {
+        "01_solovev_circular": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 97.1472969,
+              "p95_device_ms": 102.07736777,
+              "mad_device_ms": 0.350946399999998,
+              "median_wall_seconds": 0.46436903811991215,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "7df5594128f770848df8d09c63059e0bb3f0bcd1e7f48098dd06d98d0bc2ebd2"
+              ],
+              "iterations": [
+                241,
+                180,
+                315
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 94.0929261,
+              "p95_device_ms": 99.27251321,
+              "mad_device_ms": 0.15820879999999704,
+              "median_wall_seconds": 0.46301977150142193,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "43b9a74ed6c7ae687f06e4670fdfe969b36e13dd6a0142e570cea7b5d06a1df7"
+              ],
+              "iterations": [
+                154,
+                115,
+                257
+              ],
+              "extra_evaluations": 137
+            }
+          },
+          "paired_gain_percent": [
+            3.775172151748407,
+            1.6029732106964345,
+            3.121762610736767,
+            3.346669872641539,
+            2.3322330046680495,
+            2.9834786890503784,
+            3.174837528869323,
+            1.8412902077673543,
+            3.098573487119227,
+            3.4605423765602494,
+            2.854939544684265,
+            3.0438500821843184,
+            2.794793703642584,
+            2.7461551083465374,
+            3.4679632653386583
+          ],
+          "median_gain_percent": 3.0438500821843184,
+          "bootstrap_ci95_percent": [
+            2.794793703642584,
+            3.346669872641539
+          ]
+        }
+      },
+      "binary_sha256": "6a2f2b5d8ada4a125adedb0ffa9461dd58ad0a671e4284094215fa06c310b140",
+      "policy": {
+        "CUMES_NEWTON_PERIOD": "100",
+        "CUMES_NEWTON_START": "100",
+        "CUMES_NEWTON_STEPS": "32",
+        "CUMES_NEWTON_BASIS": "32",
+        "CUMES_NEWTON_FORWARD": "1",
+        "CUMES_NEWTON_EPSILON": "1e-6",
+        "CUMES_NEWTON_RATIO": "0.95"
+      }
+    },
+    "ada": {
+      "initial": {
+        "00_solovev_reference": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 71.5856972,
+              "p95_device_ms": 72.57992402,
+              "mad_device_ms": 0.053411499999995726,
+              "median_wall_seconds": 0.3699671149952337,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "698a2613abe6c5e56123c7c2fb9f8b68594bdece7f1bfa40375b19f665536535"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 68.7188788,
+              "p95_device_ms": 69.24117796,
+              "mad_device_ms": 0.22236730000000193,
+              "median_wall_seconds": 0.38083655503578484,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "b69c31da4ab2be7da3fb4f1c64f13f98f81aeb301ecaed66c4facd091699a526"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            3.1848639651280153,
+            3.9553394048262747,
+            4.10428732962036,
+            5.806925441284383,
+            3.93305885932288
+          ],
+          "median_gain_percent": 3.9553394048262747,
+          "bootstrap_ci95_percent": [
+            3.1848639651280153,
+            5.806925441284383
+          ]
+        },
+        "01_solovev_circular": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 70.92275240000001,
+              "p95_device_ms": 71.8278141,
+              "mad_device_ms": 0.6588152999999863,
+              "median_wall_seconds": 0.3702914969762787,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "4f6bf2749e281c0f788f67822ee808a512127acfdac5b92aaec4fcb2bff4be54"
+              ],
+              "iterations": [
+                241,
+                180,
+                315
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 72.8241253,
+              "p95_device_ms": 72.92306442,
+              "mad_device_ms": 0.11516949999999326,
+              "median_wall_seconds": 0.3692749709589407,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "0ea2d5f0732e0f595fef85116bb7f81a25f994c13b03f9c8b4976e7533295b5a"
+              ],
+              "iterations": [
+                154,
+                115,
+                257
+              ],
+              "extra_evaluations": 137
+            }
+          },
+          "paired_gain_percent": [
+            -8.14696643092121,
+            -2.680906811507211,
+            5.14968583876575,
+            1.13256212276851,
+            -1.8967551893949386
+          ],
+          "median_gain_percent": -1.8967551893949386,
+          "bootstrap_ci95_percent": [
+            -8.14696643092121,
+            5.14968583876575
+          ]
+        },
+        "02_solovev_elongation_low": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 70.7343349,
+              "p95_device_ms": 73.19957086000001,
+              "mad_device_ms": 0.09795379999999909,
+              "median_wall_seconds": 0.3698791600181721,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "7147643e728198dce5d1991647f5cbd41fe571e5a25b1ee59e7081bc88395c97"
+              ],
+              "iterations": [
+                242,
+                188,
+                314
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 67.1908808,
+              "p95_device_ms": 67.26516422,
+              "mad_device_ms": 0.07817459999999699,
+              "median_wall_seconds": 0.37694399198517203,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "1eaf54be46280aecd7a5689490d014a3a7370ae63cb38a00948a30528527820f"
+              ],
+              "iterations": [
+                154,
+                118,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            5.009524872198934,
+            4.793742030123338,
+            15.58555799233785,
+            7.4977155071203505,
+            5.057988758733966
+          ],
+          "median_gain_percent": 5.057988758733966,
+          "bootstrap_ci95_percent": [
+            4.793742030123338,
+            15.58555799233785
+          ]
+        },
+        "03_solovev_elongation_high": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 80.4020785,
+              "p95_device_ms": 82.52268978000001,
+              "mad_device_ms": 0.17053040000000408,
+              "median_wall_seconds": 0.36950454500038177,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "b0943a934ff969466b26ee7f0c596bf68a30b6e26413ad3b5455a16035b3a42b"
+              ],
+              "iterations": [
+                246,
+                202,
+                407
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 81.4577256,
+              "p95_device_ms": 81.9581106,
+              "mad_device_ms": 0.1798049000000077,
+              "median_wall_seconds": 0.3688110910006799,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "5827e326ab586aae19e97ae3320c3106f782e6dd4a0795d7730a67b009d2401b"
+              ],
+              "iterations": [
+                161,
+                116,
+                300
+              ],
+              "extra_evaluations": 170
+            }
+          },
+          "paired_gain_percent": [
+            -1.4867030688207716,
+            -1.964724829843778,
+            -1.5249337461203716,
+            2.0868388358492362,
+            -1.602171901374283
+          ],
+          "median_gain_percent": -1.5249337461203716,
+          "bootstrap_ci95_percent": [
+            -1.964724829843778,
+            2.0868388358492362
+          ]
+        },
+        "04_solovev_triangularity_stronger": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 83.9511052,
+              "p95_device_ms": 153.60067712,
+              "mad_device_ms": 0.3200037000000009,
+              "median_wall_seconds": 0.36806669703219086,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "401fbfb7c62e128484fc5f836af28d5e2d3b0687518accb8264e1a8c130fbedb"
+              ],
+              "iterations": [
+                244,
+                208,
+                438
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 79.7406711,
+              "p95_device_ms": 87.54369468,
+              "mad_device_ms": 0.023200900000006186,
+              "median_wall_seconds": 0.3694447970483452,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "491aaf67a31862267bd6113819209781fbb5ec51161f505f780691bc3b277d45"
+              ],
+              "iterations": [
+                151,
+                125,
+                331
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            -6.596412979682831,
+            4.6518942477398735,
+            53.38252076344207,
+            5.234080956932708,
+            4.595987788124701
+          ],
+          "median_gain_percent": 4.6518942477398735,
+          "bootstrap_ci95_percent": [
+            -6.596412979682831,
+            53.38252076344207
+          ]
+        },
+        "05_solovev_triangularity_reversed": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 67.4318409,
+              "p95_device_ms": 67.55510367999999,
+              "mad_device_ms": 0.07833680000000243,
+              "median_wall_seconds": 0.37745403399458155,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "95d1d69337f35a8f210f1ce200fafdb8ce3d8cebe30fd9e80b37eb6dd97dfd9c"
+              ],
+              "iterations": [
+                240,
+                181,
+                291
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 65.7340164,
+              "p95_device_ms": 78.78866751999999,
+              "mad_device_ms": 0.1976966999999945,
+              "median_wall_seconds": 0.4214535330538638,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "e90f344adeefe12b07708c05f988384aeee675f60732dd7e92216eb5df0e71ea"
+              ],
+              "iterations": [
+                152,
+                101,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            2.4796020251052653,
+            2.8865519802649287,
+            2.404459458553976,
+            2.4848605493735243,
+            -21.619746851668697
+          ],
+          "median_gain_percent": 2.4796020251052653,
+          "bootstrap_ci95_percent": [
+            -21.619746851668697,
+            2.8865519802649287
+          ]
+        },
+        "06_solovev_pressure_half": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 71.8832646,
+              "p95_device_ms": 74.16721111999999,
+              "mad_device_ms": 0.07043280000000607,
+              "median_wall_seconds": 0.8757504189852625,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "e12841e80a25b396c2498d8cc9c2166cc7471ffb1d4a5fea8b216ca1e3055905"
+              ],
+              "iterations": [
+                235,
+                193,
+                327
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 68.9106894,
+              "p95_device_ms": 69.19994922,
+              "mad_device_ms": 0.14947229999999934,
+              "median_wall_seconds": 0.3772175249760039,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "6274e762ff5efa9410bb74ca50bf53ffd7e5736d67db99386fe76dfcd1d428ab"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            6.026075520318363,
+            4.116668134887247,
+            4.373537870732713,
+            3.5452151602800352,
+            7.3697285024411086
+          ],
+          "median_gain_percent": 4.373537870732713,
+          "bootstrap_ci95_percent": [
+            3.5452151602800352,
+            7.3697285024411086
+          ]
+        },
+        "07_solovev_pressure_double": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 71.5695686,
+              "p95_device_ms": 71.8971711,
+              "mad_device_ms": 0.2028827999999976,
+              "median_wall_seconds": 0.36892863805405796,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "fca447e934dee7a80376db7a026d87d5261020bfdf4a1ea8ac27fcf3f28bd850"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 68.9931841,
+              "p95_device_ms": 73.42936284,
+              "mad_device_ms": 0.019616100000007464,
+              "median_wall_seconds": 0.37096070096595213,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "a130a15d5380da2427739f9beeb0a19595d4d40e74ecafb4d5a1629f6cd71c76"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            3.2982974809795618,
+            -4.1413340306203805,
+            3.895041265086241,
+            3.478735555363699,
+            4.3783923430189775
+          ],
+          "median_gain_percent": 3.478735555363699,
+          "bootstrap_ci95_percent": [
+            -4.1413340306203805,
+            4.3783923430189775
+          ]
+        },
+        "08_solovev_pressure_quadratic": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 72.0618897,
+              "p95_device_ms": 73.10231744,
+              "mad_device_ms": 0.07292750000000581,
+              "median_wall_seconds": 0.3842385410098359,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "67c8c7cd14e4c192549915bfe9df64a3ee387b348b6dd73211451ffdab308a09"
+              ],
+              "iterations": [
+                235,
+                193,
+                327
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 68.9929609,
+              "p95_device_ms": 72.33777348,
+              "mad_device_ms": 0.09084889999999746,
+              "median_wall_seconds": 0.37032760499278083,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "8eff8fbe6676615afe1092b9ee8bf560c36beefed01b72276fb3e4e5ff37eb6f"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            -1.5780377614361463,
+            4.194104757501216,
+            5.966171213896709,
+            4.086199898132758,
+            4.384811046663395
+          ],
+          "median_gain_percent": 4.194104757501216,
+          "bootstrap_ci95_percent": [
+            -1.5780377614361463,
+            5.966171213896709
+          ]
+        },
+        "09_solovev_pressure_flatcore": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 71.9365119,
+              "p95_device_ms": 72.87281334,
+              "mad_device_ms": 0.12070459999999628,
+              "median_wall_seconds": 0.3714145430130884,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "836a92841bc28c650aad49b9d8c2cecb66487aa75e16828d5f8e5d59cc4f7e66"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 68.9072009,
+              "p95_device_ms": 89.35076316,
+              "mad_device_ms": 0.06243130000000008,
+              "median_wall_seconds": 0.4183725719922222,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "72a76bbb723a66dcdd0d68355616b23e5c4ae847e8464717664f8bc1a5fb91f6"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            4.285557943489882,
+            4.050092186320098,
+            4.505583452332129,
+            5.658104062347169,
+            -31.54719981601286
+          ],
+          "median_gain_percent": 4.285557943489882,
+          "bootstrap_ci95_percent": [
+            -31.54719981601286,
+            5.658104062347169
+          ]
+        },
+        "10_solovev_mpol4": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 64.2083836,
+              "p95_device_ms": 64.34958652,
+              "mad_device_ms": 0.043744999999987044,
+              "median_wall_seconds": 0.36921750399051234,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "ff4f11e4b34c38e3caa7d39fe5961252e8cbcfcf60c42c2e7bf9ffbdd1371af2"
+              ],
+              "iterations": [
+                240,
+                189,
+                277
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 66.1156483,
+              "p95_device_ms": 82.76146614,
+              "mad_device_ms": 0.13916959999998824,
+              "median_wall_seconds": 0.38358374300878495,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "86248d77d9661db3deabd7442c5dd343ecd744e18536ddd91d6455e9f462299b"
+              ],
+              "iterations": [
+                155,
+                103,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            -2.886523096241822,
+            -35.322092425326204,
+            -3.1169228843260566,
+            -2.705593291920194,
+            -2.8307008831008673
+          ],
+          "median_gain_percent": -2.886523096241822,
+          "bootstrap_ci95_percent": [
+            -35.322092425326204,
+            -2.705593291920194
+          ]
+        },
+        "11_solovev_mpol10": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 84.6818543,
+              "p95_device_ms": 85.43789410000001,
+              "mad_device_ms": 0.1253719999999987,
+              "median_wall_seconds": 0.37028358300449327,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "6faf9751b6bfab5b4b0bd5088f390ee01d8af89c790c99adfe57bcb0800cc938"
+              ],
+              "iterations": [
+                232,
+                205,
+                354
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 79.8464622,
+              "p95_device_ms": 80.43797148,
+              "mad_device_ms": 0.11260590000000548,
+              "median_wall_seconds": 0.9308771070209332,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "5388aa33bfb0eaebb98014839dfedc800a1e6b5f166da2aa40576e170e384add"
+              ],
+              "iterations": [
+                150,
+                122,
+                245
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            5.703437357871255,
+            4.866211579875612,
+            5.5798023938109615,
+            6.532751714949081,
+            6.523758416269853
+          ],
+          "median_gain_percent": 5.703437357871255,
+          "bootstrap_ci95_percent": [
+            4.866211579875612,
+            6.532751714949081
+          ]
+        },
+        "12_solovev_radial99": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 101.7000007,
+              "p95_device_ms": 105.19522669999999,
+              "mad_device_ms": 4.217664799999994,
+              "median_wall_seconds": 0.37174484197748825,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "c558535bf2cb11276a764379bdcfb7dc69af188ab99272b00dc17cdbbc00c2b9"
+              ],
+              "iterations": [
+                235,
+                193,
+                597
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 93.06076809999999,
+              "p95_device_ms": 98.15386128,
+              "mad_device_ms": 2.645791999999986,
+              "median_wall_seconds": 0.372983684996143,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "ec0023f7a02a960cd0169ff7a3d13d04e75d9e25b5588ae15276c817c9fd22ee"
+              ],
+              "iterations": [
+                144,
+                113,
+                400
+              ],
+              "extra_evaluations": 170
+            }
+          },
+          "paired_gain_percent": [
+            3.3822766966063122,
+            3.3320610390123684,
+            5.322602050819036,
+            14.636547479419281,
+            4.673595097012962
+          ],
+          "median_gain_percent": 4.673595097012962,
+          "bootstrap_ci95_percent": [
+            3.3320610390123684,
+            14.636547479419281
+          ]
+        },
+        "13_solovev_ntheta36": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 77.91673660000001,
+              "p95_device_ms": 78.18366119999999,
+              "mad_device_ms": 0.013855000000006612,
+              "median_wall_seconds": 0.3703195049893111,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "963db2ccfd6ed1eadb90e5471ca08dba10fcb40c847392608672c819da2b4611"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 73.5815353,
+              "p95_device_ms": 74.35429074,
+              "mad_device_ms": 0.271806600000005,
+              "median_wall_seconds": 0.8866155249997973,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "9ea686ae45e0325f9ccdcd2be9fae71e176b3e1f76e4c37149fa9ba6fee4be0a"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            6.037718295736017,
+            5.5762581513720155,
+            5.820211817358201,
+            4.524174720120411,
+            4.746958038070826
+          ],
+          "median_gain_percent": 5.5762581513720155,
+          "bootstrap_ci95_percent": [
+            4.524174720120411,
+            6.037718295736017
+          ]
+        },
+        "14_vmecpp_circular": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 120.5615349,
+              "p95_device_ms": 121.19614522,
+              "mad_device_ms": 0.0821420000000046,
+              "median_wall_seconds": 0.4293949679704383,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "86c8fe132bc38e077946cc8ddb79af92ecd5e36ac4821efc671e296a896cc8ad"
+              ],
+              "iterations": [
+                310,
+                368,
+                649
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 128.1475868,
+              "p95_device_ms": 148.3105648,
+              "mad_device_ms": 3.311616900000004,
+              "median_wall_seconds": 0.4205253039835952,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "1442a334d55cf44f0347c71ee010391a3993f7181cf098abcc8d3f455ec52ae1"
+              ],
+              "iterations": [
+                200,
+                253,
+                476
+              ],
+              "extra_evaluations": 272
+            }
+          },
+          "paired_gain_percent": [
+            -6.292265527551777,
+            -2.869851931916312,
+            -9.86026175435686,
+            -26.542272179942984,
+            -4.976915265026305
+          ],
+          "median_gain_percent": -6.292265527551777,
+          "bootstrap_ci95_percent": [
+            -26.542272179942984,
+            -2.869851931916312
+          ]
+        },
+        "15_vmecpp_analytical_ncurr1": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 97.4420491,
+              "p95_device_ms": 97.59381868,
+              "mad_device_ms": 0.05830380000000446,
+              "median_wall_seconds": 0.3713375059887767,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "982e6a15f8c41598574ba6cf7b1eb172b2aefd460e7b7fb9dcf6a75da1efbede"
+              ],
+              "iterations": [
+                249,
+                211,
+                344
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 83.3103371,
+              "p95_device_ms": 86.17512858,
+              "mad_device_ms": 0.30486489999999833,
+              "median_wall_seconds": 0.36999064398696646,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "28904e7dcb2bff5bcb7eb0b38f678677f5be110d86f11bbf64a9b1cd63e60793"
+              ],
+              "iterations": [
+                152,
+                103,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            11.075204698255881,
+            14.505546878403663,
+            14.980366081716479,
+            14.648672629569969,
+            13.46084314134507
+          ],
+          "median_gain_percent": 14.505546878403663,
+          "bootstrap_ci95_percent": [
+            11.075204698255881,
+            14.980366081716479
+          ]
+        },
+        "16_solovev_pressure1000_linear": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 68.82995220000001,
+              "p95_device_ms": 69.12135696,
+              "mad_device_ms": 0.1320953999999972,
+              "median_wall_seconds": 0.3695502650225535,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "e506c796dd9882cc53b8c33d6e79ef49a2b89d3f8a9a7221a09e90574dd29e2f"
+              ],
+              "iterations": [
+                244,
+                192,
+                293
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 66.4503679,
+              "p95_device_ms": 139.50425525999998,
+              "mad_device_ms": 0.04147340000000099,
+              "median_wall_seconds": 0.3788846759707667,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "c21050ccbc3589c75d79a193d1341ece5a46161cd393031149c4b5313342b528"
+              ],
+              "iterations": [
+                160,
+                101,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            3.632558758304627,
+            -129.43463003739672,
+            3.919563303371598,
+            3.184817668836004,
+            3.82554587913837
+          ],
+          "median_gain_percent": 3.632558758304627,
+          "bootstrap_ci95_percent": [
+            -129.43463003739672,
+            3.919563303371598
+          ]
+        },
+        "17_solovev_pressure5000_linear": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 84.7773419,
+              "p95_device_ms": 150.59928738,
+              "mad_device_ms": 0.5166053999999889,
+              "median_wall_seconds": 0.3696330870152451,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "62eb134c121df20c06bd17c7732f647767d20389774781bdbd23413b5f8d49f8"
+              ],
+              "iterations": [
+                249,
+                229,
+                421
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 84.4122887,
+              "p95_device_ms": 84.98132972,
+              "mad_device_ms": 0.1550103000000007,
+              "median_wall_seconds": 0.3714577829814516,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "b78de606d8700294eb750702d96ac9d1c2db869531a51458aa84674039a91c09"
+              ],
+              "iterations": [
+                173,
+                143,
+                300
+              ],
+              "extra_evaluations": 170
+            }
+          },
+          "paired_gain_percent": [
+            0.8631442054826244,
+            -0.46442378295612485,
+            0.5154908023838334,
+            49.05218382315876,
+            -0.3289123985193987
+          ],
+          "median_gain_percent": 0.5154908023838334,
+          "bootstrap_ci95_percent": [
+            -0.46442378295612485,
+            49.05218382315876
+          ]
+        },
+        "18_solovev_pressure1000_quadratic": {
+          "variants": {
+            "baseline": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 72.00988770000001,
+              "p95_device_ms": 72.39566646,
+              "mad_device_ms": 0.4460791999999856,
+              "median_wall_seconds": 0.3700703210197389,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "6cbeff0306edde9bbb30e1b2b6d1ddc951ac6dbc40798c9876ee4519b3e2f86c"
+              ],
+              "iterations": [
+                248,
+                196,
+                312
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 5,
+              "converged": 5,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 67.4022713,
+              "p95_device_ms": 70.40507474,
+              "mad_device_ms": 0.10271829999999227,
+              "median_wall_seconds": 0.3778755370294675,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "261d27c3422e40d8a56c166498c01f3d6ae32b2bf5f40a4ccaef3054bec0a403"
+              ],
+              "iterations": [
+                160,
+                110,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            1.1928588245805671,
+            6.586139083365705,
+            6.947997543042927,
+            5.707552208036537,
+            5.672142740836761
+          ],
+          "median_gain_percent": 5.707552208036537,
+          "bootstrap_ci95_percent": [
+            1.1928588245805671,
+            6.947997543042927
+          ]
+        }
+      },
+      "followup": {
+        "01_solovev_circular": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 70.81987190000001,
+              "p95_device_ms": 73.29547557,
+              "mad_device_ms": 0.15779299999999807,
+              "median_wall_seconds": 0.3704295239876956,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "4f6bf2749e281c0f788f67822ee808a512127acfdac5b92aaec4fcb2bff4be54"
+              ],
+              "iterations": [
+                241,
+                180,
+                315
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 73.0088301,
+              "p95_device_ms": 84.69657063999999,
+              "mad_device_ms": 0.40236950000000604,
+              "median_wall_seconds": 0.37121990200830624,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "0ea2d5f0732e0f595fef85116bb7f81a25f994c13b03f9c8b4976e7533295b5a"
+              ],
+              "iterations": [
+                154,
+                115,
+                257
+              ],
+              "extra_evaluations": 137
+            }
+          },
+          "paired_gain_percent": [
+            -3.512127425153322,
+            -3.507758537150729,
+            -2.83762746663887,
+            -3.009580939607903,
+            -14.342246913112145,
+            -1.0852791793589,
+            -9.162472349009265,
+            3.7566727514859233,
+            -3.02181715458012,
+            -32.26974431211509,
+            -3.958167101462484,
+            -3.105932030133207,
+            -2.650284389258273,
+            -1.6895378228421132,
+            -13.680405993504774
+          ],
+          "median_gain_percent": -3.105932030133207,
+          "bootstrap_ci95_percent": [
+            -9.162472349009265,
+            -2.650284389258273
+          ]
+        },
+        "02_solovev_elongation_low": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 70.7758388,
+              "p95_device_ms": 72.21199743,
+              "mad_device_ms": 0.0873909000000026,
+              "median_wall_seconds": 0.37042008800199255,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "7147643e728198dce5d1991647f5cbd41fe571e5a25b1ee59e7081bc88395c97"
+              ],
+              "iterations": [
+                242,
+                188,
+                314
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 67.4866247,
+              "p95_device_ms": 78.01091027999999,
+              "mad_device_ms": 0.22396839999998974,
+              "median_wall_seconds": 0.38439937797375023,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "1eaf54be46280aecd7a5689490d014a3a7370ae63cb38a00948a30528527820f"
+              ],
+              "iterations": [
+                154,
+                118,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            4.978297114683161,
+            6.907814218929175,
+            4.999669530404283,
+            3.2222513970348476,
+            4.7016630961860155,
+            4.904497154472431,
+            4.850850842401555,
+            -9.684558285974854,
+            4.208386254517638,
+            5.187391122180851,
+            4.977371069650205,
+            -9.260118687182949,
+            3.0555021457907006,
+            3.2051736830305266,
+            5.113135910177602
+          ],
+          "median_gain_percent": 4.850850842401555,
+          "bootstrap_ci95_percent": [
+            3.2222513970348476,
+            4.999669530404283
+          ]
+        },
+        "04_solovev_triangularity_stronger": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 84.03740690000001,
+              "p95_device_ms": 110.1493651099999,
+              "mad_device_ms": 0.2523842000000087,
+              "median_wall_seconds": 0.37122811703011394,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "401fbfb7c62e128484fc5f836af28d5e2d3b0687518accb8264e1a8c130fbedb"
+              ],
+              "iterations": [
+                244,
+                208,
+                438
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 79.8387223,
+              "p95_device_ms": 142.46523475999976,
+              "mad_device_ms": 0.33350570000000346,
+              "median_wall_seconds": 0.3707377309910953,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "491aaf67a31862267bd6113819209781fbb5ec51161f505f780691bc3b277d45"
+              ],
+              "iterations": [
+                151,
+                125,
+                331
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            4.630101367103157,
+            5.398237450209386,
+            6.318158121493555,
+            52.63758494167472,
+            5.190191123494148,
+            4.525644311208977,
+            4.037991506088112,
+            5.733196601869994,
+            5.397257701917946,
+            5.155831961113877,
+            5.4897659026929,
+            10.973512320499745,
+            11.326797435172963,
+            9.364133241360994,
+            -242.9054604869151
+          ],
+          "median_gain_percent": 5.398237450209386,
+          "bootstrap_ci95_percent": [
+            5.155831961113877,
+            9.364133241360994
+          ]
+        },
+        "05_solovev_triangularity_reversed": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 67.60672,
+              "p95_device_ms": 75.52956274,
+              "mad_device_ms": 0.4742393000000078,
+              "median_wall_seconds": 0.3832203209749423,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "95d1d69337f35a8f210f1ce200fafdb8ce3d8cebe30fd9e80b37eb6dd97dfd9c"
+              ],
+              "iterations": [
+                240,
+                181,
+                291
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 65.7370872,
+              "p95_device_ms": 66.63483841,
+              "mad_device_ms": 0.5234890999999919,
+              "median_wall_seconds": 0.3699852990102954,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "e90f344adeefe12b07708c05f988384aeee675f60732dd7e92216eb5df0e71ea"
+              ],
+              "iterations": [
+                152,
+                101,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            10.46995230352097,
+            9.695955717368243,
+            4.925478899313762,
+            3.1735799345916416,
+            -4.664130134542943,
+            -2.862453821506339,
+            16.059394945141413,
+            1.8361716095587899,
+            1.991138898618361,
+            1.713498881671327,
+            11.636479964050384,
+            3.5400654232555784,
+            3.4093406339265053,
+            1.5880036286556876,
+            4.1064632728094015
+          ],
+          "median_gain_percent": 3.4093406339265053,
+          "bootstrap_ci95_percent": [
+            1.713498881671327,
+            9.695955717368243
+          ]
+        },
+        "09_solovev_pressure_flatcore": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 71.6559372,
+              "p95_device_ms": 72.19933455,
+              "mad_device_ms": 0.1667175000000043,
+              "median_wall_seconds": 0.37115260399878025,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "836a92841bc28c650aad49b9d8c2cecb66487aa75e16828d5f8e5d59cc4f7e66"
+              ],
+              "iterations": [
+                235,
+                193,
+                326
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 69.25820730000001,
+              "p95_device_ms": 91.69802926,
+              "mad_device_ms": 0.545696200000009,
+              "median_wall_seconds": 0.8222465650178492,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "72a76bbb723a66dcdd0d68355616b23e5c4ae847e8464717664f8bc1a5fb91f6"
+              ],
+              "iterations": [
+                144,
+                113,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            2.9866488251190537,
+            -27.354974734156336,
+            4.3613528346737045,
+            5.5857795519487,
+            3.7795327104737875,
+            0.055245242835622044,
+            1.6138973680306368,
+            3.6318951631369445,
+            3.6763686345309465,
+            3.34560717266168,
+            2.5380435713128646,
+            4.257872103490579,
+            4.457419372378347,
+            1.511514338098352,
+            -28.87579947969112
+          ],
+          "median_gain_percent": 3.34560717266168,
+          "bootstrap_ci95_percent": [
+            1.511514338098352,
+            4.257872103490579
+          ]
+        },
+        "10_solovev_mpol4": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 63.924417500000004,
+              "p95_device_ms": 129.92821350999975,
+              "mad_device_ms": 0.15961450000000355,
+              "median_wall_seconds": 0.3778233790071681,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "ff4f11e4b34c38e3caa7d39fe5961252e8cbcfcf60c42c2e7bf9ffbdd1371af2"
+              ],
+              "iterations": [
+                240,
+                189,
+                277
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 66.0674877,
+              "p95_device_ms": 202.63004131999986,
+              "mad_device_ms": 0.3310395000000028,
+              "median_wall_seconds": 0.3802862550364807,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "86248d77d9661db3deabd7442c5dd343ecd744e18536ddd91d6455e9f462299b"
+              ],
+              "iterations": [
+                155,
+                103,
+                227
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            76.70373134372413,
+            -3.1710924859033707,
+            -29.291883483897195,
+            -3.230125650586513,
+            -2.930777227907,
+            -8.551121284004083,
+            -157.6038107473673,
+            -2.822440610900334,
+            -2.962817300768683,
+            -10.705872893708346,
+            -3.52908759810735,
+            -3.7343655182621838,
+            -3.06523044415008,
+            -356.56954351298464,
+            -3.6859957356174977
+          ],
+          "median_gain_percent": -3.52908759810735,
+          "bootstrap_ci95_percent": [
+            -10.705872893708346,
+            -3.06523044415008
+          ]
+        },
+        "12_solovev_radial99": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 99.7911987,
+              "p95_device_ms": 134.74763943999992,
+              "mad_device_ms": 2.729917499999999,
+              "median_wall_seconds": 0.422583291947376,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "c558535bf2cb11276a764379bdcfb7dc69af188ab99272b00dc17cdbbc00c2b9"
+              ],
+              "iterations": [
+                235,
+                193,
+                597
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 95.1133127,
+              "p95_device_ms": 99.90339991999998,
+              "mad_device_ms": 1.89843359999999,
+              "median_wall_seconds": 0.3729082419886254,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "ec0023f7a02a960cd0169ff7a3d13d04e75d9e25b5588ae15276c817c9fd22ee"
+              ],
+              "iterations": [
+                144,
+                113,
+                400
+              ],
+              "extra_evaluations": 170
+            }
+          },
+          "paired_gain_percent": [
+            6.119505928418533,
+            1.863036916104499,
+            3.8511153792567976,
+            49.41312191799804,
+            7.504458253476177,
+            5.6235717565792935,
+            14.85902646124384,
+            4.606778481750585,
+            -6.2422476943350125,
+            -2.4415956550948303,
+            7.84309260332845,
+            12.445430036630379,
+            7.741502768705011,
+            8.51368853698492,
+            9.901877475054356
+          ],
+          "median_gain_percent": 7.504458253476177,
+          "bootstrap_ci95_percent": [
+            3.8511153792567976,
+            8.51368853698492
+          ]
+        },
+        "14_vmecpp_circular": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 120.7802581,
+              "p95_device_ms": 124.08318236,
+              "mad_device_ms": 0.4056912000000068,
+              "median_wall_seconds": 0.42717040301067755,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "86c8fe132bc38e077946cc8ddb79af92ecd5e36ac4821efc671e296a896cc8ad"
+              ],
+              "iterations": [
+                310,
+                368,
+                649
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 125.1190414,
+              "p95_device_ms": 151.3346861,
+              "mad_device_ms": 0.22336190000000045,
+              "median_wall_seconds": 0.41915911296382546,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "1442a334d55cf44f0347c71ee010391a3993f7181cf098abcc8d3f455ec52ae1"
+              ],
+              "iterations": [
+                200,
+                253,
+                476
+              ],
+              "extra_evaluations": 272
+            }
+          },
+          "paired_gain_percent": [
+            -3.3222187316804375,
+            -3.2541723457204075,
+            -4.023258900303395,
+            -3.769161091918405,
+            -9.240039828746504,
+            -32.83034758075336,
+            2.5540443673818913,
+            -4.691358987065608,
+            -4.033155021875134,
+            -3.6248620844641977,
+            -3.8831291333588203,
+            -22.731785164927132,
+            -3.476619132477099,
+            -2.2289270911842296,
+            -3.5771128228778037
+          ],
+          "median_gain_percent": -3.769161091918405,
+          "bootstrap_ci95_percent": [
+            -4.691358987065608,
+            -3.476619132477099
+          ]
+        },
+        "16_solovev_pressure1000_linear": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 69.0418567,
+              "p95_device_ms": 70.19471929,
+              "mad_device_ms": 0.16502570000000105,
+              "median_wall_seconds": 0.37101245002122596,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "e506c796dd9882cc53b8c33d6e79ef49a2b89d3f8a9a7221a09e90574dd29e2f"
+              ],
+              "iterations": [
+                244,
+                192,
+                293
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 66.6456014,
+              "p95_device_ms": 70.17395873,
+              "mad_device_ms": 0.3001291000000066,
+              "median_wall_seconds": 0.37952063704142347,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "c21050ccbc3589c75d79a193d1341ece5a46161cd393031149c4b5313342b528"
+              ],
+              "iterations": [
+                160,
+                101,
+                200
+              ],
+              "extra_evaluations": 136
+            }
+          },
+          "paired_gain_percent": [
+            3.296365869604423,
+            -1.767955414571576,
+            3.382233390221223,
+            4.906039036269217,
+            3.4036548267106115,
+            3.5843201032288996,
+            -2.5843357656091026,
+            3.3496938141699517,
+            4.040684401436301,
+            4.381603195282501,
+            1.529228060469301,
+            2.970895600655077,
+            7.021108344251692,
+            2.9390136711029746,
+            3.7168612184693472
+          ],
+          "median_gain_percent": 3.382233390221223,
+          "bootstrap_ci95_percent": [
+            2.9390136711029746,
+            4.040684401436301
+          ]
+        },
+        "17_solovev_pressure5000_linear": {
+          "variants": {
+            "baseline": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 84.03407849999999,
+              "p95_device_ms": 131.90451114999985,
+              "mad_device_ms": 0.12697399999998993,
+              "median_wall_seconds": 0.3710263670072891,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "62eb134c121df20c06bd17c7732f647767d20389774781bdbd23413b5f8d49f8"
+              ],
+              "iterations": [
+                249,
+                229,
+                421
+              ],
+              "extra_evaluations": 0
+            },
+            "newton": {
+              "runs": 15,
+              "converged": 15,
+              "failed_runs": [],
+              "warmup_failures": [],
+              "median_device_ms": 84.6563816,
+              "p95_device_ms": 117.59146253999992,
+              "mad_device_ms": 0.2829093999999941,
+              "median_wall_seconds": 0.3717293770168908,
+              "repeat_trajectory_exact": true,
+              "state_sha256": [
+                "b78de606d8700294eb750702d96ac9d1c2db869531a51458aa84674039a91c09"
+              ],
+              "iterations": [
+                173,
+                143,
+                300
+              ],
+              "extra_evaluations": 170
+            }
+          },
+          "paired_gain_percent": [
+            -3.2122374095270967,
+            -0.8502274983728686,
+            -0.6044010861033122,
+            -5.456931528634246,
+            -105.86986243194603,
+            -0.6684535267103442,
+            -1.6697189165637116,
+            -0.7089743901499634,
+            -9.662100834484688,
+            -0.8659796413041709,
+            62.4231457134241,
+            -0.17802280557142058,
+            -0.4846629943608072,
+            -0.5416784399836505,
+            8.111804778184162
+          ],
+          "median_gain_percent": -0.7089743901499634,
+          "bootstrap_ci95_percent": [
+            -3.2122374095270967,
+            -0.4846629943608072
+          ]
+        }
+      },
+      "binary_sha256": "7ebcd92b5f42512aca71caef4c958584773f886273721e5184f0777119170c4c",
+      "policy": {
+        "CUMES_NEWTON_PERIOD": "100",
+        "CUMES_NEWTON_START": "100",
+        "CUMES_NEWTON_STEPS": "32",
+        "CUMES_NEWTON_BASIS": "32",
+        "CUMES_NEWTON_FORWARD": "1",
+        "CUMES_NEWTON_EPSILON": "1e-6",
+        "CUMES_NEWTON_RATIO": "0.95"
+      }
+    }
+  },
+  "science": {
+    "schema": "cumes-axisymmetric-newton-scientific-summary-v1",
+    "validator_sha256": "720b62b9af27240a5ac475595077a4f7eaa702e81d834e44b0d83f1dca1c254f",
+    "process_counts": {
+      "full_solve_pairs": 491,
+      "full_solve_processes": 982,
+      "native_outputs_checked": 982,
+      "checkpoints_checked": 982,
+      "actual_replay_processes": 76,
+      "total_saved_solve_and_replay_processes": 1058,
+      "independent_vmecpp_processes": 7,
+      "total_including_independent_references": 1065
+    },
+    "counts_by_gpu_phase": [
+      {
+        "gpu": "ada",
+        "phase": "paired",
+        "pairs": 112,
+        "processes": 224
+      },
+      {
+        "gpu": "ada",
+        "phase": "pressure-paired",
+        "pairs": 21,
+        "processes": 42
+      },
+      {
+        "gpu": "ada",
+        "phase": "pressure-screen",
+        "pairs": 3,
+        "processes": 6
+      },
+      {
+        "gpu": "ada",
+        "phase": "pressure-timing-followup",
+        "pairs": 34,
+        "processes": 68
+      },
+      {
+        "gpu": "ada",
+        "phase": "screen",
+        "pairs": 16,
+        "processes": 32
+      },
+      {
+        "gpu": "ada",
+        "phase": "timing-followup",
+        "pairs": 136,
+        "processes": 272
+      },
+      {
+        "gpu": "pascal",
+        "phase": "paired",
+        "pairs": 112,
+        "processes": 224
+      },
+      {
+        "gpu": "pascal",
+        "phase": "pressure-paired",
+        "pairs": 21,
+        "processes": 42
+      },
+      {
+        "gpu": "pascal",
+        "phase": "pressure-screen",
+        "pairs": 3,
+        "processes": 6
+      },
+      {
+        "gpu": "pascal",
+        "phase": "screen",
+        "pairs": 16,
+        "processes": 32
+      },
+      {
+        "gpu": "pascal",
+        "phase": "timing-followup",
+        "pairs": 17,
+        "processes": 34
+      }
+    ],
+    "all_full_solve_checks_passed": true,
+    "failures": [],
+    "metric_definitions": {
+      "geometry": "Plain physical Rcc cosine and Zsc sine synthesis on max(256,8*mpol) equal native poloidal angles; no additional sqrt(s) or basis normalization.",
+      "near_axis": "All coefficient and R/Z surface comparisons exclude full-grid j=0 only. Axis R00 difference is separate. Native B\u00b2 and Jacobian checks include every half-grid point, including the innermost half surface.",
+      "l2": "norm(candidate-reference)/norm(reference), over all compared modes/surfaces or angular grid points. max_abs is the largest absolute element difference.",
+      "geometry_displacement": "sqrt((R_candidate-R_reference)^2+(Z_candidate-Z_reference)^2), in metres; maximum and unweighted RMS over non-axis surfaces and synthesis angles.",
+      "lambda_coefficients": "Lsc physical solver coefficient amplitudes; zero Lcs/null parity families are separately checked. VMEC lmns_full is folded and multiplied by phipF/lamscale, with lamscale=sqrt(sum(phipH^2)/(ns-1)); conversion independently checked against stored internal lambda.",
+      "b_squared": "Native half-grid B^s B_s + B^theta B_theta + B^zeta B_zeta, in tesla squared; no interpolation.",
+      "flux_surface_mean_b_squared": "sum_theta,zeta(B\u00b2*abs(sqrtg))/sum_theta,zeta(abs(sqrtg)) on each half surface.",
+      "volume": "4*pi\u00b2*mean(abs(sqrtg)) over native half surfaces and angles, in cubic metres.",
+      "gauge": "R/Z and B\u00b2 comparisons use equal native coordinate labels without gauge alignment. Numerical differences are diagnostics; no blanket equivalence threshold is imposed.",
+      "iteration_accounting": "Native RunReport proves preserved configured schedules and effective iteration caps; actual trial/full evaluation counts are provided separately by benchmark telemetry."
+    },
+    "worst_differences": {
+      "candidate_baseline_geometry_displacement_max": {
+        "value": 6.721204306432712e-07,
+        "comparison_value": 6.721204306432712e-07,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_geometry_displacement_rms": {
+        "value": 1.2466186199752996e-07,
+        "comparison_value": 1.2466186199752996e-07,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_r_max_abs": {
+        "value": 6.703686525888486e-07,
+        "comparison_value": 6.703686525888486e-07,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_r_relative_l2": {
+        "value": 3.082069790377115e-08,
+        "comparison_value": 3.082069790377115e-08,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_z_max_abs": {
+        "value": 6.60849879541292e-08,
+        "comparison_value": 6.60849879541292e-08,
+        "case": "01_solovev_circular",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "01_solovev_circular-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/01_solovev_circular-pair0.json"
+      },
+      "candidate_baseline_z_relative_l2": {
+        "value": 2.2947651178670052e-08,
+        "comparison_value": 2.2947651178670052e-08,
+        "case": "01_solovev_circular",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "01_solovev_circular-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/01_solovev_circular-pair0.json"
+      },
+      "candidate_baseline_lambda_max_abs": {
+        "value": 3.3493001132256506e-06,
+        "comparison_value": 3.3493001132256506e-06,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_lambda_relative_l2": {
+        "value": 3.483528701228818e-06,
+        "comparison_value": 3.483528701228818e-06,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_b_squared_native_max_abs": {
+        "value": 4.2434191982465563e-07,
+        "comparison_value": 4.2434191982465563e-07,
+        "case": "14_vmecpp_circular",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "14_vmecpp_circular-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/14_vmecpp_circular-pair0.json"
+      },
+      "candidate_baseline_b_squared_native_relative_l2": {
+        "value": 7.065586032339321e-08,
+        "comparison_value": 7.065586032339321e-08,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_flux_surface_mean_b_squared_max_abs": {
+        "value": 1.6384525380885862e-06,
+        "comparison_value": 1.6384525380885862e-06,
+        "case": "14_vmecpp_circular",
+        "gpu": "pascal",
+        "phase": "screen",
+        "pair": "14_vmecpp_circular-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/screen/14_vmecpp_circular-pair0.json"
+      },
+      "candidate_baseline_flux_surface_mean_b_squared_relative_l2": {
+        "value": 5.619208434181414e-08,
+        "comparison_value": 5.619208434181414e-08,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_volume_relative_change": {
+        "value": -3.054318676829625e-13,
+        "comparison_value": 3.054318676829625e-13,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_baseline_axis_r00_difference": {
+        "value": -8.209304040995846e-07,
+        "comparison_value": 8.209304040995846e-07,
+        "case": "02_solovev_elongation_low",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "02_solovev_elongation_low-pair0",
+        "variant": "newton",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/02_solovev_elongation_low-pair0.json"
+      },
+      "candidate_vmecpp_geometry_displacement_max": {
+        "value": 6.78073334620302e-08,
+        "comparison_value": 6.78073334620302e-08,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "ada",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "candidate",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "candidate_vmecpp_geometry_displacement_rms": {
+        "value": 9.960112098178739e-09,
+        "comparison_value": 9.960112098178739e-09,
+        "case": "14_vmecpp_circular",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "14_vmecpp_circular-pair0",
+        "variant": "candidate",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/14_vmecpp_circular-pair0.json"
+      },
+      "candidate_vmecpp_r_max_abs": {
+        "value": 6.458221690763821e-08,
+        "comparison_value": 6.458221690763821e-08,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "ada",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "candidate",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "candidate_vmecpp_r_relative_l2": {
+        "value": 1.6124718266774924e-09,
+        "comparison_value": 1.6124718266774924e-09,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "ada",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "candidate",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "candidate_vmecpp_z_max_abs": {
+        "value": 3.1460928306970004e-08,
+        "comparison_value": 3.1460928306970004e-08,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "ada",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "candidate",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "candidate_vmecpp_z_relative_l2": {
+        "value": 4.546696520826275e-09,
+        "comparison_value": 4.546696520826275e-09,
+        "case": "14_vmecpp_circular",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "14_vmecpp_circular-pair0",
+        "variant": "candidate",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/14_vmecpp_circular-pair0.json"
+      },
+      "candidate_vmecpp_lambda_max_abs": {
+        "value": 7.310987271136327e-07,
+        "comparison_value": 7.310987271136327e-07,
+        "case": "14_vmecpp_circular",
+        "gpu": "pascal",
+        "phase": "screen",
+        "pair": "14_vmecpp_circular-pair0",
+        "variant": "candidate",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/screen/14_vmecpp_circular-pair0.json"
+      },
+      "candidate_vmecpp_lambda_relative_l2": {
+        "value": 4.6316073740085437e-07,
+        "comparison_value": 4.6316073740085437e-07,
+        "case": "14_vmecpp_circular",
+        "gpu": "pascal",
+        "phase": "screen",
+        "pair": "14_vmecpp_circular-pair0",
+        "variant": "candidate",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/screen/14_vmecpp_circular-pair0.json"
+      },
+      "baseline_vmecpp_geometry_displacement_max": {
+        "value": 1.0094047983074575e-07,
+        "comparison_value": 1.0094047983074575e-07,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "pascal",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "baseline",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "baseline_vmecpp_geometry_displacement_rms": {
+        "value": 1.0300931160787025e-08,
+        "comparison_value": 1.0300931160787025e-08,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "pascal",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "baseline",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "baseline_vmecpp_r_max_abs": {
+        "value": 9.989087512707329e-08,
+        "comparison_value": 9.989087512707329e-08,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "pascal",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "baseline",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "baseline_vmecpp_r_relative_l2": {
+        "value": 2.338016927025323e-09,
+        "comparison_value": 2.338016927025323e-09,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "pascal",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "baseline",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "baseline_vmecpp_z_max_abs": {
+        "value": 3.7445709200056854e-08,
+        "comparison_value": 3.7445709200056854e-08,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "pascal",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "baseline",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "baseline_vmecpp_z_relative_l2": {
+        "value": 5.1229810458132985e-09,
+        "comparison_value": 5.1229810458132985e-09,
+        "case": "18_solovev_pressure1000_quadratic",
+        "gpu": "pascal",
+        "phase": "pressure-screen",
+        "pair": "18_solovev_pressure1000_quadratic-pair0",
+        "variant": "baseline",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/pascal/pressure-screen/18_solovev_pressure1000_quadratic-pair0.json"
+      },
+      "baseline_vmecpp_lambda_max_abs": {
+        "value": 2.1618633505582352e-07,
+        "comparison_value": 2.1618633505582352e-07,
+        "case": "14_vmecpp_circular",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "14_vmecpp_circular-pair0",
+        "variant": "baseline",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/14_vmecpp_circular-pair0.json"
+      },
+      "baseline_vmecpp_lambda_relative_l2": {
+        "value": 1.352336744611294e-07,
+        "comparison_value": 1.352336744611294e-07,
+        "case": "14_vmecpp_circular",
+        "gpu": "ada",
+        "phase": "screen",
+        "pair": "14_vmecpp_circular-pair0",
+        "variant": "baseline",
+        "full_validation": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/validation/ada/screen/14_vmecpp_circular-pair0.json"
+      }
+    },
+    "minimum_geometry": {
+      "oriented_jacobian_ratio": {
+        "gpu": "ada",
+        "case": "05_solovev_triangularity_reversed",
+        "variant": "baseline",
+        "pair": "05_solovev_triangularity_reversed-pair0",
+        "min_oriented_jacobian_over_max_abs": 0.6424739044181171,
+        "min_b_squared": 0.02483697583663165
+      },
+      "b_squared": {
+        "gpu": "ada",
+        "case": "03_solovev_elongation_high",
+        "variant": "baseline",
+        "pair": "03_solovev_elongation_high-pair0",
+        "min_oriented_jacobian_over_max_abs": 0.7170660178513073,
+        "min_b_squared": 0.016603375123181954
+      }
+    },
+    "vmecpp": {
+      "reference_count": 7,
+      "source_revision": "335ef66441d82980331d0062ab8d0398eff50818",
+      "source_tag": "v0.7.0",
+      "source_dirty": false,
+      "all_references_converged_at_original_tolerance": true,
+      "all_comparisons_used_valid_references": true,
+      "references": "/lustre/qzhong/magnetic-equilibrium-solver/tmp/cumes-axisymmetric-newton-20260908/ref/summary.json",
+      "convergence_oracle": false,
+      "b_squared_comparison": "Not assessed against VMEC++; matching postprocessing conventions was outside this qualification. Native candidate-baseline B\u00b2 is checked."
+    },
+    "replay": {
+      "count": 76,
+      "all_passed": true,
+      "numeric_state_exact": 76,
+      "raw_state_bit_exact": 12,
+      "with_dependent_axis_zero_sign_changes": 64,
+      "total_dependent_axis_zero_sign_changes": 68,
+      "other_bit_changes": 0,
+      "residual_triple_exact": 8,
+      "required": "One iteration, original final tolerance/cap and identical non-stage physics; exact state bits except signed zeros only at j=0,m>0. All active, boundary and nonzero values retain exact bits.",
+      "residual_equality": "Diagnostic only: a fresh epoch may recompute force-normalization factors. Original tolerance is the gate."
+    }
+  },
+  "sanitizer": {
+    "case": "15_vmecpp_analytical_ncurr1",
+    "full_candidate_pascal_cuda121_memcheck_graphs": "passed, zero errors",
+    "full_candidate_pascal_cuda121_initcheck_direct": "passed, zero errors",
+    "full_candidate_ada_cuda129_initcheck_graphs": "passed, zero errors",
+    "pascal_cuda121_initcheck_graphs": "unresolved PCR pivot-scale initialization reports; baseline reproduces before Newton; full candidate run timed out at180s",
+    "scale_probe": "fresh graph/direct and NaN-poisoned refresh scales exactly match CPU bandmax; graph/direct bands and residual slabs match; CUDA12.1 initcheck still reports PCR reads",
+    "limitation": "evidence supports old-tool graph initialization tracking issue but does not establish its cause; no blanket clean graph-initcheck claim for CUDA12.1"
+  }
+}

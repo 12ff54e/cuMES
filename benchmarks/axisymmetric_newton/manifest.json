@@ -1,0 +1,1163 @@
+{
+  "schema": "cumes-axisymmetric-newton-matrix-v1",
+  "declared_date": "2026-09-08",
+  "selection": "All sixteen cases fixed by input/code inspection before solver timing. Keep failures, caps and regressions; do not tune or filter cases after outcomes.",
+  "precision": "verify-double",
+  "newton_policy": {
+    "difference": "forward",
+    "krylov_vectors": 32,
+    "basis_vectors": 32,
+    "period": 100,
+    "start": 100,
+    "epsilon": 1e-06,
+    "accept_merit_ratio": 0.95
+  },
+  "common_stage_controls": {
+    "ns_array": [
+      5,
+      11,
+      55
+    ],
+    "niter_array": [
+      1000,
+      2000,
+      2000
+    ],
+    "ftol_array": [
+      1e-16,
+      1e-16,
+      1e-16
+    ]
+  },
+  "sources": {
+    "solovev": {
+      "file": "sources/solovev.json",
+      "repository": "cuMES",
+      "commit": "e36063dfff895a560cf2185830ebe2a6939873b9",
+      "original_path": "inputs/solovev.json",
+      "relationship": "Existing cuMES qualification case, not independent data.",
+      "sha256": "8b97a3adbbfde6b1398969daded8b6a7aac4a3857f7f1a142c4cae34ba6562ab"
+    },
+    "vmecpp_circular": {
+      "file": "sources/vmecpp_circular_tokamak.json",
+      "repository": "https://github.com/proximafusion/vmecpp",
+      "tag": "v0.7.0",
+      "commit": "335ef66441d82980331d0062ab8d0398eff50818",
+      "original_path": "src/vmecpp/cpp/vmecpp/test_data/circular_tokamak.json",
+      "license": "sources/VMECpp-LICENSE.txt",
+      "relationship": "Upstream circular-tokamak fixture with distinct geometry, flux and iota profile.",
+      "sha256": "7ee215c856b49597b6091132c1fe17c7e9abe468aa5ab51c6e9d7a3fc64d8089"
+    },
+    "vmecpp_analytical": {
+      "file": "sources/vmecpp_solovev_analytical.json",
+      "repository": "https://github.com/proximafusion/vmecpp",
+      "tag": "v0.7.0",
+      "commit": "335ef66441d82980331d0062ab8d0398eff50818",
+      "original_path": "src/vmecpp/cpp/vmecpp/test_data/solovev_analytical.json",
+      "license": "sources/VMECpp-LICENSE.txt",
+      "relationship": "Separate upstream analytical Solovev fixture; shares the Solovev family, but exercises prescribed current and substantial pressure.",
+      "sha256": "b9acd66d80f381e6e95c4a7175f58c46451047f2fdef66eb27efc260d49a5761"
+    }
+  },
+  "cases": [
+    {
+      "id": "00_solovev_reference",
+      "title": "Existing Solovev reference",
+      "input": "inputs/00_solovev_reference.json",
+      "categories": [
+        "reference"
+      ],
+      "source": "solovev",
+      "provenance": "reference",
+      "changes": [],
+      "notes": [],
+      "sha256": "b042c553d0320428edf9a345a934703a44ff8507d6a72425cd2d6ee14bc008f1",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "01_solovev_circular",
+      "title": "Generated circular boundary",
+      "input": "inputs/01_solovev_circular.json",
+      "categories": [
+        "boundary"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "rbc",
+          "before": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 3.999
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.026
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": -0.068
+            }
+          ],
+          "after": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 4.0
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.0
+            }
+          ]
+        },
+        {
+          "key": "zbs",
+          "before": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 0.0
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.58
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": 0.01
+            }
+          ],
+          "after": [
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.0
+            }
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "0c70c8b94308038ee8e7fe17c2d17daee19786b577a3bef8561e015e31acec9a",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "02_solovev_elongation_low",
+      "title": "Reduced vertical extent",
+      "input": "inputs/02_solovev_elongation_low.json",
+      "categories": [
+        "boundary"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "zbs",
+          "before": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 0.0
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.58
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": 0.01
+            }
+          ],
+          "after": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 0.0
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.2
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": 0.01
+            }
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "f5226efb004250184fc03f902043aed5f19446be555720660f8a72b836361dfc",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "03_solovev_elongation_high",
+      "title": "Increased vertical extent",
+      "input": "inputs/03_solovev_elongation_high.json",
+      "categories": [
+        "boundary"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "zbs",
+          "before": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 0.0
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.58
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": 0.01
+            }
+          ],
+          "after": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 0.0
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 2.0
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": 0.01
+            }
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "0dd866d00d6741bc06650f5e956a3bd6e49939c4a7f89df48b5cd3ba116a218d",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "04_solovev_triangularity_stronger",
+      "title": "Stronger negative R m=2 shaping",
+      "input": "inputs/04_solovev_triangularity_stronger.json",
+      "categories": [
+        "boundary"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "rbc",
+          "before": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 3.999
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.026
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": -0.068
+            }
+          ],
+          "after": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 3.999
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.026
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": -0.18
+            }
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "6be0377ac0c0983e9ddf590f1386a4c506a0b9c7f1c0c6074b973c13e5b00c74",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "05_solovev_triangularity_reversed",
+      "title": "Reversed R m=2 shaping",
+      "input": "inputs/05_solovev_triangularity_reversed.json",
+      "categories": [
+        "boundary"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "rbc",
+          "before": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 3.999
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.026
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": -0.068
+            }
+          ],
+          "after": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 3.999
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.026
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": 0.068
+            }
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "d6773e131a4ba14c8124cee786f9d4ed15b86bdb8226a834fd0f78fb04636be6",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "06_solovev_pressure_half",
+      "title": "Half pressure amplitude",
+      "input": "inputs/06_solovev_pressure_half.json",
+      "categories": [
+        "pressure_amplitude"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "am",
+          "before": [
+            0.125,
+            -0.125
+          ],
+          "after": [
+            0.0625,
+            -0.0625
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "60d2b958028c26d9a02ffbff49618c5f7b15d6cd9f684f1cdefeb007eff004db",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "07_solovev_pressure_double",
+      "title": "Double pressure amplitude",
+      "input": "inputs/07_solovev_pressure_double.json",
+      "categories": [
+        "pressure_amplitude"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "am",
+          "before": [
+            0.125,
+            -0.125
+          ],
+          "after": [
+            0.25,
+            -0.25
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "96d566b04fbf7b609766654dcbc01fd675cb0793edf03662bb04d96f695e1aa5",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "08_solovev_pressure_quadratic",
+      "title": "Pressure proportional to (1-s)^2",
+      "input": "inputs/08_solovev_pressure_quadratic.json",
+      "categories": [
+        "pressure_profile"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "am",
+          "before": [
+            0.125,
+            -0.125
+          ],
+          "after": [
+            0.125,
+            -0.25,
+            0.125
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "a28591081e2735431bb1696203e9f444ed4f8e4c7b65be9893c911f6f3a47723",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "09_solovev_pressure_flatcore",
+      "title": "Pressure proportional to 1-s^2",
+      "input": "inputs/09_solovev_pressure_flatcore.json",
+      "categories": [
+        "pressure_profile"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "am",
+          "before": [
+            0.125,
+            -0.125
+          ],
+          "after": [
+            0.125,
+            0.0,
+            -0.125
+          ]
+        }
+      ],
+      "notes": [],
+      "sha256": "b274d03614e40af0ff4b6d9f2c930ca5dd80b90975ea919af5bd4c8f68782a07",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "10_solovev_mpol4",
+      "title": "Lower poloidal resolution",
+      "input": "inputs/10_solovev_mpol4.json",
+      "categories": [
+        "poloidal_resolution"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "mpol",
+          "before": 6,
+          "after": 4
+        }
+      ],
+      "notes": [],
+      "sha256": "1d96a796520fc17d556008393ff8af213eef2898542bdc964b08f019bc097cfb",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 4,
+        "ntor": 0,
+        "ntheta": 14,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "11_solovev_mpol10",
+      "title": "Higher poloidal resolution",
+      "input": "inputs/11_solovev_mpol10.json",
+      "categories": [
+        "poloidal_resolution"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "mpol",
+          "before": 6,
+          "after": 10
+        }
+      ],
+      "notes": [],
+      "sha256": "37a95a3c35afa5ef374a6d135416ef077f18d36faf83903d6b27da8b23e9324e",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 10,
+        "ntor": 0,
+        "ntheta": 26,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "12_solovev_radial99",
+      "title": "Higher final radial resolution",
+      "input": "inputs/12_solovev_radial99.json",
+      "categories": [
+        "radial_resolution"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "ns_array",
+          "before": [
+            5,
+            11,
+            55
+          ],
+          "after": [
+            5,
+            11,
+            99
+          ]
+        }
+      ],
+      "notes": [
+        "Only this case changes the common radial schedule; caps and tolerances remain unchanged."
+      ],
+      "sha256": "16eabd9502530315adf88fabffc676e0f398cc8f9b1fea59a2b9f874e0b89b4a",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          99
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 18,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "13_solovev_ntheta36",
+      "title": "Denser angular quadrature at fixed spectral resolution",
+      "input": "inputs/13_solovev_ntheta36.json",
+      "categories": [
+        "angular_resolution"
+      ],
+      "source": "solovev",
+      "provenance": "generated_solovev_variation",
+      "changes": [
+        {
+          "key": "ntheta",
+          "before": null,
+          "after": 36
+        }
+      ],
+      "notes": [],
+      "sha256": "663c96b033cbda5fba1b4158267e350d77912865bbb5e314f33cf3110c0c24f8",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 6,
+        "ntor": 0,
+        "ntheta": 36,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "14_vmecpp_circular",
+      "title": "Upstream circular tokamak with sheared iota and zero pressure",
+      "input": "inputs/14_vmecpp_circular.json",
+      "categories": [
+        "upstream_fixture",
+        "boundary",
+        "iota_profile",
+        "zero_pressure"
+      ],
+      "source": "vmecpp_circular",
+      "provenance": "adapted_upstream_fixture",
+      "changes": [
+        {
+          "key": "ftol_array",
+          "before": [
+            1e-20
+          ],
+          "after": [
+            1e-16,
+            1e-16,
+            1e-16
+          ]
+        },
+        {
+          "key": "niter_array",
+          "before": [
+            3000
+          ],
+          "after": [
+            1000,
+            2000,
+            2000
+          ]
+        },
+        {
+          "key": "ns_array",
+          "before": [
+            17
+          ],
+          "after": [
+            5,
+            11,
+            55
+          ]
+        }
+      ],
+      "notes": [
+        "Upstream one-stage ns=17/tol=1e-20/cap=3000 controls are deliberately replaced by the common three-stage schedule; physical inputs are retained."
+      ],
+      "sha256": "31ee50f9a6949751b2795e570e8be5e35be8d7eed6ebd9353b4697ab2189fc77",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 8,
+        "ntor": 0,
+        "ntheta": 22,
+        "nzeta": 1,
+        "ncurr": 0,
+        "fixed_boundary": true
+      }
+    },
+    {
+      "id": "15_vmecpp_analytical_ncurr1",
+      "title": "Upstream analytical Solovev with prescribed current",
+      "input": "inputs/15_vmecpp_analytical_ncurr1.json",
+      "categories": [
+        "upstream_fixture",
+        "current_closure",
+        "pressure_amplitude",
+        "poloidal_resolution"
+      ],
+      "source": "vmecpp_analytical",
+      "provenance": "adapted_upstream_fixture",
+      "changes": [
+        {
+          "key": "ftol_array",
+          "before": [
+            1e-16
+          ],
+          "after": [
+            1e-16,
+            1e-16,
+            1e-16
+          ]
+        },
+        {
+          "key": "niter_array",
+          "before": [
+            2000
+          ],
+          "after": [
+            1000,
+            2000,
+            2000
+          ]
+        },
+        {
+          "key": "ns_array",
+          "before": [
+            31
+          ],
+          "after": [
+            5,
+            11,
+            55
+          ]
+        },
+        {
+          "key": "raxis_c",
+          "before": [
+            0.0
+          ],
+          "after": [
+            4.0
+          ]
+        },
+        {
+          "key": "rbc",
+          "before": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 3.933370603101
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": -1.025899678142
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": -0.06809124378642
+            },
+            {
+              "n": 0,
+              "m": 3,
+              "value": -0.0090800317773
+            },
+            {
+              "n": 0,
+              "m": 4,
+              "value": -0.001516336810656
+            },
+            {
+              "n": 0,
+              "m": 5,
+              "value": -0.0002838744594993
+            },
+            {
+              "n": 0,
+              "m": 6,
+              "value": -5.697082348932e-05
+            },
+            {
+              "n": 0,
+              "m": 7,
+              "value": -1.198195946489e-05
+            },
+            {
+              "n": 0,
+              "m": 8,
+              "value": -2.60651009584e-06
+            },
+            {
+              "n": 0,
+              "m": 9,
+              "value": -5.816406878883e-07
+            },
+            {
+              "n": 0,
+              "m": 10,
+              "value": -1.324037181689e-07
+            },
+            {
+              "n": 0,
+              "m": 11,
+              "value": -3.062633595619e-08
+            },
+            {
+              "n": 0,
+              "m": 12,
+              "value": -7.177875393912e-09
+            }
+          ],
+          "after": [
+            {
+              "n": 0,
+              "m": 0,
+              "value": 3.933370603101
+            },
+            {
+              "n": 0,
+              "m": 1,
+              "value": 1.025899678142
+            },
+            {
+              "n": 0,
+              "m": 2,
+              "value": -0.06809124378642
+            },
+            {
+              "n": 0,
+              "m": 3,
+              "value": 0.0090800317773
+            },
+            {
+              "n": 0,
+              "m": 4,
+              "value": -0.001516336810656
+            },
+            {
+              "n": 0,
+              "m": 5,
+              "value": 0.0002838744594993
+            },
+            {
+              "n": 0,
+              "m": 6,
+              "value": -5.697082348932e-05
+            },
+            {
+              "n": 0,
+              "m": 7,
+              "value": 1.198195946489e-05
+            },
+            {
+              "n": 0,
+              "m": 8,
+              "value": -2.60651009584e-06
+            },
+            {
+              "n": 0,
+              "m": 9,
+              "value": 5.816406878883e-07
+            },
+            {
+              "n": 0,
+              "m": 10,
+              "value": -1.324037181689e-07
+            },
+            {
+              "n": 0,
+              "m": 11,
+              "value": 3.062633595619e-08
+            },
+            {
+              "n": 0,
+              "m": 12,
+              "value": -7.177875393912e-09
+            }
+          ]
+        }
+      ],
+      "notes": [
+        "Poloidal coordinate reflection theta_old=pi-theta_new gives R_m_new=(-1)^m R_m_old and Z_m_new=(-1)^(m+1) Z_m_old. It preserves the geometric boundary point set and supplies cuMES's negative-Jacobian orientation.",
+        "The upstream zero R-axis seed is replaced by R=4, inside the boundary. This is an initialization adaptation, not an independently converged axis.",
+        "Upstream ns=31/tol=1e-16/cap=2000 controls are deliberately replaced by the common three-stage schedule. Current, pressure, flux, mpol13 and delt1.0 are retained.",
+        "This is an adapted upstream Solovev-family fixture, not an unmodified independent equilibrium or a copy of the cuMES ncurr0 input."
+      ],
+      "sha256": "b928cd8eb0e1bcd5c0a37d79bd5409cffb7fd785ffdcd2c2dfc20f368b82b99d",
+      "expected": {
+        "ns_array": [
+          5,
+          11,
+          55
+        ],
+        "niter_array": [
+          1000,
+          2000,
+          2000
+        ],
+        "ftol_array": [
+          1e-16,
+          1e-16,
+          1e-16
+        ],
+        "mpol": 13,
+        "ntor": 0,
+        "ntheta": 32,
+        "nzeta": 1,
+        "ncurr": 1,
+        "fixed_boundary": true
+      }
+    }
+  ]
+}

@@ -62,6 +62,9 @@ struct SolverResult {
 // selecting the axisymmetric backend for ntor=0/nzeta=1 is a trajectory
 // re-freeze. `enable_step_recovery` opts a stage into the conservative,
 // one-shot recovery of a time step reduced by an early transient.
+// `enable_newton` opts fixed-boundary axisymmetric double stages into the
+// qualified forward-difference Newton correction policy. Disabled stages
+// allocate no Newton workspace and retain the ordinary descent trajectory.
 template <typename T>
 SolverResult<T> solver_run(
     cumes::SpectralStorage<T>& state,
@@ -81,6 +84,7 @@ SolverResult<T> solver_run(
         vacuum = std::nullopt,
     bool enable_step_recovery = false,
     bool verbose = true,
-    bool use_process_environment = true);
+    bool use_process_environment = true,
+    bool enable_newton = false);
 
 #endif  // CUMES_INCLUDE_SOLVER_CUH_

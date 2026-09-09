@@ -130,6 +130,7 @@ int main(int argc, char** argv) {
         int boozer_radial_order;
         double boozer_resonance_tolerance;
         bool compatibility;
+        bool newton;
     };
 
     CLAP_BEGIN(CliInput)
@@ -166,6 +167,10 @@ int main(int argc, char** argv) {
     CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
         compatibility, "--compatibility",
         "warn and ignore unknown input keys instead of rejecting them")
+    CLAP_REGISTER_OPTION_WITH_DESCRIPTION(
+        newton, "--newton",
+        "enable Newton-Krylov corrections (double, fixed-boundary "
+        "axisymmetric solves only)")
     CLAP_END(CliInput)
 
     CliInput cli{};
@@ -178,6 +183,13 @@ int main(int argc, char** argv) {
     } catch (const std::exception& e) {
         std::cerr << e.what();
         return EINVAL;
+    }
+
+    if constexpr (sizeof(Real) != sizeof(double)) {
+        if (cli.newton) {
+            fprintf(stderr, "cuMES: --newton requires a double build\n");
+            return EINVAL;
+        }
     }
 
     if (!cli.output_path.empty() && !cli.boozer_output_path.empty()) {
@@ -318,6 +330,13 @@ int main(int argc, char** argv) {
     const int n_grids = static_cast<int>(spec.stages.size());
 
     const cumes::GridShape& shape = vp.shape();
+    if (cli.newton &&
+        (spec.free_boundary.lfreeb || shape.ntor != 0 || shape.nzeta != 1)) {
+        fprintf(stderr,
+                "cuMES: --newton requires a fixed-boundary axisymmetric "
+                "problem (ntor=0, nzeta=1)\n");
+        return EINVAL;
+    }
     printf("=== cuMES — CUDA Magnetic Equilibrium Solver ===\n");
     fflush(stdout);
     printf("input: %s\n", input_path.c_str());
@@ -345,6 +364,7 @@ int main(int argc, char** argv) {
         cumes::SolveRequest solve_request;
         solve_request.verbose = true;
         solve_request.use_process_environment = true;
+        solve_request.enable_newton = cli.newton;
         if (!restart_path.empty()) {
             auto ck = cumes::read_checkpoint(restart_path);
             if (!ck.has_value()) {

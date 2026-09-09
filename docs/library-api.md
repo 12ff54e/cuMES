@@ -123,6 +123,24 @@ the existing `CumesError` exception boundary; the CLI converts them to exit
 codes while an embedding application can add its own evaluation-failure policy.
 The facade never writes result files and never exits the process.
 
+`SolveRequest::enable_newton` defaults to `false`. Set it to `true` for the
+same fixed-boundary axisymmetric double Newton–Krylov policy as the CLI's
+`--newton` flag:
+
+```cpp
+cumes::SolveRequest request;
+request.enable_newton = true;
+auto outcome = solver.solve(problem, request);
+```
+
+The request requires `ntor=0`, `nzeta=1` and fixed boundary; unsupported
+precision or geometry throws `CumesError` before GPU setup. It preserves the
+configured grid sequence, tolerances and iteration caps, and works with an
+in-memory restart. Corrections change the convergence trajectory; their
+speedup is case-dependent. The [policy ADR](adr/0016-opt-in-newton-corrections.md)
+records acceptance, rollback, controller handling and qualification. This
+option is explicit per solve and independent of process-environment opt-in.
+
 ### Output API
 
 Binary, NetCDF, HDF5, checkpoint, and Boozer publication stay separate from the
