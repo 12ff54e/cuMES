@@ -255,6 +255,8 @@ struct GpuBasis {
     wgpu::Buffer buffer;
     wgpu::Buffer low_buffer;
     std::size_t bytes = 0;
+    wgpu::Buffer weighted_buffer;
+    std::size_t weighted_bytes = 0;
 };
 
 const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
@@ -262,7 +264,8 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
                                            int ntor,
                                            int ntheta,
                                            int nzeta,
-                                           bool canonical_zeta = false) {
+                                           bool canonical_zeta = false,
+                                           bool weighted_forward = false) {
     static std::map<std::array<int, 5>, GpuBasis> cache;
     const std::array<int, 5> key{mpol, ntor, ntheta, nzeta, canonical_zeta};
     auto [position, inserted] = cache.try_emplace(key);
@@ -351,6 +354,52 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
                                       position->second.bytes);
         device.GetQueue().WriteBuffer(position->second.low_buffer, 0,
                                       basis_lo.data(), position->second.bytes);
+    }
+    auto& entry = position->second;
+    if (ntor == 0 && weighted_forward && !entry.weighted_buffer) {
+        // Cache the original device-rounded forward products once per shape.
+        // The unweighted tables remain shared by inverse and dealiasing.
+        const auto count = 4 * std::size_t(mpol) * (ntheta / 2 + 1);
+        entry.weighted_bytes = count * sizeof(float);
+        entry.weighted_buffer = create_uncached_buffer(
+            device, entry.weighted_bytes, wgpu::BufferUsage::Storage,
+            "cuMES cached weighted axisymmetric forward basis");
+        ShaderParams params{};
+        params.mpol = static_cast<std::uint32_t>(mpol);
+        params.ntheta = static_cast<std::uint32_t>(ntheta);
+        params.norm_hi = split(1.0 / double(ntheta / 2)).hi;
+        const auto params_buffer = create_uncached_buffer(
+            device, sizeof(params),
+            wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+            "cuMES weighted forward basis parameters");
+        const auto& pipeline = detail::cached_compute_pipeline(
+            device, "axisymmetric-forward-basis",
+            detail::cached_shader_source("/shaders/axisymmetric_forward.wgsl"),
+            "cuMES weighted forward basis pipeline", "cache_basis");
+        const std::array<wgpu::BindGroupEntry, 3> entries = {{
+            {nullptr, 1, entry.buffer, 0, entry.bytes, nullptr, nullptr},
+            {nullptr, 2, entry.weighted_buffer, 0, entry.weighted_bytes,
+             nullptr, nullptr},
+            {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
+        }};
+        wgpu::BindGroupDescriptor descriptor{};
+        descriptor.label = "cuMES weighted forward basis bindings";
+        descriptor.layout = pipeline.GetBindGroupLayout(0);
+        descriptor.entryCount = entries.size();
+        descriptor.entries = entries.data();
+        const auto bindings = device.CreateBindGroup(&descriptor);
+        const auto queue = device.GetQueue();
+        queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));
+        const auto encoder = device.CreateCommandEncoder();
+        const auto pass = encoder.BeginComputePass();
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, bindings);
+        pass.DispatchWorkgroups((count + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
+        pass.End();
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        // Queue ordering makes the immutable cache ready for later consumers
+        // without adding a host completion fence.
     }
     return position->second;
 }
@@ -1171,7 +1220,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
     }
     const auto& gpu_basis = cached_separable_gpu_basis(
         device, input.mpol, input.ntor, input.ntheta, input.nzeta,
-        input.double_single && input.canonical_zeta);
+        input.double_single && input.canonical_zeta, axisymmetric);
     const std::size_t mnmax =
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
     const std::size_t n_z_n_t =
@@ -1179,7 +1228,10 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
     const std::size_t result_values =
         SPECTRAL_COMPONENT_COUNT * mnmax * input.ns;
     const std::size_t fields_bytes = 20 * input.ns * n_z_n_t * sizeof(float);
-    const std::size_t basis_bytes = gpu_basis.bytes;
+    const auto& basis_buffer =
+        axisymmetric ? gpu_basis.weighted_buffer : gpu_basis.buffer;
+    const std::size_t basis_bytes =
+        axisymmetric ? gpu_basis.weighted_bytes : gpu_basis.bytes;
     const std::size_t result_bytes =
         result_values * sizeof(float) * (input.double_single ? 2 : 1);
     const std::size_t theta_reduced = input.ntheta / 2 + 1;
@@ -1283,7 +1335,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
     }
     const auto poloidal_layout = poloidal_pipeline.GetBindGroupLayout(0);
     std::vector<wgpu::BindGroupEntry> poloidal_entries = {
-        {nullptr, 1, gpu_basis.buffer, 0, basis_bytes, nullptr, nullptr},
+        {nullptr, 1, basis_buffer, 0, basis_bytes, nullptr, nullptr},
         {nullptr, 2, result_buffer, 0, result_bytes, nullptr, nullptr},
         {nullptr, 3, params_buffer, 0, sizeof(params), nullptr, nullptr},
     };
