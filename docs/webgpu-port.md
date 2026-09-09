@@ -113,10 +113,11 @@ inverse/geometry/magnetic/MHD force, then projection/constraint/preconditioning.
 Spectral state and descent velocity remain on the GPU across normal iterations.
 The preceding descent's state snapshot joins the next prefix map, avoiding a
 separate descent wait; velocity retains a compact finite check. The host
-commits the pending state, accepts the geometry, updates the existing double
-NESTOR solve, and uploads only the four corrected LCFS force rows before the
-suffix. The force readback contains only those four rows plus flags from a
-finite scan of every force word. Rejected geometry discards the pending
+commits the pending state, accepts the geometry, and updates the vacuum solve.
+Resident boundary correction updates the four LCFS force planes directly on
+the GPU; the prefix returns only flags from a finite scan of every force word.
+The host-correction reference path also reads and uploads those four LCFS rows.
+Rejected geometry discards the pending
 continuation before the vacuum update. The coupling reconstructs only the
 axis, boundary coefficients and outer rows it needs. Inverse readback carries
 only the required axis/LCFS rows. On ordinary non-refresh passes, base geometry
@@ -124,7 +125,8 @@ returns the complete gsqrt/guv planes for the original host Jacobian gate,
 and magnetic fields return their outer two rows plus radial profiles. GPU
 finite scans retain checks on omitted fields and both precision words. Refresh
 passes keep full base/magnetic arrays for normalization; final accepted fields
-are downloaded once for output. The native bridge and reduction order remain.
+are downloaded once for output. Surface-average/repack bridges and the
+original host norm-reduction order remain.
 `&field_readbacks=full` restores full field and velocity snapshots.
 `&resident=0`, `&fences=1`, or `&compare_fft=1` selects the separate-dispatch
 free-boundary path for trajectory comparisons. Axisymmetric constraint
@@ -159,13 +161,25 @@ JSON files are served as lazy preset assets; no field grids are shipped.
 bridge kernels for Wasm memory and converts WebGPU high/low words at the
 handover. The WebGPU backend keeps geometry, fields, integrals and the Laplace
 assembly resident, maps matrix/RHS together for Wasm-double LU, uploads the
-potential, then maps pressure and surface integrals for the existing LCFS
-coupling. Other reconstructed fields remain on the GPU, with their finite
-checks preserved. Both HOST/Wasm and WebGPU cache immutable potential Fourier
+potential, and reconstructs fields on the GPU, with their finite checks
+preserved. Both HOST/Wasm and WebGPU cache immutable potential Fourier
 factors at setup, preserving their own arithmetic and ordered sums.
-Full/partial update reuse and activation/restart state are shared. Asyncify yields
-the worker's host controller while the two GPU batches complete. The HOST path
-runs its kernels in the same worker.
+The resident boundary-force path, enabled with `vacuum=webgpu`, consumes GPU
+vacuum pressure directly after
+the Wasm LU solve. It updates only the four LCFS force planes in their existing
+buffers; vacuum integrals/validity and pressure-error diagnostics join the
+plasma suffix readback. Pending vacuum results are validated before controller
+decisions, checkpoint updates or output, including updates before pressure
+activation. This removes the final standalone vacuum map. With HOST vacuum,
+`vacuum_force=webgpu` opts into the same force operator, uploading only the
+reduced pressure array; HOST retains its original correction by default. The
+`vacuum_force=host` query retains the original Wasm-double correction and
+standalone vacuum result map for comparisons. Full-readback and nonresident
+reference paths also retain that host correction.
+Full/partial update reuse and activation/restart state are shared. Asyncify
+yields the worker for the matrix/RHS readback; the resident path resumes after
+LU and reconstruction submission so plasma work can continue. The HOST vacuum
+path runs its kernels in the same worker.
 
 Vacuum activation, edge force/preconditioning, constraint decay, soft restarts,
 and multigrid persistence follow the CUDA coupling. The three bundled presets

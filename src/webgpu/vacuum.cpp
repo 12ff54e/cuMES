@@ -7,6 +7,8 @@ template class cumes::FreeBoundaryOperator<double>;
 #include "cumes/config/validated_problem.hpp"
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/vacuum.hpp"
+#include "cumes/webgpu/vacuum_force.hpp"
+#include "pipeline_cache.hpp"
 
 #include <algorithm>
 #include <array>
@@ -212,6 +214,83 @@ void apply_vacuum_force(const wgpu::Device& device,
         force.device_fields = {};
     }
     vacuum.set_delbsq(delbsq);
+}
+
+std::function<void()> enqueue_resident_vacuum_force(
+    const wgpu::Device& device,
+    FreeBoundaryOperator<double>& vacuum,
+    const AxisymmetricStageData& stage,
+    const AxisymmetricForceCase& fields,
+    const AxisymmetricForceResult& force,
+    const std::shared_ptr<ReadbackBatch>& batch) {
+    struct Completion {
+        std::array<float, 6> summary{};
+        std::string error;
+        VacuumForceResult force;
+    };
+    const auto result = std::make_shared<Completion>();
+    const bool pending = vacuum.webgpu_result_pending();
+    if (pending) {
+        // These checks precede controller acceptance, but need not interrupt
+        // device force/projection work. Preserve raw bits in the two flags.
+        const auto integrals = vacuum.webgpu_output("driver.surface_integrals");
+        const auto encoder = device.CreateCommandEncoder();
+        batch->append(encoder, integrals.buffer, integrals.byte_offset, 16,
+                      [result](std::span<const float> values) {
+                          std::copy(values.begin(), values.end(),
+                                    result->summary.begin());
+                      });
+        batch->append(encoder, vacuum.webgpu_result_flags(), 0, 8,
+                      [result](std::span<const float> values) {
+                          std::copy(values.begin(), values.end(),
+                                    result->summary.begin() + 4);
+                      });
+        const auto commands = encoder.Finish();
+        device.GetQueue().Submit(1, &commands);
+    }
+    const bool apply = vacuum.apply_edge_force();
+    if (apply) {
+        VacuumForceCase input;
+        input.ns = stage.ns;
+        input.ntheta = stage.ntheta;
+        input.nzeta = stage.nzeta;
+        input.paired = fields.double_single;
+        input.delta_s = 1.0 / (stage.ns - 1);
+        input.edge_pressure = vacuum.edge_pressure();
+        input.geometry = fields.device_geometry;
+        input.magnetic_field = fields.device_magnetic_field;
+        input.force = force.device_fields;
+        const auto pressure = vacuum.webgpu_output("driver.b_sq_vac");
+        if (pressure.buffer) {
+            input.vacuum_pressure = {pressure.buffer, pressure.byte_offset,
+                                     pressure.count};
+        } else {
+            const auto host = vacuum.host_vacuum_pressure();
+            std::vector<FloatFloat> words(host.size());
+            std::transform(host.begin(), host.end(), words.begin(), split);
+            const auto bytes = words.size() * sizeof(FloatFloat);
+            auto buffer = detail::cached_buffer(
+                device, bytes,
+                wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+                "HOST vacuum pressure for device force");
+            device.GetQueue().WriteBuffer(buffer, 0, words.data(), bytes);
+            input.vacuum_pressure = {buffer, 0, words.size()};
+        }
+        input.readback.batch = batch;
+        enqueue_vacuum_force(
+            device, input,
+            [result](std::string error, VacuumForceResult force) {
+                result->error = std::move(error);
+                result->force = std::move(force);
+            });
+    }
+    return [&vacuum, result, pending, apply] {
+        if (pending) vacuum.finish_webgpu_update(result->summary);
+        if (!result->error.empty()) throw CumesError(result->error);
+        if (!result->force.finite)
+            throw CumesError("WebGPU vacuum force produced a nonfinite value");
+        if (apply) vacuum.set_delbsq(result->force.delbsq);
+    };
 }
 
 void decay_vacuum_reference(std::vector<float>& high, std::vector<float>& low) {

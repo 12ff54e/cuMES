@@ -21,6 +21,7 @@
 #include "float_geometry_tests.hpp"
 #include "newton_tests.hpp"
 #include "rounding_tests.hpp"
+#include "vacuum_force_tests.hpp"
 
 #include <algorithm>
 #include <array>
@@ -50,6 +51,7 @@ void publish_browser_result(int success, const char* detail);
 int publish_browser_output(const char* path);
 int requested_double_solve();
 int requested_webgpu_vacuum();
+int requested_device_vacuum_force();
 int requested_float_radius_reference();
 int requested_compensated_geometry();
 int requested_newton_solve();
@@ -2150,7 +2152,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf(
                     "  float radius reference, sub-ULP radial derivative, "
                     "selective compensation, absolute force: PASS\n");
-                self->run_axisymmetric_projection_test();
+                cumes::webgpu::run_vacuum_force_tests(
+                    self->device_, [self](std::string error) {
+                        if (!error.empty()) {
+                            self->finish(false, std::move(error));
+                            return;
+                        }
+                        std::printf("  resident vacuum boundary force: PASS\n");
+                        self->run_axisymmetric_projection_test();
+                    });
             });
             return;
         }
@@ -3809,6 +3819,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         if (vacuum_ && vacuum_->run_vacuum_block()) {
             try {
                 const auto before = vacuum_->state();
+                vacuum_->set_webgpu_resident_result(
+                    resident_vacuum_force_path());
                 cumes::webgpu::update_vacuum(*vacuum_, initialized_stage_,
                                              stage_state_lo_, force_case_);
                 if (before != vacuum_->state()) {
@@ -3887,14 +3899,24 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->active_case_name_.c_str(),
                         static_cast<double>(max_error));
                 }
-                if (self->vacuum_ && self->vacuum_->apply_edge_force()) {
+                if (self->vacuum_ && (self->vacuum_->apply_edge_force() ||
+                                      self->vacuum_->webgpu_result_pending())) {
                     try {
-                        cumes::webgpu::apply_vacuum_force(
-                            self->resident_path() ? self->device_
-                                                  : wgpu::Device{},
-                            *self->vacuum_, self->initialized_stage_,
-                            self->force_case_, actual);
+                        if (self->resident_vacuum_force_path()) {
+                            self->finish_vacuum_force_ =
+                                cumes::webgpu::enqueue_resident_vacuum_force(
+                                    self->device_, *self->vacuum_,
+                                    self->initialized_stage_, self->force_case_,
+                                    actual, self->iteration_readback_);
+                        } else {
+                            cumes::webgpu::apply_vacuum_force(
+                                self->resident_path() ? self->device_
+                                                      : wgpu::Device{},
+                                *self->vacuum_, self->initialized_stage_,
+                                self->force_case_, actual);
+                        }
                     } catch (const std::exception& error) {
+                        self->vacuum_->cancel_webgpu_update();
                         self->finish(false, error.what());
                         return;
                     }
@@ -3923,7 +3945,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                    [self](std::string error,
                           cumes::webgpu::IterationResult result) {
                        if (!error.empty()) {
+                           self->vacuum_->cancel_webgpu_update();
+                           self->finish_vacuum_force_ = {};
                            self->finish(false, std::move(error));
+                           return;
+                       }
+                       try {
+                           auto finish = std::move(self->finish_vacuum_force_);
+                           self->finish_vacuum_force_ = {};
+                           if (finish) finish();
+                       } catch (const std::exception& error) {
+                           self->vacuum_->cancel_webgpu_update();
+                           self->finish(false, error.what());
                            return;
                        }
                        self->iteration_results_ = std::move(result);
@@ -6092,6 +6125,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         return production_solve_ && initialized_stage_.free_boundary &&
                resident_path();
     }
+    bool resident_vacuum_force_path() const {
+        return batched_free_boundary_path() &&
+               !requested_full_field_readbacks() &&
+               requested_device_vacuum_force() != 0;
+    }
     bool resident_spectral_path() const {
         return production_solve_ && resident_path() &&
                !requested_spectral_fences() && !requested_compare_fft();
@@ -6116,6 +6154,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         input.compact_fields =
             production_solve_ && !requested_full_field_readbacks();
         input.compact_vacuum = input.compact_fields;
+        input.resident_vacuum_force = resident_vacuum_force_path();
         input.readback_intermediates = !production_solve_;
         input.geometry_control =
             production_solve_ && requested_geometry_control();
@@ -6191,6 +6230,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         callback({}, std::move(value));
     }
     std::shared_ptr<cumes::webgpu::ReadbackBatch> iteration_readback_;
+    std::function<void()> finish_vacuum_force_;
     std::uint64_t iteration_readback_capacity_ = 0;
     std::optional<cumes::webgpu::IterationResult> iteration_results_;
     std::size_t iteration_forward_index_ = 0, iteration_residual_index_ = 0;

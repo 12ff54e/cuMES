@@ -9,6 +9,11 @@ mergeInto(LibraryManager.library, {
   requested_webgpu_vacuum: function() {
     return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('vacuum') === 'webgpu';
   },
+  requested_device_vacuum_force: function() {
+    const query = new URLSearchParams(globalThis.cumesSearch ?? location.search);
+    return query.get('vacuum_force') === 'webgpu' ||
+      (query.get('vacuum_force') !== 'host' && query.get('vacuum') === 'webgpu');
+  },
   requested_float_radius_reference: function() {
     return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('radius_reference') === '0' ? 0 : 1;
   },

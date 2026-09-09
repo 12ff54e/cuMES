@@ -24,12 +24,19 @@ assert.equal(f.library.requested_app_mode(),false);
 assert.equal(f.library.requested_double_solve(),1);
 assert.equal(f.library.requested_solver_trace(),true);
 assert.equal(f.library.requested_webgpu_vacuum(),false);
+assert.equal(f.library.requested_device_vacuum_force(),false);
 {
   const saved=f.context.cumesSearch;
   f.context.cumesSearch='?boundary=free&vacuum=webgpu';
   assert.equal(f.library.requested_webgpu_vacuum(),true);
+  assert.equal(f.library.requested_device_vacuum_force(),true);
+  f.context.cumesSearch='?boundary=free&vacuum=webgpu&vacuum_force=host';
+  assert.equal(f.library.requested_device_vacuum_force(),false);
   f.context.cumesSearch='?boundary=free&vacuum=host';
   assert.equal(f.library.requested_webgpu_vacuum(),false);
+  assert.equal(f.library.requested_device_vacuum_force(),false);
+  f.context.cumesSearch='?boundary=free&vacuum=host&vacuum_force=webgpu';
+  assert.equal(f.library.requested_device_vacuum_force(),true);
   f.context.cumesSearch=saved;
 }
 assert.equal(f.library.requested_newton_solve(),false);

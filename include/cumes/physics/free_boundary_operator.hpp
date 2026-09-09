@@ -31,8 +31,14 @@
 #include <vector>
 
 #ifdef CUMES_VACUUM_WEBGPU
+#include <span>
+#include <string_view>
 namespace wgpu {
 class Device;
+class Buffer;
+}  // namespace wgpu
+namespace vfield::webgpu {
+struct DeviceValues;
 }
 #endif
 
@@ -78,6 +84,16 @@ class FreeBoundaryOperator {
 #ifdef CUMES_VACUUM_WEBGPU
     // Select the GPU vacuum operator while retaining the shared host coupling.
     void enable_webgpu(const wgpu::Device& device);
+    // Defer final GPU vacuum validation to the caller's control readback.
+    // The caller must finish the pending result before accepting an iteration.
+    void set_webgpu_resident_result(bool enabled);
+    bool webgpu_result_pending() const;
+    vfield::webgpu::DeviceValues webgpu_output(std::string_view name) const;
+    wgpu::Buffer webgpu_result_flags() const;
+    void finish_webgpu_update(std::span<const float> summary);
+    void cancel_webgpu_update();
+    std::span<const T> host_vacuum_pressure() const;
+    T edge_pressure() const;
 #endif
 
     FreeBoundaryOperator(const FreeBoundaryOperator&) = delete;
@@ -201,6 +217,7 @@ class FreeBoundaryOperator {
                             VacuumStream stream) const;
 
    private:
+    void finish_host_update(T bsubu, T bsubv);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

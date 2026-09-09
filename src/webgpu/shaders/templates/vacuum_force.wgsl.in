@@ -1,0 +1,98 @@
+// Paired arithmetic also corrects scalar plasma forces: the old bridge
+// reconstructed words and evaluated these same expressions in Wasm double.
+struct Params {
+    ns: u32, ntheta: u32, nzeta: u32, angular: u32,
+    geometry_high: u32, geometry_low: u32,
+    magnetic_high: u32, magnetic_low: u32,
+    force_high: u32, force_low: u32, vacuum_offset: u32, paired: u32,
+    delta_s: f32, delta_s_low: f32, edge_pressure: f32, edge_pressure_low: f32,
+};
+struct Values { data: array<f32>, };
+@group(0) @binding(0) var<storage, read> geometry: Values;
+@group(0) @binding(1) var<storage, read> magnetic: Values;
+@group(0) @binding(2) var<storage, read_write> force: Values;
+@group(0) @binding(3) var<storage, read> vacuum: Values;
+@group(0) @binding(4) var<storage, read_write> pressure_error: Values;
+@group(0) @binding(5) var<uniform> params: Params;
+
+fn finite_word(value: f32) -> bool {
+    return (bitcast<u32>(value) & 0x7f800000u) != 0x7f800000u;
+}
+fn finite_pair(value: Pair) -> bool {
+    return finite_word(pair_hi(value)) && finite_word(pair_lo(value));
+}
+fn full(field: u32, point: u32) -> Pair {
+    let index = (field * params.ns + params.ns - 1u) * params.angular + point;
+    var low = 0.0;
+    if (params.paired != 0u) { low = geometry.data[params.geometry_low + index]; }
+    return pair_words(geometry.data[params.geometry_high + index], low);
+}
+fn pressure(surface: u32, point: u32) -> Pair {
+    let index = (4u * (params.ns - 1u) + surface) * params.angular + point;
+    var low = 0.0;
+    if (params.paired != 0u) { low = magnetic.data[params.magnetic_low + index]; }
+    return pair_words(magnetic.data[params.magnetic_high + index], low);
+}
+fn correct(field: u32, point: u32, correction: Pair, slot: u32) -> bool {
+    let index = (field * params.ns + params.ns - 1u) * params.angular + point;
+    var low = 0.0;
+    if (params.paired != 0u) { low = force.data[params.force_low + index]; }
+    let previous = pair_words(force.data[params.force_high + index], low);
+    let updated = pair_add(previous, correction, slot);
+    force.data[params.force_high + index] = pair_hi(updated);
+    if (params.paired != 0u) {
+        force.data[params.force_low + index] = pair_lo(updated);
+    }
+    return finite_pair(previous) && finite_pair(updated);
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let point = invocation.x;
+    if (point >= params.angular) { return; }
+    let theta = point % params.ntheta;
+    let zeta = point / params.ntheta;
+    let reduced = params.ntheta / 2u + 1u;
+    var l = theta;
+    var k = zeta;
+    if (theta >= reduced) {
+        l = params.ntheta - theta;
+        k = (params.nzeta - zeta) % params.nzeta;
+    }
+    let vacuum_index = params.vacuum_offset + 2u * (l * params.nzeta + k);
+    let b_sq = pair_words(vacuum.data[vacuum_index], vacuum.data[vacuum_index + 1u]);
+    let r_even = full(0u, point);
+    let r_odd = full(6u, point);
+    let ru_even = full(3u, point);
+    let ru_odd = full(9u, point);
+    let zu_even = full(4u, point);
+    let zu_odd = full(10u, point);
+    let p_outer = pressure(params.ns - 2u, point);
+    let p_inner = pressure(params.ns - 3u, point);
+    let outside = pair_add(b_sq, pair_words(params.edge_pressure, params.edge_pressure_low), point);
+    let rbsq = pair_div(pair_mul(outside, pair_add(r_even, r_odd, point), point),
+                        pair_words(params.delta_s, params.delta_s_low), point);
+    let radial = pair_mul(pair_add(zu_even, zu_odd, point), rbsq, point);
+    let vertical = pair_neg(pair_mul(pair_add(ru_even, ru_odd, point), rbsq, point));
+    let inside = pair_sub(pair_scale(p_outer, 1.5, point), pair_scale(p_inner, 0.5, point), point);
+    var difference = pair_sub(outside, inside, point);
+    if (pair_hi(difference) < 0.0 ||
+        (pair_hi(difference) == 0.0 && pair_lo(difference) < 0.0)) {
+        difference = pair_neg(difference);
+    }
+    let contribution = pair_div(difference, pair_real(f32(params.angular)), point);
+    var valid = finite_pair(b_sq) && finite_pair(r_even) && finite_pair(r_odd) &&
+        finite_pair(ru_even) && finite_pair(ru_odd) && finite_pair(zu_even) &&
+        finite_pair(zu_odd) && finite_pair(p_outer) && finite_pair(p_inner) &&
+        finite_pair(contribution) && finite_pair(radial) && finite_pair(vertical);
+    // Call each store unconditionally; boolean short-circuiting must never
+    // suppress writes to later force planes after an invalid input.
+    let valid_r_even = correct(0u, point, radial, point);
+    let valid_r_odd = correct(1u, point, radial, point);
+    let valid_z_even = correct(2u, point, vertical, point);
+    let valid_z_odd = correct(3u, point, vertical, point);
+    valid = valid && valid_r_even && valid_r_odd && valid_z_even && valid_z_odd;
+    pressure_error.data[3u * point] = pair_hi(contribution);
+    pressure_error.data[3u * point + 1u] = pair_lo(contribution);
+    pressure_error.data[3u * point + 2u] = select(1.0, 0.0, valid);
+}

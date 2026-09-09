@@ -30,6 +30,10 @@
     "paired": "force_double_single.wgsl"
   },
   {
+    "template": "templates/vacuum_force.wgsl.in",
+    "paired": "vacuum_force.wgsl"
+  },
+  {
     "template": "templates/magnetic_field.wgsl.in",
     "single": "magnetic_field.wgsl",
     "paired": "magnetic_field_double_single.wgsl"

@@ -24,6 +24,8 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/iteration.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/main.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/vacuum.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/vacuum_force.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/vacuum_force_tests.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/magnetic_field.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/numerics.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/newton.cpp

@@ -28,6 +28,7 @@ struct IterationCase {
     bool compact_norms = false;
     bool compact_fields = false;
     bool compact_vacuum = false;
+    bool resident_vacuum_force = false;
     // Retain force and projection snapshots for per-operator CPU comparisons.
     bool readback_intermediates = false;
     bool geometry_control = false;

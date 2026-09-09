@@ -222,6 +222,116 @@ clocks. The two-repeat comparison on one adapter is not full performance
 qualification or an isolated measurement of each optimization. Captures and
 comparison data remain in `../tmp/free-boundary-second-pass/`.
 
+### Resident vacuum boundary-force correction
+
+With WebGPU vacuum, the LCFS pressure correction now runs on the GPU. The
+operator consumes existing geometry, plasma-pressure and vacuum-pressure
+buffers, then updates the first four force planes at the LCFS in place.
+Interior force words remain unchanged. The prefix retains its full-force
+finite scan but omits the four host LCFS rows. Pressure-error contributions
+and corrected-word validity join the existing suffix readback.
+
+Vacuum-field's resident completion API returns after the matrix/RHS readback,
+Wasm-double LU solve and reconstruction submission. Pressure stays in the
+vacuum arena. The two surface integrals and raw validity flags (24 bytes)
+join the plasma suffix map. The parent validates them before controller
+decisions, checkpoint changes or output. Pre-activation updates also finish
+this validation even though they do not yet apply an edge force. The known
+activation/edge gates are prepared before dispatch; errors abort the pending
+evaluation. A cancelled or failed full update clears factorization reuse.
+The dependency retains its ordinary full/compact APIs and guards pending
+resident results with a generation token and explicit finish/cancel methods.
+
+Normal active WebGPU-vacuum iterations now have three sequential completion
+maps: plasma prefix, vacuum matrix/RHS, and plasma suffix. The previous final
+vacuum map is removed. For paired W7-X at the shape above, correction removes
+23,040 bytes of LCFS readback, 23,040 bytes of corrected-force uploads and
+3,168 bytes of vacuum-pressure readback. It adds 8,640 bytes of ordered
+pressure-error/validity data to the suffix and a 64-byte uniform upload: a net
+40,544-byte reduction in logical exchange per applying pass. The 24-byte
+vacuum summary is retained. Synchronization is the main target of this change;
+the existing constraint/reference and host norm readbacks remain.
+
+`vacuum_force=host` retains the original correction with GPU vacuum. HOST/Wasm
+vacuum keeps its original correction by default, since it has no separate
+vacuum map to eliminate. `vacuum=host&vacuum_force=webgpu` explicitly selects
+the new correction with a reduced-pressure upload. That option saves 34,208
+bytes per applying W7-X pass and retains two plasma maps. Full-readback and
+nonresident reference paths keep the host correction.
+
+The dependency completion change preserves arithmetic (Class A). Moving the
+correction from Wasm double to paired-f32 WGSL is Class B; scalar plasma also
+uses paired correction arithmetic before storing its high word. The new
+operator tests compare against independent double expressions, with force
+error bounded by `4e-12 * (1 + abs(prior) + abs(increment))` for paired output
+and `1.3e-7` times that scale for scalar output. Scaling by the operands retains
+a useful bound through cancellation. Pressure-mean error is bounded by
+`4e-12 * (1 + abs(reference))`. Real Chrome conformance passes scalar/paired,
+axisymmetric/3-D, mirrored reduced-grid indexing, unchanged interior/padding,
+malformed ranges and nonfinite/overflow cases. The measured combined scaled
+force maximum is `5.196e-8` (dominated by scalar rounding); pressure-mean error
+is `2.395e-16`. The paired variants independently pass their tighter bound.
+
+For paired W7-X, the first 100 controller records, including vacuum
+activation, remain exact against the frozen `ee3b26b` runs. Longer trajectories
+are not bitwise equivalent: rounding eventually changes checkpoint choices
+and the stopping iteration. Every configured residual still reaches `1e-12`
+after the existing validity gates. The six spectral families, axis/LCFS rows
+and all 13 derived-field arrays were compared and remain finite.
+
+| Vacuum choice with GPU correction | Baseline / updated controller records | First nonidentical record (zero-based) | Maximum final R/Z coefficient difference, m | Maximum lambda coefficient difference |
+| --- | ---: | ---: | ---: | ---: |
+| WebGPU | 1,844 / 1,859 | 172 | 5.255e-6 | 2.178e-5 |
+| HOST, explicit opt-in | 1,847 / 1,838 | 146 | 3.489e-6 | 1.385e-5 |
+
+First checkpoint-decision differences occur at records 537 and 710,
+respectively. Maximum derived-field error normalized by each reference
+array's maximum magnitude is `8.50e-4` for WebGPU and `5.36e-4` for the HOST
+opt-in, in the contravariant radial current. These are measured full-solve
+differences, not per-operator tolerance changes or general qualification for
+other inputs. The unchanged HOST default preserves all 1,847 records and
+the exact scientific digest.
+
+Paired cth_like with WebGPU vacuum converges in 625 controller records versus
+626, retains its first 100 records exactly, and has maximum R/Z coefficient
+difference `7.48e-8 m` and lambda difference `8.06e-7`. Its maximum normalized
+derived-field difference is `3.83e-4`. Evaluating the final boundaries on the
+same `128×128` angular grid with the existing output reader gives maximum
+LCFS displacement `32.91 µm` for W7-X and `0.424 µm` for cth_like; corresponding
+axis displacements are `0.890 µm` and `0.00247 µm`. Scalar multigrid Solovev
+preserves all 75 controller records and its scientific digest exactly.
+The `vacuum_force=host` fallback preserves all 626 cth_like WebGPU-vacuum
+records and its original scientific digest exactly.
+
+The WebGPU build and all 14 CTests pass. The dependency's real Chrome API
+gate preserves exact full/partial outputs through ordinary/resident
+transitions and checks stale, cancelled and invalid pending results. Parent
+out-of-grid and reversed-current cases retain their original error
+classification, identical accepted controller prefix and absence of output.
+Both native CUDA free-boundary translation units compile; their numerical
+execution path is unchanged. Native GPU solves and Firefox were not rerun.
+
+The 2026-09-09 timing comparison used Chrome 152.0.7977.77 on Windows with an
+NVIDIA GeForce RTX 3060 Ti, the bundled paired W7-X free-boundary preset,
+`vacuum=webgpu&trace=1&timing=0`, and the frozen `ee3b26b` application as baseline.
+Each revision had one warmup and two serial measured runs. The updated repeats
+preserve the new 1,859-record trajectory and scientific digest exactly.
+
+| Interval | Baseline median (range), s | Updated median (range), s |
+| --- | ---: | ---: |
+| Full page run | 63.696 (63.613–63.778) | 58.560 (58.419–58.701) |
+| First-to-last controller record | 58.819 (58.756–58.881) | 53.541 (53.433–53.650) |
+
+This is 8.06% less full-run time and 8.97% less controller-span time despite
+15 additional controller records. It measures the complete port, including
+its numerical trajectory change, rather than isolating fence latency.
+Median worker age at the first controller record is 4.513 s before and
+4.628 s after; it includes setup and is not a pure setup interval. Output is
+included in page time but cannot be isolated by the differing window/worker
+clocks. This two-repeat, one-adapter result is a bounded browser comparison,
+not full performance qualification. Raw captures, numerical differences,
+error cases and provenance remain in `../tmp/boundary-force-resident/`.
+
 ## Geometry and Newton options
 
 `geometry=compensated-m1` changes scalar W7-X trajectories and is a Class C

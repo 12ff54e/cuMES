@@ -415,9 +415,12 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
         if (ready.lcfs_only) {
             auto result = std::make_shared<AxisymmetricForceResult>(ready);
             const auto angular = static_cast<std::size_t>(in.ntheta) * in.nzeta;
-            result->fields.resize(4 * angular);
-            if (in.double_single) result->fields_lo.resize(4 * angular);
-            for (int word = 0; word < (in.double_single ? 2 : 1); ++word) {
+            if (in.readback_values) result->fields.resize(4 * angular);
+            if (in.readback_values && in.double_single)
+                result->fields_lo.resize(4 * angular);
+            for (int word = 0;
+                 in.readback_values && word < (in.double_single ? 2 : 1);
+                 ++word) {
                 for (int field = 0; field < 4; ++field) {
                     const auto first =
                         word * values + (field + 1) * nf - angular;

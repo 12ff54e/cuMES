@@ -44,10 +44,12 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 
 namespace cumes {
 namespace {
@@ -236,6 +238,8 @@ struct FreeBoundaryOperator<T>::Impl {
 #ifdef CUMES_VACUUM_WEBGPU
     std::unique_ptr<vfield::webgpu::Solver> gpu_solver;
     vfield::webgpu::Result gpu_result;
+    std::optional<vfield::webgpu::ResidentOutputs> gpu_pending;
+    bool gpu_resident_result = false;
 #endif
     VacuumState state = VacuumState::OFF;
     int nvacskip = 1;
@@ -571,6 +575,19 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
         update.net_toroidal_current = net_toroidal_current;
         update.full_update = impl_->full_update;
         update.readback_all_fields = false;
+        if (impl_->gpu_resident_result) {
+            impl_->gpu_pending =
+                impl_->gpu_solver->update_resident_blocking(update);
+            // These gates depend only on the existing activation state. GPU
+            // integrals/validity are checked at the suffix fence, before any
+            // controller, checkpoint or output can accept this evaluation.
+            if (impl_->state == VacuumState::INITIALIZING)
+                impl_->state = VacuumState::INITIALIZED;
+            impl_->soft_restart = impl_->state == VacuumState::INITIALIZED;
+            impl_->edge_gate = impl_->state == VacuumState::INITIALIZED ||
+                               impl_->state == VacuumState::ACTIVE;
+            return;
+        }
         impl_->gpu_result = impl_->gpu_solver->update_blocking(update);
         if (impl_->gpu_result.out_of_bounds)
             throw CumesError(
@@ -583,6 +600,11 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
             rcc, rss, nullptr, nullptr, zsc, zcs, nullptr, nullptr,
             DeviceParams<T>::SIGN_JACOBIAN, d_r_axis, d_z_axis, bsubu, bsubv,
             static_cast<T>(net_toroidal_current), impl_->full_update);
+    finish_host_update(bsubu, bsubv);
+}
+
+template <class T>
+void FreeBoundaryOperator<T>::finish_host_update(T bsubu, T bsubv) {
     impl_->bsubu_vac = static_cast<double>(bsubu);
     impl_->bsubv_vac = static_cast<double>(bsubv);
     if (impl_->full_update) impl_->has_factors = true;
@@ -618,6 +640,73 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
     impl_->edge_gate = (impl_->state == VacuumState::INITIALIZED ||
                         impl_->state == VacuumState::ACTIVE);
 }
+
+#ifdef CUMES_VACUUM_WEBGPU
+template <class T>
+void FreeBoundaryOperator<T>::set_webgpu_resident_result(bool enabled) {
+    if (impl_->gpu_pending)
+        throw CumesError("cannot change vacuum result mode during an update");
+    impl_->gpu_resident_result = enabled;
+}
+
+template <class T>
+bool FreeBoundaryOperator<T>::webgpu_result_pending() const {
+    return impl_->gpu_pending.has_value();
+}
+
+template <class T>
+vfield::webgpu::DeviceValues FreeBoundaryOperator<T>::webgpu_output(
+    std::string_view name) const {
+    return impl_->gpu_solver ? impl_->gpu_solver->output(name)
+                             : vfield::webgpu::DeviceValues{};
+}
+
+template <class T>
+wgpu::Buffer FreeBoundaryOperator<T>::webgpu_result_flags() const {
+    return impl_->gpu_pending ? impl_->gpu_pending->flags : wgpu::Buffer{};
+}
+
+template <class T>
+void FreeBoundaryOperator<T>::finish_webgpu_update(
+    std::span<const float> summary) {
+    if (!impl_->gpu_pending || summary.size() != 6)
+        throw CumesError("invalid pending vacuum summary");
+    std::array<vfield::webgpu::RealWords, 3> words;
+    std::memcpy(words.data(), summary.data(), sizeof(words));
+    const auto pending = std::exchange(impl_->gpu_pending, std::nullopt);
+    try {
+        impl_->gpu_result = impl_->gpu_solver->finish_resident(*pending, words);
+        if (impl_->gpu_result.out_of_bounds)
+            throw CumesError(
+                "WebGPU vacuum boundary lies outside the coil field grid");
+        finish_host_update(impl_->gpu_result.b_sub_u_vac,
+                           impl_->gpu_result.b_sub_v_vac);
+    } catch (...) {
+        if (impl_->full_update) impl_->has_factors = false;
+        throw;
+    }
+}
+
+template <class T>
+void FreeBoundaryOperator<T>::cancel_webgpu_update() {
+    if (!impl_->gpu_pending) return;
+    impl_->gpu_solver->cancel_resident(*impl_->gpu_pending);
+    impl_->gpu_pending.reset();
+    if (impl_->full_update) impl_->has_factors = false;
+}
+
+template <class T>
+std::span<const T> FreeBoundaryOperator<T>::host_vacuum_pressure() const {
+    if (impl_->gpu_solver) return impl_->gpu_result.b_sq_vac;
+    return {impl_->solver.b_sq_vac(),
+            static_cast<std::size_t>(impl_->sizes.nZnT)};
+}
+
+template <class T>
+T FreeBoundaryOperator<T>::edge_pressure() const {
+    return impl_->edge_pressure;
+}
+#endif
 
 template <class T>
 bool FreeBoundaryOperator<T>::soft_restart_requested() const {

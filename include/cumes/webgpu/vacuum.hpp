@@ -26,6 +26,16 @@ void apply_vacuum_force(const wgpu::Device& device,
                         const AxisymmetricStageData& stage,
                         const AxisymmetricForceCase& fields,
                         AxisymmetricForceResult& force);
+// Enqueue device correction and append diagnostics/validation to the suffix
+// readback. Invoke the returned completion after mapping, before accepting any
+// controller state. It throws on invalid correction or vacuum outputs.
+std::function<void()> enqueue_resident_vacuum_force(
+    const wgpu::Device& device,
+    FreeBoundaryOperator<double>& vacuum,
+    const AxisymmetricStageData& stage,
+    const AxisymmetricForceCase& fields,
+    const AxisymmetricForceResult& force,
+    const std::shared_ptr<ReadbackBatch>& batch);
 void decay_vacuum_reference(std::vector<float>& high, std::vector<float>& low);
 
 }  // namespace cumes::webgpu
