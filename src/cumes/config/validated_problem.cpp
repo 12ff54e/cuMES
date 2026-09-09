@@ -240,9 +240,6 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
                      "input variable nvacskip needs to be > 0 (vacuum "
                      "full-update cadence)");
     }
-    if (spec.lasym && spec.free_boundary.lfreeb)
-        report.error("lasym",
-                     "asymmetric free-boundary coupling is not yet supported");
     if (spec.free_boundary.lfreeb) {
 #ifdef CUMES_VACUUM_FIELD_DISABLED
         report.error(

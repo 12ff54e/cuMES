@@ -56,8 +56,8 @@ class VacuumForceTests : public std::enable_shared_from_this<VacuumForceTests> {
     std::function<void(std::string)> callback;
     double max_force_error = 0.0, max_pressure_error = 0.0;
 
-    void run(int variant = 0) {
-        if (variant == 8) {
+    void run(int test = 0) {
+        if (test == 16) {
             std::printf(
                 "  resident vacuum force (f32/paired, axisymmetric/3D), "
                 "interior preservation, malformed ranges, nonfinite gates: "
@@ -66,7 +66,9 @@ class VacuumForceTests : public std::enable_shared_from_this<VacuumForceTests> {
             callback({});
             return;
         }
+        const int variant = test % 8;
         VacuumForceCase input;
+        input.lasym = test >= 8;
         input.ns = 5;
         input.ntheta = variant < 2 ? 8 : 18;
         input.nzeta = variant < 2 ? 1 : 18;
@@ -97,7 +99,8 @@ class VacuumForceTests : public std::enable_shared_from_this<VacuumForceTests> {
             }
         }
         const auto vacuum_count =
-            std::size_t(input.ntheta / 2 + 1) * input.nzeta;
+            std::size_t(input.lasym ? input.ntheta : input.ntheta / 2 + 1) *
+            input.nzeta;
         std::vector<float> vacuum(2 * vacuum_count + 4, -456.0F);
         for (std::size_t i = 0; i < vacuum_count; ++i) {
             const auto value = split(0.4 + 0.013 * double(i % 19) + 4.56e-9);
@@ -187,7 +190,7 @@ class VacuumForceTests : public std::enable_shared_from_this<VacuumForceTests> {
                                    magnetic = std::move(magnetic),
                                    force = std::move(force),
                                    vacuum = std::move(vacuum), result, error,
-                                   actual, variant, angular, full,
+                                   actual, variant, test, angular, full,
                                    half](std::string message) {
             if (!message.empty() || !error->empty() ||
                 actual->size() != force.words.size() ||
@@ -204,7 +207,7 @@ class VacuumForceTests : public std::enable_shared_from_this<VacuumForceTests> {
                 // rBSq/edge-force contract, including stellarator symmetry.
                 const int theta = point % input.ntheta;
                 const int zeta = point / input.ntheta;
-                const bool reflected = theta > input.ntheta / 2;
+                const bool reflected = !input.lasym && theta > input.ntheta / 2;
                 const int l = reflected ? input.ntheta - theta : theta;
                 const int k =
                     reflected ? (input.nzeta - zeta) % input.nzeta : zeta;
@@ -278,7 +281,7 @@ class VacuumForceTests : public std::enable_shared_from_this<VacuumForceTests> {
                     return;
                 }
             }
-            self->run(variant + 1);
+            self->run(test + 1);
         });
     }
 };

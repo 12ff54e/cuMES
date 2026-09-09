@@ -6,6 +6,7 @@ struct Params {
     magnetic_high: u32, magnetic_low: u32,
     force_high: u32, force_low: u32, vacuum_offset: u32, paired: u32,
     delta_s: f32, delta_s_low: f32, edge_pressure: f32, edge_pressure_low: f32,
+    lasym: u32,
 };
 struct Values { data: array<f32>, };
 @group(0) @binding(0) var<storage, read> geometry: Values;
@@ -55,7 +56,7 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let reduced = params.ntheta / 2u + 1u;
     var l = theta;
     var k = zeta;
-    if (theta >= reduced) {
+    if (params.lasym == 0u && theta >= reduced) {
         l = params.ntheta - theta;
         k = (params.nzeta - zeta) % params.nzeta;
     }

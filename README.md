@@ -21,7 +21,7 @@ coefficients directly; **Contour** moves periodic control points and projects
 the free contour into the supported Fourier basis, capped at `m=5`. Both modes
 update a live R-Z preview before running a three-grid equilibrium locally on
 the user's GPU. The page displays the converged flux surfaces in-place and
-offers the complete schema-v8 result as a download. A separate browser gate
+offers the complete binary result as a download. A separate browser gate
 runs the controller-complete three-stage Solovev solve with persistent
 velocity, constraint, preconditioner, and rollback state. On the NVIDIA TITAN
 Xp through Dawn's Vulkan backend it converges in `72 -> 31 -> 247` effective
@@ -35,14 +35,16 @@ constraint, residual, and descent values use paired `f32` words. On the
 NVIDIA TITAN Xp through Dawn's Vulkan backend, the hardware-qualified
 `1e-12` run converges in `1421 -> 3220 -> 2964` effective iterations (7605
 total), with final residual `(1.000e-12, 2.115e-13, 1.528e-13)`.
-Non-stellarator-symmetric fixed boundaries are enabled in CUDA and WebGPU input
+Non-stellarator-symmetric fixed and free boundaries are enabled in CUDA and WebGPU input
 with `"lasym": true`. Supply `rbs` and `zbc` harmonic lists in addition to
 `rbc` and `zbs`; all use signed `n` and phase `m*theta - n*nfp*zeta`. Optional
 `raxis_s` and `zaxis_c` specify the complementary magnetic-axis coefficients.
 [inputs/asymmetric_tokamak.json](inputs/asymmetric_tokamak.json) is a complete
-example; the browser opens it with `?preset=asymmetric`. The advanced boundary
+fixed-boundary example; the browser opens it with `?preset=asymmetric`.
+[inputs/free_bdy/asymmetric_tokamak.json](inputs/free_bdy/asymmetric_tokamak.json)
+adds asymmetric coil currents and a moving LCFS. The advanced boundary
 editor's **Allow non-stellarator symmetry** control exposes RBS/ZBC coefficients.
-See [ADR-0017](docs/adr/0017-non-stellarator-symmetry.md) for tested
+See [ADR-0020](docs/adr/0020-non-stellarator-symmetry.md) for tested
 precision, backend coverage, and remaining limitations.
 
 The converged spectral state and run provenance are published as a version-8 (asymmetric: version-9)

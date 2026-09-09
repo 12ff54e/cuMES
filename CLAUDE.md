@@ -137,7 +137,8 @@ Preserve these contracts unless the task intentionally changes them:
 - Per-pass mathematics: spectral state → inverse transforms → geometry and
   magnetic field → scheduled vacuum update → MHD and constraint forces →
   forward transforms → residuals, preconditioner, descent, and controller.
-- Six spectral families are ordered `Rcc, Zsc, Lsc, Rss, Zcs, Lcs`, with
+- Symmetric spectral families are ordered `Rcc, Zsc, Lsc, Rss, Zcs, Lcs`;
+  `lasym=true` appends `Rsc, Zcc, Lcc, Rcs, Zss, Lss`. Each uses
   `surface + mode * ns` within a family. Real-space arrays use
   `point + surface * nZnT`, with theta contiguous. Full-grid state and
   half-grid metric/field quantities are staggered. Follow
@@ -155,8 +156,11 @@ Preserve these contracts unless the task intentionally changes them:
   apply to the native backend, not to the browser operators.
 - Free-boundary coupling retains vacuum activation/restart state, `nvacskip`
   scheduling, LCFS pressure forces, preconditioner terms, and multigrid
-  persistence. Reuse `deps/vacuum-field` and the existing coupling. The browser
-  builds its WebGPU backend and HOST-double reference. `vacuum=webgpu` selects
+  persistence. Asymmetric coupling passes eight R/Z families and uses full
+  theta vacuum pressure and averages. Coil-field `nfp` and toroidal planes must
+  match the equilibrium grid. Reuse `deps/vacuum-field` and the existing
+  coupling. The browser builds its WebGPU backend and HOST-double reference.
+  `vacuum=webgpu` selects
   paired-f32 vacuum kernels, with Wasm-double LU by default and resident
   paired-f32 LU through `vacuum_lu=webgpu`. GPU LU retains pivoting, full/partial
   factor reuse and deferred error checks; systems above 256 unknowns require
@@ -197,8 +201,9 @@ Preserve these contracts unless the task intentionally changes them:
   `$PWD/cumes-output.bin`; `--boozer-output` is an alternative, mutually
   exclusive output. Known suffixes select compiled output backends; unknown
   suffixes and unavailable backends are errors.
-- Configuration schema v1 is distinct from the native binary version (currently
-  8) and checkpoint version (currently 6). Spectral state remains double on
+- Configuration schema v1 is distinct from the native binary version (8 for
+  symmetric, 9 for asymmetric states) and checkpoint version (6/7 respectively).
+  Spectral state remains double on
   disk. Preserve reader compatibility and full provenance. Consult
   `docs/output-formats.md`, `configs/schema-v1.json`, and the readers/writers
   before changing serialization.

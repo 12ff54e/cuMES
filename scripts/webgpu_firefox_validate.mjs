@@ -8,8 +8,21 @@ const [url, prefix, prefsJson = '{}'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL OUTPUT_PREFIX [PREFS_JSON]');
 const prefs = JSON.parse(prefsJson);
 const input = process.env.CUMES_INPUT_JSON ? JSON.parse(await readFile(process.env.CUMES_INPUT_JSON, 'utf8')) : undefined;
-if (input && (new URL(url).searchParams.get('preset') !== 'w7x' || input.lfreeb))
-  throw Error('CUMES_INPUT_JSON requires the fixed advanced editor (?preset=w7x)');
+let inputStorage;
+if (input) {
+  const query = new URL(url).searchParams;
+  if (input.lfreeb) {
+    const preset = input.coils_file?.match(/coils\.(solovev|w7x|cth_like)$/)?.[1];
+    if (!preset || query.get('boundary') !== 'free' || query.has('coils'))
+      throw Error('Custom free input requires a bundled coil file and ?boundary=free without coils=');
+    inputStorage = {key: 'cumes.free.v1', value: {preset,
+      input: {...input, coils_file: '/inputs/coils.' + preset}}};
+  } else {
+    if (query.get('preset') !== 'w7x')
+      throw Error('Custom fixed input requires the advanced editor (?preset=w7x)');
+    inputStorage = {key: 'cumes.fixed.w7x.v1', value: input};
+  }
+}
 const endpoint = process.env.GECKODRIVER_URL || 'http://127.0.0.1:4445';
 const timeout = Number(process.env.CUMES_FIREFOX_TIMEOUT_MS || 1800000);
 if (!Number.isFinite(timeout) || timeout <= 0) throw Error('Invalid Firefox timeout');
@@ -53,7 +66,7 @@ try {
   await save();
   console.log(JSON.stringify({browser: session.capabilities.browserVersion, prefs, probe: result.probe}));
   if (!result.probe.adapter) throw Error('No WebGPU adapter in this Firefox profile');
-  if (input) await execute(`localStorage.setItem('cumes.fixed.w7x.v1', ${JSON.stringify(JSON.stringify(input))});`);
+  if (inputStorage) await execute(`localStorage.setItem(${JSON.stringify(inputStorage.key)}, ${JSON.stringify(JSON.stringify(inputStorage.value))});`);
   await request(base + '/url', {url});
   const started = Date.now(), deadline = started + timeout;
   let lastReport = 0, terminal = false;

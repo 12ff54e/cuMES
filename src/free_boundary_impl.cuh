@@ -9,12 +9,13 @@
 //   surface averages : bucoH/bvcoH = sum over the REDUCED poloidal subset of
 //                      bsubu/bsubv with vmecpp's trapezoid weights wInt[l] =
 //                      1/(nZeta*(nThetaReduced-1)) halved at the endpoints,
-//                      l-major/k-minor ascending (vmecpp's kl loop order)
-//   lcfs repack      : the four spectral families at j=ns-1, divided by the
+//                      l-major/k-minor ascending (vmecpp's kl loop order);
+//                      asymmetric problems use full-period uniform weights
+//   lcfs repack      : the four/eight R/Z families at j=ns-1, divided by the
 //                      state-space mscale*nscale normalization and transposed
 //                      to the n-major NESTOR layout
 //   axis extract     : r_axis[k] = R(j=0, l=0, k), z_axis[k] = Z(j=0, l=0, k)
-//   rbsq             : outsideEdgePressure = b_sq_vac (reduced, l-major) +
+//   rbsq             : outsideEdgePressure = b_sq_vac (l-major) +
 //                      edgePressure; rBSq = outside * R_full / deltaS, plus
 //                      the delBSq surface-mean diagnostic
 //   edge force       : armn_e/o += (zu_e+zu_o)*rBSq, azmn_e/o -=
@@ -76,16 +77,17 @@ VFIELD_KERNEL void surface_averages_kernel(const T* __restrict__ bsubu,
                                            int ns,
                                            int ntheta,
                                            int nzeta,
+                                           bool lasym,
                                            int host_index) {
     const int jh = vfield::kernel_index(host_index);
     if (jh >= ns - 1) return;
-    const int nred = ntheta / 2 + 1;
-    const T w = T(1.0) / T(nzeta * (nred - 1));
+    const int nred = lasym ? ntheta : ntheta / 2 + 1;
+    const T w = T(1.0) / T(nzeta * (lasym ? nred : nred - 1));
     T buco = T(0);
     T bvco = T(0);
     for (int l = 0; l < nred; ++l) {
         T wl = w;
-        if (l == 0 || l == nred - 1) wl *= T(0.5);
+        if (!lasym && (l == 0 || l == nred - 1)) wl *= T(0.5);
         for (int k = 0; k < nzeta; ++k) {
             const int idx = jh * (ntheta * nzeta) + k * ntheta + l;
             buco += bsubu[idx] * wl;
@@ -112,6 +114,10 @@ VFIELD_KERNEL void lcfs_repack_kernel(const T* __restrict__ rcc,
                                       int ns,
                                       int mpol,
                                       int ntor,
+                                      const T* rsc,
+                                      const T* zcc,
+                                      const T* rcs,
+                                      const T* zss,
                                       int host_index) {
     const int mnsize = mpol * (ntor + 1);
     const int i = vfield::kernel_index(host_index);
@@ -127,10 +133,17 @@ VFIELD_KERNEL void lcfs_repack_kernel(const T* __restrict__ rcc,
     out[mnsize + i] = rss[src] * inv;
     out[2 * mnsize + i] = zsc[src] * inv;
     out[3 * mnsize + i] = zcs[src] * inv;
+    if (rsc) {
+        out[4 * mnsize + i] = rsc[src] * inv;
+        out[5 * mnsize + i] = zcc[src] * inv;
+        out[6 * mnsize + i] = rcs[src] * inv;
+        out[7 * mnsize + i] = zss[src] * inv;
+    }
 }
 
-// r_axis[k] = R(j=0, l=0, k); z_axis[k] = Z(j=0, l=0, k) — the even-parity
-// part (the odd part vanishes at theta=0 by construction).
+// r_axis[k] = R(j=0, l=0, k); z_axis[k] = Z(j=0, l=0, k). Radial regularity
+// makes the physical odd-m geometry vanish on axis, so the even buffer
+// suffices.
 template <class T>
 VFIELD_KERNEL void axis_extract_kernel(const T* __restrict__ r_e,
                                        const T* __restrict__ z_e,
@@ -160,15 +173,16 @@ VFIELD_KERNEL void rbsq_kernel(const T* __restrict__ b_sq_vac,
                                int nZnT,
                                T edge_pressure,
                                T delta_s,
+                               bool lasym,
                                int host_index) {
     const int i = vfield::kernel_index(host_index);
     if (i >= nZnT) return;
     const int it = i % ntheta;
     const int iz = i / ntheta;
     const int nred = ntheta / 2 + 1;
-    const int l_red = (it < nred) ? it : (ntheta - it);
+    const int l_red = (lasym || it < nred) ? it : (ntheta - it);
     // Stellarator symmetry is (theta, zeta) -> (-theta, -zeta).
-    const int k_red = (it < nred) ? iz : (nzeta - iz) % nzeta;
+    const int k_red = (lasym || it < nred) ? iz : (nzeta - iz) % nzeta;
     const T outside = b_sq_vac[l_red * nzeta + k_red] + edge_pressure;
     const int base = (ns - 1) * nZnT + i;
     rbsq[i] = outside * (r_e[base] + r_o[base]) / delta_s;
@@ -271,7 +285,7 @@ struct FreeBoundaryOperator<T>::Impl {
           nZnT(p.nZnT),
           mpol(p.mpol),
           ntor(p.ntor),
-          sizes(false, p.nfp, p.mpol, p.ntor, p.ntheta, p.nzeta),
+          sizes(p.lasym, p.nfp, p.mpol, p.ntor, p.ntheta, p.nzeta),
           solver([&]() {
               typename vfield::VacuumFieldSolver<T>::Params vp(sizes);
               vp.coil_currents = params.extcur;
@@ -340,6 +354,15 @@ struct FreeBoundaryOperator<T>::Impl {
                 "free-boundary run requires an even ntheta (the symmetric "
                 "mirror bridge assumes it)");
         }
+        // The external-field operator interpolates R/Z on corresponding phi
+        // planes. A mismatched table would index the wrong plane or exceed it.
+        const auto& mgrid = solver.mgrid();
+        if (mgrid.nfp != p.nfp || mgrid.num_phi != p.nzeta) {
+            throw cumes::CumesError(
+                "free-boundary coil field requires matching nfp and nzeta; "
+                "set MAKEGRID number_of_phi_grid_points to the equilibrium "
+                "nzeta");
+        }
         nvacskip = params.nvacskip;
         if (params.use_process_environment) {
             if (const char* value =
@@ -383,9 +406,10 @@ void launch_surface_averages(const T* bsubu,
                              int ns,
                              int ntheta,
                              int nzeta,
-                             VacuumStream stream) {
+                             VacuumStream stream,
+                             bool lasym = false) {
     launch_vacuum_kernel(&surface_averages_kernel<T>, ns - 1, stream, bsubu,
-                         bsubv, out, ns, ntheta, nzeta);
+                         bsubv, out, ns, ntheta, nzeta, lasym);
 }
 
 template <class T>
@@ -397,9 +421,14 @@ void launch_lcfs_repack(const T* rcc,
                         int ns,
                         int mpol,
                         int ntor,
-                        VacuumStream stream) {
+                        VacuumStream stream,
+                        const T* rsc = nullptr,
+                        const T* zcc = nullptr,
+                        const T* rcs = nullptr,
+                        const T* zss = nullptr) {
     launch_vacuum_kernel(&lcfs_repack_kernel<T>, mpol * (ntor + 1), stream, rcc,
-                         rss, zsc, zcs, out, ns, mpol, ntor);
+                         rss, zsc, zcs, out, ns, mpol, ntor, rsc, zcc, rcs,
+                         zss);
 }
 
 template <class T>
@@ -426,10 +455,11 @@ void launch_rbsq(const T* b_sq_vac,
                  int nZnT,
                  T edge_pressure,
                  T delta_s,
-                 VacuumStream stream) {
+                 VacuumStream stream,
+                 bool lasym = false) {
     launch_vacuum_kernel(&rbsq_kernel<T>, nZnT, stream, b_sq_vac, r_e, r_o,
                          total_pressure, rbsq, delbsq_sum, ns, ntheta, nzeta,
-                         nZnT, edge_pressure, delta_s);
+                         nZnT, edge_pressure, delta_s, lasym);
 }
 
 template <class T>
@@ -563,6 +593,11 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
     const T* rss = d_lcfs_repacked + mnsize;
     const T* zsc = d_lcfs_repacked + 2 * mnsize;
     const T* zcs = d_lcfs_repacked + 3 * mnsize;
+    const bool lasym = impl_->sizes.lasym;
+    const T* rsc = lasym ? d_lcfs_repacked + 4 * mnsize : nullptr;
+    const T* zcc = lasym ? d_lcfs_repacked + 5 * mnsize : nullptr;
+    const T* rcs = lasym ? d_lcfs_repacked + 6 * mnsize : nullptr;
+    const T* zss = lasym ? d_lcfs_repacked + 7 * mnsize : nullptr;
     T bsubu = T(0);
     T bsubv = T(0);
 #ifdef CUMES_VACUUM_WEBGPU
@@ -572,6 +607,12 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
         update.r_ss = {rss, static_cast<std::size_t>(mnsize)};
         update.z_sc = {zsc, static_cast<std::size_t>(mnsize)};
         update.z_cs = {zcs, static_cast<std::size_t>(mnsize)};
+        if (lasym) {
+            update.r_sc = {rsc, static_cast<std::size_t>(mnsize)};
+            update.z_cc = {zcc, static_cast<std::size_t>(mnsize)};
+            update.r_cs = {rcs, static_cast<std::size_t>(mnsize)};
+            update.z_ss = {zss, static_cast<std::size_t>(mnsize)};
+        }
         update.r_axis = {d_r_axis, static_cast<std::size_t>(impl_->nzeta)};
         update.z_axis = {d_z_axis, static_cast<std::size_t>(impl_->nzeta)};
         update.sign_of_jacobian = DeviceParams<T>::SIGN_JACOBIAN;
@@ -599,10 +640,10 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
         bsubv = impl_->gpu_result.b_sub_v_vac;
     } else
 #endif
-        impl_->solver.update(
-            rcc, rss, nullptr, nullptr, zsc, zcs, nullptr, nullptr,
-            DeviceParams<T>::SIGN_JACOBIAN, d_r_axis, d_z_axis, bsubu, bsubv,
-            static_cast<T>(net_toroidal_current), impl_->full_update);
+        impl_->solver.update(rcc, rss, rsc, rcs, zsc, zcs, zcc, zss,
+                             DeviceParams<T>::SIGN_JACOBIAN, d_r_axis, d_z_axis,
+                             bsubu, bsubv, static_cast<T>(net_toroidal_current),
+                             impl_->full_update);
     finish_host_update(bsubu, bsubv);
 }
 
@@ -797,7 +838,7 @@ void FreeBoundaryOperator<T>::enqueue_surface_averages(
     int nzeta,
     VacuumStream stream) const {
     launch_surface_averages<T>(d_bsubu, d_bsubv, d_buco_bvco, ns, ntheta, nzeta,
-                               stream);
+                               stream, impl_->sizes.lasym);
 }
 
 template <class T>
@@ -810,10 +851,17 @@ void FreeBoundaryOperator<T>::enqueue_lcfs_repack(const T* d_rcc,
                                                   int mnmax,
                                                   int mpol,
                                                   int ntor,
-                                                  VacuumStream stream) const {
+                                                  VacuumStream stream,
+                                                  const T* d_rsc,
+                                                  const T* d_zcc,
+                                                  const T* d_rcs,
+                                                  const T* d_zss) const {
+    if (impl_->sizes.lasym && (!d_rsc || !d_zcc || !d_rcs || !d_zss))
+        throw CumesError(
+            "asymmetric vacuum coupling requires all eight R/Z families");
     (void)mnmax;  // the repack covers mnsize = mpol*(ntor+1) <= mnmax entries
     launch_lcfs_repack<T>(d_rcc, d_rss, d_zsc, d_zcs, d_repacked, ns, mpol,
-                          ntor, stream);
+                          ntor, stream, d_rsc, d_zcc, d_rcs, d_zss);
 }
 
 template <class T>
@@ -844,7 +892,7 @@ void FreeBoundaryOperator<T>::enqueue_rbsq(const T* d_r_e,
 #endif
     launch_rbsq<T>(vacuum_pressure, d_r_e, d_r_o, d_total_pressure, d_rbsq,
                    d_delbsq, ns, ntheta, nzeta, nZnT, impl_->edge_pressure,
-                   delta_s, stream);
+                   delta_s, stream, impl_->sizes.lasym);
 }
 
 template <class T>

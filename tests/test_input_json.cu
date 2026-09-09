@@ -321,8 +321,8 @@ static void test_negative() {
     check(!vr.has_value() && !find_error(vr, "expected an object").empty(),
           "neg: rbs content rejected");
 
-    // Unsupported physics keys: lasym and unsupported/ill-formed profile
-    // types. Free-boundary input is supported when its source is complete.
+    // Asymmetry is supported; free boundaries also require a complete field
+    // source. Unsupported/ill-formed profile types remain errors.
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lasym\": true,"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"

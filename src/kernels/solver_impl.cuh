@@ -633,11 +633,11 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
           solver_arena_buffer<T>(arena,
                                  "solver/buco_bvco",
                                  2 * static_cast<std::size_t>(p.ns - 1))),
-      d_repack_(
-          solver_arena_buffer<T>(arena,
-                                 "solver/lcfs_repack",
-                                 4 * static_cast<std::size_t>(p.mpol) *
-                                     static_cast<std::size_t>(p.ntor + 1))),
+      d_repack_(solver_arena_buffer<T>(
+          arena,
+          "solver/lcfs_repack",
+          (p.lasym ? 8 : 4) * static_cast<std::size_t>(p.mpol) *
+              static_cast<std::size_t>(p.ntor + 1))),
       d_axis_(solver_arena_buffer<T>(arena,
                                      "solver/axis",
                                      2 * static_cast<std::size_t>(p.nzeta))),
@@ -845,7 +845,15 @@ void cumes::EquilibriumOperator<T>::enqueue_prefix(
             storage.family_ptr(cumes::SpectralComponent::Rss),
             storage.family_ptr(cumes::SpectralComponent::Zsc),
             storage.family_ptr(cumes::SpectralComponent::Zcs), d_repack_.data(),
-            p.ns, p.mnmax, p.mpol, p.ntor, stream);
+            p.ns, p.mnmax, p.mpol, p.ntor, stream,
+            p.lasym ? storage.family_ptr(cumes::SpectralComponent::Rsc)
+                    : nullptr,
+            p.lasym ? storage.family_ptr(cumes::SpectralComponent::Zcc)
+                    : nullptr,
+            p.lasym ? storage.family_ptr(cumes::SpectralComponent::Rcs)
+                    : nullptr,
+            p.lasym ? storage.family_ptr(cumes::SpectralComponent::Zss)
+                    : nullptr);
         vacuum_->enqueue_axis_extract(geom_views.r_e.data(),
                                       geom_views.z_e.data(), d_axis_.data(),
                                       p.ntheta, p.nzeta, stream);

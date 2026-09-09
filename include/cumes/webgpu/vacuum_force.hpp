@@ -30,6 +30,7 @@ struct VacuumForceCase {
     int ntheta = 0;
     int nzeta = 1;
     bool paired = false;
+    bool lasym = false;
     double delta_s = 0.0;
     double edge_pressure = 0.0;
 };

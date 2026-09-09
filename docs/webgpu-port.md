@@ -29,7 +29,7 @@ no GPU readbacks. Completion, failure, and returning to setup clear the rate.
 
 For 3-D boundaries and free-boundary initial guesses, select a signed toroidal
 mode `n` and edit the RBC/ZBS coefficients by poloidal mode `m`. For asymmetric
-fixed boundaries, **Allow non-stellarator symmetry** adds RBS/ZBC and sets
+fixed or free boundaries, **Allow non-stellarator symmetry** adds RBS/ZBC and sets
 `lasym=true` in the input. `?preset=asymmetric` opens a tilted, vertically
 displaced tokamak with three grids and paired precision. A toroidal-angle
 slider sweeps one field period. The R-Z cross-section and orange section on the
@@ -60,7 +60,7 @@ inputs. The separate W7-X startup implementation has been removed.
 
 `webgpu/orbit_renderer.js` renders the boundary preview and solved flux
 surfaces with WebGPU. A compute shader reconstructs the full torus from the
-six physical Fourier families and reduces its bounding radius. Geometry,
+six/twelve physical Fourier families and reduces its bounding radius. Geometry,
 bounds, and line indices stay on the GPU; changing the camera uploads one
 32-byte uniform. Coefficient edits regenerate geometry, while moving the
 section slider updates only the highlighted line. Every supplied surface is
@@ -99,6 +99,13 @@ The production 3-D path performs no GPU readback; the geometry validation
 script explicitly reads vertices to compare them with independent harmonics.
 
 ### Free-boundary browser setup
+
+`lasym=true` retains both Fourier parities in the plasma and vacuum solves.
+The free-boundary editor exposes RBS/ZBC through **Allow non-stellarator
+symmetry**; asymmetric coil currents or uploaded coil geometry are supported.
+MAKEGRID field periods and toroidal planes must match the equilibrium's `nfp`
+and effective `nzeta`. Use paired plasma precision for the qualified asymmetric
+free tokamak case; see [ADR-0020](adr/0020-non-stellarator-symmetry.md).
 
 The browser runtime is built with Emscripten pthreads. Serve it with
 `Cross-Origin-Opener-Policy: same-origin` and
