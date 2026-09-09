@@ -27,6 +27,7 @@ struct IterationCase {
     bool shadow_norms = false;
     bool compact_norms = false;
     bool compact_fields = false;
+    bool compact_vacuum = false;
     // Retain force and projection snapshots for per-operator CPU comparisons.
     bool readback_intermediates = false;
     bool geometry_control = false;

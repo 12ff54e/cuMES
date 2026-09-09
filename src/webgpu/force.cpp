@@ -3,9 +3,11 @@
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/geometry.hpp"
+#include "cumes/webgpu/reduction.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -25,6 +27,8 @@ struct ShaderParams {
 static_assert(sizeof(ShaderParams) == 32);
 
 std::string validate_case(const AxisymmetricForceCase& in) {
+    if (in.readback_lcfs && !in.batched_readback.batch)
+        return "LCFS force readback requires a batch";
     if (in.ns < 2 || in.ntheta < 2 || in.ntheta % 2 != 0 || in.nzeta < 1 ||
         !(in.delta_s > 0.0F) || !std::isfinite(in.delta_s) ||
         !std::isfinite(in.lamscale))
@@ -404,6 +408,45 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     if (in.batched_readback.batch) {
         AxisymmetricForceResult ready;
         ready.device_fields = {obuf, values, 0, values * sizeof(float)};
+        // Retain the full readback above the existing finite-scan dispatch
+        // limit.
+        ready.lcfs_only =
+            in.readback_lcfs && ob / sizeof(float) <= 65535U * WORKGROUP_SIZE;
+        if (ready.lcfs_only) {
+            auto result = std::make_shared<AxisymmetricForceResult>(ready);
+            const auto angular = static_cast<std::size_t>(in.ntheta) * in.nzeta;
+            result->fields.resize(4 * angular);
+            if (in.double_single) result->fields_lo.resize(4 * angular);
+            for (int word = 0; word < (in.double_single ? 2 : 1); ++word) {
+                for (int field = 0; field < 4; ++field) {
+                    const auto first =
+                        word * values + (field + 1) * nf - angular;
+                    in.batched_readback.batch->append(
+                        encoder, obuf, first * sizeof(float),
+                        angular * sizeof(float),
+                        [result, word, field,
+                         angular](std::span<const float> words) {
+                            auto& target =
+                                word ? result->fields_lo : result->fields;
+                            std::copy(words.begin(), words.end(),
+                                      target.begin() + field * angular);
+                        });
+                }
+            }
+            const auto commands = encoder.Finish();
+            q.Submit(1, &commands);
+            // Scan every word, including the interior that stays on the GPU.
+            enqueue_field_finite(device, {obuf, ob / sizeof(float), 0, 0},
+                                 in.batched_readback.batch,
+                                 [callback = std::move(callback), result](
+                                     std::string error, bool finite) {
+                                     result->fields_finite = finite;
+                                     callback(std::move(error),
+                                              std::move(*result));
+                                 });
+            in.batched_readback.publish_device(std::move(ready));
+            return;
+        }
         in.batched_readback.batch->append(
             encoder, obuf, 0, ob,
             [callback = std::move(callback), ready, paired = in.double_single,

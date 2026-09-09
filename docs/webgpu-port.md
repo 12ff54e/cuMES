@@ -110,14 +110,22 @@ original order within each grid point, independent of the thread count.
 Free-boundary 3-D and axisymmetric solves in both precisions reuse the resident
 plasma operators in two batches:
 inverse/geometry/magnetic/MHD force, then projection/constraint/preconditioning.
-Between them the host accepts the geometry, updates the existing double NESTOR
-solve, and uploads only the four corrected LCFS force rows. Rejected geometry
-discards the pending continuation before the vacuum state can change. The
-coupling reconstructs only the axis, boundary coefficients and outer rows it
-needs; it retains the native bridge kernels and reduction order. `&resident=0`
-selects the original separate-dispatch path for trajectory comparisons.
-Axisymmetric constraint filtering retains its existing shader; buffer copies
-adapt its force-plane layout to the shared projector.
+Spectral state and descent velocity remain on the GPU across normal iterations.
+The preceding descent's state snapshot joins the next prefix map, avoiding a
+separate descent wait; velocity retains a compact finite check. The host
+commits the pending state, accepts the geometry, updates the existing double
+NESTOR solve, and uploads only the four corrected LCFS force rows before the
+suffix. The force readback contains only those four rows plus flags from a
+finite scan of every force word. Rejected geometry discards the pending
+continuation before the vacuum update. The coupling reconstructs only the
+axis, boundary coefficients and outer rows it needs; full geometry/magnetic
+readbacks and the native bridge kernels' reduction order remain.
+`&field_readbacks=full` restores full force and velocity snapshots.
+`&resident=0`, `&fences=1`, or `&compare_fft=1` selects the separate-dispatch
+free-boundary path for trajectory comparisons. Axisymmetric constraint
+filtering retains its existing shader; buffer copies adapt its force-plane
+layout to the shared projector. Transfer counts and qualification are recorded
+in [the optimization assessment](webgpu-optimization-assessment.md#free-boundary-residency-and-compact-force-readbacks).
 
 Fixed-boundary 3-D and axisymmetric solves use the same resident iteration
 pipeline, with one batched mapping per evaluated pass. The transform layer

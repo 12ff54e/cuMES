@@ -133,6 +133,12 @@ void apply_vacuum_force(const wgpu::Device& device,
     const int angular = stage.ntheta * stage.nzeta;
     const int points = stage.ns * angular;
     const int half = (stage.ns - 1) * angular;
+    if (force.lcfs_only &&
+        (!device || !force.device_fields ||
+         force.fields.size() != static_cast<std::size_t>(4 * angular) ||
+         (!force.fields_lo.empty() &&
+          force.fields_lo.size() != force.fields.size())))
+        throw CumesError("compact vacuum force requires resident full fields");
     const auto geometry = [&](int field, int surfaces) {
         const int offset = (field + 1) * points - surfaces * angular;
         return reconstruct(fields.geometry, fields.geometry_lo, offset,
@@ -147,7 +153,9 @@ void apply_vacuum_force(const wgpu::Device& device,
     std::vector<double> values(4 * angular), rbsq(angular);
     for (int field = 0; field < 4; ++field) {
         for (int point = 0; point < angular; ++point) {
-            const int index = (field + 1) * points - angular + point;
+            const int index = force.lcfs_only
+                                  ? field * angular + point
+                                  : (field + 1) * points - angular + point;
             double value = force.fields[index];
             if (!force.fields_lo.empty()) value += force.fields_lo[index];
             values[field * angular + point] = value;
@@ -166,7 +174,9 @@ void apply_vacuum_force(const wgpu::Device& device,
     // Only the LCFS force changes; preserve every interior GPU result word.
     for (int field = 0; field < 4; ++field) {
         for (int point = 0; point < angular; ++point) {
-            const int index = (field + 1) * points - angular + point;
+            const int index = force.lcfs_only
+                                  ? field * angular + point
+                                  : (field + 1) * points - angular + point;
             const auto pair = split(values[field * angular + point]);
             force.fields[index] = pair.hi;
             if (!force.fields_lo.empty()) force.fields_lo[index] = pair.lo;
@@ -177,13 +187,14 @@ void apply_vacuum_force(const wgpu::Device& device,
         const auto& fields = force.device_fields;
         for (int field = 0; field < 4; ++field) {
             const std::size_t first = (field + 1) * points - angular;
+            const auto host_first = force.lcfs_only ? field * angular : first;
             const auto offset = first * sizeof(float);
             queue.WriteBuffer(fields.buffer, fields.high_offset + offset,
-                              force.fields.data() + first,
+                              force.fields.data() + host_first,
                               angular * sizeof(float));
             if (!force.fields_lo.empty())
                 queue.WriteBuffer(fields.buffer, fields.low_offset + offset,
-                                  force.fields_lo.data() + first,
+                                  force.fields_lo.data() + host_first,
                                   angular * sizeof(float));
         }
     } else {

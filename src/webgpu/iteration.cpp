@@ -250,6 +250,7 @@ class IterationDispatch
         in.phip_f_lo = p.phip_f_lo;
         const auto self = shared_from_this();
         if (prefix_only) {
+            in.readback_lcfs = input.compact_vacuum;
             in.batched_readback = {batch,
                                    [self](AxisymmetricForceResult value) {
                                        self->force_ = std::move(value);

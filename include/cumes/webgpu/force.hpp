@@ -22,6 +22,8 @@ struct AxisymmetricForceCase {
     DeviceFields device_base_geometry;
     DeviceFields device_magnetic_field;
     bool readback = true;
+    // Batched vacuum coupling needs only the LCFS of the first four fields.
+    bool readback_lcfs = false;
     int ns = 0;
     int ntheta = 0;
     int nzeta = 1;
@@ -47,6 +49,9 @@ struct AxisymmetricForceCase {
 
 struct AxisymmetricForceResult {
     DeviceFields device_fields;
+    bool fields_finite = true;
+    // Packed LCFS rows (four fields) when requested; device_fields stays full.
+    bool lcfs_only = false;
     // Field-major full-grid order consumed by the direct forward transform:
     // armn e/o, azmn e/o, brmn e/o, bzmn e/o, blmn e/o, crmn e/o,
     // czmn e/o, clmn e/o. The historical type name is retained while the

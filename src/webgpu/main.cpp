@@ -1492,10 +1492,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_device_descent_test(int variant = 0) {
         using namespace cumes::webgpu;
-        if (variant == 3) {
+        if (variant == 6) {
             std::printf(
                 "  device-only descent, axis remap, f32 direction, "
-                "accepted snapshot isolation: PASS\n");
+                "fixed/free LCFS, accepted snapshot isolation: PASS\n");
             run_device_norm_test();
             return;
         }
@@ -1506,8 +1506,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         input.delta_t = 0.03125F;
         input.damping_b1 = 0.875F;
         input.damping_fac = 0.9375F;
-        input.double_single = variant != 0;
-        input.residual_is_f32 = variant == 1;
+        input.double_single = variant % 3 != 0;
+        input.residual_is_f32 = variant % 3 == 1;
+        input.move_lcfs = variant >= 3;
         input.extrapolate_axis = true;
         const std::size_t count = 6 * input.ns * input.mpol * (input.ntor + 1);
         input.state.resize(count);
@@ -1620,7 +1621,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             std::printf(
                 "  GPU field finite scan: offsets, partial blocks, "
                 "NaN/Inf, signed zero, subnormals, range guards: PASS\n");
-            run_geometry_control_test();
+            run_compact_force_test();
             return;
         }
         const std::size_t counts[] = {1, 255, 256, 257, 1001};
@@ -1699,6 +1700,117 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             self->run_field_finite_test(variant + 1);
+        });
+    }
+
+    void run_compact_force_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 8) {
+            std::printf(
+                "  compact force readback: scalar/paired, axisymmetric/3-D, "
+                "bitwise LCFS rows, interior finite checks: PASS\n");
+            run_geometry_control_test();
+            return;
+        }
+        AxisymmetricForceCase input;
+        input.ns = 5;
+        input.ntheta = 6;
+        input.nzeta = variant % 4 < 2 ? 1 : 3;
+        input.double_single = variant % 2 != 0;
+        input.delta_s = 0.25F;
+        input.lamscale = 1.0F;
+        const std::size_t angular = input.ntheta * input.nzeta;
+        const auto full = input.ns * angular;
+        const auto half = (input.ns - 1) * angular;
+        const auto fill = [](std::vector<float>& values, std::size_t count,
+                             float scale) {
+            values.resize(count);
+            for (std::size_t i = 0; i < count; ++i)
+                values[i] = scale * float(1 + i % 29);
+        };
+        fill(input.geometry, GEOMETRY_PARITY_FIELD_COUNT * full, 0.0625F);
+        fill(input.base_geometry, BASE_GEOMETRY_FIELD_COUNT * half, 0.125F);
+        fill(input.magnetic_field, MAGNETIC_FIELD_COUNT * half, 0.03125F);
+        input.sqrt_s_f = {0.0F, 0.5F, 0.75F, 0.875F, 1.0F};
+        input.sqrt_s_h = {0.25F, 0.625F, 0.8125F, 0.9375F};
+        input.phip_f.assign(input.ns, 1.0F);
+        if (input.double_single) {
+            fill(input.geometry_lo, input.geometry.size(), 1.0e-10F);
+            fill(input.base_geometry_lo, input.base_geometry.size(), -1.0e-10F);
+            fill(input.magnetic_field_lo, input.magnetic_field.size(),
+                 1.0e-11F);
+            input.sqrt_s_f_lo.assign(input.ns, 0.0F);
+            input.sqrt_s_h_lo.assign(input.ns - 1, 0.0F);
+            input.phip_f_lo.assign(input.ns, 0.0F);
+        }
+        if (variant >= 4) {
+            // Covariant B_u reaches force fields 14/15 at two interior rows.
+            // None of the four LCFS rows returned by the compact path sees it.
+            auto& words = input.double_single ? input.magnetic_field_lo
+                                              : input.magnetic_field;
+            words[2 * half + angular + 1] =
+                std::numeric_limits<float>::infinity();
+        }
+        const auto batch = std::make_shared<ReadbackBatch>(
+            device_, 4 * FORCE_FIELD_COUNT * full * sizeof(float));
+        input.batched_readback.batch = batch;
+        const auto results =
+            std::make_shared<std::array<AxisymmetricForceResult, 2>>();
+        const auto errors = std::make_shared<std::string>();
+        const auto collect = [results, errors](int index) {
+            return [results, errors, index](std::string error,
+                                            AxisymmetricForceResult result) {
+                if (!error.empty()) *errors = std::move(error);
+                (*results)[index] = std::move(result);
+            };
+        };
+        enqueue_axisymmetric_force(device_, input, collect(0));
+        input.readback = false;
+        input.readback_lcfs = true;
+        enqueue_axisymmetric_force(device_, input, collect(1));
+        const auto self = shared_from_this();
+        batch->map([self, results, errors, variant, angular, full,
+                    paired = input.double_single](std::string error) {
+            const auto& expected = (*results)[0];
+            const auto& actual = (*results)[1];
+            const auto all_finite = [](const auto& words) {
+                return std::all_of(words.begin(), words.end(), [](float word) {
+                    return std::isfinite(word);
+                });
+            };
+            const bool expected_finite =
+                all_finite(expected.fields) && all_finite(expected.fields_lo);
+            bool valid =
+                error.empty() && errors->empty() &&
+                expected.fields.size() == FORCE_FIELD_COUNT * full &&
+                expected.fields_lo.size() ==
+                    (paired ? FORCE_FIELD_COUNT * full : 0) &&
+                !expected.lcfs_only && actual.lcfs_only &&
+                actual.device_fields.values == FORCE_FIELD_COUNT * full &&
+                actual.fields.size() == 4 * angular &&
+                actual.fields_lo.size() == (paired ? 4 * angular : 0) &&
+                actual.fields_finite == expected_finite &&
+                expected_finite == (variant < 4) && all_finite(actual.fields) &&
+                all_finite(actual.fields_lo);
+            for (int word = 0; word < (paired ? 2 : 1) && valid; ++word) {
+                const auto& source =
+                    word ? expected.fields_lo : expected.fields;
+                const auto& target = word ? actual.fields_lo : actual.fields;
+                for (std::size_t field = 0; field < 4; ++field)
+                    for (std::size_t point = 0; point < angular; ++point)
+                        valid &=
+                            std::bit_cast<std::uint32_t>(
+                                target[field * angular + point]) ==
+                            std::bit_cast<std::uint32_t>(
+                                source[(field + 1) * full - angular + point]);
+            }
+            if (!valid) {
+                self->finish(false, "compact force readback mismatch: " +
+                                        std::to_string(variant) + " " + error +
+                                        *errors);
+                return;
+            }
+            self->run_compact_force_test(variant + 1);
         });
     }
 
@@ -3134,7 +3246,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             initialized_stage_.radius_reference;
         base_geometry_case_.geometry = std::move(geometry);
         if (double_single_solve_ &&
-            (!iteration_results_ || !production_solve_ || vacuum_)) {
+            (!iteration_results_ || !production_solve_)) {
             base_geometry_case_.geometry_lo = stage_geometry_lo_;
         } else {
             base_geometry_case_.geometry_lo.clear();
@@ -3299,13 +3411,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         magnetic_field_case_.prescribed_current =
             initialized_stage_.prescribed_current;
         magnetic_field_case_.double_single = double_single_solve_;
-        if (!iteration_results_ || !production_solve_ || vacuum_) {
+        if (!iteration_results_ || !production_solve_) {
             magnetic_field_case_.geometry = base_geometry_case_.geometry;
             magnetic_field_case_.geometry_lo = base_geometry_case_.geometry_lo;
+        } else {
+            magnetic_field_case_.geometry.clear();
+            magnetic_field_case_.geometry_lo.clear();
         }
         magnetic_field_case_.base_geometry = std::move(base_geometry);
-        if (!iteration_results_ || !production_solve_ || vacuum_) {
+        if (!iteration_results_ || !production_solve_) {
             magnetic_field_case_.base_geometry_lo = stage_base_geometry_lo_;
+        } else {
+            magnetic_field_case_.base_geometry_lo.clear();
         }
         magnetic_field_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
         magnetic_field_case_.sqrt_s_h_lo =
@@ -3486,16 +3603,24 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.lamscale_lo = initialized_stage_.profiles.lamscale_lo;
         force_case_.double_single = double_single_solve_;
         force_case_.radius_reference = initialized_stage_.radius_reference;
-        if (!iteration_results_ || !production_solve_ || vacuum_) {
+        const bool batched_vacuum =
+            iteration_results_ && production_solve_ && vacuum_;
+        if (batched_vacuum) {
+            // The prefix already evaluated the GPU force. Lend its geometry
+            // snapshot to vacuum coupling, then restore the canonical host
+            // owner before normalization, constraints and final output.
+            force_case_.geometry = std::move(base_geometry_case_.geometry);
+            force_case_.geometry_lo = std::move(stage_geometry_lo_);
+            force_case_.base_geometry.clear();
+            force_case_.base_geometry_lo.clear();
+        } else if (!iteration_results_ || !production_solve_) {
             force_case_.geometry = magnetic_field_case_.geometry;
             force_case_.geometry_lo = stage_geometry_lo_;
             force_case_.base_geometry = magnetic_field_case_.base_geometry;
             force_case_.base_geometry_lo = stage_base_geometry_lo_;
         }
         force_case_.magnetic_field = std::move(magnetic_field);
-        if (!iteration_results_ || !production_solve_ || vacuum_) {
-            force_case_.magnetic_field_lo = stage_magnetic_field_lo_;
-        }
+        force_case_.magnetic_field_lo = std::move(stage_magnetic_field_lo_);
         force_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
         force_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
         force_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
@@ -3520,8 +3645,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const auto self = shared_from_this();
         enqueue_evaluated(
             cumes::webgpu::enqueue_axisymmetric_force, force_case_,
-            [self](std::string error,
-                   cumes::webgpu::AxisymmetricForceResult actual) {
+            [self, batched_vacuum](
+                std::string error,
+                cumes::webgpu::AxisymmetricForceResult actual) {
                 if (!error.empty()) {
                     self->finish(false, std::move(error));
                     return;
@@ -3541,7 +3667,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
                 float max_error = 0.0F;
                 double max_reconstructed_error = 0.0;
-                bool finite = true;
+                bool finite = actual.fields_finite;
                 for (std::size_t i = 0; i < actual.fields.size(); ++i) {
                     if (!self->production_solve_) {
                         max_error = std::max(
@@ -3593,6 +3719,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         self->finish(false, error.what());
                         return;
                     }
+                }
+                if (batched_vacuum) {
+                    self->base_geometry_case_.geometry =
+                        std::move(self->force_case_.geometry);
+                    self->stage_geometry_lo_ =
+                        std::move(self->force_case_.geometry_lo);
                 }
                 self->device_force_fields_ =
                     self->resident_path() ? actual.device_fields
@@ -4555,7 +4687,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->invariant_raw_[2] * plain *
                         self->force_normalization_.f_norm_l};
                 const auto preconditioned_raw =
-                    self->resident_spectral_path() && requested_device_norms()
+                    !self->vacuum_ && self->resident_spectral_path() &&
+                            requested_device_norms()
                         ? actual.raw_norm
                         : cumes::webgpu::residual_raw_norms(
                               actual.residual, self->initialized_stage_.ns,
@@ -5115,8 +5248,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 if (!self->committing_descent_) {
                     self->controller_->after_descent(self->pending_decision_);
                     ++self->completed_passes_;
+                    if (self->vacuum_) self->vacuum_->on_iteration_end();
                 }
-                if (self->vacuum_) self->vacuum_->on_iteration_end();
                 const int iteration = self->controller_->effective_iteration();
                 if (!self->production_solve_ || iteration <= 3 ||
                     iteration % 25 == 0) {
@@ -5773,9 +5906,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                resident_path();
     }
     bool resident_spectral_path() const {
-        return !initialized_stage_.free_boundary && production_solve_ &&
-               resident_path() && !requested_spectral_fences() &&
-               !requested_compare_fft();
+        return production_solve_ && resident_path() &&
+               !requested_spectral_fences() && !requested_compare_fft();
     }
     cumes::webgpu::IterationCase make_iteration_case() const {
         cumes::webgpu::IterationCase input;
@@ -5796,6 +5928,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         input.compact_norms = production_solve_ && requested_device_norms();
         input.compact_fields =
             production_solve_ && !requested_full_field_readbacks();
+        input.compact_vacuum = input.compact_fields;
         input.readback_intermediates = !production_solve_;
         input.geometry_control =
             production_solve_ && requested_geometry_control();
@@ -5921,6 +6054,10 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->restore_checkpoint();
                 self->controller_->after_descent(self->pending_decision_);
                 ++self->completed_passes_;
+                // Promote a newly initialized vacuum before the next prefix
+                // chooses its update and edge-force schedule. The prefix map
+                // also commits the pending host state before vacuum coupling.
+                if (self->vacuum_) self->vacuum_->on_iteration_end();
                 self->run_stage_inverse();
             }};
         cumes::webgpu::enqueue_axisymmetric_descent(

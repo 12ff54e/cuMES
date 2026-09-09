@@ -89,6 +89,69 @@ fused fallbacks. Warmed integral-sequence measurements improve about 5–7× on
 the recorded 3-D fixtures; the optimized GPU path retains its prior component
 words and consumer controller records.
 
+### Free-boundary residency and compact force readbacks
+
+Free-boundary production solves now retain spectral state and descent velocity
+on the GPU across normal iterations. The next inverse consumes the pending
+device state, while its host snapshot joins the next prefix's readback batch.
+The host commits that snapshot before vacuum coupling. Vacuum promotion still
+precedes the next iteration's update schedule; checkpoint restores and stage
+initialization clear pending device state. Normal continuing iterations use two
+plasma completion maps instead of three. With GPU vacuum's two unchanged maps,
+the corresponding total is four instead of five.
+
+The force prefix reads only the four LCFS rows needed by the existing Wasm
+pressure correction. A GPU finite scan checks every word of all 16 force
+fields, including interior fields that remain resident. Corrected LCFS rows
+are uploaded before the suffix consumes the complete device force arrays.
+For paired W7-X at `ns=51, ntheta=20, nzeta=36, mpol=7, ntor=6`, force readback
+payload falls from 4,700,160 bytes to 41,400 bytes: 23,040 bytes of LCFS values
+and 18,360 bytes of finite flags. These are logical copy/map payloads, not
+measured bus traffic or a wall-time result.
+
+The batched host continuation also avoids copying full arrays into inputs for
+operators that have already executed. Geometry is moved into vacuum coupling
+and restored to its canonical owner before normalization and output; magnetic
+low words move directly to their consumer. This removes nine vector copies,
+or 18,259,200 bytes of host copying per paired pass at the W7-X shape above.
+
+This is a Class A ownership/scheduling change: physics arithmetic and original
+host reduction order are preserved. The WebGPU build and all 14 CTests pass.
+Real Chrome conformance passes, including fixed/free LCFS device descent,
+compact/full force word equality, and rejection of nonfinite interior force
+words. Complete solves preserve every controller record (excluding time) and
+scientific payload digest against the original baseline: 1,847 records for
+paired W7-X with HOST vacuum, 625 for paired cth_like with HOST vacuum, and 75
+for multigrid scalar Solovev with WebGPU vacuum. Native CUDA and Firefox were
+not rerun for this browser-only ownership change.
+
+The 2026-09-09 comparison against `4c06de4` used Chrome 152.0.7977.77 on an
+NVIDIA GeForce RTX 3060 Ti, the bundled W7-X free-boundary preset, paired
+plasma precision, HOST vacuum, `trace=1`, and `timing=0`. Runs were serial,
+with one warmup and two measured complete solves per revision. All measured
+runs retained the exact baseline trajectory and scientific digest.
+
+| Interval | Baseline median (range), s | Updated median (range), s |
+| --- | ---: | ---: |
+| Full page run | 74.769 (74.473–75.066) | 52.522 (52.506–52.538) |
+| First-to-last controller record | 69.276 (69.152–69.401) | 47.459 (47.448–47.471) |
+
+This is 29.75% less full-run time and 31.49% less time across the controller
+records on this measured setup. The first controller record arrived at worker
+ages 4.789/5.265 s before and 4.693/4.644 s after; these ages are not pure setup
+times. Window completion and worker trace clocks have different origins, so no
+output-only interval is inferred. Two measured samples on one adapter are a
+bounded browser comparison, not the full cross-architecture performance
+qualification in `performance.md`. Logs, traces, digests, and the comparison
+are retained outside the repository in `../tmp/free-boundary-transfers/`.
+
+Full geometry and magnetic-field readbacks, original host norm reductions,
+and Wasm vacuum/pressure coupling remain. Reducing those transfers and moving
+their consumers onto the GPU are further work, subject to the same numerical
+and scheduling contracts. `field_readbacks=full` retains full force and
+velocity snapshots; `resident=0`, `fences=1`, or `compare_fft=1` select the
+separate-dispatch free-boundary reference path.
+
 ## Geometry and Newton options
 
 `geometry=compensated-m1` changes scalar W7-X trajectories and is a Class C
