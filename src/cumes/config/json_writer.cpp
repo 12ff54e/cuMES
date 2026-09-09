@@ -161,6 +161,21 @@ std::string problem_spec_to_json(const ProblemSpec& problem) {
         doubles(output, problem.zaxis_s);
     }
 
+    if (problem.has_raxis_s) {
+        output << ",\n  \"raxis_s\":";
+        doubles(output, problem.raxis_s);
+    }
+    if (problem.has_zaxis_c) {
+        output << ",\n  \"zaxis_c\":";
+        doubles(output, problem.zaxis_c);
+    }
+    if (problem.lasym) {
+        output << ",\n  \"rbs\":";
+        harmonics(output, problem.rbs);
+        output << ",\n  \"zbc\":";
+        harmonics(output, problem.zbc);
+    }
+
     std::vector<std::size_t> radial_surfaces;
     std::vector<std::size_t> max_iterations;
     std::vector<double> tolerances;
@@ -191,7 +206,7 @@ std::string problem_spec_to_json(const ProblemSpec& problem) {
     output << ",\n  \"zbs\":";
     harmonics(output, problem.zbs);
 
-    output << ",\n  \"lasym\":false,\n"
+    output << ",\n  \"lasym\":" << (problem.lasym ? "true" : "false") << ",\n"
            << "  \"lfreeb\":"
            << (problem.free_boundary.lfreeb ? "true" : "false") << ",\n"
            << "  \"mgrid_file\":\"" << escape(problem.free_boundary.mgrid_file)

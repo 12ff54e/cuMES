@@ -11,10 +11,10 @@ back). The `CUMES_DUMP`-gated diagnostic files are documented separately in
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cumes <in> --output out.bin` | versioned binary (schema v1, on-disk version 8) | `CUMES001` |
+| `./build/cumes <in> --output out.bin` | versioned binary (schema v1, on-disk version 8; asymmetric version 9) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
-| `--checkpoint <path>` | versioned checkpoint (v6) | `CUMECKP1` |
-| `--restart <path>` (read) | versioned checkpoint (v6; v1–v5 still read) | `CUMECKP1` |
+| `--checkpoint <path>` | versioned checkpoint (v6; asymmetric v7) | `CUMECKP1` |
+| `--restart <path>` (read) | versioned checkpoint (v6/v7; v1–v5 still read) | `CUMECKP1` |
 
 The output path defaults to `$PWD/cumes-output.bin`; an unknown suffix is an
 error. All writers publish atomically (write a temporary file in the target
@@ -23,7 +23,7 @@ temporary and leaves the destination untouched).
 
 ## 2. The shared state payload
 
-Every container above carries the same converged-state payload: the six
+Every container above carries the same converged-state payload: six or twelve
 spectral coefficient families, always **double** on disk regardless of the
 computation scalar type (the device→host copy converts `T` → double).
 
@@ -31,6 +31,12 @@ Family order (the `EquilibriumSnapshot::Component` order, data-layout.md §2):
 
 ```
 rmncc, zmnsc, lmnsc, rmnss, zmncs, lmncs
+```
+
+Asymmetric snapshots (`lasym=true`) append:
+
+```
+rmnsc, zmncc, lmncc, rmncs, zmnss, lmnss
 ```
 
 Each family is `mnmax * ns` doubles, **mode-major, surface-contiguous**:
@@ -48,6 +54,10 @@ R = rmncc·cos(mθ)cos(nζ) + rmnss·sin(mθ)sin(nζ)
 Z = zmnsc·sin(mθ)cos(nζ) + zmncs·cos(mθ)sin(nζ)
 λ = lmnsc·sin(mθ)cos(nζ) + lmncs·cos(mθ)sin(nζ)
 ```
+
+For asymmetric snapshots add `rmnsc·sin(mθ)cos(nζ) + rmncs·cos(mθ)sin(nζ)`
+to R, `zmncc·cos(mθ)cos(nζ) + zmnss·sin(mθ)sin(nζ)` to Z, and
+`lmncc·cos(mθ)cos(nζ) + lmnss·sin(mθ)sin(nζ)` to λ.
 
 The axis row (`j = 0`) is the constant-extrapolated row, which the
 comparison tools intentionally skip (`build/compare_states`).
@@ -104,7 +114,23 @@ staggering, `nfp` scaling, metric lowering, and component values against a
 manufactured field using only project code. `test_io_golden` verifies exact
 round trips through binary, NetCDF, and HDF5.
 
-## 3. Versioned binary (schema v1, on-disk version 8)
+### Asymmetric format extensions
+
+Symmetric writes retain binary v8 and checkpoint v6 byte layouts. Asymmetric
+writes use binary v9 and checkpoint v7: immediately after `ns, mnmax`, an
+`int32` component count selects six or twelve families in the order above.
+The existing input record appends `int32 lasym` and a length-prefixed complete
+flat input JSON, preserving `rbs`, `zbc`, `raxis_s`, and `zaxis_c` alongside
+all existing provenance. Earlier versions remain readable; earlier readers
+reject the new versions instead of dropping complementary coefficients.
+
+NetCDF and HDF5 use the six additional named variables/datasets and a global
+`asymmetric_input_json` string attribute. Readers reject a partial set of
+complementary families. Plotting readers reconstruct all active families.
+`EquilibriumSnapshot::components()` supplies the active count; its legacy
+`COUNT` constant continues to mean six.
+
+## 3. Versioned binary (schema v1, on-disk version 8; asymmetric version 9)
 
 ```
 magic     8 bytes  "CUMES001"

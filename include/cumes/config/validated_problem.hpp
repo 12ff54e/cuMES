@@ -37,6 +37,10 @@ struct FoldedBoundary {
     std::vector<double> rbss;  // R: sin(mθ)sin(nζ)
     std::vector<double> zbsc;  // Z: sin(mθ)cos(nζ)
     std::vector<double> zbcs;  // Z: cos(mθ)sin(nζ)
+    std::vector<double> rbsc;  // R: sin(mθ)cos(nζ), lasym only
+    std::vector<double> rbcs;  // R: cos(mθ)sin(nζ), lasym only
+    std::vector<double> zbcc;  // Z: cos(mθ)cos(nζ), lasym only
+    std::vector<double> zbss;  // Z: sin(mθ)sin(nζ), lasym only
 
     std::size_t size() const { return rbcc.size(); }
 };

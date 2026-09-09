@@ -563,7 +563,8 @@ void dump_step_h(int iter,
         // of m_decomposed_f (post-decomposeInto). Keyed on iter2 so a
         // handoff/plateau comparison can use the same effective counter
         // as vmecpp's dump blocks.
-        size_t n_fspec = (size_t)6 * (size_t)p.mnmax * (size_t)p.ns;
+        size_t n_fspec =
+            (size_t)(p.lasym ? 12 : 6) * (size_t)p.mnmax * (size_t)p.ns;
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/scaled_f_spec_iter_%d.bin",
                  iter == 0 ? 1 : iter2);
@@ -573,7 +574,8 @@ void dump_step_h(int iter,
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/fspec_invariant_iter_%d.bin",
                  iter2);
-        dump_device_array(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
+        dump_device_array(fn, f_spec,
+                          (size_t)(p.lasym ? 12 : 6) * p.mnmax * p.ns);
     }
 }
 
@@ -584,7 +586,7 @@ void dump_step_final(int iter, const DeviceParams<T>& p, const T* f_spec) {
     if (!dump_enabled()) return;
     if (iter == dump_max_iter(p.max_iter) - 1) {
         dump_device_array("dump/cuMES/final_f_spec.bin", f_spec,
-                          (size_t)6 * p.mnmax * p.ns);
+                          (size_t)(p.lasym ? 12 : 6) * p.mnmax * p.ns);
     }
 }
 
@@ -601,7 +603,8 @@ void dump_step_i(int iter,
     if (iter == 0 || iter2 == 51 ||
         (iter2 >= kn.dump_iter && iter2 <= kn.dump_iter + 2) ||
         (iter2 >= 2 && iter2 <= 4)) {
-        size_t n_fspec = (size_t)6 * (size_t)p.mnmax * (size_t)p.ns;
+        size_t n_fspec =
+            (size_t)(p.lasym ? 12 : 6) * (size_t)p.mnmax * (size_t)p.ns;
         size_t n_spec = (size_t)p.mnmax * (size_t)p.ns;
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/preconditioned_f_spec_iter_%d.bin",
@@ -665,7 +668,8 @@ void dump_step_i(int iter,
     if (iter2 >= kn.e2_start && iter2 < kn.e2_start + 40) {
         char fn[128];
         snprintf(fn, sizeof fn, "dump/cuMES/fspec_precon_iter_%d.bin", iter2);
-        dump_device_array(fn, f_spec, (size_t)6 * p.mnmax * p.ns);
+        dump_device_array(fn, f_spec,
+                          (size_t)(p.lasym ? 12 : 6) * p.mnmax * p.ns);
     }
 }
 #endif  // DUMP_CUMES_VERIFY

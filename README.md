@@ -35,7 +35,15 @@ constraint, residual, and descent values use paired `f32` words. On the
 NVIDIA TITAN Xp through Dawn's Vulkan backend, the hardware-qualified
 `1e-12` run converges in `1421 -> 3220 -> 2964` effective iterations (7605
 total), with final residual `(1.000e-12, 2.115e-13, 1.528e-13)`.
-The converged spectral state and run provenance are published as a version-8
+Non-stellarator-symmetric fixed boundaries are enabled in native CUDA input
+with `"lasym": true`. Supply `rbs` and `zbc` harmonic lists in addition to
+`rbc` and `zbs`; all use signed `n` and phase `m*theta - n*nfp*zeta`. Optional
+`raxis_s` and `zaxis_c` specify the complementary magnetic-axis coefficients.
+[inputs/asymmetric_tokamak.json](inputs/asymmetric_tokamak.json) is a complete
+example. See [ADR-0017](docs/adr/0017-non-stellarator-symmetry.md) for tested
+precision, backend coverage, and remaining limitations.
+
+The converged spectral state and run provenance are published as a version-8 (asymmetric: version-9)
 native binary through a browser download link and verified by an in-Wasm
 round trip. The download also contains the complete half/full-grid scientific
 field block and is accepted by the standard plotting workflow.
@@ -230,7 +238,7 @@ component with `-DCUMES_BUILD_MAGNETIC_COORDINATE=OFF`. If its submodule is
 absent, configuration warns and continues without Boozer support.
 The Boozer output suffix selects `.bin`, `.nc`, `.h5`, or `.hdf5`; optional
 NetCDF/HDF5 libraries are detected at configure time. All three containers
-store only the six real Fourier parity families, never complex coefficients.
+store six or twelve real Fourier parity families, never complex coefficients.
 
 `deps/vacuum-field` is optional. A fixed-boundary-only build neither configures
 nor links it:

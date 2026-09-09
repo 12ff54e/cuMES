@@ -237,6 +237,18 @@
           "items": {
             "type": "number"
           }
+        },
+        "raxis_s": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "zaxis_c": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
         }
       }
     },
@@ -322,6 +334,54 @@
               }
             }
           }
+        },
+        "rbs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "m",
+              "n",
+              "value"
+            ],
+            "properties": {
+              "m": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "n": {
+                "type": "integer"
+              },
+              "value": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "zbc": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "m",
+              "n",
+              "value"
+            ],
+            "properties": {
+              "m": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "n": {
+                "type": "integer"
+              },
+              "value": {
+                "type": "number"
+              }
+            }
+          }
         }
       }
     },
@@ -358,8 +418,36 @@
           "items": {
             "type": "number"
           }
+        },
+        "rbsc": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "rbcs": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "zbcc": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "zbss": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
         }
       }
+    },
+    "lasym": {
+      "type": "boolean",
+      "default": false
     }
   },
   "x-cumes-on-disk-contracts": {
@@ -382,6 +470,25 @@
       "rmnss",
       "zmncs",
       "lmncs"
-    ]
+    ],
+    "asymmetric-family-order": [
+      "rmncc",
+      "zmnsc",
+      "lmnsc",
+      "rmnss",
+      "zmncs",
+      "lmncs",
+      "rmnsc",
+      "zmncc",
+      "lmncc",
+      "rmncs",
+      "zmnss",
+      "lmnss"
+    ],
+    "asymmetric-extension": {
+      "binary-version": 9,
+      "checkpoint-version": 7,
+      "description": "After ns/mnmax, an int32 component count selects 6 or 12 spectral families. The input record appends int32 lasym and a length-prefixed complete flat input JSON. Symmetric writers retain binary v8 and checkpoint v6; all prior versions remain readable."
+    }
   }
 }

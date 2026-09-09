@@ -288,7 +288,8 @@ __global__ void compute_tcon_kernel(
     int nzeta,
     T delta_s,
     T tcon_multiplier,
-    T* __restrict__ tcon) {
+    T* __restrict__ tcon,
+    bool lasym = false) {
     int jF = blockIdx.x * blockDim.x + threadIdx.x;
     if (jF >= ns) return;
     // Status guard (completion plan step 1.4): the tcon cache is not
@@ -309,14 +310,15 @@ __global__ void compute_tcon_kernel(
     T arN = T(0.0), azN = T(0.0);
 
     const int nThetaEven = 2 * (ntheta / 2);
-    const int nThetaRed = nThetaEven / 2 + 1;  // reduced grid [0, pi]
-    const T dnorm3 = T(1.0) / T(nzeta * (nThetaRed - 1));
+    const int nThetaRed =
+        lasym ? nThetaEven : nThetaEven / 2 + 1;  // reduced grid [0, pi]
+    const T dnorm3 = T(1.0) / T(nzeta * (lasym ? nThetaRed : nThetaRed - 1));
     const T sF = sqrtS_F[jF];
 
     for (int iz = 0; iz < nzeta; ++iz) {
         for (int it = 0; it < nThetaRed; ++it) {
             T w = dnorm3;
-            if (it == 0 || it == nThetaRed - 1) w *= T(0.5);
+            if (!lasym && (it == 0 || it == nThetaRed - 1)) w *= T(0.5);
             int idx = (jF * nzeta + iz) * ntheta + it;
             T ruFull = ru_e[idx] + sF * ru_o[idx];
             T zuFull = zu_e[idx] + sF * zu_o[idx];
@@ -403,7 +405,7 @@ void cumes::ConstraintOperator<T>::enqueue_head(
         compute_tcon_kernel<T><<<gridF, 256, 0, stream>>>(
             rs.d_ru_e, rs.d_ru_o, rs.d_zu_e, rs.d_zu_o, d_sqrtS_F, ard, azd,
             status, p.ns, p.nZnT, p.ntheta, p.nzeta, T(1.0) / T(p.ns - 1.0),
-            tcon_multiplier, d_tcon_);
+            tcon_multiplier, d_tcon_, p.lasym);
         cumes::check_cuda(cudaGetLastError(), "tcon");
         tcon_lcfs_half_kernel<T><<<1, 1, 0, stream>>>(status, d_tcon_, p.ns);
         cumes::check_cuda(cudaGetLastError(), "tcon lcfs");

@@ -37,7 +37,7 @@ void populate_snapshot_state_from_device(const SpectralStorage<T>& storage,
             "snapshot_from_device: element count overflows size_t");
     }
     auto count =
-        checked_mul(static_cast<std::size_t>(EquilibriumSnapshot::COUNT), *one);
+        checked_mul(static_cast<std::size_t>(storage.components()), *one);
     if (!count) {
         throw CumesError(
             "snapshot_from_device: element count overflows size_t");
@@ -60,7 +60,8 @@ void populate_snapshot_state_from_device(const SpectralStorage<T>& storage,
     }
     snap.ns = storage.ns();
     snap.mnmax = storage.mnmax();
-    for (int c = 0; c < EquilibriumSnapshot::COUNT; ++c) {
+    snap.families.resize(storage.components());
+    for (int c = 0; c < storage.components(); ++c) {
         snap.families[c].resize(*one);
         const T* src = buf.data() + static_cast<std::size_t>(c) * *one;
         for (std::size_t i = 0; i < *one; ++i) {

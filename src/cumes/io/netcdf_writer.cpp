@@ -161,12 +161,19 @@ class NetcdfV1Writer final : public Writer {
                      "def nstages_in");
         }
 
+        if (snapshot.lasym()) {
+            NC_CHECK(nc_put_att_text(ncid, NC_GLOBAL, "asymmetric_input_json",
+                                     ip.asymmetric_input_json.size(),
+                                     ip.asymmetric_input_json.data()),
+                     "write asymmetric input");
+        }
         // ---- state variables ----
         const int state_dims[2] = {dim_ns, dim_mnmax};
-        const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
-                                    "rmnss", "zmncs", "lmncs"};
-        int v_fam[6];
-        for (int c = 0; c < 6; ++c) {
+        const char* fam_names[12] = {"rmncc", "zmnsc", "lmnsc", "rmnss",
+                                     "zmncs", "lmncs", "rmnsc", "zmncc",
+                                     "lmncc", "rmncs", "zmnss", "lmnss"};
+        int v_fam[12];
+        for (int c = 0; c < snapshot.components(); ++c) {
             NC_CHECK(nc_def_var(ncid, fam_names[c], NC_DOUBLE, 2, state_dims,
                                 &v_fam[c]),
                      "def family");
@@ -462,7 +469,7 @@ class NetcdfV1Writer final : public Writer {
         NC_CHECK(nc_enddef(ncid), "nc_enddef");
 
         // ---- data ----
-        for (int c = 0; c < 6; ++c) {
+        for (int c = 0; c < snapshot.components(); ++c) {
             const std::vector<double>& dbuf = snapshot.component(
                 static_cast<EquilibriumSnapshot::Component>(c));
             if (dbuf.size() != snapshot.family_size()) {
@@ -901,9 +908,21 @@ class NetcdfV1Reader final : public Reader {
             EquilibriumSnapshot snapshot;
             snapshot.ns = static_cast<int>(ns);
             snapshot.mnmax = static_cast<int>(mnmax);
-            const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
-                                        "rmnss", "zmncs", "lmncs"};
-            for (int c = 0; c < 6; ++c) {
+            const char* fam_names[12] = {"rmncc", "zmnsc", "lmnsc", "rmnss",
+                                         "zmncs", "lmncs", "rmnsc", "zmncc",
+                                         "lmncc", "rmncs", "zmnss", "lmnss"};
+            int asymmetric_families = 0;
+            for (int c = 6; c < 12; ++c) {
+                int var = -1;
+                if (nc_inq_varid(ncid, fam_names[c], &var) == NC_NOERR)
+                    ++asymmetric_families;
+            }
+            if (asymmetric_families != 0 && asymmetric_families != 6)
+                return fail("incomplete asymmetric spectral families");
+            if (asymmetric_families)
+                snapshot.families.resize(EquilibriumSnapshot::ASYMMETRIC_COUNT);
+
+            for (int c = 0; c < snapshot.components(); ++c) {
                 snapshot.families[c].resize(n);
                 if (!read_state_family(fam_names[c], ns_dim, mnmax_dim, ns,
                                        snapshot.mnmax, snapshot.families[c])) {
@@ -1343,6 +1362,13 @@ class NetcdfV1Reader final : public Reader {
                             ip.pcurr_type = pcurr_tag;
                         parsed_report.input_params = std::move(ip);
                     }
+                }
+                if (snapshot.lasym()) {
+                    parsed_report.input_params.lasym = true;
+                    if (!get_str(
+                            "asymmetric_input_json",
+                            parsed_report.input_params.asymmetric_input_json))
+                        return fail("missing asymmetric input JSON");
                 }
                 report->get() = std::move(parsed_report);
             }

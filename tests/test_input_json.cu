@@ -185,8 +185,7 @@ static void test_errors() {
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = cumes::read_and_validate(scratch_path(), opts);
-    check(!vr.has_value() && !find_error(vr, "lasym=true").empty(),
-          "error: lasym rejected");
+    check(vr.has_value() && vr.value().spec().lasym, "lasym=true accepted");
     write_scratch(
         "{\"ns_array\": [5, 11], \"niter_array\": [1000, 2000, 2000],"
         " \"ftol_array\": [1e-16, 1e-16, 1e-16]}");
@@ -313,15 +312,13 @@ static void test_negative() {
     check(!vr.has_value() &&
               !find_error(vr, "raxis_s': expected an array").empty(),
           "neg: scalar raxis_s rejected");
-    // Non-empty asymmetric array is unsupported physics.
+    // Asymmetric boundary harmonics require objects.
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"rbs\": [1.0],"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = cumes::read_and_validate(scratch_path(), opts);
-    check(!vr.has_value() &&
-              !find_error(vr, "asymmetric (lasym) input is not supported")
-                   .empty(),
+    check(!vr.has_value() && !find_error(vr, "expected an object").empty(),
           "neg: rbs content rejected");
 
     // Unsupported physics keys: lasym and unsupported/ill-formed profile
@@ -331,8 +328,7 @@ static void test_negative() {
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = cumes::read_and_validate(scratch_path(), opts);
-    check(!vr.has_value() && !find_error(vr, "lasym=true").empty(),
-          "neg: lasym=true rejected");
+    check(vr.has_value() && vr.value().spec().lasym, "lasym=true accepted");
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"lfreeb\": true,"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"

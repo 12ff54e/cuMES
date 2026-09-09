@@ -16,6 +16,7 @@
 #ifndef CUMES_INCLUDE_CUMES_IO_INPUT_PARAMS_HPP_
 #define CUMES_INCLUDE_CUMES_IO_INPUT_PARAMS_HPP_
 
+#include "cumes/config/json_writer.hpp"
 #include "cumes/config/validated_problem.hpp"
 
 #include <optional>
@@ -34,6 +35,11 @@ struct InputStage {
 
 struct InputParams {
     std::string schema = "cumes-config-v1";
+    bool lasym = false;
+    // Complete flat input for the extended Fourier representation. Kept in
+    // addition to the legacy typed record so every raw harmonic and axis
+    // coefficient survives a container/checkpoint round trip.
+    std::string asymmetric_input_json;
     int mpol = 0;
     int ntor = 0;
     int nfp = 0;
@@ -82,7 +88,9 @@ inline bool operator==(const InputStage& a, const InputStage& b) {
 }
 
 inline bool operator==(const InputParams& a, const InputParams& b) {
-    return a.schema == b.schema && a.mpol == b.mpol && a.ntor == b.ntor &&
+    return a.lasym == b.lasym &&
+           a.asymmetric_input_json == b.asymmetric_input_json &&
+           a.schema == b.schema && a.mpol == b.mpol && a.ntor == b.ntor &&
            a.nfp == b.nfp && a.ntheta == b.ntheta && a.nzeta == b.nzeta &&
            a.ncurr == b.ncurr && a.delt == b.delt && a.phiedge == b.phiedge &&
            a.pres_scale == b.pres_scale &&
@@ -111,6 +119,8 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
     const ProblemSpec& sp = vp.spec();
     const FoldedBoundary& b = vp.boundary();
     InputParams p;
+    p.lasym = sp.lasym;
+    if (sp.lasym) p.asymmetric_input_json = problem_spec_to_json(sp);
     p.mpol = sp.mpol;
     p.ntor = sp.ntor;
     p.nfp = sp.nfp;

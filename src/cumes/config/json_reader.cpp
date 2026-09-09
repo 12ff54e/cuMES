@@ -526,13 +526,21 @@ static ParsedProblem map_problem_spec(json::Value root,
     if (root.contains("zbs"))
         read_boundary(root.at("zbs"), "zbs", p.zbs, report);
 
-    // ---- unsupported features -> errors ----
-    if (root.contains("lasym") &&
-        get_bool(root.at("lasym"), "lasym", false, report)) {
-        report.error(
-            "lasym",
-            "lasym=true: asymmetric equilibria are not supported by cuMES");
+    if (root.contains("lasym"))
+        p.lasym = get_bool(root.at("lasym"), "lasym", false, report);
+    if (root.contains("raxis_s")) {
+        p.has_raxis_s = true;
+        p.raxis_s = read_double_array(root.at("raxis_s"), "raxis_s", report);
     }
+    if (root.contains("zaxis_c")) {
+        p.has_zaxis_c = true;
+        p.zaxis_c = read_double_array(root.at("zaxis_c"), "zaxis_c", report);
+    }
+    if (root.contains("rbs"))
+        read_boundary(root.at("rbs"), "rbs", p.rbs, report);
+    if (root.contains("zbc"))
+        read_boundary(root.at("zbc"), "zbc", p.zbc, report);
+
     // "two_power" is supported for the mass (pressure) and current profiles;
     // it is NOT applicable to the iota profile (vmecpp marks it
     // allowedForIota=false), which stays a power series.
@@ -584,24 +592,6 @@ static ParsedProblem map_problem_spec(json::Value root,
                              "are not supported by cuMES (power series only)");
         }
     }
-    constexpr std::array<std::string_view, 4> ASYM_ARRAYS = {
-        "raxis_s", "zaxis_c", "rbs", "zbc"};
-    for (std::string_view k : ASYM_ARRAYS) {
-        if (!root.contains(std::string(k))) continue;
-        if (!root.at(std::string(k)).is_array()) {
-            report.error(std::string(k),
-                         "'" + std::string(k) + "': expected an array, got " +
-                             json::get_value_category_name(
-                                 root.at(std::string(k)).value_category()));
-            continue;
-        }
-        if (root.at(std::string(k)).size() > 0) {
-            report.error(std::string(k), "'" + std::string(k) +
-                                             "': asymmetric (lasym) input is "
-                                             "not supported by cuMES");
-        }
-    }
-
     // ---- unknown keys (strict: error; compatibility: warn) ----
     for (const auto& [key, _val] : root.as_object()) {
         if (SUPPORTED_KEYS.count(key) == 0 &&

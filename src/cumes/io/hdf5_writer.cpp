@@ -169,12 +169,18 @@ class Hdf5V1Writer final : public Writer {
             return r;
         };
 
+        if (snapshot.lasym()) {
+            H5_CHECK(put_str_attr(fid, "asymmetric_input_json",
+                                  ip.asymmetric_input_json),
+                     "write asymmetric input");
+        }
         // ---- state datasets ----
         const hsize_t state_dims[2] = {(hsize_t)snapshot.ns,
                                        (hsize_t)snapshot.mnmax};
-        const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
-                                    "rmnss", "zmncs", "lmncs"};
-        for (int c = 0; c < 6; ++c) {
+        const char* fam_names[12] = {"rmncc", "zmnsc", "lmnsc", "rmnss",
+                                     "zmncs", "lmncs", "rmnsc", "zmncc",
+                                     "lmncc", "rmncs", "zmnss", "lmnss"};
+        for (int c = 0; c < snapshot.components(); ++c) {
             const std::vector<double>& dbuf = snapshot.component(
                 static_cast<EquilibriumSnapshot::Component>(c));
             if (dbuf.size() != snapshot.family_size()) {
@@ -701,8 +707,18 @@ class Hdf5V1Reader final : public Reader {
             EquilibriumSnapshot snapshot;
             snapshot.ns = ns;
             snapshot.mnmax = mnmax;
-            const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
-                                        "rmnss", "zmncs", "lmncs"};
+            const char* fam_names[12] = {"rmncc", "zmnsc", "lmnsc", "rmnss",
+                                         "zmncs", "lmncs", "rmnsc", "zmncc",
+                                         "lmncc", "rmncs", "zmnss", "lmnss"};
+            int asymmetric_families = 0;
+            for (int c = 6; c < 12; ++c)
+                if (H5Lexists(fid, fam_names[c], H5P_DEFAULT) > 0)
+                    ++asymmetric_families;
+            if (asymmetric_families != 0 && asymmetric_families != 6)
+                return fail("incomplete asymmetric spectral families");
+            if (asymmetric_families)
+                snapshot.families.resize(EquilibriumSnapshot::ASYMMETRIC_COUNT);
+
             // The file layout is [surface, mode] (C order over the (ns, mnmax)
             // dataspace) while the snapshot is mode-major (index = m*ns + j). A
             // whole-slab read must therefore TRANSPOSE — the exact
@@ -710,7 +726,7 @@ class Hdf5V1Reader final : public Reader {
             // step 2.3). The writers use per-mode hyperslabs, which is the
             // transpose-aware mirror image.
             std::vector<double> tmp(*n_opt);
-            for (int c = 0; c < 6; ++c) {
+            for (int c = 0; c < snapshot.components(); ++c) {
                 // EVERY family must independently satisfy rank 2 + the exact
                 // [ns, mnmax] extents + a double-compatible type before the
                 // read (reader-rank-hardening §3): rmncc alone no longer
@@ -1134,6 +1150,13 @@ class Hdf5V1Reader final : public Reader {
                         }
                         parsed_report.input_params = std::move(ip);
                     }
+                }
+                if (snapshot.lasym()) {
+                    parsed_report.input_params.lasym = true;
+                    if (!get_str_attr(
+                            fid, "asymmetric_input_json",
+                            parsed_report.input_params.asymmetric_input_json))
+                        return fail("missing asymmetric input JSON");
                 }
                 report->get() = std::move(parsed_report);
             }

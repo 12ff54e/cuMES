@@ -62,6 +62,11 @@ target_include_directories(test_solver_api PRIVATE
 target_link_libraries(test_solver_api PRIVATE cumes::solver)
 cumes_enable_warnings(test_solver_api)
 
+add_executable(test_asymmetric_solver test_asymmetric_solver.cpp)
+target_link_libraries(test_asymmetric_solver PRIVATE cumes::solver cumes_io)
+cumes_enable_warnings(test_asymmetric_solver)
+cumes_add_test(test_asymmetric_solver "solver;regression")
+
 if(NOT CUMES_USE_FLOAT)
   add_executable(test_newton_solver test_newton_solver.cpp)
   target_include_directories(test_newton_solver PRIVATE
@@ -91,7 +96,7 @@ target_include_directories(test_equilibrium_tangent PRIVATE
 target_link_libraries(test_equilibrium_tangent PRIVATE cumes_config_json)
 cumes_enable_warnings(test_equilibrium_tangent)
 
-foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
+foreach(t IN ITEMS test_asymmetric test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
                    test_tridiagonal test_cuda_graph test_safety_predicates
@@ -228,6 +233,7 @@ cumes_enable_warnings(test_equilibrium_tangent_solve)
 
 # ---- ctest registration ----------------------------------------------------
 cumes_add_test(test_fourier          unit;fourier)
+cumes_add_test(test_asymmetric       unit;fourier)
 cumes_add_test(test_input_json       unit;input)
 cumes_add_test(test_solver_api       unit;solver;api)
 if(NOT CUMES_USE_FLOAT)

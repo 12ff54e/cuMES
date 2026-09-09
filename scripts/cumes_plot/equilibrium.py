@@ -76,6 +76,14 @@ def eval_state(fams, ns, j, th, zt, ntor, nfp):
     C[3] = pack_series(zs[od], zc[od], "Z", m[od], n[od], nth, nzt)
     C[4] = pack_series(lsc[ev], lcs[ev], "Z", m[ev], n[ev], nth, nzt)
     C[5] = pack_series(lsc[od], lcs[od], "Z", m[od], n[od], nth, nzt)
+    if "rmnsc" in fams:
+        for field, first, second, series in (
+                (0, "rmnsc", "rmncs", "Z"),
+                (2, "zmncc", "zmnss", "R"),
+                (4, "lmncc", "lmnss", "R")):
+            a, b = fam(first) * fac, fam(second) * fac
+            C[field] += pack_series(a[ev], b[ev], series, m[ev], n[ev], nth, nzt)
+            C[field + 1] += pack_series(a[od], b[od], series, m[od], n[od], nth, nzt)
     # derivative spectra: ×i·m for ∂/∂θ, ×i·n·nfp for ∂/∂ζ; the λ
     # ζ-derivative slots (indices 16, 17) are negated (signV = -1).
     dth = 1j * (np.fft.fftfreq(nth) * nth)[:, None]
@@ -353,6 +361,9 @@ def converged_axis(fams, ns, ntor, nfp, n=240):
     for nn in range(ntor + 1):
         R += fams["rmncc"][nn * ns + 1] * np.cos(nn * zt)
         Z += fams["zmncs"][nn * ns + 1] * np.sin(nn * zt)
+        if "rmncs" in fams:
+            R += fams["rmncs"][nn * ns + 1] * np.sin(nn * zt)
+            Z += fams["zmncc"][nn * ns + 1] * np.cos(nn * zt)
     Rfull = np.concatenate([R] * nfp)
     Zfull = np.concatenate([Z] * nfp)
     phi = np.concatenate([(zt + 2.0 * np.pi * k) / nfp for k in range(nfp)])

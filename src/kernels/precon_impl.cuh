@@ -574,7 +574,8 @@ __global__ void lambda_prec_assemble_kernel(
     T* __restrict__ dLambda,
     T* __restrict__ cLambda,
     T* __restrict__ rmsPhiP,
-    const cumes::ControlStatus* __restrict__ status) {
+    const cumes::ControlStatus* __restrict__ status,
+    bool lasym = false) {
     int jH = blockIdx.x, tid = threadIdx.x;
     if (jH >= ns - 1) return;
     // Status guard (completion plan step 1.4): no preconditioner-cache
@@ -582,8 +583,9 @@ __global__ void lambda_prec_assemble_kernel(
     if (status != nullptr && status->jacobian_valid == 0) return;
 
     const int nThetaEven = 2 * (ntheta / 2);
-    const int nThetaRed = nThetaEven / 2 + 1;  // reduced grid [0, pi]
-    const T dnorm3 = T(1.0) / T(nzeta * (nThetaRed - 1));
+    const int nThetaRed =
+        lasym ? nThetaEven : nThetaEven / 2 + 1;  // reduced grid [0, pi]
+    const T dnorm3 = T(1.0) / T(nzeta * (lasym ? nThetaRed : nThetaRed - 1));
 
     T bsum = T(0.0), dsum = T(0.0), csum = T(0.0);
     // Loop over ALL (zeta, reduced-theta) points: the layout is
@@ -594,7 +596,7 @@ __global__ void lambda_prec_assemble_kernel(
     for (int k = tid; k < nThetaRed * nzeta; k += blockDim.x) {
         int iz = k / nThetaRed, it = k % nThetaRed;
         T w = dnorm3;
-        if (it == 0 || it == nThetaRed - 1) w *= T(0.5);
+        if (!lasym && (it == 0 || it == nThetaRed - 1)) w *= T(0.5);
         int idx = (jH * nzeta + iz) * ntheta + it;
         bsum += guu[idx] / gsqrt[idx] * w;
         dsum += guv[idx] / gsqrt[idx] * w;  // 3D: toroidal coupling
@@ -1011,11 +1013,18 @@ __global__ void precon_boundary_kernel(
         f(cumes::SpectralComponent::Lsc, mode, j) = T(0.0);
         f(cumes::SpectralComponent::Rss, mode, j) = T(0.0);
         f(cumes::SpectralComponent::Zcs, mode, j) = T(0.0);
+        for (int c = 6; c < f.components(); ++c)
+            if (c != 8)
+                f(static_cast<cumes::SpectralComponent>(c), mode, j) = T(0);
     }
     for (int j = tid; j < ns; j += blockDim.x) {
         T lp = lambda_prec[mode * ns + j];
         f(cumes::SpectralComponent::Lsc, mode, j) *= lp;
         f(cumes::SpectralComponent::Lcs, mode, j) *= lp;
+        if (f.lasym()) {
+            f(cumes::SpectralComponent::Lcc, mode, j) *= lp;
+            f(cumes::SpectralComponent::Lss, mode, j) *= lp;
+        }
     }
 }
 
@@ -1086,7 +1095,7 @@ void cumes::Preconditioner<T>::enqueue_compute(
         lambda_prec_assemble_kernel<T><<<nH, threads, 0, stream>>>(
             base.guu.data(), base.guv.data(), base.gvv.data(),
             base.gsqrt.data(), rpv.phip_H, p.ns, p.nZnT, p.ntheta, p.nzeta,
-            d_bLambda_, d_dLambda_, d_cLambda_, d_rmsPhiP_, status);
+            d_bLambda_, d_dLambda_, d_cLambda_, d_rmsPhiP_, status, p.lasym);
         cumes::check_cuda(cudaGetLastError(), "lambdaPrecAssemble");
         lambda_prec_finalize_kernel<T>
             <<<dim3(p.mnmax, (p.ns + 127) / 128), 128, 0, stream>>>(
@@ -1215,6 +1224,12 @@ void cumes::Preconditioner<T>::enqueue_apply(
     cumes::PcrBackend<T> pcr;
     pcr.enqueue_solve(rv, d_preconStatus_, stream, gate);
     pcr.enqueue_solve(zv, d_preconStatus_, stream, gate);
+    if (p.lasym) {
+        rv.rhs += 6 * comp_stride;
+        zv.rhs += 6 * comp_stride;
+        pcr.enqueue_solve(rv, d_preconStatus_, stream, gate);
+        pcr.enqueue_solve(zv, d_preconStatus_, stream, gate);
+    }
 
     // Boundary + lambda-diagonal finishing (the tail of the legacy kernel).
     // Terminal-guarded like the solves.
@@ -1261,6 +1276,10 @@ __global__ void m1_precon_scale_kernel(
         int mn = m1base + n;
         f_spec(cumes::SpectralComponent::Rss, mn, j) *= scaleR;
         f_spec(cumes::SpectralComponent::Zcs, mn, j) *= scaleZ;
+        if (f_spec.lasym()) {
+            f_spec(cumes::SpectralComponent::Rsc, mn, j) *= scaleR;
+            f_spec(cumes::SpectralComponent::Zcc, mn, j) *= scaleZ;
+        }
     }
 }
 

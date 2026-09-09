@@ -59,6 +59,9 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
     }
     const GridShape& shape = problem.stage_shapes()[stage_index];
     const ProblemSpec& spec = problem.spec();
+    if (spec.lasym)
+        throw std::runtime_error(
+            "WebGPU asymmetric equilibria are not yet supported");
     const FoldedBoundary& boundary = problem.boundary();
     AxisymmetricStageData stage;
     stage.ns = shape.ns;

@@ -1,5 +1,6 @@
 """Readers for native cuMES state containers."""
 
+import json
 import os
 import struct
 
@@ -7,6 +8,24 @@ import numpy as np
 
 
 FAM_NAMES = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
+ASYM_FAM_NAMES = ("rmnsc", "zmncc", "lmncc", "rmncs", "zmnss", "lmnss")
+
+
+def _asymmetric_input(params, document):
+    source = json.loads(document)
+    if source.get("lasym") is not True:
+        raise ValueError("asymmetric state requires lasym=true input provenance")
+    params["lasym"] = True
+    for key in ("raxis_s", "zaxis_c"):
+        params[key] = source.get(key, [])
+    for key in ("rbs", "zbc"):
+        params[key] = [(h["m"], h["n"], h["value"]) for h in source.get(key, [])]
+
+
+def _family_names(count):
+    if count not in (6, 12):
+        raise ValueError("spectral component count must be 6 or 12")
+    return FAM_NAMES + (ASYM_FAM_NAMES if count == 12 else ())
 NO_PARAMS_ERROR = ("container predates the embedded-input record; "
                    "re-run the solver to regenerate it")
 
@@ -30,7 +49,8 @@ def _read_vec(f, fmt, cap=1 << 20):
 def _read_input_record(f, has_profile_types=False,
                        has_free_boundary_extension=False,
                        has_inline_makegrid_extension=False,
-                       has_embedded_makegrid_extension=False):
+                       has_embedded_makegrid_extension=False,
+                       has_asymmetric_extension=False):
     """The fixed-order embedded-input record (io_common.hpp write/readInput
     Params): 6 i32 + 8 f64 scalars, schema string, six f64 vectors, the
     input stages, the raw boundary, four folded vectors (skipped), and the
@@ -102,7 +122,7 @@ def _read_input_record(f, has_profile_types=False,
                 "number_of_phi_grid_points": nphi,
             }
 
-    return {
+    result = {
         "schema": schema, "mpol": mpol, "ntor": ntor, "nfp": nfp,
         "pmass_type": pmass_type, "piota_type": piota_type,
         "pcurr_type": pcurr_type,
@@ -122,6 +142,15 @@ def _read_input_record(f, has_profile_types=False,
         "extcur": extcur,
     }
 
+    if has_asymmetric_extension:
+        lasym = struct.unpack("<i", f.read(4))[0]
+        document = _read_str(f)
+        if lasym not in (0, 1):
+            raise ValueError("invalid lasym flag")
+        if lasym:
+            _asymmetric_input(result, document)
+    return result
+
 
 def _no_params(path):
     raise SystemExit(f"error: {path}: " + NO_PARAMS_ERROR)
@@ -130,8 +159,8 @@ def _no_params(path):
 def load_state(path):
     """Load the converged state + the embedded structured input record from
     any solver output container (docs/output-formats.md): versioned binary
-    (v8), checkpoint (v6), NetCDF, or HDF5. Returns (ns, mnmax, fams,
-    params, name) — the six mode-major families (index = mode * ns +
+    (v8/v9), checkpoint (v6/v7), NetCDF, or HDF5. Returns (ns, mnmax, fams,
+    params, name) — the active mode-major families (index = mode * ns +
     surface), the input record as a dict mirroring InputParams, and a
     display name (the recorded input path stem when available, else the
     container stem). Containers without the record are rejected; there is
@@ -147,13 +176,14 @@ def load_state(path):
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if not 1 <= version <= 8:
+            if not 1 <= version <= 9:
                 raise SystemExit(f"error: unsupported container version "
                                  f"{version} in {path}")
             ns, mnmax = struct.unpack("<ii", f.read(8))
+            count = struct.unpack("<i", f.read(4))[0] if version >= 9 else 6
             n = ns * mnmax
             fams = {fam: np.frombuffer(f.read(8 * n), dtype="<f8")
-                    for fam in FAM_NAMES}
+                    for fam in _family_names(count)}
             if version >= 8:
                 ntheta_fields, nzeta_fields = struct.unpack("<2i", f.read(8))
                 if ntheta_fields < 0 or nzeta_fields < 0:
@@ -195,7 +225,7 @@ def load_state(path):
                 f.read(4 * nrst)
             params = _read_input_record(
                 f, version == 4 or version >= 7,
-                version >= 5, version >= 5, version >= 6)
+                version >= 5, version >= 5, version >= 6, version >= 9)
             params["_precision"] = "float" if precision == 1 else "double"
             params["_source_path"] = source_path
         if source_path:
@@ -209,19 +239,20 @@ def load_state(path):
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if not 1 <= version <= 6:
+            if not 1 <= version <= 7:
                 raise SystemExit(f"error: unsupported checkpoint version "
                                  f"{version} in {path}")
             f.read(4)  # precision (always double)
             ns, mnmax = struct.unpack("<ii", f.read(8))
+            count = struct.unpack("<i", f.read(4))[0] if version >= 7 else 6
             n = ns * mnmax
             fams = {fam: np.frombuffer(f.read(8 * n), dtype="<f8")
-                    for fam in FAM_NAMES}
+                    for fam in _family_names(count)}
             if version < 2:
                 _no_params(path)
             params = _read_input_record(
                 f, version == 3 or version >= 6,
-                version >= 4, version >= 4, version >= 5)
+                version >= 4, version >= 4, version >= 5, version >= 7)
             params["_precision"] = "double"
         return ns, mnmax, fams, params, name
     if head.startswith(b"CDF"):
@@ -233,7 +264,7 @@ def load_state(path):
             mnmax = nc.dimensions["mnmax"]
             fams = {fam: np.asarray(nc.variables[fam][:],
                                     dtype="<f8").T.ravel()
-                    for fam in FAM_NAMES}
+                    for fam in _family_names(12 if "rmnsc" in nc.variables else 6)}
             if "mpol" not in nc.variables:
                 _no_params(path)
 
@@ -312,6 +343,8 @@ def load_state(path):
                 "makegrid_parameters": makegrid_parameters,
                 "extcur": darray("extcur"),
             }
+            if "rmnsc" in fams:
+                _asymmetric_input(params, sattr("asymmetric_input_json", ""))
             params["_precision"] = (
                 "float" if "precision" in nc.variables and
                 int(scalar("precision")) == 1 else "double")
@@ -329,7 +362,7 @@ def load_state(path):
         with h5py.File(path, "r") as f5:
             fams = {}
             ns = mnmax = None
-            for fam in FAM_NAMES:
+            for fam in _family_names(12 if "rmnsc" in f5 else 6):
                 dset = np.asarray(f5[fam][:], dtype="<f8")  # [surface, mode]
                 ns, mnmax = dset.shape
                 fams[fam] = dset.T.ravel()
@@ -409,6 +442,8 @@ def load_state(path):
                 "makegrid_parameters": makegrid_parameters,
                 "extcur": darray("extcur"),
             }
+            if "rmnsc" in fams:
+                _asymmetric_input(params, sattr("asymmetric_input_json", ""))
             params["_precision"] = (
                 "float" if int(f5.attrs.get("precision", 0)) == 1
                 else "double")

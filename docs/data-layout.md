@@ -22,7 +22,8 @@ basis), `mnmax = mpol * (ntor+1)`. The physical toroidal mode is `N = n * nfp`
 
 ## 2. Spectral state (component-major, surface contiguous)
 
-Six families in a fixed order — `Rcc, Zsc, Lsc, Rss, Zcs, Lcs` — each laid out
+Symmetric problems use `Rcc, Zsc, Lsc, Rss, Zcs, Lcs`. With `lasym=true`,
+append `Rsc, Zcc, Lcc, Rcs, Zss, Lss` in that order. Each family is laid out
 `[mode][surface]` with surface contiguous:
 
 ```
@@ -32,7 +33,7 @@ offset(component, mode, surface) = component * (mnmax * ns) + mode * ns + surfac
 The order is **Rcc, Zsc, Lsc** (the `m`-parity-even "cos/cos, sin/cos,
 sin/cos" families) then **Rss, Zcs, Lcs** (the odd "sin/sin, cos/sin,
 cos/sin" families). This is the `SpectralComponent` enum order and the order of
-the six views carved from each contiguous state, velocity, residual, or
+the active six or twelve views carved from each contiguous state, velocity, residual, or
 checkpoint slab. The retired `SpectralState` pointer bundle is not part of the
 current API.
 
@@ -93,7 +94,7 @@ are specified in `output-formats.md`.
 
 The 16 force arrays `armn/azmn/brmn/bzmn/crmn/czmn/blmn/clmn` × `e/o` are full
 real-space fields in the same `[surface][zeta][theta]` point-contiguous layout.
-After `forwardDFT` they become six spectral families in the §2 component-major
+After `forwardDFT` they become six or twelve spectral families in the §2 component-major
 layout. The decomposed residuals and velocities are a **different domain** from
 the physical state and are typed `DecomposedResidualDomain` /
 `DecomposedVelocityDomain` views so a kernel cannot mix them.
@@ -110,3 +111,11 @@ w = mscale * nscale / (nzeta * (nThetaRed - 1)) * e_k,
 
 This is a distinct typed view (`QuadraturePlan`), never an integer
 reinterpretation of the full-grid view.
+
+For `lasym=true`, projections and surface averages instead use every theta
+point on `[0, 2π)`, with uniform weight `1/(nzeta*ntheta)` before the same
+`mscale*nscale` normalization. No reflection or endpoint halving is applied.
+The extra `Rsc/Zcc` m=1 residual pair uses the same sum/difference gauge as
+`Rss/Zcs`; descent undoes that gauge before changing physical coefficients.
+Both constant offsets `Rcc(0,0)` and `Zcc(0,0)` are excluded from the geometry
+normalization. Axis regularity and fixed LCFS rules apply to every family.

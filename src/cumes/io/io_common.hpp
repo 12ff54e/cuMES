@@ -42,7 +42,12 @@ inline bool check_state_dimensions(FILE* fp,
                                    std::int32_t ns,
                                    std::int32_t mnmax,
                                    std::size_t& n_out,
-                                   std::string& reason) {
+                                   std::string& reason,
+                                   int components = 6) {
+    if (components != 6 && components != 12) {
+        reason = "spectral component count must be 6 or 12";
+        return false;
+    }
     if (ns < 1 || mnmax < 1) {
         reason = "bad dimensions (ns=" + std::to_string(ns) +
                  ", mnmax=" + std::to_string(mnmax) + ")";
@@ -54,7 +59,7 @@ inline bool check_state_dimensions(FILE* fp,
         reason = "dimension product overflows size_t";
         return false;
     }
-    auto needed = checked_mul(*n, 6 * sizeof(double));
+    auto needed = checked_mul(*n, std::size_t(components) * sizeof(double));
     auto sz = file_size(fp);
     // Compare in size_t: the old `(long long)*needed > *sz` cast wrapped
     // negative for byte counts in [2^63, 2^64), silently passing the
@@ -124,6 +129,7 @@ inline bool read_f64_array(FILE* fp, std::span<double> p) {
 // read from a short host vector.
 inline bool write_state_families(FILE* fp,
                                  const EquilibriumSnapshot& snapshot) {
+    if (snapshot.components() != 6 && snapshot.components() != 12) return false;
     const std::size_t n = snapshot.family_size();
     for (const auto& fam : snapshot.families) {
         if (fam.size() != n) return false;
@@ -317,7 +323,9 @@ inline bool read_makegrid_parameters(FILE* fp, MakegridParametersSpec& p) {
     return true;
 }
 
-inline bool write_input_params(FILE* fp, const InputParams& p) {
+inline bool write_input_params(FILE* fp,
+                               const InputParams& p,
+                               bool asymmetric_extension = false) {
     bool ok = write_i32(fp, p.mpol) && write_i32(fp, p.ntor) &&
               write_i32(fp, p.nfp) && write_i32(fp, p.ntheta) &&
               write_i32(fp, p.nzeta) && write_i32(fp, p.ncurr) &&
@@ -349,6 +357,9 @@ inline bool write_input_params(FILE* fp, const InputParams& p) {
     if (ok && p.embedded_makegrid_parameters.has_value()) {
         ok = write_makegrid_parameters(fp, *p.embedded_makegrid_parameters);
     }
+    if (asymmetric_extension)
+        ok = ok && write_i32(fp, p.lasym ? 1 : 0) &&
+             write_string(fp, p.asymmetric_input_json);
     return ok;
 }
 
@@ -359,7 +370,8 @@ inline bool read_input_params(FILE* fp,
                               InputParams& p,
                               std::string& reason,
                               bool with_profile_types,
-                              int free_boundary_extension = 0) {
+                              int free_boundary_extension = 0,
+                              bool asymmetric_extension = false) {
     std::int32_t nstages = 0;
     if (!read_i32(fp, p.mpol) || !read_i32(fp, p.ntor) ||
         !read_i32(fp, p.nfp) || !read_i32(fp, p.ntheta) ||
@@ -450,6 +462,19 @@ inline bool read_input_params(FILE* fp,
                 return false;
             }
             p.embedded_makegrid_parameters = parameters;
+        }
+    }
+    if (asymmetric_extension) {
+        std::int32_t lasym = 0;
+        if (!read_i32(fp, lasym) || (lasym != 0 && lasym != 1) ||
+            !read_string(fp, p.asymmetric_input_json)) {
+            reason = "malformed asymmetric input record";
+            return false;
+        }
+        p.lasym = lasym != 0;
+        if (p.lasym && p.asymmetric_input_json.empty()) {
+            reason = "missing asymmetric input JSON";
+            return false;
         }
     }
     return true;
