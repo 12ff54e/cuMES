@@ -1,6 +1,7 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_INITIALIZATION_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_INITIALIZATION_HPP_
 
+#include "cumes/physics/host_radial_profiles.hpp"
 #include "cumes/webgpu/float_geometry.hpp"
 
 #include <cstddef>
@@ -12,33 +13,20 @@ class ValidatedProblem;
 
 namespace cumes::webgpu {
 
-struct RadialProfiles {
+struct RadialProfiles : HostRadialProfiles<float> {
     using val_type = float;
 
-    std::vector<float> iota_f;
     std::vector<float> iota_f_lo;
-    std::vector<float> phip_f;
     std::vector<float> phip_f_lo;
-    std::vector<float> chi_f;
     std::vector<float> chi_f_lo;
-    std::vector<float> sqrt_s_f;
     std::vector<float> sqrt_s_f_lo;
-    std::vector<float> iota_h;
     std::vector<float> iota_h_lo;
-    std::vector<float> pres_h;
     std::vector<float> pres_h_lo;
-    std::vector<float> phip_h;
     std::vector<float> phip_h_lo;
-    std::vector<float> dvds_h;
-    std::vector<float> sqrt_s_h;
     std::vector<float> sqrt_s_h_lo;
-    std::vector<float> curr_h;
     std::vector<float> curr_h_lo;
-    std::vector<float> chip_h;
     std::vector<float> chip_h_lo;
-    float delta_s = 0.0F;
     float delta_s_lo = 0.0F;
-    float lamscale = 0.0F;
     float lamscale_lo = 0.0F;
 };
 
