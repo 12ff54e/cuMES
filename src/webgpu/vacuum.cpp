@@ -36,7 +36,10 @@ std::unique_ptr<FreeBoundaryOperator<double>> create_vacuum(
     const ValidatedProblem& problem,
     const AxisymmetricStageData& stage,
     const wgpu::Device& device,
-    bool use_webgpu) {
+    bool use_webgpu,
+    bool device_lu) {
+    if (device_lu && !use_webgpu)
+        throw CumesError("WebGPU LU requires vacuum=webgpu");
     const auto& free = problem.spec().free_boundary;
     FreeBoundaryOperator<double>::HostParams host;
     host.coils_file = free.coils_file;
@@ -55,10 +58,11 @@ std::unique_ptr<FreeBoundaryOperator<double>> create_vacuum(
     params.nZnT = stage.ntheta * stage.nzeta;
     params.nfp = stage.nfp;
     auto vacuum = std::make_unique<FreeBoundaryOperator<double>>(host, params);
-    if (use_webgpu) vacuum->enable_webgpu(device);
+    if (use_webgpu) vacuum->enable_webgpu(device, device_lu);
     std::printf("  Vacuum backend: %s\n",
-                use_webgpu ? "WebGPU paired-f32 kernels, Wasm double LU"
-                           : "HOST/Wasm double");
+                !use_webgpu ? "HOST/Wasm double"
+                : device_lu ? "WebGPU paired-f32 kernels and LU"
+                            : "WebGPU paired-f32 kernels, Wasm double LU");
     return vacuum;
 }
 

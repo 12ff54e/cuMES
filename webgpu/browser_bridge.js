@@ -9,6 +9,9 @@ mergeInto(LibraryManager.library, {
   requested_webgpu_vacuum: function() {
     return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('vacuum') === 'webgpu';
   },
+  requested_webgpu_vacuum_lu: function() {
+    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('vacuum_lu') === 'webgpu';
+  },
   requested_device_vacuum_force: function() {
     const query = new URLSearchParams(globalThis.cumesSearch ?? location.search);
     return query.get('vacuum_force') === 'webgpu' ||

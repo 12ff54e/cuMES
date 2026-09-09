@@ -51,6 +51,7 @@ void publish_browser_result(int success, const char* detail);
 int publish_browser_output(const char* path);
 int requested_double_solve();
 int requested_webgpu_vacuum();
+int requested_webgpu_vacuum_lu();
 int requested_device_vacuum_force();
 int requested_float_radius_reference();
 int requested_compensated_geometry();
@@ -5504,7 +5505,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 std::printf("Generating the coil field grid in memory...\n");
                 vacuum_ = cumes::webgpu::create_vacuum(
                     *problem_, initialized_stage_, device_,
-                    requested_webgpu_vacuum() != 0);
+                    requested_webgpu_vacuum() != 0,
+                    requested_webgpu_vacuum_lu() != 0);
                 std::printf("Coil field grid ready.\n");
             }
             cumes::webgpu::prepare_vacuum_stage(*vacuum_, *problem_,

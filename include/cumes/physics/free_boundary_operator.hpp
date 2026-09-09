@@ -83,7 +83,7 @@ class FreeBoundaryOperator {
     ~FreeBoundaryOperator();
 #ifdef CUMES_VACUUM_WEBGPU
     // Select the GPU vacuum operator while retaining the shared host coupling.
-    void enable_webgpu(const wgpu::Device& device);
+    void enable_webgpu(const wgpu::Device& device, bool device_lu = false);
     // Defer final GPU vacuum validation to the caller's control readback.
     // The caller must finish the pending result before accepting an iteration.
     void set_webgpu_resident_result(bool enabled);

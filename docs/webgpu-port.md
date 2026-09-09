@@ -155,31 +155,42 @@ an active worker and returns to setup. Precision changes restart the solve.
 The build links vacuum-field's WebGPU backend and HOST-double reference with
 NetCDF disabled. Append `&vacuum=webgpu` to select paired-f32 vacuum kernels;
 `&vacuum=host` is the reference path and remains the default.
-Coil parsing and MAKEGRID generation stay in Wasm double. Only coil geometry and small input
-JSON files are served as lazy preset assets; no field grids are shipped.
+With WebGPU vacuum, `&vacuum_lu=webgpu` also selects resident paired-f32 LU
+with partial pivoting. It supports at most 256 unknowns, including W7-X's 117;
+larger systems must use the default Wasm-double LU (`&vacuum_lu=host`).
+Coil parsing and MAKEGRID generation stay in Wasm double. Only coil geometry
+and small input JSON files are served as lazy preset assets; no field grids
+are shipped.
 `src/webgpu/vacuum.cpp` compiles the existing cuMES vacuum state machine and
 bridge kernels for Wasm memory and converts WebGPU high/low words at the
 handover. The WebGPU backend keeps geometry, fields, integrals and the Laplace
-assembly resident, maps matrix/RHS together for Wasm-double LU, uploads the
-potential, and reconstructs fields on the GPU, with their finite checks
-preserved. Both HOST/Wasm and WebGPU cache immutable potential Fourier
-factors at setup, preserving their own arithmetic and ordered sums.
+assembly resident. Wasm LU maps matrix/RHS together and uploads the potential;
+WebGPU LU keeps factors, pivots, RHS and potential on the device. Both
+reconstruct fields on the GPU and preserve finite checks. Both HOST/Wasm and
+WebGPU cache immutable potential Fourier factors at setup, preserving their
+own arithmetic and ordered sums.
 The resident boundary-force path, enabled with `vacuum=webgpu`, consumes GPU
-vacuum pressure directly after
-the Wasm LU solve. It updates only the four LCFS force planes in their existing
-buffers; vacuum integrals/validity and pressure-error diagnostics join the
-plasma suffix readback. Pending vacuum results are validated before controller
-decisions, checkpoint updates or output, including updates before pressure
+vacuum pressure directly after reconstruction. It updates only the four LCFS
+force planes in their existing buffers; vacuum integrals/validity and
+pressure-error diagnostics join the plasma suffix readback. Pending vacuum
+results are validated before controller decisions, checkpoint updates or
+output, including updates before pressure
 activation. This removes the final standalone vacuum map. With HOST vacuum,
 `vacuum_force=webgpu` opts into the same force operator, uploading only the
 reduced pressure array; HOST retains its original correction by default. The
 `vacuum_force=host` query retains the original Wasm-double correction and
 standalone vacuum result map for comparisons. Full-readback and nonresident
 reference paths also retain that host correction.
-Full/partial update reuse and activation/restart state are shared. Asyncify
-yields the worker for the matrix/RHS readback; the resident path resumes after
-LU and reconstruction submission so plasma work can continue. The HOST vacuum
-path runs its kernels in the same worker.
+Full/partial update reuse and activation/restart state are shared. Wasm LU uses
+Asyncify to yield the worker for its matrix/RHS readback. Resident WebGPU LU
+submits assembly, factorization/substitution and reconstruction without a
+vacuum-owned map or Asyncify wait. Its singular/nonfinite status joins the
+existing 24-byte summary in the plasma suffix map and is checked before
+accepting an iteration. Normal active passes then have two sequential maps,
+plasma prefix and suffix, compared with three when using Wasm LU. The HOST
+vacuum path runs its kernels in the same worker. See the
+[LU assessment](webgpu-optimization-assessment.md#resident-vacuum-lu) for
+numerical and performance evidence.
 
 Vacuum activation, edge force/preconditioning, constraint decay, soft restarts,
 and multigrid persistence follow the CUDA coupling. The three bundled presets

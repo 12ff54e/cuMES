@@ -13,7 +13,8 @@ std::unique_ptr<FreeBoundaryOperator<double>> create_vacuum(
     const ValidatedProblem& problem,
     const AxisymmetricStageData& stage,
     const wgpu::Device& device,
-    bool use_webgpu);
+    bool use_webgpu,
+    bool device_lu = false);
 void prepare_vacuum_stage(FreeBoundaryOperator<double>& vacuum,
                           const ValidatedProblem& problem,
                           const AxisymmetricStageData& stage);

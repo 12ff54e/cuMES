@@ -522,13 +522,16 @@ void FreeBoundaryOperator<T>::advance(int iter2,
 
 #ifdef CUMES_VACUUM_WEBGPU
 template <class T>
-void FreeBoundaryOperator<T>::enable_webgpu(const wgpu::Device& device) {
+void FreeBoundaryOperator<T>::enable_webgpu(const wgpu::Device& device,
+                                            bool device_lu) {
     static_assert(std::is_same_v<T, double>);
     if (impl_->has_factors)
         throw CumesError(
             "vacuum backend must be selected before its first update");
     impl_->gpu_solver = std::make_unique<vfield::webgpu::Solver>(
-        device, impl_->sizes, impl_->solver.mgrid());
+        device, impl_->sizes, impl_->solver.mgrid(),
+        device_lu ? vfield::webgpu::LuBackend::WEBGPU
+                  : vfield::webgpu::LuBackend::HOST);
 }
 #endif
 

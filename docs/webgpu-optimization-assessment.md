@@ -332,6 +332,105 @@ clocks. This two-repeat, one-adapter result is a bounded browser comparison,
 not full performance qualification. Raw captures, numerical differences,
 error cases and provenance remain in `../tmp/boundary-force-resident/`.
 
+### Resident vacuum LU
+
+`vacuum=webgpu&vacuum_lu=webgpu` keeps the dense vacuum solve on WebGPU.
+The paired-f32 implementation uses Gaussian elimination with partial pivoting,
+strict first-maximum pivot selection, complete row swaps and the existing
+forward/back-substitution order. Full updates factorize; partial updates reuse
+the resident factors and pivots. Separate factor storage preserves the original
+assembled matrix for diagnostics. A single 64-thread workgroup coordinates
+the solve; matrices stay in storage buffers, with workgroup scratch bounded
+at 256 unknowns. Larger systems must select Wasm LU (`vacuum_lu=host`).
+
+Assembly, LU and field reconstruction submit without a matrix/RHS map or
+potential upload. The resident callback also avoids an unnecessary Asyncify
+wait. Singular-pivot and nonfinite-system status share the existing 24-byte
+vacuum summary and are checked before accepting any controller result. Failed
+or cancelled full updates invalidate the factors; partial updates cannot reuse
+an unaccepted full factorization.
+
+Normal active passes with resident boundary-force correction now require two
+sequential maps, plasma prefix and suffix, versus three with Wasm LU. For
+W7-X's 117 unknowns, each full vacuum update removes 110,448 bytes of
+matrix/RHS readback and 936 bytes of potential upload, totaling 111,384 bytes.
+A partial update removes 936 bytes in each direction, totaling 1,872 bytes.
+These are logical payloads, not measured bus traffic; the unchanged plasma
+readbacks and compact vacuum summary remain. Ordinary full-output and
+`vacuum_force=host` paths retain their final vacuum-output map.
+
+This is a Class B precision port of the same pivoted solver. Real Chrome
+executes 11 direct matrix fixtures, including dense nonsymmetric orders 117
+and 256, first-maximum and low-word pivot ties, late row swaps, singular pivot
+indices, nonfinite inputs, overflow, a valid large diagonal system and repeated
+RHS solves. The independent componentwise backward-error bound is `2e-12`;
+the measured maximum is `1.053e-13`. The constructed-solution absolute bound
+is `2e-10`. Original matrix words and reused factor words remain exact.
+Solving the same GPU-assembled vacuum matrix/RHS independently with Wasm-double
+LU gives maximum scaled potential difference `2.536e-16`, below `2e-12`.
+Existing trusted, axisymmetric/asymmetric, full/partial, compact/resident and
+failure/recovery vacuum gates pass with both LU choices and unchanged bounds.
+
+LU uses local power-of-two scaling for extreme operands because GPU arithmetic
+can flush small divisors or produce finite values on overflow. The restoration
+checks paired values against the supported exponent range before rescaling.
+This retains ordinary-scale operation order; general subnormal arithmetic
+remains unqualified. See vacuum-field's
+[LU decision](../deps/vacuum-field/docs/adr/0002-resident-webgpu-lu.md).
+
+Paired W7-X preserves the first 100 controller records exactly against the
+frozen `d2c721a` build with Wasm LU. The first numerical difference occurs at
+record 254 and the first checkpoint-decision difference at 543. GPU LU
+converges in 1,832 records versus 1,859; all three configured residuals reach
+`1e-12` after the existing validity gates. All six spectral families, axis and
+LCFS rows, and 13 derived-field arrays were compared and remain finite.
+Maximum final R/Z coefficient difference is `6.60e-6 m`, lambda difference
+`2.74e-5`, and derived-field difference normalized by its reference array's
+maximum magnitude `1.04e-3` (contravariant radial current). These are full-solve
+differences from later controller rounding, not changes to operator bounds.
+
+Paired cth_like reaches `1e-12` in 626 records versus 625; paired Solovev
+reaches it in 1,056 records with either LU. Their first 100 records remain
+exact; first checkpoint differences occur at 350 and 1,042, respectively.
+Maximum R/Z coefficient differences are `5.44e-8 m` and `2.99e-8 m`, lambda
+differences `6.33e-7` and `7.26e-8`, and normalized derived-field differences
+`3.74e-4` and `8.00e-6`. All compared arrays remain finite. Scalar cth_like
+and Solovev preserve all 108 and 75 records and their scientific digests
+exactly. Existing output reconstruction on a `128×128` angular grid gives
+maximum LCFS displacements of `41.274 µm` for W7-X and `0.312 µm` for cth_like;
+the plotted-axis displacements are `1.175 µm` and `2.138 nm`, using the
+reader's existing `converged_axis` definition.
+
+The 2026-09-09 timing comparison uses Chrome 152.0.7977.77 on Windows,
+NVIDIA GeForce RTX 3060 Ti, and the bundled paired W7-X free-boundary preset.
+Both variants use `vacuum=webgpu&trace=1&timing=0`; the candidate adds
+`vacuum_lu=webgpu`. Each has one warmup and two serial measured solves. The
+updated repeats reproduce all 1,832 controller records and their scientific
+digest exactly.
+
+| Interval | Wasm LU median (range), s | WebGPU LU median (range), s |
+| --- | ---: | ---: |
+| Full page run | 61.860 (61.628–62.092) | 59.460 (59.446–59.474) |
+| First-to-last controller record | 56.479 (56.274–56.684) | 54.272 (54.218–54.326) |
+
+Warmed page time is 3.88% lower and controller-span time 3.91% lower. This
+includes the changed stopping iteration and does not isolate LU kernel time
+or fence latency. Median worker age at the first controller record is
+4.971 s with Wasm LU and 4.795 s with GPU LU. The first GPU-LU warmup instead
+took 80.789 s with 25.671 s until the first controller record, consistent
+with a substantial initial shader-compilation cost. These worker ages include
+other setup; output time is included in page time but not isolated. GPU LU
+remains opt-in, with Wasm LU and the overall HOST vacuum default retained.
+This two-repeat comparison on one adapter is not full performance
+qualification. Raw captures, comparisons and runtime provenance remain in
+`../tmp/vacuum-lu-webgpu/`.
+
+The parent WebGPU build and all 14 CTests pass, along with all 19 dependency
+Wasm reference tests and the real Chrome gates above. Native numerical
+execution paths are unchanged; native GPU solves and Firefox were not rerun.
+The explicit `vacuum_lu=host` fallback preserves all 625 paired cth_like
+controller records and its scientific digest exactly.
+
 ## Geometry and Newton options
 
 `geometry=compensated-m1` changes scalar W7-X trajectories and is a Class C
