@@ -253,14 +253,13 @@ def main():
         parser.error("--pairs must be between 5 and 50")
     if args.cpu is not None:
         os.sched_setaffinity(0, {args.cpu})
-    args.out.mkdir(parents=True, exist_ok=True)
     manifest = json.loads(args.manifest.read_text())
     selected = set(args.cases or (case["id"] for case in manifest["cases"]))
     known = {case["id"] for case in manifest["cases"]}
     if selected - known:
         parser.error(f"unknown cases: {sorted(selected - known)}")
     binary_hash = digest(args.exe)
-    write_json(args.out / "protocol.json", {
+    protocol = {
         "manifest": str(args.manifest), "manifest_sha256": digest(args.manifest),
         "binary_sha256": binary_hash, "phase": args.phase, "policy": POLICY,
         "cases": [case["id"] for case in manifest["cases"]
@@ -269,7 +268,15 @@ def main():
         "pairs": args.pairs if args.phase == "paired" else 1,
         "cpu_affinity": sorted(os.sched_getaffinity(0)),
         "metric": "sum of complete per-stage instrumented solver CUDA intervals",
-    })
+    }
+    protocol_path = args.out / "protocol.json"
+    if args.out.exists() and any(args.out.iterdir()):
+        if (not args.resume or not protocol_path.exists()
+                or json.loads(protocol_path.read_text()) != protocol):
+            parser.error("nonempty output directory requires --resume with identical protocol")
+    else:
+        args.out.mkdir(parents=True, exist_ok=True)
+        write_json(protocol_path, protocol)
     rows = []
     for case in manifest["cases"]:
         if case["id"] not in selected:
