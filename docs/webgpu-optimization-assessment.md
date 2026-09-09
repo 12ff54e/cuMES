@@ -12,8 +12,8 @@ Native CUDA performance measurements do not qualify browser speedups.
 | Cache weighted forward basis (`21b6043`) | Scalar axisymmetric projection still multiplies four basis values by the integration weight per theta, mode, and surface. A separate immutable weighted table could remove that repeated work. | Candidate for a measured follow-up; retain current arithmetic in this merge. |
 | Compensate m=1 toroidal odd-position sums (`9c59702`) | The scalar browser path rounds toroidal sums to scalar intermediates before compensated poloidal reconstruction. The paired path already retains high/low intermediates. | Scalar precision improvement is feasible, but requires new cancellation tests and trajectory qualification. |
 | Keep higher odd-mode products single-word (`0d8482a`) | Scalar WebGPU already uses single-word toroidal intermediates and compensated poloidal products. Its precision split differs from the new CUDA implementation. | Do not weaken the paired path or copy the CUDA shortcut independently of its precision contract. |
-| Parallel axisymmetric vacuum source evaluation (`0bc92e2`) | CUDA benefits from distributing source terms over blocks. The HOST/Wasm kernel dispatcher is serial; the split would add scratch traffic without GPU parallelism. | Merge the CUDA implementation and retain the fused HOST evaluation. |
-| Spread small singular RHS systems over blocks (`f8bbfa2`) | CUDA block size affects occupancy; HOST dispatch ignores it. | Merge using the existing backend launch abstraction. |
+| Parallel axisymmetric vacuum source evaluation (`0bc92e2`) | The source-term decomposition is portable to WebGPU dispatches. It provides no GPU parallelism through the current serial HOST/Wasm dispatcher. | Retain fused HOST evaluation for compatibility; carry the parallel decomposition into a vacuum WebGPU backend and measure its scratch/workgroup tradeoff. |
+| Spread small singular RHS systems over blocks (`f8bbfa2`) | Distributing independent RHS systems is portable to WebGPU workgroups. The best workgroup size is adapter-dependent; HOST dispatch ignores it. | Retain the CUDA launch change and test workgroup sizes when porting the vacuum kernels. |
 | Combine free-boundary copies with fences (`cc2d91d`) | These are CUDA stream/copy changes. The browser already reads the edge residual after its force operation and uses its own batched WebGPU readbacks. | No direct browser port. |
 | Opt-in Newton–GMRES (`bcdd3da`, `ca33025`) | Requires WebGPU linear algebra, frozen residual probes, trial acceptance, and precision qualification. Native support is restricted to fixed-boundary axisymmetric double. | Keep the browser option unavailable until a separate Class C port is qualified. |
 
@@ -21,6 +21,50 @@ The vacuum dependency must contain both the HOST backend from `4f724ed` and
 the CUDA optimizations from `4d19939`. Replacing its gitlink with the native
 revision alone removes the browser backend. The merged HOST path retains the
 existing source-summation order; only CUDA allocates the split source scratch.
+
+## Vacuum WebGPU backend
+
+The CUDA portion of vacuum-field is portable to WebGPU. The current HOST/Wasm
+implementation is a reuse path, not a requirement that vacuum computation run
+on the CPU. The absence of an immediate Wasm speedup from CUDA scheduling
+changes does not limit a WGSL implementation of the same parallel algorithm.
+
+Implement the backend inside `deps/vacuum-field`, preserving its library
+boundary and host configuration contracts, with only the cuMES coupling in
+`src/webgpu/vacuum.cpp`.
+The existing [vacuum driver](../deps/vacuum-field/src/kernels/vacuum_field_solver_impl.cuh)
+provides the stage sequence:
+
+1. GPU surface synthesis, derivatives, and metrics.
+2. GPU field-grid interpolation, axis-current field, and normal/covariant field.
+3. GPU singular and regularized integrals, Fourier projections, matrix and RHS
+   assembly, including the parallel axisymmetric source-term decomposition.
+4. Wasm double-precision dense LU factorization and solve, retaining the current
+   [native CPU solve boundary](../deps/vacuum-field/src/kernels/laplace_solver_impl.cuh).
+5. GPU potential derivatives, vacuum magnetic field and pressure, followed by
+   the cuMES LCFS pressure-force coupling.
+
+Reuse configuration, Fourier/singular coefficient setup, coil parsing,
+MAKEGRID generation, and `LuSolve` as Wasm C++. Replace CUDA device pointers,
+launches, and transfers with WebGPU buffers, WGSL pipelines, and asynchronous
+submission/readback. Keep intermediate arrays resident across GPU stages;
+batch the matrix/RHS readback needed by the dense solve and upload the solved
+potential. Preserve full/partial vacuum updates and factorization reuse under
+`nvacskip`. The cuMES controller and vacuum activation/restart policy remain
+host responsibilities.
+
+Precision needs its own implementation and validation: the current browser
+vacuum uses CPU double, while WGSL kernels use scalar or paired f32. In
+particular, singular-integral logarithms and recurrences need error checks;
+paired storage alone does not guarantee double-precision behavior. Paired f32
+also retains the f32 exponent range: the double recurrence seed `1e-300` and
+tangent sentinel `1e50` need explicit scaling or equivalent branch handling.
+Reuse the
+dependency's analytic, frozen-loop, and trusted-reference fixtures as GPU
+operator gates, then test the complete Solovev, W7-X, and cth_like coupling,
+including all configured residuals and geometry validity. Retain the HOST
+backend as an independent comparison path. Tune WebGPU workgroups and measure
+warmed runs on the target adapter before attributing a speedup to the port.
 
 ## Fourier follow-ups
 
