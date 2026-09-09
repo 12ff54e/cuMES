@@ -1,5 +1,6 @@
 #include "cumes/webgpu/iteration.hpp"
 
+#include "cumes/webgpu/operator_setup.hpp"
 #include "pipeline_cache.hpp"
 
 #include <limits>
@@ -29,7 +30,7 @@ class IterationDispatch
         callback = std::move(complete);
         prefix_only = false;
         force_.device_fields = std::move(force);
-        forward(force_.device_fields, 0);
+        forward(force_.device_fields, ResidualPhase::FORCE);
         map();
     }
 
@@ -43,8 +44,7 @@ class IterationDispatch
 
     void start() {
         ToroidalInverseCase inverse;
-        shape(inverse);
-        inverse.nfp = input.stage.nfp;
+        assign_stage_shape(inverse, input.stage);
         inverse.double_single = input.double_single;
         inverse.radius_reference = input.stage.radius_reference;
         inverse.compensated_geometry = input.stage.compensated_geometry;
@@ -129,17 +129,6 @@ class IterationDispatch
         device.GetQueue().Submit(1, &commands);
     }
 
-    template <typename Case>
-    void shape(Case& value) const {
-        value.ns = input.stage.ns;
-        if constexpr (requires { value.mpol; }) value.mpol = input.stage.mpol;
-        if constexpr (requires { value.ntor; }) value.ntor = input.stage.ntor;
-        if constexpr (requires { value.ntheta; })
-            value.ntheta = input.stage.ntheta;
-        if constexpr (requires { value.nzeta; })
-            value.nzeta = input.stage.nzeta;
-    }
-
     template <typename Result>
     std::function<void(std::string, Result)> collect(
         Result IterationResult::* member) {
@@ -159,12 +148,11 @@ class IterationDispatch
                              input.refresh_preconditioner;
         in.readback_validity = prefix_only && input.compact_vacuum &&
                                !input.refresh_preconditioner;
-        shape(in);
+        assign_stage_shape(in, input.stage);
         in.delta_s = input.stage.profiles.delta_s;
         in.double_single = input.double_single;
         in.device_geometry = inverse_.device_geometry;
-        in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
-        in.sqrt_s_h = input.stage.profiles.sqrt_s_h;
+        assign_radial_profiles(in, input.stage.profiles);
         in.readback = {
             batch, [self = shared_from_this()](BaseGeometryResult value) {
                 self->geometry_ = std::move(value);
@@ -202,7 +190,7 @@ class IterationDispatch
             !input.compact_fields || input.refresh_preconditioner;
         in.readback_vacuum = prefix_only && input.compact_vacuum &&
                              !input.refresh_preconditioner;
-        shape(in);
+        assign_stage_shape(in, input.stage);
         const auto& p = input.stage.profiles;
         in.lamscale = p.lamscale;
         in.lamscale_lo = p.lamscale_lo;
@@ -210,20 +198,7 @@ class IterationDispatch
         in.double_single = input.double_single;
         in.device_geometry = inverse_.device_geometry;
         in.device_base_geometry = geometry_.device_fields;
-        in.sqrt_s_h = p.sqrt_s_h;
-        in.sqrt_s_h_lo = p.sqrt_s_h_lo;
-        in.phip_f = p.phip_f;
-        in.phip_f_lo = p.phip_f_lo;
-        in.chip_h = p.chip_h;
-        in.chip_h_lo = p.chip_h_lo;
-        in.pres_h = p.pres_h;
-        in.pres_h_lo = p.pres_h_lo;
-        in.curr_h = p.curr_h;
-        in.curr_h_lo = p.curr_h_lo;
-        in.phip_h = p.phip_h;
-        in.phip_h_lo = p.phip_h_lo;
-        in.iota_h = p.iota_h;
-        in.iota_h_lo = p.iota_h_lo;
+        assign_radial_profiles(in, p);
         in.readback = {
             batch, [self = shared_from_this()](MagneticFieldResult value) {
                 self->magnetic_ = std::move(value);
@@ -237,7 +212,7 @@ class IterationDispatch
     void force() {
         AxisymmetricForceCase in;
         in.radius_reference = input.stage.radius_reference;
-        shape(in);
+        assign_stage_shape(in, input.stage);
         const auto& p = input.stage.profiles;
         in.delta_s = p.delta_s;
         in.delta_s_lo = p.delta_s_lo;
@@ -248,12 +223,7 @@ class IterationDispatch
         in.device_geometry = inverse_.device_geometry;
         in.device_base_geometry = geometry_.device_fields;
         in.device_magnetic_field = magnetic_.device_fields;
-        in.sqrt_s_f = p.sqrt_s_f;
-        in.sqrt_s_f_lo = p.sqrt_s_f_lo;
-        in.sqrt_s_h = p.sqrt_s_h;
-        in.sqrt_s_h_lo = p.sqrt_s_h_lo;
-        in.phip_f = p.phip_f;
-        in.phip_f_lo = p.phip_f_lo;
+        assign_radial_profiles(in, p);
         const auto self = shared_from_this();
         if (prefix_only) {
             in.readback_lcfs = input.compact_vacuum;
@@ -278,14 +248,13 @@ class IterationDispatch
                 self->snapshot_fields(value.device_fields,
                                       self->result.force.fields,
                                       self->result.force.fields_lo);
-                self->forward(value.device_fields, 0);
+                self->forward(value.device_fields, ResidualPhase::FORCE);
             });
     }
 
-    void forward(const DeviceFields& fields, int index) {
+    void forward(const DeviceFields& fields, ResidualPhase phase) {
         ToroidalForwardCase in;
-        shape(in);
-        in.nfp = input.stage.nfp;
+        assign_stage_shape(in, input.stage);
         in.double_single = input.double_single;
         in.use_fft = input.use_fft;
         in.optimized_fft = input.optimized_fft;
@@ -293,7 +262,7 @@ class IterationDispatch
         in.include_lcfs = input.include_lcfs;
         in.readback = false;
         in.device_fields = fields;
-        if (index == 1 && input.stage.ntor == 0) {
+        if (phase == ResidualPhase::CONSTRAINT && input.stage.ntor == 0) {
             // Axisymmetric constraints append four planes after ten forces;
             // the separable projector consumes sixteen force planes first.
             const auto plane = static_cast<std::uint64_t>(input.stage.ns) *
@@ -323,40 +292,41 @@ class IterationDispatch
         const auto self = shared_from_this();
         enqueue_toroidal_forward(
             device, in,
-            [self, index](std::string error, ToroidalForwardResult value) {
+            [self, phase](std::string error, ToroidalForwardResult value) {
                 if (!error.empty()) {
                     self->error = std::move(error);
                     return;
                 }
+                const auto index = static_cast<std::size_t>(phase);
                 self->result.forward[index] = value;
                 self->snapshot_fields(value.device_residual,
                                       self->result.forward[index].residual,
                                       self->result.forward[index].residual_lo);
-                self->decompose(value.device_residual, index);
+                self->decompose(value.device_residual, phase);
             });
     }
 
-    void decompose(const DeviceFields& fields, int index) {
+    void decompose(const DeviceFields& fields, ResidualPhase phase) {
+        const auto index = static_cast<int>(phase);
         ResidualDecompositionCase in;
-        shape(in);
+        assign_stage_shape(in, input.stage);
         in.double_single = input.double_single;
         in.device_residual = fields;
-        in.zero_m1_z = index == 0 || input.zero_m1_z;
+        in.zero_m1_z = phase == ResidualPhase::FORCE || input.zero_m1_z;
         in.include_edge_rz = input.include_edge_invariant;
         in.readback_values = !input.compact_norms;
-        in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
-        in.sqrt_s_f_lo = input.stage.profiles.sqrt_s_f_lo;
+        assign_radial_profiles(in, input.stage.profiles);
         const auto self = shared_from_this();
-        in.readback = {batch, [self, index](ResidualDecompositionResult value) {
-                           self->norm(
-                               value.device_residual, index,
-                               [self, index, fields = value.device_residual] {
-                                   if (index == 0)
-                                       self->elements();
-                                   else
-                                       self->apply(fields);
-                               });
-                       }};
+        in.readback = {
+            batch, [self, phase, index](ResidualDecompositionResult value) {
+                self->norm(value.device_residual, index,
+                           [self, phase, fields = value.device_residual] {
+                               if (phase == ResidualPhase::FORCE)
+                                   self->elements();
+                               else
+                                   self->apply(fields);
+                           });
+            }};
         enqueue_residual_decomposition(
             device, in,
             [self, index](std::string error,
@@ -374,14 +344,13 @@ class IterationDispatch
             return;
         }
         AxisymmetricPreconditionerElementCase in;
-        shape(in);
+        assign_stage_shape(in, input.stage);
         in.delta_s = input.stage.profiles.delta_s;
         in.free_boundary = input.include_lcfs;
         in.device_geometry = inverse_.device_geometry;
         in.device_base_geometry = geometry_.device_fields;
         in.device_magnetic_field = magnetic_.device_fields;
-        in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
-        in.sqrt_s_h = input.stage.profiles.sqrt_s_h;
+        assign_radial_profiles(in, input.stage.profiles);
         in.readback = {batch, [self = shared_from_this()](
                                   AxisymmetricPreconditionerElements value) {
                            self->elements_ = std::move(value);
@@ -393,14 +362,12 @@ class IterationDispatch
 
     void matrix() {
         AxisymmetricPreconditionerMatrixCase in;
-        shape(in);
-        in.nfp = input.stage.nfp;
+        assign_stage_shape(in, input.stage);
         in.delta_s = input.stage.profiles.delta_s;
         in.free_boundary = input.include_lcfs;
         in.elements = elements_;
         in.device_base_geometry = geometry_.device_fields;
-        in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
-        in.phip_h = input.stage.profiles.phip_h;
+        assign_radial_profiles(in, input.stage.profiles);
         in.readback = {batch, [self = shared_from_this()](
                                   AxisymmetricPreconditionerMatrix value) {
                            self->matrix_ = std::move(value);
@@ -412,7 +379,7 @@ class IterationDispatch
 
     void constraint() {
         AxisymmetricConstraintCase in;
-        shape(in);
+        assign_stage_shape(in, input.stage);
         in.readback_intermediates = !input.compact_fields;
         in.delta_s = input.stage.profiles.delta_s;
         in.tcon0 = input.stage.tcon0;
@@ -447,15 +414,14 @@ class IterationDispatch
             in.z_con0_lo.assign(points, 0.0F);
             in.tcon.assign(in.ns, 0.0F);
         }
-        in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
-        in.sqrt_s_f_lo = input.stage.profiles.sqrt_s_f_lo;
+        assign_radial_profiles(in, input.stage.profiles);
         in.batched_readback = {
             batch,
             [self = shared_from_this()](AxisymmetricConstraintResult value) {
                 self->snapshot_fields(value.device_fields,
                                       self->result.constraint.fields,
                                       self->result.constraint.fields_lo);
-                self->forward(value.device_fields, 1);
+                self->forward(value.device_fields, ResidualPhase::CONSTRAINT);
             }};
         enqueue_axisymmetric_constraint(device, in,
                                         collect(&IterationResult::constraint));
@@ -463,7 +429,7 @@ class IterationDispatch
 
     void apply(const DeviceFields& residual) {
         AxisymmetricPreconditionerApplyCase in;
-        shape(in);
+        assign_stage_shape(in, input.stage);
         in.elements = elements_;
         in.matrix = matrix_;
         in.device_residual = residual;

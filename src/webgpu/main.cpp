@@ -14,6 +14,7 @@
 #include "cumes/webgpu/iteration.hpp"
 #include "cumes/webgpu/newton.hpp"
 #include "cumes/webgpu/numerics.hpp"
+#include "cumes/webgpu/operator_setup.hpp"
 #include "cumes/webgpu/preconditioner.hpp"
 #include "cumes/webgpu/prolongation.hpp"
 #include "cumes/webgpu/toroidal.hpp"
@@ -45,6 +46,8 @@
 #include <webgpu/webgpu_cpp.h>
 
 namespace {
+
+using cumes::webgpu::ResidualPhase;
 
 extern "C" {
 void publish_browser_result(int success, const char* detail);
@@ -2622,12 +2625,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 w7x_stage_.state_lo[axis] = w7x_stage_.state_lo[axis + 1];
             }
         }
-        w7x_inverse_case_.ns = w7x_stage_.ns;
-        w7x_inverse_case_.mpol = w7x_stage_.mpol;
-        w7x_inverse_case_.ntor = w7x_stage_.ntor;
-        w7x_inverse_case_.ntheta = w7x_stage_.ntheta;
-        w7x_inverse_case_.nzeta = w7x_stage_.nzeta;
-        w7x_inverse_case_.nfp = w7x_stage_.nfp;
+        cumes::webgpu::assign_stage_shape(w7x_inverse_case_, w7x_stage_);
         w7x_inverse_case_.double_single = true;
         w7x_inverse_case_.state = w7x_stage_.state;
         w7x_inverse_case_.state_lo = w7x_stage_.state_lo;
@@ -2703,15 +2701,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_w7x_geometry(std::vector<float> geometry) {
-        w7x_geometry_case_.ns = w7x_stage_.ns;
-        w7x_geometry_case_.ntheta = w7x_stage_.ntheta;
-        w7x_geometry_case_.nzeta = w7x_stage_.nzeta;
+        cumes::webgpu::assign_stage_shape(w7x_geometry_case_, w7x_stage_);
         w7x_geometry_case_.delta_s = w7x_stage_.profiles.delta_s;
         w7x_geometry_case_.double_single = true;
         w7x_geometry_case_.geometry = std::move(geometry);
         w7x_geometry_case_.geometry_lo = w7x_geometry_lo_;
-        w7x_geometry_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
-        w7x_geometry_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
+        cumes::webgpu::assign_radial_profiles(w7x_geometry_case_,
+                                              w7x_stage_.profiles);
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_base_geometry(
             device_, w7x_geometry_case_,
@@ -2771,9 +2767,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_w7x_magnetic_field(std::vector<float> base_geometry) {
-        w7x_magnetic_case_.ns = w7x_stage_.ns;
-        w7x_magnetic_case_.ntheta = w7x_stage_.ntheta;
-        w7x_magnetic_case_.nzeta = w7x_stage_.nzeta;
+        cumes::webgpu::assign_stage_shape(w7x_magnetic_case_, w7x_stage_);
         w7x_magnetic_case_.lamscale = w7x_stage_.profiles.lamscale;
         w7x_magnetic_case_.lamscale_lo = w7x_stage_.profiles.lamscale_lo;
         w7x_magnetic_case_.prescribed_current = true;
@@ -2782,20 +2776,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_magnetic_case_.geometry_lo = w7x_geometry_case_.geometry_lo;
         w7x_magnetic_case_.base_geometry = std::move(base_geometry);
         w7x_magnetic_case_.base_geometry_lo = w7x_base_geometry_lo_;
-        w7x_magnetic_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
-        w7x_magnetic_case_.sqrt_s_h_lo = w7x_stage_.profiles.sqrt_s_h_lo;
-        w7x_magnetic_case_.phip_f = w7x_stage_.profiles.phip_f;
-        w7x_magnetic_case_.phip_f_lo = w7x_stage_.profiles.phip_f_lo;
-        w7x_magnetic_case_.chip_h = w7x_stage_.profiles.chip_h;
-        w7x_magnetic_case_.chip_h_lo = w7x_stage_.profiles.chip_h_lo;
-        w7x_magnetic_case_.pres_h = w7x_stage_.profiles.pres_h;
-        w7x_magnetic_case_.pres_h_lo = w7x_stage_.profiles.pres_h_lo;
-        w7x_magnetic_case_.curr_h = w7x_stage_.profiles.curr_h;
-        w7x_magnetic_case_.curr_h_lo = w7x_stage_.profiles.curr_h_lo;
-        w7x_magnetic_case_.phip_h = w7x_stage_.profiles.phip_h;
-        w7x_magnetic_case_.phip_h_lo = w7x_stage_.profiles.phip_h_lo;
-        w7x_magnetic_case_.iota_h = w7x_stage_.profiles.iota_h;
-        w7x_magnetic_case_.iota_h_lo = w7x_stage_.profiles.iota_h_lo;
+        cumes::webgpu::assign_radial_profiles(w7x_magnetic_case_,
+                                              w7x_stage_.profiles);
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_magnetic_field(
             device_, w7x_magnetic_case_,
@@ -2877,9 +2859,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_w7x_force(std::vector<float> magnetic_field) {
-        w7x_force_case_.ns = w7x_stage_.ns;
-        w7x_force_case_.ntheta = w7x_stage_.ntheta;
-        w7x_force_case_.nzeta = w7x_stage_.nzeta;
+        cumes::webgpu::assign_stage_shape(w7x_force_case_, w7x_stage_);
         w7x_force_case_.delta_s = w7x_stage_.profiles.delta_s;
         w7x_force_case_.delta_s_lo = w7x_stage_.profiles.delta_s_lo;
         w7x_force_case_.lamscale = w7x_stage_.profiles.lamscale;
@@ -2891,12 +2871,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         w7x_force_case_.base_geometry_lo = w7x_base_geometry_lo_;
         w7x_force_case_.magnetic_field = std::move(magnetic_field);
         w7x_force_case_.magnetic_field_lo = w7x_magnetic_field_lo_;
-        w7x_force_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
-        w7x_force_case_.sqrt_s_f_lo = w7x_stage_.profiles.sqrt_s_f_lo;
-        w7x_force_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
-        w7x_force_case_.sqrt_s_h_lo = w7x_stage_.profiles.sqrt_s_h_lo;
-        w7x_force_case_.phip_f = w7x_stage_.profiles.phip_f;
-        w7x_force_case_.phip_f_lo = w7x_stage_.profiles.phip_f_lo;
+        cumes::webgpu::assign_radial_profiles(w7x_force_case_,
+                                              w7x_stage_.profiles);
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_axisymmetric_force(
             device_, w7x_force_case_,
@@ -2943,12 +2919,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_w7x_forward(std::vector<float> force_fields) {
-        w7x_forward_case_.ns = w7x_stage_.ns;
-        w7x_forward_case_.mpol = w7x_stage_.mpol;
-        w7x_forward_case_.ntor = w7x_stage_.ntor;
-        w7x_forward_case_.ntheta = w7x_stage_.ntheta;
-        w7x_forward_case_.nzeta = w7x_stage_.nzeta;
-        w7x_forward_case_.nfp = w7x_stage_.nfp;
+        cumes::webgpu::assign_stage_shape(w7x_forward_case_, w7x_stage_);
         w7x_forward_case_.include_lcfs = false;
         w7x_forward_case_.double_single = true;
         const std::size_t points = static_cast<std::size_t>(w7x_stage_.ns) *
@@ -3010,16 +2981,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_w7x_decomposition(std::vector<float> residual) {
-        w7x_residual_case_.ns = w7x_stage_.ns;
-        w7x_residual_case_.mpol = w7x_stage_.mpol;
-        w7x_residual_case_.ntor = w7x_stage_.ntor;
+        cumes::webgpu::assign_stage_shape(w7x_residual_case_, w7x_stage_);
         w7x_residual_case_.include_edge_rz = false;
         w7x_residual_case_.zero_m1_z = true;
         w7x_residual_case_.double_single = true;
         w7x_residual_case_.residual = std::move(residual);
         w7x_residual_case_.residual_lo = w7x_spectral_residual_lo_;
-        w7x_residual_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
-        w7x_residual_case_.sqrt_s_f_lo = w7x_stage_.profiles.sqrt_s_f_lo;
+        cumes::webgpu::assign_radial_profiles(w7x_residual_case_,
+                                              w7x_stage_.profiles);
         const auto self = shared_from_this();
         cumes::webgpu::enqueue_residual_decomposition(
             device_, w7x_residual_case_,
@@ -3077,9 +3046,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_w7x_descent(std::vector<float> residual) {
-        w7x_descent_case_.ns = w7x_stage_.ns;
-        w7x_descent_case_.mpol = w7x_stage_.mpol;
-        w7x_descent_case_.ntor = w7x_stage_.ntor;
+        cumes::webgpu::assign_stage_shape(w7x_descent_case_, w7x_stage_);
         w7x_descent_case_.move_lcfs = false;
         w7x_descent_case_.delta_t = 0.01F;
         w7x_descent_case_.damping_b1 = 0.9F;
@@ -3396,12 +3363,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             (!production_solve_ && !requested_reference_transfers() &&
              !requested_spectral_fences() && !requested_compare_fft());
         if (!batched || !production_solve_) {
-            stage_toroidal_inverse_case_.ns = initialized_stage_.ns;
-            stage_toroidal_inverse_case_.mpol = initialized_stage_.mpol;
-            stage_toroidal_inverse_case_.ntor = initialized_stage_.ntor;
-            stage_toroidal_inverse_case_.ntheta = initialized_stage_.ntheta;
-            stage_toroidal_inverse_case_.nzeta = initialized_stage_.nzeta;
-            stage_toroidal_inverse_case_.nfp = initialized_stage_.nfp;
+            cumes::webgpu::assign_stage_shape(stage_toroidal_inverse_case_,
+                                              initialized_stage_);
             stage_toroidal_inverse_case_.double_single = double_single_solve_;
             stage_toroidal_inverse_case_.radius_reference =
                 initialized_stage_.radius_reference;
@@ -3548,9 +3511,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_base_geometry(std::vector<float> geometry) {
         base_geometry_case_.device_geometry = device_geometry_;
-        base_geometry_case_.ns = initialized_stage_.ns;
-        base_geometry_case_.ntheta = initialized_stage_.ntheta;
-        base_geometry_case_.nzeta = initialized_stage_.nzeta;
+        cumes::webgpu::assign_stage_shape(base_geometry_case_,
+                                          initialized_stage_);
         base_geometry_case_.delta_s = initialized_stage_.profiles.delta_s;
         base_geometry_case_.double_single = double_single_solve_;
         base_geometry_case_.radius_reference =
@@ -3562,8 +3524,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         } else {
             base_geometry_case_.geometry_lo.clear();
         }
-        base_geometry_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
-        base_geometry_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        cumes::webgpu::assign_radial_profiles(base_geometry_case_,
+                                              initialized_stage_.profiles);
         const auto self = shared_from_this();
         enqueue_evaluated(
             cumes::webgpu::enqueue_base_geometry, base_geometry_case_,
@@ -3696,9 +3658,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     void run_magnetic_field(std::vector<float> base_geometry) {
         magnetic_field_case_.device_geometry = device_geometry_;
         magnetic_field_case_.device_base_geometry = device_base_geometry_;
-        magnetic_field_case_.ns = initialized_stage_.ns;
-        magnetic_field_case_.ntheta = initialized_stage_.ntheta;
-        magnetic_field_case_.nzeta = initialized_stage_.nzeta;
+        cumes::webgpu::assign_stage_shape(magnetic_field_case_,
+                                          initialized_stage_);
         magnetic_field_case_.lamscale = initialized_stage_.profiles.lamscale;
         magnetic_field_case_.lamscale_lo =
             initialized_stage_.profiles.lamscale_lo;
@@ -3718,21 +3679,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         } else {
             magnetic_field_case_.base_geometry_lo.clear();
         }
-        magnetic_field_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
-        magnetic_field_case_.sqrt_s_h_lo =
-            initialized_stage_.profiles.sqrt_s_h_lo;
-        magnetic_field_case_.phip_f = initialized_stage_.profiles.phip_f;
-        magnetic_field_case_.phip_f_lo = initialized_stage_.profiles.phip_f_lo;
-        magnetic_field_case_.chip_h = initialized_stage_.profiles.chip_h;
-        magnetic_field_case_.chip_h_lo = initialized_stage_.profiles.chip_h_lo;
-        magnetic_field_case_.pres_h = initialized_stage_.profiles.pres_h;
-        magnetic_field_case_.pres_h_lo = initialized_stage_.profiles.pres_h_lo;
-        magnetic_field_case_.curr_h = initialized_stage_.profiles.curr_h;
-        magnetic_field_case_.curr_h_lo = initialized_stage_.profiles.curr_h_lo;
-        magnetic_field_case_.phip_h = initialized_stage_.profiles.phip_h;
-        magnetic_field_case_.phip_h_lo = initialized_stage_.profiles.phip_h_lo;
-        magnetic_field_case_.iota_h = initialized_stage_.profiles.iota_h;
-        magnetic_field_case_.iota_h_lo = initialized_stage_.profiles.iota_h_lo;
+        cumes::webgpu::assign_radial_profiles(magnetic_field_case_,
+                                              initialized_stage_.profiles);
         const auto self = shared_from_this();
         enqueue_evaluated(
             cumes::webgpu::enqueue_magnetic_field, magnetic_field_case_,
@@ -3883,9 +3831,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.device_base_geometry = device_base_geometry_;
         force_case_.device_magnetic_field = device_magnetic_field_;
         force_case_.readback = !(production_solve_ && resident_path());
-        force_case_.ns = initialized_stage_.ns;
-        force_case_.ntheta = initialized_stage_.ntheta;
-        force_case_.nzeta = initialized_stage_.nzeta;
+        cumes::webgpu::assign_stage_shape(force_case_, initialized_stage_);
         force_case_.delta_s = initialized_stage_.profiles.delta_s;
         force_case_.delta_s_lo = initialized_stage_.profiles.delta_s_lo;
         force_case_.lamscale = initialized_stage_.profiles.lamscale;
@@ -3912,12 +3858,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
         force_case_.magnetic_field = std::move(magnetic_field);
         force_case_.magnetic_field_lo = std::move(stage_magnetic_field_lo_);
-        force_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
-        force_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
-        force_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
-        force_case_.sqrt_s_h_lo = initialized_stage_.profiles.sqrt_s_h_lo;
-        force_case_.phip_f = initialized_stage_.profiles.phip_f;
-        force_case_.phip_f_lo = initialized_stage_.profiles.phip_f_lo;
+        cumes::webgpu::assign_radial_profiles(force_case_,
+                                              initialized_stage_.profiles);
         if (vacuum_ && vacuum_->run_vacuum_block()) {
             try {
                 const auto before = vacuum_->state();
@@ -4066,168 +4008,218 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                    });
             return;
         }
-        solver_toroidal_forward_case_.ns = initialized_stage_.ns;
-        solver_toroidal_forward_case_.device_fields = device_force_fields_;
-        solver_toroidal_forward_case_.use_fft =
+        run_projection(ResidualPhase::FORCE, std::move(force_fields));
+    }
+
+    void run_projection(ResidualPhase phase, std::vector<float> fields) {
+        const bool force = phase == ResidualPhase::FORCE;
+        auto& input = force ? solver_toroidal_forward_case_
+                            : constraint_toroidal_forward_case_;
+        cumes::webgpu::assign_stage_shape(input, initialized_stage_);
+        input.device_fields =
+            force ? device_force_fields_ : device_constraint_fields_;
+        input.use_fft =
             initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
-        solver_toroidal_forward_case_.readback = !resident_spectral_path();
-        solver_toroidal_forward_case_.optimized_fft = !requested_generic_fft();
-        solver_toroidal_forward_case_.canonical_zeta =
-            requested_canonical_zeta();
-        solver_toroidal_forward_case_.mpol = initialized_stage_.mpol;
-        solver_toroidal_forward_case_.ntor = initialized_stage_.ntor;
-        solver_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
-        solver_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
-        solver_toroidal_forward_case_.nfp = initialized_stage_.nfp;
-        solver_toroidal_forward_case_.include_lcfs =
-            vacuum_ && vacuum_->apply_edge_force();
-        solver_toroidal_forward_case_.double_single = double_single_solve_;
-        const std::size_t points =
-            static_cast<std::size_t>(initialized_stage_.ns) *
-            initialized_stage_.ntheta * initialized_stage_.nzeta;
-        if (!device_force_fields_ || !production_solve_) {
-            solver_toroidal_forward_case_.fields.assign(
-                cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
-            std::copy(force_fields.begin(), force_fields.end(),
-                      solver_toroidal_forward_case_.fields.begin());
-            if (double_single_solve_) {
-                solver_toroidal_forward_case_.fields_lo.assign(
+        input.readback = !resident_spectral_path();
+        input.optimized_fft = !requested_generic_fft();
+        input.canonical_zeta = requested_canonical_zeta();
+        input.include_lcfs = vacuum_ && vacuum_->apply_edge_force();
+        input.double_single = double_single_solve_;
+        if (force) {
+            const std::size_t points =
+                static_cast<std::size_t>(initialized_stage_.ns) *
+                initialized_stage_.ntheta * initialized_stage_.nzeta;
+            if (!device_force_fields_ || !production_solve_) {
+                input.fields.assign(
                     cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
-                std::copy(stage_force_fields_lo_.begin(),
-                          stage_force_fields_lo_.end(),
-                          solver_toroidal_forward_case_.fields_lo.begin());
+                std::copy(fields.begin(), fields.end(), input.fields.begin());
+                if (double_single_solve_) {
+                    input.fields_lo.assign(
+                        cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points,
+                        0.0F);
+                    std::copy(stage_force_fields_lo_.begin(),
+                              stage_force_fields_lo_.end(),
+                              input.fields_lo.begin());
+                } else {
+                    input.fields_lo.clear();
+                }
             } else {
-                solver_toroidal_forward_case_.fields_lo.clear();
+                input.fields.clear();
+                input.fields_lo.clear();
             }
         } else {
-            solver_toroidal_forward_case_.fields.clear();
-            solver_toroidal_forward_case_.fields_lo.clear();
+            input.fields = std::move(fields);
+            input.fields_lo = constraint_fields_lo_;
         }
         const auto self = shared_from_this();
         enqueue_checked_forward(
-            solver_toroidal_forward_case_, "force",
-            [self](std::string error,
-                   cumes::webgpu::ToroidalForwardResult actual) {
+            input, force ? "force" : "constraint",
+            [self, phase](std::string error,
+                          cumes::webgpu::ToroidalForwardResult actual) {
                 if (!error.empty()) {
                     self->finish(false, std::move(error));
                     return;
                 }
-                self->stage_spectral_residual_lo_ =
-                    std::move(actual.residual_lo);
-                self->residual_case_.device_residual = actual.device_residual;
+                const bool force = phase == ResidualPhase::FORCE;
+                auto& low = force ? self->stage_spectral_residual_lo_
+                                  : self->constraint_spectral_residual_lo_;
+                auto& residual = force ? self->residual_case_
+                                       : self->constraint_residual_case_;
+                low = std::move(actual.residual_lo);
+                residual.device_residual = actual.device_residual;
                 if (actual.device_residual && self->production_solve_) {
-                    self->run_residual_decomposition({});
-                    return;
-                }
-                self->finish_stage_forward(
-                    std::move(actual.residual),
-                    self->production_solve_
-                        ? std::vector<float>{}
-                        : cumes::webgpu::toroidal_forward_reference(
-                              self->solver_toroidal_forward_case_)
-                              .residual);
-            });
-    }
-
-    void finish_stage_forward(std::vector<float> residual,
-                              const std::vector<float>& expected) {
-        float max_error = 0.0F;
-        bool finite = production_solve_ || residual.size() == expected.size();
-        if (finite && !production_solve_) {
-            for (std::size_t i = 0; i < residual.size(); ++i) {
-                max_error =
-                    std::max(max_error, std::abs(residual[i] - expected[i]));
-                finite &= std::isfinite(residual[i]);
-            }
-        }
-        if (production_solve_) { finite = all_finite(residual); }
-        const bool nonzero =
-            std::any_of(residual.begin(), residual.end(),
-                        [](float value) { return value != 0.0F; });
-        if (max_error > 5.0e-4F || !finite || !nonzero) {
-            finish(false, "stage forward residual mismatch: " +
-                              std::to_string(max_error));
-            return;
-        }
-        if (!production_solve_) {
-            std::printf(
-                "  %s spectral residual projection: PASS "
-                "(max |GPU-CPU| = %.3e)\n",
-                active_case_name_.c_str(), static_cast<double>(max_error));
-        }
-        run_residual_decomposition(std::move(residual));
-    }
-
-    void run_residual_decomposition(std::vector<float> residual) {
-        if (!resident_spectral_path()) residual_case_.device_residual = {};
-        residual_case_.ns = initialized_stage_.ns;
-        residual_case_.mpol = initialized_stage_.mpol;
-        residual_case_.ntor = initialized_stage_.ntor;
-        residual_case_.include_edge_rz = include_edge_invariant_;
-        residual_case_.zero_m1_z = true;
-        residual_case_.double_single = double_single_solve_;
-        residual_case_.residual = std::move(residual);
-        residual_case_.residual_lo = stage_spectral_residual_lo_;
-        residual_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
-        residual_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
-        const auto self = shared_from_this();
-        enqueue_evaluated(
-            cumes::webgpu::enqueue_residual_decomposition, residual_case_,
-            [self](std::string error,
-                   cumes::webgpu::ResidualDecompositionResult actual) {
-                if (!error.empty()) {
-                    self->finish(false, std::move(error));
-                    return;
-                }
-                if (!actual.source_finite || !actual.source_nonzero) {
-                    self->finish(false,
-                                 "stage forward residual is nonfinite or zero");
+                    self->run_decomposition(phase, {});
                     return;
                 }
                 const auto expected =
                     self->production_solve_
-                        ? cumes::webgpu::ResidualDecompositionResult{}
-                        : cumes::webgpu::residual_decomposition_reference(
-                              self->residual_case_);
-                float max_error = 0.0F;
-                bool valid = self->production_solve_ ||
-                             actual.residual.size() == expected.residual.size();
-                if (valid && !self->production_solve_) {
-                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
-                        max_error =
-                            std::max(max_error, std::abs(actual.residual[i] -
-                                                         expected.residual[i]));
-                    }
-                }
-                double max_norm_error = 0.0;
-                for (int group = 0; group < 3; ++group) {
-                    if (!self->production_solve_) {
-                        max_norm_error = std::max(
-                            max_norm_error,
-                            std::abs(actual.raw_norm[group] -
-                                     expected.raw_norm[group]) /
-                                (1.0 + std::abs(expected.raw_norm[group])));
-                    }
-                    valid &= std::isfinite(actual.raw_norm[group]);
-                }
-                if (self->production_solve_) {
-                    valid &= all_finite(actual.residual);
-                }
-                if (!valid || max_error > 5.0e-4F || max_norm_error > 5.0e-4) {
-                    self->finish(false, "residual decomposition mismatch: " +
-                                            std::to_string(max_error));
+                        ? std::vector<float>{}
+                        : cumes::webgpu::toroidal_forward_reference(
+                              force ? self->solver_toroidal_forward_case_
+                                    : self->constraint_toroidal_forward_case_)
+                              .residual;
+                if (self->accept_projection(phase, actual.residual, expected))
+                    self->run_decomposition(phase, std::move(actual.residual));
+            });
+    }
+
+    bool accept_projection(ResidualPhase phase,
+                           const std::vector<float>& residual,
+                           const std::vector<float>& expected) {
+        const bool force = phase == ResidualPhase::FORCE;
+        float max_error = 0.0F;
+        bool valid = production_solve_ || residual.size() == expected.size();
+        if (valid && !production_solve_) {
+            for (std::size_t i = 0; i < residual.size(); ++i) {
+                max_error =
+                    std::max(max_error, std::abs(residual[i] - expected[i]));
+                valid &= std::isfinite(residual[i]);
+            }
+        }
+        if (production_solve_) { valid = all_finite(residual); }
+        const bool nonzero =
+            !force || std::any_of(residual.begin(), residual.end(),
+                                  [](float value) { return value != 0.0F; });
+        if (force ? max_error > 5.0e-4F || !valid || !nonzero
+                  : !valid || max_error > 5.0e-4F) {
+            finish(false,
+                   std::string(
+                       force ? "stage forward residual mismatch: "
+                             : "constraint residual projection mismatch: ") +
+                       std::to_string(max_error));
+            return false;
+        }
+        if (!production_solve_) {
+            if (force) {
+                std::printf(
+                    "  %s spectral residual projection: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    active_case_name_.c_str(), static_cast<double>(max_error));
+            } else {
+                std::printf(
+                    "  constrained spectral residual projection: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+            }
+        }
+        return true;
+    }
+
+    void run_decomposition(ResidualPhase phase, std::vector<float> residual) {
+        const bool force = phase == ResidualPhase::FORCE;
+        auto& input = force ? residual_case_ : constraint_residual_case_;
+        if (!resident_spectral_path()) input.device_residual = {};
+        cumes::webgpu::assign_stage_shape(input, initialized_stage_);
+        input.include_edge_rz = include_edge_invariant_;
+        input.zero_m1_z = force || controller_->effective_iteration() < 2 ||
+                          controller_->fsqz_prev() < 1.0e-6;
+        input.double_single = double_single_solve_;
+        input.residual = std::move(residual);
+        input.residual_lo = force ? stage_spectral_residual_lo_
+                                  : constraint_spectral_residual_lo_;
+        cumes::webgpu::assign_radial_profiles(input,
+                                              initialized_stage_.profiles);
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_residual_decomposition, input,
+            [self, phase](std::string error,
+                          cumes::webgpu::ResidualDecompositionResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
                     return;
                 }
-                if (!self->production_solve_) {
-                    std::printf(
-                        "  decomposed residual+double norms: PASS "
-                        "(max |GPU-CPU| = %.3e)\n",
-                        static_cast<double>(max_error));
-                }
-                self->stage_decomposed_residual_lo_ =
-                    std::move(actual.residual_lo);
-                self->run_preconditioner_elements();
+                if (!self->accept_decomposition(phase, actual)) return;
+                if (phase == ResidualPhase::FORCE)
+                    self->run_preconditioner_elements();
+                else
+                    self->run_preconditioner_apply(std::move(actual.residual));
             });
+    }
+
+    bool accept_decomposition(
+        ResidualPhase phase,
+        cumes::webgpu::ResidualDecompositionResult& actual) {
+        const bool force = phase == ResidualPhase::FORCE;
+        if (force && (!actual.source_finite || !actual.source_nonzero)) {
+            finish(false, "stage forward residual is nonfinite or zero");
+            return false;
+        }
+        const auto expected =
+            production_solve_
+                ? cumes::webgpu::ResidualDecompositionResult{}
+                : cumes::webgpu::residual_decomposition_reference(
+                      force ? residual_case_ : constraint_residual_case_);
+        float max_error = 0.0F;
+        bool valid = production_solve_ ||
+                     actual.residual.size() == expected.residual.size();
+        if (valid && !production_solve_) {
+            for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                max_error = std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+            }
+        }
+        double max_norm_error = 0.0;
+        if (force) {
+            for (int group = 0; group < 3; ++group) {
+                if (!production_solve_) {
+                    max_norm_error = std::max(
+                        max_norm_error,
+                        std::abs(actual.raw_norm[group] -
+                                 expected.raw_norm[group]) /
+                            (1.0 + std::abs(expected.raw_norm[group])));
+                }
+                valid &= std::isfinite(actual.raw_norm[group]);
+            }
+            if (production_solve_) { valid &= all_finite(actual.residual); }
+        }
+        if (!valid || max_error > 5.0e-4F ||
+            (force && max_norm_error > 5.0e-4)) {
+            finish(
+                false,
+                std::string(
+                    force ? "residual decomposition mismatch: "
+                          : "constrained residual decomposition mismatch: ") +
+                    std::to_string(max_error));
+            return false;
+        }
+        if (!force && production_solve_ &&
+            (!actual.source_finite || !all_finite(actual.residual))) {
+            finish(false, "constrained residual is nonfinite");
+            return false;
+        }
+        if (force) {
+            if (!production_solve_) {
+                std::printf(
+                    "  decomposed residual+double norms: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+            }
+            stage_decomposed_residual_lo_ = std::move(actual.residual_lo);
+        } else {
+            invariant_raw_ = actual.raw_norm;
+            constraint_decomposed_residual_lo_ = std::move(actual.residual_lo);
+        }
+        return true;
     }
 
     void run_preconditioner_elements() {
@@ -4236,9 +4228,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             run_axisymmetric_constraint();
             return;
         }
-        preconditioner_case_.ns = initialized_stage_.ns;
-        preconditioner_case_.ntheta = initialized_stage_.ntheta;
-        preconditioner_case_.nzeta = initialized_stage_.nzeta;
+        cumes::webgpu::assign_stage_shape(preconditioner_case_,
+                                          initialized_stage_);
         preconditioner_case_.delta_s = initialized_stage_.profiles.delta_s;
         preconditioner_case_.free_boundary =
             vacuum_ && vacuum_->apply_edge_force();
@@ -4248,8 +4239,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 magnetic_field_case_.base_geometry;
             preconditioner_case_.magnetic_field = force_case_.magnetic_field;
         }
-        preconditioner_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
-        preconditioner_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        cumes::webgpu::assign_radial_profiles(preconditioner_case_,
+                                              initialized_stage_.profiles);
         const auto self = shared_from_this();
         enqueue_evaluated(
             cumes::webgpu::enqueue_axisymmetric_preconditioner_elements,
@@ -4317,12 +4308,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     }
 
     void run_preconditioner_matrix() {
-        preconditioner_matrix_case_.ns = initialized_stage_.ns;
-        preconditioner_matrix_case_.mpol = initialized_stage_.mpol;
-        preconditioner_matrix_case_.ntor = initialized_stage_.ntor;
-        preconditioner_matrix_case_.ntheta = initialized_stage_.ntheta;
-        preconditioner_matrix_case_.nzeta = initialized_stage_.nzeta;
-        preconditioner_matrix_case_.nfp = initialized_stage_.nfp;
+        cumes::webgpu::assign_stage_shape(preconditioner_matrix_case_,
+                                          initialized_stage_);
         preconditioner_matrix_case_.delta_s =
             initialized_stage_.profiles.delta_s;
         preconditioner_matrix_case_.free_boundary =
@@ -4332,9 +4319,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             preconditioner_matrix_case_.base_geometry =
                 magnetic_field_case_.base_geometry;
         }
-        preconditioner_matrix_case_.sqrt_s_f =
-            initialized_stage_.profiles.sqrt_s_f;
-        preconditioner_matrix_case_.phip_h = initialized_stage_.profiles.phip_h;
+        cumes::webgpu::assign_radial_profiles(preconditioner_matrix_case_,
+                                              initialized_stage_.profiles);
         const auto self = shared_from_this();
         enqueue_evaluated(
             cumes::webgpu::enqueue_axisymmetric_preconditioner_matrix,
@@ -4408,11 +4394,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         constraint_case_.device_geometry = device_geometry_;
         constraint_case_.device_force_fields = device_force_fields_;
         constraint_case_.readback = !(production_solve_ && resident_path());
-        constraint_case_.ns = initialized_stage_.ns;
-        constraint_case_.mpol = initialized_stage_.mpol;
-        constraint_case_.ntor = initialized_stage_.ntor;
-        constraint_case_.ntheta = initialized_stage_.ntheta;
-        constraint_case_.nzeta = initialized_stage_.nzeta;
+        cumes::webgpu::assign_stage_shape(constraint_case_, initialized_stage_);
         constraint_case_.delta_s = initialized_stage_.profiles.delta_s;
         constraint_case_.tcon0 = initialized_stage_.tcon0;
         constraint_case_.reset_reference =
@@ -4451,9 +4433,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             constraint_case_.tcon = constraint_tcon_;
             constraint_case_.ard = preconditioner_elements_.ard;
             constraint_case_.azd = preconditioner_elements_.azd;
-            constraint_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
-            constraint_case_.sqrt_s_f_lo =
-                initialized_stage_.profiles.sqrt_s_f_lo;
+            cumes::webgpu::assign_radial_profiles(constraint_case_,
+                                                  initialized_stage_.profiles);
             const std::size_t force_field_count =
                 initialized_stage_.ntor == 0 ? 10
                                              : cumes::webgpu::FORCE_FIELD_COUNT;
@@ -4721,144 +4702,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             expand(fields);
             if (double_single_solve_) expand(constraint_fields_lo_);
         }
-        constraint_toroidal_forward_case_.ns = initialized_stage_.ns;
-        constraint_toroidal_forward_case_.device_fields =
-            device_constraint_fields_;
-        constraint_toroidal_forward_case_.use_fft =
-            initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
-        constraint_toroidal_forward_case_.readback = !resident_spectral_path();
-        constraint_toroidal_forward_case_.optimized_fft =
-            !requested_generic_fft();
-        constraint_toroidal_forward_case_.canonical_zeta =
-            requested_canonical_zeta();
-        constraint_toroidal_forward_case_.mpol = initialized_stage_.mpol;
-        constraint_toroidal_forward_case_.ntor = initialized_stage_.ntor;
-        constraint_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
-        constraint_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
-        constraint_toroidal_forward_case_.nfp = initialized_stage_.nfp;
-        constraint_toroidal_forward_case_.include_lcfs =
-            vacuum_ && vacuum_->apply_edge_force();
-        constraint_toroidal_forward_case_.double_single = double_single_solve_;
-        constraint_toroidal_forward_case_.fields = std::move(fields);
-        constraint_toroidal_forward_case_.fields_lo = constraint_fields_lo_;
-        const auto self = shared_from_this();
-        enqueue_checked_forward(
-            constraint_toroidal_forward_case_, "constraint",
-            [self](std::string error,
-                   cumes::webgpu::ToroidalForwardResult actual) {
-                if (!error.empty()) {
-                    self->finish(false, std::move(error));
-                    return;
-                }
-                self->constraint_spectral_residual_lo_ =
-                    std::move(actual.residual_lo);
-                self->constraint_residual_case_.device_residual =
-                    actual.device_residual;
-                if (actual.device_residual && self->production_solve_) {
-                    self->run_constraint_residual_decomposition({});
-                    return;
-                }
-                self->finish_constraint_forward(
-                    std::move(actual.residual),
-                    self->production_solve_
-                        ? std::vector<float>{}
-                        : cumes::webgpu::toroidal_forward_reference(
-                              self->constraint_toroidal_forward_case_)
-                              .residual);
-            });
-    }
-
-    void finish_constraint_forward(std::vector<float> residual,
-                                   const std::vector<float>& expected) {
-        float max_error = 0.0F;
-        bool valid = production_solve_ || residual.size() == expected.size();
-        if (valid && !production_solve_) {
-            for (std::size_t i = 0; i < residual.size(); ++i) {
-                max_error =
-                    std::max(max_error, std::abs(residual[i] - expected[i]));
-                valid &= std::isfinite(residual[i]);
-            }
-        }
-        if (production_solve_) { valid = all_finite(residual); }
-        if (!valid || max_error > 5.0e-4F) {
-            finish(false, "constraint residual projection mismatch: " +
-                              std::to_string(max_error));
-            return;
-        }
-        if (!production_solve_) {
-            std::printf(
-                "  constrained spectral residual projection: PASS "
-                "(max |GPU-CPU| = %.3e)\n",
-                static_cast<double>(max_error));
-        }
-        run_constraint_residual_decomposition(std::move(residual));
-    }
-
-    void run_constraint_residual_decomposition(std::vector<float> residual) {
-        if (!resident_spectral_path())
-            constraint_residual_case_.device_residual = {};
-        constraint_residual_case_.ns = initialized_stage_.ns;
-        constraint_residual_case_.mpol = initialized_stage_.mpol;
-        constraint_residual_case_.ntor = initialized_stage_.ntor;
-        constraint_residual_case_.include_edge_rz = include_edge_invariant_;
-        constraint_residual_case_.zero_m1_z =
-            controller_->effective_iteration() < 2 ||
-            controller_->fsqz_prev() < 1.0e-6;
-        constraint_residual_case_.double_single = double_single_solve_;
-        constraint_residual_case_.residual = std::move(residual);
-        constraint_residual_case_.residual_lo =
-            constraint_spectral_residual_lo_;
-        constraint_residual_case_.sqrt_s_f =
-            initialized_stage_.profiles.sqrt_s_f;
-        constraint_residual_case_.sqrt_s_f_lo =
-            initialized_stage_.profiles.sqrt_s_f_lo;
-        const auto self = shared_from_this();
-        enqueue_evaluated(
-            cumes::webgpu::enqueue_residual_decomposition,
-            constraint_residual_case_,
-            [self](std::string error,
-                   cumes::webgpu::ResidualDecompositionResult actual) {
-                if (!error.empty()) {
-                    self->finish(false, std::move(error));
-                    return;
-                }
-                const auto expected =
-                    self->production_solve_
-                        ? cumes::webgpu::ResidualDecompositionResult{}
-                        : cumes::webgpu::residual_decomposition_reference(
-                              self->constraint_residual_case_);
-                float max_error = 0.0F;
-                bool valid = self->production_solve_ ||
-                             actual.residual.size() == expected.residual.size();
-                if (valid && !self->production_solve_) {
-                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
-                        max_error =
-                            std::max(max_error, std::abs(actual.residual[i] -
-                                                         expected.residual[i]));
-                    }
-                }
-                if (!valid || max_error > 5.0e-4F) {
-                    self->finish(
-                        false, "constrained residual decomposition mismatch: " +
-                                   std::to_string(max_error));
-                    return;
-                }
-                if (self->production_solve_ &&
-                    (!actual.source_finite || !all_finite(actual.residual))) {
-                    self->finish(false, "constrained residual is nonfinite");
-                    return;
-                }
-                self->invariant_raw_ = actual.raw_norm;
-                self->constraint_decomposed_residual_lo_ =
-                    std::move(actual.residual_lo);
-                self->run_preconditioner_apply(std::move(actual.residual));
-            });
+        run_projection(ResidualPhase::CONSTRAINT, std::move(fields));
     }
 
     void run_preconditioner_apply(std::vector<float> residual) {
-        preconditioner_apply_case_.ns = initialized_stage_.ns;
-        preconditioner_apply_case_.mpol = initialized_stage_.mpol;
-        preconditioner_apply_case_.ntor = initialized_stage_.ntor;
+        cumes::webgpu::assign_stage_shape(preconditioner_apply_case_,
+                                          initialized_stage_);
         preconditioner_apply_case_.include_lcfs =
             vacuum_ && vacuum_->apply_edge_force();
         preconditioner_apply_case_.elements = preconditioner_elements_;
@@ -5378,9 +5227,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_descent(std::vector<float> residual) {
         iteration_results_.reset();
-        descent_case_.ns = initialized_stage_.ns;
-        descent_case_.mpol = initialized_stage_.mpol;
-        descent_case_.ntor = initialized_stage_.ntor;
+        cumes::webgpu::assign_stage_shape(descent_case_, initialized_stage_);
         descent_case_.move_lcfs = bool(vacuum_);
         descent_case_.delta_t = static_cast<float>(controller_->delta_t());
         descent_case_.damping_b1 =
