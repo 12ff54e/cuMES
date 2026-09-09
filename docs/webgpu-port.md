@@ -1804,6 +1804,35 @@ binary schema through MEMFS and a JavaScript Blob download adapter, including
 spectral state, scientific fields, multigrid history, provenance, and the
 normalized input record.
 
+## GitHub Pages deployment
+
+The browser solver is published at <https://12ff54e.github.io/cuMES/>.
+Pushing the `webgpu` branch runs `.github/workflows/pages.yml`: it checks out
+the pinned browser dependencies, builds with Emscripten 6.0.9, runs CTest,
+and deploys the packaged static site through the `github-pages` environment.
+The environment must allow deployments from `webgpu`. Push any new submodule
+commits to their remotes before pushing the parent branch.
+
+To prepare the same package locally after building:
+
+```bash
+node scripts/package_webgpu_pages.mjs \
+  ../tmp/cumes-build-webgpu/webgpu ../tmp/cumes-pages
+```
+
+Use the build directory configured for the current checkout. The package
+contains the solver, coil converter, editor assets, presets, and their licenses;
+`index.html` and `cumes_webgpu.html` open the same application. Existing query
+options, including `?mode=test`, remain available.
+
+GitHub Pages does not supply the isolation headers needed by threaded Wasm.
+The package uses a same-origin, MIT-licensed `coi-serviceworker` to supply them,
+with one reload on the first visit. Runtime and coil-preview startup wait for
+isolation. The worker covers only the deployed directory; ordinary local builds
+continue to use the server's headers. After deployment, run the Chrome validator
+against the live URL with a fresh query parameter and confirm the current test
+markers in the detailed log. CTest alone does not execute the GPU shaders.
+
 ## Verification levels
 
 - `cmake --build --preset webgpu`: compiles C++ against the installed

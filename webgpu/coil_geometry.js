@@ -2,6 +2,7 @@
 // Its small converter module is loaded only when coil geometry is requested.
 let cumesCoilReader;
 async function readCumesCoils(file) {
+  await globalThis.cumesIsolationReady;
   if (!cumesCoilReader) {
     const runtime = document.getElementById('cumes-runtime').content.querySelector('script');
     const url = new URL('cumes_coils.mjs', location.href);

@@ -169,6 +169,10 @@ add_test(NAME webgpu_threads
   COMMAND ${CUMES_WEBGPU_NODE}
           ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_threads.mjs)
 set_tests_properties(webgpu_threads PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_pages
+  COMMAND ${CUMES_WEBGPU_NODE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_pages.mjs)
+set_tests_properties(webgpu_pages PROPERTIES LABELS "unit;webgpu")
 add_test(NAME webgpu_boundary_geometry
   COMMAND ${CUMES_WEBGPU_NODE}
           ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_boundary_geometry.mjs)

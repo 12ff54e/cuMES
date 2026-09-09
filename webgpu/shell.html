@@ -601,6 +601,7 @@
   <template id="cumes-runtime">{{{ SCRIPT }}}</template>
   <script>
     (async()=>{try{
+      await globalThis.cumesIsolationReady;
       await editorReady;
       if(appMode&&boundaryMode.free){
         await boundaryMode.ready;

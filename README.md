@@ -6,7 +6,8 @@ This is a pedagogical / scaffolding project — not production-grade, but the
 architecture and physics are real.
 
 An experimental browser backend is available through Emscripten and
-emdawnwebgpu. It provides a CUDA-free build and the complete fixed-boundary
+emdawnwebgpu. [Open the web solver](https://12ff54e.github.io/cuMES/).
+It provides a CUDA-free build and the complete fixed-boundary
 iteration DAG for both axisymmetric and folded 3-D equilibria: transforms,
 half-grid geometry, fixed-iota and prescribed-current magnetic closure,
 radial/poloidal/toroidal force, spectral-condensation constraint, full `(m,n)`
