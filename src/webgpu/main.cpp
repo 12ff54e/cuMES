@@ -161,6 +161,34 @@ const char* backend_type_name(wgpu::BackendType type) {
     return "unknown";
 }
 
+template <typename Range>
+bool all_finite(const Range& values) {
+    return std::all_of(values.begin(), values.end(),
+                       [](auto value) { return std::isfinite(value); });
+}
+
+// Low words are either absent or cover the same Jacobian plane as high words.
+cumes::JacobianStatus<double> scan_jacobian(std::span<const float> high,
+                                            std::span<const float> low = {}) {
+    cumes::JacobianStatus<double> result;
+    result.min_oriented = std::numeric_limits<double>::infinity();
+    result.min_index = -1;
+    for (std::size_t i = 0; i < high.size(); ++i) {
+        const double value = double(high[i]) + (low.empty() ? 0.0 : low[i]);
+        if (!std::isfinite(value)) {
+            result.nonfinite_count += 1.0;
+            continue;
+        }
+        const double oriented = -value;
+        if (oriented < result.min_oriented) {
+            result.min_oriented = oriented;
+            result.min_index = static_cast<int>(i);
+        }
+        result.max_abs = std::max(result.max_abs, std::abs(value));
+    }
+    return result;
+}
+
 class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
    public:
     void start() {
@@ -1889,11 +1917,6 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     paired = input.double_single](std::string error) {
             const auto& expected = (*results)[0];
             const auto& actual = (*results)[1];
-            const auto all_finite = [](const auto& words) {
-                return std::all_of(words.begin(), words.end(), [](float word) {
-                    return std::isfinite(word);
-                });
-            };
             const bool expected_finite =
                 all_finite(expected.fields) && all_finite(expected.fields_lo);
             bool valid =
@@ -1966,24 +1989,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         if (variant == 12)
             hi[6 * POINTS] = -std::numeric_limits<float>::denorm_min();
         if (variant == 13) lo[7 * POINTS - 1] = 1.0e-20F;
-        cumes::JacobianStatus<double> expected;
-        expected.min_oriented = std::numeric_limits<double>::infinity();
-        expected.min_index = -1;
-        for (std::size_t i = 0; i < POINTS; ++i) {
-            const double value = double(hi[6 * POINTS + i]) +
-                                 (paired ? lo[6 * POINTS + i] : 0.0F);
-            if (!std::isfinite(value)) {
-                ++expected.nonfinite_count;
-                continue;
-            }
-            if (-value < expected.min_oriented) {
-                expected.min_oriented = -value;
-                expected.min_index = static_cast<int>(i);
-            }
-            expected.max_abs = std::max(expected.max_abs, std::abs(value));
-        }
-        cumes::IterationController<double> reference({});
-        const bool invalid = reference.jacobian_invalid(expected, 30);
+        const auto expected = scan_jacobian(
+            hi.subspan(6 * POINTS, POINTS),
+            paired ? lo.subspan(6 * POINTS, POINTS) : std::span<const float>{});
+        const bool invalid =
+            cumes::IterationController<double>::invalid_jacobian(expected, 30);
         const bool guards = variant < 4 || variant > 7;
         const bool fallback = variant == 10 || variant == 12 || variant == 13;
         wgpu::BufferDescriptor descriptor{};
@@ -2095,13 +2105,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     variant](std::string error) {
             const auto& control = actual->control;
             const auto& jacobian = control.jacobian;
-            cumes::IterationController<double> reference({});
             if (!error.empty() || !errors->empty() || !control.present ||
                 !control.guards_valid || control.fallback ||
                 jacobian.min_index != min_index ||
                 jacobian.min_oriented != minimum || jacobian.max_abs != 1.0 ||
                 jacobian.nonfinite_count != 0.0 || control.invalid != invalid ||
-                reference.jacobian_invalid(jacobian, ANGULAR) != invalid) {
+                cumes::IterationController<double>::invalid_jacobian(
+                    jacobian, ANGULAR) != invalid) {
                 self->finish(false,
                              "3-D Jacobian axis exemption mismatch "
                              "variant=" +
@@ -3513,10 +3523,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             compare(actual.r_con, expected.r_con);
             compare(actual.z_con, expected.z_con);
         } else {
-            valid &=
-                actual.geometry_finite &&
-                std::all_of(actual.geometry.begin(), actual.geometry.end(),
-                            [](float value) { return std::isfinite(value); });
+            valid &= actual.geometry_finite && all_finite(actual.geometry);
         }
         if (!valid || max_error > 5.0e-4F) {
             finish(false,
@@ -3618,9 +3625,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     const bool precision_valid =
                         !self->double_single_solve_ ||
                         (actual.fields_lo.size() == actual.fields.size() &&
-                         std::all_of(
-                             actual.fields_lo.begin(), actual.fields_lo.end(),
-                             [](float value) { return std::isfinite(value); }));
+                         all_finite(actual.fields_lo));
                     if (max_error > 2.0e-4F || !axisymmetric_guv_zero ||
                         !finite_jacobian || !precision_valid ||
                         !actual.fields_finite) {
@@ -3633,42 +3638,19 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                 (finite_jacobian ? "true" : "false"));
                         return;
                     }
-                    jacobian.min_oriented =
-                        std::numeric_limits<double>::infinity();
-                    jacobian.max_abs = 0.0;
-                    jacobian.min_index = -1;
-                    jacobian.nonfinite_count = 0.0;
-                    for (std::size_t i = 0; i < half_points; ++i) {
-                        const std::size_t gsqrt_index = gsqrt_offset + i;
-                        const double value =
-                            static_cast<double>(gsqrt[i]) +
-                            (self->double_single_solve_
-                                 ? actual.fields_lo[gsqrt_index]
-                                 : 0.0);
-                        if (!std::isfinite(value)) {
-                            jacobian.nonfinite_count += 1.0;
-                            continue;
-                        }
-                        const double oriented = -value;
-                        if (oriented < jacobian.min_oriented) {
-                            jacobian.min_oriented = oriented;
-                            jacobian.min_index = static_cast<int>(i);
-                        }
-                        jacobian.max_abs =
-                            std::max(jacobian.max_abs, std::abs(value));
-                    }
+                    jacobian = scan_jacobian(
+                        {gsqrt, half_points},
+                        self->double_single_solve_
+                            ? std::span(actual.fields_lo)
+                                  .subspan(gsqrt_offset, half_points)
+                            : std::span<const float>{});
                 }
                 bool invalid;
                 if (actual.control.present) {
                     const auto& gpu = actual.control.jacobian;
                     const bool host_invalid =
-                        gpu.nonfinite_count > 0 || gpu.max_abs <= 0 ||
-                        gpu.min_oriented <= 0 ||
-                        (gpu.min_oriented <
-                             cumes::control_policy::
-                                     JACOBIAN_RELATIVE_THRESHOLD *
-                                 gpu.max_abs &&
-                         gpu.min_index >= angular_points);
+                        cumes::IterationController<double>::invalid_jacobian(
+                            gpu, angular_points);
                     if (host_invalid != actual.control.invalid ||
                         gpu.min_oriented != jacobian.min_oriented ||
                         gpu.max_abs != jacobian.max_abs ||
@@ -3793,19 +3775,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                               std::isfinite(actual.iota_h[i]);
                 }
                 if (self->double_single_solve_) {
-                    finite &=
-                        actual.fields_lo.size() == actual.fields.size() &&
-                        actual.chip_h_lo.size() == actual.chip_h.size() &&
-                        actual.iota_h_lo.size() == actual.iota_h.size() &&
-                        std::all_of(
-                            actual.fields_lo.begin(), actual.fields_lo.end(),
-                            [](float value) { return std::isfinite(value); }) &&
-                        std::all_of(
-                            actual.chip_h_lo.begin(), actual.chip_h_lo.end(),
-                            [](float value) { return std::isfinite(value); }) &&
-                        std::all_of(
-                            actual.iota_h_lo.begin(), actual.iota_h_lo.end(),
-                            [](float value) { return std::isfinite(value); });
+                    finite &= actual.fields_lo.size() == actual.fields.size() &&
+                              actual.chip_h_lo.size() == actual.chip_h.size() &&
+                              actual.iota_h_lo.size() == actual.iota_h.size() &&
+                              all_finite(actual.fields_lo) &&
+                              all_finite(actual.chip_h_lo) &&
+                              all_finite(actual.iota_h_lo);
                 }
                 if (max_error > 2.0e-4F || !finite) {
                     self->finish(false,
@@ -4165,11 +4140,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 finite &= std::isfinite(residual[i]);
             }
         }
-        if (production_solve_) {
-            finite =
-                std::all_of(residual.begin(), residual.end(),
-                            [](float value) { return std::isfinite(value); });
-        }
+        if (production_solve_) { finite = all_finite(residual); }
         const bool nonzero =
             std::any_of(residual.begin(), residual.end(),
                         [](float value) { return value != 0.0F; });
@@ -4240,9 +4211,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     valid &= std::isfinite(actual.raw_norm[group]);
                 }
                 if (self->production_solve_) {
-                    valid &= std::all_of(
-                        actual.residual.begin(), actual.residual.end(),
-                        [](float value) { return std::isfinite(value); });
+                    valid &= all_finite(actual.residual);
                 }
                 if (!valid || max_error > 5.0e-4F || max_norm_error > 5.0e-4) {
                     self->finish(false, "residual decomposition mismatch: " +
@@ -4321,16 +4290,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     compare(actual.azm, expected.azm);
                     compare(actual.bzm, expected.bzm);
                 } else {
-                    const auto finite = [](const auto& values) {
-                        return std::all_of(
-                            values.begin(), values.end(),
-                            [](float value) { return std::isfinite(value); });
-                    };
-                    valid = finite(actual.ard) && finite(actual.brd) &&
-                            finite(actual.azd) && finite(actual.bzd) &&
-                            finite(actual.cxd) && finite(actual.arm) &&
-                            finite(actual.brm) && finite(actual.azm) &&
-                            finite(actual.bzm);
+                    valid = all_finite(actual.ard) && all_finite(actual.brd) &&
+                            all_finite(actual.azd) && all_finite(actual.bzd) &&
+                            all_finite(actual.cxd) && all_finite(actual.arm) &&
+                            all_finite(actual.brm) && all_finite(actual.azm) &&
+                            all_finite(actual.bzm);
                 }
                 if (!valid || max_scaled_error > 5.0e-5F) {
                     self->finish(false, "preconditioner element mismatch: " +
@@ -4411,16 +4375,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     compare(actual.lambda, expected.lambda);
                     compare(actual.scale, expected.scale);
                 } else {
-                    const auto finite = [](const auto& values) {
-                        return std::all_of(
-                            values.begin(), values.end(),
-                            [](float value) { return std::isfinite(value); });
-                    };
-                    valid =
-                        finite(actual.upper_r) && finite(actual.diagonal_r) &&
-                        finite(actual.lower_r) && finite(actual.upper_z) &&
-                        finite(actual.diagonal_z) && finite(actual.lower_z) &&
-                        finite(actual.lambda) && finite(actual.scale);
+                    valid = all_finite(actual.upper_r) &&
+                            all_finite(actual.diagonal_r) &&
+                            all_finite(actual.lower_r) &&
+                            all_finite(actual.upper_z) &&
+                            all_finite(actual.diagonal_z) &&
+                            all_finite(actual.lower_z) &&
+                            all_finite(actual.lambda) &&
+                            all_finite(actual.scale);
                 }
                 if (!valid || max_scaled_error > 2.0e-4F) {
                     self->finish(false, "preconditioner matrix mismatch: " +
@@ -4525,19 +4487,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->resident_path() ? actual.device_fields
                                           : cumes::webgpu::DeviceFields{};
                 if (self->production_solve_) {
-                    bool finite =
-                        actual.intermediates_finite &&
-                        std::all_of(
-                            actual.fields.begin(), actual.fields.end(),
-                            [](float value) { return std::isfinite(value); });
+                    bool finite = actual.intermediates_finite &&
+                                  all_finite(actual.fields);
                     if (self->double_single_solve_)
                         finite &=
                             actual.fields_lo.size() == actual.fields.size() &&
-                            std::all_of(actual.fields_lo.begin(),
-                                        actual.fields_lo.end(),
-                                        [](float value) {
-                                            return std::isfinite(value);
-                                        });
+                            all_finite(actual.fields_lo);
                     if (!finite) {
                         self->finish(false,
                                      "constraint produced nonfinite fields");
@@ -4824,11 +4779,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 valid &= std::isfinite(residual[i]);
             }
         }
-        if (production_solve_) {
-            valid =
-                std::all_of(residual.begin(), residual.end(),
-                            [](float value) { return std::isfinite(value); });
-        }
+        if (production_solve_) { valid = all_finite(residual); }
         if (!valid || max_error > 5.0e-4F) {
             finish(false, "constraint residual projection mismatch: " +
                               std::to_string(max_error));
@@ -4893,10 +4844,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     return;
                 }
                 if (self->production_solve_ &&
-                    (!actual.source_finite ||
-                     !std::all_of(
-                         actual.residual.begin(), actual.residual.end(),
-                         [](float value) { return std::isfinite(value); }))) {
+                    (!actual.source_finite || !all_finite(actual.residual))) {
                     self->finish(false, "constrained residual is nonfinite");
                     return;
                 }
@@ -4953,9 +4901,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         valid &= std::isfinite(actual.residual[i]);
                     }
                 } else if (self->production_solve_) {
-                    valid = std::all_of(
-                        actual.residual.begin(), actual.residual.end(),
-                        [](float value) { return std::isfinite(value); });
+                    valid = all_finite(actual.residual);
                 }
                 if (!valid || actual.breakdown_count != 0 ||
                     max_scaled_error > 2.0e-4F) {
@@ -5090,24 +5036,20 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     bool valid_newton_trial(
         const cumes::webgpu::IterationResult& result) const {
-        const auto finite = [](const auto& values) {
-            return std::all_of(values.begin(), values.end(),
-                               [](auto value) { return std::isfinite(value); });
-        };
         if (!result.inverse.geometry_finite || !result.magnetic.fields_finite ||
-            !finite(result.inverse.geometry) ||
-            !finite(result.inverse.geometry_lo) ||
-            !finite(result.magnetic.fields) ||
-            !finite(result.magnetic.fields_lo) ||
-            !finite(result.magnetic.chip_h) ||
-            !finite(result.magnetic.chip_h_lo) ||
-            !finite(result.magnetic.iota_h) ||
-            !finite(result.magnetic.iota_h_lo) ||
-            !finite(result.preconditioned.residual) ||
+            !all_finite(result.inverse.geometry) ||
+            !all_finite(result.inverse.geometry_lo) ||
+            !all_finite(result.magnetic.fields) ||
+            !all_finite(result.magnetic.fields_lo) ||
+            !all_finite(result.magnetic.chip_h) ||
+            !all_finite(result.magnetic.chip_h_lo) ||
+            !all_finite(result.magnetic.iota_h) ||
+            !all_finite(result.magnetic.iota_h_lo) ||
+            !all_finite(result.preconditioned.residual) ||
             result.preconditioned.breakdown_count != 0)
             return false;
         for (const auto& residual : result.residual)
-            if (!residual.source_finite || !finite(residual.raw_norm))
+            if (!residual.source_finite || !all_finite(residual.raw_norm))
                 return false;
         // Trials use full geometry and the same host-double orientation gate
         // as ordinary passes. An invalid trial is rejected without changing
@@ -5117,7 +5059,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         const auto& geometry = result.geometry;
         if (geometry.fields.size() != 10 * points ||
             geometry.fields_lo.size() != 10 * points ||
-            !finite(geometry.fields) || !finite(geometry.fields_lo))
+            !all_finite(geometry.fields) || !all_finite(geometry.fields_lo))
             return false;
         double minimum = std::numeric_limits<double>::infinity(), maximum = 0;
         std::size_t index = 0;
@@ -5132,12 +5074,12 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             }
             maximum = std::max(maximum, std::abs(value));
         }
-        if (minimum <= 0 || maximum <= 0 ||
-            (minimum <
-                 cumes::control_policy::JACOBIAN_RELATIVE_THRESHOLD * maximum &&
-             index >= static_cast<std::size_t>(initialized_stage_.ntheta)))
+        if (cumes::IterationController<double>::invalid_jacobian(
+                cumes::JacobianStatus<double>{minimum, maximum, 0.0,
+                                              static_cast<int>(index)},
+                initialized_stage_.ntheta))
             return false;
-        return finite(newton_residual(result));
+        return all_finite(newton_residual(result));
     }
 
     bool begin_newton_correction(
@@ -5149,9 +5091,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         invariant_normalized_.end(), [this](double value) {
                             return value <= initialized_stage_.tolerance;
                         });
-        const bool finite = std::all_of(
-            invariant_normalized_.begin(), invariant_normalized_.end(),
-            [](double value) { return std::isfinite(value); });
+        const bool finite = all_finite(invariant_normalized_);
         if (iteration == last_newton_iteration_ ||
             iteration < cumes::control_policy::NEWTON_START_ITERATION ||
             iteration % cumes::control_policy::NEWTON_PERIOD != 0 ||
@@ -5505,29 +5445,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     compare(actual.state, expected.state);
                     compare(actual.velocity, expected.velocity);
                 } else {
-                    valid =
-                        actual.velocity_finite &&
-                        std::all_of(
-                            actual.state.begin(), actual.state.end(),
-                            [](float value) { return std::isfinite(value); }) &&
-                        std::all_of(
-                            actual.velocity.begin(), actual.velocity.end(),
-                            [](float value) { return std::isfinite(value); });
+                    valid = actual.velocity_finite &&
+                            all_finite(actual.state) &&
+                            all_finite(actual.velocity);
                     if (self->double_single_solve_) {
                         valid &=
                             actual.state_lo.size() == actual.state.size() &&
                             actual.velocity_lo.size() ==
                                 actual.velocity.size() &&
-                            std::all_of(actual.state_lo.begin(),
-                                        actual.state_lo.end(),
-                                        [](float value) {
-                                            return std::isfinite(value);
-                                        }) &&
-                            std::all_of(actual.velocity_lo.begin(),
-                                        actual.velocity_lo.end(),
-                                        [](float value) {
-                                            return std::isfinite(value);
-                                        });
+                            all_finite(actual.state_lo) &&
+                            all_finite(actual.velocity_lo);
                     }
                 }
                 const std::size_t family_values =
