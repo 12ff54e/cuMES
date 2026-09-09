@@ -73,6 +73,10 @@ converges at all-stage `1e-5`. The input floor remains `1e-6`, with convergence
 case-dependent. Removing FP64 does not imply every reduction is faster:
 float-float uses multiple FP32 operations to retain small summands.
 
+The subsequent [single-grid investigation](../w7x-single-grid-float.md) expands
+float `compensated` reconstruction while retaining this float-only device policy.
+The qualification below records the earlier poloidal-only setting.
+
 ## Qualification on TITAN Xp, CUDA 12.1
 
 Both precise builds complete. CTest passes **103/103 verify** (including 19

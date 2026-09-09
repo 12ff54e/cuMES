@@ -35,6 +35,19 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
 
     const auto solve_start = std::chrono::steady_clock::now();
 
+    if (request.enable_newton) {
+        if constexpr (sizeof(Real) != sizeof(double)) {
+            throw CumesError(
+                "Newton-Krylov corrections require a double build");
+        }
+        if (problem.spec().free_boundary.lfreeb || problem.shape().ntor != 0 ||
+            problem.shape().nzeta != 1) {
+            throw CumesError(
+                "Newton-Krylov corrections require a fixed-boundary "
+                "axisymmetric problem (ntor=0, nzeta=1)");
+        }
+    }
+
     bool use_radius_reference = request.use_radius_reference;
     auto odd_geometry = request.odd_geometry;
     if (request.use_process_environment) {
@@ -43,7 +56,7 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
             if (precision == "native")
                 odd_geometry = OddGeometryPrecision::NATIVE;
             else if (precision == "compensated")
-                odd_geometry = OddGeometryPrecision::POLOIDAL;
+                odd_geometry = OddGeometryPrecision::COMPENSATED;
             else
                 throw CumesError(
                     "CUMES_GEOMETRY_PRECISION: expected native or compensated");
@@ -102,7 +115,8 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
     MultigridOutcome<Real> internal = MultigridSolver<Real>::run(
         params, problem, std::move(seed), compute_stream.get(),
         request.restart.has_value(), request.verbose,
-        request.use_process_environment, radial_interpolation);
+        request.use_process_environment, radial_interpolation,
+        request.enable_newton);
     const auto multigrid_end = std::chrono::steady_clock::now();
 
     SolveOutcome outcome;

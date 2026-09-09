@@ -8,7 +8,7 @@ set(CUMES_BACKEND "CUDA" CACHE STRING "Compute backend: CUDA|WEBGPU")
 set_property(CACHE CUMES_BACKEND PROPERTY STRINGS CUDA WEBGPU)
 
 if(CUMES_BACKEND STREQUAL "WEBGPU")
-  project(cuMES VERSION 1.4.0 LANGUAGES CXX)
+  project(cuMES VERSION 1.5.0 LANGUAGES CXX)
   if(NOT EMSCRIPTEN)
     message(FATAL_ERROR
       "CUMES_BACKEND=WEBGPU requires Emscripten; configure with: "
@@ -72,7 +72,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # default only when CMAKE_CUDA_ARCHITECTURES was not already provided.
 include(CumesCudaArchitectures)
 
-project(cuMES VERSION 1.4.0 LANGUAGES CXX CUDA)
+project(cuMES VERSION 1.5.0 LANGUAGES CXX CUDA)
 
 include(CumesOptions)
 include(CumesDependencies)
@@ -169,7 +169,7 @@ endif()
 # The templated operator modules, each split into a *_double.cu and a
 # *_float.cu explicit-instantiation TU (one scalar type per TU). The CLI links
 # only the TU matching `Real`; the tests link both (they instantiate both).
-set(CUMES_CUDA_MODULES fourier geometry forces solver profiles precon constraint prolongation axisymmetric)
+set(CUMES_CUDA_MODULES fourier geometry forces solver profiles precon constraint prolongation axisymmetric newton)
 if(CUMES_USE_VACUUM_FIELD)
   list(APPEND CUMES_CUDA_MODULES free_boundary)
 else()
@@ -561,6 +561,24 @@ if(CUMES_BUILD_BENCHMARKS)
   cumes_enable_warnings(cumes_benchmark_graph_realpass)
   cumes_apply_policy_flags(cumes_benchmark_graph_realpass)
   cumes_add_precision_provenance(cumes_benchmark_graph_realpass)
+
+  # Frozen-state diagnostics for experimental coupled corrections.
+  foreach(probe rz_coupling lambda_correction newton_correction coarse_correction test_device_bicgstab test_device_gmres test_correction_coordinates)
+    add_executable(cumes_benchmark_${probe} benchmarks/${probe}.cu)
+    target_include_directories(cumes_benchmark_${probe} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(cumes_benchmark_${probe} PRIVATE cumes_config_json cumes_io_host cumes_cuda_double)
+    cumes_enable_warnings(cumes_benchmark_${probe})
+    cumes_apply_policy_flags(cumes_benchmark_${probe})
+  endforeach()
+  target_link_libraries(cumes_benchmark_test_correction_coordinates PRIVATE cumes_cuda_float)
+  target_link_libraries(cumes_benchmark_test_device_gmres PRIVATE cumes_cuda_float)
+  if(CUMES_BUILD_TESTS)
+    add_test(NAME experimental_device_bicgstab COMMAND cumes_benchmark_test_device_bicgstab)
+    set_tests_properties(experimental_device_bicgstab PROPERTIES LABELS "gpu;benchmark")
+    add_test(NAME experimental_device_gmres COMMAND cumes_benchmark_test_device_gmres)
+    add_test(NAME experimental_correction_coordinates COMMAND cumes_benchmark_test_correction_coordinates)
+    set_tests_properties(experimental_device_gmres experimental_correction_coordinates PROPERTIES LABELS "gpu;benchmark")
+  endif()
 endif()
 
 # CLI policy gate: strict-vs-compatibility schema

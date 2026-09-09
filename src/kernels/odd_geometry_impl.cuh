@@ -27,7 +27,7 @@ void upload(DeviceBuffer<A>& buffer, const std::vector<A>& values) {
 }
 
 // Four channels, only odd m. Surface-contiguous scratch/coefficient loads.
-template <class A>
+template <class A, bool RoundedProducts = false>
 __global__ void toroidal_kernel(
     SpectralView<const float, PhysicalStateDomain> coeff,
     const A* d_cos,
@@ -46,10 +46,19 @@ __global__ void toroidal_kernel(
     for (int n = 0; n <= ntor; ++n) {
         int mode = m * (ntor + 1) + n;
         A c = d_cos[n * nzeta + k], s = d_sin[n * nzeta + k];
-        rcc = rcc + A(coeff(SpectralComponent::Rcc, mode, j)) * c;
-        rss = rss + A(coeff(SpectralComponent::Rss, mode, j)) * s;
-        zsc = zsc + A(coeff(SpectralComponent::Zsc, mode, j)) * c;
-        zcs = zcs + A(coeff(SpectralComponent::Zcs, mode, j)) * s;
+        if constexpr (RoundedProducts) {
+            // Native products are sufficient for m=1; retain the low word
+            // of each toroidal sum until the final poloidal reconstruction.
+            rcc += A(coeff(SpectralComponent::Rcc, mode, j) * float(c));
+            rss += A(coeff(SpectralComponent::Rss, mode, j) * float(s));
+            zsc += A(coeff(SpectralComponent::Zsc, mode, j) * float(c));
+            zcs += A(coeff(SpectralComponent::Zcs, mode, j) * float(s));
+        } else {
+            rcc = rcc + A(coeff(SpectralComponent::Rcc, mode, j)) * c;
+            rss = rss + A(coeff(SpectralComponent::Rss, mode, j)) * s;
+            zsc = zsc + A(coeff(SpectralComponent::Zsc, mode, j)) * c;
+            zcs = zcs + A(coeff(SpectralComponent::Zcs, mode, j)) * s;
+        }
     }
     d_scratch[i] = rcc;
     d_scratch[count + i] = rss;
@@ -92,13 +101,15 @@ template <class A>
 OddGeometryOperator<A>::OddGeometryOperator(const DeviceParams<float>& p)
     : p_(p) {
     using namespace odd_geometry_detail;
-    bool full = p.odd_geometry == OddGeometryPrecision::FLOAT_FLOAT;
+    const bool full = p.odd_geometry == OddGeometryPrecision::FLOAT_FLOAT;
+    const bool compensated =
+        p.odd_geometry == OddGeometryPrecision::COMPENSATED;
     std::vector<A> scale(p.ns);
     for (int j = 0; j < p.ns; ++j)
         scale[j] =
             split_constant<A>(std::sqrt(double(p.ns - 1) / std::max(j, 1)));
     upload(d_scale_, scale);
-    if (!full) return;
+    if (!full && !compensated) return;
     std::vector<A> cos_zeta((p.ntor + 1) * p.nzeta), sin_zeta(cos_zeta.size());
     for (int n = 0; n <= p.ntor; ++n)
         for (int k = 0; k < p.nzeta; ++k) {
@@ -108,6 +119,9 @@ OddGeometryOperator<A>::OddGeometryOperator(const DeviceParams<float>& p)
         }
     upload(d_cos_zeta_, cos_zeta);
     upload(d_sin_zeta_, sin_zeta);
+    const int odd_count = full ? p.mpol / 2 : std::min(1, p.mpol / 2);
+    d_scratch_.allocate(4 * odd_count * p.nzeta * p.ns);
+    if (!full) return;
     std::vector<A> cos_theta((p.mpol / 2) * p.ntheta),
         sin_theta(cos_theta.size());
     for (int m = 1; m < p.mpol; m += 2)
@@ -120,7 +134,29 @@ OddGeometryOperator<A>::OddGeometryOperator(const DeviceParams<float>& p)
         }
     upload(d_cos_theta_, cos_theta);
     upload(d_sin_theta_, sin_theta);
-    d_scratch_.allocate(4 * (p.mpol / 2) * p.nzeta * p.ns);
+}
+
+template <class A>
+void OddGeometryOperator<A>::enqueue_toroidal(
+    SpectralView<const float, PhysicalStateDomain> coeff,
+    cudaStream_t stream) {
+    using namespace odd_geometry_detail;
+    const auto& p = p_;
+    int odd_count = p.odd_geometry == OddGeometryPrecision::COMPENSATED
+                        ? std::min(1, p.mpol / 2)
+                        : p.mpol / 2;
+    int count = odd_count * p.nzeta * p.ns;
+    if (count > 0) {
+        if (p.odd_geometry == OddGeometryPrecision::COMPENSATED)
+            toroidal_kernel<A, true><<<(count + 255) / 256, 256, 0, stream>>>(
+                coeff, d_cos_zeta_.data(), d_sin_zeta_.data(),
+                d_scratch_.data(), p.ns, p.ntor, p.nzeta, odd_count);
+        else
+            toroidal_kernel<A><<<(count + 255) / 256, 256, 0, stream>>>(
+                coeff, d_cos_zeta_.data(), d_sin_zeta_.data(),
+                d_scratch_.data(), p.ns, p.ntor, p.nzeta, odd_count);
+        check_cuda(cudaGetLastError(), "odd toroidal reconstruction");
+    }
 }
 
 template <class A>
@@ -130,12 +166,8 @@ void OddGeometryOperator<A>::enqueue(
     cudaStream_t stream) {
     using namespace odd_geometry_detail;
     const auto& p = p_;
-    int count = (p.mpol / 2) * p.nzeta * p.ns;
-    if (count > 0)
-        toroidal_kernel<A><<<(count + 255) / 256, 256, 0, stream>>>(
-            coeff, d_cos_zeta_.data(), d_sin_zeta_.data(), d_scratch_.data(),
-            p.ns, p.ntor, p.nzeta, p.mpol / 2);
-    count = p.ns * p.nZnT;
+    enqueue_toroidal(coeff, stream);
+    int count = p.ns * p.nZnT;
     poloidal_kernel<A><<<(count + 255) / 256, 256, 0, stream>>>(
         geometry.r_o.data(), geometry.z_o.data(), d_scratch_.data(),
         d_cos_theta_.data(), d_sin_theta_.data(), d_scale_.data(), p.ns, p.mpol,

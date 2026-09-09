@@ -72,6 +72,21 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+For fixed-boundary axisymmetric inputs in a double build, opt into the tested
+Newton–Krylov correction policy with `--newton`:
+
+```bash
+./build/cumes inputs/solovev.json --newton --output out.bin
+```
+
+The flag retains every configured multigrid stage, tolerance and iteration cap.
+It changes the convergence trajectory and its speed benefit depends on the
+case and GPU; it is off by default. The qualified Solovev trajectory becomes
+`144 → 113 → 227` (484 effective iterations). See the
+[19-case qualification](docs/axisymmetric-newton-qualification.md) for both
+GPUs' gains and regressions. Float, free-boundary and nonaxisymmetric requests
+are rejected before GPU setup.
+
 The current WebGPU milestone builds separately. WGSL arithmetic remains
 `f32`, with paired words used by the strict W7-X path.
 
@@ -171,6 +186,9 @@ Library solves are quiet and ignore the CLI's process-global `CUMES_*`
 controls by default. `SolveRequest` can opt into those controls or provide an
 in-memory restart snapshot. Installed consumers use
 `find_package(cuMES CONFIG REQUIRED)` and link `cumes::solver`.
+
+Set `cumes::SolveRequest::enable_newton = true` to select the same correction
+policy through the library API.
 
 Optimization targets and integration applications are maintained in the meow
 repository. A source-tree integration build remains available by configuring
@@ -374,9 +392,9 @@ See `inputs/free_bdy/solovev_free_bdy_coils.json` and
   convergence guarantee. Fixed-boundary 3-D float runs use reference-plus-
   displacement radius storage by default. This converges the first two W7-X
   grids at 1e-5 but still stalls on ns=99. Adding
-  `CUMES_GEOMETRY_PRECISION=compensated` converges W7-X at 1e-5 by compensating
-  only the odd R/Z position reconstruction; see the
-  [precision and timing experiment](docs/w7x-float-float.md).
+  `CUMES_GEOMETRY_PRECISION=compensated` converges both multigrid and single-grid
+  W7-X at 1e-5 by compensating m=1 toroidal sums and odd R/Z poloidal position
+  reconstruction; see the [single-grid investigation](docs/w7x-single-grid-float.md).
 - `CUMES_GEOMETRY_PRECISION=compensated` also supports fixed-boundary 3-D
   double solves, using double-double arithmetic in the same reconstruction.
   It improves local reconstruction accuracy but did not reduce the tested

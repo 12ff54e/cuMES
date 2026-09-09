@@ -39,6 +39,18 @@ inline constexpr double SECOND_MAINTENANCE_STEP_FACTOR = 0.96;
 inline constexpr int STEP_RECOVERY_AGE = 250;
 inline constexpr double STEP_RECOVERY_FACTOR = 1.1;
 
+// Opt-in fixed-boundary axisymmetric double Newton correction policy.
+// Qualified across shapes, resolutions and pressure/current profiles in
+// docs/axisymmetric-newton-qualification.md; all stage controls are retained.
+inline constexpr int NEWTON_START_ITERATION = 100;
+inline constexpr int NEWTON_PERIOD = 100;
+inline constexpr int NEWTON_KRYLOV_STEPS = 32;
+inline constexpr int NEWTON_KRYLOV_BASIS = 32;
+inline constexpr int NEWTON_MIN_EPOCH_AGE = 20;
+inline constexpr double NEWTON_DIFFERENCE_STEP = 1.0e-6;
+inline constexpr double NEWTON_INNER_TOLERANCE = 1.0e-3;
+inline constexpr double NEWTON_ACCEPTANCE_RATIO = 0.95;
+
 // Per-pass gauge and free-boundary scheduling.
 inline constexpr int M1_GAUGE_BOOTSTRAP_ITERATIONS = 2;
 inline constexpr double M1_GAUGE_RESIDUAL_THRESHOLD = 1.0e-6;

@@ -5,6 +5,62 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] - 2026-09-09
+
+### Added
+
+- `--newton` and `SolveRequest::enable_newton` for guarded Newton–Krylov
+  corrections in fixed-boundary axisymmetric double solves (`ntor=0`,
+  `nzeta=1`). The option is off by default, retains all configured multigrid
+  stages, tolerances and iteration caps, and rejects unsupported requests
+  before GPU setup. Benefits depend on the input; the
+  [19-case qualification](docs/axisymmetric-newton-qualification.md) records
+  both speedups and regressions on TITAN Xp and RTX 4090.
+- Reusable CUDA GMRES, correction-coordinate maps and frozen-state Newton
+  operators, with regression tests and optional block, Newton and coarse
+  correction diagnostics.
+- Pinned axisymmetric Newton and free-boundary benchmark matrices, paired
+  runners, native-output and checkpoint validation, and reproducible
+  performance reports. Resume checks preserve saved protocols and reject
+  incompatible output directories before writing results.
+
+### Changed
+
+- Fourier transforms cache weighted forward bases once per stage and skip
+  unused inverse constraint sums. Qualified W7-X steady-iteration latency
+  falls by 5.19% on TITAN Xp and 6.50% on RTX 4090, with bit-identical
+  trajectories within each architecture.
+- Free-boundary solves parallelize axisymmetric vacuum source evaluation and
+  small singular right-hand-side systems, and combine pinned host transfers
+  with existing stream fences. Qualified solver-interval reductions are
+  37.01% / 29.69% for precomputed-grid Solovev and 6.77% / 23.70% for the
+  positive-flux W7-X case on TITAN Xp / RTX 4090. State, fields and numerical
+  reports remain bit-identical within each architecture; the
+  [qualification report](docs/free-boundary-performance.md) separates solver
+  timing from process wall time and retains all failures.
+
+### Fixed
+
+- The free-boundary pressure-mismatch diagnostic starts at zero and reads
+  device memory only after an edge-force evaluation, eliminating an
+  uninitialized read before vacuum activation.
+
+## [1.4.1] - 2026-09-07
+
+### Changed
+
+- Float `compensated` geometry now includes four m=1 toroidal R/Z sums and
+  split odd scaling. Higher toroidal modes retain the native FFT path;
+  double compensated reconstruction keeps its existing arithmetic.
+
+### Fixed
+
+- W7-X float ns=99 single-grid cold starts converge at `1e-5` with compensated
+  geometry in 1,354 effective iterations (FSQR `9.785e-6`). The multigrid case
+  converges in 149 → 277 → 311 iterations; both checkpoints converge again on
+  their first replay iteration. A cold-start/replay regression test covers
+  the single-grid case.
+
 ## [1.4.0] - 2026-09-07
 
 ### Added

@@ -1,18 +1,20 @@
 # W7-X: selective float-float reconstruction
 
 This experiment follows the [inverse-transform isolation](w7x-float-inverse-diagnostic.md).
-The smallest successful scope tested uses float-float only for the poloidal
+The smallest successful scope in the original multigrid experiment used
+float-float only for the poloidal
 products, accumulation and final odd-scale multiplication of `r_o` and `z_o`.
 It retains the float cuFFT, float basis tables and float scale value, along with
 float state and downstream geometry. It is fused into the existing R/Z kernels:
 no additional launches, scratch arrays or hot-loop allocations are needed for
-this `compensated` setting (the diagnostic `poloidal` scope). The default
-remains `native`.
+the diagnostic `poloidal` scope. The current `compensated` setting additionally
+corrects m=1 toroidal sums and the odd scale to support
+[single-grid cold starts](w7x-single-grid-float.md). Native remains the default.
 
 The measurements below describe the original reconstruction experiment.
 The subsequent [float-only device policy](adr/0015-float-only-device-arithmetic.md)
 also replaces double norm accumulation/control records and reference arithmetic.
-Its current W7-X qualification is 149 → 278 → 314 iterations at all-stage `1e-5`.
+Its W7-X multigrid qualification was 149 → 278 → 314 iterations at all-stage `1e-5`.
 
 ## Usage and scope
 
@@ -31,7 +33,8 @@ document reports the float experiment; see the separate
 [double measurements](w7x-double-compensation.md).
 
 Embedding callers select the same correction with
-`SolveRequest::odd_geometry = OddGeometryPrecision::POLOIDAL`.
+`SolveRequest::odd_geometry = OddGeometryPrecision::COMPENSATED`. The `POLOIDAL` scope retains the original
+multigrid experiment.
 Environment parsing is enabled only when `use_process_environment` is true.
 The solver applies it only to fixed-boundary 3-D runs. Reference storage
 is enabled by default for float solves; `CUMES_RADIUS_REFERENCE=0` or
@@ -41,7 +44,7 @@ Checkpoint replay must use the same options.
 
 For diagnostic experiments, the library API and the benchmark's
 `--odd-geometry` option retain these detailed float scopes. Double supports
-`native` and `poloidal` (the compensated mode).
+`native`, `poloidal` and `compensated` (the last two are identical in double).
 
 | Diagnostic option | Extra precision in the two odd position fields |
 | --- | --- |
@@ -50,6 +53,7 @@ For diagnostic experiments, the library API and the benchmark's
 | `sum` | Float products, float-float accumulation and final multiplication |
 | `poloidal` | Float-float products, accumulation and final multiplication |
 | `poloidal-scale` | `poloidal`, plus a scale stored as a split float pair |
+| `compensated` | Float products and float-float sums for m=1 toroidal positions, retained through `poloidal-scale` reconstruction |
 | `float-float` | Additional direct toroidal/poloidal reconstruction using float-float throughout |
 
 The full `float-float` reconstruction calculates only odd R/Z positions, using

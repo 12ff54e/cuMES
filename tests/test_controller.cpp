@@ -234,6 +234,64 @@ int main() {
         check(ctl.refresh_preconditioner(), "cadence: (26-1)%25==0 => refresh");
     }
 
+    // ---- accepted correction clears momentum without starting an epoch ----
+    {
+        IterationController<double> ctl({0.9, 1e-16, 0.0, true});
+        cumes::JacobianStatus<double> js;
+        js.min_oriented = -1.0;
+        js.max_abs = 1.0;
+        js.nonfinite_count = 0.0;
+        js.min_index = 5;
+        check(ctl.jacobian_invalid(js, 5),
+              "correction setup reduces the time step");
+        const double inv[3] = {1e-8, 2e-8, 1e-8};
+        const double small_prec[3] = {1e-12, 1e-12, 1e-12};
+        for (int i = 0; i < 55; ++i) {
+            ctl.classify_invariant(inv);
+            ctl.after_descent(ctl.decide_restart(small_prec, inv));
+        }
+        auto stale = ctl;
+        ctl.reset_correction_momentum();
+        check(ctl.effective_iteration() == stale.effective_iteration() &&
+                  ctl.restart_anchor() == stale.restart_anchor() &&
+                  ctl.output_anchor() == stale.output_anchor(),
+              "correction retains iteration and restart anchors");
+        check(ctl.delta_t() == stale.delta_t() &&
+                  ctl.bad_jacobian_count() == stale.bad_jacobian_count() &&
+                  ctl.fsqz_prev() == stale.fsqz_prev(),
+              "correction retains step, Jacobian count and gauge history");
+        check(ctl.restart_events().size() == stale.restart_events().size() &&
+                  ctl.restart_events().back().iteration ==
+                      stale.restart_events().back().iteration,
+              "correction does not record a restart");
+        check(ctl.refresh_preconditioner() == stale.refresh_preconditioner() &&
+                  ctl.reset_constraint_reference() ==
+                      stale.reset_constraint_reference(),
+              "correction retains preconditioner and reference cadence");
+
+        // A correction reduces invariant merit, but its preconditioned norm
+        // need not preserve the minimum from the old descent trajectory.
+        const double corrected_prec[3] = {0.1, 0.1, 0.1};
+        const auto corrected = ctl.decide_restart(corrected_prec, inv);
+        check(stale.decide_restart(corrected_prec, inv).reason ==
+                  RestartReason::BAD_JACOBIAN,
+              "stale preconditioned minimum would spuriously restart");
+        check(corrected.reason == RestartReason::NONE && corrected.do_refresh,
+              "accepted correction establishes a new descent minimum");
+        const double expected_otav = (9 * 0.15 / 0.9 + 0.15 / 0.81) / 10;
+        check_near(corrected.damping.otav, expected_otav, 1e-15,
+                   "correction resets damping using initial step history");
+        ctl.after_descent(corrected);
+        while (ctl.effective_iteration() - ctl.restart_anchor() <
+               cumes::control_policy::STEP_RECOVERY_AGE) {
+            ctl.classify_invariant(inv);
+            ctl.after_descent(ctl.decide_restart(corrected_prec, inv));
+        }
+        check_near(ctl.delta_t(),
+                   0.81 * cumes::control_policy::STEP_RECOVERY_FACTOR, 1e-15,
+                   "correction retains the existing recovery window");
+    }
+
     // ---- one-time recovery of a reduced time step ----
     {
         IterationController<double> enabled({0.9, 1e-14, 0.0, true});

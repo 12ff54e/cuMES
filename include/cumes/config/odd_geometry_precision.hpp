@@ -6,8 +6,9 @@
 
 namespace cumes {
 // Experimental accuracy scopes for the odd R/Z position reconstruction.
-// POLOIDAL compensates in the state scalar type (float-float or double-double).
-// Other non-native scopes are float-only diagnostic controls.
+// COMPENSATED corrects m=1 toroidal sums and odd poloidal reconstruction in
+// float; double uses poloidal double-double compensation. POLOIDAL retains
+// the poloidal-only diagnostic. Other non-native scopes are float-only.
 enum class OddGeometryPrecision {
     NATIVE,
     FLOAT_ORDER,
@@ -15,6 +16,7 @@ enum class OddGeometryPrecision {
     POLOIDAL,
     POLOIDAL_SCALE,
     FLOAT_FLOAT,
+    COMPENSATED,
 };
 
 inline OddGeometryPrecision parse_odd_geometry_precision(
@@ -24,10 +26,11 @@ inline OddGeometryPrecision parse_odd_geometry_precision(
     if (name == "sum") return OddGeometryPrecision::SUM;
     if (name == "poloidal") return OddGeometryPrecision::POLOIDAL;
     if (name == "poloidal-scale") return OddGeometryPrecision::POLOIDAL_SCALE;
+    if (name == "compensated") return OddGeometryPrecision::COMPENSATED;
     if (name == "float-float") return OddGeometryPrecision::FLOAT_FLOAT;
     throw std::invalid_argument(
         "odd geometry precision: expected native, float-order, sum, poloidal, "
-        "poloidal-scale or float-float");
+        "poloidal-scale, compensated or float-float");
 }
 }  // namespace cumes
 #endif

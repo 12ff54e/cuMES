@@ -92,6 +92,18 @@ class IterationController {
                0;
     }
 
+    // An accepted Newton correction replaces the momentum trajectory. Forget
+    // its old damping samples and residual minimum while preserving the time
+    // step, restart epoch, gauge history and checkpoint-refresh cadence.
+    void reset_correction_momentum() {
+        res0_ = T(-1);
+        fsq_prev_ = T(1);
+        for (int i = 0; i < control_policy::DAMPING_HISTORY_LENGTH; ++i) {
+            inv_tau_hist_[i] =
+                T(control_policy::DAMPING_LOG_RATIO_LIMIT) / delt0_;
+        }
+    }
+
     // ---- per-fence decisions ----
 
     // Top-of-pass maintenance branch (vmec.cc "HAVING A CONVERGENCE PROBLEM:

@@ -1,6 +1,6 @@
 # W7-X: compensated double reconstruction
 
-`CUMES_GEOMETRY_PRECISION=compensated` now applies the same poloidal
+`CUMES_GEOMETRY_PRECISION=compensated` originally applied the same poloidal
 compensation algorithm to either state scalar. `Compensated<float>` uses two
 floats; `Compensated<double>` uses two doubles. Products, their sums and the
 final odd-position scaling retain the low word until the result is rounded
@@ -15,6 +15,9 @@ fixed-boundary 3-D problems. `native` remains the default in both builds.
 The later [float-only device policy](adr/0015-float-only-device-arithmetic.md)
 changes float reduction/control precision and its trajectory. The float
 byte-identity checks below apply to this double-compensation experiment.
+
+The subsequent [single-grid float correction](w7x-single-grid-float.md) adds
+m=1 toroidal compensation only for float; double arithmetic below is unchanged.
 
 ## Accuracy
 

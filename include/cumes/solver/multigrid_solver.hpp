@@ -66,7 +66,8 @@ class MultigridSolver {
         bool verbose = true,
         bool use_process_environment = true,
         std::optional<RadialInterpolation> radial_interpolation_override =
-            std::nullopt) {
+            std::nullopt,
+        bool enable_newton = false) {
         MultigridOutcome<T> out;
         SpectralStorage<T> storage = std::move(seed);
         DeviceParams<T> p_prev;
@@ -215,7 +216,8 @@ class MultigridSolver {
                 // Free-boundary stages retain their vacuum-coupled reference
                 // trajectory until separately qualified.
                 !vac, std::ref(stage_device_time_ms), verbose,
-                use_process_environment, std::ref(stage_wall_timings));
+                use_process_environment, std::ref(stage_wall_timings),
+                enable_newton);
             total_device_time_ms += stage_device_time_ms;
             out.stage_wall_timings += stage_wall_timings;
             if (vac) {

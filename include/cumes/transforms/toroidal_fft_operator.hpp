@@ -13,6 +13,7 @@
 #ifndef CUMES_INCLUDE_CUMES_TRANSFORMS_TOROIDAL_FFT_OPERATOR_HPP_
 #define CUMES_INCLUDE_CUMES_TRANSFORMS_TOROIDAL_FFT_OPERATOR_HPP_
 
+#include "cumes/runtime/device_buffer.cuh"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/real_space_storage.hpp"
 #include "cumes/state/spectral_storage.hpp"
@@ -168,6 +169,7 @@ class ToroidalFftOperator : public SpectralOperator<T> {
     T* d_mcos_th_ = nullptr;
     T* d_msin_th_ = nullptr;
     T* d_fwd_w_ = nullptr;  // [ntheta/2+1] intNorm weights (endpoints 1/2)
+    DeviceBuffer<T> d_forward_basis_;  // [4][mpol][ntheta/2+1], weighted
     bool arena_backed_ = false;
 
     // Phase 6B: one shared cuFFT work area for the two main plans.

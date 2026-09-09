@@ -168,13 +168,19 @@ Preserve these contracts unless the task intentionally changes them:
 - Native float inputs reject stage tolerances below `1e-6`; this is an input
   floor, not a convergence guarantee. Fixed-boundary 3-D float uses radius
   reference storage; the qualified W7-X `1e-5` case also uses compensated
-  geometry. Browser scalar/paired behavior has separate qualification;
-  scalar free-boundary W7-X can stall above tolerance.
+  geometry, including compensated m=1 toroidal sums for single-grid cold
+  starts (`docs/w7x-single-grid-float.md`). Browser scalar/paired behavior has
+  separate qualification; scalar free-boundary W7-X can stall above tolerance.
 - Parse/validate input through the shared config API. Unknown keys are errors
   by default; native `--compatibility` changes input handling only. Native
   library solves ignore process-global `CUMES_*` controls unless requested.
   See `README.md` for CLI controls and `webgpu/browser_bridge.js` for browser
   options; do not assume a native environment variable configures the page.
+- Native `--newton` opts fixed-boundary axisymmetric double solves (`ntor=0`,
+  `nzeta=1`) into guarded Newton–Krylov corrections. It is off by default and
+  preserves configured multigrid stages, tolerances, and caps. The library
+  equivalent is `SolveRequest::enable_newton`; this is not a browser option.
+  See `docs/adr/0016-opt-in-newton-corrections.md` for policy and qualification.
 - Native `INPUT_FILE` is positional. `--output` defaults to
   `$PWD/cumes-output.bin`; `--boozer-output` is an alternative, mutually
   exclusive output. Known suffixes select compiled output backends; unknown
