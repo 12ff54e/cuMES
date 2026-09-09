@@ -148,11 +148,13 @@ revisions and do not establish superiority over a matched HOST run.
 For cth_like, discarding the first warmup solve of each revision and retaining
 three further serial solves gave a median complete time of 45.67 → 20.33 s
 (2.25×). Original samples ranged 45.33–46.52 s; optimized samples ranged
-19.82–29.94 s, so the variability must accompany the median. Time through the
-first controller record was 0.45–0.68 s, and time after the final record was
-0.17–0.18 s. The median interval between first and final controller records
-fell from 44.94 to 19.71 s. These intervals separate startup and output tails
-without presenting controller wall time as isolated GPU execution.
+19.82–29.94 s, so the variability must accompany the median. The worker age
+at the first controller record was 0.45–0.68 s. The median interval between first
+and final controller records fell from 44.94 to 19.71 s. Controller timestamps
+use the worker clock; completion timestamps use the window clock. An earlier
+0.17–0.18 s output-tail estimate subtracted these different time origins and
+was invalid. Complete window wall times and within-worker controller spans
+remain valid; neither isolates GPU execution or output cost.
 
 All full-run comparisons used the same bundled preset, paired plasma,
 `vacuum=webgpu&trace=1&timing=0`, Chrome 152 and RTX 3060 Ti, with no concurrent
@@ -160,3 +162,42 @@ GPU tests. The baseline dependency was `3dbc6aa`; the optimized dependency is
 `09f682d`. Repeated traces and scientific digests remain exact. Raw captures,
 including all samples and the per-run timing split, live outside the repository
 in `../tmp/vacuum-webgpu-speed/`. Other adapters need their own qualification.
+
+## Default selection after matched HOST/WebGPU comparison
+
+Retain HOST/Wasm as the browser vacuum default. The improved GPU port must
+be compared with the HOST backend, separately from its speedup over the
+original GPU implementation. This decision uses complete free-boundary
+solves because the default also affects transfer, coupling and controller
+costs; it is not an isolated kernel-throughput comparison.
+
+The comparison uses the same optimized build (`34827be`, vacuum-field
+`09f682d`), paired plasma precision and bundled presets, changing only
+`vacuum=host|webgpu`. Both execute plasma operators on WebGPU. Runs use
+`trace=1&timing=0&run=1` in visible tabs of the forwarded Chrome 152 browser,
+on its NVIDIA GeForce RTX 3060 Ti / Windows machine. The browser reports
+16 logical processors; the CPU model was not recorded. All GPU workloads
+run serially. One complete warmup per backend/preset is excluded, then two
+measured solves per backend alternate order between rounds. Times include
+navigation, setup, iterations, tracing and output.
+
+| Preset | HOST/Wasm median s (range) | WebGPU median s (range) | GPU/HOST time |
+| --- | ---: | ---: | ---: |
+| Solovev, two grids | 14.08 (14.003–14.156) | 24.25 (24.245–24.264) | 1.72× |
+| cth_like | 12.82 (12.816–12.820) | 20.38 (20.280–20.486) | 1.59× |
+| W7-X | 77.90 (77.350–78.447) | 92.63 (91.716–93.542) | 1.19× |
+
+All 18 runs (including warmups) passed their configured residual and validity
+gates, exact numerical controller comparison against their own backend's
+baseline, and scientific output digests. HOST/GPU records are respectively
+1,056/1,056 for Solovev, 625/626 for cth_like and 1,847/1,844 for W7-X; the
+small backend-dependent trajectory differences are retained. The existing
+worker query/default checks also pass. No backend-selection code changed.
+
+For these workloads on this machine, GPU vacuum increases complete solve time
+by approximately 19–72%. The 5–7× integral speedup over the older GPU port
+therefore does not justify replacing HOST/Wasm as the default. Keep the
+explicit `vacuum=webgpu` option for further work and other configurations.
+Raw captures and the validated summary are in
+`../tmp/vacuum-backend-comparison/`. These results do not establish a universal
+CPU-versus-GPU ordering for other hardware or resolutions.
