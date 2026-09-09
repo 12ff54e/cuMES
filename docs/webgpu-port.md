@@ -1732,8 +1732,13 @@ completion gates for the fixed-boundary WebGPU port:
 1. reduce the remaining host validation/reduction payload and combine the
    individual operator submissions (production 3-D operator dependencies now
    stay on device, with one batched mapping per evaluated pass);
-2. port the optional free-boundary/NESTOR dependency as a separate WebGPU
-   project if browser free-boundary equilibria are required.
+2. move costly HOST vacuum operations to WebGPU if browser profiling justifies
+   a port; browser free-boundary solves already use the HOST/Wasm dependency.
+
+The [cuMES 1.5 optimization assessment](webgpu-optimization-assessment.md)
+maps the merged CUDA changes to browser implementations. Weighted scalar
+axisymmetric basis caching is a focused candidate. Newton–GMRES and additional
+scalar geometry compensation require separate numerical qualification.
 
 `deps/vacuum-field` is compiled through its HOST backend for browser free-boundary
 solves. The CUDA and WebAssembly builds share the numerical kernel bodies. NetCDF/HDF5 and the
