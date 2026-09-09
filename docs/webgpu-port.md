@@ -3,7 +3,7 @@
 ## Status
 
 The WebGPU backend is an additive browser backend. CUDA remains the default. Free-boundary browser solves combine WebGPU plasma
-operators with the existing vacuum-field library compiled to WebAssembly. The WebGPU port
+operators with the vacuum-field library using WebGPU or HOST/WebAssembly. The WebGPU port
 of cuMES's fixed-boundary solver is complete: it implements and hardware-
 qualifies the entire iteration DAG for axisymmetric and folded 3-D equilibria,
 multigrid control, native binary result publication, and an interactive
@@ -137,22 +137,33 @@ setup choices stay in localStorage. Switching modes or **Stop and edit** ends
 an active worker and returns to setup. Precision changes restart the solve.
 `?boundary=free&coils=w7x` opens a named preset; append `&run=1` to run it.
 
-The build links vacuum-field's HOST backend in double precision with NetCDF
-disabled. It shares the numerical kernel bodies with CUDA, including coil
-parsing, MAKEGRID generation, and NESTOR. Only coil geometry and small input
+The build links vacuum-field's WebGPU backend and HOST-double reference with
+NetCDF disabled. Append `&vacuum=webgpu` to select paired-f32 vacuum kernels;
+`&vacuum=host` is the reference path and remains the default.
+Coil parsing and MAKEGRID generation stay in Wasm double. Only coil geometry and small input
 JSON files are served as lazy preset assets; no field grids are shipped.
 `src/webgpu/vacuum.cpp` compiles the existing cuMES vacuum state machine and
 bridge kernels for Wasm memory and converts WebGPU high/low words at the
-handover. Fixed-boundary resident/batched execution is unchanged. CPU vacuum
-work runs in the solver worker so the UI remains responsive.
+handover. The WebGPU backend keeps geometry, fields, integrals and the Laplace
+assembly resident, maps matrix/RHS together for Wasm-double LU, uploads the
+potential, then maps the reconstructed outputs for the existing LCFS coupling.
+Full/partial update reuse and activation/restart state are shared. Asyncify yields
+the worker's host controller while the two GPU batches complete. The HOST path
+runs its kernels in the same worker.
 
 Vacuum activation, edge force/preconditioning, constraint decay, soft restarts,
 and multigrid persistence follow the CUDA coupling. The three bundled presets
 pass full paired-precision solves in Chrome, including the 3-D W7-X vacuum
 and cth_like cases. The shared bridge has analytic CUDA/WebAssembly tests for
 pressure symmetry, surface averages, and boundary-only force updates;
-vacuum-field's 18 operator/reference tests also pass under WebAssembly, native
-HOST, and CUDA. Headless Firefox also passes the full paired Solovev solve.
+vacuum-field's 19 operator/reference tests also pass under WebAssembly, native
+HOST, and CUDA. Headless Firefox also passes the full paired Solovev solve
+with HOST vacuum.
+The opt-in GPU vacuum passes paired Solovev/W7-X/cth_like and scalar Solovev
+on Chrome/RTX 3060 Ti. It changes paired trajectories and is currently slower
+in the recorded end-to-end captures. [ADR-0019](adr/0019-webgpu-vacuum-backend.md)
+records numerical comparisons, timing limits and the retained HOST default.
+
 Scalar-float Solovev works, but W7-X can stall above its tolerance; single
 precision remains experimental for free-boundary work. Preset provenance is
 recorded in `webgpu/presets/README.md`.
@@ -1732,16 +1743,18 @@ completion gates for the fixed-boundary WebGPU port:
 1. reduce the remaining host validation/reduction payload and combine the
    individual operator submissions (production 3-D operator dependencies now
    stay on device, with one batched mapping per evaluated pass);
-2. move costly HOST vacuum operations to WebGPU if browser profiling justifies
-   a port; browser free-boundary solves already use the HOST/Wasm dependency.
+2. reduce final vacuum readbacks by moving the remaining LCFS coupling to GPU;
+   `vacuum=webgpu` already executes the vacuum kernel pipeline on WebGPU.
 
 The [cuMES 1.5 optimization assessment](webgpu-optimization-assessment.md)
-maps the merged CUDA changes to browser implementations. Weighted scalar
-axisymmetric basis caching is a focused candidate. Newton–GMRES and additional
-scalar geometry compensation require separate numerical qualification.
+records the implemented weighted scalar axisymmetric cache, vacuum kernel backend,
+and separately qualified opt-in Newton–GMRES and scalar m=1 geometry compensation.
+Use `newton=1&precision=double` for the fixed-axisymmetric experiment, or
+`geometry=compensated-m1&precision=float` for scalar 3-D geometry.
 
-`deps/vacuum-field` is compiled through its HOST backend for browser free-boundary
-solves. The CUDA and WebAssembly builds share the numerical kernel bodies. NetCDF/HDF5 and the
+`deps/vacuum-field` provides WebGPU and HOST backends for browser free-boundary
+solves. The CUDA and HOST builds share C++ kernel bodies; WebGPU uses corresponding
+WGSL kernels with independent reference gates. NetCDF/HDF5 and the
 magnetic-coordinate CUDA postprocessor are likewise host/native extensions,
 not browser solver requirements. The browser publishes the complete native
 binary schema through MEMFS and a JavaScript Blob download adapter, including

@@ -1,137 +1,87 @@
 # Applying the cuMES 1.5 optimizations to WebGPU
 
-Assessment of `main` at `6756fd6` against the WebGPU implementation at
-`c7eceda`. The merge retains the browser's arithmetic and controller behavior.
-Native CUDA performance measurements do not qualify browser speedups.
+The `main` merge at `49f5e41` brought `6756fd6` into the browser branch.
+The merge itself preserved the browser's controller traces and scientific
+outputs. The subsequent ports below have separate numerical qualification;
+CUDA timing results do not establish browser speedups.
 
-## Applicability
+## Port results
 
-| Update | Browser applicability | Decision |
-| --- | --- | --- |
-| Skip unused inverse constraint accumulations (`66a557a`) | Already present structurally: the WebGPU inverse computes only the two needed R/Z constraint accumulators. | No additional port. |
-| Cache weighted forward basis (`21b6043`) | Scalar axisymmetric projection still multiplies four basis values by the integration weight per theta, mode, and surface. A separate immutable weighted table could remove that repeated work. | Candidate for a measured follow-up; retain current arithmetic in this merge. |
-| Compensate m=1 toroidal odd-position sums (`9c59702`) | The scalar browser path rounds toroidal sums to scalar intermediates before compensated poloidal reconstruction. The paired path already retains high/low intermediates. | Scalar precision improvement is feasible, but requires new cancellation tests and trajectory qualification. |
-| Keep higher odd-mode products single-word (`0d8482a`) | Scalar WebGPU already uses single-word toroidal intermediates and compensated poloidal products. Its precision split differs from the new CUDA implementation. | Do not weaken the paired path or copy the CUDA shortcut independently of its precision contract. |
-| Parallel axisymmetric vacuum source evaluation (`0bc92e2`) | The source-term decomposition is portable to WebGPU dispatches. It provides no GPU parallelism through the current serial HOST/Wasm dispatcher. | Retain fused HOST evaluation for compatibility; carry the parallel decomposition into a vacuum WebGPU backend and measure its scratch/workgroup tradeoff. |
-| Spread small singular RHS systems over blocks (`f8bbfa2`) | Distributing independent RHS systems is portable to WebGPU workgroups. The best workgroup size is adapter-dependent; HOST dispatch ignores it. | Retain the CUDA launch change and test workgroup sizes when porting the vacuum kernels. |
-| Combine free-boundary copies with fences (`cc2d91d`) | These are CUDA stream/copy changes. The browser already reads the edge residual after its force operation and uses its own batched WebGPU readbacks. | No direct browser port. |
-| Opt-in Newton–GMRES (`bcdd3da`, `ca33025`) | Requires WebGPU linear algebra, frozen residual probes, trial acceptance, and precision qualification. Native support is restricted to fixed-boundary axisymmetric double. | Keep the browser option unavailable until a separate Class C port is qualified. |
+| Merged update | WebGPU implementation and qualification |
+| --- | --- |
+| Skip unused inverse constraint accumulations (`66a557a`) | Already present: the inverse computes only the required R/Z constraint accumulators. No duplicate implementation was added. |
+| Cache weighted forward basis (`21b6043`) | Implemented a setup-time GPU cache for scalar axisymmetric forward projection, retaining each rounded product and endpoint weight. Conformance, fixed Solovev and free Solovev controller traces and scientific hashes are exact. Twenty alternating warmed runs had overlapping timing ranges; no speedup is claimed. |
+| Compensate m=1 toroidal odd-position sums (`9c59702`) | Implemented `geometry=compensated-m1` for scalar 3-D. Paired m=1 intermediates and radial scaling survive through poloidal reconstruction. New signed-family, nonzero-n, sub-ULP and minimal-grid fixtures pass. Default behavior remains exact. |
+| Keep higher odd-mode inputs single-word (`0d8482a`) | The m=1 option retains the existing scalar toroidal products for higher odd modes and the established compensated poloidal reconstruction. The always-paired path retains its own precision contract. |
+| Parallel axisymmetric vacuum source evaluation (`0bc92e2`) | Ported into vacuum-field's WGSL: independent source/image terms followed by the original ordered sum. Scratch is persistent. The fused HOST operator remains the independent reference. |
+| Spread small singular RHS systems over blocks (`f8bbfa2`) | Singular RHS systems are independent WebGPU invocations with the original four-lane sum association. Warmed 8/16/32/64 trials preserve every output word and have overlapping timing ranges; 64 is retained. |
+| Combine free-boundary copies with fences (`cc2d91d`) | The new vacuum backend batches matrix/RHS into one map and final outputs into a second map around Wasm LU. Integral intermediates stay resident. Plasma already uses its own batched readbacks; CUDA streams/copies are not part of this backend. |
+| Opt-in Newton–GMRES (`bcdd3da`, `ca33025`) | Implemented resident f32 Krylov algebra, paired trials, frozen physics probes, native eligibility/backtracking policy, and exact rollback. `newton=1` is restricted to paired fixed-boundary axisymmetric solves. Solovev and prescribed-current cases pass all configured residuals and independent scientific checks. |
 
-The vacuum dependency must contain both the HOST backend from `4f724ed` and
-the CUDA optimizations from `4d19939`. Replacing its gitlink with the native
-revision alone removes the browser backend. The merged HOST path retains the
-existing source-summation order; only CUDA allocates the split source scratch.
+## Vacuum backend
 
-## Vacuum WebGPU backend
+The GPU portion of vacuum-field now has a WebGPU implementation inside
+`deps/vacuum-field`. It provides a separate `vfield::webgpu::Solver` API with
+owned WebGPU buffers and asynchronous updates. It does not emulate CUDA
+pointers in Wasm memory. The corresponding six WGSL modules execute:
 
-The CUDA portion of vacuum-field is portable to WebGPU. The current HOST/Wasm
-implementation is a reuse path, not a requirement that vacuum computation run
-on the CPU. The absence of an immediate Wasm speedup from CUDA scheduling
-changes does not limit a WGSL implementation of the same parallel algorithm.
+1. Surface synthesis, derivatives, metrics and curvatures.
+2. Coil-grid interpolation, axis-current field, normal and covariant fields.
+3. Singular and regularized integrals, Fourier transforms, matrix/RHS assembly.
+4. Potential derivatives, vacuum magnetic field, pressure and surface integrals.
 
-Implement the backend inside `deps/vacuum-field`, preserving its library
-boundary and host configuration contracts, with only the cuMES coupling in
-`src/webgpu/vacuum.cpp`.
-The existing [vacuum driver](../deps/vacuum-field/src/kernels/vacuum_field_solver_impl.cuh)
-provides the stage sequence:
+Coil parsing, MAKEGRID, immutable coefficient setup and dense LU use shared
+Wasm-double C++. LU remains between the assembly and reconstruction GPU
+batches; partial updates reuse its factorization. Inputs are copied before
+asynchronous submission, intermediate arrays remain resident, and output
+views are available directly to GPU consumers. The existing cuMES host
+coupling currently consumes the final readback arrays. An Asyncify wrapper
+yields the worker while the same asynchronous solver completes, without polling.
 
-1. GPU surface synthesis, derivatives, and metrics.
-2. GPU field-grid interpolation, axis-current field, and normal/covariant field.
-3. GPU singular and regularized integrals, Fourier projections, matrix and RHS
-   assembly, including the parallel axisymmetric source-term decomposition.
-4. Wasm double-precision dense LU factorization and solve, retaining the current
-   [native CPU solve boundary](../deps/vacuum-field/src/kernels/laplace_solver_impl.cuh).
-5. GPU potential derivatives, vacuum magnetic field and pressure, followed by
-   the cuMES LCFS pressure-force coupling.
+Select `vacuum=webgpu` on a free-boundary page. `vacuum=host` remains the
+reference/default. Selection precedes the first vacuum update and survives
+multigrid transitions with the existing activation, restart, `nvacskip`,
+current-consistency and LCFS-pressure policies. Only coil geometry and small
+configuration assets are served; response grids are generated in memory.
 
-Reuse configuration, Fourier/singular coefficient setup, coil parsing,
-MAKEGRID generation, and `LuSolve` as Wasm C++. Replace CUDA device pointers,
-launches, and transfers with WebGPU buffers, WGSL pipelines, and asynchronous
-submission/readback. Keep intermediate arrays resident across GPU stages;
-batch the matrix/RHS readback needed by the dense solve and upload the solved
-potential. Preserve full/partial vacuum updates and factorization reuse under
-`nvacskip`. The cuMES controller and vacuum activation/restart policy remain
-host responsibilities.
+Paired-f32 vacuum arithmetic has independent sqrt/log/recurrence checks and
+retains the binary32 exponent range. Miller normalization and tangent-pole
+handling avoid double-only seed/sentinel magnitudes. The qualification and
+conditioning limits live in the dependency's
+[precision ADR](../deps/vacuum-field/docs/adr/0001-webgpu-paired-vacuum.md)
+and [browser test instructions](../deps/vacuum-field/tests/webgpu/README.md).
+A passed stress recurrence estimate does not relax any physical residual or
+complete-solver comparison bound. Paired Solovev/W7-X/cth_like and scalar
+Solovev pass the consumer gates; [ADR-0019](adr/0019-webgpu-vacuum-backend.md)
+records trajectory differences, scientific diagnostics and timing limits.
 
-Precision needs its own implementation and validation: the current browser
-vacuum uses CPU double, while WGSL kernels use scalar or paired f32. In
-particular, singular-integral logarithms and recurrences need error checks;
-paired storage alone does not guarantee double-precision behavior. Paired f32
-also retains the f32 exponent range: the double recurrence seed `1e-300` and
-tangent sentinel `1e50` need explicit scaling or equivalent branch handling.
-Reuse the
-dependency's analytic, frozen-loop, and trusted-reference fixtures as GPU
-operator gates, then test the complete Solovev, W7-X, and cth_like coupling,
-including all configured residuals and geometry validity. Retain the HOST
-backend as an independent comparison path. Tune WebGPU workgroups and measure
-warmed runs on the target adapter before attributing a speedup to the port.
+## Geometry and Newton options
 
-## Fourier follow-ups
+`geometry=compensated-m1` changes scalar W7-X trajectories and is a Class C
+experiment. The single-grid case converges in 895 effective iterations;
+three grids converge in 1,163. Untouched inverse fields are bitwise preserved.
+Finite fields, oriented Jacobians, fixed LCFS, and an independent VMEC++ 0.7.0
+comparison are recorded in [ADR-0017](adr/0017-webgpu-m1-geometry-compensation.md).
+The option remains disabled by default; it is not a qualification below the
+browser scalar `1e-5` tolerance or a general speed result.
 
-The lowest-scope candidate is the scalar axisymmetric projector in
-[`axisymmetric_forward.wgsl`](../src/webgpu/shaders/axisymmetric_forward.wgsl).
-[`cached_separable_gpu_basis`](../src/webgpu/toroidal.cpp) already caches its
-unweighted trigonometric and derivative tables. A weighted cache must preserve
-the four separately rounded products, endpoint half weights, and existing
-normalization. Keep it separate from the unweighted tables shared with inverse
-transforms and dealiasing. Check exact operator outputs and controller traces
-on the same adapter before calling this Class A. Measure warmed repeated runs
-before claiming that removing four multiplies offsets any added setup/storage.
+`newton=1&precision=double` is an opt-in Class C change. It reuses the physics
+DAG with a frozen preconditioner, constraint references, normalization and
+gauge. Probes enqueue without individual host maps. Eager GMRES work has one
+control map, and actual trial states pass geometry and all three residual
+checks before a correction is accepted. Rejection reevaluates the original
+base; accepted steps clear velocity and reset controller momentum.
 
-The 3-D projector in
-[`toroidal_forward.wgsl.in`](../src/webgpu/shaders/templates/toroidal_forward.wgsl.in)
-weights the combined residual expression. Moving that weight into its basis
-changes arithmetic order, so it is not the same mechanical cache optimization.
+The matched paired Solovev case takes 333 iterations versus 507 without
+Newton; the prescribed-current case takes 397 versus 596. Deliberate inner
+breakdown reproduces the exact baseline controller trace and scientific
+hashes. A step sweep measures finite differences of the actual browser
+f32-preconditioned residual; paired state alone does not make that oracle
+binary64. [ADR-0018](adr/0018-webgpu-newton-experiment.md) records the fixtures,
+independent VMEC++ diagnostics, rollback, and remaining qualification limits.
+Iteration reductions do not by themselves establish a wall-time speedup.
 
-The scalar inverse in
-[`toroidal_inverse.wgsl.in`](../src/webgpu/shaders/templates/toroidal_inverse.wgsl.in)
-uses Kahan toroidal summation but stores a scalar result; its correction is
-not a paired low word. Applying the native m=1 precision improvement requires
-explicit paired toroidal sums carried through poloidal products, together with
-a paired radial normalization (the scalar shader currently computes it in
-f32). Existing odd-position cancellation tests
-in [`float_geometry_tests.cpp`](../src/webgpu/float_geometry_tests.cpp) populate
-n=0 odd coefficients; add nonzero-n cancellation coverage before changing this
-path. Use the browser's scalar W7-X baselines and tolerances, not native CUDA
-iteration counts. If controller decisions change, apply the Class C gates. The already paired inverse has a different precision
-contract and does not need this selective compensation retrofit.
-
-## Newton prerequisites
-
-The native
-[`NewtonCorrection`](../include/cumes/numerics/newton_correction.hpp) and
-[`DeviceGmres`](../include/cumes/numerics/device_gmres.hpp) own CUDA buffers and
-launch CUDA kernels. Their mathematics and fixtures are reusable; those
-implementations cannot link into the Wasm target. A first browser experiment
-should be opt-in, paired-f32, fixed-boundary, and axisymmetric.
-
-Reuse the existing WebGPU physics DAG and cached preconditioner through
-[`IterationCase`](../include/cumes/webgpu/iteration.hpp), with these additions:
-
-- WGSL active-coordinate packing, finite-difference JVPs, and stable restarted
-  GMRES. Retain axis/LCFS exclusions, parity zeros, and the m=1 coordinate map.
-- A probe enqueue path that keeps residuals on device. The current
-  [`IterationDispatch`](../src/webgpu/iteration.cpp) always maps a readback;
-  invoking it for each Krylov probe would introduce a host fence per probe.
-  Own frozen RHS/base/trial snapshots because result handles can alias scratch.
-- Freeze preconditioner, constraint references and multiplier, force
-  normalization, and gauge during probes; recompute geometry, fields, forces,
-  and current closure.
-- Study finite-difference step size and cancellation. Paired spectral state
-  does not make the complete residual oracle paired: the current
-  [`preconditioner application`](../src/webgpu/preconditioner_apply.cpp) still
-  consumes and produces scalar f32. Native epsilon and inner tolerance cannot
-  be assumed valid for this path.
-- Preserve native finite/Jacobian gates, stable-epoch guards, merit decrease,
-  and accepted-correction velocity reset. Rejected trials must restore and
-  reevaluate the base with the frozen caches, requiring all three residuals to
-  match their pre-probe values. Coefficient restoration alone leaves probe
-  intermediates active. The merged shared controller's
-  `reset_correction_momentum()` is reusable.
-
-Follow the native [Newton ADR](adr/0016-opt-in-newton-corrections.md) and the
-[Class C gates](verification.md#6-equivalence-gates): every configured residual,
-valid geometry, physical invariants, rollback, fixed-point replay where
-practical, representative cases including prescribed current, an independent
-comparison, and a browser ADR. Real adapter qualification and warmed timings
-must precede a browser performance claim or a default-policy change.
+The 3-D forward projector weights the combined force expression. Moving the
+weight into its basis would change the arithmetic association, unlike the
+qualified scalar axisymmetric cache. That further change is outside the
+merged cache optimization and has not been introduced.

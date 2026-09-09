@@ -33,6 +33,11 @@
 #endif
 #include "vfield/common/sizes.hpp"
 #include "vfield/free_boundary/vacuum_field_solver.hpp"
+#ifdef CUMES_VACUUM_WEBGPU
+#include "vfield/webgpu/solver.hpp"
+
+#include <type_traits>
+#endif
 #include "vfield/makegrid/makegrid.hpp"
 
 #include <algorithm>
@@ -228,6 +233,10 @@ struct FreeBoundaryOperator<T>::Impl {
     int ntor;
     vfield::Sizes sizes;
     vfield::VacuumFieldSolver<T> solver;
+#ifdef CUMES_VACUUM_WEBGPU
+    std::unique_ptr<vfield::webgpu::Solver> gpu_solver;
+    vfield::webgpu::Result gpu_result;
+#endif
     VacuumState state = VacuumState::OFF;
     int nvacskip = 1;
     double activation_threshold = control_policy::VACUUM_ACTIVATION_RESIDUAL;
@@ -507,6 +516,18 @@ void FreeBoundaryOperator<T>::advance(int iter2,
     impl_->decay = (impl_->state != VacuumState::OFF);
 }
 
+#ifdef CUMES_VACUUM_WEBGPU
+template <class T>
+void FreeBoundaryOperator<T>::enable_webgpu(const wgpu::Device& device) {
+    static_assert(std::is_same_v<T, double>);
+    if (impl_->has_factors)
+        throw CumesError(
+            "vacuum backend must be selected before its first update");
+    impl_->gpu_solver = std::make_unique<vfield::webgpu::Solver>(
+        device, impl_->sizes, impl_->solver.mgrid());
+}
+#endif
+
 template <class T>
 void FreeBoundaryOperator<T>::run_host_update(int ns,
                                               const T* buco_h,
@@ -537,10 +558,30 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
     const T* zcs = d_lcfs_repacked + 3 * mnsize;
     T bsubu = T(0);
     T bsubv = T(0);
-    impl_->solver.update(rcc, rss, nullptr, nullptr, zsc, zcs, nullptr, nullptr,
-                         DeviceParams<T>::SIGN_JACOBIAN, d_r_axis, d_z_axis,
-                         bsubu, bsubv, static_cast<T>(net_toroidal_current),
-                         impl_->full_update);
+#ifdef CUMES_VACUUM_WEBGPU
+    if (impl_->gpu_solver) {
+        vfield::webgpu::Update update;
+        update.r_cc = {rcc, static_cast<std::size_t>(mnsize)};
+        update.r_ss = {rss, static_cast<std::size_t>(mnsize)};
+        update.z_sc = {zsc, static_cast<std::size_t>(mnsize)};
+        update.z_cs = {zcs, static_cast<std::size_t>(mnsize)};
+        update.r_axis = {d_r_axis, static_cast<std::size_t>(impl_->nzeta)};
+        update.z_axis = {d_z_axis, static_cast<std::size_t>(impl_->nzeta)};
+        update.sign_of_jacobian = DeviceParams<T>::SIGN_JACOBIAN;
+        update.net_toroidal_current = net_toroidal_current;
+        update.full_update = impl_->full_update;
+        impl_->gpu_result = impl_->gpu_solver->update_blocking(update);
+        if (impl_->gpu_result.out_of_bounds)
+            throw CumesError(
+                "WebGPU vacuum boundary lies outside the coil field grid");
+        bsubu = impl_->gpu_result.b_sub_u_vac;
+        bsubv = impl_->gpu_result.b_sub_v_vac;
+    } else
+#endif
+        impl_->solver.update(
+            rcc, rss, nullptr, nullptr, zsc, zcs, nullptr, nullptr,
+            DeviceParams<T>::SIGN_JACOBIAN, d_r_axis, d_z_axis, bsubu, bsubv,
+            static_cast<T>(net_toroidal_current), impl_->full_update);
     impl_->bsubu_vac = static_cast<double>(bsubu);
     impl_->bsubv_vac = static_cast<double>(bsubv);
     if (impl_->full_update) impl_->has_factors = true;
@@ -704,9 +745,13 @@ void FreeBoundaryOperator<T>::enqueue_rbsq(const T* d_r_e,
                                            int nZnT,
                                            T delta_s,
                                            VacuumStream stream) const {
-    launch_rbsq<T>(impl_->solver.b_sq_vac(), d_r_e, d_r_o, d_total_pressure,
-                   d_rbsq, d_delbsq, ns, ntheta, nzeta, nZnT,
-                   impl_->edge_pressure, delta_s, stream);
+    const T* vacuum_pressure = impl_->solver.b_sq_vac();
+#ifdef CUMES_VACUUM_WEBGPU
+    if (impl_->gpu_solver) vacuum_pressure = impl_->gpu_result.b_sq_vac.data();
+#endif
+    launch_rbsq<T>(vacuum_pressure, d_r_e, d_r_o, d_total_pressure, d_rbsq,
+                   d_delbsq, ns, ntheta, nzeta, nZnT, impl_->edge_pressure,
+                   delta_s, stream);
 }
 
 template <class T>

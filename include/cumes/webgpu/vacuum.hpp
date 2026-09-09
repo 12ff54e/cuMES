@@ -11,7 +11,9 @@ namespace cumes::webgpu {
 
 std::unique_ptr<FreeBoundaryOperator<double>> create_vacuum(
     const ValidatedProblem& problem,
-    const AxisymmetricStageData& stage);
+    const AxisymmetricStageData& stage,
+    const wgpu::Device& device,
+    bool use_webgpu);
 void prepare_vacuum_stage(FreeBoundaryOperator<double>& vacuum,
                           const ValidatedProblem& problem,
                           const AxisymmetricStageData& stage);

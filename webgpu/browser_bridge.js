@@ -6,11 +6,25 @@ mergeInto(LibraryManager.library, {
     const free = query.get('boundary') === 'free' && query.get('mode') !== 'test';
     return query.get('precision') === 'double' || ((free || query.get('preset') === 'w7x') && !query.has('precision')) ? 1 : 0;
   },
+  requested_webgpu_vacuum: function() {
+    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('vacuum') === 'webgpu';
+  },
   requested_float_radius_reference: function() {
     return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('radius_reference') === '0' ? 0 : 1;
   },
   requested_compensated_geometry: function() {
-    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('geometry') === 'native' ? 0 : 1;
+    const scope = new URLSearchParams(globalThis.cumesSearch ?? location.search).get('geometry');
+    return scope === 'native' ? 0 : scope === 'compensated-m1' ? 2 : 1;
+  },
+  requested_newton_solve: function() {
+    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('newton') === '1';
+  },
+  requested_newton_step: function() {
+    const value = new URLSearchParams(globalThis.cumesSearch ?? location.search).get('newton_step');
+    return value === null ? 1e-6 : Number(value);
+  },
+  requested_newton_probe: function() {
+    return new URLSearchParams(globalThis.cumesSearch ?? location.search).get('newton_probe') === '1';
   },
   publish_browser_result__deps: ['$UTF8ToString'],
   publish_browser_result: function(success, detail) {

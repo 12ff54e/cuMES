@@ -26,6 +26,8 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/vacuum.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/magnetic_field.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/numerics.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/newton.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/newton_tests.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/preconditioner.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/preconditioner_apply.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/preconditioner_matrix.cpp
@@ -70,14 +72,14 @@ if(NOT EXISTS "${PROJECT_SOURCE_DIR}/deps/webgpu-fft/CMakeLists.txt")
 endif()
 add_subdirectory(${PROJECT_SOURCE_DIR}/deps/webgpu-fft ${CMAKE_CURRENT_BINARY_DIR}/fft)
 target_link_libraries(cumes_webgpu PRIVATE webgpu_fft)
-set(VFIELD_BACKEND HOST CACHE STRING "vacuum-field execution backend" FORCE)
+set(VFIELD_BACKEND WEBGPU CACHE STRING "vacuum-field execution backend" FORCE)
 set(VFIELD_USE_NETCDF OFF CACHE BOOL "Browser uses in-memory coil grids" FORCE)
 set(VFIELD_BUILD_TESTS OFF CACHE BOOL "Test vacuum-field separately" FORCE)
 set(VFIELD_BUILD_TOOLS OFF CACHE BOOL "No vacuum command-line tools" FORCE)
 set(VFIELD_BUILD_MAKEGRID ON CACHE BOOL "Generate browser coil grids in memory" FORCE)
 set(VFIELD_WARNINGS_AS_ERRORS ${CUMES_WARNINGS_AS_ERRORS} CACHE BOOL "Vacuum warnings policy" FORCE)
 add_subdirectory(${PROJECT_SOURCE_DIR}/deps/vacuum-field ${CMAKE_CURRENT_BINARY_DIR}/vacuum)
-target_link_libraries(cumes_webgpu PRIVATE vfield_cuda_double vfield::makegrid)
+target_link_libraries(cumes_webgpu PRIVATE vfield_cuda_double vfield::makegrid vfield::webgpu)
 
 # Reuse vacuum-field's converter for previews without loading the solver or
 # maintaining another coils-dot/JSON parser in JavaScript.
@@ -93,7 +95,7 @@ set_target_properties(cumes_coils PROPERTIES SUFFIX ".mjs")
 add_dependencies(cumes_webgpu cumes_coils)
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   $<TARGET_FILE:cumes_coils>)
-target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_HOST)
+target_compile_definitions(cumes_webgpu PRIVATE CUMES_VACUUM_HOST CUMES_VACUUM_WEBGPU)
 target_compile_definitions(cumes_webgpu PRIVATE
   CUMES_GIT_REVISION="${CUMES_GIT_REVISION}"
   CUMES_GIT_DIRTY=${CUMES_GIT_DIRTY}

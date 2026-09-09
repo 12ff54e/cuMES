@@ -107,6 +107,8 @@ after rebuilding; cached HTML can still select an older versioned runtime.
   solve. All equilibria use the same Run button.
 - `?boundary=free&coils=solovev` (or `w7x`, `cth_like`): free-boundary preset;
   `&run=1` starts it.
+- `vacuum=webgpu` selects the opt-in paired-f32 vacuum kernels with Wasm-double
+  LU; `vacuum=host` is the default/reference.
 - `precision=float|double` selects scalar-f32 or paired-f32 plasma arithmetic.
   Paired words provide higher precision; this is not native WGSL f64. The
   fixed editor defaults to scalar, while free-boundary and W7-X examples
@@ -148,8 +150,9 @@ Preserve these contracts unless the task intentionally changes them:
 - Free-boundary coupling retains vacuum activation/restart state, `nvacskip`
   scheduling, LCFS pressure forces, preconditioner terms, and multigrid
   persistence. Reuse `deps/vacuum-field` and the existing coupling. The browser
-  compiles its HOST backend to Wasm, sharing numerical kernels with CUDA;
-  vacuum work runs in the solver worker.
+  builds its WebGPU backend and HOST-double reference. `vacuum=webgpu` selects
+  paired-f32 vacuum kernels with Wasm-double LU; `vacuum=host` retains the
+  HOST path. Both run from the solver worker and reuse the same coupling.
 - Browser free-boundary assets contain coil geometry and small configuration
   files. Generate field grids in memory with the existing MAKEGRID code.
   Preserve Solovev/W7-X/cth_like selection and coil uploads; do not ship field

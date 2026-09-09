@@ -12,12 +12,14 @@
 #include "cumes/webgpu/geometry.hpp"
 #include "cumes/webgpu/initialization.hpp"
 #include "cumes/webgpu/iteration.hpp"
+#include "cumes/webgpu/newton.hpp"
 #include "cumes/webgpu/numerics.hpp"
 #include "cumes/webgpu/preconditioner.hpp"
 #include "cumes/webgpu/prolongation.hpp"
 #include "cumes/webgpu/toroidal.hpp"
 #include "cumes/webgpu/vacuum.hpp"
 #include "float_geometry_tests.hpp"
+#include "newton_tests.hpp"
 #include "rounding_tests.hpp"
 
 #include <algorithm>
@@ -47,8 +49,12 @@ extern "C" {
 void publish_browser_result(int success, const char* detail);
 int publish_browser_output(const char* path);
 int requested_double_solve();
+int requested_webgpu_vacuum();
 int requested_float_radius_reference();
 int requested_compensated_geometry();
+int requested_newton_solve();
+double requested_newton_step();
+int requested_newton_probe();
 int requested_reference_transfers();
 int requested_direct_dft();
 int requested_generic_fft();
@@ -237,13 +243,20 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "adapter/device ready; running %zu radial-transfer "
                     "cases\n",
                     self->cases_.size());
-                cumes::webgpu::run_rounding_tests(
+                cumes::webgpu::run_newton_tests(
                     self->device_, [self](std::string error) {
                         if (!error.empty()) {
                             self->finish(false, std::move(error));
                             return;
                         }
-                        self->run_next();
+                        cumes::webgpu::run_rounding_tests(
+                            self->device_, [self](std::string error) {
+                                if (!error.empty()) {
+                                    self->finish(false, std::move(error));
+                                    return;
+                                }
+                                self->run_next();
+                            });
                     });
             });
     }
@@ -2091,6 +2104,28 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 return;
             }
             problem_.emplace(std::move(validated.value()));
+            newton_enabled_ = requested_newton_solve() != 0;
+            if (newton_enabled_ &&
+                (!paired || problem_->spec().free_boundary.lfreeb ||
+                 problem_->shape().ntor != 0 || problem_->shape().nzeta != 1 ||
+                 requested_reference_transfers() ||
+                 requested_spectral_fences() || requested_compare_fft())) {
+                finish(false,
+                       "Newton experiments require precision=double, fixed "
+                       "boundary, axisymmetry (ntor=0, nzeta=1), and resident "
+                       "execution");
+                return;
+            }
+            if (newton_enabled_ &&
+                (!(requested_newton_step() > 0) ||
+                 !(static_cast<float>(requested_newton_step()) > 0) ||
+                 !std::isfinite(requested_newton_step()) ||
+                 requested_newton_step() > 0.01)) {
+                finish(false,
+                       "newton_step must be positive in f32, finite, and at "
+                       "most 0.01");
+                return;
+            }
             production_solve_ = true;
             double_single_solve_ = paired;
             publish_browser_iteration_timing(0, 0);
@@ -2105,7 +2140,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             initialized_stage_ = cumes::webgpu::initialize_stage(
                 *problem_, stage_index_,
                 float_3d && requested_float_radius_reference() != 0,
-                float_3d && requested_compensated_geometry() != 0);
+                float_3d && requested_compensated_geometry() != 0,
+                float_3d && requested_compensated_geometry() == 2);
             reset_stage_state();
             std::printf(
                 "running interactive %s-boundary solve "
@@ -2946,6 +2982,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 initialized_stage_.radius_reference;
             stage_toroidal_inverse_case_.compensated_geometry =
                 initialized_stage_.compensated_geometry;
+            stage_toroidal_inverse_case_.compensated_toroidal_geometry =
+                initialized_stage_.compensated_toroidal_geometry;
             stage_toroidal_inverse_case_.state = initialized_stage_.state;
             if (double_single_solve_) {
                 stage_toroidal_inverse_case_.state_lo = stage_state_lo_;
@@ -4534,6 +4572,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->restore_checkpoint();
                     self->controller_->vacuum_soft_restart();
                 }
+                if (self->begin_newton_correction(actual)) return;
                 const auto verdict = self->controller_->classify_invariant(
                     self->invariant_normalized_.data());
                 if (verdict.nonfinite) {
@@ -4565,6 +4604,364 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 self->device_descent_residual_ = actual.device_residual;
                 self->run_descent(std::move(actual.residual));
             });
+    }
+
+    std::array<double, 3> newton_residual(
+        const cumes::webgpu::IterationResult& result) const {
+        const auto& raw = result.residual[1].raw_norm;
+        const double plain =
+            double(initialized_stage_.ns) * initialized_stage_.mpol;
+        return {raw[0] * plain * force_normalization_.f_norm_rz * 0.25,
+                raw[1] * plain * force_normalization_.f_norm_rz * 0.25,
+                raw[2] * plain * force_normalization_.f_norm_l};
+    }
+
+    bool valid_newton_trial(
+        const cumes::webgpu::IterationResult& result) const {
+        const auto finite = [](const auto& values) {
+            return std::all_of(values.begin(), values.end(),
+                               [](auto value) { return std::isfinite(value); });
+        };
+        if (!result.inverse.geometry_finite || !result.magnetic.fields_finite ||
+            !finite(result.inverse.geometry) ||
+            !finite(result.inverse.geometry_lo) ||
+            !finite(result.magnetic.fields) ||
+            !finite(result.magnetic.fields_lo) ||
+            !finite(result.magnetic.chip_h) ||
+            !finite(result.magnetic.chip_h_lo) ||
+            !finite(result.magnetic.iota_h) ||
+            !finite(result.magnetic.iota_h_lo) ||
+            !finite(result.preconditioned.residual) ||
+            result.preconditioned.breakdown_count != 0)
+            return false;
+        for (const auto& residual : result.residual)
+            if (!residual.source_finite || !finite(residual.raw_norm))
+                return false;
+        // Trials use full geometry and the same host-double orientation gate
+        // as ordinary passes. An invalid trial is rejected without changing
+        // controller counters or its checkpoint.
+        const auto points =
+            std::size_t(initialized_stage_.ns - 1) * initialized_stage_.ntheta;
+        const auto& geometry = result.geometry;
+        if (geometry.fields.size() != 10 * points ||
+            geometry.fields_lo.size() != 10 * points ||
+            !finite(geometry.fields) || !finite(geometry.fields_lo))
+            return false;
+        double minimum = std::numeric_limits<double>::infinity(), maximum = 0;
+        std::size_t index = 0;
+        for (std::size_t i = 0; i < points; ++i) {
+            const float hi = geometry.fields[6 * points + i];
+            if (hi == 0 || geometry.fields[8 * points + i] != 0) return false;
+            const double value =
+                double(hi) + geometry.fields_lo[6 * points + i];
+            if (-value < minimum) {
+                minimum = -value;
+                index = i;
+            }
+            maximum = std::max(maximum, std::abs(value));
+        }
+        if (minimum <= 0 || maximum <= 0 ||
+            (minimum <
+                 cumes::control_policy::JACOBIAN_RELATIVE_THRESHOLD * maximum &&
+             index >= static_cast<std::size_t>(initialized_stage_.ntheta)))
+            return false;
+        return finite(newton_residual(result));
+    }
+
+    bool begin_newton_correction(
+        const cumes::webgpu::AxisymmetricPreconditionerApplyResult& base) {
+        if (!newton_enabled_ || !newton_) return false;
+        const int iteration = controller_->effective_iteration();
+        const bool converged =
+            std::all_of(invariant_normalized_.begin(),
+                        invariant_normalized_.end(), [this](double value) {
+                            return value <= initialized_stage_.tolerance;
+                        });
+        const bool finite = std::all_of(
+            invariant_normalized_.begin(), invariant_normalized_.end(),
+            [](double value) { return std::isfinite(value); });
+        if (iteration == last_newton_iteration_ ||
+            iteration < cumes::control_policy::NEWTON_START_ITERATION ||
+            iteration % cumes::control_policy::NEWTON_PERIOD != 0 ||
+            iteration - controller_->restart_anchor() <=
+                cumes::control_policy::NEWTON_MIN_EPOCH_AGE ||
+            controller_->refresh_preconditioner() ||
+            controller_->reset_constraint_reference() ||
+            controller_->fsqz_prev() >= 1.0e-6 || converged || !finite)
+            return false;
+        last_newton_iteration_ = iteration;
+        ++newton_attempts_;
+        newton_base_residual_ = invariant_normalized_;
+        try {
+            // The preceding deferred-descent callback has reconstructed the
+            // canonical paired host state, including its dependent axis.
+            const auto bytes = initialized_stage_.state.size() * sizeof(float);
+            device_.GetQueue().WriteBuffer(newton_input_.buffer, 0,
+                                           initialized_stage_.state.data(),
+                                           bytes);
+            device_.GetQueue().WriteBuffer(newton_input_.buffer, bytes,
+                                           stage_state_lo_.data(), bytes);
+            newton_frozen_ = make_iteration_case();
+            newton_frozen_.device_state = newton_input_;
+            newton_frozen_.refresh_preconditioner = false;
+            newton_frozen_.reset_reference = false;
+            newton_->prepare(newton_frozen_, newton_input_,
+                             base.device_residual);
+            if (requested_newton_probe() && !newton_studied_) {
+                newton_studied_ = true;
+                study_newton_probes();
+            } else {
+                solve_newton_correction();
+            }
+        } catch (const std::exception& error) {
+            finish(false, "Newton correction setup failed: " +
+                              std::string(error.what()));
+        }
+        return true;
+    }
+
+    void solve_newton_correction() {
+        const auto self = shared_from_this();
+        try {
+            cumes::webgpu::NewtonOptions options;
+            options.difference_step =
+                static_cast<float>(requested_newton_step());
+            newton_->solve(
+                options, [self](std::string error,
+                                cumes::webgpu::NewtonControl control) {
+                    if (!error.empty()) {
+                        self->finish(false, std::move(error));
+                        return;
+                    }
+                    self->newton_control_ = control;
+                    self->newton_evaluations_ += control.evaluations;
+                    self->evaluate_newton_trial(control.breakdown ? 4 : 0);
+                });
+        } catch (const std::exception& error) {
+            finish(false,
+                   "Newton inner solve failed: " + std::string(error.what()));
+        }
+    }
+
+    void evaluate_newton_trial(int trial) {
+        const bool rollback = trial == 4;
+        const auto state =
+            rollback ? newton_->base_state()
+                     : newton_->enqueue_trial(std::ldexp(1.0F, -trial));
+        auto input = newton_frozen_;
+        input.device_state = state;
+        // The ordinary raw-norm reduction choice is retained for exact base
+        // rollback; full fields let trial rejection reuse the host validity
+        // checks without committing an invalid state to the controller.
+        input.compact_fields = false;
+        input.geometry_control = false;
+        auto high = std::make_shared<std::vector<float>>();
+        auto low = std::make_shared<std::vector<float>>();
+        const auto bytes = state.values * sizeof(float);
+        const auto encoder = device_.CreateCommandEncoder();
+        newton_trial_batch_->append(
+            encoder, state.buffer, state.high_offset, bytes,
+            [high](std::span<const float> values) {
+                high->assign(values.begin(), values.end());
+            });
+        newton_trial_batch_->append(
+            encoder, state.buffer, state.low_offset, bytes,
+            [low](std::span<const float> values) {
+                low->assign(values.begin(), values.end());
+            });
+        const auto commands = encoder.Finish();
+        device_.GetQueue().Submit(1, &commands);
+        ++newton_evaluations_;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_iteration(
+            device_, std::move(input), newton_trial_batch_,
+            [self, state, high, low, trial, rollback](
+                std::string error, cumes::webgpu::IterationResult result) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const bool valid = self->valid_newton_trial(result);
+                const auto residual = self->newton_residual(result);
+                if (rollback) {
+                    if (!valid || residual != self->newton_base_residual_) {
+                        self->finish(false,
+                                     "Newton rollback did not recover the "
+                                     "original valid residual triple");
+                        return;
+                    }
+                } else {
+                    const double merit =
+                        residual[0] + residual[1] + residual[2];
+                    const double original = self->newton_base_residual_[0] +
+                                            self->newton_base_residual_[1] +
+                                            self->newton_base_residual_[2];
+                    if (!valid ||
+                        !(merit <
+                          cumes::control_policy::NEWTON_ACCEPTANCE_RATIO *
+                              original)) {
+                        self->evaluate_newton_trial(trial + 1);
+                        return;
+                    }
+                    ++self->newton_accepted_;
+                    self->stage_velocity_.assign(high->size(), 0.0F);
+                    self->stage_velocity_lo_.assign(high->size(), 0.0F);
+                    self->device_descent_velocity_ = {};
+                    self->controller_->reset_correction_momentum();
+                }
+                std::ostringstream record;
+                record << std::setprecision(17)
+                       << "{\"kind\":\"newton\",\"stage\":"
+                       << self->stage_index_ + 1 << ",\"iteration\":"
+                       << self->controller_->effective_iteration()
+                       << ",\"accepted\":" << (rollback ? "false" : "true")
+                       << ",\"scale\":"
+                       << (rollback ? 0 : std::ldexp(1.0, -trial))
+                       << ",\"step\":" << requested_newton_step()
+                       << ",\"merit_before\":"
+                       << self->newton_base_residual_[0] +
+                              self->newton_base_residual_[1] +
+                              self->newton_base_residual_[2]
+                       << ",\"merit_after\":"
+                       << residual[0] + residual[1] + residual[2]
+                       << ",\"gmres_steps\":" << self->newton_control_.steps
+                       << ",\"breakdown\":" << self->newton_control_.breakdown
+                       << ",\"evaluations\":" << self->newton_evaluations_
+                       << ",\"linear_residual\":";
+                if (std::isfinite(self->newton_control_.residual_norm))
+                    record << self->newton_control_.residual_norm;
+                else
+                    record << "null";
+                record << '}';
+                publish_browser_diagnostic(record.str().c_str());
+                std::printf(
+                    "  Newton iter=%d: %s, GMRES steps=%d breakdown=%d\n",
+                    self->controller_->effective_iteration(),
+                    rollback ? "rejected and restored" : "accepted",
+                    self->newton_control_.steps,
+                    self->newton_control_.breakdown);
+                self->initialized_stage_.state = std::move(*high);
+                self->stage_state_lo_ = std::move(*low);
+                self->device_iteration_state_ = state;
+                self->device_descent_state_ = state;
+                self->iteration_forward_index_ =
+                    self->iteration_residual_index_ = 0;
+                self->iteration_results_ = std::move(result);
+                self->finish_stage_inverse(
+                    std::move(self->iteration_results_->inverse));
+            });
+    }
+
+    void study_newton_probes() {
+        // One diagnostic fence after every probe and cache snapshot has been
+        // enqueued. This does not introduce a fence per Krylov/JVP evaluation.
+        const std::array<float, 7> steps{3.0e-4F, 1.0e-4F, 3.0e-5F, 1.0e-5F,
+                                         3.0e-6F, 1.0e-6F, 3.0e-7F};
+        std::vector<std::pair<cumes::webgpu::DeviceFields, bool>> caches{
+            {newton_->base_state(), true},
+            {newton_frozen_.elements.device_elements, false},
+            {newton_frozen_.matrix.device_matrix, false},
+            {newton_frozen_.device_r_con0, true},
+            {newton_frozen_.device_z_con0, true}};
+        std::uint64_t capacity =
+            (steps.size() + 1) * newton_->rhs().values * sizeof(float);
+        for (const auto& [field, paired] : caches)
+            if (field)
+                capacity +=
+                    2 * field.values * sizeof(float) * (paired ? 2 : 1) + 32;
+        auto batch = std::make_shared<cumes::webgpu::ReadbackBatch>(
+            device_, capacity + 128);
+        auto before = std::make_shared<std::vector<std::vector<float>>>(
+            2 * caches.size());
+        auto changed = std::make_shared<bool>(false);
+        const auto snapshots = [&](bool after) {
+            const auto encoder = device_.CreateCommandEncoder();
+            for (std::size_t i = 0; i < caches.size(); ++i) {
+                const auto& [field, paired] = caches[i];
+                if (!field) continue;
+                for (int word = 0; word < (paired ? 2 : 1); ++word)
+                    batch->append(
+                        encoder, field.buffer,
+                        word ? field.low_offset : field.high_offset,
+                        field.values * sizeof(float),
+                        [before, changed, i, word,
+                         after](std::span<const float> values) {
+                            auto& original = (*before)[2 * i + word];
+                            if (!after)
+                                original.assign(values.begin(), values.end());
+                            else
+                                for (std::size_t j = 0; j < values.size(); ++j)
+                                    *changed |= std::bit_cast<std::uint32_t>(
+                                                    values[j]) !=
+                                                std::bit_cast<std::uint32_t>(
+                                                    original[j]);
+                        });
+            }
+            const auto commands = encoder.Finish();
+            device_.GetQueue().Submit(1, &commands);
+        };
+        snapshots(false);
+        auto columns =
+            std::make_shared<std::vector<std::vector<float>>>(steps.size() + 1);
+        for (std::size_t i = 0; i <= steps.size(); ++i) {
+            const auto result = newton_->enqueue_jvp(
+                newton_->rhs(), i == steps.size() ? 1.0e-4F : steps[i],
+                i == steps.size());
+            const auto encoder = device_.CreateCommandEncoder();
+            batch->append(encoder, result.buffer, result.high_offset,
+                          result.values * sizeof(float),
+                          [columns, i](std::span<const float> values) {
+                              (*columns)[i].assign(values.begin(),
+                                                   values.end());
+                          });
+            const auto commands = encoder.Finish();
+            device_.GetQueue().Submit(1, &commands);
+        }
+        snapshots(true);
+        newton_evaluations_ += static_cast<int>(steps.size()) + 2;
+        const auto self = shared_from_this();
+        batch->map([self, columns, changed, steps](std::string error) {
+            if (!error.empty() || *changed) {
+                self->finish(false,
+                             error.empty()
+                                 ? "Newton probes modified a frozen state/cache"
+                                 : error);
+                return;
+            }
+            const auto& reference = columns->back();
+            double reference_norm = 0;
+            for (const float value : reference)
+                reference_norm += double(value) * value;
+            std::ostringstream record;
+            record << std::setprecision(17)
+                   << "{\"kind\":\"newton-probe-study\",\"stage\":"
+                   << self->stage_index_ + 1 << ",\"iteration\":"
+                   << self->controller_->effective_iteration()
+                   << ",\"cache_unchanged\":true,\"central_step\":0.0001,"
+                      "\"relative_difference\":[";
+            for (std::size_t i = 0; i < steps.size(); ++i) {
+                double difference = 0;
+                for (std::size_t j = 0; j < reference.size(); ++j) {
+                    const double delta =
+                        double((*columns)[i][j]) - reference[j];
+                    difference += delta * delta;
+                }
+                if (i) record << ',';
+                record << "{\"step\":" << steps[i] << ",\"error\":";
+                const double relative = std::sqrt(difference / reference_norm);
+                if (std::isfinite(relative))
+                    record << relative;
+                else
+                    record << "null";
+                record << '}';
+            }
+            record << "]}";
+            publish_browser_diagnostic(record.str().c_str());
+            std::printf(
+                "  Newton frozen-cache preservation and step sweep: "
+                "complete\n");
+            self->solve_newton_correction();
+        });
     }
 
     void run_descent(std::vector<float> residual) {
@@ -4760,8 +5157,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         if (initialized_stage_.free_boundary) {
             if (!vacuum_) {
                 std::printf("Generating the coil field grid in memory...\n");
-                vacuum_ =
-                    cumes::webgpu::create_vacuum(*problem_, initialized_stage_);
+                vacuum_ = cumes::webgpu::create_vacuum(
+                    *problem_, initialized_stage_, device_,
+                    requested_webgpu_vacuum() != 0);
                 std::printf("Coil field grid ready.\n");
             }
             cumes::webgpu::prepare_vacuum_stage(*vacuum_, *problem_,
@@ -4805,6 +5203,27 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         completed_passes_ = 0;
         attempted_passes_ = 0;
         published_restart_count_ = 0;
+        last_newton_iteration_ = 0;
+        newton_attempts_ = newton_accepted_ = newton_evaluations_ = 0;
+        newton_studied_ = false;
+        if (newton_enabled_) {
+            newton_ = std::make_shared<cumes::webgpu::NewtonCorrection>(
+                device_, initialized_stage_.ns, initialized_stage_.mpol);
+            const auto count = initialized_stage_.state.size();
+            wgpu::BufferDescriptor descriptor{};
+            descriptor.label = "Newton canonical paired input state";
+            descriptor.size = 2 * count * sizeof(float);
+            descriptor.usage = wgpu::BufferUsage::Storage |
+                               wgpu::BufferUsage::CopySrc |
+                               wgpu::BufferUsage::CopyDst;
+            newton_input_ = {device_.CreateBuffer(&descriptor), count, 0,
+                             count * sizeof(float)};
+            newton_trial_batch_ =
+                std::make_shared<cumes::webgpu::ReadbackBatch>(
+                    device_, cumes::webgpu::iteration_readback_capacity(
+                                 initialized_stage_) +
+                                 2 * count * sizeof(float) + 16);
+        }
     }
 
     void complete_stage() {
@@ -4880,6 +5299,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             publish_browser_diagnostic(diagnostic.str().c_str());
         }
         const int stage_iterations = controller_->effective_iteration();
+        if (newton_enabled_)
+            std::printf(
+                "  Newton stage %zu: attempts=%d accepted=%d evaluations=%d\n",
+                stage_index_ + 1, newton_attempts_, newton_accepted_,
+                newton_evaluations_);
         stage_iterations_.push_back(stage_iterations);
         total_iterations_ += stage_iterations;
         cumes::StageReport stage_report;
@@ -4979,7 +5403,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     *self->problem_, next_stage,
                     static_cast<bool>(
                         self->initialized_stage_.radius_reference),
-                    self->initialized_stage_.compensated_geometry);
+                    self->initialized_stage_.compensated_geometry,
+                    self->initialized_stage_.compensated_toroidal_geometry);
                 self->initialized_stage_.state = std::move(prolonged.state);
                 self->stage_state_lo_ = std::move(prolonged_lo);
                 self->reset_stage_state();
@@ -5097,9 +5522,18 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                                               ? "; radius-reference=on"
                                               : "; radius-reference=off";
             report.build.compile_flags +=
-                initialized_stage_.compensated_geometry
+                initialized_stage_.compensated_toroidal_geometry
+                    ? "; geometry=compensated-m1"
+                : initialized_stage_.compensated_geometry
                     ? "; geometry=compensated"
                     : "; geometry=native";
+            if (newton_enabled_) {
+                std::ostringstream policy;
+                policy << std::setprecision(17)
+                       << "; newton=forward32-f32; newton-step="
+                       << requested_newton_step();
+                report.build.compile_flags += policy.str();
+            }
         }
         report.input.source_path = active_input_path_;
         report.runtime.gpu_name = "WebGPU adapter";
@@ -5315,6 +5749,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     bool w7x_stage_slice_ = false;
     bool production_solve_ = false;
     bool double_single_solve_ = false;
+    bool newton_enabled_ = false, newton_studied_ = false;
+    int last_newton_iteration_ = 0;
+    int newton_attempts_ = 0, newton_accepted_ = 0, newton_evaluations_ = 0;
+    std::shared_ptr<cumes::webgpu::NewtonCorrection> newton_;
+    cumes::webgpu::DeviceFields newton_input_;
+    std::shared_ptr<cumes::webgpu::ReadbackBatch> newton_trial_batch_;
+    cumes::webgpu::IterationCase newton_frozen_;
+    std::array<double, 3> newton_base_residual_{};
+    cumes::webgpu::NewtonControl newton_control_;
     std::vector<float> stage_r_con_;
     std::vector<float> stage_z_con_;
     bool resident_path() const {

@@ -10,6 +10,7 @@ template class cumes::FreeBoundaryOperator<double>;
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 
 namespace cumes::webgpu {
 namespace {
@@ -31,7 +32,9 @@ std::vector<double> reconstruct(std::span<const float> high,
 
 std::unique_ptr<FreeBoundaryOperator<double>> create_vacuum(
     const ValidatedProblem& problem,
-    const AxisymmetricStageData& stage) {
+    const AxisymmetricStageData& stage,
+    const wgpu::Device& device,
+    bool use_webgpu) {
     const auto& free = problem.spec().free_boundary;
     FreeBoundaryOperator<double>::HostParams host;
     host.coils_file = free.coils_file;
@@ -49,7 +52,12 @@ std::unique_ptr<FreeBoundaryOperator<double>> create_vacuum(
     params.nzeta = stage.nzeta;
     params.nZnT = stage.ntheta * stage.nzeta;
     params.nfp = stage.nfp;
-    return std::make_unique<FreeBoundaryOperator<double>>(host, params);
+    auto vacuum = std::make_unique<FreeBoundaryOperator<double>>(host, params);
+    if (use_webgpu) vacuum->enable_webgpu(device);
+    std::printf("  Vacuum backend: %s\n",
+                use_webgpu ? "WebGPU paired-f32 kernels, Wasm double LU"
+                           : "HOST/Wasm double");
+    return vacuum;
 }
 
 void prepare_vacuum_stage(FreeBoundaryOperator<double>& vacuum,

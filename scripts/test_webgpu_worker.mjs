@@ -23,6 +23,33 @@ assert.equal(f.imports(),1);
 assert.equal(f.library.requested_app_mode(),false);
 assert.equal(f.library.requested_double_solve(),1);
 assert.equal(f.library.requested_solver_trace(),true);
+assert.equal(f.library.requested_webgpu_vacuum(),false);
+{
+  const saved=f.context.cumesSearch;
+  f.context.cumesSearch='?boundary=free&vacuum=webgpu';
+  assert.equal(f.library.requested_webgpu_vacuum(),true);
+  f.context.cumesSearch='?boundary=free&vacuum=host';
+  assert.equal(f.library.requested_webgpu_vacuum(),false);
+  f.context.cumesSearch=saved;
+}
+assert.equal(f.library.requested_newton_solve(),false);
+assert.equal(f.library.requested_newton_step(),1e-6);
+{
+  const saved=f.context.cumesSearch;
+  f.context.cumesSearch='?newton=1&newton_step=0.00003&newton_probe=1';
+  assert.equal(f.library.requested_newton_solve(),true);
+  assert.equal(f.library.requested_newton_step(),0.00003);
+  assert.equal(f.library.requested_newton_probe(),true);
+  f.context.cumesSearch='?newton_step=invalid';
+  assert.ok(Number.isNaN(f.library.requested_newton_step()));
+  f.context.cumesSearch=saved;
+}
+for(const [geometry,expected] of [['',1],['native',0],['compensated',1],['compensated-m1',2]]){
+  const saved=f.context.cumesSearch;
+  f.context.cumesSearch=`?geometry=${geometry}`;
+  assert.equal(f.library.requested_compensated_geometry(),expected);
+  f.context.cumesSearch=saved;
+}
 assert.equal(f.context.Module.locateFile('cumes_webgpu.wasm'),'https://example.test/cumes_webgpu.wasm?v=abc');
 assert.equal(f.context.cumesVisibility,'visible');
 f.context.onmessage({data:{kind:'visibility',value:'hidden'}});

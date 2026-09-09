@@ -3,6 +3,7 @@
 #include "pipeline_cache.hpp"
 
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace cumes::webgpu {
@@ -18,6 +19,8 @@ class IterationDispatch
     IterationResult result;
     std::string error;
     bool prefix_only = false;
+    bool probe_only = false;
+    IterationProbeResult probe_result;
 
     void resume(IterationCase next,
                 DeviceFields force,
@@ -45,6 +48,8 @@ class IterationDispatch
         inverse.double_single = input.double_single;
         inverse.radius_reference = input.stage.radius_reference;
         inverse.compensated_geometry = input.stage.compensated_geometry;
+        inverse.compensated_toroidal_geometry =
+            input.stage.compensated_toroidal_geometry;
         inverse.state = input.stage.state;
         inverse.state_lo = input.stage.state_lo;
         inverse.device_state = input.device_state;
@@ -58,7 +63,7 @@ class IterationDispatch
                                  collect(&IterationResult::inverse));
         // All device-ready callbacks above are synchronous. The whole DAG is
         // submitted before this single map; decode callbacks only store values.
-        map();
+        if (!probe_only) map();
     }
 
    private:
@@ -147,7 +152,7 @@ class IterationDispatch
     void geometry() {
         BaseGeometryCase in;
         in.radius_reference = input.stage.radius_reference;
-        in.device_control = input.geometry_control;
+        in.device_control = input.geometry_control && !probe_only;
         in.axisymmetric = input.stage.ntor == 0;
         in.readback_values = !input.geometry_control || !input.compact_fields ||
                              input.refresh_preconditioner;
@@ -157,11 +162,32 @@ class IterationDispatch
         in.device_geometry = inverse_.device_geometry;
         in.sqrt_s_f = input.stage.profiles.sqrt_s_f;
         in.sqrt_s_h = input.stage.profiles.sqrt_s_h;
-        in.readback = {batch,
-                       [self = shared_from_this()](BaseGeometryResult value) {
-                           self->geometry_ = std::move(value);
-                           self->magnetic();
-                       }};
+        in.readback = {
+            batch, [self = shared_from_this()](BaseGeometryResult value) {
+                self->geometry_ = std::move(value);
+                if (self->probe_only) {
+                    self->probe_result.inverse = self->inverse_.device_geometry;
+                    enqueue_geometry_control(
+                        self->device, self->geometry_.device_fields,
+                        self->input.double_single, true,
+                        self->input.stage.ntheta, self->batch,
+                        [self](std::string error, GeometryControlResult) {
+                            if (!error.empty()) self->error = std::move(error);
+                        },
+                        [self](DeviceFields fields) {
+                            const auto encoder =
+                                self->device.CreateCommandEncoder();
+                            encoder.CopyBufferToBuffer(
+                                fields.buffer, fields.high_offset,
+                                self->probe_result.control.buffer,
+                                self->probe_result.control.high_offset,
+                                8 * sizeof(float));
+                            const auto commands = encoder.Finish();
+                            self->device.GetQueue().Submit(1, &commands);
+                        });
+                }
+                self->magnetic();
+            }};
         enqueue_base_geometry(device, in, collect(&IterationResult::geometry));
     }
 
@@ -192,11 +218,13 @@ class IterationDispatch
         in.phip_h_lo = p.phip_h_lo;
         in.iota_h = p.iota_h;
         in.iota_h_lo = p.iota_h_lo;
-        in.readback = {batch,
-                       [self = shared_from_this()](MagneticFieldResult value) {
-                           self->magnetic_ = std::move(value);
-                           self->force();
-                       }};
+        in.readback = {
+            batch, [self = shared_from_this()](MagneticFieldResult value) {
+                self->magnetic_ = std::move(value);
+                if (self->probe_only)
+                    self->probe_result.magnetic = self->magnetic_.device_fields;
+                self->force();
+            }};
         enqueue_magnetic_field(device, in, collect(&IterationResult::magnetic));
     }
 
@@ -434,6 +462,9 @@ class IterationDispatch
         in.include_lcfs = input.include_lcfs;
         in.readback = {batch, [self = shared_from_this()](
                                   AxisymmetricPreconditionerApplyResult value) {
+                           if (self->probe_only)
+                               self->probe_result.preconditioned =
+                                   value.device_residual;
                            self->norm(value.device_residual, 2, [] {});
                        }};
         enqueue_axisymmetric_preconditioner_apply(
@@ -453,7 +484,21 @@ class IterationDispatch
         in.paired = index != 2 && input.double_single;
         in.include_edge_rz = index == 2 || input.include_edge_invariant;
         in.readback = {
-            batch, [next = std::move(next)](ResidualNormResult) { next(); }};
+            batch, [self = shared_from_this(), index,
+                    next = std::move(next)](ResidualNormResult value) {
+                if (self->probe_only) {
+                    const auto encoder = self->device.CreateCommandEncoder();
+                    encoder.CopyBufferToBuffer(
+                        value.device_norm.buffer, 0,
+                        self->probe_result.control.buffer,
+                        self->probe_result.control.high_offset +
+                            (8 + 9 * index) * sizeof(float),
+                        9 * sizeof(float));
+                    const auto commands = encoder.Finish();
+                    self->device.GetQueue().Submit(1, &commands);
+                }
+                next();
+            }};
         enqueue_residual_norm(
             device, in,
             [self = shared_from_this(), index](std::string error,
@@ -530,6 +575,35 @@ void enqueue_iteration_prefix(const wgpu::Device& device,
                  });
     };
     dispatch->start();
+}
+
+IterationProbeResult enqueue_iteration_probe(const wgpu::Device& device,
+                                             IterationCase input,
+                                             const DeviceFields& control) {
+    if (!input.double_single || input.stage.free_boundary ||
+        input.stage.ntor != 0 || input.stage.nzeta != 1 ||
+        input.refresh_preconditioner || input.reset_reference ||
+        input.include_lcfs || input.include_edge_invariant ||
+        !input.device_state || !input.elements.device_elements ||
+        !input.matrix.device_matrix || !control || control.values != 35 ||
+        control.high_offset % sizeof(float) != 0 ||
+        control.high_offset > control.buffer.GetSize() ||
+        35 * sizeof(float) > control.buffer.GetSize() - control.high_offset)
+        throw std::invalid_argument("invalid frozen Newton probe epoch");
+    auto dispatch = std::make_shared<IterationDispatch>();
+    dispatch->device = device;
+    dispatch->input = std::move(input);
+    dispatch->input.compact_fields = true;
+    dispatch->input.compact_norms = true;
+    dispatch->input.readback_intermediates = false;
+    dispatch->probe_only = true;
+    dispatch->probe_result.control = control;
+    dispatch->batch = std::make_shared<ReadbackBatch>(device, 0, false);
+    dispatch->start();
+    if (!dispatch->error.empty()) throw std::runtime_error(dispatch->error);
+    if (!dispatch->probe_result.preconditioned)
+        throw std::runtime_error("Newton probe did not publish device outputs");
+    return dispatch->probe_result;
 }
 
 }  // namespace cumes::webgpu

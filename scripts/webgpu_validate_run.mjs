@@ -1,12 +1,20 @@
 // Run a browser correctness gate in a new tab with tab-scoped test settings.
 // Usage: node scripts/webgpu_validate_run.mjs APP_URL OUTPUT_PREFIX [BASELINE_TRACE]
 // APP_URL chooses the solve/conformance mode. Never runs concurrent GPU solves.
+// CUMES_INPUT_JSON loads a fixed input into the tab-local advanced editor
+// (?preset=w7x); the page retains its displayed browser precision tolerance.
+// CUMES_CAPTURE_OUTPUT=1 saves the scientific binary and its payload digest.
 import {readFile, writeFile} from 'node:fs/promises';
 import {isDeepStrictEqual} from 'node:util';
 import assert from 'node:assert/strict';
 
 const [url, prefix, baselinePath, comparison = 'exact'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
+const input = process.env.CUMES_INPUT_JSON ?
+  JSON.parse(await readFile(process.env.CUMES_INPUT_JSON, 'utf8')) : undefined;
+if (input && (new URL(url).searchParams.get('preset') !== 'w7x' ||
+    new URL(url).searchParams.get('boundary') === 'free' || input.lfreeb))
+  throw Error('CUMES_INPUT_JSON requires the fixed advanced editor (?preset=w7x)');
 if (!['exact', 'paired-reductions'].includes(comparison))
   throw Error('Comparison must be exact or paired-reductions');
 const base = 'http://127.0.0.1:' + (process.env.CUMES_CDP_PORT || '9333');
@@ -35,14 +43,15 @@ function call(method, params = {}) {
   });
 }
 const evaluate = async expression => (await call('Runtime.evaluate', {
-  expression, returnByValue: true})).result.value;
+  expression, returnByValue: true, awaitPromise: true})).result.value;
 let finished = false;
 try {
   page = {id: (await call('Target.createTarget', {url: 'about:blank', newWindow: false})).targetId};
   session = (await call('Target.attachToTarget', {targetId: page.id, flatten: true})).sessionId;
   await call('Page.enable');
   await call('Page.addScriptToEvaluateOnNewDocument', {source:
-    `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});`});
+    `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});
+    ${input ? `sessionStorage.setItem('cumes.fixed.w7x.v1', ${JSON.stringify(JSON.stringify(input))});` : ''}`});
   await call('Page.navigate', {url});
   await call('Page.bringToFront');
   console.log(JSON.stringify({target: page.id, url}));
@@ -57,9 +66,33 @@ try {
         plot: window.cumesResidualPlot?.report(),
         log: window.cumesVerificationLog?.text() || document.getElementById('log')?.textContent || document.body.innerText})`);
       const trace = await evaluate('window.cumesDiagnostics || []');
+      if (input) await writeFile(`${prefix}-input.json`, await evaluate('inputJSON()'));
       await writeFile(`${prefix}-result.json`, JSON.stringify(result));
       await writeFile(`${prefix}-trace.json`, JSON.stringify(trace));
       if (status === 'fail') throw Error(result.dataset.cumesDetail);
+      for (const row of trace.filter(row => row.kind === 'newton')) {
+        assert.ok(Number.isFinite(row.merit_before) && row.merit_before >= 0);
+        assert.ok(Number.isFinite(row.merit_after) && row.merit_after >= 0);
+        if (row.accepted) {
+          assert.equal(row.breakdown, 0);
+          assert.ok([1, .5, .25, .125].includes(row.scale));
+          assert.ok(row.merit_after < .95 * row.merit_before);
+        } else {
+          assert.equal(row.scale, 0);
+          assert.equal(row.merit_after, row.merit_before);
+        }
+      }
+      for (const row of trace.filter(row => row.kind === 'newton-probe-study'))
+        assert.equal(row.cache_unchanged, true);
+      if (process.env.CUMES_CAPTURE_OUTPUT === '1') {
+        const digest = await evaluate(await readFile(new URL('./webgpu_output_digest.js', import.meta.url), 'utf8'));
+        await writeFile(`${prefix}-digest.json`, JSON.stringify(digest));
+        const encoded = await evaluate(`(async () => {
+          const bytes = new Uint8Array(await (await fetch(window.cumesOutputUrl)).arrayBuffer());
+          return btoa(Array.from(bytes, value => String.fromCharCode(value)).join(''));
+        })()`);
+        await writeFile(`${prefix}-output.bin`, Buffer.from(encoded, 'base64'));
+      }
       if (result.plot) {
         const samples = result.plot.samples, states = trace.filter(row => row.kind === 'controller');
         assert.ok(samples.length > 0);

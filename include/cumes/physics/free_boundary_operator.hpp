@@ -30,6 +30,12 @@
 #include <string>
 #include <vector>
 
+#ifdef CUMES_VACUUM_WEBGPU
+namespace wgpu {
+class Device;
+}
+#endif
+
 namespace cumes {
 
 #ifdef CUMES_VACUUM_HOST
@@ -69,6 +75,10 @@ class FreeBoundaryOperator {
     // vacuum solver would raise above the configured grid.
     FreeBoundaryOperator(const HostParams& params, const DeviceParams<T>& p);
     ~FreeBoundaryOperator();
+#ifdef CUMES_VACUUM_WEBGPU
+    // Select the GPU vacuum operator while retaining the shared host coupling.
+    void enable_webgpu(const wgpu::Device& device);
+#endif
 
     FreeBoundaryOperator(const FreeBoundaryOperator&) = delete;
     FreeBoundaryOperator& operator=(const FreeBoundaryOperator&) = delete;
