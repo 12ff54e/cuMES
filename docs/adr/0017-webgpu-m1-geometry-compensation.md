@@ -58,8 +58,10 @@ The recorded Chrome 152 / RTX 3060 Ti qualification includes the complete
 conformance suite and single/multigrid W7-X solves at the browser's scalar
 `1e-5` tolerance. The default conformance and W7-X paths preserve all 304 and
 1,134 controller records respectively. The new scope converges in 895 effective
-iterations on the single grid and 1,163 across three grids. These are measured
-case results, not general acceptance counts.
+iterations on the single grid and 1,163 across three grids, versus 1,129 and
+1,571 with the default scope. Both new-scope paths were repeated: all 900 / 1,177
+controller records and scientific state/field hashes were exact. These are
+measured case results, not general acceptance counts or wall-time speedups.
 
 The single-grid comparison starts from the same spectral-state hash. Residuals
 already differ on that first evaluation, adaptive damping first differs on
@@ -69,14 +71,26 @@ numerical equivalence.
 
 Both new-scope scientific outputs contain finite state and fields, a strictly
 single-sign coordinate Jacobian, and exactly zero radial magnetic field. Their
-prescribed R/Z LCFS coefficients agree bitwise between the two stage paths.
+prescribed R/Z LCFS coefficients agree bitwise between the two stage paths and
+with the matched default outputs. All four outputs retain the prescribed
+folded boundary coefficients bitwise and pass the same finite, Jacobian and
+radial-field invariants. Relative to the default single/multigrid outputs, the
+new scope changes non-axis Rcc by at most `6.094e-4` / `7.824e-4` m and lambda
+coefficients by at most `3.442e-3` / `4.308e-3`.
+
 An independent VMEC++ 0.7.0 CPU run uses the unchanged `inputs/w7x.json` with its
-original `1e-12` stage tolerances. The single/multigrid volumes differ by
-`1.91e-8` / `1.82e-8` relative. Maximum interior Rcc differences are
-`4.646e-3` / `3.805e-3` m; maximum lambda-family differences are
-`3.202e-2` / `2.546e-2`. These report independent diagnostic differences at
-different residual tolerances; they do not establish tight spectral agreement
-or replace cuMES's residual and geometry gates.
+original `1e-12` stage tolerances. The new-scope single/multigrid volumes differ
+by `1.91e-8` / `1.82e-8` relative. Maximum non-axis spectral differences to this
+reference are:
+
+| Scope | Single-grid Rcc (m) | Multigrid Rcc (m) | Single-grid lambda | Multigrid lambda |
+| --- | ---: | ---: | ---: | ---: |
+| Default | 4.037e-3 | 3.022e-3 | 2.872e-2 | 2.116e-2 |
+| Compensated m=1 | 4.646e-3 | 3.805e-3 | 3.202e-2 | 2.546e-2 |
+
+These report independent diagnostic differences at different residual
+tolerances. They do not support an accuracy-improvement claim, establish tight
+spectral agreement, or replace cuMES's residual and geometry gates.
 
 The scope remains experimental. This qualification does not establish a
 free-boundary benefit, a scalar tolerance below `1e-5`, or performance on other
