@@ -160,9 +160,11 @@ vacuum-field's 19 operator/reference tests also pass under WebAssembly, native
 HOST, and CUDA. Headless Firefox also passes the full paired Solovev solve
 with HOST vacuum.
 The opt-in GPU vacuum passes paired Solovev/W7-X/cth_like and scalar Solovev
-on Chrome/RTX 3060 Ti. It changes paired trajectories and is currently slower
-in the recorded end-to-end captures. [ADR-0019](adr/0019-webgpu-vacuum-backend.md)
-records numerical comparisons, timing limits and the retained HOST default.
+on Chrome/RTX 3060 Ti. GPU versus HOST vacuum can change paired trajectories.
+The subsequent integral optimizations preserve the original GPU arithmetic
+and controller trajectories while accelerating singular and 3-D regularized
+work. [ADR-0019](adr/0019-webgpu-vacuum-backend.md) records numerical comparisons,
+measured performance and the retained HOST default.
 
 Scalar-float Solovev works, but W7-X can stall above its tolerance; single
 precision remains experimental for free-boundary work. Preset provenance is

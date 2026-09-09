@@ -30,8 +30,9 @@ pointers in Wasm memory. The corresponding six WGSL modules execute:
 3. Singular and regularized integrals, Fourier transforms, matrix/RHS assembly.
 4. Potential derivatives, vacuum magnetic field, pressure and surface integrals.
 
-Coil parsing, MAKEGRID, immutable coefficient setup and dense LU use shared
-Wasm-double C++. LU remains between the assembly and reconstruction GPU
+Coil parsing, MAKEGRID, base coefficient setup and dense LU use shared
+Wasm-double C++; paired Fourier quotients are cached once on the GPU. LU
+remains between the assembly and reconstruction GPU
 batches; partial updates reuse its factorization. Inputs are copied before
 asynchronous submission, intermediate arrays remain resident, and output
 views are available directly to GPU consumers. The existing cuMES host
@@ -54,6 +55,11 @@ A passed stress recurrence estimate does not relax any physical residual or
 complete-solver comparison bound. Paired Solovev/W7-X/cth_like and scalar
 Solovev pass the consumer gates; [ADR-0019](adr/0019-webgpu-vacuum-backend.md)
 records trajectory differences, scientific diagnostics and timing limits.
+The subsequent arithmetic-preserving acceleration splits singular and 3-D
+regularized RHS terms from their original ordered sums, with capacity-limited
+fused fallbacks. Warmed integral-sequence measurements improve about 5–7× on
+the recorded 3-D fixtures; the optimized GPU path retains its prior component
+words and consumer controller records.
 
 ## Geometry and Newton options
 
