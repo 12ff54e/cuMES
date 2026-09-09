@@ -186,18 +186,23 @@ void enqueue_residual_norm(
     std::function<void(std::string, ResidualNormResult)> callback) {
     const auto count = input.residual.values;
     if (!input.residual || !input.readback.batch || input.ns < 2 ||
-        count == 0 || count % (6 * std::size_t(input.ns)) != 0 ||
-        count / 6 > (1U << 24)) {
+        count == 0 ||
+        count % ((input.lasym ? 12 : 6) * std::size_t(input.ns)) != 0 ||
+        count / (input.lasym ? 12 : 6) > (1U << 24)) {
         callback("invalid device residual norm shape or readback", {});
         return;
     }
     struct Params {
         std::uint32_t points, ns, paired, edge;
+        std::uint32_t lasym, padding[3];
     };
-    const Params params{static_cast<std::uint32_t>(count / 6),
-                        static_cast<std::uint32_t>(input.ns),
-                        input.paired ? 1U : 0U,
-                        input.include_edge_rz ? 1U : 0U};
+    const Params params{
+        static_cast<std::uint32_t>(count / (input.lasym ? 12 : 6)),
+        static_cast<std::uint32_t>(input.ns),
+        input.paired ? 1U : 0U,
+        input.include_edge_rz ? 1U : 0U,
+        input.lasym ? 1U : 0U,
+        {}};
     const auto bytes = count * sizeof(float);
     const auto fits = [&](std::uint64_t offset) {
         return offset % sizeof(float) == 0 &&

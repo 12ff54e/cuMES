@@ -23,6 +23,27 @@ for(const name of ['w7x','cth_like','solovev']){
   const section=context.fourierSections(fourier,.2)[0];
   close(section[0][0],section.at(-1)[0]);close(section[0][1],section.at(-1)[1]);
 }
+// Complementary signed-n harmonics, including vertical offset and m=0,
+// must follow the full VMEC formula without reflecting the section.
+const asymmetric = {mpol:4, ntor:2, nfp:3, lasym:true,
+  rbc:[{m:0,n:0,value:4},{m:1,n:0,value:1}],
+  zbs:[{m:1,n:0,value:1.4}],
+  rbs:[{m:1,n:0,value:.1},{m:2,n:-1,value:.07},{m:0,n:2,value:.03}],
+  zbc:[{m:0,n:0,value:.2},{m:1,n:1,value:.08},{m:2,n:-2,value:.04}]};
+const full = context.boundaryFourier(asymmetric);
+assert.equal(full.surfaces[0].coefficients.length, 12 * 4 * 3);
+for (const theta of [.2, 1.3, 4.2]) for (const phi of [0, .17, .41]) {
+  const actual = context.fourierPoint(full, full.surfaces[0].coefficients, theta, phi);
+  for (const [i, even, odd] of [[0,'rbc','rbs'],[1,'zbc','zbs']]) {
+    const phase = h => h.m * theta - h.n * asymmetric.nfp * phi;
+    const expected = asymmetric[even].reduce((v,h)=>v+h.value*Math.cos(phase(h)),0) +
+      asymmetric[odd].reduce((v,h)=>v+h.value*Math.sin(phase(h)),0);
+    close(actual[i], expected);
+  }
+}
+assert.notEqual(context.fourierPoint(full,full.surfaces[0].coefficients,.4,0)[1],
+  -context.fourierPoint(full,full.surfaces[0].coefficients,-.4,0)[1]);
+console.log('PASS: asymmetric signed-n boundary, vertical offset and all complementary families');
 assert.throws(()=>context.boundaryFourier({mpol:1e9}),/valid mpol/);
 console.log('PASS: VMEC signed-n geometry, stellarator symmetry, field periodicity and closed sections');
 vm.runInContext(readFileSync(new URL('../webgpu/boundary_editor.js',import.meta.url),'utf8'),context);

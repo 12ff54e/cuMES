@@ -5,7 +5,7 @@ struct Params {
     ntor: u32,
     points: u32,
     last_surface: u32,
-    _padding0: u32,
+    lasym: u32,
     _padding1: u32,
     _padding2: u32,
 };
@@ -33,7 +33,7 @@ fn guarded_pivot(value: f32, floor: f32) -> f32 {
     return select(-floor, floor, value >= 0.0);
 }
 fn scratch_index(bank: u32, field: u32, mode: u32, row: u32) -> u32 {
-    return 6u * params.points + params.mode_count +
+    return select(6u, 12u, params.lasym != 0u) * params.points + params.mode_count +
            (bank * 5u + field) * params.points + mode * params.ns + row;
 }
 fn scratch_at(bank: u32, field: u32, mode: u32, row: u32) -> f32 {
@@ -42,13 +42,13 @@ fn scratch_at(bank: u32, field: u32, mode: u32, row: u32) -> f32 {
 fn put_scratch(bank: u32, field: u32, mode: u32, row: u32, value: f32) {
     output.data[scratch_index(bank, field, mode, row)] = value;
 }
-fn solve_pair(mode: u32, z_system: bool, floor: f32) -> bool {
+fn solve_pair(mode: u32, z_system: bool, floor: f32, offset: u32) -> bool {
     let m = mode / (params.ntor + 1u);
     let first = select(1u, 0u, m == 0u);
     let count = params.last_surface - first;
     if (count == 0u) { return false; }
     let matrix_offset = select(0u, 3u, z_system);
-    let component0 = select(0u, 1u, z_system);
+    let component0 = offset + select(0u, 1u, z_system);
     let component1 = component0 + 3u;
     var broke = false;
     for (var row = 0u; row < count; row++) {
@@ -154,7 +154,7 @@ fn main(@builtin(workgroup_id) workgroup: vec3<u32>) {
     let mode = workgroup.x;
     if (mode >= params.mode_count || params.ns > MAX_SURFACES) { return; }
     let m = mode / (params.ntor + 1u);
-    for (var component = 0u; component < 6u; component++) {
+    for (var component = 0u; component < select(6u, 12u, params.lasym != 0u); component++) {
         for (var surface = 0u; surface < params.ns; surface++) {
             let index = component * params.points + mode * params.ns + surface;
             output.data[index] = input_residual.data[index];
@@ -175,18 +175,26 @@ fn main(@builtin(workgroup_id) workgroup: vec3<u32>) {
                 put_residual(4u, mode, surface,
                              residual_at(4u, mode, surface) *
                                  zsum / denominator);
+                if (params.lasym != 0u) {
+                    put_residual(6u, mode, surface, residual_at(6u, mode, surface) * rsum / denominator);
+                    put_residual(7u, mode, surface, residual_at(7u, mode, surface) * zsum / denominator);
+                }
             }
         }
     }
     let scale = matrix.data[7u * params.points + mode];
     let relative_floor = 1.1920928955078125e-7;
     let floor = select(relative_floor, relative_floor * scale, scale > 0.0);
-    var broke = solve_pair(mode, false, floor);
-    broke = solve_pair(mode, true, floor) || broke;
+    var broke = solve_pair(mode, false, floor, 0u);
+    broke = solve_pair(mode, true, floor, 0u) || broke;
+    if (params.lasym != 0u) {
+        broke = solve_pair(mode, false, floor, 6u) || broke;
+        broke = solve_pair(mode, true, floor, 6u) || broke;
+    }
     let first = select(1u, 0u, m == 0u);
     for (var surface = 0u; surface < first; surface++) {
-        for (var component = 0u; component < 5u; component++) {
-            put_residual(component, mode, surface, 0.0);
+        for (var component = 0u; component < select(5u, 12u, params.lasym != 0u); component++) {
+            if (component != 5u && component != 8u) { put_residual(component, mode, surface, 0.0); }
         }
     }
     for (var surface = 0u; surface < params.ns; surface++) {
@@ -195,6 +203,10 @@ fn main(@builtin(workgroup_id) workgroup: vec3<u32>) {
                      residual_at(2u, mode, surface) * lambda);
         put_residual(5u, mode, surface,
                      residual_at(5u, mode, surface) * lambda);
+        if (params.lasym != 0u) {
+            put_residual(8u, mode, surface, residual_at(8u, mode, surface) * lambda);
+            put_residual(11u, mode, surface, residual_at(11u, mode, surface) * lambda);
+        }
     }
-    output.data[6u * params.points + mode] = select(0.0, 1.0, broke);
+    output.data[select(6u, 12u, params.lasym != 0u) * params.points + mode] = select(0.0, 1.0, broke);
 }

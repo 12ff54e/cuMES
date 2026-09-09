@@ -10,10 +10,10 @@ struct Params {
     n_z_n_t: u32,
     total_points: u32,
     extrapolate_axis: f32,
-#if !PAIRED
     radius_reference: f32,
     compensated_geometry: f32,
-#endif
+    padding: f32,
+    lasym: u32,
 };
 
 struct Values { data: array<f32>, };
@@ -39,7 +39,7 @@ fn coefficient(component: u32, m: u32, n: u32, surface: u32) -> Real {
     let mnmax = params.mpol * (params.ntor + 1u);
     let mode = m * (params.ntor + 1u) + n;
     let extrapolate = params.extrapolate_axis != 0.0 && surface == 0u &&
-        (m == 1u || (m == 0u && component == 5u));
+        (m == 1u || (m == 0u && (component == 5u || component == 8u)));
     let radial = select(surface, 1u, extrapolate);
     let index = (component * mnmax + mode) * params.ns + radial;
     return words(state_hi.data[index], state_lo.data[index]);
@@ -174,6 +174,34 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
             odd3 = pair_add(odd3, pair_real(pair_round(zc * sn, index)), index);
         }
 #endif
+        if (params.lasym != 0u) {
+            let rsc = coefficient(6u, m, n, surface);
+            let zcc = coefficient(7u, m, n, surface);
+            let lcc = coefficient(8u, m, n, surface);
+            let rcs = coefficient(9u, m, n, surface);
+            let zss = coefficient(10u, m, n, surface);
+            let lss = coefficient(11u, m, n, surface);
+            sum0 = accumulate(sum0, mul(rcs, sn, index), index);
+            sum1 = accumulate(sum1, mul(rsc, cn, index), index);
+            sum2 = accumulate(sum2, mul(zss, sn, index), index);
+            sum3 = accumulate(sum3, mul(zcc, cn, index), index);
+            sum4 = accumulate(sum4, mul(lss, sn, index), index);
+            sum5 = accumulate(sum5, mul(lcc, cn, index), index);
+            sum6 = accumulate(sum6, mul(scale(rcs, nf, index), cn, index), index);
+            sum7 = accumulate(sum7, mul(scale(rsc, -nf, index), sn, index), index);
+            sum8 = accumulate(sum8, mul(scale(zss, nf, index), cn, index), index);
+            sum9 = accumulate(sum9, mul(scale(zcc, -nf, index), sn, index), index);
+            sum10 = accumulate(sum10, mul(scale(lss, -nf, index), cn, index), index);
+            sum11 = accumulate(sum11, mul(scale(lcc, nf, index), sn, index), index);
+#if !PAIRED
+            if (params.compensated_geometry == 2.0 && m == 1u) {
+                odd0 = pair_add(odd0, pair_real(pair_round(rcs * sn, index)), index);
+                odd1 = pair_add(odd1, pair_real(pair_round(rsc * cn, index)), index);
+                odd2 = pair_add(odd2, pair_real(pair_round(zss * sn, index)), index);
+                odd3 = pair_add(odd3, pair_real(pair_round(zcc * cn, index)), index);
+            }
+#endif
+        }
         var derivative_rc = rc;
 #if !PAIRED
         if (params.radius_reference != 0.0 && m == 0u && n > 0u) {

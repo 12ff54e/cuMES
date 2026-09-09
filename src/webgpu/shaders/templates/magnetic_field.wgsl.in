@@ -6,7 +6,7 @@ struct Params {
     full_points: u32,
     half_points: u32,
     prescribed_current: u32,
-    _padding0: u32,
+    lasym: u32,
     lamscale: f32,
     lamscale_lo: f32,
     _padding2: u32,
@@ -99,12 +99,12 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
         // are scratch until finalize_fields overwrites them. Keep the exact
         // original normalization and arithmetic, including field_at's
         // renormalization of the stored contravariant fields.
-        let reduced_ntheta = params.ntheta / 2u + 1u;
+        let reduced_ntheta = select(params.ntheta / 2u + 1u, params.ntheta, params.lasym != 0u);
         let itheta = angular % params.ntheta;
         if (itheta < reduced_ntheta) {
             var weight = reciprocal(
-                words(f32(params.nzeta * (reduced_ntheta - 1u)), 0.0), point);
-            if (itheta == 0u || itheta == reduced_ntheta - 1u) {
+                words(f32(params.nzeta * select(reduced_ntheta - 1u, reduced_ntheta, params.lasym != 0u)), 0.0), point);
+            if (params.lasym == 0u && (itheta == 0u || itheta == reduced_ntheta - 1u)) {
                 weight = scale(weight, 0.5, point);
             }
             let integrand = add(
@@ -152,7 +152,7 @@ fn finalize_current(@builtin(global_invocation_id) invocation: vec3<u32>) {
         store_index(iota_result, profile(iota_offset + surface, surface));
         return;
     }
-    let reduced_ntheta = params.ntheta / 2u + 1u;
+    let reduced_ntheta = select(params.ntheta / 2u + 1u, params.ntheta, params.lasym != 0u);
     let base_point = surface * params.n_z_n_t;
     var jv = real(0.0);
     var average = real(0.0);

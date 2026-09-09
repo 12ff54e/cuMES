@@ -1,13 +1,14 @@
-// Fold the VMEC signed-n input into the same six families as solver output.
+// Fold the VMEC signed-n input into the same active families as solver output.
 function boundaryFourier(input) {
   const {mpol, ntor = 0, nfp = 1} = input;
   if (!Number.isInteger(mpol) || mpol < 1 || !Number.isInteger(ntor) || ntor < 0 ||
       !Number.isInteger(nfp) || nfp < 1 || mpol * (ntor + 1) > 4096)
     throw Error('Boundary preview needs valid mpol, ntor and field periods (up to 4096 modes).');
-  const modes = mpol * (ntor + 1), coefficients = new Float64Array(6 * modes);
-  for (const family of ['rbc', 'zbs']) {
-    if (!Array.isArray(input[family])) throw Error(`Boundary input needs a ${family} array.`);
-    for (const {m, n, value} of input[family]) {
+  const modes = mpol * (ntor + 1), coefficients = new Float64Array((input.lasym ? 12 : 6) * modes);
+  for (const family of (input.lasym ? ['rbc', 'zbs', 'rbs', 'zbc'] : ['rbc', 'zbs'])) {
+    const entries = input[family] ?? ((family === 'rbs' || family === 'zbc' || (family === 'zbs' && input.lasym)) ? [] : undefined);
+    if (!Array.isArray(entries)) throw Error(`Boundary input needs a ${family} array.`);
+    for (const {m, n, value} of entries) {
       if (!Number.isInteger(m) || m < 0 || !Number.isInteger(n) || !Number.isFinite(value))
         throw Error(`Invalid ${family} boundary coefficient.`);
       // The config validator likewise excludes harmonics outside the solver basis.
@@ -16,13 +17,19 @@ function boundaryFourier(input) {
       if (family === 'rbc') {
         coefficients[mode] += value;
         if (m > 0) coefficients[3 * modes + mode] += Math.sign(n) * value;
-      } else {
+      } else if (family === 'zbs') {
         if (m > 0) coefficients[modes + mode] += value;
         coefficients[4 * modes + mode] -= Math.sign(n) * value;
+      } else if (family === 'rbs') {
+        if (m > 0) coefficients[6 * modes + mode] += value;
+        coefficients[9 * modes + mode] -= Math.sign(n) * value;
+      } else {
+        coefficients[7 * modes + mode] += value;
+        if (m > 0) coefficients[10 * modes + mode] += Math.sign(n) * value;
       }
     }
   }
-  return {mpol, ntor, nfp, ns: 2, surfaces: [{index: 1, coefficients}]};
+  return {mpol, ntor, nfp, lasym: !!input.lasym, ns: 2, surfaces: [{index: 1, coefficients}]};
 }
 
 function fourierPoint(fourier, coefficients, theta, phi) {
@@ -34,6 +41,10 @@ function fourierPoint(fourier, coefficients, theta, phi) {
       const mode = m * (ntor + 1) + n, cn = Math.cos(n * nfp * phi), sn = Math.sin(n * nfp * phi);
       r += coefficients[mode] * cm * cn + coefficients[3 * modes + mode] * sm * sn;
       z += coefficients[modes + mode] * sm * cn + coefficients[4 * modes + mode] * cm * sn;
+      if (fourier.lasym) {
+        r += coefficients[6 * modes + mode] * sm * cn + coefficients[9 * modes + mode] * cm * sn;
+        z += coefficients[7 * modes + mode] * cm * cn + coefficients[10 * modes + mode] * sm * sn;
+      }
     }
   }
   return [r, z];

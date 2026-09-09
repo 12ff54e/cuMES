@@ -1,4 +1,6 @@
 // Full-period Fourier and weak-form checks for all asymmetric families.
+#include "cumes/config/json_reader.hpp"
+#include "cumes/state/seed_state.hpp"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/toroidal_fft_operator.hpp"
 #include "cumes_test_cuda_helper.cuh"
@@ -203,6 +205,20 @@ void run(int ntor) {
 }  // namespace
 
 int main() {
+    auto parsed = read_problem_spec("inputs/asymmetric_tokamak.json", {});
+    auto spec = parsed.spec;
+    spec.ntor = 1;
+    spec.raxis_c = {4, .01};
+    spec.raxis_s = {0, .023};
+    spec.zaxis_c = {.12, -.035};
+    spec.zaxis_s = {0, .015};
+    const auto problem = validate(spec, {}).value();
+    const auto params = init_params<double>(problem);
+    auto seeded = init_state(params, problem, false, false);
+    const auto one = std::size_t(params.ns) * params.mnmax;
+    const auto state = download(seeded.state_slab(), 12 * one);
+    close(state[9 * one + params.ns], -.023, 1e-15, "VMEC R axis sine phase");
+    close(state[7 * one + params.ns], -.035, 1e-15, "VMEC Z axis cosine phase");
     run<double>(0);
     run<double>(2);
     run<float>(0);

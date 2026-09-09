@@ -1,12 +1,15 @@
 // Headless Firefox gate using a local geckodriver WebDriver endpoint.
 // Usage: node scripts/webgpu_firefox_validate.mjs APP_URL OUTPUT_PREFIX [PREFS_JSON]
 // Preferences apply only to geckodriver's disposable profile. GPU solves run serially.
-import {mkdir, writeFile} from 'node:fs/promises';
+import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname} from 'node:path';
 
 const [url, prefix, prefsJson = '{}'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL OUTPUT_PREFIX [PREFS_JSON]');
 const prefs = JSON.parse(prefsJson);
+const input = process.env.CUMES_INPUT_JSON ? JSON.parse(await readFile(process.env.CUMES_INPUT_JSON, 'utf8')) : undefined;
+if (input && (new URL(url).searchParams.get('preset') !== 'w7x' || input.lfreeb))
+  throw Error('CUMES_INPUT_JSON requires the fixed advanced editor (?preset=w7x)');
 const endpoint = process.env.GECKODRIVER_URL || 'http://127.0.0.1:4445';
 const timeout = Number(process.env.CUMES_FIREFOX_TIMEOUT_MS || 1800000);
 if (!Number.isFinite(timeout) || timeout <= 0) throw Error('Invalid Firefox timeout');
@@ -50,6 +53,7 @@ try {
   await save();
   console.log(JSON.stringify({browser: session.capabilities.browserVersion, prefs, probe: result.probe}));
   if (!result.probe.adapter) throw Error('No WebGPU adapter in this Firefox profile');
+  if (input) await execute(`localStorage.setItem('cumes.fixed.w7x.v1', ${JSON.stringify(JSON.stringify(input))});`);
   await request(base + '/url', {url});
   const started = Date.now(), deadline = started + timeout;
   let lastReport = 0, terminal = false;
@@ -78,6 +82,13 @@ try {
     log: window.cumesVerificationLog?.text() || document.getElementById('output')?.textContent || document.getElementById('legacy-output')?.textContent || document.body.innerText};`));
   await save();
   await writeFile(prefix + '-trace.json', JSON.stringify(await execute('return window.cumesDiagnostics || [];')));
+  if (process.env.CUMES_CAPTURE_OUTPUT === '1' && result.dataset.cumesWebgpu === 'pass') {
+    const encoded = await request(base + '/execute/async', {script: `
+      const done = arguments[arguments.length - 1];
+      fetch(window.cumesOutputUrl).then(r => r.arrayBuffer()).then(bytes =>
+        done(btoa(Array.from(new Uint8Array(bytes), value => String.fromCharCode(value)).join(''))));`, args: []});
+    await writeFile(prefix + '-output.bin', Buffer.from(encoded, 'base64'));
+  }
   const png = await request(base + '/screenshot', undefined, 'GET');
   await writeFile(prefix + '.png', Buffer.from(png, 'base64'));
   if (interrupted) throw Error('Firefox gate interrupted');

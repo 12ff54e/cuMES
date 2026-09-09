@@ -75,6 +75,7 @@ struct MagneticFieldCase {
     DeviceFields device_geometry;
     DeviceFields device_base_geometry;
     int ns = 0;
+    bool lasym = false;
     int ntheta = 0;
     int nzeta = 1;
     float lamscale = 0.0F;

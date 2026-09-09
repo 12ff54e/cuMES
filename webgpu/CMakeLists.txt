@@ -6,6 +6,7 @@ add_link_options(-pthread)
 add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/json_parser.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/config/json_reader.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/json_writer.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/config/validated_problem.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/config/validation_report.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
@@ -19,6 +20,7 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/geometry.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/force.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/float_geometry_tests.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/asymmetric_tests.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/rounding_tests.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/initialization.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/iteration.cpp
@@ -151,7 +153,8 @@ set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/runtime_threads.js
   ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
   ${PROJECT_SOURCE_DIR}/inputs/solovev.json
-  ${PROJECT_SOURCE_DIR}/inputs/w7x.json)
+  ${PROJECT_SOURCE_DIR}/inputs/w7x.json
+  ${PROJECT_SOURCE_DIR}/inputs/asymmetric_tokamak.json)
 
 # CTest cannot provide a browser WebGPU implementation, but it can guard the
 # complete browser artifact set. Emscripten 6 embeds the preloaded shader in

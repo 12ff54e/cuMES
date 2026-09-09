@@ -35,12 +35,14 @@ constraint, residual, and descent values use paired `f32` words. On the
 NVIDIA TITAN Xp through Dawn's Vulkan backend, the hardware-qualified
 `1e-12` run converges in `1421 -> 3220 -> 2964` effective iterations (7605
 total), with final residual `(1.000e-12, 2.115e-13, 1.528e-13)`.
-Non-stellarator-symmetric fixed boundaries are enabled in native CUDA input
+Non-stellarator-symmetric fixed boundaries are enabled in CUDA and WebGPU input
 with `"lasym": true`. Supply `rbs` and `zbc` harmonic lists in addition to
 `rbc` and `zbs`; all use signed `n` and phase `m*theta - n*nfp*zeta`. Optional
 `raxis_s` and `zaxis_c` specify the complementary magnetic-axis coefficients.
 [inputs/asymmetric_tokamak.json](inputs/asymmetric_tokamak.json) is a complete
-example. See [ADR-0017](docs/adr/0017-non-stellarator-symmetry.md) for tested
+example; the browser opens it with `?preset=asymmetric`. The advanced boundary
+editor's **Allow non-stellarator symmetry** control exposes RBS/ZBC coefficients.
+See [ADR-0017](docs/adr/0017-non-stellarator-symmetry.md) for tested
 precision, backend coverage, and remaining limitations.
 
 The converged spectral state and run provenance are published as a version-8 (asymmetric: version-9)

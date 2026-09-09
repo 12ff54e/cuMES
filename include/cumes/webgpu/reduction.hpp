@@ -61,9 +61,10 @@ struct ResidualNormCase {
     int ns = 0;
     bool paired = false;
     bool include_edge_rz = false;
+    bool lasym = false;
 };
 
-// GPU-only input; two dispatches reduce all six parity families to a paired
+// GPU-only input; two dispatches reduce all active parity families to a paired
 // triple. At most 2^24 samples/family keeps the f32 divisor exact. The compact
 // readback is appended to the caller's existing fence. Nonfinite inputs and
 // unrepresentable squared norms are invalid, never a convergence signal.

@@ -28,7 +28,7 @@ int main() {
         if (ntor) {
             spec.nfp = 3;
             spec.raxis_c.push_back(0);
-            spec.raxis_s.push_back(0);
+            spec.raxis_s.push_back(.001);
             spec.zaxis_c.push_back(0);
             spec.zaxis_s.push_back(0);
             spec.rbc.push_back({1, 1, .008});

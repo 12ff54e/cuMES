@@ -7,6 +7,7 @@ struct Params {
     damping_b1: f32,
     damping_fac: f32,
     extrapolate_axis: u32,
+    lasym: u32,
 };
 struct Values { data: array<f32>, };
 #if PAIRED
@@ -35,7 +36,7 @@ fn state_at(i: u32) -> Real {
     let m = point / params.ns / params.ntor_plus_one;
     let component = i / params.points;
     let axis_copy = params.extrapolate_axis != 0u && point % params.ns == 0u &&
-        (m == 1u || (m == 0u && component == 5u));
+        (m == 1u || (m == 0u && (component == 5u || component == 8u)));
     let source = select(i, i + 1u, axis_copy);
     return words(state_hi.data[source], state_lo.data[source]);
 }
@@ -51,16 +52,16 @@ fn residual_at(i: u32) -> Real {
 fn put_state(i: u32, value: Real) {
     output.data[i] = hi(value);
 #if PAIRED
-    output.data[6u * params.points + i] = lo(value);
+    output.data[select(6u, 12u, params.lasym != 0u) * params.points + i] = lo(value);
 #endif
 }
 
 fn put_velocity(i: u32, value: Real) {
 #if PAIRED
-    output.data[12u * params.points + i] = hi(value);
-    output.data[18u * params.points + i] = lo(value);
+    output.data[2u * select(6u, 12u, params.lasym != 0u) * params.points + i] = hi(value);
+    output.data[3u * select(6u, 12u, params.lasym != 0u) * params.points + i] = lo(value);
 #else
-    output.data[6u * params.points + i] = hi(value);
+    output.data[select(6u, 12u, params.lasym != 0u) * params.points + i] = hi(value);
 #endif
 }
 
@@ -82,7 +83,7 @@ fn advance_state(i: u32, velocity: Real, scale: f32) {
 fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let point = invocation.x;
     if (point >= params.points) { return; }
-    for (var component = 0u; component < 6u; component++) {
+    for (var component = 0u; component < select(6u, 12u, params.lasym != 0u); component++) {
         let i = index(component, point);
         put_state(i, state_at(i));
         put_velocity(i, velocity_at(i));
@@ -118,6 +119,21 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
         } else {
             advance_state(index(3u, point), vrs, step_scale);
             advance_state(index(4u, point), vzc, step_scale);
+        }
+    }
+    if (params.lasym != 0u) {
+        for (var c = 6u; c < 12u; c++) {
+            if (c % 3u != 2u && surface >= j_max) { continue; }
+            let velocity = update_velocity(c, point);
+            put_velocity(index(c, point), velocity);
+            var physical = velocity;
+            if (m == 1u && (c == 6u || c == 7u)) {
+                let r = update_velocity(6u, point);
+                let z = update_velocity(7u, point);
+                if (c == 6u) { physical = add(r, z, point); }
+                else { physical = sub(r, z, point); }
+            }
+            advance_state(index(c, point), physical, step_scale);
         }
     }
     let vl = update_velocity(2u, point);

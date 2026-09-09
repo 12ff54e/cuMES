@@ -48,3 +48,6 @@ endforeach()
 
 configure_file("${FRONTEND_SOURCE_DIR}/../inputs/w7x.json"
                "${artifact_dir}/presets/fixed-w7x.json" COPYONLY)
+
+configure_file("${FRONTEND_SOURCE_DIR}/../inputs/asymmetric_tokamak.json"
+               "${artifact_dir}/presets/fixed-asymmetric.json" COPYONLY)

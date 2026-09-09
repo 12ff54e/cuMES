@@ -10,7 +10,7 @@ struct Params {
     nfp: u32,
     free_boundary: u32,
     delta_s: f32,
-    _padding0: u32,
+    lasym: u32,
 };
 struct Values { data: array<f32>, };
 // Element cache emitted by axisymmetric_preconditioner_elements.wgsl.
@@ -101,13 +101,13 @@ fn matrix_values(mode: u32, surface: u32) -> MatrixValues {
 fn half_lambda(shifted: u32, metric_field: u32) -> f32 {
     if (shifted == 0u || shifted == params.ns) { return 0.0; }
     let half_surface = shifted - 1u;
-    let ntheta_red = params.ntheta / 2u + 1u;
-    let norm = 1.0 / f32(params.nzeta * (ntheta_red - 1u));
+    let ntheta_red = select(params.ntheta / 2u + 1u, params.ntheta, params.lasym != 0u);
+    let norm = 1.0 / f32(params.nzeta * select(ntheta_red - 1u, ntheta_red, params.lasym != 0u));
     var sum = 0.0;
     for (var zeta = 0u; zeta < params.nzeta; zeta++) {
         for (var theta = 0u; theta < ntheta_red; theta++) {
             var weight = norm;
-            if (theta == 0u || theta + 1u == ntheta_red) { weight *= 0.5; }
+            if (params.lasym == 0u && (theta == 0u || theta + 1u == ntheta_red)) { weight *= 0.5; }
             let point = half_surface * params.n_z_n_t +
                         zeta * params.ntheta + theta;
             let gsqrt = base_geometry.data[6u * params.half_points + point];

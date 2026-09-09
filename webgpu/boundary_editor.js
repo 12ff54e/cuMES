@@ -11,7 +11,7 @@ function migrateCumesEditorUrl(location, history) {
 }
 
 function setBoundaryCoefficient(input, family, m, n, value) {
-  const coefficients = input[family];
+  const coefficients = input[family] ||= [];
   const existing = coefficients.find(coefficient => coefficient.m === m && coefficient.n === n);
   if (existing) existing.value = value;
   else if (value !== 0) coefficients.push({m, n, value});
@@ -34,16 +34,18 @@ function installCumesSurfaceEditor(readInput, writeInput, onChange) {
   function table(input) {
     const n = Number(get('toroidal-mode').value), body = get('boundary-coefficients');
     body.replaceChildren();
+    for (const cell of document.querySelectorAll('[data-asymmetric-column]')) cell.hidden = !input.lasym;
+    get('allow-asymmetry').checked = !!input.lasym;
     for (let m = 0; m < input.mpol; m++) {
       const row = document.createElement('tr'), label = document.createElement('th');
       label.scope = 'row'; label.textContent = m; row.append(label);
-      for (const family of ['rbc', 'zbs']) {
+      for (const family of (input.lasym ? ['rbc', 'zbs', 'rbs', 'zbc'] : ['rbc', 'zbs'])) {
         const cell = document.createElement('td'), control = document.createElement('input');
-        const original = input[family].find(coefficient => coefficient.m === m && coefficient.n === n)?.value ?? 0;
+        const original = (input[family] || []).find(coefficient => coefficient.m === m && coefficient.n === n)?.value ?? 0;
         control.type = 'number'; control.step = 'any'; control.value = original;
         control.dataset.family = family; control.dataset.m = m; control.dataset.n = n;
         control.setAttribute('aria-label', `${family.toUpperCase()}(${n},${m}) in meters`);
-        control.disabled = document.body.classList.contains('busy') || (family === 'zbs' && m === 0 && n === 0);
+        control.disabled = document.body.classList.contains('busy') || ((family === 'zbs' || family === 'rbs') && m === 0 && n === 0);
         control.addEventListener('input', () => {
           if (control.value === '' || !Number.isFinite(Number(control.value))) return;
           try {
@@ -75,6 +77,13 @@ function installCumesSurfaceEditor(readInput, writeInput, onChange) {
     get('slice-angle-value').textContent = `${(phi * 180 / Math.PI).toFixed(1)}° / ${(360 / fourier.nfp).toFixed(1)}°`;
     onChange(changed);
   }
+  get('allow-asymmetry').addEventListener('change', () => {
+    const input = readInput();
+    input.lasym = get('allow-asymmetry').checked;
+    if (input.lasym) { input.rbs ||= []; input.zbc ||= []; }
+    else for (const key of ['rbs', 'zbc', 'raxis_s', 'zaxis_c']) delete input[key];
+    writeInput(input); refresh(); onChange(true);
+  });
   get('toroidal-mode').addEventListener('change', () => table(readInput()));
   get('slice-angle').addEventListener('input', () => updateSlice(false));
   return {refresh, get fourier() { return fourier; }, get phi() { return phi; }};

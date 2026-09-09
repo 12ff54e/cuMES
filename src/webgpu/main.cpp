@@ -1,3 +1,4 @@
+#include "asymmetric_tests.hpp"
 #include "cumes/config/device_params.hpp"
 #include "cumes/config/json_reader.hpp"
 #include "cumes/io/derived_fields.hpp"
@@ -2247,7 +2248,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                             return;
                         }
                         std::printf("  resident vacuum boundary force: PASS\n");
-                        self->run_axisymmetric_projection_test();
+                        cumes::webgpu::run_asymmetric_tests(
+                            self->device_, [self](std::string message) {
+                                if (!message.empty())
+                                    self->finish(false, std::move(message));
+                                else
+                                    self->run_axisymmetric_projection_test();
+                            });
                     });
             });
             return;
@@ -2480,7 +2487,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             if (newton_enabled_ &&
                 (!paired || problem_->spec().free_boundary.lfreeb ||
                  problem_->shape().ntor != 0 || problem_->shape().nzeta != 1 ||
-                 requested_reference_transfers() ||
+                 problem_->spec().lasym || requested_reference_transfers() ||
                  requested_spectral_fences() || requested_compare_fft())) {
                 finish(false,
                        "Newton experiments require precision=double, fixed "
@@ -3271,7 +3278,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             const int m = mode / (initialized_stage_.ntor + 1);
             if (m != 0 && m != 1) continue;
             const int first_component = m == 0 ? 5 : 0;
-            for (int component = first_component; component < 6; ++component) {
+            for (int component = first_component;
+                 component < (initialized_stage_.lasym ? 12 : 6); ++component) {
+                if (m == 0 && component != 5 && component != 8) continue;
                 const std::size_t axis =
                     static_cast<std::size_t>(component) * family_values +
                     static_cast<std::size_t>(mode) * initialized_stage_.ns;
@@ -4077,7 +4086,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 input.fields_lo.clear();
             }
         } else {
-            if (initialized_stage_.ntor == 0) {
+            if (initialized_stage_.ntor == 0 && !initialized_stage_.lasym) {
                 // Axisymmetric constraint output is [10 force, 4 constraint]
                 // planes. The shared projector expects [16, 4].
                 const std::size_t points =
@@ -4503,8 +4512,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         cumes::webgpu::assign_radial_profiles(constraint_case_,
                                               initialized_stage_.profiles);
         const std::size_t force_field_count =
-            initialized_stage_.ntor == 0 ? 10
-                                         : cumes::webgpu::FORCE_FIELD_COUNT;
+            initialized_stage_.ntor == 0 && !initialized_stage_.lasym
+                ? 10
+                : cumes::webgpu::FORCE_FIELD_COUNT;
         if (!device_force_fields_ || !production_solve_) {
             constraint_case_.force_fields.assign(
                 stage_force_fields_.begin(),
@@ -4832,6 +4842,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             norm_case.ns = initialized_stage_.ns;
             norm_case.mpol = initialized_stage_.mpol;
             norm_case.ntor = initialized_stage_.ntor;
+            norm_case.lasym = initialized_stage_.lasym;
             norm_case.ntheta = initialized_stage_.ntheta;
             norm_case.nzeta = initialized_stage_.nzeta;
             norm_case.delta_s = initialized_stage_.profiles.delta_s;
@@ -5632,6 +5643,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         transfer.mnmax =
             initialized_stage_.mpol * (initialized_stage_.ntor + 1);
         transfer.ntor = initialized_stage_.ntor;
+        transfer.lasym = initialized_stage_.lasym;
         transfer.interpolation = cumes::webgpu::RadialInterpolation::LINEAR;
         transfer.state = initialized_stage_.state;
         auto low_transfer = transfer;
@@ -5703,12 +5715,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     std::string publish_output() {
         cumes::EquilibriumSnapshot snapshot;
         snapshot.ns = initialized_stage_.ns;
+        if (initialized_stage_.lasym)
+            snapshot.families.resize(
+                cumes::EquilibriumSnapshot::ASYMMETRIC_COUNT);
         snapshot.mnmax =
             initialized_stage_.mpol * (initialized_stage_.ntor + 1);
         const std::size_t family_values =
             static_cast<std::size_t>(snapshot.ns) * snapshot.mnmax;
-        for (std::size_t component = 0;
-             component < cumes::EquilibriumSnapshot::COUNT; ++component) {
+        for (std::size_t component = 0; component < snapshot.families.size();
+             ++component) {
             const auto begin =
                 initialized_stage_.state.begin() + component * family_values;
             snapshot.families[component].assign(begin, begin + family_values);
@@ -5928,6 +5943,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         const int mode = m * (ntor + 1) + n;
                         r += physical_coefficient(0, mode, surface) * cosine;
                         z += physical_coefficient(1, mode, surface) * sine;
+                        if (initialized_stage_.lasym) {
+                            r += physical_coefficient(6, mode, surface) * sine;
+                            z +=
+                                physical_coefficient(7, mode, surface) * cosine;
+                        }
                     }
                 }
                 json << '[' << r << ',' << z << ']';
@@ -5935,16 +5955,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             json << ']';
         }
         json << "],\"fourier\":{\"ns\":" << ns << ",\"mpol\":" << mpol
-             << ",\"ntor\":" << ntor << ",\"nfp\":" << problem_->spec().nfp
-             << ",\"surfaces\":[";
+             << ",\"ntor\":" << ntor
+             << ",\"lasym\":" << (initialized_stage_.lasym ? "true" : "false")
+             << ",\"nfp\":" << problem_->spec().nfp << ",\"surfaces\":[";
         first_surface = true;
         for (const int surface : plotted_surfaces) {
             if (!first_surface) json << ',';
             first_surface = false;
             json << "{\"index\":" << surface << ",\"coefficients\":[";
             bool first_coefficient = true;
-            for (int family = 0;
-                 family < static_cast<int>(cumes::EquilibriumSnapshot::COUNT);
+            for (int family = 0; family < (initialized_stage_.lasym ? 12 : 6);
                  ++family) {
                 for (int mode = 0; mode < mnmax; ++mode) {
                     if (!first_coefficient) json << ',';

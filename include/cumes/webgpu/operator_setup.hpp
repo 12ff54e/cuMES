@@ -13,6 +13,7 @@ void assign_stage_shape(Case& value, const AxisymmetricStageData& stage) {
     value.ns = stage.ns;
     if constexpr (requires { value.mpol; }) value.mpol = stage.mpol;
     if constexpr (requires { value.ntor; }) value.ntor = stage.ntor;
+    if constexpr (requires { value.lasym; }) value.lasym = stage.lasym;
     if constexpr (requires { value.ntheta; }) value.ntheta = stage.ntheta;
     if constexpr (requires { value.nzeta; }) value.nzeta = stage.nzeta;
     if constexpr (requires { value.nfp; }) value.nfp = stage.nfp;

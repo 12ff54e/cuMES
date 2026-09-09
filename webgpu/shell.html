@@ -191,7 +191,7 @@
         <div class="panel-head"><h2 id="boundary-title">Input boundary</h2><div class="mode-switch axisymmetric-input" role="tablist" aria-label="Boundary editor mode">
           <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div></div>
         <div class="setup-row fixed-configuration">
-          <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option></select>
+          <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option><option value="asymmetric">Asymmetric tokamak</option></select>
           <span class="subtitle" id="fixed-preset-description"></span>
         </div>
         <section id="free-boundary-controls" class="controls" hidden>
@@ -215,9 +215,10 @@
         <div class="controls">
           <section id="surface-editor" hidden>
             <div class="surface-toolbar"><label for="toroidal-mode">Toroidal mode <select id="toroidal-mode"></select></label><span class="subtitle" id="boundary-dimensions"></span></div>
-            <div class="coefficient-scroll"><table class="mode-table"><thead><tr><th scope="col">m</th><th scope="col">RBC(n,m) · m</th><th scope="col">ZBS(n,m) · m</th></tr></thead><tbody id="boundary-coefficients"></tbody></table></div>
-            <p class="subtitle">Edit one toroidal mode at a time. Both views update together; coefficients retain stellarator symmetry.</p>
-            <div class="formula">R = Σ RBC(n,m) cos(mθ − n·NFP·φ)<br>Z = Σ ZBS(n,m) sin(mθ − n·NFP·φ)</div>
+            <label><input id="allow-asymmetry" type="checkbox"> Allow non-stellarator symmetry</label>
+            <div class="coefficient-scroll"><table class="mode-table"><thead><tr><th scope="col">m</th><th scope="col">RBC(n,m) · m</th><th scope="col">ZBS(n,m) · m</th><th scope="col" data-asymmetric-column hidden>RBS(n,m) · m</th><th scope="col" data-asymmetric-column hidden>ZBC(n,m) · m</th></tr></thead><tbody id="boundary-coefficients"></tbody></table></div>
+            <p class="subtitle">Edit one toroidal mode at a time. Both views update together. Enable non-stellarator symmetry to edit R sine and Z cosine coefficients.</p>
+            <div class="formula">R = Σ [RBC cos(α) + RBS sin(α)]<br>Z = Σ [ZBS sin(α) + ZBC cos(α)], α = mθ − n·NFP·φ</div>
           </section>
           <details id="equilibrium-settings" hidden><summary>Resolution, profiles and input JSON</summary>
             <div class="setup-row fixed-configuration"><label for="grid-sequence">Radial grids</label><select id="grid-sequence"><option value="1">Single grid · 99 surfaces</option><option value="3">Multigrid · 33 → 66 → 99</option><option value="custom" hidden>Custom input</option></select></div>
@@ -304,7 +305,8 @@
   <script>
     migrateCumesEditorUrl(location,history);
     installCumesBrowser();
-    const query=new URLSearchParams(location.search),w7xPreset=query.get('preset')==='w7x';
+    const query=new URLSearchParams(location.search),w7xPreset=query.get('preset')==='w7x',asymmetricPreset=query.get('preset')==='asymmetric';
+    const fixedStorageKey=asymmetricPreset?'cumes.fixed.asymmetric.v1':'cumes.fixed.w7x.v1';
     const appMode=query.get('mode')!=='test',running=appMode&&query.get('run')==='1';
     const boundaryMode=installCumesBoundaryMode();
     document.getElementById('free-precision-note').hidden=!boundaryMode.free;
@@ -316,7 +318,7 @@
     if(appMode&&query.get('residual_plot')!=='0'){
       const panel=document.getElementById('residual-panel-template').content.firstElementChild.cloneNode(true);
       document.getElementById('editor-residual-host').append(panel);
-      const paired=query.get('precision')==='double'||((w7xPreset||boundaryMode.free)&&query.get('precision')!=='float');
+      const paired=query.get('precision')==='double'||((w7xPreset||asymmetricPreset||boundaryMode.free)&&query.get('precision')!=='float');
       window.cumesResidualPlot=createCumesResidualPlot(panel,paired?1e-12:1e-5);
     }
     // Precision switch: kept in the frontend; URL remains the solver contract.
@@ -357,7 +359,7 @@
     const shape={r:defaults.r.map((v,m)=>finite(saved?.r?.[m],v)),z:defaults.z.map((v,m)=>finite(saved?.z?.[m],v)),
       pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier'};
     let editorMode=shape.mode,surfaceEditor=null;
-    const advancedEditor=appMode&&(boundaryMode.free||w7xPreset);
+    const advancedEditor=appMode&&(boundaryMode.free||w7xPreset||asymmetricPreset);
     document.body.dataset.surfaceEditor=String(advancedEditor);
     const value=id=>document.getElementById(id);
     const harmonicSpecs=[...Array.from({length:6},(_,m)=>({family:'r',m,id:`rbc-${m}`})),
@@ -440,7 +442,7 @@
       if(advancedEditor){for(const control of document.querySelectorAll('#boundary-coefficients input:not(:disabled)')){if(control.value===''||!control.validity.valid)throw Error('Enter finite boundary coefficients before running.')}saveSurfaceInput()}
       localStorage.setItem('cumes.input.v1',inputJSON());value('run').disabled=true;
       const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('boundary-error').textContent=error.message}});
-    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(w7xPreset)localStorage.removeItem('cumes.fixed.w7x.v1');else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
+    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(w7xPreset||asymmetricPreset)localStorage.removeItem(fixedStorageKey);else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
       const next=new URL(location.href);next.searchParams.delete('run');
       if(boundaryMode.free)next.searchParams.set('coils',value('coil-preset').value==='upload'?'solovev':value('coil-preset').value);
       location.assign(next.href)});
@@ -504,7 +506,7 @@
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
     function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
       document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#coil-equilibrium,#apply-equilibrium,#grid-sequence,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
-      const dc=document.querySelector('#boundary-coefficients input[data-family="zbs"][data-m="0"][data-n="0"]');if(dc)dc.disabled=true;
+      for(const family of ['zbs','rbs']){const dc=document.querySelector(`#boundary-coefficients input[data-family="${family}"][data-m="0"][data-n="0"]`);if(dc)dc.disabled=true;}
       value('reset').disabled=disabled}
     function updateStatus(){const state=document.body.dataset.cumesWebgpu;
       if(state==='pass'||state==='fail'){cumesBrowser.speed(null);logBuffer.flush()}
@@ -523,21 +525,22 @@
     function readSurfaceInput(){return JSON.parse(value('coil-equilibrium').value)}
     function writeSurfaceInput(input){value('coil-equilibrium').value=JSON.stringify(input,null,2);saveSurfaceInput()}
     function saveSurfaceInput(){if(!advancedEditor)return;if(boundaryMode.free)boundaryMode.save();
-      else localStorage.setItem('cumes.fixed.w7x.v1',JSON.stringify(readSurfaceInput()))}
+      else localStorage.setItem(fixedStorageKey,JSON.stringify(readSurfaceInput()))}
     let w7xGridInput;
     function selectW7xGrids(input,grids){
       if(grids==='3'){input.ns_array=[...w7xGridInput.ns_array];input.niter_array=[...w7xGridInput.niter_array]}
       else{input.ns_array=[w7xGridInput.ns_array.at(-1)];input.niter_array=[w7xGridInput.niter_array.reduce((sum,n)=>sum+n,0)]}
       input.ftol_array=input.ns_array.map(()=>document.body.dataset.cumesPrecision==='double'?1e-12:1e-5);
     }
-    value('fixed-preset').value=w7xPreset?'w7x':'solovev';
-    value('fixed-preset-description').textContent=w7xPreset?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
+    value('fixed-preset').value=asymmetricPreset?'asymmetric':w7xPreset?'w7x':'solovev';
+    value('fixed-preset-description').textContent=(w7xPreset||asymmetricPreset)?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
     value('fixed-preset').addEventListener('change',()=>{saveSurfaceInput();const next=new URL(location.href);
       next.searchParams.set('preset',value('fixed-preset').value);next.searchParams.delete('run');next.searchParams.delete('grids');location.assign(next.href)});
     value('grid-sequence').addEventListener('change',()=>{const grids=value('grid-sequence').value;if(grids==='custom')return;
       const input=readSurfaceInput();selectW7xGrids(input,grids);writeSurfaceInput(input);
       invalidateResult()});
     function syncGridSequence(){if(boundaryMode.free||!w7xGridInput)return;const grids=readSurfaceInput().ns_array.join(',');
+      value('grid-sequence').options[0].textContent=`Single grid · ${w7xGridInput.ns_array.at(-1)} surfaces`;value('grid-sequence').options[1].textContent=`Multigrid · ${w7xGridInput.ns_array.join(' → ')}`;
       value('grid-sequence').value=grids===String(w7xGridInput.ns_array.at(-1))?'1':grids===w7xGridInput.ns_array.join(',')?'3':'custom'}
     function drawSurfaceBoundary(){if(!surfaceEditor?.fourier)return;
       const section=fourierSections(surfaceEditor.fourier,surfaceEditor.phi)[0],svg=value('boundary-plot');svg.replaceChildren();
@@ -565,11 +568,11 @@
       value('run').disabled=true;
       if(boundaryMode.free)await boundaryMode.ready;
       else{
-        const response=await fetch(new URL('presets/fixed-w7x.json',location.href));
-        if(!response.ok)throw Error('Could not load the W7-X boundary preset.');
+        const response=await fetch(new URL(asymmetricPreset?'presets/fixed-asymmetric.json':'presets/fixed-w7x.json',location.href));
+        if(!response.ok)throw Error('Could not load the boundary preset.');
         w7xGridInput=await response.json();let input;
-        try{input=JSON.parse(localStorage.getItem('cumes.fixed.w7x.v1'))}catch(_){}
-        if(!input){input=structuredClone(w7xGridInput);selectW7xGrids(input,query.get('grids')||'1')}
+        try{input=JSON.parse(localStorage.getItem(fixedStorageKey))}catch(_){}
+        if(!input){input=structuredClone(w7xGridInput);selectW7xGrids(input,query.get('grids')||(asymmetricPreset?'3':'1'))}
         else if(query.has('grids'))selectW7xGrids(input,query.get('grids'));
         writeSurfaceInput(input);syncGridSequence();
         // Grid query parameters initialize setup once; subsequent JSON edits remain authoritative.

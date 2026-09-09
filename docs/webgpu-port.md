@@ -11,8 +11,8 @@ fixed/free-boundary editor with axisymmetric and 3-D previews.
 
 ### Unified boundary editor
 
-The Boundary editor handles both fixed and free equilibria. Select Solovev or
-W7-X under **Fixed boundary**, or select the coil configuration under **Free
+The Boundary editor handles both fixed and free equilibria. Select Solovev,
+W7-X, or Asymmetric tokamak under **Fixed boundary**, or select the coil configuration under **Free
 boundary**. There is one Run/Stop workflow, precision control, residual plot,
 and result download. Historical `?solve=w7x` links open the fixed W7-X editor;
 `?preset=w7x` is the current link. Neither starts a solve until Run is clicked.
@@ -28,9 +28,12 @@ setup do not enter the estimate. It remains available with `timing=0` and adds
 no GPU readbacks. Completion, failure, and returning to setup clear the rate.
 
 For 3-D boundaries and free-boundary initial guesses, select a signed toroidal
-mode `n` and edit the RBC/ZBS coefficients by poloidal mode `m`. A toroidal-angle
+mode `n` and edit the RBC/ZBS coefficients by poloidal mode `m`. For asymmetric
+fixed boundaries, **Allow non-stellarator symmetry** adds RBS/ZBC and sets
+`lasym=true` in the input. `?preset=asymmetric` opens a tilted, vertically
+displaced tokamak with three grids and paired precision. A toroidal-angle
 slider sweeps one field period. The R-Z cross-section and orange section on the
-orbitable boundary preview update together, using the solver's six-family
+orbitable boundary preview update together, using the solver's six/twelve-family
 Fourier convention. Coefficient edits update the input JSON directly; no
 projection or rounding to the axisymmetric editor's `m <= 5` basis is applied.
 The fixed Solovev editor retains its existing Fourier sliders and contour mode.

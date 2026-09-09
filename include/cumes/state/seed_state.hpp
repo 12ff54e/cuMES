@@ -161,7 +161,7 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
                     h_state[10 * one + i] = w * T(b.zbss[mn]);
                     if (m == 0) {
                         h_state[7 * one + i] += (T(1) - s) * T(sp.zaxis_c[n]);
-                        h_state[9 * one + i] += (T(1) - s) * T(sp.raxis_s[n]);
+                        h_state[9 * one + i] -= (T(1) - s) * T(sp.raxis_s[n]);
                     }
                 }
             }

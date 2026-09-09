@@ -46,12 +46,12 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) color: vec4f }
 @fragment fn fragment_main(vertex: Vertex) -> @location(0) vec4f { return vertex.color; }
 `;
 
-// Same six real Fourier families used by the 2D view and solver output.
+// Same active real Fourier families used by the 2D view and solver output.
 // Geometry and its bounding radius are produced once per changed input, with
 // no GPU-to-CPU transfer. The render pass reads both buffers directly.
 const ORBIT_SURFACE_SHADER = `
 struct Mesh { mpol: u32, ntor: u32, nfp: u32, ns: u32,
-              theta_segments: u32, phi_segments: u32, vertices: u32, padding: u32 }
+              theta_segments: u32, phi_segments: u32, vertices: u32, components: u32 }
 @group(0) @binding(0) var<uniform> mesh: Mesh;
 @group(0) @binding(1) var<storage, read> coefficients: array<f32>;
 @group(0) @binding(2) var<storage, read_write> points: array<vec4f>;
@@ -67,7 +67,7 @@ fn build_surfaces(@builtin(global_invocation_id) id: vec3u,
     let theta = 6.283185307179586 * f32(id.x % row) / f32(mesh.theta_segments);
     let phi = 6.283185307179586 * f32(id.x / row) / f32(mesh.phi_segments);
     let modes = mesh.mpol * (mesh.ntor + 1u);
-    let base = id.y * (6u * modes + 1u);
+    let base = id.y * (mesh.components * modes + 1u);
     var r = 0.0;
     var z = 0.0;
     for (var m = 0u; m < mesh.mpol; m++) {
@@ -79,10 +79,14 @@ fn build_surfaces(@builtin(global_invocation_id) id: vec3u,
         let sn = sin(f32(n * mesh.nfp) * phi);
         r += coefficients[base + mode] * cm * cn + coefficients[base + 3u * modes + mode] * sm * sn;
         z += coefficients[base + modes + mode] * sm * cn + coefficients[base + 4u * modes + mode] * cm * sn;
+        if (mesh.components == 12u) {
+          r += coefficients[base + 6u * modes + mode] * sm * cn + coefficients[base + 9u * modes + mode] * cm * sn;
+          z += coefficients[base + 7u * modes + mode] * cm * cn + coefficients[base + 10u * modes + mode] * sm * sn;
+        }
       }
     }
     let position = vec3f(r * cos(phi), r * sin(phi), z);
-    points[id.y * mesh.vertices + id.x] = vec4f(position, coefficients[base + 6u * modes]);
+    points[id.y * mesh.vertices + id.x] = vec4f(position, coefficients[base + mesh.components * modes]);
     radius = length(position);
   }
   radii[lane] = bitcast<u32>(radius);
@@ -176,6 +180,7 @@ class CumesOrbitRenderer {
     if (![mpol, ntor, nfp, ns].every(Number.isInteger) || mpol < 1 || ntor < 0 || nfp < 1 || ns < 2 || modes > 4096 ||
         !surfaces.length || surfaces.length > this.device.limits.maxComputeWorkgroupsPerDimension)
       throw Error('Invalid 3D surface dimensions');
+    const components = fourier.lasym ? 12 : 6;
     const thetaSegments = 40, phiSegments = ntor ? Math.min(256, Math.max(64, nfp * 16)) : 64;
     const row = thetaSegments + 1, vertices = row * (phiSegments + 1);
     const indicesPerSurface = 2 * (Math.ceil(phiSegments / 4) * thetaSegments + Math.ceil(thetaSegments / 4) * phiSegments);
@@ -192,16 +197,16 @@ class CumesOrbitRenderer {
       }
       this.device.queue.writeBuffer(this.surface.indices, 0, indices); this.topology = topology;
     }
-    const coefficients = new Float32Array(surfaces.length * (6 * modes + 1));
+    const coefficients = new Float32Array(surfaces.length * (components * modes + 1));
     surfaces.forEach((surface, s) => {
-      if (surface.coefficients.length !== 6 * modes || surface.index < 0 || surface.index >= ns) throw Error('Invalid 3D surface coefficients');
-      coefficients.set(surface.coefficients, s * (6 * modes + 1));
-      coefficients[s * (6 * modes + 1) + 6 * modes] = surface.index / (ns - 1);
+      if (surface.coefficients.length !== components * modes || surface.index < 0 || surface.index >= ns) throw Error('Invalid 3D surface coefficients');
+      coefficients.set(surface.coefficients, s * (components * modes + 1));
+      coefficients[s * (components * modes + 1) + components * modes] = surface.index / (ns - 1);
     });
     if (!coefficients.every(Number.isFinite)) throw Error('3D surface coefficients exceed rendering precision');
     this.coefficients = this.buffer(this.coefficients, coefficients.byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, 'orbit Fourier coefficients');
     this.device.queue.writeBuffer(this.coefficients, 0, coefficients);
-    this.device.queue.writeBuffer(this.meshParams, 0, new Uint32Array([mpol, ntor, nfp, ns, thetaSegments, phiSegments, vertices, 0]));
+    this.device.queue.writeBuffer(this.meshParams, 0, new Uint32Array([mpol, ntor, nfp, ns, thetaSegments, phiSegments, vertices, components]));
     const group = this.device.createBindGroup({layout: this.surfacePipeline.getBindGroupLayout(0), entries: [
       {binding: 0, resource: {buffer: this.meshParams}}, {binding: 1, resource: {buffer: this.coefficients}},
       {binding: 2, resource: {buffer: this.surface.positions}}, {binding: 3, resource: {buffer: this.radiusBuffer}}

@@ -6,9 +6,12 @@
   const view = new DataView(bytes);
   const version = view.getInt32(8, true);
   const ns = view.getInt32(12, true), mnmax = view.getInt32(16, true);
-  if (version !== 8 || ns < 2 || mnmax < 1)
+  if (![8, 9].includes(version) || ns < 2 || mnmax < 1)
     throw Error(`Unsupported output shape/version: ${version}/${ns}/${mnmax}`);
-  const spectralEnd = 20 + 6 * ns * mnmax * 8;
+  const components = version === 9 ? view.getInt32(20, true) : 6;
+  if (![6, 12].includes(components)) throw Error("Invalid spectral component count");
+  const start = version === 9 ? 24 : 20;
+  const spectralEnd = start + components * ns * mnmax * 8;
   const ntheta = view.getInt32(spectralEnd, true);
   const nzeta = view.getInt32(spectralEnd + 4, true);
   if (ntheta < 1 || nzeta < 1) throw Error('Missing derived output fields');
@@ -19,6 +22,6 @@
     await crypto.subtle.digest('SHA-256', bytes.slice(begin, end))))
     .map(value => value.toString(16).padStart(2, '0')).join('');
   return {version, ns, mnmax, ntheta, nzeta, scientificBytes: end,
-    state: await digest(20, spectralEnd),
+    state: await digest(start, spectralEnd),
     fields: await digest(spectralEnd + 8, end)};
 })()

@@ -44,8 +44,9 @@ struct ShaderParams {
     float norm_lo;
     float sqrt2_hi;
     float sqrt2_lo;
+    std::uint32_t lasym = 0, padding[3] = {};
 };
-static_assert(sizeof(ShaderParams) == 48);
+static_assert(sizeof(ShaderParams) == 64);
 
 struct DealiasParams {
     std::uint32_t ns;
@@ -56,8 +57,9 @@ struct DealiasParams {
     std::uint32_t n_z_n_t;
     std::uint32_t band_modes;
     std::uint32_t points;
+    std::uint32_t lasym = 0, padding[3] = {};
 };
-static_assert(sizeof(DealiasParams) == 32);
+static_assert(sizeof(DealiasParams) == 48);
 
 std::string validate_case(const ToroidalInverseCase& input) {
     if (input.readback_vacuum && !input.readback.batch)
@@ -91,10 +93,10 @@ std::string validate_case(const ToroidalInverseCase& input) {
     const std::size_t total_points =
         static_cast<std::size_t>(input.ns) * n_z_n_t;
     if (!field_shape(input.state, input.device_state,
-                     SPECTRAL_COMPONENT_COUNT * mnmax * input.ns) ||
+                     (input.lasym ? 12 : 6) * mnmax * input.ns) ||
         (!input.device_state && input.double_single &&
          input.state_lo.size() != input.state.size())) {
-        return "toroidal state size does not match 6*mnmax*ns";
+        return "toroidal state size does not match the active Fourier families";
     }
     if (total_points > std::numeric_limits<std::uint32_t>::max() ||
         RESULT_FIELD_COUNT * total_points >
@@ -203,10 +205,10 @@ const std::vector<float>& make_basis(const ToroidalForwardCase& input) {
 }
 
 std::string validate_case(const ToroidalDealiasCase& input) {
-    if (input.ns < 2 || input.mpol < 3 || input.ntor < 1 || input.ntheta < 2 ||
-        input.ntheta % 2 != 0 || input.nzeta < 2) {
-        return "toroidal dealias requires ns>=2, mpol>=3, ntor>=1, even "
-               "ntheta>=2, and nzeta>=2";
+    if (input.ns < 2 || input.mpol < 3 || input.ntor < 0 || input.ntheta < 2 ||
+        input.ntheta % 2 != 0 || input.nzeta < 1) {
+        return "toroidal dealias requires ns>=2, mpol>=3, ntor>=0, even "
+               "ntheta>=2, and nzeta>=1";
     }
     const std::size_t points =
         static_cast<std::size_t>(input.ns) * input.ntheta * input.nzeta;
@@ -550,6 +552,27 @@ ToroidalInverseResult toroidal_inverse_double_single_reference(
                 const double xmpq = mf * (mf - 1.0);
                 values[18 * total_points + point] += xmpq * (rc * cc + rs * ss);
                 values[19 * total_points + point] += xmpq * (zs * sc + zc * cs);
+                if (input.lasym) {
+                    const double rsc = coefficient(6, mode, surface);
+                    const double zcc = coefficient(7, mode, surface);
+                    const double lcc = coefficient(8, mode, surface);
+                    const double rcs = coefficient(9, mode, surface);
+                    const double zss = coefficient(10, mode, surface);
+                    const double lss = coefficient(11, mode, surface);
+                    add(parity, rsc * sc + rcs * cs);
+                    add(parity + 1, zcc * cc + zss * ss);
+                    add(parity + 2, lcc * cc + lss * ss);
+                    add(parity + 3, mf * (rsc * cc - rcs * ss));
+                    add(parity + 4, mf * (-zcc * sc + zss * cs));
+                    add(parity + 5, mf * (-lcc * sc + lss * cs));
+                    add(12 + (m % 2 == 1 ? 3 : 0), nf * (-rsc * ss + rcs * cc));
+                    add(13 + (m % 2 == 1 ? 3 : 0), nf * (-zcc * cs + zss * sc));
+                    add(14 + (m % 2 == 1 ? 3 : 0), nf * (lcc * cs - lss * sc));
+                    values[18 * total_points + point] +=
+                        xmpq * (rsc * sc + rcs * cs);
+                    values[19 * total_points + point] +=
+                        xmpq * (zcc * cc + zss * ss);
+                }
             }
         }
     }
@@ -586,7 +609,7 @@ ToroidalInverseResult toroidal_inverse_reference(
     if (input.double_single) {
         return toroidal_inverse_double_single_reference(input);
     }
-    if (input.ntor == 0 && !input.radius_reference &&
+    if (input.ntor == 0 && !input.lasym && !input.radius_reference &&
         !input.compensated_geometry)
         return axisymmetric_inverse_reference(
             {input.ns, input.mpol, input.ntheta, input.state});
@@ -665,6 +688,27 @@ ToroidalInverseResult toroidal_inverse_reference(
                                 xmpq * (rc * cc + rs * ss));
                 compensated_add(result.z_con[point], z_con_correction,
                                 xmpq * (zs * sc + zc * cs));
+                if (input.lasym) {
+                    const float rsc = coeff(6, mode, surface);
+                    const float zcc = coeff(7, mode, surface);
+                    const float lcc = coeff(8, mode, surface);
+                    const float rcs = coeff(9, mode, surface);
+                    const float zss = coeff(10, mode, surface);
+                    const float lss = coeff(11, mode, surface);
+                    add(parity, rsc * sc + rcs * cs);
+                    add(parity + 1, zcc * cc + zss * ss);
+                    add(parity + 2, lcc * cc + lss * ss);
+                    add(parity + 3, mf * (rsc * cc - rcs * ss));
+                    add(parity + 4, mf * (-zcc * sc + zss * cs));
+                    add(parity + 5, mf * (-lcc * sc + lss * cs));
+                    add(12 + (m % 2 == 1 ? 3 : 0), nf * (-rsc * ss + rcs * cc));
+                    add(13 + (m % 2 == 1 ? 3 : 0), nf * (-zcc * cs + zss * sc));
+                    add(14 + (m % 2 == 1 ? 3 : 0), nf * (lcc * cs - lss * sc));
+                    compensated_add(result.r_con[point], r_con_correction,
+                                    xmpq * (rsc * sc + rcs * cs));
+                    compensated_add(result.z_con[point], z_con_correction,
+                                    xmpq * (zcc * cc + zss * ss));
+                }
             }
         }
     }
@@ -692,6 +736,20 @@ ToroidalInverseResult toroidal_inverse_reference(
                                         coeff(1, mode, surface) * cn);
                         compensated_add(sums[3], corrections[3],
                                         coeff(4, mode, surface) * sn);
+                        if (input.lasym) {
+                            const std::array<float, 4> terms{
+                                coeff(9, mode, surface) * sn,
+                                coeff(6, mode, surface) * cn,
+                                coeff(10, mode, surface) * sn,
+                                coeff(7, mode, surface) * cn};
+                            for (int k = 0; k < 4; ++k) {
+                                compensated_add(sums[k], corrections[k],
+                                                terms[k]);
+                                if (input.compensated_toroidal_geometry &&
+                                    m == 1)
+                                    wide_sums[k] += terms[k];
+                            }
+                        }
                         if (input.compensated_toroidal_geometry && m == 1) {
                             wide_sums[0] += float(coeff(0, mode, surface) * cn);
                             wide_sums[1] += float(coeff(3, mode, surface) * sn);
@@ -741,8 +799,8 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const bool axisymmetric = input.ntor == 0 && !input.double_single &&
-                              !input.radius_reference &&
+    const bool axisymmetric = input.ntor == 0 && !input.lasym &&
+                              !input.double_single && !input.radius_reference &&
                               !input.compensated_geometry;
     const auto& shader_text =
         axisymmetric
@@ -761,7 +819,7 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
     const std::size_t result_values =
         RESULT_FIELD_COUNT * total_points * (input.double_single ? 2 : 1);
     const std::size_t state_bytes =
-        SPECTRAL_COMPONENT_COUNT * static_cast<std::size_t>(input.ns) *
+        (input.lasym ? 12 : 6) * static_cast<std::size_t>(input.ns) *
         input.mpol * (input.ntor + 1) * sizeof(float);
     const std::size_t basis_bytes = gpu_basis.bytes;
     const std::size_t result_bytes = result_values * sizeof(float);
@@ -873,7 +931,8 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
                               input.compensated_toroidal_geometry ? 2.0F
                               : input.compensated_geometry        ? 1.0F
                                                                   : 0.0F,
-                              0.0F};
+                              0.0F,
+                              input.lasym ? 1U : 0U};
     const auto queue = device.GetQueue();
     const auto encoder = device.CreateCommandEncoder();
     if (input.compensated_toroidal_geometry) {
@@ -1100,7 +1159,7 @@ ToroidalForwardResult toroidal_forward_reference(
     const ToroidalForwardCase& input) {
     if (input.device_fields && input.fields.empty()) return {};
     if (!validate_case(input).empty()) return {};
-    if (input.ntor == 0 && !input.double_single) {
+    if (input.ntor == 0 && !input.lasym && !input.double_single) {
         AxisymmetricForwardCase axisymmetric;
         axisymmetric.ns = input.ns;
         axisymmetric.mpol = input.mpol;
@@ -1118,12 +1177,14 @@ ToroidalForwardResult toroidal_forward_reference(
     }
     const int mnmax = input.mpol * (input.ntor + 1);
     const int n_z_n_t = input.ntheta * input.nzeta;
-    const int theta_reduced = input.ntheta / 2 + 1;
+    const int theta_reduced = input.lasym ? input.ntheta : input.ntheta / 2 + 1;
     const double norm =
-        1.0 / static_cast<double>(input.nzeta * (theta_reduced - 1));
+        1.0 /
+        static_cast<double>(input.nzeta *
+                            (input.lasym ? theta_reduced : theta_reduced - 1));
     const auto& basis = make_basis(input);
     ToroidalForwardResult result;
-    result.residual.assign(SPECTRAL_COMPONENT_COUNT * mnmax * input.ns, 0.0F);
+    result.residual.assign((input.lasym ? 12 : 6) * mnmax * input.ns, 0.0F);
     if (input.double_single)
         result.residual_lo.assign(result.residual.size(), 0.0F);
     const auto field = [&](int component, int surface, int angular) {
@@ -1168,13 +1229,14 @@ ToroidalForwardResult toroidal_forward_reference(
         const double scale =
             (m == 0 ? 1.0 : std::sqrt(2.0)) * (n == 0 ? 1.0 : std::sqrt(2.0));
         for (int surface = 0; surface < input.ns; ++surface) {
-            std::array<double, SPECTRAL_COMPONENT_COUNT> sums{};
-            std::array<double, SPECTRAL_COMPONENT_COUNT> corrections{};
+            std::array<double, 12> sums{};
+            std::array<double, 12> corrections{};
             for (int zeta = 0; zeta < input.nzeta; ++zeta) {
                 for (int theta = 0; theta < theta_reduced; ++theta) {
                     const int angular = zeta * input.ntheta + theta;
                     double weight = norm;
-                    if (theta == 0 || theta + 1 == theta_reduced) {
+                    if (!input.lasym &&
+                        (theta == 0 || theta + 1 == theta_reduced)) {
                         weight *= 0.5F;
                     }
                     const double cc = weight * table(0, mode, angular);
@@ -1205,17 +1267,35 @@ ToroidalForwardResult toroidal_forward_reference(
                                     mf * bl * cc + nf * cl * ss);
                     compensated_add(sums[5], corrections[5],
                                     -mf * bl * ss - nf * cl * cc);
+                    if (input.lasym) {
+                        compensated_add(
+                            sums[6], corrections[6],
+                            temp_r * sc + mf * br * cc + nf * cr * ss);
+                        compensated_add(
+                            sums[7], corrections[7],
+                            temp_z * cc - mf * bz * sc + nf * cz * cs);
+                        compensated_add(sums[8], corrections[8],
+                                        -mf * bl * sc + nf * cl * cs);
+                        compensated_add(
+                            sums[9], corrections[9],
+                            temp_r * cs - mf * br * ss - nf * cr * cc);
+                        compensated_add(
+                            sums[10], corrections[10],
+                            temp_z * ss + mf * bz * cs - nf * cz * sc);
+                        compensated_add(sums[11], corrections[11],
+                                        mf * bl * cs - nf * cl * sc);
+                    }
                 }
             }
-            for (int component = 0;
-                 component < static_cast<int>(SPECTRAL_COMPONENT_COUNT);
+            for (int component = 0; component < (input.lasym ? 12 : 6);
                  ++component) {
                 double value = scale * sums[component];
                 if (surface == 0 &&
-                    !(m == 0 && (component == 0 || component == 4))) {
+                    !(m == 0 && (component == 0 || component == 4 ||
+                                 component == 7 || component == 9))) {
                     value = 0.0F;
                 } else if (surface == input.ns - 1 && !input.include_lcfs &&
-                           component != 2 && component != 5) {
+                           component % 3 != 2) {
                     value = 0.0F;
                 }
                 const std::size_t index =
@@ -1239,7 +1319,8 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         callback(validation_error, {});
         return;
     }
-    const bool axisymmetric = input.ntor == 0 && !input.double_single;
+    const bool axisymmetric =
+        input.ntor == 0 && !input.lasym && !input.double_single;
     const auto& shader_text =
         axisymmetric
             ? detail::cached_shader_source("/shaders/axisymmetric_forward.wgsl")
@@ -1255,8 +1336,7 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         static_cast<std::size_t>(input.mpol) * (input.ntor + 1);
     const std::size_t n_z_n_t =
         static_cast<std::size_t>(input.ntheta) * input.nzeta;
-    const std::size_t result_values =
-        SPECTRAL_COMPONENT_COUNT * mnmax * input.ns;
+    const std::size_t result_values = (input.lasym ? 12 : 6) * mnmax * input.ns;
     const std::size_t fields_bytes = 20 * input.ns * n_z_n_t * sizeof(float);
     const auto& basis_buffer =
         axisymmetric ? gpu_basis.weighted_buffer : gpu_basis.buffer;
@@ -1264,7 +1344,8 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         axisymmetric ? gpu_basis.weighted_bytes : gpu_basis.bytes;
     const std::size_t result_bytes =
         result_values * sizeof(float) * (input.double_single ? 2 : 1);
-    const std::size_t theta_reduced = input.ntheta / 2 + 1;
+    const std::size_t theta_reduced =
+        input.lasym ? input.ntheta : input.ntheta / 2 + 1;
     const std::size_t intermediate_values = 40 *
                                             static_cast<std::size_t>(input.ns) *
                                             theta_reduced * (input.ntor + 1);
@@ -1327,10 +1408,17 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         static_cast<std::uint32_t>(input.nfp),
         static_cast<std::uint32_t>(n_z_n_t),
         static_cast<std::uint32_t>(input.include_lcfs),
-        split(1.0 / static_cast<double>(input.nzeta * (input.ntheta / 2))).hi,
-        split(1.0 / static_cast<double>(input.nzeta * (input.ntheta / 2))).lo,
+        split(1.0 / static_cast<double>(input.nzeta * (input.lasym
+                                                           ? input.ntheta
+                                                           : input.ntheta / 2)))
+            .hi,
+        split(1.0 / static_cast<double>(input.nzeta * (input.lasym
+                                                           ? input.ntheta
+                                                           : input.ntheta / 2)))
+            .lo,
         split(std::sqrt(2.0)).hi,
-        split(std::sqrt(2.0)).lo};
+        split(std::sqrt(2.0)).lo,
+        input.lasym ? 1U : 0U};
     const auto queue = device.GetQueue();
     const auto encoder = device.CreateCommandEncoder();
     transfer_fields(device, encoder, fields_buffer, input.fields,
@@ -1514,7 +1602,7 @@ ToroidalDealiasResult toroidal_dealias_reference(
     };
     ToroidalDealiasResult result;
     result.g_con.assign(static_cast<std::size_t>(input.ns) * n_z_n_t, 0.0F);
-    std::vector<std::array<float, 2>> coefficients(mnmax);
+    std::vector<std::array<float, 4>> coefficients(mnmax);
     for (int surface = 1; surface < input.ns; ++surface) {
         // Analysis depends on the surface and mode, not the output point.
         // Retain the original compensated source order and unscaled sums so
@@ -1523,9 +1611,10 @@ ToroidalDealiasResult toroidal_dealias_reference(
             for (int n = 0; n <= input.ntor; ++n) {
                 const int mode = m * (input.ntor + 1) + n;
                 float sum_sc = 0.0F;
-                float sum_cs = 0.0F;
+                float sum_cs = 0.0F, sum_cc = 0.0F, sum_ss = 0.0F;
                 float correction_sc = 0.0F;
-                float correction_cs = 0.0F;
+                float correction_cs = 0.0F, correction_cc = 0.0F,
+                      correction_ss = 0.0F;
                 for (int source = 0; source < n_z_n_t; ++source) {
                     const float g =
                         input.g_con_eff[static_cast<std::size_t>(surface) *
@@ -1535,8 +1624,14 @@ ToroidalDealiasResult toroidal_dealias_reference(
                                     g * table(2, mode, source));
                     compensated_add(sum_cs, correction_cs,
                                     g * table(3, mode, source));
+                    if (input.lasym) {
+                        compensated_add(sum_cc, correction_cc,
+                                        g * table(0, mode, source));
+                        compensated_add(sum_ss, correction_ss,
+                                        g * table(1, mode, source));
+                    }
                 }
-                coefficients[mode] = {sum_sc, sum_cs};
+                coefficients[mode] = {sum_sc, sum_cs, sum_cc, sum_ss};
             }
         }
         for (int angular = 0; angular < n_z_n_t; ++angular) {
@@ -1545,7 +1640,8 @@ ToroidalDealiasResult toroidal_dealias_reference(
             for (int m = 1; m <= band_modes; ++m) {
                 for (int n = 0; n <= input.ntor; ++n) {
                     const int mode = m * (input.ntor + 1) + n;
-                    const auto [sum_sc, sum_cs] = coefficients[mode];
+                    const auto [sum_sc, sum_cs, sum_cc, sum_ss] =
+                        coefficients[mode];
                     const float norm = n == 0
                                            ? 2.0F / static_cast<float>(n_z_n_t)
                                            : 4.0F / static_cast<float>(n_z_n_t);
@@ -1554,6 +1650,11 @@ ToroidalDealiasResult toroidal_dealias_reference(
                     compensated_add(value, correction,
                                     scale * (sum_sc * table(2, mode, angular) +
                                              sum_cs * table(3, mode, angular)));
+                    if (input.lasym)
+                        compensated_add(
+                            value, correction,
+                            scale * (sum_cc * table(0, mode, angular) +
+                                     sum_ss * table(1, mode, angular)));
                 }
             }
             result
@@ -1589,7 +1690,7 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
     const std::size_t points = static_cast<std::size_t>(input.ns) * n_z_n_t;
     const std::size_t band_modes = static_cast<std::size_t>(input.mpol - 2);
     const std::size_t coefficient_values =
-        2 * input.ns * band_modes * (input.ntor + 1);
+        (input.lasym ? 4 : 2) * input.ns * band_modes * (input.ntor + 1);
     const std::size_t input_bytes = points * sizeof(float);
     const std::size_t profile_bytes = profiles.size() * sizeof(float);
     const std::size_t basis_bytes = gpu_basis.bytes;
@@ -1654,7 +1755,8 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
                                static_cast<std::uint32_t>(input.nzeta),
                                static_cast<std::uint32_t>(n_z_n_t),
                                static_cast<std::uint32_t>(band_modes),
-                               static_cast<std::uint32_t>(points)};
+                               static_cast<std::uint32_t>(points),
+                               input.lasym ? 1U : 0U};
     const auto queue = device.GetQueue();
     queue.WriteBuffer(profile_buffer, 0, profiles.data(), profile_bytes);
     queue.WriteBuffer(params_buffer, 0, &params, sizeof(params));

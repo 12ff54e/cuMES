@@ -23,7 +23,7 @@ struct Params {
     std::uint32_t nzeta, n_z_n_t, points, half_points;
     std::uint32_t nfp, free_boundary;
     float delta_s;
-    std::uint32_t padding;
+    std::uint32_t lasym;
 };
 static_assert(sizeof(Params) == 48);
 
@@ -124,13 +124,16 @@ float half_lambda(const AxisymmetricPreconditionerMatrixCase& in,
     const std::size_t half_points =
         static_cast<std::size_t>(in.ns - 1) * in.ntheta * in.nzeta;
     const std::size_t n_z_n_t = static_cast<std::size_t>(in.ntheta) * in.nzeta;
-    const int ntheta_red = in.ntheta / 2 + 1;
-    const float norm = 1.0F / static_cast<float>(in.nzeta * (ntheta_red - 1));
+    const int ntheta_red = in.lasym ? in.ntheta : in.ntheta / 2 + 1;
+    const float norm =
+        1.0F /
+        static_cast<float>(in.nzeta * (in.lasym ? ntheta_red : ntheta_red - 1));
     float sum = 0.0F;
     for (int zeta = 0; zeta < in.nzeta; ++zeta) {
         for (int theta = 0; theta < ntheta_red; ++theta) {
             float weight = norm;
-            if (theta == 0 || theta == ntheta_red - 1) weight *= 0.5F;
+            if (!in.lasym && (theta == 0 || theta == ntheta_red - 1))
+                weight *= 0.5F;
             const std::size_t point =
                 static_cast<std::size_t>(half_surface) * n_z_n_t +
                 zeta * in.ntheta + theta;
@@ -331,7 +334,7 @@ void enqueue_axisymmetric_preconditioner_matrix(
                         static_cast<std::uint32_t>(input.nfp),
                         input.free_boundary ? 1U : 0U,
                         input.delta_s,
-                        0};
+                        input.lasym ? 1U : 0U};
     auto queue = device.GetQueue();
     auto encoder = device.CreateCommandEncoder();
     transfer_fields(device, encoder, element_buffer, elements,

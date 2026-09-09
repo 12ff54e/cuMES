@@ -59,14 +59,12 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
     }
     const GridShape& shape = problem.stage_shapes()[stage_index];
     const ProblemSpec& spec = problem.spec();
-    if (spec.lasym)
-        throw std::runtime_error(
-            "WebGPU asymmetric equilibria are not yet supported");
     const FoldedBoundary& boundary = problem.boundary();
     AxisymmetricStageData stage;
     stage.ns = shape.ns;
     stage.mpol = shape.mpol;
     stage.ntor = shape.ntor;
+    stage.lasym = spec.lasym;
     stage.ntheta = shape.ntheta;
     stage.nzeta = shape.nzeta;
     stage.nfp = shape.nfp;
@@ -80,8 +78,8 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
         spec.current_model == CurrentModel::PRESCRIBED_CURRENT;
     const std::size_t family_values =
         static_cast<std::size_t>(shape.ns) * shape.modes();
-    stage.state.assign(6 * family_values, 0.0F);
-    stage.state_lo.assign(6 * family_values, 0.0F);
+    stage.state.assign((stage.lasym ? 12 : 6) * family_values, 0.0F);
+    stage.state_lo.assign((stage.lasym ? 12 : 6) * family_values, 0.0F);
     const double envelope_correction =
         default_seed_envelope(shape.ntor, spec.free_boundary.lfreeb, shape.ns,
                               static_cast<int>(spec.stages.size()));
@@ -89,6 +87,7 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
     stage.lambda_seed_scale =
         static_cast<float>(default_axisymmetric_lambda_seed(
             shape.ntor, spec.free_boundary.lfreeb));
+    if (stage.lasym) stage.lambda_seed_scale = 0.0F;
 
     auto family = [&](std::size_t component) {
         return std::span<float>(stage.state.data() + component * family_values,
@@ -148,6 +147,33 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
                 stage.state_lo[4 * family_values + index] =
                     static_cast<float>(exact_weight * boundary.zbcs[mode] -
                                        static_cast<double>(zcs[index]));
+            }
+        }
+    }
+
+    if (stage.lasym) {
+        for (int c : {6, 7, 9, 10}) {
+            const auto& edge = c == 6   ? boundary.rbsc
+                               : c == 7 ? boundary.zbcc
+                               : c == 9 ? boundary.rbcs
+                                        : boundary.zbss;
+            for (int mode = 0; mode < static_cast<int>(shape.modes()); ++mode) {
+                const int m = mode / (shape.ntor + 1);
+                const int n = mode % (shape.ntor + 1);
+                for (int j = 0; j < shape.ns; ++j) {
+                    const double s = double(j) / (shape.ns - 1);
+                    const double axis = c == 7   ? spec.zaxis_c[n]
+                                        : c == 9 ? -spec.raxis_s[n]
+                                                 : 0.0;
+                    const double exact =
+                        m == 0 ? s * edge[mode] + (1 - s) * axis
+                               : seed_radial_weight(m, s, envelope_correction) *
+                                     edge[mode];
+                    const auto i = c * family_values + mode * shape.ns + j;
+                    stage.state[i] = static_cast<float>(exact);
+                    stage.state_lo[i] =
+                        static_cast<float>(exact - stage.state[i]);
+                }
             }
         }
     }

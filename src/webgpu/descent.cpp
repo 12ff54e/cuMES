@@ -24,8 +24,9 @@ struct Params {
     std::uint32_t ns, ntor_plus_one, points, move_lcfs;
     float delta_t, damping_b1, damping_fac;
     std::uint32_t extrapolate_axis;
+    std::uint32_t lasym, padding[3];
 };
-static_assert(sizeof(Params) == 32);
+static_assert(sizeof(Params) == 48);
 
 std::string validate_case(const AxisymmetricDescentCase& in) {
     if (in.ns < 2 || in.mpol < 2 || in.ntor < 0 || !std::isfinite(in.delta_t) ||
@@ -35,14 +36,18 @@ std::string validate_case(const AxisymmetricDescentCase& in) {
     const std::size_t points =
         static_cast<std::size_t>(in.ns) * in.mpol * (in.ntor + 1);
     if (points > std::numeric_limits<std::uint32_t>::max() ||
-        !field_shape(in.state, in.device_state, 6 * points) ||
-        !field_shape(in.velocity, in.device_velocity, 6 * points) ||
-        !field_shape(in.residual, in.device_residual, 6 * points) ||
-        (in.double_single &&
-         (!field_shape(in.state_lo, in.device_state, 6 * points) ||
-          !field_shape(in.velocity_lo, in.device_velocity, 6 * points) ||
-          (!in.residual_is_f32 &&
-           !field_shape(in.residual_lo, in.device_residual, 6 * points))))) {
+        !field_shape(in.state, in.device_state, (in.lasym ? 12 : 6) * points) ||
+        !field_shape(in.velocity, in.device_velocity,
+                     (in.lasym ? 12 : 6) * points) ||
+        !field_shape(in.residual, in.device_residual,
+                     (in.lasym ? 12 : 6) * points) ||
+        (in.double_single && (!field_shape(in.state_lo, in.device_state,
+                                           (in.lasym ? 12 : 6) * points) ||
+                              !field_shape(in.velocity_lo, in.device_velocity,
+                                           (in.lasym ? 12 : 6) * points) ||
+                              (!in.residual_is_f32 &&
+                               !field_shape(in.residual_lo, in.device_residual,
+                                            (in.lasym ? 12 : 6) * points))))) {
         return "axisymmetric descent input shape mismatch";
     }
     return {};
@@ -68,13 +73,14 @@ AxisymmetricDescentResult axisymmetric_descent_reference(
     if (!validate_case(input).empty()) return {};
     const int mode_count = input.mpol * (input.ntor + 1);
     const std::size_t points = static_cast<std::size_t>(input.ns) * mode_count;
-    if (input.state.size() != 6 * points ||
-        input.velocity.size() != 6 * points ||
-        input.residual.size() != 6 * points ||
+    if (input.state.size() != (input.lasym ? 12 : 6) * points ||
+        input.velocity.size() != (input.lasym ? 12 : 6) * points ||
+        input.residual.size() != (input.lasym ? 12 : 6) * points ||
         (input.double_single &&
-         (input.state_lo.size() != 6 * points ||
-          input.velocity_lo.size() != 6 * points ||
-          (!input.residual_is_f32 && input.residual_lo.size() != 6 * points))))
+         (input.state_lo.size() != (input.lasym ? 12 : 6) * points ||
+          input.velocity_lo.size() != (input.lasym ? 12 : 6) * points ||
+          (!input.residual_is_f32 &&
+           input.residual_lo.size() != (input.lasym ? 12 : 6) * points))))
         return {};
     AxisymmetricDescentResult out;
     out.state = input.state;
@@ -86,8 +92,10 @@ AxisymmetricDescentResult axisymmetric_descent_reference(
     if (input.extrapolate_axis) {
         for (int mode = 0; mode < mode_count; ++mode) {
             const int m = mode / (input.ntor + 1);
-            for (int component = 0; component < 6; ++component) {
-                if (m != 1 && !(m == 0 && component == 5)) continue;
+            for (int component = 0; component < (input.lasym ? 12 : 6);
+                 ++component) {
+                if (m != 1 && !(m == 0 && (component == 5 || component == 8)))
+                    continue;
                 const auto i = component * points + mode * input.ns;
                 out.state[i] = out.state[i + 1];
                 if (input.double_single) out.state_lo[i] = out.state_lo[i + 1];
@@ -129,6 +137,35 @@ AxisymmetricDescentResult axisymmetric_descent_reference(
         const float basis_scale = m_scale * n_scale;
         for (int surface = 0; surface < input.ns; ++surface) {
             if (surface == 0 && m > 0) continue;
+            if (input.lasym) {
+                for (int c = 6; c < 12; ++c) {
+                    if (c % 3 != 2 && surface >= j_max) continue;
+                    const auto i = index(c, mode, surface);
+                    if (input.double_single) {
+                        const auto v = update_velocity_ds(c, mode, surface);
+                        out.velocity[i] = v.hi;
+                        out.velocity_lo[i] = v.lo;
+                        auto physical = v;
+                        if (m == 1 && (c == 6 || c == 7)) {
+                            const auto r = update_velocity_ds(6, mode, surface);
+                            const auto z = update_velocity_ds(7, mode, surface);
+                            physical =
+                                c == 6 ? add(r, z) : add(r, multiply(z, -1.0F));
+                        }
+                        advance_ds(i, physical, input.delta_t * basis_scale);
+                    } else {
+                        const float v = update_velocity(c, mode, surface);
+                        out.velocity[i] = v;
+                        float physical = v;
+                        if (m == 1 && (c == 6 || c == 7)) {
+                            const float r = update_velocity(6, mode, surface);
+                            const float z = update_velocity(7, mode, surface);
+                            physical = c == 6 ? r + z : r - z;
+                        }
+                        out.state[i] += input.delta_t * physical * basis_scale;
+                    }
+                }
+            }
             if (input.double_single) {
                 if (surface < j_max) {
                     const FloatFloat vr = update_velocity_ds(0, mode, surface);
@@ -217,8 +254,9 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
     }
     const std::size_t points =
         static_cast<std::size_t>(input.ns) * input.mpol * (input.ntor + 1);
-    const auto input_bytes = 6 * points * sizeof(float);
-    const auto output_values = (input.double_single ? 24 : 12) * points;
+    const auto input_bytes = (input.lasym ? 12 : 6) * points * sizeof(float);
+    const auto output_values =
+        (input.double_single ? 4 : 2) * (input.lasym ? 12 : 6) * points;
     const auto output_bytes = output_values * sizeof(float);
     auto state_buffer =
         make_buffer(device, input_bytes,
@@ -278,7 +316,9 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
                         input.delta_t,
                         input.damping_b1,
                         input.damping_fac,
-                        input.extrapolate_axis ? 1U : 0U};
+                        input.extrapolate_axis ? 1U : 0U,
+                        input.lasym ? 1U : 0U,
+                        {}};
     auto queue = device.GetQueue();
     auto encoder = device.CreateCommandEncoder();
     transfer_fields(device, encoder, state_buffer, input.state,
@@ -338,7 +378,7 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         WORKGROUP_SIZE);
     pass.End();
     AxisymmetricDescentResult resident;
-    const auto count = 6 * points;
+    const auto count = (input.lasym ? 12 : 6) * points;
     if (input.readback.batch) {
         resident.device_state = {output_buffer, count, 0,
                                  count * sizeof(float)};
