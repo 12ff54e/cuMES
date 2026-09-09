@@ -4,7 +4,8 @@ import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
 
 const source = await readFile(new URL('./webgpu_timestamps.js', import.meta.url), 'utf8');
-async function fixture(supported = true) {
+const captureSource = await readFile(new URL('../webgpu/timestamp_capture.js', import.meta.url), 'utf8');
+async function fixture(supported = true, gpuStart = 1000000n) {
   let mapCalls = 0, submissions = 0, request;
   class GPUBuffer {
     constructor(descriptor) { Object.assign(this, descriptor); this.data = new ArrayBuffer(this.size); }
@@ -25,7 +26,7 @@ async function fixture(supported = true) {
       const writes = this.descriptor.timestampWrites;
       if (!writes) return;
       const {querySet, beginningOfPassWriteIndex: begin, endOfPassWriteIndex: end} = writes;
-      querySet.values[begin] = BigInt(1000000 + begin * 1000000);
+      querySet.values[begin] = gpuStart + BigInt(begin * 1000000);
       querySet.values[end] = querySet.values[begin] + 500000n;
     }
   }
@@ -54,16 +55,27 @@ async function fixture(supported = true) {
   const context = {GPUAdapter, GPUDevice, GPUQueue, GPUBuffer, GPUCommandEncoder, GPUComputePassEncoder,
     GPUBufferUsage: {QUERY_RESOLVE: 1, COPY_SRC: 2, COPY_DST: 4, MAP_READ: 8}, GPUMapMode: {READ: 1},
     performance, document: {visibilityState: 'visible'}};
-  const original = GPUBuffer.prototype.mapAsync;
-  runInNewContext(source, context);
-  const device = await new GPUAdapter().requestDevice({requiredFeatures: ['timestamp-query']});
-  return {device, profile: context.cumesTimestampProfile, original, GPUBuffer,
+  const hooks = () => [GPUAdapter.prototype.requestDevice, GPUDevice.prototype.createBuffer,
+    GPUDevice.prototype.createCommandEncoder, GPUCommandEncoder.prototype.beginComputePass,
+    GPUComputePassEncoder.prototype.setPipeline, GPUComputePassEncoder.prototype.dispatchWorkgroups,
+    GPUQueue.prototype.writeBuffer, GPUQueue.prototype.submit, GPUCommandEncoder.prototype.copyBufferToBuffer,
+    GPUBuffer.prototype.getMappedRange, GPUBuffer.prototype.mapAsync];
+  const originals = hooks();
+  runInNewContext(captureSource + '\n' + source, context);
+  const helper = context.createCumesTimestampCapture, installed = GPUBuffer.prototype.mapAsync;
+  runInNewContext(captureSource, context);
+  assert.equal(context.createCumesTimestampCapture, helper);
+  assert.equal(GPUBuffer.prototype.mapAsync, installed, 'embedded helper must retain injected profiling hooks');
+  const device = await new GPUAdapter().requestDevice({requiredFeatures: ['timestamp-query', 'timestamp-query']});
+  return {device, profile: context.cumesTimestampProfile, hooks, originals,
     counts: () => ({mapCalls, submissions, features: [...request.requiredFeatures]})};
 }
 const test = await fixture();
 const buffer = test.device.createBuffer({label: 'cuMES iteration readback batch', size: 96, usage: 12});
 new Uint8Array(buffer.data, 0, 32).fill(42);
 assert.equal(buffer.size, 96 + 4096 * 8);
+for (const descriptor of [{label: 'other readback'}, {label: 'cuMES iteration readback batch', mappedAtCreation: true}])
+  assert.equal(test.device.createBuffer({size: 96, usage: 12, ...descriptor}).size, 96);
 assert.throws(() => test.profile.start(0), /positive/);
 test.profile.start(2);
 assert.throws(() => test.profile.restore(), /Wait/);
@@ -87,9 +99,42 @@ assert.equal(report.batches[0].timeline[0].end, 0.5);
 assert.deepEqual(test.counts(), {mapCalls: 2, submissions: 4, features: ['timestamp-query']});
 assert.throws(() => test.profile.start(), /Reload/);
 test.profile.restore();
-assert.equal(test.GPUBuffer.prototype.mapAsync, test.original);
+assert.deepEqual(test.hooks(), test.originals);
 const unsupported = await fixture(false);
 assert.match(unsupported.profile.report().errors[0], /does not support/);
 assert.throws(() => unsupported.profile.start(), /No healthy/);
 unsupported.profile.restore();
+assert.deepEqual(unsupported.hooks(), unsupported.originals);
+for (const [mode, offset, size] of [[1, 8, 32], [1, 0, 100], [2, 0, 32]]) {
+  const f = await fixture(), buffer = f.device.createBuffer({label: 'cuMES iteration readback batch', size: 96, usage: 12});
+  f.profile.start(1); f.device.createCommandEncoder().beginComputePass().end();
+  await buffer.mapAsync(mode, offset, size);
+  assert.equal(f.profile.report().active, false);
+  assert.match(f.profile.report().errors[0], /Unsupported iteration mapping range/);
+  assert.equal(f.counts().mapCalls, 1); assert.equal(f.counts().submissions, 0);
+  f.profile.restore();
+}
+{
+  const f = await fixture(); f.profile.start(1);
+  for (let i = 0; i < 2049; ++i) f.device.createCommandEncoder().beginComputePass();
+  assert.equal(f.profile.report().active, false);
+  assert.match(f.profile.report().errors[0], /capacity exhausted/);
+  f.profile.restore();
+}
+for (const zero of [false, true]) {
+  const f = await fixture(true, zero ? 0n : 1000000n);
+  const buffer = f.device.createBuffer({label: 'cuMES iteration readback batch', size: 96, usage: 12});
+  const external = {querySet: {values: new BigUint64Array(2)}, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1};
+  f.profile.start(1);
+  f.device.createCommandEncoder().beginComputePass({timestampWrites: external}).end();
+  f.device.createCommandEncoder().beginComputePass().end();
+  await buffer.mapAsync(1, 0, 32);
+  const report = f.profile.report();
+  assert.equal(external.querySet.values[1], (zero ? 0n : 1000000n) + 500000n);
+  assert.equal(report.batches[0].passes, 1, 'passes owned by another profiler must be skipped');
+  assert.equal(report.errors.length, zero ? 1 : 0);
+  if (zero) assert.match(report.errors[0], /Invalid GPU timestamp pair/);
+  assert.equal(f.counts().mapCalls, 1); assert.equal(f.counts().submissions, 1);
+  f.profile.restore();
+}
 console.log('PASS: timestamp feature negotiation, query reuse, one map per batch, disjoint payload/timestamp ranges, unchanged payload, and hook restoration');

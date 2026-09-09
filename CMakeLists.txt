@@ -8,7 +8,7 @@ set(CUMES_BACKEND "CUDA" CACHE STRING "Compute backend: CUDA|WEBGPU")
 set_property(CACHE CUMES_BACKEND PROPERTY STRINGS CUDA WEBGPU)
 
 if(CUMES_BACKEND STREQUAL "WEBGPU")
-  project(cuMES VERSION 1.6.0 LANGUAGES CXX)
+  project(cuMES VERSION 1.6.1 LANGUAGES CXX)
   if(NOT EMSCRIPTEN)
     message(FATAL_ERROR
       "CUMES_BACKEND=WEBGPU requires Emscripten; configure with: "
@@ -72,7 +72,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # default only when CMAKE_CUDA_ARCHITECTURES was not already provided.
 include(CumesCudaArchitectures)
 
-project(cuMES VERSION 1.6.0 LANGUAGES CXX CUDA)
+project(cuMES VERSION 1.6.1 LANGUAGES CXX CUDA)
 
 include(CumesOptions)
 include(CumesDependencies)

@@ -213,14 +213,6 @@ wgpu::Buffer make_buffer(const wgpu::Device& device,
     return detail::cached_buffer(device, size, usage, label);
 }
 
-struct Dispatch {
-    AxisymmetricPreconditionerMatrixCallback callback;
-    wgpu::Buffer output, readback;
-    std::size_t bytes = 0, points = 0;
-    int mpol = 0;
-    std::vector<int> first_surface;
-};
-
 }  // namespace
 
 AxisymmetricPreconditionerMatrix axisymmetric_preconditioner_matrix_reference(
@@ -368,81 +360,51 @@ void enqueue_axisymmetric_preconditioner_matrix(
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
-    if (input.readback.batch) {
-        AxisymmetricPreconditionerMatrix resident;
+    // Standalone diagnostics use the same decoder as the iteration batch;
+    // only their completion callback may enqueue work after the buffer unmaps.
+    const auto host =
+        input.readback.batch
+            ? nullptr
+            : std::make_shared<AxisymmetricPreconditionerMatrix>();
+    const auto batch = input.readback.batch ? input.readback.batch
+                                            : std::make_shared<ReadbackBatch>(
+                                                  readback, output_bytes);
+    AxisymmetricPreconditionerMatrix resident;
+    if (input.readback.batch)
         resident.device_matrix = {output_buffer, output_values, 0, 0};
-        resident.first_surface.resize(mode_count);
-        for (int mode = 0; mode < mode_count; ++mode)
-            resident.first_surface[mode] = mode / (input.ntor + 1) == 0 ? 0 : 1;
-        input.readback.batch->append(
-            encoder, output_buffer, 0, output_bytes,
-            [callback = std::move(callback), resident,
-             n = points](std::span<const float> values) mutable {
-                const auto hi = values.begin();
-                resident.upper_r.assign(hi, hi + n);
-                resident.diagonal_r.assign(hi + n, hi + 2 * n);
-                resident.lower_r.assign(hi + 2 * n, hi + 3 * n);
-                resident.upper_z.assign(hi + 3 * n, hi + 4 * n);
-                resident.diagonal_z.assign(hi + 4 * n, hi + 5 * n);
-                resident.lower_z.assign(hi + 5 * n, hi + 6 * n);
-                resident.lambda.assign(hi + 6 * n, hi + 7 * n);
-                resident.scale.assign(hi + 7 * n, values.end());
+    resident.first_surface.resize(mode_count);
+    for (int mode = 0; mode < mode_count; ++mode)
+        resident.first_surface[mode] = mode / (input.ntor + 1) == 0 ? 0 : 1;
+    batch->append(
+        encoder, output_buffer, 0, output_bytes,
+        [callback = input.readback.batch
+                        ? std::move(callback)
+                        : AxisymmetricPreconditionerMatrixCallback{},
+         host, resident = input.readback.batch ? resident : std::move(resident),
+         n = points](std::span<const float> values) mutable {
+            const auto hi = values.begin();
+            resident.upper_r.assign(hi, hi + n);
+            resident.diagonal_r.assign(hi + n, hi + 2 * n);
+            resident.lower_r.assign(hi + 2 * n, hi + 3 * n);
+            resident.upper_z.assign(hi + 3 * n, hi + 4 * n);
+            resident.diagonal_z.assign(hi + 4 * n, hi + 5 * n);
+            resident.lower_z.assign(hi + 5 * n, hi + 6 * n);
+            resident.lambda.assign(hi + 6 * n, hi + 7 * n);
+            resident.scale.assign(hi + 7 * n, values.end());
+            if (host)
+                *host = std::move(resident);
+            else
                 callback({}, std::move(resident));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
+        });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    if (input.readback.batch) {
         input.readback.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
-    auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-    auto dispatch = std::make_shared<Dispatch>();
-    dispatch->callback = std::move(callback);
-    dispatch->output = output_buffer;
-    dispatch->readback = readback;
-    dispatch->bytes = output_bytes;
-    dispatch->points = points;
-    dispatch->mpol = mode_count;
-    dispatch->first_surface.resize(mode_count);
-    for (int mode = 0; mode < mode_count; ++mode) {
-        const int m = mode / (input.ntor + 1);
-        dispatch->first_surface[mode] = m == 0 ? 0 : 1;
-    }
-    readback.MapAsync(
-        wgpu::MapMode::Read, 0, output_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback(
-                    "preconditioner matrix mapping failed: " + detail, {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback.GetConstMappedRange(0, dispatch->bytes));
-            if (values == nullptr) {
-                dispatch->callback("preconditioner matrix mapped range is null",
-                                   {});
-                return;
-            }
-            const std::size_t n = dispatch->points;
-            AxisymmetricPreconditionerMatrix out;
-            out.upper_r.assign(values, values + n);
-            out.diagonal_r.assign(values + n, values + 2 * n);
-            out.lower_r.assign(values + 2 * n, values + 3 * n);
-            out.upper_z.assign(values + 3 * n, values + 4 * n);
-            out.diagonal_z.assign(values + 4 * n, values + 5 * n);
-            out.lower_z.assign(values + 5 * n, values + 6 * n);
-            out.lambda.assign(values + 6 * n, values + 7 * n);
-            out.scale.assign(values + 7 * n, values + 7 * n + dispatch->mpol);
-            out.first_surface = std::move(dispatch->first_surface);
-            dispatch->readback.Unmap();
-            dispatch->callback({}, std::move(out));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu

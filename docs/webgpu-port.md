@@ -1180,8 +1180,9 @@ axisymmetric and 3-D solves share the batched pipeline in both precisions.
 ### Per-pass GPU timestamps and CPU sampling
 
 For deeper profiling, `scripts/webgpu_deep_profile.mjs` creates its own
-foreground Chrome target and injects `scripts/webgpu_timestamps.js` before
-the application requests its device. It requests the optional `timestamp-query`
+foreground Chrome target and injects `webgpu/timestamp_capture.js` followed by
+`scripts/webgpu_timestamps.js` before the application requests its device.
+It requests the optional `timestamp-query`
 feature and records beginning/end timestamps for each compute pass. A pass
 containing multiple pipelines (currently constraint de-aliasing) is reported
 as one combined interval, not as individually timed dispatches.
@@ -1739,8 +1740,10 @@ share each existing mapping's reserved tail: no extra map or host fence.
 Unavailable or incomplete device samples are reported as unavailable, never
 estimated from wall time. Statistics, raw samples and availability are also
 accessible through `cumesIterationTiming.report()` in the browser console.
-All frontend instrumentation lives in `webgpu/iteration_timing.js`, with only
-iteration-boundary notifications in C++; no `EM_JS` is used.
+Frontend reporting lives in `webgpu/iteration_timing.js`; timestamp resources
+and readback encoding are shared with the diagnostic profiler through
+`webgpu/timestamp_capture.js`. Both are embedded in the runtime for page and
+worker execution, with only iteration-boundary notifications in C++.
 
 Use `&timing=0` for uninstrumented throughput measurements. The deep-profile
 and A/B harnesses set this themselves to avoid stacking timestamp hooks.

@@ -2,32 +2,15 @@
 // Creates and preserves its own result tab. Captures 256 warmed GPU iterations,
 // then a separate 10-second CPU sample; waits for convergence and saves the trace.
 import {readFile, writeFile} from 'node:fs/promises';
+import {connectCdp} from './include/webgpu_cdp.mjs';
 
 const [appUrl, prefix, port = '9333'] = process.argv.slice(2);
 if (!appUrl || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
 const base = `http://127.0.0.1:${port}`;
 const page = await (await fetch(`${base}/json/new?about:blank`, {method: 'PUT'})).json();
-const source = await readFile(new URL('./webgpu_timestamps.js', import.meta.url), 'utf8');
-const ws = new WebSocket(page.webSocketDebuggerUrl);
-await new Promise((resolve, reject) => {ws.onopen = resolve; ws.onerror = reject;});
-const pending = new Map();
-let nextId = 0;
-ws.onmessage = event => {
-  const reply = JSON.parse(event.data), request = pending.get(reply.id);
-  if (!request) return;
-  pending.delete(reply.id); clearTimeout(request.timer);
-  if (reply.error || reply.result?.exceptionDetails)
-    request.reject(Error(JSON.stringify(reply.error || reply.result.exceptionDetails)));
-  else request.resolve(reply.result);
-};
-function call(method, params = {}) {
-  return new Promise((resolve, reject) => {
-    const id = ++nextId;
-    const timer = setTimeout(() => {pending.delete(id); reject(Error(`CDP timeout: ${method}`));}, 30000);
-    pending.set(id, {resolve, reject, timer});
-    ws.send(JSON.stringify({id, method, params}));
-  });
-}
+const source = (await Promise.all(['../webgpu/timestamp_capture.js', './webgpu_timestamps.js']
+  .map(path => readFile(new URL(path, import.meta.url), 'utf8')))).join('\n');
+const {call, close} = await connectCdp(page.webSocketDebuggerUrl);
 const evaluate = async expression => (await call('Runtime.evaluate', {
   expression, returnByValue: true, awaitPromise: true})).result.value;
 const save = (suffix, value) => writeFile(`${prefix}-${suffix}.json`, JSON.stringify(value));
@@ -90,5 +73,5 @@ try {
 } finally {
   // Do not leave a failed diagnostic solve consuming the user's GPU.
   if (!succeeded) await call('Page.navigate', {url: 'about:blank'}).catch(() => {});
-  ws.close();
+  close();
 }

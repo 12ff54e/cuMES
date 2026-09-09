@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -36,6 +37,11 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
             wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
         buffer_ = device.CreateBuffer(&descriptor);
     }
+
+    // Reuse a standalone operator's cached CopyDst/MapRead allocation.
+    // Capacity is its payload budget, which can end on a four-byte boundary.
+    ReadbackBatch(wgpu::Buffer buffer, std::uint64_t capacity)
+        : buffer_(std::move(buffer)), capacity_(capacity) {}
 
     void append(const wgpu::CommandEncoder& encoder,
                 const wgpu::Buffer& source,
@@ -76,10 +82,13 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
         }
         mapping_ = true;
         const auto self = shared_from_this();
+        // used_ includes alignment for a possible next slice; an exact-size
+        // borrowed buffer need not contain that trailing padding.
+        const auto bytes = std::min(used_, capacity_);
         buffer_.MapAsync(
-            wgpu::MapMode::Read, 0, used_, wgpu::CallbackMode::AllowSpontaneous,
-            [self, complete = std::move(complete)](wgpu::MapAsyncStatus status,
-                                                   wgpu::StringView message) {
+            wgpu::MapMode::Read, 0, bytes, wgpu::CallbackMode::AllowSpontaneous,
+            [self, bytes, complete = std::move(complete)](
+                wgpu::MapAsyncStatus status, wgpu::StringView message) {
                 std::string error;
                 if (status != wgpu::MapAsyncStatus::Success) {
                     error = "iteration readback failed: ";
@@ -87,7 +96,7 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
                         error.append(message.data, message.length);
                 } else {
                     const auto* h_values = static_cast<const float*>(
-                        self->buffer_.GetConstMappedRange(0, self->used_));
+                        self->buffer_.GetConstMappedRange(0, bytes));
                     if (!h_values) {
                         error = "iteration readback returned a null range";
                     } else {

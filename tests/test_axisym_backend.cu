@@ -14,6 +14,7 @@
 //   - constraint bandpass: gCon
 // The comparison is Class B (the two paths differ in summation order / the
 // length-one FFT elision), so the gate is a ULP-level tolerance, not bytes.
+#include "cumes/physics/constraint_filter.hpp"
 #include "cumes/state/mode_table.cuh"
 #include "cumes/state/spectral_storage.hpp"
 #include "cumes/transforms/axisymmetric_operator.hpp"
@@ -144,10 +145,7 @@ static void fill_faccon(Cw<T>& cw, int mpol) {
     // ctor); the old test left this buffer as cudaMalloc garbage and passed
     // only because the stale pages happened to read zero.
     std::vector<T> v((size_t)mpol);
-    for (int m = 0; m < mpol; ++m) {
-        T xmpq = T((m + 1) * m);
-        v[m] = (m > 0) ? (T(0.25) / (xmpq * xmpq)) : T(0.0);
-    }
+    cumes::fill_constraint_filter<T>(v);
     cc(cudaMemcpy(cw.d_faccon.data(), v.data(), (size_t)mpol * sizeof(T),
                   cudaMemcpyHostToDevice),
        "fill faccon");

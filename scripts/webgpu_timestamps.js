@@ -4,66 +4,40 @@
 // submission resolves the pass timestamps into a reserved readback-buffer tail.
 (() => {
   if (globalThis.cumesTimestampProfile || !globalThis.GPUAdapter) return;
-  const CAPACITY = 4096, TAIL_BYTES = CAPACITY * 8;
+  const CAPACITY = 4096;
   const BATCH_LABEL = 'cuMES iteration readback batch';
-  const originals = [], devices = new WeakMap(), buffers = new WeakMap();
-  const encoders = new WeakMap(), passes = new WeakMap();
+  const passes = new WeakMap();
   const rows = new Map(), batches = [], errors = [], cpu = new Map(), adapters = [];
   let active = false, remaining = 0, lastCompletion = null, lastGpuEnd = null;
-  const patch = (prototype, key, wrapper) => {
-    const original = prototype[key];
-    originals.push(() => { prototype[key] = original; });
-    prototype[key] = wrapper(original);
-  };
   const count = (label, milliseconds, bytes = 0) => {
     const row = cpu.get(label) || {label, calls: 0, milliseconds: 0, bytes: 0};
     ++row.calls; row.milliseconds += milliseconds; row.bytes += bytes;
     cpu.set(label, row);
   };
-  patch(GPUAdapter.prototype, 'requestDevice', original => async function(descriptor = {}) {
-    if (!this.features.has('timestamp-query')) {
+  const capture = globalThis.createCumesTimestampCapture(CAPACITY, {
+    query: 'cuMES profiling timestamps', resolve: 'cuMES profiling query resolve',
+    encoder: 'cuMES profiling resolve'
+  }, descriptor => descriptor.label === BATCH_LABEL, (adapter, device, supported) => {
+    if (!supported) {
       errors.push('Adapter does not support timestamp-query');
-      return original.call(this, descriptor);
+      return;
     }
-    const device = await original.call(this, {...descriptor,
-      requiredFeatures: [...new Set([...(descriptor.requiredFeatures || []), 'timestamp-query'])]});
     adapters.push(Object.fromEntries(['vendor', 'architecture', 'device', 'description',
-      'driver', 'backend', 'type'].map(key => [key, this.info?.[key]])));
-    const state = {device, pending: [], queries: device.createQuerySet({
-      label: 'cuMES profiling timestamps', type: 'timestamp', count: CAPACITY}),
-      resolve: device.createBuffer({label: 'cuMES profiling query resolve', size: TAIL_BYTES,
-        usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC})};
-    devices.set(device, state);
+      'driver', 'backend', 'type'].map(key => [key, adapter.info?.[key]])));
     device.addEventListener('uncapturederror', event => errors.push(event.error.message));
     device.lost.then(info => errors.push(`Device lost: ${info.reason}: ${info.message}`));
-    return device;
   });
-  patch(GPUDevice.prototype, 'createBuffer', original => function(descriptor) {
-    const state = devices.get(this);
-    const tail = Math.ceil(descriptor.size / 8) * 8;
-    const extend = state && descriptor.label === BATCH_LABEL && !descriptor.mappedAtCreation;
-    const buffer = original.call(this, extend ? {...descriptor, size: tail + TAIL_BYTES} : descriptor);
-    if (extend) buffers.set(buffer, {state, tail});
-    return buffer;
-  });
-  patch(GPUDevice.prototype, 'createCommandEncoder', original => function(...args) {
-    const encoder = original.apply(this, args);
-    encoders.set(encoder, devices.get(this));
-    return encoder;
-  });
+  const {patch} = capture;
   patch(GPUCommandEncoder.prototype, 'beginComputePass', original => function(descriptor = {}) {
-    const state = encoders.get(this);
+    const state = capture.state(this);
     if (!active || !state || descriptor.timestampWrites) return original.call(this, descriptor);
     if (state.pending.length * 2 + 2 > CAPACITY) {
       errors.push('Timestamp capacity exhausted; sample is incomplete');
       active = false;
       return original.call(this, descriptor);
     }
-    const index = state.pending.length * 2;
     const row = {label: descriptor.label || '', pipelines: [], dispatches: 0};
-    state.pending.push(row);
-    const pass = original.call(this, {...descriptor, timestampWrites: {
-      querySet: state.queries, beginningOfPassWriteIndex: index, endOfPassWriteIndex: index + 1}});
+    const pass = original.call(this, {...descriptor, timestampWrites: capture.writes(state, row)});
     passes.set(pass, row);
     return pass;
   });
@@ -105,23 +79,17 @@
     return result;
   });
   patch(GPUBuffer.prototype, 'mapAsync', original => function(mode, offset = 0, size = this.size - offset) {
-    const info = buffers.get(this);
+    const info = capture.buffer(this);
     if (!active || !info || !info.state.pending.length) return original.apply(this, arguments);
     if (offset !== 0 || size > info.tail || mode !== GPUMapMode.READ) {
       errors.push('Unsupported iteration mapping range; profiling stopped');
       active = false;
       return original.apply(this, arguments);
     }
-    // Every producer has finished encoding its slices before mapAsync. Put
-    // timestamps directly after the used payload, not after spare capacity:
-    // mapping unused capacity would inflate the readback being measured.
-    const {state} = info, tail = Math.ceil(size / 8) * 8;
+    const {state} = info;
     const pending = state.pending.splice(0);
-    const bytes = pending.length * 16, start = performance.now();
-    const encoder = state.device.createCommandEncoder({label: 'cuMES profiling resolve'});
-    encoder.resolveQuerySet(state.queries, 0, pending.length * 2, state.resolve, 0);
-    encoder.copyBufferToBuffer(state.resolve, 0, this, tail, bytes);
-    state.device.queue.submit([encoder.finish()]);
+    const start = performance.now();
+    const {tail, bytes} = capture.resolve(this, state, pending, size);
     return original.call(this, mode, 0, tail + bytes).then(result => {
       const completed = performance.now();
       const timestamps = new BigUint64Array(this.getMappedRange(tail, bytes));
@@ -168,7 +136,7 @@
       cpu: [...cpu.values()].sort((a, b) => b.milliseconds - a.milliseconds)}),
     restore() {
       if (active) throw Error('Wait for the profiling sample to complete before restoring hooks');
-      for (const restore of originals.reverse()) restore();
+      capture.restore();
     }
   };
 })();

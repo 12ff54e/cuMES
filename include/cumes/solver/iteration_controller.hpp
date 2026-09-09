@@ -127,6 +127,18 @@ class IterationController {
         return false;
     }
 
+    // Inspect geometry without committing a rejection to the controller.
+    // Diagnostic shadows and Newton trials use the same predicate as passes.
+    template <class S>
+    static bool invalid_jacobian(const JacobianStatus<S>& s, int nZnT) {
+        return s.nonfinite_count > S(0) || s.max_abs <= S(0) ||
+               s.min_oriented <= S(0) ||
+               (s.min_oriented <
+                    S(control_policy::JACOBIAN_RELATIVE_THRESHOLD) *
+                        s.max_abs &&
+                s.min_index >= nZnT);
+    }
+
     // Oriented-Jacobian validity gate. Returns true when the geometry is
     // degenerate (the caller restores and continues); the delt shrink and
     // restart-anchor reset happen here, matching the legacy inline check.
@@ -152,11 +164,7 @@ class IterationController {
     // inv_gsqrt guards that keep the buffers finite in the interim).
     template <class S>
     bool jacobian_invalid(const JacobianStatus<S>& s, int nZnT) {
-        if (s.nonfinite_count > S(0) || s.max_abs <= S(0) ||
-            s.min_oriented <= S(0) ||
-            (s.min_oriented <
-                 S(control_policy::JACOBIAN_RELATIVE_THRESHOLD) * s.max_abs &&
-             s.min_index >= nZnT)) {
+        if (invalid_jacobian(s, nZnT)) {
             reject_jacobian();
             return true;
         }

@@ -20,6 +20,7 @@
 // All computation is templated on the scalar type T (double or float); the
 // cuFFT plans / exec calls dispatch through FftTraits<T>.
 
+#include "cumes/physics/constraint_filter.hpp"
 #include "cumes/physics/constraint_operator.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
@@ -75,10 +76,8 @@ cumes::ConstraintOperator<T>::ConstraintOperator(
     // Precompute faccon[m] = -0.25 * signJ / (xmpq[m+1]^2) with
     // xmpq[m+1] = (m+1)*m, matching vmecpp (ideal_mhd_model.cc lines
     // 238-242): faccon[i] = 0.25 / (i^2 (i+1)^2) for i >= 1.
-    for (int m = 0; m < p.mnmax; ++m) {
-        T xmpq = T((m + 1) * m);
-        h_faccon_[m] = (m > 0) ? (T(0.25) / (xmpq * xmpq)) : T(0.0);
-    }
+    cumes::fill_constraint_filter(
+        std::span(h_faccon_, static_cast<std::size_t>(p.mnmax)));
     cumes::check_cuda(cudaMemcpy(d_faccon_, h_faccon_, p.mnmax * sizeof(T),
                                  cudaMemcpyHostToDevice),
                       "faccon copy");

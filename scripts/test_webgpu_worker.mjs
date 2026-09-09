@@ -115,6 +115,7 @@ assert.equal(files.library.requested_double_solve(),0);
 console.log('PASS: worker precision agrees with free-boundary paired and fixed-boundary float defaults');
 
 const speed=fixture();speed.start();
+vm.runInContext(readFileSync(new URL('../webgpu/timestamp_capture.js',import.meta.url),'utf8'),speed.context);
 vm.runInContext(readFileSync(new URL('../webgpu/iteration_timing.js',import.meta.url),'utf8'),speed.context);
 speed.time(10000);speed.library.publish_browser_iteration_timing(1,1);
 speed.time(10500);speed.library.publish_browser_iteration_timing(2,1);

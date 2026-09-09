@@ -7,6 +7,7 @@
 import {readFile, writeFile} from 'node:fs/promises';
 import {isDeepStrictEqual} from 'node:util';
 import assert from 'node:assert/strict';
+import {connectCdp} from './include/webgpu_cdp.mjs';
 
 const [url, prefix, baselinePath, comparison = 'exact'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
@@ -19,29 +20,10 @@ if (!['exact', 'paired-reductions'].includes(comparison))
   throw Error('Comparison must be exact or paired-reductions');
 const base = 'http://127.0.0.1:' + (process.env.CUMES_CDP_PORT || '9333');
 const browser = await (await fetch(`${base}/json/version`)).json();
-const ws = new WebSocket(browser.webSocketDebuggerUrl);
+const cdp = await connectCdp(browser.webSocketDebuggerUrl);
 let session, page;
-await new Promise((resolve, reject) => {ws.onopen = resolve; ws.onerror = reject;});
-let nextId = 0;
-const pending = new Map();
-ws.onmessage = event => {
-  const reply = JSON.parse(event.data), request = pending.get(reply.id);
-  if (!request) return;
-  pending.delete(reply.id); clearTimeout(request.timer);
-  if (reply.error || reply.result?.exceptionDetails)
-    request.reject(Error(JSON.stringify(reply.error || reply.result.exceptionDetails)));
-  else request.resolve(reply.result);
-};
-function call(method, params = {}) {
-  return new Promise((resolve, reject) => {
-    const id = ++nextId;
-    const timer = setTimeout(() => {
-      pending.delete(id); reject(Error(`CDP timeout: ${method}`));
-    }, 30000);
-    pending.set(id, {resolve, reject, timer});
-    ws.send(JSON.stringify({id, method, params, sessionId: method.startsWith('Target.') ? undefined : session}));
-  });
-}
+const call = (method, params = {}) => cdp.call(method, params,
+  method.startsWith('Target.') ? undefined : session);
 const evaluate = async expression => (await call('Runtime.evaluate', {
   expression, returnByValue: true, awaitPromise: true})).result.value;
 let finished = false;
@@ -160,5 +142,5 @@ try {
   if (!finished) await call('Page.navigate', {url: 'about:blank'}).catch(() => {});
   if (page && (!finished || process.env.CUMES_CLOSE_TEST_TAB === '1'))
     await call('Target.closeTarget', {targetId: page.id});
-  ws.close();
+  cdp.close();
 }

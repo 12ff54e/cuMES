@@ -5,6 +5,27 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.6.1] - 2026-09-09
+
+### Changed
+
+- Reuse host radial-profile evaluation, scalar interpolation references,
+  constraint-filter coefficients, and Jacobian/finite-value checks across
+  native and browser paths.
+- Centralize WebGPU operator readback decoding for standalone and batched
+  execution, retaining compact transfers and existing completion points.
+- Share WebGPU operator setup, force/constraint residual phases, validation,
+  and state updates. Completed batches are consumed directly without serial
+  replay, preserving vacuum continuation, preconditioner caches, and Newton
+  acceptance/rollback sequencing.
+- Consolidate the independent CPU force reference used by native tests and
+  share Chrome connection handling across browser harnesses.
+- Share timestamp resources and readback capture between live iteration
+  timing and diagnostic profiling while retaining their reporting policies.
+  Expand regression coverage for timestamp ownership, capacity, mapping
+  ranges, payload preservation, worker execution, and hook restoration;
+  include the diagnostic profiler test in the WebGPU CTest suite.
+
 ## [1.6.0] - 2026-09-09
 
 ### Added

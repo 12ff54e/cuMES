@@ -11,6 +11,7 @@
 #ifndef CUMES_INCLUDE_CUMES_NUMERICS_PROLONGATION_HPP_
 #define CUMES_INCLUDE_CUMES_NUMERICS_PROLONGATION_HPP_
 
+#include "cumes/numerics/radial_interpolation.hpp"
 #include "cumes/state/spectral_storage.hpp"
 
 #include <cuda_runtime.h>
@@ -18,12 +19,6 @@
 #include <span>
 
 namespace cumes {
-
-enum class RadialInterpolation {
-    LINEAR,
-    CATMULL_ROM,
-    BSPLINE,
-};
 
 template <class T>
 class Prolongation {

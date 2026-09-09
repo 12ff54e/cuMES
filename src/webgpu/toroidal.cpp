@@ -10,12 +10,10 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
 #include <numbers>
-#include <sstream>
 #include <utility>
 
 namespace cumes::webgpu {
@@ -428,33 +426,6 @@ const GpuBasis& cached_separable_gpu_basis(const wgpu::Device& device,
     }
     return position->second;
 }
-
-struct DispatchState {
-    ToroidalInverseCallback callback;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t total_points = 0;
-    std::size_t result_bytes = 0;
-    bool double_single = false;
-};
-
-struct ForwardDispatchState {
-    ToroidalForwardCallback callback;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t result_values = 0;
-    std::size_t result_bytes = 0;
-    bool double_single = false;
-};
-
-struct DealiasDispatchState {
-    ToroidalDealiasCallback callback;
-    wgpu::Buffer coefficients_buffer;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t result_values = 0;
-    std::size_t result_bytes = 0;
-};
 
 }  // namespace
 
@@ -1012,12 +983,12 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
         (static_cast<std::uint32_t>(total_points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     poloidal_pass.End();
+    ToroidalInverseResult resident;
+    const auto fields = GEOMETRY_PARITY_FIELD_COUNT * total_points;
+    const auto high_values = RESULT_FIELD_COUNT * total_points;
+    resident.device_geometry = {result_buffer, fields, 0,
+                                high_values * sizeof(float)};
     if (input.readback.batch) {
-        ToroidalInverseResult resident;
-        const auto fields = GEOMETRY_PARITY_FIELD_COUNT * total_points;
-        const auto high_values = RESULT_FIELD_COUNT * total_points;
-        resident.device_geometry = {result_buffer, fields, 0,
-                                    high_values * sizeof(float)};
         resident.device_r_con =
             field_slice(resident.device_geometry, fields, total_points);
         resident.device_z_con = field_slice(
@@ -1083,91 +1054,46 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
             input.readback.publish_device(std::move(resident));
             return;
         }
-        input.readback.batch->append(
-            encoder, result_buffer, 0, result_bytes,
-            [callback = std::move(callback), resident, fields, high_values,
-             total_points, paired = input.double_single](
-                std::span<const float> values) mutable {
-                const auto hi = values.begin();
-                resident.geometry.assign(hi, hi + fields);
-                resident.r_con.assign(hi + fields, hi + fields + total_points);
-                resident.z_con.assign(hi + fields + total_points,
-                                      hi + high_values);
-                if (paired) {
-                    const auto lo = hi + high_values;
-                    resident.geometry_lo.assign(lo, lo + fields);
-                    resident.r_con_lo.assign(lo + fields,
-                                             lo + fields + total_points);
-                    resident.z_con_lo.assign(lo + fields + total_points,
-                                             lo + high_values);
-                }
+    }
+    const auto host = input.readback.batch
+                          ? nullptr
+                          : std::make_shared<ToroidalInverseResult>();
+    const auto batch =
+        input.readback.batch
+            ? input.readback.batch
+            : std::make_shared<ReadbackBatch>(readback_buffer, result_bytes);
+    batch->append(
+        encoder, result_buffer, 0, result_bytes,
+        [callback = input.readback.batch ? std::move(callback)
+                                         : ToroidalInverseCallback{},
+         host, resident, fields, high_values, total_points,
+         paired = input.double_single](std::span<const float> values) mutable {
+            const auto hi = values.begin();
+            resident.geometry.assign(hi, hi + fields);
+            resident.r_con.assign(hi + fields, hi + fields + total_points);
+            resident.z_con.assign(hi + fields + total_points, hi + high_values);
+            if (paired) {
+                const auto lo = hi + high_values;
+                resident.geometry_lo.assign(lo, lo + fields);
+                resident.r_con_lo.assign(lo + fields,
+                                         lo + fields + total_points);
+                resident.z_con_lo.assign(lo + fields + total_points,
+                                         lo + high_values);
+            }
+            if (host)
+                *host = std::move(resident);
+            else
                 callback({}, std::move(resident));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
+        });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    if (input.readback.batch) {
         input.readback.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
-    const auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-
-    auto dispatch = std::make_shared<DispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->total_points = total_points;
-    dispatch->result_bytes = result_bytes;
-    dispatch->double_single = input.double_single;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                dispatch->callback(
-                    "WebGPU toroidal inverse mapping failed: " +
-                        std::string(message.data, message.length),
-                    {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback_buffer.GetConstMappedRange(
-                    0, dispatch->result_bytes));
-            if (values == nullptr) {
-                dispatch->callback(
-                    "WebGPU toroidal inverse returned a null mapped range", {});
-                return;
-            }
-            ToroidalInverseResult result;
-            const std::size_t geometry_values =
-                GEOMETRY_PARITY_FIELD_COUNT * dispatch->total_points;
-            result.device_geometry = {
-                dispatch->result_buffer, geometry_values, 0,
-                RESULT_FIELD_COUNT * dispatch->total_points * sizeof(float)};
-            result.geometry.assign(values, values + geometry_values);
-            result.r_con.assign(
-                values + geometry_values,
-                values + geometry_values + dispatch->total_points);
-            result.z_con.assign(
-                values + geometry_values + dispatch->total_points,
-                values + geometry_values + 2 * dispatch->total_points);
-            if (dispatch->double_single) {
-                const std::size_t low_offset =
-                    RESULT_FIELD_COUNT * dispatch->total_points;
-                result.geometry_lo.assign(
-                    values + low_offset, values + low_offset + geometry_values);
-                result.r_con_lo.assign(values + low_offset + geometry_values,
-                                       values + low_offset + geometry_values +
-                                           dispatch->total_points);
-                result.z_con_lo.assign(values + low_offset + geometry_values +
-                                           dispatch->total_points,
-                                       values + low_offset + geometry_values +
-                                           2 * dispatch->total_points);
-            }
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 ToroidalForwardResult toroidal_forward_reference(
@@ -1551,45 +1477,23 @@ void enqueue_toroidal_forward(const wgpu::Device& device,
         callback({}, std::move(result));
         return;
     }
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
+    const auto host = std::make_shared<ToroidalForwardResult>();
+    const auto batch =
+        std::make_shared<ReadbackBatch>(readback_buffer, result_bytes);
+    batch->append(encoder, result_buffer, 0, result_bytes,
+                  [host, result_values, paired = input.double_single](
+                      std::span<const float> values) {
+                      host->residual.assign(values.begin(),
+                                            values.begin() + result_values);
+                      if (paired)
+                          host->residual_lo.assign(
+                              values.begin() + result_values, values.end());
+                  });
     const auto commands = encoder.Finish();
     queue.Submit(1, &commands);
-
-    auto dispatch = std::make_shared<ForwardDispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->result_values = result_values;
-    dispatch->result_bytes = result_bytes;
-    dispatch->double_single = input.double_single;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                dispatch->callback(
-                    "WebGPU toroidal forward mapping failed: " +
-                        std::string(message.data, message.length),
-                    {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback_buffer.GetConstMappedRange(
-                    0, dispatch->result_bytes));
-            if (values == nullptr) {
-                dispatch->callback(
-                    "WebGPU toroidal forward returned a null mapped range", {});
-                return;
-            }
-            ToroidalForwardResult result;
-            result.residual.assign(values, values + dispatch->result_values);
-            if (dispatch->double_single)
-                result.residual_lo.assign(values + dispatch->result_values,
-                                          values + 2 * dispatch->result_values);
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 ToroidalDealiasResult toroidal_dealias_reference(
@@ -1858,8 +1762,8 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    ToroidalDealiasResult resident;
     if (input.readback.batch) {
-        ToroidalDealiasResult resident;
         resident.device_g_con = {result_buffer, points, 0, 0};
         if (!input.readback_values) {
             const auto commands = encoder.Finish();
@@ -1874,54 +1778,33 @@ void enqueue_toroidal_dealias(const wgpu::Device& device,
             input.readback.publish_device(std::move(resident));
             return;
         }
-        input.readback.batch->append(
-            encoder, result_buffer, 0, result_bytes,
-            [callback = std::move(callback),
-             resident](std::span<const float> values) mutable {
-                resident.g_con.assign(values.begin(), values.end());
-                callback({}, std::move(resident));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
+    }
+    const auto host = input.readback.batch
+                          ? nullptr
+                          : std::make_shared<ToroidalDealiasResult>();
+    const auto batch =
+        input.readback.batch
+            ? input.readback.batch
+            : std::make_shared<ReadbackBatch>(readback_buffer, result_bytes);
+    batch->append(encoder, result_buffer, 0, result_bytes,
+                  [callback = input.readback.batch ? std::move(callback)
+                                                   : ToroidalDealiasCallback{},
+                   host, resident](std::span<const float> values) mutable {
+                      resident.g_con.assign(values.begin(), values.end());
+                      if (host)
+                          *host = std::move(resident);
+                      else
+                          callback({}, std::move(resident));
+                  });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    if (input.readback.batch) {
         input.readback.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
-    const auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-
-    auto dispatch = std::make_shared<DealiasDispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->coefficients_buffer = coefficient_buffer;
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->result_values = points;
-    dispatch->result_bytes = result_bytes;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                dispatch->callback(
-                    "WebGPU toroidal dealias mapping failed: " +
-                        std::string(message.data, message.length),
-                    {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback_buffer.GetConstMappedRange(
-                    0, dispatch->result_bytes));
-            if (values == nullptr) {
-                dispatch->callback(
-                    "WebGPU toroidal dealias returned a null mapped range", {});
-                return;
-            }
-            ToroidalDealiasResult result;
-            result.g_con.assign(values, values + dispatch->result_values);
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu

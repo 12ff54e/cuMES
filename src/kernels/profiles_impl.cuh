@@ -21,8 +21,8 @@
 // All computation is templated on the scalar type T (double or float); the
 // ValidatedProblem profile coefficients stay double (host config) and are
 // converted at the point of use.
-#include "cumes/config/profile_functions.hpp"  // shared host/device evaluators
 #include "cumes/config/validated_problem.hpp"
+#include "cumes/physics/host_radial_profiles.hpp"
 #include "cumes/physics/profiles.hpp"
 #include "cumes/runtime/cuda_status.hpp"
 #include "cumes/runtime/device_arena.cuh"
@@ -44,44 +44,12 @@ cumes::Profiles<T>::Profiles(
     const std::optional<std::reference_wrapper<DeviceArena>>& arena,
     bool verbose) {
     const cumes::ProblemSpec& sp = vp.spec();
-    const int ncurr =
-        (sp.current_model == cumes::CurrentModel::PRESCRIBED_CURRENT) ? 1 : 0;
-    delta_s_ = T(1.0) / T(p.ns - 1);
-
-    // Normalization scalars FIRST — before any device allocation. The host
-    // validator (ValidatedProblem::validate) already rejects non-finite, zero,
-    // and ill-scaled normalizations before CUDA initialization. The current
-    // normalization is intentionally absent when curtor=0. The guards here
-    // are the belt-and-suspenders error boundary, and they throw a typed
-    // CumesError instead of exit()ing (library code never exits).
-    // maxToroidalFlux = signJ * phiedge / (2π) / torflux(1)
-    // (signJ = -1, so phiedge < 0 gives a positive flux, e.g. w7x).
-    T maxToroidalFlux =
-        T(DeviceParams<T>::SIGN_JACOBIAN * sp.physical.phiedge) / T(2.0 * M_PI);
-    T tf1 = cumes::torflux<T>(sp, T(1.0));
-    if (tf1 != T(0.0)) maxToroidalFlux /= tf1;
-
-    // ncurr=1: normalize the enclosed toroidal current profile
-    // Itor = signJ * μ0*curtor / (2π * I(1)), I(s) = ∫₀ˢ ac
-    T Itor = T(0.0);
-    if (ncurr == 1 && sp.physical.curtor != 0.0) {
-        T edgeCurrent = cumes::eval_curr_profile<T>(sp, T(1.0));
-        if (edgeCurrent == T(0.0)) {
-            // The normalization is a division by the edge current integral:
-            // a degenerate (all-zero) ac profile would make Itor infinite and
-            // poison the current constraint. Fail with a typed error (the
-            // validator rejects this case earlier when curtor is nonzero,
-            // before any CUDA work).
-            throw cumes::CumesError(
-                "profiles: ncurr=1 with a zero edge current integral "
-                "(ac profile integrates to 0 at s=1)");
-        }
-        Itor = T(DeviceParams<T>::SIGN_JACOBIAN) * DeviceParams<T>::MU_0 *
-               T(sp.physical.curtor) / (T(2.0 * M_PI) * edgeCurrent);
-    }
-
-    size_t nF = p.ns * sizeof(T);
-    size_t nH = (p.ns - 1) * sizeof(T);
+    // Validate normalizations and evaluate all prescribed data before device
+    // allocation; the shared evaluator retains the native typed error boundary.
+    const auto profiles = cumes::evaluate_radial_profiles<T>(
+        sp, p.ns, [](T a, T b) { return fmin(a, b); },
+        /*skip_zero_current=*/true);
+    delta_s_ = profiles.delta_s;
 
     auto alloc = [&](T*& dst, size_t count, const char* name) {
         if (arena)
@@ -102,102 +70,32 @@ cumes::Profiles<T>::Profiles(
     alloc(d_chip_H_, p.ns - 1, "profiles/chip_H");
     arena_backed_ = arena.has_value();
 
-    auto* h = new T[p.ns];
-    // ---- Full grid ----
-    for (int j = 0; j < p.ns; ++j) {
-        T s = delta_s_ * T(j);
-        T tf = fmin(torflux<T>(sp, s), T(1.0));
-        h[j] = eval_iota_profile<T>(sp, tf);
-    }
-    cumes::check_cuda(cudaMemcpy(d_iota_F_, h, nF, cudaMemcpyHostToDevice),
-                      "iota_F cpy");
-    for (int j = 0; j < p.ns; ++j) {
-        T s = delta_s_ * T(j);
-        h[j] = maxToroidalFlux * torflux_deriv<T>(sp, s);
-    }
-    cumes::check_cuda(cudaMemcpy(d_phip_F_, h, nF, cudaMemcpyHostToDevice),
-                      "phip_F cpy");
-    for (int j = 0; j < p.ns; ++j) {
-        T s = delta_s_ * T(j);
-        T tf = fmin(torflux<T>(sp, s), T(1.0));
-        h[j] = maxToroidalFlux * eval_iota_profile<T>(sp, tf) *
-               torflux_deriv<T>(sp, s);
-    }
-    cumes::check_cuda(cudaMemcpy(d_chi_F_, h, nF, cudaMemcpyHostToDevice),
-                      "chi_F cpy");
-    for (int j = 0; j < p.ns; ++j) h[j] = sqrt(delta_s_ * T(j) + T(1e-12));
-    cumes::check_cuda(cudaMemcpy(d_sqrtS_F_, h, nF, cudaMemcpyHostToDevice),
-                      "sqrtS_F cpy");
-
-    // ---- Half grid ----
-    for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = delta_s_ * (T(j) + T(0.5));
-        T tf = fmin(torflux<T>(sp, sh), T(1.0));
-        h[j] = eval_iota_profile<T>(sp, tf);
-    }
-    cumes::check_cuda(cudaMemcpy(d_iota_H_, h, nH, cudaMemcpyHostToDevice),
-                      "iota_H cpy");
-    for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = delta_s_ * (T(j) + T(0.5));
-        T tf = fmin(torflux<T>(sp, fmin(sh, T(sp.physical.spres_ped))), T(1.0));
-        h[j] = eval_mass_profile<T>(sp, tf);  // pres = mass (gamma = 0)
-    }
-    cumes::check_cuda(cudaMemcpy(d_pres_H_, h, nH, cudaMemcpyHostToDevice),
-                      "pres_H cpy");
-    for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = delta_s_ * (T(j) + T(0.5));
-        h[j] = maxToroidalFlux * torflux_deriv<T>(sp, sh);
-    }
-    cumes::check_cuda(cudaMemcpy(d_phip_H_, h, nH, cudaMemcpyHostToDevice),
-                      "phip_H cpy");
-    // Note: d_mass_H (dead storage, never read) was removed; d_pres_H holds
-    // the mass profile (gamma=0 -> pres = mass).
-    for (int j = 0; j < p.ns - 1; ++j) {
-        T sh = delta_s_ * (T(j) + T(0.5));
-        T tf = fmin(torflux<T>(sp, sh), T(1.0));
-        h[j] = maxToroidalFlux * eval_iota_profile<T>(sp, tf) *
-               torflux_deriv<T>(sp, sh);
-    }
-    cumes::check_cuda(cudaMemcpy(d_chip_H_, h, nH, cudaMemcpyHostToDevice),
-                      "chip_H cpy");
-    for (int j = 0; j < p.ns - 1; ++j)
-        h[j] = T(1.0);  // dVds placeholder (gamma=0)
-    cumes::check_cuda(cudaMemcpy(d_dVds_H_, h, nH, cudaMemcpyHostToDevice),
-                      "dVds_H cpy");
-    for (int j = 0; j < p.ns - 1; ++j) {
-        if (sp.physical.curtor == 0.0) {
-            h[j] = T(0.0);
-        } else {
-            T sh = delta_s_ * (T(j) + T(0.5));
-            h[j] = Itor *
-                   eval_curr_profile<T>(sp, fmin(torflux<T>(sp, sh), T(1.0)));
-        }
-    }
-    cumes::check_cuda(cudaMemcpy(d_curr_H_, h, nH, cudaMemcpyHostToDevice),
-                      "curr_H cpy");
-    // sqrt(s) on half-grid for parity mixing
-    for (int j = 0; j < p.ns - 1; ++j) {
-        h[j] = sqrt(delta_s_ * (T(j) + T(0.5)));
-    }
-    cumes::check_cuda(cudaMemcpy(d_sqrtS_H_, h, nH, cudaMemcpyHostToDevice),
-                      "sqrtS_H cpy");
-
-    delete[] h;
-
-    // lamscale = sqrt(deltaS * Σ phipH²) (vmecpp constants_.lamscale)
-    T rmsPhiP = T(0.0);
-    auto* h_phip = new T[p.ns - 1];
-    cumes::check_cuda(cudaMemcpy(h_phip, d_phip_H_, nH, cudaMemcpyDeviceToHost),
-                      "phip_H get");
-    for (int j = 0; j < p.ns - 1; ++j) rmsPhiP += h_phip[j] * h_phip[j];
-    delete[] h_phip;
-    p.lamscale = sqrt(rmsPhiP * delta_s_);
+    const auto upload = [](T* d_destination, const std::vector<T>& values,
+                           const char* name) {
+        cumes::check_cuda(
+            cudaMemcpy(d_destination, values.data(), values.size() * sizeof(T),
+                       cudaMemcpyHostToDevice),
+            name);
+    };
+    upload(d_iota_F_, profiles.iota_f, "iota_F cpy");
+    upload(d_phip_F_, profiles.phip_f, "phip_F cpy");
+    upload(d_chi_F_, profiles.chi_f, "chi_F cpy");
+    upload(d_sqrtS_F_, profiles.sqrt_s_f, "sqrtS_F cpy");
+    upload(d_iota_H_, profiles.iota_h, "iota_H cpy");
+    upload(d_pres_H_, profiles.pres_h, "pres_H cpy");
+    upload(d_phip_H_, profiles.phip_h, "phip_H cpy");
+    upload(d_chip_H_, profiles.chip_h, "chip_H cpy");
+    upload(d_dVds_H_, profiles.dvds_h, "dVds_H cpy");
+    upload(d_curr_H_, profiles.curr_h, "curr_H cpy");
+    upload(d_sqrtS_H_, profiles.sqrt_s_h, "sqrtS_H cpy");
+    p.lamscale = profiles.lamscale;
     if (verbose) {
         printf(
             "  profiles: ns=%d phip=%.6e lamscale=%.6e "
             "maxToroidalFlux=%.6e\n",
-            p.ns, (double)(maxToroidalFlux * torflux_deriv<T>(sp, T(0.5))),
-            (double)p.lamscale, (double)maxToroidalFlux);
+            p.ns,
+            (double)(profiles.max_toroidal_flux * torflux_deriv<T>(sp, T(0.5))),
+            (double)p.lamscale, (double)profiles.max_toroidal_flux);
     }
 }
 

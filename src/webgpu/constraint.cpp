@@ -1,5 +1,6 @@
 #include "cumes/webgpu/constraint.hpp"
 
+#include "cumes/physics/constraint_filter.hpp"
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/force.hpp"
@@ -272,14 +273,6 @@ void apply_constraint_tail(const AxisymmetricConstraintCase& in,
     }
 }
 
-struct HeadDispatch {
-    std::function<void(std::string, HeadResult)> callback;
-    wgpu::Buffer output, readback;
-    std::size_t points = 0, bytes = 0;
-    int ns = 0;
-    bool double_single = false;
-};
-
 void enqueue_head(const wgpu::Device& device,
                   const AxisymmetricConstraintCase& in,
                   std::function<void(std::string, HeadResult)> callback,
@@ -436,11 +429,11 @@ void enqueue_head(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    HeadResult resident;
+    const auto tcon_offset = (in.double_single ? 6 : 3) * points;
     if (batched.batch) {
-        HeadResult resident;
         resident.device_fields = {output_buffer, 3 * points, 0,
                                   3 * points * sizeof(float)};
-        const auto tcon_offset = (in.double_single ? 6 : 3) * points;
         resident.device_tcon = {output_buffer, static_cast<std::size_t>(in.ns),
                                 tcon_offset * sizeof(float), 0};
         if (!in.readback_intermediates) {
@@ -462,91 +455,41 @@ void enqueue_head(const wgpu::Device& device,
             batched.publish_device(std::move(resident));
             return;
         }
-        batched.batch->append(
-            encoder, output_buffer, 0, output_bytes,
-            [callback = std::move(callback), resident, points, tcon_offset,
-             paired = in.double_single](std::span<const float> values) mutable {
-                const auto hi = values.begin();
-                resident.g_con_eff.assign(hi, hi + points);
-                resident.r_con0.assign(hi + points, hi + 2 * points);
-                resident.z_con0.assign(hi + 2 * points, hi + 3 * points);
-                if (paired) {
-                    resident.g_con_eff_lo.assign(hi + 3 * points,
-                                                 hi + 4 * points);
-                    resident.r_con0_lo.assign(hi + 4 * points, hi + 5 * points);
-                    resident.z_con0_lo.assign(hi + 5 * points, hi + 6 * points);
-                }
-                resident.tcon.assign(hi + tcon_offset, values.end());
+    }
+    const auto host = batched.batch ? nullptr : std::make_shared<HeadResult>();
+    const auto batch =
+        batched.batch ? batched.batch
+                      : std::make_shared<ReadbackBatch>(readback, output_bytes);
+    batch->append(
+        encoder, output_buffer, 0, output_bytes,
+        [callback = batched.batch ? std::move(callback) : decltype(callback){},
+         host, resident, points, tcon_offset,
+         paired = in.double_single](std::span<const float> values) mutable {
+            const auto hi = values.begin();
+            resident.g_con_eff.assign(hi, hi + points);
+            resident.r_con0.assign(hi + points, hi + 2 * points);
+            resident.z_con0.assign(hi + 2 * points, hi + 3 * points);
+            if (paired) {
+                resident.g_con_eff_lo.assign(hi + 3 * points, hi + 4 * points);
+                resident.r_con0_lo.assign(hi + 4 * points, hi + 5 * points);
+                resident.z_con0_lo.assign(hi + 5 * points, hi + 6 * points);
+            }
+            resident.tcon.assign(hi + tcon_offset, values.end());
+            if (host)
+                *host = std::move(resident);
+            else
                 callback({}, std::move(resident));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
+        });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    if (batched.batch) {
         batched.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
-    auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-    auto dispatch = std::make_shared<HeadDispatch>();
-    dispatch->callback = std::move(callback);
-    dispatch->output = output_buffer;
-    dispatch->readback = readback;
-    dispatch->points = points;
-    dispatch->bytes = output_bytes;
-    dispatch->ns = in.ns;
-    dispatch->double_single = in.double_single;
-    readback.MapAsync(
-        wgpu::MapMode::Read, 0, output_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback("constraint head mapping failed: " + detail,
-                                   {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback.GetConstMappedRange(0, dispatch->bytes));
-            if (values == nullptr) {
-                dispatch->callback("constraint head mapped range is null", {});
-                return;
-            }
-            HeadResult out;
-            out.g_con_eff.assign(values, values + dispatch->points);
-            out.r_con0.assign(values + dispatch->points,
-                              values + 2 * dispatch->points);
-            out.z_con0.assign(values + 2 * dispatch->points,
-                              values + 3 * dispatch->points);
-            std::size_t tcon_offset = 3 * dispatch->points;
-            if (dispatch->double_single) {
-                out.g_con_eff_lo.assign(
-                    values + tcon_offset,
-                    values + tcon_offset + dispatch->points);
-                out.r_con0_lo.assign(
-                    values + tcon_offset + dispatch->points,
-                    values + tcon_offset + 2 * dispatch->points);
-                out.z_con0_lo.assign(
-                    values + tcon_offset + 2 * dispatch->points,
-                    values + tcon_offset + 3 * dispatch->points);
-                tcon_offset += 3 * dispatch->points;
-            }
-            out.tcon.assign(values + tcon_offset,
-                            values + tcon_offset + dispatch->ns);
-            dispatch->readback.Unmap();
-            dispatch->callback({}, std::move(out));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
-
-struct TailDispatch {
-    AxisymmetricConstraintCallback callback;
-    AxisymmetricConstraintResult result;
-    wgpu::Buffer output, readback;
-    std::size_t values = 0, bytes = 0;
-    bool double_single = false;
-};
 
 void enqueue_tail(const wgpu::Device& device,
                   const AxisymmetricConstraintCase& in,
@@ -712,57 +655,41 @@ void enqueue_tail(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
-    if (in.readback)
-        encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
-    auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-    auto dispatch = std::make_shared<TailDispatch>();
-    dispatch->callback = std::move(callback);
-    dispatch->result.r_con0 = std::move(head.r_con0);
-    dispatch->result.r_con0_lo = std::move(head.r_con0_lo);
-    dispatch->result.z_con0 = std::move(head.z_con0);
-    dispatch->result.z_con0_lo = std::move(head.z_con0_lo);
-    dispatch->result.tcon = std::move(head.tcon);
-    dispatch->result.g_con_eff = std::move(head.g_con_eff);
-    dispatch->result.g_con_eff_lo = std::move(head.g_con_eff_lo);
-    dispatch->result.g_con = std::move(g_con);
-    dispatch->output = output_buffer;
-    dispatch->readback = readback;
-    dispatch->values = output_values;
-    dispatch->bytes = output_bytes;
-    dispatch->double_single = in.double_single;
-    dispatch->result.device_fields = {output_buffer, output_values, 0,
-                                      output_values * sizeof(float)};
+    auto result = std::make_shared<AxisymmetricConstraintResult>();
+    result->r_con0 = std::move(head.r_con0);
+    result->r_con0_lo = std::move(head.r_con0_lo);
+    result->z_con0 = std::move(head.z_con0);
+    result->z_con0_lo = std::move(head.z_con0_lo);
+    result->tcon = std::move(head.tcon);
+    result->g_con_eff = std::move(head.g_con_eff);
+    result->g_con_eff_lo = std::move(head.g_con_eff_lo);
+    result->g_con = std::move(g_con);
+    result->device_fields = {output_buffer, output_values, 0,
+                             output_values * sizeof(float)};
     if (!in.readback) {
-        dispatch->callback({}, std::move(dispatch->result));
+        const auto commands = encoder.Finish();
+        queue.Submit(1, &commands);
+        callback({}, std::move(*result));
         return;
     }
-    readback.MapAsync(
-        wgpu::MapMode::Read, 0, output_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback("constraint tail mapping failed: " + detail,
-                                   {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback.GetConstMappedRange(0, dispatch->bytes));
-            if (values == nullptr) {
-                dispatch->callback("constraint tail mapped range is null", {});
-                return;
-            }
-            dispatch->result.fields.assign(values, values + dispatch->values);
-            if (dispatch->double_single)
-                dispatch->result.fields_lo.assign(
-                    values + dispatch->values, values + 2 * dispatch->values);
-            dispatch->readback.Unmap();
-            dispatch->callback({}, std::move(dispatch->result));
-        });
+    const auto batch = std::make_shared<ReadbackBatch>(readback, output_bytes);
+    batch->append(encoder, output_buffer, 0, output_bytes,
+                  [result, output_values,
+                   paired = in.double_single](std::span<const float> values) {
+                      result->fields.assign(values.begin(),
+                                            values.begin() + output_values);
+                      if (paired)
+                          result->fields_lo.assign(
+                              values.begin() + output_values, values.end());
+                  });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    batch->map([callback = std::move(callback), result](std::string error) {
+        if (!error.empty())
+            callback(std::move(error), {});
+        else
+            callback({}, std::move(*result));
+    });
 }
 
 struct ConstraintChain {
@@ -770,6 +697,20 @@ struct ConstraintChain {
     AxisymmetricConstraintCase input;
     AxisymmetricConstraintCallback callback;
 };
+
+template <typename DealiasCase>
+void prepare_constraint_filter(DealiasCase& dealias,
+                               const AxisymmetricConstraintCase& input) {
+    dealias.ns = input.ns;
+    dealias.mpol = input.mpol;
+    dealias.ntheta = input.ntheta;
+    if constexpr (requires { dealias.ntor; }) {
+        dealias.ntor = input.ntor;
+        dealias.nzeta = input.nzeta;
+    }
+    dealias.faccon.resize(input.mpol);
+    fill_constraint_filter<float>(dealias.faccon);
+}
 
 }  // namespace
 
@@ -786,36 +727,16 @@ AxisymmetricConstraintResult axisymmetric_constraint_reference(
         return {};
     if (!validate_case(input).empty()) return {};
     auto head = head_reference(input);
-    std::vector<float> g_con;
-    if (input.ntor > 0) {
-        ToroidalDealiasCase dealias;
-        dealias.ns = input.ns;
-        dealias.mpol = input.mpol;
-        dealias.ntor = input.ntor;
-        dealias.ntheta = input.ntheta;
-        dealias.nzeta = input.nzeta;
+    const auto filter = [&input, &head](auto dealias, auto reference) {
+        prepare_constraint_filter(dealias, input);
         dealias.g_con_eff = head.g_con_eff;
         dealias.tcon = head.tcon;
-        dealias.faccon.assign(input.mpol, 0.0F);
-        for (int mode = 1; mode < input.mpol; ++mode) {
-            const float xmpq = static_cast<float>((mode + 1) * mode);
-            dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
-        }
-        g_con = toroidal_dealias_reference(dealias).g_con;
-    } else {
-        AxisymmetricDealiasCase dealias;
-        dealias.ns = input.ns;
-        dealias.mpol = input.mpol;
-        dealias.ntheta = input.ntheta;
-        dealias.g_con_eff = head.g_con_eff;
-        dealias.tcon = head.tcon;
-        dealias.faccon.assign(input.mpol, 0.0F);
-        for (int mode = 1; mode < input.mpol; ++mode) {
-            const float xmpq = static_cast<float>((mode + 1) * mode);
-            dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
-        }
-        g_con = axisymmetric_dealias_reference(dealias).g_con;
-    }
+        return reference(dealias).g_con;
+    };
+    auto g_con =
+        input.ntor > 0
+            ? filter(ToroidalDealiasCase{}, toroidal_dealias_reference)
+            : filter(AxisymmetricDealiasCase{}, axisymmetric_dealias_reference);
     AxisymmetricConstraintResult result;
     result.r_con0 = head.r_con0;
     result.r_con0_lo = head.r_con0_lo;
@@ -860,22 +781,12 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
             const auto filter = [chain, result, head, points](auto dealias,
                                                               auto enqueue) {
                 const auto& in = chain->input;
-                dealias.ns = in.ns;
-                dealias.mpol = in.mpol;
-                dealias.ntheta = in.ntheta;
-                if constexpr (requires { dealias.ntor; }) {
-                    dealias.ntor = in.ntor;
-                    dealias.nzeta = in.nzeta;
+                prepare_constraint_filter(dealias, in);
+                if constexpr (requires { dealias.readback_values; })
                     dealias.readback_values = in.readback_intermediates;
-                }
                 dealias.device_g_con_eff =
                     field_slice(head.device_fields, 0, points);
                 dealias.device_tcon = head.device_tcon;
-                dealias.faccon.assign(in.mpol, 0.0F);
-                for (int m = 1; m < in.mpol; ++m) {
-                    const float xmpq = static_cast<float>((m + 1) * m);
-                    dealias.faccon[m] = 0.25F / (xmpq * xmpq);
-                }
                 dealias.readback.batch = in.batched_readback.batch;
                 dealias.readback.device_ready = [chain, result,
                                                  head](auto filtered) {
@@ -931,59 +842,27 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
                 chain->callback(std::move(error), {});
                 return;
             }
-            if (chain->input.ntor > 0) {
-                ToroidalDealiasCase dealias;
-                dealias.ns = chain->input.ns;
-                dealias.mpol = chain->input.mpol;
-                dealias.ntor = chain->input.ntor;
-                dealias.ntheta = chain->input.ntheta;
-                dealias.nzeta = chain->input.nzeta;
+            const auto filter = [chain, &head](auto dealias, auto enqueue) {
+                prepare_constraint_filter(dealias, chain->input);
                 dealias.g_con_eff = head.g_con_eff;
                 dealias.tcon = head.tcon;
-                dealias.faccon.assign(chain->input.mpol, 0.0F);
-                for (int mode = 1; mode < chain->input.mpol; ++mode) {
-                    const float xmpq = static_cast<float>((mode + 1) * mode);
-                    dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
-                }
-                enqueue_toroidal_dealias(
-                    chain->device, dealias,
-                    [chain, head = std::move(head)](
-                        std::string filter_error,
-                        ToroidalDealiasResult filtered) mutable {
-                        if (!filter_error.empty()) {
-                            chain->callback(std::move(filter_error), {});
-                            return;
-                        }
-                        enqueue_tail(chain->device, chain->input,
-                                     std::move(head), std::move(filtered.g_con),
-                                     std::move(chain->callback));
-                    });
-                return;
-            }
-            AxisymmetricDealiasCase dealias;
-            dealias.ns = chain->input.ns;
-            dealias.mpol = chain->input.mpol;
-            dealias.ntheta = chain->input.ntheta;
-            dealias.g_con_eff = head.g_con_eff;
-            dealias.tcon = head.tcon;
-            dealias.faccon.assign(chain->input.mpol, 0.0F);
-            for (int mode = 1; mode < chain->input.mpol; ++mode) {
-                const float xmpq = static_cast<float>((mode + 1) * mode);
-                dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
-            }
-            enqueue_axisymmetric_dealias(
-                chain->device, dealias,
-                [chain, head = std::move(head)](
-                    std::string filter_error,
-                    AxisymmetricDealiasResult filtered) mutable {
-                    if (!filter_error.empty()) {
-                        chain->callback(std::move(filter_error), {});
-                        return;
-                    }
-                    enqueue_tail(chain->device, chain->input, std::move(head),
-                                 std::move(filtered.g_con),
-                                 std::move(chain->callback));
-                });
+                enqueue(chain->device, dealias,
+                        [chain, head = std::move(head)](
+                            std::string filter_error, auto filtered) mutable {
+                            if (!filter_error.empty()) {
+                                chain->callback(std::move(filter_error), {});
+                                return;
+                            }
+                            enqueue_tail(chain->device, chain->input,
+                                         std::move(head),
+                                         std::move(filtered.g_con),
+                                         std::move(chain->callback));
+                        });
+            };
+            if (chain->input.ntor > 0)
+                filter(ToroidalDealiasCase{}, enqueue_toroidal_dealias);
+            else
+                filter(AxisymmetricDealiasCase{}, enqueue_axisymmetric_dealias);
         });
 }
 
