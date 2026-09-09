@@ -74,12 +74,6 @@ wgpu::Buffer buffer(const wgpu::Device& d,
                     const char* label) {
     return detail::cached_buffer(d, n, u, label);
 }
-struct Dispatch {
-    AxisymmetricForceCallback callback;
-    wgpu::Buffer result, readback;
-    std::size_t values = 0, bytes = 0;
-    bool double_single = false;
-};
 }  // namespace
 
 AxisymmetricForceResult axisymmetric_force_reference(
@@ -405,9 +399,9 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
     pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(nf) + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
     pass.End();
+    AxisymmetricForceResult ready;
+    ready.device_fields = {obuf, values, 0, values * sizeof(float)};
     if (in.batched_readback.batch) {
-        AxisymmetricForceResult ready;
-        ready.device_fields = {obuf, values, 0, values * sizeof(float)};
         // Retain the full readback above the existing finite-scan dispatch
         // limit.
         ready.lcfs_only =
@@ -450,63 +444,42 @@ void enqueue_axisymmetric_force(const wgpu::Device& device,
             in.batched_readback.publish_device(std::move(ready));
             return;
         }
-        in.batched_readback.batch->append(
-            encoder, obuf, 0, ob,
-            [callback = std::move(callback), ready, paired = in.double_single,
-             values](std::span<const float> words) mutable {
-                auto result = ready;
-                result.fields.assign(words.begin(), words.begin() + values);
-                if (paired)
-                    result.fields_lo.assign(words.begin() + values,
-                                            words.end());
-                callback({}, std::move(result));
-            });
+    }
+    if (!in.batched_readback.batch && !in.readback) {
         const auto commands = encoder.Finish();
         q.Submit(1, &commands);
+        callback({}, std::move(ready));
+        return;
+    }
+    const auto host = in.batched_readback.batch
+                          ? nullptr
+                          : std::make_shared<AxisymmetricForceResult>();
+    const auto batch = in.batched_readback.batch
+                           ? in.batched_readback.batch
+                           : std::make_shared<ReadbackBatch>(read, ob);
+    batch->append(
+        encoder, obuf, 0, ob,
+        [callback = in.batched_readback.batch ? std::move(callback)
+                                              : AxisymmetricForceCallback{},
+         host, ready, paired = in.double_single,
+         values](std::span<const float> words) mutable {
+            auto result = ready;
+            result.fields.assign(words.begin(), words.begin() + values);
+            if (paired)
+                result.fields_lo.assign(words.begin() + values, words.end());
+            if (host)
+                *host = std::move(result);
+            else
+                callback({}, std::move(result));
+        });
+    const auto commands = encoder.Finish();
+    q.Submit(1, &commands);
+    if (in.batched_readback.batch) {
         in.batched_readback.publish_device(std::move(ready));
         return;
     }
-    if (!in.readback) {
-        const auto commands = encoder.Finish();
-        q.Submit(1, &commands);
-        AxisymmetricForceResult result;
-        result.device_fields = {obuf, values, 0, values * sizeof(float)};
-        callback({}, std::move(result));
-        return;
-    }
-    encoder.CopyBufferToBuffer(obuf, 0, read, 0, ob);
-    auto commands = encoder.Finish();
-    q.Submit(1, &commands);
-    auto d = std::make_shared<Dispatch>();
-    d->callback = std::move(callback);
-    d->result = obuf;
-    d->readback = read;
-    d->values = values;
-    d->bytes = ob;
-    d->double_single = in.double_single;
-    read.MapAsync(
-        wgpu::MapMode::Read, 0, ob, wgpu::CallbackMode::AllowSpontaneous,
-        [d](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                d->callback("WebGPU force mapping failed: " +
-                                std::string(message.data, message.length),
-                            {});
-                return;
-            }
-            const auto* v = static_cast<const float*>(
-                d->readback.GetConstMappedRange(0, d->bytes));
-            if (v == nullptr) {
-                d->callback("WebGPU returned a null mapped range", {});
-                return;
-            }
-            AxisymmetricForceResult out;
-            out.device_fields = {d->result, d->values, 0,
-                                 d->values * sizeof(float)};
-            out.fields.assign(v, v + d->values);
-            if (d->double_single)
-                out.fields_lo.assign(v + d->values, v + 2 * d->values);
-            d->readback.Unmap();
-            d->callback({}, std::move(out));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 }  // namespace cumes::webgpu

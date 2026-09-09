@@ -61,13 +61,6 @@ wgpu::Buffer make_buffer(const wgpu::Device& device,
     return detail::cached_buffer(device, size, usage, label);
 }
 
-struct Dispatch {
-    AxisymmetricDescentCallback callback;
-    wgpu::Buffer output, readback;
-    std::size_t bytes = 0, values = 0;
-    bool double_single = false;
-};
-
 }  // namespace
 
 AxisymmetricDescentResult axisymmetric_descent_reference(
@@ -344,9 +337,9 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    AxisymmetricDescentResult resident;
+    const auto count = 6 * points;
     if (input.readback.batch) {
-        AxisymmetricDescentResult resident;
-        const auto count = 6 * points;
         resident.device_state = {output_buffer, count, 0,
                                  count * sizeof(float)};
         const auto velocity_offset = (input.double_single ? 2 : 1) * count;
@@ -379,71 +372,42 @@ void enqueue_axisymmetric_descent(const wgpu::Device& device,
             input.readback.publish_device(std::move(resident));
             return;
         }
-        input.readback.batch->append(
-            encoder, output_buffer, 0, output_bytes,
-            [callback = std::move(callback), resident, count,
-             paired =
-                 input.double_single](std::span<const float> values) mutable {
-                const auto hi = values.begin();
-                resident.state.assign(hi, hi + count);
-                if (paired) {
-                    resident.state_lo.assign(hi + count, hi + 2 * count);
-                    resident.velocity.assign(hi + 2 * count, hi + 3 * count);
-                    resident.velocity_lo.assign(hi + 3 * count, hi + 4 * count);
-                } else {
-                    resident.velocity.assign(hi + count, hi + 2 * count);
-                }
+    }
+    const auto host = input.readback.batch
+                          ? nullptr
+                          : std::make_shared<AxisymmetricDescentResult>();
+    const auto batch = input.readback.batch ? input.readback.batch
+                                            : std::make_shared<ReadbackBatch>(
+                                                  readback, output_bytes);
+    batch->append(
+        encoder, output_buffer, 0, output_bytes,
+        [callback = input.readback.batch ? std::move(callback)
+                                         : AxisymmetricDescentCallback{},
+         host, resident, count,
+         paired = input.double_single](std::span<const float> values) mutable {
+            const auto hi = values.begin();
+            resident.state.assign(hi, hi + count);
+            if (paired) {
+                resident.state_lo.assign(hi + count, hi + 2 * count);
+                resident.velocity.assign(hi + 2 * count, hi + 3 * count);
+                resident.velocity_lo.assign(hi + 3 * count, hi + 4 * count);
+            } else {
+                resident.velocity.assign(hi + count, hi + 2 * count);
+            }
+            if (host)
+                *host = std::move(resident);
+            else
                 callback({}, std::move(resident));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
+        });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    if (input.readback.batch) {
         input.readback.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
-    auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-    auto dispatch = std::make_shared<Dispatch>();
-    dispatch->callback = std::move(callback);
-    dispatch->output = output_buffer;
-    dispatch->readback = readback;
-    dispatch->bytes = output_bytes;
-    dispatch->values = 6 * points;
-    dispatch->double_single = input.double_single;
-    readback.MapAsync(
-        wgpu::MapMode::Read, 0, output_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback("descent mapping failed: " + detail, {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback.GetConstMappedRange(0, dispatch->bytes));
-            if (values == nullptr) {
-                dispatch->callback("descent mapped range is null", {});
-                return;
-            }
-            AxisymmetricDescentResult out;
-            out.state.assign(values, values + dispatch->values);
-            if (dispatch->double_single) {
-                out.state_lo.assign(values + dispatch->values,
-                                    values + 2 * dispatch->values);
-                out.velocity.assign(values + 2 * dispatch->values,
-                                    values + 3 * dispatch->values);
-                out.velocity_lo.assign(values + 3 * dispatch->values,
-                                       values + 4 * dispatch->values);
-            } else {
-                out.velocity.assign(values + dispatch->values,
-                                    values + 2 * dispatch->values);
-            }
-            dispatch->readback.Unmap();
-            dispatch->callback({}, std::move(out));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu

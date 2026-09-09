@@ -91,16 +91,6 @@ wgpu::Buffer create_buffer(const wgpu::Device& device,
     return detail::cached_buffer(device, size, usage, label);
 }
 
-struct DispatchState {
-    MagneticFieldCallback callback;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t result_values = 0;
-    std::size_t result_bytes = 0;
-    std::size_t half_surfaces = 0;
-    bool double_single = false;
-};
-
 }  // namespace
 
 namespace {
@@ -624,11 +614,11 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             WORKGROUP_SIZE);
         finalize_pass.End();
     }
+    MagneticFieldResult resident;
+    const auto fields = result_values - 2 * half_surfaces;
+    resident.device_fields = {result_buffer, fields, 0,
+                              result_values * sizeof(float)};
     if (input.readback.batch) {
-        MagneticFieldResult resident;
-        const auto fields = result_values - 2 * half_surfaces;
-        resident.device_fields = {result_buffer, fields, 0,
-                                  result_values * sizeof(float)};
         // Preserve the full snapshot when the existing finite scan cannot
         // cover every output word, including the interior and radial profiles.
         const bool compact =
@@ -699,90 +689,47 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             input.readback.publish_device(std::move(resident));
             return;
         }
-        input.readback.batch->append(
-            encoder, result_buffer, 0, result_bytes,
-            [callback = std::move(callback), resident, fields, half_surfaces,
-             result_values, paired = input.double_single](
-                std::span<const float> values) mutable {
-                const auto hi = values.begin();
-                resident.fields.assign(hi, hi + fields);
-                resident.chip_h.assign(hi + fields,
-                                       hi + fields + half_surfaces);
-                resident.iota_h.assign(hi + fields + half_surfaces,
-                                       hi + result_values);
-                if (paired) {
-                    const auto lo = hi + result_values;
-                    resident.fields_lo.assign(lo, lo + fields);
-                    resident.chip_h_lo.assign(lo + fields,
-                                              lo + fields + half_surfaces);
-                    resident.iota_h_lo.assign(lo + fields + half_surfaces,
-                                              lo + result_values);
-                }
+    }
+    const auto host = input.readback.batch
+                          ? nullptr
+                          : std::make_shared<MagneticFieldResult>();
+    const auto batch =
+        input.readback.batch
+            ? input.readback.batch
+            : std::make_shared<ReadbackBatch>(readback_buffer, result_bytes);
+    batch->append(
+        encoder, result_buffer, 0, result_bytes,
+        [callback = input.readback.batch ? std::move(callback)
+                                         : MagneticFieldCallback{},
+         host, resident, fields, half_surfaces, result_values,
+         paired = input.double_single](std::span<const float> values) mutable {
+            const auto hi = values.begin();
+            resident.fields.assign(hi, hi + fields);
+            resident.chip_h.assign(hi + fields, hi + fields + half_surfaces);
+            resident.iota_h.assign(hi + fields + half_surfaces,
+                                   hi + result_values);
+            if (paired) {
+                const auto lo = hi + result_values;
+                resident.fields_lo.assign(lo, lo + fields);
+                resident.chip_h_lo.assign(lo + fields,
+                                          lo + fields + half_surfaces);
+                resident.iota_h_lo.assign(lo + fields + half_surfaces,
+                                          lo + result_values);
+            }
+            if (host)
+                *host = std::move(resident);
+            else
                 callback({}, std::move(resident));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
+        });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    if (input.readback.batch) {
         input.readback.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
-    const auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-    auto dispatch = std::make_shared<DispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->result_values = result_values;
-    dispatch->result_bytes = result_bytes;
-    dispatch->half_surfaces = half_surfaces;
-    dispatch->double_single = input.double_single;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback(
-                    "WebGPU magnetic field mapping failed: " + detail, {});
-                return;
-            }
-            const void* mapped = dispatch->readback_buffer.GetConstMappedRange(
-                0, dispatch->result_bytes);
-            if (mapped == nullptr) {
-                dispatch->callback("WebGPU returned a null mapped range", {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(mapped);
-            MagneticFieldResult result;
-            const std::size_t half_surfaces = dispatch->half_surfaces;
-            const std::size_t profile_values = 2 * half_surfaces;
-            const std::size_t field_values =
-                dispatch->result_values - profile_values;
-            result.device_fields = {dispatch->result_buffer, field_values, 0,
-                                    dispatch->result_values * sizeof(float)};
-            result.fields.assign(values, values + field_values);
-            result.chip_h.assign(values + field_values,
-                                 values + field_values + half_surfaces);
-            result.iota_h.assign(values + field_values + half_surfaces,
-                                 values + dispatch->result_values);
-            if (dispatch->double_single) {
-                const std::size_t low_offset = dispatch->result_values;
-                result.fields_lo.assign(values + low_offset,
-                                        values + low_offset + field_values);
-                result.chip_h_lo.assign(
-                    values + low_offset + field_values,
-                    values + low_offset + field_values + half_surfaces);
-                result.iota_h_lo.assign(
-                    values + low_offset + field_values + half_surfaces,
-                    values + 2 * dispatch->result_values);
-            }
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu

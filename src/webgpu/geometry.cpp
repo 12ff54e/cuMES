@@ -77,15 +77,6 @@ wgpu::Buffer create_buffer(const wgpu::Device& device,
     return detail::cached_buffer(device, size, usage, label);
 }
 
-struct DispatchState {
-    BaseGeometryCallback callback;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t result_values = 0;
-    std::size_t result_bytes = 0;
-    bool double_single = false;
-};
-
 }  // namespace
 
 namespace {
@@ -509,6 +500,13 @@ void enqueue_base_geometry(const wgpu::Device& device,
         (static_cast<std::uint32_t>(half_points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    const auto decode = [count = result_values, paired = input.double_single](
+                            BaseGeometryResult& result,
+                            std::span<const float> values) {
+        result.fields.assign(values.begin(), values.begin() + count);
+        if (paired)
+            result.fields_lo.assign(values.begin() + count, values.end());
+    };
     if (input.readback.batch) {
         BaseGeometryResult resident;
         resident.device_fields = {result_buffer, result_values, 0,
@@ -554,14 +552,9 @@ void enqueue_base_geometry(const wgpu::Device& device,
             !input.device_control) {
             input.readback.batch->append(
                 encoder, result_buffer, 0, result_bytes,
-                [host, callback, control = input.device_control,
-                 paired = input.double_single](
+                [host, callback, decode, control = input.device_control](
                     std::span<const float> values) mutable {
-                    const auto count = host->device_fields.values;
-                    host->fields.assign(values.begin(), values.begin() + count);
-                    if (paired)
-                        host->fields_lo.assign(values.begin() + count,
-                                               values.end());
+                    decode(*host, values);
                     if (!control) callback({}, std::move(*host));
                 });
         }
@@ -581,50 +574,21 @@ void enqueue_base_geometry(const wgpu::Device& device,
         input.readback.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
-    const wgpu::CommandBuffer commands = encoder.Finish();
+    const auto host = std::make_shared<BaseGeometryResult>();
+    const auto batch =
+        std::make_shared<ReadbackBatch>(readback_buffer, result_bytes);
+    batch->append(encoder, result_buffer, 0, result_bytes,
+                  [host, decode, result_buffer,
+                   result_values](std::span<const float> values) {
+                      host->device_fields = {result_buffer, result_values, 0,
+                                             result_values * sizeof(float)};
+                      decode(*host, values);
+                  });
+    const auto commands = encoder.Finish();
     queue.Submit(1, &commands);
-
-    auto dispatch = std::make_shared<DispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->result_values = result_values;
-    dispatch->result_bytes = result_bytes;
-    dispatch->double_single = input.double_single;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback("WebGPU geometry mapping failed: " + detail,
-                                   {});
-                return;
-            }
-            const void* mapped = dispatch->readback_buffer.GetConstMappedRange(
-                0, dispatch->result_bytes);
-            if (mapped == nullptr) {
-                dispatch->callback("WebGPU returned a null mapped range", {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(mapped);
-            BaseGeometryResult result;
-            result.device_fields = {dispatch->result_buffer,
-                                    dispatch->result_values, 0,
-                                    dispatch->result_values * sizeof(float)};
-            result.fields.assign(values, values + dispatch->result_values);
-            if (dispatch->double_single) {
-                result.fields_lo.assign(values + dispatch->result_values,
-                                        values + 2 * dispatch->result_values);
-            }
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu

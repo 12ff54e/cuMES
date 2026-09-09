@@ -1,5 +1,6 @@
 #include "cumes/webgpu/prolongation.hpp"
 
+#include "cumes/webgpu/readback_batch.hpp"
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
@@ -56,14 +57,6 @@ std::string validate_case(const ProlongationCase& input) {
 const std::string& load_shader() {
     return detail::cached_shader_source("/shaders/prolongation.wgsl");
 }
-
-struct DispatchState {
-    ProlongationCallback callback;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t total = 0;
-    std::size_t result_bytes = 0;
-};
 
 wgpu::Buffer create_buffer(const wgpu::Device& device,
                            std::uint64_t size,
@@ -179,44 +172,20 @@ void enqueue_prolongation(const wgpu::Device& device,
         (static_cast<std::uint32_t>(total) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
-    const wgpu::CommandBuffer commands = encoder.Finish();
-    queue.Submit(1, &commands);
-
-    auto dispatch = std::make_shared<DispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->total = total;
-    dispatch->result_bytes = result_bytes;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback("WebGPU result mapping failed: " + detail,
-                                   {});
-                return;
-            }
-            const void* mapped = dispatch->readback_buffer.GetConstMappedRange(
-                0, dispatch->result_bytes);
-            if (mapped == nullptr) {
-                dispatch->callback("WebGPU returned a null mapped range", {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(mapped);
-            ProlongationResult result;
-            result.state.assign(values, values + dispatch->total);
-            result.velocity.assign(values + dispatch->total,
-                                   values + 2 * dispatch->total);
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
+    const auto host = std::make_shared<ProlongationResult>();
+    const auto batch =
+        std::make_shared<ReadbackBatch>(readback_buffer, result_bytes);
+    batch->append(
+        encoder, result_buffer, 0, result_bytes,
+        [host, total](std::span<const float> values) {
+            host->state.assign(values.begin(), values.begin() + total);
+            host->velocity.assign(values.begin() + total, values.end());
         });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu

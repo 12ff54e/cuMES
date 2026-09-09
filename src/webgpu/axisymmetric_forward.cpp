@@ -6,12 +6,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <numbers>
-#include <sstream>
 #include <utility>
 
 namespace cumes::webgpu {
@@ -107,14 +105,6 @@ std::vector<float> make_forward_weights(int ntheta) {
     weights.back() *= 0.5F;
     return weights;
 }
-
-struct DealiasDispatchState {
-    AxisymmetricDealiasCallback callback;
-    wgpu::Buffer result_buffer;
-    wgpu::Buffer readback_buffer;
-    std::size_t result_values = 0;
-    std::size_t result_bytes = 0;
-};
 
 }  // namespace
 
@@ -363,67 +353,38 @@ void enqueue_axisymmetric_dealias(const wgpu::Device& device,
         (static_cast<std::uint32_t>(points) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
+    const auto host = input.readback.batch
+                          ? nullptr
+                          : std::make_shared<AxisymmetricDealiasResult>();
+    const auto batch =
+        input.readback.batch
+            ? input.readback.batch
+            : std::make_shared<ReadbackBatch>(readback_buffer, result_bytes);
+    AxisymmetricDealiasResult ready;
+    ready.device_g_con = {result_buffer, points, 0, 0};
+    batch->append(
+        encoder, result_buffer, 0, result_bytes,
+        [callback = input.readback.batch ? std::move(callback)
+                                         : AxisymmetricDealiasCallback{},
+         host, ready](std::span<const float> values) mutable {
+            ready.g_con.assign(values.begin(), values.end());
+            ready.finite =
+                std::all_of(values.begin(), values.end(),
+                            [](float value) { return std::isfinite(value); });
+            if (host)
+                *host = std::move(ready);
+            else
+                callback({}, std::move(ready));
+        });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
     if (input.readback.batch) {
-        AxisymmetricDealiasResult ready;
-        ready.device_g_con = {result_buffer, points, 0, 0};
-        input.readback.batch->append(
-            encoder, result_buffer, 0, result_bytes,
-            [callback = std::move(callback),
-             ready](std::span<const float> values) mutable {
-                auto result = ready;
-                result.g_con.assign(values.begin(), values.end());
-                result.finite = std::all_of(
-                    values.begin(), values.end(),
-                    [](float value) { return std::isfinite(value); });
-                callback({}, std::move(result));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
         input.readback.publish_device(std::move(ready));
         return;
     }
-    encoder.CopyBufferToBuffer(result_buffer, 0, readback_buffer, 0,
-                               result_bytes);
-    const wgpu::CommandBuffer commands = encoder.Finish();
-    queue.Submit(1, &commands);
-
-    auto dispatch = std::make_shared<DealiasDispatchState>();
-    dispatch->callback = std::move(callback);
-    dispatch->result_buffer = result_buffer;
-    dispatch->readback_buffer = readback_buffer;
-    dispatch->result_values = points;
-    dispatch->result_bytes = result_bytes;
-    readback_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback(
-                    "WebGPU axisymmetric dealias mapping failed: " + detail,
-                    {});
-                return;
-            }
-            const void* mapped = dispatch->readback_buffer.GetConstMappedRange(
-                0, dispatch->result_bytes);
-            if (mapped == nullptr) {
-                dispatch->callback("WebGPU returned a null mapped range", {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(mapped);
-            AxisymmetricDealiasResult result;
-            result.device_g_con = {dispatch->result_buffer,
-                                   dispatch->result_values, 0, 0};
-            result.g_con.assign(values, values + dispatch->result_values);
-            result.finite =
-                std::all_of(result.g_con.begin(), result.g_con.end(),
-                            [](float value) { return std::isfinite(value); });
-            dispatch->readback_buffer.Unmap();
-            dispatch->callback({}, std::move(result));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu

@@ -87,15 +87,6 @@ std::array<double, 3> accumulate_norms(const std::vector<float>& residual,
     accumulate_norms(result, ns, mode_count, include_edge);
     return result.raw_norm;
 }
-struct Dispatch {
-    ResidualDecompositionCallback callback;
-    wgpu::Buffer output, readback;
-    std::size_t count = 0, bytes = 0;
-    int ns = 0, mode_count = 0;
-    bool include_edge = false;
-    bool double_single = false;
-    bool source_check = false;
-};
 }  // namespace
 
 ResidualDecompositionResult residual_decomposition_reference(
@@ -355,8 +346,22 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
     pass.DispatchWorkgroups(
         (static_cast<std::uint32_t>(n) + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE);
     pass.End();
+    const auto result = std::make_shared<ResidualDecompositionResult>();
+    const auto decode_source = [result](std::span<const float> original) {
+        result->source_finite =
+            std::all_of(original.begin(), original.end(),
+                        [](float value) { return std::isfinite(value); });
+        result->source_nonzero =
+            std::any_of(original.begin(), original.end(),
+                        [](float value) { return value != 0.0F; });
+    };
+    const auto decode = [result, count = 6 * n, paired = in.double_single](
+                            std::span<const float> values) {
+        result->residual.assign(values.begin(), values.begin() + count);
+        if (paired)
+            result->residual_lo.assign(values.begin() + count, values.end());
+    };
     if (in.readback.batch) {
-        auto result = std::make_shared<ResidualDecompositionResult>();
         result->device_residual = {output, 6 * n, 0, input_bytes};
         if (in.device_residual &&
             (in.device_residual.buffer.GetUsage() &
@@ -368,30 +373,18 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
                     result->source_nonzero = status.nonzero;
                 });
         } else if (in.device_residual) {
-            in.readback.batch->append(
-                encoder, in.device_residual.buffer,
-                in.device_residual.high_offset, input_bytes,
-                [result](std::span<const float> original) {
-                    result->source_finite = std::all_of(
-                        original.begin(), original.end(),
-                        [](float value) { return std::isfinite(value); });
-                    result->source_nonzero =
-                        std::any_of(original.begin(), original.end(),
-                                    [](float value) { return value != 0.0F; });
-                });
+            in.readback.batch->append(encoder, in.device_residual.buffer,
+                                      in.device_residual.high_offset,
+                                      input_bytes, decode_source);
         }
         in.readback.batch->append(
             encoder, output, 0,
             in.readback_values ? output_bytes : sizeof(float),
-            [callback = std::move(callback), result, count = 6 * n, ns = in.ns,
-             mode_count, edge = in.include_edge_rz, paired = in.double_single,
+            [callback = std::move(callback), result, decode, ns = in.ns,
+             mode_count, edge = in.include_edge_rz,
              read_values = in.readback_values](std::span<const float> values) {
                 if (read_values) {
-                    result->residual.assign(values.begin(),
-                                            values.begin() + count);
-                    if (paired)
-                        result->residual_lo.assign(values.begin() + count,
-                                                   values.end());
+                    decode(values);
                     accumulate_norms(*result, ns, mode_count, edge);
                 }
                 callback({}, std::move(*result));
@@ -401,58 +394,19 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
         in.readback.publish_device(*result);
         return;
     }
-    encoder.CopyBufferToBuffer(output, 0, readback, 0, output_bytes);
+    const auto batch =
+        std::make_shared<ReadbackBatch>(readback, readback_bytes);
+    batch->append(encoder, output, 0, output_bytes, decode);
     if (in.device_residual)
-        encoder.CopyBufferToBuffer(in.device_residual.buffer,
-                                   in.device_residual.high_offset, readback,
-                                   output_bytes, input_bytes);
-    auto commands = encoder.Finish();
+        batch->append(encoder, in.device_residual.buffer,
+                      in.device_residual.high_offset, input_bytes,
+                      decode_source);
+    const auto commands = encoder.Finish();
     queue.Submit(1, &commands);
-    auto d = std::make_shared<Dispatch>();
-    d->callback = std::move(callback);
-    d->output = output;
-    d->readback = readback;
-    d->count = 6 * n;
-    d->bytes = readback_bytes;
-    d->source_check = static_cast<bool>(in.device_residual);
-    d->ns = in.ns;
-    d->mode_count = mode_count;
-    d->include_edge = in.include_edge_rz;
-    d->double_single = in.double_single;
-    readback.MapAsync(
-        wgpu::MapMode::Read, 0, readback_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [d](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                d->callback("WebGPU residual mapping failed: " +
-                                std::string(message.data, message.length),
-                            {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                d->readback.GetConstMappedRange(0, d->bytes));
-            if (values == nullptr) {
-                d->callback("WebGPU returned a null mapped range", {});
-                return;
-            }
-            ResidualDecompositionResult out;
-            out.residual.assign(values, values + d->count);
-            if (d->double_single)
-                out.residual_lo.assign(values + d->count,
-                                       values + 2 * d->count);
-            if (d->source_check) {
-                const std::span<const float> original(
-                    values + d->count * (d->double_single ? 2 : 1), d->count);
-                out.source_finite = std::all_of(
-                    original.begin(), original.end(),
-                    [](float value) { return std::isfinite(value); });
-                out.source_nonzero =
-                    std::any_of(original.begin(), original.end(),
-                                [](float value) { return value != 0.0F; });
-            }
-            d->readback.Unmap();
-            accumulate_norms(out, d->ns, d->mode_count, d->include_edge);
-            d->callback({}, std::move(out));
-        });
+    batch->map([callback = std::move(callback), result, ns = in.ns, mode_count,
+                edge = in.include_edge_rz](std::string error) {
+        if (error.empty()) accumulate_norms(*result, ns, mode_count, edge);
+        callback(std::move(error), std::move(*result));
+    });
 }
 }  // namespace cumes::webgpu
