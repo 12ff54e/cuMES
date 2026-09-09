@@ -145,12 +145,82 @@ bounded browser comparison, not the full cross-architecture performance
 qualification in `performance.md`. Logs, traces, digests, and the comparison
 are retained outside the repository in `../tmp/free-boundary-transfers/`.
 
-Full geometry and magnetic-field readbacks, original host norm reductions,
-and Wasm vacuum/pressure coupling remain. Reducing those transfers and moving
-their consumers onto the GPU are further work, subject to the same numerical
-and scheduling contracts. `field_readbacks=full` retains full force and
-velocity snapshots; `resident=0`, `fences=1`, or `compare_fft=1` select the
-separate-dispatch free-boundary reference path.
+The extension below reduces the remaining geometry and magnetic-field
+readbacks. Original host norm reductions and Wasm vacuum/pressure coupling
+remain. `field_readbacks=full` retains full field and velocity snapshots;
+`resident=0`, `fences=1`, or `compare_fft=1` select the separate-dispatch
+free-boundary reference path.
+
+### Boundary snapshots and cached vacuum reconstruction
+
+Both vacuum choices now receive compact plasma snapshots. The inverse returns
+12 angular rows containing axis R/Z and the LCFS geometry used by the existing
+coupling. On non-refresh passes, base geometry returns gsqrt/guv for the
+unchanged ordered host Jacobian gate; magnetic fields return their outer two
+half-grid rows and radial profiles. GPU finite scans include omitted fields
+and both precision words. Refresh passes retain full base/magnetic arrays for
+normalization. Final output downloads the accepted full fields once, without
+another physics pass or controller transition. Full-readback fallbacks remain
+for unsupported compact shapes or finite-scan dispatch sizes.
+
+For paired W7-X (`ns=51`, angular grid `20×36`), the affected non-refresh
+readbacks, including finite flags and magnetic profiles, change as follows:
+
+| Snapshot | Before, bytes | After, bytes |
+| --- | ---: | ---: |
+| Inverse geometry and constraint reconstructions | 5,875,200 | 92,072 |
+| Base geometry | 2,880,000 | 587,252 |
+| Magnetic fields and profiles | 1,440,800 | 40,992 |
+| Total for these snapshots | 10,196,000 | 720,316 |
+
+These are logical readback payloads, not measured bus traffic. The existing
+prefix map carries all three, so no extra completion wait is introduced.
+
+Vacuum-field now caches potential Fourier factors separately in HOST-native T
+arithmetic and paired-f32 WGSL. Both retain the original factor expressions
+and ascending mode accumulation; full/partial factorization scheduling is
+unchanged. The WebGPU cache has an uncached capacity fallback. The browser
+requests pressure and surface integrals only from GPU vacuum; all other
+outputs stay resident and retain their finite checks. This removes eight
+output copy commands and six recurring uploads from ordinary cuMES GPU
+updates. The public dependency API retains full results by default.
+
+This is a Class A change. The WebGPU build and all 14 parent CTests pass,
+as do all 19 native HOST and all 19 Wasm dependency tests. Cached HOST
+reconstruction matches the original kernel bitwise in float and double.
+Real Chrome conformance checks compact/full scalar and paired words, retained
+device layouts, and finite gates. The dependency's Chrome API gate also checks
+full/compact/full result transitions and nonzero-to-omitted input reuse.
+Complete paired W7-X solves preserve their own backend's controller records
+(1,847 HOST; 1,844 WebGPU), excluding timestamps, and scientific output digest.
+Paired cth_like and multigrid scalar Solovev likewise preserve exact traces and
+digests with both vacuum backends. CUDA float/double libraries compile; the
+CUDA execution path is unchanged and was not benchmarked. Firefox was not run.
+
+The 2026-09-09 comparison against `b3a77c9` used Chrome 152.0.7977.77 on
+Windows with an NVIDIA GeForce RTX 3060 Ti, the bundled free-boundary W7-X
+preset above, paired plasma precision, and `trace=1`. Both revisions used the
+page's default detailed timing and GPU timestamp instrumentation; these are
+instrumented default-page timings. Runs were serial, with one warmup and two
+measured complete solves per revision and vacuum backend. Measured runs had
+no CPU profiler attached.
+
+| Vacuum backend / interval | Baseline median (range), s | Updated median (range), s |
+| --- | ---: | ---: |
+| HOST/Wasm full page run | 56.311 (56.244–56.378) | 41.857 (41.725–41.989) |
+| HOST/Wasm controller span | 51.035 (51.014–51.057) | 36.746 (36.570–36.922) |
+| WebGPU full page run | 78.711 (77.964–79.458) | 65.598 (65.166–66.031) |
+| WebGPU controller span | 73.149 (72.411–73.886) | 60.431 (60.165–60.696) |
+
+This is 25.67% less full-run time with HOST/Wasm vacuum and 16.66% less with
+WebGPU vacuum on the measured setup. HOST/Wasm remains the faster default.
+Median worker age at the first controller record changed from 4.859 to
+4.723 s for HOST and 5.158 to 4.749 s for WebGPU; these include setup and
+are not pure setup intervals. Controller spans use the first and last worker
+records. Output time is included in the page run but not isolated by these
+clocks. The two-repeat comparison on one adapter is not full performance
+qualification or an isolated measurement of each optimization. Captures and
+comparison data remain in `../tmp/free-boundary-second-pass/`.
 
 ## Geometry and Newton options
 

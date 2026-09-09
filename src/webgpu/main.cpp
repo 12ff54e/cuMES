@@ -771,8 +771,68 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  3-D half-grid base geometry: PASS "
                     "(max |GPU-CPU| = %.3e)\n",
                     static_cast<double>(max_error));
-                self->run_toroidal_magnetic_field(std::move(actual.fields));
+                self->check_compact_base_geometry(
+                    self->toroidal_geometry_case_, std::move(actual),
+                    [self](cumes::webgpu::BaseGeometryResult checked) {
+                        self->run_toroidal_magnetic_field(
+                            std::move(checked.fields));
+                    });
             });
+    }
+
+    void check_compact_base_geometry(
+        cumes::webgpu::BaseGeometryCase input,
+        cumes::webgpu::BaseGeometryResult expected,
+        std::function<void(cumes::webgpu::BaseGeometryResult)> next) {
+        using namespace cumes::webgpu;
+        const auto half =
+            std::size_t(input.ns - 1) * input.ntheta * input.nzeta;
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_, 2 * expected.fields.size() * sizeof(float) + 64);
+        input.readback_validity = true;
+        input.readback = {batch, {}};
+        auto actual = std::make_shared<BaseGeometryResult>();
+        auto errors = std::make_shared<std::string>();
+        enqueue_base_geometry(
+            device_, input,
+            [actual, errors](std::string error, BaseGeometryResult result) {
+                *actual = std::move(result);
+                *errors = std::move(error);
+            });
+        const auto self = shared_from_this();
+        batch->map([self, actual, errors, expected = std::move(expected),
+                    next = std::move(next), half,
+                    paired = input.double_single](std::string error) mutable {
+            bool valid =
+                error.empty() && errors->empty() &&
+                actual->fields_are_validity && actual->fields_finite &&
+                !actual->control.present && actual->device_fields &&
+                actual->device_fields.values == expected.fields.size() &&
+                actual->fields.size() == 2 * half &&
+                actual->fields_lo.size() == (paired ? 2 * half : 0);
+            for (int word = 0; word < (paired ? 2 : 1) && valid; ++word) {
+                const auto& source =
+                    word ? expected.fields_lo : expected.fields;
+                const auto& target = word ? actual->fields_lo : actual->fields;
+                for (std::size_t point = 0; point < half; ++point) {
+                    valid &=
+                        std::bit_cast<std::uint32_t>(target[point]) ==
+                        std::bit_cast<std::uint32_t>(source[6 * half + point]);
+                    valid &=
+                        std::bit_cast<std::uint32_t>(target[half + point]) ==
+                        std::bit_cast<std::uint32_t>(source[8 * half + point]);
+                }
+            }
+            if (!valid) {
+                self->finish(
+                    false, "compact base validity snapshot mismatch: " + error +
+                               *errors);
+                return;
+            }
+            std::printf("  compact base geometry gsqrt/guv, bitwise %s: PASS\n",
+                        paired ? "paired words" : "f32 words");
+            next(std::move(expected));
+        });
     }
 
     void run_toroidal_magnetic_field(std::vector<float> base_geometry) {
@@ -843,12 +903,23 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     void check_compact_magnetic(
         cumes::webgpu::MagneticFieldCase input,
         cumes::webgpu::MagneticFieldResult expected,
-        std::function<void(cumes::webgpu::MagneticFieldResult)> next) {
+        std::function<void(cumes::webgpu::MagneticFieldResult)> next,
+        int variant = 0) {
         using namespace cumes::webgpu;
         auto batch = std::make_shared<ReadbackBatch>(
             device_,
             2 * expected.fields.size() * sizeof(float) + 64 * input.ns);
-        input.readback_values = false;
+        auto retry = input;
+        retry.readback = {};
+        input.readback_values = variant != 0;
+        input.readback_vacuum = variant != 0;
+        if (variant == 2) {
+            // Only an omitted interior pressure row becomes nonfinite. The
+            // retained vacuum rows and all radial profiles stay unchanged.
+            auto& pressure =
+                input.double_single ? input.pres_h_lo : input.pres_h;
+            pressure.front() = std::numeric_limits<float>::infinity();
+        }
         input.readback = {batch, {}};
         auto actual = std::make_shared<MagneticFieldResult>();
         auto errors = std::make_shared<std::string>();
@@ -860,20 +931,62 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             });
         const auto self = shared_from_this();
         batch->map([self, actual, errors, expected = std::move(expected),
-                    next = std::move(next)](std::string error) mutable {
-            if (!error.empty() || !errors->empty() || !actual->fields_finite ||
-                !actual->fields.empty() || !actual->fields_lo.empty() ||
-                !actual->device_fields ||
-                actual->device_fields.values != expected.fields.size() ||
-                actual->chip_h != expected.chip_h ||
-                actual->chip_h_lo != expected.chip_h_lo ||
-                actual->iota_h != expected.iota_h ||
-                actual->iota_h_lo != expected.iota_h_lo) {
+                    next = std::move(next), retry = std::move(retry),
+                    variant](std::string error) mutable {
+            const auto same_bits = [](float a, float b) {
+                return std::bit_cast<std::uint32_t>(a) ==
+                       std::bit_cast<std::uint32_t>(b);
+            };
+            const auto same_words = [&](const auto& a, const auto& b) {
+                return a.size() == b.size() &&
+                       std::equal(a.begin(), a.end(), b.begin(), same_bits);
+            };
+            const auto angular = std::size_t(retry.ntheta) * retry.nzeta;
+            const auto half = std::size_t(retry.ns - 1) * angular;
+            const auto values = variant == 0 ? 0 : 6 * angular;
+            bool valid =
+                error.empty() && errors->empty() &&
+                actual->fields_finite == (variant != 2) &&
+                actual->fields_are_vacuum == (variant != 0) &&
+                actual->fields.size() == values &&
+                actual->fields_lo.size() ==
+                    (retry.double_single ? values : 0) &&
+                actual->device_fields &&
+                actual->device_fields.values == expected.fields.size() &&
+                same_words(actual->chip_h, expected.chip_h) &&
+                same_words(actual->chip_h_lo, expected.chip_h_lo) &&
+                same_words(actual->iota_h, expected.iota_h) &&
+                same_words(actual->iota_h_lo, expected.iota_h_lo);
+            for (int word = 0;
+                 variant != 0 && word < (retry.double_single ? 2 : 1) && valid;
+                 ++word) {
+                const auto& source =
+                    word ? expected.fields_lo : expected.fields;
+                const auto& target = word ? actual->fields_lo : actual->fields;
+                for (std::size_t field = 0; field < 3; ++field) {
+                    for (std::size_t point = 0; point < 2 * angular; ++point) {
+                        valid &= same_bits(
+                            target[field * 2 * angular + point],
+                            source[(field + 3) * half - 2 * angular + point]);
+                    }
+                }
+            }
+            if (!valid) {
                 self->finish(false, "compact magnetic snapshot mismatch: " +
-                                        error + *errors);
+                                        std::to_string(variant) + " " + error +
+                                        *errors);
                 return;
             }
-            std::printf("  compact magnetic readback: PASS\n");
+            if (variant == 0 || (variant == 1 && retry.ns > 3)) {
+                self->check_compact_magnetic(std::move(retry),
+                                             std::move(expected),
+                                             std::move(next), variant + 1);
+                return;
+            }
+            std::printf(
+                "  compact magnetic profiles/vacuum rows, bitwise "
+                "words%s: PASS\n",
+                variant == 2 ? ", interior finite check" : "");
             next(std::move(expected));
         });
     }
@@ -2023,10 +2136,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_device_inverse_test(int variant = 0) {
         using namespace cumes::webgpu;
-        if (variant == 4) {
+        if (variant == 8) {
             std::printf(
                 "  batched device-state inverse and axis extrapolation (f32, "
-                "paired, axisymmetric f32/paired): PASS\n");
+                "paired, axisymmetric f32/paired), bitwise compact vacuum "
+                "rows: PASS\n");
             const auto self = shared_from_this();
             run_float_geometry_tests(device_, [self](std::string error) {
                 if (!error.empty()) {
@@ -2041,13 +2155,14 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             return;
         }
         ToroidalInverseCase input;
-        input.ns = 3;
+        const int shape = variant % 4;
+        input.ns = variant >= 4 ? 5 : 3;
         input.mpol = 3;
-        input.ntor = variant >= 2 ? 0 : 2;
+        input.ntor = shape >= 2 ? 0 : 2;
         input.ntheta = 8;
-        input.nzeta = variant >= 2 ? 1 : 6;
+        input.nzeta = shape >= 2 ? 1 : 6;
         input.nfp = 5;
-        input.double_single = variant == 1 || variant == 2;
+        input.double_single = shape == 1 || shape == 2;
         const std::size_t count = 6 * input.ns * input.mpol * (input.ntor + 1);
         input.state.resize(count);
         input.state_lo.resize(count);
@@ -2101,6 +2216,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     40 * input.ns * input.ntheta * input.nzeta * sizeof(float));
                 auto actual = std::make_shared<ToroidalInverseResult>();
                 input.readback.batch = batch;
+                input.readback_vacuum = variant >= 4;
                 enqueue_toroidal_inverse(
                     self->device_, input,
                     [self, actual](std::string error,
@@ -2112,19 +2228,65 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                         *actual = std::move(value);
                     });
                 batch->map([self, source, actual,
-                            expected = std::move(expected),
-                            variant](std::string error) {
+                            expected = std::move(expected), variant,
+                            ns = input.ns,
+                            angular = std::size_t(input.ntheta) *
+                                      input.nzeta](std::string error) mutable {
                     source.Destroy();
-                    if (!error.empty() ||
-                        actual->geometry != expected.geometry ||
-                        actual->geometry_lo != expected.geometry_lo ||
-                        actual->r_con != expected.r_con ||
-                        actual->z_con != expected.z_con ||
-                        actual->r_con_lo != expected.r_con_lo ||
-                        actual->z_con_lo != expected.z_con_lo) {
-                        self->finish(
-                            false,
-                            "batched device-state inverse mismatch: " + error);
+                    const auto same_words = [](const auto& a, const auto& b) {
+                        return a.size() == b.size() &&
+                               std::equal(
+                                   a.begin(), a.end(), b.begin(),
+                                   [](float a, float b) {
+                                       return std::bit_cast<std::uint32_t>(a) ==
+                                              std::bit_cast<std::uint32_t>(b);
+                                   });
+                    };
+                    const auto points = std::size_t(ns) * angular;
+                    if (variant >= 4) {
+                        // Express the physical row contract independently of
+                        // the operator's grouped copy ranges.
+                        const std::size_t fields[] = {0, 1, 0, 0,  0, 6,
+                                                      6, 6, 4, 10, 3, 9};
+                        const int rows[] = {0,      0,      ns - 3, ns - 2,
+                                            ns - 1, ns - 3, ns - 2, ns - 1,
+                                            ns - 1, ns - 1, ns - 1, ns - 1};
+                        const auto pack = [&](std::vector<float>& words) {
+                            if (words.empty()) return;
+                            std::vector<float> packed(12 * angular);
+                            for (std::size_t row = 0; row < 12; ++row) {
+                                for (std::size_t point = 0; point < angular;
+                                     ++point) {
+                                    packed[row * angular + point] =
+                                        words[fields[row] * points +
+                                              rows[row] * angular + point];
+                                }
+                            }
+                            words = std::move(packed);
+                        };
+                        pack(expected.geometry);
+                        pack(expected.geometry_lo);
+                        expected.r_con.clear();
+                        expected.z_con.clear();
+                        expected.r_con_lo.clear();
+                        expected.z_con_lo.clear();
+                    }
+                    if (!error.empty() || !actual->geometry_finite ||
+                        actual->geometry_is_vacuum != (variant >= 4) ||
+                        actual->device_geometry.values !=
+                            GEOMETRY_PARITY_FIELD_COUNT * points ||
+                        actual->device_r_con.values != points ||
+                        actual->device_z_con.values != points ||
+                        !same_words(actual->geometry, expected.geometry) ||
+                        !same_words(actual->geometry_lo,
+                                    expected.geometry_lo) ||
+                        !same_words(actual->r_con, expected.r_con) ||
+                        !same_words(actual->z_con, expected.z_con) ||
+                        !same_words(actual->r_con_lo, expected.r_con_lo) ||
+                        !same_words(actual->z_con_lo, expected.z_con_lo)) {
+                        self->finish(false,
+                                     "batched device-state inverse mismatch: " +
+                                         std::to_string(variant) + " " + error);
                         return;
                     }
                     self->run_device_inverse_test(variant + 1);
@@ -2498,8 +2660,13 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     "  W7-X double-single half-grid geometry: PASS "
                     "(max reconstructed |GPU-CPU| = %.3e)\n",
                     max_reconstructed_error);
-                self->w7x_base_geometry_lo_ = std::move(actual.fields_lo);
-                self->run_w7x_magnetic_field(std::move(actual.fields));
+                self->check_compact_base_geometry(
+                    self->w7x_geometry_case_, std::move(actual),
+                    [self](cumes::webgpu::BaseGeometryResult checked) {
+                        self->w7x_base_geometry_lo_ =
+                            std::move(checked.fields_lo);
+                        self->run_w7x_magnetic_field(std::move(checked.fields));
+                    });
             });
     }
 
@@ -3230,6 +3397,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         stage_r_con_ = std::move(actual.r_con);
         stage_z_con_ = std::move(actual.z_con);
         stage_geometry_lo_ = std::move(actual.geometry_lo);
+        stage_geometry_is_vacuum_ = actual.geometry_is_vacuum;
         stage_r_con_lo_ = std::move(actual.r_con_lo);
         stage_z_con_lo_ = std::move(actual.z_con_lo);
         run_base_geometry(std::move(actual.geometry));
@@ -3296,12 +3464,16 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     ++self->geometry_control_fallbacks_;
                 }
                 if (!actual.control.present || !actual.fields.empty()) {
-                    const auto guv = actual.fields.begin() + 8 * half_points;
+                    const auto guv =
+                        actual.fields.begin() +
+                        (actual.fields_are_validity ? 1 : 8) * half_points;
                     const bool axisymmetric_guv_zero =
                         self->initialized_stage_.ntor != 0 ||
                         std::all_of(guv, guv + half_points,
                                     [](float value) { return value == 0.0F; });
-                    const auto gsqrt = actual.fields.begin() + 6 * half_points;
+                    const auto gsqrt_offset =
+                        (actual.fields_are_validity ? 0 : 6) * half_points;
+                    const auto gsqrt = actual.fields.begin() + gsqrt_offset;
                     const bool finite_jacobian = std::all_of(
                         gsqrt, gsqrt + half_points, [](float value) {
                             return std::isfinite(value) && value != 0.0F;
@@ -3313,7 +3485,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                              actual.fields_lo.begin(), actual.fields_lo.end(),
                              [](float value) { return std::isfinite(value); }));
                     if (max_error > 2.0e-4F || !axisymmetric_guv_zero ||
-                        !finite_jacobian || !precision_valid) {
+                        !finite_jacobian || !precision_valid ||
+                        !actual.fields_finite) {
                         self->finish(
                             false,
                             "base geometry mismatch: max_error=" +
@@ -3329,7 +3502,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     jacobian.min_index = -1;
                     jacobian.nonfinite_count = 0.0;
                     for (std::size_t i = 0; i < half_points; ++i) {
-                        const std::size_t gsqrt_index = 6 * half_points + i;
+                        const std::size_t gsqrt_index = gsqrt_offset + i;
                         const double value =
                             static_cast<double>(gsqrt[i]) +
                             (self->double_single_solve_
@@ -3395,6 +3568,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->resident_path() ? actual.device_fields
                                           : cumes::webgpu::DeviceFields{};
                 self->stage_base_geometry_lo_ = std::move(actual.fields_lo);
+                self->stage_base_geometry_is_validity_ =
+                    actual.fields_are_validity;
                 self->run_magnetic_field(std::move(actual.fields));
             });
     }
@@ -3585,6 +3760,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                     self->resident_path() ? actual.device_fields
                                           : cumes::webgpu::DeviceFields{};
                 self->stage_magnetic_field_lo_ = std::move(actual.fields_lo);
+                self->stage_magnetic_field_is_vacuum_ =
+                    actual.fields_are_vacuum;
                 self->run_axisymmetric_force(std::move(actual.fields));
             });
     }
@@ -3603,6 +3780,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         force_case_.lamscale_lo = initialized_stage_.profiles.lamscale_lo;
         force_case_.double_single = double_single_solve_;
         force_case_.radius_reference = initialized_stage_.radius_reference;
+        force_case_.geometry_is_vacuum = stage_geometry_is_vacuum_;
+        force_case_.magnetic_field_is_vacuum = stage_magnetic_field_is_vacuum_;
         const bool batched_vacuum =
             iteration_results_ && production_solve_ && vacuum_;
         if (batched_vacuum) {
@@ -5366,7 +5545,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         // Resident iterations return validity flags for large fields. Read
         // the accepted final fields once for derived fields and publication;
         // do not rerun physics or advance the controller to obtain a snapshot.
-        if ((base_geometry_case_.geometry.empty() ||
+        if ((stage_geometry_is_vacuum_ || stage_base_geometry_is_validity_ ||
+             force_case_.magnetic_field_is_vacuum ||
+             base_geometry_case_.geometry.empty() ||
              magnetic_field_case_.base_geometry.empty() ||
              force_case_.magnetic_field.empty()) &&
             stage_index_ + 1 == problem_->stage_shapes().size()) {
@@ -5384,25 +5565,31 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 device_, bytes + magnetic_bytes + base_bytes + 16);
             const auto encoder = device_.CreateCommandEncoder();
             const auto self = shared_from_this();
-            if (base_geometry_case_.geometry.empty())
+            if (stage_geometry_is_vacuum_ ||
+                base_geometry_case_.geometry.empty())
                 batch->append(encoder, fields.buffer, fields.high_offset, bytes,
                               [self](std::span<const float> values) {
                                   self->base_geometry_case_.geometry.assign(
                                       values.begin(), values.end());
+                                  self->stage_geometry_is_vacuum_ = false;
                               });
-            if (force_case_.magnetic_field.empty())
-                batch->append(encoder, magnetic.buffer, magnetic.high_offset,
-                              magnetic_bytes,
-                              [self](std::span<const float> values) {
-                                  self->force_case_.magnetic_field.assign(
-                                      values.begin(), values.end());
-                              });
-            if (magnetic_field_case_.base_geometry.empty())
+            if (force_case_.magnetic_field_is_vacuum ||
+                force_case_.magnetic_field.empty())
+                batch->append(
+                    encoder, magnetic.buffer, magnetic.high_offset,
+                    magnetic_bytes, [self](std::span<const float> values) {
+                        self->force_case_.magnetic_field.assign(values.begin(),
+                                                                values.end());
+                        self->force_case_.magnetic_field_is_vacuum = false;
+                    });
+            if (stage_base_geometry_is_validity_ ||
+                magnetic_field_case_.base_geometry.empty())
                 batch->append(
                     encoder, base.buffer, base.high_offset, base_bytes,
                     [self](std::span<const float> values) {
                         self->magnetic_field_case_.base_geometry.assign(
                             values.begin(), values.end());
+                        self->stage_base_geometry_is_validity_ = false;
                     });
             const auto commands = encoder.Finish();
             device_.GetQueue().Submit(1, &commands);
@@ -6076,6 +6263,9 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
     int geometry_control_passes_ = 0;
     int geometry_control_fallbacks_ = 0;
     std::vector<float> stage_geometry_lo_;
+    bool stage_geometry_is_vacuum_ = false;
+    bool stage_base_geometry_is_validity_ = false;
+    bool stage_magnetic_field_is_vacuum_ = false;
     std::vector<float> stage_base_geometry_lo_;
     std::vector<float> stage_magnetic_field_lo_;
     std::vector<float> stage_r_con_lo_;

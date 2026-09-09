@@ -85,12 +85,16 @@ void update_vacuum(FreeBoundaryOperator<double>& vacuum,
     const int family = modes * stage.ns;
     // NESTOR consumes only the outer two half-grid averages, the LCFS
     // coefficients and the magnetic axis. Reconstruct those slices only.
-    const auto field = [&](int offset, int count) {
+    const auto field = [&](int component) {
+        const int count = 2 * angular;
+        const int offset = fields.magnetic_field_is_vacuum
+                               ? (component - 2) * count
+                               : (component + 1) * half - count;
         return reconstruct(fields.magnetic_field, fields.magnetic_field_lo,
                            offset, count);
     };
-    const auto bu = field(3 * half - 2 * angular, 2 * angular);
-    const auto bv = field(4 * half - 2 * angular, 2 * angular);
+    const auto bu = field(2);
+    const auto bv = field(3);
     std::array<double, 4> edge_averages{};
     vacuum.enqueue_surface_averages(bu.data(), bv.data(), edge_averages.data(),
                                     3, stage.ntheta, stage.nzeta, nullptr);
@@ -112,11 +116,13 @@ void update_vacuum(FreeBoundaryOperator<double>& vacuum,
                                boundary.data() + 2 * modes,
                                boundary.data() + 3 * modes, lcfs.data(), 1,
                                modes, stage.mpol, stage.ntor, nullptr);
-    const auto geometry = [&](int offset) {
+    const auto geometry = [&](int component) {
+        const int offset =
+            component * (fields.geometry_is_vacuum ? angular : points);
         return reconstruct(fields.geometry, fields.geometry_lo, offset,
                            angular);
     };
-    const auto r_axis = geometry(0), z_axis = geometry(points);
+    const auto r_axis = geometry(0), z_axis = geometry(1);
     std::vector<double> axis(2 * stage.nzeta);
     vacuum.enqueue_axis_extract(r_axis.data(), z_axis.data(), axis.data(),
                                 stage.ntheta, stage.nzeta, nullptr);
@@ -140,16 +146,21 @@ void apply_vacuum_force(const wgpu::Device& device,
           force.fields_lo.size() != force.fields.size())))
         throw CumesError("compact vacuum force requires resident full fields");
     const auto geometry = [&](int field, int surfaces) {
-        const int offset = (field + 1) * points - surfaces * angular;
+        constexpr std::array<int, 12> PACKED_ROW{2, -1, -1, 10, 8, -1,
+                                                 5, -1, -1, 11, 9, -1};
+        const int offset = fields.geometry_is_vacuum
+                               ? PACKED_ROW.at(field) * angular
+                               : (field + 1) * points - surfaces * angular;
         return reconstruct(fields.geometry, fields.geometry_lo, offset,
                            surfaces * angular);
     };
     // The shared rBSq kernel needs the last three full-grid rows and two
     // half-grid rows. The edge-force kernel needs only the LCFS row.
     const auto r_e = geometry(0, 3), r_o = geometry(6, 3);
-    const auto pressure =
-        reconstruct(fields.magnetic_field, fields.magnetic_field_lo,
-                    5 * half - 2 * angular, 2 * angular);
+    const auto pressure = reconstruct(
+        fields.magnetic_field, fields.magnetic_field_lo,
+        fields.magnetic_field_is_vacuum ? 4 * angular : 5 * half - 2 * angular,
+        2 * angular);
     std::vector<double> values(4 * angular), rbsq(angular);
     for (int field = 0; field < 4; ++field) {
         for (int point = 0; point < angular; ++point) {

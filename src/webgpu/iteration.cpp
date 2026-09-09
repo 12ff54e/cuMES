@@ -54,6 +54,7 @@ class IterationDispatch
         inverse.state_lo = input.stage.state_lo;
         inverse.device_state = input.device_state;
         inverse.readback_values = !input.compact_fields;
+        inverse.readback_vacuum = prefix_only && input.compact_vacuum;
         inverse.readback = {
             batch, [self = shared_from_this()](ToroidalInverseResult value) {
                 self->inverse_ = std::move(value);
@@ -156,6 +157,8 @@ class IterationDispatch
         in.axisymmetric = input.stage.ntor == 0;
         in.readback_values = !input.geometry_control || !input.compact_fields ||
                              input.refresh_preconditioner;
+        in.readback_validity = prefix_only && input.compact_vacuum &&
+                               !input.refresh_preconditioner;
         shape(in);
         in.delta_s = input.stage.profiles.delta_s;
         in.double_single = input.double_single;
@@ -196,6 +199,8 @@ class IterationDispatch
         // CPU force normalization only consumes fields on refresh passes.
         in.readback_values =
             !input.compact_fields || input.refresh_preconditioner;
+        in.readback_vacuum = prefix_only && input.compact_vacuum &&
+                             !input.refresh_preconditioner;
         shape(in);
         const auto& p = input.stage.profiles;
         in.lamscale = p.lamscale;

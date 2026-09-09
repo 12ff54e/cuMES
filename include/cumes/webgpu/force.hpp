@@ -24,6 +24,9 @@ struct AxisymmetricForceCase {
     bool readback = true;
     // Batched vacuum coupling needs only the LCFS of the first four fields.
     bool readback_lcfs = false;
+    // Host-only vacuum snapshots; resident operator inputs remain full.
+    bool geometry_is_vacuum = false;
+    bool magnetic_field_is_vacuum = false;
     int ns = 0;
     int ntheta = 0;
     int nzeta = 1;

@@ -20,6 +20,9 @@ struct BaseGeometryResult;
 struct BaseGeometryCase {
     bool device_control = false;
     bool readback_values = true;
+    // Batched host validity checks need only gsqrt and guv. Retain full
+    // readback with device_control or above the GPU finite-scan range.
+    bool readback_validity = false;
     bool axisymmetric = false;
     BatchedReadback<BaseGeometryResult> readback;
     DeviceFields device_geometry;
@@ -37,10 +40,13 @@ struct BaseGeometryCase {
 };
 
 struct BaseGeometryResult {
+    bool fields_are_validity = false;
+    bool fields_finite = true;
     GeometryControlResult control;
     DeviceFields device_fields;
     // Field-major half-grid order: r12, ru12, zu12, rs, zs, tau, gsqrt,
-    // guu, guv, gvv.
+    // guu, guv, gvv. If fields_are_validity, pack only gsqrt then guv; device
+    // fields always retain the full ten-field layout.
     std::vector<float> fields;
     std::vector<float> fields_lo;
 };
@@ -61,6 +67,10 @@ struct MagneticFieldResult;
 struct MagneticFieldCase {
     // Keep radial profiles but replace full-field vectors with a finite flag.
     bool readback_values = true;
+    // With batched readback, retain just the outer two half-grid rows of
+    // B_theta, B_zeta and total pressure, plus all radial profiles. Requires
+    // ns>=3 and the GPU finite-scan range; otherwise retain full readback.
+    bool readback_vacuum = false;
     BatchedReadback<MagneticFieldResult> readback;
     DeviceFields device_geometry;
     DeviceFields device_base_geometry;
@@ -93,9 +103,13 @@ struct MagneticFieldCase {
 
 struct MagneticFieldResult {
     bool fields_finite = true;
+    bool fields_are_vacuum = false;
     DeviceFields device_fields;
     // Field-major half-grid order: B^theta, B^zeta, B_theta, B_zeta,
-    // total pressure.
+    // total pressure. If fields_are_vacuum, pack only the last two half-grid
+    // rows of B_theta, B_zeta and pressure, in that order. Device fields always
+    // retain the full five-field layout; profile-only readbacks leave these
+    // host vectors empty.
     std::vector<float> fields;
     std::vector<float> fields_lo;
     std::vector<float> chip_h;

@@ -62,6 +62,8 @@ struct DealiasParams {
 static_assert(sizeof(DealiasParams) == 32);
 
 std::string validate_case(const ToroidalInverseCase& input) {
+    if (input.readback_vacuum && !input.readback.batch)
+        return "vacuum geometry readback requires a batch";
     if (input.double_single &&
         (input.radius_reference || input.compensated_geometry ||
          input.compensated_toroidal_geometry)) {
@@ -1020,7 +1022,55 @@ void enqueue_toroidal_inverse(const wgpu::Device& device,
             field_slice(resident.device_geometry, fields, total_points);
         resident.device_z_con = field_slice(
             resident.device_geometry, fields + total_points, total_points);
-        if (!input.readback_values) {
+        resident.geometry_is_vacuum =
+            input.readback_vacuum && input.ns >= 3 &&
+            result_bytes / sizeof(float) <= 65535U * 256U;
+        if (resident.geometry_is_vacuum) {
+            const auto angular = total_points / input.ns;
+            auto host = std::make_shared<ToroidalInverseResult>(resident);
+            host->geometry.resize(12 * angular);
+            if (input.double_single) host->geometry_lo.resize(12 * angular);
+            // Source field, radial row, row count, packed angular-row offset.
+            const std::array<std::array<std::size_t, 4>, 8> slices{
+                {{0, 0, 1, 0},
+                 {1, 0, 1, 1},
+                 {0, std::size_t(input.ns - 3), 3, 2},
+                 {6, std::size_t(input.ns - 3), 3, 5},
+                 {4, std::size_t(input.ns - 1), 1, 8},
+                 {10, std::size_t(input.ns - 1), 1, 9},
+                 {3, std::size_t(input.ns - 1), 1, 10},
+                 {9, std::size_t(input.ns - 1), 1, 11}}};
+            for (int word = 0; word < (input.double_single ? 2 : 1); ++word) {
+                for (const auto& slice : slices) {
+                    const auto source = word * high_values +
+                                        slice[0] * total_points +
+                                        slice[1] * angular;
+                    input.readback.batch->append(
+                        encoder, result_buffer, source * sizeof(float),
+                        slice[2] * angular * sizeof(float),
+                        [host, word, offset = slice[3] * angular](
+                            std::span<const float> values) {
+                            auto& target =
+                                word ? host->geometry_lo : host->geometry;
+                            std::copy(values.begin(), values.end(),
+                                      target.begin() + offset);
+                        });
+                }
+            }
+            const auto commands = encoder.Finish();
+            queue.Submit(1, &commands);
+            enqueue_field_finite(
+                device, {result_buffer, result_bytes / sizeof(float), 0, 0},
+                input.readback.batch,
+                [host, callback = std::move(callback)](std::string error,
+                                                       bool finite) {
+                    host->geometry_finite = finite;
+                    callback(std::move(error), std::move(*host));
+                });
+            input.readback.publish_device(std::move(resident));
+            return;
+        }
+        if (!input.readback_values && !input.readback_vacuum) {
             const auto commands = encoder.Finish();
             queue.Submit(1, &commands);
             enqueue_field_finite(

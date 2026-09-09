@@ -4,6 +4,7 @@
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -628,8 +629,40 @@ void enqueue_magnetic_field(const wgpu::Device& device,
         const auto fields = result_values - 2 * half_surfaces;
         resident.device_fields = {result_buffer, fields, 0,
                                   result_values * sizeof(float)};
-        if (!input.readback_values) {
+        // Preserve the full snapshot when the existing finite scan cannot
+        // cover every output word, including the interior and radial profiles.
+        const bool compact =
+            (!input.readback_values || input.readback_vacuum) &&
+            result_bytes / sizeof(float) <= 65535U * WORKGROUP_SIZE &&
+            (!input.readback_vacuum || input.ns >= 3);
+        resident.fields_are_vacuum = compact && input.readback_vacuum;
+        if (compact) {
             auto host = std::make_shared<MagneticFieldResult>(resident);
+            if (resident.fields_are_vacuum) {
+                const auto edge_points = 2 * n_z_n_t;
+                host->fields.resize(3 * edge_points);
+                if (input.double_single) {
+                    host->fields_lo.resize(3 * edge_points);
+                }
+                for (int word = 0; word < (input.double_single ? 2 : 1);
+                     ++word) {
+                    for (int field = 0; field < 3; ++field) {
+                        const auto first = word * result_values +
+                                           (field + 3) * half_points -
+                                           edge_points;
+                        input.readback.batch->append(
+                            encoder, result_buffer, first * sizeof(float),
+                            edge_points * sizeof(float),
+                            [host, word, field,
+                             edge_points](std::span<const float> values) {
+                                auto& target =
+                                    word ? host->fields_lo : host->fields;
+                                std::copy(values.begin(), values.end(),
+                                          target.begin() + field * edge_points);
+                            });
+                    }
+                }
+            }
             const auto profile_bytes = 2 * half_surfaces * sizeof(float);
             input.readback.batch->append(
                 encoder, result_buffer, fields * sizeof(float), profile_bytes,
@@ -657,8 +690,8 @@ void enqueue_magnetic_field(const wgpu::Device& device,
             enqueue_field_finite(device, all, input.readback.batch,
                                  [callback = std::move(callback), host](
                                      std::string error, bool finite) {
-                                     // Profile slices decode before this final
-                                     // status slice.
+                                     // Field/profile slices decode before this
+                                     // final status slice.
                                      host->fields_finite = finite;
                                      callback(std::move(error),
                                               std::move(*host));

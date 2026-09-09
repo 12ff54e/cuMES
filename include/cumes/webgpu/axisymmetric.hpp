@@ -25,6 +25,9 @@ struct AxisymmetricInverseCase {
 
 struct AxisymmetricInverseResult {
     bool geometry_finite = true;
+    // Packed vacuum rows: axis R/Z; outer three R even/odd rows; LCFS
+    // Z_theta even/odd and R_theta even/odd (12 angular rows altogether).
+    bool geometry_is_vacuum = false;
     DeviceFields device_r_con;
     DeviceFields device_z_con;
     DeviceFields device_geometry;

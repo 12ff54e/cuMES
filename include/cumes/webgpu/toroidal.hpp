@@ -17,6 +17,7 @@ using ToroidalInverseResult = AxisymmetricInverseResult;
 struct ToroidalInverseCase {
     // Batched resident solves can replace host vectors with a GPU finite scan.
     bool readback_values = true;
+    bool readback_vacuum = false;
     // A pending descent state is consumed without mapping. Axis extrapolation
     // is applied by index selection; the host mirror is updated at the fence.
     DeviceFields device_state;

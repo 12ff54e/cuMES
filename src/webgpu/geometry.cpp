@@ -4,6 +4,7 @@
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -512,8 +513,45 @@ void enqueue_base_geometry(const wgpu::Device& device,
         BaseGeometryResult resident;
         resident.device_fields = {result_buffer, result_values, 0,
                                   result_values * sizeof(float)};
+        resident.fields_are_validity =
+            input.readback_validity && !input.device_control &&
+            result_bytes / sizeof(float) <= 65535U * WORKGROUP_SIZE;
         auto host = std::make_shared<BaseGeometryResult>(resident);
-        if (input.readback_values || !input.device_control) {
+        if (resident.fields_are_validity) {
+            host->fields.resize(2 * half_points);
+            if (input.double_single) host->fields_lo.resize(2 * half_points);
+            for (int word = 0; word < (input.double_single ? 2 : 1); ++word) {
+                for (int field = 0; field < 2; ++field) {
+                    const auto first = word * result_values +
+                                       (field == 0 ? 6 : 8) * half_points;
+                    input.readback.batch->append(
+                        encoder, result_buffer, first * sizeof(float),
+                        half_points * sizeof(float),
+                        [host, word, field,
+                         half_points](std::span<const float> values) {
+                            auto& target =
+                                word ? host->fields_lo : host->fields;
+                            std::copy(values.begin(), values.end(),
+                                      target.begin() + field * half_points);
+                        });
+                }
+            }
+            const auto commands = encoder.Finish();
+            queue.Submit(1, &commands);
+            // Scan both complete word planes, including all omitted fields.
+            enqueue_field_finite(
+                device, {result_buffer, result_bytes / sizeof(float), 0, 0},
+                input.readback.batch,
+                [callback = std::move(callback), host](std::string error,
+                                                       bool finite) {
+                    host->fields_finite = finite;
+                    callback(std::move(error), std::move(*host));
+                });
+            input.readback.publish_device(std::move(resident));
+            return;
+        }
+        if (input.readback_values || input.readback_validity ||
+            !input.device_control) {
             input.readback.batch->append(
                 encoder, result_buffer, 0, result_bytes,
                 [host, callback, control = input.device_control,

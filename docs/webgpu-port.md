@@ -118,9 +118,14 @@ NESTOR solve, and uploads only the four corrected LCFS force rows before the
 suffix. The force readback contains only those four rows plus flags from a
 finite scan of every force word. Rejected geometry discards the pending
 continuation before the vacuum update. The coupling reconstructs only the
-axis, boundary coefficients and outer rows it needs; full geometry/magnetic
-readbacks and the native bridge kernels' reduction order remain.
-`&field_readbacks=full` restores full force and velocity snapshots.
+axis, boundary coefficients and outer rows it needs. Inverse readback carries
+only the required axis/LCFS rows. On ordinary non-refresh passes, base geometry
+returns the complete gsqrt/guv planes for the original host Jacobian gate,
+and magnetic fields return their outer two rows plus radial profiles. GPU
+finite scans retain checks on omitted fields and both precision words. Refresh
+passes keep full base/magnetic arrays for normalization; final accepted fields
+are downloaded once for output. The native bridge and reduction order remain.
+`&field_readbacks=full` restores full field and velocity snapshots.
 `&resident=0`, `&fences=1`, or `&compare_fft=1` selects the separate-dispatch
 free-boundary path for trajectory comparisons. Axisymmetric constraint
 filtering retains its existing shader; buffer copies adapt its force-plane
@@ -154,7 +159,10 @@ JSON files are served as lazy preset assets; no field grids are shipped.
 bridge kernels for Wasm memory and converts WebGPU high/low words at the
 handover. The WebGPU backend keeps geometry, fields, integrals and the Laplace
 assembly resident, maps matrix/RHS together for Wasm-double LU, uploads the
-potential, then maps the reconstructed outputs for the existing LCFS coupling.
+potential, then maps pressure and surface integrals for the existing LCFS
+coupling. Other reconstructed fields remain on the GPU, with their finite
+checks preserved. Both HOST/Wasm and WebGPU cache immutable potential Fourier
+factors at setup, preserving their own arithmetic and ordered sums.
 Full/partial update reuse and activation/restart state are shared. Asyncify yields
 the worker's host controller while the two GPU batches complete. The HOST path
 runs its kernels in the same worker.

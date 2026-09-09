@@ -570,6 +570,7 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
         update.sign_of_jacobian = DeviceParams<T>::SIGN_JACOBIAN;
         update.net_toroidal_current = net_toroidal_current;
         update.full_update = impl_->full_update;
+        update.readback_all_fields = false;
         impl_->gpu_result = impl_->gpu_solver->update_blocking(update);
         if (impl_->gpu_result.out_of_bounds)
             throw CumesError(
