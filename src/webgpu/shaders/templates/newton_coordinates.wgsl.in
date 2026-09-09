@@ -1,0 +1,126 @@
+// Paired trial states for a scalar-f32 frozen preconditioned residual oracle.
+struct Params {
+    ns: u32, mpol: u32, size: u32, source: u32,
+    base: u32, trial: u32, rhs: u32, positive: u32,
+    negative: u32, result: u32, control: u32, destination: u32,
+    count: u32, low: u32, paired: u32, normalized: u32,
+    scale: f32, central: u32, pad0: u32, pad1: u32,
+}
+@group(0) @binding(0) var<storage, read_write> data: array<f32>;
+@group(0) @binding(1) var<storage, read> source: array<f32>;
+@group(0) @binding(2) var<uniform> p: Params;
+var<workgroup> maxima: array<f32, 256>;
+var<workgroup> validity: array<u32, 256>;
+fn finite(x: f32) -> bool { return (bitcast<u32>(x) & 0x7f800000u) != 0x7f800000u; }
+fn is_active(i: u32) -> bool {
+    let points = p.size / 6u;
+    let component = i / points;
+    let point = i % points;
+    let m = point / p.ns;
+    let j = point % p.ns;
+    if (component == 2u) { return m > 0u && j > 0u; }
+    if (j == p.ns - 1u || (j == 0u && m > 0u)) { return false; }
+    if (component == 0u) { return true; }
+    if (component == 1u) { return m > 0u; }
+    return false;
+}
+fn basis(i: u32) -> f32 {
+    let m = (i % (p.size / 6u)) / p.ns;
+    return select(1.4142135623730951, 1.0, m == 0u);
+}
+@compute @workgroup_size(256)
+fn pack(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= p.size) { return; }
+    data[p.destination + id.x] = select(0.0, source[p.source + id.x], is_active(id.x));
+}
+@compute @workgroup_size(256)
+fn difference_scale(@builtin(local_invocation_index) lane: u32) {
+    var largest = 0.0;
+    var invalid = 0u;
+    for (var i = lane; i < p.size; i += 256u) {
+        let value = select(0.0, source[p.source + i] * basis(i), is_active(i));
+        invalid |= select(1u, 0u, finite(value));
+        largest = max(largest, abs(value));
+    }
+    maxima[lane] = largest; validity[lane] = invalid;
+    workgroupBarrier();
+    for (var stride = 128u; stride > 0u; stride /= 2u) {
+        if (lane < stride) {
+            maxima[lane] = max(maxima[lane], maxima[lane + stride]);
+            validity[lane] |= validity[lane + stride];
+        }
+        workgroupBarrier();
+    }
+    if (lane == 0u) {
+        var scale = 0.0;
+        if (maxima[0] > 0.0) { scale = p.scale / maxima[0]; }
+        data[p.control] = scale;
+        data[p.control + 1u] = select(0.0, 1.0, validity[0] == 0u && finite(scale));
+    }
+}
+@compute @workgroup_size(256)
+fn trial(@builtin(global_invocation_id) id: vec3<u32>) {
+    let i = id.x;
+    if (i >= p.size) { return; }
+    // Dependent m=1 axis coefficients use their first off-axis value, as in
+    // the existing inverse/descent operators; they are never independent DOFs.
+    let point = i % (p.size / 6u);
+    let m = point / p.ns;
+    let index = select(i, i + 1u, point % p.ns == 0u && m == 1u);
+    let q = select(0.0, source[p.source + index], is_active(index));
+    var amount = p.scale;
+    if (p.normalized != 0u) { amount *= data[p.control]; }
+    let base = words(data[p.base + index], data[p.base + p.size + index]);
+    var value = base;
+    if (q != 0.0 && amount != 0.0) {
+        let increment = scale(scale(real(q), amount, i), basis(index), i);
+        value = add(base, increment, i);
+    }
+    data[p.trial + i] = hi(value);
+    data[p.trial + p.size + i] = lo(value);
+}
+@compute @workgroup_size(1)
+fn check_control() {
+    // Reject ambiguous geometry instead of changing the host's fallback gate.
+    var valid = source[p.source + 5u] == 0.0 && source[p.source + 6u] == 0.0 && source[p.source + 7u] == 0.0;
+    for (var record = 0u; record < 3u; record++) {
+        for (var c = 0u; c < 3u; c++) {
+            valid = valid && source[p.source + 8u + 9u * record + 6u + c] == 0.0;
+        }
+    }
+    if (!valid) { data[p.control + 1u] = 0.0; }
+}
+@compute @workgroup_size(256)
+fn check_values(@builtin(local_invocation_index) lane: u32) {
+    var invalid = 0u;
+    for (var i = lane; i < p.count; i += 256u) {
+        invalid |= select(1u, 0u, finite(source[p.source + i]));
+        if (p.paired != 0u) { invalid |= select(1u, 0u, finite(source[p.low + i])); }
+    }
+    validity[lane] = invalid;
+    workgroupBarrier();
+    for (var stride = 128u; stride > 0u; stride /= 2u) {
+        if (lane < stride) { validity[lane] |= validity[lane + stride]; }
+        workgroupBarrier();
+    }
+    if (lane == 0u && validity[0] != 0u) { data[p.control + 1u] = 0.0; }
+}
+@compute @workgroup_size(1)
+fn check_preconditioner() {
+    for (var m = 0u; m < p.mpol; m++) {
+        if (source[p.source + p.size + m] != 0.0) { data[p.control + 1u] = 0.0; }
+    }
+}
+@compute @workgroup_size(256)
+fn difference(@builtin(global_invocation_id) id: vec3<u32>) {
+    let i = id.x;
+    if (i >= p.size) { return; }
+    var value = 0.0;
+    if (data[p.control + 1u] == 0.0) { value = bitcast<f32>(0x7fc00000u | p.pad0); }
+    else if (data[p.control] != 0.0) {
+        let negative = select(p.rhs, p.negative, p.central != 0u);
+        value = (data[negative + i] - data[p.positive + i]) /
+            (select(1.0, 2.0, p.central != 0u) * data[p.control]);
+    }
+    data[p.result + i] = value;
+}

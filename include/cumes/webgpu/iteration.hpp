@@ -76,4 +76,19 @@ void enqueue_iteration_prefix(const wgpu::Device& device,
                               const std::shared_ptr<ReadbackBatch>& batch,
                               IterationPrefixCallback callback);
 
+struct IterationProbeResult {
+    DeviceFields preconditioned, inverse, magnetic, control;
+};
+
+// Synchronously enqueue a frozen fixed-boundary residual evaluation without
+// host readback or controller/cache commits. Device views alias operator
+// scratch and must be consumed before another evaluation. Geometry ambiguity
+// flags are exposed so a probe can reject them conservatively.
+// control is a caller-owned 35-float buffer: geometry status (8) followed by
+// three full residual-norm records (9 each). Every record is copied before the
+// corresponding operator scratch is reused.
+IterationProbeResult enqueue_iteration_probe(const wgpu::Device& device,
+                                             IterationCase input,
+                                             const DeviceFields& control);
+
 }  // namespace cumes::webgpu

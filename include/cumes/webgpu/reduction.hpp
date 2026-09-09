@@ -26,7 +26,8 @@ void enqueue_geometry_control(
     bool axisymmetric,
     int axis_points,
     const std::shared_ptr<ReadbackBatch>& batch,
-    std::function<void(std::string, GeometryControlResult)> callback);
+    std::function<void(std::string, GeometryControlResult)> callback,
+    std::function<void(DeviceFields)> device_ready = {});
 
 struct FieldStatus {
     bool finite = true;

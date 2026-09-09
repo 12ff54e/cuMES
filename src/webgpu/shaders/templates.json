@@ -47,5 +47,9 @@
   {
     "template": "templates/residual_norm.wgsl.in",
     "single": "residual_norm.wgsl"
+  },
+  {
+    "template": "templates/newton_coordinates.wgsl.in",
+    "paired": "newton_coordinates.wgsl"
   }
 ]

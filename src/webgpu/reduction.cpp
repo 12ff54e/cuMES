@@ -15,7 +15,8 @@ void enqueue_geometry_control(
     bool axisymmetric,
     int axis_points,
     const std::shared_ptr<ReadbackBatch>& batch,
-    std::function<void(std::string, GeometryControlResult)> callback) {
+    std::function<void(std::string, GeometryControlResult)> callback,
+    std::function<void(DeviceFields)> device_ready) {
     const auto size = fields ? fields.buffer.GetSize() : 0;
     const auto fits = [&](std::uint64_t offset) {
         return offset % sizeof(float) == 0 && offset <= size &&
@@ -101,6 +102,7 @@ void enqueue_geometry_control(
         });
     const auto commands = encoder.Finish();
     device.GetQueue().Submit(1, &commands);
+    if (device_ready) device_ready({output, 8, 0, 0});
 }
 
 void enqueue_field_finite(const wgpu::Device& device,

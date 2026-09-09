@@ -23,7 +23,11 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
     using Decode = std::function<void(std::span<const float>)>;
     using Complete = std::function<void(std::string)>;
 
-    ReadbackBatch(const wgpu::Device& device, std::uint64_t capacity) {
+    ReadbackBatch(const wgpu::Device& device,
+                  std::uint64_t capacity,
+                  bool readback_enabled = true)
+        : readback_enabled_(readback_enabled) {
+        if (!readback_enabled_) return;
         wgpu::BufferDescriptor descriptor{};
         descriptor.label = "cuMES iteration readback batch";
         capacity_ = (capacity + 7) & ~std::uint64_t{7};
@@ -38,6 +42,9 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
                 std::uint64_t source_offset,
                 std::uint64_t bytes,
                 Decode decode) {
+        // Enqueue-only numerical probes use the same operator DAG and device
+        // callbacks, without allocating/copying host observation snapshots.
+        if (!readback_enabled_) return;
         if (mapping_ || bytes == 0 || bytes % sizeof(float) != 0 ||
             source_offset % sizeof(float) != 0 || used_ > capacity_ ||
             bytes > capacity_ - used_) {
@@ -51,6 +58,10 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
     }
 
     void map(Complete complete) {
+        if (!readback_enabled_) {
+            complete("device-only iteration batch cannot be mapped");
+            return;
+        }
         if (mapping_) {
             complete("iteration readback is already mapping");
             return;
@@ -109,6 +120,7 @@ class ReadbackBatch : public std::enable_shared_from_this<ReadbackBatch> {
     std::vector<Slice> slices_;
     std::uint64_t used_ = 0;
     bool mapping_ = false;
+    bool readback_enabled_ = true;
     std::string error_;
 };
 
