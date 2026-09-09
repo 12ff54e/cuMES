@@ -32,6 +32,26 @@ int main() {
 
     // ---- initial state ----
     {
+        IterationController<double> host({0.9, 1e-12, 0.0});
+        auto device = host;
+        cumes::JacobianStatus<double> invalid;
+        invalid.min_oriented = -1.0;
+        invalid.max_abs = 2.0;
+        check(host.jacobian_invalid(invalid, 30), "host Jacobian rejection");
+        device.reject_jacobian();
+        check(host.delta_t() == device.delta_t() &&
+                  host.restart_anchor() == device.restart_anchor() &&
+                  host.output_anchor() == device.output_anchor() &&
+                  host.effective_iteration() == device.effective_iteration() &&
+                  host.bad_jacobian_count() == device.bad_jacobian_count() &&
+                  host.restart_events().size() ==
+                      device.restart_events().size() &&
+                  host.restart_events().back().iteration ==
+                      device.restart_events().back().iteration,
+              "device verdict preserves exact host restart bookkeeping");
+    }
+
+    {
         IterationController<double> ctl({0.9, 1e-14, 0.0});
         check(ctl.effective_iteration() == 1, "initial iter2 == 1");
         check(ctl.restart_anchor() == 1, "initial iter1 == 1");

@@ -5,6 +5,43 @@ algorithm. All computation runs on GPU; the CPU host is a thin orchestrator.
 This is a pedagogical / scaffolding project — not production-grade, but the
 architecture and physics are real.
 
+An experimental browser backend is available through Emscripten and
+emdawnwebgpu. [Open the web solver](https://12ff54e.github.io/cuMES/).
+It provides a CUDA-free build and the complete fixed-boundary
+iteration DAG for both axisymmetric and folded 3-D equilibria: transforms,
+half-grid geometry, fixed-iota and prescribed-current magnetic closure,
+radial/poloidal/toroidal force, spectral-condensation constraint, full `(m,n)`
+preconditioner, accelerated descent, controller recovery, and multigrid
+transfer. The default browser page is a shared fixed/free-boundary editor. Fixed
+boundaries offer Solovev and W7-X presets; free boundaries offer coil presets
+and uploads. Three-dimensional boundaries have a signed Fourier-mode editor
+with a linked toroidal cross-section and orbitable preview. For axisymmetric
+Solovev shapes, **Fourier** adjusts the active `RBC(0,m)` and `ZBS(0,m)`
+coefficients directly; **Contour** moves periodic control points and projects
+the free contour into the supported Fourier basis, capped at `m=5`. Both modes
+update a live R-Z preview before running a three-grid equilibrium locally on
+the user's GPU. The page displays the converged flux surfaces in-place and
+offers the complete schema-v8 result as a download. A separate browser gate
+runs the controller-complete three-stage Solovev solve with persistent
+velocity, constraint, preconditioner, and rollback state. On the NVIDIA TITAN
+Xp through Dawn's Vulkan backend it converges in `72 -> 31 -> 247` effective
+iterations.
+The shipped W7-X case executes the same integrated path in the browser,
+including its prescribed-current closure; its iteration-3 residual triple
+matches native CUDA mixed-float at `(1.141e+01, 7.079e+00, 1.012e-01)`. A
+`?preset=w7x&grids=3` editor setup runs all three W7-X stages; the
+precision-critical state, transforms, geometry, magnetic field, force,
+constraint, residual, and descent values use paired `f32` words. On the
+NVIDIA TITAN Xp through Dawn's Vulkan backend, the hardware-qualified
+`1e-12` run converges in `1421 -> 3220 -> 2964` effective iterations (7605
+total), with final residual `(1.000e-12, 2.115e-13, 1.528e-13)`.
+The converged spectral state and run provenance are published as a version-8
+native binary through a browser download link and verified by an in-Wasm
+round trip. The download also contains the complete half/full-grid scientific
+field block and is accepted by the standard plotting workflow.
+See
+[the WebGPU port status](docs/webgpu-port.md).
+
 **Independent comparison implementation:** [`proximafusion/vmecpp`](https://github.com/proximafusion/vmecpp)
 (CPU-based C++ VMEC solver) at tag 0.7.0. cuMES convergence is defined by its
 own discrete force residuals and validity gates; vmecpp is a diagnostic
@@ -50,6 +87,73 @@ case and GPU; it is off by default. The qualified Solovev trajectory becomes
 [19-case qualification](docs/axisymmetric-newton-qualification.md) for both
 GPUs' gains and regressions. Float, free-boundary and nonaxisymmetric requests
 are rejected before GPU setup.
+
+The current WebGPU milestone builds separately. WGSL arithmetic remains
+`f32`, with paired words used by the strict W7-X path.
+
+The explicit `?preset=w7x&precision=float` example uses main's radius-reference
+storage and selective odd R/Z compensation at `ftol=1e-5`. It converges the
+single-grid browser test in 1256 iterations. The default `?preset=w7x` retains
+paired-f32 arithmetic and `1e-12`; see the [WebGPU precision notes](docs/webgpu-port.md#scalar-f32-radius-reference-and-selective-geometry-correction).
+
+```bash
+source "/lustre/qzhong/emsdk/emsdk_env.sh"
+export EM_CACHE="$PWD/../tmp/cumes-emscripten-cache"
+emcmake cmake --preset webgpu
+cmake --build --preset webgpu -j
+ctest --preset webgpu
+# open the generated app through the existing nginx file server:
+# http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html
+# or run the numerical conformance/strict Solovev gate:
+# http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?mode=test
+# or open the W7-X single-grid boundary editor (ns=99), then click Run:
+# http://localhost:6969/magnetic-equilibrium-solver/tmp/cumes-build-webgpu/webgpu/cumes_webgpu.html?preset=w7x
+# retain the complete three-grid integration route with &grids=3
+```
+
+The default page is the visual boundary editor. Its preview solve uses an
+interactive mixed-float tolerance of `1e-5`; the `?mode=test` route retains the
+strict `1e-6` Solovev numerical gate and prints `cuMES WebGPU self-test: PASS`
+when dispatch, readback, and convergence agree. The artifact test checks the
+generated HTML/JavaScript/Wasm bundle; browser execution is the numerical gate.
+Converged runs expose both a poloidal cut and an interactive 3-D flux-surface
+mesh reconstructed in the frontend from the solver's six Fourier parity
+families; drag to orbit and use the wheel to zoom.
+Resident 3-D solves batch iteration reads into one mapping; on the tested
+Chrome/RTX 3060 Ti, batching reduced single-grid W7-X from 260 s to 141 s;
+subsequent host-copy/upload optimization completed a profiled run in 99.7 s,
+retaining 2812 iterations and `1e-12` convergence. An alternating old/new
+benchmark measured a further 28.4% reduction in iteration time. See the
+[WebGPU measurements](docs/webgpu-port.md#host-data-path-optimization-after-profiling-2026-09-06).
+Persistent GPU constraint/preconditioner/descent state now reduces warmed
+uploads from 4.37 MB to about 20 KB per iteration. Opt-in `&gpu_norms=1`
+also moves residual reductions to the GPU; qualified direct/FFT W7-X runs
+took 92.3/104.0 s before field-readback compaction. GPU finite scans now keep
+inverse geometry and most magnetic fields on device, reducing readbacks from
+35.42 to 14.29 MB/iteration. Latest direct/FFT GPU-norm runs took 64.8/74.0 s
+with identical per-route controller trajectories, exported fields and `1e-12`
+convergence.
+An alternating full/compact benchmark measured 31.9% lower iteration time.
+See the [compact-field measurements](docs/webgpu-port.md#compact-magnetic-readbacks-2026-09-06).
+Iteration control remains on the CPU; see the
+[residency and reduction qualification](docs/webgpu-port.md#persistent-iteration-state-and-gpu-residual-norms-2026-09-06).
+
+Opt-in `&gpu_control=jacobian` moves the geometry acceptance/restart gate into
+shaders. With `&gpu_norms=1`, readbacks fall further to 6.15 MB/iteration;
+an alternating benchmark measured another 24.6% lower iteration time. The
+qualified direct/FFT runs took 54.9/58.0 s with identical per-route trajectories
+and output.
+Further compact validation keeps velocity and constraint intermediates on
+device: readbacks are now 1.69 MB/iteration, with another 14.8% measured
+iteration-time reduction. The webpage log now ends with min/max/median/average
+host, readback-wait and GPU-compute timings (when timestamps are supported).
+Use `&timing=0` to disable measurement overhead.
+Parallel current integrands preserve the ordered sums and reduce iteration
+time by a further 9.9% in A/B testing; the qualified optimized direct W7-X run
+took 38.9 s with the same trajectory and output. These timings are from the
+user's Chrome/RTX 3060 Ti, not a cross-device performance guarantee.
+Damping, convergence classification and checkpoint rollback remain on the CPU.
+See [shader-control qualification](docs/webgpu-port.md#shader-jacobian-control-2026-09-06).
 
 ### In-process library
 
@@ -233,6 +337,7 @@ the convergence decision.
 | `fast` | fast-double | opt-in `--use_fast_math`, dump machinery compiled out |
 | `debug` | debug-double | precise + `-G` |
 | `sanitizer` | verify-double | compute-sanitizer memcheck/initcheck/racecheck/synccheck + ASan/UBSan host twins |
+| `webgpu` | mixed-float | Emscripten + emdawnwebgpu; experimental fixed-boundary axisymmetric/3-D solver |
 
 The backend matrix (`nobackend`, `netcdf-only`, `hdf5-only`) rounds out the
 optional-backend presets. Every computation is `template<typename T>`; `Real`

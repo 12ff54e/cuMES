@@ -136,6 +136,20 @@
         "CUMES_USE_FLOAT": "OFF",
         "CMAKE_CUDA_FLAGS": "-lineinfo -Xptxas=-v"
       }
+    },
+    {
+      "name": "webgpu",
+      "displayName": "WebGPU — Emscripten + emdawnwebgpu (mixed-float)",
+      "description": "Browser/Wasm build. Invoke through emcmake so CMake uses the Emscripten toolchain.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../tmp/cumes-build-webgpu",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUMES_BACKEND": "WEBGPU",
+        "CUMES_PRECISION_POLICY": "mixed-float",
+        "CUMES_USE_FLOAT": "ON",
+        "CUMES_WARNINGS_AS_ERRORS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -178,6 +192,10 @@
     {
       "name": "profiling",
       "configurePreset": "profiling"
+    },
+    {
+      "name": "webgpu",
+      "configurePreset": "webgpu"
     }
   ],
   "testPresets": [
@@ -191,6 +209,13 @@
     {
       "name": "sanitizer",
       "configurePreset": "sanitizer",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "webgpu",
+      "configurePreset": "webgpu",
       "output": {
         "outputOnFailure": true
       }

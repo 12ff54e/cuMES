@@ -25,28 +25,42 @@
 #ifndef CUMES_SRC_FREE_BOUNDARY_IMPL_CUH_
 #define CUMES_SRC_FREE_BOUNDARY_IMPL_CUH_
 
+#include "cumes/core/error.hpp"
 #include "cumes/physics/free_boundary_operator.hpp"
 #include "cumes/physics/free_boundary_policy.hpp"
+#ifndef CUMES_VACUUM_HOST
 #include "cumes/runtime/cuda_status.hpp"
+#endif
 #include "vfield/common/sizes.hpp"
 #include "vfield/free_boundary/vacuum_field_solver.hpp"
+#ifdef CUMES_VACUUM_WEBGPU
+#include "vfield/webgpu/solver.hpp"
+
+#include <type_traits>
+#endif
 #include "vfield/makegrid/makegrid.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 
 namespace cumes {
 namespace {
 
+#ifndef CUMES_VACUUM_HOST
 constexpr int BLOCK_SIZE = 256;
 
 inline int grid_size(int n) {
     return (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Kernels
@@ -56,13 +70,14 @@ inline int grid_size(int n) {
 // vmecpp's exact accumulation order (l-major/k-minor ascending over the
 // reduced subset, per-element multiply by the trapezoid weight).
 template <class T>
-__global__ void surface_averages_kernel(const T* __restrict__ bsubu,
-                                        const T* __restrict__ bsubv,
-                                        T* __restrict__ out,
-                                        int ns,
-                                        int ntheta,
-                                        int nzeta) {
-    const int jh = blockIdx.x * blockDim.x + threadIdx.x;
+VFIELD_KERNEL void surface_averages_kernel(const T* __restrict__ bsubu,
+                                           const T* __restrict__ bsubv,
+                                           T* __restrict__ out,
+                                           int ns,
+                                           int ntheta,
+                                           int nzeta,
+                                           int host_index) {
+    const int jh = vfield::kernel_index(host_index);
     if (jh >= ns - 1) return;
     const int nred = ntheta / 2 + 1;
     const T w = T(1.0) / T(nzeta * (nred - 1));
@@ -89,16 +104,17 @@ __global__ void surface_averages_kernel(const T* __restrict__ bsubu,
 // mscale*nscale factors, while NESTOR's boundary arrays use the unscaled
 // Fourier coefficients, so remove those factors at the handover.
 template <class T>
-__global__ void lcfs_repack_kernel(const T* __restrict__ rcc,
-                                   const T* __restrict__ rss,
-                                   const T* __restrict__ zsc,
-                                   const T* __restrict__ zcs,
-                                   T* __restrict__ out,
-                                   int ns,
-                                   int mpol,
-                                   int ntor) {
+VFIELD_KERNEL void lcfs_repack_kernel(const T* __restrict__ rcc,
+                                      const T* __restrict__ rss,
+                                      const T* __restrict__ zsc,
+                                      const T* __restrict__ zcs,
+                                      T* __restrict__ out,
+                                      int ns,
+                                      int mpol,
+                                      int ntor,
+                                      int host_index) {
     const int mnsize = mpol * (ntor + 1);
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int i = vfield::kernel_index(host_index);
     if (i >= mnsize) return;
     const int m = i % mpol;
     const int n = i / mpol;
@@ -116,12 +132,13 @@ __global__ void lcfs_repack_kernel(const T* __restrict__ rcc,
 // r_axis[k] = R(j=0, l=0, k); z_axis[k] = Z(j=0, l=0, k) — the even-parity
 // part (the odd part vanishes at theta=0 by construction).
 template <class T>
-__global__ void axis_extract_kernel(const T* __restrict__ r_e,
-                                    const T* __restrict__ z_e,
-                                    T* __restrict__ out,
-                                    int ntheta,
-                                    int nzeta) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+VFIELD_KERNEL void axis_extract_kernel(const T* __restrict__ r_e,
+                                       const T* __restrict__ z_e,
+                                       T* __restrict__ out,
+                                       int ntheta,
+                                       int nzeta,
+                                       int host_index) {
+    const int k = vfield::kernel_index(host_index);
     if (k >= nzeta) return;
     out[k] = r_e[k * ntheta];
     out[nzeta + k] = z_e[k * ntheta];
@@ -131,47 +148,55 @@ __global__ void axis_extract_kernel(const T* __restrict__ r_e,
 // is l-major on the reduced grid; the full-grid poloidal index mirrors into
 // the reduced half (stellarator-symmetric). Order mirrors vmecpp :806-812.
 template <class T>
-__global__ void rbsq_kernel(const T* __restrict__ b_sq_vac,
-                            const T* __restrict__ r_e,
-                            const T* __restrict__ r_o,
-                            const T* __restrict__ total_pressure,
-                            T* __restrict__ rbsq,
-                            T* __restrict__ delbsq_sum,
-                            int ns,
-                            int ntheta,
-                            int nzeta,
-                            int nZnT,
-                            T edge_pressure,
-                            T delta_s) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+VFIELD_KERNEL void rbsq_kernel(const T* __restrict__ b_sq_vac,
+                               const T* __restrict__ r_e,
+                               const T* __restrict__ r_o,
+                               const T* __restrict__ total_pressure,
+                               T* __restrict__ rbsq,
+                               T* __restrict__ delbsq_sum,
+                               int ns,
+                               int ntheta,
+                               int nzeta,
+                               int nZnT,
+                               T edge_pressure,
+                               T delta_s,
+                               int host_index) {
+    const int i = vfield::kernel_index(host_index);
     if (i >= nZnT) return;
     const int it = i % ntheta;
     const int iz = i / ntheta;
     const int nred = ntheta / 2 + 1;
     const int l_red = (it < nred) ? it : (ntheta - it);
-    const T outside = b_sq_vac[l_red * nzeta + iz] + edge_pressure;
+    // Stellarator symmetry is (theta, zeta) -> (-theta, -zeta).
+    const int k_red = (it < nred) ? iz : (nzeta - iz) % nzeta;
+    const T outside = b_sq_vac[l_red * nzeta + k_red] + edge_pressure;
     const int base = (ns - 1) * nZnT + i;
     rbsq[i] = outside * (r_e[base] + r_o[base]) / delta_s;
     const T inside = T(1.5) * total_pressure[(ns - 2) * nZnT + i] -
                      T(0.5) * total_pressure[(ns - 3) * nZnT + i];
+#ifdef CUMES_VACUUM_HOST
+    *delbsq_sum += fabs(outside - inside) / T(nZnT);
+#else
     atomicAdd(delbsq_sum, fabs(outside - inside) / T(nZnT));
+#endif
 }
 
 // The vacuum edge force (vmecpp assembleTotalForces :2160-2167): identical
 // increments on the even and odd rows at the LCFS.
 template <class T>
-__global__ void vacuum_edge_force_kernel(T* __restrict__ armn_e,
-                                         T* __restrict__ armn_o,
-                                         T* __restrict__ azmn_e,
-                                         T* __restrict__ azmn_o,
-                                         const T* __restrict__ zu_e,
-                                         const T* __restrict__ zu_o,
-                                         const T* __restrict__ ru_e,
-                                         const T* __restrict__ ru_o,
-                                         const T* __restrict__ rbsq,
-                                         int ns,
-                                         int nZnT) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+VFIELD_KERNEL void vacuum_edge_force_kernel(T* __restrict__ armn_e,
+                                            T* __restrict__ armn_o,
+                                            T* __restrict__ azmn_e,
+                                            T* __restrict__ azmn_o,
+                                            const T* __restrict__ zu_e,
+                                            const T* __restrict__ zu_o,
+                                            const T* __restrict__ ru_e,
+                                            const T* __restrict__ ru_o,
+                                            const T* __restrict__ rbsq,
+                                            int ns,
+                                            int nZnT,
+                                            int host_index) {
+    const int i = vfield::kernel_index(host_index);
     if (i >= nZnT) return;
     const int base = (ns - 1) * nZnT + i;
     const T zu_full = zu_e[base] + zu_o[base];
@@ -186,10 +211,11 @@ __global__ void vacuum_edge_force_kernel(T* __restrict__ armn_e,
 // Scale rCon0/zCon0 over every surface (vmecpp :651-661; nsMaxF = ns for free
 // boundary).
 template <class T>
-__global__ void rcon_decay_kernel(T* __restrict__ rcon0,
-                                  T* __restrict__ zcon0,
-                                  int n) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+VFIELD_KERNEL void rcon_decay_kernel(T* __restrict__ rcon0,
+                                     T* __restrict__ zcon0,
+                                     int n,
+                                     int host_index) {
+    const int i = vfield::kernel_index(host_index);
     if (i >= n) return;
     rcon0[i] *= T(control_policy::VACUUM_CONSTRAINT_DECAY_FACTOR);
     zcon0[i] *= T(control_policy::VACUUM_CONSTRAINT_DECAY_FACTOR);
@@ -209,6 +235,12 @@ struct FreeBoundaryOperator<T>::Impl {
     int ntor;
     vfield::Sizes sizes;
     vfield::VacuumFieldSolver<T> solver;
+#ifdef CUMES_VACUUM_WEBGPU
+    std::unique_ptr<vfield::webgpu::Solver> gpu_solver;
+    vfield::webgpu::Result gpu_result;
+    std::optional<vfield::webgpu::ResidentOutputs> gpu_pending;
+    bool gpu_resident_result = false;
+#endif
     VacuumState state = VacuumState::OFF;
     int nvacskip = 1;
     double activation_threshold = control_policy::VACUUM_ACTIVATION_RESIDUAL;
@@ -319,10 +351,31 @@ struct FreeBoundaryOperator<T>::Impl {
     }
 };
 
-// Launch helper: the six bridge kernels take plain scalar/pointer argument
-// lists; each launch checks the launch error through the centralized
-// boundary. (cudaLaunchKernel is used rather than <<< >>> so the pointer
-// arithmetic stays uniform; bit-identical launch configs either way.)
+// The same typed bridge kernels operate on CUDA or Wasm memory. Keeping
+// execution in one helper also avoids compiler-specific launch syntax here.
+template <class Kernel, class... Args>
+void launch_vacuum_kernel(Kernel kernel,
+                          int count,
+                          [[maybe_unused]] VacuumStream stream,
+                          Args... args) {
+#ifdef CUMES_VACUUM_HOST
+    for (int index = 0; index < count; ++index) kernel(args..., index);
+#else
+    auto values = std::tuple{args..., 0};
+    std::apply(
+        [&](auto&... value) {
+            std::array<void*, sizeof...(Args) + 1> arguments{
+                static_cast<void*>(&value)...};
+            check_cuda(
+                cudaLaunchKernel(reinterpret_cast<const void*>(kernel),
+                                 dim3(grid_size(count)), dim3(BLOCK_SIZE),
+                                 arguments.data(), 0, stream),
+                "vacuum bridge kernel");
+        },
+        values);
+#endif
+}
+
 template <class T>
 void launch_surface_averages(const T* bsubu,
                              const T* bsubv,
@@ -330,10 +383,9 @@ void launch_surface_averages(const T* bsubu,
                              int ns,
                              int ntheta,
                              int nzeta,
-                             cudaStream_t stream) {
-    surface_averages_kernel<T><<<grid_size(ns - 1), BLOCK_SIZE, 0, stream>>>(
-        bsubu, bsubv, out, ns, ntheta, nzeta);
-    check_cuda(cudaGetLastError(), "surface averages");
+                             VacuumStream stream) {
+    launch_vacuum_kernel(&surface_averages_kernel<T>, ns - 1, stream, bsubu,
+                         bsubv, out, ns, ntheta, nzeta);
 }
 
 template <class T>
@@ -345,11 +397,9 @@ void launch_lcfs_repack(const T* rcc,
                         int ns,
                         int mpol,
                         int ntor,
-                        cudaStream_t stream) {
-    lcfs_repack_kernel<T>
-        <<<grid_size(mpol * (ntor + 1)), BLOCK_SIZE, 0, stream>>>(
-            rcc, rss, zsc, zcs, out, ns, mpol, ntor);
-    check_cuda(cudaGetLastError(), "lcfs repack");
+                        VacuumStream stream) {
+    launch_vacuum_kernel(&lcfs_repack_kernel<T>, mpol * (ntor + 1), stream, rcc,
+                         rss, zsc, zcs, out, ns, mpol, ntor);
 }
 
 template <class T>
@@ -358,10 +408,9 @@ void launch_axis_extract(const T* r_e,
                          T* out,
                          int ntheta,
                          int nzeta,
-                         cudaStream_t stream) {
-    axis_extract_kernel<T><<<grid_size(nzeta), BLOCK_SIZE, 0, stream>>>(
-        r_e, z_e, out, ntheta, nzeta);
-    check_cuda(cudaGetLastError(), "axis extract");
+                         VacuumStream stream) {
+    launch_vacuum_kernel(&axis_extract_kernel<T>, nzeta, stream, r_e, z_e, out,
+                         ntheta, nzeta);
 }
 
 template <class T>
@@ -377,11 +426,10 @@ void launch_rbsq(const T* b_sq_vac,
                  int nZnT,
                  T edge_pressure,
                  T delta_s,
-                 cudaStream_t stream) {
-    rbsq_kernel<T><<<grid_size(nZnT), BLOCK_SIZE, 0, stream>>>(
-        b_sq_vac, r_e, r_o, total_pressure, rbsq, delbsq_sum, ns, ntheta, nzeta,
-        nZnT, edge_pressure, delta_s);
-    check_cuda(cudaGetLastError(), "rbsq");
+                 VacuumStream stream) {
+    launch_vacuum_kernel(&rbsq_kernel<T>, nZnT, stream, b_sq_vac, r_e, r_o,
+                         total_pressure, rbsq, delbsq_sum, ns, ntheta, nzeta,
+                         nZnT, edge_pressure, delta_s);
 }
 
 template <class T>
@@ -396,10 +444,10 @@ void launch_edge_force(T* armn_e,
                        const T* rbsq,
                        int ns,
                        int nZnT,
-                       cudaStream_t stream) {
-    vacuum_edge_force_kernel<T><<<grid_size(nZnT), BLOCK_SIZE, 0, stream>>>(
-        armn_e, armn_o, azmn_e, azmn_o, zu_e, zu_o, ru_e, ru_o, rbsq, ns, nZnT);
-    check_cuda(cudaGetLastError(), "vacuum edge force");
+                       VacuumStream stream) {
+    launch_vacuum_kernel(&vacuum_edge_force_kernel<T>, nZnT, stream, armn_e,
+                         armn_o, azmn_e, azmn_o, zu_e, zu_o, ru_e, ru_o, rbsq,
+                         ns, nZnT);
 }
 
 template <class T>
@@ -408,11 +456,9 @@ void launch_rcon_decay(T* rcon0,
                        int ns,
                        int ntheta,
                        int nzeta,
-                       cudaStream_t stream) {
-    rcon_decay_kernel<T>
-        <<<grid_size(ns * ntheta * nzeta), BLOCK_SIZE, 0, stream>>>(
-            rcon0, zcon0, ns * ntheta * nzeta);
-    check_cuda(cudaGetLastError(), "rcon decay");
+                       VacuumStream stream) {
+    launch_vacuum_kernel(&rcon_decay_kernel<T>, ns * ntheta * nzeta, stream,
+                         rcon0, zcon0, ns * ntheta * nzeta);
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +520,21 @@ void FreeBoundaryOperator<T>::advance(int iter2,
     impl_->decay = (impl_->state != VacuumState::OFF);
 }
 
+#ifdef CUMES_VACUUM_WEBGPU
+template <class T>
+void FreeBoundaryOperator<T>::enable_webgpu(const wgpu::Device& device,
+                                            bool device_lu) {
+    static_assert(std::is_same_v<T, double>);
+    if (impl_->has_factors)
+        throw CumesError(
+            "vacuum backend must be selected before its first update");
+    impl_->gpu_solver = std::make_unique<vfield::webgpu::Solver>(
+        device, impl_->sizes, impl_->solver.mgrid(),
+        device_lu ? vfield::webgpu::LuBackend::WEBGPU
+                  : vfield::webgpu::LuBackend::HOST);
+}
+#endif
+
 template <class T>
 void FreeBoundaryOperator<T>::run_host_update(int ns,
                                               const T* buco_h,
@@ -481,7 +542,7 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
                                               const T* d_lcfs_repacked,
                                               const T* d_r_axis,
                                               const T* d_z_axis,
-                                              cudaStream_t /*stream*/) {
+                                              VacuumStream /*stream*/) {
     // vmecpp :534-549: rBtor/cTor from the two outermost half-grid surface
     // averages (host scalars, D2H'd by the caller after the vacuum fence).
     const int nh = ns - 1;
@@ -504,10 +565,49 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
     const T* zcs = d_lcfs_repacked + 3 * mnsize;
     T bsubu = T(0);
     T bsubv = T(0);
-    impl_->solver.update(rcc, rss, nullptr, nullptr, zsc, zcs, nullptr, nullptr,
-                         DeviceParams<T>::SIGN_JACOBIAN, d_r_axis, d_z_axis,
-                         bsubu, bsubv, static_cast<T>(net_toroidal_current),
-                         impl_->full_update);
+#ifdef CUMES_VACUUM_WEBGPU
+    if (impl_->gpu_solver) {
+        vfield::webgpu::Update update;
+        update.r_cc = {rcc, static_cast<std::size_t>(mnsize)};
+        update.r_ss = {rss, static_cast<std::size_t>(mnsize)};
+        update.z_sc = {zsc, static_cast<std::size_t>(mnsize)};
+        update.z_cs = {zcs, static_cast<std::size_t>(mnsize)};
+        update.r_axis = {d_r_axis, static_cast<std::size_t>(impl_->nzeta)};
+        update.z_axis = {d_z_axis, static_cast<std::size_t>(impl_->nzeta)};
+        update.sign_of_jacobian = DeviceParams<T>::SIGN_JACOBIAN;
+        update.net_toroidal_current = net_toroidal_current;
+        update.full_update = impl_->full_update;
+        update.readback_all_fields = false;
+        if (impl_->gpu_resident_result) {
+            impl_->gpu_pending =
+                impl_->gpu_solver->update_resident_blocking(update);
+            // These gates depend only on the existing activation state. GPU
+            // integrals/validity are checked at the suffix fence, before any
+            // controller, checkpoint or output can accept this evaluation.
+            if (impl_->state == VacuumState::INITIALIZING)
+                impl_->state = VacuumState::INITIALIZED;
+            impl_->soft_restart = impl_->state == VacuumState::INITIALIZED;
+            impl_->edge_gate = impl_->state == VacuumState::INITIALIZED ||
+                               impl_->state == VacuumState::ACTIVE;
+            return;
+        }
+        impl_->gpu_result = impl_->gpu_solver->update_blocking(update);
+        if (impl_->gpu_result.out_of_bounds)
+            throw CumesError(
+                "WebGPU vacuum boundary lies outside the coil field grid");
+        bsubu = impl_->gpu_result.b_sub_u_vac;
+        bsubv = impl_->gpu_result.b_sub_v_vac;
+    } else
+#endif
+        impl_->solver.update(
+            rcc, rss, nullptr, nullptr, zsc, zcs, nullptr, nullptr,
+            DeviceParams<T>::SIGN_JACOBIAN, d_r_axis, d_z_axis, bsubu, bsubv,
+            static_cast<T>(net_toroidal_current), impl_->full_update);
+    finish_host_update(bsubu, bsubv);
+}
+
+template <class T>
+void FreeBoundaryOperator<T>::finish_host_update(T bsubu, T bsubv) {
     impl_->bsubu_vac = static_cast<double>(bsubu);
     impl_->bsubv_vac = static_cast<double>(bsubv);
     if (impl_->full_update) impl_->has_factors = true;
@@ -543,6 +643,73 @@ void FreeBoundaryOperator<T>::run_host_update(int ns,
     impl_->edge_gate = (impl_->state == VacuumState::INITIALIZED ||
                         impl_->state == VacuumState::ACTIVE);
 }
+
+#ifdef CUMES_VACUUM_WEBGPU
+template <class T>
+void FreeBoundaryOperator<T>::set_webgpu_resident_result(bool enabled) {
+    if (impl_->gpu_pending)
+        throw CumesError("cannot change vacuum result mode during an update");
+    impl_->gpu_resident_result = enabled;
+}
+
+template <class T>
+bool FreeBoundaryOperator<T>::webgpu_result_pending() const {
+    return impl_->gpu_pending.has_value();
+}
+
+template <class T>
+vfield::webgpu::DeviceValues FreeBoundaryOperator<T>::webgpu_output(
+    std::string_view name) const {
+    return impl_->gpu_solver ? impl_->gpu_solver->output(name)
+                             : vfield::webgpu::DeviceValues{};
+}
+
+template <class T>
+wgpu::Buffer FreeBoundaryOperator<T>::webgpu_result_flags() const {
+    return impl_->gpu_pending ? impl_->gpu_pending->flags : wgpu::Buffer{};
+}
+
+template <class T>
+void FreeBoundaryOperator<T>::finish_webgpu_update(
+    std::span<const float> summary) {
+    if (!impl_->gpu_pending || summary.size() != 6)
+        throw CumesError("invalid pending vacuum summary");
+    std::array<vfield::webgpu::RealWords, 3> words;
+    std::memcpy(words.data(), summary.data(), sizeof(words));
+    const auto pending = std::exchange(impl_->gpu_pending, std::nullopt);
+    try {
+        impl_->gpu_result = impl_->gpu_solver->finish_resident(*pending, words);
+        if (impl_->gpu_result.out_of_bounds)
+            throw CumesError(
+                "WebGPU vacuum boundary lies outside the coil field grid");
+        finish_host_update(impl_->gpu_result.b_sub_u_vac,
+                           impl_->gpu_result.b_sub_v_vac);
+    } catch (...) {
+        if (impl_->full_update) impl_->has_factors = false;
+        throw;
+    }
+}
+
+template <class T>
+void FreeBoundaryOperator<T>::cancel_webgpu_update() {
+    if (!impl_->gpu_pending) return;
+    impl_->gpu_solver->cancel_resident(*impl_->gpu_pending);
+    impl_->gpu_pending.reset();
+    if (impl_->full_update) impl_->has_factors = false;
+}
+
+template <class T>
+std::span<const T> FreeBoundaryOperator<T>::host_vacuum_pressure() const {
+    if (impl_->gpu_solver) return impl_->gpu_result.b_sq_vac;
+    return {impl_->solver.b_sq_vac(),
+            static_cast<std::size_t>(impl_->sizes.nZnT)};
+}
+
+template <class T>
+T FreeBoundaryOperator<T>::edge_pressure() const {
+    return impl_->edge_pressure;
+}
+#endif
 
 template <class T>
 bool FreeBoundaryOperator<T>::soft_restart_requested() const {
@@ -628,7 +795,7 @@ void FreeBoundaryOperator<T>::enqueue_surface_averages(
     int ns,
     int ntheta,
     int nzeta,
-    cudaStream_t stream) const {
+    VacuumStream stream) const {
     launch_surface_averages<T>(d_bsubu, d_bsubv, d_buco_bvco, ns, ntheta, nzeta,
                                stream);
 }
@@ -643,7 +810,7 @@ void FreeBoundaryOperator<T>::enqueue_lcfs_repack(const T* d_rcc,
                                                   int mnmax,
                                                   int mpol,
                                                   int ntor,
-                                                  cudaStream_t stream) const {
+                                                  VacuumStream stream) const {
     (void)mnmax;  // the repack covers mnsize = mpol*(ntor+1) <= mnmax entries
     launch_lcfs_repack<T>(d_rcc, d_rss, d_zsc, d_zcs, d_repacked, ns, mpol,
                           ntor, stream);
@@ -655,7 +822,7 @@ void FreeBoundaryOperator<T>::enqueue_axis_extract(const T* d_r_e,
                                                    T* d_axis,
                                                    int ntheta,
                                                    int nzeta,
-                                                   cudaStream_t stream) const {
+                                                   VacuumStream stream) const {
     launch_axis_extract<T>(d_r_e, d_z_e, d_axis, ntheta, nzeta, stream);
 }
 
@@ -670,10 +837,14 @@ void FreeBoundaryOperator<T>::enqueue_rbsq(const T* d_r_e,
                                            int nzeta,
                                            int nZnT,
                                            T delta_s,
-                                           cudaStream_t stream) const {
-    launch_rbsq<T>(impl_->solver.b_sq_vac(), d_r_e, d_r_o, d_total_pressure,
-                   d_rbsq, d_delbsq, ns, ntheta, nzeta, nZnT,
-                   impl_->edge_pressure, delta_s, stream);
+                                           VacuumStream stream) const {
+    const T* vacuum_pressure = impl_->solver.b_sq_vac();
+#ifdef CUMES_VACUUM_WEBGPU
+    if (impl_->gpu_solver) vacuum_pressure = impl_->gpu_result.b_sq_vac.data();
+#endif
+    launch_rbsq<T>(vacuum_pressure, d_r_e, d_r_o, d_total_pressure, d_rbsq,
+                   d_delbsq, ns, ntheta, nzeta, nZnT, impl_->edge_pressure,
+                   delta_s, stream);
 }
 
 template <class T>
@@ -689,7 +860,7 @@ void FreeBoundaryOperator<T>::enqueue_edge_force(T* d_armn_e,
                                                  int ns,
                                                  int ntheta,
                                                  int nzeta,
-                                                 cudaStream_t stream) const {
+                                                 VacuumStream stream) const {
     launch_edge_force<T>(d_armn_e, d_armn_o, d_azmn_e, d_azmn_o, d_zu_e, d_zu_o,
                          d_ru_e, d_ru_o, d_rbsq, ns, ntheta * nzeta, stream);
 }
@@ -700,7 +871,7 @@ void FreeBoundaryOperator<T>::enqueue_rcon_decay(T* d_rcon0,
                                                  int ns,
                                                  int ntheta,
                                                  int nzeta,
-                                                 cudaStream_t stream) const {
+                                                 VacuumStream stream) const {
     launch_rcon_decay<T>(d_rcon0, d_zcon0, ns, ntheta, nzeta, stream);
 }
 

@@ -7,3 +7,6 @@
 [submodule "deps/BSplineInterpolation"]
 	path = deps/BSplineInterpolation
 	url = ../../12ff54e/BSplineInterpolation
+[submodule "deps/webgpu-fft"]
+	path = deps/webgpu-fft
+	url = https://github.com/12ff54e/webgpu-fft.git

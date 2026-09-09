@@ -1,0 +1,141 @@
+#ifndef CUMES_INCLUDE_CUMES_WEBGPU_PRECONDITIONER_HPP_
+#define CUMES_INCLUDE_CUMES_WEBGPU_PRECONDITIONER_HPP_
+
+#include "cumes/webgpu/device_fields.hpp"
+
+#include <array>
+#include <functional>
+#include <string>
+#include <vector>
+
+#include <webgpu/webgpu_cpp.h>
+
+namespace cumes::webgpu {
+
+struct AxisymmetricPreconditionerElements;
+
+struct AxisymmetricPreconditionerElementCase {
+    BatchedReadback<AxisymmetricPreconditionerElements> readback;
+    DeviceFields device_geometry;
+    DeviceFields device_base_geometry;
+    DeviceFields device_magnetic_field;
+    int ns = 0;
+    int ntheta = 0;
+    int nzeta = 1;
+    float delta_s = 0.0F;
+    bool free_boundary = false;
+    std::vector<float> geometry;
+    std::vector<float> base_geometry;
+    std::vector<float> magnetic_field;
+    std::vector<float> sqrt_s_f;
+    std::vector<float> sqrt_s_h;
+};
+
+struct AxisymmetricPreconditionerElements {
+    DeviceFields device_elements;
+    // Surface-major [surface][even, odd].
+    std::vector<float> ard;
+    std::vector<float> brd;
+    std::vector<float> azd;
+    std::vector<float> bzd;
+    std::vector<float> cxd;
+    // Half-grid [surface][even, odd] off-diagonal element caches.
+    std::vector<float> arm;
+    std::vector<float> brm;
+    std::vector<float> azm;
+    std::vector<float> bzm;
+};
+
+using AxisymmetricPreconditionerElementCallback =
+    std::function<void(std::string, AxisymmetricPreconditionerElements)>;
+
+void enqueue_axisymmetric_preconditioner_elements(
+    const wgpu::Device& device,
+    const AxisymmetricPreconditionerElementCase& input,
+    AxisymmetricPreconditionerElementCallback callback);
+
+AxisymmetricPreconditionerElements
+axisymmetric_preconditioner_element_reference(
+    const AxisymmetricPreconditionerElementCase& input);
+
+struct AxisymmetricPreconditionerMatrix;
+
+struct AxisymmetricPreconditionerMatrixCase {
+    BatchedReadback<AxisymmetricPreconditionerMatrix> readback;
+    DeviceFields device_base_geometry;
+    int ns = 0;
+    int mpol = 0;
+    int ntor = 0;
+    int ntheta = 0;
+    int nzeta = 1;
+    int nfp = 1;
+    float delta_s = 0.0F;
+    bool free_boundary = false;
+    AxisymmetricPreconditionerElements elements;
+    std::vector<float> base_geometry;
+    std::vector<float> sqrt_s_f;
+    std::vector<float> phip_h;
+};
+
+struct AxisymmetricPreconditionerMatrix {
+    DeviceFields device_matrix;
+    // Mode-major radial systems.
+    std::vector<float> upper_r;
+    std::vector<float> diagonal_r;
+    std::vector<float> lower_r;
+    std::vector<float> upper_z;
+    std::vector<float> diagonal_z;
+    std::vector<float> lower_z;
+    std::vector<float> lambda;
+    std::vector<float> scale;
+    std::vector<int> first_surface;
+};
+
+using AxisymmetricPreconditionerMatrixCallback =
+    std::function<void(std::string, AxisymmetricPreconditionerMatrix)>;
+
+void enqueue_axisymmetric_preconditioner_matrix(
+    const wgpu::Device& device,
+    const AxisymmetricPreconditionerMatrixCase& input,
+    AxisymmetricPreconditionerMatrixCallback callback);
+
+AxisymmetricPreconditionerMatrix axisymmetric_preconditioner_matrix_reference(
+    const AxisymmetricPreconditionerMatrixCase& input);
+
+struct AxisymmetricPreconditionerApplyResult;
+
+struct AxisymmetricPreconditionerApplyCase {
+    BatchedReadback<AxisymmetricPreconditionerApplyResult> readback;
+    DeviceFields device_residual;
+    int ns = 0;
+    int mpol = 0;
+    int ntor = 0;
+    bool include_lcfs = false;
+    AxisymmetricPreconditionerElements elements;
+    AxisymmetricPreconditionerMatrix matrix;
+    // Decomposed component-major [component][mode][surface] residual.
+    std::vector<float> residual;
+};
+
+struct AxisymmetricPreconditionerApplyResult {
+    DeviceFields device_residual;
+    std::array<double, 3> raw_norm{};
+    std::vector<float> residual;
+    int breakdown_count = 0;
+};
+
+using AxisymmetricPreconditionerApplyCallback =
+    std::function<void(std::string, AxisymmetricPreconditionerApplyResult)>;
+
+void enqueue_axisymmetric_preconditioner_apply(
+    const wgpu::Device& device,
+    const AxisymmetricPreconditionerApplyCase& input,
+    AxisymmetricPreconditionerApplyCallback callback);
+
+AxisymmetricPreconditionerApplyResult
+axisymmetric_preconditioner_apply_reference(
+    const AxisymmetricPreconditionerApplyCase& input);
+
+}  // namespace cumes::webgpu
+
+#endif  // CUMES_INCLUDE_CUMES_WEBGPU_PRECONDITIONER_HPP_

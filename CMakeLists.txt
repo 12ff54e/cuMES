@@ -1,5 +1,62 @@
 cmake_minimum_required(VERSION 3.20)
 
+# The browser build cannot enable CUDA at all: Emscripten is both the host and
+# device-facing compiler and emdawnwebgpu supplies the WebGPU API at link time.
+# Keep CUDA as the default so every existing preset and downstream build keeps
+# its current behavior.
+set(CUMES_BACKEND "CUDA" CACHE STRING "Compute backend: CUDA|WEBGPU")
+set_property(CACHE CUMES_BACKEND PROPERTY STRINGS CUDA WEBGPU)
+
+if(CUMES_BACKEND STREQUAL "WEBGPU")
+  project(cuMES VERSION 1.6.0 LANGUAGES CXX)
+  if(NOT EMSCRIPTEN)
+    message(FATAL_ERROR
+      "CUMES_BACKEND=WEBGPU requires Emscripten; configure with: "
+      "emcmake cmake --preset webgpu")
+  endif()
+
+  list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+  include(CumesOptions)
+  include(CumesWarnings)
+
+  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_EXTENSIONS OFF)
+
+  if(NOT CUMES_PRECISION_POLICY STREQUAL "mixed-float" OR
+     NOT CUMES_USE_FLOAT)
+    message(FATAL_ERROR
+      "The WebGPU backend requires CUMES_PRECISION_POLICY=mixed-float and "
+      "CUMES_USE_FLOAT=ON because core WGSL has no f64 scalar type")
+  endif()
+
+  execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE CUMES_GIT_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  execute_process(
+    COMMAND git status --porcelain
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE CUMES_GIT_STATUS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  if(CUMES_GIT_STATUS STREQUAL "")
+    set(CUMES_GIT_DIRTY 0)
+  else()
+    set(CUMES_GIT_DIRTY 1)
+  endif()
+  set(CUMES_PRECISION_FLAGS_STR "")
+
+  enable_testing()
+  add_subdirectory(webgpu)
+  return()
+elseif(NOT CUMES_BACKEND STREQUAL "CUDA")
+  message(FATAL_ERROR
+    "unknown CUMES_BACKEND '${CUMES_BACKEND}' (expected CUDA|WEBGPU)")
+endif()
+
 # Use g++-12 as CUDA host compiler (CUDA 12.1 doesn't support gcc > 12).
 # Must be set BEFORE project() or as a cache variable. Override with
 # -DCMAKE_CUDA_HOST_COMPILER=<path> if your toolchain differs.
@@ -15,7 +72,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # default only when CMAKE_CUDA_ARCHITECTURES was not already provided.
 include(CumesCudaArchitectures)
 
-project(cuMES VERSION 1.5.0 LANGUAGES CXX CUDA)
+project(cuMES VERSION 1.6.0 LANGUAGES CXX CUDA)
 
 include(CumesOptions)
 include(CumesDependencies)

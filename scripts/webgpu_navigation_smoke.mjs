@@ -1,0 +1,83 @@
+// Check the shared navigation without launching GPU solves or touching user tabs/storage.
+// Usage: node scripts/webgpu_navigation_smoke.mjs APP_URL [SCREENSHOT_PREFIX]
+import assert from 'node:assert/strict';
+import {writeFile} from 'node:fs/promises';
+const [url,prefix]=process.argv.slice(2);
+if(!url)throw Error('Pass APP_URL');
+const version=await(await fetch('http://127.0.0.1:9333/json/version')).json();
+const ws=new WebSocket(version.webSocketDebuggerUrl);
+await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=reject});
+let id=0;
+const pending=new Map();
+ws.onmessage=event=>{
+  const reply=JSON.parse(event.data),request=pending.get(reply.id);
+  if(!request)return;
+  pending.delete(reply.id);clearTimeout(request.timer);
+  if(reply.error||reply.result?.exceptionDetails)request.reject(Error(JSON.stringify(reply.error||reply.result.exceptionDetails)));
+  else request.resolve(reply.result);
+};
+function call(method,params={},sessionId){return new Promise((resolve,reject)=>{
+  const current=++id,timer=setTimeout(()=>{pending.delete(current);reject(Error(`CDP timeout: ${method}`))},30000);
+  pending.set(current,{resolve,reject,timer});ws.send(JSON.stringify({id:current,method,params,sessionId}));
+})}
+let target;
+try{
+  target=(await call('Target.createTarget',{url:'about:blank',newWindow:false})).targetId;
+  const session=(await call('Target.attachToTarget',{targetId:target,flatten:true})).sessionId;
+  const evaluate=async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true},session)).result.value;
+  await call('Network.enable',{},session);
+  // Only the frontend is in scope: keep verification/W7-X from starting a solve.
+  await call('Network.setBlockedURLs',{urls:['*cumes_webgpu.js*','*verification_worker.js*']},session);
+  await call('Page.enable',{},session);
+  await call('Page.addScriptToEvaluateOnNewDocument',{source:
+    `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});`},session);
+  await call('Page.bringToFront',{},session);
+  for(const width of [1280,390]){
+    await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false},session);
+    let expectedStyle;
+    for(const [search,view] of [['','editor'],['?mode=test','verification'],['?solve=w7x','editor'],['?preset=w7x&precision=float','editor'],['?boundary=free&coils=w7x','editor'],['?boundary=free&coils=cth_like','editor'],['?residual_plot=0','editor']]){
+      const next=new URL(url);next.search=search;
+      await call('Page.navigate',{url:next.href},session);
+      let ready=false;
+      for(let attempt=0;attempt<100&&!ready;++attempt){
+        try{ready=await evaluate(`document.querySelector('nav [aria-current="page"]')?.dataset.view===${JSON.stringify(view)}&&!!window.cumesAppReady&&(${JSON.stringify(view)}==='verification'||document.body.dataset.cumesExecution==='idle')`)}catch{}
+        if(!ready)await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      assert(ready,`frontend did not initialize: ${search}`);
+      const state=await evaluate(`(()=>{
+        const nav=document.querySelector('nav'),links=[...nav.querySelectorAll('a')];
+        const styles=links.map(link=>{const s=getComputedStyle(link);return [s.fontSize,s.padding,s.textDecorationLine,s.borderRadius]});
+        return {navCount:document.querySelectorAll('nav').length,shared:!nav.closest('#app,#legacy'),
+          links:links.map(link=>[link.textContent,link.getAttribute('href')]),styles,
+          visible:links.every(link=>{const r=link.getBoundingClientRect();return r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight}),
+          active:links.filter(link=>link.getAttribute('aria-current')==='page').map(link=>link.dataset.view),
+          precision:document.body.dataset.cumesPrecision,
+          plots:document.querySelectorAll('.residual-panel').length,
+          plotFits:[...document.querySelectorAll('.residual-canvas')].every(canvas=>{const r=canvas.getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth})};
+      })()`);
+      assert.equal(state.navCount,1);assert(state.shared);assert(state.visible);
+      assert.deepEqual(state.links,[['Boundary editor','?'],['GPU verification','?mode=test']]);
+      assert.deepEqual(state.active,[view]);
+      assert.equal(state.plots,view==='verification'||search.includes('residual_plot=0')?0:1);
+      assert.ok(state.plotFits,'residual plot must fit the viewport');
+      if(expectedStyle)assert.deepEqual(state.styles,expectedStyle);else expectedStyle=state.styles;
+      if(search.includes('w7x'))assert.equal(state.precision,search.includes('float')?'float':'double');
+      if(search.includes('w7x'))assert.equal(await evaluate(`document.body.dataset.cumesExecution==='idle'&&
+        !document.getElementById('run').disabled&&!document.getElementById('surface-editor').hidden&&
+        !window.cumesKeepAlive&&typeof HEAPU8==='undefined'`),true);
+      if(search.includes('w7x')||search.includes('cth_like')){
+        assert.equal(await evaluate(`document.getElementById('result-plot').getBoundingClientRect().height`),0,'3-D preview must hide the SVG, not merely set an expando property');
+        if(width>920)assert.equal(await evaluate(`document.getElementById('result-3d').getBoundingClientRect().top<innerHeight`),true,'preview must be visible beside the editor');
+      }
+      if(prefix&&!search.includes('float')&&!search.includes('residual_plot=0')){
+        await new Promise(resolve=>setTimeout(resolve,150));
+        const shot=await call('Page.captureScreenshot',{format:'png'},session);
+        await writeFile(`${prefix}-${search.includes('w7x')?'w7x':search.includes('cth_like')?'cth_like':view}-${width}.png`,Buffer.from(shot.data,'base64'));
+      }
+      console.log(`PASS: ${view} ${width}px ${state.precision||''}`);
+    }
+  }
+}finally{
+  if(target)await call('Target.closeTarget',{targetId:target});
+  ws.close();
+}

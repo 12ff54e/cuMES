@@ -345,7 +345,7 @@ struct Value {
               [](const void* data) { delete static_cast<const T*>(data); }),
           value_cat(cat) {}
 
-    friend class JsonParser;
+    friend struct JsonParser;
 
     std::unique_ptr<void, std::function<void(void*)>> ptr;
     ValueCategory value_cat;

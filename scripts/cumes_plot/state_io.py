@@ -170,7 +170,7 @@ def load_state(path):
                                          f"in {path}")
             if version < 3:
                 _no_params(path)
-            nstages = struct.unpack("<4i", f.read(16))[3]
+            precision, _, _, nstages = struct.unpack("<4i", f.read(16))
             # precision, status, total_iter, nstages (the header count is
             # the stage-record count; no second count follows the strings)
             if not 0 <= nstages <= 1 << 20:
@@ -196,6 +196,7 @@ def load_state(path):
             params = _read_input_record(
                 f, version == 4 or version >= 7,
                 version >= 5, version >= 5, version >= 6)
+            params["_precision"] = "float" if precision == 1 else "double"
             params["_source_path"] = source_path
         if source_path:
             name = os.path.splitext(os.path.basename(source_path))[0]
@@ -221,6 +222,7 @@ def load_state(path):
             params = _read_input_record(
                 f, version == 3 or version >= 6,
                 version >= 4, version >= 4, version >= 5)
+            params["_precision"] = "double"
         return ns, mnmax, fams, params, name
     if head.startswith(b"CDF"):
         # NetCDF: the six families are 2-D [surface, mode] datasets; the
@@ -310,6 +312,9 @@ def load_state(path):
                 "makegrid_parameters": makegrid_parameters,
                 "extcur": darray("extcur"),
             }
+            params["_precision"] = (
+                "float" if "precision" in nc.variables and
+                int(scalar("precision")) == 1 else "double")
             sp = getattr(nc, "source_path", "")
             if isinstance(sp, bytes):
                 sp = sp.decode()
@@ -404,6 +409,9 @@ def load_state(path):
                 "makegrid_parameters": makegrid_parameters,
                 "extcur": darray("extcur"),
             }
+            params["_precision"] = (
+                "float" if int(f5.attrs.get("precision", 0)) == 1
+                else "double")
             params["_source_path"] = sattr("source_path", "")
             if params["_source_path"]:
                 name = os.path.splitext(

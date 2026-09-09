@@ -159,7 +159,10 @@ def main(figure_parameters):
               "(expected for free boundary)", flush=True)
     else:
         print(f"  max err = {err:.3e}", flush=True)
-        assert err < 1e-8, "state LCFS does not match the embedded boundary"
+        boundary_tolerance = (5e-7 if params.get("_precision") == "float"
+                              else 1e-8)
+        assert err < boundary_tolerance, \
+            "state LCFS does not match the embedded boundary"
 
     # ---- edge half-grid field data used by interpolation / field lines ---
     print(f"edge surface: solving chi' + half-grid geometry (jh = {ns - 2}) ...",

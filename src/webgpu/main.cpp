@@ -1,0 +1,6491 @@
+#include "cumes/config/device_params.hpp"
+#include "cumes/config/json_reader.hpp"
+#include "cumes/io/derived_fields.hpp"
+#include "cumes/io/reader.hpp"
+#include "cumes/io/writer.hpp"
+#include "cumes/solver/iteration_controller.hpp"
+#include "cumes/webgpu/axisymmetric.hpp"
+#include "cumes/webgpu/constraint.hpp"
+#include "cumes/webgpu/descent.hpp"
+#include "cumes/webgpu/float_float.hpp"
+#include "cumes/webgpu/force.hpp"
+#include "cumes/webgpu/geometry.hpp"
+#include "cumes/webgpu/initialization.hpp"
+#include "cumes/webgpu/iteration.hpp"
+#include "cumes/webgpu/newton.hpp"
+#include "cumes/webgpu/numerics.hpp"
+#include "cumes/webgpu/preconditioner.hpp"
+#include "cumes/webgpu/prolongation.hpp"
+#include "cumes/webgpu/toroidal.hpp"
+#include "cumes/webgpu/vacuum.hpp"
+#include "float_geometry_tests.hpp"
+#include "newton_tests.hpp"
+#include "rounding_tests.hpp"
+#include "vacuum_force_tests.hpp"
+
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdio>
+#include <exception>
+#include <iomanip>
+#include <limits>
+#include <memory>
+#include <numbers>
+#include <optional>
+#include <span>
+#include <sstream>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <emscripten.h>
+#include <webgpu/webgpu_cpp.h>
+
+namespace {
+
+extern "C" {
+void publish_browser_result(int success, const char* detail);
+int publish_browser_output(const char* path);
+int requested_double_solve();
+int requested_webgpu_vacuum();
+int requested_webgpu_vacuum_lu();
+int requested_device_vacuum_force();
+int requested_float_radius_reference();
+int requested_compensated_geometry();
+int requested_newton_solve();
+double requested_newton_step();
+int requested_newton_probe();
+int requested_reference_transfers();
+int requested_direct_dft();
+int requested_generic_fft();
+int requested_canonical_zeta();
+int requested_solver_trace();
+int requested_shadow_norms();
+int requested_device_norms();
+int requested_full_field_readbacks();
+void publish_browser_iteration_timing(int kind, int stage);
+void publish_browser_restart(int stage, int attempt, int iteration);
+void publish_browser_residual(int stage,
+                              int attempt,
+                              int iteration,
+                              double fsqr,
+                              double fsqz,
+                              double fsql,
+                              double tolerance,
+                              int converged);
+int requested_geometry_control();
+int requested_compare_fft();
+int requested_spectral_fences();
+void publish_browser_diagnostic(const char* json);
+int requested_app_mode();
+int requested_app_run();
+void publish_browser_ready();
+void publish_browser_equilibrium(const char* json);
+void publish_browser_adapter(const char* device,
+                             const char* type,
+                             const char* backend);
+}
+
+#ifndef CUMES_GIT_REVISION
+#define CUMES_GIT_REVISION ""
+#endif
+#ifndef CUMES_GIT_DIRTY
+#define CUMES_GIT_DIRTY 0
+#endif
+#ifndef CUMES_BUILD_TYPE
+#define CUMES_BUILD_TYPE ""
+#endif
+#ifndef CUMES_PRECISION_POLICY_NAME
+#define CUMES_PRECISION_POLICY_NAME "mixed-float"
+#endif
+#ifndef CUMES_PRECISION_FLAGS
+#define CUMES_PRECISION_FLAGS ""
+#endif
+
+std::string message_text(wgpu::StringView message) {
+    return message.length == 0 ? std::string{}
+                               : std::string(message.data, message.length);
+}
+
+std::string adapter_name(const wgpu::AdapterInfo& info) {
+    // The device field is an identifier (often a PCI ID), not the model name.
+    std::string name = message_text(info.description);
+    if (!name.empty()) return name;
+    for (const auto field : {info.vendor, info.architecture, info.device}) {
+        const std::string part = message_text(field);
+        if (part.empty()) continue;
+        if (!name.empty()) name += ' ';
+        name += part;
+    }
+    return name.empty() ? "GPU name unavailable" : name;
+}
+
+const char* adapter_type_name(wgpu::AdapterType type) {
+    switch (type) {
+        case wgpu::AdapterType::DiscreteGPU:
+            return "discrete-gpu";
+        case wgpu::AdapterType::IntegratedGPU:
+            return "integrated-gpu";
+        case wgpu::AdapterType::CPU:
+            return "cpu";
+        case wgpu::AdapterType::Unknown:
+            return "unknown";
+    }
+    return "unknown";
+}
+
+const char* backend_type_name(wgpu::BackendType type) {
+    switch (type) {
+        case wgpu::BackendType::Undefined:
+            return "undefined";
+        case wgpu::BackendType::Null:
+            return "null";
+        case wgpu::BackendType::WebGPU:
+            return "webgpu";
+        case wgpu::BackendType::D3D11:
+            return "d3d11";
+        case wgpu::BackendType::D3D12:
+            return "d3d12";
+        case wgpu::BackendType::Metal:
+            return "metal";
+        case wgpu::BackendType::Vulkan:
+            return "vulkan";
+        case wgpu::BackendType::OpenGL:
+            return "opengl";
+        case wgpu::BackendType::OpenGLES:
+            return "opengles";
+    }
+    return "unknown";
+}
+
+class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
+   public:
+    void start() {
+        instance_ = wgpu::Instance(wgpuCreateInstance(nullptr));
+        if (!instance_) {
+            finish(false, "wgpuCreateInstance returned null");
+            return;
+        }
+        std::printf("cuMES WebGPU milestone: requesting adapter\n");
+        const auto self = shared_from_this();
+        wgpu::RequestAdapterOptions options{};
+        options.powerPreference = wgpu::PowerPreference::HighPerformance;
+        instance_.RequestAdapter(
+            &options, wgpu::CallbackMode::AllowSpontaneous,
+            [self](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter,
+                   wgpu::StringView message) {
+                if (status != wgpu::RequestAdapterStatus::Success) {
+                    self->finish(false, "WebGPU adapter request failed: " +
+                                            message_text(message));
+                    return;
+                }
+                self->adapter_ = std::move(adapter);
+                wgpu::AdapterInfo info{};
+                if (self->adapter_.GetInfo(&info)) {
+                    const std::string device_name = adapter_name(info);
+                    const char* type_name = adapter_type_name(info.adapterType);
+                    const char* backend_name =
+                        backend_type_name(info.backendType);
+                    std::string details = backend_name;
+                    if (info.adapterType != wgpu::AdapterType::Unknown) {
+                        details = std::string(type_name) + ", " + details;
+                    }
+                    std::printf("adapter selected: %s (%s)\n",
+                                device_name.c_str(), details.c_str());
+                    publish_browser_adapter(device_name.c_str(), type_name,
+                                            backend_name);
+                }
+                self->request_device();
+            });
+    }
+
+   private:
+    void request_device() {
+        const auto self = shared_from_this();
+        wgpu::DeviceDescriptor descriptor{};
+        descriptor.label = "cuMES WebGPU device";
+        wgpu::Limits supported_limits{};
+        if (!adapter_.GetLimits(&supported_limits) ||
+            supported_limits.maxStorageBuffersPerShaderStage < 10) {
+            finish(false,
+                   "WebGPU adapter needs at least 10 compute storage buffers "
+                   "for the high-precision solver");
+            return;
+        }
+        wgpu::Limits required_limits{};
+        required_limits.maxStorageBuffersPerShaderStage = 10;
+        descriptor.requiredLimits = &required_limits;
+        descriptor.SetUncapturedErrorCallback(
+            [](const wgpu::Device&, wgpu::ErrorType type,
+               wgpu::StringView message, BrowserSelfTest* test) {
+                test->gpu_error_ = "uncaptured WebGPU error (" +
+                                   std::to_string(static_cast<unsigned>(type)) +
+                                   "): " + message_text(message);
+                std::fprintf(stderr, "%s\n", test->gpu_error_.c_str());
+            },
+            this);
+        adapter_.RequestDevice(
+            &descriptor, wgpu::CallbackMode::AllowSpontaneous,
+            [self](wgpu::RequestDeviceStatus status, wgpu::Device device,
+                   wgpu::StringView message) {
+                if (status != wgpu::RequestDeviceStatus::Success) {
+                    self->finish(false, "WebGPU device request failed: " +
+                                            message_text(message));
+                    return;
+                }
+                self->device_ = std::move(device);
+                if (requested_app_mode() != 0) {
+                    self->run_interactive_solver();
+                    return;
+                }
+                self->cases_ = make_cases();
+                std::printf(
+                    "adapter/device ready; running %zu radial-transfer "
+                    "cases\n",
+                    self->cases_.size());
+                cumes::webgpu::run_newton_tests(
+                    self->device_, [self](std::string error) {
+                        if (!error.empty()) {
+                            self->finish(false, std::move(error));
+                            return;
+                        }
+                        cumes::webgpu::run_rounding_tests(
+                            self->device_, [self](std::string error) {
+                                if (!error.empty()) {
+                                    self->finish(false, std::move(error));
+                                    return;
+                                }
+                                self->run_next();
+                            });
+                    });
+            });
+    }
+
+    static std::vector<cumes::webgpu::ProlongationCase> make_cases() {
+        std::vector<cumes::webgpu::ProlongationCase> cases;
+        for (const auto interpolation :
+             {cumes::webgpu::RadialInterpolation::LINEAR,
+              cumes::webgpu::RadialInterpolation::CATMULL_ROM}) {
+            cumes::webgpu::ProlongationCase test;
+            test.ns_old = 5;
+            test.ns_new = 8;
+            test.ntor = 1;
+            test.mnmax = 6;  // m=0..2, n=0..1 exercises true m parity.
+            test.interpolation = interpolation;
+            test.state.resize(6 * test.mnmax * test.ns_old);
+            for (int family = 0; family < 6; ++family) {
+                for (int mode = 0; mode < test.mnmax; ++mode) {
+                    const bool odd = ((mode / (test.ntor + 1)) % 2) == 1;
+                    for (int j = 0; j < test.ns_old; ++j) {
+                        const float base =
+                            0.4F * static_cast<float>(family + 1) +
+                            0.2F * static_cast<float>(mode);
+                        float value = base + 0.08F * static_cast<float>(j) +
+                                      0.013F * static_cast<float>(j * j);
+                        if (odd) {
+                            const float s = static_cast<float>(j) /
+                                            static_cast<float>(test.ns_old - 1);
+                            const float radial = std::max(
+                                std::sqrt(s),
+                                std::sqrt(1.0F /
+                                          static_cast<float>(test.ns_old - 1)));
+                            value *= radial;
+                            if (j == 0) value = 0.0F;
+                        }
+                        const auto index =
+                            (static_cast<std::size_t>(family) * test.mnmax +
+                             mode) *
+                                test.ns_old +
+                            j;
+                        test.state[index] = value;
+                    }
+                }
+            }
+            cases.push_back(std::move(test));
+        }
+        return cases;
+    }
+
+    void run_next() {
+        if (case_index_ == cases_.size()) {
+            if (!gpu_error_.empty()) {
+                finish(false, gpu_error_);
+            } else {
+                run_axisymmetric_inverse();
+            }
+            return;
+        }
+
+        const auto self = shared_from_this();
+        const auto interpolation = cases_[case_index_].interpolation;
+        cumes::webgpu::enqueue_prolongation(
+            device_, cases_[case_index_],
+            [self, interpolation](std::string error,
+                                  cumes::webgpu::ProlongationResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::prolongation_reference(
+                    self->cases_[self->case_index_]);
+                if (actual.state.size() != expected.state.size() ||
+                    actual.velocity.size() != expected.velocity.size()) {
+                    self->finish(false, "WebGPU result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                for (std::size_t i = 0; i < actual.state.size(); ++i) {
+                    max_error =
+                        std::max(max_error,
+                                 std::abs(actual.state[i] - expected.state[i]));
+                }
+                const bool velocity_zero =
+                    std::all_of(actual.velocity.begin(), actual.velocity.end(),
+                                [](float value) { return value == 0.0F; });
+                if (max_error > 4.0e-6F || !velocity_zero) {
+                    self->finish(
+                        false,
+                        "radial-transfer mismatch: max_error=" +
+                            std::to_string(max_error) + " velocity_zero=" +
+                            std::string(velocity_zero ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  %s: PASS (max |GPU-CPU| = %.3e)\n",
+                    interpolation == cumes::webgpu::RadialInterpolation::LINEAR
+                        ? "linear"
+                        : "Catmull-Rom",
+                    static_cast<double>(max_error));
+                ++self->case_index_;
+                self->run_next();
+            });
+    }
+
+    static cumes::webgpu::AxisymmetricInverseCase make_axisymmetric_case() {
+        cumes::webgpu::AxisymmetricInverseCase test;
+        test.ns = 5;
+        test.mpol = 6;
+        test.ntheta = 18;
+        test.state.resize(cumes::webgpu::SPECTRAL_COMPONENT_COUNT * test.mpol *
+                          test.ns);
+        for (std::size_t component = 0;
+             component < cumes::webgpu::SPECTRAL_COMPONENT_COUNT; ++component) {
+            for (int mode = 0; mode < test.mpol; ++mode) {
+                for (int surface = 0; surface < test.ns; ++surface) {
+                    const auto index =
+                        (component * test.mpol + mode) * test.ns + surface;
+                    test.state[index] =
+                        0.17F * static_cast<float>(component + 1) +
+                        0.031F * static_cast<float>(mode * mode + 1) +
+                        0.043F * static_cast<float>(surface) -
+                        0.007F * static_cast<float>(mode * surface);
+                }
+            }
+        }
+        return test;
+    }
+
+    void run_axisymmetric_inverse() {
+        axisymmetric_case_ = make_axisymmetric_case();
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_inverse(
+            device_, axisymmetric_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricInverseResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_inverse_reference(
+                        self->axisymmetric_case_);
+                if (actual.geometry.size() != expected.geometry.size() ||
+                    actual.r_con.size() != expected.r_con.size() ||
+                    actual.z_con.size() != expected.z_con.size()) {
+                    self->finish(false,
+                                 "axisymmetric inverse result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                const auto compare = [&max_error](const auto& gpu,
+                                                  const auto& cpu) {
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                    }
+                };
+                compare(actual.geometry, expected.geometry);
+                compare(actual.r_con, expected.r_con);
+                compare(actual.z_con, expected.z_con);
+
+                const std::size_t points =
+                    static_cast<std::size_t>(self->axisymmetric_case_.ns) *
+                    self->axisymmetric_case_.ntheta;
+                bool toroidal_derivatives_zero = true;
+                for (std::size_t field = 12;
+                     field < cumes::webgpu::GEOMETRY_PARITY_FIELD_COUNT;
+                     ++field) {
+                    const auto first = actual.geometry.begin() + field * points;
+                    toroidal_derivatives_zero &=
+                        std::all_of(first, first + points,
+                                    [](float value) { return value == 0.0F; });
+                }
+                if (max_error > 1.0e-4F || !toroidal_derivatives_zero) {
+                    self->finish(
+                        false,
+                        "axisymmetric inverse mismatch: max_error=" +
+                            std::to_string(max_error) +
+                            " toroidal_derivatives_zero=" +
+                            (toroidal_derivatives_zero ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  axisymmetric inverse+rCon/zCon: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                if (!self->gpu_error_.empty()) {
+                    self->finish(false, self->gpu_error_);
+                    return;
+                }
+                self->forward_cases_ = make_forward_cases();
+                self->run_axisymmetric_forward();
+            });
+    }
+
+    static std::vector<cumes::webgpu::AxisymmetricForwardCase>
+    make_forward_cases() {
+        cumes::webgpu::AxisymmetricForwardCase base;
+        base.ns = 5;
+        base.mpol = 6;
+        base.ntheta = 18;
+        const std::size_t points =
+            static_cast<std::size_t>(base.ns) * base.ntheta;
+        base.fields.resize(cumes::webgpu::FORWARD_INPUT_FIELD_COUNT * points);
+        for (std::size_t field = 0;
+             field < cumes::webgpu::FORWARD_INPUT_FIELD_COUNT; ++field) {
+            for (int surface = 0; surface < base.ns; ++surface) {
+                for (int theta = 0; theta < base.ntheta; ++theta) {
+                    const auto index =
+                        field * points +
+                        static_cast<std::size_t>(surface) * base.ntheta + theta;
+                    base.fields[index] =
+                        0.023F * static_cast<float>(field + 1) +
+                        0.017F * static_cast<float>(surface + 1) +
+                        0.009F * static_cast<float>((theta * 5 + field) % 11);
+                }
+            }
+        }
+        auto include_lcfs = base;
+        include_lcfs.include_lcfs = true;
+        return {std::move(base), std::move(include_lcfs)};
+    }
+
+    void run_axisymmetric_forward() {
+        if (forward_case_index_ == forward_cases_.size()) {
+            run_axisymmetric_dealias();
+            return;
+        }
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_forward(
+            device_, forward_cases_[forward_case_index_],
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto& test =
+                    self->forward_cases_[self->forward_case_index_];
+                const auto expected =
+                    cumes::webgpu::axisymmetric_forward_reference(test);
+                if (actual.residual.size() != expected.residual.size()) {
+                    self->finish(false,
+                                 "axisymmetric forward result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                    max_error = std::max(
+                        max_error,
+                        std::abs(actual.residual[i] - expected.residual[i]));
+                }
+                const auto value = [&test, &actual](int component, int mode,
+                                                    int surface) {
+                    return actual
+                        .residual[(static_cast<std::size_t>(component) *
+                                       test.mpol +
+                                   mode) *
+                                      test.ns +
+                                  surface];
+                };
+                bool boundary_contract = true;
+                for (int component = 3; component < 6; ++component) {
+                    for (int mode = 0; mode < test.mpol; ++mode) {
+                        for (int surface = 0; surface < test.ns; ++surface) {
+                            boundary_contract &=
+                                value(component, mode, surface) == 0.0F;
+                        }
+                    }
+                }
+                for (int mode = 0; mode < test.mpol; ++mode) {
+                    boundary_contract &= value(1, mode, 0) == 0.0F;
+                    boundary_contract &= value(2, mode, 0) == 0.0F;
+                    if (mode > 0) {
+                        boundary_contract &= value(0, mode, 0) == 0.0F;
+                    }
+                    if (!test.include_lcfs) {
+                        boundary_contract &=
+                            value(0, mode, test.ns - 1) == 0.0F;
+                        boundary_contract &=
+                            value(1, mode, test.ns - 1) == 0.0F;
+                    }
+                }
+                if (max_error > 1.0e-4F || !boundary_contract) {
+                    self->finish(false,
+                                 "axisymmetric forward mismatch: max_error=" +
+                                     std::to_string(max_error) +
+                                     " boundary_contract=" +
+                                     (boundary_contract ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  axisymmetric forward (%s LCFS): PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    test.include_lcfs ? "included" : "fixed",
+                    static_cast<double>(max_error));
+                ++self->forward_case_index_;
+                self->run_axisymmetric_forward();
+            });
+    }
+
+    static cumes::webgpu::AxisymmetricDealiasCase make_dealias_case() {
+        cumes::webgpu::AxisymmetricDealiasCase test;
+        test.ns = 5;
+        test.mpol = 6;
+        test.ntheta = 18;
+        const std::size_t points =
+            static_cast<std::size_t>(test.ns) * test.ntheta;
+        test.g_con_eff.resize(points);
+        for (std::size_t i = 0; i < points; ++i) {
+            test.g_con_eff[i] =
+                std::sin(0.21F * static_cast<float>(i)) +
+                0.13F * std::cos(0.07F * static_cast<float>(i * i));
+        }
+        test.tcon.resize(test.ns);
+        for (int surface = 0; surface < test.ns; ++surface) {
+            test.tcon[surface] = 0.5F + 0.1F * static_cast<float>(surface);
+        }
+        test.faccon.resize(test.mpol, 0.0F);
+        for (int mode = 1; mode < test.mpol; ++mode) {
+            const float xmpq = static_cast<float>((mode + 1) * mode);
+            test.faccon[mode] = 0.25F / (xmpq * xmpq);
+        }
+        return test;
+    }
+
+    void run_axisymmetric_dealias() {
+        dealias_case_ = make_dealias_case();
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_dealias(
+            device_, dealias_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricDealiasResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_dealias_reference(
+                        self->dealias_case_);
+                if (actual.g_con.size() != expected.g_con.size()) {
+                    self->finish(false,
+                                 "axisymmetric dealias result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                for (std::size_t i = 0; i < actual.g_con.size(); ++i) {
+                    max_error =
+                        std::max(max_error,
+                                 std::abs(actual.g_con[i] - expected.g_con[i]));
+                }
+                const bool axis_zero = std::all_of(
+                    actual.g_con.begin(),
+                    actual.g_con.begin() + self->dealias_case_.ntheta,
+                    [](float value) { return value == 0.0F; });
+                if (max_error > 1.0e-4F || !axis_zero) {
+                    self->finish(false,
+                                 "axisymmetric dealias mismatch: max_error=" +
+                                     std::to_string(max_error) + " axis_zero=" +
+                                     (axis_zero ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  axisymmetric constraint dealias: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                if (!self->gpu_error_.empty()) {
+                    self->finish(false, self->gpu_error_);
+                    return;
+                }
+                self->run_toroidal_inverse();
+            });
+    }
+
+    void run_toroidal_inverse() {
+        toroidal_case_.ns = 3;
+        toroidal_case_.mpol = 3;
+        toroidal_case_.ntor = 2;
+        toroidal_case_.ntheta = 16;
+        toroidal_case_.nzeta = 8;
+        toroidal_case_.nfp = 5;
+        const std::size_t values = cumes::webgpu::SPECTRAL_COMPONENT_COUNT *
+                                   toroidal_case_.ns * toroidal_case_.mpol *
+                                   (toroidal_case_.ntor + 1);
+        toroidal_case_.state.resize(values);
+        for (std::size_t i = 0; i < values; ++i) {
+            toroidal_case_.state[i] =
+                0.03F * std::sin(0.17F * static_cast<float>(i + 1)) +
+                0.01F * std::cos(0.07F * static_cast<float>(i * i + 3));
+        }
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_inverse(
+            device_, toroidal_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalInverseResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_inverse_reference(
+                    self->toroidal_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.geometry, expected.geometry);
+                compare(actual.r_con, expected.r_con);
+                compare(actual.z_con, expected.z_con);
+                const std::size_t points =
+                    static_cast<std::size_t>(self->toroidal_case_.ns) *
+                    self->toroidal_case_.ntheta * self->toroidal_case_.nzeta;
+                const bool toroidal_derivatives =
+                    std::any_of(actual.geometry.begin() + 12 * points,
+                                actual.geometry.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !toroidal_derivatives || max_error > 2.0e-5F) {
+                    self->finish(false, "toroidal inverse mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  direct 3-D inverse transform: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_toroidal_geometry();
+            });
+    }
+
+    void run_toroidal_geometry() {
+        cumes::webgpu::ToroidalInverseCase physical = toroidal_case_;
+        std::fill(physical.state.begin(), physical.state.end(), 0.0F);
+        const int mnmax = physical.mpol * (physical.ntor + 1);
+        const auto coefficient = [&](int component, int m, int n,
+                                     int surface) -> float& {
+            const int mode = m * (physical.ntor + 1) + n;
+            return physical
+                .state[(static_cast<std::size_t>(component) * mnmax + mode) *
+                           physical.ns +
+                       surface];
+        };
+        for (int surface = 0; surface < physical.ns; ++surface) {
+            const float s = static_cast<float>(surface) /
+                            static_cast<float>(physical.ns - 1);
+            coefficient(0, 0, 0, surface) = 10.0F;
+            coefficient(0, 1, 0, surface) = 0.8F * s;
+            coefficient(1, 1, 0, surface) = 0.8F * s;
+            coefficient(0, 1, 1, surface) = 0.025F * s;
+            coefficient(1, 1, 1, surface) = -0.018F * s;
+            coefficient(2, 1, 1, surface) = 0.006F * s;
+            coefficient(3, 1, 1, surface) = 0.012F * s;
+            coefficient(4, 1, 1, surface) = -0.009F * s;
+            coefficient(5, 1, 1, surface) = 0.004F * s;
+            coefficient(0, 2, 2, surface) = 0.003F * s;
+            coefficient(1, 2, 2, surface) = -0.002F * s;
+        }
+        const auto full = cumes::webgpu::toroidal_inverse_reference(physical);
+        toroidal_r_con_ = full.r_con;
+        toroidal_z_con_ = full.z_con;
+        toroidal_geometry_case_.ns = physical.ns;
+        toroidal_geometry_case_.ntheta = physical.ntheta;
+        toroidal_geometry_case_.nzeta = physical.nzeta;
+        toroidal_geometry_case_.delta_s = 0.5F;
+        toroidal_geometry_case_.geometry = full.geometry;
+        toroidal_geometry_case_.sqrt_s_f = {0.0F, std::sqrt(0.5F), 1.0F};
+        toroidal_geometry_case_.sqrt_s_h = {std::sqrt(0.25F), std::sqrt(0.75F)};
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_base_geometry(
+            device_, toroidal_geometry_case_,
+            [self](std::string error,
+                   cumes::webgpu::BaseGeometryResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::base_geometry_reference(
+                    self->toroidal_geometry_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                const std::size_t half_points =
+                    static_cast<std::size_t>(self->toroidal_geometry_case_.ns -
+                                             1) *
+                    self->toroidal_geometry_case_.ntheta *
+                    self->toroidal_geometry_case_.nzeta;
+                const bool guv_nonzero =
+                    valid &&
+                    std::any_of(actual.fields.begin() + 8 * half_points,
+                                actual.fields.begin() + 9 * half_points,
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !guv_nonzero || max_error > 2.0e-4F) {
+                    self->finish(false, "3-D base geometry mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  3-D half-grid base geometry: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->check_compact_base_geometry(
+                    self->toroidal_geometry_case_, std::move(actual),
+                    [self](cumes::webgpu::BaseGeometryResult checked) {
+                        self->run_toroidal_magnetic_field(
+                            std::move(checked.fields));
+                    });
+            });
+    }
+
+    void check_compact_base_geometry(
+        cumes::webgpu::BaseGeometryCase input,
+        cumes::webgpu::BaseGeometryResult expected,
+        std::function<void(cumes::webgpu::BaseGeometryResult)> next) {
+        using namespace cumes::webgpu;
+        const auto half =
+            std::size_t(input.ns - 1) * input.ntheta * input.nzeta;
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_, 2 * expected.fields.size() * sizeof(float) + 64);
+        input.readback_validity = true;
+        input.readback = {batch, {}};
+        auto actual = std::make_shared<BaseGeometryResult>();
+        auto errors = std::make_shared<std::string>();
+        enqueue_base_geometry(
+            device_, input,
+            [actual, errors](std::string error, BaseGeometryResult result) {
+                *actual = std::move(result);
+                *errors = std::move(error);
+            });
+        const auto self = shared_from_this();
+        batch->map([self, actual, errors, expected = std::move(expected),
+                    next = std::move(next), half,
+                    paired = input.double_single](std::string error) mutable {
+            bool valid =
+                error.empty() && errors->empty() &&
+                actual->fields_are_validity && actual->fields_finite &&
+                !actual->control.present && actual->device_fields &&
+                actual->device_fields.values == expected.fields.size() &&
+                actual->fields.size() == 2 * half &&
+                actual->fields_lo.size() == (paired ? 2 * half : 0);
+            for (int word = 0; word < (paired ? 2 : 1) && valid; ++word) {
+                const auto& source =
+                    word ? expected.fields_lo : expected.fields;
+                const auto& target = word ? actual->fields_lo : actual->fields;
+                for (std::size_t point = 0; point < half; ++point) {
+                    valid &=
+                        std::bit_cast<std::uint32_t>(target[point]) ==
+                        std::bit_cast<std::uint32_t>(source[6 * half + point]);
+                    valid &=
+                        std::bit_cast<std::uint32_t>(target[half + point]) ==
+                        std::bit_cast<std::uint32_t>(source[8 * half + point]);
+                }
+            }
+            if (!valid) {
+                self->finish(
+                    false, "compact base validity snapshot mismatch: " + error +
+                               *errors);
+                return;
+            }
+            std::printf("  compact base geometry gsqrt/guv, bitwise %s: PASS\n",
+                        paired ? "paired words" : "f32 words");
+            next(std::move(expected));
+        });
+    }
+
+    void run_toroidal_magnetic_field(std::vector<float> base_geometry) {
+        toroidal_magnetic_case_.ns = toroidal_geometry_case_.ns;
+        toroidal_magnetic_case_.ntheta = toroidal_geometry_case_.ntheta;
+        toroidal_magnetic_case_.nzeta = toroidal_geometry_case_.nzeta;
+        toroidal_magnetic_case_.lamscale = 1.0F;
+        toroidal_magnetic_case_.prescribed_current = true;
+        toroidal_magnetic_case_.geometry = toroidal_geometry_case_.geometry;
+        toroidal_magnetic_case_.base_geometry = std::move(base_geometry);
+        toroidal_magnetic_case_.sqrt_s_h = toroidal_geometry_case_.sqrt_s_h;
+        toroidal_magnetic_case_.phip_f = {0.9F, 0.85F, 0.8F};
+        toroidal_magnetic_case_.chip_h = {0.2F, 0.25F};
+        toroidal_magnetic_case_.pres_h = {0.03F, 0.01F};
+        toroidal_magnetic_case_.curr_h = {0.18F, 0.22F};
+        toroidal_magnetic_case_.phip_h = {0.875F, 0.825F};
+        toroidal_magnetic_case_.iota_h = {0.2F, 0.25F};
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_magnetic_field(
+            device_, toroidal_magnetic_case_,
+            [self](std::string error,
+                   cumes::webgpu::MagneticFieldResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::magnetic_field_reference(
+                    self->toroidal_magnetic_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size() &&
+                             actual.chip_h.size() == expected.chip_h.size() &&
+                             actual.iota_h.size() == expected.iota_h.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.chip_h.size(); ++i) {
+                        max_error = std::max(
+                            {max_error,
+                             std::abs(actual.chip_h[i] - expected.chip_h[i]),
+                             std::abs(actual.iota_h[i] - expected.iota_h[i])});
+                        valid &= std::isfinite(actual.chip_h[i]) &&
+                                 std::isfinite(actual.iota_h[i]);
+                    }
+                }
+                if (!valid || max_error > 2.0e-4F) {
+                    self->finish(false, "3-D magnetic field mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  3-D prescribed-current magnetic field+pressure: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->check_compact_magnetic(
+                    self->toroidal_magnetic_case_, std::move(actual),
+                    [self](cumes::webgpu::MagneticFieldResult checked) {
+                        self->run_toroidal_force(std::move(checked.fields));
+                    });
+            });
+    }
+
+    void check_compact_magnetic(
+        cumes::webgpu::MagneticFieldCase input,
+        cumes::webgpu::MagneticFieldResult expected,
+        std::function<void(cumes::webgpu::MagneticFieldResult)> next,
+        int variant = 0) {
+        using namespace cumes::webgpu;
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_,
+            2 * expected.fields.size() * sizeof(float) + 64 * input.ns);
+        auto retry = input;
+        retry.readback = {};
+        input.readback_values = variant != 0;
+        input.readback_vacuum = variant != 0;
+        if (variant == 2) {
+            // Only an omitted interior pressure row becomes nonfinite. The
+            // retained vacuum rows and all radial profiles stay unchanged.
+            auto& pressure =
+                input.double_single ? input.pres_h_lo : input.pres_h;
+            pressure.front() = std::numeric_limits<float>::infinity();
+        }
+        input.readback = {batch, {}};
+        auto actual = std::make_shared<MagneticFieldResult>();
+        auto errors = std::make_shared<std::string>();
+        enqueue_magnetic_field(
+            device_, input,
+            [actual, errors](std::string error, MagneticFieldResult result) {
+                *actual = std::move(result);
+                *errors = std::move(error);
+            });
+        const auto self = shared_from_this();
+        batch->map([self, actual, errors, expected = std::move(expected),
+                    next = std::move(next), retry = std::move(retry),
+                    variant](std::string error) mutable {
+            const auto same_bits = [](float a, float b) {
+                return std::bit_cast<std::uint32_t>(a) ==
+                       std::bit_cast<std::uint32_t>(b);
+            };
+            const auto same_words = [&](const auto& a, const auto& b) {
+                return a.size() == b.size() &&
+                       std::equal(a.begin(), a.end(), b.begin(), same_bits);
+            };
+            const auto angular = std::size_t(retry.ntheta) * retry.nzeta;
+            const auto half = std::size_t(retry.ns - 1) * angular;
+            const auto values = variant == 0 ? 0 : 6 * angular;
+            bool valid =
+                error.empty() && errors->empty() &&
+                actual->fields_finite == (variant != 2) &&
+                actual->fields_are_vacuum == (variant != 0) &&
+                actual->fields.size() == values &&
+                actual->fields_lo.size() ==
+                    (retry.double_single ? values : 0) &&
+                actual->device_fields &&
+                actual->device_fields.values == expected.fields.size() &&
+                same_words(actual->chip_h, expected.chip_h) &&
+                same_words(actual->chip_h_lo, expected.chip_h_lo) &&
+                same_words(actual->iota_h, expected.iota_h) &&
+                same_words(actual->iota_h_lo, expected.iota_h_lo);
+            for (int word = 0;
+                 variant != 0 && word < (retry.double_single ? 2 : 1) && valid;
+                 ++word) {
+                const auto& source =
+                    word ? expected.fields_lo : expected.fields;
+                const auto& target = word ? actual->fields_lo : actual->fields;
+                for (std::size_t field = 0; field < 3; ++field) {
+                    for (std::size_t point = 0; point < 2 * angular; ++point) {
+                        valid &= same_bits(
+                            target[field * 2 * angular + point],
+                            source[(field + 3) * half - 2 * angular + point]);
+                    }
+                }
+            }
+            if (!valid) {
+                self->finish(false, "compact magnetic snapshot mismatch: " +
+                                        std::to_string(variant) + " " + error +
+                                        *errors);
+                return;
+            }
+            if (variant == 0 || (variant == 1 && retry.ns > 3)) {
+                self->check_compact_magnetic(std::move(retry),
+                                             std::move(expected),
+                                             std::move(next), variant + 1);
+                return;
+            }
+            std::printf(
+                "  compact magnetic profiles/vacuum rows, bitwise "
+                "words%s: PASS\n",
+                variant == 2 ? ", interior finite check" : "");
+            next(std::move(expected));
+        });
+    }
+
+    void run_toroidal_force(std::vector<float> magnetic_field) {
+        toroidal_force_case_.ns = toroidal_geometry_case_.ns;
+        toroidal_force_case_.ntheta = toroidal_geometry_case_.ntheta;
+        toroidal_force_case_.nzeta = toroidal_geometry_case_.nzeta;
+        toroidal_force_case_.delta_s = toroidal_geometry_case_.delta_s;
+        toroidal_force_case_.lamscale = toroidal_magnetic_case_.lamscale;
+        toroidal_force_case_.geometry = toroidal_geometry_case_.geometry;
+        toroidal_force_case_.base_geometry =
+            toroidal_magnetic_case_.base_geometry;
+        toroidal_force_case_.magnetic_field = std::move(magnetic_field);
+        toroidal_force_case_.sqrt_s_f = toroidal_geometry_case_.sqrt_s_f;
+        toroidal_force_case_.sqrt_s_h = toroidal_geometry_case_.sqrt_s_h;
+        toroidal_force_case_.phip_f = toroidal_magnetic_case_.phip_f;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_force(
+            device_, toroidal_force_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForceResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_force_reference(
+                        self->toroidal_force_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                const std::size_t points =
+                    static_cast<std::size_t>(self->toroidal_force_case_.ns) *
+                    self->toroidal_force_case_.ntheta *
+                    self->toroidal_force_case_.nzeta;
+                const bool toroidal_force_nonzero =
+                    valid && std::any_of(actual.fields.begin() + 10 * points,
+                                         actual.fields.end(), [](float value) {
+                                             return value != 0.0F;
+                                         });
+                if (!valid || !toroidal_force_nonzero || max_error > 5.0e-4F) {
+                    self->finish(false, "3-D MHD force mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf("  3-D MHD force: PASS (max |GPU-CPU| = %.3e)\n",
+                            static_cast<double>(max_error));
+                self->run_toroidal_constraint(std::move(actual.fields));
+            });
+    }
+
+    void run_toroidal_constraint(std::vector<float> force_fields) {
+        toroidal_constraint_case_.ns = toroidal_case_.ns;
+        toroidal_constraint_case_.mpol = toroidal_case_.mpol;
+        toroidal_constraint_case_.ntor = toroidal_case_.ntor;
+        toroidal_constraint_case_.ntheta = toroidal_case_.ntheta;
+        toroidal_constraint_case_.nzeta = toroidal_case_.nzeta;
+        toroidal_constraint_case_.delta_s = toroidal_geometry_case_.delta_s;
+        toroidal_constraint_case_.tcon0 = 1.0F;
+        toroidal_constraint_case_.reset_reference = true;
+        toroidal_constraint_case_.refresh_preconditioner = true;
+        toroidal_constraint_case_.geometry = toroidal_geometry_case_.geometry;
+        toroidal_constraint_case_.r_con = toroidal_r_con_;
+        toroidal_constraint_case_.z_con = toroidal_z_con_;
+        const std::size_t points = toroidal_r_con_.size();
+        toroidal_constraint_case_.r_con0.assign(points, 0.0F);
+        toroidal_constraint_case_.z_con0.assign(points, 0.0F);
+        toroidal_constraint_case_.tcon.assign(toroidal_case_.ns, 0.0F);
+        toroidal_constraint_case_.ard.assign(2 * toroidal_case_.ns, 0.8F);
+        toroidal_constraint_case_.azd.assign(2 * toroidal_case_.ns, 0.9F);
+        toroidal_constraint_case_.sqrt_s_f = toroidal_geometry_case_.sqrt_s_f;
+        toroidal_constraint_case_.force_fields = std::move(force_fields);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_constraint(
+            device_, toroidal_constraint_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricConstraintResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_constraint_reference(
+                        self->toroidal_constraint_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.fields, expected.fields);
+                compare(actual.r_con0, expected.r_con0);
+                compare(actual.z_con0, expected.z_con0);
+                compare(actual.tcon, expected.tcon);
+                compare(actual.g_con_eff, expected.g_con_eff);
+                compare(actual.g_con, expected.g_con);
+                const bool active =
+                    std::any_of(actual.g_con.begin(), actual.g_con.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !active || max_error > 1.0e-3F) {
+                    self->finish(false, "3-D constraint mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  complete 3-D constraint: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_toroidal_dealias(std::move(actual.fields));
+            });
+    }
+
+    void run_toroidal_dealias(std::vector<float> constrained_fields) {
+        toroidal_dealias_case_.ns = toroidal_case_.ns;
+        toroidal_dealias_case_.mpol = toroidal_case_.mpol;
+        toroidal_dealias_case_.ntor = toroidal_case_.ntor;
+        toroidal_dealias_case_.ntheta = toroidal_case_.ntheta;
+        toroidal_dealias_case_.nzeta = toroidal_case_.nzeta;
+        const std::size_t points = static_cast<std::size_t>(toroidal_case_.ns) *
+                                   toroidal_case_.ntheta * toroidal_case_.nzeta;
+        toroidal_dealias_case_.g_con_eff.resize(points);
+        for (std::size_t i = 0; i < points; ++i) {
+            toroidal_dealias_case_.g_con_eff[i] =
+                0.09F * std::sin(0.071F * static_cast<float>(i + 1)) +
+                0.03F * std::cos(0.037F * static_cast<float>(i + 4));
+        }
+        toroidal_dealias_case_.tcon = {0.0F, 0.45F, 0.7F};
+        toroidal_dealias_case_.faccon.assign(toroidal_case_.mpol, 0.0F);
+        for (int m = 1; m < toroidal_case_.mpol; ++m) {
+            const float xmpq = static_cast<float>((m + 1) * m);
+            toroidal_dealias_case_.faccon[m] = 0.25F / (xmpq * xmpq);
+        }
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_dealias(
+            device_, toroidal_dealias_case_,
+            [self, constrained_fields = std::move(constrained_fields)](
+                std::string error,
+                cumes::webgpu::ToroidalDealiasResult actual) mutable {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_dealias_reference(
+                    self->toroidal_dealias_case_);
+                float max_error = 0.0F;
+                bool valid = actual.g_con.size() == expected.g_con.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.g_con.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.g_con[i] - expected.g_con[i]));
+                        valid &= std::isfinite(actual.g_con[i]);
+                    }
+                }
+                const bool active =
+                    valid &&
+                    std::any_of(actual.g_con.begin(), actual.g_con.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !active || max_error > 2.0e-5F) {
+                    self->finish(false, "3-D constraint dealias mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  direct 3-D constraint dealias: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_toroidal_forward(std::move(constrained_fields));
+            });
+    }
+
+    void run_toroidal_forward(std::vector<float> force_fields) {
+        toroidal_forward_case_.ns = toroidal_case_.ns;
+        toroidal_forward_case_.mpol = toroidal_case_.mpol;
+        toroidal_forward_case_.ntor = toroidal_case_.ntor;
+        toroidal_forward_case_.ntheta = toroidal_case_.ntheta;
+        toroidal_forward_case_.nzeta = toroidal_case_.nzeta;
+        toroidal_forward_case_.nfp = toroidal_case_.nfp;
+        toroidal_forward_case_.include_lcfs = false;
+        const std::size_t points =
+            static_cast<std::size_t>(toroidal_forward_case_.ns) *
+            toroidal_forward_case_.ntheta * toroidal_forward_case_.nzeta;
+        toroidal_forward_case_.fields.assign(
+            cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+        std::copy(force_fields.begin(), force_fields.end(),
+                  toroidal_forward_case_.fields.begin());
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, toroidal_forward_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_forward_reference(
+                    self->toroidal_forward_case_);
+                float max_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+                        valid &= std::isfinite(actual.residual[i]);
+                    }
+                }
+                const int mnmax = self->toroidal_forward_case_.mpol *
+                                  (self->toroidal_forward_case_.ntor + 1);
+                bool gates_valid = true;
+                bool interior_nonzero = false;
+                for (int component = 0; component < 6; ++component) {
+                    for (int mode = 0; mode < mnmax; ++mode) {
+                        const int m =
+                            mode / (self->toroidal_forward_case_.ntor + 1);
+                        const auto at = [&](int surface) {
+                            return actual
+                                .residual[(static_cast<std::size_t>(component) *
+                                               mnmax +
+                                           mode) *
+                                              self->toroidal_forward_case_.ns +
+                                          surface];
+                        };
+                        if (m > 0 || (component != 0 && component != 4)) {
+                            gates_valid &= at(0) == 0.0F;
+                        }
+                        if (component != 2 && component != 5) {
+                            gates_valid &=
+                                at(self->toroidal_forward_case_.ns - 1) == 0.0F;
+                        }
+                        interior_nonzero |= at(1) != 0.0F;
+                    }
+                }
+                if (!valid || !gates_valid || !interior_nonzero ||
+                    max_error > 2.0e-5F) {
+                    self->finish(false, "toroidal forward mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  direct 3-D forward transform: PASS "
+                    "(max |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_toroidal_preconditioner_elements(
+                    std::move(actual.residual));
+            });
+    }
+
+    void run_toroidal_preconditioner_elements(std::vector<float> residual) {
+        toroidal_preconditioner_case_.ns = toroidal_geometry_case_.ns;
+        toroidal_preconditioner_case_.ntheta = toroidal_geometry_case_.ntheta;
+        toroidal_preconditioner_case_.nzeta = toroidal_geometry_case_.nzeta;
+        toroidal_preconditioner_case_.delta_s = toroidal_geometry_case_.delta_s;
+        toroidal_preconditioner_case_.free_boundary = false;
+        toroidal_preconditioner_case_.geometry =
+            toroidal_geometry_case_.geometry;
+        toroidal_preconditioner_case_.base_geometry =
+            toroidal_magnetic_case_.base_geometry;
+        toroidal_preconditioner_case_.magnetic_field =
+            toroidal_force_case_.magnetic_field;
+        toroidal_preconditioner_case_.sqrt_s_f =
+            toroidal_geometry_case_.sqrt_s_f;
+        toroidal_preconditioner_case_.sqrt_s_h =
+            toroidal_geometry_case_.sqrt_s_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_elements(
+            device_, toroidal_preconditioner_case_,
+            [self, residual = std::move(residual)](
+                std::string error,
+                cumes::webgpu::AxisymmetricPreconditionerElements
+                    actual) mutable {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::
+                    axisymmetric_preconditioner_element_reference(
+                        self->toroidal_preconditioner_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.ard, expected.ard);
+                compare(actual.brd, expected.brd);
+                compare(actual.azd, expected.azd);
+                compare(actual.bzd, expected.bzd);
+                compare(actual.cxd, expected.cxd);
+                compare(actual.arm, expected.arm);
+                compare(actual.brm, expected.brm);
+                compare(actual.azm, expected.azm);
+                compare(actual.bzm, expected.bzm);
+                if (!valid || max_error > 5.0e-5F) {
+                    self->finish(false,
+                                 "3-D preconditioner element mismatch: " +
+                                     std::to_string(max_error));
+                    return;
+                }
+                self->toroidal_preconditioner_elements_ = std::move(actual);
+                self->run_toroidal_preconditioner_matrix(std::move(residual));
+            });
+    }
+
+    void run_toroidal_preconditioner_matrix(std::vector<float> residual) {
+        toroidal_preconditioner_matrix_case_.ns = toroidal_case_.ns;
+        toroidal_preconditioner_matrix_case_.mpol = toroidal_case_.mpol;
+        toroidal_preconditioner_matrix_case_.ntor = toroidal_case_.ntor;
+        toroidal_preconditioner_matrix_case_.ntheta = toroidal_case_.ntheta;
+        toroidal_preconditioner_matrix_case_.nzeta = toroidal_case_.nzeta;
+        toroidal_preconditioner_matrix_case_.nfp = toroidal_case_.nfp;
+        toroidal_preconditioner_matrix_case_.delta_s =
+            toroidal_geometry_case_.delta_s;
+        toroidal_preconditioner_matrix_case_.free_boundary = false;
+        toroidal_preconditioner_matrix_case_.elements =
+            toroidal_preconditioner_elements_;
+        toroidal_preconditioner_matrix_case_.base_geometry =
+            toroidal_magnetic_case_.base_geometry;
+        toroidal_preconditioner_matrix_case_.sqrt_s_f =
+            toroidal_geometry_case_.sqrt_s_f;
+        toroidal_preconditioner_matrix_case_.phip_h = {0.875F, 0.825F};
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_matrix(
+            device_, toroidal_preconditioner_matrix_case_,
+            [self, residual = std::move(residual)](
+                std::string error,
+                cumes::webgpu::AxisymmetricPreconditionerMatrix
+                    actual) mutable {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_preconditioner_matrix_reference(
+                        self->toroidal_preconditioner_matrix_case_);
+                float max_error = 0.0F;
+                bool valid = actual.first_surface == expected.first_surface;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.upper_r, expected.upper_r);
+                compare(actual.diagonal_r, expected.diagonal_r);
+                compare(actual.lower_r, expected.lower_r);
+                compare(actual.upper_z, expected.upper_z);
+                compare(actual.diagonal_z, expected.diagonal_z);
+                compare(actual.lower_z, expected.lower_z);
+                compare(actual.lambda, expected.lambda);
+                compare(actual.scale, expected.scale);
+                if (!valid || max_error > 2.0e-4F) {
+                    self->finish(false, "3-D preconditioner matrix mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                self->toroidal_preconditioner_matrix_ = std::move(actual);
+                self->run_toroidal_preconditioner_apply(std::move(residual));
+            });
+    }
+
+    void run_toroidal_preconditioner_apply(std::vector<float> residual) {
+        toroidal_preconditioner_apply_case_.ns = toroidal_case_.ns;
+        toroidal_preconditioner_apply_case_.mpol = toroidal_case_.mpol;
+        toroidal_preconditioner_apply_case_.ntor = toroidal_case_.ntor;
+        toroidal_preconditioner_apply_case_.include_lcfs = false;
+        toroidal_preconditioner_apply_case_.elements =
+            toroidal_preconditioner_elements_;
+        toroidal_preconditioner_apply_case_.matrix =
+            toroidal_preconditioner_matrix_;
+        toroidal_preconditioner_apply_case_.residual = std::move(residual);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_preconditioner_apply(
+            device_, toroidal_preconditioner_apply_case_,
+            [self](
+                std::string error,
+                cumes::webgpu::AxisymmetricPreconditionerApplyResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_preconditioner_apply_reference(
+                        self->toroidal_preconditioner_apply_case_);
+                float max_error = 0.0F;
+                bool valid = actual.residual.size() == expected.residual.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.residual[i] -
+                                     expected.residual[i]) /
+                                (1.0F + std::abs(expected.residual[i])));
+                        valid &= std::isfinite(actual.residual[i]);
+                    }
+                }
+                valid &= actual.breakdown_count == expected.breakdown_count;
+                if (!valid || actual.breakdown_count != 0 ||
+                    max_error > 2.0e-4F) {
+                    self->finish(false, "3-D preconditioner apply mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  complete 3-D preconditioner: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->run_resident_residual_tests();
+            });
+    }
+
+    void run_resident_residual_tests(int test = 0) {
+        if (test == 12) {
+            std::printf(
+                "  resident and batched spectral handoff (f32, paired, zero, "
+                "NaN): PASS\n");
+            run_readback_batch_test();
+            return;
+        }
+        const int variant = test % 4;
+        cumes::webgpu::ResidualDecompositionCase input;
+        input.ns = 3;
+        input.mpol = 2;
+        input.ntor = 1;
+        input.double_single = variant != 0;
+        input.sqrt_s_f = {0.0F, 0.5F, 1.0F};
+        input.sqrt_s_f_lo.assign(3, 0.0F);
+        input.residual.resize(72);
+        input.residual_lo.assign(72, 0.0F);
+        for (std::size_t i = 0; i < input.residual.size(); ++i) {
+            input.residual[i] = variant == 2 ? 0.0F : 0.125F * (int(i % 9) - 4);
+            if (variant == 1)
+                input.residual_lo[i] = 1.0e-10F * (int(i % 7) - 3);
+        }
+        if (variant == 3)
+            input.residual[0] = std::numeric_limits<float>::quiet_NaN();
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_residual_decomposition(
+            device_, input,
+            [self, input, variant, test](
+                std::string error,
+                cumes::webgpu::ResidualDecompositionResult expected) mutable {
+                if (!error.empty()) {
+                    self->finish(false, error);
+                    return;
+                }
+                const auto count = input.residual.size();
+                // Non-storage-aligned high/low offsets exercise the copy path.
+                std::vector<float> storage(7 + 2 * count, 47.0F);
+                std::copy(input.residual.begin(), input.residual.end(),
+                          storage.begin() + 4);
+                std::copy(input.residual_lo.begin(), input.residual_lo.end(),
+                          storage.begin() + 7 + count);
+                wgpu::BufferDescriptor descriptor{};
+                descriptor.size = storage.size() * sizeof(float);
+                descriptor.usage =
+                    wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc;
+                if (test >= 8) descriptor.usage |= wgpu::BufferUsage::Storage;
+                const auto buffer = self->device_.CreateBuffer(&descriptor);
+                self->device_.GetQueue().WriteBuffer(buffer, 0, storage.data(),
+                                                     descriptor.size);
+                input.device_residual = {buffer, count, 4 * sizeof(float),
+                                         (7 + count) * sizeof(float)};
+                input.residual.clear();
+                input.residual_lo.clear();
+                if (!cumes::webgpu::residual_decomposition_reference(input)
+                         .residual.empty()) {
+                    self->finish(
+                        false, "CPU reference accepted a device-only residual");
+                    return;
+                }
+                const auto check =
+                    [self, buffer, expected = std::move(expected), variant,
+                     test](std::string error,
+                           cumes::webgpu::ResidualDecompositionResult actual) {
+                        const bool equal =
+                            variant == 3 ||
+                            (actual.residual == expected.residual &&
+                             actual.residual_lo == expected.residual_lo &&
+                             actual.raw_norm == expected.raw_norm);
+                        buffer.Destroy();
+                        if (!error.empty() || !equal ||
+                            actual.source_finite != (variant != 3) ||
+                            actual.source_nonzero != (variant != 2)) {
+                            self->finish(
+                                false,
+                                "resident residual/validation mismatch: " +
+                                    error);
+                            return;
+                        }
+                        self->run_resident_residual_tests(test + 1);
+                    };
+                if (test < 4) {
+                    cumes::webgpu::enqueue_residual_decomposition(self->device_,
+                                                                  input, check);
+                    return;
+                }
+                auto batch = std::make_shared<cumes::webgpu::ReadbackBatch>(
+                    self->device_, 4096);
+                auto result = std::make_shared<
+                    cumes::webgpu::ResidualDecompositionResult>();
+                input.readback = {
+                    batch, [](cumes::webgpu::ResidualDecompositionResult) {}};
+                cumes::webgpu::enqueue_residual_decomposition(
+                    self->device_, input,
+                    [self, result](
+                        std::string error,
+                        cumes::webgpu::ResidualDecompositionResult value) {
+                        if (!error.empty()) {
+                            self->finish(false, error);
+                            return;
+                        }
+                        *result = std::move(value);
+                    });
+                batch->map([check, result](std::string error) {
+                    check(std::move(error), std::move(*result));
+                });
+            });
+    }
+
+    void run_readback_batch_test(
+        int cycle = 0,
+        std::shared_ptr<cumes::webgpu::ReadbackBatch> batch = {}) {
+        if (!batch)
+            batch = std::make_shared<cumes::webgpu::ReadbackBatch>(device_, 24);
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = 16;
+        descriptor.usage =
+            wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+        const auto source = device_.CreateBuffer(&descriptor);
+        auto valid = std::make_shared<bool>(true);
+        auto decoded = std::make_shared<int>(0);
+        const auto encoder = device_.CreateCommandEncoder();
+        bool empty_rejected = false, overflow_rejected = false;
+        batch->map([&empty_rejected](std::string error) {
+            empty_rejected = !error.empty();
+        });
+        batch->append(encoder, source, 0, 28, [](std::span<const float>) {});
+        batch->map([&overflow_rejected](std::string error) {
+            overflow_rejected = !error.empty();
+        });
+        if (!empty_rejected || !overflow_rejected) {
+            finish(false,
+                   "readback batch accepted an empty map or overflowing slice");
+            return;
+        }
+        const std::array<float, 4> first{1.0F, -2.0F, float(cycle), 4.0F};
+        device_.GetQueue().WriteBuffer(source, 0, first.data(), sizeof(first));
+        batch->append(encoder, source, 0, 12,
+                      [valid, decoded, first](std::span<const float> values) {
+                          *valid &= std::equal(values.begin(), values.end(),
+                                               first.begin());
+                          ++*decoded;
+                      });
+        const auto commands = encoder.Finish();
+        device_.GetQueue().Submit(1, &commands);
+        // Reuse the producer before mapping; its first snapshot must survive.
+        const std::array<float, 4> second{17.0F, 19.0F, 23.0F, 29.0F};
+        device_.GetQueue().WriteBuffer(source, 0, second.data(),
+                                       sizeof(second));
+        const auto next_encoder = device_.CreateCommandEncoder();
+        batch->append(next_encoder, source, 4, 4,
+                      [valid, decoded](std::span<const float> values) {
+                          *valid &= values.size() == 1 && values[0] == 19.0F;
+                          ++*decoded;
+                      });
+        const auto next_commands = next_encoder.Finish();
+        device_.GetQueue().Submit(1, &next_commands);
+        const auto self = shared_from_this();
+        batch->map(
+            [self, batch, source, valid, decoded, cycle](std::string error) {
+                source.Destroy();
+                if (!error.empty() || !*valid || *decoded != 2) {
+                    self->finish(
+                        false,
+                        "readback batch snapshot/alignment/reuse mismatch: " +
+                            error);
+                    return;
+                }
+                if (cycle == 0)
+                    self->run_readback_batch_test(1, batch);
+                else {
+                    std::printf(
+                        "  batched readback snapshots, alignment, reuse, "
+                        "guards: PASS\n");
+                    self->run_device_inverse_test();
+                }
+            });
+    }
+
+    void run_device_descent_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 6) {
+            std::printf(
+                "  device-only descent, axis remap, f32 direction, "
+                "fixed/free LCFS, accepted snapshot isolation: PASS\n");
+            run_device_norm_test();
+            return;
+        }
+        AxisymmetricDescentCase input;
+        input.ns = 3;
+        input.mpol = 3;
+        input.ntor = 2;
+        input.delta_t = 0.03125F;
+        input.damping_b1 = 0.875F;
+        input.damping_fac = 0.9375F;
+        input.double_single = variant % 3 != 0;
+        input.residual_is_f32 = variant % 3 == 1;
+        input.move_lcfs = variant >= 3;
+        input.extrapolate_axis = true;
+        const std::size_t count = 6 * input.ns * input.mpol * (input.ntor + 1);
+        input.state.resize(count);
+        input.velocity.resize(count);
+        input.residual.resize(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            input.state[i] = 1.0F + float(i) / 128.0F;
+            input.velocity[i] = float(int(i % 7) - 3) / 1024.0F;
+            input.residual[i] = float(int(i % 11) - 5) / 512.0F;
+        }
+        if (input.double_single) {
+            input.state_lo.assign(count, 1.0e-8F);
+            input.velocity_lo.assign(count, -1.0e-12F);
+            if (!input.residual_is_f32)
+                input.residual_lo.assign(count, 2.0e-11F);
+        }
+        const auto upload = [&](const std::vector<float>& hi,
+                                const std::vector<float>& lo) {
+            // Deliberately unaligned storage-binding offsets, with sentinel
+            // padding and low words not immediately following high words.
+            std::vector<float> packed(2 * count + 7, 91.0F);
+            std::copy(hi.begin(), hi.end(), packed.begin() + 1);
+            std::copy(lo.begin(), lo.end(), packed.begin() + count + 4);
+            wgpu::BufferDescriptor descriptor{};
+            descriptor.size = packed.size() * sizeof(float);
+            descriptor.usage =
+                wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+            auto buffer = device_.CreateBuffer(&descriptor);
+            device_.GetQueue().WriteBuffer(buffer, 0, packed.data(),
+                                           descriptor.size);
+            return DeviceFields{buffer, count, sizeof(float),
+                                (count + 4) * sizeof(float)};
+        };
+        auto resident = input;
+        const auto candidate = upload(input.state, input.state_lo);
+        FieldSnapshot checkpoint;
+        resident.device_state = checkpoint.capture(
+            device_, candidate, input.double_single, "test accepted state");
+        // A subsequent rejected candidate must not modify the accepted copy.
+        auto clear = device_.CreateCommandEncoder();
+        clear.ClearBuffer(candidate.buffer);
+        const auto clear_commands = clear.Finish();
+        device_.GetQueue().Submit(1, &clear_commands);
+        resident.device_velocity = upload(input.velocity, input.velocity_lo);
+        resident.device_residual = upload(input.residual, input.residual_lo);
+        resident.state.clear();
+        resident.state_lo.clear();
+        resident.velocity.clear();
+        resident.velocity_lo.clear();
+        resident.residual.clear();
+        resident.residual_lo.clear();
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_, 10 * count * sizeof(float));
+        input.readback.batch = batch;
+        resident.readback.batch = batch;
+        auto results =
+            std::make_shared<std::array<AxisymmetricDescentResult, 2>>();
+        auto errors = std::make_shared<std::string>();
+        const auto collect = [results, errors](int index) {
+            return [results, errors, index](std::string error,
+                                            AxisymmetricDescentResult out) {
+                if (!error.empty()) *errors = std::move(error);
+                (*results)[index] = std::move(out);
+            };
+        };
+        enqueue_axisymmetric_descent(device_, input, collect(0));
+        resident.readback_velocity = false;
+        // Snapshot the retained velocity solely for this comparison; the
+        // production compact route downloads only its finite flag.
+        auto velocity = std::make_shared<std::vector<float>>();
+        resident.readback.device_ready = [self = shared_from_this(), batch,
+                                          velocity, count,
+                                          paired = input.double_single](
+                                             AxisymmetricDescentResult out) {
+            const auto encoder = self->device_.CreateCommandEncoder();
+            batch->append(encoder, out.device_velocity.buffer,
+                          out.device_velocity.high_offset,
+                          count * (paired ? 2 : 1) * sizeof(float),
+                          [velocity](std::span<const float> values) {
+                              velocity->assign(values.begin(), values.end());
+                          });
+            const auto commands = encoder.Finish();
+            self->device_.GetQueue().Submit(1, &commands);
+        };
+        enqueue_axisymmetric_descent(device_, resident, collect(1));
+        const auto self = shared_from_this();
+        batch->map(
+            [self, results, errors, velocity, variant](std::string error) {
+                const auto& a = (*results)[0];
+                const auto& b = (*results)[1];
+                auto expected_velocity = a.velocity;
+                expected_velocity.insert(expected_velocity.end(),
+                                         a.velocity_lo.begin(),
+                                         a.velocity_lo.end());
+                if (!error.empty() || !errors->empty() || a.state.empty() ||
+                    a.state != b.state || a.state_lo != b.state_lo ||
+                    !b.velocity.empty() || !b.velocity_lo.empty() ||
+                    !b.velocity_finite || expected_velocity != *velocity) {
+                    self->finish(false, "device descent snapshot mismatch: " +
+                                            error + *errors);
+                    return;
+                }
+                self->run_device_descent_test(variant + 1);
+            });
+    }
+
+    void run_field_finite_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 14) {
+            std::printf(
+                "  GPU field finite scan: offsets, partial blocks, "
+                "NaN/Inf, signed zero, subnormals, range guards: PASS\n");
+            run_compact_force_test();
+            return;
+        }
+        const std::size_t counts[] = {1, 255, 256, 257, 1001};
+        const auto count = counts[variant % 5];
+        std::vector<float> values(count + 2, 0.0F);
+        values.front() = values.back() =
+            std::numeric_limits<float>::quiet_NaN();
+        for (std::size_t i = 1; i <= count; ++i) {
+            const float finite[] = {0.0F, -0.0F,
+                                    std::numeric_limits<float>::denorm_min(),
+                                    std::numeric_limits<float>::max(),
+                                    -std::numeric_limits<float>::max()};
+            values[i] = finite[i % 5];
+        }
+        if (variant >= 5 && variant <= 8) {
+            const float nonfinite[] = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::infinity(),
+                -std::numeric_limits<float>::infinity(),
+                std::numeric_limits<float>::signaling_NaN()};
+            values[variant % 2 ? count : 1] = nonfinite[variant - 5];
+        }
+        if (variant == 12)
+            std::fill(values.begin() + 1, values.end() - 1, -0.0F);
+        if (variant == 13) {
+            std::fill(values.begin() + 1, values.end() - 1, 0.0F);
+            values[count] = std::numeric_limits<float>::denorm_min();
+        }
+        const bool expected_nonzero =
+            std::any_of(values.begin() + 1, values.end() - 1,
+                        [](float value) { return value != 0.0F; });
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = values.size() * sizeof(float);
+        descriptor.usage =
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
+        const auto buffer = device_.CreateBuffer(&descriptor);
+        device_.GetQueue().WriteBuffer(buffer, 0, values.data(),
+                                       descriptor.size);
+        DeviceFields fields{buffer, count, sizeof(float), 0};
+        if (variant == 9) fields.high_offset = 1;
+        if (variant == 10) fields.values = values.size();
+        if (variant == 11) fields.values = 0;
+        auto batch = std::make_shared<ReadbackBatch>(device_, 64);
+        const auto result = std::make_shared<bool>(false);
+        const auto error = std::make_shared<std::string>();
+        enqueue_field_finite(device_, fields, batch,
+                             [result, error](std::string message, bool finite) {
+                                 *result = finite;
+                                 *error = std::move(message);
+                             });
+        if (variant >= 9 && variant <= 11) {
+            if (error->empty() || *result) {
+                finish(false, "GPU field finite scan accepted invalid range");
+                return;
+            }
+            run_field_finite_test(variant + 1);
+            return;
+        }
+        const auto status = std::make_shared<FieldStatus>();
+        enqueue_field_status(
+            device_, fields, batch,
+            [status, error](std::string message, FieldStatus value) {
+                *status = value;
+                if (!message.empty()) *error = std::move(message);
+            });
+        const auto self = shared_from_this();
+        batch->map([self, variant, buffer, result, error, status,
+                    expected_nonzero](std::string message) {
+            if (!message.empty() || !error->empty() ||
+                *result != (variant < 5 || variant >= 12) ||
+                status->finite != *result ||
+                status->nonzero != expected_nonzero) {
+                self->finish(false, "GPU field finite scan mismatch: " +
+                                        std::to_string(variant) + " " +
+                                        message + *error);
+                return;
+            }
+            self->run_field_finite_test(variant + 1);
+        });
+    }
+
+    void run_compact_force_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 8) {
+            std::printf(
+                "  compact force readback: scalar/paired, axisymmetric/3-D, "
+                "bitwise LCFS rows, interior finite checks: PASS\n");
+            run_geometry_control_test();
+            return;
+        }
+        AxisymmetricForceCase input;
+        input.ns = 5;
+        input.ntheta = 6;
+        input.nzeta = variant % 4 < 2 ? 1 : 3;
+        input.double_single = variant % 2 != 0;
+        input.delta_s = 0.25F;
+        input.lamscale = 1.0F;
+        const std::size_t angular = input.ntheta * input.nzeta;
+        const auto full = input.ns * angular;
+        const auto half = (input.ns - 1) * angular;
+        const auto fill = [](std::vector<float>& values, std::size_t count,
+                             float scale) {
+            values.resize(count);
+            for (std::size_t i = 0; i < count; ++i)
+                values[i] = scale * float(1 + i % 29);
+        };
+        fill(input.geometry, GEOMETRY_PARITY_FIELD_COUNT * full, 0.0625F);
+        fill(input.base_geometry, BASE_GEOMETRY_FIELD_COUNT * half, 0.125F);
+        fill(input.magnetic_field, MAGNETIC_FIELD_COUNT * half, 0.03125F);
+        input.sqrt_s_f = {0.0F, 0.5F, 0.75F, 0.875F, 1.0F};
+        input.sqrt_s_h = {0.25F, 0.625F, 0.8125F, 0.9375F};
+        input.phip_f.assign(input.ns, 1.0F);
+        if (input.double_single) {
+            fill(input.geometry_lo, input.geometry.size(), 1.0e-10F);
+            fill(input.base_geometry_lo, input.base_geometry.size(), -1.0e-10F);
+            fill(input.magnetic_field_lo, input.magnetic_field.size(),
+                 1.0e-11F);
+            input.sqrt_s_f_lo.assign(input.ns, 0.0F);
+            input.sqrt_s_h_lo.assign(input.ns - 1, 0.0F);
+            input.phip_f_lo.assign(input.ns, 0.0F);
+        }
+        if (variant >= 4) {
+            // Covariant B_u reaches force fields 14/15 at two interior rows.
+            // None of the four LCFS rows returned by the compact path sees it.
+            auto& words = input.double_single ? input.magnetic_field_lo
+                                              : input.magnetic_field;
+            words[2 * half + angular + 1] =
+                std::numeric_limits<float>::infinity();
+        }
+        const auto batch = std::make_shared<ReadbackBatch>(
+            device_, 4 * FORCE_FIELD_COUNT * full * sizeof(float));
+        input.batched_readback.batch = batch;
+        const auto results =
+            std::make_shared<std::array<AxisymmetricForceResult, 2>>();
+        const auto errors = std::make_shared<std::string>();
+        const auto collect = [results, errors](int index) {
+            return [results, errors, index](std::string error,
+                                            AxisymmetricForceResult result) {
+                if (!error.empty()) *errors = std::move(error);
+                (*results)[index] = std::move(result);
+            };
+        };
+        enqueue_axisymmetric_force(device_, input, collect(0));
+        input.readback = false;
+        input.readback_lcfs = true;
+        enqueue_axisymmetric_force(device_, input, collect(1));
+        const auto self = shared_from_this();
+        batch->map([self, results, errors, variant, angular, full,
+                    paired = input.double_single](std::string error) {
+            const auto& expected = (*results)[0];
+            const auto& actual = (*results)[1];
+            const auto all_finite = [](const auto& words) {
+                return std::all_of(words.begin(), words.end(), [](float word) {
+                    return std::isfinite(word);
+                });
+            };
+            const bool expected_finite =
+                all_finite(expected.fields) && all_finite(expected.fields_lo);
+            bool valid =
+                error.empty() && errors->empty() &&
+                expected.fields.size() == FORCE_FIELD_COUNT * full &&
+                expected.fields_lo.size() ==
+                    (paired ? FORCE_FIELD_COUNT * full : 0) &&
+                !expected.lcfs_only && actual.lcfs_only &&
+                actual.device_fields.values == FORCE_FIELD_COUNT * full &&
+                actual.fields.size() == 4 * angular &&
+                actual.fields_lo.size() == (paired ? 4 * angular : 0) &&
+                actual.fields_finite == expected_finite &&
+                expected_finite == (variant < 4) && all_finite(actual.fields) &&
+                all_finite(actual.fields_lo);
+            for (int word = 0; word < (paired ? 2 : 1) && valid; ++word) {
+                const auto& source =
+                    word ? expected.fields_lo : expected.fields;
+                const auto& target = word ? actual.fields_lo : actual.fields;
+                for (std::size_t field = 0; field < 4; ++field)
+                    for (std::size_t point = 0; point < angular; ++point)
+                        valid &=
+                            std::bit_cast<std::uint32_t>(
+                                target[field * angular + point]) ==
+                            std::bit_cast<std::uint32_t>(
+                                source[(field + 1) * full - angular + point]);
+            }
+            if (!valid) {
+                self->finish(false, "compact force readback mismatch: " +
+                                        std::to_string(variant) + " " + error +
+                                        *errors);
+                return;
+            }
+            self->run_compact_force_test(variant + 1);
+        });
+    }
+
+    void run_geometry_control_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 16) {
+            std::printf(
+                "  GPU Jacobian control: sign/zero/nonfinite, ties, "
+                "axis exemption, threshold/range fallback: PASS\n");
+            run_geometry_axis_exemption_test();
+            return;
+        }
+        constexpr std::size_t POINTS = 513;
+        constexpr std::size_t VALUES = 10 * POINTS;
+        const bool paired = variant != 1;
+        std::vector<float> data(1 + 2 * VALUES, 0.0F);
+        auto hi = std::span(data).subspan(1, VALUES);
+        auto lo = std::span(data).subspan(1 + VALUES, VALUES);
+        std::fill(hi.begin() + 6 * POINTS, hi.begin() + 7 * POINTS, -1.0F);
+        if (variant == 2) hi[6 * POINTS] = 1.0F;
+        if (variant == 3) hi[6 * POINTS + 512] = 2.0F;
+        if (variant == 4) hi[6 * POINTS] = 0.0F;
+        if (variant == 5)
+            lo[VALUES - 1] = std::numeric_limits<float>::quiet_NaN();
+        if (variant == 6)
+            hi[6 * POINTS + 256] = std::numeric_limits<float>::infinity();
+        if (variant == 7) hi[8 * POINTS + 512] = 0.1F;
+        if (variant == 8 || variant == 9)
+            hi[6 * POINTS + (variant == 8 ? 0 : 32)] = -1.0e-15F;
+        if (variant == 10) {
+            const auto value =
+                split(-cumes::control_policy::JACOBIAN_RELATIVE_THRESHOLD);
+            hi[6 * POINTS + 32] = value.hi;
+            lo[6 * POINTS + 32] = value.lo;
+        }
+        if (variant == 11) lo[7 * POINTS - 1] = 0x1p-27F;
+        if (variant == 12)
+            hi[6 * POINTS] = -std::numeric_limits<float>::denorm_min();
+        if (variant == 13) lo[7 * POINTS - 1] = 1.0e-20F;
+        cumes::JacobianStatus<double> expected;
+        expected.min_oriented = std::numeric_limits<double>::infinity();
+        expected.min_index = -1;
+        for (std::size_t i = 0; i < POINTS; ++i) {
+            const double value = double(hi[6 * POINTS + i]) +
+                                 (paired ? lo[6 * POINTS + i] : 0.0F);
+            if (!std::isfinite(value)) {
+                ++expected.nonfinite_count;
+                continue;
+            }
+            if (-value < expected.min_oriented) {
+                expected.min_oriented = -value;
+                expected.min_index = static_cast<int>(i);
+            }
+            expected.max_abs = std::max(expected.max_abs, std::abs(value));
+        }
+        cumes::IterationController<double> reference({});
+        const bool invalid = reference.jacobian_invalid(expected, 30);
+        const bool guards = variant < 4 || variant > 7;
+        const bool fallback = variant == 10 || variant == 12 || variant == 13;
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = data.size() * sizeof(float);
+        descriptor.usage =
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
+        const auto buffer = device_.CreateBuffer(&descriptor);
+        device_.GetQueue().WriteBuffer(buffer, 0, data.data(), descriptor.size);
+        DeviceFields fields{buffer, VALUES, 4, (1 + VALUES) * sizeof(float)};
+        if (variant == 14) fields.high_offset = 1;
+        if (variant == 15) fields.low_offset += 4;
+        auto batch = std::make_shared<ReadbackBatch>(device_, 32);
+        auto actual = std::make_shared<GeometryControlResult>();
+        auto errors = std::make_shared<std::string>();
+        enqueue_geometry_control(
+            device_, fields, paired, true, 30, batch,
+            [actual, errors](std::string error, GeometryControlResult result) {
+                *actual = result;
+                *errors = std::move(error);
+            });
+        if (variant >= 14) {
+            if (errors->empty()) {
+                finish(false, "GPU Jacobian accepted malformed range");
+                return;
+            }
+            run_geometry_control_test(variant + 1);
+            return;
+        }
+        const auto self = shared_from_this();
+        batch->map([self, buffer, actual, errors, expected, invalid, guards,
+                    fallback, variant](std::string error) {
+            const auto& s = actual->jacobian;
+            if (!error.empty() || !errors->empty() || !actual->present ||
+                actual->guards_valid != guards ||
+                actual->fallback != fallback ||
+                (!fallback && guards &&
+                 (s.min_oriented != expected.min_oriented ||
+                  s.max_abs != expected.max_abs ||
+                  s.min_index != expected.min_index ||
+                  s.nonfinite_count != expected.nonfinite_count ||
+                  actual->invalid != invalid))) {
+                self->finish(false, "GPU Jacobian control mismatch variant=" +
+                                        std::to_string(variant) + " " + error +
+                                        *errors);
+                return;
+            }
+            self->run_geometry_control_test(variant + 1);
+        });
+    }
+
+    void run_geometry_axis_exemption_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 8) {
+            std::printf(
+                "  3-D GPU Jacobian control: angular-plane exemption, "
+                "next surface, sign rejection, f32/paired: PASS\n");
+            run_w7x_initialization();
+            return;
+        }
+        constexpr int NTHETA = 18;
+        constexpr int NZETA = 4;
+        constexpr int ANGULAR = NTHETA * NZETA;
+        constexpr std::size_t FULL = 3 * ANGULAR;
+        constexpr std::size_t HALF = 2 * ANGULAR;
+        constexpr float SMALL = 0x1p-60F;
+        const bool paired = variant >= 4;
+        const int scenario = variant % 4;
+        const int min_index = std::array{18, 71, 72, 18}[scenario];
+        const float minimum = scenario == 3 ? -SMALL : SMALL;
+        const bool invalid = scenario >= 2;
+        BaseGeometryCase input;
+        input.ns = 3;
+        input.ntheta = NTHETA;
+        input.nzeta = NZETA;
+        input.delta_s = 0.5F;
+        input.device_control = true;
+        input.double_single = paired;
+        input.sqrt_s_f = {0.0F, std::sqrt(0.5F), 1.0F};
+        input.sqrt_s_h = {0.5F, std::sqrt(0.75F)};
+        input.geometry.resize(18 * FULL, 0.0F);
+        if (paired) input.geometry_lo.resize(input.geometry.size(), 0.0F);
+        // Manufactured fields give r12=1, ru12=-1, rs=zu12=tau2=0,
+        // hence gsqrt=-zs. Z=0 on the middle surface avoids cancellation
+        // when either half-grid surface has the very small Jacobian.
+        for (std::size_t point = 0; point < FULL; ++point) {
+            input.geometry[point] = 1.0F;
+            input.geometry[3 * FULL + point] = -1.0F;
+        }
+        for (int point = 0; point < ANGULAR; ++point) {
+            const float inner = point == min_index ? minimum : 1.0F;
+            const float outer = point + ANGULAR == min_index ? minimum : 1.0F;
+            input.geometry[FULL + point] = -0.5F * inner;
+            input.geometry[FULL + 2 * ANGULAR + point] = 0.5F * outer;
+        }
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_,
+            (2 * BASE_GEOMETRY_FIELD_COUNT * HALF + 8) * sizeof(float));
+        input.readback = {batch, {}};
+        auto actual = std::make_shared<BaseGeometryResult>();
+        auto errors = std::make_shared<std::string>();
+        enqueue_base_geometry(
+            device_, input,
+            [actual, errors](std::string error, BaseGeometryResult result) {
+                *actual = std::move(result);
+                *errors = std::move(error);
+            });
+        const auto self = shared_from_this();
+        batch->map([self, actual, errors, min_index, minimum, invalid,
+                    variant](std::string error) {
+            const auto& control = actual->control;
+            const auto& jacobian = control.jacobian;
+            cumes::IterationController<double> reference({});
+            if (!error.empty() || !errors->empty() || !control.present ||
+                !control.guards_valid || control.fallback ||
+                jacobian.min_index != min_index ||
+                jacobian.min_oriented != minimum || jacobian.max_abs != 1.0 ||
+                jacobian.nonfinite_count != 0.0 || control.invalid != invalid ||
+                reference.jacobian_invalid(jacobian, ANGULAR) != invalid) {
+                self->finish(false,
+                             "3-D Jacobian axis exemption mismatch "
+                             "variant=" +
+                                 std::to_string(variant) + " " + error +
+                                 *errors);
+                return;
+            }
+            self->run_geometry_axis_exemption_test(variant + 1);
+        });
+    }
+
+    void run_device_norm_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 7) {
+            std::printf(
+                "  paired GPU norms: f32/paired, edge masks, awkward "
+                "sizes, zeros, nonfinite/range guards: PASS\n");
+            run_field_finite_test();
+            return;
+        }
+        const int ns = variant == 1 ? 99 : 3;
+        const std::size_t points = ns * (variant == 1 ? 156 : 7);
+        std::vector<float> values(12 * points, 0.0F);
+        for (std::size_t i = 0; i < 6 * points; ++i) {
+            values[i] = float(int(i % 113) - 56) * (i % 2 ? 1.0e-6F : 0.125F);
+            if (variant != 0) values[6 * points + i] = values[i] * 1.0e-8F;
+        }
+        if (variant == 3) std::fill(values.begin(), values.end(), 0.0F);
+        if (variant == 4) {
+            // Include a NaN in an otherwise excluded LCFS correction word.
+            values[6 * points + ns - 1] =
+                std::numeric_limits<float>::quiet_NaN();
+            values[3 * points] = std::numeric_limits<float>::infinity();
+        }
+        if (variant == 5) values[1] = 1.0e30F;
+        if (variant == 6) {
+            std::fill(values.begin(), values.end(), 0.0F);
+            values[1] = 1.0e-30F;
+        }
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = values.size() * sizeof(float);
+        descriptor.usage =
+            wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+        const auto source = device_.CreateBuffer(&descriptor);
+        device_.GetQueue().WriteBuffer(source, 0, values.data(),
+                                       descriptor.size);
+        ResidualNormCase input;
+        input.residual = {source, 6 * points, 0, 6 * points * sizeof(float)};
+        input.ns = ns;
+        input.paired = variant != 0;
+        input.include_edge_rz = variant == 2;
+        input.readback.batch = std::make_shared<ReadbackBatch>(device_, 40);
+        for (const bool bad_offset : {false, true}) {
+            auto malformed = input;
+            if (bad_offset)
+                malformed.residual.high_offset = source.GetSize();
+            else
+                --malformed.residual.values;
+            bool rejected = false;
+            enqueue_residual_norm(
+                device_, malformed,
+                [&rejected](std::string error, ResidualNormResult) {
+                    rejected = !error.empty();
+                });
+            if (!rejected) {
+                finish(false, "GPU norm accepted a malformed device plane");
+                return;
+            }
+        }
+        auto result = std::make_shared<ResidualNormResult>();
+        auto error = std::make_shared<std::string>();
+        enqueue_residual_norm(
+            device_, input,
+            [result, error](std::string message, ResidualNormResult value) {
+                *result = std::move(value);
+                *error = std::move(message);
+            });
+        const auto self = shared_from_this();
+        input.readback.batch->map([self, input, values = std::move(values),
+                                   result, error, points,
+                                   variant](std::string message) {
+            bool valid = message.empty() && error->empty() &&
+                         result->finite == (variant < 4);
+            if (variant < 4) {
+                for (int family = 0; family < 3; ++family) {
+                    double sum = 0.0;
+                    for (std::size_t i = 0; i < points; ++i) {
+                        if (family != 2 && !input.include_edge_rz &&
+                            i % input.ns == std::size_t(input.ns - 1))
+                            continue;
+                        const auto a_index = family * points + i;
+                        const auto b_index = (family + 3) * points + i;
+                        const double a = double(values[a_index]) +
+                                         values[6 * points + a_index];
+                        const double b = double(values[b_index]) +
+                                         values[6 * points + b_index];
+                        sum += a * a + b * b;
+                    }
+                    const double expected = sum / double(points);
+                    valid &= std::isfinite(result->raw[family]) &&
+                             std::abs(result->raw[family] - expected) <=
+                                 2.0e-12 * std::abs(expected);
+                }
+            }
+            if (!valid) {
+                self->finish(false, "GPU norm conformance mismatch variant=" +
+                                        std::to_string(variant) + ": " +
+                                        message + *error);
+                return;
+            }
+            self->run_device_norm_test(variant + 1);
+        });
+    }
+
+    void run_device_inverse_test(int variant = 0) {
+        using namespace cumes::webgpu;
+        if (variant == 8) {
+            std::printf(
+                "  batched device-state inverse and axis extrapolation (f32, "
+                "paired, axisymmetric f32/paired), bitwise compact vacuum "
+                "rows: PASS\n");
+            const auto self = shared_from_this();
+            run_float_geometry_tests(device_, [self](std::string error) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                std::printf(
+                    "  float radius reference, sub-ULP radial derivative, "
+                    "selective compensation, absolute force: PASS\n");
+                cumes::webgpu::run_vacuum_force_tests(
+                    self->device_, [self](std::string error) {
+                        if (!error.empty()) {
+                            self->finish(false, std::move(error));
+                            return;
+                        }
+                        std::printf("  resident vacuum boundary force: PASS\n");
+                        self->run_axisymmetric_projection_test();
+                    });
+            });
+            return;
+        }
+        ToroidalInverseCase input;
+        const int shape = variant % 4;
+        input.ns = variant >= 4 ? 5 : 3;
+        input.mpol = 3;
+        input.ntor = shape >= 2 ? 0 : 2;
+        input.ntheta = 8;
+        input.nzeta = shape >= 2 ? 1 : 6;
+        input.nfp = 5;
+        input.double_single = shape == 1 || shape == 2;
+        const std::size_t count = 6 * input.ns * input.mpol * (input.ntor + 1);
+        input.state.resize(count);
+        input.state_lo.resize(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            input.state[i] = 0.03125F * (int(i % 17) - 8);
+            input.state_lo[i] = 1.0e-11F * (int(i % 7) - 3);
+        }
+        // The device input is deliberately not extrapolated and its word
+        // planes do not meet storage-binding alignment.
+        std::vector<float> storage(5 + 2 * count, 0.0F);
+        std::copy(input.state.begin(), input.state.end(), storage.begin() + 4);
+        std::copy(input.state_lo.begin(), input.state_lo.end(),
+                  storage.begin() + 5 + count);
+        wgpu::BufferDescriptor descriptor{};
+        descriptor.size = storage.size() * sizeof(float);
+        descriptor.usage =
+            wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+        const auto source = device_.CreateBuffer(&descriptor);
+        device_.GetQueue().WriteBuffer(source, 0, storage.data(),
+                                       descriptor.size);
+        const int modes = input.mpol * (input.ntor + 1);
+        for (int mode = 0; mode < modes; ++mode) {
+            const int m = mode / (input.ntor + 1);
+            for (int component = 0; component < 6; ++component) {
+                if (m != 1 && !(m == 0 && component == 5)) continue;
+                const auto axis = (component * modes + mode) * input.ns;
+                input.state[axis] = input.state[axis + 1];
+                input.state_lo[axis] = input.state_lo[axis + 1];
+            }
+        }
+        const auto self = shared_from_this();
+        enqueue_toroidal_inverse(
+            device_, input,
+            [self, input, source, count, variant](
+                std::string error, ToroidalInverseResult expected) mutable {
+                if (!error.empty()) {
+                    self->finish(false, error);
+                    return;
+                }
+                input.device_state = {source, count, 4 * sizeof(float),
+                                      (5 + count) * sizeof(float)};
+                input.state.clear();
+                input.state_lo.clear();
+                if (!toroidal_inverse_reference(input).geometry.empty()) {
+                    self->finish(false,
+                                 "CPU inverse accepted a device-only state");
+                    return;
+                }
+                auto batch = std::make_shared<ReadbackBatch>(
+                    self->device_,
+                    40 * input.ns * input.ntheta * input.nzeta * sizeof(float));
+                auto actual = std::make_shared<ToroidalInverseResult>();
+                input.readback.batch = batch;
+                input.readback_vacuum = variant >= 4;
+                enqueue_toroidal_inverse(
+                    self->device_, input,
+                    [self, actual](std::string error,
+                                   ToroidalInverseResult value) {
+                        if (!error.empty()) {
+                            self->finish(false, error);
+                            return;
+                        }
+                        *actual = std::move(value);
+                    });
+                batch->map([self, source, actual,
+                            expected = std::move(expected), variant,
+                            ns = input.ns,
+                            angular = std::size_t(input.ntheta) *
+                                      input.nzeta](std::string error) mutable {
+                    source.Destroy();
+                    const auto same_words = [](const auto& a, const auto& b) {
+                        return a.size() == b.size() &&
+                               std::equal(
+                                   a.begin(), a.end(), b.begin(),
+                                   [](float a, float b) {
+                                       return std::bit_cast<std::uint32_t>(a) ==
+                                              std::bit_cast<std::uint32_t>(b);
+                                   });
+                    };
+                    const auto points = std::size_t(ns) * angular;
+                    if (variant >= 4) {
+                        // Express the physical row contract independently of
+                        // the operator's grouped copy ranges.
+                        const std::size_t fields[] = {0, 1, 0, 0,  0, 6,
+                                                      6, 6, 4, 10, 3, 9};
+                        const int rows[] = {0,      0,      ns - 3, ns - 2,
+                                            ns - 1, ns - 3, ns - 2, ns - 1,
+                                            ns - 1, ns - 1, ns - 1, ns - 1};
+                        const auto pack = [&](std::vector<float>& words) {
+                            if (words.empty()) return;
+                            std::vector<float> packed(12 * angular);
+                            for (std::size_t row = 0; row < 12; ++row) {
+                                for (std::size_t point = 0; point < angular;
+                                     ++point) {
+                                    packed[row * angular + point] =
+                                        words[fields[row] * points +
+                                              rows[row] * angular + point];
+                                }
+                            }
+                            words = std::move(packed);
+                        };
+                        pack(expected.geometry);
+                        pack(expected.geometry_lo);
+                        expected.r_con.clear();
+                        expected.z_con.clear();
+                        expected.r_con_lo.clear();
+                        expected.z_con_lo.clear();
+                    }
+                    if (!error.empty() || !actual->geometry_finite ||
+                        actual->geometry_is_vacuum != (variant >= 4) ||
+                        actual->device_geometry.values !=
+                            GEOMETRY_PARITY_FIELD_COUNT * points ||
+                        actual->device_r_con.values != points ||
+                        actual->device_z_con.values != points ||
+                        !same_words(actual->geometry, expected.geometry) ||
+                        !same_words(actual->geometry_lo,
+                                    expected.geometry_lo) ||
+                        !same_words(actual->r_con, expected.r_con) ||
+                        !same_words(actual->z_con, expected.z_con) ||
+                        !same_words(actual->r_con_lo, expected.r_con_lo) ||
+                        !same_words(actual->z_con_lo, expected.z_con_lo)) {
+                        self->finish(false,
+                                     "batched device-state inverse mismatch: " +
+                                         std::to_string(variant) + " " + error);
+                        return;
+                    }
+                    self->run_device_inverse_test(variant + 1);
+                });
+            });
+    }
+
+    void run_axisymmetric_projection_test(int variant = 0) {
+        if (variant == 4) {
+            std::printf(
+                "  axisymmetric f32/paired forward, constraint planes, LCFS "
+                "masks: "
+                "PASS\n");
+            run_device_descent_test();
+            return;
+        }
+        cumes::webgpu::ToroidalForwardCase input;
+        input.ns = 3;
+        input.mpol = 5;
+        input.ntor = 0;
+        input.ntheta = 16;
+        input.nzeta = 1;
+        input.nfp = 1;
+        input.double_single = variant < 2;
+        input.use_fft = false;
+        input.include_lcfs = (variant & 1) != 0;
+        input.fields.resize(20 * input.ns * input.ntheta);
+        input.fields_lo.resize(input.fields.size());
+        for (std::size_t i = 0; i < input.fields.size(); ++i) {
+            input.fields[i] = 0.03125F * float(int(i % 19) - 9);
+            input.fields_lo[i] = 1.0e-10F * float(int(i % 7) - 3);
+        }
+        const auto expected = cumes::webgpu::toroidal_forward_reference(input);
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, input,
+            [self, expected, variant](
+                std::string error,
+                cumes::webgpu::ToroidalForwardResult actual) {
+                bool valid =
+                    error.empty() &&
+                    actual.residual.size() == expected.residual.size() &&
+                    actual.residual_lo.size() == expected.residual_lo.size();
+                for (std::size_t i = 0; i < actual.residual.size() && valid;
+                     ++i) {
+                    const double a =
+                        double(actual.residual[i]) +
+                        (variant < 2 ? actual.residual_lo[i] : 0.0F);
+                    const double b =
+                        double(expected.residual[i]) +
+                        (variant < 2 ? expected.residual_lo[i] : 0.0F);
+                    valid &=
+                        std::isfinite(a) &&
+                        std::abs(a - b) < (variant < 2 ? 5.0e-12 : 5.0e-6) *
+                                              (1.0 + std::abs(b));
+                }
+                if (!valid) {
+                    self->finish(false,
+                                 "axisymmetric forward mismatch: " + error);
+                    return;
+                }
+                self->run_axisymmetric_projection_test(variant + 1);
+            });
+    }
+
+    void run_interactive_solver() {
+        try {
+            const bool paired = requested_double_solve() != 0;
+            cumes::SolverOptions options;
+            options.precision = paired ? cumes::PrecisionPolicy::VERIFY_DOUBLE
+                                       : cumes::PrecisionPolicy::MIXED_FLOAT;
+            auto parsed =
+                cumes::read_problem_spec("/inputs/interactive.json", options);
+            if (parsed.report.has_errors()) {
+                const auto errors = parsed.report.errors();
+                finish(false,
+                       "Interactive input mapping failed: " + errors.front());
+                return;
+            }
+            for (auto& stage : parsed.spec.stages) {
+                stage.tolerance = paired ? 1.0e-12 : 1.0e-5;
+            }
+            auto validated = cumes::validate(std::move(parsed.spec), options);
+            if (!validated.has_value()) {
+                const auto errors = validated.error().errors();
+                finish(false, "Interactive input validation failed: " +
+                                  (errors.empty() ? std::string("unknown error")
+                                                  : errors.front()));
+                return;
+            }
+            problem_.emplace(std::move(validated.value()));
+            newton_enabled_ = requested_newton_solve() != 0;
+            if (newton_enabled_ &&
+                (!paired || problem_->spec().free_boundary.lfreeb ||
+                 problem_->shape().ntor != 0 || problem_->shape().nzeta != 1 ||
+                 requested_reference_transfers() ||
+                 requested_spectral_fences() || requested_compare_fft())) {
+                finish(false,
+                       "Newton experiments require precision=double, fixed "
+                       "boundary, axisymmetry (ntor=0, nzeta=1), and resident "
+                       "execution");
+                return;
+            }
+            if (newton_enabled_ &&
+                (!(requested_newton_step() > 0) ||
+                 !(static_cast<float>(requested_newton_step()) > 0) ||
+                 !std::isfinite(requested_newton_step()) ||
+                 requested_newton_step() > 0.01)) {
+                finish(false,
+                       "newton_step must be positive in f32, finite, and at "
+                       "most 0.01");
+                return;
+            }
+            production_solve_ = true;
+            double_single_solve_ = paired;
+            publish_browser_iteration_timing(0, 0);
+            active_case_name_ = "Interactive equilibrium";
+            active_input_path_ = "browser boundary editor";
+            stage_index_ = 0;
+            total_iterations_ = 0;
+            stage_iterations_.clear();
+            stage_reports_.clear();
+            const bool float_3d = !paired && problem_->spec().ntor > 0 &&
+                                  !problem_->spec().free_boundary.lfreeb;
+            initialized_stage_ = cumes::webgpu::initialize_stage(
+                *problem_, stage_index_,
+                float_3d && requested_float_radius_reference() != 0,
+                float_3d && requested_compensated_geometry() != 0,
+                float_3d && requested_compensated_geometry() == 2);
+            reset_stage_state();
+            std::printf(
+                "running interactive %s-boundary solve "
+                "(%zu stages, %s ftol=%.0e)\n",
+                initialized_stage_.free_boundary ? "free" : "fixed",
+                problem_->stage_shapes().size(),
+                paired ? "double-single" : "float",
+                initialized_stage_.tolerance);
+            run_stage_inverse();
+        } catch (const std::exception& error) {
+            finish(false, "Interactive solver startup failed: " +
+                              std::string(error.what()));
+        }
+    }
+
+    void run_w7x_initialization() {
+        try {
+            cumes::SolverOptions options;
+            options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+            auto parsed = cumes::read_problem_spec("/inputs/w7x.json", options);
+            if (parsed.report.has_errors()) {
+                const auto errors = parsed.report.errors();
+                finish(false, "W7-X JSON mapping failed: " + errors.front());
+                return;
+            }
+            for (auto& stage : parsed.spec.stages) {
+                stage.tolerance = std::max(
+                    stage.tolerance, cumes::tolerance_floor(options.precision));
+            }
+            auto validated = cumes::validate(std::move(parsed.spec), options);
+            if (!validated.has_value()) {
+                const auto errors = validated.error().errors();
+                finish(false, "W7-X validation failed: " +
+                                  (errors.empty() ? std::string("unknown error")
+                                                  : errors.front()));
+                return;
+            }
+            w7x_problem_.emplace(std::move(validated.value()));
+            w7x_stage_ = cumes::webgpu::initialize_stage(*w7x_problem_, 0);
+            const auto& shape = w7x_problem_->stage_shapes()[0];
+            const auto& boundary = w7x_problem_->boundary();
+            const std::size_t family_values =
+                static_cast<std::size_t>(shape.ns) * shape.modes();
+            bool valid = w7x_stage_.ns == 33 && w7x_stage_.mpol == 12 &&
+                         w7x_stage_.ntor == 12 && w7x_stage_.ntheta == 30 &&
+                         w7x_stage_.nzeta == 36 && w7x_stage_.nfp == 5 &&
+                         w7x_stage_.state.size() == 6 * family_values &&
+                         w7x_stage_.envelope_correction == 0.12F &&
+                         w7x_stage_.lambda_seed_scale == 0.0F;
+            for (std::size_t mode = 0; mode < shape.modes(); ++mode) {
+                const int m = static_cast<int>(mode) / (shape.ntor + 1);
+                const std::size_t axis =
+                    mode * static_cast<std::size_t>(shape.ns);
+                const std::size_t lcfs = axis + shape.ns - 1;
+                valid &= w7x_stage_.state[lcfs] ==
+                         static_cast<float>(boundary.rbcc[mode]);
+                valid &= w7x_stage_.state[3 * family_values + lcfs] ==
+                         static_cast<float>(boundary.rbss[mode]);
+                valid &= w7x_stage_.state[family_values + lcfs] ==
+                         static_cast<float>(boundary.zbsc[mode]);
+                valid &= w7x_stage_.state[4 * family_values + lcfs] ==
+                         static_cast<float>(boundary.zbcs[mode]);
+                if (m > 0) {
+                    for (int component = 0; component < 6; ++component) {
+                        valid &= w7x_stage_
+                                     .state[component * family_values + axis] ==
+                                 0.0F;
+                    }
+                }
+            }
+            valid &= w7x_stage_.profiles.curr_h.size() == 32;
+            valid &= std::any_of(w7x_stage_.profiles.curr_h.begin(),
+                                 w7x_stage_.profiles.curr_h.end(),
+                                 [](float value) { return value != 0.0F; });
+            if (!valid) {
+                finish(false, "W7-X cold-start/profile contract mismatch");
+                return;
+            }
+            std::printf(
+                "  parsed W7-X 3-D cold start: PASS "
+                "(ns=%d, mnmax=%d, angular=%d)\n",
+                shape.ns, static_cast<int>(shape.modes()),
+                shape.ntheta * shape.nzeta);
+            run_w7x_inverse();
+        } catch (const std::exception& error) {
+            finish(false,
+                   "W7-X initialization failed: " + std::string(error.what()));
+        }
+    }
+
+    void run_w7x_inverse() {
+        const int modes = w7x_stage_.mpol * (w7x_stage_.ntor + 1);
+        const std::size_t family_values =
+            static_cast<std::size_t>(w7x_stage_.ns) * modes;
+        for (int mode = 0; mode < modes; ++mode) {
+            const int m = mode / (w7x_stage_.ntor + 1);
+            if (m != 0 && m != 1) continue;
+            const int first_component = m == 0 ? 5 : 0;
+            for (int component = first_component; component < 6; ++component) {
+                const std::size_t axis =
+                    static_cast<std::size_t>(component) * family_values +
+                    static_cast<std::size_t>(mode) * w7x_stage_.ns;
+                w7x_stage_.state[axis] = w7x_stage_.state[axis + 1];
+                w7x_stage_.state_lo[axis] = w7x_stage_.state_lo[axis + 1];
+            }
+        }
+        w7x_inverse_case_.ns = w7x_stage_.ns;
+        w7x_inverse_case_.mpol = w7x_stage_.mpol;
+        w7x_inverse_case_.ntor = w7x_stage_.ntor;
+        w7x_inverse_case_.ntheta = w7x_stage_.ntheta;
+        w7x_inverse_case_.nzeta = w7x_stage_.nzeta;
+        w7x_inverse_case_.nfp = w7x_stage_.nfp;
+        w7x_inverse_case_.double_single = true;
+        w7x_inverse_case_.state = w7x_stage_.state;
+        w7x_inverse_case_.state_lo = w7x_stage_.state_lo;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_inverse(
+            device_, w7x_inverse_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalInverseResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_inverse_reference(
+                    self->w7x_inverse_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.geometry, expected.geometry);
+                compare(actual.r_con, expected.r_con);
+                compare(actual.z_con, expected.z_con);
+                double max_reconstructed_error = 0.0;
+                const auto compare_pairs =
+                    [&max_reconstructed_error, &valid](
+                        const auto& gpu_hi, const auto& gpu_lo,
+                        const auto& cpu_hi, const auto& cpu_lo) {
+                        valid &= gpu_hi.size() == gpu_lo.size() &&
+                                 gpu_hi.size() == cpu_hi.size() &&
+                                 gpu_hi.size() == cpu_lo.size();
+                        if (!valid) return;
+                        for (std::size_t i = 0; i < gpu_hi.size(); ++i) {
+                            const double gpu =
+                                static_cast<double>(gpu_hi[i]) + gpu_lo[i];
+                            const double cpu =
+                                static_cast<double>(cpu_hi[i]) + cpu_lo[i];
+                            max_reconstructed_error = std::max(
+                                max_reconstructed_error, std::abs(gpu - cpu));
+                            valid &= std::isfinite(gpu_lo[i]);
+                        }
+                    };
+                compare_pairs(actual.geometry, actual.geometry_lo,
+                              expected.geometry, expected.geometry_lo);
+                compare_pairs(actual.r_con, actual.r_con_lo, expected.r_con,
+                              expected.r_con_lo);
+                compare_pairs(actual.z_con, actual.z_con_lo, expected.z_con,
+                              expected.z_con_lo);
+                if (!valid || max_error > 5.0e-4F ||
+                    max_reconstructed_error > 2.0e-10) {
+                    self->finish(
+                        false,
+                        "W7-X inverse mismatch: " + std::to_string(max_error) +
+                            " reconstructed=" +
+                            std::to_string(max_reconstructed_error));
+                    return;
+                }
+                self->w7x_r_con_ = std::move(actual.r_con);
+                self->w7x_z_con_ = std::move(actual.z_con);
+                self->w7x_geometry_lo_ = std::move(actual.geometry_lo);
+                std::printf(
+                    "  W7-X double-single inverse transform: PASS "
+                    "(max reconstructed |GPU-CPU| = %.3e)\n",
+                    max_reconstructed_error);
+                self->run_w7x_geometry(std::move(actual.geometry));
+            });
+    }
+
+    void run_w7x_geometry(std::vector<float> geometry) {
+        w7x_geometry_case_.ns = w7x_stage_.ns;
+        w7x_geometry_case_.ntheta = w7x_stage_.ntheta;
+        w7x_geometry_case_.nzeta = w7x_stage_.nzeta;
+        w7x_geometry_case_.delta_s = w7x_stage_.profiles.delta_s;
+        w7x_geometry_case_.double_single = true;
+        w7x_geometry_case_.geometry = std::move(geometry);
+        w7x_geometry_case_.geometry_lo = w7x_geometry_lo_;
+        w7x_geometry_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
+        w7x_geometry_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_base_geometry(
+            device_, w7x_geometry_case_,
+            [self](std::string error,
+                   cumes::webgpu::BaseGeometryResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::base_geometry_reference(
+                    self->w7x_geometry_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        valid &= std::isfinite(actual.fields[i]);
+                    }
+                }
+                double max_reconstructed_error = 0.0;
+                valid &= actual.fields_lo.size() == actual.fields.size() &&
+                         expected.fields_lo.size() == expected.fields.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_reconstructed_error = std::max(
+                            max_reconstructed_error,
+                            std::abs((static_cast<double>(actual.fields[i]) +
+                                      actual.fields_lo[i]) -
+                                     (static_cast<double>(expected.fields[i]) +
+                                      expected.fields_lo[i])));
+                        valid &= std::isfinite(actual.fields_lo[i]);
+                    }
+                }
+                if (!valid || max_error > 5.0e-4F ||
+                    max_reconstructed_error > 5.0e-9) {
+                    self->finish(
+                        false,
+                        "W7-X geometry mismatch: " + std::to_string(max_error) +
+                            " reconstructed=" +
+                            std::to_string(max_reconstructed_error));
+                    return;
+                }
+                std::printf(
+                    "  W7-X double-single half-grid geometry: PASS "
+                    "(max reconstructed |GPU-CPU| = %.3e)\n",
+                    max_reconstructed_error);
+                self->check_compact_base_geometry(
+                    self->w7x_geometry_case_, std::move(actual),
+                    [self](cumes::webgpu::BaseGeometryResult checked) {
+                        self->w7x_base_geometry_lo_ =
+                            std::move(checked.fields_lo);
+                        self->run_w7x_magnetic_field(std::move(checked.fields));
+                    });
+            });
+    }
+
+    void run_w7x_magnetic_field(std::vector<float> base_geometry) {
+        w7x_magnetic_case_.ns = w7x_stage_.ns;
+        w7x_magnetic_case_.ntheta = w7x_stage_.ntheta;
+        w7x_magnetic_case_.nzeta = w7x_stage_.nzeta;
+        w7x_magnetic_case_.lamscale = w7x_stage_.profiles.lamscale;
+        w7x_magnetic_case_.lamscale_lo = w7x_stage_.profiles.lamscale_lo;
+        w7x_magnetic_case_.prescribed_current = true;
+        w7x_magnetic_case_.double_single = true;
+        w7x_magnetic_case_.geometry = w7x_geometry_case_.geometry;
+        w7x_magnetic_case_.geometry_lo = w7x_geometry_case_.geometry_lo;
+        w7x_magnetic_case_.base_geometry = std::move(base_geometry);
+        w7x_magnetic_case_.base_geometry_lo = w7x_base_geometry_lo_;
+        w7x_magnetic_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
+        w7x_magnetic_case_.sqrt_s_h_lo = w7x_stage_.profiles.sqrt_s_h_lo;
+        w7x_magnetic_case_.phip_f = w7x_stage_.profiles.phip_f;
+        w7x_magnetic_case_.phip_f_lo = w7x_stage_.profiles.phip_f_lo;
+        w7x_magnetic_case_.chip_h = w7x_stage_.profiles.chip_h;
+        w7x_magnetic_case_.chip_h_lo = w7x_stage_.profiles.chip_h_lo;
+        w7x_magnetic_case_.pres_h = w7x_stage_.profiles.pres_h;
+        w7x_magnetic_case_.pres_h_lo = w7x_stage_.profiles.pres_h_lo;
+        w7x_magnetic_case_.curr_h = w7x_stage_.profiles.curr_h;
+        w7x_magnetic_case_.curr_h_lo = w7x_stage_.profiles.curr_h_lo;
+        w7x_magnetic_case_.phip_h = w7x_stage_.profiles.phip_h;
+        w7x_magnetic_case_.phip_h_lo = w7x_stage_.profiles.phip_h_lo;
+        w7x_magnetic_case_.iota_h = w7x_stage_.profiles.iota_h;
+        w7x_magnetic_case_.iota_h_lo = w7x_stage_.profiles.iota_h_lo;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_magnetic_field(
+            device_, w7x_magnetic_case_,
+            [self](std::string error,
+                   cumes::webgpu::MagneticFieldResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::magnetic_field_reference(
+                    self->w7x_magnetic_case_);
+                float max_error = 0.0F;
+                bool valid = actual.fields.size() == expected.fields.size() &&
+                             actual.chip_h.size() == expected.chip_h.size() &&
+                             actual.iota_h.size() == expected.iota_h.size();
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.fields, expected.fields);
+                compare(actual.chip_h, expected.chip_h);
+                compare(actual.iota_h, expected.iota_h);
+                double max_reconstructed_error = 0.0;
+                const auto compare_pairs =
+                    [&max_reconstructed_error, &valid](
+                        const auto& actual_hi, const auto& actual_lo,
+                        const auto& expected_hi, const auto& expected_lo) {
+                        valid &= actual_hi.size() == actual_lo.size() &&
+                                 actual_hi.size() == expected_hi.size() &&
+                                 actual_hi.size() == expected_lo.size();
+                        if (!valid) return;
+                        for (std::size_t i = 0; i < actual_hi.size(); ++i) {
+                            max_reconstructed_error = std::max(
+                                max_reconstructed_error,
+                                std::abs((static_cast<double>(actual_hi[i]) +
+                                          actual_lo[i]) -
+                                         (static_cast<double>(expected_hi[i]) +
+                                          expected_lo[i])));
+                            valid &= std::isfinite(actual_lo[i]);
+                        }
+                    };
+                compare_pairs(actual.fields, actual.fields_lo, expected.fields,
+                              expected.fields_lo);
+                compare_pairs(actual.chip_h, actual.chip_h_lo, expected.chip_h,
+                              expected.chip_h_lo);
+                compare_pairs(actual.iota_h, actual.iota_h_lo, expected.iota_h,
+                              expected.iota_h_lo);
+                if (!valid || max_error > 5.0e-4F ||
+                    max_reconstructed_error > 2.0e-8) {
+                    self->finish(false,
+                                 "W7-X current solve mismatch: " +
+                                     std::to_string(max_error) +
+                                     " reconstructed=" +
+                                     std::to_string(max_reconstructed_error));
+                    return;
+                }
+                self->w7x_stage_.profiles.chip_h = actual.chip_h;
+                self->w7x_stage_.profiles.chip_h_lo = actual.chip_h_lo;
+                self->w7x_stage_.profiles.iota_h = actual.iota_h;
+                self->w7x_stage_.profiles.iota_h_lo = actual.iota_h_lo;
+                std::printf(
+                    "  W7-X double-single prescribed-current magnetic field: "
+                    "PASS (max reconstructed |GPU-CPU| = %.3e)\n",
+                    max_reconstructed_error);
+                self->check_compact_magnetic(
+                    self->w7x_magnetic_case_, std::move(actual),
+                    [self](cumes::webgpu::MagneticFieldResult checked) {
+                        self->w7x_magnetic_field_lo_ =
+                            std::move(checked.fields_lo);
+                        self->run_w7x_force(std::move(checked.fields));
+                    });
+            });
+    }
+
+    void run_w7x_force(std::vector<float> magnetic_field) {
+        w7x_force_case_.ns = w7x_stage_.ns;
+        w7x_force_case_.ntheta = w7x_stage_.ntheta;
+        w7x_force_case_.nzeta = w7x_stage_.nzeta;
+        w7x_force_case_.delta_s = w7x_stage_.profiles.delta_s;
+        w7x_force_case_.delta_s_lo = w7x_stage_.profiles.delta_s_lo;
+        w7x_force_case_.lamscale = w7x_stage_.profiles.lamscale;
+        w7x_force_case_.lamscale_lo = w7x_stage_.profiles.lamscale_lo;
+        w7x_force_case_.double_single = true;
+        w7x_force_case_.geometry = w7x_geometry_case_.geometry;
+        w7x_force_case_.geometry_lo = w7x_geometry_lo_;
+        w7x_force_case_.base_geometry = w7x_magnetic_case_.base_geometry;
+        w7x_force_case_.base_geometry_lo = w7x_base_geometry_lo_;
+        w7x_force_case_.magnetic_field = std::move(magnetic_field);
+        w7x_force_case_.magnetic_field_lo = w7x_magnetic_field_lo_;
+        w7x_force_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
+        w7x_force_case_.sqrt_s_f_lo = w7x_stage_.profiles.sqrt_s_f_lo;
+        w7x_force_case_.sqrt_s_h = w7x_stage_.profiles.sqrt_s_h;
+        w7x_force_case_.sqrt_s_h_lo = w7x_stage_.profiles.sqrt_s_h_lo;
+        w7x_force_case_.phip_f = w7x_stage_.profiles.phip_f;
+        w7x_force_case_.phip_f_lo = w7x_stage_.profiles.phip_f_lo;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_force(
+            device_, w7x_force_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricForceResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_force_reference(
+                        self->w7x_force_case_);
+                double max_error = 0.0;
+                bool valid =
+                    actual.fields.size() == expected.fields.size() &&
+                    actual.fields_lo.size() == expected.fields_lo.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs((static_cast<double>(actual.fields[i]) +
+                                      actual.fields_lo[i]) -
+                                     (static_cast<double>(expected.fields[i]) +
+                                      expected.fields_lo[i])) /
+                                (1.0 + std::abs(static_cast<double>(
+                                                    expected.fields[i]) +
+                                                expected.fields_lo[i])));
+                        valid &= std::isfinite(actual.fields[i]) &&
+                                 std::isfinite(actual.fields_lo[i]);
+                    }
+                }
+                if (!valid || max_error > 2.0e-7) {
+                    self->finish(false, "W7-X force mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  W7-X double-single MHD force: PASS "
+                    "(max reconstructed scaled |GPU-CPU| = %.3e)\n",
+                    max_error);
+                self->w7x_force_fields_lo_ = std::move(actual.fields_lo);
+                self->run_w7x_forward(std::move(actual.fields));
+            });
+    }
+
+    void run_w7x_forward(std::vector<float> force_fields) {
+        w7x_forward_case_.ns = w7x_stage_.ns;
+        w7x_forward_case_.mpol = w7x_stage_.mpol;
+        w7x_forward_case_.ntor = w7x_stage_.ntor;
+        w7x_forward_case_.ntheta = w7x_stage_.ntheta;
+        w7x_forward_case_.nzeta = w7x_stage_.nzeta;
+        w7x_forward_case_.nfp = w7x_stage_.nfp;
+        w7x_forward_case_.include_lcfs = false;
+        w7x_forward_case_.double_single = true;
+        const std::size_t points = static_cast<std::size_t>(w7x_stage_.ns) *
+                                   w7x_stage_.ntheta * w7x_stage_.nzeta;
+        w7x_forward_case_.fields.assign(
+            cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+        std::copy(force_fields.begin(), force_fields.end(),
+                  w7x_forward_case_.fields.begin());
+        w7x_forward_case_.fields_lo.assign(
+            cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+        std::copy(w7x_force_fields_lo_.begin(), w7x_force_fields_lo_.end(),
+                  w7x_forward_case_.fields_lo.begin());
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, w7x_forward_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected = cumes::webgpu::toroidal_forward_reference(
+                    self->w7x_forward_case_);
+                double max_error = 0.0;
+                bool valid =
+                    actual.residual.size() == expected.residual.size() &&
+                    actual.residual_lo.size() == expected.residual_lo.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(
+                                (static_cast<double>(actual.residual[i]) +
+                                 actual.residual_lo[i]) -
+                                (static_cast<double>(expected.residual[i]) +
+                                 expected.residual_lo[i])) /
+                                (1.0 + std::abs(static_cast<double>(
+                                                    expected.residual[i]) +
+                                                expected.residual_lo[i])));
+                        valid &= std::isfinite(actual.residual[i]) &&
+                                 std::isfinite(actual.residual_lo[i]);
+                    }
+                }
+                const bool nonzero =
+                    std::any_of(actual.residual.begin(), actual.residual.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !nonzero || max_error > 2.0e-7) {
+                    self->finish(false, "W7-X forward residual mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  W7-X double-single spectral residual projection: PASS "
+                    "(max reconstructed scaled |GPU-CPU| = %.3e)\n",
+                    max_error);
+                self->w7x_spectral_residual_lo_ = std::move(actual.residual_lo);
+                self->run_w7x_decomposition(std::move(actual.residual));
+            });
+    }
+
+    void run_w7x_decomposition(std::vector<float> residual) {
+        w7x_residual_case_.ns = w7x_stage_.ns;
+        w7x_residual_case_.mpol = w7x_stage_.mpol;
+        w7x_residual_case_.ntor = w7x_stage_.ntor;
+        w7x_residual_case_.include_edge_rz = false;
+        w7x_residual_case_.zero_m1_z = true;
+        w7x_residual_case_.double_single = true;
+        w7x_residual_case_.residual = std::move(residual);
+        w7x_residual_case_.residual_lo = w7x_spectral_residual_lo_;
+        w7x_residual_case_.sqrt_s_f = w7x_stage_.profiles.sqrt_s_f;
+        w7x_residual_case_.sqrt_s_f_lo = w7x_stage_.profiles.sqrt_s_f_lo;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_residual_decomposition(
+            device_, w7x_residual_case_,
+            [self](std::string error,
+                   cumes::webgpu::ResidualDecompositionResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::residual_decomposition_reference(
+                        self->w7x_residual_case_);
+                double max_error = 0.0;
+                bool valid =
+                    actual.residual.size() == expected.residual.size() &&
+                    actual.residual_lo.size() == expected.residual_lo.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(
+                                (static_cast<double>(actual.residual[i]) +
+                                 actual.residual_lo[i]) -
+                                (static_cast<double>(expected.residual[i]) +
+                                 expected.residual_lo[i])) /
+                                (1.0 + std::abs(static_cast<double>(
+                                                    expected.residual[i]) +
+                                                expected.residual_lo[i])));
+                        valid &= std::isfinite(actual.residual[i]) &&
+                                 std::isfinite(actual.residual_lo[i]);
+                    }
+                }
+                double max_norm_error = 0.0;
+                for (int group = 0; group < 3; ++group) {
+                    max_norm_error = std::max(
+                        max_norm_error,
+                        std::abs(actual.raw_norm[group] -
+                                 expected.raw_norm[group]) /
+                            (1.0 + std::abs(expected.raw_norm[group])));
+                    valid &= std::isfinite(actual.raw_norm[group]);
+                }
+                if (!valid || max_error > 2.0e-7 || max_norm_error > 2.0e-7) {
+                    self->finish(false, "W7-X decomposition mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  W7-X double-single residual decomposition: PASS "
+                    "(max reconstructed scaled |GPU-CPU| = %.3e)\n",
+                    max_error);
+                self->w7x_decomposed_residual_lo_ =
+                    std::move(actual.residual_lo);
+                self->run_w7x_descent(std::move(actual.residual));
+            });
+    }
+
+    void run_w7x_descent(std::vector<float> residual) {
+        w7x_descent_case_.ns = w7x_stage_.ns;
+        w7x_descent_case_.mpol = w7x_stage_.mpol;
+        w7x_descent_case_.ntor = w7x_stage_.ntor;
+        w7x_descent_case_.move_lcfs = false;
+        w7x_descent_case_.delta_t = 0.01F;
+        w7x_descent_case_.damping_b1 = 0.9F;
+        w7x_descent_case_.damping_fac = 1.0F;
+        w7x_descent_case_.double_single = true;
+        w7x_descent_case_.state = w7x_stage_.state;
+        w7x_descent_case_.state_lo.assign(w7x_stage_.state.size(), 0.0F);
+        // Exercise persistence below the high word's ulp independently of the
+        // particular first-pass W7-X force values.
+        w7x_descent_case_.state_lo[w7x_stage_.ns - 1] = 1.0e-8F;
+        w7x_descent_case_.velocity.assign(w7x_stage_.state.size(), 0.0F);
+        w7x_descent_case_.velocity_lo.assign(w7x_stage_.state.size(), 0.0F);
+        w7x_descent_case_.residual = std::move(residual);
+        w7x_descent_case_.residual_lo = w7x_decomposed_residual_lo_;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_axisymmetric_descent(
+            device_, w7x_descent_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricDescentResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_descent_reference(
+                        self->w7x_descent_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.state, expected.state);
+                compare(actual.state_lo, expected.state_lo);
+                compare(actual.velocity, expected.velocity);
+                compare(actual.velocity_lo, expected.velocity_lo);
+                double max_reconstructed_error = 0.0;
+                if (actual.state_lo.size() == expected.state_lo.size() &&
+                    actual.velocity_lo.size() == expected.velocity_lo.size()) {
+                    for (std::size_t i = 0; i < actual.state_lo.size(); ++i) {
+                        max_reconstructed_error = std::max(
+                            {max_reconstructed_error,
+                             std::abs((static_cast<double>(actual.state[i]) +
+                                       actual.state_lo[i]) -
+                                      (static_cast<double>(expected.state[i]) +
+                                       expected.state_lo[i])),
+                             std::abs(
+                                 (static_cast<double>(actual.velocity[i]) +
+                                  actual.velocity_lo[i]) -
+                                 (static_cast<double>(expected.velocity[i]) +
+                                  expected.velocity_lo[i]))});
+                    }
+                }
+                const bool retained_low_bits =
+                    std::any_of(actual.state_lo.begin(), actual.state_lo.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !retained_low_bits || max_error > 5.0e-4F ||
+                    max_reconstructed_error > 2.0e-12) {
+                    self->finish(false,
+                                 "W7-X descent mismatch: error=" +
+                                     std::to_string(max_error) + " state_lo=" +
+                                     std::to_string(actual.state_lo.size()) +
+                                     " reconstruction_error=" +
+                                     std::to_string(max_reconstructed_error) +
+                                     " retained=" +
+                                     (retained_low_bits ? "true" : "false") +
+                                     " valid=" + (valid ? "true" : "false"));
+                    return;
+                }
+                std::printf(
+                    "  W7-X accelerated descent: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    static_cast<double>(max_error));
+                self->initialized_stage_ = self->w7x_stage_;
+                self->w7x_stage_slice_ = true;
+                self->double_single_solve_ = true;
+                self->active_case_name_ = "W7-X";
+                self->reset_stage_state();
+                self->run_stage_inverse();
+            });
+    }
+
+    void run_solovev_initialization() {
+        try {
+            cumes::SolverOptions options;
+            options.precision = cumes::PrecisionPolicy::MIXED_FLOAT;
+            auto parsed =
+                cumes::read_problem_spec("/inputs/solovev.json", options);
+            if (parsed.report.has_errors()) {
+                const auto errors = parsed.report.errors();
+                finish(false, "Solovev JSON mapping failed: " + errors.front());
+                return;
+            }
+            for (auto& stage : parsed.spec.stages) {
+                stage.tolerance = std::max(
+                    stage.tolerance, cumes::tolerance_floor(options.precision));
+            }
+            auto validated = cumes::validate(std::move(parsed.spec), options);
+            if (!validated.has_value()) {
+                const auto errors = validated.error().errors();
+                finish(false, "Solovev validation failed: " +
+                                  (errors.empty() ? std::string("unknown error")
+                                                  : errors.front()));
+                return;
+            }
+            problem_.emplace(std::move(validated.value()));
+            active_case_name_ = "Solovev";
+            active_input_path_ = "inputs/solovev.json";
+            const auto& boundary = problem_->boundary();
+            initialized_stage_ =
+                cumes::webgpu::initialize_axisymmetric_stage(*problem_, 0);
+            const auto& stage = initialized_stage_;
+            const std::size_t family_values =
+                static_cast<std::size_t>(stage.ns) * stage.mpol;
+            bool state_contract =
+                stage.ns == 5 && stage.mpol == 6 && stage.ntheta == 18 &&
+                stage.state.size() ==
+                    cumes::webgpu::SPECTRAL_COMPONENT_COUNT * family_values &&
+                stage.envelope_correction == -0.07F &&
+                stage.lambda_seed_scale == 0.65F;
+            for (int mode = 0; mode < stage.mpol; ++mode) {
+                const std::size_t lcfs =
+                    static_cast<std::size_t>(mode) * stage.ns + stage.ns - 1;
+                state_contract &= stage.state[lcfs] ==
+                                  static_cast<float>(boundary.rbcc[mode]);
+                state_contract &= stage.state[family_values + lcfs] ==
+                                  static_cast<float>(boundary.zbsc[mode]);
+                if (mode > 0) {
+                    const std::size_t axis =
+                        static_cast<std::size_t>(mode) * stage.ns;
+                    for (std::size_t component = 0;
+                         component < cumes::webgpu::SPECTRAL_COMPONENT_COUNT;
+                         ++component) {
+                        state_contract &=
+                            stage.state[component * family_values + axis] ==
+                            0.0F;
+                    }
+                }
+            }
+            const auto& profiles = stage.profiles;
+            const bool profile_contract =
+                profiles.iota_f.size() == static_cast<std::size_t>(stage.ns) &&
+                profiles.phip_f.size() == static_cast<std::size_t>(stage.ns) &&
+                profiles.iota_h.size() ==
+                    static_cast<std::size_t>(stage.ns - 1) &&
+                profiles.pres_h.size() ==
+                    static_cast<std::size_t>(stage.ns - 1) &&
+                profiles.delta_s == 0.25F && profiles.lamscale > 0.0F &&
+                std::all_of(profiles.iota_f.begin(), profiles.iota_f.end(),
+                            [](float value) { return value == 1.0F; });
+            if (!state_contract || !profile_contract) {
+                finish(false,
+                       "Solovev initialization violated state/profile layout "
+                       "contract");
+                return;
+            }
+
+            // A zero target current needs no edge normalization, regardless
+            // of whether the optional current profile is empty or nonzero.
+            for (const auto& coefficients :
+                 {std::vector<double>{}, std::vector<double>{0.0},
+                  std::vector<double>{1.0}}) {
+                auto current_spec = problem_->spec();
+                current_spec.current_model =
+                    cumes::CurrentModel::PRESCRIBED_CURRENT;
+                current_spec.physical.curtor = 0.0;
+                current_spec.current.coefficients = coefficients;
+                auto current_problem = cumes::validate(current_spec, options);
+                if (!current_problem.has_value()) {
+                    finish(false, "Zero-current profile validation failed");
+                    return;
+                }
+                const auto current_stage =
+                    cumes::webgpu::initialize_stage(current_problem.value(), 0);
+                const auto& current_profiles = current_stage.profiles;
+                const auto half_surfaces =
+                    static_cast<std::size_t>(current_stage.ns - 1);
+                const auto is_zero = [](float value) { return value == 0.0F; };
+                if (!current_stage.prescribed_current ||
+                    current_profiles.curr_h.size() != half_surfaces ||
+                    current_profiles.curr_h_lo.size() != half_surfaces ||
+                    !std::all_of(current_profiles.curr_h.begin(),
+                                 current_profiles.curr_h.end(), is_zero) ||
+                    !std::all_of(current_profiles.curr_h_lo.begin(),
+                                 current_profiles.curr_h_lo.end(), is_zero)) {
+                    finish(false,
+                           "Zero-current initialization published a "
+                           "nonzero or non-finite current profile");
+                    return;
+                }
+                if (coefficients.empty() || coefficients.front() == 0.0) {
+                    current_spec.physical.curtor = 1.0;
+                    if (cumes::validate(std::move(current_spec), options)
+                            .has_value()) {
+                        finish(false,
+                               "Nonzero current with zero edge "
+                               "integral passed validation");
+                        return;
+                    }
+                }
+            }
+            std::printf("  zero-current scalar/paired profiles: PASS\n");
+
+            reset_stage_state();
+            run_stage_inverse();
+        } catch (const std::exception& error) {
+            finish(false, "Solovev initialization failed: " +
+                              std::string(error.what()));
+        }
+    }
+
+    void extrapolate_stage_axis() {
+        // CUDA's extrapolateTowardsAxis mutates the physical state immediately
+        // before every inverse pass.
+        const int mode_count =
+            initialized_stage_.mpol * (initialized_stage_.ntor + 1);
+        const std::size_t family_values =
+            static_cast<std::size_t>(initialized_stage_.ns) * mode_count;
+        for (int mode = 0; mode < mode_count; ++mode) {
+            const int m = mode / (initialized_stage_.ntor + 1);
+            if (m != 0 && m != 1) continue;
+            const int first_component = m == 0 ? 5 : 0;
+            for (int component = first_component; component < 6; ++component) {
+                const std::size_t axis =
+                    static_cast<std::size_t>(component) * family_values +
+                    static_cast<std::size_t>(mode) * initialized_stage_.ns;
+                initialized_stage_.state[axis] =
+                    initialized_stage_.state[axis + 1];
+                if (double_single_solve_) {
+                    stage_state_lo_[axis] = stage_state_lo_[axis + 1];
+                }
+            }
+        }
+    }
+
+    void run_stage_inverse() {
+        // Observe completed controller events before advancing the attempt.
+        // This also covers early Jacobian/nonfinite/maintenance restores,
+        // which have no residual sample, without duplicating deferred commits.
+        if (production_solve_) {
+            const auto& restarts = controller_->restart_events();
+            for (; published_restart_count_ < restarts.size();
+                 ++published_restart_count_) {
+                publish_browser_restart(
+                    static_cast<int>(stage_index_ + 1), attempted_passes_,
+                    restarts[published_restart_count_].iteration);
+            }
+        }
+        if (production_solve_)
+            publish_browser_iteration_timing(2, stage_index_ + 1);
+        iteration_results_.reset();
+        resume_vacuum_iteration_ = {};
+        if (attempted_passes_ >= initialized_stage_.max_iterations) {
+            if (deferred_descent_callback_) {
+                const auto self = shared_from_this();
+                iteration_readback_->map([self](std::string error) {
+                    if (!error.empty()) {
+                        self->finish(false, error);
+                        return;
+                    }
+                    self->commit_deferred_descent();
+                    self->run_stage_inverse();
+                });
+                return;
+            }
+            std::ostringstream detail;
+            detail << active_case_name_
+                   << " stage exhausted its iteration limit at iter="
+                   << controller_->effective_iteration()
+                   << " FSQR=" << std::scientific << std::setprecision(6)
+                   << invariant_normalized_[0];
+            finish(false, detail.str());
+            return;
+        }
+        ++attempted_passes_;
+        if (controller_->next_schedule()) {
+            restore_checkpoint();
+            std::printf(
+                "  controller maintenance restore: iter=%d delta=%.3e\n",
+                controller_->effective_iteration(), controller_->delta_t());
+            run_stage_inverse();
+            return;
+        }
+        if (production_solve_)
+            publish_browser_iteration_timing(1, stage_index_ + 1);
+        if (vacuum_) {
+            vacuum_->advance(controller_->effective_iteration(),
+                             controller_->restart_anchor(),
+                             invariant_normalized_[0],
+                             invariant_normalized_[1]);
+            const bool almost =
+                invariant_normalized_[0] + invariant_normalized_[1] <
+                cumes::control_policy::VACUUM_ALMOST_CONVERGED_RESIDUAL;
+            const bool hot =
+                controller_->effective_iteration() == 1 &&
+                vacuum_->state() == cumes::VacuumState::INITIALIZED;
+            include_edge_invariant_ =
+                controller_->effective_iteration() -
+                        controller_->restart_anchor() <
+                    cumes::control_policy::VACUUM_EDGE_INVARIANT_WINDOW &&
+                (almost || hot);
+        }
+        if (!device_iteration_state_) extrapolate_stage_axis();
+        const auto self = shared_from_this();
+        const bool batched =
+            resident_spectral_path() || batched_free_boundary_path() ||
+            (!production_solve_ && !requested_reference_transfers() &&
+             !requested_spectral_fences() && !requested_compare_fft());
+        if (!batched || !production_solve_) {
+            stage_toroidal_inverse_case_.ns = initialized_stage_.ns;
+            stage_toroidal_inverse_case_.mpol = initialized_stage_.mpol;
+            stage_toroidal_inverse_case_.ntor = initialized_stage_.ntor;
+            stage_toroidal_inverse_case_.ntheta = initialized_stage_.ntheta;
+            stage_toroidal_inverse_case_.nzeta = initialized_stage_.nzeta;
+            stage_toroidal_inverse_case_.nfp = initialized_stage_.nfp;
+            stage_toroidal_inverse_case_.double_single = double_single_solve_;
+            stage_toroidal_inverse_case_.radius_reference =
+                initialized_stage_.radius_reference;
+            stage_toroidal_inverse_case_.compensated_geometry =
+                initialized_stage_.compensated_geometry;
+            stage_toroidal_inverse_case_.compensated_toroidal_geometry =
+                initialized_stage_.compensated_toroidal_geometry;
+            stage_toroidal_inverse_case_.state = initialized_stage_.state;
+            if (double_single_solve_) {
+                stage_toroidal_inverse_case_.state_lo = stage_state_lo_;
+            } else {
+                stage_toroidal_inverse_case_.state_lo.clear();
+            }
+        }
+        if (batched) {
+            auto input = make_iteration_case();
+            const auto capacity = cumes::webgpu::iteration_readback_capacity(
+                input.stage, input.readback_intermediates);
+            if (!iteration_readback_ ||
+                iteration_readback_capacity_ != capacity) {
+                iteration_readback_ =
+                    std::make_shared<cumes::webgpu::ReadbackBatch>(device_,
+                                                                   capacity);
+                iteration_readback_capacity_ = capacity;
+            }
+            auto receive = [self](std::string error,
+                                  cumes::webgpu::IterationResult result) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                if (self->deferred_descent_callback_) {
+                    self->commit_deferred_descent();
+                    self->extrapolate_stage_axis();
+                }
+                self->iteration_forward_index_ = 0;
+                self->iteration_residual_index_ = 0;
+                if (requested_shadow_norms() && !self->vacuum_) {
+                    const auto prec = cumes::webgpu::residual_raw_norms(
+                        result.preconditioned.residual,
+                        self->initialized_stage_.ns,
+                        self->initialized_stage_.mpol,
+                        self->initialized_stage_.ntor, true);
+                    for (int index = 0; index < 3; ++index) {
+                        const auto& cpu =
+                            index == 2 ? prec : result.residual[index].raw_norm;
+                        for (int family = 0; family < 3; ++family) {
+                            if (!std::isfinite(cpu[family])) continue;
+                            const double relative =
+                                std::abs(cpu[family] -
+                                         result.norms[index].raw[family]) /
+                                std::max(std::abs(cpu[family]), 1.0e-290);
+                            if (!result.norms[index].finite ||
+                                !std::isfinite(relative) ||
+                                relative > 2.0e-12) {
+                                self->finish(false,
+                                             "GPU norm shadow mismatch: " +
+                                                 std::to_string(index) + "/" +
+                                                 std::to_string(family) +
+                                                 " relative=" +
+                                                 std::to_string(relative));
+                                return;
+                            }
+                            self->shadow_norm_error_ =
+                                std::max(self->shadow_norm_error_, relative);
+                        }
+                    }
+                }
+                self->iteration_results_ = std::move(result);
+                self->finish_stage_inverse(
+                    std::move(self->iteration_results_->inverse));
+            };
+            if (batched_free_boundary_path()) {
+                cumes::webgpu::enqueue_iteration_prefix(
+                    device_, std::move(input), iteration_readback_,
+                    [self, receive](std::string error,
+                                    cumes::webgpu::IterationResult result,
+                                    cumes::webgpu::ResumeIteration resume) {
+                        self->resume_vacuum_iteration_ = std::move(resume);
+                        receive(std::move(error), std::move(result));
+                    });
+            } else {
+                cumes::webgpu::enqueue_iteration(device_, std::move(input),
+                                                 iteration_readback_,
+                                                 std::move(receive));
+            }
+            return;
+        }
+        cumes::webgpu::enqueue_toroidal_inverse(
+            device_, stage_toroidal_inverse_case_,
+            [self](std::string error,
+                   cumes::webgpu::ToroidalInverseResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                self->finish_stage_inverse(std::move(actual));
+            });
+    }
+
+    void finish_stage_inverse(cumes::webgpu::ToroidalInverseResult actual) {
+        const auto expected = production_solve_
+                                  ? cumes::webgpu::ToroidalInverseResult{}
+                                  : cumes::webgpu::toroidal_inverse_reference(
+                                        stage_toroidal_inverse_case_);
+        float max_error = 0.0F;
+        bool valid = production_solve_ || !expected.geometry.empty();
+        const auto compare = [&max_error, &valid](const auto& gpu,
+                                                  const auto& cpu) {
+            valid &= gpu.size() == cpu.size();
+            if (gpu.size() != cpu.size()) return;
+            for (std::size_t i = 0; i < gpu.size(); ++i) {
+                max_error = std::max(max_error, std::abs(gpu[i] - cpu[i]));
+                valid &= std::isfinite(gpu[i]);
+            }
+        };
+        if (!production_solve_) {
+            compare(actual.geometry, expected.geometry);
+            compare(actual.r_con, expected.r_con);
+            compare(actual.z_con, expected.z_con);
+        } else {
+            valid &=
+                actual.geometry_finite &&
+                std::all_of(actual.geometry.begin(), actual.geometry.end(),
+                            [](float value) { return std::isfinite(value); });
+        }
+        if (!valid || max_error > 5.0e-4F) {
+            finish(false,
+                   "iterative inverse mismatch: " + std::to_string(max_error));
+            return;
+        }
+        if (!production_solve_) {
+            std::printf("  %s pass %d inverse: PASS (max |GPU-CPU| = %.3e)\n",
+                        active_case_name_.c_str(), completed_passes_ + 1,
+                        static_cast<double>(max_error));
+        }
+        device_geometry_ = resident_path() ? actual.device_geometry
+                                           : cumes::webgpu::DeviceFields{};
+        stage_r_con_ = std::move(actual.r_con);
+        stage_z_con_ = std::move(actual.z_con);
+        stage_geometry_lo_ = std::move(actual.geometry_lo);
+        stage_geometry_is_vacuum_ = actual.geometry_is_vacuum;
+        stage_r_con_lo_ = std::move(actual.r_con_lo);
+        stage_z_con_lo_ = std::move(actual.z_con_lo);
+        run_base_geometry(std::move(actual.geometry));
+    }
+
+    void run_base_geometry(std::vector<float> geometry) {
+        base_geometry_case_.device_geometry = device_geometry_;
+        base_geometry_case_.ns = initialized_stage_.ns;
+        base_geometry_case_.ntheta = initialized_stage_.ntheta;
+        base_geometry_case_.nzeta = initialized_stage_.nzeta;
+        base_geometry_case_.delta_s = initialized_stage_.profiles.delta_s;
+        base_geometry_case_.double_single = double_single_solve_;
+        base_geometry_case_.radius_reference =
+            initialized_stage_.radius_reference;
+        base_geometry_case_.geometry = std::move(geometry);
+        if (double_single_solve_ &&
+            (!iteration_results_ || !production_solve_)) {
+            base_geometry_case_.geometry_lo = stage_geometry_lo_;
+        } else {
+            base_geometry_case_.geometry_lo.clear();
+        }
+        base_geometry_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        base_geometry_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_base_geometry, base_geometry_case_,
+            [self](std::string error,
+                   cumes::webgpu::BaseGeometryResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::BaseGeometryResult{}
+                        : cumes::webgpu::base_geometry_reference(
+                              self->base_geometry_case_);
+                if (!self->production_solve_ &&
+                    actual.fields.size() != expected.fields.size()) {
+                    self->finish(false, "base geometry result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                if (!self->production_solve_) {
+                    for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                    }
+                }
+                const int angular_points = self->base_geometry_case_.ntheta *
+                                           self->base_geometry_case_.nzeta;
+                const std::size_t half_points =
+                    static_cast<std::size_t>(self->base_geometry_case_.ns - 1) *
+                    angular_points;
+                auto jacobian = actual.control.jacobian;
+                if (actual.control.present) {
+                    ++self->geometry_control_passes_;
+                    if (!actual.control.guards_valid) {
+                        self->finish(false,
+                                     "GPU geometry validity guard failed");
+                        return;
+                    }
+                } else if (actual.control.fallback) {
+                    ++self->geometry_control_fallbacks_;
+                }
+                if (!actual.control.present || !actual.fields.empty()) {
+                    const auto guv =
+                        actual.fields.begin() +
+                        (actual.fields_are_validity ? 1 : 8) * half_points;
+                    const bool axisymmetric_guv_zero =
+                        self->initialized_stage_.ntor != 0 ||
+                        std::all_of(guv, guv + half_points,
+                                    [](float value) { return value == 0.0F; });
+                    const auto gsqrt_offset =
+                        (actual.fields_are_validity ? 0 : 6) * half_points;
+                    const auto gsqrt = actual.fields.begin() + gsqrt_offset;
+                    const bool finite_jacobian = std::all_of(
+                        gsqrt, gsqrt + half_points, [](float value) {
+                            return std::isfinite(value) && value != 0.0F;
+                        });
+                    const bool precision_valid =
+                        !self->double_single_solve_ ||
+                        (actual.fields_lo.size() == actual.fields.size() &&
+                         std::all_of(
+                             actual.fields_lo.begin(), actual.fields_lo.end(),
+                             [](float value) { return std::isfinite(value); }));
+                    if (max_error > 2.0e-4F || !axisymmetric_guv_zero ||
+                        !finite_jacobian || !precision_valid ||
+                        !actual.fields_finite) {
+                        self->finish(
+                            false,
+                            "base geometry mismatch: max_error=" +
+                                std::to_string(max_error) + " guv_zero=" +
+                                (axisymmetric_guv_zero ? "true" : "false") +
+                                " finite_jacobian=" +
+                                (finite_jacobian ? "true" : "false"));
+                        return;
+                    }
+                    jacobian.min_oriented =
+                        std::numeric_limits<double>::infinity();
+                    jacobian.max_abs = 0.0;
+                    jacobian.min_index = -1;
+                    jacobian.nonfinite_count = 0.0;
+                    for (std::size_t i = 0; i < half_points; ++i) {
+                        const std::size_t gsqrt_index = gsqrt_offset + i;
+                        const double value =
+                            static_cast<double>(gsqrt[i]) +
+                            (self->double_single_solve_
+                                 ? actual.fields_lo[gsqrt_index]
+                                 : 0.0);
+                        if (!std::isfinite(value)) {
+                            jacobian.nonfinite_count += 1.0;
+                            continue;
+                        }
+                        const double oriented = -value;
+                        if (oriented < jacobian.min_oriented) {
+                            jacobian.min_oriented = oriented;
+                            jacobian.min_index = static_cast<int>(i);
+                        }
+                        jacobian.max_abs =
+                            std::max(jacobian.max_abs, std::abs(value));
+                    }
+                }
+                bool invalid;
+                if (actual.control.present) {
+                    const auto& gpu = actual.control.jacobian;
+                    const bool host_invalid =
+                        gpu.nonfinite_count > 0 || gpu.max_abs <= 0 ||
+                        gpu.min_oriented <= 0 ||
+                        (gpu.min_oriented <
+                             cumes::control_policy::
+                                     JACOBIAN_RELATIVE_THRESHOLD *
+                                 gpu.max_abs &&
+                         gpu.min_index >= angular_points);
+                    if (host_invalid != actual.control.invalid ||
+                        gpu.min_oriented != jacobian.min_oriented ||
+                        gpu.max_abs != jacobian.max_abs ||
+                        gpu.min_index != jacobian.min_index) {
+                        self->finish(false,
+                                     "GPU Jacobian control/reference mismatch");
+                        return;
+                    }
+                    invalid = actual.control.invalid;
+                    if (invalid) self->controller_->reject_jacobian();
+                } else {
+                    invalid = self->controller_->jacobian_invalid(
+                        jacobian, angular_points);
+                }
+                if (invalid) {
+                    self->restore_checkpoint();
+                    std::printf(
+                        "  invalid Jacobian restore: iter=%d min=%.3e "
+                        "max=%.3e delta=%.3e\n",
+                        self->controller_->effective_iteration(),
+                        jacobian.min_oriented, jacobian.max_abs,
+                        self->controller_->delta_t());
+                    self->run_stage_inverse();
+                    return;
+                }
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s half-grid base geometry: PASS "
+                        "(max |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_error));
+                }
+                self->device_base_geometry_ =
+                    self->resident_path() ? actual.device_fields
+                                          : cumes::webgpu::DeviceFields{};
+                self->stage_base_geometry_lo_ = std::move(actual.fields_lo);
+                self->stage_base_geometry_is_validity_ =
+                    actual.fields_are_validity;
+                self->run_magnetic_field(std::move(actual.fields));
+            });
+    }
+
+    void run_magnetic_field(std::vector<float> base_geometry) {
+        magnetic_field_case_.device_geometry = device_geometry_;
+        magnetic_field_case_.device_base_geometry = device_base_geometry_;
+        magnetic_field_case_.ns = initialized_stage_.ns;
+        magnetic_field_case_.ntheta = initialized_stage_.ntheta;
+        magnetic_field_case_.nzeta = initialized_stage_.nzeta;
+        magnetic_field_case_.lamscale = initialized_stage_.profiles.lamscale;
+        magnetic_field_case_.lamscale_lo =
+            initialized_stage_.profiles.lamscale_lo;
+        magnetic_field_case_.prescribed_current =
+            initialized_stage_.prescribed_current;
+        magnetic_field_case_.double_single = double_single_solve_;
+        if (!iteration_results_ || !production_solve_) {
+            magnetic_field_case_.geometry = base_geometry_case_.geometry;
+            magnetic_field_case_.geometry_lo = base_geometry_case_.geometry_lo;
+        } else {
+            magnetic_field_case_.geometry.clear();
+            magnetic_field_case_.geometry_lo.clear();
+        }
+        magnetic_field_case_.base_geometry = std::move(base_geometry);
+        if (!iteration_results_ || !production_solve_) {
+            magnetic_field_case_.base_geometry_lo = stage_base_geometry_lo_;
+        } else {
+            magnetic_field_case_.base_geometry_lo.clear();
+        }
+        magnetic_field_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        magnetic_field_case_.sqrt_s_h_lo =
+            initialized_stage_.profiles.sqrt_s_h_lo;
+        magnetic_field_case_.phip_f = initialized_stage_.profiles.phip_f;
+        magnetic_field_case_.phip_f_lo = initialized_stage_.profiles.phip_f_lo;
+        magnetic_field_case_.chip_h = initialized_stage_.profiles.chip_h;
+        magnetic_field_case_.chip_h_lo = initialized_stage_.profiles.chip_h_lo;
+        magnetic_field_case_.pres_h = initialized_stage_.profiles.pres_h;
+        magnetic_field_case_.pres_h_lo = initialized_stage_.profiles.pres_h_lo;
+        magnetic_field_case_.curr_h = initialized_stage_.profiles.curr_h;
+        magnetic_field_case_.curr_h_lo = initialized_stage_.profiles.curr_h_lo;
+        magnetic_field_case_.phip_h = initialized_stage_.profiles.phip_h;
+        magnetic_field_case_.phip_h_lo = initialized_stage_.profiles.phip_h_lo;
+        magnetic_field_case_.iota_h = initialized_stage_.profiles.iota_h;
+        magnetic_field_case_.iota_h_lo = initialized_stage_.profiles.iota_h_lo;
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_magnetic_field, magnetic_field_case_,
+            [self](std::string error,
+                   cumes::webgpu::MagneticFieldResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::MagneticFieldResult{}
+                        : cumes::webgpu::magnetic_field_reference(
+                              self->magnetic_field_case_);
+                if (!self->production_solve_ &&
+                    (actual.fields.size() != expected.fields.size() ||
+                     actual.chip_h.size() != expected.chip_h.size() ||
+                     actual.iota_h.size() != expected.iota_h.size())) {
+                    self->finish(false, "magnetic field result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                bool finite = actual.fields_finite;
+                for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                    if (!self->production_solve_) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                    }
+                    finite &= std::isfinite(actual.fields[i]);
+                }
+                for (std::size_t i = 0; i < actual.chip_h.size(); ++i) {
+                    if (!self->production_solve_) {
+                        max_error = std::max(
+                            {max_error,
+                             std::abs(actual.chip_h[i] - expected.chip_h[i]),
+                             std::abs(actual.iota_h[i] - expected.iota_h[i])});
+                    }
+                    finite &= std::isfinite(actual.chip_h[i]) &&
+                              std::isfinite(actual.iota_h[i]);
+                }
+                if (self->double_single_solve_) {
+                    finite &=
+                        actual.fields_lo.size() == actual.fields.size() &&
+                        actual.chip_h_lo.size() == actual.chip_h.size() &&
+                        actual.iota_h_lo.size() == actual.iota_h.size() &&
+                        std::all_of(
+                            actual.fields_lo.begin(), actual.fields_lo.end(),
+                            [](float value) { return std::isfinite(value); }) &&
+                        std::all_of(
+                            actual.chip_h_lo.begin(), actual.chip_h_lo.end(),
+                            [](float value) { return std::isfinite(value); }) &&
+                        std::all_of(
+                            actual.iota_h_lo.begin(), actual.iota_h_lo.end(),
+                            [](float value) { return std::isfinite(value); });
+                }
+                if (max_error > 2.0e-4F || !finite) {
+                    self->finish(false,
+                                 "magnetic field mismatch: max_error=" +
+                                     std::to_string(max_error) +
+                                     " finite=" + (finite ? "true" : "false"));
+                    return;
+                }
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s magnetic field+pressure: PASS "
+                        "(max |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_error));
+                }
+                self->initialized_stage_.profiles.chip_h = actual.chip_h;
+                if (self->double_single_solve_) {
+                    self->initialized_stage_.profiles.chip_h_lo =
+                        actual.chip_h_lo;
+                }
+                self->initialized_stage_.profiles.iota_h = actual.iota_h;
+                if (self->double_single_solve_) {
+                    self->initialized_stage_.profiles.iota_h_lo =
+                        actual.iota_h_lo;
+                }
+                if (self->initialized_stage_.prescribed_current) {
+                    auto& profiles = self->initialized_stage_.profiles;
+                    const int ns = self->initialized_stage_.ns;
+                    profiles.iota_f[0] =
+                        1.5F * profiles.iota_h[0] - 0.5F * profiles.iota_h[1];
+                    for (int surface = 1; surface < ns - 1; ++surface) {
+                        profiles.iota_f[surface] =
+                            0.5F * (profiles.iota_h[surface] +
+                                    profiles.iota_h[surface - 1]);
+                        profiles.chi_f[surface] =
+                            0.5F * (profiles.chip_h[surface] +
+                                    profiles.chip_h[surface - 1]);
+                    }
+                    profiles.iota_f[ns - 1] = 1.5F * profiles.iota_h[ns - 2] -
+                                              0.5F * profiles.iota_h[ns - 3];
+                    profiles.chi_f[ns - 1] = 2.0F * profiles.chip_h[ns - 2] -
+                                             profiles.chip_h[ns - 3];
+                    if (self->double_single_solve_) {
+                        const auto pair_value = [](const auto& hi,
+                                                   const auto& lo, int index) {
+                            return static_cast<double>(hi[index]) + lo[index];
+                        };
+                        const auto put_pair = [](double value, auto& hi,
+                                                 auto& lo, int index) {
+                            const auto pair = cumes::webgpu::split(value);
+                            hi[index] = pair.hi;
+                            lo[index] = pair.lo;
+                        };
+                        put_pair(1.5 * pair_value(profiles.iota_h,
+                                                  profiles.iota_h_lo, 0) -
+                                     0.5 * pair_value(profiles.iota_h,
+                                                      profiles.iota_h_lo, 1),
+                                 profiles.iota_f, profiles.iota_f_lo, 0);
+                        for (int surface = 1; surface < ns - 1; ++surface) {
+                            put_pair(
+                                0.5 * (pair_value(profiles.iota_h,
+                                                  profiles.iota_h_lo, surface) +
+                                       pair_value(profiles.iota_h,
+                                                  profiles.iota_h_lo,
+                                                  surface - 1)),
+                                profiles.iota_f, profiles.iota_f_lo, surface);
+                            put_pair(
+                                0.5 * (pair_value(profiles.chip_h,
+                                                  profiles.chip_h_lo, surface) +
+                                       pair_value(profiles.chip_h,
+                                                  profiles.chip_h_lo,
+                                                  surface - 1)),
+                                profiles.chi_f, profiles.chi_f_lo, surface);
+                        }
+                        put_pair(
+                            1.5 * pair_value(profiles.iota_h,
+                                             profiles.iota_h_lo, ns - 2) -
+                                0.5 * pair_value(profiles.iota_h,
+                                                 profiles.iota_h_lo, ns - 3),
+                            profiles.iota_f, profiles.iota_f_lo, ns - 1);
+                        put_pair(2.0 * pair_value(profiles.chip_h,
+                                                  profiles.chip_h_lo, ns - 2) -
+                                     pair_value(profiles.chip_h,
+                                                profiles.chip_h_lo, ns - 3),
+                                 profiles.chi_f, profiles.chi_f_lo, ns - 1);
+                    }
+                }
+                self->device_magnetic_field_ =
+                    self->resident_path() ? actual.device_fields
+                                          : cumes::webgpu::DeviceFields{};
+                self->stage_magnetic_field_lo_ = std::move(actual.fields_lo);
+                self->stage_magnetic_field_is_vacuum_ =
+                    actual.fields_are_vacuum;
+                self->run_axisymmetric_force(std::move(actual.fields));
+            });
+    }
+
+    void run_axisymmetric_force(std::vector<float> magnetic_field) {
+        force_case_.device_geometry = device_geometry_;
+        force_case_.device_base_geometry = device_base_geometry_;
+        force_case_.device_magnetic_field = device_magnetic_field_;
+        force_case_.readback = !(production_solve_ && resident_path());
+        force_case_.ns = initialized_stage_.ns;
+        force_case_.ntheta = initialized_stage_.ntheta;
+        force_case_.nzeta = initialized_stage_.nzeta;
+        force_case_.delta_s = initialized_stage_.profiles.delta_s;
+        force_case_.delta_s_lo = initialized_stage_.profiles.delta_s_lo;
+        force_case_.lamscale = initialized_stage_.profiles.lamscale;
+        force_case_.lamscale_lo = initialized_stage_.profiles.lamscale_lo;
+        force_case_.double_single = double_single_solve_;
+        force_case_.radius_reference = initialized_stage_.radius_reference;
+        force_case_.geometry_is_vacuum = stage_geometry_is_vacuum_;
+        force_case_.magnetic_field_is_vacuum = stage_magnetic_field_is_vacuum_;
+        const bool batched_vacuum =
+            iteration_results_ && production_solve_ && vacuum_;
+        if (batched_vacuum) {
+            // The prefix already evaluated the GPU force. Lend its geometry
+            // snapshot to vacuum coupling, then restore the canonical host
+            // owner before normalization, constraints and final output.
+            force_case_.geometry = std::move(base_geometry_case_.geometry);
+            force_case_.geometry_lo = std::move(stage_geometry_lo_);
+            force_case_.base_geometry.clear();
+            force_case_.base_geometry_lo.clear();
+        } else if (!iteration_results_ || !production_solve_) {
+            force_case_.geometry = magnetic_field_case_.geometry;
+            force_case_.geometry_lo = stage_geometry_lo_;
+            force_case_.base_geometry = magnetic_field_case_.base_geometry;
+            force_case_.base_geometry_lo = stage_base_geometry_lo_;
+        }
+        force_case_.magnetic_field = std::move(magnetic_field);
+        force_case_.magnetic_field_lo = std::move(stage_magnetic_field_lo_);
+        force_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        force_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
+        force_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        force_case_.sqrt_s_h_lo = initialized_stage_.profiles.sqrt_s_h_lo;
+        force_case_.phip_f = initialized_stage_.profiles.phip_f;
+        force_case_.phip_f_lo = initialized_stage_.profiles.phip_f_lo;
+        if (vacuum_ && vacuum_->run_vacuum_block()) {
+            try {
+                const auto before = vacuum_->state();
+                vacuum_->set_webgpu_resident_result(
+                    resident_vacuum_force_path());
+                cumes::webgpu::update_vacuum(*vacuum_, initialized_stage_,
+                                             stage_state_lo_, force_case_);
+                if (before != vacuum_->state()) {
+                    std::printf("  vacuum pressure activated: iter=%d\n",
+                                controller_->effective_iteration());
+                }
+            } catch (const std::exception& error) {
+                finish(false,
+                       std::string("Vacuum update failed: ") + error.what());
+                return;
+            }
+        }
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_force, force_case_,
+            [self, batched_vacuum](
+                std::string error,
+                cumes::webgpu::AxisymmetricForceResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::AxisymmetricForceResult{}
+                        : cumes::webgpu::axisymmetric_force_reference(
+                              self->force_case_);
+                if (!self->production_solve_ &&
+                    (actual.fields.size() != expected.fields.size() ||
+                     (self->force_case_.double_single &&
+                      (actual.fields_lo.size() != actual.fields.size() ||
+                       expected.fields_lo.size() != expected.fields.size())))) {
+                    self->finish(false, "force result shape mismatch");
+                    return;
+                }
+                float max_error = 0.0F;
+                double max_reconstructed_error = 0.0;
+                bool finite = actual.fields_finite;
+                for (std::size_t i = 0; i < actual.fields.size(); ++i) {
+                    if (!self->production_solve_) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(actual.fields[i] - expected.fields[i]));
+                        if (self->force_case_.double_single) {
+                            max_reconstructed_error = std::max(
+                                max_reconstructed_error,
+                                std::abs(
+                                    (static_cast<double>(actual.fields[i]) +
+                                     actual.fields_lo[i]) -
+                                    (static_cast<double>(expected.fields[i]) +
+                                     expected.fields_lo[i])) /
+                                    (1.0 + std::abs(static_cast<double>(
+                                                        expected.fields[i]) +
+                                                    expected.fields_lo[i])));
+                        }
+                    }
+                    finite &= std::isfinite(actual.fields[i]);
+                    if (self->force_case_.double_single)
+                        finite &= std::isfinite(actual.fields_lo[i]);
+                }
+                const bool mismatch = self->force_case_.double_single
+                                          ? max_reconstructed_error > 2.0e-7
+                                          : max_error > 5.0e-4F;
+                if (mismatch || !finite) {
+                    self->finish(false, "axisymmetric force mismatch: " +
+                                            std::to_string(
+                                                self->force_case_.double_single
+                                                    ? max_reconstructed_error
+                                                    : max_error));
+                    return;
+                }
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s MHD force: PASS "
+                        "(max |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_error));
+                }
+                if (self->vacuum_ && (self->vacuum_->apply_edge_force() ||
+                                      self->vacuum_->webgpu_result_pending())) {
+                    try {
+                        if (self->resident_vacuum_force_path()) {
+                            self->finish_vacuum_force_ =
+                                cumes::webgpu::enqueue_resident_vacuum_force(
+                                    self->device_, *self->vacuum_,
+                                    self->initialized_stage_, self->force_case_,
+                                    actual, self->iteration_readback_);
+                        } else {
+                            cumes::webgpu::apply_vacuum_force(
+                                self->resident_path() ? self->device_
+                                                      : wgpu::Device{},
+                                *self->vacuum_, self->initialized_stage_,
+                                self->force_case_, actual);
+                        }
+                    } catch (const std::exception& error) {
+                        self->vacuum_->cancel_webgpu_update();
+                        self->finish(false, error.what());
+                        return;
+                    }
+                }
+                if (batched_vacuum) {
+                    self->base_geometry_case_.geometry =
+                        std::move(self->force_case_.geometry);
+                    self->stage_geometry_lo_ =
+                        std::move(self->force_case_.geometry_lo);
+                }
+                self->device_force_fields_ =
+                    self->resident_path() ? actual.device_fields
+                                          : cumes::webgpu::DeviceFields{};
+                self->stage_force_fields_ = actual.fields;
+                self->stage_force_fields_lo_ = std::move(actual.fields_lo);
+                self->run_solovev_forward(std::move(actual.fields));
+            });
+    }
+
+    void run_solovev_forward(std::vector<float> force_fields) {
+        if (resume_vacuum_iteration_) {
+            auto resume = std::move(resume_vacuum_iteration_);
+            resume_vacuum_iteration_ = {};
+            const auto self = shared_from_this();
+            resume(make_iteration_case(), device_force_fields_,
+                   [self](std::string error,
+                          cumes::webgpu::IterationResult result) {
+                       if (!error.empty()) {
+                           self->vacuum_->cancel_webgpu_update();
+                           self->finish_vacuum_force_ = {};
+                           self->finish(false, std::move(error));
+                           return;
+                       }
+                       try {
+                           auto finish = std::move(self->finish_vacuum_force_);
+                           self->finish_vacuum_force_ = {};
+                           if (finish) finish();
+                       } catch (const std::exception& error) {
+                           self->vacuum_->cancel_webgpu_update();
+                           self->finish(false, error.what());
+                           return;
+                       }
+                       self->iteration_results_ = std::move(result);
+                       self->run_solovev_forward({});
+                   });
+            return;
+        }
+        solver_toroidal_forward_case_.ns = initialized_stage_.ns;
+        solver_toroidal_forward_case_.device_fields = device_force_fields_;
+        solver_toroidal_forward_case_.use_fft =
+            initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
+        solver_toroidal_forward_case_.readback = !resident_spectral_path();
+        solver_toroidal_forward_case_.optimized_fft = !requested_generic_fft();
+        solver_toroidal_forward_case_.canonical_zeta =
+            requested_canonical_zeta();
+        solver_toroidal_forward_case_.mpol = initialized_stage_.mpol;
+        solver_toroidal_forward_case_.ntor = initialized_stage_.ntor;
+        solver_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
+        solver_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
+        solver_toroidal_forward_case_.nfp = initialized_stage_.nfp;
+        solver_toroidal_forward_case_.include_lcfs =
+            vacuum_ && vacuum_->apply_edge_force();
+        solver_toroidal_forward_case_.double_single = double_single_solve_;
+        const std::size_t points =
+            static_cast<std::size_t>(initialized_stage_.ns) *
+            initialized_stage_.ntheta * initialized_stage_.nzeta;
+        if (!device_force_fields_ || !production_solve_) {
+            solver_toroidal_forward_case_.fields.assign(
+                cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+            std::copy(force_fields.begin(), force_fields.end(),
+                      solver_toroidal_forward_case_.fields.begin());
+            if (double_single_solve_) {
+                solver_toroidal_forward_case_.fields_lo.assign(
+                    cumes::webgpu::TOROIDAL_FORWARD_FIELD_COUNT * points, 0.0F);
+                std::copy(stage_force_fields_lo_.begin(),
+                          stage_force_fields_lo_.end(),
+                          solver_toroidal_forward_case_.fields_lo.begin());
+            } else {
+                solver_toroidal_forward_case_.fields_lo.clear();
+            }
+        } else {
+            solver_toroidal_forward_case_.fields.clear();
+            solver_toroidal_forward_case_.fields_lo.clear();
+        }
+        const auto self = shared_from_this();
+        enqueue_checked_forward(
+            solver_toroidal_forward_case_, "force",
+            [self](std::string error,
+                   cumes::webgpu::ToroidalForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                self->stage_spectral_residual_lo_ =
+                    std::move(actual.residual_lo);
+                self->residual_case_.device_residual = actual.device_residual;
+                if (actual.device_residual && self->production_solve_) {
+                    self->run_residual_decomposition({});
+                    return;
+                }
+                self->finish_stage_forward(
+                    std::move(actual.residual),
+                    self->production_solve_
+                        ? std::vector<float>{}
+                        : cumes::webgpu::toroidal_forward_reference(
+                              self->solver_toroidal_forward_case_)
+                              .residual);
+            });
+    }
+
+    void finish_stage_forward(std::vector<float> residual,
+                              const std::vector<float>& expected) {
+        float max_error = 0.0F;
+        bool finite = production_solve_ || residual.size() == expected.size();
+        if (finite && !production_solve_) {
+            for (std::size_t i = 0; i < residual.size(); ++i) {
+                max_error =
+                    std::max(max_error, std::abs(residual[i] - expected[i]));
+                finite &= std::isfinite(residual[i]);
+            }
+        }
+        if (production_solve_) {
+            finite =
+                std::all_of(residual.begin(), residual.end(),
+                            [](float value) { return std::isfinite(value); });
+        }
+        const bool nonzero =
+            std::any_of(residual.begin(), residual.end(),
+                        [](float value) { return value != 0.0F; });
+        if (max_error > 5.0e-4F || !finite || !nonzero) {
+            finish(false, "stage forward residual mismatch: " +
+                              std::to_string(max_error));
+            return;
+        }
+        if (!production_solve_) {
+            std::printf(
+                "  %s spectral residual projection: PASS "
+                "(max |GPU-CPU| = %.3e)\n",
+                active_case_name_.c_str(), static_cast<double>(max_error));
+        }
+        run_residual_decomposition(std::move(residual));
+    }
+
+    void run_residual_decomposition(std::vector<float> residual) {
+        if (!resident_spectral_path()) residual_case_.device_residual = {};
+        residual_case_.ns = initialized_stage_.ns;
+        residual_case_.mpol = initialized_stage_.mpol;
+        residual_case_.ntor = initialized_stage_.ntor;
+        residual_case_.include_edge_rz = include_edge_invariant_;
+        residual_case_.zero_m1_z = true;
+        residual_case_.double_single = double_single_solve_;
+        residual_case_.residual = std::move(residual);
+        residual_case_.residual_lo = stage_spectral_residual_lo_;
+        residual_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        residual_case_.sqrt_s_f_lo = initialized_stage_.profiles.sqrt_s_f_lo;
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_residual_decomposition, residual_case_,
+            [self](std::string error,
+                   cumes::webgpu::ResidualDecompositionResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                if (!actual.source_finite || !actual.source_nonzero) {
+                    self->finish(false,
+                                 "stage forward residual is nonfinite or zero");
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::ResidualDecompositionResult{}
+                        : cumes::webgpu::residual_decomposition_reference(
+                              self->residual_case_);
+                float max_error = 0.0F;
+                bool valid = self->production_solve_ ||
+                             actual.residual.size() == expected.residual.size();
+                if (valid && !self->production_solve_) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+                    }
+                }
+                double max_norm_error = 0.0;
+                for (int group = 0; group < 3; ++group) {
+                    if (!self->production_solve_) {
+                        max_norm_error = std::max(
+                            max_norm_error,
+                            std::abs(actual.raw_norm[group] -
+                                     expected.raw_norm[group]) /
+                                (1.0 + std::abs(expected.raw_norm[group])));
+                    }
+                    valid &= std::isfinite(actual.raw_norm[group]);
+                }
+                if (self->production_solve_) {
+                    valid &= std::all_of(
+                        actual.residual.begin(), actual.residual.end(),
+                        [](float value) { return std::isfinite(value); });
+                }
+                if (!valid || max_error > 5.0e-4F || max_norm_error > 5.0e-4) {
+                    self->finish(false, "residual decomposition mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  decomposed residual+double norms: PASS "
+                        "(max |GPU-CPU| = %.3e)\n",
+                        static_cast<double>(max_error));
+                }
+                self->stage_decomposed_residual_lo_ =
+                    std::move(actual.residual_lo);
+                self->run_preconditioner_elements();
+            });
+    }
+
+    void run_preconditioner_elements() {
+        if (!controller_->refresh_preconditioner() &&
+            !preconditioner_elements_.ard.empty()) {
+            run_axisymmetric_constraint();
+            return;
+        }
+        preconditioner_case_.ns = initialized_stage_.ns;
+        preconditioner_case_.ntheta = initialized_stage_.ntheta;
+        preconditioner_case_.nzeta = initialized_stage_.nzeta;
+        preconditioner_case_.delta_s = initialized_stage_.profiles.delta_s;
+        preconditioner_case_.free_boundary =
+            vacuum_ && vacuum_->apply_edge_force();
+        if (!iteration_results_ || !production_solve_) {
+            preconditioner_case_.geometry = base_geometry_case_.geometry;
+            preconditioner_case_.base_geometry =
+                magnetic_field_case_.base_geometry;
+            preconditioner_case_.magnetic_field = force_case_.magnetic_field;
+        }
+        preconditioner_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+        preconditioner_case_.sqrt_s_h = initialized_stage_.profiles.sqrt_s_h;
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_preconditioner_elements,
+            preconditioner_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricPreconditionerElements actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::AxisymmetricPreconditionerElements{}
+                        : cumes::webgpu::
+                              axisymmetric_preconditioner_element_reference(
+                                  self->preconditioner_case_);
+                float max_scaled_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_scaled_error, &valid](
+                                         const auto& gpu, const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_scaled_error = std::max(
+                            max_scaled_error, std::abs(gpu[i] - cpu[i]) /
+                                                  (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                if (!self->production_solve_) {
+                    compare(actual.ard, expected.ard);
+                    compare(actual.brd, expected.brd);
+                    compare(actual.azd, expected.azd);
+                    compare(actual.bzd, expected.bzd);
+                    compare(actual.cxd, expected.cxd);
+                    compare(actual.arm, expected.arm);
+                    compare(actual.brm, expected.brm);
+                    compare(actual.azm, expected.azm);
+                    compare(actual.bzm, expected.bzm);
+                } else {
+                    const auto finite = [](const auto& values) {
+                        return std::all_of(
+                            values.begin(), values.end(),
+                            [](float value) { return std::isfinite(value); });
+                    };
+                    valid = finite(actual.ard) && finite(actual.brd) &&
+                            finite(actual.azd) && finite(actual.bzd) &&
+                            finite(actual.cxd) && finite(actual.arm) &&
+                            finite(actual.brm) && finite(actual.azm) &&
+                            finite(actual.bzm);
+                }
+                if (!valid || max_scaled_error > 5.0e-5F) {
+                    self->finish(false, "preconditioner element mismatch: " +
+                                            std::to_string(max_scaled_error));
+                    return;
+                }
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s radial preconditioner elements: PASS "
+                        "(max scaled |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_scaled_error));
+                }
+                actual.device_elements = self->accepted_elements_.capture(
+                    self->device_, actual.device_elements, false,
+                    "accepted preconditioner elements");
+                self->preconditioner_elements_ = std::move(actual);
+                self->run_preconditioner_matrix();
+            });
+    }
+
+    void run_preconditioner_matrix() {
+        preconditioner_matrix_case_.ns = initialized_stage_.ns;
+        preconditioner_matrix_case_.mpol = initialized_stage_.mpol;
+        preconditioner_matrix_case_.ntor = initialized_stage_.ntor;
+        preconditioner_matrix_case_.ntheta = initialized_stage_.ntheta;
+        preconditioner_matrix_case_.nzeta = initialized_stage_.nzeta;
+        preconditioner_matrix_case_.nfp = initialized_stage_.nfp;
+        preconditioner_matrix_case_.delta_s =
+            initialized_stage_.profiles.delta_s;
+        preconditioner_matrix_case_.free_boundary =
+            vacuum_ && vacuum_->apply_edge_force();
+        preconditioner_matrix_case_.elements = preconditioner_elements_;
+        if (!iteration_results_ || !production_solve_) {
+            preconditioner_matrix_case_.base_geometry =
+                magnetic_field_case_.base_geometry;
+        }
+        preconditioner_matrix_case_.sqrt_s_f =
+            initialized_stage_.profiles.sqrt_s_f;
+        preconditioner_matrix_case_.phip_h = initialized_stage_.profiles.phip_h;
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_preconditioner_matrix,
+            preconditioner_matrix_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricPreconditionerMatrix actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::AxisymmetricPreconditionerMatrix{}
+                        : cumes::webgpu::
+                              axisymmetric_preconditioner_matrix_reference(
+                                  self->preconditioner_matrix_case_);
+                float max_scaled_error = 0.0F;
+                bool valid = self->production_solve_ ||
+                             actual.first_surface == expected.first_surface;
+                const auto compare = [&max_scaled_error, &valid](
+                                         const auto& gpu, const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_scaled_error = std::max(
+                            max_scaled_error, std::abs(gpu[i] - cpu[i]) /
+                                                  (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                if (!self->production_solve_) {
+                    compare(actual.upper_r, expected.upper_r);
+                    compare(actual.diagonal_r, expected.diagonal_r);
+                    compare(actual.lower_r, expected.lower_r);
+                    compare(actual.upper_z, expected.upper_z);
+                    compare(actual.diagonal_z, expected.diagonal_z);
+                    compare(actual.lower_z, expected.lower_z);
+                    compare(actual.lambda, expected.lambda);
+                    compare(actual.scale, expected.scale);
+                } else {
+                    const auto finite = [](const auto& values) {
+                        return std::all_of(
+                            values.begin(), values.end(),
+                            [](float value) { return std::isfinite(value); });
+                    };
+                    valid =
+                        finite(actual.upper_r) && finite(actual.diagonal_r) &&
+                        finite(actual.lower_r) && finite(actual.upper_z) &&
+                        finite(actual.diagonal_z) && finite(actual.lower_z) &&
+                        finite(actual.lambda) && finite(actual.scale);
+                }
+                if (!valid || max_scaled_error > 2.0e-4F) {
+                    self->finish(false, "preconditioner matrix mismatch: " +
+                                            std::to_string(max_scaled_error));
+                    return;
+                }
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s tridiagonal+lambda preconditioner: PASS "
+                        "(max scaled |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_scaled_error));
+                }
+                actual.device_matrix = self->accepted_matrix_.capture(
+                    self->device_, actual.device_matrix, false,
+                    "accepted preconditioner matrix");
+                self->preconditioner_matrix_ = std::move(actual);
+                self->run_axisymmetric_constraint();
+            });
+    }
+
+    void run_axisymmetric_constraint() {
+        constraint_case_.device_geometry = device_geometry_;
+        constraint_case_.device_force_fields = device_force_fields_;
+        constraint_case_.readback = !(production_solve_ && resident_path());
+        constraint_case_.ns = initialized_stage_.ns;
+        constraint_case_.mpol = initialized_stage_.mpol;
+        constraint_case_.ntor = initialized_stage_.ntor;
+        constraint_case_.ntheta = initialized_stage_.ntheta;
+        constraint_case_.nzeta = initialized_stage_.nzeta;
+        constraint_case_.delta_s = initialized_stage_.profiles.delta_s;
+        constraint_case_.tcon0 = initialized_stage_.tcon0;
+        constraint_case_.reset_reference =
+            controller_->reset_constraint_reference() &&
+            (!vacuum_ || !vacuum_->apply_edge_force());
+        if (!iteration_results_ && vacuum_ && vacuum_->decay_rcon0_zcon0()) {
+            cumes::webgpu::decay_vacuum_reference(constraint_r_con0_,
+                                                  constraint_r_con0_lo_);
+            cumes::webgpu::decay_vacuum_reference(constraint_z_con0_,
+                                                  constraint_z_con0_lo_);
+        }
+        constraint_case_.refresh_preconditioner =
+            controller_->refresh_preconditioner();
+        constraint_case_.double_single = double_single_solve_;
+        if (!iteration_results_ || !production_solve_) {
+            constraint_case_.geometry = base_geometry_case_.geometry;
+            constraint_case_.geometry_lo = stage_geometry_lo_;
+            constraint_case_.r_con = stage_r_con_;
+            constraint_case_.r_con_lo = stage_r_con_lo_;
+            constraint_case_.z_con = stage_z_con_;
+            constraint_case_.z_con_lo = stage_z_con_lo_;
+            const std::size_t points =
+                static_cast<std::size_t>(constraint_case_.ns) *
+                constraint_case_.ntheta * constraint_case_.nzeta;
+            if (constraint_r_con0_.empty()) {
+                constraint_r_con0_.assign(points, 0.0F);
+                constraint_z_con0_.assign(points, 0.0F);
+                constraint_r_con0_lo_.assign(points, 0.0F);
+                constraint_z_con0_lo_.assign(points, 0.0F);
+                constraint_tcon_.assign(constraint_case_.ns, 0.0F);
+            }
+            constraint_case_.r_con0 = constraint_r_con0_;
+            constraint_case_.r_con0_lo = constraint_r_con0_lo_;
+            constraint_case_.z_con0 = constraint_z_con0_;
+            constraint_case_.z_con0_lo = constraint_z_con0_lo_;
+            constraint_case_.tcon = constraint_tcon_;
+            constraint_case_.ard = preconditioner_elements_.ard;
+            constraint_case_.azd = preconditioner_elements_.azd;
+            constraint_case_.sqrt_s_f = initialized_stage_.profiles.sqrt_s_f;
+            constraint_case_.sqrt_s_f_lo =
+                initialized_stage_.profiles.sqrt_s_f_lo;
+            const std::size_t force_field_count =
+                initialized_stage_.ntor == 0 ? 10
+                                             : cumes::webgpu::FORCE_FIELD_COUNT;
+            if (!device_force_fields_ || !production_solve_) {
+                constraint_case_.force_fields.assign(
+                    stage_force_fields_.begin(),
+                    stage_force_fields_.begin() + force_field_count * points);
+                if (double_single_solve_) {
+                    constraint_case_.force_fields_lo.assign(
+                        stage_force_fields_lo_.begin(),
+                        stage_force_fields_lo_.begin() +
+                            force_field_count * points);
+                } else {
+                    constraint_case_.force_fields_lo.clear();
+                }
+            } else {
+                constraint_case_.force_fields.clear();
+                constraint_case_.force_fields_lo.clear();
+            }
+        }
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_constraint, constraint_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricConstraintResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                self->device_constraint_fields_ =
+                    self->resident_path() ? actual.device_fields
+                                          : cumes::webgpu::DeviceFields{};
+                if (self->production_solve_) {
+                    bool finite =
+                        actual.intermediates_finite &&
+                        std::all_of(
+                            actual.fields.begin(), actual.fields.end(),
+                            [](float value) { return std::isfinite(value); });
+                    if (self->double_single_solve_)
+                        finite &=
+                            actual.fields_lo.size() == actual.fields.size() &&
+                            std::all_of(actual.fields_lo.begin(),
+                                        actual.fields_lo.end(),
+                                        [](float value) {
+                                            return std::isfinite(value);
+                                        });
+                    if (!finite) {
+                        self->finish(false,
+                                     "constraint produced nonfinite fields");
+                        return;
+                    }
+                    self->device_constraint_r_con0_ =
+                        self->accepted_r_con0_.capture(
+                            self->device_, actual.device_r_con0,
+                            self->double_single_solve_,
+                            "accepted constraint R");
+                    self->device_constraint_z_con0_ =
+                        self->accepted_z_con0_.capture(
+                            self->device_, actual.device_z_con0,
+                            self->double_single_solve_,
+                            "accepted constraint Z");
+                    self->constraint_r_con0_ = std::move(actual.r_con0);
+                    self->constraint_r_con0_lo_ = std::move(actual.r_con0_lo);
+                    self->constraint_z_con0_ = std::move(actual.z_con0);
+                    self->constraint_z_con0_lo_ = std::move(actual.z_con0_lo);
+                    self->constraint_tcon_ = std::move(actual.tcon);
+                    self->constraint_fields_lo_ = std::move(actual.fields_lo);
+                    self->run_constraint_forward(std::move(actual.fields));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::axisymmetric_constraint_reference(
+                        self->constraint_case_);
+                float max_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_error, &valid](const auto& gpu,
+                                                          const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(gpu[i] - cpu[i]) /
+                                                    (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                compare(actual.fields, expected.fields);
+                compare(actual.r_con0, expected.r_con0);
+                compare(actual.z_con0, expected.z_con0);
+                compare(actual.tcon, expected.tcon);
+                compare(actual.g_con_eff, expected.g_con_eff);
+                compare(actual.g_con, expected.g_con);
+                const bool active =
+                    std::any_of(actual.g_con.begin(), actual.g_con.end(),
+                                [](float value) { return value != 0.0F; });
+                if (!valid || !active || max_error > 1.0e-3F) {
+                    self->finish(false, "axisymmetric constraint mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                std::printf(
+                    "  %s constraint refresh+force: PASS "
+                    "(max scaled |GPU-CPU| = %.3e)\n",
+                    self->active_case_name_.c_str(),
+                    static_cast<double>(max_error));
+                self->constraint_r_con0_ = std::move(actual.r_con0);
+                self->constraint_r_con0_lo_ = std::move(actual.r_con0_lo);
+                self->constraint_z_con0_ = std::move(actual.z_con0);
+                self->constraint_z_con0_lo_ = std::move(actual.z_con0_lo);
+                self->constraint_tcon_ = std::move(actual.tcon);
+                self->constraint_fields_lo_ = std::move(actual.fields_lo);
+                self->run_constraint_forward(std::move(actual.fields));
+            });
+    }
+
+    // Compare transforms on identical resident fields, never feed the shadow
+    // result into the controller. Disabled diagnostics have no GPU work.
+    void enqueue_checked_forward(
+        const cumes::webgpu::ToroidalForwardCase& input,
+        std::string label,
+        cumes::webgpu::ToroidalForwardCallback callback) {
+        if (iteration_results_) {
+            callback({}, std::move(iteration_results_->forward.at(
+                             iteration_forward_index_++)));
+            return;
+        }
+        const int iteration = controller_->effective_iteration();
+        if (!input.double_single || !requested_compare_fft() ||
+            (iteration > 3 && iteration % 100 != 0)) {
+            cumes::webgpu::enqueue_toroidal_forward(device_, input,
+                                                    std::move(callback));
+            return;
+        }
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, input,
+            [self, input, label = std::move(label),
+             callback = std::move(callback)](
+                std::string error,
+                cumes::webgpu::ToroidalForwardResult primary) mutable {
+                if (!error.empty()) {
+                    callback(std::move(error), {});
+                    return;
+                }
+                self->enqueue_shadow_forward(input, std::move(label),
+                                             std::move(primary),
+                                             std::move(callback), 0);
+            });
+    }
+
+    void enqueue_shadow_forward(cumes::webgpu::ToroidalForwardCase input,
+                                std::string label,
+                                cumes::webgpu::ToroidalForwardResult primary,
+                                cumes::webgpu::ToroidalForwardCallback callback,
+                                int variant) {
+        if (variant == 3) {
+            callback({}, std::move(primary));
+            return;
+        }
+        input.use_fft = variant == 0;
+        input.optimized_fft = false;
+        input.canonical_zeta = variant == 2;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_toroidal_forward(
+            device_, input,
+            [self, input, label = std::move(label),
+             primary = std::move(primary), callback = std::move(callback),
+             variant](std::string error,
+                      cumes::webgpu::ToroidalForwardResult shadow) mutable {
+                if (!error.empty()) {
+                    callback(std::move(error), {});
+                    return;
+                }
+                double max_abs = 0, error2 = 0, norm2 = 0;
+                std::size_t high_differences = 0, max_index = 0;
+                for (std::size_t i = 0; i < primary.residual.size(); ++i) {
+                    const double a =
+                        double(primary.residual[i]) + primary.residual_lo[i];
+                    const double b =
+                        double(shadow.residual[i]) + shadow.residual_lo[i];
+                    const double difference = std::abs(a - b);
+                    if (difference > max_abs) {
+                        max_abs = difference;
+                        max_index = i;
+                    }
+                    error2 += difference * difference;
+                    norm2 += a * a;
+                    high_differences +=
+                        primary.residual[i] != shadow.residual[i];
+                }
+                std::ostringstream json;
+                json << std::setprecision(17)
+                     << "{\"kind\":\"transform\",\"phase\":\"" << label
+                     << "\",\"attempt\":" << self->attempted_passes_
+                     << ",\"iter\":" << self->controller_->effective_iteration()
+                     << ",\"variant\":" << variant << ",\"max_abs\":" << max_abs
+                     << ",\"relative_l2\":"
+                     << std::sqrt(error2 / std::max(norm2, 1e-300))
+                     << ",\"high_differences\":" << high_differences
+                     << ",\"max_index\":" << max_index << '}';
+                publish_browser_diagnostic(json.str().c_str());
+                self->enqueue_shadow_forward(input, std::move(label),
+                                             std::move(primary),
+                                             std::move(callback), variant + 1);
+            });
+    }
+
+    void trace_controller(std::span<const float> preconditioned,
+                          bool converged) {
+        // Reuse the controller's host scalars; plotting adds no GPU readback
+        // and does not require the full state-fingerprint diagnostic trace.
+        if (production_solve_) {
+            publish_browser_residual(
+                static_cast<int>(stage_index_ + 1), attempted_passes_,
+                controller_->effective_iteration(), invariant_normalized_[0],
+                invariant_normalized_[1], invariant_normalized_[2],
+                initialized_stage_.tolerance, converged ? 1 : 0);
+        }
+        if (!requested_solver_trace()) return;
+        const auto fingerprint = [](std::span<const float> values) {
+            std::uint32_t hash = 2166136261U;
+            for (float value : values) {
+                hash ^= std::bit_cast<std::uint32_t>(value);
+                hash *= 16777619U;
+            }
+            return hash;
+        };
+        std::ostringstream json;
+        json << std::setprecision(17)
+             << "{\"kind\":\"controller\",\"attempt\":" << attempted_passes_
+             << ",\"iter\":" << controller_->effective_iteration()
+             << ",\"fsq\":[" << invariant_normalized_[0] << ','
+             << invariant_normalized_[1] << ',' << invariant_normalized_[2]
+             << "],\"preconditioned\":[" << preconditioned_normalized_[0] << ','
+             << preconditioned_normalized_[1] << ','
+             << preconditioned_normalized_[2]
+             << "],\"delta\":" << controller_->delta_t()
+             << ",\"b1\":" << pending_decision_.damping.b1
+             << ",\"fac\":" << pending_decision_.damping.fac
+             << ",\"restart\":" << int(pending_decision_.reason)
+             << ",\"anchor\":" << controller_->restart_anchor()
+             << ",\"refresh\":" << int(controller_->refresh_preconditioner())
+             << ",\"checkpoint\":" << int(pending_decision_.do_refresh)
+             << ",\"converged\":" << int(converged)
+             << ",\"state_hash\":" << fingerprint(initialized_stage_.state)
+             << ",\"state_low_hash\":" << fingerprint(stage_state_lo_)
+             << ",\"preconditioned_hash\":" << fingerprint(preconditioned);
+        if (vacuum_) {
+            json << ",\"vacuum_state\":" << int(vacuum_->state())
+                 << ",\"vacuum_restart\":"
+                 << int(vacuum_->soft_restart_requested());
+        }
+        json << '}';
+        publish_browser_diagnostic(json.str().c_str());
+    }
+
+    void run_constraint_forward(std::vector<float> fields) {
+        if (initialized_stage_.ntor == 0 &&
+            (!iteration_results_ || !production_solve_)) {
+            // Axisymmetric constraint output is [10 force, 4 constraint]
+            // planes. The shared projector expects [16, 4].
+            const std::size_t points =
+                static_cast<std::size_t>(initialized_stage_.ns) *
+                initialized_stage_.ntheta;
+            const auto expand = [points](std::vector<float>& values) {
+                values.resize(20 * points, 0.0F);
+                std::copy_backward(values.begin() + 10 * points,
+                                   values.begin() + 14 * points, values.end());
+                std::fill(values.begin() + 10 * points,
+                          values.begin() + 16 * points, 0.0F);
+            };
+            expand(fields);
+            if (double_single_solve_) expand(constraint_fields_lo_);
+        }
+        constraint_toroidal_forward_case_.ns = initialized_stage_.ns;
+        constraint_toroidal_forward_case_.device_fields =
+            device_constraint_fields_;
+        constraint_toroidal_forward_case_.use_fft =
+            initialized_stage_.ntor != 0 && requested_direct_dft() == 0;
+        constraint_toroidal_forward_case_.readback = !resident_spectral_path();
+        constraint_toroidal_forward_case_.optimized_fft =
+            !requested_generic_fft();
+        constraint_toroidal_forward_case_.canonical_zeta =
+            requested_canonical_zeta();
+        constraint_toroidal_forward_case_.mpol = initialized_stage_.mpol;
+        constraint_toroidal_forward_case_.ntor = initialized_stage_.ntor;
+        constraint_toroidal_forward_case_.ntheta = initialized_stage_.ntheta;
+        constraint_toroidal_forward_case_.nzeta = initialized_stage_.nzeta;
+        constraint_toroidal_forward_case_.nfp = initialized_stage_.nfp;
+        constraint_toroidal_forward_case_.include_lcfs =
+            vacuum_ && vacuum_->apply_edge_force();
+        constraint_toroidal_forward_case_.double_single = double_single_solve_;
+        constraint_toroidal_forward_case_.fields = std::move(fields);
+        constraint_toroidal_forward_case_.fields_lo = constraint_fields_lo_;
+        const auto self = shared_from_this();
+        enqueue_checked_forward(
+            constraint_toroidal_forward_case_, "constraint",
+            [self](std::string error,
+                   cumes::webgpu::ToroidalForwardResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                self->constraint_spectral_residual_lo_ =
+                    std::move(actual.residual_lo);
+                self->constraint_residual_case_.device_residual =
+                    actual.device_residual;
+                if (actual.device_residual && self->production_solve_) {
+                    self->run_constraint_residual_decomposition({});
+                    return;
+                }
+                self->finish_constraint_forward(
+                    std::move(actual.residual),
+                    self->production_solve_
+                        ? std::vector<float>{}
+                        : cumes::webgpu::toroidal_forward_reference(
+                              self->constraint_toroidal_forward_case_)
+                              .residual);
+            });
+    }
+
+    void finish_constraint_forward(std::vector<float> residual,
+                                   const std::vector<float>& expected) {
+        float max_error = 0.0F;
+        bool valid = production_solve_ || residual.size() == expected.size();
+        if (valid && !production_solve_) {
+            for (std::size_t i = 0; i < residual.size(); ++i) {
+                max_error =
+                    std::max(max_error, std::abs(residual[i] - expected[i]));
+                valid &= std::isfinite(residual[i]);
+            }
+        }
+        if (production_solve_) {
+            valid =
+                std::all_of(residual.begin(), residual.end(),
+                            [](float value) { return std::isfinite(value); });
+        }
+        if (!valid || max_error > 5.0e-4F) {
+            finish(false, "constraint residual projection mismatch: " +
+                              std::to_string(max_error));
+            return;
+        }
+        if (!production_solve_) {
+            std::printf(
+                "  constrained spectral residual projection: PASS "
+                "(max |GPU-CPU| = %.3e)\n",
+                static_cast<double>(max_error));
+        }
+        run_constraint_residual_decomposition(std::move(residual));
+    }
+
+    void run_constraint_residual_decomposition(std::vector<float> residual) {
+        if (!resident_spectral_path())
+            constraint_residual_case_.device_residual = {};
+        constraint_residual_case_.ns = initialized_stage_.ns;
+        constraint_residual_case_.mpol = initialized_stage_.mpol;
+        constraint_residual_case_.ntor = initialized_stage_.ntor;
+        constraint_residual_case_.include_edge_rz = include_edge_invariant_;
+        constraint_residual_case_.zero_m1_z =
+            controller_->effective_iteration() < 2 ||
+            controller_->fsqz_prev() < 1.0e-6;
+        constraint_residual_case_.double_single = double_single_solve_;
+        constraint_residual_case_.residual = std::move(residual);
+        constraint_residual_case_.residual_lo =
+            constraint_spectral_residual_lo_;
+        constraint_residual_case_.sqrt_s_f =
+            initialized_stage_.profiles.sqrt_s_f;
+        constraint_residual_case_.sqrt_s_f_lo =
+            initialized_stage_.profiles.sqrt_s_f_lo;
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_residual_decomposition,
+            constraint_residual_case_,
+            [self](std::string error,
+                   cumes::webgpu::ResidualDecompositionResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::ResidualDecompositionResult{}
+                        : cumes::webgpu::residual_decomposition_reference(
+                              self->constraint_residual_case_);
+                float max_error = 0.0F;
+                bool valid = self->production_solve_ ||
+                             actual.residual.size() == expected.residual.size();
+                if (valid && !self->production_solve_) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        max_error =
+                            std::max(max_error, std::abs(actual.residual[i] -
+                                                         expected.residual[i]));
+                    }
+                }
+                if (!valid || max_error > 5.0e-4F) {
+                    self->finish(
+                        false, "constrained residual decomposition mismatch: " +
+                                   std::to_string(max_error));
+                    return;
+                }
+                if (self->production_solve_ &&
+                    (!actual.source_finite ||
+                     !std::all_of(
+                         actual.residual.begin(), actual.residual.end(),
+                         [](float value) { return std::isfinite(value); }))) {
+                    self->finish(false, "constrained residual is nonfinite");
+                    return;
+                }
+                self->invariant_raw_ = actual.raw_norm;
+                self->constraint_decomposed_residual_lo_ =
+                    std::move(actual.residual_lo);
+                self->run_preconditioner_apply(std::move(actual.residual));
+            });
+    }
+
+    void run_preconditioner_apply(std::vector<float> residual) {
+        preconditioner_apply_case_.ns = initialized_stage_.ns;
+        preconditioner_apply_case_.mpol = initialized_stage_.mpol;
+        preconditioner_apply_case_.ntor = initialized_stage_.ntor;
+        preconditioner_apply_case_.include_lcfs =
+            vacuum_ && vacuum_->apply_edge_force();
+        preconditioner_apply_case_.elements = preconditioner_elements_;
+        preconditioner_apply_case_.matrix = preconditioner_matrix_;
+        preconditioner_apply_case_.residual = std::move(residual);
+        const auto self = shared_from_this();
+        enqueue_evaluated(
+            cumes::webgpu::enqueue_axisymmetric_preconditioner_apply,
+            preconditioner_apply_case_,
+            [self](
+                std::string error,
+                cumes::webgpu::AxisymmetricPreconditionerApplyResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::AxisymmetricPreconditionerApplyResult{}
+                        : cumes::webgpu::
+                              axisymmetric_preconditioner_apply_reference(
+                                  self->preconditioner_apply_case_);
+                float max_scaled_error = 0.0F;
+                std::size_t max_error_index = 0;
+                bool valid = self->production_solve_ ||
+                             actual.residual.size() == expected.residual.size();
+                if (!self->production_solve_) {
+                    valid &= actual.breakdown_count == expected.breakdown_count;
+                }
+                if (valid && !self->production_solve_) {
+                    for (std::size_t i = 0; i < actual.residual.size(); ++i) {
+                        const float error =
+                            std::abs(actual.residual[i] -
+                                     expected.residual[i]) /
+                            (1.0F + std::abs(expected.residual[i]));
+                        if (error > max_scaled_error) {
+                            max_scaled_error = error;
+                            max_error_index = i;
+                        }
+                        valid &= std::isfinite(actual.residual[i]);
+                    }
+                } else if (self->production_solve_) {
+                    valid = std::all_of(
+                        actual.residual.begin(), actual.residual.end(),
+                        [](float value) { return std::isfinite(value); });
+                }
+                if (!valid || actual.breakdown_count != 0 ||
+                    max_scaled_error > 2.0e-4F) {
+                    const float actual_value =
+                        max_error_index < actual.residual.size()
+                            ? actual.residual[max_error_index]
+                            : 0.0F;
+                    const float expected_value =
+                        !self->production_solve_ &&
+                                max_error_index < expected.residual.size()
+                            ? expected.residual[max_error_index]
+                            : 0.0F;
+                    char detail[256];
+                    std::snprintf(
+                        detail, sizeof(detail),
+                        "preconditioner apply mismatch: scaled=%.6g index=%zu "
+                        "actual=%.9g expected=%.9g breakdown=%d/%d",
+                        static_cast<double>(max_scaled_error), max_error_index,
+                        static_cast<double>(actual_value),
+                        static_cast<double>(expected_value),
+                        actual.breakdown_count,
+                        self->production_solve_ ? 0 : expected.breakdown_count);
+                    self->finish(false, detail);
+                    return;
+                }
+                if (!self->force_norm_ready_ ||
+                    self->controller_->refresh_preconditioner()) {
+                    cumes::webgpu::AxisymmetricForceNormalizationCase norm_case;
+                    norm_case.ns = self->initialized_stage_.ns;
+                    norm_case.mpol = self->initialized_stage_.mpol;
+                    norm_case.ntor = self->initialized_stage_.ntor;
+                    norm_case.ntheta = self->initialized_stage_.ntheta;
+                    norm_case.nzeta = self->initialized_stage_.nzeta;
+                    norm_case.delta_s =
+                        self->initialized_stage_.profiles.delta_s;
+                    norm_case.lamscale =
+                        self->initialized_stage_.profiles.lamscale;
+                    norm_case.state = self->initialized_stage_.state;
+                    if (const auto& reference =
+                            self->initialized_stage_.radius_reference) {
+                        for (int n = 0; n <= norm_case.ntor; ++n)
+                            for (int j = 0; j < norm_case.ns; ++j)
+                                norm_case.state[n * norm_case.ns + j] =
+                                    static_cast<float>(
+                                        static_cast<double>(
+                                            norm_case
+                                                .state[n * norm_case.ns + j]) +
+                                        reference->coefficients[n]);
+                    }
+                    norm_case.base_geometry =
+                        self->magnetic_field_case_.base_geometry;
+                    norm_case.magnetic_field = self->force_case_.magnetic_field;
+                    norm_case.pres_h = self->initialized_stage_.profiles.pres_h;
+                    self->force_normalization_ =
+                        cumes::webgpu::axisymmetric_force_normalization(
+                            norm_case);
+                    self->force_norm_ready_ = true;
+                }
+                const double plain =
+                    static_cast<double>(self->initialized_stage_.ns) *
+                    self->initialized_stage_.mpol *
+                    (self->initialized_stage_.ntor + 1);
+                self->invariant_normalized_ = {
+                    self->invariant_raw_[0] * plain *
+                        self->force_normalization_.f_norm_rz * 0.25,
+                    self->invariant_raw_[1] * plain *
+                        self->force_normalization_.f_norm_rz * 0.25,
+                    self->invariant_raw_[2] * plain *
+                        self->force_normalization_.f_norm_l};
+                const auto preconditioned_raw =
+                    !self->vacuum_ && self->resident_spectral_path() &&
+                            requested_device_norms()
+                        ? actual.raw_norm
+                        : cumes::webgpu::residual_raw_norms(
+                              actual.residual, self->initialized_stage_.ns,
+                              self->initialized_stage_.mpol,
+                              self->initialized_stage_.ntor, true);
+                self->preconditioned_normalized_ = {
+                    preconditioned_raw[0] * plain *
+                        self->force_normalization_.f_norm_1,
+                    preconditioned_raw[1] * plain *
+                        self->force_normalization_.f_norm_1,
+                    preconditioned_raw[2] * plain *
+                        self->initialized_stage_.profiles.delta_s};
+                if (self->vacuum_ && self->vacuum_->soft_restart_requested()) {
+                    self->restore_checkpoint();
+                    self->controller_->vacuum_soft_restart();
+                }
+                if (self->begin_newton_correction(actual)) return;
+                const auto verdict = self->controller_->classify_invariant(
+                    self->invariant_normalized_.data());
+                if (verdict.nonfinite) {
+                    self->restore_checkpoint();
+                    std::printf(
+                        "  nonfinite residual restore: iter=%d delta=%.3e\n",
+                        self->controller_->effective_iteration(),
+                        self->controller_->delta_t());
+                    self->run_stage_inverse();
+                    return;
+                }
+                if (verdict.converged &&
+                    (!self->vacuum_ || self->vacuum_->apply_edge_force())) {
+                    self->trace_controller(actual.residual, true);
+                    self->complete_stage();
+                    return;
+                }
+                self->pending_decision_ = self->controller_->decide_restart(
+                    self->preconditioned_normalized_.data(),
+                    self->invariant_normalized_.data());
+                self->trace_controller(actual.residual, false);
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s preconditioned residual: PASS "
+                        "(max scaled |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_scaled_error));
+                }
+                self->device_descent_residual_ = actual.device_residual;
+                self->run_descent(std::move(actual.residual));
+            });
+    }
+
+    std::array<double, 3> newton_residual(
+        const cumes::webgpu::IterationResult& result) const {
+        const auto& raw = result.residual[1].raw_norm;
+        const double plain =
+            double(initialized_stage_.ns) * initialized_stage_.mpol;
+        return {raw[0] * plain * force_normalization_.f_norm_rz * 0.25,
+                raw[1] * plain * force_normalization_.f_norm_rz * 0.25,
+                raw[2] * plain * force_normalization_.f_norm_l};
+    }
+
+    bool valid_newton_trial(
+        const cumes::webgpu::IterationResult& result) const {
+        const auto finite = [](const auto& values) {
+            return std::all_of(values.begin(), values.end(),
+                               [](auto value) { return std::isfinite(value); });
+        };
+        if (!result.inverse.geometry_finite || !result.magnetic.fields_finite ||
+            !finite(result.inverse.geometry) ||
+            !finite(result.inverse.geometry_lo) ||
+            !finite(result.magnetic.fields) ||
+            !finite(result.magnetic.fields_lo) ||
+            !finite(result.magnetic.chip_h) ||
+            !finite(result.magnetic.chip_h_lo) ||
+            !finite(result.magnetic.iota_h) ||
+            !finite(result.magnetic.iota_h_lo) ||
+            !finite(result.preconditioned.residual) ||
+            result.preconditioned.breakdown_count != 0)
+            return false;
+        for (const auto& residual : result.residual)
+            if (!residual.source_finite || !finite(residual.raw_norm))
+                return false;
+        // Trials use full geometry and the same host-double orientation gate
+        // as ordinary passes. An invalid trial is rejected without changing
+        // controller counters or its checkpoint.
+        const auto points =
+            std::size_t(initialized_stage_.ns - 1) * initialized_stage_.ntheta;
+        const auto& geometry = result.geometry;
+        if (geometry.fields.size() != 10 * points ||
+            geometry.fields_lo.size() != 10 * points ||
+            !finite(geometry.fields) || !finite(geometry.fields_lo))
+            return false;
+        double minimum = std::numeric_limits<double>::infinity(), maximum = 0;
+        std::size_t index = 0;
+        for (std::size_t i = 0; i < points; ++i) {
+            const float hi = geometry.fields[6 * points + i];
+            if (hi == 0 || geometry.fields[8 * points + i] != 0) return false;
+            const double value =
+                double(hi) + geometry.fields_lo[6 * points + i];
+            if (-value < minimum) {
+                minimum = -value;
+                index = i;
+            }
+            maximum = std::max(maximum, std::abs(value));
+        }
+        if (minimum <= 0 || maximum <= 0 ||
+            (minimum <
+                 cumes::control_policy::JACOBIAN_RELATIVE_THRESHOLD * maximum &&
+             index >= static_cast<std::size_t>(initialized_stage_.ntheta)))
+            return false;
+        return finite(newton_residual(result));
+    }
+
+    bool begin_newton_correction(
+        const cumes::webgpu::AxisymmetricPreconditionerApplyResult& base) {
+        if (!newton_enabled_ || !newton_) return false;
+        const int iteration = controller_->effective_iteration();
+        const bool converged =
+            std::all_of(invariant_normalized_.begin(),
+                        invariant_normalized_.end(), [this](double value) {
+                            return value <= initialized_stage_.tolerance;
+                        });
+        const bool finite = std::all_of(
+            invariant_normalized_.begin(), invariant_normalized_.end(),
+            [](double value) { return std::isfinite(value); });
+        if (iteration == last_newton_iteration_ ||
+            iteration < cumes::control_policy::NEWTON_START_ITERATION ||
+            iteration % cumes::control_policy::NEWTON_PERIOD != 0 ||
+            iteration - controller_->restart_anchor() <=
+                cumes::control_policy::NEWTON_MIN_EPOCH_AGE ||
+            controller_->refresh_preconditioner() ||
+            controller_->reset_constraint_reference() ||
+            controller_->fsqz_prev() >= 1.0e-6 || converged || !finite)
+            return false;
+        last_newton_iteration_ = iteration;
+        ++newton_attempts_;
+        newton_base_residual_ = invariant_normalized_;
+        try {
+            // The preceding deferred-descent callback has reconstructed the
+            // canonical paired host state, including its dependent axis.
+            const auto bytes = initialized_stage_.state.size() * sizeof(float);
+            device_.GetQueue().WriteBuffer(newton_input_.buffer, 0,
+                                           initialized_stage_.state.data(),
+                                           bytes);
+            device_.GetQueue().WriteBuffer(newton_input_.buffer, bytes,
+                                           stage_state_lo_.data(), bytes);
+            newton_frozen_ = make_iteration_case();
+            newton_frozen_.device_state = newton_input_;
+            newton_frozen_.refresh_preconditioner = false;
+            newton_frozen_.reset_reference = false;
+            newton_->prepare(newton_frozen_, newton_input_,
+                             base.device_residual);
+            if (requested_newton_probe() && !newton_studied_) {
+                newton_studied_ = true;
+                study_newton_probes();
+            } else {
+                solve_newton_correction();
+            }
+        } catch (const std::exception& error) {
+            finish(false, "Newton correction setup failed: " +
+                              std::string(error.what()));
+        }
+        return true;
+    }
+
+    void solve_newton_correction() {
+        const auto self = shared_from_this();
+        try {
+            cumes::webgpu::NewtonOptions options;
+            options.difference_step =
+                static_cast<float>(requested_newton_step());
+            newton_->solve(
+                options, [self](std::string error,
+                                cumes::webgpu::NewtonControl control) {
+                    if (!error.empty()) {
+                        self->finish(false, std::move(error));
+                        return;
+                    }
+                    self->newton_control_ = control;
+                    self->newton_evaluations_ += control.evaluations;
+                    self->evaluate_newton_trial(control.breakdown ? 4 : 0);
+                });
+        } catch (const std::exception& error) {
+            finish(false,
+                   "Newton inner solve failed: " + std::string(error.what()));
+        }
+    }
+
+    void evaluate_newton_trial(int trial) {
+        const bool rollback = trial == 4;
+        const auto state =
+            rollback ? newton_->base_state()
+                     : newton_->enqueue_trial(std::ldexp(1.0F, -trial));
+        auto input = newton_frozen_;
+        input.device_state = state;
+        // The ordinary raw-norm reduction choice is retained for exact base
+        // rollback; full fields let trial rejection reuse the host validity
+        // checks without committing an invalid state to the controller.
+        input.compact_fields = false;
+        input.geometry_control = false;
+        auto high = std::make_shared<std::vector<float>>();
+        auto low = std::make_shared<std::vector<float>>();
+        const auto bytes = state.values * sizeof(float);
+        const auto encoder = device_.CreateCommandEncoder();
+        newton_trial_batch_->append(
+            encoder, state.buffer, state.high_offset, bytes,
+            [high](std::span<const float> values) {
+                high->assign(values.begin(), values.end());
+            });
+        newton_trial_batch_->append(
+            encoder, state.buffer, state.low_offset, bytes,
+            [low](std::span<const float> values) {
+                low->assign(values.begin(), values.end());
+            });
+        const auto commands = encoder.Finish();
+        device_.GetQueue().Submit(1, &commands);
+        ++newton_evaluations_;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_iteration(
+            device_, std::move(input), newton_trial_batch_,
+            [self, state, high, low, trial, rollback](
+                std::string error, cumes::webgpu::IterationResult result) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const bool valid = self->valid_newton_trial(result);
+                const auto residual = self->newton_residual(result);
+                if (rollback) {
+                    if (!valid || residual != self->newton_base_residual_) {
+                        self->finish(false,
+                                     "Newton rollback did not recover the "
+                                     "original valid residual triple");
+                        return;
+                    }
+                } else {
+                    const double merit =
+                        residual[0] + residual[1] + residual[2];
+                    const double original = self->newton_base_residual_[0] +
+                                            self->newton_base_residual_[1] +
+                                            self->newton_base_residual_[2];
+                    if (!valid ||
+                        !(merit <
+                          cumes::control_policy::NEWTON_ACCEPTANCE_RATIO *
+                              original)) {
+                        self->evaluate_newton_trial(trial + 1);
+                        return;
+                    }
+                    ++self->newton_accepted_;
+                    self->stage_velocity_.assign(high->size(), 0.0F);
+                    self->stage_velocity_lo_.assign(high->size(), 0.0F);
+                    self->device_descent_velocity_ = {};
+                    self->controller_->reset_correction_momentum();
+                }
+                std::ostringstream record;
+                record << std::setprecision(17)
+                       << "{\"kind\":\"newton\",\"stage\":"
+                       << self->stage_index_ + 1 << ",\"iteration\":"
+                       << self->controller_->effective_iteration()
+                       << ",\"accepted\":" << (rollback ? "false" : "true")
+                       << ",\"scale\":"
+                       << (rollback ? 0 : std::ldexp(1.0, -trial))
+                       << ",\"step\":" << requested_newton_step()
+                       << ",\"merit_before\":"
+                       << self->newton_base_residual_[0] +
+                              self->newton_base_residual_[1] +
+                              self->newton_base_residual_[2]
+                       << ",\"merit_after\":"
+                       << residual[0] + residual[1] + residual[2]
+                       << ",\"gmres_steps\":" << self->newton_control_.steps
+                       << ",\"breakdown\":" << self->newton_control_.breakdown
+                       << ",\"evaluations\":" << self->newton_evaluations_
+                       << ",\"linear_residual\":";
+                if (std::isfinite(self->newton_control_.residual_norm))
+                    record << self->newton_control_.residual_norm;
+                else
+                    record << "null";
+                record << '}';
+                publish_browser_diagnostic(record.str().c_str());
+                std::printf(
+                    "  Newton iter=%d: %s, GMRES steps=%d breakdown=%d\n",
+                    self->controller_->effective_iteration(),
+                    rollback ? "rejected and restored" : "accepted",
+                    self->newton_control_.steps,
+                    self->newton_control_.breakdown);
+                self->initialized_stage_.state = std::move(*high);
+                self->stage_state_lo_ = std::move(*low);
+                self->device_iteration_state_ = state;
+                self->device_descent_state_ = state;
+                self->iteration_forward_index_ =
+                    self->iteration_residual_index_ = 0;
+                self->iteration_results_ = std::move(result);
+                self->finish_stage_inverse(
+                    std::move(self->iteration_results_->inverse));
+            });
+    }
+
+    void study_newton_probes() {
+        // One diagnostic fence after every probe and cache snapshot has been
+        // enqueued. This does not introduce a fence per Krylov/JVP evaluation.
+        const std::array<float, 7> steps{3.0e-4F, 1.0e-4F, 3.0e-5F, 1.0e-5F,
+                                         3.0e-6F, 1.0e-6F, 3.0e-7F};
+        std::vector<std::pair<cumes::webgpu::DeviceFields, bool>> caches{
+            {newton_->base_state(), true},
+            {newton_frozen_.elements.device_elements, false},
+            {newton_frozen_.matrix.device_matrix, false},
+            {newton_frozen_.device_r_con0, true},
+            {newton_frozen_.device_z_con0, true}};
+        std::uint64_t capacity =
+            (steps.size() + 1) * newton_->rhs().values * sizeof(float);
+        for (const auto& [field, paired] : caches)
+            if (field)
+                capacity +=
+                    2 * field.values * sizeof(float) * (paired ? 2 : 1) + 32;
+        auto batch = std::make_shared<cumes::webgpu::ReadbackBatch>(
+            device_, capacity + 128);
+        auto before = std::make_shared<std::vector<std::vector<float>>>(
+            2 * caches.size());
+        auto changed = std::make_shared<bool>(false);
+        const auto snapshots = [&](bool after) {
+            const auto encoder = device_.CreateCommandEncoder();
+            for (std::size_t i = 0; i < caches.size(); ++i) {
+                const auto& [field, paired] = caches[i];
+                if (!field) continue;
+                for (int word = 0; word < (paired ? 2 : 1); ++word)
+                    batch->append(
+                        encoder, field.buffer,
+                        word ? field.low_offset : field.high_offset,
+                        field.values * sizeof(float),
+                        [before, changed, i, word,
+                         after](std::span<const float> values) {
+                            auto& original = (*before)[2 * i + word];
+                            if (!after)
+                                original.assign(values.begin(), values.end());
+                            else
+                                for (std::size_t j = 0; j < values.size(); ++j)
+                                    *changed |= std::bit_cast<std::uint32_t>(
+                                                    values[j]) !=
+                                                std::bit_cast<std::uint32_t>(
+                                                    original[j]);
+                        });
+            }
+            const auto commands = encoder.Finish();
+            device_.GetQueue().Submit(1, &commands);
+        };
+        snapshots(false);
+        auto columns =
+            std::make_shared<std::vector<std::vector<float>>>(steps.size() + 1);
+        for (std::size_t i = 0; i <= steps.size(); ++i) {
+            const auto result = newton_->enqueue_jvp(
+                newton_->rhs(), i == steps.size() ? 1.0e-4F : steps[i],
+                i == steps.size());
+            const auto encoder = device_.CreateCommandEncoder();
+            batch->append(encoder, result.buffer, result.high_offset,
+                          result.values * sizeof(float),
+                          [columns, i](std::span<const float> values) {
+                              (*columns)[i].assign(values.begin(),
+                                                   values.end());
+                          });
+            const auto commands = encoder.Finish();
+            device_.GetQueue().Submit(1, &commands);
+        }
+        snapshots(true);
+        newton_evaluations_ += static_cast<int>(steps.size()) + 2;
+        const auto self = shared_from_this();
+        batch->map([self, columns, changed, steps](std::string error) {
+            if (!error.empty() || *changed) {
+                self->finish(false,
+                             error.empty()
+                                 ? "Newton probes modified a frozen state/cache"
+                                 : error);
+                return;
+            }
+            const auto& reference = columns->back();
+            double reference_norm = 0;
+            for (const float value : reference)
+                reference_norm += double(value) * value;
+            std::ostringstream record;
+            record << std::setprecision(17)
+                   << "{\"kind\":\"newton-probe-study\",\"stage\":"
+                   << self->stage_index_ + 1 << ",\"iteration\":"
+                   << self->controller_->effective_iteration()
+                   << ",\"cache_unchanged\":true,\"central_step\":0.0001,"
+                      "\"relative_difference\":[";
+            for (std::size_t i = 0; i < steps.size(); ++i) {
+                double difference = 0;
+                for (std::size_t j = 0; j < reference.size(); ++j) {
+                    const double delta =
+                        double((*columns)[i][j]) - reference[j];
+                    difference += delta * delta;
+                }
+                if (i) record << ',';
+                record << "{\"step\":" << steps[i] << ",\"error\":";
+                const double relative = std::sqrt(difference / reference_norm);
+                if (std::isfinite(relative))
+                    record << relative;
+                else
+                    record << "null";
+                record << '}';
+            }
+            record << "]}";
+            publish_browser_diagnostic(record.str().c_str());
+            std::printf(
+                "  Newton frozen-cache preservation and step sweep: "
+                "complete\n");
+            self->solve_newton_correction();
+        });
+    }
+
+    void run_descent(std::vector<float> residual) {
+        iteration_results_.reset();
+        descent_case_.ns = initialized_stage_.ns;
+        descent_case_.mpol = initialized_stage_.mpol;
+        descent_case_.ntor = initialized_stage_.ntor;
+        descent_case_.move_lcfs = bool(vacuum_);
+        descent_case_.delta_t = static_cast<float>(controller_->delta_t());
+        descent_case_.damping_b1 =
+            static_cast<float>(pending_decision_.damping.b1);
+        descent_case_.damping_fac =
+            static_cast<float>(pending_decision_.damping.fac);
+        descent_case_.double_single = double_single_solve_;
+        descent_case_.device_state = device_descent_state_;
+        descent_case_.device_velocity = device_descent_velocity_;
+        descent_case_.device_residual = device_descent_residual_;
+        descent_case_.residual_is_f32 = true;
+        descent_case_.extrapolate_axis = bool(device_descent_state_);
+        descent_case_.readback_velocity =
+            !resident_spectral_path() || requested_full_field_readbacks();
+        descent_case_.state = initialized_stage_.state;
+        descent_case_.velocity = stage_velocity_;
+        if (double_single_solve_) {
+            descent_case_.state_lo = stage_state_lo_;
+            descent_case_.velocity_lo = stage_velocity_lo_;
+        } else {
+            descent_case_.state_lo.clear();
+            descent_case_.velocity_lo.clear();
+        }
+        descent_case_.residual = std::move(residual);
+        if (double_single_solve_) {
+            // The f32 radial preconditioner changes the search direction but
+            // not the paired invariant used for convergence. Preserve the
+            // paired descent contract; a later paired preconditioner can
+            // populate these correction words directly.
+            descent_case_.residual_lo.clear();
+        } else {
+            descent_case_.residual_lo.clear();
+        }
+        const auto self = shared_from_this();
+        enqueue_descent_result(
+            descent_case_,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricDescentResult actual) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    self->production_solve_
+                        ? cumes::webgpu::AxisymmetricDescentResult{}
+                        : cumes::webgpu::axisymmetric_descent_reference(
+                              self->descent_case_);
+                float max_scaled_error = 0.0F;
+                bool valid = true;
+                const auto compare = [&max_scaled_error, &valid](
+                                         const auto& gpu, const auto& cpu) {
+                    valid &= gpu.size() == cpu.size();
+                    if (gpu.size() != cpu.size()) return;
+                    for (std::size_t i = 0; i < gpu.size(); ++i) {
+                        max_scaled_error = std::max(
+                            max_scaled_error, std::abs(gpu[i] - cpu[i]) /
+                                                  (1.0F + std::abs(cpu[i])));
+                        valid &= std::isfinite(gpu[i]);
+                    }
+                };
+                if (!self->production_solve_) {
+                    compare(actual.state, expected.state);
+                    compare(actual.velocity, expected.velocity);
+                } else {
+                    valid =
+                        actual.velocity_finite &&
+                        std::all_of(
+                            actual.state.begin(), actual.state.end(),
+                            [](float value) { return std::isfinite(value); }) &&
+                        std::all_of(
+                            actual.velocity.begin(), actual.velocity.end(),
+                            [](float value) { return std::isfinite(value); });
+                    if (self->double_single_solve_) {
+                        valid &=
+                            actual.state_lo.size() == actual.state.size() &&
+                            actual.velocity_lo.size() ==
+                                actual.velocity.size() &&
+                            std::all_of(actual.state_lo.begin(),
+                                        actual.state_lo.end(),
+                                        [](float value) {
+                                            return std::isfinite(value);
+                                        }) &&
+                            std::all_of(actual.velocity_lo.begin(),
+                                        actual.velocity_lo.end(),
+                                        [](float value) {
+                                            return std::isfinite(value);
+                                        });
+                    }
+                }
+                const std::size_t family_values =
+                    static_cast<std::size_t>(self->descent_case_.ns) *
+                    self->descent_case_.mpol * (self->descent_case_.ntor + 1);
+                const int mode_count =
+                    self->descent_case_.mpol * (self->descent_case_.ntor + 1);
+                bool fixed_lcfs = true;
+                for (const int component : {0, 1, 3, 4}) {
+                    for (int mode = 0; mode < mode_count; ++mode) {
+                        const std::size_t lcfs =
+                            static_cast<std::size_t>(component) *
+                                family_values +
+                            static_cast<std::size_t>(mode) *
+                                self->descent_case_.ns +
+                            self->descent_case_.ns - 1;
+                        fixed_lcfs &= actual.state[lcfs] ==
+                                      self->descent_case_.state[lcfs];
+                        if (self->double_single_solve_ &&
+                            actual.state_lo.size() == actual.state.size()) {
+                            fixed_lcfs &= actual.state_lo[lcfs] ==
+                                          self->descent_case_.state_lo[lcfs];
+                        }
+                    }
+                }
+                if (!valid || (!self->vacuum_ && !fixed_lcfs) ||
+                    max_scaled_error > 2.0e-5F) {
+                    self->finish(false, "descent mismatch: " +
+                                            std::to_string(max_scaled_error));
+                    return;
+                }
+                if (!self->production_solve_) {
+                    std::printf(
+                        "  %s accelerated descent: PASS "
+                        "(max scaled |GPU-CPU| = %.3e)\n",
+                        self->active_case_name_.c_str(),
+                        static_cast<double>(max_scaled_error));
+                }
+                if (self->pending_decision_.do_refresh) {
+                    self->checkpoint_state_ = actual.state;
+                    if (self->double_single_solve_) {
+                        self->checkpoint_state_lo_ = actual.state_lo;
+                    }
+                }
+                if (self->pending_decision_.reason !=
+                    cumes::RestartReason::NONE) {
+                    self->restore_checkpoint();
+                } else {
+                    self->initialized_stage_.state = std::move(actual.state);
+                    self->stage_velocity_ = std::move(actual.velocity);
+                    if (self->double_single_solve_) {
+                        self->stage_state_lo_ = std::move(actual.state_lo);
+                        self->stage_velocity_lo_ =
+                            std::move(actual.velocity_lo);
+                    }
+                }
+                if (!self->committing_descent_) {
+                    self->controller_->after_descent(self->pending_decision_);
+                    ++self->completed_passes_;
+                    if (self->vacuum_) self->vacuum_->on_iteration_end();
+                }
+                const int iteration = self->controller_->effective_iteration();
+                if (!self->production_solve_ || iteration <= 3 ||
+                    iteration % 25 == 0) {
+                    std::printf(
+                        "  host controller: PASS (iter=%d, FSQR=%.3e, "
+                        "delta=%.3e)\n",
+                        iteration, self->invariant_normalized_[0],
+                        self->controller_->delta_t());
+                }
+                if (self->w7x_stage_slice_ && self->completed_passes_ == 2) {
+                    std::printf(
+                        "  W7-X controller-complete two-pass slice: PASS "
+                        "(FSQR=%.3e)\n",
+                        self->invariant_normalized_[0]);
+                    self->w7x_stage_slice_ = false;
+                    self->double_single_solve_ = false;
+                    self->run_solovev_initialization();
+                    return;
+                }
+                if (self->committing_descent_) return;
+                self->run_stage_inverse();
+            });
+    }
+
+    void restore_checkpoint() {
+        device_iteration_state_ = {};
+        device_descent_state_ = {};
+        device_descent_velocity_ = {};
+        initialized_stage_.state = checkpoint_state_;
+        stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
+        if (double_single_solve_) {
+            stage_state_lo_ = checkpoint_state_lo_;
+            stage_velocity_lo_.assign(initialized_stage_.state.size(), 0.0F);
+        }
+    }
+
+    void reset_stage_state() {
+        if (initialized_stage_.free_boundary) {
+            if (!vacuum_) {
+                std::printf("Generating the coil field grid in memory...\n");
+                vacuum_ = cumes::webgpu::create_vacuum(
+                    *problem_, initialized_stage_, device_,
+                    requested_webgpu_vacuum() != 0,
+                    requested_webgpu_vacuum_lu() != 0);
+                std::printf("Coil field grid ready.\n");
+            }
+            cumes::webgpu::prepare_vacuum_stage(*vacuum_, *problem_,
+                                                initialized_stage_);
+        } else {
+            vacuum_.reset();
+        }
+        include_edge_invariant_ = false;
+        invariant_normalized_ = {1.0, 1.0, 1.0};
+        device_iteration_state_ = {};
+        device_descent_state_ = {};
+        device_descent_velocity_ = {};
+        device_descent_residual_ = {};
+        device_constraint_r_con0_ = {};
+        device_constraint_z_con0_ = {};
+        controller_.emplace(cumes::IterationController<double>::Options{
+            static_cast<double>(initialized_stage_.delta_t),
+            initialized_stage_.tolerance, 0.0, false});
+        stage_velocity_.assign(initialized_stage_.state.size(), 0.0F);
+        checkpoint_state_ = initialized_stage_.state;
+        if (double_single_solve_) {
+            if (stage_state_lo_.size() != initialized_stage_.state.size()) {
+                stage_state_lo_ = initialized_stage_.state_lo;
+            }
+            stage_velocity_lo_.assign(initialized_stage_.state.size(), 0.0F);
+            checkpoint_state_lo_ = stage_state_lo_;
+        } else {
+            stage_state_lo_.clear();
+            stage_velocity_lo_.clear();
+            checkpoint_state_lo_.clear();
+        }
+        constraint_r_con0_.clear();
+        constraint_r_con0_lo_.clear();
+        constraint_z_con0_.clear();
+        constraint_z_con0_lo_.clear();
+        constraint_tcon_.clear();
+        preconditioner_elements_ = {};
+        preconditioner_matrix_ = {};
+        force_normalization_ = {};
+        force_norm_ready_ = false;
+        completed_passes_ = 0;
+        attempted_passes_ = 0;
+        published_restart_count_ = 0;
+        last_newton_iteration_ = 0;
+        newton_attempts_ = newton_accepted_ = newton_evaluations_ = 0;
+        newton_studied_ = false;
+        if (newton_enabled_) {
+            newton_ = std::make_shared<cumes::webgpu::NewtonCorrection>(
+                device_, initialized_stage_.ns, initialized_stage_.mpol);
+            const auto count = initialized_stage_.state.size();
+            wgpu::BufferDescriptor descriptor{};
+            descriptor.label = "Newton canonical paired input state";
+            descriptor.size = 2 * count * sizeof(float);
+            descriptor.usage = wgpu::BufferUsage::Storage |
+                               wgpu::BufferUsage::CopySrc |
+                               wgpu::BufferUsage::CopyDst;
+            newton_input_ = {device_.CreateBuffer(&descriptor), count, 0,
+                             count * sizeof(float)};
+            newton_trial_batch_ =
+                std::make_shared<cumes::webgpu::ReadbackBatch>(
+                    device_, cumes::webgpu::iteration_readback_capacity(
+                                 initialized_stage_) +
+                                 2 * count * sizeof(float) + 16);
+        }
+    }
+
+    void complete_stage() {
+        if (vacuum_) vacuum_->on_stage_end();
+        if (production_solve_)
+            publish_browser_iteration_timing(2, stage_index_ + 1);
+        // Resident iterations return validity flags for large fields. Read
+        // the accepted final fields once for derived fields and publication;
+        // do not rerun physics or advance the controller to obtain a snapshot.
+        if ((stage_geometry_is_vacuum_ || stage_base_geometry_is_validity_ ||
+             force_case_.magnetic_field_is_vacuum ||
+             base_geometry_case_.geometry.empty() ||
+             magnetic_field_case_.base_geometry.empty() ||
+             force_case_.magnetic_field.empty()) &&
+            stage_index_ + 1 == problem_->stage_shapes().size()) {
+            const auto fields = device_geometry_;
+            const auto magnetic = device_magnetic_field_;
+            const auto base = device_base_geometry_;
+            if (!fields || !magnetic || !base) {
+                finish(false, "missing resident fields for final output");
+                return;
+            }
+            const auto bytes = fields.values * sizeof(float);
+            const auto magnetic_bytes = magnetic.values * sizeof(float);
+            const auto base_bytes = base.values * sizeof(float);
+            auto batch = std::make_shared<cumes::webgpu::ReadbackBatch>(
+                device_, bytes + magnetic_bytes + base_bytes + 16);
+            const auto encoder = device_.CreateCommandEncoder();
+            const auto self = shared_from_this();
+            if (stage_geometry_is_vacuum_ ||
+                base_geometry_case_.geometry.empty())
+                batch->append(encoder, fields.buffer, fields.high_offset, bytes,
+                              [self](std::span<const float> values) {
+                                  self->base_geometry_case_.geometry.assign(
+                                      values.begin(), values.end());
+                                  self->stage_geometry_is_vacuum_ = false;
+                              });
+            if (force_case_.magnetic_field_is_vacuum ||
+                force_case_.magnetic_field.empty())
+                batch->append(
+                    encoder, magnetic.buffer, magnetic.high_offset,
+                    magnetic_bytes, [self](std::span<const float> values) {
+                        self->force_case_.magnetic_field.assign(values.begin(),
+                                                                values.end());
+                        self->force_case_.magnetic_field_is_vacuum = false;
+                    });
+            if (stage_base_geometry_is_validity_ ||
+                magnetic_field_case_.base_geometry.empty())
+                batch->append(
+                    encoder, base.buffer, base.high_offset, base_bytes,
+                    [self](std::span<const float> values) {
+                        self->magnetic_field_case_.base_geometry.assign(
+                            values.begin(), values.end());
+                        self->stage_base_geometry_is_validity_ = false;
+                    });
+            const auto commands = encoder.Finish();
+            device_.GetQueue().Submit(1, &commands);
+            batch->map([self](std::string error) {
+                if (!error.empty())
+                    self->finish(false, std::move(error));
+                else
+                    self->complete_stage();
+            });
+            return;
+        }
+        if (requested_geometry_control()) {
+            std::ostringstream diagnostic;
+            diagnostic << "{\"kind\":\"geometry-control\",\"gpu_passes\":"
+                       << geometry_control_passes_
+                       << ",\"fallback_passes\":" << geometry_control_fallbacks_
+                       << '}';
+            publish_browser_diagnostic(diagnostic.str().c_str());
+        }
+        if (requested_shadow_norms()) {
+            std::printf("  GPU norm shadow: PASS (max relative error=%.6e)\n",
+                        shadow_norm_error_);
+            std::ostringstream diagnostic;
+            diagnostic << std::setprecision(17)
+                       << "{\"kind\":\"norm-shadow\",\"max_relative_error\":"
+                       << shadow_norm_error_ << '}';
+            publish_browser_diagnostic(diagnostic.str().c_str());
+        }
+        const int stage_iterations = controller_->effective_iteration();
+        if (newton_enabled_)
+            std::printf(
+                "  Newton stage %zu: attempts=%d accepted=%d evaluations=%d\n",
+                stage_index_ + 1, newton_attempts_, newton_accepted_,
+                newton_evaluations_);
+        stage_iterations_.push_back(stage_iterations);
+        total_iterations_ += stage_iterations;
+        cumes::StageReport stage_report;
+        stage_report.ns = initialized_stage_.ns;
+        stage_report.effective_iterations = stage_iterations;
+        stage_report.converged = true;
+        stage_report.final_residual = cumes::ResidualTriple{
+            invariant_normalized_[0], invariant_normalized_[1],
+            invariant_normalized_[2]};
+        stage_report.restarts = controller_->restart_events();
+        stage_reports_.push_back(std::move(stage_report));
+        std::printf(
+            "  %s stage %zu/%zu converged: iter=%d residual=(%.3e, "
+            "%.3e, %.3e)\n",
+            active_case_name_.c_str(), stage_index_ + 1,
+            problem_->stage_shapes().size(), stage_iterations,
+            invariant_normalized_[0], invariant_normalized_[1],
+            invariant_normalized_[2]);
+        if (stage_index_ + 1 == problem_->stage_shapes().size()) {
+            const std::string output_error = publish_output();
+            if (!output_error.empty()) {
+                finish(false, output_error);
+                return;
+            }
+            char detail[320];
+            std::snprintf(detail, sizeof(detail),
+                          "%s %s converged in %d effective iterations; "
+                          "final residual=(%.3e, %.3e, %.3e)",
+                          active_case_name_.c_str(),
+                          problem_->stage_shapes().size() == 1 ? "single-grid"
+                                                               : "multigrid",
+                          total_iterations_, invariant_normalized_[0],
+                          invariant_normalized_[1], invariant_normalized_[2]);
+            finish(true, detail);
+            return;
+        }
+
+        const std::size_t next_stage = stage_index_ + 1;
+        const auto& next_shape = problem_->stage_shapes()[next_stage];
+        cumes::webgpu::ProlongationCase transfer;
+        transfer.ns_old = initialized_stage_.ns;
+        transfer.ns_new = next_shape.ns;
+        transfer.mnmax =
+            initialized_stage_.mpol * (initialized_stage_.ntor + 1);
+        transfer.ntor = initialized_stage_.ntor;
+        transfer.interpolation = cumes::webgpu::RadialInterpolation::LINEAR;
+        transfer.state = initialized_stage_.state;
+        auto low_transfer = transfer;
+        low_transfer.state = stage_state_lo_;
+        const auto self = shared_from_this();
+        cumes::webgpu::enqueue_prolongation(
+            device_, transfer,
+            [self, transfer, low_transfer, next_stage](
+                std::string error,
+                cumes::webgpu::ProlongationResult prolonged) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                const auto expected =
+                    cumes::webgpu::prolongation_reference(transfer);
+                float max_error = 0.0F;
+                bool valid =
+                    prolonged.state.size() == expected.state.size() &&
+                    prolonged.velocity.size() == expected.velocity.size();
+                if (valid) {
+                    for (std::size_t i = 0; i < prolonged.state.size(); ++i) {
+                        max_error = std::max(
+                            max_error,
+                            std::abs(prolonged.state[i] - expected.state[i]));
+                        valid &= prolonged.velocity[i] == 0.0F;
+                    }
+                }
+                if (!valid || max_error > 4.0e-6F) {
+                    self->finish(false, "stage prolongation mismatch: " +
+                                            std::to_string(max_error));
+                    return;
+                }
+                if (self->vacuum_)
+                    self->vacuum_->on_stage_transition(transfer.ns_old,
+                                                       transfer.ns_new);
+                self->stage_index_ = next_stage;
+                std::vector<float> prolonged_lo;
+                if (self->double_single_solve_) {
+                    const auto low =
+                        cumes::webgpu::prolongation_reference(low_transfer);
+                    prolonged_lo.resize(prolonged.state.size());
+                    for (std::size_t i = 0; i < prolonged.state.size(); ++i) {
+                        const auto combined = cumes::webgpu::add(
+                            cumes::webgpu::FloatFloat{prolonged.state[i], 0.0F},
+                            low.state[i]);
+                        prolonged.state[i] = combined.hi;
+                        prolonged_lo[i] = combined.lo;
+                    }
+                }
+                self->initialized_stage_ = cumes::webgpu::initialize_stage(
+                    *self->problem_, next_stage,
+                    static_cast<bool>(
+                        self->initialized_stage_.radius_reference),
+                    self->initialized_stage_.compensated_geometry,
+                    self->initialized_stage_.compensated_toroidal_geometry);
+                self->initialized_stage_.state = std::move(prolonged.state);
+                self->stage_state_lo_ = std::move(prolonged_lo);
+                self->reset_stage_state();
+                std::printf(
+                    "  %s stage prolongation: PASS (ns=%d -> %d, max "
+                    "|GPU-CPU| = %.3e)\n",
+                    self->active_case_name_.c_str(), transfer.ns_old,
+                    transfer.ns_new, static_cast<double>(max_error));
+                self->run_stage_inverse();
+            });
+    }
+
+    std::string publish_output() {
+        cumes::EquilibriumSnapshot snapshot;
+        snapshot.ns = initialized_stage_.ns;
+        snapshot.mnmax =
+            initialized_stage_.mpol * (initialized_stage_.ntor + 1);
+        const std::size_t family_values =
+            static_cast<std::size_t>(snapshot.ns) * snapshot.mnmax;
+        for (std::size_t component = 0;
+             component < cumes::EquilibriumSnapshot::COUNT; ++component) {
+            const auto begin =
+                initialized_stage_.state.begin() + component * family_values;
+            snapshot.families[component].assign(begin, begin + family_values);
+            if (double_single_solve_) {
+                const auto low_begin =
+                    stage_state_lo_.begin() + component * family_values;
+                for (std::size_t i = 0; i < family_values; ++i) {
+                    snapshot.families[component][i] +=
+                        static_cast<double>(low_begin[i]);
+                }
+            }
+        }
+
+        if (const auto& reference = initialized_stage_.radius_reference) {
+            for (int n = 0; n <= initialized_stage_.ntor; ++n)
+                for (int j = 0; j < snapshot.ns; ++j)
+                    snapshot.families[0][n * snapshot.ns + j] +=
+                        reference->coefficients[n];
+        }
+
+        cumes::DerivedFieldInputs fields;
+        fields.ns = initialized_stage_.ns;
+        fields.ntheta = initialized_stage_.ntheta;
+        fields.nzeta = initialized_stage_.nzeta;
+        fields.nfp = problem_->spec().nfp;
+        fields.delta_s = initialized_stage_.profiles.delta_s;
+        fields.mu0 = static_cast<double>(DeviceParams<float>::MU_0);
+        fields.sqrt_s_full.assign(initialized_stage_.profiles.sqrt_s_f.begin(),
+                                  initialized_stage_.profiles.sqrt_s_f.end());
+        fields.sqrt_s_half.assign(initialized_stage_.profiles.sqrt_s_h.begin(),
+                                  initialized_stage_.profiles.sqrt_s_h.end());
+        const std::size_t full_points =
+            static_cast<std::size_t>(fields.ns) * fields.ntheta * fields.nzeta;
+        const std::size_t half_points =
+            static_cast<std::size_t>(fields.ns - 1) * fields.ntheta *
+            fields.nzeta;
+        const auto copy_field = [](const std::vector<float>& source,
+                                   std::size_t field, std::size_t count) {
+            const auto begin = source.begin() + field * count;
+            return std::vector<double>(begin, begin + count);
+        };
+        const auto& full = base_geometry_case_.geometry;
+        fields.r_e = copy_field(full, 0, full_points);
+        if (const auto& reference = initialized_stage_.radius_reference)
+            for (std::size_t i = 0; i < full_points; ++i)
+                fields.r_e[i] +=
+                    reference->coefficients[0] +
+                    reference->angular[i % reference->angular.size()];
+        fields.z_e = copy_field(full, 1, full_points);
+        fields.ru_e = copy_field(full, 3, full_points);
+        fields.zu_e = copy_field(full, 4, full_points);
+        fields.r_o = copy_field(full, 6, full_points);
+        fields.z_o = copy_field(full, 7, full_points);
+        fields.ru_o = copy_field(full, 9, full_points);
+        fields.zu_o = copy_field(full, 10, full_points);
+        fields.rv_e = copy_field(full, 12, full_points);
+        fields.zv_e = copy_field(full, 13, full_points);
+        fields.rv_o = copy_field(full, 15, full_points);
+        fields.zv_o = copy_field(full, 16, full_points);
+        const auto& base = magnetic_field_case_.base_geometry;
+        fields.ru12 = copy_field(base, 1, half_points);
+        fields.zu12 = copy_field(base, 2, half_points);
+        fields.rs = copy_field(base, 3, half_points);
+        fields.zs = copy_field(base, 4, half_points);
+        fields.sqrtg = copy_field(base, 6, half_points);
+        const auto& magnetic = force_case_.magnetic_field;
+        fields.bsupu = copy_field(magnetic, 0, half_points);
+        fields.bsupv = copy_field(magnetic, 1, half_points);
+        fields.bsubu = copy_field(magnetic, 2, half_points);
+        fields.bsubv = copy_field(magnetic, 3, half_points);
+        const cumes::Status derived_status =
+            cumes::populate_derived_fields(fields, snapshot);
+        if (!derived_status.has_value()) {
+            return "WebGPU derived fields failed: " + derived_status.error();
+        }
+
+        publish_equilibrium_plot();
+
+        cumes::RunReport report;
+        report.status = cumes::RunStatus::CONVERGED;
+        report.total_effective_iterations = total_iterations_;
+        report.stages = stage_reports_;
+        report.build.revision = CUMES_GIT_REVISION;
+        report.build.dirty = CUMES_GIT_DIRTY != 0;
+        report.build.build_type = CUMES_BUILD_TYPE;
+        report.build.scalar_type = "float";
+        report.build.precision_policy = CUMES_PRECISION_POLICY_NAME;
+        report.build.compile_flags = CUMES_PRECISION_FLAGS;
+        if (production_solve_) {
+            report.build.compile_flags += double_single_solve_
+                                              ? "; webgpu-state=paired-f32"
+                                              : "; webgpu-state=f32";
+            report.build.compile_flags += initialized_stage_.radius_reference
+                                              ? "; radius-reference=on"
+                                              : "; radius-reference=off";
+            report.build.compile_flags +=
+                initialized_stage_.compensated_toroidal_geometry
+                    ? "; geometry=compensated-m1"
+                : initialized_stage_.compensated_geometry
+                    ? "; geometry=compensated"
+                    : "; geometry=native";
+            if (newton_enabled_) {
+                std::ostringstream policy;
+                policy << std::setprecision(17)
+                       << "; newton=forward32-f32; newton-step="
+                       << requested_newton_step();
+                report.build.compile_flags += policy.str();
+            }
+        }
+        report.input.source_path = active_input_path_;
+        report.runtime.gpu_name = "WebGPU adapter";
+        report.runtime.runtime = "emdawnwebgpu";
+        report.runtime.toolkit = "Emscripten";
+        report.input_params = cumes::make_input_params(*problem_);
+
+        const cumes::OutputSpec spec{cumes::OutputFormat::BINARY,
+                                     "/cumes-output.bin"};
+        auto writer = cumes::make_binary_writer();
+        if (!writer) return "WebGPU binary writer is unavailable";
+        const cumes::Status status =
+            writer->write_atomic(snapshot, report, spec, *problem_);
+        if (!status.has_value()) {
+            return "WebGPU output failed: " + status.error();
+        }
+        auto reader = cumes::make_binary_reader();
+        if (!reader) return "WebGPU binary reader is unavailable";
+        cumes::RunReport roundtrip_report;
+        auto roundtrip = reader->read(spec.path, std::ref(roundtrip_report));
+        if (!roundtrip.has_value()) {
+            return "WebGPU output round-trip failed: " + roundtrip.error();
+        }
+        const auto& recovered = roundtrip.value();
+        if (recovered.ns != snapshot.ns || recovered.mnmax != snapshot.mnmax ||
+            recovered.families != snapshot.families ||
+            !recovered.has_derived_fields() ||
+            recovered.half_fields != snapshot.half_fields ||
+            recovered.full_fields != snapshot.full_fields ||
+            roundtrip_report.status != cumes::RunStatus::CONVERGED ||
+            roundtrip_report.total_effective_iterations != total_iterations_ ||
+            roundtrip_report.stages.size() != stage_reports_.size() ||
+            !(roundtrip_report.input_params == report.input_params)) {
+            return "WebGPU output round-trip contract mismatch";
+        }
+        const int output_bytes = publish_browser_output(spec.path.c_str());
+        if (output_bytes <= 0) {
+            return "WebGPU output could not be exposed for download";
+        }
+        std::printf("  published schema-v8 output: %d bytes\n", output_bytes);
+        return {};
+    }
+
+    void publish_equilibrium_plot() const {
+        const int ns = initialized_stage_.ns;
+        const int mpol = initialized_stage_.mpol;
+        const int ntor = initialized_stage_.ntor;
+        const int mnmax = mpol * (ntor + 1);
+        const auto& state = initialized_stage_.state;
+        const std::size_t family_values = static_cast<std::size_t>(ns) * mnmax;
+        if (ns <= 1 || mpol <= 0 ||
+            state.size() < cumes::EquilibriumSnapshot::COUNT * family_values) {
+            return;
+        }
+
+        std::vector<int> plotted_surfaces;
+        const int stride = std::max(1, (ns - 1) / 18);
+        for (int surface = 0; surface < ns; ++surface) {
+            if (surface == 0 || surface == ns - 1 || surface % stride == 0) {
+                plotted_surfaces.push_back(surface);
+            }
+        }
+        const auto physical_coefficient = [&](int family, int mode,
+                                              int surface) -> double {
+            const std::size_t offset =
+                (static_cast<std::size_t>(family) * mnmax + mode) * ns +
+                surface;
+            double value = state[offset];
+            if (initialized_stage_.radius_reference && family == 0 &&
+                mode <= ntor)
+                value +=
+                    initialized_stage_.radius_reference->coefficients[mode];
+            if (double_single_solve_ && offset < stage_state_lo_.size()) {
+                value += static_cast<double>(stage_state_lo_[offset]);
+            }
+            const int m = mode / (ntor + 1);
+            // State coefficients already contain their physical radial
+            // dependence. Only inverse-work odd fields are divided by sqrt(s),
+            // then multiplied back when assembling physical R/Z. The copied
+            // m=1 axis row is a derivative aid, not a finite-radius surface.
+            if (surface == 0 && m % 2 != 0) return 0.0;
+            return value;
+        };
+
+        std::ostringstream json;
+        json << std::setprecision(9);
+        json << "{\"name\":\"" << active_case_name_
+             << "\",\"iterations\":" << total_iterations_ << ",\"residual\":["
+             << invariant_normalized_[0] << ',' << invariant_normalized_[1]
+             << ',' << invariant_normalized_[2] << "],\"surfaces\":[";
+        bool first_surface = true;
+        for (const int surface : plotted_surfaces) {
+            if (!first_surface) json << ',';
+            first_surface = false;
+            json << '[';
+            constexpr int PLOT_SEGMENTS = 128;
+            for (int theta_index = 0; theta_index <= PLOT_SEGMENTS;
+                 ++theta_index) {
+                if (theta_index != 0) json << ',';
+                const double theta = 2.0 * std::numbers::pi_v<double> *
+                                     theta_index / PLOT_SEGMENTS;
+                double r = 0.0;
+                double z = 0.0;
+                for (int m = 0; m < mpol; ++m) {
+                    if (surface == 0 && m % 2 == 1) continue;
+                    const double cosine = std::cos(m * theta);
+                    const double sine = std::sin(m * theta);
+                    for (int n = 0; n <= ntor; ++n) {
+                        const int mode = m * (ntor + 1) + n;
+                        r += physical_coefficient(0, mode, surface) * cosine;
+                        z += physical_coefficient(1, mode, surface) * sine;
+                    }
+                }
+                json << '[' << r << ',' << z << ']';
+            }
+            json << ']';
+        }
+        json << "],\"fourier\":{\"ns\":" << ns << ",\"mpol\":" << mpol
+             << ",\"ntor\":" << ntor << ",\"nfp\":" << problem_->spec().nfp
+             << ",\"surfaces\":[";
+        first_surface = true;
+        for (const int surface : plotted_surfaces) {
+            if (!first_surface) json << ',';
+            first_surface = false;
+            json << "{\"index\":" << surface << ",\"coefficients\":[";
+            bool first_coefficient = true;
+            for (int family = 0;
+                 family < static_cast<int>(cumes::EquilibriumSnapshot::COUNT);
+                 ++family) {
+                for (int mode = 0; mode < mnmax; ++mode) {
+                    if (!first_coefficient) json << ',';
+                    first_coefficient = false;
+                    json << physical_coefficient(family, mode, surface);
+                }
+            }
+            json << "]}";
+        }
+        json << "]}}";
+        publish_browser_equilibrium(json.str().c_str());
+    }
+
+    static void finish(bool success, const std::string& detail) {
+        std::printf("cuMES WebGPU self-test: %s — %s\n",
+                    success ? "PASS" : "FAIL", detail.c_str());
+        std::fflush(stdout);
+        std::fflush(stderr);
+        publish_browser_result(success ? 1 : 0, detail.c_str());
+        emscripten_force_exit(success ? 0 : 1);
+    }
+
+    wgpu::Instance instance_;
+    wgpu::Adapter adapter_;
+    wgpu::Device device_;
+    std::vector<cumes::webgpu::ProlongationCase> cases_;
+    cumes::webgpu::AxisymmetricInverseCase axisymmetric_case_;
+    std::vector<cumes::webgpu::AxisymmetricForwardCase> forward_cases_;
+    cumes::webgpu::AxisymmetricDealiasCase dealias_case_;
+    cumes::webgpu::ToroidalInverseCase toroidal_case_;
+    cumes::webgpu::ToroidalForwardCase toroidal_forward_case_;
+    cumes::webgpu::ToroidalDealiasCase toroidal_dealias_case_;
+    cumes::webgpu::AxisymmetricConstraintCase toroidal_constraint_case_;
+    cumes::webgpu::BaseGeometryCase toroidal_geometry_case_;
+    cumes::webgpu::MagneticFieldCase toroidal_magnetic_case_;
+    cumes::webgpu::AxisymmetricForceCase toroidal_force_case_;
+    cumes::webgpu::AxisymmetricPreconditionerElementCase
+        toroidal_preconditioner_case_;
+    cumes::webgpu::AxisymmetricPreconditionerElements
+        toroidal_preconditioner_elements_;
+    cumes::webgpu::AxisymmetricPreconditionerMatrixCase
+        toroidal_preconditioner_matrix_case_;
+    cumes::webgpu::AxisymmetricPreconditionerMatrix
+        toroidal_preconditioner_matrix_;
+    cumes::webgpu::AxisymmetricPreconditionerApplyCase
+        toroidal_preconditioner_apply_case_;
+    cumes::webgpu::AxisymmetricStageData initialized_stage_;
+    cumes::webgpu::ToroidalInverseCase stage_toroidal_inverse_case_;
+    cumes::webgpu::BaseGeometryCase base_geometry_case_;
+    cumes::webgpu::MagneticFieldCase magnetic_field_case_;
+    cumes::webgpu::AxisymmetricForceCase force_case_;
+    cumes::webgpu::ToroidalForwardCase solver_toroidal_forward_case_;
+    cumes::webgpu::ResidualDecompositionCase residual_case_;
+    cumes::webgpu::AxisymmetricConstraintCase constraint_case_;
+    cumes::webgpu::ToroidalForwardCase constraint_toroidal_forward_case_;
+    cumes::webgpu::AxisymmetricPreconditionerElementCase preconditioner_case_;
+    cumes::webgpu::AxisymmetricPreconditionerElements preconditioner_elements_;
+    cumes::webgpu::AxisymmetricPreconditionerMatrixCase
+        preconditioner_matrix_case_;
+    cumes::webgpu::AxisymmetricPreconditionerMatrix preconditioner_matrix_;
+    cumes::webgpu::ResidualDecompositionCase constraint_residual_case_;
+    cumes::webgpu::AxisymmetricPreconditionerApplyCase
+        preconditioner_apply_case_;
+    cumes::webgpu::AxisymmetricDescentCase descent_case_;
+    cumes::webgpu::ResumeIteration resume_vacuum_iteration_;
+    std::unique_ptr<cumes::FreeBoundaryOperator<double>> vacuum_;
+    bool include_edge_invariant_ = false;
+    std::optional<cumes::IterationController<double>> controller_;
+    std::optional<cumes::ValidatedProblem> problem_;
+    std::optional<cumes::ValidatedProblem> w7x_problem_;
+    cumes::webgpu::AxisymmetricStageData w7x_stage_;
+    cumes::webgpu::ToroidalInverseCase w7x_inverse_case_;
+    cumes::webgpu::BaseGeometryCase w7x_geometry_case_;
+    cumes::webgpu::MagneticFieldCase w7x_magnetic_case_;
+    cumes::webgpu::AxisymmetricForceCase w7x_force_case_;
+    cumes::webgpu::ToroidalForwardCase w7x_forward_case_;
+    cumes::webgpu::ResidualDecompositionCase w7x_residual_case_;
+    cumes::webgpu::AxisymmetricDescentCase w7x_descent_case_;
+    cumes::RestartDecision<double> pending_decision_;
+    std::array<double, 3> invariant_raw_{};
+    std::array<double, 3> invariant_normalized_{};
+    std::array<double, 3> preconditioned_normalized_{};
+    cumes::webgpu::ForceNormalizationResult force_normalization_;
+    bool force_norm_ready_ = false;
+    bool w7x_stage_slice_ = false;
+    bool production_solve_ = false;
+    bool double_single_solve_ = false;
+    bool newton_enabled_ = false, newton_studied_ = false;
+    int last_newton_iteration_ = 0;
+    int newton_attempts_ = 0, newton_accepted_ = 0, newton_evaluations_ = 0;
+    std::shared_ptr<cumes::webgpu::NewtonCorrection> newton_;
+    cumes::webgpu::DeviceFields newton_input_;
+    std::shared_ptr<cumes::webgpu::ReadbackBatch> newton_trial_batch_;
+    cumes::webgpu::IterationCase newton_frozen_;
+    std::array<double, 3> newton_base_residual_{};
+    cumes::webgpu::NewtonControl newton_control_;
+    std::vector<float> stage_r_con_;
+    std::vector<float> stage_z_con_;
+    bool resident_path() const {
+        if (requested_reference_transfers()) return false;
+        if ((initialized_stage_.free_boundary ||
+             initialized_stage_.ntor == 0) &&
+            (requested_spectral_fences() || requested_compare_fft()))
+            return false;
+        return initialized_stage_.ntor > 0 || production_solve_;
+    }
+    bool batched_free_boundary_path() const {
+        return production_solve_ && initialized_stage_.free_boundary &&
+               resident_path();
+    }
+    bool resident_vacuum_force_path() const {
+        return batched_free_boundary_path() &&
+               !requested_full_field_readbacks() &&
+               requested_device_vacuum_force() != 0;
+    }
+    bool resident_spectral_path() const {
+        return production_solve_ && resident_path() &&
+               !requested_spectral_fences() && !requested_compare_fft();
+    }
+    cumes::webgpu::IterationCase make_iteration_case() const {
+        cumes::webgpu::IterationCase input;
+        input.stage = initialized_stage_;
+        input.device_state = device_iteration_state_;
+        input.stage.state_lo = stage_state_lo_;
+        input.double_single = double_single_solve_;
+        input.refresh_preconditioner = controller_->refresh_preconditioner() ||
+                                       preconditioner_elements_.ard.empty();
+        input.reset_reference = controller_->reset_constraint_reference();
+        input.zero_m1_z = controller_->effective_iteration() < 2 ||
+                          controller_->fsqz_prev() < 1.0e-6;
+        input.use_fft =
+            initialized_stage_.ntor > 0 && requested_direct_dft() == 0;
+        input.optimized_fft = !requested_generic_fft();
+        input.canonical_zeta = requested_canonical_zeta();
+        input.shadow_norms = requested_shadow_norms();
+        input.compact_norms = production_solve_ && requested_device_norms();
+        input.compact_fields =
+            production_solve_ && !requested_full_field_readbacks();
+        input.compact_vacuum = input.compact_fields;
+        input.resident_vacuum_force = resident_vacuum_force_path();
+        input.readback_intermediates = !production_solve_;
+        input.geometry_control =
+            production_solve_ && requested_geometry_control();
+        input.elements = preconditioner_elements_;
+        input.matrix = preconditioner_matrix_;
+        input.device_r_con0 = device_constraint_r_con0_;
+        input.device_z_con0 = device_constraint_z_con0_;
+        input.r_con0 = constraint_r_con0_;
+        input.r_con0_lo = constraint_r_con0_lo_;
+        input.z_con0 = constraint_z_con0_;
+        input.z_con0_lo = constraint_z_con0_lo_;
+        input.tcon = constraint_tcon_;
+        if (vacuum_) {
+            // Free-boundary norms retain the original host summation order.
+            input.compact_norms = false;
+            input.compact_fields = false;
+            input.geometry_control = false;
+            input.include_lcfs = vacuum_->apply_edge_force();
+            input.include_edge_invariant = include_edge_invariant_;
+            input.reset_reference &= !input.include_lcfs;
+            input.device_r_con0 = {};
+            input.device_z_con0 = {};
+            if (vacuum_->decay_rcon0_zcon0()) {
+                cumes::webgpu::decay_vacuum_reference(input.r_con0,
+                                                      input.r_con0_lo);
+                cumes::webgpu::decay_vacuum_reference(input.z_con0,
+                                                      input.z_con0_lo);
+            }
+        }
+        return input;
+    }
+
+    // Feed collected values through the same validation/controller chain as
+    // the reference path. No operator is resubmitted while consuming a batch.
+    // In that path, callers need not materialize duplicate input arrays. Keep
+    // the primary inverse/base/magnetic results for checks, normalization and
+    // output; populate reference/dispatch-only copies only without a batch.
+    template <typename Input, typename Result, typename Callback>
+    void enqueue_evaluated(
+        void (*enqueue)(const wgpu::Device&,
+                        const Input&,
+                        std::function<void(std::string, Result)>),
+        const Input& input,
+        Callback callback) {
+        if (!iteration_results_) {
+            enqueue(device_, input, std::move(callback));
+            return;
+        }
+        using namespace cumes::webgpu;
+        Result value;
+        auto& r = *iteration_results_;
+        if constexpr (std::is_same_v<Result, BaseGeometryResult>)
+            value = std::move(r.geometry);
+        else if constexpr (std::is_same_v<Result, MagneticFieldResult>)
+            value = std::move(r.magnetic);
+        else if constexpr (std::is_same_v<Result, AxisymmetricForceResult>)
+            value = std::move(r.force);
+        else if constexpr (std::is_same_v<Result, ResidualDecompositionResult>)
+            value = std::move(r.residual.at(iteration_residual_index_++));
+        else if constexpr (std::is_same_v<Result,
+                                          AxisymmetricPreconditionerElements>)
+            value = std::move(r.elements);
+        else if constexpr (std::is_same_v<Result,
+                                          AxisymmetricPreconditionerMatrix>)
+            value = std::move(r.matrix);
+        else if constexpr (std::is_same_v<Result, AxisymmetricConstraintResult>)
+            value = std::move(r.constraint);
+        else if constexpr (std::is_same_v<
+                               Result, AxisymmetricPreconditionerApplyResult>)
+            value = std::move(r.preconditioned);
+        else
+            static_assert(!sizeof(Result), "unhandled iteration result");
+        callback({}, std::move(value));
+    }
+    std::shared_ptr<cumes::webgpu::ReadbackBatch> iteration_readback_;
+    std::function<void()> finish_vacuum_force_;
+    std::uint64_t iteration_readback_capacity_ = 0;
+    std::optional<cumes::webgpu::IterationResult> iteration_results_;
+    std::size_t iteration_forward_index_ = 0, iteration_residual_index_ = 0;
+    double shadow_norm_error_ = 0.0;
+    cumes::webgpu::DeviceFields device_iteration_state_;
+    cumes::webgpu::DeviceFields device_descent_state_, device_descent_velocity_,
+        device_descent_residual_;
+    cumes::webgpu::DeviceFields device_constraint_r_con0_,
+        device_constraint_z_con0_;
+    cumes::webgpu::FieldSnapshot accepted_elements_, accepted_matrix_,
+        accepted_r_con0_, accepted_z_con0_;
+    cumes::webgpu::AxisymmetricDescentCallback deferred_descent_callback_;
+    cumes::webgpu::AxisymmetricDescentResult deferred_descent_result_;
+    bool committing_descent_ = false;
+
+    void commit_deferred_descent() {
+        auto callback = std::move(deferred_descent_callback_);
+        deferred_descent_callback_ = {};
+        committing_descent_ = true;
+        callback({}, std::move(deferred_descent_result_));
+        committing_descent_ = false;
+        device_iteration_state_ = {};
+    }
+
+    void enqueue_descent_result(
+        const cumes::webgpu::AxisymmetricDescentCase& input,
+        cumes::webgpu::AxisymmetricDescentCallback callback) {
+        if (!resident_spectral_path()) {
+            cumes::webgpu::enqueue_axisymmetric_descent(device_, input,
+                                                        std::move(callback));
+            return;
+        }
+        deferred_descent_callback_ = std::move(callback);
+        auto batched = input;
+        const auto self = shared_from_this();
+        batched.readback = {
+            iteration_readback_,
+            [self](cumes::webgpu::AxisymmetricDescentResult result) {
+                self->device_iteration_state_ = result.device_state;
+                self->device_descent_state_ = result.device_state;
+                self->device_descent_velocity_ = result.device_velocity;
+                // Refresh and restart are mutually exclusive controller
+                // decisions. A restart consumes the last accepted host
+                // checkpoint; a normal pass consumes the pending device state
+                // without waiting for it.
+                if (self->pending_decision_.reason !=
+                    cumes::RestartReason::NONE)
+                    self->restore_checkpoint();
+                self->controller_->after_descent(self->pending_decision_);
+                ++self->completed_passes_;
+                // Promote a newly initialized vacuum before the next prefix
+                // chooses its update and edge-force schedule. The prefix map
+                // also commits the pending host state before vacuum coupling.
+                if (self->vacuum_) self->vacuum_->on_iteration_end();
+                self->run_stage_inverse();
+            }};
+        cumes::webgpu::enqueue_axisymmetric_descent(
+            device_, batched,
+            [self](std::string error,
+                   cumes::webgpu::AxisymmetricDescentResult result) {
+                if (!error.empty()) {
+                    self->finish(false, std::move(error));
+                    return;
+                }
+                self->deferred_descent_result_ = std::move(result);
+            });
+    }
+    cumes::webgpu::DeviceFields device_geometry_, device_base_geometry_,
+        device_magnetic_field_, device_force_fields_, device_constraint_fields_;
+    int geometry_control_passes_ = 0;
+    int geometry_control_fallbacks_ = 0;
+    std::vector<float> stage_geometry_lo_;
+    bool stage_geometry_is_vacuum_ = false;
+    bool stage_base_geometry_is_validity_ = false;
+    bool stage_magnetic_field_is_vacuum_ = false;
+    std::vector<float> stage_base_geometry_lo_;
+    std::vector<float> stage_magnetic_field_lo_;
+    std::vector<float> stage_r_con_lo_;
+    std::vector<float> stage_z_con_lo_;
+    std::vector<float> stage_force_fields_;
+    std::vector<float> stage_force_fields_lo_;
+    std::vector<float> stage_spectral_residual_lo_;
+    std::vector<float> stage_decomposed_residual_lo_;
+    std::vector<float> toroidal_r_con_;
+    std::vector<float> toroidal_z_con_;
+    std::vector<float> w7x_r_con_;
+    std::vector<float> w7x_z_con_;
+    std::vector<float> w7x_geometry_lo_;
+    std::vector<float> w7x_base_geometry_lo_;
+    std::vector<float> w7x_magnetic_field_lo_;
+    std::vector<float> w7x_force_fields_lo_;
+    std::vector<float> w7x_spectral_residual_lo_;
+    std::vector<float> w7x_decomposed_residual_lo_;
+    std::vector<float> constraint_r_con0_;
+    std::vector<float> constraint_r_con0_lo_;
+    std::vector<float> constraint_z_con0_;
+    std::vector<float> constraint_z_con0_lo_;
+    std::vector<float> constraint_tcon_;
+    std::vector<float> constraint_fields_lo_;
+    std::vector<float> constraint_spectral_residual_lo_;
+    std::vector<float> constraint_decomposed_residual_lo_;
+    std::vector<float> stage_velocity_;
+    std::vector<float> stage_state_lo_;
+    std::vector<float> stage_velocity_lo_;
+    std::vector<float> checkpoint_state_;
+    std::vector<float> checkpoint_state_lo_;
+    int completed_passes_ = 0;
+    int attempted_passes_ = 0;
+    std::size_t published_restart_count_ = 0;
+    std::size_t stage_index_ = 0;
+    int total_iterations_ = 0;
+    std::vector<int> stage_iterations_;
+    std::vector<cumes::StageReport> stage_reports_;
+    std::size_t case_index_ = 0;
+    std::size_t forward_case_index_ = 0;
+    std::string active_case_name_ = "Solovev";
+    std::string active_input_path_ = "inputs/solovev.json";
+    std::string gpu_error_;
+};
+
+}  // namespace
+
+int main() {
+    if (requested_app_mode() != 0 && requested_app_run() == 0) {
+        publish_browser_ready();
+        return 0;
+    }
+    std::make_shared<BrowserSelfTest>()->start();
+    return 0;
+}

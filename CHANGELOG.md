@@ -5,6 +5,61 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.6.0] - 2026-09-09
+
+### Added
+
+- A CUDA-free WebGPU/WebAssembly backend for axisymmetric and three-dimensional
+  fixed- and free-boundary equilibria, with shared input validation, residual
+  and geometry gates, controller recovery, multigrid, and schema-v8 scientific
+  result downloads.
+- A [hosted web solver](https://12ff54e.github.io/cuMES/) and reproducible
+  GitHub Pages build/deployment workflow. A same-origin service worker enables
+  the isolation required by threaded Wasm, with one reload on the first visit.
+- A shared fixed/free-boundary editor with Solovev and W7-X fixed-boundary
+  presets; Solovev, W7-X vacuum, and cth_like coil presets; coil uploads; and
+  in-memory MAKEGRID generation. Fourier and axisymmetric contour controls,
+  live residual/restart plots, iteration throughput, orbitable surfaces, coil
+  overlays, and selectable toroidal cuts support interactive solves.
+- Browser scalar-f32 and paired-f32 precision selection. The browser's Double
+  option uses paired words rather than native WGSL f64; free-boundary and W7-X
+  examples default to paired precision. Qualification remains specific to the
+  case, precision, adapter, and browser; scalar free-boundary W7-X can stall.
+- Opt-in paired-f32 vacuum kernels through `vacuum=webgpu`, with Wasm-double
+  LU by default and resident pivoted LU through `vacuum_lu=webgpu` for systems
+  of at most 256 unknowns. HOST/Wasm vacuum remains the default/reference;
+  see the [vacuum backend qualification](docs/adr/0019-webgpu-vacuum-backend.md).
+- Experimental `newton=1` corrections for paired, fixed-boundary axisymmetric
+  browser solves, and `geometry=compensated-m1` for scalar three-dimensional
+  geometry. Both are opt-in and have separate
+  [Newton](docs/adr/0018-webgpu-newton-experiment.md) and
+  [geometry](docs/adr/0017-webgpu-m1-geometry-compensation.md) qualification.
+- Worker-based numerical conformance, Chrome and headless Firefox harnesses,
+  controller-trace comparisons, and GPU/host profiling tools.
+
+### Changed
+
+- Browser iteration paths retain spectral state, velocity, reusable fields,
+  constraints, and preconditioners on the GPU, with batched and compact
+  readbacks. Free-boundary coupling batches work around vacuum updates,
+  parallelizes MAKEGRID, and retains vacuum boundary-force corrections on GPU.
+- Shared WGSL templates generate scalar and paired operators. Optional FFT
+  transforms, GPU residual norms, and GPU Jacobian control provide additional
+  execution paths with numerical checks and host fallbacks; direct Fourier
+  projection remains the default.
+
+### Fixed
+
+- Zero prescribed-current inputs initialize without requiring a nonzero
+  current-profile edge integral in either browser precision.
+- Host and GPU Jacobian gates exempt the complete first half-grid angular
+  surface (`ntheta * nzeta`) from the relative threshold in three dimensions,
+  avoiding unnecessary checkpoint restores and step reductions.
+- Paired shader rounding and compiler-sensitive array/projection operations
+  preserve the qualified Chrome/D3D12 and Firefox numerical behavior.
+- Versioned browser assets keep HTML, JavaScript, Wasm, and editor resources
+  coherent across rebuilds and deployments.
+
 ## [1.5.0] - 2026-09-09
 
 ### Added
