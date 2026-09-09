@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -17,57 +18,6 @@ template <typename T>
 static T scalxc_cpu(int j, int ns) {
     return T(1) /
            std::max(std::sqrt(T(j) / T(ns - 1)), std::sqrt(T(1) / T(ns - 1)));
-}
-
-template <typename T>
-static T expected_value(const std::vector<T>& old_state,
-                        int component,
-                        int mode,
-                        int j_new,
-                        int ns_old,
-                        int ns_new,
-                        int mnmax,
-                        cumes::RadialInterpolation interpolation,
-                        const std::vector<double>& bspline_matrix) {
-    const bool odd = mode % 2 == 1;
-    const T s = T(j_new) / T(ns_new - 1);
-    const int j0 = (j_new * (ns_old - 1)) / (ns_new - 1);
-    const int j1 = std::min(j0 + 1, ns_old - 1);
-    const T t = std::clamp(s * T(ns_old - 1) - T(j0), T(0), T(1));
-    const std::size_t family =
-        static_cast<std::size_t>(component) * mnmax * ns_old;
-    const auto xs = [&](int j) {
-        const T value = old_state[family + mode * ns_old + j];
-        return odd ? value * scalxc_cpu<T>(j, ns_old) : value;
-    };
-    const auto axis_regular = [&](int j) {
-        return odd && j == 0 ? T(2) * xs(1) - xs(2) : xs(j);
-    };
-
-    const T y0 = axis_regular(j0);
-    const T y1 = axis_regular(j1);
-    T value = (T(1) - t) * y0 + t * y1;
-    if (interpolation == cumes::RadialInterpolation::CATMULL_ROM && j0 != j1) {
-        const T ym1 = j0 > 0 ? axis_regular(j0 - 1) : T(2) * y0 - y1;
-        const T yp2 = j1 + 1 < ns_old ? axis_regular(j1 + 1) : T(2) * y1 - y0;
-        value = y0 + T(0.5) * t *
-                         (y1 - ym1 +
-                          t * (T(2) * ym1 - T(5) * y0 + T(4) * y1 - yp2 +
-                               t * (T(3) * (y0 - y1) + yp2 - ym1)));
-    } else if (interpolation == cumes::RadialInterpolation::BSPLINE) {
-        if (j_new == ns_new - 1) {
-            return old_state[family + mode * ns_old + ns_old - 1];
-        }
-        value = T(0);
-        for (int j_old = 0; j_old < ns_old; ++j_old) {
-            value += T(bspline_matrix[static_cast<std::size_t>(j_new) * ns_old +
-                                      j_old]) *
-                     axis_regular(j_old);
-        }
-    }
-    value *=
-        odd ? std::max(std::sqrt(s), std::sqrt(T(1) / T(ns_new - 1))) : T(1);
-    return odd && j_new == 0 ? T(0) : value;
 }
 
 template <typename T>
@@ -135,10 +85,16 @@ static void run_case(cumes::RadialInterpolation interpolation,
     double error = 0.0;
     for (int f = 0; f < families; ++f) {
         for (int mode = 0; mode < mnmax; ++mode) {
+            const auto values = std::span<const T>(input).subspan(
+                (f * mnmax + mode) * ns_old, ns_old);
             for (int j = 0; j < ns_new; ++j) {
-                const T expected =
-                    expected_value(input, f, mode, j, ns_old, ns_new, mnmax,
-                                   interpolation, bspline_matrix);
+                const auto weights =
+                    bspline_matrix.empty()
+                        ? std::span<const double>{}
+                        : std::span<const double>(bspline_matrix)
+                              .subspan(j * ns_old, ns_old);
+                const T expected = cumes::interpolate_radial_value(
+                    values, ns_new, j, mode % 2 == 1, interpolation, weights);
                 error = std::max(
                     error,
                     std::abs(static_cast<double>(

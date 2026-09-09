@@ -1,6 +1,8 @@
 #ifndef CUMES_INCLUDE_CUMES_WEBGPU_PROLONGATION_HPP_
 #define CUMES_INCLUDE_CUMES_WEBGPU_PROLONGATION_HPP_
 
+#include "cumes/numerics/radial_interpolation.hpp"
+
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -10,10 +12,7 @@
 
 namespace cumes::webgpu {
 
-enum class RadialInterpolation : unsigned {
-    LINEAR = 0,
-    CATMULL_ROM = 1,
-};
+using RadialInterpolation = cumes::RadialInterpolation;
 
 struct ProlongationCase {
     int ns_old = 0;

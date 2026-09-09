@@ -3,14 +3,11 @@
 #include "pipeline_cache.hpp"
 #include "shader_source.hpp"
 
-#include <algorithm>
-#include <cmath>
 #include <cstdint>
-#include <fstream>
 #include <iterator>
 #include <limits>
 #include <memory>
-#include <sstream>
+#include <span>
 #include <utility>
 
 namespace cumes::webgpu {
@@ -60,51 +57,6 @@ const std::string& load_shader() {
     return detail::cached_shader_source("/shaders/prolongation.wgsl");
 }
 
-float scalxc(int j, int ns) {
-    const float s = static_cast<float>(j) / static_cast<float>(ns - 1);
-    const float sqrt_s1 = std::sqrt(1.0F / static_cast<float>(ns - 1));
-    return 1.0F / std::max(std::sqrt(s), sqrt_s1);
-}
-
-float reference_value(const ProlongationCase& input, int profile, int j_new) {
-    const int mode = profile % input.mnmax;
-    const bool odd = ((mode / (input.ntor + 1)) % 2) == 1;
-    const float s =
-        static_cast<float>(j_new) / static_cast<float>(input.ns_new - 1);
-    const int j0 = (j_new * (input.ns_old - 1)) / (input.ns_new - 1);
-    const int j1 = std::min(j0 + 1, input.ns_old - 1);
-    const float t = std::clamp(
-        s * static_cast<float>(input.ns_old - 1) - static_cast<float>(j0), 0.0F,
-        1.0F);
-    const auto sample = [&](int j) {
-        float value =
-            input.state[static_cast<std::size_t>(profile) * input.ns_old + j];
-        return odd ? value * scalxc(j, input.ns_old) : value;
-    };
-    const auto regular_sample = [&](int j) {
-        return odd && j == 0 ? 2.0F * sample(1) - sample(2) : sample(j);
-    };
-
-    const float y0 = regular_sample(j0);
-    const float y1 = regular_sample(j1);
-    float interpolated = (1.0F - t) * y0 + t * y1;
-    if (input.interpolation == RadialInterpolation::CATMULL_ROM && j0 != j1) {
-        const float ym1 = j0 > 0 ? regular_sample(j0 - 1) : 2.0F * y0 - y1;
-        const float yp2 =
-            j1 + 1 < input.ns_old ? regular_sample(j1 + 1) : 2.0F * y1 - y0;
-        interpolated = y0 + 0.5F * t *
-                                (y1 - ym1 +
-                                 t * (2.0F * ym1 - 5.0F * y0 + 4.0F * y1 - yp2 +
-                                      t * (3.0F * (y0 - y1) + yp2 - ym1)));
-    }
-
-    if (!odd) return interpolated;
-    const float sqrt_s1_new =
-        std::sqrt(1.0F / static_cast<float>(input.ns_new - 1));
-    const float value = interpolated * std::max(std::sqrt(s), sqrt_s1_new);
-    return j_new == 0 ? 0.0F : value;
-}
-
 struct DispatchState {
     ProlongationCallback callback;
     wgpu::Buffer result_buffer;
@@ -135,9 +87,16 @@ ProlongationResult prolongation_reference(const ProlongationCase& input) {
     for (int profile = 0;
          profile < static_cast<int>(SPECTRAL_FAMILIES) * input.mnmax;
          ++profile) {
+        const int mode = profile % input.mnmax;
+        const bool odd = ((mode / (input.ntor + 1)) % 2) == 1;
+        const auto values =
+            std::span(input.state)
+                .subspan(static_cast<std::size_t>(profile) * input.ns_old,
+                         input.ns_old);
         for (int j = 0; j < input.ns_new; ++j) {
             result.state[static_cast<std::size_t>(profile) * input.ns_new + j] =
-                reference_value(input, profile, j);
+                interpolate_radial_value(values, input.ns_new, j, odd,
+                                         input.interpolation);
         }
     }
     return result;
