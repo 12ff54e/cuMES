@@ -5,6 +5,34 @@ The merge itself preserved the browser's controller traces and scientific
 outputs. The subsequent ports below have separate numerical qualification;
 CUDA timing results do not establish browser speedups.
 
+## Optimization priorities
+
+Include host/device exchange and synchronization in every investigation of
+browser solver performance. For free boundary, audit the plasma/vacuum
+interface as well as the vacuum kernels:
+
+- Identify the host consumer and dependency for each readback, upload, and
+  completion wait. Account for bytes and round trips separately for full and
+  partial vacuum updates; partial updates still require vacuum work.
+- Keep spectral state, physics fields, and reusable intermediates resident
+  wherever their consumers permit it. Read only required axis/LCFS slices and
+  compact controller values, and upload only host-modified results.
+- Batch independent readbacks and copies at existing dependency boundaries.
+  Reuse staging buffers and scratch. Evaluate GPU boundary coupling against
+  the existing formulas to remove transfers of fields used only on the GPU.
+- Preserve vacuum activation, restart state, `nvacskip`, pressure coupling,
+  preconditioner terms, and multigrid persistence. Moving a reduction changes
+  the numerical qualification unless its original arithmetic is preserved;
+  retain finite, geometry, Jacobian, and residual gates.
+- Measure warmed complete solves with matching configurations and retain
+  controller and scientific comparisons. Report transfer/wait reductions
+  separately from measured wall-time improvement; a faster vacuum kernel
+  does not establish a faster free-boundary solve.
+
+These priorities guide further work and do not describe completed ports.
+See [the performance contract](performance.md#11-hostdevice-exchange-and-synchronization)
+for measurement and acceptance requirements.
+
 ## Port results
 
 | Merged update | WebGPU implementation and qualification |

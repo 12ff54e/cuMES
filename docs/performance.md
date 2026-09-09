@@ -39,6 +39,36 @@ reported interval includes the required host vacuum-coupling gaps between the
 prefix and suffix device work, so it represents end-to-end CUDA-stream elapsed
 time rather than a sum of kernel durations.
 
+### 1.1 Host/device exchange and synchronization
+
+Optimization must account for data movement and host/device waits alongside
+kernel execution. For the affected path, identify each host consumer, the
+data it actually needs, and the dependency that requires completion before
+device work can continue. Record transferred bytes and completion points per
+iteration; distinguish full vacuum updates, partial updates, and iterations
+before vacuum activation. `nvacskip` controls full-update cadence and does not
+eliminate the work or transfers required by partial updates.
+
+Keep state and reusable intermediates on the device across operators and
+iterations. Prefer required boundary slices or compact reductions over full
+array readbacks. Batch independent copies into an existing completion point,
+and avoid a new fence or map for diagnostics that can share it. When host work
+is necessary, upload only its changed results. Reuse staging and scratch at
+stage setup; measure any additional device work or storage introduced to save
+transfers. Apply these principles to CUDA and WebGPU using each backend's
+existing ownership and submission APIs.
+
+These are optimization priorities, not permission to change arithmetic,
+vacuum activation/restarts, full/partial update decisions, or validity gates.
+Preserve reduction order for Class A changes; classify and validate a changed
+reduction under `verification.md` §6 before making a timing claim. Compare
+warmed complete solves with matching inputs, precision, grids, tolerances,
+and backend choices, retaining iteration counts and numerical checks. Reduced
+bytes or fewer waits establish a structural improvement; only end-to-end
+measurements establish a speedup. Use a common clock origin for phase timing;
+browser window and worker `performance.now()` values cannot be subtracted
+without aligning their time origins.
+
 ## 2. Steady-state wall time (TITAN Xp, sm_61)
 
 Measured by the fixed-iteration harness with 300 timed passes after 50 warmup

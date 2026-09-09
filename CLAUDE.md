@@ -32,6 +32,11 @@ checkpoint replay is useful evidence; a small FSQR alone is insufficient.
 - Reuse existing operators and dependency APIs. Prefer a small integration
   layer over a second implementation of the same mathematics. Avoid unrelated
   refactors, new frameworks, and speculative generalization.
+- Treat host/device data exchange and synchronization as optimization targets
+  alongside kernel time. Keep reusable state and intermediates resident,
+  transfer only the slices or compact reductions that host consumers need,
+  and batch copies with required completion points. Preserve numerical gates,
+  controller decisions, and vacuum update scheduling; see `docs/performance.md`.
 - Commit meaningful, coherent steps progressively as they are completed and
   validated. Keep each commit focused and reviewable; include its validation
   summary. A small task may need only one implementation commit.
