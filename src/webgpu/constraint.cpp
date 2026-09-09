@@ -1,5 +1,6 @@
 #include "cumes/webgpu/constraint.hpp"
 
+#include "cumes/physics/constraint_filter.hpp"
 #include "cumes/webgpu/axisymmetric.hpp"
 #include "cumes/webgpu/float_float.hpp"
 #include "cumes/webgpu/force.hpp"
@@ -697,6 +698,20 @@ struct ConstraintChain {
     AxisymmetricConstraintCallback callback;
 };
 
+template <typename DealiasCase>
+void prepare_constraint_filter(DealiasCase& dealias,
+                               const AxisymmetricConstraintCase& input) {
+    dealias.ns = input.ns;
+    dealias.mpol = input.mpol;
+    dealias.ntheta = input.ntheta;
+    if constexpr (requires { dealias.ntor; }) {
+        dealias.ntor = input.ntor;
+        dealias.nzeta = input.nzeta;
+    }
+    dealias.faccon.resize(input.mpol);
+    fill_constraint_filter<float>(dealias.faccon);
+}
+
 }  // namespace
 
 AxisymmetricConstraintResult axisymmetric_constraint_reference(
@@ -712,36 +727,16 @@ AxisymmetricConstraintResult axisymmetric_constraint_reference(
         return {};
     if (!validate_case(input).empty()) return {};
     auto head = head_reference(input);
-    std::vector<float> g_con;
-    if (input.ntor > 0) {
-        ToroidalDealiasCase dealias;
-        dealias.ns = input.ns;
-        dealias.mpol = input.mpol;
-        dealias.ntor = input.ntor;
-        dealias.ntheta = input.ntheta;
-        dealias.nzeta = input.nzeta;
+    const auto filter = [&input, &head](auto dealias, auto reference) {
+        prepare_constraint_filter(dealias, input);
         dealias.g_con_eff = head.g_con_eff;
         dealias.tcon = head.tcon;
-        dealias.faccon.assign(input.mpol, 0.0F);
-        for (int mode = 1; mode < input.mpol; ++mode) {
-            const float xmpq = static_cast<float>((mode + 1) * mode);
-            dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
-        }
-        g_con = toroidal_dealias_reference(dealias).g_con;
-    } else {
-        AxisymmetricDealiasCase dealias;
-        dealias.ns = input.ns;
-        dealias.mpol = input.mpol;
-        dealias.ntheta = input.ntheta;
-        dealias.g_con_eff = head.g_con_eff;
-        dealias.tcon = head.tcon;
-        dealias.faccon.assign(input.mpol, 0.0F);
-        for (int mode = 1; mode < input.mpol; ++mode) {
-            const float xmpq = static_cast<float>((mode + 1) * mode);
-            dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
-        }
-        g_con = axisymmetric_dealias_reference(dealias).g_con;
-    }
+        return reference(dealias).g_con;
+    };
+    auto g_con =
+        input.ntor > 0
+            ? filter(ToroidalDealiasCase{}, toroidal_dealias_reference)
+            : filter(AxisymmetricDealiasCase{}, axisymmetric_dealias_reference);
     AxisymmetricConstraintResult result;
     result.r_con0 = head.r_con0;
     result.r_con0_lo = head.r_con0_lo;
@@ -786,22 +781,12 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
             const auto filter = [chain, result, head, points](auto dealias,
                                                               auto enqueue) {
                 const auto& in = chain->input;
-                dealias.ns = in.ns;
-                dealias.mpol = in.mpol;
-                dealias.ntheta = in.ntheta;
-                if constexpr (requires { dealias.ntor; }) {
-                    dealias.ntor = in.ntor;
-                    dealias.nzeta = in.nzeta;
+                prepare_constraint_filter(dealias, in);
+                if constexpr (requires { dealias.readback_values; })
                     dealias.readback_values = in.readback_intermediates;
-                }
                 dealias.device_g_con_eff =
                     field_slice(head.device_fields, 0, points);
                 dealias.device_tcon = head.device_tcon;
-                dealias.faccon.assign(in.mpol, 0.0F);
-                for (int m = 1; m < in.mpol; ++m) {
-                    const float xmpq = static_cast<float>((m + 1) * m);
-                    dealias.faccon[m] = 0.25F / (xmpq * xmpq);
-                }
                 dealias.readback.batch = in.batched_readback.batch;
                 dealias.readback.device_ready = [chain, result,
                                                  head](auto filtered) {
@@ -857,59 +842,27 @@ void enqueue_axisymmetric_constraint(const wgpu::Device& device,
                 chain->callback(std::move(error), {});
                 return;
             }
-            if (chain->input.ntor > 0) {
-                ToroidalDealiasCase dealias;
-                dealias.ns = chain->input.ns;
-                dealias.mpol = chain->input.mpol;
-                dealias.ntor = chain->input.ntor;
-                dealias.ntheta = chain->input.ntheta;
-                dealias.nzeta = chain->input.nzeta;
+            const auto filter = [chain, &head](auto dealias, auto enqueue) {
+                prepare_constraint_filter(dealias, chain->input);
                 dealias.g_con_eff = head.g_con_eff;
                 dealias.tcon = head.tcon;
-                dealias.faccon.assign(chain->input.mpol, 0.0F);
-                for (int mode = 1; mode < chain->input.mpol; ++mode) {
-                    const float xmpq = static_cast<float>((mode + 1) * mode);
-                    dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
-                }
-                enqueue_toroidal_dealias(
-                    chain->device, dealias,
-                    [chain, head = std::move(head)](
-                        std::string filter_error,
-                        ToroidalDealiasResult filtered) mutable {
-                        if (!filter_error.empty()) {
-                            chain->callback(std::move(filter_error), {});
-                            return;
-                        }
-                        enqueue_tail(chain->device, chain->input,
-                                     std::move(head), std::move(filtered.g_con),
-                                     std::move(chain->callback));
-                    });
-                return;
-            }
-            AxisymmetricDealiasCase dealias;
-            dealias.ns = chain->input.ns;
-            dealias.mpol = chain->input.mpol;
-            dealias.ntheta = chain->input.ntheta;
-            dealias.g_con_eff = head.g_con_eff;
-            dealias.tcon = head.tcon;
-            dealias.faccon.assign(chain->input.mpol, 0.0F);
-            for (int mode = 1; mode < chain->input.mpol; ++mode) {
-                const float xmpq = static_cast<float>((mode + 1) * mode);
-                dealias.faccon[mode] = 0.25F / (xmpq * xmpq);
-            }
-            enqueue_axisymmetric_dealias(
-                chain->device, dealias,
-                [chain, head = std::move(head)](
-                    std::string filter_error,
-                    AxisymmetricDealiasResult filtered) mutable {
-                    if (!filter_error.empty()) {
-                        chain->callback(std::move(filter_error), {});
-                        return;
-                    }
-                    enqueue_tail(chain->device, chain->input, std::move(head),
-                                 std::move(filtered.g_con),
-                                 std::move(chain->callback));
-                });
+                enqueue(chain->device, dealias,
+                        [chain, head = std::move(head)](
+                            std::string filter_error, auto filtered) mutable {
+                            if (!filter_error.empty()) {
+                                chain->callback(std::move(filter_error), {});
+                                return;
+                            }
+                            enqueue_tail(chain->device, chain->input,
+                                         std::move(head),
+                                         std::move(filtered.g_con),
+                                         std::move(chain->callback));
+                        });
+            };
+            if (chain->input.ntor > 0)
+                filter(ToroidalDealiasCase{}, enqueue_toroidal_dealias);
+            else
+                filter(AxisymmetricDealiasCase{}, enqueue_axisymmetric_dealias);
         });
 }
 
