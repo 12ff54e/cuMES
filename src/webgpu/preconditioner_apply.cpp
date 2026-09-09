@@ -222,13 +222,6 @@ wgpu::Buffer make_buffer(const wgpu::Device& device,
     return detail::cached_buffer(device, size, usage, label);
 }
 
-struct Dispatch {
-    AxisymmetricPreconditionerApplyCallback callback;
-    wgpu::Buffer output, readback;
-    std::size_t bytes = 0, points = 0;
-    int mpol = 0;
-};
-
 }  // namespace
 
 AxisymmetricPreconditionerApplyResult
@@ -389,65 +382,43 @@ void enqueue_axisymmetric_preconditioner_apply(
     pass.SetBindGroup(0, bind_group);
     pass.DispatchWorkgroups(static_cast<std::uint32_t>(modes));
     pass.End();
-    if (input.readback.batch) {
-        AxisymmetricPreconditionerApplyResult resident;
+    // Standalone diagnostics use the same decoder as the iteration batch;
+    // only their completion callback may enqueue work after the buffer unmaps.
+    const auto host =
+        input.readback.batch
+            ? nullptr
+            : std::make_shared<AxisymmetricPreconditionerApplyResult>();
+    const auto batch = input.readback.batch ? input.readback.batch
+                                            : std::make_shared<ReadbackBatch>(
+                                                  readback, result_bytes);
+    AxisymmetricPreconditionerApplyResult resident;
+    if (input.readback.batch)
         resident.device_residual = {output_buffer, 6 * points, 0, 0};
-        input.readback.batch->append(
-            encoder, output_buffer, 0, result_bytes,
-            [callback = std::move(callback), points, resident,
-             modes](std::span<const float> values) {
-                auto out = resident;
-                out.residual.assign(values.begin(),
-                                    values.begin() + 6 * points);
-                for (int mode = 0; mode < modes; ++mode)
-                    out.breakdown_count +=
-                        values[6 * points + mode] != 0.0F ? 1 : 0;
-                callback({}, std::move(out));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
+    batch->append(
+        encoder, output_buffer, 0, result_bytes,
+        [callback = input.readback.batch
+                        ? std::move(callback)
+                        : AxisymmetricPreconditionerApplyCallback{},
+         host, resident, points, modes](std::span<const float> values) mutable {
+            resident.residual.assign(values.begin(),
+                                     values.begin() + 6 * points);
+            for (int mode = 0; mode < modes; ++mode)
+                resident.breakdown_count +=
+                    values[6 * points + mode] != 0.0F ? 1 : 0;
+            if (host)
+                *host = std::move(resident);
+            else
+                callback({}, std::move(resident));
+        });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    if (input.readback.batch) {
         input.readback.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, result_bytes);
-    auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-    auto dispatch = std::make_shared<Dispatch>();
-    dispatch->callback = std::move(callback);
-    dispatch->output = output_buffer;
-    dispatch->readback = readback;
-    dispatch->bytes = result_bytes;
-    dispatch->points = points;
-    dispatch->mpol = modes;
-    readback.MapAsync(
-        wgpu::MapMode::Read, 0, result_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback(
-                    "preconditioner apply mapping failed: " + detail, {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback.GetConstMappedRange(0, dispatch->bytes));
-            if (values == nullptr) {
-                dispatch->callback("preconditioner apply mapped range is null",
-                                   {});
-                return;
-            }
-            AxisymmetricPreconditionerApplyResult out;
-            out.residual.assign(values, values + 6 * dispatch->points);
-            for (int mode = 0; mode < dispatch->mpol; ++mode) {
-                out.breakdown_count +=
-                    values[6 * dispatch->points + mode] != 0.0F ? 1 : 0;
-            }
-            dispatch->readback.Unmap();
-            dispatch->callback({}, std::move(out));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu

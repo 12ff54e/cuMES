@@ -213,13 +213,6 @@ wgpu::Buffer make_buffer(const wgpu::Device& device,
     return detail::cached_buffer(device, size, usage, label);
 }
 
-struct Dispatch {
-    AxisymmetricPreconditionerElementCallback callback;
-    wgpu::Buffer output, readback;
-    std::size_t bytes = 0;
-    int ns = 0;
-};
-
 }  // namespace
 
 AxisymmetricPreconditionerElements
@@ -371,77 +364,50 @@ void enqueue_axisymmetric_preconditioner_elements(
         (static_cast<std::uint32_t>(input.ns) + WORKGROUP_SIZE - 1) /
         WORKGROUP_SIZE);
     pass.End();
-    if (input.readback.batch) {
-        AxisymmetricPreconditionerElements resident;
+    // Standalone diagnostics use the same decoder as the iteration batch;
+    // only their completion callback may enqueue work after the buffer unmaps.
+    const auto host =
+        input.readback.batch
+            ? nullptr
+            : std::make_shared<AxisymmetricPreconditionerElements>();
+    const auto batch = input.readback.batch ? input.readback.batch
+                                            : std::make_shared<ReadbackBatch>(
+                                                  readback, output_bytes);
+    AxisymmetricPreconditionerElements resident;
+    if (input.readback.batch)
         resident.device_elements = {output_buffer, output_values, 0, 0};
-        input.readback.batch->append(
-            encoder, output_buffer, 0, output_bytes,
-            [callback = std::move(callback), resident,
-             ns = input.ns](std::span<const float> values) mutable {
-                const auto hi = values.begin();
-                const std::size_t pairs = 2 * ns, half = 2 * (ns - 1);
-                resident.ard.assign(hi, hi + pairs);
-                resident.brd.assign(hi + pairs, hi + 2 * pairs);
-                resident.azd.assign(hi + 2 * pairs, hi + 3 * pairs);
-                resident.bzd.assign(hi + 3 * pairs, hi + 4 * pairs);
-                resident.cxd.assign(hi + 4 * pairs, hi + 4 * pairs + ns);
-                const auto h = hi + 4 * pairs + ns;
-                resident.arm.assign(h, h + half);
-                resident.brm.assign(h + half, h + 2 * half);
-                resident.azm.assign(h + 2 * half, h + 3 * half);
-                resident.bzm.assign(h + 3 * half, h + 4 * half);
+    batch->append(
+        encoder, output_buffer, 0, output_bytes,
+        [callback = input.readback.batch
+                        ? std::move(callback)
+                        : AxisymmetricPreconditionerElementCallback{},
+         host, resident, ns = input.ns](std::span<const float> values) mutable {
+            const auto hi = values.begin();
+            const std::size_t pairs = 2 * ns, half = 2 * (ns - 1);
+            resident.ard.assign(hi, hi + pairs);
+            resident.brd.assign(hi + pairs, hi + 2 * pairs);
+            resident.azd.assign(hi + 2 * pairs, hi + 3 * pairs);
+            resident.bzd.assign(hi + 3 * pairs, hi + 4 * pairs);
+            resident.cxd.assign(hi + 4 * pairs, hi + 4 * pairs + ns);
+            const auto h = hi + 4 * pairs + ns;
+            resident.arm.assign(h, h + half);
+            resident.brm.assign(h + half, h + 2 * half);
+            resident.azm.assign(h + 2 * half, h + 3 * half);
+            resident.bzm.assign(h + 3 * half, h + 4 * half);
+            if (host)
+                *host = std::move(resident);
+            else
                 callback({}, std::move(resident));
-            });
-        const auto commands = encoder.Finish();
-        queue.Submit(1, &commands);
+        });
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+    if (input.readback.batch) {
         input.readback.publish_device(std::move(resident));
         return;
     }
-    encoder.CopyBufferToBuffer(output_buffer, 0, readback, 0, output_bytes);
-    auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-    auto dispatch = std::make_shared<Dispatch>();
-    dispatch->callback = std::move(callback);
-    dispatch->output = output_buffer;
-    dispatch->readback = readback;
-    dispatch->bytes = output_bytes;
-    dispatch->ns = input.ns;
-    readback.MapAsync(
-        wgpu::MapMode::Read, 0, output_bytes,
-        wgpu::CallbackMode::AllowSpontaneous,
-        [dispatch](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-            if (status != wgpu::MapAsyncStatus::Success) {
-                const std::string detail =
-                    message.length == 0
-                        ? std::string{}
-                        : std::string(message.data, message.length);
-                dispatch->callback("preconditioner mapping failed: " + detail,
-                                   {});
-                return;
-            }
-            const auto* values = static_cast<const float*>(
-                dispatch->readback.GetConstMappedRange(0, dispatch->bytes));
-            if (values == nullptr) {
-                dispatch->callback("preconditioner mapped range is null", {});
-                return;
-            }
-            const std::size_t pair_count = 2 * dispatch->ns;
-            AxisymmetricPreconditionerElements out;
-            out.ard.assign(values, values + pair_count);
-            out.brd.assign(values + pair_count, values + 2 * pair_count);
-            out.azd.assign(values + 2 * pair_count, values + 3 * pair_count);
-            out.bzd.assign(values + 3 * pair_count, values + 4 * pair_count);
-            out.cxd.assign(values + 4 * pair_count,
-                           values + 4 * pair_count + dispatch->ns);
-            const std::size_t half_count = 2 * (dispatch->ns - 1);
-            const auto* half = values + 4 * pair_count + dispatch->ns;
-            out.arm.assign(half, half + half_count);
-            out.brm.assign(half + half_count, half + 2 * half_count);
-            out.azm.assign(half + 2 * half_count, half + 3 * half_count);
-            out.bzm.assign(half + 3 * half_count, half + 4 * half_count);
-            dispatch->readback.Unmap();
-            dispatch->callback({}, std::move(out));
-        });
+    batch->map([callback = std::move(callback), host](std::string error) {
+        callback(std::move(error), std::move(*host));
+    });
 }
 
 }  // namespace cumes::webgpu
