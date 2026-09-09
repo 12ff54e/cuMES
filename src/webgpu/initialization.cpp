@@ -159,7 +159,8 @@ RadialProfiles initialize_profiles(const ProblemSpec& spec, int ns) {
 AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
                                        std::size_t stage_index,
                                        bool float_radius_reference,
-                                       bool compensated_geometry) {
+                                       bool compensated_geometry,
+                                       bool compensated_toroidal_geometry) {
     if (stage_index >= problem.stage_shapes().size()) {
         throw std::runtime_error("WebGPU stage index is out of range");
     }
@@ -263,12 +264,15 @@ AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
         stage.lambda_seed_scale = 0.0F;
         std::fill(lsc.begin(), lsc.end(), 0.0F);
     }
-    if ((float_radius_reference || compensated_geometry) &&
+    if ((float_radius_reference || compensated_geometry ||
+         compensated_toroidal_geometry) &&
         (shape.ntor == 0 || spec.free_boundary.lfreeb)) {
         throw std::runtime_error(
             "float geometry fixes require fixed-boundary 3-D geometry");
     }
-    stage.compensated_geometry = compensated_geometry;
+    stage.compensated_geometry =
+        compensated_geometry || compensated_toroidal_geometry;
+    stage.compensated_toroidal_geometry = compensated_toroidal_geometry;
     if (float_radius_reference) {
         auto reference = std::make_shared<FloatRadiusReference>();
         reference->coefficients.assign(boundary.rbcc.begin(),

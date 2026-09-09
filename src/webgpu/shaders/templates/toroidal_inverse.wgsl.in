@@ -23,7 +23,8 @@ struct Values { data: array<f32>, };
 // Twenty high planes followed by twenty low planes.
 @group(0) @binding(2) var<storage, read_write> output: Values;
 @group(0) @binding(3) var<uniform> params: Params;
-// Twelve high planes followed by twelve low planes.
+// Paired: twelve high planes followed by twelve low planes. The scalar m=1
+// diagnostic appends four high/low toroidal planes and paired radial scales.
 @group(0) @binding(4) var<storage, read_write> intermediate: Values;
 #if PAIRED
 @group(0) @binding(5) var<storage, read> state_lo: Values;
@@ -92,6 +93,30 @@ fn put_output(field: u32, point: u32, value: Real) {
 #endif
 }
 
+#if !PAIRED
+fn put_odd_toroidal(field: u32, surface: u32, zeta: u32, value: Pair) {
+    let count = params.ns * params.nzeta;
+    let start = 12u * params.mpol * count;
+    let index = field * count + surface * params.nzeta + zeta;
+    intermediate.data[start + index] = pair_hi(value);
+    intermediate.data[start + 4u * count + index] = pair_lo(value);
+}
+
+fn odd_toroidal_at(field: u32, surface: u32, zeta: u32) -> Pair {
+    let count = params.ns * params.nzeta;
+    let start = 12u * params.mpol * count;
+    let index = field * count + surface * params.nzeta + zeta;
+    return pair_words(intermediate.data[start + index],
+                      intermediate.data[start + 4u * count + index]);
+}
+
+fn odd_radial_scale(surface: u32) -> Pair {
+    let start = (12u * params.mpol + 8u) * params.ns * params.nzeta;
+    return pair_words(intermediate.data[start + 2u * surface],
+                      intermediate.data[start + 2u * surface + 1u]);
+}
+#endif
+
 @compute @workgroup_size(128)
 fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let count = params.ns * params.mpol * params.nzeta;
@@ -115,6 +140,14 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var sum9 = empty_accumulator();
     var sum10 = empty_accumulator();
     var sum11 = empty_accumulator();
+#if !PAIRED
+    // These explicit pairs preserve the m=1 low words; the scalar Kahan
+    // intermediates below still supply derivatives and constraint geometry.
+    var odd0: Pair = pair_real(0.0);
+    var odd1: Pair = pair_real(0.0);
+    var odd2: Pair = pair_real(0.0);
+    var odd3: Pair = pair_real(0.0);
+#endif
     for (var n = 0u; n <= params.ntor; n++) {
         let cn = zeta_basis(false, n, zeta, index);
         let sn = zeta_basis(true, n, zeta, index);
@@ -131,6 +164,16 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         sum3 = accumulate(sum3, mul(zc, sn, index), index);
         sum4 = accumulate(sum4, mul(ls, cn, index), index);
         sum5 = accumulate(sum5, mul(lc, sn, index), index);
+#if !PAIRED
+        if (params.compensated_geometry == 2.0 && m == 1u) {
+            // Match native selective compensation: products are rounded f32,
+            // while the toroidal sums retain both words until reconstruction.
+            odd0 = pair_add(odd0, pair_real(pair_round(rc * cn, index)), index);
+            odd1 = pair_add(odd1, pair_real(pair_round(rs * sn, index)), index);
+            odd2 = pair_add(odd2, pair_real(pair_round(zs * cn, index)), index);
+            odd3 = pair_add(odd3, pair_real(pair_round(zc * sn, index)), index);
+        }
+#endif
         var derivative_rc = rc;
 #if !PAIRED
         if (params.radius_reference != 0.0 && m == 0u && n > 0u) {
@@ -162,6 +205,14 @@ fn toroidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     put_intermediate(9u, surface, m, zeta, accumulated(sum9));
     put_intermediate(10u, surface, m, zeta, accumulated(sum10));
     put_intermediate(11u, surface, m, zeta, accumulated(sum11));
+#if !PAIRED
+    if (params.compensated_geometry == 2.0 && m == 1u) {
+        put_odd_toroidal(0u, surface, zeta, odd0);
+        put_odd_toroidal(1u, surface, zeta, odd1);
+        put_odd_toroidal(2u, surface, zeta, odd2);
+        put_odd_toroidal(3u, surface, zeta, odd3);
+    }
+#endif
 }
 
 @compute @workgroup_size(128)
@@ -253,12 +304,23 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
         if (odd) {
 #if !PAIRED
             if (params.compensated_geometry != 0.0) {
-                odd_r = pair_add(odd_r, pair_add(
-                    pair_scale(pair_real(a0), cm, point),
-                    pair_scale(pair_real(a1), sm, point), point), point);
-                odd_z = pair_add(odd_z, pair_add(
-                    pair_scale(pair_real(a2), sm, point),
-                    pair_scale(pair_real(a3), cm, point), point), point);
+                if (params.compensated_geometry == 2.0 && m == 1u) {
+                    odd_r = pair_add(odd_r, pair_add(
+                        pair_scale(odd_toroidal_at(0u, surface, zeta), cm, point),
+                        pair_scale(odd_toroidal_at(1u, surface, zeta), sm, point), point), point);
+                    odd_z = pair_add(odd_z, pair_add(
+                        pair_scale(odd_toroidal_at(2u, surface, zeta), sm, point),
+                        pair_scale(odd_toroidal_at(3u, surface, zeta), cm, point), point), point);
+                } else {
+                    // Higher odd modes keep visibly single-word inputs;
+                    // only their poloidal products and sums are compensated.
+                    odd_r = pair_add(odd_r, pair_add(
+                        pair_scale(pair_real(a0), cm, point),
+                        pair_scale(pair_real(a1), sm, point), point), point);
+                    odd_z = pair_add(odd_z, pair_add(
+                        pair_scale(pair_real(a2), sm, point),
+                        pair_scale(pair_real(a3), cm, point), point), point);
+                }
             } else {
 #endif
                 value6 = accumulate(value6, scaled_r, point);
@@ -290,8 +352,16 @@ fn poloidal_stage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     }
 #if !PAIRED
     if (params.compensated_geometry != 0.0) {
-        let r = pair_scale(odd_r, odd_scale, point);
-        let z = pair_scale(odd_z, odd_scale, point);
+        var r: Pair;
+        var z: Pair;
+        if (params.compensated_geometry == 2.0) {
+            let radial = odd_radial_scale(surface);
+            r = pair_mul(odd_r, radial, point);
+            z = pair_mul(odd_z, radial, point);
+        } else {
+            r = pair_scale(odd_r, odd_scale, point);
+            z = pair_scale(odd_z, odd_scale, point);
+        }
         value6.x = pair_round(pair_scalar(r), point);
         value7.x = pair_round(pair_scalar(z), point);
     }

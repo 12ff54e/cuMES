@@ -30,6 +30,9 @@ struct ToroidalInverseCase {
     bool double_single = false;
     FloatRadiusReferencePtr radius_reference;
     bool compensated_geometry = false;
+    // Diagnostic scope: retain m=1 toroidal sums and radial normalization
+    // in paired arithmetic inside an otherwise scalar inverse.
+    bool compensated_toroidal_geometry = false;
     // Component-major [component][mode][surface], with
     // mode=m*(ntor+1)+n.
     std::vector<float> state;

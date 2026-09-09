@@ -8,7 +8,9 @@
 #include "cumes/webgpu/toroidal.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <numbers>
 #include <sstream>
@@ -36,9 +38,16 @@ class FloatGeometryTest
         for (std::size_t k = 0; k < problem.stage_shapes().size(); ++k) {
             const auto plain = initialize_stage(problem, k);
             const auto relative = initialize_stage(problem, k, true, true);
+            const auto toroidal =
+                initialize_stage(problem, k, true, true, true);
             bool valid =
                 !plain.radius_reference && !plain.compensated_geometry &&
-                relative.radius_reference && relative.compensated_geometry;
+                !plain.compensated_toroidal_geometry &&
+                relative.radius_reference && relative.compensated_geometry &&
+                !relative.compensated_toroidal_geometry &&
+                toroidal.compensated_geometry &&
+                toroidal.compensated_toroidal_geometry &&
+                toroidal.state == relative.state;
             for (int n = 0; n <= relative.ntor; ++n) {
                 valid &= relative.radius_reference->coefficients[n] ==
                          problem.boundary().rbcc[n];
@@ -277,8 +286,128 @@ class FloatGeometryTest
                             message =
                                 "float radius-reference absolute force "
                                 "mismatch";
-                        self->callback(std::move(message));
+                        if (!message.empty())
+                            self->callback(std::move(message));
+                        else
+                            self->toroidal_compensated();
                     });
+            });
+    }
+
+    void toroidal_compensated(int ns = 4) {
+        input_.ns = ns;
+        input_.radius_reference.reset();
+        input_.compensated_geometry = true;
+        input_.compensated_toroidal_geometry = false;
+        input_.state.assign(6 * 18 * std::size_t(ns), 0.0F);
+        const auto coefficient = [this](int family, int m, int n, int surface,
+                                        float value) {
+            input_.state[(family * 18 + m * 3 + n) * input_.ns + surface] =
+                value;
+        };
+        // Each m=1 toroidal sum carries a sub-ULP term that matters after
+        // cancellation with m=3. Exercise all four R/Z harmonic families.
+        for (int j = 0; j < ns; ++j) {
+            coefficient(0, 1, 0, j, 0.75F);
+            coefficient(0, 1, 1, j, 0x1p-27F);
+            coefficient(0, 3, 0, j, -0.75F);
+            coefficient(1, 1, 0, j, 0.5F);
+            coefficient(1, 1, 1, j, 0x1p-26F);
+            coefficient(1, 3, 0, j, 0.5F);
+            coefficient(3, 1, 1, j, 0.375F);
+            coefficient(3, 1, 2, j, 0x1p-28F);
+            coefficient(3, 3, 1, j, 0.375F);
+            coefficient(4, 1, 1, j, 0.625F);
+            coefficient(4, 1, 2, j, 0x1p-27F);
+            coefficient(4, 3, 1, j, -0.625F);
+        }
+        const auto self = shared_from_this();
+        enqueue_toroidal_inverse(
+            device, input_,
+            [self](std::string error, ToroidalInverseResult baseline) {
+                if (!error.empty()) {
+                    self->callback(std::move(error));
+                    return;
+                }
+                self->native_ = std::move(baseline);
+                self->input_.compensated_toroidal_geometry = true;
+                self->check_toroidal_compensated();
+            });
+    }
+
+    void check_toroidal_compensated() {
+        const auto self = shared_from_this();
+        const auto expected = toroidal_inverse_reference(input_);
+        enqueue_toroidal_inverse(
+            device, input_,
+            [self, expected](std::string error, ToroidalInverseResult value) {
+                if (!error.empty()) {
+                    self->callback(std::move(error));
+                    return;
+                }
+                const auto points = std::size_t(self->input_.ns) * 128;
+                const auto same_bits = [](float a, float b) {
+                    return std::bit_cast<std::uint32_t>(a) ==
+                           std::bit_cast<std::uint32_t>(b);
+                };
+                bool valid = value.geometry.size() == 18 * points &&
+                             std::equal(value.r_con.begin(), value.r_con.end(),
+                                        self->native_.r_con.begin(),
+                                        self->native_.r_con.end(), same_bits) &&
+                             std::equal(value.z_con.begin(), value.z_con.end(),
+                                        self->native_.z_con.begin(),
+                                        self->native_.z_con.end(), same_bits);
+                if (!valid) {
+                    self->callback(
+                        "m=1 toroidal output shape/constraint mismatch");
+                    return;
+                }
+                for (std::size_t field = 0; field < 18 && valid; ++field) {
+                    for (std::size_t p = 0; p < points; ++p) {
+                        const auto i = field * points + p;
+                        if (field != 6 && field != 7) {
+                            valid &= same_bits(value.geometry[i],
+                                               self->native_.geometry[i]);
+                        } else {
+                            const float reference = expected.geometry[i];
+                            const float ulp =
+                                std::abs(std::nextafter(reference, INFINITY) -
+                                         reference);
+                            // Near angular zeros, cancellation exposes the
+                            // rounding of both the double oracle and paired
+                            // sums of unit-scale terms. Allow 2^-45 absolute
+                            // there; the analytic case below stays exact.
+                            valid &= std::isfinite(value.geometry[i]) &&
+                                     std::abs(value.geometry[i] - reference) <=
+                                         2.0F * ulp + 0x1p-45F;
+                        }
+                        if (!valid) {
+                            std::ostringstream detail;
+                            detail.precision(9);
+                            detail << "m=1 toroidal compensation mismatch: "
+                                   << "field=" << field << " point=" << p
+                                   << " actual=" << value.geometry[i]
+                                   << " expected=" << expected.geometry[i];
+                            self->callback(detail.str());
+                            return;
+                        }
+                    }
+                }
+                // At theta=zeta=0 the Rcc terms reduce analytically to
+                // sqrt(ns-1) * 2^-27 on surface 1. The old scalar toroidal
+                // intermediate loses this term before the m=3 cancellation.
+                const auto index = 6 * points + 128;
+                const float exact =
+                    float(std::sqrt(double(self->input_.ns - 1)) * 0x1p-27);
+                valid &= value.geometry[index] == exact &&
+                         self->native_.geometry[index] == 0.0F;
+                if (!valid)
+                    self->callback(
+                        "m=1 toroidal cancellation lost radial detail");
+                else if (self->input_.ns == 4)
+                    self->toroidal_compensated(2);
+                else
+                    self->callback({});
             });
     }
 };

@@ -59,6 +59,7 @@ struct AxisymmetricStageData {
     bool prescribed_current = false;
     FloatRadiusReferencePtr radius_reference;
     bool compensated_geometry = false;
+    bool compensated_toroidal_geometry = false;
     std::vector<float> state;
     // Low words for precision-selective WebGPU solves. Ordinary mixed-float
     // callers ignore this vector and retain the existing fast path.
@@ -70,10 +71,12 @@ struct AxisymmetricStageData {
 
 // Constructs the same f32 cold-start state and immutable radial profiles as
 // the CUDA stage setup for either axisymmetric or folded 3-D modes.
-AxisymmetricStageData initialize_stage(const ValidatedProblem& problem,
-                                       std::size_t stage_index,
-                                       bool float_radius_reference = false,
-                                       bool compensated_geometry = false);
+AxisymmetricStageData initialize_stage(
+    const ValidatedProblem& problem,
+    std::size_t stage_index,
+    bool float_radius_reference = false,
+    bool compensated_geometry = false,
+    bool compensated_toroidal_geometry = false);
 
 AxisymmetricStageData initialize_axisymmetric_stage(
     const ValidatedProblem& problem,
