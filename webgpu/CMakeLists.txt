@@ -42,6 +42,7 @@ target_sources(cumes_webgpu PRIVATE ${PROJECT_SOURCE_DIR}/src/webgpu/reduction.c
 # generated WGSL. Browser compilation receives ordinary WGSL, with no runtime
 # substitution or precision branches. Output names preserve the C++ bindings.
 find_program(CUMES_WEBGPU_NODE NAMES node nodejs REQUIRED)
+find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
 set(CUMES_SHADER_COMPILER ${PROJECT_SOURCE_DIR}/scripts/compile_webgpu_shaders.mjs)
 set(CUMES_SHADER_DIR ${PROJECT_SOURCE_DIR}/src/webgpu/shaders)
 set(CUMES_GENERATED_SHADERS ${CMAKE_CURRENT_BINARY_DIR}/shaders)
@@ -125,33 +126,49 @@ target_link_options(cumes_webgpu PRIVATE
   "--embed-file=${PROJECT_SOURCE_DIR}/inputs/w7x.json@/inputs/w7x.json")
 
 set_target_properties(cumes_webgpu PROPERTIES SUFFIX ".html")
+# All files copied or embedded by the browser asset stage belong to the build
+# graph, including newly added presets. Share the generated coil selection
+# with that stage so its input dependencies cannot drift from its copy loop.
+file(GLOB_RECURSE CUMES_WEBGPU_ASSETS CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/*)
+set(CUMES_WEBGPU_COIL_PRESETS solovev cth_like)
+foreach(preset IN LISTS CUMES_WEBGPU_COIL_PRESETS)
+  list(APPEND CUMES_WEBGPU_ASSETS
+    ${PROJECT_SOURCE_DIR}/deps/vacuum-field/tests/data/coils.${preset})
+endforeach()
 add_custom_command(
   TARGET cumes_webgpu POST_BUILD
   COMMAND ${CMAKE_COMMAND}
           -DARTIFACT_BASE=$<TARGET_FILE_DIR:cumes_webgpu>/cumes_webgpu
           -DFRONTEND_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+          "-DCOIL_PRESETS=${CUMES_WEBGPU_COIL_PRESETS}"
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
-  COMMENT "Adding content versions to the WebGPU runtime artifacts")
+  COMMENT "Adding content versions to the WebGPU runtime artifacts"
+  VERBATIM)
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
-  ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
-  ${CMAKE_CURRENT_SOURCE_DIR}/browser_ui.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/equilibrium_view.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/orbit_renderer.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/boundary_editor.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/free_boundary.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/coil_geometry.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/presets/solovev.json
-  ${CMAKE_CURRENT_SOURCE_DIR}/presets/w7x.json
-  ${CMAKE_CURRENT_SOURCE_DIR}/presets/cth_like.json
-  ${CMAKE_CURRENT_SOURCE_DIR}/residual_plot.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/verification_worker.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/browser_bridge.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/timestamp_capture.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/iteration_timing.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/runtime_threads.js
-  ${CMAKE_CURRENT_SOURCE_DIR}/cache_bust_artifacts.cmake
+  ${CUMES_WEBGPU_ASSETS}
   ${PROJECT_SOURCE_DIR}/inputs/solovev.json
   ${PROJECT_SOURCE_DIR}/inputs/w7x.json)
+
+# CD asks the build system for the completed target's inputs, including
+# compiler-discovered headers and files read by the packager. No source-tree
+# path filters need to be maintained in the workflow.
+add_custom_target(cumes_webgpu_pages
+  COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/pages
+  COMMAND ${CUMES_WEBGPU_NODE} ${PROJECT_SOURCE_DIR}/scripts/package_webgpu_pages.mjs
+          $<TARGET_FILE_DIR:cumes_webgpu> ${CMAKE_BINARY_DIR}/pages
+          ${CMAKE_BINARY_DIR}/pages-package-inputs.json
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/webgpu_pages_fingerprint.py
+          ${PROJECT_SOURCE_DIR} ${CMAKE_BINARY_DIR} cumes_webgpu_pages
+          ${CMAKE_BINARY_DIR}/pages-package-inputs.json
+          ${CMAKE_BINARY_DIR}/pages-fingerprint.txt
+  DEPENDS cumes_webgpu
+          ${PROJECT_SOURCE_DIR}/scripts/package_webgpu_pages.mjs
+          ${PROJECT_SOURCE_DIR}/scripts/webgpu_pages_fingerprint.py
+          ${PROJECT_SOURCE_DIR}/CMakePresets.json
+          ${PROJECT_SOURCE_DIR}/.github/workflows/pages.yml
+  COMMENT "Packaging and fingerprinting the WebGPU Pages target"
+  VERBATIM)
 
 # CTest cannot provide a browser WebGPU implementation, but it can guard the
 # complete browser artifact set. Emscripten 6 embeds the preloaded shader in
@@ -176,6 +193,11 @@ add_test(NAME webgpu_coils
           ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_coils.mjs
           $<TARGET_FILE:cumes_coils>)
 set_tests_properties(webgpu_coils PROPERTIES LABELS "unit;webgpu")
+add_test(NAME webgpu_pages_fingerprint
+  COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+          ${Python3_EXECUTABLE}
+          ${PROJECT_SOURCE_DIR}/scripts/test_webgpu_pages_fingerprint.py)
+set_tests_properties(webgpu_pages_fingerprint PROPERTIES LABELS "unit;webgpu")
 
 # The CUDA and Wasm vacuum bridges share these analytic contracts.
 add_executable(test_webgpu_vacuum_bridge

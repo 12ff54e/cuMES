@@ -41,7 +41,7 @@ string(REPLACE "src=\"cumes_webgpu.js\""
 file(WRITE "${html}" "${contents}")
 
 file(COPY "${FRONTEND_SOURCE_DIR}/presets/" DESTINATION "${artifact_dir}/presets")
-foreach(preset IN ITEMS solovev cth_like)
+foreach(preset IN LISTS COIL_PRESETS)
   configure_file("${FRONTEND_SOURCE_DIR}/../deps/vacuum-field/tests/data/coils.${preset}"
                  "${artifact_dir}/presets/coils.${preset}" COPYONLY)
 endforeach()

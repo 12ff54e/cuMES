@@ -1810,25 +1810,37 @@ normalized input record.
 ## GitHub Pages deployment
 
 The browser solver is published at <https://12ff54e.github.io/cuMES/>.
-Pushing to `main` runs `.github/workflows/pages.yml` when the browser app,
-WebGPU backend, shared build inputs, browser checks, or Pages workflow changes.
-The workflow's `paths` list includes the browser dependency gitlinks; unrelated
-documentation and native CUDA source changes do not trigger a deployment.
-Manual deployment is also available through `workflow_dispatch`. The workflow
-checks out the pinned browser dependencies, builds with Emscripten 6.0.9, runs
-CTest, and deploys the packaged static site through the `github-pages` environment.
+Every push to `main` runs `.github/workflows/pages.yml`: it checks out the
+pinned browser dependencies, builds with Emscripten 6.0.9, and runs CTest.
+The `cumes_webgpu_pages` CMake target packages the site and fingerprints its
+Ninja dependency graph, compiler-discovered headers, packaging inputs, and
+build commands. New sources, relocated headers, presets, and dependency code
+follow the build graph without a separate workflow path list. The preset and
+workflow themselves are also inputs so build-setting changes are included.
+
+Deployment is skipped when the fingerprint matches the last successful Pages
+deployment. Unrelated documentation and native source changes therefore still
+run the browser build and checks, but do not publish a new site. Git revision
+and dirty-state metadata are excluded from the fingerprint; the binary retains
+its full build provenance. A missing cache or a manual `workflow_dispatch`
+forces deployment. Each cached fingerprint is keyed by GitHub's environment
+deployment ID and saved only after publishing succeeds. A failed deployment
+or cache save cannot select an older site's fingerprint; the next run deploys
+again. Reverting a change also republishes the earlier content. Deployment
+uses the `github-pages` environment.
 The environment must allow deployments from `main`. Push any new submodule
 commits to their remotes before pushing the parent branch.
 
-To prepare the same package locally after building:
+To prepare the same package and fingerprint locally (Ninja 1.11+ and Python 3.9+):
 
 ```bash
-node scripts/package_webgpu_pages.mjs \
-  ../tmp/cumes-build-webgpu/webgpu ../tmp/cumes-pages
+cmake --build --preset webgpu --target cumes_webgpu_pages
 ```
 
-Use the build directory configured for the current checkout. The package
-contains the solver, coil converter, editor assets, presets, and their licenses;
+Use the build directory configured for the current checkout. The package is
+written to `pages/` in that build directory, alongside `pages-fingerprint.txt`
+and its JSON input record. The package contains the solver, coil converter,
+editor assets, presets, and their licenses;
 `index.html` and `cumes_webgpu.html` open the same application. Existing query
 options, including `?mode=test`, remain available.
 

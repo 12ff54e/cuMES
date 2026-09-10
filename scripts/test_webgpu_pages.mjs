@@ -94,7 +94,14 @@ try {
     await writeFile(join(build, 'presets', name), 'fixture:' + name);
   await writeFile(join(build, 'CTestTestfile.cmake'), 'do not publish');
   await writeFile(join(build, 'presets', 'unwanted.nc'), 'do not publish');
-  await packageWebgpuPages(build, output);
+  const inputsFile = join(scratch, 'package-inputs.json');
+  await packageWebgpuPages(build, output, inputsFile);
+  const inputs = JSON.parse(await readFile(inputsFile, 'utf8'));
+  for (const name of ['pages_bootstrap.js', 'vendor/coi-serviceworker/coi-serviceworker.js',
+    'vendor/coi-serviceworker/LICENSE', '../LICENSE', '../deps/webgpu-fft/LICENSE', '../deps/vacuum-field/LICENSE'])
+    assert(inputs.includes(fileURLToPath(new URL('../webgpu/' + name, import.meta.url))),
+      'packaging dependencies must follow the actual reads and copies: ' + name);
+  for (const name of assets) assert(inputs.includes(join(build, name)));
   const index = await readFile(join(output, 'index.html'), 'utf8');
   assert.equal(index, await readFile(join(output, 'cumes_webgpu.html'), 'utf8'));
   assert(index.includes('cumes_webgpu.js?v=abcdef'));
