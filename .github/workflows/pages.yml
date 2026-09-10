@@ -2,7 +2,34 @@ name: WebGPU Pages
 
 on:
   push:
-    branches: [webgpu]
+    branches: [main]
+    paths:
+      - '.github/workflows/pages.yml'
+      - '.gitmodules'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'cmake/CumesOptions.cmake'
+      - 'cmake/CumesWarnings.cmake'
+      - 'webgpu/**'
+      - 'src/webgpu/**'
+      # The Wasm build also consumes shared headers, host code, and inputs.
+      - 'include/**'
+      - 'src/cumes/config/**'
+      - 'src/cumes/core/**'
+      - 'src/cumes/io/**'
+      - 'src/json_parser.cpp'
+      - 'src/free_boundary_impl.cuh'
+      - 'inputs/solovev.json'
+      - 'inputs/w7x.json'
+      - 'scripts/compile_webgpu_shaders.mjs'
+      - 'scripts/package_webgpu_pages.mjs'
+      - 'scripts/test_webgpu_*.mjs'
+      - 'scripts/include/webgpu_cdp.mjs'
+      - 'tests/test_vacuum_bridge.cpp'
+      # Submodule updates appear as changes to the gitlink itself.
+      - 'deps/webgpu-fft'
+      - 'deps/vacuum-field'
+      - 'LICENSE'
   workflow_dispatch:
 
 permissions:

@@ -1810,10 +1810,14 @@ normalized input record.
 ## GitHub Pages deployment
 
 The browser solver is published at <https://12ff54e.github.io/cuMES/>.
-Pushing the `webgpu` branch runs `.github/workflows/pages.yml`: it checks out
-the pinned browser dependencies, builds with Emscripten 6.0.9, runs CTest,
-and deploys the packaged static site through the `github-pages` environment.
-The environment must allow deployments from `webgpu`. Push any new submodule
+Pushing to `main` runs `.github/workflows/pages.yml` when the browser app,
+WebGPU backend, shared build inputs, browser checks, or Pages workflow changes.
+The workflow's `paths` list includes the browser dependency gitlinks; unrelated
+documentation and native CUDA source changes do not trigger a deployment.
+Manual deployment is also available through `workflow_dispatch`. The workflow
+checks out the pinned browser dependencies, builds with Emscripten 6.0.9, runs
+CTest, and deploys the packaged static site through the `github-pages` environment.
+The environment must allow deployments from `main`. Push any new submodule
 commits to their remotes before pushing the parent branch.
 
 To prepare the same package locally after building:
