@@ -71,7 +71,7 @@ signed-n perturbation converges to (9.441e-13, 3.740e-13, 2.289e-14).
 The same 3-D boundary in scalar precision converges at the editor's 1e-5
 threshold to (9.674e-06, 4.216e-06, 5.598e-08).
 The complete browser conformance/Solovev gate and the WebGPU CTest suite pass.
-The forwarded Chrome endpoint was unavailable for this qualification.
+Chrome qualification is recorded below.
 
 ## Free-boundary coupling
 
@@ -133,11 +133,65 @@ final R/Z coefficient difference is 1.7e-7, and lambda differs by at most
 The browser state also reconverges through a native double free-boundary
 checkpoint replay in 51 passes, with residuals below 1e-12.
 
+## Chrome qualification (2026-09-10)
+
+The user's forwarded Chrome 153.0.8010.36 on Windows 10 / NVIDIA RTX 3060 Ti
+passes the full cuMES WebGPU conformance suite, including all twelve families
+in scalar and paired precision, axisymmetric/3-D operator references, vacuum
+pressure forces, validity gates, and the symmetric Solovev regression. All
+17 WebGPU CTest checks also pass. Runs use separate temporary tabs in the
+existing browser window, redirect editor settings to session storage, and
+execute serially on the adapter.
+
+The following complete asymmetric solves pass every configured residual and
+the controller/plot consistency checks. Paired means paired-f32 plasma
+arithmetic, not native f64. Its threshold is 1e-12; the scalar editor uses
+1e-5. Iterations below sum the effective counts over all radial stages.
+
+| Case | Plasma precision / vacuum | Iterations | Maximum final residual |
+| --- | --- | ---: | ---: |
+| Fixed tokamak | Paired | 498 | 9.500e-13 |
+| Fixed 3-D, ntor=1, nfp=3 | Paired | 608 | 9.503e-13 |
+| Fixed 3-D, ntor=1, nfp=3 | Scalar | 94 | 9.620e-6 |
+| Free tokamak | Paired / HOST vacuum | 1326 | 9.507e-13 |
+| Free tokamak | Paired / WebGPU vacuum, Wasm LU | 1326 | 9.520e-13 |
+| Free tokamak | Paired / WebGPU vacuum, resident LU | 1326 | 9.511e-13 |
+| Free 3-D, ntor=1, nzeta=16 | Paired / HOST vacuum | 1323 | 9.485e-13 |
+| Free 3-D, ntor=1, nzeta=16 | Paired / WebGPU vacuum, Wasm LU | 1323 | 9.474e-13 |
+
+The fixed cases use 5/11/33 radial surfaces; the free cases use 16/32. The
+free 3-D case adds the same signed-n perturbations as
+`test_asymmetric_free_solver`, with 16 matching MAKEGRID toroidal planes.
+Its coil geometry remains axisymmetric; the initial LCFS has toroidal modes.
+Downloaded binary v9 outputs retain all twelve families, finite scientific
+fields, and negative Jacobians. The fixed LCFS agrees with the embedded
+boundary within 4.4e-15 m in paired precision and 4.6e-8 m in scalar precision;
+free-boundary outputs show the expected moving LCFS.
+
+The separate vacuum-library browser gate also passes, including resident LU
+fixtures through 256 unknowns, singular/nonfinite rejection, independent
+factorization checks, and full/partial asymmetric updates with both LU
+backends. This qualifies resident LU on this Chrome adapter; the Firefox
+limitation below still applies. For the free tokamak, HOST versus WebGPU vacuum
+changes final R/Z coefficients by at most 1.1e-7 and lambda by at most 2.2e-7
+over the two tested GPU LU choices. These comparisons are numerical
+consistency checks, not an independent asymmetric equilibrium benchmark.
+For the free ntor=1 case, HOST versus WebGPU vacuum with Wasm LU differs by
+at most 8.0e-8 in R/Z and 1.5e-7 in lambda.
+
+Captures, effective input JSON, controller traces, scientific outputs, and
+output checks are in `../tmp/cumes-asym-validation/chrome-20260910/`. The Chrome
+harness accepts `CUMES_INPUT_JSON=inputs/free_bdy/asymmetric_tokamak.json`
+with `?boundary=free&precision=double&trace=1` and the desired `vacuum` /
+`vacuum_lu` query options. Omit `coils=` when injecting a custom free input,
+so a named preset does not replace it. Set `CUMES_CAPTURE_OUTPUT=1` and
+`CUMES_CLOSE_TEST_TAB=1` to save the binary and close the test tab.
+
 ## Remaining qualification limits
 
 Newton corrections, the retained tangent operator, and Boozer export reject
 asymmetric states because their operators support only the original six
 families. The opt-in resident WebGPU LU limit is 256 total sine/cosine unknowns.
-Its existing algebra fixture fails on this Firefox adapter on both the original
-and modified vacuum library, so this configuration is not qualified here;
-use the default Wasm-double LU. The forwarded Chrome endpoint was unavailable.
+Its existing algebra fixture fails on the Firefox adapter above on both the
+original and modified vacuum library, so resident LU remains unqualified on
+that adapter; use the default Wasm-double LU there.

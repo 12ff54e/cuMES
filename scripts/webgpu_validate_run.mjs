@@ -1,8 +1,9 @@
 // Run a browser correctness gate in a new tab with tab-scoped test settings.
 // Usage: node scripts/webgpu_validate_run.mjs APP_URL OUTPUT_PREFIX [BASELINE_TRACE]
 // APP_URL chooses the solve/conformance mode. Never runs concurrent GPU solves.
-// CUMES_INPUT_JSON loads a fixed input into the tab-local advanced editor
-// (?preset=w7x); the page retains its displayed browser precision tolerance.
+// CUMES_INPUT_JSON loads a fixed (?preset=w7x) or bundled-coil free input
+// (?boundary=free without coils=) into tab-local editor storage. The page
+// retains its displayed browser precision tolerance.
 // CUMES_CAPTURE_OUTPUT=1 saves the scientific binary and its payload digest.
 import {readFile, writeFile} from 'node:fs/promises';
 import {isDeepStrictEqual} from 'node:util';
@@ -13,9 +14,21 @@ const [url, prefix, baselinePath, comparison = 'exact'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
 const input = process.env.CUMES_INPUT_JSON ?
   JSON.parse(await readFile(process.env.CUMES_INPUT_JSON, 'utf8')) : undefined;
-if (input && (new URL(url).searchParams.get('preset') !== 'w7x' ||
-    new URL(url).searchParams.get('boundary') === 'free' || input.lfreeb))
-  throw Error('CUMES_INPUT_JSON requires the fixed advanced editor (?preset=w7x)');
+let inputStorage;
+if (input) {
+  const query = new URL(url).searchParams;
+  if (input.lfreeb) {
+    const preset = input.coils_file?.match(/coils\.(solovev|w7x|cth_like)$/)?.[1];
+    if (!preset || query.get('boundary') !== 'free' || query.has('coils'))
+      throw Error('Custom free input requires a bundled coil file and ?boundary=free without coils=');
+    inputStorage = {key: 'cumes.free.v1', value: {preset,
+      input: {...input, coils_file: '/inputs/coils.' + preset}}};
+  } else {
+    if (query.get('preset') !== 'w7x' || query.get('boundary') === 'free')
+      throw Error('Custom fixed input requires the advanced editor (?preset=w7x)');
+    inputStorage = {key: 'cumes.fixed.w7x.v1', value: input};
+  }
+}
 if (!['exact', 'paired-reductions'].includes(comparison))
   throw Error('Comparison must be exact or paired-reductions');
 const base = 'http://127.0.0.1:' + (process.env.CUMES_CDP_PORT || '9333');
@@ -33,7 +46,7 @@ try {
   await call('Page.enable');
   await call('Page.addScriptToEvaluateOnNewDocument', {source:
     `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});
-    ${input ? `sessionStorage.setItem('cumes.fixed.w7x.v1', ${JSON.stringify(JSON.stringify(input))});` : ''}`});
+    ${inputStorage ? `sessionStorage.setItem(${JSON.stringify(inputStorage.key)}, ${JSON.stringify(JSON.stringify(inputStorage.value))});` : ''}`});
   await call('Page.navigate', {url});
   await call('Page.bringToFront');
   console.log(JSON.stringify({target: page.id, url}));
