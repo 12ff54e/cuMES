@@ -29,7 +29,7 @@ from cumes_plot.coordinates import (
     make_boozer_grid,
     make_pest_grid,
 )
-from cumes_plot.equilibrium import field_lines
+from cumes_plot.equilibrium import boundary_from_params, field_lines
 from cumes_plot.output_paths import figure_path, resolve_output_base
 from cumes_plot.render_3d import add_pyvista_field_lines
 from plot_equilibrium import FIGURE_PARAMETERS
@@ -90,6 +90,28 @@ def _manufactured_file(path):
 
 
 class PlotCoordinateTest(unittest.TestCase):
+    def test_boundary_preserves_phase_and_vertical_displacement(self):
+        theta, zeta = np.meshgrid(
+            np.linspace(0.0, PERIOD, 32, endpoint=False),
+            np.linspace(0.0, PERIOD, 12, endpoint=False), indexing="ij")
+        for phase, offset in ((0.0, 0.0), (0.4, 0.1)):
+            with self.subTest(phase=phase):
+                params = {
+                    "rbc": [(0, 0, 3.0), (1, 1, 0.4 * np.cos(phase))],
+                    "zbs": [(1, -1, 0.6 * np.cos(phase))],
+                }
+                if phase:
+                    params["rbs"] = [(1, 1, -0.4 * np.sin(phase))]
+                    params["zbc"] = [(0, 0, offset),
+                                     (1, -1, 0.6 * np.sin(phase))]
+                r, z = boundary_from_params(params, theta, zeta)
+                np.testing.assert_allclose(
+                    r, 3.0 + 0.4 * np.cos(theta - zeta + phase),
+                    atol=2.0e-15, rtol=0.0)
+                np.testing.assert_allclose(
+                    z, offset + 0.6 * np.sin(theta + zeta + phase),
+                    atol=2.0e-15, rtol=0.0)
+
     def test_field_lines_lift_onto_independent_render_grid(self):
         theta = np.linspace(0.0, PERIOD, 8, endpoint=False)
         zeta = np.linspace(0.0, PERIOD, 4, endpoint=False)

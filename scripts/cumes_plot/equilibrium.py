@@ -298,6 +298,10 @@ def boundary_from_params(params, th, zt):
         R += value * np.cos(m * th - n * zt)
     for m, n, value in params["zbs"]:
         Z += value * np.sin(m * th - n * zt)
+    for m, n, value in params.get("rbs", []):
+        R += value * np.sin(m * th - n * zt)
+    for m, n, value in params.get("zbc", []):
+        Z += value * np.cos(m * th - n * zt)
     return R, Z
 
 
