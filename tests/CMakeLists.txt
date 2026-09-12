@@ -346,6 +346,9 @@ cumes_register_sanitizer_variants(
     test_axisym_backend test_tridiagonal
     test_cuda_graph test_safety_predicates test_prolongation test_radius_reference
     test_odd_geometry)
+if(NOT CUMES_USE_FLOAT)
+  cumes_register_sanitizer_variants(test_equilibrium_tangent_solve)
+endif()
 # test_event_dag registers its sanitizer variants manually: the deliberate
 # pending-event API-error probes are skipped under the sanitizers (they count
 # the intended cudaErrorNotReady return as a sanitizer error).
