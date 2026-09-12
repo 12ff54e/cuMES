@@ -545,6 +545,18 @@ compensated-geometry memcheck/initcheck, and Ada Fourier memcheck pass.
 These are comparisons within each architecture, preserving the respective
 baseline's cuFFT results.
 
+Downstream qualification on 2026-09-13 found a narrower equivalence scope.
+At meow's QA/QH mode-3 resolution, `66a557a` (the inverse constraint-sum
+specialization) first changes the spectral/field arrays relative to its parent
+`f0c17f7`; the following weighted-basis cache `21b6043` preserves those changed
+arrays. Replaying QH with `66a557a` alone reproduces the newer dependency's
+optimization trajectory and column-30 failure. The identical failed input
+also fails on the old pin: the changed trajectory encounters an existing
+cold-solve limitation. QA completes with a different endpoint. This does not
+extend the Solovev/W7-X bitwise qualification above to downstream optimization.
+See [meow's revision isolation](../../meow/docs/performance.md#revision-isolation-2026-09-13)
+for the controlled comparisons and their limits.
+
 These percentages qualify steady-iteration latency. Full-process Ada timings
 were too noisy for a separate end-to-end speedup claim: Nsight located a
 653 ms outlier in the first `cudaMalloc`, and an A/A comparison of the same
