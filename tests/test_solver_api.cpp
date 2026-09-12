@@ -3,6 +3,7 @@
 #include "cumes/solver/equilibrium_solver.hpp"
 #include "cumes_test.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -276,6 +277,27 @@ int main() {
               "solver API: in-memory restart returns a complete equilibrium");
         check(restarted.report.input_params == outcome.report.input_params,
               "solver API: cold and hot runs retain the same input metadata");
+
+        // A collapsed restart is rejected by the Jacobian gate on its only
+        // pass. Budget exhaustion through that early-continue branch must
+        // still publish the controller's iteration and reduced time step.
+        auto collapsed = outcome.equilibrium;
+        for (auto& family : collapsed.families) {
+            std::fill(family.begin(), family.end(), 0.0);
+        }
+        cumes::SolveRequest collapsed_request;
+        collapsed_request.restart = std::cref(collapsed);
+        const auto rejected =
+            solver.solve(validated.value(), collapsed_request);
+        check(!rejected.converged && rejected.report.stages.size() == 1 &&
+                  rejected.report.stages.front().restarts.size() == 1,
+              "solver API: collapsed restart exhausts its Jacobian retry");
+        check(rejected.iterations == 1 && rejected.total_iterations == 1 &&
+                  rejected.report.total_effective_iterations == 1 &&
+                  rejected.report.stages.front().effective_iterations == 1,
+              "solver API: rejected final pass reports effective iterations");
+        check(rejected.delt > 0.0 && rejected.delt < outcome.delt,
+              "solver API: rejected final pass reports reduced time step");
 
         cumes::SolveOutcome repeated = solver.solve(validated.value());
         check(repeated.fsqr == outcome.fsqr && repeated.fsqz == outcome.fsqz &&

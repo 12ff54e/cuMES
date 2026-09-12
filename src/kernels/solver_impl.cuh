@@ -1575,11 +1575,9 @@ SolverResult<T> solver_run(
                             controller.effective_iteration(),
                             controller.restart_anchor());
             res.converged = true;
-            res.iterations = controller.effective_iteration();
             res.fsqr = (T)fsqr_i;
             res.fsqz = (T)fsqz_i;
             res.fsql = (T)fsql_i;
-            res.delt = (T)controller.delta_t();
             // Report the EFFECTIVE iteration count (iter2): restart passes
             // don't advance it, matching vmecpp's bad_resets counter and the
             // ITER column of the table above (the raw pass count, iter+1,
@@ -1668,12 +1666,18 @@ SolverResult<T> solver_run(
         }
 
         if (iter == MAX_ITER_EFF - 1) {
-            res.iterations = controller.effective_iteration();
             res.fsqr = (T)fsqr_i;
             res.fsqz = (T)fsqz_i;
             res.fsql = (T)fsql_i;
-            res.delt = (T)controller.delta_t();
         }
+    }
+
+    // Finalize control telemetry even when the last pass took an early
+    // restart branch (invalid Jacobian, nonfinite residual or maintenance).
+    // A zero-pass diagnostic run retains its zero-iteration result.
+    if (MAX_ITER_EFF > 0) {
+        res.iterations = controller.effective_iteration();
+        res.delt = (T)controller.delta_t();
     }
 
     // Per-pass record (dump/cuMES/per_iter_residuals_cumes.bin) — dump
