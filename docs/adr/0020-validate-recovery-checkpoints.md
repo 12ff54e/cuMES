@@ -55,11 +55,12 @@ finite output fields, positive oriented Jacobian and magnetic energy, and
 one-pass final-grid replay with preserved coefficients. The same test fails
 against the pre-fix library for both transfer policies.
 
-All 63 tests in the local double integration build pass, including the
+All 63 tests in both GPU double integration builds pass, including the
 float-kernel type audit. The recovery regression passes memcheck and initcheck
-with zero errors. Solovev, W7-X, and fixed QA/QH inputs at mode-3 resolution
-retain byte-identical spectral/half-grid arrays and stage residual, iteration,
-and restart records compared with the pre-fix library on TITAN Xp.
+with zero errors on both GPUs. Solovev, W7-X, and fixed QA/QH inputs at mode-3
+resolution retain byte-identical spectral/half-grid arrays, stage residuals,
+iteration counts and restart records compared with the pre-fix library on
+TITAN Xp.
 
 VMEC++ 0.7.0 rejects `tcon0=2`. An independent diagnostic therefore uses
 `tcon0=1` in both solvers while retaining the other input values. Both converge
@@ -68,6 +69,14 @@ is 2.20 mm and the RMS displacement is 0.668 mm on a 64-by-64 angular grid,
 excluding the dependent axis row. This comparison has no gauge alignment and
 is a diagnostic, not a replacement convergence criterion. Production meow
 inputs retain `tcon0=2`.
+
+The full meow QH fast construction completes all five modes on RTX 4090 with
+objective `4.35863809963e-5`, 9.56% lower than the old pin's result. All 132
+printed objective evaluations preceding the unfixed newer revision's failure
+are preserved. Full QA retains the newer revision's `1.39766656956e-6` endpoint
+and byte-identical final boundary JSON. Both saved-boundary QH cold replays
+converge at `1e-12`. The targets, rundown, derivative steps and transfer
+policies are unchanged.
 
 Raw before/after runs, comparison scripts, sanitizer logs, and the downstream
 construction qualification are retained under

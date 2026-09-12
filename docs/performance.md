@@ -707,7 +707,8 @@ time-step telemetry when the last nonlinear pass exits through a Jacobian
 rejection. Finalizing those controller fields after the loop fixes the report;
 a collapsed-restart regression fails before the fix and passes afterward.
 This leaves numerical iteration and convergence policy unchanged. The newer
-dependency still fails meow's full-construction quality gate; see
+dependency initially failed meow's QH construction; the recovery fix in §3.11
+resolves that failure. See
 [meow's qualification record](../../meow/docs/performance.md#dependency-qualification).
 
 Raw benchmark drivers, exact build configurations, per-column binary arrays,
@@ -715,6 +716,35 @@ logs, and `analysis.json` are under
 `../tmp/meow-performance-20260912/`; Ada captures are copied to its
 `rtx4090-tangent-pairs/` directory. The original remote run directory is
 `gervais:/tmp/meow-performance-20260912/`.
+
+### 3.11 Reject invalid pending checkpoints (2026-09-13)
+
+`83726d6` fixes a recovery loop reached by meow's full QH construction. A
+checkpoint refreshed after descent can contain invalid geometry that has not
+yet passed the next evaluation's gates. Restoring it repeatedly prevents any
+further descent, so reducing the time step alone cannot recover.
+
+The native solver retains the preceding checkpoint until the new one passes
+geometry and finite invariant-residual validation. Rejection discards the
+pending checkpoint and restores the preceding state. Buffer ownership rotates
+on the host; each refresh still performs one device copy and no new iteration
+kernels or fences are added. The extra stage allocation is
+`6 * ns * mnmax * sizeof(T)`, or 100,800 bytes on meow's final QH double grid.
+[ADR-0020](adr/0020-validate-recovery-checkpoints.md) records the policy,
+regression fixture, physical checks and independent comparison limits.
+
+The formerly failing cold input now converges on TITAN Xp and RTX 4090 at the
+original `1e-12` tolerances. Its regression covers B-spline and meow's explicit
+Catmull-Rom transfer and passes memcheck/initcheck on both GPUs. Both complete
+63-test integration suites pass. Successful Solovev/W7-X and fixed QA/QH
+mode-3 probes preserve byte-identical arrays and stage records on TITAN Xp.
+
+Full QH construction on RTX 4090 completes all five modes, reaching objective
+`4.35863809963e-5` versus `4.81929127810e-5` with meow's old pin (9.56% lower).
+QA still reaches `1.39766656956e-6`, with the same final boundary JSON as the
+unfixed newer revision. These are reliability/quality qualifications, not
+repeated full-construction speed measurements. See
+[meow's updated-pin record](../../meow/docs/performance.md#qh-recovery-and-updated-pin-2026-09-13).
 
 ## 4. Acceptance policy (verification.md §7)
 
