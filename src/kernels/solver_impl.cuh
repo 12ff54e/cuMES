@@ -1107,14 +1107,31 @@ SolverResult<T> solver_run(
     double previous_fsqr = 1.0;
     double previous_fsqz = 1.0;
 
-    // State rollback: one contiguous state-only checkpoint slab (6*mnmax*ns),
-    // replacing the six separate d_bk_* arrays. The slab order matches the six
-    // old families, so backup/restore become single copies.
+    // State rollback: contiguous state-only slabs (6*mnmax*ns), rotated when
+    // refreshing a checkpoint. Backup/restore still enqueue one copy; the
+    // previous slab protects against a checkpoint whose descent is rejected.
     cumes::DeviceBuffer<T> checkpoint(6 * (size_t)p.ns * p.mnmax);
+    cumes::DeviceBuffer<T> previous_checkpoint(checkpoint.size());
+    bool checkpoint_pending = false;
 
     // Helper: copy current spectral state to backup (one device-to-device copy)
     auto backup_state = [&]() {
         checkpoint.copy_from_async(storage.state_buffer(), stream);
+    };
+
+    // A refreshed checkpoint contains the post-descent state. Its geometry
+    // is only checked on the next pass; retain the preceding checkpoint until
+    // that pass succeeds so a rejected descent cannot poison every rollback.
+    auto reject_pending_checkpoint = [&]() {
+        if (!checkpoint_pending) return;
+        std::swap(checkpoint, previous_checkpoint);
+        checkpoint_pending = false;
+        if (verbose) {
+            printf(
+                "  -> rejected checkpoint at iteration %d; restoring "
+                "previous checkpoint\n",
+                controller.effective_iteration());
+        }
     };
 
     // Helper: restore spectral state from backup + zero velocities
@@ -1503,6 +1520,7 @@ SolverResult<T> solver_run(
         if (host_jac_invalid) {
             recorder.record(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
                             it2_before, it1_before);
+            reject_pending_checkpoint();
             restore_state();
             if (verbose) {
                 cumes::dump_event_bad_jacobian(
@@ -1561,6 +1579,7 @@ SolverResult<T> solver_run(
             // we recover instead: restore the last good state and shrink delt.
             recorder.record(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0,
                             0, 0, 0, it2_before, it1_before);
+            reject_pending_checkpoint();
             restore_state();
             if (verbose) {
                 cumes::dump_event_nonfinite((double)controller.delta_t());
@@ -1569,6 +1588,7 @@ SolverResult<T> solver_run(
                            fsql_i, controller.delta_t());
             continue;
         }
+        checkpoint_pending = false;
         if (verdict.converged) {
             recorder.record(0, fsqr_i, fsqz_i, fsql_i, 0, 0, 0,
                             controller.delta_t(), 0, 0, 0, 0,
@@ -1633,8 +1653,10 @@ SolverResult<T> solver_run(
                            equilibrium.xn(), p.ns, p.mnmax, dact, stream);
 
         if (decision.do_refresh) {
+            std::swap(checkpoint, previous_checkpoint);
             backup_state();  // POST-descent state (vmecpp RestartIteration
                              // NO_RESTART semantics — see comment above)
+            checkpoint_pending = true;
         }
         if (decision.reason != cumes::RestartReason::NONE) {
             // Restore overwrites the just-descended state and zeroes the
