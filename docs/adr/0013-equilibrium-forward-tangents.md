@@ -138,6 +138,47 @@ through 80 variables and every QH mode through 120 variables. A future block
 interface can reduce the still-linear cost in the number of boundary
 directions without changing this contract.
 
+## Resident tangent GMRES
+
+The CUDA tangent solve defaults to a resident backend through
+`TangentLinearOptions::backend`. It reuses `DeviceGmres`, including its device
+reductions, two-pass classical Gram-Schmidt, Givens rotations, and true
+residual checks. The original host modified Gram-Schmidt backend remains
+selectable as `TangentLinearBackend::HOST`. Reordering the reductions and
+using reorthogonalization is a numerical algorithm change (Class C), rather
+than a bitwise scheduling change.
+
+The retained workspace owns a private ordered stream, uploads the primal and
+active-degree maps once, and packs/gathers the existing analytic JVP and
+preconditioner on the device. cuFFT plans follow the supplied compute stream;
+public residual and field materialization calls can subsequently reuse the
+same evaluator on the default stream. Boundary/gauge conventions and physical
+operators are unchanged.
+
+`DeviceGmres` accepts incremental submission and separate absolute and relative
+tolerances. The tangent caller reads one compact control record after at most
+16 Arnoldi steps, avoiding a full restart's unnecessary JVPs after projected
+convergence. Each completed cycle recomputes the true residual before reporting
+convergence. The existing fixed-submission Newton interface delegates to the
+same primitives and retains its fixed operator budget. Restart 300 is supported;
+the basis limit protects integer Hessenberg indexing instead of imposing the
+former limit of 256.
+
+Qualification compares Solovev, QA, and QH states, fields, target columns,
+true residuals, and iteration counts against the retained host backend on
+Pascal and Ada. Manufactured float/double GMRES systems cover incremental
+restarts, capped budgets, singular/nonfinite maps, and basis 300. The boundary
+regression also covers zero RHS, absolute stopping, workspace reuse, backend
+switching, unpreconditioned restarts, and prescribed LCFS rows. The existing
+Solovev nonlinear finite-difference oracle and meow target-derivative checks
+remain required. Measurements and their scope are in
+[performance.md](../performance.md).
+
+This backend accelerates the same implicit tangent map. It does not resolve
+the documented differences between that map and the cold nonlinear optimizer
+derivative, and does not qualify analytic Jacobians as a replacement for the
+fast rundown's cold finite differences.
+
 ## Consequences
 
 A dense Jacobian still contains one column per boundary variable, so forward

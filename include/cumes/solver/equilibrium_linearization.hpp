@@ -22,12 +22,18 @@ struct ResidualJvp {
     std::vector<double> tangent;
 };
 
+enum class TangentLinearBackend { HOST, DEVICE };
+
 struct TangentLinearOptions {
     int max_iterations = 300;
     int restart = 80;
     double relative_tolerance = 1e-4;
     double absolute_tolerance = 1e-10;
     bool use_equilibrium_preconditioner = true;
+    // DEVICE retains Krylov vectors and analytic JVP/preconditioner data on
+    // the GPU, with compact control readbacks between Arnoldi chunks.
+    // HOST preserves the original serial Gram-Schmidt reference.
+    TangentLinearBackend backend = TangentLinearBackend::DEVICE;
 };
 
 struct SpectralTangentSolve {

@@ -64,6 +64,7 @@ class EquilibriumResidualJvpOperator {
     GeometryOperator<ForwardDualDouble> geometry_;
     Preconditioner<ForwardDualDouble> preconditioner_;
     ConstraintOperator<ForwardDualDouble> constraint_;
+    cudaStream_t stream_ = nullptr;
 };
 
 }  // namespace cumes

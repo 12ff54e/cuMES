@@ -1,9 +1,12 @@
 #ifndef CUMES_SRC_TANGENT_IMPL_CUH_
 #define CUMES_SRC_TANGENT_IMPL_CUH_
 
+#include "cumes/numerics/device_gmres.hpp"
 #include "cumes/numerics/dual_spectral_operator.hpp"
 #include "cumes/numerics/equilibrium_residual_jvp.hpp"
 #include "cumes/runtime/cuda_status.hpp"
+#include "cumes/runtime/pinned_buffer.hpp"
+#include "cumes/runtime/stream.hpp"
 #include "cumes/solver/equilibrium_linearization.hpp"
 #include "cumes/state/seed_state.hpp"
 
@@ -21,6 +24,86 @@
 namespace {
 
 using Dual = cumes::ForwardDualDouble;
+
+struct TangentActiveDof {
+    std::size_t first_state = 0;
+    std::size_t second_state = std::numeric_limits<std::size_t>::max();
+    std::size_t residual = 0;
+    double precondition_scale = 1.0;
+};
+
+__device__ double tangent_boundary_value(std::size_t index,
+                                         int ns,
+                                         int mnmax,
+                                         const double* d_boundary) {
+    const std::size_t family_size = static_cast<std::size_t>(ns) * mnmax;
+    const int component = static_cast<int>(index / family_size);
+    const int mode = static_cast<int>((index % family_size) / ns);
+    const int slot = component == 0   ? 0
+                     : component == 1 ? 1
+                     : component == 3 ? 2
+                     : component == 4 ? 3
+                                      : -1;
+    return slot >= 0 ? d_boundary[slot * mnmax + mode] : 0.0;
+}
+
+__global__ void tangent_pack_boundary_kernel(std::size_t size,
+                                             int ns,
+                                             int mnmax,
+                                             const double* d_primal,
+                                             const double* d_boundary,
+                                             Dual* d_state) {
+    const std::size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= size) return;
+    d_state[i] = {d_primal[i],
+                  i % ns == static_cast<std::size_t>(ns - 1)
+                      ? tangent_boundary_value(i, ns, mnmax, d_boundary)
+                      : 0.0};
+}
+
+__global__ void tangent_pack_active_kernel(std::size_t size,
+                                           const double* d_primal,
+                                           const int* d_indices,
+                                           const double* d_active,
+                                           Dual* d_state) {
+    const std::size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= size) return;
+    const int active = d_indices[i];
+    d_state[i] = {d_primal ? d_primal[i] : 0.0,
+                  active >= 0 ? d_active[active] : 0.0};
+}
+
+__global__ void tangent_gather_active_kernel(std::size_t size,
+                                             const TangentActiveDof* d_mapping,
+                                             const Dual* d_residual,
+                                             double* d_result,
+                                             bool preconditioned,
+                                             double sign) {
+    const std::size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= size) return;
+    const auto degree = d_mapping[i];
+    const double scale = preconditioned ? degree.precondition_scale : 1.0;
+    d_result[i] = sign * scale * d_residual[degree.residual].tangent;
+}
+
+__global__ void tangent_expand_result_kernel(std::size_t size,
+                                             int ns,
+                                             int mnmax,
+                                             const int* d_indices,
+                                             const double* d_active,
+                                             const double* d_boundary,
+                                             double* d_result) {
+    const std::size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= size) return;
+    const int active = d_indices[i];
+    double value = active >= 0 ? d_active[active] : 0.0;
+    const int component =
+        static_cast<int>(i / (static_cast<std::size_t>(ns) * mnmax));
+    if (i % ns == static_cast<std::size_t>(ns - 1) && component != 2 &&
+        component != 5)
+        value = tangent_boundary_value(i, ns, mnmax, d_boundary);
+    d_result[i] = value;
+}
 
 cumes::GeometryParityViews<const double> const_geometry_views(
     const cumes::RealSpaceStorage<double>& rs,
@@ -467,6 +550,10 @@ void cumes::EquilibriumResidualJvpOperator::enqueue(
     SpectralView<const ForwardDualDouble, PhysicalStateDomain> state,
     SpectralView<ForwardDualDouble, DecomposedResidualDomain> residual,
     cudaStream_t stream) {
+    if (stream != stream_) {
+        transform_.bind_stream(stream);
+        stream_ = stream;
+    }
     const std::size_t state_bytes = static_cast<std::size_t>(6) * p_.ns *
                                     p_.mnmax * sizeof(ForwardDualDouble);
     check_cuda(cudaMemcpyAsync(state_.state_slab(), state.data(), state_bytes,
@@ -513,10 +600,18 @@ void cumes::EquilibriumResidualJvpOperator::enqueue_precondition(
 
 class cumes::EquilibriumLinearization::Impl {
    public:
-    struct ActiveDof {
-        std::size_t first_state = 0;
-        std::size_t second_state = std::numeric_limits<std::size_t>::max();
-        std::size_t residual = 0;
+    using ActiveDof = TangentActiveDof;
+
+    struct DeviceWorkspace {
+        Stream stream;
+        DeviceBuffer<double> primal, boundary, rhs, solution, conditioned,
+            result;
+        DeviceBuffer<int> state_indices, residual_indices;
+        DeviceBuffer<ActiveDof> mapping;
+        PinnedBuffer<GmresControl<double>> control{1};
+        std::vector<double> boundary_values;
+        std::unique_ptr<DeviceGmres<double>> gmres;
+        int restart = 0;
     };
 
     Impl(const ValidatedProblem& problem,
@@ -557,8 +652,193 @@ class cumes::EquilibriumLinearization::Impl {
     }
 
     ~Impl() {
+        device_.reset();
         evaluator_.reset();
         mode_table_free(mode_table_);
+    }
+
+    void initialize_device(int restart) {
+        if (!device_) {
+            device_ = std::make_unique<DeviceWorkspace>();
+            auto& work = *device_;
+            const std::size_t size = primal_.size();
+            const std::size_t n = active_.size();
+            work.primal.allocate(size);
+            work.boundary.allocate(4 * boundary_size_);
+            work.boundary_values.resize(4 * boundary_size_);
+            work.rhs.allocate(n);
+            work.solution.allocate(n);
+            work.conditioned.allocate(n);
+            work.result.allocate(size);
+            work.state_indices.allocate(size);
+            work.residual_indices.allocate(size);
+            work.mapping.allocate(n);
+            std::vector<int> state_indices(size, -1),
+                residual_indices(size, -1);
+            std::vector<ActiveDof> mapping = active_;
+            const std::size_t family_size =
+                static_cast<std::size_t>(p_.ns) * p_.mnmax;
+            for (std::size_t i = 0; i < n; ++i) {
+                auto& degree = mapping[i];
+                state_indices[degree.first_state] = static_cast<int>(i);
+                if (degree.second_state !=
+                    std::numeric_limits<std::size_t>::max())
+                    state_indices[degree.second_state] = static_cast<int>(i);
+                residual_indices[degree.residual] = static_cast<int>(i);
+                const int mode = static_cast<int>(
+                    (degree.first_state % family_size) / p_.ns);
+                const int m = mode / (p_.ntor + 1),
+                          n_mode = mode % (p_.ntor + 1);
+                degree.precondition_scale =
+                    (m == 0 ? 1.0 : std::sqrt(2.0)) *
+                    (n_mode == 0 ? 1.0 : std::sqrt(2.0));
+            }
+            // The retained evaluator is constructed on the default stream.
+            // Finish that setup before the private stream consumes its tables.
+            check_cuda(cudaStreamSynchronize(0), "tangent evaluator setup");
+            const auto stream = work.stream.get();
+            check_cuda(cudaMemcpyAsync(work.primal.data(), primal_.data(),
+                                       size * sizeof(double),
+                                       cudaMemcpyHostToDevice, stream),
+                       "tangent primal upload");
+            check_cuda(cudaMemcpyAsync(work.state_indices.data(),
+                                       state_indices.data(), size * sizeof(int),
+                                       cudaMemcpyHostToDevice, stream),
+                       "tangent state mapping upload");
+            check_cuda(
+                cudaMemcpyAsync(work.residual_indices.data(),
+                                residual_indices.data(), size * sizeof(int),
+                                cudaMemcpyHostToDevice, stream),
+                "tangent residual mapping upload");
+            check_cuda(cudaMemcpyAsync(work.mapping.data(), mapping.data(),
+                                       n * sizeof(ActiveDof),
+                                       cudaMemcpyHostToDevice, stream),
+                       "tangent active mapping upload");
+            work.stream.synchronize();
+        }
+        if (device_->restart != restart) {
+            device_->gmres = std::make_unique<DeviceGmres<double>>(
+                static_cast<int>(active_.size()), restart);
+            device_->restart = restart;
+        }
+    }
+
+    SpectralTangentSolve solve_device(const BoundaryTangent& direction,
+                                      const TangentLinearOptions& options) {
+        if (direction.rbcc.size() != boundary_size_ ||
+            direction.rbss.size() != boundary_size_ ||
+            direction.zbsc.size() != boundary_size_ ||
+            direction.zbcs.size() != boundary_size_)
+            throw CumesError(
+                "boundary tangent does not match the validated folded basis");
+        if (active_.empty() ||
+            active_.size() >
+                static_cast<std::size_t>(std::numeric_limits<int>::max() - 255))
+            throw CumesError(
+                "tangent active space exceeds device int indexing");
+        const int n = static_cast<int>(active_.size());
+        const int restart = std::min(options.restart, n);
+        initialize_device(restart);
+        auto& work = *device_;
+        const auto stream = work.stream.get();
+        const int full_blocks = static_cast<int>((primal_.size() + 255) / 256);
+        const int active_blocks = (n + 255) / 256;
+        std::size_t offset = 0;
+        for (const auto* family : {&direction.rbcc, &direction.zbsc,
+                                   &direction.rbss, &direction.zbcs}) {
+            std::copy(family->begin(), family->end(),
+                      work.boundary_values.begin() + offset);
+            offset += boundary_size_;
+        }
+        check_cuda(cudaMemcpyAsync(
+                       work.boundary.data(), work.boundary_values.data(),
+                       offset * sizeof(double), cudaMemcpyHostToDevice, stream),
+                   "tangent boundary upload");
+        tangent_pack_boundary_kernel<<<full_blocks, 256, 0, stream>>>(
+            primal_.size(), p_.ns, p_.mnmax, work.primal.data(),
+            work.boundary.data(), dual_state_.data());
+        auto evaluate = [&]() {
+            evaluator_->enqueue({dual_state_.data(), p_.ns, p_.mnmax},
+                                {dual_residual_.data(), p_.ns, p_.mnmax},
+                                stream);
+        };
+        evaluate();
+        tangent_gather_active_kernel<<<active_blocks, 256, 0, stream>>>(
+            n, work.mapping.data(), dual_residual_.data(), work.rhs.data(),
+            false, -1.0);
+        auto precondition = [&](const double* input) {
+            tangent_pack_active_kernel<<<full_blocks, 256, 0, stream>>>(
+                primal_.size(), nullptr, work.residual_indices.data(), input,
+                dual_residual_.data());
+            evaluator_->enqueue_precondition(
+                {dual_residual_.data(), p_.ns, p_.mnmax}, stream);
+            tangent_gather_active_kernel<<<active_blocks, 256, 0, stream>>>(
+                n, work.mapping.data(), dual_residual_.data(),
+                work.conditioned.data(), true, 1.0);
+        };
+        auto apply = [&](const double* input, double* output, cudaStream_t) {
+            if (options.use_equilibrium_preconditioner) {
+                precondition(input);
+                input = work.conditioned.data();
+            }
+            tangent_pack_active_kernel<<<full_blocks, 256, 0, stream>>>(
+                primal_.size(), work.primal.data(), work.state_indices.data(),
+                input, dual_state_.data());
+            evaluate();
+            tangent_gather_active_kernel<<<active_blocks, 256, 0, stream>>>(
+                n, work.mapping.data(), dual_residual_.data(), output, false,
+                1.0);
+        };
+        auto read_control = [&]() {
+            check_cuda(cudaMemcpyAsync(work.control.data(),
+                                       work.gmres->control_device(),
+                                       sizeof(GmresControl<double>),
+                                       cudaMemcpyDeviceToHost, stream),
+                       "tangent GMRES control");
+            work.stream.synchronize();
+            return *work.control.data();
+        };
+        work.gmres->enqueue_start(work.rhs.data(), work.solution.data(),
+                                  options.relative_tolerance,
+                                  options.absolute_tolerance, stream);
+        auto control = read_control();
+        while (control.active && control.steps < options.max_iterations) {
+            const int count =
+                std::min(restart, options.max_iterations - control.steps);
+            for (int first = 0; first < count;) {
+                // Bound unnecessary expensive JVPs after projected convergence
+                // while transferring only one small record per chunk.
+                const int chunk = std::min(16, count - first);
+                work.gmres->enqueue_steps(apply, first, chunk, stream);
+                first += chunk;
+                control = read_control();
+                if (!control.cycle_active) break;
+            }
+            work.gmres->enqueue_finish(apply, work.rhs.data(),
+                                       work.solution.data(), stream);
+            control = read_control();
+        }
+        const double* active_state = work.solution.data();
+        if (options.use_equilibrium_preconditioner) {
+            precondition(active_state);
+            active_state = work.conditioned.data();
+        }
+        tangent_expand_result_kernel<<<full_blocks, 256, 0, stream>>>(
+            primal_.size(), p_.ns, p_.mnmax, work.state_indices.data(),
+            active_state, work.boundary.data(), work.result.data());
+        SpectralTangentSolve result;
+        result.state_tangent.resize(primal_.size());
+        result.initial_residual = control.rhs_norm;
+        result.final_residual = control.residual_norm;
+        result.iterations = control.steps;
+        result.converged = control.converged;
+        check_cuda(
+            cudaMemcpyAsync(result.state_tangent.data(), work.result.data(),
+                            primal_.size() * sizeof(double),
+                            cudaMemcpyDeviceToHost, stream),
+            "tangent solution download");
+        work.stream.synchronize();
+        return result;
     }
 
     ResidualJvp evaluate(std::span<const double> direction) {
@@ -727,6 +1007,7 @@ class cumes::EquilibriumLinearization::Impl {
     std::vector<double> primal_;
     std::vector<ForwardDualDouble> host_dual_;
     std::vector<ActiveDof> active_;
+    std::unique_ptr<DeviceWorkspace> device_;
 };
 
 cumes::EquilibriumLinearization::EquilibriumLinearization(
@@ -785,6 +1066,10 @@ cumes::EquilibriumLinearization::solve_boundary_tangent(
         options.relative_tolerance < 0.0 || options.absolute_tolerance < 0.0) {
         throw CumesError("invalid tangent linear-solver options");
     }
+    if (options.backend == TangentLinearBackend::DEVICE)
+        return impl_->solve_device(direction, options);
+    if (options.backend != TangentLinearBackend::HOST)
+        throw CumesError("invalid tangent linear-solver backend");
     const ResidualJvp boundary = boundary_residual_jvp(direction);
     const std::size_t n = impl_->active_.size();
     std::vector<double> rhs(n);

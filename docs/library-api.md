@@ -141,6 +141,44 @@ speedup is case-dependent. The [policy ADR](adr/0016-opt-in-newton-corrections.m
 records acceptance, rollback, controller handling and qualification. This
 option is explicit per solve and independent of process-environment opt-in.
 
+### Equilibrium tangents
+
+`EquilibriumLinearization` retains the final-grid operators around a converged
+fixed-boundary, stellarator-symmetric, precise-double equilibrium. It applies
+analytic residual JVPs, solves boundary tangents, and materializes field/profile
+derivatives without re-running the nonlinear solve:
+
+```cpp
+cumes::EquilibriumLinearization linearization(problem, outcome.equilibrium);
+cumes::TangentLinearOptions options;
+options.backend = cumes::TangentLinearBackend::DEVICE;
+options.restart = 300;
+options.max_iterations = 1000;
+auto tangent = linearization.solve_boundary_tangent(direction, options);
+if (tangent.converged) {
+    auto fields = linearization.materialize_tangent(
+        tangent.state_tangent, outcome.equilibrium, outcome.profiles);
+}
+```
+
+The default device backend keeps the primal state, active-degree maps, Krylov
+basis, and preconditioner intermediates resident. It uploads the boundary
+direction, reads compact convergence records between batches of at most 16
+Arnoldi steps, and downloads the completed state once. Allocation is lazy on the first
+device solve and reused across directions; changing the restart size rebuilds
+the Krylov workspace. Memory scales as `sizeof(double) * active_dofs *
+(restart + 1)` for the basis, plus the small Hessenberg matrix and operator
+scratch. One retained session is used serially.
+
+`TangentLinearBackend::HOST` retains the original CPU Gram-Schmidt solver for
+comparison. Both backends use the same active/gauge rows, optional right
+preconditioner, iteration budget, and absolute/relative stopping tolerances.
+`final_residual` is the true active residual after a restart update, including
+when the budget is exhausted. A small linear residual does not establish
+agreement with an optimizer's cold nonlinear derivative; the existing
+[tangent qualification limits](verification.md#7-equilibrium-tangent-branch-qualification)
+still apply.
+
 ### Output API
 
 Binary, NetCDF, HDF5, checkpoint, and Boozer publication stay separate from the

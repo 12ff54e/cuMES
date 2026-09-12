@@ -17,7 +17,8 @@ enum class System {
     NEAR_BREAKDOWN,
     SINGULAR,
     NONFINITE,
-    ROTATION
+    ROTATION,
+    CYCLIC
 };
 int failures = 0;
 
@@ -45,11 +46,18 @@ __global__ void apply_tridiagonal(int size,
 }
 
 template <class T>
+__global__ void apply_cyclic(int size, const T* d_input, T* d_output) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size) d_output[i] = d_input[(i + size - 1) % size];
+}
+
+template <class T>
 void exercise_system(System system,
                      int size,
                      int basis,
                      int budget,
-                     T amplitude = T(1)) {
+                     T amplitude = T(1),
+                     bool incremental = false) {
     constexpr bool IS_FLOAT = std::is_same_v<T, float>;
     const T tolerance = IS_FLOAT ? T(1e-5) : T(1e-12);
     const long double error_limit = IS_FLOAT ? 2e-5L : 2e-12L;
@@ -76,6 +84,7 @@ void exercise_system(System system,
                       (system == System::DIAGONAL
                            ? T(0.125 * (i % 9 - 4))
                            : T(std::sin(0.013 * i) + 0.1 * (i % 7 - 3) + 0.5));
+        if (system == System::CYCLIC) solution[i] = i == 0 ? amplitude : T(0);
     }
     for (int i = 0; i < size; ++i) {
         long double value = static_cast<long double>(diagonal[i]) * solution[i];
@@ -83,6 +92,7 @@ void exercise_system(System system,
             value += static_cast<long double>(lower[i]) * solution[i - 1];
         if (i + 1 < size)
             value += static_cast<long double>(upper[i]) * solution[i + 1];
+        if (system == System::CYCLIC) value = solution[(i + size - 1) % size];
         rhs[i] = system == System::SINGULAR || system == System::NONFINITE
                      ? T(1)
                      : static_cast<T>(value);
@@ -102,6 +112,11 @@ void exercise_system(System system,
     upload(diagonal, d_diagonal);
     upload(upper, d_upper);
     auto apply = [&](const T* d_input, T* d_output, cudaStream_t compute) {
+        if (system == System::CYCLIC) {
+            apply_cyclic<<<(size + 255) / 256, 256, 0, compute>>>(size, d_input,
+                                                                  d_output);
+            return;
+        }
         apply_tridiagonal<<<(size + 255) / 256, 256, 0, compute>>>(
             size, d_lower.data(), d_diagonal.data(), d_upper.data(), d_input,
             d_output);
@@ -111,8 +126,35 @@ void exercise_system(System system,
     auto solve = [&]() {
         upload(rhs, d_rhs);
         upload(result, d_result);
-        solver.enqueue(apply, d_rhs.data(), d_result.data(), budget, tolerance,
-                       stream.get());
+        if (incremental) {
+            auto read_control = [&]() {
+                cumes::check_cuda(
+                    cudaMemcpyAsync(&control, solver.control_device(),
+                                    sizeof(control), cudaMemcpyDeviceToHost,
+                                    stream.get()),
+                    "incremental GMRES control");
+                stream.synchronize();
+            };
+            solver.enqueue_start(d_rhs.data(), d_result.data(), tolerance, T(0),
+                                 stream.get());
+            read_control();
+            while (control.active && control.steps < budget) {
+                const int count = std::min(basis, budget - control.steps);
+                for (int first = 0; first < count;) {
+                    const int chunk = std::min(3, count - first);
+                    solver.enqueue_steps(apply, first, chunk, stream.get());
+                    first += chunk;
+                    read_control();
+                    if (!control.cycle_active) break;
+                }
+                solver.enqueue_finish(apply, d_rhs.data(), d_result.data(),
+                                      stream.get());
+                read_control();
+            }
+        } else {
+            solver.enqueue(apply, d_rhs.data(), d_result.data(), budget,
+                           tolerance, stream.get());
+        }
         cumes::check_cuda(cudaMemcpyAsync(result.data(), d_result.data(), bytes,
                                           cudaMemcpyDeviceToHost, stream.get()),
                           "GMRES test result");
@@ -140,6 +182,7 @@ void exercise_system(System system,
                 value += static_cast<long double>(lower[i]) * result[i - 1];
             if (i + 1 < size)
                 value += static_cast<long double>(upper[i]) * result[i + 1];
+            if (system == System::CYCLIC) value = result[(i + size - 1) % size];
             const long double residual = value - rhs[i];
             const long double error =
                 static_cast<long double>(result[i]) - solution[i];
@@ -181,6 +224,9 @@ void exercise_system(System system,
         if (system == System::ROTATION)
             check(control.steps == 2,
                   "skew rotation with zero first Arnoldi diagonal converges");
+        if (system == System::CYCLIC)
+            check(control.steps == size && control.cycles == 1,
+                  "cyclic permutation exercises every restart basis column");
         std::printf(
             "%s system=%d n=%d basis=%d scale=%.1e: steps=%d cycles=%d "
             "residual=%.3Le error=%.3Le\n",
@@ -217,6 +263,13 @@ void run_precision() {
     const T huge = sizeof(T) == sizeof(float) ? T(1e25) : T(1e200);
     exercise_system<T>(System::DIAGONAL, 129, 8, 7, tiny);
     exercise_system<T>(System::DIAGONAL, 129, 8, 7, huge);
+    exercise_system<T>(System::TRIDIAGONAL, 4099, 8, 64, T(1), true);
+    exercise_system<T>(System::TRIDIAGONAL, 513, 300, 600, T(1), true);
+    exercise_system<T>(System::TRIDIAGONAL, 257, 8, 1, T(1), true);
+    exercise_system<T>(System::DIAGONAL, 513, 8, 7, T(1), true);
+    exercise_system<T>(System::SINGULAR, 17, 8, 8, T(1), true);
+    exercise_system<T>(System::NONFINITE, 17, 8, 8, T(1), true);
+    exercise_system<T>(System::CYCLIC, 300, 300, 300, T(1), true);
 }
 
 }  // namespace

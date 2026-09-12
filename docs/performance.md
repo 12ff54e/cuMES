@@ -599,6 +599,91 @@ within each architecture. All configured stages, tolerances, caps and vacuum
 update decisions are preserved. The report includes confidence intervals,
 process-wall results, retained failures, float limitations and raw data.
 
+### 3.10 Resident tangent GMRES (2026-09-12)
+
+The default `EquilibriumLinearization` tangent backend now keeps Krylov
+vectors, primal state, active-degree maps, and right-preconditioner
+intermediates on the GPU. `TangentLinearBackend::HOST` retains the original
+reference. [ADR-0013](adr/0013-equilibrium-forward-tangents.md) records the
+numerical algorithm change and the incremental `DeviceGmres` interface.
+
+The measured workload is the six non-`m=0` boundary columns at the QA/QH
+mode-1 construction start in meow `de1b324`, using cuMES `5a595ee` plus this
+change. Each retained linearization uses restart 300, a 1,000-step cap,
+relative tolerance `5e-6`, absolute tolerance `1e-11`, and the same cold
+primal equilibrium. The host and device selectors are timed in the same
+binary. Each process warms all six directions before measurement; ten pairs
+alternate backend order, serially on each GPU, with the calling thread pinned
+to CPU 8. Confidence intervals use 20,000 paired bootstrap resamples of the
+ratio of median wall times.
+
+| GPU / case | Six solves, median host → device (ms) | p95 host → device (ms) | Speedup (95% CI) |
+| --- | ---: | ---: | ---: |
+| TITAN Xp / QA | 526.68 → 415.98 | 537.20 → 416.36 | 1.266× (1.262–1.278) |
+| TITAN Xp / QH | 639.66 → 485.92 | 647.75 → 486.68 | 1.316× (1.307–1.331) |
+| RTX 4090 / QA | 379.71 → 245.31 | 382.20 → 248.70 | 1.548× (1.541–1.550) |
+| RTX 4090 / QH | 469.43 → 286.87 | 474.83 → 289.98 | 1.636× (1.625–1.644) |
+
+The solve-time noise floor, measured as median absolute deviation divided by
+the median, is 0.60–0.71% for the Pascal host path, 0.03–0.04% for its device
+path, 0.28–0.60% for the Ada host path, and 0.01–0.04% for its device path.
+Both cases clear the performance threshold on both GPUs. TITAN Xp uses GCC
+12.4, CUDA 12.1, `sm_61`, driver 580.173.02 and Xeon E5-2690 v4; RTX 4090 uses
+GCC 12, CUDA 12.9, `sm_89`, driver 570.169 and Xeon Platinum 8375C. Both builds
+are Release precise-double, fixed boundary, with B-spline transfer enabled.
+Clocks are unlocked: tangent samples show 1,847/5,702 MHz core/memory and 65°C
+on Pascal, 2,760/10,501 MHz and 35–36°C on Ada.
+
+Median linearization construction is 3.4–3.5 ms on Pascal and 2.4–3.6 ms on
+Ada. The first device batch, including lazy Krylov allocation, takes
+417.44/487.88 ms for Pascal QA/QH and 246.64/288.22 ms for Ada. It reserves an
+additional 8 MiB at these grids, replacing the host-resident basis; that small
+memory cost is justified by the measured latency reduction. Memory grows with
+active degrees and restart size and is not an 8 MiB ceiling for larger grids.
+
+Field materialization remains 8.4–8.7 ms per batch on Pascal and 6.4–6.8 ms on
+Ada; the meow target chain rule remains 53–54 ms and 41 ms respectively. The
+combined solve/materialize/target batch speedup is 1.233×/1.280× for Pascal
+QA/QH and 1.460×/1.544× for Ada. These are derivative-batch measurements, not
+complete optimization speedups.
+
+All runs converge with identical active iteration counts: 622 for six QA
+directions and 743 for six QH directions. Across both GPUs and every saved
+column, worst host/device relative L2 differences are below `7.5e-12` for
+spectral state, `8.7e-11` for individual half-grid fields, and `2.6e-12` for
+target columns. The existing nonlinear finite-difference and gauge limits
+remain unchanged; this does not promote analytic Jacobians over the cold
+finite-difference construction policy.
+
+The fixed-only cuMES/meow build passes all 62 CTests on Pascal and Ada, including
+Newton regression, float kernel-type audit, installed-package consumption,
+Solovev tangent/field checks and the meow QH target derivative oracle.
+Manufactured float/double GMRES tests exercise all 300 Arnoldi columns of a
+cyclic permutation, as well as restart, tolerance, reuse and failure cases.
+Tangent memcheck/initcheck pass on both GPUs, and manufactured-GMRES
+memcheck/initcheck pass on Pascal.
+
+Qualification exposed an uninitialized persistent pivot-scale cache in the
+nonlinear preconditioner, reproduced with a primal-only executable linked to
+untouched `5a595ee`. Initializing that cache fixes the full Pascal initcheck
+failure. Solovev and W7-X spectral state, half-grid fields, residuals, stage
+counts and restart histories remain byte-identical to the baseline. The new
+tangent test is included in the double-build sanitizer registrations.
+
+An independent full-QH qualification also exposed incorrect iteration and
+time-step telemetry when the last nonlinear pass exits through a Jacobian
+rejection. Finalizing those controller fields after the loop fixes the report;
+a collapsed-restart regression fails before the fix and passes afterward.
+This leaves numerical iteration and convergence policy unchanged. The newer
+dependency still fails meow's full-construction quality gate; see
+[meow's qualification record](../../meow/docs/performance.md#dependency-qualification).
+
+Raw benchmark drivers, exact build configurations, per-column binary arrays,
+logs, and `analysis.json` are under
+`../tmp/meow-performance-20260912/`; Ada captures are copied to its
+`rtx4090-tangent-pairs/` directory. The original remote run directory is
+`gervais:/tmp/meow-performance-20260912/`.
+
 ## 4. Acceptance policy (verification.md §7)
 
 A performance-motivated change is accepted only when, on one named target
