@@ -481,8 +481,9 @@ unchanged because their start geometries do not enter the new policy branch.
 Two transform changes reduce repeated work relative to `f0c17f7` (v1.4.1).
 The inverse accumulator specializes which constraint output is needed: R/Z
 each compute one sum, and lambda computes neither. Basis and derivative-sign
-selection remain runtime expressions to preserve the baseline's floating-point
-contraction order. The forward transform caches its four weighted poloidal
+selection remain runtime expressions. Compiler unrolling and floating-point
+contraction can nevertheless change, as the downstream investigation below
+demonstrates. The forward transform caches its four weighted poloidal
 tables once per stage, using device arithmetic to preserve the original
 T-rounded products. The compact W7-X double cache adds 6,144 arena bytes and
 removes four multiplications and one weight load per theta contribution.
@@ -556,6 +557,25 @@ cold-solve limitation. QA completes with a different endpoint. This does not
 extend the Solovev/W7-X bitwise qualification above to downstream optimization.
 See [meow's revision isolation](../../meow/docs/performance.md#revision-isolation-2026-09-13)
 for the controlled comparisons and their limits.
+
+The rounding mechanism is reproduced in an isolated comparison of the parent
+and `66a557a` inverse kernels (GCC 12 / CUDA 12.9, RTX 4090, native double).
+Removing both unused constraint sums from the lambda launch changes the
+compiler's loop unrolling from two modes to four. At `mpol=6`, the old kernel
+accumulates odd mode `m=5` with a fused multiply-add; the new remainder loop
+rounds the scale multiplication before a separate addition. The original
+`66a557a` binary's PTX has the same four-mode loop and separate remainder
+operations as the probe. Thus preserving the source expressions did not
+preserve their contraction order.
+
+With identical manufactured toroidal inputs, `ns=7`, `ntheta=nzeta=18`, and
+`mpol=6`, all R/Z outputs agree bitwise; lambda's three odd-parity arrays have
+516, 635, and 564 changed elements out of 2,268, with maximum absolute
+differences `1.78e-15`, `3.55e-15`, and `8.88e-16`. Rebuilding both kernels with
+`--fmad=false` eliminates all differences across the probe's 84 field
+comparisons (`mpol=2,3,6,10`). This flag is a diagnostic experiment, not a
+qualified solver fix. Raw sources, PTX, and logs are retained in the meow
+benchmark root's `revision-bisect/` directory.
 
 These percentages qualify steady-iteration latency. Full-process Ada timings
 were too noisy for a separate end-to-end speedup claim: Nsight located a

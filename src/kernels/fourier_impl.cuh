@@ -678,8 +678,10 @@ __global__ void inverse_accumulate_kernel(
     const cumes::FloatFloat* d_odd_toroidal = nullptr) {
     static_assert(SLOT0 == 0 || SLOT0 == 4 || SLOT0 == 8);
     // SLOT0: 0 = R slots 0-3, 4 = Z slots 4-7, 8 = λ slots 8-11.
-    // Each launch has at most one constraint output. Specialize only that
-    // choice; keep the runtime basis expressions and their contraction order.
+    // Each launch has at most one constraint output. Specialize that choice
+    // while keeping runtime basis expressions. This can still change compiler
+    // unrolling and FMA contraction; see docs/performance.md §3.8 for the
+    // measured equivalence limits.
     // Thread mapping: l = threadIdx.x (fastest), k = threadIdx.y — the
     // output stores at idx = j*nZnT + k*ntheta + l then vary l fastest and
     // coalesce; the m-loop shared reads (sm[.. + k]) become broadcasts.
