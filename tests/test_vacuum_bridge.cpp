@@ -17,9 +17,56 @@ vfield::DeviceBuffer<double> upload(std::span<const double> values) {
     buffer.upload(values.data(), values.size());
     return buffer;
 }
+
+void check_activation_consistency() {
+    // An axis filament near the circular LCFS is deliberately under-resolved
+    // by this coarse quadrature. Its spurious loop-current mismatch must not
+    // abort the preceding fixed-boundary relaxation, but must reject coupling.
+    DeviceParams<double> p{};
+    p.ns = 3;
+    p.mpol = p.mnmax = 5;
+    p.ntheta = p.nZnT = 16;
+    p.nzeta = p.nfp = 1;
+    cumes::FreeBoundaryOperator<double>::HostParams params;
+    params.coils_file = "deps/vacuum-field/tests/data/coils.solovev";
+    params.extcur.assign(13, 0.0);
+    params.extcur[0] = 1e6;
+    params.use_process_environment = false;
+    params.embedded_makegrid_parameters = cumes::MakegridParametersSpec{
+        false, false, 1, 2.0, 6.0, 9, -2.0, 2.0, 9, 1};
+    cumes::FreeBoundaryOperator<double> vacuum(params, p);
+    std::array<double, 20> lcfs{};
+    lcfs[0] = 4.0;
+    lcfs[1] = lcfs[11] = 1.0 / std::sqrt(2.0);
+    const std::array<double, 2> buco{0.1, 0.1}, bvco{1.0, 1.0};
+    const std::array<double, 1> axis_r{4.99}, axis_z{0.0};
+    auto d_lcfs = upload(lcfs), d_axis_r = upload(axis_r),
+         d_axis_z = upload(axis_z);
+    const auto update = [&] {
+        vacuum.run_host_update(p.ns, buco.data(), bvco.data(), d_lcfs.data(),
+                               d_axis_r.data(), d_axis_z.data(), nullptr);
+    };
+    vacuum.advance(2, 1, 1.0, 1.0);
+    update();
+    if (vacuum.state() != cumes::VacuumState::OFF ||
+        vacuum.apply_edge_force() ||
+        std::abs((vacuum.ctor() - vacuum.bsubu_vac()) / vacuum.rbtor()) <= 0.01)
+        throw std::runtime_error("inactive vacuum fixture lost its mismatch");
+    vacuum.advance(3, 1, 0.0, 0.0);
+    bool rejected = false;
+    try {
+        update();
+    } catch (const cumes::CumesError& error) {
+        rejected = std::string_view(error.what()).find("I_TOR MISMATCH") !=
+                   std::string_view::npos;
+    }
+    if (!rejected)
+        throw std::runtime_error("active vacuum accepted a current mismatch");
+}
 }  // namespace
 
 int main() try {
+    check_activation_consistency();
     constexpr int NS = 3, NTHETA = 8, NZETA = 4, ANGULAR = NTHETA * NZETA;
     constexpr int POINTS = NS * ANGULAR;
     const double pi = std::acos(-1.0);

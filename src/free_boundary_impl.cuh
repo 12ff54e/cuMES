@@ -658,10 +658,12 @@ void FreeBoundaryOperator<T>::finish_host_update(T bsubu, T bsubv) {
         impl_->state = VacuumState::INITIALIZED;
     }
 
-    // Consistency checks (vmecpp :755-768) — hard errors here (cuMES has no
-    // best-effort output mode; documented deviation). The values ride along
-    // in the message for diagnosis.
-    if (impl_->rbtor * impl_->bsubv_vac < 0.0) {
+    // The unrelaxed cold-start axis can give inaccurate vacuum integrals.
+    // Enforce consistency from the first pressure-coupled pass onward;
+    // diagnostic updates while pressure is OFF must allow that relaxation.
+    // Failures remain hard errors, with the original sign and current limits.
+    const bool coupled = impl_->state != VacuumState::OFF;
+    if (coupled && impl_->rbtor * impl_->bsubv_vac < 0.0) {
         throw cumes::CumesError(
             "rBtor and bSubVVac must have the same sign - maybe flip the "
             "sign of phiedge or the sign of the coil currents "
@@ -669,7 +671,8 @@ void FreeBoundaryOperator<T>::finish_host_update(T bsubu, T bsubv) {
             std::to_string(impl_->rbtor) +
             ", bSubVVac=" + std::to_string(impl_->bsubv_vac) + ")");
     }
-    if (std::fabs((impl_->ctor - impl_->bsubu_vac) / impl_->rbtor) > 0.01) {
+    if (coupled &&
+        std::fabs((impl_->ctor - impl_->bsubu_vac) / impl_->rbtor) > 0.01) {
         throw cumes::CumesError(
             "VAC-VMEC I_TOR MISMATCH : BOUNDARY MAY ENCLOSE EXT. COIL "
             "(cTor=" +
