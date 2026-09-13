@@ -1,4 +1,5 @@
 #include "cumes/config/json_reader.hpp"
+#include "cumes/core/error.hpp"
 #include "cumes/io/checkpoint.hpp"
 #include "cumes/io/reader.hpp"
 #include "cumes/io/writer.hpp"
@@ -124,6 +125,23 @@ int main() {
                   "asymmetric checkpoint is a fixed point");
         }
         std::filesystem::remove(path);
+
+        // An axis outside the LCFS gives an invalid initial Jacobian. There
+        // is no valid backup yet, so the solver must diagnose it immediately
+        // instead of exhausting the iteration cap restoring the same state.
+        auto invalid_spec = spec;
+        invalid_spec.raxis_c[0] = 10.0;
+        invalid_spec.stages = {{11, 3, tolerance}};
+        bool rejected_initial_geometry = false;
+        try {
+            solver.solve(validate(invalid_spec, options).value());
+        } catch (const CumesError& error) {
+            rejected_initial_geometry =
+                std::string(error.what()).find("Invalid initial geometry") !=
+                std::string::npos;
+        }
+        check(rejected_initial_geometry,
+              "invalid initial axis fails without futile restore retries");
     }
     // A toroidal phase shift breaks stellarator symmetry about zeta=0 but
     // leaves the physical equilibrium unchanged. Use the symmetric solver's

@@ -3702,6 +3702,15 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             invalid = controller_->jacobian_invalid(jacobian, angular_points);
         }
         if (invalid) {
+            // The initial checkpoint is the same geometry; restoring it and
+            // shrinking the step cannot help before any descent has occurred.
+            if (controller_->effective_iteration() == 1) {
+                finish(false,
+                       "Invalid initial geometry on this grid: check the "
+                       "boundary orientation and magnetic axis, or the "
+                       "restart state");
+                return false;
+            }
             restore_checkpoint();
             std::printf(
                 "  invalid Jacobian restore: iter=%d min=%.3e "

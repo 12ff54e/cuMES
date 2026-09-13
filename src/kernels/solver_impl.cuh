@@ -1564,6 +1564,13 @@ SolverResult<T> solver_run(
             rec.status.jacobian_valid != 0, host_jac_invalid,
             controller.effective_iteration());
         if (host_jac_invalid) {
+            // Before the first descent the backup is the same invalid state.
+            // Shrinking delt cannot repair it, including after prolongation.
+            if (controller.effective_iteration() == 1) {
+                throw cumes::CumesError(
+                    "Invalid initial geometry on this grid: check the boundary "
+                    "orientation and magnetic axis, or the restart state");
+            }
             recorder.record(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
                             it2_before, it1_before);
             restore_state();
