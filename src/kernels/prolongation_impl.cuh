@@ -245,9 +245,11 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
                                     precomputed_bspline_matrix.end());
             matrix_data = converted_matrix.data();
         }
+        // Pageable host copies can return before the device transfer finishes.
+        // Order the upload with its consumer on the nonblocking solve stream.
         cumes::check_cuda(
-            cudaMemcpy(d_matrix.data(), matrix_data, d_matrix.byte_size(),
-                       cudaMemcpyHostToDevice),
+            cudaMemcpyAsync(d_matrix.data(), matrix_data, d_matrix.byte_size(),
+                            cudaMemcpyHostToDevice, stream),
             "interpolateState B-spline matrix upload");
         const int total = st_new.components() * p_new.mnmax * p_new.ns;
         dim3 bspline_gd((total + 255) / 256);
