@@ -126,17 +126,18 @@ void enqueue_field_status(
     if (!fields || !batch || fields.values == 0 ||
         size / sizeof(float) > std::numeric_limits<std::uint32_t>::max() ||
         offset % sizeof(float) != 0 || offset > size ||
-        fields.values > (size - offset) / sizeof(float) ||
-        fields.values > 65535U * 256U) {
+        fields.values > (size - offset) / sizeof(float)) {
         callback("invalid finite-scan field range or readback", {false, false});
         return;
     }
     struct Params {
-        std::uint32_t offset, count, pad0 = 0, pad1 = 0;
+        std::uint32_t offset, count, groups_x, groups;
     };
+    const auto blocks = static_cast<std::uint32_t>((fields.values + 255) / 256);
+    const auto groups_x = std::min(blocks, 65535U);
     const Params params{static_cast<std::uint32_t>(offset / sizeof(float)),
-                        static_cast<std::uint32_t>(fields.values)};
-    const auto blocks = (params.count + 255) / 256;
+                        static_cast<std::uint32_t>(fields.values), groups_x,
+                        blocks};
     const auto bytes = blocks * sizeof(float);
     auto output = detail::cached_buffer(
         device, bytes, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
@@ -163,7 +164,7 @@ void enqueue_field_status(
     auto pass = encoder.BeginComputePass();
     pass.SetPipeline(pipeline);
     pass.SetBindGroup(0, group);
-    pass.DispatchWorkgroups(blocks);
+    pass.DispatchWorkgroups(groups_x, (blocks + groups_x - 1) / groups_x);
     pass.End();
     batch->append(
         encoder, output, 0, bytes,

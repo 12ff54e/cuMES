@@ -250,6 +250,11 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         }
         wgpu::Limits required_limits{};
         required_limits.maxStorageBuffersPerShaderStage = 10;
+        // Large asymmetric grids exceed WebGPU's default buffer limits.
+        // Enable the adapter's supported sizes before creating stage buffers.
+        required_limits.maxStorageBufferBindingSize =
+            supported_limits.maxStorageBufferBindingSize;
+        required_limits.maxBufferSize = supported_limits.maxBufferSize;
         descriptor.requiredLimits = &required_limits;
         descriptor.SetUncapturedErrorCallback(
             [](const wgpu::Device&, wgpu::ErrorType type,
@@ -1760,15 +1765,17 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
 
     void run_field_finite_test(int variant = 0) {
         using namespace cumes::webgpu;
-        if (variant == 14) {
+        if (variant == 16) {
             std::printf(
                 "  GPU field finite scan: offsets, partial blocks, "
-                "NaN/Inf, signed zero, subnormals, range guards: PASS\n");
+                "NaN/Inf, signed zero, subnormals, 2-D dispatch, range guards: "
+                "PASS\n");
             run_compact_force_test();
             return;
         }
         const std::size_t counts[] = {1, 255, 256, 257, 1001};
-        const auto count = counts[variant % 5];
+        const auto count =
+            variant >= 14 ? 65535U * 256U + 17U : counts[variant % 5];
         std::vector<float> values(count + 2, 0.0F);
         values.front() = values.back() =
             std::numeric_limits<float>::quiet_NaN();
@@ -1793,6 +1800,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
             std::fill(values.begin() + 1, values.end() - 1, 0.0F);
             values[count] = std::numeric_limits<float>::denorm_min();
         }
+        if (variant == 15)
+            values[count] = std::numeric_limits<float>::quiet_NaN();
         const bool expected_nonzero =
             std::any_of(values.begin() + 1, values.end() - 1,
                         [](float value) { return value != 0.0F; });
@@ -1807,7 +1816,8 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         if (variant == 9) fields.high_offset = 1;
         if (variant == 10) fields.values = values.size();
         if (variant == 11) fields.values = 0;
-        auto batch = std::make_shared<ReadbackBatch>(device_, 64);
+        auto batch = std::make_shared<ReadbackBatch>(
+            device_, std::max<std::size_t>(64, 2 * ((count + 255) / 256) * 4));
         const auto result = std::make_shared<bool>(false);
         const auto error = std::make_shared<std::string>();
         enqueue_field_finite(device_, fields, batch,
@@ -1834,7 +1844,7 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
         batch->map([self, variant, buffer, result, error, status,
                     expected_nonzero](std::string message) {
             if (!message.empty() || !error->empty() ||
-                *result != (variant < 5 || variant >= 12) ||
+                *result != (variant < 5 || (variant >= 12 && variant < 15)) ||
                 status->finite != *result ||
                 status->nonzero != expected_nonzero) {
                 self->finish(false, "GPU field finite scan mismatch: " +

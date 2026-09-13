@@ -5,7 +5,7 @@
 // (?boundary=free without coils=) into tab-local editor storage. The page
 // retains its displayed browser precision tolerance.
 // CUMES_CAPTURE_OUTPUT=1 saves the scientific binary and its payload digest.
-import {readFile, writeFile} from 'node:fs/promises';
+import {appendFile, readFile, rename, writeFile} from 'node:fs/promises';
 import {isDeepStrictEqual} from 'node:util';
 import assert from 'node:assert/strict';
 import {connectCdp} from './include/webgpu_cdp.mjs';
@@ -59,7 +59,7 @@ try {
     if (status === 'pass' || status === 'fail') {
       const result = await evaluate(`({dataset: {...document.body.dataset},
         plot: window.cumesResidualPlot?.report(),
-        log: window.cumesVerificationLog?.text() || document.getElementById('log')?.textContent || document.body.innerText})`);
+        log: window.cumesVerificationLog?.text() || document.getElementById('output')?.textContent || document.getElementById('log')?.textContent || document.body.innerText})`);
       const trace = await evaluate('window.cumesDiagnostics || []');
       if (input) await writeFile(`${prefix}-input.json`, await evaluate('inputJSON()'));
       await writeFile(`${prefix}-result.json`, JSON.stringify(result));
@@ -82,11 +82,21 @@ try {
       if (process.env.CUMES_CAPTURE_OUTPUT === '1') {
         const digest = await evaluate(await readFile(new URL('./webgpu_output_digest.js', import.meta.url), 'utf8'));
         await writeFile(`${prefix}-digest.json`, JSON.stringify(digest));
-        const encoded = await evaluate(`(async () => {
-          const bytes = new Uint8Array(await (await fetch(window.cumesOutputUrl)).arrayBuffer());
-          return btoa(Array.from(bytes, value => String.fromCharCode(value)).join(''));
+        const size = await evaluate(`(async () => {
+          window.cumesCaptureBytes = new Uint8Array(await (await fetch(window.cumesOutputUrl)).arrayBuffer());
+          return window.cumesCaptureBytes.length;
         })()`);
-        await writeFile(`${prefix}-output.bin`, Buffer.from(encoded, 'base64'));
+        // Large scientific outputs must not become one enormous JS character
+        // array or CDP response. Keep each transfer bounded to one MiB.
+        const temporary = `${prefix}-output.bin.tmp`;
+        await writeFile(temporary, '');
+        for (let offset = 0; offset < size; offset += 1048576) {
+          const encoded = await evaluate(`btoa(Array.from(window.cumesCaptureBytes.subarray(
+            ${offset}, ${Math.min(size, offset + 1048576)}), value => String.fromCharCode(value)).join(''))`);
+          await appendFile(temporary, Buffer.from(encoded, 'base64'));
+        }
+        await evaluate('delete window.cumesCaptureBytes');
+        await rename(temporary, `${prefix}-output.bin`);
       }
       if (result.plot) {
         const samples = result.plot.samples, states = trace.filter(row => row.kind === 'controller');

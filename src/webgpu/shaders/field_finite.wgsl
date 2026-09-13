@@ -1,8 +1,8 @@
 struct Params {
     offset: u32,
     count: u32,
-    pad0: u32,
-    pad1: u32,
+    groups_x: u32,
+    groups: u32,
 }
 @group(0) @binding(0) var<storage, read> words: array<u32>;
 @group(0) @binding(1) var<storage, read_write> flags: array<f32>;
@@ -12,9 +12,11 @@ var<workgroup> bad: array<u32, 64>;
 @compute @workgroup_size(64)
 fn main(@builtin(local_invocation_index) lane: u32,
         @builtin(workgroup_id) group: vec3<u32>) {
+    let block = group.x + group.y * params.groups_x;
+    if (block >= params.groups) { return; }
     var invalid = 0u;
     for (var j = 0u; j < 4u; j++) {
-        let index = group.x * 256u + lane + j * 64u;
+        let index = block * 256u + lane + j * 64u;
         if (index < params.count) {
             let word = words[params.offset + index];
             let exponent = word & 0x7f800000u;
@@ -30,5 +32,5 @@ fn main(@builtin(local_invocation_index) lane: u32,
         if (lane < stride) { bad[lane] |= bad[lane + stride]; }
         workgroupBarrier();
     }
-    if (lane == 0u) { flags[group.x] = f32(bad[0]); }
+    if (lane == 0u) { flags[block] = f32(bad[0]); }
 }
