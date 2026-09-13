@@ -143,7 +143,7 @@ def half_grid(arrays, ns, jh, chip, phip_avg, lamscale):
                  + (rp["rue"] * rp["rve"] + rp["zue"] * rp["zve"])
                  + sfi2 * (r["ruo"] * r["rvo"] + r["zuo"] * r["zvo"])
                  + sfo2 * (rp["ruo"] * rp["rvo"] + rp["zuo"] * rp["zvo"])
-                 + s_h * ((r["rue"] * rp["rvo"] + r["zue"] * rp["zvo"])
+                 + s_h * ((r["rue"] * r["rvo"] + r["zue"] * r["zvo"])
                           + (rp["rue"] * rp["rvo"] + rp["zue"] * rp["zvo"])
                           + (r["rve"] * r["ruo"] + r["zve"] * r["zuo"])
                           + (rp["rve"] * rp["ruo"] + rp["zve"] * rp["zuo"])))
@@ -259,7 +259,8 @@ def make_profiles(cfg, ns):
 def solve_chip(fams, ns, jh, cfg, prof):
     """chi' for half-grid surface jh. ncurr=1: ncurr1FinalizeKernel —
     chi' = (currH − Σ(guu·B^θ_λ + guv·B^ζ)·w) / Σ(guu/√g·w), summed over the
-    reduced-theta trapezoid with dnorm3 = 1/(nzeta·(nThetaRed−1)), currH
+    full theta grid for lasym, otherwise the reduced-theta trapezoid with
+    dnorm3 = 1/(nzeta·(nThetaRed−1)), currH
     evaluated at the FLUX coordinate sh (the solver's convention). ncurr=0:
     the prescribed-iota profile χ' = maxTF·ι(tf)·torfluxDeriv(sh)
     (kernels/profiles_impl.cuh)."""
@@ -268,6 +269,7 @@ def solve_chip(fams, ns, jh, cfg, prof):
     ntheta = cfg["ntheta"]
     nz = cfg["nzeta"]
     ntheta_red = ntheta // 2 + 1
+    full_theta = cfg.get("lasym", False)
     # eval_state needs a uniform full-period grid; the reduced-theta grid is
     # the first nThetaRed rows of the solver's ntheta grid, so evaluate on
     # the full grid and slice.
@@ -275,12 +277,16 @@ def solve_chip(fams, ns, jh, cfg, prof):
     zt = 2.0 * np.pi * np.arange(nz) / nz
     a = [eval_state(fams, ns, j, th, zt, cfg["ntor"], cfg["nfp"])
          for j in (jh, jh + 1)]
-    a = [{k: v[:ntheta_red] for k, v in e.items() if k not in ("th", "zt")}
+    a = [{k: v if full_theta else v[:ntheta_red]
+          for k, v in e.items() if k not in ("th", "zt")}
          for e in a]
     h = half_grid(a, ns, jh, 0.0, prof["phip_avg"](jh), prof["lamscale"])
-    w = np.full(ntheta_red, 1.0 / (nz * (ntheta_red - 1)))
-    w[0] *= 0.5
-    w[-1] *= 0.5
+    if full_theta:
+        w = np.full(ntheta, 1.0 / (nz * ntheta))
+    else:
+        w = np.full(ntheta_red, 1.0 / (nz * (ntheta_red - 1)))
+        w[0] *= 0.5
+        w[-1] *= 0.5
     jv = np.sum(w[:, None] * (h["guu"] * h["bsupu"] + h["guv"] * h["bsupv"]))
     one_over = np.zeros_like(h["gsqrt"])
     np.divide(1.0, h["gsqrt"], out=one_over, where=np.abs(h["gsqrt"]) > 1e-30)
