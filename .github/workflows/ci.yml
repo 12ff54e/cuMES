@@ -59,7 +59,7 @@ jobs:
       - name: Build
         run: cmake --build ${{ matrix.binary-dir }} -j2
       - name: Host-only tests
-        run: ctest --test-dir ${{ matrix.binary-dir }} -R 'test_controller|test_host_config|test_host_io|test_checkpoint|test_input_json|test_io_restart_offsets|test_io_malformed_shapes' --output-on-failure
+        run: ctest --test-dir ${{ matrix.binary-dir }} -L '^cumes_host$' --no-tests=error --output-on-failure
 
   host-asan:
     runs-on: ubuntu-22.04
