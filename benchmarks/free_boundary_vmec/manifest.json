@@ -1,0 +1,65 @@
+{
+  "vmec_source": "https://github.com/hiddenSymmetries/VMEC2000",
+  "vmec_commit": "c965d31faf732ca77d280ef509a7bdefe7797292",
+  "cases": [
+    {
+      "id": "diiid",
+      "description": "DIII-D up/down asymmetric axisymmetric free boundary",
+      "namelist": "input.DIII-D",
+      "assets": [
+        {
+          "path": "diiid/input.DIII-D",
+          "url": "https://raw.githubusercontent.com/PrincetonUniversity/STELLOPT/05e013b622291ab57b98bafd5b22de8405139bd6/BENCHMARKS/VMEC_TEST/input.DIII-D",
+          "sha256": "3ae83e803de7407646723e577b19d5872fad7fb7cb86fa418a859d9deb13c1f7",
+          "bytes": 2266
+        },
+        {
+          "path": "diiid/mgrid_d3d_ef.nc",
+          "url": "https://raw.githubusercontent.com/PrincetonUniversity/STELLOPT/05e013b622291ab57b98bafd5b22de8405139bd6/BENCHMARKS/VMEC_TEST/mgrid_d3d_ef.nc",
+          "sha256": "08f705d326de264a6cd925b9e8ccafb73de25d93a9916369f7ed387bf109e7e0",
+          "bytes": 12769072
+        }
+      ]
+    },
+    {
+      "id": "ncsx",
+      "description": "NCSX c09r00 stellarator-symmetric 3-D free boundary",
+      "namelist": "input.ncsx_c09r00_free_lowres",
+      "assets": [
+        {
+          "path": "ncsx/input.ncsx_c09r00_free_lowres",
+          "url": "https://raw.githubusercontent.com/uwplasma/vmex/f09288b37bac7d7122e98220192795e76770cd1f/examples/data/input.ncsx_c09r00_free_lowres",
+          "sha256": "2e5bdaabeee46d6e7fa647c3d6f926e65be4509f35d8bbf600fce162afe3dbcb",
+          "bytes": 12304
+        },
+        {
+          "path": "ncsx/mgrid_ncsx_c09r00_small.nc",
+          "url": "https://github.com/uwplasma/vmex/releases/download/assets-20260823-ncsx/vmex_assets_ncsx_mgrid.tar.gz",
+          "sha256": "ae50a0db1baace0efa4b9c3dcbd46a544f8c28c29ab6b9c1129d071e68ef2563",
+          "bytes": 4518472,
+          "archive_sha256": "bbfa34415953d0263c1ec87d928d6369bb598b16b47f56567e9e1dea9044c40f",
+          "member": "mgrid_ncsx_c09r00_small.nc"
+        }
+      ]
+    },
+    {
+      "id": "cth",
+      "description": "CTH-like synthetic LASYM field; negative benchmark, not a converged reference",
+      "namelist": "input.cth_like_free_bdy_lasym_small",
+      "assets": [
+        {
+          "path": "cth/input.cth_like_free_bdy_lasym_small",
+          "url": "https://raw.githubusercontent.com/uwplasma/vmex/f09288b37bac7d7122e98220192795e76770cd1f/examples/data/input.cth_like_free_bdy_lasym_small",
+          "sha256": "e80c1526877195877d6370314f6d80ed0d580e6f1594615b64981608728f3271",
+          "bytes": 4735
+        },
+        {
+          "path": "cth/mgrid_cth_like_lasym_small.nc",
+          "url": "https://raw.githubusercontent.com/uwplasma/vmex/f09288b37bac7d7122e98220192795e76770cd1f/examples/data/mgrid_cth_like_lasym_small.nc",
+          "sha256": "3469f72823fd9a980533c9b17c010f349cfae653744f0c8084aa85ab5677d3ef",
+          "bytes": 48324
+        }
+      ]
+    }
+  ]
+}

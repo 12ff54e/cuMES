@@ -1,5 +1,10 @@
 # Asymmetric fixed-boundary benchmarks against Fortran VMEC
 
+The [QH gauge and convergence study](../../docs/qh-gauge-convergence.md)
+adds isolated m=1 policies, stopping-tolerance sweeps, radial/angular
+refinement, and a warm transfer with frozen gauge. Its scripts record failed
+runs as well as successful ones and generate profile comparison figures.
+
 These three cases exercise `lasym=true` with original Fortran VMEC2000
 references. The reference executable was built from
 [`c965d31`](https://github.com/hiddenSymmetries/VMEC2000/tree/c965d31faf732ca77d280ef509a7bdefe7797292),
