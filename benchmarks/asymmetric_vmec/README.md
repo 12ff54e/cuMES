@@ -97,6 +97,16 @@ oriented Jacobians and the fixed LCFS, and optionally checks a one/two-evaluatio
 checkpoint replay. It writes a JSON diagnostic report and an iota/R–Z overlay.
 VMEC comparisons remain diagnostic; they do not replace cuMES's own gates.
 
+The same numeric `tcon0` does **not** give the same asymmetric constraint
+strength: pinned Fortran VMEC caps its magnitude at 1 and has two additional
+half factors. In cuMES's full-period projection convention, an explicit
+matched-constraint run uses `min(abs(Fortran tcon0), 1)/4`. The original fixtures
+retain their recorded settings. Also align the frozen m=1 coordinate state
+when diagnosing remaining differences; matching the boundary, grid and nominal
+`FTOL` alone is insufficient. The
+[Fortran comparison audit](../../docs/fortran-vmec-comparisons.md) derives these
+rules and isolates their effect on QH.
+
 `iotas[1:]` is compared on the half radial mesh. Axis positions are compared at
 the same geometric toroidal angles. The VMEC `wb` angular normalization is
 restored with `4*pi**2` before comparing magnetic energies. Lambda is deliberately
@@ -200,8 +210,14 @@ surfaces. QH still differs by `7.32e-3` after tightening both solvers' final
 residual tolerance to `1e-16`. Keeping its physical boundary and refining to
 `MPOL=10, NTOR=15, NTHETA=40, NZETA=80`, at 51 surfaces and `1e-13` residual
 tolerance, reduces the maximum iota difference to `2.45e-3`. This demonstrates
-resolution sensitivity; an identical Fortran equilibrium has not been
-established for that case.
+resolution sensitivity. The subsequent
+[same-state force audit](../../docs/fortran-vmec-comparisons.md#qh-isolation-experiment-2026-09-13)
+finds an eightfold constraint-strength mismatch in the original QH comparison.
+Matching that strength and the frozen m=1 coordinates reduces its first-half-grid
+iota difference to `4.67e-6` (`0.000672%`) at `1e-16` final tolerance, and the
+maximum profile difference to `1.68e-5`. That result uses controlled state
+alignment; the original independent cold-start discrepancy remains recorded
+above.
 
 Native float at `1e-5` converges for QA and heliotron. QH's final float stage
 stalls around `(1.6e-5, 3.8e-5, 7.2e-9)` and is unqualified at that tolerance.
