@@ -46,6 +46,9 @@ adds asymmetric coil currents and a moving LCFS. The advanced boundary
 editor's **Allow non-stellarator symmetry** control exposes RBS/ZBC coefficients.
 See [ADR-0020](docs/adr/0020-non-stellarator-symmetry.md) for tested
 precision, backend coverage, and remaining limitations.
+The [asymmetric Fortran VMEC benchmarks](benchmarks/asymmetric_vmec/README.md)
+provide QA, heliotron and finite-pressure QH inputs, serial runners, physical
+comparison plots, and case-specific CUDA/Chrome results and limitations.
 
 The converged spectral state and run provenance are published as a version-8 (asymmetric: version-9)
 native binary through a browser download link and verified by an in-Wasm

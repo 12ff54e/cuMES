@@ -343,6 +343,24 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 }
             }
             cases.push_back(std::move(test));
+            cumes::webgpu::ProlongationCase large;
+            large.ns_old = 128;
+            large.ns_new = 256;
+            large.ntor = 3;
+            large.mnmax = 8;
+            large.lasym = true;
+            large.interpolation = interpolation;
+            large.state.resize(12 * large.mnmax * large.ns_old);
+            for (int profile = 0; profile < 12 * large.mnmax; ++profile) {
+                const bool odd = profile % large.mnmax >= large.ntor + 1;
+                for (int j = 0; j < large.ns_old; ++j) {
+                    const float s = float(j) / (large.ns_old - 1);
+                    large.state[profile * large.ns_old + j] =
+                        (0.3F + 0.01F * profile + s) *
+                        (odd ? std::sqrt(s) : 1.0F);
+                }
+            }
+            cases.push_back(std::move(large));
         }
         return cases;
     }
@@ -383,12 +401,22 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                 const bool velocity_zero =
                     std::all_of(actual.velocity.begin(), actual.velocity.end(),
                                 [](float value) { return value == 0.0F; });
-                if (max_error > 4.0e-6F || !velocity_zero) {
+                const auto& input = self->cases_[self->case_index_];
+                bool boundary_exact = true;
+                for (std::size_t profile = 0;
+                     profile < input.state.size() / input.ns_old; ++profile) {
+                    boundary_exact &=
+                        actual.state[(profile + 1) * input.ns_new - 1] ==
+                        input.state[(profile + 1) * input.ns_old - 1];
+                }
+                if (max_error > 4.0e-6F || !velocity_zero || !boundary_exact) {
                     self->finish(
                         false,
                         "radial-transfer mismatch: max_error=" +
                             std::to_string(max_error) + " velocity_zero=" +
-                            std::string(velocity_zero ? "true" : "false"));
+                            std::string(velocity_zero ? "true" : "false") +
+                            " boundary_exact=" +
+                            std::string(boundary_exact ? "true" : "false"));
                     return;
                 }
                 std::printf(
