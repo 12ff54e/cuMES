@@ -96,10 +96,9 @@ changes as expected from the new reduction/finalization precision. The replay
 converges immediately; its normalization refresh changes FSQZ, so no identical
 float residual-triple claim is made.
 
-Raw commands, inputs, checkpoints, logs, telemetry and summaries are in
-`/lustre/qzhong/cumes-diagnostics/float-only-device/`. The reference inputs
-use `inputs/w7x.json` and `inputs/solovev.json` with every stage tolerance set
-to the corresponding value in the table. Reproduce the float solve with:
+The reference inputs use `inputs/w7x.json` and `inputs/solovev.json` with every
+stage tolerance set to the corresponding value in the table. Reproduce the
+float solve with:
 
 ```sh
 CUMES_GEOMETRY_PRECISION=compensated ./build-float/cumes w7x-1e-5.json \

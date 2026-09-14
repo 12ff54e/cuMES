@@ -121,7 +121,3 @@ CUMES_GEOMETRY_PRECISION=compensated ./build/cumes w7x-double.json \
   --restart w7x-native.ckpt --warmup 300 --passes 500 \
   --odd-geometry poloidal --out timing.json
 ```
-
-Raw local experiment artifacts: `/tmp/cumes-double-compensation/` (commands,
-input variants, checkpoints, residual telemetry, reconstruction output and
-individual timing records).

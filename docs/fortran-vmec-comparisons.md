@@ -151,9 +151,3 @@ coordinates, and near-axis stopping sensitivity as the causes of the original
 percent-level discrepancy. It does not identify a different prescribed-current
 iota formula. Residual convergence, a fixed-point replay, and agreement of
 volume alone do not establish a mesh-independent near-axis iota.
-
-Audit scripts, executable hashes, state conversions, original Fortran dumps,
-JSON data and PNG/PDF figures are retained outside the repository under
-`../tmp/asym-vmec-benchmark/qh-current-audit/` and
-`../tmp/asym-vmec-benchmark/qh-state-audit/`. No production numerical code was
-changed for this investigation.

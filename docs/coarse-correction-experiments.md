@@ -149,21 +149,15 @@ or production integration was pursued.
 
 ## Reproduction and artifacts
 
+Set `W7X_CHECKPOINT` to a W7-X checkpoint on the ns=99 grid. The standalone
+probe accepts both frozen diagnostic states and ordinary solver checkpoints.
+
 ```sh
 cmake --build build --target cumes_benchmark_coarse_correction
 build/cumes_benchmark_coarse_correction --input inputs/w7x.json \
-  --restart ../tmp/cumes-block-20260908/states/w7x-ns99-iter500.ckpt \
+  --restart "$W7X_CHECKPOINT" \
   --steps 8 --delta 0.5 --out /tmp/w7x-coarse.json
 ```
-
-The complete local record is `../tmp/cumes-two-level-20260908/`: anchor JSON
-and logs, float SASS audit, `prepare_live.py`, `build_live.py`, `run_full.py`
-and the private solver source. `ada/` contains the exact tested source,
-compile/link commands, hashes, all eight native/checkpoint outputs, logs and
-structured stage reports. The combined stdout/stderr stream can place a
-structured marker inside a progress line; `ada/reparse_ada.py` finds the marker
-anywhere and decodes its JSON object. The original parser failure and corrected
-reports are both retained for provenance.
 
 The exact tested full-solver hook is retained as
 `benchmarks/coarse_live.patch`. It modifies only the solver implementation

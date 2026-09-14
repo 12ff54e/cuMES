@@ -46,8 +46,7 @@ stage iterations. Original symmetric Solovev and a small 3-D symmetric case
 retain bitwise-identical final coefficients and identical stage counts against
 the pre-change executable (235/193/326 and 199/138/150 respectively). Operator,
 configuration, malformed-I/O, checkpoint, and existing Fourier/geometry/
-preconditioner/multigrid regressions also pass. Local captures are kept outside
-the repository in `../tmp/cumes-asym-validation/`.
+preconditioner/multigrid regressions also pass.
 
 VMEC++ 0.7.0 rejects asymmetric transforms, so it cannot serve as an independent
 asymmetric equilibrium reference. Analytic transform and toroidal-rotation
@@ -179,9 +178,8 @@ consistency checks, not an independent asymmetric equilibrium benchmark.
 For the free ntor=1 case, HOST versus WebGPU vacuum with Wasm LU differs by
 at most 8.0e-8 in R/Z and 1.5e-7 in lambda.
 
-Captures, effective input JSON, controller traces, scientific outputs, and
-output checks are in `../tmp/cumes-asym-validation/chrome-20260910/`. The Chrome
-harness accepts `CUMES_INPUT_JSON=inputs/free_bdy/asymmetric_tokamak.json`
+The Chrome harness accepts
+`CUMES_INPUT_JSON=inputs/free_bdy/asymmetric_tokamak.json`
 with `?boundary=free&precision=double&trace=1` and the desired `vacuum` /
 `vacuum_lu` query options. Omit `coils=` when injecting a custom free input,
 so a named preset does not replace it. Set `CUMES_CAPTURE_OUTPUT=1` and

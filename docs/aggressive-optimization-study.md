@@ -82,13 +82,3 @@ spacing-4/interval-16 variant with the weaker acceptance threshold exhausted
 the second W7-X stage's configured iteration budget. The prototype is therefore
 excluded from the production solver, including its experimental environment
 variables and controller changes.
-
-## Reproduction artifacts
-
-The local experiment directory is
-`../tmp/cumes-aggressive-20260908/`: logs, outputs, checkpoints,
-`pulay-results.json`, the archived prototype, and the grid-schedule report.
-The schedule source, generated inputs, scripts, and full-precision state
-comparisons are also archived at `gervais:/tmp/cumes-stage-policy.6aSYtc`.
-These scratch paths describe this run; the tables above preserve the principal
-findings independently of their lifetime.

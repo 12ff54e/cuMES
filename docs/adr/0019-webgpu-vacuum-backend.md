@@ -159,9 +159,8 @@ remain valid; neither isolates GPU execution or output cost.
 All full-run comparisons used the same bundled preset, paired plasma,
 `vacuum=webgpu&trace=1&timing=0`, Chrome 152 and RTX 3060 Ti, with no concurrent
 GPU tests. The baseline dependency was `3dbc6aa`; the optimized dependency is
-`09f682d`. Repeated traces and scientific digests remain exact. Raw captures,
-including all samples and the per-run timing split, live outside the repository
-in `../tmp/vacuum-webgpu-speed/`. Other adapters need their own qualification.
+`09f682d`. Repeated traces and scientific digests remain exact. Other adapters
+need their own qualification.
 
 ## Default selection after matched HOST/WebGPU comparison
 
@@ -198,6 +197,5 @@ For these workloads on this machine, GPU vacuum increases complete solve time
 by approximately 19–72%. The 5–7× integral speedup over the older GPU port
 therefore does not justify replacing HOST/Wasm as the default. Keep the
 explicit `vacuum=webgpu` option for further work and other configurations.
-Raw captures and the validated summary are in
-`../tmp/vacuum-backend-comparison/`. These results do not establish a universal
-CPU-versus-GPU ordering for other hardware or resolutions.
+These results do not establish a universal CPU-versus-GPU ordering for other
+hardware or resolutions.

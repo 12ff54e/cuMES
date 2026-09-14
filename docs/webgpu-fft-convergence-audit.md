@@ -148,8 +148,8 @@ transform conformance supply complementary checks.
 
 ## Reproduction and evidence
 
-All evidence below is under the workspace's `../tmp`. The scripts create and
-operate only on their own Chrome tabs, through the user-provided port 9333.
+The scripts create and operate only on their own Chrome tabs, through the
+user-provided port 9333.
 No `EM_JS` or production numerical changes were introduced.
 
 ```bash
@@ -161,7 +161,7 @@ node scripts/webgpu_route_experiment.mjs \
 # Sham: use fft=0 in both schedule entries and a distinct output prefix.
 # Early/late audit: use fft=1&compare_fft=1, omit audit_iterations, schedule [].
 
-export TMPDIR=/lustre/qzhong/magnetic-equilibrium-solver/tmp
+export TMPDIR="$PWD/../tmp"
 g++-12 -std=c++20 -O2 -ffp-contract=off -Wall -Wextra -Werror \
   scripts/webgpu_transform_oracle.cpp -o ../tmp/webgpu-transform-oracle
 ../tmp/webgpu-transform-oracle --self-test
@@ -178,18 +178,6 @@ FFT, generic FFT, legacy direct and canonical direct. The JSON capture
 manifest describes every binary section. For a two-route pulse/sham check,
 the oracle accepts full primary captures in the comparison slots; duplicated
 slots do **not** represent additional measured variants.
-
-Evidence prefixes/files:
-
-- `w7x-causality-{canonical,one-fft,one-fft-101,one-fft-101-repeat,sham,late-fft,late-direct}`:
-  full logs, controller traces and route-switch records.
-- `w7x-causality-{pulse-capture,sham-capture}`: full captured intervention runs,
-  section manifests and binary snapshots.
-- `w7x-causality-audit`: full early/late shadow run and 16 snapshots.
-- `w7x-causality-pulse-difference.json`, `w7x-causality-oracle.json`,
-  `w7x-causality-pulse-oracle.json`: same-input differences and oracle metrics.
-  The early/late oracle was first evaluated from the identical snapshots
-  exported while that run was still completing (`w7x-causality-early`).
 
 ## Remaining question
 
