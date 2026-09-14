@@ -188,7 +188,7 @@
     </section>
     <main class="workspace">
       <section class="panel editor">
-        <div class="panel-head"><h2 id="boundary-title">Input boundary</h2><div class="mode-switch axisymmetric-input" role="tablist" aria-label="Boundary editor mode">
+        <div class="panel-head"><h2 id="boundary-title">Input boundary</h2><div id="boundary-editor-mode" class="mode-switch" role="tablist" aria-label="Boundary editor mode">
           <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div></div>
         <div class="setup-row fixed-configuration">
           <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option><option value="asymmetric">Asymmetric tokamak</option></select>
@@ -234,9 +234,9 @@
             </div>
             <div class="formula">VMEC stellarator-symmetric boundary harmonics; toroidal mode n = 0.</div>
           </div>
-          <div class="contour-editor axisymmetric-input" id="contour-editor" hidden>
-            <p>Move any contour point freely. Its opposite point is mirrored to preserve the solver's stellarator symmetry. A periodic cubic contour is transformed continuously into coefficients capped at <strong>m = 5</strong>.</p>
-            <div class="contour-legend"><span><i class="swatch target"></i>free contour</span><span><i class="swatch"></i>m ≤ 5 Fourier fit</span><span class="fit-error" id="fit-error"></span></div>
+          <div class="contour-editor" id="contour-editor" hidden>
+            <p id="contour-description"></p>
+            <div class="contour-legend"><span><i class="swatch target"></i>free contour</span><span><i class="swatch"></i><span id="contour-fit-label">m ≤ 5 Fourier fit</span></span><span class="fit-error" id="fit-error"></span></div>
             <button class="secondary" id="reset-contour">Reset points from Fourier fit</button>
           </div>
           <label class="pressure-control axisymmetric-input">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
@@ -351,9 +351,10 @@
     installPrecisionSwitch(document,location,()=>{if(appMode){saveSurfaceInput();localStorage.setItem('cumes.input.v1',inputJSON())}});
     const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
-    const saved=(()=>{try{return JSON.parse(localStorage.getItem('cumes.editor.v1'))}catch(_){return null}})();
+    const editorStorageKey=asymmetricPreset?fixedStorageKey+'.editor':'cumes.editor.v1';
+    const saved=(()=>{try{return JSON.parse(localStorage.getItem(editorStorageKey))}catch(_){return null}})();
     const finite=(candidate,fallback)=>Number.isFinite(Number(candidate))?Number(candidate):fallback;
-    const savedContour=Array.isArray(saved?.contour)&&saved.contour.length===CONTOUR_POINTS&&
+    const savedContour=Array.isArray(saved?.contour)&&saved.contour.length>=CONTOUR_POINTS&&saved.contour.length%2===0&&
       saved.contour.every(point=>Array.isArray(point)&&point.length===2&&point.every(Number.isFinite))?
       saved.contour.map(point=>point.map(Number)):null;
     const shape={r:defaults.r.map((v,m)=>finite(saved?.r?.[m],v)),z:defaults.z.map((v,m)=>finite(saved?.z?.[m],v)),
@@ -377,19 +378,27 @@
       value(`${spec.id}-value`).textContent=shape[spec.family][spec.m].toFixed(3)}
       value('pressure').value=Math.min(Number(value('pressure').max),Math.max(Number(value('pressure').min),shape.pressure));
       value('pressure-value').textContent=Number(value('pressure').value).toFixed(3)}
-    function pointAt(theta){let r=0,z=0;for(let m=0;m<shape.r.length;++m)r+=shape.r[m]*Math.cos(m*theta);
+    function contourAvailable(){return !advancedEditor||(asymmetricPreset&&!boundaryMode.free&&surfaceEditor?.fourier?.ntor===0)}
+    function contourMpol(){return advancedEditor?surfaceEditor.fourier.mpol:MAX_M+1}
+    function contourAsymmetric(){return advancedEditor&&surfaceEditor.fourier.lasym}
+    function contourPointCount(){return Math.max(CONTOUR_POINTS,2*contourMpol())}
+    function saveContourState(){if(!advancedEditor||asymmetricPreset)localStorage.setItem(editorStorageKey,
+      JSON.stringify(advancedEditor?{mode:shape.mode,contour:shape.contour}:shape))}
+    function pointAt(theta){if(advancedEditor){const f=surfaceEditor.fourier;return fourierPoint(f,f.surfaces[0].coefficients,theta,0)}
+      let r=0,z=0;for(let m=0;m<shape.r.length;++m)r+=shape.r[m]*Math.cos(m*theta);
       for(let m=1;m<shape.z.length;++m)z+=shape.z[m]*Math.sin(m*theta);return[r,z]}
-    function resetContourFromFourier(){shape.contour=Array.from({length:CONTOUR_POINTS},(_,i)=>pointAt(2*Math.PI*i/CONTOUR_POINTS))}
-    function ensureContour(){if(!shape.contour||shape.contour.length!==CONTOUR_POINTS)resetContourFromFourier()}
+    function resetContourFromFourier(){const count=contourPointCount();shape.contour=Array.from({length:count},(_,i)=>pointAt(2*Math.PI*i/count))}
+    function ensureContour(){if(!shape.contour||shape.contour.length!==contourPointCount())resetContourFromFourier()}
     function catmullRom(a,b,c,d,t){return .5*((2*b)+(-a+c)*t+(2*a-5*b+4*c-d)*t*t+(-a+3*b-3*c+d)*t*t*t)}
-    function contourAt(theta){ensureContour();const position=((theta/(2*Math.PI))*CONTOUR_POINTS)%CONTOUR_POINTS,
-      i=Math.floor(position),t=position-i,at=offset=>shape.contour[(i+offset+CONTOUR_POINTS)%CONTOUR_POINTS];
+    function contourAt(theta){ensureContour();const count=shape.contour.length,position=((theta/(2*Math.PI))*count)%count,
+      i=Math.floor(position),t=position-i,at=offset=>shape.contour[(i+offset+count)%count];
       return[catmullRom(at(-1)[0],at(0)[0],at(1)[0],at(2)[0],t),catmullRom(at(-1)[1],at(0)[1],at(1)[1],at(2)[1],t)]}
-    function updateFourierFromContour(){const r=Array(MAX_M+1).fill(0),z=Array(MAX_M+1).fill(0);
-      for(let i=0;i<TRANSFORM_SAMPLES;i++){const theta=2*Math.PI*i/TRANSFORM_SAMPLES,[rv,zv]=contourAt(theta);r[0]+=rv;
-        for(let m=1;m<=MAX_M;m++){r[m]+=rv*Math.cos(m*theta);z[m]+=zv*Math.sin(m*theta)}}
-      shape.r[0]=r[0]/TRANSFORM_SAMPLES;for(let m=1;m<=MAX_M;m++){shape.r[m]=2*r[m]/TRANSFORM_SAMPLES;shape.z[m]=2*z[m]/TRANSFORM_SAMPLES}
-      clampCoefficients();syncControls()}
+    function updateFourierFromContour(){const fit=fitTokamakContour(contourAt,contourMpol(),contourAsymmetric(),TRANSFORM_SAMPLES);
+      if(advancedEditor){const input=readSurfaceInput();
+        for(const[family,coefficients]of Object.entries(fit))input[family]=[...(input[family]||[]).filter(h=>h.n!==0||h.m>=input.mpol),
+          ...coefficients.map((value,m)=>({m,n:0,value}))];
+        writeSurfaceInput(input);surfaceEditor.refresh();
+      }else{shape.r=fit.rbc;shape.z=fit.zbs;clampCoefficients();syncControls()}}
     function contourFitError(){if(editorMode!=='contour')return 0;let squared=0;
       for(let i=0;i<TRANSFORM_SAMPLES;i++){const theta=2*Math.PI*i/TRANSFORM_SAMPLES,target=contourAt(theta),fit=pointAt(theta);
         squared+=(target[0]-fit[0])**2+(target[1]-fit[1])**2}return Math.sqrt(squared/TRANSFORM_SAMPLES)}
@@ -406,28 +415,38 @@
       const zl=node('text',{x:18,y:31,class:'axis-label'});zl.textContent='Z (m)';group.append(zl);svg.append(group)}
     function pathData(points,project){return points.map((point,i)=>`${i?'L':'M'}${project(point).join(',')}`).join(' ')+' Z'}
     let boundaryProjection;
-    function drawBoundary(){if(advancedEditor){drawSurfaceBoundary();return}const svg=value('boundary-plot');if(!svg)return;svg.replaceChildren();
+    function drawBoundary(){if(advancedEditor){drawSurfaceBoundary();return}drawTokamakBoundary()}
+    function drawTokamakBoundary(){const svg=value('boundary-plot');if(!svg)return;svg.replaceChildren();
       const fit=Array.from({length:161},(_,i)=>pointAt(2*Math.PI*i/160)),target=editorMode==='contour'?
         Array.from({length:161},(_,i)=>contourAt(2*Math.PI*i/160)):fit;
       boundaryProjection=projection([...fit,...target],600,520,65);drawGrid(svg,600,520);
       if(editorMode==='contour')svg.append(node('path',{d:pathData(target,boundaryProjection.map),class:'contour-target'}));
       svg.append(node('path',{d:pathData(fit,boundaryProjection.map),class:'boundary'}));
-      if(editorMode==='contour'){ensureContour();for(let i=0;i<CONTOUR_POINTS;i++){const[x,y]=boundaryProjection.map(shape.contour[i]);
+      if(editorMode==='contour'){ensureContour();for(let i=0;i<shape.contour.length;i++){const[x,y]=boundaryProjection.map(shape.contour[i]);
         svg.append(node('circle',{cx:x,cy:y,r:6,class:'handle','data-index':i}))}value('fit-error').textContent=`RMS fit error: ${contourFitError().toExponential(2)} m`}
-      localStorage.setItem('cumes.editor.v1',JSON.stringify(shape))}
+      saveContourState()}
     function svgPosition(event,svg){const pt=new DOMPoint(event.clientX,event.clientY).matrixTransform(svg.getScreenCTM().inverse());return[pt.x,pt.y]}
-    function setEditorMode(mode,preserveContour=false){if(mode!=='fourier'&&mode!=='contour')return;
+    function syncEditorMode(){const available=contourAvailable();value('boundary-editor-mode').hidden=!available;
+      if(!available){editorMode='fourier';shape.mode=editorMode;shape.contour=null}
+      value('surface-editor').hidden=!advancedEditor||editorMode==='contour';
+      value('fourier-editor').hidden=editorMode!=='fourier';value('contour-editor').hidden=!available||editorMode!=='contour';
+      for(const candidate of ['fourier','contour']){const selected=candidate===editorMode,button=value(`mode-${candidate}`);button.classList.toggle('active',selected);button.setAttribute('aria-selected',String(selected))}
+      if(available){const asymmetric=contourAsymmetric(),maxM=contourMpol()-1;
+        value('contour-description').textContent=(asymmetric?'Move each contour point independently.':'Move a contour point and its reflected partner follows.')+
+          ` A periodic cubic contour is fitted to the boundary harmonics through m = ${maxM}.`;
+        value('contour-fit-label').textContent=`m ≤ ${maxM} Fourier fit`;
+        value('editor-hint').textContent=editorMode==='fourier'?'Tune the Fourier harmonics below':
+          asymmetric?'Drag any point independently':'Drag a point; its symmetric partner follows'}}
+    function setEditorMode(mode,preserveContour=false){if((mode!=='fourier'&&mode!=='contour')||(mode==='contour'&&!contourAvailable()))return;
       if(mode==='contour'&&(!preserveContour||!shape.contour))resetContourFromFourier();editorMode=mode;shape.mode=mode;
-      value('fourier-editor').hidden=mode!=='fourier';value('contour-editor').hidden=mode!=='contour';
-      for(const candidate of ['fourier','contour']){const selected=candidate===mode,button=value(`mode-${candidate}`);button.classList.toggle('active',selected);button.setAttribute('aria-selected',String(selected))}
-      value('editor-hint').textContent=mode==='fourier'?'Tune the Fourier harmonics below':'Drag a point; its symmetric partner follows';drawBoundary()}
+      syncEditorMode();drawBoundary()}
     let activeHandle=null;
     value('boundary-plot')?.addEventListener('pointerdown',event=>{const target=event.target.closest('.handle');if(!target||document.body.classList.contains('busy'))return;
       activeHandle={index:Number(target.dataset.index),pointerId:event.pointerId};target.classList.add('active');event.preventDefault()});
     window.addEventListener('pointermove',event=>{if(!activeHandle||event.pointerId!==activeHandle.pointerId)return;const index=activeHandle.index,
-      target=boundaryProjection.unmap(svgPosition(event,value('boundary-plot'))),mirror=(CONTOUR_POINTS-index)%CONTOUR_POINTS;
-      if(index===0||index===CONTOUR_POINTS/2)target[1]=0;shape.contour[index]=target;shape.contour[mirror]=[target[0],-target[1]];
-      updateFourierFromContour();drawBoundary();invalidateResult();document.querySelector(`.handle[data-index="${index}"]`)?.classList.add('active');event.preventDefault()});
+      target=boundaryProjection.unmap(svgPosition(event,value('boundary-plot')));
+      moveContourPoint(shape.contour,index,target,contourAsymmetric());
+      updateFourierFromContour();if(!advancedEditor)drawBoundary();invalidateResult();document.querySelector(`.handle[data-index="${index}"]`)?.classList.add('active');event.preventDefault()});
     function releaseHandle(event){if(!activeHandle||event.pointerId!==activeHandle.pointerId)return;activeHandle=null}
     window.addEventListener('pointerup',releaseHandle);window.addEventListener('pointercancel',releaseHandle);
     value('mode-fourier')?.addEventListener('click',()=>setEditorMode('fourier'));
@@ -443,6 +462,7 @@
       localStorage.setItem('cumes.input.v1',inputJSON());value('run').disabled=true;
       const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('boundary-error').textContent=error.message}});
     value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(w7xPreset||asymmetricPreset)localStorage.removeItem(fixedStorageKey);else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
+      if(asymmetricPreset)localStorage.removeItem(editorStorageKey);
       const next=new URL(location.href);next.searchParams.delete('run');
       if(boundaryMode.free)next.searchParams.set('coils',value('coil-preset').value==='upload'?'solovev':value('coil-preset').value);
       location.assign(next.href)});
@@ -543,10 +563,13 @@
       value('grid-sequence').options[0].textContent=`Single grid · ${w7xGridInput.ns_array.at(-1)} surfaces`;value('grid-sequence').options[1].textContent=`Multigrid · ${w7xGridInput.ns_array.join(' → ')}`;
       value('grid-sequence').value=grids===String(w7xGridInput.ns_array.at(-1))?'1':grids===w7xGridInput.ns_array.join(',')?'3':'custom'}
     function drawSurfaceBoundary(){if(!surfaceEditor?.fourier)return;
-      const section=fourierSections(surfaceEditor.fourier,surfaceEditor.phi)[0],svg=value('boundary-plot');svg.replaceChildren();
-      const p=projection(section,600,520,65);drawGrid(svg,600,520);
-      svg.append(node('path',{d:pathData(section,p.map),class:'boundary',style:'stroke:var(--orange)'}));
-      value('editor-hint').textContent=`φ = ${(surfaceEditor.phi*180/Math.PI).toFixed(1)}° · R–Z cross-section`;
+      syncEditorMode();
+      if(editorMode==='contour')drawTokamakBoundary();
+      else{const section=fourierSections(surfaceEditor.fourier,surfaceEditor.phi)[0],svg=value('boundary-plot');svg.replaceChildren();
+        const p=projection(section,600,520,65);drawGrid(svg,600,520);
+        svg.append(node('path',{d:pathData(section,p.map),class:'boundary',style:'stroke:var(--orange)'}));
+        value('editor-hint').textContent=`φ = ${(surfaceEditor.phi*180/Math.PI).toFixed(1)}° · R–Z cross-section`;
+        saveContourState()}
       if(value('preview-label').hidden&&['pass','fail'].includes(document.body.dataset.cumesWebgpu))return;
       showBoundaryPreview();
     }
@@ -562,6 +585,7 @@
     async function prepareEditor(){
       if(!appMode)return;
       value('surface-editor').hidden=!advancedEditor;value('slice-control').hidden=!advancedEditor;
+      value('boundary-editor-mode').hidden=advancedEditor;
       value('equilibrium-settings').hidden=!advancedEditor;
       value('boundary-title').textContent=boundaryMode.free?'Initial plasma boundary':'Input boundary';
       if(!advancedEditor)return;
@@ -579,14 +603,15 @@
         if(query.has('grids')){const next=new URL(location.href);next.searchParams.delete('grids');history.replaceState(null,'',next.href)}
       }
       surfaceEditor=installCumesSurfaceEditor(readSurfaceInput,writeSurfaceInput,changed=>{
-        if(changed)invalidateResult();drawSurfaceBoundary();
+        if(changed){shape.contour=null;invalidateResult()}drawSurfaceBoundary();
       });
       window.cumesBoundaryChanged=()=>{if(surfaceEditor.refresh()){invalidateResult();drawSurfaceBoundary();setEditorDisabled(running&&document.body.classList.contains('busy'))}};
-      value('apply-equilibrium').addEventListener('click',()=>{if(surfaceEditor.refresh()){saveSurfaceInput();syncGridSequence();invalidateResult();drawSurfaceBoundary()}});
+      value('apply-equilibrium').addEventListener('click',()=>{shape.contour=null;if(surfaceEditor.refresh()){saveSurfaceInput();syncGridSequence();invalidateResult();drawSurfaceBoundary()}});
       if(!surfaceEditor.refresh())throw Error(value('boundary-error').textContent);
       setEditorDisabled(running);value('run').disabled=running;
     }
     for(const id of ['coil-equilibrium','coil-currents','coil-grid'])value(id).addEventListener('input',invalidateResult);
+    value('coil-equilibrium').addEventListener('input',()=>{shape.contour=null;saveContourState()});
     const editorReady=prepareEditor();
     function versionedAsset(path,prefix){
       const runtime=document.getElementById('cumes-runtime').content.querySelector('script');

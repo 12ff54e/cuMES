@@ -17,6 +17,36 @@ function setBoundaryCoefficient(input, family, m, n, value) {
   else if (value !== 0) coefficients.push({m, n, value});
 }
 
+// The planar contour editor uses the same Fourier projection for both parities.
+function fitTokamakContour(pointAt, mpol, lasym, samples = 512) {
+  const rbc = Array(mpol).fill(0), zbs = Array(mpol).fill(0);
+  const rbs = Array(mpol).fill(0), zbc = Array(mpol).fill(0);
+  samples = Math.max(samples, 4 * mpol);
+  for (let i = 0; i < samples; i++) {
+    const theta = 2 * Math.PI * i / samples, [r, z] = pointAt(theta);
+    rbc[0] += r;
+    if (lasym) zbc[0] += z;
+    for (let m = 1; m < mpol; m++) {
+      const c = Math.cos(m * theta), s = Math.sin(m * theta);
+      rbc[m] += r * c; zbs[m] += z * s;
+      if (lasym) { rbs[m] += r * s; zbc[m] += z * c; }
+    }
+  }
+  const result = {rbc, zbs};
+  if (lasym) Object.assign(result, {rbs, zbc});
+  for (const coefficients of Object.values(result))
+    for (let m = 0; m < mpol; m++) coefficients[m] *= (m ? 2 : 1) / samples;
+  return result;
+}
+
+function moveContourPoint(points, index, point, lasym) {
+  points[index] = [...point];
+  if (!lasym) {
+    if (index === 0 || index === points.length / 2) points[index][1] = 0;
+    points[(points.length - index) % points.length] = [points[index][0], -points[index][1]];
+  }
+}
+
 function installCumesSurfaceEditor(readInput, writeInput, onChange) {
   const get = id => document.getElementById(id);
   let fourier, phi = 0;

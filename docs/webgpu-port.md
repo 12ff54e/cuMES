@@ -37,6 +37,14 @@ orbitable boundary preview update together, using the solver's six/twelve-family
 Fourier convention. Coefficient edits update the input JSON directly; no
 projection or rounding to the axisymmetric editor's `m <= 5` basis is applied.
 The fixed Solovev editor retains its existing Fourier sliders and contour mode.
+The asymmetric tokamak also offers **Contour** mode while `ntor=0`: points
+move independently and the fit updates RBC/ZBS/RBS/ZBC, including the vertical
+offset, through `m=mpol-1`. It uses at least 16 periodic cubic control points
+and keeps the configured profiles, axis guess and grid schedule. The target,
+fitted boundary and RMS error are shown together. Contour edits and the selected
+mode survive reloads and precision changes separately from the Solovev setup.
+Switching modes does not refit the boundary; dragging a point performs the fit.
+Inputs with nonzero toroidal modes retain the Fourier surface editor.
 
 Boundary previews are labeled separately from converged flux surfaces. The
 result's **2D cut** view has its own toroidal-angle slider for 3-D equilibria,
@@ -440,7 +448,7 @@ After upgrading from a build that predates this scheme, use one hard refresh
 or add any one-time query parameter to the HTML URL; subsequent rebuilds are
 cache-coherent automatically.
 
-In **Fourier** mode the editor exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
+In the Solovev preset, **Fourier** mode exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
 for `m=1..5` as sliders beside a live boundary preview. In **Contour** mode,
 16 points define a periodic Catmull-Rom contour; dragging one point mirrors its
 partner and a 512-point discrete Fourier transform updates those same
@@ -451,6 +459,12 @@ stay in browser local storage; compute and output generation remain local to
 the page. The interactive profile uses stellarator-symmetric axisymmetric
 harmonics (`ntor=0`), three grids (`ns=5,11,55`), and a responsive mixed-float
 tolerance of `1e-5`.
+
+`node scripts/webgpu_contour_smoke.mjs APP_URL OUTPUT_PREFIX` checks real
+pointer drags and solves for both tokamak parities in the forwarded Chrome.
+It also checks asymmetric vertical offsets, retained profiles, reloads,
+precision changes, poloidal resolution changes and the Fourier-only 3-D path.
+Its temporary tab uses session storage and is closed after the checks.
 
 After convergence the result panel defaults to an interactive 3-D equilibrium
 view, with a **2D cut** toggle for the poloidal cross-section. The solver sends

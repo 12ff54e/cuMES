@@ -47,6 +47,30 @@ console.log('PASS: asymmetric signed-n boundary, vertical offset and all complem
 assert.throws(()=>context.boundaryFourier({mpol:1e9}),/valid mpol/);
 console.log('PASS: VMEC signed-n geometry, stellarator symmetry, field periodicity and closed sections');
 vm.runInContext(readFileSync(new URL('../webgpu/boundary_editor.js',import.meta.url),'utf8'),context);
+// Analytic planar curve: recover both parities, its vertical offset, and modes
+// above the symmetric demo's m=5 cap at the requested resolution.
+const curve = theta => [4 + .9*Math.cos(theta) + .06*Math.sin(theta) + .02*Math.sin(7*theta),
+  .12 + 1.3*Math.sin(theta) + .08*Math.cos(theta) - .025*Math.cos(9*theta)];
+const fit = context.fitTokamakContour(curve, 10, true);
+const expected = {rbc:{0:4,1:.9}, zbs:{1:1.3}, rbs:{1:.06,7:.02}, zbc:{0:.12,1:.08,9:-.025}};
+for (const family of Object.keys(expected)) for (let m=0;m<10;m++)
+  close(fit[family][m], expected[family][m] || 0);
+const symmetricFit = context.fitTokamakContour(curve, 10, false);
+assert.deepEqual(Object.keys(symmetricFit), ['rbc','zbs']);
+for (const family of ['rbc','zbs']) for (let m=0;m<10;m++)
+  close(symmetricFit[family][m], expected[family][m] || 0);
+const points = Array.from({length:16},(_,i)=>curve(2*Math.PI*i/16));
+for (const index of [0,3,8]) {
+  const moved = structuredClone(points), target = [4.8,.37];
+  context.moveContourPoint(moved,index,target,true);
+  for (let i=0;i<points.length;i++) assert.deepEqual([...moved[i]],i===index?target:points[i]);
+}
+const mirrored = Array.from({length:16},(_,i)=>[4+Math.cos(2*Math.PI*i/16),Math.sin(2*Math.PI*i/16)]);
+context.moveContourPoint(mirrored,3,[4.8,.37],false);
+close(mirrored[3][0],mirrored[13][0]);close(mirrored[3][1],-mirrored[13][1]);
+context.moveContourPoint(mirrored,0,[5.1,.37],false);
+close(mirrored[0][1],0);
+console.log('PASS: contour parity, vertical offset, selected Fourier resolution and independent asymmetric handles');
 context.URL=URL;
 let migrated;
 context.migrateCumesEditorUrl({href:'https://example.test/app?solve=w7x&grids=3&precision=float&fft=1&run=1#result'},
