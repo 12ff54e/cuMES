@@ -36,6 +36,7 @@ try {
     assert.equal(after.points.length,count);
     assert.equal(await evaluate(`document.querySelectorAll('.handle').length`),count);
     assert.equal(await evaluate(`document.getElementById('contour-points-value').textContent`),String(count));
+    assert.deepEqual(await evaluate(`[document.getElementById('contour-points').min,document.getElementById('contour-points').max]`),['12','36']);
     assert.deepEqual(after.input,before.input,'Changing handle count must not change the fitted boundary');
   };
   const drag = async (index, dx, dy) => {
@@ -95,7 +96,7 @@ try {
   assert.equal(initial.input.lasym, true);
   await evaluate(`document.getElementById('mode-contour').click()`);
   await resize(12);
-  await resize(64);
+  await resize(36);
   await resize(24);
   const before = await snapshot();
   assert.deepEqual(before.input, initial.input, 'Selecting Contour must not refit the input');
@@ -134,7 +135,7 @@ try {
   const refined = structuredClone(edited.input);
   refined.mpol = 10; refined.zbc.push({m:9,n:0,value:.004});
   await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(refined))};document.getElementById('apply-equilibrium').click();document.getElementById('mode-contour').click()`);
-  assert.equal((await snapshot()).points.length,20);
+  assert.equal((await snapshot()).points.length,16);
   await drag(3,2,-2);
   assert.ok((await snapshot()).input.zbc.some(h=>h.m===9&&Math.abs(h.value)>1e-4));
   await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(edited.input))};document.getElementById('apply-equilibrium').click()`);

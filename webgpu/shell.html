@@ -236,7 +236,7 @@
           </div>
           <div class="contour-editor" id="contour-editor" hidden>
             <label>Contour points <output id="contour-points-value" for="contour-points">16</output>
-              <input id="contour-points" type="range" min="12" max="64" step="2" value="16"></label>
+              <input id="contour-points" type="range" min="12" max="36" step="2" value="16"></label>
             <p>Changing the count keeps the fitted boundary. Drag a point to reshape it.</p>
             <p id="contour-description"></p>
             <div class="contour-legend"><span><i class="swatch target"></i>free contour</span><span><i class="swatch"></i><span id="contour-fit-label">m ≤ 5 Fourier fit</span></span><span class="fit-error" id="fit-error"></span></div>
@@ -386,7 +386,7 @@
     function contourAvailable(){return !advancedEditor||(asymmetricPreset&&!boundaryMode.free&&surfaceEditor?.fourier?.ntor===0)}
     function contourMpol(){return advancedEditor?surfaceEditor.fourier.mpol:MAX_M+1}
     function contourAsymmetric(){return advancedEditor&&surfaceEditor.fourier.lasym}
-    function contourPointRange(){const min=Math.max(4,2*contourMpol());return[min,Math.max(64,2*min)]}
+    function contourPointRange(){return[12,36]}
     function contourPointCount(){const[min,max]=contourPointRange();return Math.min(max,Math.max(min,shape.contourPoints))}
     function saveContourState(){if(!advancedEditor||asymmetricPreset)localStorage.setItem(editorStorageKey,
       JSON.stringify(advancedEditor?{mode:shape.mode,contour:shape.contour,contourPoints:shape.contourPoints}:shape))}

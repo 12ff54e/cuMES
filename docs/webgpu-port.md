@@ -41,8 +41,8 @@ The asymmetric tokamak also offers **Contour** mode while `ntor=0`: points
 move independently and the fit updates RBC/ZBS/RBS/ZBC, including the vertical
 offset, through `m=mpol-1`. The **Contour points** slider adjusts the number of
 periodic cubic control points in both tokamak editors, starting from 16.
-It uses even counts, with a minimum of `max(4,2*mpol)` and a maximum of
-`max(64,4*mpol)`. Changing the count resamples the current contour without
+It uses even counts from 12 to 36, independently of `mpol`.
+Changing the count resamples the current contour without
 changing the fitted boundary, profiles, axis guess or grid schedule. The target,
 fitted boundary and RMS error are shown together. Contour edits, editing mode
 and point count survive reloads and precision changes separately from the
