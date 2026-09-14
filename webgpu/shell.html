@@ -235,6 +235,9 @@
             <div class="formula">VMEC stellarator-symmetric boundary harmonics; toroidal mode n = 0.</div>
           </div>
           <div class="contour-editor" id="contour-editor" hidden>
+            <label>Contour points <output id="contour-points-value" for="contour-points">16</output>
+              <input id="contour-points" type="range" min="12" max="64" step="2" value="16"></label>
+            <p>Changing the count keeps the fitted boundary. Drag a point to reshape it.</p>
             <p id="contour-description"></p>
             <div class="contour-legend"><span><i class="swatch target"></i>free contour</span><span><i class="swatch"></i><span id="contour-fit-label">m ≤ 5 Fourier fit</span></span><span class="fit-error" id="fit-error"></span></div>
             <button class="secondary" id="reset-contour">Reset points from Fourier fit</button>
@@ -354,11 +357,13 @@
     const editorStorageKey=asymmetricPreset?fixedStorageKey+'.editor':'cumes.editor.v1';
     const saved=(()=>{try{return JSON.parse(localStorage.getItem(editorStorageKey))}catch(_){return null}})();
     const finite=(candidate,fallback)=>Number.isFinite(Number(candidate))?Number(candidate):fallback;
-    const savedContour=Array.isArray(saved?.contour)&&saved.contour.length>=CONTOUR_POINTS&&saved.contour.length%2===0&&
+    const savedContour=Array.isArray(saved?.contour)&&saved.contour.length>=4&&saved.contour.length%2===0&&
       saved.contour.every(point=>Array.isArray(point)&&point.length===2&&point.every(Number.isFinite))?
       saved.contour.map(point=>point.map(Number)):null;
     const shape={r:defaults.r.map((v,m)=>finite(saved?.r?.[m],v)),z:defaults.z.map((v,m)=>finite(saved?.z?.[m],v)),
-      pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier'};
+      pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier',
+      contourPoints:Number.isInteger(saved?.contourPoints)&&saved.contourPoints>=4&&saved.contourPoints%2===0?
+        saved.contourPoints:savedContour?.length||CONTOUR_POINTS};
     let editorMode=shape.mode,surfaceEditor=null;
     const advancedEditor=appMode&&(boundaryMode.free||w7xPreset||asymmetricPreset);
     document.body.dataset.surfaceEditor=String(advancedEditor);
@@ -381,9 +386,10 @@
     function contourAvailable(){return !advancedEditor||(asymmetricPreset&&!boundaryMode.free&&surfaceEditor?.fourier?.ntor===0)}
     function contourMpol(){return advancedEditor?surfaceEditor.fourier.mpol:MAX_M+1}
     function contourAsymmetric(){return advancedEditor&&surfaceEditor.fourier.lasym}
-    function contourPointCount(){return Math.max(CONTOUR_POINTS,2*contourMpol())}
+    function contourPointRange(){const min=Math.max(4,2*contourMpol());return[min,Math.max(64,2*min)]}
+    function contourPointCount(){const[min,max]=contourPointRange();return Math.min(max,Math.max(min,shape.contourPoints))}
     function saveContourState(){if(!advancedEditor||asymmetricPreset)localStorage.setItem(editorStorageKey,
-      JSON.stringify(advancedEditor?{mode:shape.mode,contour:shape.contour}:shape))}
+      JSON.stringify(advancedEditor?{mode:shape.mode,contour:shape.contour,contourPoints:shape.contourPoints}:shape))}
     function pointAt(theta){if(advancedEditor){const f=surfaceEditor.fourier;return fourierPoint(f,f.surfaces[0].coefficients,theta,0)}
       let r=0,z=0;for(let m=0;m<shape.r.length;++m)r+=shape.r[m]*Math.cos(m*theta);
       for(let m=1;m<shape.z.length;++m)z+=shape.z[m]*Math.sin(m*theta);return[r,z]}
@@ -432,6 +438,8 @@
       value('fourier-editor').hidden=editorMode!=='fourier';value('contour-editor').hidden=!available||editorMode!=='contour';
       for(const candidate of ['fourier','contour']){const selected=candidate===editorMode,button=value(`mode-${candidate}`);button.classList.toggle('active',selected);button.setAttribute('aria-selected',String(selected))}
       if(available){const asymmetric=contourAsymmetric(),maxM=contourMpol()-1;
+        const[min,max]=contourPointRange(),slider=value('contour-points');slider.min=min;slider.max=max;slider.value=contourPointCount();
+        value('contour-points-value').textContent=slider.value;
         value('contour-description').textContent=(asymmetric?'Move each contour point independently.':'Move a contour point and its reflected partner follows.')+
           ` A periodic cubic contour is fitted to the boundary harmonics through m = ${maxM}.`;
         value('contour-fit-label').textContent=`m ≤ ${maxM} Fourier fit`;
@@ -452,6 +460,11 @@
     value('mode-fourier')?.addEventListener('click',()=>setEditorMode('fourier'));
     value('mode-contour')?.addEventListener('click',()=>setEditorMode('contour'));
     value('reset-contour')?.addEventListener('click',()=>{resetContourFromFourier();drawBoundary()});
+    value('contour-points').addEventListener('input',()=>{
+      if(!contourAvailable()||document.body.classList.contains('busy'))return;
+      ensureContour();const count=Number(value('contour-points').value);if(count===shape.contour.length)return;
+      const points=Array.from({length:count},(_,i)=>contourAt(2*Math.PI*i/count));
+      shape.contourPoints=count;shape.contour=points;activeHandle=null;syncEditorMode();drawBoundary()});
     function inputJSON(){if(advancedEditor){const input=boundaryMode.free?boundaryMode.input():readSurfaceInput();
       input.lfreeb=boundaryMode.free;input.ftol_array=input.ns_array.map(()=>document.body.dataset.cumesPrecision==='double'?1e-12:1e-5);return JSON.stringify(input)}const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
       return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,ns_array:[5,11,55],niter_array:[1200,2500,3000],
@@ -524,7 +537,7 @@
       value('result-empty').innerHTML='<strong>Boundary changed</strong><span>Run again to update the equilibrium.</span>';value('download').hidden=true;
       if(advancedEditor)showBoundaryPreview()}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
-    function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
+    function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,#contour-points,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
       document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#coil-equilibrium,#apply-equilibrium,#grid-sequence,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
       for(const family of ['zbs','rbs']){const dc=document.querySelector(`#boundary-coefficients input[data-family="${family}"][data-m="0"][data-n="0"]`);if(dc)dc.disabled=true;}
       value('reset').disabled=disabled}

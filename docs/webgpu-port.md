@@ -39,10 +39,14 @@ projection or rounding to the axisymmetric editor's `m <= 5` basis is applied.
 The fixed Solovev editor retains its existing Fourier sliders and contour mode.
 The asymmetric tokamak also offers **Contour** mode while `ntor=0`: points
 move independently and the fit updates RBC/ZBS/RBS/ZBC, including the vertical
-offset, through `m=mpol-1`. It uses at least 16 periodic cubic control points
-and keeps the configured profiles, axis guess and grid schedule. The target,
-fitted boundary and RMS error are shown together. Contour edits and the selected
-mode survive reloads and precision changes separately from the Solovev setup.
+offset, through `m=mpol-1`. The **Contour points** slider adjusts the number of
+periodic cubic control points in both tokamak editors, starting from 16.
+It uses even counts, with a minimum of `max(4,2*mpol)` and a maximum of
+`max(64,4*mpol)`. Changing the count resamples the current contour without
+changing the fitted boundary, profiles, axis guess or grid schedule. The target,
+fitted boundary and RMS error are shown together. Contour edits, editing mode
+and point count survive reloads and precision changes separately from the
+Solovev setup.
 Switching modes does not refit the boundary; dragging a point performs the fit.
 Inputs with nonzero toroidal modes retain the Fourier surface editor.
 
@@ -450,8 +454,8 @@ cache-coherent automatically.
 
 In the Solovev preset, **Fourier** mode exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
 for `m=1..5` as sliders beside a live boundary preview. In **Contour** mode,
-16 points define a periodic Catmull-Rom contour; dragging one point mirrors its
-partner and a 512-point discrete Fourier transform updates those same
+the default 16 points define a periodic Catmull-Rom contour; dragging one point
+mirrors its partner and a 512-point discrete Fourier transform updates those same
 coefficients through `m=5`. The orange target and cyan truncated reconstruction
 make the approximation explicit. Select **Run equilibrium** to solve the
 fitted boundary. The generated input, editing mode, contour, and coefficients

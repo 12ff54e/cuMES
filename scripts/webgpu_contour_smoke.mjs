@@ -29,6 +29,15 @@ try {
   const ready = () => wait(`document.body?.dataset.cumesWebgpu==='ready' && !document.getElementById('run').disabled`);
   const snapshot = () => evaluate(`({input:JSON.parse(inputJSON()), points:shape.contour,
     mode:editorMode, dataset:{...document.body.dataset}, error:document.getElementById('boundary-error').textContent})`);
+  const resize = async count => {
+    const before = await snapshot();
+    await evaluate(`document.getElementById('contour-points').value=${count};document.getElementById('contour-points').dispatchEvent(new Event('input',{bubbles:true}))`);
+    const after = await snapshot();
+    assert.equal(after.points.length,count);
+    assert.equal(await evaluate(`document.querySelectorAll('.handle').length`),count);
+    assert.equal(await evaluate(`document.getElementById('contour-points-value').textContent`),String(count));
+    assert.deepEqual(after.input,before.input,'Changing handle count must not change the fitted boundary');
+  };
   const drag = async (index, dx, dy) => {
     const {x,y} = await evaluate(`(() => {
       const handle=document.querySelector('.handle[data-index="${index}"]');
@@ -69,11 +78,13 @@ try {
   await call('Page.bringToFront');
   await ready();
   await evaluate(`document.getElementById('mode-contour').click()`);
+  await resize(20);
   const symmetricBefore = await snapshot();
   await drag(3, 5, -4);
   const symmetricAfter = await snapshot();
-  assert.equal(symmetricAfter.points[3][0], symmetricAfter.points[13][0]);
-  assert.equal(symmetricAfter.points[3][1], -symmetricAfter.points[13][1]);
+  const mirror = symmetricAfter.points.length-3;
+  assert.equal(symmetricAfter.points[3][0], symmetricAfter.points[mirror][0]);
+  assert.equal(symmetricAfter.points[3][1], -symmetricAfter.points[mirror][1]);
   assert.notDeepEqual(symmetricAfter.points[3], symmetricBefore.points[3]);
   await solve('symmetric');
 
@@ -83,6 +94,9 @@ try {
   const initial = await snapshot();
   assert.equal(initial.input.lasym, true);
   await evaluate(`document.getElementById('mode-contour').click()`);
+  await resize(12);
+  await resize(64);
+  await resize(24);
   const before = await snapshot();
   assert.deepEqual(before.input, initial.input, 'Selecting Contour must not refit the input');
   await drag(3, 5, -4);
@@ -108,6 +122,7 @@ try {
     assert.deepEqual(retained.points,edited.points); assert.equal(retained.mode,'contour');
     assert.deepEqual({...retained.input,ftol_array:edited.input.ftol_array},edited.input);
   }
+  await resize(16);
   // A 3-D JSON edit must retain its toroidal harmonics and leave planar editing.
   const threeD = structuredClone(edited.input);
   threeD.ntor = 1; threeD.rbs.push({m:1,n:1,value:.003});
@@ -124,7 +139,7 @@ try {
   assert.ok((await snapshot()).input.zbc.some(h=>h.m===9&&Math.abs(h.value)>1e-4));
   await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(edited.input))};document.getElementById('apply-equilibrium').click()`);
   assert.equal((await snapshot()).points.length,16);
-  console.log('Contour editing: PASS (independent handles, vertical offset, profiles, reload, precision and JSON resolution)');
+  console.log('Contour editing: PASS (point count, independent handles, vertical offset, profiles, reload, precision and JSON resolution)');
   await solve('asymmetric');
 } finally {
   if (target) await cdp.call('Target.closeTarget',{targetId:target});
