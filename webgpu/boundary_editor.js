@@ -108,8 +108,13 @@ function installCumesSurfaceEditor(readInput, writeInput, onChange) {
     onChange(changed);
   }
   get('allow-asymmetry').addEventListener('change', () => {
+    const checkbox = get('allow-asymmetry');
+    if (checkbox.disabled || document.body.classList.contains('busy')) {
+      checkbox.checked = !!readInput().lasym;
+      return;
+    }
     const input = readInput();
-    input.lasym = get('allow-asymmetry').checked;
+    input.lasym = checkbox.checked;
     if (input.lasym) { input.rbs ||= []; input.zbc ||= []; }
     else for (const key of ['rbs', 'zbc', 'raxis_s', 'zaxis_c']) delete input[key];
     writeInput(input); refresh(); onChange(true);

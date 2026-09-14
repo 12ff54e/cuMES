@@ -186,6 +186,12 @@ add_executable(test_webgpu_vacuum_bridge
 target_include_directories(test_webgpu_vacuum_bridge PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(test_webgpu_vacuum_bridge PRIVATE CUMES_VACUUM_HOST)
 target_link_libraries(test_webgpu_vacuum_bridge PRIVATE vfield_cuda_double vfield::makegrid)
+set(CUMES_VACUUM_BRIDGE_COILS
+  ${PROJECT_SOURCE_DIR}/deps/vacuum-field/tests/data/coils.solovev)
+target_link_options(test_webgpu_vacuum_bridge PRIVATE
+  "--embed-file=${CUMES_VACUUM_BRIDGE_COILS}@/deps/vacuum-field/tests/data/coils.solovev")
+set_property(TARGET test_webgpu_vacuum_bridge APPEND PROPERTY
+  LINK_DEPENDS ${CUMES_VACUUM_BRIDGE_COILS})
 cumes_enable_warnings(test_webgpu_vacuum_bridge)
 add_test(NAME webgpu_vacuum_bridge COMMAND test_webgpu_vacuum_bridge)
 set_tests_properties(webgpu_vacuum_bridge PROPERTIES LABELS "unit;webgpu")

@@ -84,12 +84,14 @@ printf '\011\000\000\000' | \
 expect_failure 2 "$COMPARE_STATES" "$scratch/state-a.bin" "$scratch/asymmetric-a.bin"
 cp "$scratch/asymmetric-a.bin" "$scratch/asymmetric-b.bin"
 cp "$scratch/a.log" "$scratch/b.log"
-"$COMPARE_RUNS" "$scratch/a.log" "$scratch/asymmetric-a.bin" \
+"$COMPARE_RUNS" "$scratch/a.log" "$scratch/asymmetric-v9.bin" \
   "$scratch/b.log" "$scratch/asymmetric-b.bin" >/dev/null
 for tree in baseline run; do
   cp "$scratch/asymmetric-a.bin" "$scratch/$tree/cumes_state.bin"
   printf 'trajectory\n' >"$scratch/$tree/per_iter_residuals_cumes.bin"
 done
+# The binary input-record change does not change the twelve-family payload.
+cp "$scratch/asymmetric-v9.bin" "$scratch/baseline/cumes_state.bin"
 "$COMPARE_BITWISE" "$scratch/baseline" "$scratch/run" >/dev/null
 
 # Change only the LAST complementary family, lmnss, at interior j=1.

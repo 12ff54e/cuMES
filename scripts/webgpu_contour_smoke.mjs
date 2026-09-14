@@ -53,6 +53,21 @@ try {
   const solve = async name => {
     const before = await snapshot();
     await evaluate(`document.getElementById('run').click()`);
+    if (before.input.lasym) {
+      await wait(`document.body?.classList.contains('busy') && typeof surfaceEditor!=='undefined' && surfaceEditor?.fourier`);
+      const locked = await evaluate(`(() => {
+        const checkbox=document.getElementById('allow-asymmetry');
+        const disabled=checkbox.disabled, savedBefore=localStorage.getItem(fixedStorageKey);
+        checkbox.checked=false;checkbox.dispatchEvent(new Event('change',{bubbles:true}));
+        return {disabled, checked:checkbox.checked, input:JSON.parse(inputJSON()),
+          savedBefore, savedAfter:localStorage.getItem(fixedStorageKey)};
+      })()`);
+      assert.equal(locked.disabled,true,'The symmetry checkbox must be disabled during a solve');
+      assert.equal(locked.checked,true,'A dispatched change must retain the active symmetry');
+      assert.deepEqual(locked.input,before.input,'A busy symmetry change must preserve the active input');
+      assert.equal(locked.savedAfter,locked.savedBefore,'A busy symmetry change must preserve saved input');
+      console.log('Symmetry lock: PASS (disabled checkbox and ignored busy change event)');
+    }
     await wait(`document.body?.dataset.cumesWebgpu==='pass'||document.body?.dataset.cumesWebgpu==='fail'`, 600000);
     const result = await evaluate(`({dataset:{...document.body.dataset}, input:JSON.parse(inputJSON()),
       points:shape.contour, mode:editorMode, plot:window.cumesResidualPlot.report(),
@@ -62,6 +77,9 @@ try {
     assert.equal(result.mode, 'contour');
     assert.deepEqual(result.input, before.input, 'Run must use the edited boundary');
     assert.deepEqual(result.points, before.points, 'Run must retain contour handles');
+    if (before.input.lasym)
+      assert.equal(await evaluate(`document.getElementById('allow-asymmetry').disabled`),false,
+        'The symmetry checkbox must unlock after completion');
     const last = result.plot.samples.at(-1);
     assert.equal(last.converged, true);
     assert.ok(last.fsq.every(value => Number.isFinite(value) && value < last.tolerance));

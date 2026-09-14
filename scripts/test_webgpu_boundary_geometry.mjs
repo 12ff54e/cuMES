@@ -81,3 +81,41 @@ assert(!migrated.searchParams.has('solve'));assert(!migrated.searchParams.has('r
 assert.equal(migrated.searchParams.get('grids'),'3');assert.equal(migrated.searchParams.get('fft'),'1');
 assert.equal(migrated.searchParams.get('precision'),'float');assert.equal(migrated.hash,'#result');
 console.log('PASS: legacy W7-X links enter the editor without losing precision/grid/FFT settings or starting a solve');
+
+// Exercise the installed checkbox handler against a saved asymmetric input.
+// A disabled or busy editor must retain both its data and the checkbox state,
+// including when a change event is dispatched programmatically.
+function element() {
+  return {value:'0', checked:false, disabled:false, dataset:{}, children:[], listeners:new Map(),
+    addEventListener(name, handler) { this.listeners.set(name, handler); },
+    replaceChildren() { this.children = []; },
+    append(child) { this.children.push(child); }, setAttribute() {}};
+}
+const controls = new Map();
+const control = id => {
+  if (!controls.has(id)) controls.set(id, element());
+  return controls.get(id);
+};
+let busy = false, writes = 0, changes = 0;
+context.document = {getElementById:control, createElement:element, querySelectorAll:()=>[],
+  body:{classList:{contains:name => name === 'busy' && busy}}};
+let savedInput = {...structuredClone(asymmetric), raxis_s:[0,.02,0], zaxis_c:[.2,0,.01]};
+const original = structuredClone(savedInput);
+const editor = context.installCumesSurfaceEditor(() => structuredClone(savedInput),
+  input => { savedInput = input; writes++; }, () => { changes++; });
+assert.equal(editor.refresh(), true);
+const checkbox = control('allow-asymmetry'), initialChanges = changes;
+for (const lock of [{disabled:true, busy:false}, {disabled:false, busy:true},
+                    {disabled:true, busy:true}]) {
+  checkbox.disabled = lock.disabled; busy = lock.busy; checkbox.checked = false;
+  checkbox.listeners.get('change')();
+  assert.deepEqual(savedInput, original, 'Locked symmetry changes must preserve all coefficients');
+  assert.equal(checkbox.checked, true, 'The checkbox must reflect the active input');
+  assert.equal(writes, 0); assert.equal(changes, initialChanges);
+}
+busy = false; checkbox.disabled = false; checkbox.checked = false;
+checkbox.listeners.get('change')();
+assert.equal(savedInput.lasym, false); assert.equal(writes, 1);
+for (const family of ['rbs','zbc','raxis_s','zaxis_c']) assert(!(family in savedInput));
+assert.deepEqual(savedInput.rbc, original.rbc); assert.deepEqual(savedInput.zbs, original.zbs);
+console.log('PASS: symmetry edits stay locked during solves and resume after unlocking');
