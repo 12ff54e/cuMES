@@ -11,10 +11,10 @@ back). The `CUMES_DUMP`-gated diagnostic files are documented separately in
 
 | Situation | Container | Magic |
 | --- | --- | --- |
-| `./build/cumes <in> --output out.bin` | versioned binary (schema v1, on-disk version 8; asymmetric version 9) | `CUMES001` |
+| `./build/cumes <in> --output out.bin` | versioned binary (schema v1, on-disk version 8; asymmetric version 10) | `CUMES001` |
 | a `.nc`/`.h5` suffix | NetCDF/HDF5 v1 (versioned, attributes) | — |
-| `--checkpoint <path>` | versioned checkpoint (v6; asymmetric v7) | `CUMECKP1` |
-| `--restart <path>` (read) | versioned checkpoint (v6/v7; v1–v5 still read) | `CUMECKP1` |
+| `--checkpoint <path>` | versioned checkpoint (v6; asymmetric v8) | `CUMECKP1` |
+| `--restart <path>` (read) | versioned checkpoint (v6/v8; v1–v7 state still read) | `CUMECKP1` |
 
 The output path defaults to `$PWD/cumes-output.bin`; an unknown suffix is an
 error. All writers publish atomically (write a temporary file in the target
@@ -117,20 +117,39 @@ round trips through binary, NetCDF, and HDF5.
 ### Asymmetric format extensions
 
 Symmetric writes retain binary v8 and checkpoint v6 byte layouts. Asymmetric
-writes use binary v9 and checkpoint v7: immediately after `ns, mnmax`, an
+writes use binary v10 and checkpoint v8: immediately after `ns, mnmax`, an
 `int32` component count selects six or twelve families in the order above.
-The existing input record appends `int32 lasym` and a length-prefixed complete
-flat input JSON, preserving `rbs`, `zbc`, `raxis_s`, and `zaxis_c` alongside
-all existing provenance. Earlier versions remain readable; earlier readers
-reject the new versions instead of dropping complementary coefficients.
+The existing input record appends `int32 lasym`, then the typed vectors
+`raxis_s, zaxis_c` (f64), `rbs_m, rbs_n` (int32), `rbs_value` (f64),
+`zbc_m, zbc_n` (int32), `zbc_value` (f64), and the folded boundary vectors
+`rbsc, rbcs, zbcc, zbss` (f64). Each vector uses the existing int32 count +
+payload convention. Raw harmonic order, signed n, duplicates, and explicit
+zero coefficients are preserved.
 
-NetCDF and HDF5 use the six additional named variables/datasets and a global
-`asymmetric_input_json` string attribute. Readers reject a partial set of
-complementary families. Plotting readers reconstruct all active families.
+NetCDF and HDF5 use the six additional state variables/datasets and native
+input fields: scalar `lasym` (a NetCDF variable / HDF5 attribute), 1-D axis
+and raw-harmonic arrays, and 2-D folded matrices with dimensions
+`[n_mpol, n_ntorp1]`. NetCDF omits empty raw-harmonic lists; their nonempty
+dimensions are `n_rbs` and `n_zbc`. Its complementary axes use `n_ntorp1`.
+HDF5 stores empty lists as zero-length datasets. Growing harmonic lists
+therefore use datasets, including when their payload exceeds 64 KiB.
+
+The former JSON-string embedding is no longer written or decoded. Readers
+requesting provenance reject binary v9 / checkpoint v7 input records and
+the old asymmetric NetCDF/HDF5 representation. State-only binary reads and
+checkpoint restarts can still consume those versions. Symmetric input
+records remain readable. Readers reject partial complementary input and
+state families. Plotting readers reconstruct all active families.
 `EquilibriumSnapshot::components()` supplies the active count; its legacy
 `COUNT` constant continues to mean six.
 
-## 3. Versioned binary (schema v1, on-disk version 8; asymmetric version 9)
+`test_asymmetric_io` checks large and empty harmonic lists, exact input/state
+round trips, and malformed records; `webgpu_asymmetric_io` runs its binary
+and checkpoint checks under Wasm. Run
+`python3 tests/test_state_io.py <build>/tests/test_asymmetric_io` to check the
+same native outputs with the plotting readers.
+
+## 3. Versioned binary (schema v1, on-disk version 8; asymmetric version 10)
 
 ```
 magic     8 bytes  "CUMES001"
@@ -197,7 +216,7 @@ Notes:
   later trailer revisions. The trailer is parsed only when the caller
   requests the `RunReport`.
 
-## 4. Versioned checkpoint v6 (`--checkpoint` / `--restart`)
+## 4. Versioned checkpoint v6 / asymmetric v8 (`--checkpoint` / `--restart`)
 
 ```
 magic     8 bytes  "CUMECKP1"
@@ -242,6 +261,7 @@ natively in NetCDF/HDF5:
 - the boundary is the pre-existing native pair: `rbc_m/rbc_n/rbc_value`
   and `zbs_m/zbs_n/zbs_value` (int/int/double over `nrbc`/`nzbs`) plus the
   folded 2-D matrices `rbcc/rbss/zbsc/zbcs` over `[n_mpol, n_ntorp1]`.
+  Asymmetric records add the complementary typed fields listed in §2.
 
 Empty profile vectors get no variable/dataset (classic NetCDF gives a
 0-length dimension unlimited semantics and allows only one); a reader

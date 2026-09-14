@@ -132,6 +132,12 @@ target_include_directories(test_host_io PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_host_io PRIVATE cumes_io_host cumes_config_json)
 cumes_enable_warnings(test_host_io)
 
+add_executable(test_asymmetric_io test_asymmetric_io.cpp)
+target_link_libraries(test_asymmetric_io PRIVATE cumes_io cumes_config_json)
+cumes_apply_backend_test_defines(test_asymmetric_io)
+cumes_enable_warnings(test_asymmetric_io)
+cumes_add_test(test_asymmetric_io "unit;io")
+
 add_executable(test_derived_fields test_derived_fields.cpp)
 target_include_directories(test_derived_fields PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_derived_fields PRIVATE cumes_io_host)
@@ -306,6 +312,11 @@ if(CUMES_HOST_SANITIZERS)
                            test_io_malformed_shapes.cpp
                            cumes_io_readers_asan io)
   cumes_apply_backend_test_defines(asan_test_io_malformed_shapes)
+
+  cumes_add_host_asan_test(asan_test_asymmetric_io test_asymmetric_io.cpp
+                           cumes_io_readers_asan io)
+  target_link_libraries(asan_test_asymmetric_io PRIVATE cumes_config_json_asan)
+  cumes_apply_backend_test_defines(asan_test_asymmetric_io)
 
   cumes_add_host_asan_test(asan_test_host_config test_host_config.cpp
                            cumes_config_json_asan config)

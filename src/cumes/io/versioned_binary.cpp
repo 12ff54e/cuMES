@@ -2,7 +2,7 @@
 // §6.13) and the host-library binary factories.
 //
 // Layout (little-endian), symmetric version 8 (asymmetric extension: version
-// 9):
+// 10):
 //   magic     8 bytes  "CUMES001"
 //   version   int32    = 8
 //   ns        int32
@@ -36,7 +36,8 @@
 // the "power_series" defaults for version-3 records). Free-boundary versions
 // 5 and 6 add inline-Makegrid provenance; version 7 combines both extensions;
 // version 8 inserts scientific fields; version 9 adds a family count after
-// ns/mnmax and asymmetric input provenance at the end of the input record.
+// ns/mnmax. Version 10 stores asymmetric input as typed vectors; the version-9
+// JSON input record is no longer supported (its state remains readable).
 //
 // The state payload is read and validated independently of the provenance
 // trailer, so a reader stays forward-compatible with later v1.x trailers.
@@ -61,7 +62,7 @@ constexpr char MAGIC[9] = "CUMES001";
 // "power_series"). Versions 5/6 are the free-boundary lineage; version 7
 // combines the profile and free-boundary extensions. Version 8 inserts the
 // scientific fields after the stable spectral state payload.
-constexpr std::int32_t VERSION = 9;
+constexpr std::int32_t VERSION = 10;
 constexpr std::int32_t MIN_READ_VERSION = 1;
 
 // The on-disk precision discriminator of the v1 trailer (0=double, 1=float).
@@ -83,6 +84,9 @@ class VersionedBinaryWriter final : public Writer {
                         const OutputSpec& spec,
                         const ValidatedProblem& problem) override {
         (void)problem;  // v1 binary records report + state only
+        if (snapshot.lasym() != report.input_params.lasym) {
+            return Status("versioned binary: state/input symmetry mismatch");
+        }
         const std::string tmp = io_detail::temp_path_for(spec.path);
         FILE* fp = fopen(tmp.c_str(), "wb");
         if (!fp) return Status("cannot open " + tmp + " for writing");
@@ -209,6 +213,11 @@ class VersionedBinaryReader final : public Reader {
         // round-trip contract, completion plan step 2.3). A truncated trailer
         // fails the read when the caller asked for the report.
         if (report) {
+            if (version == 9) {
+                return fail(
+                    "versioned binary: JSON-based asymmetric input "
+                    "record is no longer supported");
+            }
             std::int32_t precision = 0, status = 0, total = 0, nstages = 0;
             std::uint8_t dirty = 0;
             if (!io_detail::read_i32(fp, precision) ||
@@ -289,8 +298,12 @@ class VersionedBinaryReader final : public Reader {
                 if (!io_detail::read_input_params(
                         fp, report->get().input_params, reason,
                         has_profile_types, free_boundary_extension,
-                        version >= 9)) {
+                        version >= 10)) {
                     return fail("versioned binary: " + reason);
+                }
+                if (report->get().input_params.lasym != snapshot.lasym()) {
+                    return fail(
+                        "versioned binary: state/input symmetry mismatch");
                 }
             }
         }

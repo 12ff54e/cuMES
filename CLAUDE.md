@@ -202,7 +202,7 @@ Preserve these contracts unless the task intentionally changes them:
   exclusive output. Known suffixes select compiled output backends; unknown
   suffixes and unavailable backends are errors.
 - Configuration schema v1 is distinct from the native binary version (8 for
-  symmetric, 9 for asymmetric states) and checkpoint version (6/7 respectively).
+  symmetric, 10 for asymmetric states) and checkpoint version (6/8 respectively).
   Spectral state remains double on
   disk. Preserve reader compatibility and full provenance. Consult
   `docs/output-formats.md`, `configs/schema-v1.json`, and the readers/writers

@@ -16,7 +16,6 @@
 #ifndef CUMES_INCLUDE_CUMES_IO_INPUT_PARAMS_HPP_
 #define CUMES_INCLUDE_CUMES_IO_INPUT_PARAMS_HPP_
 
-#include "cumes/config/json_writer.hpp"
 #include "cumes/config/validated_problem.hpp"
 
 #include <optional>
@@ -36,10 +35,6 @@ struct InputStage {
 struct InputParams {
     std::string schema = "cumes-config-v1";
     bool lasym = false;
-    // Complete flat input for the extended Fourier representation. Kept in
-    // addition to the legacy typed record so every raw harmonic and axis
-    // coefficient survives a container/checkpoint round trip.
-    std::string asymmetric_input_json;
     int mpol = 0;
     int ntor = 0;
     int nfp = 0;
@@ -81,6 +76,20 @@ struct InputParams {
     std::vector<double> rbss;  // R: sin(mθ)sin(nζ)
     std::vector<double> zbsc;  // Z: sin(mθ)cos(nζ)
     std::vector<double> zbcs;  // Z: cos(mθ)sin(nζ)
+    // Complementary input fields, present only for lasym=true. Raw harmonics
+    // retain signed n, ordering, duplicates, and explicit zero coefficients.
+    std::vector<double> raxis_s;
+    std::vector<double> zaxis_c;
+    std::vector<int> rbs_m;
+    std::vector<int> rbs_n;
+    std::vector<double> rbs_value;
+    std::vector<int> zbc_m;
+    std::vector<int> zbc_n;
+    std::vector<double> zbc_value;
+    std::vector<double> rbsc;  // R: sin(mθ)cos(nζ)
+    std::vector<double> rbcs;  // R: cos(mθ)sin(nζ)
+    std::vector<double> zbcc;  // Z: cos(mθ)cos(nζ)
+    std::vector<double> zbss;  // Z: sin(mθ)sin(nζ)
 };
 
 inline bool operator==(const InputStage& a, const InputStage& b) {
@@ -88,12 +97,10 @@ inline bool operator==(const InputStage& a, const InputStage& b) {
 }
 
 inline bool operator==(const InputParams& a, const InputParams& b) {
-    return a.lasym == b.lasym &&
-           a.asymmetric_input_json == b.asymmetric_input_json &&
-           a.schema == b.schema && a.mpol == b.mpol && a.ntor == b.ntor &&
-           a.nfp == b.nfp && a.ntheta == b.ntheta && a.nzeta == b.nzeta &&
-           a.ncurr == b.ncurr && a.delt == b.delt && a.phiedge == b.phiedge &&
-           a.pres_scale == b.pres_scale &&
+    return a.lasym == b.lasym && a.schema == b.schema && a.mpol == b.mpol &&
+           a.ntor == b.ntor && a.nfp == b.nfp && a.ntheta == b.ntheta &&
+           a.nzeta == b.nzeta && a.ncurr == b.ncurr && a.delt == b.delt &&
+           a.phiedge == b.phiedge && a.pres_scale == b.pres_scale &&
            a.adiabatic_index == b.adiabatic_index &&
            a.spres_ped == b.spres_ped && a.bloat == b.bloat &&
            a.curtor == b.curtor && a.tcon0 == b.tcon0 &&
@@ -110,7 +117,12 @@ inline bool operator==(const InputParams& a, const InputParams& b) {
            a.rbc_value == b.rbc_value && a.zbs_m == b.zbs_m &&
            a.zbs_n == b.zbs_n && a.zbs_value == b.zbs_value &&
            a.rbcc == b.rbcc && a.rbss == b.rbss && a.zbsc == b.zbsc &&
-           a.zbcs == b.zbcs;
+           a.zbcs == b.zbcs && a.raxis_s == b.raxis_s &&
+           a.zaxis_c == b.zaxis_c && a.rbs_m == b.rbs_m && a.rbs_n == b.rbs_n &&
+           a.rbs_value == b.rbs_value && a.zbc_m == b.zbc_m &&
+           a.zbc_n == b.zbc_n && a.zbc_value == b.zbc_value &&
+           a.rbsc == b.rbsc && a.rbcs == b.rbcs && a.zbcc == b.zbcc &&
+           a.zbss == b.zbss;
 }
 
 // The embedded record from a validated problem: the RESOLVED values
@@ -120,7 +132,6 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
     const FoldedBoundary& b = vp.boundary();
     InputParams p;
     p.lasym = sp.lasym;
-    if (sp.lasym) p.asymmetric_input_json = problem_spec_to_json(sp);
     p.mpol = sp.mpol;
     p.ntor = sp.ntor;
     p.nfp = sp.nfp;
@@ -173,6 +184,24 @@ inline InputParams make_input_params(const ValidatedProblem& vp) {
     p.rbss = b.rbss;
     p.zbsc = b.zbsc;
     p.zbcs = b.zbcs;
+    if (sp.lasym) {
+        p.raxis_s = sp.raxis_s;
+        p.zaxis_c = sp.zaxis_c;
+        for (const auto& h : sp.rbs) {
+            p.rbs_m.push_back(h.m);
+            p.rbs_n.push_back(h.n);
+            p.rbs_value.push_back(h.value);
+        }
+        for (const auto& h : sp.zbc) {
+            p.zbc_m.push_back(h.m);
+            p.zbc_n.push_back(h.n);
+            p.zbc_value.push_back(h.value);
+        }
+        p.rbsc = b.rbsc;
+        p.rbcs = b.rbcs;
+        p.zbcc = b.zbcc;
+        p.zbss = b.zbss;
+    }
     return p;
 }
 

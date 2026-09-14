@@ -12,18 +12,20 @@
 
 namespace cumes::compare {
 
-inline constexpr std::array<const char*, 6> FAMILY_NAMES = {
-    "rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs"};
+inline constexpr std::array<const char*, 12> FAMILY_NAMES = {
+    "rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs",
+    "rmnsc", "zmncc", "lmncc", "rmncs", "zmnss", "lmnss"};
 
 struct State {
     std::int32_t ns = 0;
     std::int32_t mnmax = 0;
-    std::array<std::vector<double>, FAMILY_NAMES.size()> families;
+    std::vector<std::vector<double>> families;
 };
 
 struct StatePayload {
     std::int32_t ns = 0;
     std::int32_t mnmax = 0;
+    std::int32_t components = 6;
     std::vector<std::uint8_t> bytes;
 };
 
@@ -123,7 +125,12 @@ double read_f64(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
     return decoded;
 }
 
-std::size_t payload_size(std::int32_t ns, std::int32_t mnmax) {
+std::size_t payload_size(std::int32_t ns,
+                         std::int32_t mnmax,
+                         std::int32_t components = 6) {
+    if (components != 6 && components != 12) {
+        throw std::runtime_error("spectral component count must be 6 or 12");
+    }
     if (ns < 1 || mnmax < 1) {
         throw std::runtime_error("invalid state dimensions");
     }
@@ -134,7 +141,7 @@ std::size_t payload_size(std::int32_t ns, std::int32_t mnmax) {
     }
     const auto values = surfaces * modes;
     constexpr std::size_t bytes_per_value = sizeof(double);
-    constexpr std::size_t family_count = FAMILY_NAMES.size();
+    const auto family_count = static_cast<std::size_t>(components);
     if (values > std::numeric_limits<std::size_t>::max() /
                      (family_count * bytes_per_value)) {
         throw std::runtime_error("state payload size overflow");
@@ -151,6 +158,7 @@ struct StateLayout {
     std::int32_t ns = 0;
     std::int32_t mnmax = 0;
     std::size_t offset = 0;
+    std::int32_t components = 6;
 };
 
 StateLayout resolve_layout(const std::vector<std::uint8_t>& bytes,
@@ -160,16 +168,18 @@ StateLayout resolve_layout(const std::vector<std::uint8_t>& bytes,
         const auto version = read_i32(bytes, 8);
         const auto ns = read_i32(bytes, 12);
         const auto mnmax = read_i32(bytes, 16);
-        if (version < 1 || version > 8) {
+        if (version < 1 || version > 10) {
             throw std::runtime_error(path.string() +
                                      " has an unsupported state version");
         }
-        const auto size = payload_size(ns, mnmax);
-        if (bytes.size() - STATE_HEADER_SIZE < size) {
+        const auto components = version >= 9 ? read_i32(bytes, 20) : 6;
+        const auto offset = STATE_HEADER_SIZE + (version >= 9 ? 4 : 0);
+        const auto size = payload_size(ns, mnmax, components);
+        if (bytes.size() - offset < size) {
             throw std::runtime_error(path.string() +
                                      " has a truncated state payload");
         }
-        return {ns, mnmax, STATE_HEADER_SIZE};
+        return {ns, mnmax, offset, components};
     }
 
     if (allow_legacy && bytes.size() >= 8) {
@@ -193,6 +203,7 @@ State read_state(const std::filesystem::path& path, bool allow_legacy) {
     State state;
     state.ns = layout.ns;
     state.mnmax = layout.mnmax;
+    state.families.resize(layout.components);
     const auto family_values = static_cast<std::size_t>(state.ns) *
                                static_cast<std::size_t>(state.mnmax);
     std::size_t offset = layout.offset;
@@ -209,10 +220,11 @@ State read_state(const std::filesystem::path& path, bool allow_legacy) {
 StatePayload read_state_payload(const std::filesystem::path& path) {
     const auto bytes = read_file(path);
     const auto layout = resolve_layout(bytes, false, path);
-    const auto size = payload_size(layout.ns, layout.mnmax);
+    const auto size = payload_size(layout.ns, layout.mnmax, layout.components);
     StatePayload payload;
     payload.ns = layout.ns;
     payload.mnmax = layout.mnmax;
+    payload.components = layout.components;
     payload.bytes.assign(
         bytes.begin() + static_cast<std::ptrdiff_t>(layout.offset),
         bytes.begin() + static_cast<std::ptrdiff_t>(layout.offset + size));

@@ -1,6 +1,5 @@
 """Readers for native cuMES state containers."""
 
-import json
 import os
 import struct
 
@@ -11,15 +10,22 @@ FAM_NAMES = ("rmncc", "zmnsc", "lmnsc", "rmnss", "zmncs", "lmncs")
 ASYM_FAM_NAMES = ("rmnsc", "zmncc", "lmncc", "rmncs", "zmnss", "lmnss")
 
 
-def _asymmetric_input(params, document):
-    source = json.loads(document)
-    if source.get("lasym") is not True:
-        raise ValueError("asymmetric state requires lasym=true input provenance")
+def _asymmetric_input(params, lasym, darray, iarray):
+    if lasym != 1:
+        raise ValueError("asymmetric state requires typed lasym=true "
+                         "input provenance")
     params["lasym"] = True
     for key in ("raxis_s", "zaxis_c"):
-        params[key] = source.get(key, [])
+        params[key] = list(darray(key))
+        if len(params[key]) != params["ntor"] + 1:
+            raise ValueError("invalid asymmetric axis dimensions")
     for key in ("rbs", "zbc"):
-        params[key] = [(h["m"], h["n"], h["value"]) for h in source.get(key, [])]
+        m = iarray(key + "_m")
+        n = iarray(key + "_n")
+        values = darray(key + "_value")
+        if not len(m) == len(n) == len(values):
+            raise ValueError("asymmetric boundary vector lengths disagree")
+        params[key] = list(zip(m, n, values))
 
 
 def _family_names(count):
@@ -144,11 +150,16 @@ def _read_input_record(f, has_profile_types=False,
 
     if has_asymmetric_extension:
         lasym = struct.unpack("<i", f.read(4))[0]
-        document = _read_str(f)
-        if lasym not in (0, 1):
-            raise ValueError("invalid lasym flag")
-        if lasym:
-            _asymmetric_input(result, document)
+        arrays = {key: _read_vec(f, "d") for key in ("raxis_s", "zaxis_c")}
+        for key in ("rbs", "zbc"):
+            for suffix, fmt in (("_m", "i"), ("_n", "i"), ("_value", "d")):
+                arrays[key + suffix] = _read_vec(f, fmt)
+        _asymmetric_input(result, lasym, arrays.__getitem__,
+                          arrays.__getitem__)
+        for _ in range(4):  # folded rbsc/rbcs/zbcc/zbss
+            if len(_read_vec(f, "d")) != mpol * (ntor + 1):
+                raise ValueError("invalid asymmetric folded "
+                                 "boundary dimensions")
     return result
 
 
@@ -159,7 +170,7 @@ def _no_params(path):
 def load_state(path):
     """Load the converged state + the embedded structured input record from
     any solver output container (docs/output-formats.md): versioned binary
-    (v8/v9), checkpoint (v6/v7), NetCDF, or HDF5. Returns (ns, mnmax, fams,
+    (v8/v10), checkpoint (v6/v8), NetCDF, or HDF5. Returns (ns, mnmax, fams,
     params, name) — the active mode-major families (index = mode * ns +
     surface), the input record as a dict mirroring InputParams, and a
     display name (the recorded input path stem when available, else the
@@ -176,7 +187,10 @@ def load_state(path):
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if not 1 <= version <= 9:
+            if version == 9:
+                raise SystemExit("error: JSON-based asymmetric input record is "
+                                 "no longer supported")
+            if not 1 <= version <= 10:
                 raise SystemExit(f"error: unsupported container version "
                                  f"{version} in {path}")
             ns, mnmax = struct.unpack("<ii", f.read(8))
@@ -225,7 +239,7 @@ def load_state(path):
                 f.read(4 * nrst)
             params = _read_input_record(
                 f, version == 4 or version >= 7,
-                version >= 5, version >= 5, version >= 6, version >= 9)
+                version >= 5, version >= 5, version >= 6, version >= 10)
             params["_precision"] = "float" if precision == 1 else "double"
             params["_source_path"] = source_path
         if source_path:
@@ -239,7 +253,10 @@ def load_state(path):
         with open(path, "rb") as f:
             f.seek(8)
             version = struct.unpack("<i", f.read(4))[0]
-            if not 1 <= version <= 7:
+            if version == 7:
+                raise SystemExit("error: JSON-based asymmetric input record is "
+                                 "no longer supported")
+            if not 1 <= version <= 8:
                 raise SystemExit(f"error: unsupported checkpoint version "
                                  f"{version} in {path}")
             f.read(4)  # precision (always double)
@@ -252,7 +269,7 @@ def load_state(path):
                 _no_params(path)
             params = _read_input_record(
                 f, version == 3 or version >= 6,
-                version >= 4, version >= 4, version >= 5, version >= 7)
+                version >= 4, version >= 4, version >= 5, version >= 8)
             params["_precision"] = "double"
         return ns, mnmax, fams, params, name
     if head.startswith(b"CDF"):
@@ -344,7 +361,19 @@ def load_state(path):
                 "extcur": darray("extcur"),
             }
             if "rmnsc" in fams:
-                _asymmetric_input(params, sattr("asymmetric_input_json", ""))
+                if "lasym" not in nc.variables:
+                    raise ValueError("missing typed asymmetric input record")
+                for key in ("rbs", "zbc"):
+                    present = [key + suffix in nc.variables
+                               for suffix in ("_m", "_n", "_value")]
+                    if any(present) and not all(present):
+                        raise ValueError("incomplete asymmetric boundary record")
+                _asymmetric_input(params, scalar("lasym"), darray, iarray)
+                shape = (params["mpol"], params["ntor"] + 1)
+                for key in ("rbsc", "rbcs", "zbcc", "zbss"):
+                    if nc.variables[key].shape != shape:
+                        raise ValueError("invalid asymmetric folded "
+                                         "boundary dimensions")
             params["_precision"] = (
                 "float" if "precision" in nc.variables and
                 int(scalar("precision")) == 1 else "double")
@@ -443,7 +472,17 @@ def load_state(path):
                 "extcur": darray("extcur"),
             }
             if "rmnsc" in fams:
-                _asymmetric_input(params, sattr("asymmetric_input_json", ""))
+                for key in ("rbs", "zbc"):
+                    if any(key + suffix not in f5
+                           for suffix in ("_m", "_n", "_value")):
+                        raise ValueError("incomplete asymmetric boundary record")
+                _asymmetric_input(params, f5.attrs.get("lasym", 0),
+                                  darray, iarray)
+                shape = (params["mpol"], params["ntor"] + 1)
+                for key in ("rbsc", "rbcs", "zbcc", "zbss"):
+                    if f5[key].shape != shape:
+                        raise ValueError("invalid asymmetric folded "
+                                         "boundary dimensions")
             params["_precision"] = (
                 "float" if int(f5.attrs.get("precision", 0)) == 1
                 else "double")

@@ -189,3 +189,20 @@ target_link_libraries(test_webgpu_vacuum_bridge PRIVATE vfield_cuda_double vfiel
 cumes_enable_warnings(test_webgpu_vacuum_bridge)
 add_test(NAME webgpu_vacuum_bridge COMMAND test_webgpu_vacuum_bridge)
 set_tests_properties(webgpu_vacuum_bridge PROPERTIES LABELS "unit;webgpu")
+
+# Exercise the browser's shared binary input record under Wasm as well.
+add_executable(test_webgpu_asymmetric_io
+  ${PROJECT_SOURCE_DIR}/tests/test_asymmetric_io.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/validated_problem.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/validation_report.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/core/mode_table.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/output_spec.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/versioned_binary.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/checkpoint.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/writer_dispatch.cpp)
+target_include_directories(test_webgpu_asymmetric_io PRIVATE
+  ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests/include)
+cumes_enable_warnings(test_webgpu_asymmetric_io)
+add_test(NAME webgpu_asymmetric_io COMMAND test_webgpu_asymmetric_io)
+set_tests_properties(webgpu_asymmetric_io PROPERTIES LABELS "unit;io;webgpu")

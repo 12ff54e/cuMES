@@ -50,7 +50,7 @@ The [asymmetric Fortran VMEC benchmarks](benchmarks/asymmetric_vmec/README.md)
 provide QA, heliotron and finite-pressure QH inputs, serial runners, physical
 comparison plots, and case-specific CUDA/Chrome results and limitations.
 
-The converged spectral state and run provenance are published as a version-8 (asymmetric: version-9)
+The converged spectral state and run provenance are published as a version-8 (asymmetric: version-10)
 native binary through a browser download link and verified by an in-Wasm
 round trip. The download also contains the complete half/full-grid scientific
 field block and is accepted by the standard plotting workflow.

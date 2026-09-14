@@ -57,6 +57,13 @@ class NetcdfV1Writer final : public Writer {
         const int ntorp1 = problem.shape().ntor + 1;
         const std::vector<BoundaryHarmonic>& rbc = problem.spec().rbc;
         const std::vector<BoundaryHarmonic>& zbs = problem.spec().zbs;
+        const InputParams& ip = report.input_params;
+        if (snapshot.lasym() != ip.lasym ||
+            (snapshot.lasym() &&
+             (ip.mpol != mpol || ip.ntor != ntorp1 - 1 ||
+              !io_detail::check_asymmetric_input_params(ip)))) {
+            return Status("NetCDF: malformed asymmetric input record");
+        }
 
         const std::string tmp = io_detail::temp_path_for(spec.path);
         int ncid = -1;
@@ -81,7 +88,6 @@ class NetcdfV1Writer final : public Writer {
         const size_t nstages = report.stages.size();
         size_t nrestarts = 0;
         for (const auto& st : report.stages) nrestarts += st.restarts.size();
-        const InputParams& ip = report.input_params;
 
         // ---- active dimensions ----
         int dim_ns, dim_mnmax, dim_nstages, dim_nrestarts, dim_nrbc, dim_nzbs,
@@ -161,11 +167,48 @@ class NetcdfV1Writer final : public Writer {
                      "def nstages_in");
         }
 
+        int v_lasym = -1, v_raxis_s = -1, v_zaxis_c = -1;
+        int v_rbs[3] = {-1, -1, -1}, v_zbc[3] = {-1, -1, -1};
+        int v_rbsc = -1, v_rbcs = -1, v_zbcc = -1, v_zbss = -1;
         if (snapshot.lasym()) {
-            NC_CHECK(nc_put_att_text(ncid, NC_GLOBAL, "asymmetric_input_json",
-                                     ip.asymmetric_input_json.size(),
-                                     ip.asymmetric_input_json.data()),
-                     "write asymmetric input");
+            NC_CHECK(nc_def_var(ncid, "lasym", NC_INT, 0, nullptr, &v_lasym),
+                     "def lasym");
+            NC_CHECK(nc_def_var(ncid, "raxis_s", NC_DOUBLE, 1, &dim_ntorp1,
+                                &v_raxis_s),
+                     "def raxis_s");
+            NC_CHECK(nc_def_var(ncid, "zaxis_c", NC_DOUBLE, 1, &dim_ntorp1,
+                                &v_zaxis_c),
+                     "def zaxis_c");
+            auto define_harmonics = [&](const char* name, size_t count,
+                                        int (&vars)[3]) -> int {
+                // An empty harmonic list has no dimension or variables in
+                // classic NetCDF, matching the existing input-vector rule.
+                if (count == 0) return NC_NOERR;
+                const std::string base(name);
+                int dim = -1;
+                int result =
+                    nc_def_dim(ncid, ("n_" + base).c_str(), count, &dim);
+                const char* suffixes[3] = {"_m", "_n", "_value"};
+                for (int c = 0; result == NC_NOERR && c < 3; ++c) {
+                    result = nc_def_var(ncid, (base + suffixes[c]).c_str(),
+                                        c == 2 ? NC_DOUBLE : NC_INT, 1, &dim,
+                                        &vars[c]);
+                }
+                return result;
+            };
+            NC_CHECK(define_harmonics("rbs", ip.rbs_m.size(), v_rbs),
+                     "def rbs");
+            NC_CHECK(define_harmonics("zbc", ip.zbc_m.size(), v_zbc),
+                     "def zbc");
+            const int dims[2] = {dim_mpol, dim_ntorp1};
+            NC_CHECK(nc_def_var(ncid, "rbsc", NC_DOUBLE, 2, dims, &v_rbsc),
+                     "def rbsc");
+            NC_CHECK(nc_def_var(ncid, "rbcs", NC_DOUBLE, 2, dims, &v_rbcs),
+                     "def rbcs");
+            NC_CHECK(nc_def_var(ncid, "zbcc", NC_DOUBLE, 2, dims, &v_zbcc),
+                     "def zbcc");
+            NC_CHECK(nc_def_var(ncid, "zbss", NC_DOUBLE, 2, dims, &v_zbss),
+                     "def zbss");
         }
         // ---- state variables ----
         const int state_dims[2] = {dim_ns, dim_mnmax};
@@ -469,6 +512,38 @@ class NetcdfV1Writer final : public Writer {
         NC_CHECK(nc_enddef(ncid), "nc_enddef");
 
         // ---- data ----
+        if (snapshot.lasym()) {
+            const int lasym = 1;
+            NC_CHECK(nc_put_var_int(ncid, v_lasym, &lasym), "put lasym");
+            NC_CHECK(nc_put_var_double(ncid, v_raxis_s, ip.raxis_s.data()),
+                     "put raxis_s");
+            NC_CHECK(nc_put_var_double(ncid, v_zaxis_c, ip.zaxis_c.data()),
+                     "put zaxis_c");
+            if (!ip.rbs_m.empty()) {
+                NC_CHECK(nc_put_var_int(ncid, v_rbs[0], ip.rbs_m.data()),
+                         "put rbs_m");
+                NC_CHECK(nc_put_var_int(ncid, v_rbs[1], ip.rbs_n.data()),
+                         "put rbs_n");
+                NC_CHECK(nc_put_var_double(ncid, v_rbs[2], ip.rbs_value.data()),
+                         "put rbs_value");
+            }
+            if (!ip.zbc_m.empty()) {
+                NC_CHECK(nc_put_var_int(ncid, v_zbc[0], ip.zbc_m.data()),
+                         "put zbc_m");
+                NC_CHECK(nc_put_var_int(ncid, v_zbc[1], ip.zbc_n.data()),
+                         "put zbc_n");
+                NC_CHECK(nc_put_var_double(ncid, v_zbc[2], ip.zbc_value.data()),
+                         "put zbc_value");
+            }
+            NC_CHECK(nc_put_var_double(ncid, v_rbsc, ip.rbsc.data()),
+                     "put rbsc");
+            NC_CHECK(nc_put_var_double(ncid, v_rbcs, ip.rbcs.data()),
+                     "put rbcs");
+            NC_CHECK(nc_put_var_double(ncid, v_zbcc, ip.zbcc.data()),
+                     "put zbcc");
+            NC_CHECK(nc_put_var_double(ncid, v_zbss, ip.zbss.data()),
+                     "put zbss");
+        }
         for (int c = 0; c < snapshot.components(); ++c) {
             const std::vector<double>& dbuf = snapshot.component(
                 static_cast<EquilibriumSnapshot::Component>(c));
@@ -1364,11 +1439,70 @@ class NetcdfV1Reader final : public Reader {
                     }
                 }
                 if (snapshot.lasym()) {
-                    parsed_report.input_params.lasym = true;
-                    if (!get_str(
-                            "asymmetric_input_json",
-                            parsed_report.input_params.asymmetric_input_json))
-                        return fail("missing asymmetric input JSON");
+                    auto& ip = parsed_report.input_params;
+                    int lasym = 0;
+                    if (!read_scalar_int("lasym", lasym) || lasym != 1 ||
+                        ip.mpol < 1 || ip.ntor < 0) {
+                        return fail("missing typed asymmetric input record");
+                    }
+                    ip.lasym = true;
+                    int dim_mpol = -1, dim_ntorp1 = -1;
+                    size_t mpol = 0, ntorp1 = 0;
+                    if (!get_dim("n_mpol", dim_mpol, mpol) ||
+                        !get_dim("n_ntorp1", dim_ntorp1, ntorp1) ||
+                        mpol != (size_t)ip.mpol ||
+                        ntorp1 != (size_t)ip.ntor + 1) {
+                        return fail("malformed asymmetric input dimensions");
+                    }
+                    const auto modes = checked_mul(mpol, ntorp1);
+                    if (!modes || *modes > io_detail::MAX_INPUT_PARAMS_VECTOR) {
+                        return fail(
+                            "asymmetric input dimensions exceed resource cap");
+                    }
+                    auto read_harmonics = [&](const char* name,
+                                              std::vector<int>& m,
+                                              std::vector<int>& n,
+                                              std::vector<double>& values) {
+                        const std::string base(name);
+                        int dim = -1;
+                        if (nc_inq_dimid(ncid, ("n_" + base).c_str(), &dim) ==
+                            NC_EBADDIM) {
+                            int vid = -1;
+                            return nc_inq_varid(ncid, (base + "_m").c_str(),
+                                                &vid) == NC_ENOTVAR &&
+                                   nc_inq_varid(ncid, (base + "_n").c_str(),
+                                                &vid) == NC_ENOTVAR &&
+                                   nc_inq_varid(ncid, (base + "_value").c_str(),
+                                                &vid) == NC_ENOTVAR;
+                        }
+                        size_t count = 0;
+                        return get_dim(("n_" + base).c_str(), dim, count) &&
+                               count <= io_detail::MAX_INPUT_PARAMS_VECTOR &&
+                               read_vector_int((base + "_m").c_str(), dim,
+                                               count, m) &&
+                               read_vector_int((base + "_n").c_str(), dim,
+                                               count, n) &&
+                               read_vector_double((base + "_value").c_str(),
+                                                  dim, count, values);
+                    };
+                    if (!read_vector_double("raxis_s", dim_ntorp1, ntorp1,
+                                            ip.raxis_s) ||
+                        !read_vector_double("zaxis_c", dim_ntorp1, ntorp1,
+                                            ip.zaxis_c) ||
+                        !read_harmonics("rbs", ip.rbs_m, ip.rbs_n,
+                                        ip.rbs_value) ||
+                        !read_harmonics("zbc", ip.zbc_m, ip.zbc_n,
+                                        ip.zbc_value) ||
+                        !read_matrix_double("rbsc", dim_mpol, dim_ntorp1, mpol,
+                                            ntorp1, ip.rbsc) ||
+                        !read_matrix_double("rbcs", dim_mpol, dim_ntorp1, mpol,
+                                            ntorp1, ip.rbcs) ||
+                        !read_matrix_double("zbcc", dim_mpol, dim_ntorp1, mpol,
+                                            ntorp1, ip.zbcc) ||
+                        !read_matrix_double("zbss", dim_mpol, dim_ntorp1, mpol,
+                                            ntorp1, ip.zbss)) {
+                        return fail("malformed asymmetric input record");
+                    }
                 }
                 report->get() = std::move(parsed_report);
             }

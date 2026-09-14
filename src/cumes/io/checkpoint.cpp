@@ -15,6 +15,8 @@
 // "power_series"). Free-boundary versions 4/5 add inline-Makegrid provenance;
 // version 6 combines both extensions. The restart path reads the state only and
 // ignores the record; version-1 checkpoints (no record) remain readable.
+// Version 7 adds the family count; version 8 stores complementary input as
+// typed vectors. The version-7 JSON input record is no longer supported.
 #include "cumes/io/checkpoint.hpp"
 
 #include "io_common.hpp"
@@ -27,7 +29,7 @@ namespace cumes {
 namespace {
 
 constexpr char CHECKPOINT_MAGIC[9] = "CUMECKP1";
-constexpr std::int32_t CHECKPOINT_VERSION = 7;
+constexpr std::int32_t CHECKPOINT_VERSION = 8;
 constexpr std::int32_t MIN_CHECKPOINT_VERSION = 1;
 
 }  // namespace
@@ -35,6 +37,9 @@ constexpr std::int32_t MIN_CHECKPOINT_VERSION = 1;
 Status write_checkpoint(const EquilibriumSnapshot& snapshot,
                         const InputParams& input_params,
                         const std::string& path) {
+    if (snapshot.lasym() != input_params.lasym) {
+        return Status("checkpoint: state/input symmetry mismatch");
+    }
     const std::string tmp = io_detail::temp_path_for(path);
     FILE* fp = fopen(tmp.c_str(), "wb");
     if (!fp) return Status("cannot open " + tmp + " for writing");
@@ -118,14 +123,22 @@ Result<EquilibriumSnapshot> read_checkpoint(
     // for the record never touches it. The three profile-type strings exist
     // in version-3 checkpoints only.
     if (input_params && version >= 2) {
+        if (version == 7) {
+            return fail(
+                "checkpoint: JSON-based asymmetric input record is "
+                "no longer supported");
+        }
         const bool has_profile_types = version == 3 || version >= 6;
         const int free_boundary_extension = version >= 6   ? 3
                                             : version >= 4 ? version - 2
                                                            : 0;
         if (!io_detail::read_input_params(
                 fp, input_params->get(), reason, has_profile_types,
-                free_boundary_extension, version >= 7)) {
+                free_boundary_extension, version >= 8)) {
             return fail("checkpoint: " + reason);
+        }
+        if (input_params->get().lasym != snapshot.lasym()) {
+            return fail("checkpoint: state/input symmetry mismatch");
         }
     }
     fclose(fp);

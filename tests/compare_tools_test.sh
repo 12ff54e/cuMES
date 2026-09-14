@@ -72,6 +72,35 @@ done
 printf 'changed\n' >"$scratch/run/per_iter_residuals_cumes.bin"
 expect_failure 1 "$COMPARE_BITWISE" "$scratch/baseline" "$scratch/run"
 
+# Both asymmetric state versions carry twelve families after a count field.
+{
+  printf 'CUMES001\012\000\000\000\002\000\000\000\001\000\000\000\014\000\000\000'
+  dd if=/dev/zero bs=192 count=1 status=none
+} > "$scratch/asymmetric-a.bin"
+cp "$scratch/asymmetric-a.bin" "$scratch/asymmetric-v9.bin"
+printf '\011\000\000\000' | \
+  dd of="$scratch/asymmetric-v9.bin" bs=1 seek=8 conv=notrunc status=none
+"$COMPARE_STATES" "$scratch/asymmetric-a.bin" "$scratch/asymmetric-v9.bin" >/dev/null
+expect_failure 2 "$COMPARE_STATES" "$scratch/state-a.bin" "$scratch/asymmetric-a.bin"
+cp "$scratch/asymmetric-a.bin" "$scratch/asymmetric-b.bin"
+cp "$scratch/a.log" "$scratch/b.log"
+"$COMPARE_RUNS" "$scratch/a.log" "$scratch/asymmetric-a.bin" \
+  "$scratch/b.log" "$scratch/asymmetric-b.bin" >/dev/null
+for tree in baseline run; do
+  cp "$scratch/asymmetric-a.bin" "$scratch/$tree/cumes_state.bin"
+  printf 'trajectory\n' >"$scratch/$tree/per_iter_residuals_cumes.bin"
+done
+"$COMPARE_BITWISE" "$scratch/baseline" "$scratch/run" >/dev/null
+
+# Change only the LAST complementary family, lmnss, at interior j=1.
+printf '\000\000\000\000\000\000\360\077' | \
+  dd of="$scratch/asymmetric-b.bin" bs=1 seek=208 conv=notrunc status=none
+expect_failure 1 "$COMPARE_STATES" "$scratch/asymmetric-a.bin" "$scratch/asymmetric-b.bin"
+expect_failure 1 "$COMPARE_RUNS" "$scratch/a.log" "$scratch/asymmetric-a.bin" \
+  "$scratch/b.log" "$scratch/asymmetric-b.bin"
+cp "$scratch/asymmetric-b.bin" "$scratch/run/cumes_state.bin"
+expect_failure 1 "$COMPARE_BITWISE" --verbose "$scratch/baseline" "$scratch/run"
+
 # The HDF5-backed semantic path is exercised when real wout fixtures are used;
 # this smoke gate at least verifies the fourth CLI is present and parseable.
 "$COMPARE_WOUT" --help >/dev/null
