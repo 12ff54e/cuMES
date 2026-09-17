@@ -124,7 +124,8 @@ __global__ void initialize(int size,
                            T* d_x,
                            T* d_residual,
                            GmresControl<T>* d_control,
-                           T tolerance) {
+                           T tolerance,
+                           T absolute_tolerance) {
     for (int i = threadIdx.x; i < size; i += blockDim.x) {
         d_x[i] = T(0);
         d_residual[i] = d_b[i];
@@ -134,12 +135,13 @@ __global__ void initialize(int size,
         *d_control = GmresControl<T>{};
         d_control->rhs_norm = d_control->residual_norm = rhs_norm;
         d_control->norm_squared = rhs_norm * rhs_norm;
-        d_control->target_norm = rhs_norm * tolerance;
+        d_control->target_norm = fmax(rhs_norm * tolerance, absolute_tolerance);
         d_control->target_squared =
             d_control->target_norm * d_control->target_norm;
         d_control->breakdown = isfinite(rhs_norm) ? 0 : 2;
-        d_control->converged = rhs_norm == T(0);
-        d_control->active = isfinite(rhs_norm) && rhs_norm > T(0);
+        d_control->converged =
+            isfinite(rhs_norm) && rhs_norm <= d_control->target_norm;
+        d_control->active = isfinite(rhs_norm) && !d_control->converged;
     }
 }
 
@@ -463,8 +465,8 @@ int DeviceGmres<T>::check_size(int size) {
 
 template <class T>
 int DeviceGmres<T>::check_basis(int basis) {
-    if (basis < 1 || basis > 256)
-        throw cumes::CumesError("GMRES: basis must be in [1,256]");
+    if (basis < 1 || basis >= INT_MAX || basis > INT_MAX / (basis + 1))
+        throw cumes::CumesError("GMRES: basis exceeds int Hessenberg indexing");
     return basis;
 }
 
@@ -477,12 +479,18 @@ std::size_t DeviceGmres<T>::basis_count(int size, int basis) {
 }
 
 template <class T>
-void DeviceGmres<T>::enqueue_initialize(const T* d_b,
-                                        T* d_x,
-                                        T tolerance,
-                                        cudaStream_t stream) {
+void DeviceGmres<T>::enqueue_start(const T* d_b,
+                                   T* d_x,
+                                   T relative_tolerance,
+                                   T absolute_tolerance,
+                                   cudaStream_t stream) {
+    if (!d_b || !d_x || d_b == d_x || !std::isfinite(relative_tolerance) ||
+        relative_tolerance < T(0) || !std::isfinite(absolute_tolerance) ||
+        absolute_tolerance < T(0))
+        throw CumesError("GMRES: invalid vectors or stopping tolerances");
     gmres_detail::initialize<<<1, 256, 0, stream>>>(
-        size_, d_b, d_x, d_residual_.data(), d_control_.data(), tolerance);
+        size_, d_b, d_x, d_residual_.data(), d_control_.data(),
+        relative_tolerance, absolute_tolerance);
 }
 
 template <class T>

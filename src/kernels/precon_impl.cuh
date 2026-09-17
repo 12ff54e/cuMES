@@ -80,6 +80,10 @@ cumes::Preconditioner<T>::Preconditioner(
     alloc(d_cLambda_, p.ns + 1, "precon/cLambda");
     alloc(d_rmsPhiP_, 1, "precon/rmsPhiP");
     alloc(d_preconScale_, p.mnmax, "precon/scale");
+    // PCR reads this persistent cache on every apply. Before its first
+    // refresh, zero selects the backend's relative pivot-floor fallback.
+    cumes::check_cuda(cudaMemset(d_preconScale_, 0, p.mnmax * sizeof(T)),
+                      "precon scale initialization");
     if (arena)
         d_preconStatus_ = arena->get().alloc_span<int>("precon/status", 1);
     else

@@ -154,6 +154,7 @@ static void test_seed_restart() {
     auto axisymmetric = load_validated("inputs/solovev.json");
     check(init_params<float>(axisymmetric).radius_reference == 0.0,
           "reference: axisymmetric policy unchanged");
+#ifndef CUMES_VACUUM_FIELD_DISABLED
     auto free_boundary =
         load_validated("inputs/free_bdy/solovev_free_bdy_embedded.json");
     auto free_spec = free_boundary.spec();
@@ -166,6 +167,7 @@ static void test_seed_restart() {
     if (free_3d.has_value())
         check(init_params<float>(free_3d.value()).radius_reference == 0.0,
               "reference: free-boundary default remains absolute coefficients");
+#endif
     auto seeded = init_state(p, vp, false, false);
     auto snapshot = snapshot_from_device(seeded);
     for (int invalid_case = 0; invalid_case < 3; ++invalid_case) {

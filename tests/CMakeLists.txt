@@ -68,6 +68,10 @@ cumes_enable_warnings(test_asymmetric_solver)
 cumes_add_test(test_asymmetric_solver "solver;regression")
 
 if(NOT CUMES_USE_FLOAT)
+  add_executable(test_checkpoint_recovery test_checkpoint_recovery.cpp)
+  target_link_libraries(test_checkpoint_recovery PRIVATE cumes::solver)
+  cumes_enable_warnings(test_checkpoint_recovery)
+
   add_executable(test_newton_solver test_newton_solver.cpp)
   target_include_directories(test_newton_solver PRIVATE
     ${PROJECT_SOURCE_DIR}/include)
@@ -136,7 +140,7 @@ add_executable(test_asymmetric_io test_asymmetric_io.cpp)
 target_link_libraries(test_asymmetric_io PRIVATE cumes_io cumes_config_json)
 cumes_apply_backend_test_defines(test_asymmetric_io)
 cumes_enable_warnings(test_asymmetric_io)
-cumes_add_test(test_asymmetric_io "unit;io")
+cumes_add_test(test_asymmetric_io "unit;io;cumes_host")
 
 add_executable(test_derived_fields test_derived_fields.cpp)
 target_include_directories(test_derived_fields PRIVATE ${PROJECT_SOURCE_DIR}/include)
@@ -246,11 +250,15 @@ target_link_libraries(test_equilibrium_tangent_solve PRIVATE cumes::solver)
 cumes_enable_warnings(test_equilibrium_tangent_solve)
 
 # ---- ctest registration ----------------------------------------------------
+# The `cumes_host` label selects CPU-only CI coverage. These tests never require
+# a CUDA device, regardless of their name or the configured output backends.
 cumes_add_test(test_fourier          unit;fourier)
 cumes_add_test(test_asymmetric       unit;fourier)
-cumes_add_test(test_input_json       unit;input)
+cumes_add_test(test_input_json       unit;input;cumes_host)
 cumes_add_test(test_solver_api       unit;solver;api)
 if(NOT CUMES_USE_FLOAT)
+  cumes_add_test(test_checkpoint_recovery integration;solver;regression)
+  set_tests_properties(test_checkpoint_recovery PROPERTIES TIMEOUT 120)
   cumes_add_test(test_newton_solver integration;solver;newton)
   set_tests_properties(test_newton_solver PROPERTIES TIMEOUT 120)
 endif()
@@ -259,18 +267,18 @@ if(CUMES_USE_VACUUM_FIELD AND NOT CUMES_USE_FLOAT)
   set_tests_properties(test_free_boundary_solver PROPERTIES TIMEOUT 120)
 endif()
 cumes_add_test(test_equilibrium_tangent unit;solver;api;sensitivity)
-cumes_add_test(test_host_config      unit;config)
-cumes_add_test(test_host_io          unit;io)
+cumes_add_test(test_host_config      unit;config;cumes_host)
+cumes_add_test(test_host_io          unit;io;cumes_host)
 cumes_add_test(test_derived_fields   unit;io;physics)
-cumes_add_test(test_checkpoint       unit;io)
+cumes_add_test(test_checkpoint       unit;io;cumes_host)
 if(CUMES_BUILD_MAGNETIC_COORDINATE)
   cumes_add_test(test_magnetic_coordinate_bridge unit;io;boozer)
 endif()
 cumes_add_test(test_io_golden        unit;io)
-cumes_add_test(test_io_restart_offsets unit;io)
-cumes_add_test(test_io_malformed_shapes unit;io)
+cumes_add_test(test_io_restart_offsets unit;io;cumes_host)
+cumes_add_test(test_io_malformed_shapes unit;io;cumes_host)
 cumes_add_test(test_runtime          unit;runtime)
-cumes_add_test(test_controller       unit;solver)
+cumes_add_test(test_controller       unit;solver;cumes_host)
 cumes_add_test(test_seed_envelope    unit;solver)
 cumes_add_test(test_start_policy     unit;solver)
 cumes_add_test(test_axisymmetric_lambda_seed unit;solver)
@@ -371,6 +379,9 @@ cumes_register_sanitizer_variants(
     test_axisym_backend test_tridiagonal
     test_cuda_graph test_safety_predicates test_prolongation test_radius_reference
     test_odd_geometry)
+if(NOT CUMES_USE_FLOAT)
+  cumes_register_sanitizer_variants(test_equilibrium_tangent_solve)
+endif()
 # test_event_dag registers its sanitizer variants manually: the deliberate
 # pending-event API-error probes are skipped under the sanitizers (they count
 # the intended cudaErrorNotReady return as a sanitizer error).

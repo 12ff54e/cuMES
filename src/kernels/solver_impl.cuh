@@ -1169,15 +1169,33 @@ SolverResult<T> solver_run(
     double previous_fsqr = 1.0;
     double previous_fsqz = 1.0;
 
-    // State rollback: one contiguous state-only checkpoint slab (6*mnmax*ns),
-    // replacing the six separate d_bk_* arrays. The slab order matches the six
-    // old families, so backup/restore become single copies.
+    // State rollback: contiguous state-only slabs covering every active family,
+    // rotated when refreshing a checkpoint. Backup/restore enqueue one copy;
+    // the previous slab protects against a checkpoint whose descent is
+    // rejected.
     cumes::DeviceBuffer<T> checkpoint(storage.components() * (size_t)p.ns *
                                       p.mnmax);
+    cumes::DeviceBuffer<T> previous_checkpoint(checkpoint.size());
+    bool checkpoint_pending = false;
 
     // Helper: copy current spectral state to backup (one device-to-device copy)
     auto backup_state = [&]() {
         checkpoint.copy_from_async(storage.state_buffer(), stream);
+    };
+
+    // A refreshed checkpoint contains the post-descent state. Its geometry
+    // is only checked on the next pass; retain the preceding checkpoint until
+    // that pass succeeds so a rejected descent cannot poison every rollback.
+    auto reject_pending_checkpoint = [&]() {
+        if (!checkpoint_pending) return;
+        std::swap(checkpoint, previous_checkpoint);
+        checkpoint_pending = false;
+        if (verbose) {
+            printf(
+                "  -> rejected checkpoint at iteration %d; restoring "
+                "previous checkpoint\n",
+                controller.effective_iteration());
+        }
     };
 
     // Helper: restore spectral state from backup + zero velocities
@@ -1573,6 +1591,7 @@ SolverResult<T> solver_run(
             }
             recorder.record(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
                             it2_before, it1_before);
+            reject_pending_checkpoint();
             restore_state();
             if (verbose) {
                 cumes::dump_event_bad_jacobian(
@@ -1631,6 +1650,7 @@ SolverResult<T> solver_run(
             // we recover instead: restore the last good state and shrink delt.
             recorder.record(1, fsqr_i, fsqz_i, fsql_i, 0, 0, 0, delt_before, 0,
                             0, 0, 0, it2_before, it1_before);
+            reject_pending_checkpoint();
             restore_state();
             if (verbose) {
                 cumes::dump_event_nonfinite((double)controller.delta_t());
@@ -1639,17 +1659,16 @@ SolverResult<T> solver_run(
                            fsql_i, controller.delta_t());
             continue;
         }
+        checkpoint_pending = false;
         if (verdict.converged) {
             recorder.record(0, fsqr_i, fsqz_i, fsql_i, 0, 0, 0,
                             controller.delta_t(), 0, 0, 0, 0,
                             controller.effective_iteration(),
                             controller.restart_anchor());
             res.converged = true;
-            res.iterations = controller.effective_iteration();
             res.fsqr = (T)fsqr_i;
             res.fsqz = (T)fsqz_i;
             res.fsql = (T)fsql_i;
-            res.delt = (T)controller.delta_t();
             // Report the EFFECTIVE iteration count (iter2): restart passes
             // don't advance it, matching vmecpp's bad_resets counter and the
             // ITER column of the table above (the raw pass count, iter+1,
@@ -1705,8 +1724,10 @@ SolverResult<T> solver_run(
                            equilibrium.xn(), p.ns, p.mnmax, dact, stream);
 
         if (decision.do_refresh) {
+            std::swap(checkpoint, previous_checkpoint);
             backup_state();  // POST-descent state (vmecpp RestartIteration
                              // NO_RESTART semantics — see comment above)
+            checkpoint_pending = true;
         }
         if (decision.reason != cumes::RestartReason::NONE) {
             // Restore overwrites the just-descended state and zeroes the
@@ -1738,12 +1759,18 @@ SolverResult<T> solver_run(
         }
 
         if (iter == MAX_ITER_EFF - 1) {
-            res.iterations = controller.effective_iteration();
             res.fsqr = (T)fsqr_i;
             res.fsqz = (T)fsqz_i;
             res.fsql = (T)fsql_i;
-            res.delt = (T)controller.delta_t();
         }
+    }
+
+    // Finalize control telemetry even when the last pass took an early
+    // restart branch (invalid Jacobian, nonfinite residual or maintenance).
+    // A zero-pass diagnostic run retains its zero-iteration result.
+    if (MAX_ITER_EFF > 0) {
+        res.iterations = controller.effective_iteration();
+        res.delt = (T)controller.delta_t();
     }
 
     // Per-pass record (dump/cuMES/per_iter_residuals_cumes.bin) — dump

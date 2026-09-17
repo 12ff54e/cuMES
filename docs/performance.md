@@ -481,8 +481,9 @@ unchanged because their start geometries do not enter the new policy branch.
 Two transform changes reduce repeated work relative to `f0c17f7` (v1.4.1).
 The inverse accumulator specializes which constraint output is needed: R/Z
 each compute one sum, and lambda computes neither. Basis and derivative-sign
-selection remain runtime expressions to preserve the baseline's floating-point
-contraction order. The forward transform caches its four weighted poloidal
+selection remain runtime expressions. Compiler unrolling and floating-point
+contraction can nevertheless change, as the downstream investigation below
+demonstrates. The forward transform caches its four weighted poloidal
 tables once per stage, using device arithmetic to preserve the original
 T-rounded products. The compact W7-X double cache adds 6,144 arena bytes and
 removes four multiplications and one weight load per theta contribution.
@@ -545,6 +546,36 @@ compensated-geometry memcheck/initcheck, and Ada Fourier memcheck pass.
 These are comparisons within each architecture, preserving the respective
 baseline's cuFFT results.
 
+Downstream qualification on 2026-09-13 found a narrower equivalence scope.
+At meow's QA/QH mode-3 resolution, `66a557a` (the inverse constraint-sum
+specialization) first changes the spectral/field arrays relative to its parent
+`f0c17f7`; the following weighted-basis cache `21b6043` preserves those changed
+arrays. Replaying QH with `66a557a` alone reproduces the newer dependency's
+optimization trajectory and column-30 failure. The identical failed input
+also fails on the old pin: the changed trajectory encounters an existing
+cold-solve limitation. QA completes with a different endpoint. This does not
+extend the Solovev/W7-X bitwise qualification above to downstream optimization.
+See [meow's revision isolation](../../meow/docs/performance.md#revision-isolation-2026-09-13)
+for the controlled comparisons and their limits.
+
+The rounding mechanism is reproduced in an isolated comparison of the parent
+and `66a557a` inverse kernels (GCC 12 / CUDA 12.9, RTX 4090, native double).
+Removing both unused constraint sums from the lambda launch changes the
+compiler's loop unrolling from two modes to four. At `mpol=6`, the old kernel
+accumulates odd mode `m=5` with a fused multiply-add; the new remainder loop
+rounds the scale multiplication before a separate addition. The original
+`66a557a` binary's PTX has the same four-mode loop and separate remainder
+operations as the probe. Thus preserving the source expressions did not
+preserve their contraction order.
+
+With identical manufactured toroidal inputs, `ns=7`, `ntheta=nzeta=18`, and
+`mpol=6`, all R/Z outputs agree bitwise; lambda's three odd-parity arrays have
+516, 635, and 564 changed elements out of 2,268, with maximum absolute
+differences `1.78e-15`, `3.55e-15`, and `8.88e-16`. Rebuilding both kernels with
+`--fmad=false` eliminates all differences across the probe's 84 field
+comparisons (`mpol=2,3,6,10`). This flag is a diagnostic experiment, not a
+qualified solver fix.
+
 These percentages qualify steady-iteration latency. Full-process Ada timings
 were too noisy for a separate end-to-end speedup claim: Nsight located a
 653 ms outlier in the first `cudaMalloc`, and an A/A comparison of the same
@@ -598,6 +629,115 @@ RTX 4090. Coefficients, fields and numerical stage reports remain bit identical
 within each architecture. All configured stages, tolerances, caps and vacuum
 update decisions are preserved. The report includes confidence intervals,
 process-wall results, retained failures, float limitations and raw data.
+
+### 3.10 Resident tangent GMRES (2026-09-12)
+
+The default `EquilibriumLinearization` tangent backend now keeps Krylov
+vectors, primal state, active-degree maps, and right-preconditioner
+intermediates on the GPU. `TangentLinearBackend::HOST` retains the original
+reference. [ADR-0013](adr/0013-equilibrium-forward-tangents.md) records the
+numerical algorithm change and the incremental `DeviceGmres` interface.
+
+The measured workload is the six non-`m=0` boundary columns at the QA/QH
+mode-1 construction start in meow `de1b324`, using cuMES `5a595ee` plus this
+change. Each retained linearization uses restart 300, a 1,000-step cap,
+relative tolerance `5e-6`, absolute tolerance `1e-11`, and the same cold
+primal equilibrium. The host and device selectors are timed in the same
+binary. Each process warms all six directions before measurement; ten pairs
+alternate backend order, serially on each GPU, with the calling thread pinned
+to CPU 8. Confidence intervals use 20,000 paired bootstrap resamples of the
+ratio of median wall times.
+
+| GPU / case | Six solves, median host → device (ms) | p95 host → device (ms) | Speedup (95% CI) |
+| --- | ---: | ---: | ---: |
+| TITAN Xp / QA | 526.68 → 415.98 | 537.20 → 416.36 | 1.266× (1.262–1.278) |
+| TITAN Xp / QH | 639.66 → 485.92 | 647.75 → 486.68 | 1.316× (1.307–1.331) |
+| RTX 4090 / QA | 379.71 → 245.31 | 382.20 → 248.70 | 1.548× (1.541–1.550) |
+| RTX 4090 / QH | 469.43 → 286.87 | 474.83 → 289.98 | 1.636× (1.625–1.644) |
+
+The solve-time noise floor, measured as median absolute deviation divided by
+the median, is 0.60–0.71% for the Pascal host path, 0.03–0.04% for its device
+path, 0.28–0.60% for the Ada host path, and 0.01–0.04% for its device path.
+Both cases clear the performance threshold on both GPUs. TITAN Xp uses GCC
+12.4, CUDA 12.1, `sm_61`, driver 580.173.02 and Xeon E5-2690 v4; RTX 4090 uses
+GCC 12, CUDA 12.9, `sm_89`, driver 570.169 and Xeon Platinum 8375C. Both builds
+are Release precise-double, fixed boundary, with B-spline transfer enabled.
+Clocks are unlocked: tangent samples show 1,847/5,702 MHz core/memory and 65°C
+on Pascal, 2,760/10,501 MHz and 35–36°C on Ada.
+
+Median linearization construction is 3.4–3.5 ms on Pascal and 2.4–3.6 ms on
+Ada. The first device batch, including lazy Krylov allocation, takes
+417.44/487.88 ms for Pascal QA/QH and 246.64/288.22 ms for Ada. It reserves an
+additional 8 MiB at these grids, replacing the host-resident basis; that small
+memory cost is justified by the measured latency reduction. Memory grows with
+active degrees and restart size and is not an 8 MiB ceiling for larger grids.
+
+Field materialization remains 8.4–8.7 ms per batch on Pascal and 6.4–6.8 ms on
+Ada; the meow target chain rule remains 53–54 ms and 41 ms respectively. The
+combined solve/materialize/target batch speedup is 1.233×/1.280× for Pascal
+QA/QH and 1.460×/1.544× for Ada. These are derivative-batch measurements, not
+complete optimization speedups.
+
+All runs converge with identical active iteration counts: 622 for six QA
+directions and 743 for six QH directions. Across both GPUs and every saved
+column, worst host/device relative L2 differences are below `7.5e-12` for
+spectral state, `8.7e-11` for individual half-grid fields, and `2.6e-12` for
+target columns. The existing nonlinear finite-difference and gauge limits
+remain unchanged; this does not promote analytic Jacobians over the cold
+finite-difference construction policy.
+
+The fixed-only cuMES/meow build passes all 62 CTests on Pascal and Ada, including
+Newton regression, float kernel-type audit, installed-package consumption,
+Solovev tangent/field checks and the meow QH target derivative oracle.
+Manufactured float/double GMRES tests exercise all 300 Arnoldi columns of a
+cyclic permutation, as well as restart, tolerance, reuse and failure cases.
+Tangent memcheck/initcheck pass on both GPUs, and manufactured-GMRES
+memcheck/initcheck pass on Pascal.
+
+Qualification exposed an uninitialized persistent pivot-scale cache in the
+nonlinear preconditioner, reproduced with a primal-only executable linked to
+untouched `5a595ee`. Initializing that cache fixes the full Pascal initcheck
+failure. Solovev and W7-X spectral state, half-grid fields, residuals, stage
+counts and restart histories remain byte-identical to the baseline. The new
+tangent test is included in the double-build sanitizer registrations.
+
+An independent full-QH qualification also exposed incorrect iteration and
+time-step telemetry when the last nonlinear pass exits through a Jacobian
+rejection. Finalizing those controller fields after the loop fixes the report;
+the API regression checks recovery after a valid initial pass. Invalid
+initial geometry is rejected immediately because no valid checkpoint exists.
+This leaves numerical iteration and convergence policy unchanged. The newer
+dependency initially failed meow's QH construction; the recovery fix in §3.11
+resolves that failure.
+
+### 3.11 Reject invalid pending checkpoints (2026-09-13)
+
+`83726d6` fixes a recovery loop reached by meow's full QH construction. A
+checkpoint refreshed after descent can contain invalid geometry that has not
+yet passed the next evaluation's gates. Restoring it repeatedly prevents any
+further descent, so reducing the time step alone cannot recover.
+
+The native solver retains the preceding checkpoint until the new one passes
+geometry and finite invariant-residual validation. Rejection discards the
+pending checkpoint and restores the preceding state. Buffer ownership rotates
+on the host; each refresh still performs one device copy and no new iteration
+kernels or fences are added. The extra stage allocation is
+`6 * ns * mnmax * sizeof(T)`, or 100,800 bytes on meow's final QH double grid.
+[ADR-0020](adr/0020-validate-recovery-checkpoints.md) records the policy,
+regression fixture, physical checks and independent comparison limits.
+
+The formerly failing cold input now converges on TITAN Xp and RTX 4090 at the
+original `1e-12` tolerances. Its regression covers B-spline and meow's explicit
+Catmull-Rom transfer and passes memcheck/initcheck on both GPUs. Both complete
+63-test integration suites pass. Successful Solovev/W7-X and fixed QA/QH
+mode-3 probes preserve byte-identical arrays and stage records on TITAN Xp.
+
+Full QH construction on RTX 4090 completes all five modes, reaching objective
+`4.35863809963e-5` versus `4.81929127810e-5` with meow's old pin (9.56% lower).
+QA still reaches `1.39766656956e-6`, with the same final boundary JSON as the
+unfixed newer revision. These are reliability/quality qualifications, not
+repeated full-construction speed measurements. See
+[meow's updated-pin record](../../meow/docs/performance.md#qh-recovery-and-updated-pin-2026-09-13).
 
 ## 4. Acceptance policy (verification.md §7)
 

@@ -108,6 +108,7 @@ int main() {
     detached_linearization.reset();
 
     cumes::TangentLinearOptions options;
+    options.backend = cumes::TangentLinearBackend::HOST;
     options.max_iterations = 1000;
     options.restart = 300;
     options.relative_tolerance = 2e-6;
@@ -136,6 +137,91 @@ int main() {
         std::cerr << "FAIL: Solovev tangent solve did not reach tolerance\n";
         return 1;
     }
+    auto device_options = options;
+    device_options.backend = cumes::TangentLinearBackend::DEVICE;
+    const auto device_tangent =
+        linearization.solve_boundary_tangent(direction, device_options);
+    double reference_squared = 0.0, difference_squared = 0.0;
+    for (std::size_t i = 0; i < tangent.state_tangent.size(); ++i) {
+        const double difference =
+            device_tangent.state_tangent[i] - tangent.state_tangent[i];
+        difference_squared += difference * difference;
+        reference_squared +=
+            tangent.state_tangent[i] * tangent.state_tangent[i];
+    }
+    const double device_error =
+        std::sqrt(difference_squared / reference_squared);
+    std::cout << "Solovev device GMRES final=" << device_tangent.final_residual
+              << " iterations=" << device_tangent.iterations
+              << " host_relative_difference=" << device_error << '\n';
+    if (!device_tangent.converged || !(device_error < 1e-7)) {
+        std::cerr << "FAIL: device tangent disagrees with the host reference\n";
+        return 1;
+    }
+    const auto zero_tangent = linearization.solve_boundary_tangent(
+        cumes::BoundaryTangent::zero(problem.value()), device_options);
+    if (!zero_tangent.converged || zero_tangent.iterations != 0 ||
+        zero_tangent.final_residual != 0.0) {
+        std::cerr << "FAIL: reused device tangent workspace did not stop for "
+                     "zero RHS\n";
+        return 1;
+    }
+    for (const double value : zero_tangent.state_tangent) {
+        if (value != 0.0) {
+            std::cerr << "FAIL: zero boundary retained an earlier tangent\n";
+            return 1;
+        }
+    }
+    auto absolute_options = device_options;
+    absolute_options.relative_tolerance = 0.0;
+    absolute_options.absolute_tolerance = 2.0 * tangent.initial_residual;
+    const auto absolute_tangent =
+        linearization.solve_boundary_tangent(direction, absolute_options);
+    if (!absolute_tangent.converged || absolute_tangent.iterations != 0) {
+        std::cerr
+            << "FAIL: device tangent ignored absolute stopping tolerance\n";
+        return 1;
+    }
+    auto capped_options = device_options;
+    capped_options.max_iterations = 1;
+    capped_options.restart = 8;
+    const auto capped_tangent =
+        linearization.solve_boundary_tangent(direction, capped_options);
+    if (capped_tangent.converged || capped_tangent.iterations != 1 ||
+        !std::isfinite(capped_tangent.final_residual)) {
+        std::cerr << "FAIL: device tangent ignored its iteration budget\n";
+        return 1;
+    }
+    const auto repeated_tangent =
+        linearization.solve_boundary_tangent(direction, device_options);
+    if (!repeated_tangent.converged ||
+        repeated_tangent.state_tangent != device_tangent.state_tangent) {
+        std::cerr << "FAIL: changed restart size corrupted reused tangent "
+                     "workspace\n";
+        return 1;
+    }
+    auto unpreconditioned_options = device_options;
+    unpreconditioned_options.use_equilibrium_preconditioner = false;
+    unpreconditioned_options.restart = 2;
+    unpreconditioned_options.max_iterations = 3;
+    const auto unpreconditioned_device = linearization.solve_boundary_tangent(
+        direction, unpreconditioned_options);
+    unpreconditioned_options.backend = cumes::TangentLinearBackend::HOST;
+    const auto unpreconditioned_host = linearization.solve_boundary_tangent(
+        direction, unpreconditioned_options);
+    if (unpreconditioned_device.converged ||
+        unpreconditioned_device.iterations != 3 ||
+        !std::isfinite(unpreconditioned_device.final_residual) ||
+        std::abs(unpreconditioned_device.final_residual -
+                 unpreconditioned_host.final_residual) >
+            1e-10 * unpreconditioned_host.final_residual) {
+        std::cerr << "FAIL: unpreconditioned device restart disagrees with "
+                     "the host residual\n";
+        return 1;
+    }
+    const auto device_fields = linearization.materialize_tangent(
+        device_tangent.state_tangent, equilibrium.equilibrium,
+        equilibrium.profiles);
     const cumes::EquilibriumTangent fields = linearization.materialize_tangent(
         tangent.state_tangent, equilibrium.equilibrium, equilibrium.profiles);
     if (!fields.matches(equilibrium.equilibrium, equilibrium.profiles)) {
@@ -160,7 +246,11 @@ int main() {
     const std::size_t lcfs = static_cast<std::size_t>(
         (problem.value().spec().ntor + 1) * equilibrium.equilibrium.ns +
         equilibrium.equilibrium.ns - 1);
-    if (fields.equilibrium.families[cumes::EquilibriumSnapshot::RMNCC][lcfs] !=
+    if (device_fields.equilibrium.families[cumes::EquilibriumSnapshot::RMNCC]
+                                          [lcfs] != direction.rbcc[m1n0] ||
+        device_fields.equilibrium.families[cumes::EquilibriumSnapshot::ZMNSC]
+                                          [lcfs] != direction.zbsc[m1n0] ||
+        fields.equilibrium.families[cumes::EquilibriumSnapshot::RMNCC][lcfs] !=
             direction.rbcc[m1n0] ||
         fields.equilibrium.families[cumes::EquilibriumSnapshot::ZMNSC][lcfs] !=
             direction.zbsc[m1n0] ||

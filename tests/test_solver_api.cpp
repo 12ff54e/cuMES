@@ -3,6 +3,7 @@
 #include "cumes/solver/equilibrium_solver.hpp"
 #include "cumes_test.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -276,6 +277,48 @@ int main() {
               "solver API: in-memory restart returns a complete equilibrium");
         check(restarted.report.input_params == outcome.report.input_params,
               "solver API: cold and hot runs retain the same input metadata");
+
+        // An invalid initial state has no valid checkpoint to restore.
+        auto collapsed = outcome.equilibrium;
+        for (auto& family : collapsed.families) {
+            std::fill(family.begin(), family.end(), 0.0);
+        }
+        cumes::SolveRequest collapsed_request;
+        collapsed_request.restart = std::cref(collapsed);
+        bool rejected_initial_geometry = false;
+        try {
+            solver.solve(validated.value(), collapsed_request);
+        } catch (const std::exception& error) {
+            rejected_initial_geometry =
+                std::string_view(error.what())
+                    .find("Invalid initial geometry") != std::string_view::npos;
+        }
+        check(rejected_initial_geometry,
+              "solver API: collapsed restart fails without futile retries");
+
+        // A large first descent makes the second, final pass fail its
+        // Jacobian gate. Recovery from a valid initial state must still
+        // publish the controller's iteration and reduced time step.
+        auto rejected_spec = validated.value().spec();
+        rejected_spec.delt = 1000.0;
+        const auto large_step =
+            solver.solve(cumes::validate(rejected_spec, options).value());
+        rejected_spec.stages.front().max_iterations = 2;
+        const auto rejected_problem =
+            cumes::validate(std::move(rejected_spec), options);
+        check(rejected_problem.has_value(),
+              "solver API: final-pass recovery fixture validates");
+        if (!rejected_problem.has_value()) return cumes::test::summary();
+        const auto rejected = solver.solve(rejected_problem.value());
+        check(!rejected.converged && rejected.report.stages.size() == 1 &&
+                  rejected.report.stages.front().restarts.size() == 1,
+              "solver API: final pass exhausts its Jacobian retry");
+        check(rejected.iterations == 2 && rejected.total_iterations == 2 &&
+                  rejected.report.total_effective_iterations == 2 &&
+                  rejected.report.stages.front().effective_iterations == 2,
+              "solver API: rejected final pass reports effective iterations");
+        check(rejected.delt > 0.0 && rejected.delt < large_step.delt,
+              "solver API: rejected final pass reports reduced time step");
 
         cumes::SolveOutcome repeated = solver.solve(validated.value());
         check(repeated.fsqr == outcome.fsqr && repeated.fsqz == outcome.fsqz &&
