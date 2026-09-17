@@ -5,6 +5,72 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.7.0] - 2026-09-17
+
+### Added
+
+- Non-stellarator-symmetric fixed- and free-boundary equilibria on CUDA and
+  WebGPU through `lasym=true`, signed-n `rbs`/`zbc` boundary harmonics, and
+  optional `raxis_s`/`zaxis_c` axis coefficients. All twelve spectral families
+  participate in transforms, residuals, preconditioning, descent, and
+  multigrid; vacuum coupling receives all eight R/Z edge families.
+  The [qualification](docs/adr/0020-non-stellarator-symmetry.md)
+  records native float/double and browser scalar/paired coverage; Newton
+  corrections, tangents, and Boozer export still require stellarator symmetry.
+- Twelve-family scientific output and restarts, with typed complementary
+  input provenance in binary, NetCDF, and HDF5 containers. Asymmetric writes
+  use binary v10 and checkpoint v8; symmetric writes retain binary v8 and
+  checkpoint v6. Plotting and comparison readers handle all active families.
+- Asymmetric tokamak inputs and a browser preset with Fourier and draggable
+  contour editing. Both tokamak editors offer persistent contour point counts
+  from 12 through 36 while preserving the selected poloidal resolution,
+  profiles, and axis seeds.
+- Reproducible original Fortran VMEC comparisons for
+  [fixed boundaries](benchmarks/asymmetric_vmec/README.md) and
+  [free boundaries](benchmarks/free_boundary_vmec/README.md), with pinned
+  inputs, serial runners, physical comparison reports, and
+  [QH gauge studies](docs/qh-gauge-convergence.md). Reports retain failed
+  references and distinguish residual convergence from physical agreement.
+
+### Changed
+
+- Retained boundary tangent solves default to the device GMRES backend,
+  keeping primal state, active maps, Krylov vectors, and JVP/preconditioner
+  intermediates on the GPU across columns. HOST remains available as the
+  reference backend; [measured benefits](docs/performance.md) depend on the
+  workload and GPU.
+- WebGPU requests supported adapter buffer limits and scans finite values
+  with two-dimensional dispatches to support larger asymmetric grids.
+  Browser validation captures large scientific outputs in bounded chunks.
+- GitHub Pages builds and tests every `main` push, then selects deployments
+  using a fingerprint derived from the WebGPU build and packaging inputs.
+
+### Fixed
+
+- Recovery checkpoints replace the preceding valid state only after geometry
+  and finite-residual validation, preventing repeated restores of invalid
+  post-descent states. CUDA and WebGPU diagnose invalid initial geometry
+  immediately instead of retrying an unchanged initial checkpoint.
+- Native iteration counts and final time steps are reported correctly when
+  the iteration budget is exhausted by rejected passes. The persistent
+  preconditioner pivot-scale cache is initialized before use.
+- CUDA B-spline transfer matrices upload on their consuming solve stream,
+  preventing corrupted geometry during multigrid refinement.
+- WebGPU radial transfer copies endpoints exactly, preserving the prescribed
+  fixed boundary across multigrid stages.
+- Asymmetric plots include complementary boundary harmonics, average
+  prescribed current over the full theta grid, and use consistent inner-face
+  tangents in mixed radial metric terms.
+- Vacuum sign and current-consistency guards apply once pressure coupling
+  activates, allowing cold-axis relaxation during preliminary diagnostics.
+  The vacuum dependency corrects singular Fourier branches and finite float
+  tangent-pole limits.
+- Browser symmetry controls lock during solves, and the shared vacuum test
+  fixture is embedded at the path used by the Wasm bridge.
+- CPU-only CI selects host tests by CMake label, excludes GPU recovery tests,
+  and rejects an empty test selection. Fixed-only radius tests skip the
+  optional vacuum fixture.
+
 ## [1.6.1] - 2026-09-09
 
 ### Changed
