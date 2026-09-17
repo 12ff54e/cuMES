@@ -90,7 +90,7 @@ try {
   const html = (await readFile(new URL('../webgpu/shell.html', import.meta.url), 'utf8'))
     .replace('{{{ SCRIPT }}}', '<script src="cumes_webgpu.js?v=abcdef"></script>');
   await writeFile(join(build, 'cumes_webgpu.html'), html);
-  for (const name of ['solovev.json', 'w7x.json', 'cth_like.json', 'fixed-w7x.json', 'coils.solovev', 'coils.w7x', 'coils.cth_like', 'LICENSE.vmecpp', 'README.md'])
+  for (const name of ['solovev.json', 'w7x.json', 'cth_like.json', 'fixed-w7x.json', 'fixed-asymmetric.json', 'coils.solovev', 'coils.w7x', 'coils.cth_like', 'LICENSE.vmecpp', 'README.md'])
     await writeFile(join(build, 'presets', name), 'fixture:' + name);
   await writeFile(join(build, 'CTestTestfile.cmake'), 'do not publish');
   await writeFile(join(build, 'presets', 'unwanted.nc'), 'do not publish');
@@ -102,6 +102,9 @@ try {
     assert(inputs.includes(fileURLToPath(new URL('../webgpu/' + name, import.meta.url))),
       'packaging dependencies must follow the actual reads and copies: ' + name);
   for (const name of assets) assert(inputs.includes(join(build, name)));
+  assert(inputs.includes(join(build, 'presets/fixed-asymmetric.json')));
+  assert.equal(await readFile(join(output, 'presets/fixed-asymmetric.json'), 'utf8'),
+    'fixture:fixed-asymmetric.json');
   const index = await readFile(join(output, 'index.html'), 'utf8');
   assert.equal(index, await readFile(join(output, 'cumes_webgpu.html'), 'utf8'));
   assert(index.includes('cumes_webgpu.js?v=abcdef'));

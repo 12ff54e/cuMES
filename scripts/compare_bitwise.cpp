@@ -155,16 +155,18 @@ int main(int argc, char** argv) {
             const auto left =
                 cumes::compare::read_state_payload(baseline_state);
             const auto right = cumes::compare::read_state_payload(run_state);
-            if (left.bytes != right.bytes) {
+            if (left.ns != right.ns || left.mnmax != right.mnmax ||
+                left.components != right.components ||
+                left.bytes != right.bytes) {
                 report("cumes_state.bin", false, "state payload byte mismatch");
                 ++failures;
                 if (command.verbose && left.ns == right.ns &&
-                    left.mnmax == right.mnmax) {
+                    left.mnmax == right.mnmax &&
+                    left.components == right.components) {
                     const auto a =
                         cumes::compare::read_state(baseline_state, false);
                     const auto b = cumes::compare::read_state(run_state, false);
-                    for (std::size_t family = 0;
-                         family < cumes::compare::FAMILY_NAMES.size();
+                    for (std::size_t family = 0; family < a.families.size();
                          ++family) {
                         double largest = 0.0;
                         for (std::size_t index = 0;

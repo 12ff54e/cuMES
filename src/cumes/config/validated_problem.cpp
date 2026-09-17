@@ -45,6 +45,24 @@ FoldedBoundary fold_boundary(const ProblemSpec& spec, std::size_t modes) {
         if (e.m > 0) fb.zbsc[idx(e.m, n)] += e.value;
         fb.zbcs[idx(e.m, n)] -= sn * e.value;
     }
+    if (spec.lasym) {
+        fb.rbsc.assign(modes, 0.0);
+        fb.rbcs.assign(modes, 0.0);
+        fb.zbcc.assign(modes, 0.0);
+        fb.zbss.assign(modes, 0.0);
+        for (const auto& e : spec.rbs) {
+            const int n = std::abs(e.n);
+            const double sn = (e.n > 0) ? 1.0 : (e.n < 0) ? -1.0 : 0.0;
+            if (e.m > 0) fb.rbsc[idx(e.m, n)] += e.value;
+            fb.rbcs[idx(e.m, n)] -= sn * e.value;
+        }
+        for (const auto& e : spec.zbc) {
+            const int n = std::abs(e.n);
+            const double sn = (e.n > 0) ? 1.0 : (e.n < 0) ? -1.0 : 0.0;
+            fb.zbcc[idx(e.m, n)] += e.value;
+            if (e.m > 0) fb.zbss[idx(e.m, n)] += sn * e.value;
+        }
+    }
     return fb;
 }
 
@@ -309,6 +327,21 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         report.error("zaxis_s", "zaxis_s must have exactly ntor+1 entries");
     }
 
+    if (!spec.lasym && (!spec.raxis_s.empty() || !spec.zaxis_c.empty() ||
+                        !spec.rbs.empty() || !spec.zbc.empty())) {
+        report.error(
+            "lasym",
+            "asymmetric axis/boundary coefficients require lasym=true");
+    }
+    if (spec.lasym) {
+        if (spec.has_raxis_s &&
+            spec.raxis_s.size() != std::size_t(spec.ntor + 1))
+            report.error("raxis_s", "raxis_s must have exactly ntor+1 entries");
+        if (spec.has_zaxis_c &&
+            spec.zaxis_c.size() != std::size_t(spec.ntor + 1))
+            report.error("zaxis_c", "zaxis_c must have exactly ntor+1 entries");
+    }
+
     // ---- stage schedule ----
     if (spec.stages.empty()) {
         report.error("ns_array", "ns_array must contain at least one stage");
@@ -368,11 +401,32 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         }
         kept_zbs.push_back(e);
     }
+    auto keep_asymmetric = [&](std::vector<BoundaryHarmonic>& harmonics,
+                               const char* key) {
+        std::vector<BoundaryHarmonic> kept;
+        for (const auto& e : harmonics) {
+            if (e.m < 0 || e.m >= spec.mpol || e.n < -spec.ntor ||
+                e.n > spec.ntor) {
+                report.warn(key, std::string(key) + ": skipping mode m=" +
+                                     std::to_string(e.m) +
+                                     " n=" + std::to_string(e.n) +
+                                     " (outside configured mode range)");
+            } else if (!std::isfinite(e.value)) {
+                report.error(key,
+                             std::string(key) + ": coefficient must be finite");
+            } else {
+                kept.push_back(e);
+            }
+        }
+        harmonics = std::move(kept);
+    };
+    keep_asymmetric(spec.rbs, "rbs");
+    keep_asymmetric(spec.zbc, "zbc");
     if (kept_rbc.empty()) {
         report.error("rbc",
                      "rbc: at least one boundary coefficient is required");
     }
-    if (kept_zbs.empty()) {
+    if (kept_zbs.empty() && spec.zbc.empty()) {
         report.error("zbs",
                      "zbs: at least one boundary coefficient is required");
     }
@@ -400,6 +454,10 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
     vp.spec_.angular.nzeta = nzeta;
     vp.spec_.raxis_c.resize(static_cast<std::size_t>(vp.spec_.ntor + 1), 0.0);
     vp.spec_.zaxis_s.resize(static_cast<std::size_t>(vp.spec_.ntor + 1), 0.0);
+    if (vp.spec_.lasym) {
+        vp.spec_.raxis_s.resize(std::size_t(vp.spec_.ntor + 1), 0.0);
+        vp.spec_.zaxis_c.resize(std::size_t(vp.spec_.ntor + 1), 0.0);
+    }
     vp.spec_.rbc = std::move(kept_rbc);
     vp.spec_.zbs = std::move(kept_zbs);
 
@@ -411,6 +469,7 @@ ValidationResult validate(ProblemSpec spec, const SolverOptions& options) {
         gs.mpol = vp.spec_.mpol;
         gs.ntor = vp.spec_.ntor;
         gs.nfp = vp.spec_.nfp;
+        gs.lasym = vp.spec_.lasym;
         vp.stage_shapes_.push_back(gs);
     }
     vp.mode_table_ = ModeTable<double>::build(vp.shape());
@@ -427,6 +486,7 @@ std::string ValidatedProblem::normalize_to_json() const {
     os << std::setprecision(17);
 
     os << "{\n";
+    if (s.lasym) os << "  \"lasym\":true,\n";
     os << "  \"schema\":\"cumes-config-v1\",\n";
     os << "  \"mpol\":" << s.mpol << ",\n";
     os << "  \"ntor\":" << s.ntor << ",\n";
@@ -494,6 +554,12 @@ std::string ValidatedProblem::normalize_to_json() const {
     emit_double_array(os, s.raxis_c);
     os << ",\"zaxis_s\":";
     emit_double_array(os, s.zaxis_s);
+    if (s.lasym) {
+        os << ",\"raxis_s\":";
+        emit_double_array(os, s.raxis_s);
+        os << ",\"zaxis_c\":";
+        emit_double_array(os, s.zaxis_c);
+    }
     os << "},\n";
     os << "  \"stages\":[";
     for (std::size_t g = 0; g < s.stages.size(); ++g) {
@@ -507,6 +573,12 @@ std::string ValidatedProblem::normalize_to_json() const {
     emit_harmonics(os, s.rbc);
     os << ",\"zbs\":";
     emit_harmonics(os, s.zbs);
+    if (s.lasym) {
+        os << ",\"rbs\":";
+        emit_harmonics(os, s.rbs);
+        os << ",\"zbc\":";
+        emit_harmonics(os, s.zbc);
+    }
     os << "},\n";
     os << "  \"folded\":{\"rbcc\":";
     emit_double_array(os, boundary_.rbcc);
@@ -516,6 +588,16 @@ std::string ValidatedProblem::normalize_to_json() const {
     emit_double_array(os, boundary_.zbsc);
     os << ",\"zbcs\":";
     emit_double_array(os, boundary_.zbcs);
+    if (s.lasym) {
+        os << ",\"rbsc\":";
+        emit_double_array(os, boundary_.rbsc);
+        os << ",\"rbcs\":";
+        emit_double_array(os, boundary_.rbcs);
+        os << ",\"zbcc\":";
+        emit_double_array(os, boundary_.zbcc);
+        os << ",\"zbss\":";
+        emit_double_array(os, boundary_.zbss);
+    }
     os << "}\n";
     os << "}\n";
     return os.str();

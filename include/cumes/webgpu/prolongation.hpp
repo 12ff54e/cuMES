@@ -19,6 +19,7 @@ struct ProlongationCase {
     int ns_new = 0;
     int mnmax = 0;
     int ntor = 0;
+    bool lasym = false;
     RadialInterpolation interpolation = RadialInterpolation::LINEAR;
     std::vector<float> state;
 };

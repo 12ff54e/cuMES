@@ -66,6 +66,7 @@ struct AxisymmetricPreconditionerMatrixCase {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     int ntheta = 0;
     int nzeta = 1;
     int nfp = 1;
@@ -110,6 +111,7 @@ struct AxisymmetricPreconditionerApplyCase {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     bool include_lcfs = false;
     AxisymmetricPreconditionerElements elements;
     AxisymmetricPreconditionerMatrix matrix;

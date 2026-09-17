@@ -69,6 +69,26 @@ Z^{cs}_{m,n}&=zbs(m,-n)-zbs(m,+n).
 
 At `n=0`, `rbc` is accumulated once into `Rcc`, and `zbs` contributes to `Zsc` only for `m>0`; sine-in-zeta families vanish and `zbs(0,0)` has no basis function. Duplicate raw entries are summed deliberately. Folding validation precedes any fixed/device packing.
 
+With `lasym=true`, append `Rsc*sin(mθ)*cos(nζ) + Rcs*cos(mθ)*sin(nζ)`
+to R, and `Zcc*cos(mθ)*cos(nζ) + Zss*sin(mθ)*sin(nζ)` to Z.
+Lambda gains the corresponding `Lcc` and `Lss` terms. For `n>0`, the
+complementary signed-n inputs fold as
+
+\[
+\begin{aligned}
+R^{sc}_{m,n}&=rbs(m,+n)+rbs(m,-n)\quad(m>0),&
+R^{cs}_{m,n}&=rbs(m,-n)-rbs(m,+n),\\
+Z^{cc}_{m,n}&=zbc(m,+n)+zbc(m,-n),&
+Z^{ss}_{m,n}&=zbc(m,+n)-zbc(m,-n)\quad(m>0).
+\end{aligned}
+\]
+
+At `n=0`, `rbs` contributes once to `Rsc` for `m>0`, and `zbc` contributes
+once to `Zcc`, including the vertical offset at `m=0`. The physical axis uses
+`Rcs(0,n)=-raxis_s[n]` and `Zcc(0,n)=zaxis_c[n]`, consistent with the VMEC
+axis convention. Full-period quadrature and the complementary m=1 gauge are
+specified in [data-layout.md](data-layout.md#5-reduced-theta-quadrature-forward-only).
+
 Poloidal derivatives multiply by `m`; physical toroidal derivatives multiply by `N`, not the raw stored `n`. The inverse DFT computes derivatives analytically,
 
 \[

@@ -39,13 +39,13 @@ std::string validate_case(const ProlongationCase& input) {
         input.interpolation != RadialInterpolation::CATMULL_ROM) {
         return "unsupported WebGPU radial interpolation";
     }
-    const auto expected = SPECTRAL_FAMILIES *
+    const auto expected = (input.lasym ? 12 : SPECTRAL_FAMILIES) *
                           static_cast<std::size_t>(input.mnmax) *
                           static_cast<std::size_t>(input.ns_old);
     if (input.state.size() != expected) {
         return "prolongation input state size does not match 6*mnmax*ns_old";
     }
-    const auto total = SPECTRAL_FAMILIES *
+    const auto total = (input.lasym ? 12 : SPECTRAL_FAMILIES) *
                        static_cast<std::size_t>(input.mnmax) *
                        static_cast<std::size_t>(input.ns_new);
     if (total > std::numeric_limits<std::uint32_t>::max()) {
@@ -72,13 +72,14 @@ ProlongationResult prolongation_reference(const ProlongationCase& input) {
     if (!error.empty()) return {};
 
     ProlongationResult result;
-    const std::size_t total = SPECTRAL_FAMILIES *
+    const std::size_t total = (input.lasym ? 12 : SPECTRAL_FAMILIES) *
                               static_cast<std::size_t>(input.mnmax) *
                               static_cast<std::size_t>(input.ns_new);
     result.state.resize(total);
     result.velocity.assign(total, 0.0F);
     for (int profile = 0;
-         profile < static_cast<int>(SPECTRAL_FAMILIES) * input.mnmax;
+         profile <
+         (input.lasym ? 12 : static_cast<int>(SPECTRAL_FAMILIES)) * input.mnmax;
          ++profile) {
         const int mode = profile % input.mnmax;
         const bool odd = ((mode / (input.ntor + 1)) % 2) == 1;
@@ -110,7 +111,7 @@ void enqueue_prolongation(const wgpu::Device& device,
         return;
     }
 
-    const std::size_t total = SPECTRAL_FAMILIES *
+    const std::size_t total = (input.lasym ? 12 : SPECTRAL_FAMILIES) *
                               static_cast<std::size_t>(input.mnmax) *
                               static_cast<std::size_t>(input.ns_new);
     const std::size_t input_bytes = input.state.size() * sizeof(float);

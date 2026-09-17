@@ -25,6 +25,7 @@ struct AxisymmetricConstraintCase {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     int ntheta = 0;
     int nzeta = 1;
     float delta_s = 0.0F;

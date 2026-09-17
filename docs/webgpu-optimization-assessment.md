@@ -142,8 +142,7 @@ ages 4.789/5.265 s before and 4.693/4.644 s after; these ages are not pure setup
 times. Window completion and worker trace clocks have different origins, so no
 output-only interval is inferred. Two measured samples on one adapter are a
 bounded browser comparison, not the full cross-architecture performance
-qualification in `performance.md`. Logs, traces, digests, and the comparison
-are retained outside the repository in `../tmp/free-boundary-transfers/`.
+qualification in `performance.md`.
 
 The extension below reduces the remaining geometry and magnetic-field
 readbacks. Original host norm reductions and Wasm vacuum/pressure coupling
@@ -219,8 +218,7 @@ Median worker age at the first controller record changed from 4.859 to
 are not pure setup intervals. Controller spans use the first and last worker
 records. Output time is included in the page run but not isolated by these
 clocks. The two-repeat comparison on one adapter is not full performance
-qualification or an isolated measurement of each optimization. Captures and
-comparison data remain in `../tmp/free-boundary-second-pass/`.
+qualification or an isolated measurement of each optimization.
 
 ### Resident vacuum boundary-force correction
 
@@ -329,8 +327,7 @@ Median worker age at the first controller record is 4.513 s before and
 4.628 s after; it includes setup and is not a pure setup interval. Output is
 included in page time but cannot be isolated by the differing window/worker
 clocks. This two-repeat, one-adapter result is a bounded browser comparison,
-not full performance qualification. Raw captures, numerical differences,
-error cases and provenance remain in `../tmp/boundary-force-resident/`.
+not full performance qualification.
 
 ### Resident vacuum LU
 
@@ -422,8 +419,7 @@ with a substantial initial shader-compilation cost. These worker ages include
 other setup; output time is included in page time but not isolated. GPU LU
 remains opt-in, with Wasm LU and the overall HOST vacuum default retained.
 This two-repeat comparison on one adapter is not full performance
-qualification. Raw captures, comparisons and runtime provenance remain in
-`../tmp/vacuum-lu-webgpu/`.
+qualification.
 
 The parent WebGPU build and all 14 CTests pass, along with all 19 dependency
 Wasm reference tests and the real Chrome gates above. Native numerical

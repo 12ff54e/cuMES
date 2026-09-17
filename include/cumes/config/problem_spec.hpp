@@ -122,6 +122,7 @@ struct ProblemSpec {
     int mpol = 6;
     int ntor = 0;
     int nfp = 1;
+    bool lasym = false;
     AngularResolution angular;
     CurrentModel current_model = CurrentModel::FIXED_IOTA;
     double delt = 0.9;
@@ -137,9 +138,15 @@ struct ProblemSpec {
     // present-but-empty array (a malformed input the legacy parser rejects).
     bool has_raxis_c = false;
     bool has_zaxis_s = false;
+    std::vector<double> raxis_s;
+    std::vector<double> zaxis_c;
+    bool has_raxis_s = false;
+    bool has_zaxis_c = false;
 
     std::vector<BoundaryHarmonic> rbc;  // raw, signed-n
     std::vector<BoundaryHarmonic> zbs;  // raw, signed-n
+    std::vector<BoundaryHarmonic> rbs;  // R sin(m theta - n zeta)
+    std::vector<BoundaryHarmonic> zbc;  // Z cos(m theta - n zeta)
 
     std::vector<StageRequest> stages;  // default: a single {11, 1000, 1e-16}
 

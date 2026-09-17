@@ -153,6 +153,7 @@ class FreeBoundaryOperator {
     // buco/bvco surface averages: one thread per half-grid surface, serial
     // ascending reduced-subset loop with vmecpp's trapezoid weights
     // (1/(nzeta*(ntheta/2)) halved at the endpoints), per-element multiply.
+    // Asymmetric problems use every theta point with uniform weights.
     void enqueue_surface_averages(const T* d_bsubu,
                                   const T* d_bsubv,
                                   T* d_buco_bvco,
@@ -160,9 +161,10 @@ class FreeBoundaryOperator {
                                   int ntheta,
                                   int nzeta,
                                   VacuumStream stream) const;
-    // LCFS repack: the four spectral families at j=ns-1, divided by
+    // LCFS repack: the R/Z spectral families at j=ns-1, divided by
     // mscale*nscale, transposed to n-major. d_repacked holds 4 contiguous
-    // mnsize blocks (rCC/rSS/zSC/zCS).
+    // mnsize blocks (rCC/rSS/zSC/zCS), followed by rSC/zCC/rCS/zSS
+    // for asymmetric problems. All eight inputs are then required.
     void enqueue_lcfs_repack(const T* d_rcc,
                              const T* d_rss,
                              const T* d_zsc,
@@ -172,7 +174,11 @@ class FreeBoundaryOperator {
                              int mnmax,
                              int mpol,
                              int ntor,
-                             VacuumStream stream) const;
+                             VacuumStream stream,
+                             const T* d_rsc = nullptr,
+                             const T* d_zcc = nullptr,
+                             const T* d_rcs = nullptr,
+                             const T* d_zss = nullptr) const;
     // Axis extraction: r_axis[k] = R(j=0, l=0, k), z_axis[k] = Z(j=0, l=0, k).
     void enqueue_axis_extract(const T* d_r_e,
                               const T* d_z_e,
@@ -180,8 +186,8 @@ class FreeBoundaryOperator {
                               int ntheta,
                               int nzeta,
                               VacuumStream stream) const;
-    // rBSq at the LCFS (reduced-grid mirror of the vacuum pressure) plus the
-    // delBSq surface-mean diagnostic scalar.
+    // rBSq at the LCFS (full pressure, or reduced-grid symmetric mirror) plus
+    // the delBSq surface-mean diagnostic scalar.
     void enqueue_rbsq(const T* d_r_e,
                       const T* d_r_o,
                       const T* d_total_pressure,

@@ -25,18 +25,25 @@
 namespace cumes {
 
 enum class SpectralComponent : std::uint8_t {
-    Rcc = 0,  // R: cos(mθ)cos(nζ)
-    Zsc = 1,  // Z: sin(mθ)cos(nζ)
-    Lsc = 2,  // λ: sin(mθ)cos(nζ)
-    Rss = 3,  // R: sin(mθ)sin(nζ)
-    Zcs = 4,  // Z: cos(mθ)sin(nζ)
-    Lcs = 5,  // λ: cos(mθ)sin(nζ)
-    Count = 6,
+    Rcc = 0,   // R: cos(mθ)cos(nζ)
+    Zsc = 1,   // Z: sin(mθ)cos(nζ)
+    Lsc = 2,   // λ: sin(mθ)cos(nζ)
+    Rss = 3,   // R: sin(mθ)sin(nζ)
+    Zcs = 4,   // Z: cos(mθ)sin(nζ)
+    Lcs = 5,   // λ: cos(mθ)sin(nζ)
+    Rsc = 6,   // R: sin(mθ)cos(nζ)
+    Zcc = 7,   // Z: cos(mθ)cos(nζ)
+    Lcc = 8,   // λ: cos(mθ)cos(nζ)
+    Rcs = 9,   // R: cos(mθ)sin(nζ)
+    Zss = 10,  // Z: sin(mθ)sin(nζ)
+    Lss = 11,  // λ: sin(mθ)sin(nζ)
+    Count = 12,
 };
 
 inline constexpr int SPECTRAL_COMPONENT_COUNT = 6;
+inline constexpr int ASYMMETRIC_COMPONENT_COUNT = 12;
 
-// Mathematical-domain tags. The same six-component layout is reused for the
+// Mathematical-domain tags. The same component layout is reused for the
 // physical state, decomposed residuals, decomposed velocities, and the
 // state-only checkpoint; the tag prevents cross-domain misuse.
 struct PhysicalStateDomain {};
@@ -56,12 +63,14 @@ class SpectralView {
                  int ns,
                  int mnmax,
                  const std::remove_const_t<T>* d_radius_reference = nullptr,
-                 int reference_modes = 0)
+                 int reference_modes = 0,
+                 bool lasym = false)
         : data_(data),
           ns_(ns),
           mnmax_(mnmax),
           d_radius_reference_(d_radius_reference),
-          reference_modes_(reference_modes) {}
+          reference_modes_(reference_modes),
+          lasym_(lasym) {}
 
     // Physical-state Rcc coefficients may store displacements of the m=0
     // modes. This fixed reference is not part of velocity/residual slabs.
@@ -91,6 +100,8 @@ class SpectralView {
     __host__ __device__ T* data() const { return data_; }
     __host__ __device__ int ns() const { return ns_; }
     __host__ __device__ int mnmax() const { return mnmax_; }
+    __host__ __device__ bool lasym() const { return lasym_; }
+    __host__ __device__ int components() const { return lasym_ ? 12 : 6; }
 
    private:
     T* data_ = nullptr;
@@ -98,6 +109,7 @@ class SpectralView {
     int mnmax_ = 0;
     const std::remove_const_t<T>* d_radius_reference_ = nullptr;
     int reference_modes_ = 0;
+    bool lasym_ = false;
 };
 
 // Real-space view over [surface][zeta][theta] (theta contiguous). `surfaces` is

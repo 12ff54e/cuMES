@@ -21,7 +21,7 @@ namespace {
 constexpr std::uint32_t WORKGROUP_SIZE = 256;
 struct Params {
     std::uint32_t ns, mode_count, ntor_plus_one, zero_m1_z;
-    std::uint32_t padding[4];
+    std::uint32_t lasym, padding[3];
 };
 static_assert(sizeof(Params) == 32);
 std::string validate(const ResidualDecompositionCase& in) {
@@ -31,12 +31,13 @@ std::string validate(const ResidualDecompositionCase& in) {
         static_cast<std::size_t>(in.mpol) * (in.ntor + 1);
     const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
     if (n > std::numeric_limits<std::uint32_t>::max() ||
-        !field_shape(in.residual, in.device_residual, 6 * n) ||
+        !field_shape(in.residual, in.device_residual,
+                     (in.lasym ? 12 : 6) * n) ||
         in.sqrt_s_f.size() != static_cast<std::size_t>(in.ns))
         return "residual decomposition input shape mismatch";
-    if (in.double_single &&
-        (!field_shape(in.residual_lo, in.device_residual, 6 * n) ||
-         in.sqrt_s_f_lo.size() != in.sqrt_s_f.size()))
+    if (in.double_single && (!field_shape(in.residual_lo, in.device_residual,
+                                          (in.lasym ? 12 : 6) * n) ||
+                             in.sqrt_s_f_lo.size() != in.sqrt_s_f.size()))
         return "double-single residual decomposition input shape mismatch";
     return {};
 }
@@ -72,6 +73,16 @@ void accumulate_norms(ResidualDecompositionResult& out,
                     static_cast<double>(out.residual[b_index]) +
                     (out.residual_lo.empty() ? 0.0 : out.residual_lo[b_index]);
                 sum += a * a + b * b;
+                if (out.residual.size() == 12 * n) {
+                    const auto get = [&](std::size_t i) {
+                        return double(out.residual[i]) +
+                               (out.residual_lo.empty() ? 0.0
+                                                        : out.residual_lo[i]);
+                    };
+                    const double c = get(a_index + 6 * n),
+                                 d = get(b_index + 6 * n);
+                    sum += c * c + d * d;
+                }
             }
         }
         out.raw_norm[group] = sum / static_cast<double>(n);
@@ -95,8 +106,8 @@ ResidualDecompositionResult residual_decomposition_reference(
     const int mode_count = in.mpol * (in.ntor + 1);
     const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
     // The CPU reference cannot dereference a device-only input.
-    if (in.residual.size() != 6 * n ||
-        (in.double_single && in.residual_lo.size() != 6 * n))
+    if (in.residual.size() != (in.lasym ? 12 : 6) * n ||
+        (in.double_single && in.residual_lo.size() != (in.lasym ? 12 : 6) * n))
         return {};
     ResidualDecompositionResult out;
     out.residual = in.residual;
@@ -122,7 +133,8 @@ ResidualDecompositionResult residual_decomposition_reference(
             const double scale =
                 m % 2 == 0 ? 1.0 : 1.0 / std::max(sqrt_surface, sqrt_first);
             const auto index = static_cast<std::size_t>(mode) * in.ns + surface;
-            for (int component = 0; component < 6; ++component) {
+            for (int component = 0; component < (in.lasym ? 12 : 6);
+                 ++component) {
                 const std::size_t component_index = component * n + index;
                 put(component_index, get(component_index) * scale);
             }
@@ -133,6 +145,13 @@ ResidualDecompositionResult residual_decomposition_reference(
                 put(3 * n + index, (old_r + old_z) * INV_SQRT_TWO);
                 put(4 * n + index,
                     in.zero_m1_z ? 0.0 : (old_r - old_z) * INV_SQRT_TWO);
+                if (in.lasym) {
+                    const double rsc = get(6 * n + index),
+                                 zcc = get(7 * n + index);
+                    put(6 * n + index, (rsc + zcc) * INV_SQRT_TWO);
+                    put(7 * n + index,
+                        in.zero_m1_z ? 0.0 : (rsc - zcc) * INV_SQRT_TWO);
+                }
             }
         }
     }
@@ -147,7 +166,8 @@ std::array<double, 3> residual_raw_norms(const std::vector<float>& residual,
                                          bool include_edge_rz) {
     const int mode_count = mpol * (ntor + 1);
     const std::size_t count = static_cast<std::size_t>(ns) * mode_count;
-    if (ns < 2 || mpol < 1 || ntor < 0 || residual.size() != 6 * count)
+    if (ns < 2 || mpol < 1 || ntor < 0 ||
+        (residual.size() != 6 * count && residual.size() != 12 * count))
         return {};
     return accumulate_norms(residual, ns, mode_count, include_edge_rz);
 }
@@ -160,14 +180,16 @@ ForceNormalizationResult axisymmetric_force_normalization(
     const std::size_t spectral = static_cast<std::size_t>(in.ns) * mode_count;
     if (in.ns < 2 || in.mpol < 1 || in.ntor < 0 || in.ntheta < 2 ||
         in.ntheta % 2 != 0 || in.nzeta < 1 || !(in.delta_s > 0.0F) ||
-        in.state.size() != 6 * spectral ||
+        in.state.size() != (in.lasym ? 12 : 6) * spectral ||
         in.base_geometry.size() != 10 * half ||
         in.magnetic_field.size() != 5 * half ||
         in.pres_h.size() != static_cast<std::size_t>(in.ns - 1)) {
         return {};
     }
-    const int ntheta_red = in.ntheta / 2 + 1;
-    const float norm = 1.0F / static_cast<float>(in.nzeta * (ntheta_red - 1));
+    const int ntheta_red = in.lasym ? in.ntheta : in.ntheta / 2 + 1;
+    const float norm =
+        1.0F /
+        static_cast<float>(in.nzeta * (in.lasym ? ntheta_red : ntheta_red - 1));
     std::vector<float> partials(4 * static_cast<std::size_t>(in.ns - 1));
     std::vector<float> dvds(in.ns - 1);
     for (int surface = 0; surface < in.ns - 1; ++surface) {
@@ -178,7 +200,8 @@ ForceNormalizationResult axisymmetric_force_normalization(
         for (int zeta = 0; zeta < in.nzeta; ++zeta) {
             for (int theta = 0; theta < ntheta_red; ++theta) {
                 float weight = norm;
-                if (theta == 0 || theta == ntheta_red - 1) weight *= 0.5F;
+                if (!in.lasym && (theta == 0 || theta == ntheta_red - 1))
+                    weight *= 0.5F;
                 const std::size_t point =
                     static_cast<std::size_t>(surface) * angular +
                     static_cast<std::size_t>(zeta) * in.ntheta + theta;
@@ -232,6 +255,17 @@ ForceNormalizationResult axisymmetric_force_normalization(
             const float odd_pair = rss * rss + zcs * zcs;
             out.raw[5] += static_cast<double>((m == 1 ? 0.5F : 1.0F) *
                                               odd_pair * inverse_square);
+            if (in.lasym) {
+                const float rsc = in.state[6 * spectral + point];
+                const float zcc =
+                    mode == 0 ? 0.0F : in.state[7 * spectral + point];
+                const float rcs = in.state[9 * spectral + point];
+                const float zss = in.state[10 * spectral + point];
+                out.raw[5] +=
+                    double(((m == 1 ? 0.5F : 1.0F) * (rsc * rsc + zcc * zcc) +
+                            rcs * rcs + zss * zss) *
+                           inverse_square);
+            }
         }
     }
     const double e_mag = std::abs(out.raw[2]) * in.delta_s;
@@ -262,7 +296,7 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
     }
     const int mode_count = in.mpol * (in.ntor + 1);
     const std::size_t n = static_cast<std::size_t>(in.ns) * mode_count;
-    const auto input_bytes = 6 * n * sizeof(float);
+    const auto input_bytes = (in.lasym ? 12 : 6) * n * sizeof(float);
     const auto output_bytes = input_bytes * (in.double_single ? 2 : 1);
     const auto readback_bytes =
         output_bytes + (in.device_residual ? input_bytes : 0);
@@ -311,7 +345,8 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
                   static_cast<std::uint32_t>(mode_count),
                   static_cast<std::uint32_t>(in.ntor + 1),
                   in.zero_m1_z ? 1U : 0U,
-                  {0, 0, 0, 0}};
+                  in.lasym ? 1U : 0U,
+                  {0, 0, 0}};
     auto queue = device.GetQueue();
     auto encoder = device.CreateCommandEncoder();
     transfer_fields(device, encoder, input, in.residual, in.device_residual);
@@ -355,14 +390,16 @@ void enqueue_residual_decomposition(const wgpu::Device& device,
             std::any_of(original.begin(), original.end(),
                         [](float value) { return value != 0.0F; });
     };
-    const auto decode = [result, count = 6 * n, paired = in.double_single](
-                            std::span<const float> values) {
+    const auto decode = [result, count = (in.lasym ? 12 : 6) * n,
+                         paired =
+                             in.double_single](std::span<const float> values) {
         result->residual.assign(values.begin(), values.begin() + count);
         if (paired)
             result->residual_lo.assign(values.begin() + count, values.end());
     };
     if (in.readback.batch) {
-        result->device_residual = {output, 6 * n, 0, input_bytes};
+        result->device_residual = {output, (in.lasym ? 12 : 6) * n, 0,
+                                   input_bytes};
         if (in.device_residual &&
             (in.device_residual.buffer.GetUsage() &
              wgpu::BufferUsage::Storage) != wgpu::BufferUsage::None) {

@@ -1,10 +1,11 @@
 // Run a browser correctness gate in a new tab with tab-scoped test settings.
 // Usage: node scripts/webgpu_validate_run.mjs APP_URL OUTPUT_PREFIX [BASELINE_TRACE]
 // APP_URL chooses the solve/conformance mode. Never runs concurrent GPU solves.
-// CUMES_INPUT_JSON loads a fixed input into the tab-local advanced editor
-// (?preset=w7x); the page retains its displayed browser precision tolerance.
+// CUMES_INPUT_JSON loads a fixed (?preset=w7x) or bundled-coil free input
+// (?boundary=free without coils=) into tab-local editor storage. The page
+// retains its displayed browser precision tolerance.
 // CUMES_CAPTURE_OUTPUT=1 saves the scientific binary and its payload digest.
-import {readFile, writeFile} from 'node:fs/promises';
+import {appendFile, readFile, rename, writeFile} from 'node:fs/promises';
 import {isDeepStrictEqual} from 'node:util';
 import assert from 'node:assert/strict';
 import {connectCdp} from './include/webgpu_cdp.mjs';
@@ -13,9 +14,21 @@ const [url, prefix, baselinePath, comparison = 'exact'] = process.argv.slice(2);
 if (!url || !prefix) throw Error('Pass APP_URL and OUTPUT_PREFIX');
 const input = process.env.CUMES_INPUT_JSON ?
   JSON.parse(await readFile(process.env.CUMES_INPUT_JSON, 'utf8')) : undefined;
-if (input && (new URL(url).searchParams.get('preset') !== 'w7x' ||
-    new URL(url).searchParams.get('boundary') === 'free' || input.lfreeb))
-  throw Error('CUMES_INPUT_JSON requires the fixed advanced editor (?preset=w7x)');
+let inputStorage;
+if (input) {
+  const query = new URL(url).searchParams;
+  if (input.lfreeb) {
+    const preset = input.coils_file?.match(/coils\.(solovev|w7x|cth_like)$/)?.[1];
+    if (!preset || query.get('boundary') !== 'free' || query.has('coils'))
+      throw Error('Custom free input requires a bundled coil file and ?boundary=free without coils=');
+    inputStorage = {key: 'cumes.free.v1', value: {preset,
+      input: {...input, coils_file: '/inputs/coils.' + preset}}};
+  } else {
+    if (query.get('preset') !== 'w7x' || query.get('boundary') === 'free')
+      throw Error('Custom fixed input requires the advanced editor (?preset=w7x)');
+    inputStorage = {key: 'cumes.fixed.w7x.v1', value: input};
+  }
+}
 if (!['exact', 'paired-reductions'].includes(comparison))
   throw Error('Comparison must be exact or paired-reductions');
 const base = 'http://127.0.0.1:' + (process.env.CUMES_CDP_PORT || '9333');
@@ -33,7 +46,7 @@ try {
   await call('Page.enable');
   await call('Page.addScriptToEvaluateOnNewDocument', {source:
     `Object.defineProperty(window, 'localStorage', {get: () => window.sessionStorage});
-    ${input ? `sessionStorage.setItem('cumes.fixed.w7x.v1', ${JSON.stringify(JSON.stringify(input))});` : ''}`});
+    ${inputStorage ? `sessionStorage.setItem(${JSON.stringify(inputStorage.key)}, ${JSON.stringify(JSON.stringify(inputStorage.value))});` : ''}`});
   await call('Page.navigate', {url});
   await call('Page.bringToFront');
   console.log(JSON.stringify({target: page.id, url}));
@@ -46,7 +59,7 @@ try {
     if (status === 'pass' || status === 'fail') {
       const result = await evaluate(`({dataset: {...document.body.dataset},
         plot: window.cumesResidualPlot?.report(),
-        log: window.cumesVerificationLog?.text() || document.getElementById('log')?.textContent || document.body.innerText})`);
+        log: window.cumesVerificationLog?.text() || document.getElementById('output')?.textContent || document.getElementById('log')?.textContent || document.body.innerText})`);
       const trace = await evaluate('window.cumesDiagnostics || []');
       if (input) await writeFile(`${prefix}-input.json`, await evaluate('inputJSON()'));
       await writeFile(`${prefix}-result.json`, JSON.stringify(result));
@@ -69,11 +82,21 @@ try {
       if (process.env.CUMES_CAPTURE_OUTPUT === '1') {
         const digest = await evaluate(await readFile(new URL('./webgpu_output_digest.js', import.meta.url), 'utf8'));
         await writeFile(`${prefix}-digest.json`, JSON.stringify(digest));
-        const encoded = await evaluate(`(async () => {
-          const bytes = new Uint8Array(await (await fetch(window.cumesOutputUrl)).arrayBuffer());
-          return btoa(Array.from(bytes, value => String.fromCharCode(value)).join(''));
+        const size = await evaluate(`(async () => {
+          window.cumesCaptureBytes = new Uint8Array(await (await fetch(window.cumesOutputUrl)).arrayBuffer());
+          return window.cumesCaptureBytes.length;
         })()`);
-        await writeFile(`${prefix}-output.bin`, Buffer.from(encoded, 'base64'));
+        // Large scientific outputs must not become one enormous JS character
+        // array or CDP response. Keep each transfer bounded to one MiB.
+        const temporary = `${prefix}-output.bin.tmp`;
+        await writeFile(temporary, '');
+        for (let offset = 0; offset < size; offset += 1048576) {
+          const encoded = await evaluate(`btoa(Array.from(window.cumesCaptureBytes.subarray(
+            ${offset}, ${Math.min(size, offset + 1048576)}), value => String.fromCharCode(value)).join(''))`);
+          await appendFile(temporary, Buffer.from(encoded, 'base64'));
+        }
+        await evaluate('delete window.cumesCaptureBytes');
+        await rename(temporary, `${prefix}-output.bin`);
       }
       if (result.plot) {
         const samples = result.plot.samples, states = trace.filter(row => row.kind === 'controller');

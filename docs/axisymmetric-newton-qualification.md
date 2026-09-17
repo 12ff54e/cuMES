@@ -56,12 +56,11 @@ numerical implementation or per-case tuning enters this qualification.
 
 TITAN Xp uses CUDA 12.1/GCC 12 and native sm61; RTX 4090 on gervais uses CUDA
 12.9.41/GCC 12.4 and native sm89. Both use precise Release arithmetic and CPU
-8 affinity. The full binary hashes, build commands, exact tested source,
-input hashes and endpoint GPU telemetry are archived. A resident Chromium
-process on TITAN Xp was left untouched. Telemetry is sampled before and after
-each solve; it does not bound clock or utilization changes inside the solve.
-The Ada build's scratch CUDA-header compatibility adaptation is recorded in
-its archive; no mathematical body was changed.
+8 affinity. A resident Chromium process on TITAN Xp was left untouched.
+Telemetry is sampled before and after each solve; it does not bound clock or
+utilization changes inside the solve.
+The Ada build uses a CUDA-header compatibility adaptation; no mathematical
+body was changed.
 
 The metric is the sum of CUDA-event intervals from `solver_run` entry before
 EquilibriumOperator/Newton construction through final solver synchronization.
@@ -270,22 +269,6 @@ hook in a disposable worktree using the instructions in the original
 [Newton report](newton-correction-experiments.md#reproduction-and-artifacts),
 including recursive submodule initialization, then run the matrix commands
 in the benchmark README. The hook is excluded from the normal solver build.
-
-The full artifact tree is `../tmp/cumes-axisymmetric-newton-20260908/`:
-
-- `pascal/` and `ada/`: all screen, warmup, measured and replay logs; native
-  outputs/checkpoints; input/environment/command records; follow-up selection
-  plans; sample and summary JSON. Original and fresh timing results remain in
-  separate phase directories.
-- `tested-source/`, `compile-command.json`, `binary-provenance.json` and the
-  corresponding Ada source/build archive: exact private numerical sources and
-  preserved executables. The committed benchmark tools add no production
-  numerical behavior.
-- `ref/`: seven independently converged VMEC++ 0.7.0 references with exact
-  input, source/binary provenance and lambda normalization checks.
-- `validation/`: checks of all native outputs/checkpoints, physical differences
-  and actual checkpoint replays. `pascal/sanitizer/` and `ada-sanitizer/`
-  record additional diagnostic runs separately from timing results.
 
 This study establishes a useful axisymmetric opportunity and its limits.
 It does not establish a universal policy, free-boundary/float qualification,

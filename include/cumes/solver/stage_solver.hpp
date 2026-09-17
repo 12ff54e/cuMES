@@ -204,13 +204,14 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     // fourier: 43 real arrays, zeta scratch (main + compact de-alias), 5
     // poloidal tables and their compact weighted forward cache.
     bytes += 43 * ns * nZnT * szT;
-    bytes += 12 * p.mpol * ns * nz2 * szC;           // d_zeta_spectra
-    bytes += 12 * p.mpol * ns * p.nzeta * szT;       // d_zeta_real
-    bytes += 4 * p.mpol * p.ntheta * szT;            // cos/sin/mcos/msin_th
-    bytes += (p.ntheta / 2 + 1) * szT;               // fwd_w
-    bytes += 4 * p.mpol * (p.ntheta / 2 + 1) * szT;  // weighted forward basis
-    bytes += batch_da * p.nzeta * szT;               // d_zeta_real_c (de-alias)
-    bytes += batch_da * nz2 * szC;  // d_zeta_spectra_c (de-alias)
+    bytes += 12 * p.mpol * ns * nz2 * szC;      // d_zeta_spectra
+    bytes += 12 * p.mpol * ns * p.nzeta * szT;  // d_zeta_real
+    bytes += 4 * p.mpol * p.ntheta * szT;       // cos/sin/mcos/msin_th
+    bytes += (p.lasym ? p.ntheta : p.ntheta / 2 + 1) * szT;  // fwd_w
+    bytes += 4 * p.mpol * (p.lasym ? p.ntheta : p.ntheta / 2 + 1) *
+             szT;                       // forward basis
+    bytes += batch_da * p.nzeta * szT;  // d_zeta_real_c (de-alias)
+    bytes += batch_da * nz2 * szC;      // d_zeta_spectra_c (de-alias)
     // preconditioner: 25*nH + 9*ns + 7*mnmax*ns + 3*(ns+1) + 1 T-elements,
     // plus the mnmax int jMin table.
     bytes += (25 * nH + 9 * ns + 7 * mnmax * ns + 3 * (ns + 1) + 1) * szT;
@@ -220,7 +221,7 @@ std::size_t stage_arena_seed_bytes(const DeviceParams<T>& p) {
     bytes += (10 * ns * nZnT + ns + mnmax) * szT;
     // solver: f_spec + control + psum (6.4 — carved from the stage arena;
     // the control span is the typed ControlRecord).
-    bytes += (6 * mnmax * ns + 4 * (ns - 1)) * szT +
+    bytes += ((p.lasym ? 12 : 6) * mnmax * ns + 4 * (ns - 1)) * szT +
              sizeof(cumes::DeviceControlRecord<T>);
     // Alignment slack for the ~110 subspans (each padded to alignof <= 16).
     bytes += 64 * 1024;
@@ -317,7 +318,7 @@ class StageSolver {
                 // trajectory. The solver drives a single `SpectralOperator<T>`
                 // (no axisym_active branch); nullopt selects the generic
                 // ToroidalFft operator.
-                bool use_axisym = (p.ntor == 0 && p.nzeta == 1);
+                bool use_axisym = (p.ntor == 0 && p.nzeta == 1 && !p.lasym);
                 if (use_process_environment) {
                     if (const char* e = std::getenv("CUMES_FORCE_GENERIC"))
                         if (std::atoi(e) != 0) use_axisym = false;

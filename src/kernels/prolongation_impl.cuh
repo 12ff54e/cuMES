@@ -134,9 +134,10 @@ __global__ void interpolate_state_bspline_kernel(
     int ns_new,
     int ns_old,
     int mnmax,
-    int ntorp1) {
+    int ntorp1,
+    int components = 6) {
     const int index = blockIdx.x * blockDim.x + threadIdx.x;
-    const int total = 6 * mnmax * ns_new;
+    const int total = components * mnmax * ns_new;
     if (index >= total) return;
 
     const int profile = index / ns_new;
@@ -186,6 +187,8 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
 #ifndef CUMES_HAVE_BSPLINE_PROLONGATION
     static_cast<void>(precomputed_bspline_matrix);
 #endif
+    if (p_new.lasym != p_old.lasym || st_old.lasym() != p_old.lasym)
+        throw cumes::CumesError("interpolateState: symmetry mismatch");
     if (p_new.ns <= p_old.ns || p_new.mnmax != p_old.mnmax || p_old.ns < 3) {
         // Library contract: never exit() here — the RAII device buffers, the
         // caller's --checkpoint write, and the CLI run-report mapping must
@@ -203,7 +206,7 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
     // New grid's contiguous slabs; the ctor zeroes both (velocities are never
     // interpolated — vmecpp zeroes them per stage).
     cumes::SpectralStorage<T> st_new(p_new.ns, p_new.mnmax,
-                                     st_old.radius_references());
+                                     st_old.radius_references(), p_new.lasym);
 
     dim3 bd(256), gd((p_new.ns * p_new.mnmax + 255) / 256);
     // The coarse state (st_old) is written by the previous stage's kernels on
@@ -242,15 +245,17 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
                                     precomputed_bspline_matrix.end());
             matrix_data = converted_matrix.data();
         }
+        // Pageable host copies can return before the device transfer finishes.
+        // Order the upload with its consumer on the nonblocking solve stream.
         cumes::check_cuda(
-            cudaMemcpy(d_matrix.data(), matrix_data, d_matrix.byte_size(),
-                       cudaMemcpyHostToDevice),
+            cudaMemcpyAsync(d_matrix.data(), matrix_data, d_matrix.byte_size(),
+                            cudaMemcpyHostToDevice, stream),
             "interpolateState B-spline matrix upload");
-        const int total = 6 * p_new.mnmax * p_new.ns;
+        const int total = st_new.components() * p_new.mnmax * p_new.ns;
         dim3 bspline_gd((total + 255) / 256);
         interpolate_state_bspline_kernel<T><<<bspline_gd, bd, 0, stream>>>(
             st_new.state_slab(), st_old.state_slab(), d_matrix.data(), p_new.ns,
-            p_old.ns, p_new.mnmax, p_new.ntor + 1);
+            p_old.ns, p_new.mnmax, p_new.ntor + 1, st_new.components());
         cumes::check_cuda(cudaGetLastError(), "interpolateState B-spline");
         cumes::check_cuda(cudaStreamSynchronize(stream),
                           "interpolateState B-spline sync");
@@ -282,6 +287,22 @@ cumes::SpectralStorage<T> cumes::Prolongation<T>::enqueue(
         st_old.family_ptr(cumes::SpectralComponent::Zcs),
         st_old.family_ptr(cumes::SpectralComponent::Lcs), p_new.ns, p_old.ns,
         p_new.mnmax, p_new.ntor + 1, cubic);
+    if (p_new.lasym) {
+        interpolate_state_kernel<T><<<gd, bd, 0, stream>>>(
+            st_new.family_ptr(cumes::SpectralComponent::Rsc),
+            st_new.family_ptr(cumes::SpectralComponent::Zcc),
+            st_new.family_ptr(cumes::SpectralComponent::Lcc),
+            st_new.family_ptr(cumes::SpectralComponent::Rcs),
+            st_new.family_ptr(cumes::SpectralComponent::Zss),
+            st_new.family_ptr(cumes::SpectralComponent::Lss),
+            st_old.family_ptr(cumes::SpectralComponent::Rsc),
+            st_old.family_ptr(cumes::SpectralComponent::Zcc),
+            st_old.family_ptr(cumes::SpectralComponent::Lcc),
+            st_old.family_ptr(cumes::SpectralComponent::Rcs),
+            st_old.family_ptr(cumes::SpectralComponent::Zss),
+            st_old.family_ptr(cumes::SpectralComponent::Lss), p_new.ns,
+            p_old.ns, p_new.mnmax, p_new.ntor + 1, cubic);
+    }
     cumes::check_cuda(cudaGetLastError(), "interpolateState");
     // The kernel reads the OLD (coarse) state asynchronously; the caller frees
     // that state (via move-assignment of the returned SpectralStorage) as soon

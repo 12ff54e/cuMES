@@ -150,21 +150,7 @@ Thus the correction enables a cold-start trajectory to reach a state that
 also passes an exact-state double evaluation. This is not a lowered
 convergence threshold or a norm-reporting workaround.
 
-## Reproduction and implementation status
-
-Artifacts are preserved under
-`/lustre/qzhong/cumes-diagnostics/w7x-float-investigation/stage-probe/`;
-`/tmp/cumes-w7x-float-investigation` links to the parent investigation.
-The artifact directory contains:
-
-- `run_probe.py`, `isolate_inverse.py`, and `poloidal_oracle.py`;
-- all case commands, logs, summaries, canonical double array captures and
-  checkpoint outputs;
-- `solver_impl.before.cuh` / `fourier_impl.before.cuh`, the instrumented
-  `.probe.cuh` snapshots, `direct_inverse.cuh`, and source hashes;
-- saved `bin-float/cumes` and `bin-double/cumes` diagnostic executables;
-- a README with commands for rerunning the stage sweep and cold-start
-  correction, and the matching Compute Sanitizer memcheck result.
+## Implementation status
 
 The temporary substitutions and GPU oracle were removed from the normal
 solver source after the experiment. `CUMES_RADIUS_REFERENCE=1` still enables
@@ -175,7 +161,7 @@ The oracle is intentionally unoptimized and requires the dump-driven,
 non-graph diagnostic execution path. A replay with Compute Sanitizer
 memcheck on that path reports zero errors. An initial attempt without
 `CUMES_DUMP=1` correctly failed because the prototype's lazy basis allocation
-is unsupported inside graph capture; that failed attempt is preserved too.
+is unsupported inside graph capture.
 No graph/performance qualification is claimed for this diagnostic backend.
 
 The subsequent [float-float experiment](w7x-float-float.md) tests how much of

@@ -1,7 +1,7 @@
 // equilibrium_snapshot.hpp — host-side state and derived-field snapshot
 // (blueprint §6.13).
 //
-// The single host representation every writer consumes. The six coefficient
+// The single host representation every writer consumes. The active coefficient
 // families are double on the host regardless of the computation scalar type
 // (the device->host copy converts T -> double). Each family is laid out
 // mode-major, surface-contiguous: index = surface + mode * ns, matching the
@@ -24,13 +24,24 @@ struct EquilibriumSnapshot {
         RMNSS = 3,  // R: sin(mθ)sin(nζ)
         ZMNCS = 4,  // Z: cos(mθ)sin(nζ)
         LMNCS = 5,  // λ: cos(mθ)sin(nζ)
-        COUNT = 6,
+        COUNT = 6,  // Legacy symmetric family count.
+        RMNSC = 6,
+        ZMNCC = 7,
+        LMNCC = 8,
+        RMNCS = 9,
+        ZMNSS = 10,
+        LMNSS = 11,
+        ASYMMETRIC_COUNT = 12,
     };
 
     int ns = 0;
     int mnmax = 0;
     // families[c] has ns * mnmax doubles, mode-major (surface contiguous).
-    std::array<std::vector<double>, COUNT> families;
+    std::vector<std::vector<double>> families =
+        std::vector<std::vector<double>>(COUNT);
+
+    bool lasym() const { return families.size() == ASYMMETRIC_COUNT; }
+    int components() const { return static_cast<int>(families.size()); }
 
     // Scientific result fields. The solver state above remains mode-major;
     // these real-space arrays use the native point-major layout

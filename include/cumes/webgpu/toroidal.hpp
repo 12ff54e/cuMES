@@ -25,6 +25,7 @@ struct ToroidalInverseCase {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     int ntheta = 0;
     int nzeta = 0;
     int nfp = 0;
@@ -57,6 +58,7 @@ struct ToroidalForwardCase {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     int ntheta = 0;
     int nzeta = 0;
     int nfp = 0;
@@ -101,6 +103,7 @@ struct ToroidalDealiasCase {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     int ntheta = 0;
     int nzeta = 0;
     std::vector<float> g_con_eff;

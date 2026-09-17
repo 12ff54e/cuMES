@@ -35,7 +35,8 @@ the checkpoint selected on trajectories whose refreshed checkpoints pass
 validation. There are no additional iteration kernels, transfers, or fences:
 rotation only swaps host buffer ownership and each refresh still performs one
 device-to-device copy. The extra allocation is made at stage setup and costs
-`6 * ns * mnmax * sizeof(T)` bytes: 100,800 bytes on the QH final double grid
+`components * ns * mnmax * sizeof(T)` bytes, with six symmetric or twelve
+asymmetric families: 100,800 bytes on the symmetric QH final double grid
 (`ns=50`, `mnmax=42`). The WebGPU implementation is outside this change.
 
 ## Verification
@@ -77,8 +78,3 @@ are preserved. Full QA retains the newer revision's `1.39766656956e-6` endpoint
 and byte-identical final boundary JSON. Both saved-boundary QH cold replays
 converge at `1e-12`. The targets, rundown, derivative steps and transfer
 policies are unchanged.
-
-Raw before/after runs, comparison scripts, sanitizer logs, and the downstream
-construction qualification are retained under
-`../tmp/meow-performance-20260912/qh-recovery/`, with the RTX 4090 artifacts in
-the corresponding `/tmp/meow-performance-20260912/qh-recovery/` on `gervais`.

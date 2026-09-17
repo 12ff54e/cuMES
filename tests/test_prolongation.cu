@@ -1,6 +1,7 @@
 // test_prolongation.cu — direct CPU/GPU checks for linear and cubic radial
 // multigrid transfer, including odd-m decomposition and endpoint contracts.
 #include "cumes/numerics/prolongation.hpp"
+#include "cumes/runtime/stream.hpp"
 #ifdef CUMES_HAVE_BSPLINE_PROLONGATION
 #include "cumes/numerics/bspline_matrix.hpp"
 #endif
@@ -127,6 +128,60 @@ static void run_case(cumes::RadialInterpolation interpolation,
     }
 }
 
+#ifdef CUMES_HAVE_BSPLINE_PROLONGATION
+template <typename T>
+static void run_large_bspline_case(bool lasym) {
+    // The heliotron's 128 -> 256 stage transfers a 256 KiB double matrix.
+    // Exercise the production nonblocking stream with independently known
+    // constant/linear profiles in every symmetric and asymmetric family.
+    constexpr int ns_old = 128;
+    constexpr int ns_new = 256;
+    constexpr int ntor = 3;
+    constexpr int mnmax = 2 * (ntor + 1);
+    DeviceParams<T> old_params{};
+    old_params.ns = ns_old;
+    old_params.ntor = ntor;
+    old_params.mnmax = mnmax;
+    old_params.lasym = lasym;
+    auto new_params = old_params;
+    new_params.ns = ns_new;
+    cumes::SpectralStorage<T> old_state(ns_old, mnmax, {}, lasym);
+    std::vector<T> input(old_state.components() * mnmax * ns_old);
+    for (int profile = 0; profile < old_state.components() * mnmax; ++profile) {
+        const bool odd = profile % mnmax >= ntor + 1;
+        for (int j = 0; j < ns_old; ++j) {
+            const T s = T(j) / T(ns_old - 1);
+            input[profile * ns_old + j] =
+                (T(1) + T(profile) / T(10) + s) * (odd ? std::sqrt(s) : T(1));
+        }
+    }
+    cc(cudaMemcpy(old_state.state_slab(), input.data(),
+                  input.size() * sizeof(T), cudaMemcpyHostToDevice),
+       "large prolongation input");
+    cumes::Stream stream;
+    auto output = cumes::Prolongation<T>{}.enqueue(
+        new_params, old_state, old_params, stream.get(),
+        cumes::RadialInterpolation::BSPLINE);
+    std::vector<T> actual(output.components() * mnmax * ns_new);
+    cc(cudaMemcpy(actual.data(), output.state_slab(), actual.size() * sizeof(T),
+                  cudaMemcpyDeviceToHost),
+       "large prolongation result");
+    double error = 0;
+    for (int profile = 0; profile < output.components() * mnmax; ++profile) {
+        const bool odd = profile % mnmax >= ntor + 1;
+        for (int j = 0; j < ns_new; ++j) {
+            const double s = double(j) / (ns_new - 1);
+            const double expected =
+                (1 + double(profile) / 10 + s) * (odd ? std::sqrt(s) : 1);
+            error = std::max(error,
+                             std::abs(actual[profile * ns_new + j] - expected));
+        }
+    }
+    check(error < (sizeof(T) == sizeof(double) ? 2e-11 : 2e-5),
+          "large nonblocking B-spline transfer preserves analytic profiles");
+}
+#endif
+
 int main() {
     run_case<double>(cumes::RadialInterpolation::LINEAR);
     run_case<double>(cumes::RadialInterpolation::CATMULL_ROM);
@@ -135,6 +190,10 @@ int main() {
     run_case<double>(cumes::RadialInterpolation::BSPLINE, false);
     check(cumes::cubic_bspline_interpolation_matrix(3, 5).size() == 15,
           "B-spline matrix supports the minimum coarse grid");
+    for (bool lasym : {false, true}) {
+        run_large_bspline_case<double>(lasym);
+        run_large_bspline_case<float>(lasym);
+    }
 #endif
     run_case<float>(cumes::RadialInterpolation::LINEAR);
     run_case<float>(cumes::RadialInterpolation::CATMULL_ROM);

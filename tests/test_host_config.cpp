@@ -350,15 +350,13 @@ static void test_malformed() {
               !find_error(vr, "am_aux_s': expected an array").empty(),
           "malformed: scalar am_aux_s rejected");
 
-    // Non-empty asymmetric array is unsupported.
+    // Asymmetric boundary harmonics require objects.
     write_scratch(
         "{\"mpol\": 2, \"ntor\": 0, \"am\": [1.0], \"rbs\": [1.0],"
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = read_and_validate(scratch_path(), opts);
-    check(!vr.has_value() &&
-              !find_error(vr, "asymmetric (lasym) input is not supported")
-                   .empty(),
+    check(!vr.has_value() && !find_error(vr, "expected an object").empty(),
           "malformed: rbs content rejected");
 
     // Unsupported profile type.
@@ -447,8 +445,31 @@ static void test_malformed() {
         " \"rbc\": [{\"n\": 0, \"m\": 1, \"value\": 1.0}],"
         " \"zbs\": [{\"n\": 0, \"m\": 1, \"value\": 0.5}]}");
     vr = read_and_validate(scratch_path(), opts);
-    check(!vr.has_value() && !find_error(vr, "lasym=true").empty(),
-          "malformed: lasym=true rejected");
+    check(vr.has_value() && vr.value().spec().lasym, "lasym=true accepted");
+    write_scratch(R"({"mpol":3,"ntor":1,"lasym":true,"am":[1],
+        "raxis_s":[0,0.1],"zaxis_c":[0.2,0.3],
+        "rbc":[{"m":0,"n":0,"value":4}],
+        "zbs":[{"m":1,"n":0,"value":1}],
+        "rbs":[{"m":2,"n":1,"value":2},{"m":2,"n":-1,"value":5},
+               {"m":2,"n":1,"value":1},{"m":0,"n":1,"value":3},
+               {"m":1,"n":0,"value":4}],
+        "zbc":[{"m":2,"n":1,"value":4},{"m":2,"n":-1,"value":7},
+               {"m":2,"n":1,"value":1},{"m":0,"n":0,"value":0.2}]})");
+    vr = read_and_validate(scratch_path(), opts);
+    check(vr.has_value(), "asymmetric signed-n boundary validates");
+    if (vr.has_value()) {
+        const auto& boundary = vr.value().boundary();
+        check(boundary.rbsc[5] == 8 && boundary.rbcs[5] == 2 &&
+                  boundary.zbcc[5] == 12 && boundary.zbss[5] == -2,
+              "asymmetric folding sums duplicates with signed-n parity");
+        check(boundary.rbsc[1] == 0 && boundary.rbcs[1] == -3 &&
+                  boundary.rbsc[2] == 4 && boundary.rbcs[2] == 0 &&
+                  boundary.zbcc[0] == 0.2 && boundary.zbss[0] == 0,
+              "asymmetric zero-mode basis rules");
+        check(vr.value().spec().raxis_s[1] == 0.1 &&
+                  vr.value().spec().zaxis_c[0] == 0.2,
+              "asymmetric magnetic axis preserved");
+    }
 
     // ---- profile-normalization scalars (completion plan step 1.1) ----
     // T_edge = torflux(1) normalizes the toroidal flux; C_edge = J_C(1)

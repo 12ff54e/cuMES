@@ -38,8 +38,7 @@ of 525.07 microseconds with absolute coefficients and 543.09 microseconds
 with reference storage: approximately 3.4% extra cost. The default is justified
 by retaining radial detail and the improved convergence behavior, rather than
 by a per-pass speedup. These timings are separate from the incremental cost of
-float-float reconstruction. The run records are in
-`/lustre/qzhong/cumes-diagnostics/w7x-float-investigation/default-reference/`.
+float-float reconstruction.
 
 Validation of the default change: 64/64 float tests and the four selected
 verify API/reference tests pass, including reference memcheck and initcheck.
@@ -84,8 +83,7 @@ The absolute-coefficient control measured 526.46 µs in the same comparison.
 Thus caching removes approximately 3% of pass time and makes the remaining
 reference-only cost indistinguishable from the absolute control at this
 measurement's variability. The earlier 3.4% overhead included the unnecessary
-per-iteration reconstruction. Records and the executable comparison script
-are under `w7x-float-investigation/reference-cache/` beside the prior artifacts.
+per-iteration reconstruction.
 
 The cache test verifies a one-node reduction in the captured inverse graph,
 bit-identical output, reference switching/invalidation and non-aliasing output

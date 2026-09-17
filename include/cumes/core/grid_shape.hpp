@@ -21,6 +21,7 @@ struct GridShape {
     int mpol = 0;    // poloidal mode count
     int ntor = 0;    // toroidal mode count (folded basis: n = 0..ntor)
     int nfp = 0;     // field periods
+    bool lasym = false;
 
     // ns * ntheta * nzeta, or 0 on overflow.
     std::size_t full_points() const;

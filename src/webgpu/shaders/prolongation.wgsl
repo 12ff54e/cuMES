@@ -50,6 +50,13 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let profile = index / params.ns_new;
     let mode = profile % params.mnmax;
     let j_new = index % params.ns_new;
+    // Endpoint division/sqrt need not round to exactly one in WGSL.
+    // Preserve the physical LCFS, including the low word of paired state.
+    if (j_new == params.ns_new - 1u) {
+        output.data[index] = input_state.data[profile * params.ns_old + params.ns_old - 1u];
+        output.data[params.total + index] = 0.0;
+        return;
+    }
     let m = mode / params.ntorp1;
     let odd = (m & 1u) == 1u;
 

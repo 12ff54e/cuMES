@@ -45,8 +45,7 @@ Baseline Nsight Systems profiles identified different dominant kernels. In the
 Solovev profile, serial axisymmetric `gstore` occupied 43.3% of measured GPU
 kernel time; in the positive-flux W7-X profile, singular `bvec` occupied 52.0%.
 These are diagnostic kernel-time shares from individual profiled runs, not
-end-to-end speedups. Raw reports and CSV summaries are retained under
-`../tmp/cumes-free-boundary-20260909/pascal/profile-*`.
+end-to-end speedups.
 
 For axisymmetric `gstore`, each source/image/target term is independent until
 the final sum. The implementation evaluates these terms in parallel and stores
@@ -91,11 +90,10 @@ timing spikes are retained without filtering.
 | gervais | RTX 4090, GPU 2 | CUDA 12.9.41, native sm_89 | GCC 12.4 | 570.169 |
 
 Builds use precise double arithmetic with vacuum support and the existing
-field-output backends. Configure/build scripts and dependency revisions are
-archived alongside each machine's results. Both Ada builds use the same
-archived CUDA header compatibility include (six host exception-specification
-fixes) and user-local NetCDF installation. Clocks are not fixed; per-run
-telemetry records their variation. The local display process remains resident.
+field-output backends. Both Ada builds use the same CUDA header compatibility
+include (six host exception-specification fixes) and user-local NetCDF
+installation. Clocks are not fixed; per-run telemetry records their variation.
+The local display process remains resident.
 
 The solver metric is the CLI's summed stage CUDA-event interval, printed to
 0.001 ms. It includes vacuum work and host gaps within each solver interval,
@@ -182,16 +180,15 @@ Float kernel equivalence does not establish free-boundary float convergence.
 Additional Solovev and CTH checks with every stage tolerance raised to `1e-6`
 failed in both baseline and candidate before leaving the coarse grid (reporting
 5002 and 1274 iterations respectively). Neither produced a completed native
-result. Those attempts remain in `pascal/float-check/`; no float solve speedup
-or new free-boundary float qualification is claimed.
+result. No float solve speedup or new free-boundary float qualification is
+claimed.
 
 Full `CUMES_DUMP=1` runs pass on both architectures. A temporary `fopen`
 interposer redirects only the per-iteration record filename so every stage is
-retained instead of overwritten. It changes no solver data or stage controls;
-its source, compiled helpers, commands and checksums remain in `trace/` and
-`ada/stage-traces/`. Both ordinary and dump-enabled free-boundary paths use
-direct launches. The native output of every dump run also matches both ordinary
-baseline and candidate outputs, checking that observation changes no result.
+retained instead of overwritten. It changes no solver data or stage controls.
+Both ordinary and dump-enabled free-boundary paths use direct launches. The
+native output of every dump run also matches both ordinary baseline and
+candidate outputs, checking that observation changes no result.
 
 For each architecture, all 1,281 dump files per variant match byte for byte,
 including all 15 residual/controller columns at every one of seven configured
@@ -203,11 +200,6 @@ references qualify the retained numerical work as Class A on this matrix.
 
 The [compact raw results](../benchmarks/free_boundary/results/20260909.json)
 retain per-run timings, numerical fingerprints, stage controls and telemetry
-with their protocol provenance. The full artifact root is
-`../tmp/cumes-free-boundary-20260909/`. Final Pascal
-measurements are in `pascal/qualified-pairs/`; final Ada measurements are in
-`ada/qualified-paired/`. The earlier `final-pairs`/`final-paired` directories
-predate the diagnostic guard and are retained separately. Earlier graph, direct,
-gstore and block-size
-experiments remain in separate directories. Their cumulative speedups are not
-presented as isolated gains from an individual kernel change.
+with their protocol provenance. These measurements include the diagnostic
+guard. The cumulative speedups are not presented as isolated gains from an
+individual kernel change.

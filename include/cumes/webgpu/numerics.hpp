@@ -20,6 +20,7 @@ struct ResidualDecompositionCase {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     bool include_edge_rz = false;
     bool zero_m1_z = false;
     bool double_single = false;
@@ -56,6 +57,7 @@ struct AxisymmetricForceNormalizationCase {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     int ntheta = 0;
     int nzeta = 1;
     float delta_s = 0.0F;

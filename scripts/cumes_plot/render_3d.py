@@ -490,6 +490,11 @@ def render_slices(base, S, scene_image=None):
                   for nn in range(ntor + 1))
         Zax = sum(fams["zmncs"][nn * ns + 1] * np.sin(nn * zc)
                   for nn in range(ntor + 1))
+        if "rmncs" in fams:
+            Rax += sum(fams["rmncs"][nn * ns + 1] * np.sin(nn * zc)
+                       for nn in range(ntor + 1))
+            Zax += sum(fams["zmncc"][nn * ns + 1] * np.cos(nn * zc)
+                       for nn in range(ntor + 1))
         ax.plot([Rax], [Zax], "o", color=config.curve_color, markersize=2.5)
         ax.set_xlim(Rmin - 0.05, Rmax + 0.05)
         # Mild vertical headroom; the slice plots fill their cell heights

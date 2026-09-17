@@ -128,17 +128,20 @@ void FreeBoundaryOperator<T>::enqueue_surface_averages(
     cudaStream_t /*stream*/) const {}
 
 template <class T>
-void FreeBoundaryOperator<T>::enqueue_lcfs_repack(
-    const T* /*d_rcc*/,
-    const T* /*d_rss*/,
-    const T* /*d_zsc*/,
-    const T* /*d_zcs*/,
-    T* /*d_repacked*/,
-    int /*ns*/,
-    int /*mnmax*/,
-    int /*mpol*/,
-    int /*ntor*/,
-    cudaStream_t /*stream*/) const {}
+void FreeBoundaryOperator<T>::enqueue_lcfs_repack(const T* /*d_rcc*/,
+                                                  const T* /*d_rss*/,
+                                                  const T* /*d_zsc*/,
+                                                  const T* /*d_zcs*/,
+                                                  T* /*d_repacked*/,
+                                                  int /*ns*/,
+                                                  int /*mnmax*/,
+                                                  int /*mpol*/,
+                                                  int /*ntor*/,
+                                                  cudaStream_t /*stream*/,
+                                                  const T*,
+                                                  const T*,
+                                                  const T*,
+                                                  const T*) const {}
 
 template <class T>
 void FreeBoundaryOperator<T>::enqueue_axis_extract(

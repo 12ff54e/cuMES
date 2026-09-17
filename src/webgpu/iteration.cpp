@@ -262,7 +262,8 @@ class IterationDispatch
         in.include_lcfs = input.include_lcfs;
         in.readback = false;
         in.device_fields = fields;
-        if (phase == ResidualPhase::CONSTRAINT && input.stage.ntor == 0) {
+        if (phase == ResidualPhase::CONSTRAINT && input.stage.ntor == 0 &&
+            !input.stage.lasym) {
             // Axisymmetric constraints append four planes after ten forces;
             // the separable projector consumes sixteen force planes first.
             const auto plane = static_cast<std::uint64_t>(input.stage.ns) *
@@ -391,7 +392,7 @@ class IterationDispatch
         in.device_r_con = inverse_.device_r_con;
         in.device_z_con = inverse_.device_z_con;
         in.device_force_fields = force_.device_fields;
-        if (input.stage.ntor == 0)
+        if (input.stage.ntor == 0 && !input.stage.lasym)
             in.device_force_fields =
                 field_slice(force_.device_fields, 0,
                             10 * static_cast<std::size_t>(in.ns) * in.ntheta);
@@ -455,6 +456,7 @@ class IterationDispatch
         ResidualNormCase in;
         in.residual = fields;
         in.ns = input.stage.ns;
+        in.lasym = input.stage.lasym;
         in.paired = index != 2 && input.double_single;
         in.include_edge_rz = index == 2 || input.include_edge_invariant;
         in.readback = {
@@ -510,7 +512,8 @@ std::uint64_t iteration_readback_capacity(const AxisymmetricStageData& stage,
     const int extra_spectral = readback_intermediates ? 24 : 0;
     return sizeof(float) *
                (((stage.free_boundary ? 112 : 80) + extra_fields) * points +
-                (80 + extra_spectral) * spectral + 32 * stage.ns) +
+                (80 + extra_spectral + (stage.lasym ? 80 : 0)) * spectral +
+                32 * stage.ns) +
            256;
 }
 
@@ -555,7 +558,7 @@ IterationProbeResult enqueue_iteration_probe(const wgpu::Device& device,
                                              IterationCase input,
                                              const DeviceFields& control) {
     if (!input.double_single || input.stage.free_boundary ||
-        input.stage.ntor != 0 || input.stage.nzeta != 1 ||
+        input.stage.ntor != 0 || input.stage.nzeta != 1 || input.stage.lasym ||
         input.refresh_preconditioner || input.reset_reference ||
         input.include_lcfs || input.include_edge_invariant ||
         !input.device_state || !input.elements.device_elements ||

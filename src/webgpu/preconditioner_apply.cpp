@@ -19,7 +19,7 @@ constexpr int MAX_SURFACES = 512;
 
 struct Params {
     std::uint32_t ns, mode_count, ntor, points;
-    std::uint32_t last_surface, padding[3];
+    std::uint32_t last_surface, lasym, padding[2];
 };
 static_assert(sizeof(Params) == 32);
 
@@ -60,7 +60,8 @@ std::string validate_case(const AxisymmetricPreconditionerApplyCase& in) {
     }
     const std::size_t points = static_cast<std::size_t>(in.ns) * mode_count(in);
     if (!valid_elements(in) || !valid_matrix(in) ||
-        !field_shape(in.residual, in.device_residual, 6 * points)) {
+        !field_shape(in.residual, in.device_residual,
+                     (in.lasym ? 12 : 6) * points)) {
         return "axisymmetric preconditioner apply input shape mismatch";
     }
     return {};
@@ -107,7 +108,8 @@ bool solve_pair(const AxisymmetricPreconditionerApplyCase& in,
                 int mode,
                 int last_surface,
                 float floor,
-                std::vector<float>& residual) {
+                std::vector<float>& residual,
+                int offset = 0) {
     const int first = in.matrix.first_surface[mode];
     const int count = last_surface - first;
     if (count <= 0) return false;
@@ -116,7 +118,7 @@ bool solve_pair(const AxisymmetricPreconditionerApplyCase& in,
     const auto& diagonal =
         z_system ? in.matrix.diagonal_z : in.matrix.diagonal_r;
     const auto& upper = z_system ? in.matrix.upper_z : in.matrix.upper_r;
-    const int component0 = z_system ? 1 : 0;
+    const int component0 = offset + (z_system ? 1 : 0);
     const int component1 = component0 + 3;
     const auto index = [&](int component, int surface) {
         return static_cast<std::size_t>(component) * points +
@@ -228,8 +230,9 @@ AxisymmetricPreconditionerApplyResult
 axisymmetric_preconditioner_apply_reference(
     const AxisymmetricPreconditionerApplyCase& input) {
     if (!valid_elements(input, false) || !valid_matrix(input, false) ||
-        input.residual.size() !=
-            6 * static_cast<std::size_t>(input.ns) * mode_count(input))
+        input.residual.size() != (input.lasym ? 12 : 6) *
+                                     static_cast<std::size_t>(input.ns) *
+                                     mode_count(input))
         return {};
     if (!validate_case(input).empty()) return {};
     const int modes = mode_count(input);
@@ -251,6 +254,10 @@ axisymmetric_preconditioner_apply_reference(
                         static_cast<std::size_t>(mode) * input.ns + surface;
                     out.residual[3 * points + base] *= rsum / denominator;
                     out.residual[4 * points + base] *= zsum / denominator;
+                    if (input.lasym) {
+                        out.residual[6 * points + base] *= rsum / denominator;
+                        out.residual[7 * points + base] *= zsum / denominator;
+                    }
                 }
             }
         }
@@ -266,10 +273,20 @@ axisymmetric_preconditioner_apply_reference(
         broke =
             solve_pair(input, true, mode, last_surface, floor, out.residual) ||
             broke;
+        if (input.lasym) {
+            broke = solve_pair(input, false, mode, last_surface, floor,
+                               out.residual, 6) ||
+                    broke;
+            broke = solve_pair(input, true, mode, last_surface, floor,
+                               out.residual, 6) ||
+                    broke;
+        }
         out.breakdown_count += broke ? 1 : 0;
         const int first = input.matrix.first_surface[mode];
         for (int surface = 0; surface < first; ++surface) {
-            for (int component = 0; component < 5; ++component) {
+            for (int component = 0; component < (input.lasym ? 12 : 5);
+                 ++component) {
+                if (component == 5 || component == 8) continue;
                 out.residual[static_cast<std::size_t>(component) * points +
                              static_cast<std::size_t>(mode) * input.ns +
                              surface] = 0.0F;
@@ -282,6 +299,12 @@ axisymmetric_preconditioner_apply_reference(
                 input.matrix.lambda[matrix_index];
             out.residual[5 * points + matrix_index] *=
                 input.matrix.lambda[matrix_index];
+            if (input.lasym) {
+                out.residual[8 * points + matrix_index] *=
+                    input.matrix.lambda[matrix_index];
+                out.residual[11 * points + matrix_index] *=
+                    input.matrix.lambda[matrix_index];
+            }
         }
     }
     return out;
@@ -308,8 +331,8 @@ void enqueue_axisymmetric_preconditioner_apply(
     const auto matrix_bytes = (7 * points + modes) * sizeof(float);
     const auto element_bytes =
         8 * static_cast<std::size_t>(input.ns) * sizeof(float);
-    const auto input_bytes = 6 * points * sizeof(float);
-    const auto result_values = 6 * points + modes;
+    const auto input_bytes = (input.lasym ? 12 : 6) * points * sizeof(float);
+    const auto result_values = (input.lasym ? 12 : 6) * points + modes;
     const auto result_bytes = result_values * sizeof(float);
     // PCR keeps two five-plane banks in storage. Unlike CUDA dynamic shared
     // memory this remains within WebGPU's portable workgroup-storage limit for
@@ -351,7 +374,8 @@ void enqueue_axisymmetric_preconditioner_apply(
                         static_cast<std::uint32_t>(points),
                         static_cast<std::uint32_t>(
                             input.include_lcfs ? input.ns : input.ns - 1),
-                        {0, 0, 0}};
+                        input.lasym ? 1U : 0U,
+                        {0, 0}};
     auto queue = device.GetQueue();
     auto encoder = device.CreateCommandEncoder();
     transfer_fields(device, encoder, matrix_buffer, matrix,
@@ -393,18 +417,20 @@ void enqueue_axisymmetric_preconditioner_apply(
                                                   readback, result_bytes);
     AxisymmetricPreconditionerApplyResult resident;
     if (input.readback.batch)
-        resident.device_residual = {output_buffer, 6 * points, 0, 0};
+        resident.device_residual = {output_buffer,
+                                    (input.lasym ? 12 : 6) * points, 0, 0};
     batch->append(
         encoder, output_buffer, 0, result_bytes,
         [callback = input.readback.batch
                         ? std::move(callback)
                         : AxisymmetricPreconditionerApplyCallback{},
-         host, resident, points, modes](std::span<const float> values) mutable {
-            resident.residual.assign(values.begin(),
-                                     values.begin() + 6 * points);
+         host, resident, points, modes,
+         lasym = input.lasym](std::span<const float> values) mutable {
+            resident.residual.assign(
+                values.begin(), values.begin() + (lasym ? 12 : 6) * points);
             for (int mode = 0; mode < modes; ++mode)
                 resident.breakdown_count +=
-                    values[6 * points + mode] != 0.0F ? 1 : 0;
+                    values[(lasym ? 12 : 6) * points + mode] != 0.0F ? 1 : 0;
             if (host)
                 *host = std::move(resident);
             else

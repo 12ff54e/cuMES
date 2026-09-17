@@ -85,8 +85,8 @@ must match exactly; velocity and controller history remain untouched. The
 disabled hook reproduces the original baseline. Full forced-reject Solovev
 and W7-X runs reproduced baseline checkpoints byte for byte. Native structured
 stage residuals, iteration counts and restart sequences also match the
-preserved reference executable exactly. Earlier exploratory runs without the damping-history reset are archived in `runs/` and are not
-the basis of the final performance comparison.
+preserved reference executable exactly. Earlier exploratory runs without the
+damping-history reset are excluded from the final performance comparison.
 
 Structured `EXPERIMENT_STAGE` records come from `SolverResult`; they contain
 actual stage iterations, convergence, all three residuals, extra equilibrium
@@ -165,7 +165,7 @@ Pascal Solovev and 0.218%/0.228% for Pascal W7-X; Ada gives
 
 Clocks were unlocked. Pascal active samples at 200 ms intervals recorded
 SM 1759–1885 MHz, memory 5508–5702 MHz, temperature 34–71 °C and
-power 68–197 W; exact samples are retained. Ada endpoint samples recorded
+power 68–197 W. Ada endpoint samples recorded
 SM 2520–2760 MHz, memory 10501 MHz, 31–39 °C and 53–146 W, which do
 not bound all in-process excursions.
 
@@ -177,8 +177,8 @@ These measurements sum CUDA-event intervals around each solver call, starting
 before equilibrium/corrector construction and ending after stream drain.
 They include correction setup, all extra maps, trials, fences, and host gaps
 inside the interval. Outer stage construction, inter-stage transfer, output
-and process startup are outside it. Separate process wall times are archived;
-their allocation/startup outliers prevent an end-to-end speedup claim.
+and process startup are outside it. Allocation/startup outliers in the separate
+process wall times prevent an end-to-end speedup claim.
 Five pairs are a small sample. No production adoption claim is made.
 
 The Ada lower confidence bound falls below the required 5% improvement in
@@ -203,24 +203,24 @@ and `4.03e-10`. W7-X changes by up to `2.97e-5` in R, `2.27e-5` in Z and
 and `6.38e-6`. These are differences in the native coordinates, not a
 gauge-invariant field comparison.
 
-The archived independent VMEC++ 0.7.0 solves provide a diagnostic cross-check.
+Independent VMEC++ 0.7.0 solves provide a diagnostic cross-check.
 Signed-n modes are folded and wout lambda is converted back with
 `phipF/lamscale`. Solovev's maximum R/Z/lambda differences from VMEC++ are
 `2.55e-8`, `1.44e-8`, `5.13e-8`; baseline values were `2.14e-8`, `1.24e-8`,
 `3.48e-8`. W7-X retains the known gauge-family discrepancy: the largest
 lambda-family difference is about `5.74e-3` for both trajectories. VMEC++ is
-not used as the convergence oracle. The exact arrays are retained in the
-native outputs/checkpoints; hashes and all six-family differences are in
-`scientific-comparison.json`.
+not used as the convergence oracle.
 
 ## Reproduction and artifacts
 
-The committed standalone probe accepts an existing captured checkpoint:
+The committed standalone probe accepts an existing checkpoint. Set
+`W7X_CHECKPOINT` to a frozen diagnostic state or ordinary solver checkpoint
+on the ns=99 W7-X grid:
 
 ```sh
 cmake --build build --target cumes_benchmark_newton_correction
 build/cumes_benchmark_newton_correction --input inputs/w7x.json \
-  --restart ../tmp/cumes-block-20260908/states/w7x-ns99-iter500.ckpt \
+  --restart "$W7X_CHECKPOINT" \
   --iterations 32 --basis 32 --epsilon 1e-8 --difference central
 ```
 
@@ -256,11 +256,3 @@ CUMES_NEWTON_EPSILON=1e-8 \
 
 Use `CUMES_NEWTON_RATIO=0` for forced rejection. These are private experimental
 controls, not additions to the public CLI/environment contract.
-
-The full artifact tree is `../tmp/cumes-newton-20260908/`: exact tested sources,
-the private binary and compile commands, anchor probes, screening runs,
-`paired-pascal-warm/`, `ada/paired/`, replay logs, scientific comparisons and
-input/environment records. `../tmp/cumes-block-20260908/ada-gmres/` and
-`ada-newton/` hold the manufactured tests, all anchor JSON, sanitizer logs,
-tested source copies and SHA256 manifests. The FAS results and independent
-private hook are documented separately.

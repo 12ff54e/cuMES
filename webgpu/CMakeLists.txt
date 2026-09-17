@@ -6,6 +6,7 @@ add_link_options(-pthread)
 add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/json_parser.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/config/json_reader.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/json_writer.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/config/validated_problem.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/config/validation_report.cpp
   ${PROJECT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
@@ -19,6 +20,7 @@ add_executable(cumes_webgpu
   ${PROJECT_SOURCE_DIR}/src/webgpu/geometry.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/force.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/float_geometry_tests.cpp
+  ${PROJECT_SOURCE_DIR}/src/webgpu/asymmetric_tests.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/rounding_tests.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/initialization.cpp
   ${PROJECT_SOURCE_DIR}/src/webgpu/iteration.cpp
@@ -148,7 +150,8 @@ add_custom_command(
 set_property(TARGET cumes_webgpu APPEND PROPERTY LINK_DEPENDS
   ${CUMES_WEBGPU_ASSETS}
   ${PROJECT_SOURCE_DIR}/inputs/solovev.json
-  ${PROJECT_SOURCE_DIR}/inputs/w7x.json)
+  ${PROJECT_SOURCE_DIR}/inputs/w7x.json
+  ${PROJECT_SOURCE_DIR}/inputs/asymmetric_tokamak.json)
 
 # CD asks the build system for the completed target's inputs, including
 # compiler-discovered headers and files read by the packager. No source-tree
@@ -205,6 +208,29 @@ add_executable(test_webgpu_vacuum_bridge
 target_include_directories(test_webgpu_vacuum_bridge PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(test_webgpu_vacuum_bridge PRIVATE CUMES_VACUUM_HOST)
 target_link_libraries(test_webgpu_vacuum_bridge PRIVATE vfield_cuda_double vfield::makegrid)
+set(CUMES_VACUUM_BRIDGE_COILS
+  ${PROJECT_SOURCE_DIR}/deps/vacuum-field/tests/data/coils.solovev)
+target_link_options(test_webgpu_vacuum_bridge PRIVATE
+  "--embed-file=${CUMES_VACUUM_BRIDGE_COILS}@/deps/vacuum-field/tests/data/coils.solovev")
+set_property(TARGET test_webgpu_vacuum_bridge APPEND PROPERTY
+  LINK_DEPENDS ${CUMES_VACUUM_BRIDGE_COILS})
 cumes_enable_warnings(test_webgpu_vacuum_bridge)
 add_test(NAME webgpu_vacuum_bridge COMMAND test_webgpu_vacuum_bridge)
 set_tests_properties(webgpu_vacuum_bridge PROPERTIES LABELS "unit;webgpu")
+
+# Exercise the browser's shared binary input record under Wasm as well.
+add_executable(test_webgpu_asymmetric_io
+  ${PROJECT_SOURCE_DIR}/tests/test_asymmetric_io.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/validated_problem.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/config/validation_report.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/core/grid_shape.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/core/mode_table.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/output_spec.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/versioned_binary.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/checkpoint.cpp
+  ${PROJECT_SOURCE_DIR}/src/cumes/io/writer_dispatch.cpp)
+target_include_directories(test_webgpu_asymmetric_io PRIVATE
+  ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests/include)
+cumes_enable_warnings(test_webgpu_asymmetric_io)
+add_test(NAME webgpu_asymmetric_io COMMAND test_webgpu_asymmetric_io)
+set_tests_properties(webgpu_asymmetric_io PROPERTIES LABELS "unit;io;webgpu")

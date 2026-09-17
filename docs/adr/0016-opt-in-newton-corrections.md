@@ -85,12 +85,10 @@ produces bit-identical results to its unsanitized run. A dump-enabled Solovev
 run preserves the qualified state and stage records without writing fake
 iteration-1000 probe files.
 
-Full promotion evidence and commands are retained in
-`../tmp/cumes-newton-flag-20260908/`. The original timing and independent VMEC++
-comparisons remain in `../tmp/cumes-axisymmetric-newton-20260908/`. Promotion
-checks establish numerical equivalence to that experiment; they are not a new
-cross-GPU performance measurement. The original CUDA 12.1 graph-initcheck
-caveat remains documented in the qualification report.
+Promotion checks establish numerical equivalence to the
+[axisymmetric experiment](../axisymmetric-newton-qualification.md); they are
+not a new cross-GPU performance measurement. The original CUDA 12.1
+graph-initcheck caveat remains documented in the qualification report.
 
 ## Consequences
 

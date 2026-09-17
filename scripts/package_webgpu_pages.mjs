@@ -11,7 +11,7 @@ const artifacts = [
   'orbit_renderer.js', 'boundary_editor.js'
 ];
 const presets = [
-  'solovev.json', 'w7x.json', 'cth_like.json', 'fixed-w7x.json',
+  'solovev.json', 'w7x.json', 'cth_like.json', 'fixed-w7x.json', 'fixed-asymmetric.json',
   'coils.solovev', 'coils.w7x', 'coils.cth_like', 'LICENSE.vmecpp', 'README.md'
 ];
 

@@ -195,9 +195,16 @@ __global__ void extrapolate_axis_kernel(
         // a 1e-4-level drift of the lambda channel).
         st(cumes::SpectralComponent::Lcs, mode, 0) =
             st(cumes::SpectralComponent::Lcs, mode, 1);
+        if (st.lasym())
+            st(cumes::SpectralComponent::Lcc, mode, 0) =
+                st(cumes::SpectralComponent::Lcc, mode, 1);
         return;
     }
     if (m != 1) return;  // only m=1 needs extrapolation
+    for (int c = 6; c < st.components(); ++c) {
+        const auto component = static_cast<cumes::SpectralComponent>(c);
+        st(component, mode, 0) = st(component, mode, 1);
+    }
     // Copy from j=1 to j=0
     st(cumes::SpectralComponent::Rcc, mode, 0) =
         st(cumes::SpectralComponent::Rcc, mode, 1);
@@ -251,7 +258,7 @@ __global__ void scalxc_apply_kernel(
     if (m % 2 == 0) return;  // even-m: scalxc = 1
     int j = i % ns;
     T scal = T(1.0) / fmax(sqrtS_F[j], sqrtS1);
-    for (int c = 0; c < 6; ++c)
+    for (int c = 0; c < f_spec.components(); ++c)
         f_spec(static_cast<cumes::SpectralComponent>(c), mode, j) *= scal;
 }
 
@@ -281,6 +288,13 @@ __global__ void m1_constraint_kernel(
     int m1base = ntor + 1;  // mode index of (m=1, n=0)
     for (int n = 0; n < ntor + 1; ++n) {
         int mn = m1base + n;
+        if (f_spec.lasym()) {
+            T rsc = f_spec(cumes::SpectralComponent::Rsc, mn, j);
+            T zcc = f_spec(cumes::SpectralComponent::Zcc, mn, j);
+            f_spec(cumes::SpectralComponent::Rsc, mn, j) = (rsc + zcc) * s;
+            f_spec(cumes::SpectralComponent::Zcc, mn, j) =
+                zeroZ ? T(0) : (rsc - zcc) * s;
+        }
         T old_rss = f_spec(cumes::SpectralComponent::Rss, mn, j);
         T old_zcs = f_spec(cumes::SpectralComponent::Zcs, mn, j);
         f_spec(cumes::SpectralComponent::Rss, mn, j) = (old_rss + old_zcs) * s;
@@ -333,6 +347,16 @@ __global__ void rz_norm_kernel(
         T zcs = st(cumes::SpectralComponent::Zcs, m, j);
         if (mm > 0 || nn > 0) sum += A(rcc * rcc * inv2);
         sum += A(zsc * zsc * inv2);
+        if (st.lasym()) {
+            T rsc = st(cumes::SpectralComponent::Rsc, m, j);
+            T zcc = (mm > 0 || nn > 0) ? st(cumes::SpectralComponent::Zcc, m, j)
+                                       : T(0);
+            T rcs = st(cumes::SpectralComponent::Rcs, m, j);
+            T zss = st(cumes::SpectralComponent::Zss, m, j);
+            sum +=
+                A((mm == 1 ? T(0.5) : T(1)) * (rsc * rsc + zcc * zcc) * inv2);
+            sum += A((rcs * rcs + zss * zss) * inv2);
+        }
         if (mm == 1) {
             // decomposed pair is mixed: (rss_d^2 + zcs_d^2) = (rss_p^2 +
             // zcs_p^2) / (2 * (ms*ns)^2)
@@ -374,6 +398,13 @@ __global__ void compute_residuals_kernel(
         T a = f_spec(static_cast<cumes::SpectralComponent>(comp), mode, j);
         T b = f_spec(static_cast<cumes::SpectralComponent>(comp + 3), mode, j);
         sum += A(a * a + b * b);
+        if (f_spec.lasym()) {
+            T c = f_spec(static_cast<cumes::SpectralComponent>(comp + 6), mode,
+                         j);
+            T d = f_spec(static_cast<cumes::SpectralComponent>(comp + 9), mode,
+                         j);
+            sum += A(c * c + d * d);
+        }
     }
     __shared__ A s_sum[256];
     int tid = threadIdx.x;
@@ -449,6 +480,23 @@ __global__ void descent_step_kernel(
         } else {
             x(SpectralComponent::Rss, m, j) += delt * vs * f;
             x(SpectralComponent::Zcs, m, j) += delt * vzc * f;
+        }
+    }
+    if (x.lasym()) {
+        for (int c = 6; c < x.components(); ++c) {
+            if (c % 3 != 2 && j >= j_max) continue;
+            const auto component = static_cast<SpectralComponent>(c);
+            v(component, m, j) = fac * (b1 * v(component, m, j) +
+                                        delt * f_spec(component, m, j));
+        }
+        for (int c = 6; c < x.components(); ++c) {
+            if (c % 3 != 2 && j >= j_max) continue;
+            const auto component = static_cast<SpectralComponent>(c);
+            T value = v(component, m, j);
+            if (mm == 1 && c == 6) value += v(SpectralComponent::Zcc, m, j);
+            if (mm == 1 && c == 7)
+                value = v(SpectralComponent::Rsc, m, j) - value;
+            x(component, m, j) += delt * value * f;
         }
     }
     T vl = v(SpectralComponent::Lsc, m, j);
@@ -559,9 +607,10 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       base_views_(geometry.base_geometry_views(p)),
       field_views_(geometry.magnetic_field_views(p)),
       rpv_(profiles.profile_views()),
-      d_f_spec_(solver_arena_buffer<T>(arena,
-                                       "solver/f_spec",
-                                       6 * (size_t)p.ns * p.mnmax)),
+      d_f_spec_(
+          solver_arena_buffer<T>(arena,
+                                 "solver/f_spec",
+                                 (p.lasym ? 12 : 6) * (size_t)p.ns * p.mnmax)),
       d_control_(
           solver_arena_buffer<cumes::DeviceControlRecord<T>>(arena,
                                                              "solver/control",
@@ -571,19 +620,24 @@ cumes::EquilibriumOperator<T>::EquilibriumOperator(
       state_view_(storage.physical()),
       state_view_const_(storage.physical_const()),
       velocity_view_(storage.velocity()),
-      residual_view_(d_f_spec_.data(), p.ns, p.mnmax),
-      residual_view_const_(d_f_spec_.data(), p.ns, p.mnmax),
+      residual_view_(d_f_spec_.data(), p.ns, p.mnmax, nullptr, 0, p.lasym),
+      residual_view_const_(d_f_spec_.data(),
+                           p.ns,
+                           p.mnmax,
+                           nullptr,
+                           0,
+                           p.lasym),
       transform_op_(op ? &op->get() : &transform),
       vacuum_(vacuum ? &vacuum->get() : nullptr),
       d_buco_bvco_(
           solver_arena_buffer<T>(arena,
                                  "solver/buco_bvco",
                                  2 * static_cast<std::size_t>(p.ns - 1))),
-      d_repack_(
-          solver_arena_buffer<T>(arena,
-                                 "solver/lcfs_repack",
-                                 4 * static_cast<std::size_t>(p.mpol) *
-                                     static_cast<std::size_t>(p.ntor + 1))),
+      d_repack_(solver_arena_buffer<T>(
+          arena,
+          "solver/lcfs_repack",
+          (p.lasym ? 8 : 4) * static_cast<std::size_t>(p.mpol) *
+              static_cast<std::size_t>(p.ntor + 1))),
       d_axis_(solver_arena_buffer<T>(arena,
                                      "solver/axis",
                                      2 * static_cast<std::size_t>(p.nzeta))),
@@ -791,7 +845,15 @@ void cumes::EquilibriumOperator<T>::enqueue_prefix(
             storage.family_ptr(cumes::SpectralComponent::Rss),
             storage.family_ptr(cumes::SpectralComponent::Zsc),
             storage.family_ptr(cumes::SpectralComponent::Zcs), d_repack_.data(),
-            p.ns, p.mnmax, p.mpol, p.ntor, stream);
+            p.ns, p.mnmax, p.mpol, p.ntor, stream,
+            p.lasym ? storage.family_ptr(cumes::SpectralComponent::Rsc)
+                    : nullptr,
+            p.lasym ? storage.family_ptr(cumes::SpectralComponent::Zcc)
+                    : nullptr,
+            p.lasym ? storage.family_ptr(cumes::SpectralComponent::Rcs)
+                    : nullptr,
+            p.lasym ? storage.family_ptr(cumes::SpectralComponent::Zss)
+                    : nullptr);
         vacuum_->enqueue_axis_extract(geom_views.r_e.data(),
                                       geom_views.z_e.data(), d_axis_.data(),
                                       p.ntheta, p.nzeta, stream);
@@ -1027,7 +1089,7 @@ SolverResult<T> solver_run(
     bool use_process_environment,
     bool enable_newton) {
     if (enable_newton && (sizeof(T) != sizeof(double) || p.ntor != 0 ||
-                          p.nzeta != 1 || vacuum)) {
+                          p.nzeta != 1 || p.lasym || vacuum)) {
         throw cumes::CumesError(
             "Newton corrections require fixed-boundary axisymmetric double "
             "stages (ntor=0, nzeta=1)");
@@ -1107,10 +1169,12 @@ SolverResult<T> solver_run(
     double previous_fsqr = 1.0;
     double previous_fsqz = 1.0;
 
-    // State rollback: contiguous state-only slabs (6*mnmax*ns), rotated when
-    // refreshing a checkpoint. Backup/restore still enqueue one copy; the
-    // previous slab protects against a checkpoint whose descent is rejected.
-    cumes::DeviceBuffer<T> checkpoint(6 * (size_t)p.ns * p.mnmax);
+    // State rollback: contiguous state-only slabs covering every active family,
+    // rotated when refreshing a checkpoint. Backup/restore enqueue one copy;
+    // the previous slab protects against a checkpoint whose descent is
+    // rejected.
+    cumes::DeviceBuffer<T> checkpoint(storage.components() * (size_t)p.ns *
+                                      p.mnmax);
     cumes::DeviceBuffer<T> previous_checkpoint(checkpoint.size());
     bool checkpoint_pending = false;
 
@@ -1518,6 +1582,13 @@ SolverResult<T> solver_run(
             rec.status.jacobian_valid != 0, host_jac_invalid,
             controller.effective_iteration());
         if (host_jac_invalid) {
+            // Before the first descent the backup is the same invalid state.
+            // Shrinking delt cannot repair it, including after prolongation.
+            if (controller.effective_iteration() == 1) {
+                throw cumes::CumesError(
+                    "Invalid initial geometry on this grid: check the boundary "
+                    "orientation and magnetic axis, or the restart state");
+            }
             recorder.record(1, 0, 0, 0, 0, 0, 0, delt_before, 0, 0, 0, 0,
                             it2_before, it1_before);
             reject_pending_checkpoint();

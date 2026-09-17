@@ -413,7 +413,8 @@ __global__ void ncurr1_finalize_kernel(
     T* __restrict__ bsubv,
     T* __restrict__ totalPressure,
     T* __restrict__ chipH_out,
-    T* __restrict__ iotaH_out) {
+    T* __restrict__ iotaH_out,
+    bool lasym = false) {
     int jH = blockIdx.x;
     if (jH >= ns - 1) return;
     // Status guard (completion plan step 1.4): the evolved iotaH/chipH cache
@@ -426,8 +427,8 @@ __global__ void ncurr1_finalize_kernel(
 
     // vmecpp's wInt surface averages: trapezoid over the reduced [0,pi]
     // poloidal grid with dnorm3 = 1/(nZeta*(nThetaReduced-1)) (sizes.cc).
-    const int nThetaRed = ntheta / 2 + 1;
-    const T dnorm3 = T(1.0) / T(nzeta * (nThetaRed - 1));
+    const int nThetaRed = lasym ? ntheta : ntheta / 2 + 1;
+    const T dnorm3 = T(1.0) / T(nzeta * (lasym ? nThetaRed : nThetaRed - 1));
 
     T jv = T(0), avg = T(0);
     int base = jH * nZnT;
@@ -438,7 +439,7 @@ __global__ void ncurr1_finalize_kernel(
     for (int k = tid; k < nRed; k += blockDim.x) {
         int iz = k / nThetaRed, it = k - iz * nThetaRed;
         T w = dnorm3;
-        if (it == 0 || it == nThetaRed - 1) w *= T(0.5);
+        if (!lasym && (it == 0 || it == nThetaRed - 1)) w *= T(0.5);
         int idx = base + iz * ntheta + it;
         T guu_v = guu[idx], gsqrt_v = gsqrt[idx];
         jv += (guu_v * bsupu[idx] + guv[idx] * bsupv[idx]) * w;
@@ -512,13 +513,14 @@ __global__ void compute_norm_partials_kernel(
     int nzeta,
     int ns,
     T* __restrict__ dVdsH,  // (ns-1): signJ * sum(gsqrt * wInt)
-    T* __restrict__ psum)   // 4*(ns-1): sRZ sL sMag sG per surface
+    T* __restrict__ psum,
+    bool lasym = false)  // 4*(ns-1): sRZ sL sMag sG per surface
 {
     int jH = blockIdx.x;
     if (jH >= ns - 1) return;
     int tid = threadIdx.x;
-    const int nThetaRed = ntheta / 2 + 1;
-    const T dnorm3 = T(1.0) / T(nzeta * (nThetaRed - 1));
+    const int nThetaRed = lasym ? ntheta : ntheta / 2 + 1;
+    const T dnorm3 = T(1.0) / T(nzeta * (lasym ? nThetaRed : nThetaRed - 1));
 
     extern __shared__ T s_buf[];  // [4][blockDim.x]
     T* s_RZ = s_buf;
@@ -532,7 +534,7 @@ __global__ void compute_norm_partials_kernel(
         int it = k % ntheta;
         if (it >= nThetaRed) continue;
         T w = dnorm3;
-        if (it == 0 || it == nThetaRed - 1) w *= T(0.5);
+        if (!lasym && (it == 0 || it == nThetaRed - 1)) w *= T(0.5);
         int idx = base + k;
         T g = gsqrt[idx];
         T bsubu_v = bsubu[idx], bsubv_v = bsubv[idx];
@@ -790,7 +792,7 @@ void cumes::GeometryOperator<T>::force_norm_partials(
     size_t shmem = 4 * block.x * sizeof(T);
     compute_norm_partials_kernel<T><<<grid, block, shmem, stream>>>(
         d_gsqrt_, d_guu_, d_r12_, d_bsupu_, d_bsupv_, d_bsubu_, d_bsubv_,
-        p.ntheta, p.nzeta, p.ns, dVdsH, psum);
+        p.ntheta, p.nzeta, p.ns, dVdsH, psum, p.lasym);
     cumes::check_cuda(cudaGetLastError(), "norm partials");
 }
 
@@ -858,7 +860,7 @@ void cumes::MagneticFieldOperator<T>::enqueue(
             base.gvv.data(), field.bsupu.data(), field.bsupv.data(), rpv.curr_H,
             rpv.phip_H, rpv.pres_H, rpv.sqrtS_H, status, p.ns, p.nZnT, p.ntheta,
             p.nzeta, p.lamscale, field.bsubu.data(), field.bsubv.data(),
-            field.total_pressure.data(), rpv.chip_H, rpv.iota_H);
+            field.total_pressure.data(), rpv.chip_H, rpv.iota_H, p.lasym);
         cumes::check_cuda(cudaGetLastError(), "ncurr1 kernel");
     }
 

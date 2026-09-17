@@ -47,17 +47,19 @@ int main(int argc, char** argv) {
     try {
         const auto a = cumes::compare::read_state(command.state_a, false);
         const auto b = cumes::compare::read_state(command.state_b, false);
-        if (a.ns != b.ns || a.mnmax != b.mnmax) {
-            std::cerr << "error: size mismatch: (" << a.ns << ", " << a.mnmax
-                      << ") vs (" << b.ns << ", " << b.mnmax << ")\n";
+        if (a.ns != b.ns || a.mnmax != b.mnmax ||
+            a.families.size() != b.families.size()) {
+            std::cerr << "error: size mismatch (ns, mnmax, families): (" << a.ns
+                      << ", " << a.mnmax << ", " << a.families.size()
+                      << ") vs (" << b.ns << ", " << b.mnmax << ", "
+                      << b.families.size() << ")\n";
             return 2;
         }
 
         std::cout << "ns=" << a.ns << " mnmax=" << a.mnmax
                   << " (comparing interior j=1.." << a.ns - 1 << ")\n";
         double worst = 0.0;
-        for (std::size_t family = 0;
-             family < cumes::compare::FAMILY_NAMES.size(); ++family) {
+        for (std::size_t family = 0; family < a.families.size(); ++family) {
             double family_worst = 0.0;
             for (std::int32_t mode = 0; mode < a.mnmax; ++mode) {
                 for (std::int32_t surface = 1; surface < a.ns; ++surface) {

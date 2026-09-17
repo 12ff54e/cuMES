@@ -7,6 +7,7 @@ struct Params {
     n_z_n_t: u32,
     band_modes: u32,
     points: u32,
+    lasym: u32,
 };
 
 struct Values { data: array<f32>, };
@@ -105,6 +106,8 @@ fn poloidal_analyze(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var sum_cs = 0.0;
     var correction_sc = 0.0;
     var correction_cs = 0.0;
+    var sum_cc = 0.0; var sum_ss = 0.0;
+    var correction_cc = 0.0; var correction_ss = 0.0;
     if (surface != 0u) {
         for (var theta = 0u; theta < params.ntheta; theta++) {
             compensated_add(
@@ -115,6 +118,12 @@ fn poloidal_analyze(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 &sum_cs, &correction_cs,
                 scratch.data[analysis_index(1u, surface, theta, n)] *
                     theta_basis(false, m, theta));
+            if (params.lasym != 0u) {
+                compensated_add(&sum_cc, &correction_cc,
+                    scratch.data[analysis_index(0u, surface, theta, n)] * theta_basis(false, m, theta));
+                compensated_add(&sum_ss, &correction_ss,
+                    scratch.data[analysis_index(1u, surface, theta, n)] * theta_basis(true, m, theta));
+            }
         }
     }
     let norm = select(4.0 / f32(params.n_z_n_t),
@@ -122,6 +131,10 @@ fn poloidal_analyze(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let scale = norm * profiles.data[surface] * profiles.data[params.ns + m];
     coefficients.data[coefficient_index(0u, surface, m1, n)] = scale * sum_sc;
     coefficients.data[coefficient_index(1u, surface, m1, n)] = scale * sum_cs;
+    if (params.lasym != 0u) {
+        coefficients.data[coefficient_index(2u, surface, m1, n)] = scale * sum_cc;
+        coefficients.data[coefficient_index(3u, surface, m1, n)] = scale * sum_ss;
+    }
 }
 
 @compute @workgroup_size(128)
@@ -147,6 +160,12 @@ fn toroidal_synthesize(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 &cs_sum, &cs_correction,
                 coefficients.data[coefficient_index(1u, surface, m1, n)] *
                     zeta_basis(true, n, zeta));
+            if (params.lasym != 0u) {
+                compensated_add(&sc_sum, &sc_correction,
+                    coefficients.data[coefficient_index(3u, surface, m1, n)] * zeta_basis(true, n, zeta));
+                compensated_add(&cs_sum, &cs_correction,
+                    coefficients.data[coefficient_index(2u, surface, m1, n)] * zeta_basis(false, n, zeta));
+            }
         }
     }
     scratch.data[synthesis_index(0u, surface, m1, zeta)] = sc_sum;

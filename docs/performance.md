@@ -574,8 +574,7 @@ With identical manufactured toroidal inputs, `ns=7`, `ntheta=nzeta=18`, and
 differences `1.78e-15`, `3.55e-15`, and `8.88e-16`. Rebuilding both kernels with
 `--fmad=false` eliminates all differences across the probe's 84 field
 comparisons (`mpol=2,3,6,10`). This flag is a diagnostic experiment, not a
-qualified solver fix. Raw sources, PTX, and logs are retained in the meow
-benchmark root's `revision-bisect/` directory.
+qualified solver fix.
 
 These percentages qualify steady-iteration latency. Full-process Ada timings
 were too noisy for a separate end-to-end speedup claim: Nsight located a
@@ -705,17 +704,11 @@ tangent test is included in the double-build sanitizer registrations.
 An independent full-QH qualification also exposed incorrect iteration and
 time-step telemetry when the last nonlinear pass exits through a Jacobian
 rejection. Finalizing those controller fields after the loop fixes the report;
-a collapsed-restart regression fails before the fix and passes afterward.
+the API regression checks recovery after a valid initial pass. Invalid
+initial geometry is rejected immediately because no valid checkpoint exists.
 This leaves numerical iteration and convergence policy unchanged. The newer
 dependency initially failed meow's QH construction; the recovery fix in §3.11
-resolves that failure. See
-[meow's qualification record](../../meow/docs/performance.md#dependency-qualification).
-
-Raw benchmark drivers, exact build configurations, per-column binary arrays,
-logs, and `analysis.json` are under
-`../tmp/meow-performance-20260912/`; Ada captures are copied to its
-`rtx4090-tangent-pairs/` directory. The original remote run directory is
-`gervais:/tmp/meow-performance-20260912/`.
+resolves that failure.
 
 ### 3.11 Reject invalid pending checkpoints (2026-09-13)
 

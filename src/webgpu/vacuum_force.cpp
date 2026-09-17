@@ -42,7 +42,9 @@ void enqueue_vacuum_force(
     const auto angular = std::size_t(input.ntheta) * input.nzeta;
     const auto full = std::size_t(input.ns) * angular;
     const auto half = std::size_t(input.ns - 1) * angular;
-    const auto vacuum_count = std::size_t(input.ntheta / 2 + 1) * input.nzeta;
+    const auto vacuum_count =
+        std::size_t(input.lasym ? input.ntheta : input.ntheta / 2 + 1) *
+        input.nzeta;
     const auto& vacuum = input.vacuum_pressure;
     const auto vacuum_size = vacuum.buffer ? vacuum.buffer.GetSize() : 0;
     if (angular > 65535U * WORKGROUP_SIZE ||
@@ -81,8 +83,9 @@ void enqueue_vacuum_force(
         std::uint32_t geometry_high, geometry_low, magnetic_high, magnetic_low;
         std::uint32_t force_high, force_low, vacuum_offset, paired;
         FloatFloat delta_s, edge_pressure;
+        std::uint32_t lasym, padding[3] = {};
     };
-    static_assert(sizeof(Params) == 64);
+    static_assert(sizeof(Params) == 80);
     const Params params{
         static_cast<std::uint32_t>(input.ns),
         static_cast<std::uint32_t>(input.ntheta),
@@ -99,7 +102,8 @@ void enqueue_vacuum_force(
         static_cast<std::uint32_t>(vacuum.byte_offset / sizeof(float)),
         input.paired ? 1U : 0U,
         delta_s,
-        edge_pressure};
+        edge_pressure,
+        input.lasym ? 1U : 0U};
     const auto bytes = 3 * angular * sizeof(float);
     const auto diagnostic = detail::cached_buffer(
         device, bytes, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,

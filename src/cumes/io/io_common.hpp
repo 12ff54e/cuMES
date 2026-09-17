@@ -42,7 +42,12 @@ inline bool check_state_dimensions(FILE* fp,
                                    std::int32_t ns,
                                    std::int32_t mnmax,
                                    std::size_t& n_out,
-                                   std::string& reason) {
+                                   std::string& reason,
+                                   int components = 6) {
+    if (components != 6 && components != 12) {
+        reason = "spectral component count must be 6 or 12";
+        return false;
+    }
     if (ns < 1 || mnmax < 1) {
         reason = "bad dimensions (ns=" + std::to_string(ns) +
                  ", mnmax=" + std::to_string(mnmax) + ")";
@@ -54,7 +59,7 @@ inline bool check_state_dimensions(FILE* fp,
         reason = "dimension product overflows size_t";
         return false;
     }
-    auto needed = checked_mul(*n, 6 * sizeof(double));
+    auto needed = checked_mul(*n, std::size_t(components) * sizeof(double));
     auto sz = file_size(fp);
     // Compare in size_t: the old `(long long)*needed > *sz` cast wrapped
     // negative for byte counts in [2^63, 2^64), silently passing the
@@ -124,6 +129,7 @@ inline bool read_f64_array(FILE* fp, std::span<double> p) {
 // read from a short host vector.
 inline bool write_state_families(FILE* fp,
                                  const EquilibriumSnapshot& snapshot) {
+    if (snapshot.components() != 6 && snapshot.components() != 12) return false;
     const std::size_t n = snapshot.family_size();
     for (const auto& fam : snapshot.families) {
         if (fam.size() != n) return false;
@@ -240,6 +246,9 @@ inline bool read_derived_fields(FILE* fp,
 // NetCDF/HDF5 writers map the same fields to native variables/datasets/
 // attributes instead. A corrupt count must fail before the host allocates:
 // every count is bounded by MAX_INPUT_PARAMS_VECTOR.
+// Binary v10 / checkpoint v8 append lasym(i32), raxis_s/zaxis_c(f64 vectors),
+// rbs_m/rbs_n(i32 vectors), rbs_value(f64 vector), zbc_m/zbc_n(i32 vectors),
+// zbc_value(f64 vector), then rbsc/rbcs/zbcc/zbss(f64 vectors).
 constexpr std::int32_t MAX_INPUT_PARAMS_VECTOR = 1
                                                  << 20;  // elements per vector
 
@@ -317,7 +326,26 @@ inline bool read_makegrid_parameters(FILE* fp, MakegridParametersSpec& p) {
     return true;
 }
 
-inline bool write_input_params(FILE* fp, const InputParams& p) {
+inline bool check_asymmetric_input_params(const InputParams& p) {
+    if (!p.lasym || p.mpol < 1 || p.ntor < 0) return false;
+    const auto axis = static_cast<std::size_t>(p.ntor) + 1;
+    const auto modes = checked_mul(static_cast<std::size_t>(p.mpol), axis);
+    return modes && *modes <= MAX_INPUT_PARAMS_VECTOR &&
+           axis <= MAX_INPUT_PARAMS_VECTOR &&
+           p.rbs_m.size() <= MAX_INPUT_PARAMS_VECTOR &&
+           p.zbc_m.size() <= MAX_INPUT_PARAMS_VECTOR &&
+           p.raxis_s.size() == axis && p.zaxis_c.size() == axis &&
+           p.rbs_m.size() == p.rbs_n.size() &&
+           p.rbs_m.size() == p.rbs_value.size() &&
+           p.zbc_m.size() == p.zbc_n.size() &&
+           p.zbc_m.size() == p.zbc_value.size() && p.rbsc.size() == *modes &&
+           p.rbcs.size() == *modes && p.zbcc.size() == *modes &&
+           p.zbss.size() == *modes;
+}
+
+inline bool write_input_params(FILE* fp,
+                               const InputParams& p,
+                               bool asymmetric_extension = false) {
     bool ok = write_i32(fp, p.mpol) && write_i32(fp, p.ntor) &&
               write_i32(fp, p.nfp) && write_i32(fp, p.ntheta) &&
               write_i32(fp, p.nzeta) && write_i32(fp, p.ncurr) &&
@@ -349,6 +377,15 @@ inline bool write_input_params(FILE* fp, const InputParams& p) {
     if (ok && p.embedded_makegrid_parameters.has_value()) {
         ok = write_makegrid_parameters(fp, *p.embedded_makegrid_parameters);
     }
+    if (asymmetric_extension)
+        ok = ok && check_asymmetric_input_params(p) &&
+             write_i32(fp, p.lasym ? 1 : 0) && write_f64_vec(fp, p.raxis_s) &&
+             write_f64_vec(fp, p.zaxis_c) && write_i32_vec(fp, p.rbs_m) &&
+             write_i32_vec(fp, p.rbs_n) && write_f64_vec(fp, p.rbs_value) &&
+             write_i32_vec(fp, p.zbc_m) && write_i32_vec(fp, p.zbc_n) &&
+             write_f64_vec(fp, p.zbc_value) && write_f64_vec(fp, p.rbsc) &&
+             write_f64_vec(fp, p.rbcs) && write_f64_vec(fp, p.zbcc) &&
+             write_f64_vec(fp, p.zbss);
     return ok;
 }
 
@@ -359,7 +396,9 @@ inline bool read_input_params(FILE* fp,
                               InputParams& p,
                               std::string& reason,
                               bool with_profile_types,
-                              int free_boundary_extension = 0) {
+                              int free_boundary_extension = 0,
+                              bool asymmetric_extension = false) {
+    p = InputParams{};
     std::int32_t nstages = 0;
     if (!read_i32(fp, p.mpol) || !read_i32(fp, p.ntor) ||
         !read_i32(fp, p.nfp) || !read_i32(fp, p.ntheta) ||
@@ -450,6 +489,30 @@ inline bool read_input_params(FILE* fp,
                 return false;
             }
             p.embedded_makegrid_parameters = parameters;
+        }
+    }
+    if (asymmetric_extension) {
+        std::int32_t lasym = 0;
+        if (!read_i32(fp, lasym) || (lasym != 0 && lasym != 1)) {
+            reason = "malformed asymmetric input record";
+            return false;
+        }
+        p.lasym = lasym != 0;
+        if (!read_f64_vec(fp, p.raxis_s, reason) ||
+            !read_f64_vec(fp, p.zaxis_c, reason) ||
+            !read_i32_vec(fp, p.rbs_m, reason) ||
+            !read_i32_vec(fp, p.rbs_n, reason) ||
+            !read_f64_vec(fp, p.rbs_value, reason) ||
+            !read_i32_vec(fp, p.zbc_m, reason) ||
+            !read_i32_vec(fp, p.zbc_n, reason) ||
+            !read_f64_vec(fp, p.zbc_value, reason) ||
+            !read_f64_vec(fp, p.rbsc, reason) ||
+            !read_f64_vec(fp, p.rbcs, reason) ||
+            !read_f64_vec(fp, p.zbcc, reason) ||
+            !read_f64_vec(fp, p.zbss, reason) ||
+            !check_asymmetric_input_params(p)) {
+            if (reason.empty()) reason = "malformed asymmetric input record";
+            return false;
         }
     }
     return true;

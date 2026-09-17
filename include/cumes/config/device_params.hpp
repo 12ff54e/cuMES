@@ -39,6 +39,7 @@ struct DeviceParams {
     int nZnT;
     int mpol;
     int ntor;
+    bool lasym = false;
     // Runtime input knobs (host-side; the validated problem fills them).
     int ncurr;          // 0: prescribed iota, 1: prescribed current
     T delt = T(0.9);    // initial time step

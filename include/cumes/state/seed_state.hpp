@@ -46,6 +46,7 @@ DeviceParams<T> init_params(const ValidatedProblem& vp,
     p.ntheta = s.angular.ntheta;
     p.nzeta = s.angular.nzeta;
     p.nfp = s.nfp;
+    p.lasym = s.lasym;
     p.nZnT = p.ntheta * p.nzeta;
     p.mnmax = p.mpol * (p.ntor + 1);  // folded basis: mode = m*(ntor+1)+n
     p.ncurr = (s.current_model == CurrentModel::PRESCRIBED_CURRENT) ? 1 : 0;
@@ -83,7 +84,8 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
         p.ns, p.mnmax,
         p.radius_reference != 0.0
             ? std::span<const double>(b.rbcc).first(ntorp1)
-            : std::span<const double>{});
+            : std::span<const double>{},
+        p.lasym);
     T envelope_correction =
         T(default_seed_envelope(p.ntor, sp.free_boundary.lfreeb, p.ns,
                                 static_cast<int>(sp.stages.size())));
@@ -97,7 +99,7 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
     // H2D copies become a single upload. The host staging exists only for the
     // double->T conversion; the layout and values are unchanged
     // (bit-identical).
-    std::vector<T> h_state(6 * one);
+    std::vector<T> h_state(storage.components() * one);
     std::span<T> h_c(h_state.data() + 0 * one, one);    // rmncc
     std::span<T> h_zsc(h_state.data() + 1 * one, one);  // zmnsc
     std::span<T> h_lsc(h_state.data() + 2 * one, one);  // lmnsc
@@ -143,6 +145,28 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
             }
         }
     }
+    if (p.lasym) {
+        for (int m = 0; m < p.mpol; ++m) {
+            for (int n = 0; n < ntorp1; ++n) {
+                const int mn = m * ntorp1 + n;
+                for (int j = 0; j < p.ns; ++j) {
+                    const T s = T(j) / T(p.ns - 1);
+                    const T w =
+                        m == 0 ? s
+                               : seed_radial_weight(m, s, envelope_correction);
+                    const std::size_t i = mn * p.ns + j;
+                    h_state[6 * one + i] = w * T(b.rbsc[mn]);
+                    h_state[7 * one + i] = w * T(b.zbcc[mn]);
+                    h_state[9 * one + i] = w * T(b.rbcs[mn]);
+                    h_state[10 * one + i] = w * T(b.zbss[mn]);
+                    if (m == 0) {
+                        h_state[7 * one + i] += (T(1) - s) * T(sp.zaxis_c[n]);
+                        h_state[9 * one + i] -= (T(1) - s) * T(sp.raxis_s[n]);
+                    }
+                }
+            }
+        }
+    }
     if (p.radius_reference != 0.0) {
         // Subtract before conversion to float, including the cold seed.
         for (int n = 0; n < ntorp1; ++n) {
@@ -152,14 +176,15 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
                     T((1.0 - double(j) / (p.ns - 1)) * axis_delta);
         }
     }
-    double lambda_seed_scale =
-        default_axisymmetric_lambda_seed(p.ntor, sp.free_boundary.lfreeb);
+    double lambda_seed_scale = p.lasym ? 0.0
+                                       : default_axisymmetric_lambda_seed(
+                                             p.ntor, sp.free_boundary.lfreeb);
     if (use_process_environment) {
         if (const char* e = std::getenv("CUMES_AXISYM_LAMBDA_SEED")) {
             lambda_seed_scale = std::atof(e);
         }
     }
-    if (lambda_seed_scale != 0.0 &&
+    if (!p.lasym && lambda_seed_scale != 0.0 &&
         !seed_axisymmetric_lambda<T>(p.ns, p.mpol, h_c, h_zsc, h_lsc, b.rbcc,
                                      b.zbsc, sp.raxis_c[0], envelope_correction,
                                      T(lambda_seed_scale))) {
@@ -177,8 +202,8 @@ SpectralStorage<T> init_state(const DeviceParams<T>& p,
             static_cast<double>(envelope_correction), lambda_seed_scale);
     }
 
-    check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(), 6 * nb,
-                          cudaMemcpyHostToDevice),
+    check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(),
+                          storage.components() * nb, cudaMemcpyHostToDevice),
                "init state slab");
     return storage;
 }
@@ -207,14 +232,15 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
         p.ns, p.mnmax,
         p.radius_reference != 0.0
             ? std::span<const double>(b.rbcc).first(ntorp1)
-            : std::span<const double>{});
+            : std::span<const double>{},
+        p.lasym);
 
     // One staging buffer in the exact state_slab() order
     // (Rcc Zsc Lsc Rss Zcs Lcs — spectral_storage.hpp), so the six per-family
     // H2D copies become a single upload. The host staging exists only for the
     // double->T conversion; the layout and values are unchanged
     // (bit-identical).
-    std::vector<T> h_state(6 * one);
+    std::vector<T> h_state(storage.components() * one);
     std::span<T> h_c(h_state.data() + 0 * one, one);    // rmncc
     std::span<T> h_zsc(h_state.data() + 1 * one, one);  // zmnsc
     std::span<T> h_lsc(h_state.data() + 2 * one, one);  // lmnsc
@@ -230,6 +256,29 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
         h_lcs[i] = T(snap.families[EquilibriumSnapshot::LMNCS][i]);
     }
 
+    if (snap.lasym() != p.lasym)
+        throw CumesError("checkpoint symmetry does not match the problem");
+    if (p.lasym) {
+        for (int c = 6; c < storage.components(); ++c) {
+            const std::span<const double> boundary =
+                c == 6    ? b.rbsc
+                : c == 7  ? b.zbcc
+                : c == 9  ? b.rbcs
+                : c == 10 ? std::span<const double>(b.zbss)
+                          : std::span<const double>{};
+            for (int mn = 0; mn < p.mnmax; ++mn) {
+                for (int j = 0; j < p.ns; ++j) {
+                    const std::size_t i = mn * p.ns + j;
+                    T value = T(snap.families[c][i]);
+                    if (j == 0 && mn >= ntorp1) value = T(0);
+                    if (j == p.ns - 1 && !boundary.empty() &&
+                        !vp.spec().free_boundary.lfreeb)
+                        value = T(boundary[mn]);
+                    h_state[c * one + i] = value;
+                }
+            }
+        }
+    }
     if (p.radius_reference != 0.0) {
         for (int n = 0; n < ntorp1; ++n)
             for (int j = 0; j < p.ns; ++j) {
@@ -272,8 +321,8 @@ SpectralStorage<T> restart_state(const DeviceParams<T>& p,
         }
     }
 
-    check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(), 6 * nb,
-                          cudaMemcpyHostToDevice),
+    check_cuda(cudaMemcpy(storage.state_slab(), h_state.data(),
+                          storage.components() * nb, cudaMemcpyHostToDevice),
                "restart state slab");
     if (verbose) {
         printf("  restart_state: uploaded checkpoint + LCFS/axis patch\n");

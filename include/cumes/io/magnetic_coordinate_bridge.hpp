@@ -16,6 +16,10 @@ namespace cumes {
 inline magnetic_coordinate::CumesEquilibriumView make_magnetic_coordinate_view(
     const EquilibriumSnapshot& snapshot,
     const InputParams& input) {
+    if (snapshot.lasym())
+        throw std::invalid_argument(
+            "magnetic-coordinate export currently requires stellarator "
+            "symmetry");
     const long long expected_mnmax =
         static_cast<long long>(input.mpol) * (input.ntor + 1LL);
     if (snapshot.mnmax != expected_mnmax || snapshot.ntheta != input.ntheta ||

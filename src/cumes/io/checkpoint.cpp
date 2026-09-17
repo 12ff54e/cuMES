@@ -15,6 +15,8 @@
 // "power_series"). Free-boundary versions 4/5 add inline-Makegrid provenance;
 // version 6 combines both extensions. The restart path reads the state only and
 // ignores the record; version-1 checkpoints (no record) remain readable.
+// Version 7 adds the family count; version 8 stores complementary input as
+// typed vectors. The version-7 JSON input record is no longer supported.
 #include "cumes/io/checkpoint.hpp"
 
 #include "io_common.hpp"
@@ -27,7 +29,7 @@ namespace cumes {
 namespace {
 
 constexpr char CHECKPOINT_MAGIC[9] = "CUMECKP1";
-constexpr std::int32_t CHECKPOINT_VERSION = 6;
+constexpr std::int32_t CHECKPOINT_VERSION = 8;
 constexpr std::int32_t MIN_CHECKPOINT_VERSION = 1;
 
 }  // namespace
@@ -35,6 +37,9 @@ constexpr std::int32_t MIN_CHECKPOINT_VERSION = 1;
 Status write_checkpoint(const EquilibriumSnapshot& snapshot,
                         const InputParams& input_params,
                         const std::string& path) {
+    if (snapshot.lasym() != input_params.lasym) {
+        return Status("checkpoint: state/input symmetry mismatch");
+    }
     const std::string tmp = io_detail::temp_path_for(path);
     FILE* fp = fopen(tmp.c_str(), "wb");
     if (!fp) return Status("cannot open " + tmp + " for writing");
@@ -45,18 +50,20 @@ Status write_checkpoint(const EquilibriumSnapshot& snapshot,
         return Status(reason);
     };
 
-    bool ok = io_detail::write_bytes(fp, CHECKPOINT_MAGIC, 8) &&
-              io_detail::write_i32(fp, CHECKPOINT_VERSION) &&
-              io_detail::write_i32(fp, 0 /* precision = double */) &&
-              io_detail::write_i32(fp, snapshot.ns) &&
-              io_detail::write_i32(fp, snapshot.mnmax);
+    bool ok =
+        io_detail::write_bytes(fp, CHECKPOINT_MAGIC, 8) &&
+        io_detail::write_i32(fp, snapshot.lasym() ? CHECKPOINT_VERSION : 6) &&
+        io_detail::write_i32(fp, 0 /* precision = double */) &&
+        io_detail::write_i32(fp, snapshot.ns) &&
+        io_detail::write_i32(fp, snapshot.mnmax) &&
+        (!snapshot.lasym() || io_detail::write_i32(fp, snapshot.components()));
     if (!ok) return fail("failed to write checkpoint payload");
     // write_state_families aborts on a family-size mismatch before writing (an
     // undersized family must not fall through into an OOB read).
     if (!io_detail::write_state_families(fp, snapshot)) {
         return fail("failed to write checkpoint payload");
     }
-    if (!io_detail::write_input_params(fp, input_params)) {
+    if (!io_detail::write_input_params(fp, input_params, snapshot.lasym())) {
         return fail("failed to write checkpoint input record");
     }
 
@@ -95,14 +102,19 @@ Result<EquilibriumSnapshot> read_checkpoint(
         return fail("checkpoint: unsupported precision tag " +
                     std::to_string(precision));
     }
+    std::int32_t components = 6;
+    if (version >= 7 && !io_detail::read_i32(fp, components))
+        return fail("truncated spectral component count");
     std::size_t n = 0;
     std::string reason;
-    if (!io_detail::check_state_dimensions(fp, ns, mnmax, n, reason)) {
+    if (!io_detail::check_state_dimensions(fp, ns, mnmax, n, reason,
+                                           components)) {
         return fail("checkpoint: " + reason);
     }
     EquilibriumSnapshot snapshot;
     snapshot.ns = ns;
     snapshot.mnmax = mnmax;
+    snapshot.families.resize(components);
     if (!io_detail::read_state_families(fp, n, snapshot)) {
         return fail("checkpoint: truncated state data");
     }
@@ -111,14 +123,22 @@ Result<EquilibriumSnapshot> read_checkpoint(
     // for the record never touches it. The three profile-type strings exist
     // in version-3 checkpoints only.
     if (input_params && version >= 2) {
+        if (version == 7) {
+            return fail(
+                "checkpoint: JSON-based asymmetric input record is "
+                "no longer supported");
+        }
         const bool has_profile_types = version == 3 || version >= 6;
         const int free_boundary_extension = version >= 6   ? 3
                                             : version >= 4 ? version - 2
                                                            : 0;
-        if (!io_detail::read_input_params(fp, input_params->get(), reason,
-                                          has_profile_types,
-                                          free_boundary_extension)) {
+        if (!io_detail::read_input_params(
+                fp, input_params->get(), reason, has_profile_types,
+                free_boundary_extension, version >= 8)) {
             return fail("checkpoint: " + reason);
+        }
+        if (input_params->get().lasym != snapshot.lasym()) {
+            return fail("checkpoint: state/input symmetry mismatch");
         }
     }
     fclose(fp);

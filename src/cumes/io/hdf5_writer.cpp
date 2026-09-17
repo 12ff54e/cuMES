@@ -140,6 +140,12 @@ class Hdf5V1Writer final : public Writer {
         size_t nrestarts = 0;
         for (const auto& st : report.stages) nrestarts += st.restarts.size();
         const InputParams& ip = report.input_params;
+        if (snapshot.lasym() != ip.lasym ||
+            (snapshot.lasym() &&
+             (ip.mpol != mpol || ip.ntor != ntorp1 - 1 ||
+              !io_detail::check_asymmetric_input_params(ip)))) {
+            return Status("HDF5: malformed asymmetric input record");
+        }
 
         const std::string tmp = io_detail::temp_path_for(spec.path);
         hid_t fid =
@@ -169,12 +175,52 @@ class Hdf5V1Writer final : public Writer {
             return r;
         };
 
+        if (snapshot.lasym()) {
+            const int lasym = 1;
+            H5_CHECK(put_attr(fid, "lasym", H5T_NATIVE_INT, &lasym),
+                     "attr lasym");
+            auto write_vec = [&](const char* name, hid_t dtype,
+                                 const auto& values) -> herr_t {
+                const hsize_t dims[1] = {values.size()};
+                return write_array(name, dtype, 1, dims, values.data());
+            };
+            H5_CHECK(write_vec("raxis_s", H5T_NATIVE_DOUBLE, ip.raxis_s),
+                     "write raxis_s");
+            H5_CHECK(write_vec("zaxis_c", H5T_NATIVE_DOUBLE, ip.zaxis_c),
+                     "write zaxis_c");
+            H5_CHECK(write_vec("rbs_m", H5T_NATIVE_INT, ip.rbs_m),
+                     "write rbs_m");
+            H5_CHECK(write_vec("rbs_n", H5T_NATIVE_INT, ip.rbs_n),
+                     "write rbs_n");
+            H5_CHECK(write_vec("rbs_value", H5T_NATIVE_DOUBLE, ip.rbs_value),
+                     "write rbs_value");
+            H5_CHECK(write_vec("zbc_m", H5T_NATIVE_INT, ip.zbc_m),
+                     "write zbc_m");
+            H5_CHECK(write_vec("zbc_n", H5T_NATIVE_INT, ip.zbc_n),
+                     "write zbc_n");
+            H5_CHECK(write_vec("zbc_value", H5T_NATIVE_DOUBLE, ip.zbc_value),
+                     "write zbc_value");
+            const hsize_t dims[2] = {(hsize_t)mpol, (hsize_t)ntorp1};
+            H5_CHECK(
+                write_array("rbsc", H5T_NATIVE_DOUBLE, 2, dims, ip.rbsc.data()),
+                "write rbsc");
+            H5_CHECK(
+                write_array("rbcs", H5T_NATIVE_DOUBLE, 2, dims, ip.rbcs.data()),
+                "write rbcs");
+            H5_CHECK(
+                write_array("zbcc", H5T_NATIVE_DOUBLE, 2, dims, ip.zbcc.data()),
+                "write zbcc");
+            H5_CHECK(
+                write_array("zbss", H5T_NATIVE_DOUBLE, 2, dims, ip.zbss.data()),
+                "write zbss");
+        }
         // ---- state datasets ----
         const hsize_t state_dims[2] = {(hsize_t)snapshot.ns,
                                        (hsize_t)snapshot.mnmax};
-        const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
-                                    "rmnss", "zmncs", "lmncs"};
-        for (int c = 0; c < 6; ++c) {
+        const char* fam_names[12] = {"rmncc", "zmnsc", "lmnsc", "rmnss",
+                                     "zmncs", "lmncs", "rmnsc", "zmncc",
+                                     "lmncc", "rmncs", "zmnss", "lmnss"};
+        for (int c = 0; c < snapshot.components(); ++c) {
             const std::vector<double>& dbuf = snapshot.component(
                 static_cast<EquilibriumSnapshot::Component>(c));
             if (dbuf.size() != snapshot.family_size()) {
@@ -701,8 +747,18 @@ class Hdf5V1Reader final : public Reader {
             EquilibriumSnapshot snapshot;
             snapshot.ns = ns;
             snapshot.mnmax = mnmax;
-            const char* fam_names[6] = {"rmncc", "zmnsc", "lmnsc",
-                                        "rmnss", "zmncs", "lmncs"};
+            const char* fam_names[12] = {"rmncc", "zmnsc", "lmnsc", "rmnss",
+                                         "zmncs", "lmncs", "rmnsc", "zmncc",
+                                         "lmncc", "rmncs", "zmnss", "lmnss"};
+            int asymmetric_families = 0;
+            for (int c = 6; c < 12; ++c)
+                if (H5Lexists(fid, fam_names[c], H5P_DEFAULT) > 0)
+                    ++asymmetric_families;
+            if (asymmetric_families != 0 && asymmetric_families != 6)
+                return fail("incomplete asymmetric spectral families");
+            if (asymmetric_families)
+                snapshot.families.resize(EquilibriumSnapshot::ASYMMETRIC_COUNT);
+
             // The file layout is [surface, mode] (C order over the (ns, mnmax)
             // dataspace) while the snapshot is mode-major (index = m*ns + j). A
             // whole-slab read must therefore TRANSPOSE — the exact
@@ -710,7 +766,7 @@ class Hdf5V1Reader final : public Reader {
             // step 2.3). The writers use per-mode hyperslabs, which is the
             // transpose-aware mirror image.
             std::vector<double> tmp(*n_opt);
-            for (int c = 0; c < 6; ++c) {
+            for (int c = 0; c < snapshot.components(); ++c) {
                 // EVERY family must independently satisfy rank 2 + the exact
                 // [ns, mnmax] extents + a double-compatible type before the
                 // read (reader-rank-hardening §3): rmncc alone no longer
@@ -1133,6 +1189,37 @@ class Hdf5V1Reader final : public Reader {
                             ip.pcurr_type = pcurr_tag;
                         }
                         parsed_report.input_params = std::move(ip);
+                    }
+                }
+                if (snapshot.lasym()) {
+                    auto& ip = parsed_report.input_params;
+                    int lasym = 0;
+                    if (!get_int_attr("lasym", lasym) || lasym != 1 ||
+                        ip.mpol < 1 || ip.ntor < 0) {
+                        return fail("missing typed asymmetric input record");
+                    }
+                    ip.lasym = true;
+                    const size_t axis = static_cast<size_t>(ip.ntor) + 1;
+                    const auto modes = checked_mul((size_t)ip.mpol, axis);
+                    hsize_t d_r[1] = {0}, d_z[1] = {0};
+                    if (!modes || *modes > io_detail::MAX_INPUT_PARAMS_VECTOR ||
+                        !get_dim_exact("rbs_m", 1, d_r) ||
+                        !get_dim_exact("zbc_m", 1, d_z) ||
+                        d_r[0] > io_detail::MAX_INPUT_PARAMS_VECTOR ||
+                        d_z[0] > io_detail::MAX_INPUT_PARAMS_VECTOR ||
+                        !get_dbl_arr("raxis_s", ip.raxis_s, axis) ||
+                        !get_dbl_arr("zaxis_c", ip.zaxis_c, axis) ||
+                        !get_int_arr("rbs_m", ip.rbs_m, d_r[0]) ||
+                        !get_int_arr("rbs_n", ip.rbs_n, d_r[0]) ||
+                        !get_dbl_arr("rbs_value", ip.rbs_value, d_r[0]) ||
+                        !get_int_arr("zbc_m", ip.zbc_m, d_z[0]) ||
+                        !get_int_arr("zbc_n", ip.zbc_n, d_z[0]) ||
+                        !get_dbl_arr("zbc_value", ip.zbc_value, d_z[0]) ||
+                        !get_dbl_mat("rbsc", ip.rbsc, ip.mpol, axis) ||
+                        !get_dbl_mat("rbcs", ip.rbcs, ip.mpol, axis) ||
+                        !get_dbl_mat("zbcc", ip.zbcc, ip.mpol, axis) ||
+                        !get_dbl_mat("zbss", ip.zbss, ip.mpol, axis)) {
+                        return fail("malformed asymmetric input record");
                     }
                 }
                 report->get() = std::move(parsed_report);

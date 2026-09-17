@@ -618,6 +618,10 @@ class cumes::EquilibriumLinearization::Impl {
          const EquilibriumSnapshot& equilibrium)
         : boundary_size_(problem.boundary().size()),
           p_(init_params<double>(problem)) {
+        if (problem.spec().lasym)
+            throw CumesError(
+                "equilibrium linearization currently requires stellarator "
+                "symmetry");
         if (problem.spec().free_boundary.lfreeb) {
             throw CumesError(
                 "equilibrium forward tangents currently support fixed "

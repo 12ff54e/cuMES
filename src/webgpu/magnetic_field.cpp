@@ -28,7 +28,7 @@ struct ShaderParams {
     std::uint32_t full_points;
     std::uint32_t half_points;
     std::uint32_t prescribed_current;
-    std::uint32_t padding0;
+    std::uint32_t lasym;
     float lamscale;
     float lamscale_lo;
     std::uint32_t padding[2];
@@ -167,9 +167,12 @@ MagneticFieldResult magnetic_field_double_single_reference(
         }
     }
     if (input.prescribed_current) {
-        const int reduced_ntheta = input.ntheta / 2 + 1;
+        const int reduced_ntheta =
+            input.lasym ? input.ntheta : input.ntheta / 2 + 1;
         const double normalization =
-            1.0 / static_cast<double>(input.nzeta * (reduced_ntheta - 1));
+            1.0 / static_cast<double>(input.nzeta * (input.lasym
+                                                         ? reduced_ntheta
+                                                         : reduced_ntheta - 1));
         for (int surface = 0; surface < input.ns - 1; ++surface) {
             double jv = 0.0;
             double average = 0.0;
@@ -181,7 +184,8 @@ MagneticFieldResult magnetic_field_double_single_reference(
                         base_point +
                         static_cast<std::size_t>(izeta) * input.ntheta + itheta;
                     double weight = normalization;
-                    if (itheta == 0 || itheta == reduced_ntheta - 1) {
+                    if (!input.lasym &&
+                        (itheta == 0 || itheta == reduced_ntheta - 1)) {
                         weight *= 0.5;
                     }
                     const double gsqrt = half(6, point);
@@ -320,9 +324,12 @@ MagneticFieldResult magnetic_field_reference(const MagneticFieldCase& input) {
         }
     }
     if (input.prescribed_current) {
-        const int reduced_ntheta = input.ntheta / 2 + 1;
+        const int reduced_ntheta =
+            input.lasym ? input.ntheta : input.ntheta / 2 + 1;
         const float normalization =
-            1.0F / static_cast<float>(input.nzeta * (reduced_ntheta - 1));
+            1.0F / static_cast<float>(input.nzeta * (input.lasym
+                                                         ? reduced_ntheta
+                                                         : reduced_ntheta - 1));
         for (int surface = 0; surface < input.ns - 1; ++surface) {
             float jv = 0.0F;
             float average = 0.0F;
@@ -335,8 +342,10 @@ MagneticFieldResult magnetic_field_reference(const MagneticFieldCase& input) {
                         static_cast<std::size_t>(izeta) * input.ntheta + itheta;
                     const float weight =
                         normalization *
-                        ((itheta == 0 || itheta == reduced_ntheta - 1) ? 0.5F
-                                                                       : 1.0F);
+                        ((!input.lasym &&
+                          (itheta == 0 || itheta == reduced_ntheta - 1))
+                             ? 0.5F
+                             : 1.0F);
                     const float gsqrt = half(6, point);
                     jv +=
                         (half(7, point) * result.fields[point] +
@@ -525,7 +534,7 @@ void enqueue_magnetic_field(const wgpu::Device& device,
                               static_cast<std::uint32_t>(full_points),
                               static_cast<std::uint32_t>(half_points),
                               input.prescribed_current ? 1U : 0U,
-                              0U,
+                              input.lasym ? 1U : 0U,
                               input.lamscale,
                               input.double_single ? input.lamscale_lo : 0.0F,
                               {0, 0}};

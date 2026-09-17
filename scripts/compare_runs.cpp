@@ -322,17 +322,19 @@ void print_restart_sequence(const std::vector<Restart>& events) {
 struct StateComparison {
     bool pass = false;
     std::string dimensions;
-    std::array<double, cumes::compare::FAMILY_NAMES.size()> worst{};
+    std::vector<double> worst;
 };
 
 StateComparison compare_states(const cumes::compare::State& a,
                                const cumes::compare::State& b,
                                double tolerance) {
     StateComparison result;
-    if (a.ns != b.ns || a.mnmax != b.mnmax) {
+    if (a.ns != b.ns || a.mnmax != b.mnmax ||
+        a.families.size() != b.families.size()) {
         std::ostringstream message;
-        message << "size mismatch: (" << a.ns << ", " << a.mnmax << ") vs ("
-                << b.ns << ", " << b.mnmax << ')';
+        message << "size mismatch (ns, mnmax, families): (" << a.ns << ", "
+                << a.mnmax << ", " << a.families.size() << ") vs (" << b.ns
+                << ", " << b.mnmax << ", " << b.families.size() << ')';
         result.dimensions = message.str();
         return result;
     }
@@ -341,6 +343,7 @@ StateComparison compare_states(const cumes::compare::State& a,
             << a.ns - 1 << ')';
     result.dimensions = message.str();
     result.pass = true;
+    result.worst.resize(a.families.size());
     for (std::size_t family = 0; family < result.worst.size(); ++family) {
         for (std::int32_t mode = 0; mode < a.mnmax; ++mode) {
             for (std::int32_t surface = 1; surface < a.ns; ++surface) {

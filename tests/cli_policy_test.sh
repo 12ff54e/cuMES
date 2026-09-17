@@ -26,22 +26,26 @@ cd "$tmp" || exit 2
 # the behavior under test in EVERY precision (completion-plan follow-up §3.2).
 cat > in_unknown.json <<'EOF'
 {"mpol": 2, "ntor": 0, "nfp": 1, "am": [1.0], "aphi": [1.0], "ai": [0.5],
- "n_theta": 6,
- "rbc": [{"n": 0, "m": 1, "value": 1.0}],
+ "n_theta": 6, "raxis_c": [3.0],
+ "rbc": [{"n": 0, "m": 0, "value": 3.0}, {"n": 0, "m": 1, "value": 1.0}],
  "zbs": [{"n": 0, "m": 1, "value": 0.5}],
  "ns_array": [5], "niter_array": [1], "ftol_array": [1e-6]}
 EOF
 
 # Clean input: one 5-surface stage, one iteration (never converges; the run
 # exits 1 with the stage-cap message — enough to prove it got past validation).
+# The positive major radius keeps the initial torus geometrically valid.
 cat > in_clean.json <<'EOF'
 {"mpol": 2, "ntor": 0, "nfp": 1, "am": [1.0], "aphi": [1.0], "ai": [0.5],
- "rbc": [{"n": 0, "m": 1, "value": 1.0}],
+ "raxis_c": [3.0],
+ "rbc": [{"n": 0, "m": 0, "value": 3.0}, {"n": 0, "m": 1, "value": 1.0}],
  "zbs": [{"n": 0, "m": 1, "value": 0.5}],
  "ns_array": [5], "niter_array": [1], "ftol_array": [1e-6]}
 EOF
 
-sed 's/"ntor": 0/"ntor": 1/' in_clean.json > in_3d.json
+sed -e 's/"ntor": 0/"ntor": 1/' \
+    -e 's/"raxis_c": \[3\.0\]/"raxis_c": [3.0, 0.0]/' \
+    in_clean.json > in_3d.json
 sed 's/"ntor": 0/"ntor": 0, "nzeta": 2/' in_clean.json > in_nzeta2.json
 
 check() { # name want_exit want_grep want_absent -- cmd...

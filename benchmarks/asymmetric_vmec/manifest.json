@@ -1,0 +1,43 @@
+{
+  "vmec": {
+    "repository": "https://github.com/hiddenSymmetries/VMEC2000",
+    "revision": "c965d31faf732ca77d280ef509a7bdefe7797292",
+    "implementation": "Original Fortran VMEC2000, serial MPICH build, version 9.0"
+  },
+  "cases": [
+    {
+      "id": "qa",
+      "input": "inputs/qa.json",
+      "input_sha256": "9606d44a68d6021485823a08daac2628d95cccc9f12b005e6137cef9837837d3",
+      "namelist": "sources/input.qa",
+      "namelist_sha256": "4867affcbfb748cecaf514c1046fc38ad3dda191cc43414828d2c3a853cc0a9b",
+      "reference_sha256": "9e71bea07ee2834969543b46f0f6cc93fbd74c8770140e6a0f457f01eeff02db",
+      "description": "Landreman-Sengupta-Plunk 2019 section 5.3, SIMSOPT resolution variant",
+      "source": "https://github.com/hiddenSymmetries/simsopt/blob/c648630cfc5625863b291709c17015bcdcba13af/tests/test_files/input.LandremanSenguptaPlunk_section5p3",
+      "input_preparation": "VMEC INDATA converted to JSON; canonical boundary already agrees with wout"
+    },
+    {
+      "id": "heliotron",
+      "input": "inputs/heliotron.json",
+      "input_sha256": "cbd6740cfd9fa93d77f49045a40bd703b8116fb32e7543269674c6fcdb019058",
+      "namelist": "sources/input.heliotron",
+      "namelist_sha256": "5a0a848f2ace8440f60e672792c06f0f5aa882234c9a8b621ba5ae19fffee261",
+      "reference_sha256": "dbd983fcb31f7467c19bf96bbd58dd5cec53bf0de36e6086f899742b0f409f48",
+      "description": "Asymmetric heliotron external VMEC reference distributed by DESC",
+      "source": "https://github.com/PlasmaControl/DESC/blob/ad105c5e525fbf26824d6cf9dde48775db0f8a2c/tests/inputs/wout_HELIOTRON_asym_NTHETA50_NZETA100.nc",
+      "input_preparation": "Reconstructed boundary, flux and profiles; chosen multigrid schedule; original namelist unavailable"
+    },
+    {
+      "id": "qh",
+      "input": "inputs/qh.json",
+      "input_sha256": "8471916906e85dea137a5adca3cf3114177d40d4e1faf854a7b0d42d7947eaa5",
+      "namelist": "sources/input.qh",
+      "namelist_sha256": "2d1aa0dcc754e392031888d787681ef18b87a79d46f6bcb0491d331d5ad6e53d",
+      "reference_sha256": "55625c08e76aeb69a4220f056171483fca9ea81f06cc1cb6d2513e47eb3837d9",
+      "description": "Landreman-Sengupta 2019 section 5.5, regenerated finite-pressure QH",
+      "source": "https://doi.org/10.1017/S0022377819000783",
+      "input_preparation": "pyQSC 0.1.3 Qsc.from_paper(\"r2 section 5.5\", nphi=101), r=.025, construction ntheta=40, ntorMax=12, mpol=8; JSON LCFS and axis from reproduced Fortran wout",
+      "axis_source": "Converged Fortran axis used as an initial guess; automatic cuMES axis recovery is not qualified"
+    }
+  ]
+}

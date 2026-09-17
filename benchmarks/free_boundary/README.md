@@ -30,14 +30,13 @@ Solovev inputs come from cuMES commit
 supplement, only field paths and W7-X's ignored `free_boundary_method=only_coils`
 selector change. No convergence controls or other physical values change.
 
-Large mgrid tables remain outside Git. The original local experiment stores
-them in `../tmp/cumes-free-boundary-20260909/data/`. Solovev and CTH tables match
-their upstream v0.7.0 Git LFS object hashes; a 133-byte Git LFS pointer is not a
-field table. W7-X uses the existing 88,550,256-byte table from
-`../cuMES/figure_data/w7x_free_boundary/mgrid_w7x.nc`, pinned by content hash.
-Its exact generating binary revision is unavailable; the original generating
-parameter file and coil-file hash are retained for provenance. The compact
-Solovev coil file is tracked in `sources/` with its upstream license.
+Large mgrid tables remain outside Git. Solovev and CTH tables match their
+upstream v0.7.0 Git LFS object hashes; a 133-byte Git LFS pointer is not a
+field table. The manifest pins the 88,550,256-byte W7-X table by content hash.
+Its exact generating binary revision is unavailable; the
+[generation parameters](sources/makegrid_parameters_w7x.json) and the manifest's
+coil-file hash document its provenance. The compact Solovev coil file is
+tracked in `sources/` with its upstream license.
 
 Regenerate or check the portable fixtures without running a solver:
 
@@ -46,13 +45,14 @@ python3 benchmarks/free_boundary/generate.py
 python3 benchmarks/free_boundary/generate.py --check
 ```
 
-Template field paths are portable data filenames. Materialize a fresh directory
-before running, pointing `--data-root` to the three pinned mgrid tables:
+Template field paths are portable data filenames. Set `FIELD_DATA_DIR` to the
+directory containing the three pinned mgrid tables, then materialize a fresh
+input directory before running:
 
 ```bash
 python3 benchmarks/free_boundary/generate.py \
   --materialize /tmp/cumes-free-boundary-inputs \
-  --data-root ../tmp/cumes-free-boundary-20260909/data
+  --data-root "$FIELD_DATA_DIR"
 ```
 
 This checks every dependency's size/hash, resolves field paths absolutely and
@@ -61,11 +61,6 @@ reside in the data root or fall back to its tracked copy. The materializer
 refuses to overwrite a nonempty directory. Copy the fixture directory and
 pinned field data to another machine, then materialize there; no input physics
 depends on the machine's filesystem layout.
-
-The root study initially used the already materialized inputs under
-`../tmp/cumes-free-boundary-20260909/inputs/`; their path strings and hashes are
-preserved in the run protocols. Their values match these templates after
-resolving the declared dependency keys. Regeneration does not overwrite them.
 
 `run.py` accepts a materialized manifest or input directory and runs complete
 baseline/candidate pairs. `analyze.py` checks the native reports and numerical

@@ -29,7 +29,11 @@ from cumes_plot.coordinates import (
     make_boozer_grid,
     make_pest_grid,
 )
-from cumes_plot.equilibrium import field_lines
+from cumes_plot.equilibrium import (
+    boundary_from_params, eval_state, field_lines, half_grid, make_profiles,
+    solve_chip,
+)
+from cumes_plot.state_io import ASYM_FAM_NAMES, FAM_NAMES
 from cumes_plot.output_paths import figure_path, resolve_output_base
 from cumes_plot.render_3d import add_pyvista_field_lines
 from plot_equilibrium import FIGURE_PARAMETERS
@@ -90,6 +94,81 @@ def _manufactured_file(path):
 
 
 class PlotCoordinateTest(unittest.TestCase):
+    @staticmethod
+    def asymmetric_state():
+        ns, ntor = 5, 1
+        s = np.linspace(0.0, 1.0, ns)
+        families = {name: np.zeros(6 * ns)
+                    for name in FAM_NAMES + ASYM_FAM_NAMES}
+        families["rmncc"][:ns] = 4.0
+        families["rmncc"][2 * ns:3 * ns] = 0.8 * np.sqrt(s)
+        families["zmnsc"][2 * ns:3 * ns] = np.sqrt(s)
+        families["rmncc"][4 * ns:5 * ns] = 0.1 * s
+        families["rmnss"][3 * ns:4 * ns] = 0.2 * np.sqrt(s) * (1 + 0.3 * s)
+        return ns, ntor, families
+
+    def test_metric_contracts_derivatives_on_each_radial_face(self):
+        ns, ntor, families = self.asymmetric_state()
+        theta = PERIOD * np.arange(32) / 32
+        zeta = PERIOD * np.arange(12) / 12
+        arrays = [eval_state(families, ns, j, theta, zeta, ntor, 1)
+                  for j in (1, 2)]
+        metric = half_grid(arrays, ns, 1, 0.0, -1.0, 1.0)
+        # At phi=0, the manufactured R has R_even=.1*s*cos(2*theta)
+        # and R_odd=.8*cos(theta)+.2*(1+.3*s)*sin(theta)*sin(phi).
+        # Contract these analytic tangents with the staggered radial weights.
+        si, so, sh = 0.25, 0.5, np.sqrt(0.375)
+        bi, bo = 0.2 * (1 + 0.3 * si), 0.2 * (1 + 0.3 * so)
+        expected = (-0.4 * np.sin(theta)**2 * (si * bi + so * bo)
+                    - sh * np.sin(2 * theta) * np.sin(theta)
+                    * (0.1 * si * bi + 0.1 * so * bo))
+        np.testing.assert_allclose(metric["guv"][:, 0], expected,
+                                   atol=2e-15, rtol=0)
+
+    def test_asymmetric_plot_field_preserves_prescribed_current(self):
+        ns, ntor, families = self.asymmetric_state()
+        s = np.linspace(0.0, 1.0, ns)
+        families["rmnsc"][2 * ns:3 * ns] = 0.15 * np.sqrt(s)
+        families["zmncc"][ns:2 * ns] = 0.08
+        families["lmncc"][3 * ns:4 * ns] = 0.02 * np.sqrt(s)
+        config = dict(lasym=True, ntheta=32, nzeta=12, ntor=ntor, nfp=1,
+                      ncurr=1, ac=[1.0], ai=[], aphi=[1.0], bloat=1.0,
+                      phiedge=1.0, curtor=1000.0)
+        profiles = make_profiles(config, ns)
+        theta = PERIOD * np.arange(32) / 32
+        zeta = PERIOD * np.arange(12) / 12
+        for jh in (1, 3):
+            chip = solve_chip(families, ns, jh, config, profiles)
+            arrays = [eval_state(families, ns, j, theta, zeta, ntor, 1)
+                      for j in (jh, jh + 1)]
+            fields = half_grid(arrays, ns, jh, chip,
+                               profiles["phip_avg"](jh), profiles["lamscale"])
+            current = np.mean(fields["guu"] * fields["bsupu"]
+                              + fields["guv"] * fields["bsupv"])
+            self.assertAlmostEqual(current, profiles["curr_h"](jh), delta=2e-15)
+
+    def test_boundary_preserves_phase_and_vertical_displacement(self):
+        theta, zeta = np.meshgrid(
+            np.linspace(0.0, PERIOD, 32, endpoint=False),
+            np.linspace(0.0, PERIOD, 12, endpoint=False), indexing="ij")
+        for phase, offset in ((0.0, 0.0), (0.4, 0.1)):
+            with self.subTest(phase=phase):
+                params = {
+                    "rbc": [(0, 0, 3.0), (1, 1, 0.4 * np.cos(phase))],
+                    "zbs": [(1, -1, 0.6 * np.cos(phase))],
+                }
+                if phase:
+                    params["rbs"] = [(1, 1, -0.4 * np.sin(phase))]
+                    params["zbc"] = [(0, 0, offset),
+                                     (1, -1, 0.6 * np.sin(phase))]
+                r, z = boundary_from_params(params, theta, zeta)
+                np.testing.assert_allclose(
+                    r, 3.0 + 0.4 * np.cos(theta - zeta + phase),
+                    atol=2.0e-15, rtol=0.0)
+                np.testing.assert_allclose(
+                    z, offset + 0.6 * np.sin(theta + zeta + phase),
+                    atol=2.0e-15, rtol=0.0)
+
     def test_field_lines_lift_onto_independent_render_grid(self):
         theta = np.linspace(0.0, PERIOD, 8, endpoint=False)
         zeta = np.linspace(0.0, PERIOD, 4, endpoint=False)

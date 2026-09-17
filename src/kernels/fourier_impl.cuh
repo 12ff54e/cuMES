@@ -179,9 +179,9 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
     amt(d_sin_th_, "sinth", p.mpol * p.ntheta);
     amt(d_mcos_th_, "mcosth", p.mpol * p.ntheta);
     amt(d_msin_th_, "msinth", p.mpol * p.ntheta);
-    amt(d_fwd_w_, "fwdw", p.ntheta / 2 + 1);
+    amt(d_fwd_w_, "fwdw", p.lasym ? p.ntheta : p.ntheta / 2 + 1);
     const std::size_t forward_count =
-        4 * std::size_t(p.mpol) * (p.ntheta / 2 + 1);
+        4 * std::size_t(p.mpol) * (p.lasym ? p.ntheta : p.ntheta / 2 + 1);
     if (arena)
         d_forward_basis_ = DeviceBuffer<T>(
             arena->get().alloc_span<T>("fourier/forward_basis", forward_count),
@@ -204,12 +204,12 @@ cumes::ToroidalFftOperator<T>::ToroidalFftOperator(
         }
     // Reduced-grid trapezoid weights for the forward quadrature (vmecpp
     // intNorm = 1/(nZeta*(nThetaRed-1)), endpoint-halved).
-    int nThetaRed = p.ntheta / 2 + 1;
+    int nThetaRed = p.lasym ? p.ntheta : p.ntheta / 2 + 1;
     auto* h_fwd_w = new T[nThetaRed];
-    T intNorm = T(1.0) / T(p.nzeta * (nThetaRed - 1));
+    T intNorm = T(1.0) / T(p.nzeta * (p.lasym ? nThetaRed : nThetaRed - 1));
     for (int l = 0; l < nThetaRed; ++l) {
         h_fwd_w[l] = intNorm;
-        if (l == 0 || l == nThetaRed - 1) h_fwd_w[l] *= T(0.5);
+        if (!p.lasym && (l == 0 || l == nThetaRed - 1)) h_fwd_w[l] *= T(0.5);
     }
     cumes::check_cuda(
         cudaMemcpy(d_cos_th_, h_cos_th, (size_t)p.mpol * p.ntheta * sizeof(T),
@@ -602,6 +602,26 @@ __global__ void inverse_pack_kernel(
     slot[9 * step] = Complex{T(0.0), -lcs * shalf};
     slot[10 * step] = Complex{T(0.0), +lsc * dhalf};
     slot[11 * step] = Complex{+lcs * dhalf, T(0.0)};
+    if (coeff.lasym()) {
+        const T rsc = coeff(cumes::SpectralComponent::Rsc, mode, j);
+        const T rcs = coeff(cumes::SpectralComponent::Rcs, mode, j);
+        const T zcc = coeff(cumes::SpectralComponent::Zcc, mode, j);
+        const T zss = coeff(cumes::SpectralComponent::Zss, mode, j);
+        const T lcc = coeff(cumes::SpectralComponent::Lcc, mode, j);
+        const T lss = coeff(cumes::SpectralComponent::Lss, mode, j);
+        slot[0 * step].y = -rcs * shalf;
+        slot[1 * step].x = rsc * half;
+        slot[2 * step].x = rcs * dhalf;
+        slot[3 * step].y = rsc * dhalf;
+        slot[4 * step].y = -zss * shalf;
+        slot[5 * step].x = zcc * half;
+        slot[6 * step].x = zss * dhalf;
+        slot[7 * step].y = zcc * dhalf;
+        slot[8 * step].y = -lss * shalf;
+        slot[9 * step].x = lcc * half;
+        slot[10 * step].x = lss * dhalf;
+        slot[11 * step].y = lcc * dhalf;
+    }
     // Zero the unused tail bins (n > ntor) of this thread's 12 slots: cuFFT's
     // Z2D synthesizes every bin, so the tails must be zero. Every (m, j) slot
     // group has exactly one thread with n == ntor, so every tail is covered.
@@ -926,7 +946,8 @@ static void inverse_pipeline(
     // R slots 0-3 -> r/ru/rv (and fused rCon), Z slots 4-7 -> z/zu/zv (and
     // fused zCon), λ slots 8-11 -> l/lu/lv.
     if constexpr (std::is_same_v<T, float>) {
-        if (p.odd_geometry == cumes::OddGeometryPrecision::COMPENSATED)
+        if (!p.lasym &&
+            p.odd_geometry == cumes::OddGeometryPrecision::COMPENSATED)
             odd_float_float->enqueue_toroidal(coeff, stream);
     }
     auto positions = [&]<int OddPrecision>() {
@@ -962,7 +983,10 @@ static void inverse_pipeline(
                 positions.template operator()<3>();
                 break;
             case OddGeometryPrecision::COMPENSATED:
-                positions.template operator()<5>();
+                if (p.lasym)
+                    positions.template operator()<4>();
+                else
+                    positions.template operator()<5>();
                 break;
             case OddGeometryPrecision::POLOIDAL_SCALE:
                 positions.template operator()<4>();
@@ -983,7 +1007,7 @@ static void inverse_pipeline(
         geom.lv_e.data(), geom.l_o.data(), geom.lu_o.data(), geom.lv_o.data(),
         k_tile, nullptr, nullptr);
     if constexpr (std::is_same_v<T, float>) {
-        if (odd_float_float &&
+        if (!p.lasym && odd_float_float &&
             p.odd_geometry == cumes::OddGeometryPrecision::FLOAT_FLOAT)
             odd_float_float->enqueue(coeff, geom, stream);
     }
@@ -1152,6 +1176,7 @@ __global__ void de_alias_coeff_pack_kernel(
     int ntor,
     int nz2,
     int nZnT,
+    bool lasym,
     typename FftTraits<T>::Complex* out)  // compact slots 4,5 — intentionally
                                           // the SAME buffer as spectra
                                           // (in-place, see below)
@@ -1182,11 +1207,13 @@ __global__ void de_alias_coeff_pack_kernel(
         T coeff_cs = norm * scale * (-in[1 * step + n].y);  // -Im F_cs
         T half = (n == 0) ? T(1.0) : T(0.5);
         T shalf = (n == 0) ? T(0.0) : T(0.5);
+        const T coeff_ss = lasym ? norm * scale * in[0 * step + n].y : T(0);
+        const T coeff_cc = lasym ? norm * scale * in[1 * step + n].x : T(0);
         // In-place: compact slots 0,1 carry the analysis (sc/cs) and are
         // overwritten with the synthesis coefficients (the full-batch path
         // wrote slots 4,5, which were disjoint from 0,1 there).
-        slot[0 * step + n] = Complex{coeff_sc * half, T(0.0)};
-        slot[1 * step + n] = Complex{T(0.0), -coeff_cs * shalf};
+        slot[0 * step + n] = Complex{coeff_sc * half, coeff_ss * shalf};
+        slot[1 * step + n] = Complex{coeff_cc * half, -coeff_cs * shalf};
     }
     // Zero the unused tail bins: the compact Z2D synthesizes every bin, so
     // bins n > ntor must be zero (the full-batch path got this from the
@@ -1289,7 +1316,7 @@ void cumes::ToroidalFftOperator<T>::dealias_bandpass(const T* gConEff,
         int nBand = (p.mpol - 2) * (p.ns - 1);
         de_alias_coeff_pack_kernel<T><<<(nBand + 255) / 256, 256, 0, stream>>>(
             d_zeta_spectra_c_, tcon, faccon, p.ns, p.mpol, p.ntor,
-            p.nzeta / 2 + 1, p.nZnT, d_zeta_spectra_c_);
+            p.nzeta / 2 + 1, p.nZnT, p.lasym, d_zeta_spectra_c_);
         cumes::check_cuda(cudaGetLastError(), "deAlias coeff");
     }
     cumes::check_cufft(FftTraits<T>::exec_inverse(
@@ -1499,6 +1526,22 @@ __global__ void forward_recover_kernel(
             F7 = slot[7 * step];
     Complex F8 = slot[8 * step], F9 = slot[9 * step], F10 = slot[10 * step],
             F11 = slot[11 * step];
+    if (f_spec.lasym()) {
+        const bool rz = (j != ns - 1 || include_lcfs) && (j != 0 || m == 0);
+        const bool lambda = j != 0;
+        f_spec(cumes::SpectralComponent::Rsc, mode, j) =
+            rz ? mn * (F1.x + nf * F3.y) : T(0);
+        f_spec(cumes::SpectralComponent::Zcc, mode, j) =
+            rz ? mn * (F5.x + nf * F7.y) : T(0);
+        f_spec(cumes::SpectralComponent::Lcc, mode, j) =
+            lambda ? mn * (F9.x + nf * F11.y) : T(0);
+        f_spec(cumes::SpectralComponent::Rcs, mode, j) =
+            rz ? mn * (-F0.y + nf * F2.x) : T(0);
+        f_spec(cumes::SpectralComponent::Zss, mode, j) =
+            rz ? mn * (-F4.y + nf * F6.x) : T(0);
+        f_spec(cumes::SpectralComponent::Lss, mode, j) =
+            lambda ? mn * (-F8.y + nf * F10.x) : T(0);
+    }
     if (j == 0) {
         // axis: m=0 keeps frcc/fzcs; m>0 and the remaining families are zero
         // (decomposed forces vanish at the magnetic axis).
@@ -1593,7 +1636,8 @@ static void forward_pipeline(
     int n_k_tiles = (p.nzeta + k_tile - 1) / k_tile;
     dim3 blk(16, k_tile);  // x padded to 16 lanes (warp shuffle width)
     dim3 grd(p.mpol, p.ns, n_k_tiles);
-    const std::size_t basis_count = std::size_t(p.mpol) * (p.ntheta / 2 + 1);
+    const std::size_t basis_count =
+        std::size_t(p.mpol) * (p.lasym ? p.ntheta : p.ntheta / 2 + 1);
     forward_reduce_kernel<T><<<grd, blk, 0, stream>>>(
         forces.armn_e.data(), forces.armn_o.data(), forces.azmn_e.data(),
         forces.azmn_o.data(), forces.brmn_e.data(), forces.brmn_o.data(),
@@ -1603,8 +1647,8 @@ static void forward_pipeline(
         forces.clmn_o.data(), frcon_e, frcon_o, fzcon_e, fzcon_o,
         d_forward_basis, d_forward_basis + basis_count,
         d_forward_basis + 2 * basis_count, d_forward_basis + 3 * basis_count,
-        p.ns, p.mpol, p.ntheta, p.ntheta / 2 + 1, p.nzeta, p.nZnT, d_zeta_real,
-        k_tile);
+        p.ns, p.mpol, p.ntheta, p.lasym ? p.ntheta : p.ntheta / 2 + 1, p.nzeta,
+        p.nZnT, d_zeta_real, k_tile);
     cumes::check_cufft(
         FftTraits<T>::exec_forward(plan_d2z, d_zeta_real, d_zeta_spectra),
         "fwd d2z");

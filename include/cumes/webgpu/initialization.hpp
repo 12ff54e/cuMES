@@ -36,6 +36,7 @@ struct AxisymmetricStageData {
     int ns = 0;
     int mpol = 0;
     int ntor = 0;
+    bool lasym = false;
     int ntheta = 0;
     int nzeta = 1;
     int nfp = 1;

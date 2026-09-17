@@ -62,6 +62,11 @@ target_include_directories(test_solver_api PRIVATE
 target_link_libraries(test_solver_api PRIVATE cumes::solver)
 cumes_enable_warnings(test_solver_api)
 
+add_executable(test_asymmetric_solver test_asymmetric_solver.cpp)
+target_link_libraries(test_asymmetric_solver PRIVATE cumes::solver cumes_io)
+cumes_enable_warnings(test_asymmetric_solver)
+cumes_add_test(test_asymmetric_solver "solver;regression")
+
 if(NOT CUMES_USE_FLOAT)
   add_executable(test_checkpoint_recovery test_checkpoint_recovery.cpp)
   target_link_libraries(test_checkpoint_recovery PRIVATE cumes::solver)
@@ -73,6 +78,14 @@ if(NOT CUMES_USE_FLOAT)
   target_link_libraries(test_newton_solver PRIVATE cumes::solver)
   cumes_enable_warnings(test_newton_solver)
   cumes_add_precision_provenance(test_newton_solver)
+endif()
+
+if(CUMES_USE_VACUUM_FIELD)
+  add_executable(test_asymmetric_free_solver test_asymmetric_free_solver.cpp)
+  target_link_libraries(test_asymmetric_free_solver PRIVATE cumes::solver cumes_io)
+  cumes_enable_warnings(test_asymmetric_free_solver)
+  cumes_add_test(test_asymmetric_free_solver "integration;solver;free_boundary")
+  set_tests_properties(test_asymmetric_free_solver PROPERTIES TIMEOUT 180)
 endif()
 
 if(CUMES_USE_VACUUM_FIELD AND NOT CUMES_USE_FLOAT)
@@ -95,7 +108,7 @@ target_include_directories(test_equilibrium_tangent PRIVATE
 target_link_libraries(test_equilibrium_tangent PRIVATE cumes_config_json)
 cumes_enable_warnings(test_equilibrium_tangent)
 
-foreach(t IN ITEMS test_forces test_force_verify test_geometry_iso
+foreach(t IN ITEMS test_asymmetric test_forces test_force_verify test_geometry_iso
                    test_geometry_ncurr test_regression_kernels test_constraint_tcon
                    test_force_reference test_axisym_backend
                    test_tridiagonal test_cuda_graph test_safety_predicates
@@ -122,6 +135,12 @@ add_executable(test_host_io test_host_io.cpp)
 target_include_directories(test_host_io PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(test_host_io PRIVATE cumes_io_host cumes_config_json)
 cumes_enable_warnings(test_host_io)
+
+add_executable(test_asymmetric_io test_asymmetric_io.cpp)
+target_link_libraries(test_asymmetric_io PRIVATE cumes_io cumes_config_json)
+cumes_apply_backend_test_defines(test_asymmetric_io)
+cumes_enable_warnings(test_asymmetric_io)
+cumes_add_test(test_asymmetric_io "unit;io;cumes_host")
 
 add_executable(test_derived_fields test_derived_fields.cpp)
 target_include_directories(test_derived_fields PRIVATE ${PROJECT_SOURCE_DIR}/include)
@@ -234,6 +253,7 @@ cumes_enable_warnings(test_equilibrium_tangent_solve)
 # The `cumes_host` label selects CPU-only CI coverage. These tests never require
 # a CUDA device, regardless of their name or the configured output backends.
 cumes_add_test(test_fourier          unit;fourier)
+cumes_add_test(test_asymmetric       unit;fourier)
 cumes_add_test(test_input_json       unit;input;cumes_host)
 cumes_add_test(test_solver_api       unit;solver;api)
 if(NOT CUMES_USE_FLOAT)
@@ -300,6 +320,11 @@ if(CUMES_HOST_SANITIZERS)
                            test_io_malformed_shapes.cpp
                            cumes_io_readers_asan io)
   cumes_apply_backend_test_defines(asan_test_io_malformed_shapes)
+
+  cumes_add_host_asan_test(asan_test_asymmetric_io test_asymmetric_io.cpp
+                           cumes_io_readers_asan io)
+  target_link_libraries(asan_test_asymmetric_io PRIVATE cumes_config_json_asan)
+  cumes_apply_backend_test_defines(asan_test_asymmetric_io)
 
   cumes_add_host_asan_test(asan_test_host_config test_host_config.cpp
                            cumes_config_json_asan config)

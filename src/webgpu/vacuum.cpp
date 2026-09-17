@@ -57,6 +57,7 @@ std::unique_ptr<FreeBoundaryOperator<double>> create_vacuum(
     params.nzeta = stage.nzeta;
     params.nZnT = stage.ntheta * stage.nzeta;
     params.nfp = stage.nfp;
+    params.lasym = stage.lasym;
     auto vacuum = std::make_unique<FreeBoundaryOperator<double>>(host, params);
     if (use_webgpu) vacuum->enable_webgpu(device, device_lu);
     std::printf("  Vacuum backend: %s\n",
@@ -107,9 +108,10 @@ void update_vacuum(FreeBoundaryOperator<double>& vacuum,
     std::vector<double> averages(2 * (stage.ns - 1));
     std::copy_n(edge_averages.begin(), 2, averages.end() - stage.ns - 1);
     std::copy_n(edge_averages.begin() + 2, 2, averages.end() - 2);
-    std::vector<double> boundary(4 * modes), lcfs(4 * modes);
-    constexpr std::array<int, 4> FAMILIES{0, 3, 1, 4};
-    for (int field_index = 0; field_index < 4; ++field_index) {
+    const int families = stage.lasym ? 8 : 4;
+    std::vector<double> boundary(families * modes), lcfs(families * modes);
+    constexpr std::array<int, 8> FAMILIES{0, 3, 1, 4, 6, 7, 9, 10};
+    for (int field_index = 0; field_index < families; ++field_index) {
         for (int mode = 0; mode < modes; ++mode) {
             const auto index =
                 FAMILIES[field_index] * family + (mode + 1) * stage.ns - 1;
@@ -118,10 +120,14 @@ void update_vacuum(FreeBoundaryOperator<double>& vacuum,
             boundary[field_index * modes + mode] = value;
         }
     }
-    vacuum.enqueue_lcfs_repack(boundary.data(), boundary.data() + modes,
-                               boundary.data() + 2 * modes,
-                               boundary.data() + 3 * modes, lcfs.data(), 1,
-                               modes, stage.mpol, stage.ntor, nullptr);
+    vacuum.enqueue_lcfs_repack(
+        boundary.data(), boundary.data() + modes, boundary.data() + 2 * modes,
+        boundary.data() + 3 * modes, lcfs.data(), 1, modes, stage.mpol,
+        stage.ntor, nullptr,
+        stage.lasym ? boundary.data() + 4 * modes : nullptr,
+        stage.lasym ? boundary.data() + 5 * modes : nullptr,
+        stage.lasym ? boundary.data() + 6 * modes : nullptr,
+        stage.lasym ? boundary.data() + 7 * modes : nullptr);
     const auto geometry = [&](int component) {
         const int offset =
             component * (fields.geometry_is_vacuum ? angular : points);
@@ -255,6 +261,7 @@ std::function<void()> enqueue_resident_vacuum_force(
     const bool apply = vacuum.apply_edge_force();
     if (apply) {
         VacuumForceCase input;
+        input.lasym = stage.lasym;
         input.ns = stage.ns;
         input.ntheta = stage.ntheta;
         input.nzeta = stage.nzeta;

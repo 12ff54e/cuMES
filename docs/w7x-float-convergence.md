@@ -260,7 +260,7 @@ The rebuilt `test_fourier`, `test_geometry_ncurr`, `test_forces`,
 all pass on this GPU (6/6). Their operator-level checks do not establish
 end-to-end W7-X convergence at the requested tolerance.
 
-## Reproduction and artifacts
+## Reproduction
 
 Build with `cmake --preset verify` / `cmake --preset float`, then build the
 `cumes` target in each directory. Generate a temporary input by replacing
@@ -270,19 +270,6 @@ its own working directory with `CUMES_DUMP=1`, clearing other `CUMES_*`
 overrides. For checkpoint tests, set `ns_array` to the checkpoint grid size,
 use one corresponding tolerance/cap, and set `CUMES_MAX_ITER=1` with
 `--restart` pointing to the checkpoint.
-
-The complete local record is in `/tmp/cumes-w7x-float-investigation/`:
-
-- Each case directory contains `command.json`, `run.log`, `summary.json`,
-  and `dump/cuMES/` with binary telemetry and force-normalization factors.
-- `double-ns33/state.ckpt` and `double-qualified/state.ckpt` are the reference
-  checkpoints. `quantize99-*` contains the selective-quantization evaluations.
-- `reference-final-*` contains the retained implementation runs;
-  `m0-ref-compensated-mg`, `m0-reference-widegeom3-mg`, and
-  `m0-ref-fine-smallstep` contain the rejected additions.
-- `run_case.py` captures isolated runs; `roundoff_probe.py` and `roundoff.json`
-  are the earlier CPU sensitivity experiment, superseded by the GPU results
-  above for conclusions about solver residuals.
 
 The historical ADR-0001 float smoke was Solovev. Its observed residual scale
 does not establish a universal `~1e-7` float floor, and the input requirement

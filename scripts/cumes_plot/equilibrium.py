@@ -76,6 +76,14 @@ def eval_state(fams, ns, j, th, zt, ntor, nfp):
     C[3] = pack_series(zs[od], zc[od], "Z", m[od], n[od], nth, nzt)
     C[4] = pack_series(lsc[ev], lcs[ev], "Z", m[ev], n[ev], nth, nzt)
     C[5] = pack_series(lsc[od], lcs[od], "Z", m[od], n[od], nth, nzt)
+    if "rmnsc" in fams:
+        for field, first, second, series in (
+                (0, "rmnsc", "rmncs", "Z"),
+                (2, "zmncc", "zmnss", "R"),
+                (4, "lmncc", "lmnss", "R")):
+            a, b = fam(first) * fac, fam(second) * fac
+            C[field] += pack_series(a[ev], b[ev], series, m[ev], n[ev], nth, nzt)
+            C[field + 1] += pack_series(a[od], b[od], series, m[od], n[od], nth, nzt)
     # derivative spectra: ×i·m for ∂/∂θ, ×i·n·nfp for ∂/∂ζ; the λ
     # ζ-derivative slots (indices 16, 17) are negated (signV = -1).
     dth = 1j * (np.fft.fftfreq(nth) * nth)[:, None]
@@ -135,7 +143,7 @@ def half_grid(arrays, ns, jh, chip, phip_avg, lamscale):
                  + (rp["rue"] * rp["rve"] + rp["zue"] * rp["zve"])
                  + sfi2 * (r["ruo"] * r["rvo"] + r["zuo"] * r["zvo"])
                  + sfo2 * (rp["ruo"] * rp["rvo"] + rp["zuo"] * rp["zvo"])
-                 + s_h * ((r["rue"] * rp["rvo"] + r["zue"] * rp["zvo"])
+                 + s_h * ((r["rue"] * r["rvo"] + r["zue"] * r["zvo"])
                           + (rp["rue"] * rp["rvo"] + rp["zue"] * rp["zvo"])
                           + (r["rve"] * r["ruo"] + r["zve"] * r["zuo"])
                           + (rp["rve"] * rp["ruo"] + rp["zve"] * rp["zuo"])))
@@ -251,7 +259,8 @@ def make_profiles(cfg, ns):
 def solve_chip(fams, ns, jh, cfg, prof):
     """chi' for half-grid surface jh. ncurr=1: ncurr1FinalizeKernel —
     chi' = (currH − Σ(guu·B^θ_λ + guv·B^ζ)·w) / Σ(guu/√g·w), summed over the
-    reduced-theta trapezoid with dnorm3 = 1/(nzeta·(nThetaRed−1)), currH
+    full theta grid for lasym, otherwise the reduced-theta trapezoid with
+    dnorm3 = 1/(nzeta·(nThetaRed−1)), currH
     evaluated at the FLUX coordinate sh (the solver's convention). ncurr=0:
     the prescribed-iota profile χ' = maxTF·ι(tf)·torfluxDeriv(sh)
     (kernels/profiles_impl.cuh)."""
@@ -260,6 +269,7 @@ def solve_chip(fams, ns, jh, cfg, prof):
     ntheta = cfg["ntheta"]
     nz = cfg["nzeta"]
     ntheta_red = ntheta // 2 + 1
+    full_theta = cfg.get("lasym", False)
     # eval_state needs a uniform full-period grid; the reduced-theta grid is
     # the first nThetaRed rows of the solver's ntheta grid, so evaluate on
     # the full grid and slice.
@@ -267,12 +277,16 @@ def solve_chip(fams, ns, jh, cfg, prof):
     zt = 2.0 * np.pi * np.arange(nz) / nz
     a = [eval_state(fams, ns, j, th, zt, cfg["ntor"], cfg["nfp"])
          for j in (jh, jh + 1)]
-    a = [{k: v[:ntheta_red] for k, v in e.items() if k not in ("th", "zt")}
+    a = [{k: v if full_theta else v[:ntheta_red]
+          for k, v in e.items() if k not in ("th", "zt")}
          for e in a]
     h = half_grid(a, ns, jh, 0.0, prof["phip_avg"](jh), prof["lamscale"])
-    w = np.full(ntheta_red, 1.0 / (nz * (ntheta_red - 1)))
-    w[0] *= 0.5
-    w[-1] *= 0.5
+    if full_theta:
+        w = np.full(ntheta, 1.0 / (nz * ntheta))
+    else:
+        w = np.full(ntheta_red, 1.0 / (nz * (ntheta_red - 1)))
+        w[0] *= 0.5
+        w[-1] *= 0.5
     jv = np.sum(w[:, None] * (h["guu"] * h["bsupu"] + h["guv"] * h["bsupv"]))
     one_over = np.zeros_like(h["gsqrt"])
     np.divide(1.0, h["gsqrt"], out=one_over, where=np.abs(h["gsqrt"]) > 1e-30)
@@ -290,6 +304,10 @@ def boundary_from_params(params, th, zt):
         R += value * np.cos(m * th - n * zt)
     for m, n, value in params["zbs"]:
         Z += value * np.sin(m * th - n * zt)
+    for m, n, value in params.get("rbs", []):
+        R += value * np.sin(m * th - n * zt)
+    for m, n, value in params.get("zbc", []):
+        Z += value * np.cos(m * th - n * zt)
     return R, Z
 
 
@@ -353,6 +371,9 @@ def converged_axis(fams, ns, ntor, nfp, n=240):
     for nn in range(ntor + 1):
         R += fams["rmncc"][nn * ns + 1] * np.cos(nn * zt)
         Z += fams["zmncs"][nn * ns + 1] * np.sin(nn * zt)
+        if "rmncs" in fams:
+            R += fams["rmncs"][nn * ns + 1] * np.sin(nn * zt)
+            Z += fams["zmncc"][nn * ns + 1] * np.cos(nn * zt)
     Rfull = np.concatenate([R] * nfp)
     Zfull = np.concatenate([Z] * nfp)
     phi = np.concatenate([(zt + 2.0 * np.pi * k) / nfp for k in range(nfp)])

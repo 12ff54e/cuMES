@@ -1,0 +1,32 @@
+! Reconstructed from DESC's external VMEC wout, not the original namelist.
+! Original boundary, flux, pressure, final spectral/radial/angular resolution.
+! The multigrid schedule is chosen for this benchmark; NCURR=1, zero current.
+&INDATA
+ LASYM=T
+ LFREEB=F
+ NFP=4
+ MPOL=7
+ NTOR=3
+ NTHETA=50
+ NZETA=100
+ NS_ARRAY=25, 51, 128, 256
+ FTOL_ARRAY=1e-12, 1e-12, 1e-12, 1e-14
+ NITER_ARRAY=4000, 5000, 10000, 20000
+ DELT=0.9
+ TCON0=2
+ PHIEDGE=1.0000000000000042
+ NCURR=1
+ CURTOR=0
+ AC=1
+ AM=0
+ RAXIS_CC=10,0,0,0
+ RAXIS_CS=0,0,0,0
+ ZAXIS_CC=0,0.2,0,0
+ ZAXIS_CS=0,0,0,0
+ RBC(0,0)=10
+ RBC(0,1)=1
+ RBC(1,1)=0.3
+ ZBS(0,1)=1
+ ZBS(1,1)=-0.3
+ ZBC(1,0)=0.2
+/

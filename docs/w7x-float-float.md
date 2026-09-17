@@ -122,8 +122,8 @@ The retained fused implementation converges from a cold start:
 
 All four checkpoints converge on their first replay pass. Graph-enabled runs
 with dumps disabled reproduce these iteration counts. Earlier supplementary
-kernel versions had slightly different trajectories; their logs are preserved
-under `mg-*`, while the table reports the retained `fused-mg-*` implementation.
+kernel versions had slightly different trajectories; the table reports the
+fused implementation.
 
 An independent long-double host Fourier sum, using the exact imported float
 coefficients at ns=99, measures the following RMS errors. Radial error is the
@@ -186,7 +186,7 @@ Reproduce timing after a float build with benchmarks enabled:
 ./build-float/tests/test_odd_geometry --benchmark tight-w7x.ckpt
 ```
 
-## Verification and artifacts
+## Verification
 
 `test_odd_geometry` compares against independent host direct synthesis, checks
 that poloidal compensation reduces radial-difference error, and verifies
@@ -197,9 +197,3 @@ The float suite passes 64/64 tests. The verify suite passes 102/102, including
 retains 1315 → 1419 → 1372 iterations at 1e-12, with a byte-identical
 checkpoint and final-stage per-pass telemetry compared with the pre-change
 executable. `git diff --check` passes.
-
-Commands, checkpoints, per-pass telemetry, precision comparisons, timing JSON
-and logs are preserved under
-`/lustre/qzhong/cumes-diagnostics/w7x-float-investigation/float-float/`.
-`run_bench.py` reproduces the timing order. The parent directory contains the
-input variants, tight checkpoint and `run_case.py` convergence runner.

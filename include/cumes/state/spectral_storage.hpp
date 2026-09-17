@@ -33,10 +33,11 @@ class SpectralStorage {
 
     explicit SpectralStorage(int ns,
                              int mnmax,
-                             std::span<const double> radius_reference = {})
+                             std::span<const double> radius_reference = {},
+                             bool lasym = false)
         : radius_reference_(radius_reference.begin(), radius_reference.end()),
           d_radius_reference_(radius_reference.size()) {
-        allocate(ns, mnmax);
+        allocate(ns, mnmax, lasym);
         if (!radius_reference.empty()) {
             std::vector<T> native_reference;
             native_reference.reserve(radius_reference.size());
@@ -56,7 +57,8 @@ class SpectralStorage {
     SpectralStorage& operator=(const SpectralStorage&) = delete;
     ~SpectralStorage() = default;
 
-    void allocate(int ns, int mnmax) {
+    void allocate(int ns, int mnmax, bool lasym = false) {
+        lasym_ = lasym;
         if (!radius_reference_.empty() &&
             (!std::is_same_v<T, float> || radius_reference_.front() == 0.0 ||
              radius_reference_.size() > static_cast<std::size_t>(mnmax)))
@@ -65,7 +67,8 @@ class SpectralStorage {
                 "nonzero mean and at most mnmax coefficients");
         ns_ = ns;
         mnmax_ = mnmax;
-        const std::size_t count = static_cast<std::size_t>(6) * ns * mnmax;
+        const std::size_t count =
+            static_cast<std::size_t>(components()) * ns * mnmax;
         state_.allocate(count);
         velocity_.allocate(count);
         // Both slabs start zeroed: matches the legacy `new T[n]()` cold start
@@ -84,6 +87,10 @@ class SpectralStorage {
     }
     int ns() const { return ns_; }
     int mnmax() const { return mnmax_; }
+    bool lasym() const { return lasym_; }
+    int components() const {
+        return lasym_ ? ASYMMETRIC_COMPONENT_COUNT : SPECTRAL_COMPONENT_COUNT;
+    }
     bool empty() const { return state_.empty(); }
 
     T* state_slab() const { return state_.data(); }
@@ -113,12 +120,12 @@ class SpectralStorage {
     SpectralView<T, PhysicalStateDomain> physical() const {
         return SpectralView<T, PhysicalStateDomain>(
             state_.data(), ns_, mnmax_, d_radius_reference_.data(),
-            static_cast<int>(radius_reference_.size()));
+            static_cast<int>(radius_reference_.size()), lasym_);
     }
 
     SpectralView<T, DecomposedVelocityDomain> velocity() const {
-        return SpectralView<T, DecomposedVelocityDomain>(velocity_.data(), ns_,
-                                                         mnmax_);
+        return SpectralView<T, DecomposedVelocityDomain>(
+            velocity_.data(), ns_, mnmax_, nullptr, 0, lasym_);
     }
 
     // Read-only spectral views (the const-input side of the operator
@@ -127,12 +134,12 @@ class SpectralStorage {
     SpectralView<const T, PhysicalStateDomain> physical_const() const {
         return SpectralView<const T, PhysicalStateDomain>(
             state_.data(), ns_, mnmax_, d_radius_reference_.data(),
-            static_cast<int>(radius_reference_.size()));
+            static_cast<int>(radius_reference_.size()), lasym_);
     }
 
     SpectralView<const T, DecomposedVelocityDomain> velocity_const() const {
-        return SpectralView<const T, DecomposedVelocityDomain>(velocity_.data(),
-                                                               ns_, mnmax_);
+        return SpectralView<const T, DecomposedVelocityDomain>(
+            velocity_.data(), ns_, mnmax_, nullptr, 0, lasym_);
     }
 
    private:
@@ -142,6 +149,7 @@ class SpectralStorage {
     DeviceBuffer<T> d_radius_reference_;
     int ns_ = 0;
     int mnmax_ = 0;
+    bool lasym_ = false;
 };
 
 }  // namespace cumes

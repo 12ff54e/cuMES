@@ -11,8 +11,8 @@ fixed/free-boundary editor with axisymmetric and 3-D previews.
 
 ### Unified boundary editor
 
-The Boundary editor handles both fixed and free equilibria. Select Solovev or
-W7-X under **Fixed boundary**, or select the coil configuration under **Free
+The Boundary editor handles both fixed and free equilibria. Select Solovev,
+W7-X, or Asymmetric tokamak under **Fixed boundary**, or select the coil configuration under **Free
 boundary**. There is one Run/Stop workflow, precision control, residual plot,
 and result download. Historical `?solve=w7x` links open the fixed W7-X editor;
 `?preset=w7x` is the current link. Neither starts a solve until Run is clicked.
@@ -28,12 +28,27 @@ setup do not enter the estimate. It remains available with `timing=0` and adds
 no GPU readbacks. Completion, failure, and returning to setup clear the rate.
 
 For 3-D boundaries and free-boundary initial guesses, select a signed toroidal
-mode `n` and edit the RBC/ZBS coefficients by poloidal mode `m`. A toroidal-angle
+mode `n` and edit the RBC/ZBS coefficients by poloidal mode `m`. For asymmetric
+fixed or free boundaries, **Allow non-stellarator symmetry** adds RBS/ZBC and sets
+`lasym=true` in the input. `?preset=asymmetric` opens a tilted, vertically
+displaced tokamak with three grids and paired precision. A toroidal-angle
 slider sweeps one field period. The R-Z cross-section and orange section on the
-orbitable boundary preview update together, using the solver's six-family
+orbitable boundary preview update together, using the solver's six/twelve-family
 Fourier convention. Coefficient edits update the input JSON directly; no
 projection or rounding to the axisymmetric editor's `m <= 5` basis is applied.
 The fixed Solovev editor retains its existing Fourier sliders and contour mode.
+The asymmetric tokamak also offers **Contour** mode while `ntor=0`: points
+move independently and the fit updates RBC/ZBS/RBS/ZBC, including the vertical
+offset, through `m=mpol-1`. The **Contour points** slider adjusts the number of
+periodic cubic control points in both tokamak editors, starting from 16.
+It uses even counts from 12 to 36, independently of `mpol`.
+Changing the count resamples the current contour without
+changing the fitted boundary, profiles, axis guess or grid schedule. The target,
+fitted boundary and RMS error are shown together. Contour edits, editing mode
+and point count survive reloads and precision changes separately from the
+Solovev setup.
+Switching modes does not refit the boundary; dragging a point performs the fit.
+Inputs with nonzero toroidal modes retain the Fourier surface editor.
 
 Boundary previews are labeled separately from converged flux surfaces. The
 result's **2D cut** view has its own toroidal-angle slider for 3-D equilibria,
@@ -57,7 +72,7 @@ inputs. The separate W7-X startup implementation has been removed.
 
 `webgpu/orbit_renderer.js` renders the boundary preview and solved flux
 surfaces with WebGPU. A compute shader reconstructs the full torus from the
-six physical Fourier families and reduces its bounding radius. Geometry,
+six/twelve physical Fourier families and reduces its bounding radius. Geometry,
 bounds, and line indices stay on the GPU; changing the camera uploads one
 32-byte uniform. Coefficient edits regenerate geometry, while moving the
 section slider updates only the highlighted line. Every supplied surface is
@@ -96,6 +111,13 @@ The production 3-D path performs no GPU readback; the geometry validation
 script explicitly reads vertices to compare them with independent harmonics.
 
 ### Free-boundary browser setup
+
+`lasym=true` retains both Fourier parities in the plasma and vacuum solves.
+The free-boundary editor exposes RBS/ZBC through **Allow non-stellarator
+symmetry**; asymmetric coil currents or uploaded coil geometry are supported.
+MAKEGRID field periods and toroidal planes must match the equilibrium's `nfp`
+and effective `nzeta`. Use paired plasma precision for the qualified asymmetric
+free tokamak case; see [ADR-0020](adr/0020-non-stellarator-symmetry.md).
 
 The browser runtime is built with Emscripten pthreads. Serve it with
 `Cross-Origin-Opener-Policy: same-origin` and
@@ -430,10 +452,10 @@ After upgrading from a build that predates this scheme, use one hard refresh
 or add any one-time query parameter to the HTML URL; subsequent rebuilds are
 cache-coherent automatically.
 
-In **Fourier** mode the editor exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
+In the Solovev preset, **Fourier** mode exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
 for `m=1..5` as sliders beside a live boundary preview. In **Contour** mode,
-16 points define a periodic Catmull-Rom contour; dragging one point mirrors its
-partner and a 512-point discrete Fourier transform updates those same
+the default 16 points define a periodic Catmull-Rom contour; dragging one point
+mirrors its partner and a 512-point discrete Fourier transform updates those same
 coefficients through `m=5`. The orange target and cyan truncated reconstruction
 make the approximation explicit. Select **Run equilibrium** to solve the
 fitted boundary. The generated input, editing mode, contour, and coefficients
@@ -441,6 +463,12 @@ stay in browser local storage; compute and output generation remain local to
 the page. The interactive profile uses stellarator-symmetric axisymmetric
 harmonics (`ntor=0`), three grids (`ns=5,11,55`), and a responsive mixed-float
 tolerance of `1e-5`.
+
+`node scripts/webgpu_contour_smoke.mjs APP_URL OUTPUT_PREFIX` checks real
+pointer drags and solves for both tokamak parities in the forwarded Chrome.
+It also checks asymmetric vertical offsets, retained profiles, reloads,
+precision changes, poloidal resolution changes and the Fourier-only 3-D path.
+Its temporary tab uses session storage and is closed after the checks.
 
 After convergence the result panel defaults to an interactive 3-D equilibrium
 view, with a **2D cut** toggle for the poloidal cross-section. The solver sends
@@ -805,10 +833,9 @@ node scripts/webgpu_validate_run.mjs \
   ../tmp/verification-worker ../tmp/verification-main-trace.json
 ```
 
-Local profiling evidence: `../tmp/verification-lag-{result,cpu}.json` (before)
-and `../tmp/verification-lag-worker-{result,cpu}.json` (after). Node tests cover
-batched log ordering/final flush, DOM-free worker messages, transferred output
-ownership, query propagation, runtime selection, errors, and worker cleanup.
+Node tests cover batched log ordering/final flush, DOM-free worker messages,
+transferred output ownership, query propagation, runtime selection, errors,
+and worker cleanup.
 
 ### W7-X shader performance history
 
@@ -1323,12 +1350,6 @@ Cache shader-source construction outside the loop. GPU kernel work should
 target the current reduction and forward transforms after those host costs
 are addressed, with precision/convergence checks maintained.
 
-Raw captures and Chrome-importable symbolized CPU profiles are saved under
-`../tmp/w7x-deep-direct-final-*` and `../tmp/w7x-deep-fft-*`; the earlier
-independent direct sample is `../tmp/w7x-deep-direct-*`. The timing summaries
-use `-summary.json`; `-cpu-symbolized.cpuprofile` can be imported into Chrome
-DevTools. These local artifacts are not required by the application.
-
 ### Host data-path optimization after profiling (2026-09-06)
 
 `30418b8` caches immutable embedded shader text (including paired-precision
@@ -1398,10 +1419,7 @@ does not imply a regression: the CPU reaches its one fence sooner.
 The native shader-cache test checks exact text/prelude assembly, cache object
 identity, and failed-load retry. The full Chrome conformance suite with FFT
 enabled passed, including the paired W7-X slice and the 327-iteration Solovev
-regression. The browser artifact CTest gate passed as well. Captures are saved
-under `../tmp/w7x-opt-transfer-cache-*`, `../tmp/w7x-opt-host-copies-*`,
-`../tmp/w7x-opt-abba.json`, `../tmp/w7x-opt-fft-*`, and
-`../tmp/w7x-opt-conformance.json`.
+regression. The browser artifact CTest gate passed as well.
 
 Further work remains: reducing full-field readback, retaining persistent
 constraint/descent data on the device, and accelerating the serial current
@@ -1469,10 +1487,6 @@ restart control, then bounded multi-iteration dispatch batches remain to be
 implemented. Most full-field readbacks and the per-iteration host fence have
 not yet been removed. The scalar radial/profile/parameter uploads also remain.
 
-Evidence: `../tmp/w7x-resident-caches-*`, `w7x-resident-descent-*`,
-`resident-descent-conformance-*`, `w7x-gpu-norm-shadow-*`, `w7x-gpu-norm-fft-*`,
-`gpu-norm-conformance-*`, `w7x-device-norms-*` and `w7x-device-norms-fft-*`.
-
 ### Compact inverse readbacks (2026-09-06)
 
 Resident production iterations now scan the inverse geometry's high words on
@@ -1494,7 +1508,6 @@ these independently of revision/provenance metadata in retained result tabs.
 The full browser conformance suite passed (90.74 s), including twelve finite
 scan cases covering unaligned binding offsets, partial blocks, signed zeros,
 subnormals, maximal finite values, NaNs/infinities and malformed ranges.
-Evidence: `../tmp/w7x-compact-inverse-*`, `compact-inverse-conformance-*`.
 
 ### Compact magnetic readbacks (2026-09-06)
 
@@ -1527,7 +1540,6 @@ and the costly direct forward projections/current solve remain unchanged.
 The total scan-parameter upload is only 31 bytes/iteration amortized. Base
 geometry/Jacobian checks still download full fields, and GPU checkpointing,
 controller logic and multi-iteration batching remain follow-on work.
-Evidence: `../tmp/w7x-compact-fields-{gpu,cpu,windows,result,trace,summary}.json`.
 
 An uninstrumented, visible A/B/B/A benchmark used the **same build**, toggling
 only `field_readbacks=full` with `gpu_norms=1` held constant. Each run warmed
@@ -1543,16 +1555,14 @@ only `field_readbacks=full` with `gpu_norms=1` held constant. Each run warmed
 The two-run averages are **34.316 → 23.368 ms**, a **31.90% reduction**.
 All sampled controller records match exactly. The benchmark now preserves
 feature flags from its input URLs instead of silently dropping them.
-`../tmp/w7x-compact-fields-abba.json` contains the samples and trajectories.
 The complete conformance suite passed in 90.74 s, including dedicated f32 and
-paired comparisons of compact radial profiles against full readbacks
-(`../tmp/compact-fields-conformance-*`).
+paired comparisons of compact radial profiles against full readbacks.
 
 The FFT route also passed: **73.98 s**, 3,091 effective iterations and all
 3,096 controller records exactly equal to its qualified GPU-norm baseline.
-Its spectral and derived-field digests are unchanged too
-(`../tmp/w7x-compact-fields-fft-*`). These changes accelerate each route
-without trying to make the direct and FFT convergence trajectories equal.
+Its spectral and derived-field digests are unchanged too. These changes
+accelerate each route without trying to make the direct and FFT convergence
+trajectories equal.
 
 ### Shader Jacobian control (2026-09-06)
 
@@ -1599,25 +1609,23 @@ measured **6.15 MB readbacks/pass**, down from 14.29 MB, and **0.0205 ms/pass**
 for the two new shaders. Mean profiled interval was 20.76 ms (previous capture
 22.46 ms); whole-run timing is observational, not a controlled speedup claim.
 The host controller regression and full browser conformance suite passed.
-Evidence: `../tmp/w7x-gpu-jacobian-refined-*`, `gpu-jacobian-conformance-*`.
 
 A visible, uninstrumented same-build A/B/B/A comparison (GPU norms enabled,
 only `gpu_control=jacobian` toggled) measured host-gate runs of 23.791/22.207
 ms and shader-gate runs of 16.986/17.718 ms per warmed iteration. The averages
 are **22.999 → 17.352 ms**, a **24.55% reduction**, with exact sampled
-controller-record equality (`../tmp/w7x-gpu-jacobian-abba.json`). Timestamp
-instrumentation adds overhead; these values should not be mixed with the
-profiled 20.76 ms interval when computing a speedup.
+controller-record equality. Timestamp instrumentation adds overhead; these
+values should not be mixed with the profiled 20.76 ms interval when computing
+a speedup.
 
 An additional full-readback run compared GPU min/max values, earliest indices
 and decisions with the CPU scan on **every pass**, not only refreshes: all
-2,821 passed, with zero fallbacks and exact 2,817-record trajectory equality
-(`../tmp/w7x-gpu-jacobian-full-check-*`). The host controller suite also passed
-with ASan/UBSan enabled.
+2,821 passed, with zero fallbacks and exact 2,817-record trajectory equality.
+The host controller suite also passed with ASan/UBSan enabled.
 
 The FFT route qualified in **58.00 s**, retaining 3,091 effective iterations,
 all 3,096 exact controller records and the original spectral/derived-field
-digests (`../tmp/w7x-gpu-jacobian-fft-*`).
+digests.
 
 ## Compact validation and retained velocity (2026-09-06)
 
@@ -1638,12 +1646,10 @@ passed, including compact velocity versus full device snapshots, copy-only
 and storage-backed residual validation, and signed-zero/subnormal flag cases.
 An uninstrumented visible A/B/B/A comparison measured **17.326 → 14.767 ms**
 per warmed iteration (**14.77% lower**), with exact sampled trajectories.
-Evidence: `../tmp/w7x-compact-control-*`, `compact-control-conformance-*`.
 
 The follow-up 256-pass profile measured **1.692 MB/readback per iteration**,
 down from 6.151 MB. The new validity scans cost 0.063 ms/pass in total;
 Emdawn mapped-data copying dropped to 0.84% of the separate CPU sample.
-Evidence: `../tmp/w7x-compact-control-profile-*`.
 
 ## Parallel current integrands with ordered sums (2026-09-06)
 
@@ -1661,14 +1667,14 @@ The serial-current kernel fell from **1.689 to 0.380 ms/iteration** in separate
 **14.232 → 12.817 ms/iteration (9.94% lower)** with exact sampled controller
 records. The complete direct W7-X solve took **38.92 s**, preserving all
 2,817 controller records, `1e-12` convergence and both scientific-output
-digests. Evidence: `../tmp/w7x-parallel-current-*`.
+digests.
 
 A theta-contiguous invocation mapping was also tested for direct toroidal
 projections. It retained the sampled trajectory but showed no useful speedup:
 12.901 ms baseline versus 12.947 ms candidate in A/B/B/A. The experiment was
-reverted (`../tmp/w7x-forward-layout-abba.json`). The profiled remaining device
-leaders are forward projections (3.63 ms), inverse transforms (1.48 ms), and
-preconditioner application (0.61 ms); this is not a claim of global optimality.
+reverted. The profiled remaining device leaders are forward projections
+(3.63 ms), inverse transforms (1.48 ms), and preconditioner application
+(0.61 ms); this is not a claim of global optimality.
 
 ## Standalone FFT optimization integrated into W7-X (2026-09-06)
 
@@ -1710,15 +1716,13 @@ was 13.810 ms/iteration. Do not use that cold full-run outlier against the new
 runs to claim a kernel speedup. A separate warmed old/new/new/old comparison
 (256 controller intervals per run) measured **13.870 → 12.698 ms/iteration**,
 an **8.45% reduction** in FFT-route iteration time, with exact sampled
-controller records. Evidence: `../tmp/w7x-fft-owner-abba.json` and
-`../tmp/w7x-fft-owner-{old,new-1,new-2,direct-1,direct-2}-{result,trace}.json`.
+controller records.
 
 Full browser conformance with `mode=test&fft=1&gpu_norms=1&gpu_control=jacobian`
 passed, including all three Solovev stages with timing instrumentation
-enabled (`../tmp/fft-owner-integration-conformance-*`). Artifact CTest and
-the frontend iteration/timestamp tests also passed. The served
-`../tmp/cumes-build-webgpu-ds/webgpu/cumes_webgpu.html` was rebuilt with this
-dependency revision; `fft=1` selects it without changing the direct default.
+enabled. Artifact CTest and the frontend iteration/timestamp tests also passed.
+The browser runtime was rebuilt with this dependency revision; `fft=1` selects
+it without changing the direct default.
 
 ## Iteration statistics in the webpage log (2026-09-06)
 
@@ -1750,11 +1754,11 @@ and A/B harnesses set this themselves to avoid stacking timestamp hooks.
 `node scripts/test_webgpu_iteration_timing.mjs` tests exact host/wait timing,
 timestamp decoding, median calculation, unsupported adapters, reset and opt-out.
 The Chrome GPU run retained all 2,817 controller records and produced timing
-samples for all 2,821 passes (`../tmp/w7x-iteration-timing-*`).
+samples for all 2,821 passes.
 Conformance exposed and now guards against the reserved timestamp tail
 enlarging the logical payload capacity. `ReadbackBatch` enforces its declared
 payload budget independently of physical buffer size. Full conformance passed
-with instrumentation enabled (`../tmp/timing-capacity-conformance-*`).
+with instrumentation enabled.
 
 The WebGPU implementation lives under these paths:
 

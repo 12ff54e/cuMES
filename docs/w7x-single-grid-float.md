@@ -86,11 +86,6 @@ CUMES_GEOMETRY_PRECISION=compensated ./build-float/cumes w7x-ns99-1e-5.json \
 
 Use the same input and setting with `--restart w7x-single.ckpt` for replay.
 
-Local experiment commands, checkpoints, source variants and logs are in
-`/lustre/qzhong/cumes-diagnostics/w7x-single-grid-fix/`; the preceding stall
-records are in `/lustre/qzhong/cumes-diagnostics/w7x-single-grid-float/`.
-
-
 ## Final qualification and cost
 
 | Solve | Effective iterations | Final FSQR / FSQZ / FSQL |
@@ -100,7 +95,6 @@ records are in `/lustre/qzhong/cumes-diagnostics/w7x-single-grid-float/`.
 | Multigrid cold start, 33/66/99 | 149 → 277 → 311 | 9.883718121e-6 / 5.675343800e-6 / 2.955646394e-9 |
 | Multigrid checkpoint replay, ns=99 | 1 | 9.883718121e-6 / 5.614867405e-6 / 2.955646394e-9 |
 
-Final CLI commands and telemetry are in `qualified/` under the artifact root.
 The native double W7-X and Solovev checkpoints and final-stage telemetry are
 byte-identical to the previous qualified results. `compare_runs` reports zero
 state/residual differences and identical restart sequences. Double compensated
@@ -128,7 +122,7 @@ The retained correction costs 2.9% more per pass than the preceding poloidal
 scope and 14.8% less than the full diagnostic. The old poloidal scope does not
 converge this single-grid cold start, so per-pass timing alone is not a
 solution-time comparison. The first poloidal timing was 601.44 µs; the other
-two were 546.68 and 546.79 µs. All samples are retained in `timing/`.
+two were 546.68 and 546.79 µs.
 
 Reproduce the float timing with the explicitly float benchmark target:
 

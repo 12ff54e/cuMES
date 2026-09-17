@@ -41,10 +41,10 @@ SolveOutcome EquilibriumSolver::solve(const ValidatedProblem& problem,
                 "Newton-Krylov corrections require a double build");
         }
         if (problem.spec().free_boundary.lfreeb || problem.shape().ntor != 0 ||
-            problem.shape().nzeta != 1) {
+            problem.shape().nzeta != 1 || problem.spec().lasym) {
             throw CumesError(
                 "Newton-Krylov corrections require a fixed-boundary "
-                "axisymmetric problem (ntor=0, nzeta=1)");
+                "axisymmetric problem (ntor=0, nzeta=1, lasym=false)");
         }
     }
 

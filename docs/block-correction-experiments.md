@@ -186,8 +186,8 @@ axis elimination, single-interior-row grids, protected families/boundaries,
 and singular/nonfinite fallback in both precisions. Maximum solution errors
 are 1.11e-16 double and 5.96e-8 float. Pascal memcheck, initcheck and synccheck
 report zero errors; the four float kernels contain no FP64 arithmetic or
-comparison instructions. The rejected operator, tests and live hook are
-archived rather than added to the production library.
+comparison instructions. The rejected operator and live hook were not added
+to the production library.
 
 The finite-difference probes also show substantial response in *other*
 Fourier modes. Neither a lambda-only solve nor the tested same-mode radial
@@ -197,19 +197,3 @@ experiment](newton-correction-experiments.md) measured that response and ran
 complete original-schedule solves. A separate [FAS coarse
 correction](coarse-correction-experiments.md) was also tested through all
 configured stages. Both remaining proposals now have measured outcomes.
-
-## Artifacts
-
-The session archive is
-`../tmp/cumes-block-20260908/` relative to the repository. `states/manifest.json`
-records capture provenance and SHA256 checksums; `ada-diagnostics/README.md`
-records the remote toolchain, commands, exact tested source copies and logs.
-`ada-lambda/README.md` and its JSON/log files retain all 13 map checks,
-invalid-input results and the three targeted sanitizer runs.
-`rz-results/`, the `lambda-*-force-only.log` files and `live-results/` contain
-the measurements above. `live-source/` preserves the rejected full-solver
-lambda hook. These large local artifacts are not repository fixtures.
-`once/` records the single early lambda correction. `coupled-rz-prototype/`
-contains the rejected radial operator, manufactured tests, executable,
-sanitizer logs and build commands; `rz-live-source/`, `prepare_rz_live.py`,
-`build_rz_live.py` and `rz-live-results/` preserve its full-solver experiment.
